@@ -90,8 +90,8 @@ fn join_reorder2_session() -> Session {
 /// ```
 ///
 /// The mechanism: `sub` writes `... left join t3 ...` in its own `FROM`, and
-/// the row inventory (`tidb_executor::driver::join_reorder`) used to DECLINE
-/// any derived table containing an outer join. With no estimate the top
+/// the former executor-local row inventory used to decline any derived table
+/// containing an outer join. With no estimate the top
 /// `(sub, t4)` site priced NO alternatives, and `build_join_with_choice`'s
 /// fallback kept the structurally-available merge; the merge's child order
 /// then reached the left-outer site as a non-empty property, where Go's

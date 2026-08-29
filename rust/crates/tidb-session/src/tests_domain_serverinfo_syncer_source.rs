@@ -239,7 +239,10 @@ fn startup_cleans_the_stale_server_info_at_this_address() {
 
     // Act: create a new Syncer with same IP+Port and store its server info.
     let new_id = "new-uuid";
-    let syncer = Syncer::new(mock_server_info_at(new_id, "1.1.1.1", 4000), Some(fake.clone()));
+    let syncer = Syncer::new(
+        mock_server_info_at(new_id, "1.1.1.1", 4000),
+        Some(fake.clone()),
+    );
     let new_info = syncer.local_server_info();
     assert_eq!(new_info.static_info.ip, "1.1.1.1");
     assert_eq!(new_info.static_info.port, 4000);
@@ -311,7 +314,10 @@ fn stale_ddl_owner_key_is_deleted_too() {
     let stale_owner_key = format!("{DDL_OWNER_KEY}/12345");
     put_str(&fake, &stale_owner_key, stale_id);
 
-    let syncer = Syncer::new(mock_server_info_at("new-uuid", "1.1.1.1", 4000), Some(fake.clone()));
+    let syncer = Syncer::new(
+        mock_server_info_at("new-uuid", "1.1.1.1", 4000),
+        Some(fake.clone()),
+    );
     syncer.new_session_and_store_server_info().unwrap();
 
     let resp = fake.get(&stale_owner_key);

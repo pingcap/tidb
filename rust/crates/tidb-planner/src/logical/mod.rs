@@ -352,6 +352,8 @@ pub mod rule_aggregation_elimination;
 pub mod rule_derive_topn_from_window;
 pub mod rule_eliminate_empty_selection;
 pub mod rule_eliminate_unionall_dual_item;
+pub mod rule_join_key_type_cast;
+pub mod rule_projection_elimination;
 pub mod rule_push_down_sequence;
 pub mod rule_resolve_expand;
 pub mod rule_result_reorder;
@@ -769,17 +771,22 @@ impl LogicalPlan {
     pub fn push_down_topn_with(
         self,
         builder: &dyn tidb_expr::expr_util::builder::FunctionBuilder,
+        allocator: &crate::plan_base::PlanIdAllocator,
         topn: Option<LogicalTopN>,
     ) -> Self {
-        rewrite::push_down_topn_with_builder(builder, self, topn)
+        rewrite::push_down_topn_with_builder(builder, allocator, self, topn)
     }
 
     /// Test-only convenience over [`LogicalPlan::push_down_topn_with`] using
     /// the preserving test builder.
     #[cfg(test)]
     #[must_use]
-    pub fn push_down_topn(self, topn: Option<LogicalTopN>) -> Self {
-        self.push_down_topn_with(&crate::logical::rule_tests::TEST_BUILDER, topn)
+    pub fn push_down_topn(
+        self,
+        allocator: &crate::plan_base::PlanIdAllocator,
+        topn: Option<LogicalTopN>,
+    ) -> Self {
+        self.push_down_topn_with(&crate::logical::rule_tests::TEST_BUILDER, allocator, topn)
     }
 
     /// Go `DeriveTopN()` (`<5th>`), gated on `AllowDeriveTopN`.

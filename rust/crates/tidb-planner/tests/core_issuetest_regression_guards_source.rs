@@ -141,18 +141,6 @@ fn push_down_sequence_attaches_above_childless_table_dual() {
     assert_eq!(optimized, expected_unary_over_sequence_over_join);
 }
 
-/// GO PORT of `pkg/planner/core/issuetest/panicrisk_tier2_test.go:26
-/// TestNonPreparedPlanCacheZeroArgDateFunc`.
-///
-/// Re-derived contract: the non-prepared plan cache parameterizer visits
-/// date_format()/str_to_date()/time_format()/from_unixtime() BEFORE arity
-/// validation, so zero-argument calls in a WHERE clause must not trigger an
-/// out-of-range access on Args[0]; each statement still fails its normal
-/// invalid-call error but MUST NOT crash the server (:32-43).
-#[test]
-#[ignore = "go-parity-gap: needs the AST parameterizer + non-prepared plan cache pipeline"]
-fn non_prepared_plan_cache_zero_arg_date_funcs_do_not_panic() {}
-
 /// GO PORT of `pkg/planner/core/issuetest/panicrisk_tier2_test.go:44
 /// TestSkewDistinctAggConstantArg`.
 ///

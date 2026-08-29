@@ -193,7 +193,11 @@ impl LogicalTopN {
     /// Go's comment for why this exists rather than `SetChild`: "AttachChild
     /// will tracer the children change while SetChild doesn't."
     #[must_use]
-    pub fn attach_child(self, child: LogicalPlan) -> LogicalPlan {
+    pub fn attach_child(
+        self,
+        child: LogicalPlan,
+        allocator: &crate::plan_base::PlanIdAllocator,
+    ) -> LogicalPlan {
         if let LogicalPlan::TableDual(mut dual) = child {
             let num_dual_rows = dual.row_count as u64;
             dual.row_count = if num_dual_rows < self.offset {
@@ -204,8 +208,11 @@ impl LogicalTopN {
             return LogicalPlan::TableDual(dual);
         }
         if self.is_limit() {
-            let mut base = self.base.shell();
-            base.base.set_tp(LogicalLimit::TYPE);
+            let base = BaseLogicalPlan::new(
+                allocator,
+                LogicalLimit::TYPE,
+                self.base.base.query_block_offset(),
+            );
             let mut limit = LogicalLimit {
                 base,
                 partition_by: self.partition_by,

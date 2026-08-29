@@ -20,13 +20,10 @@
 //!
 //! # What the two sides share and where they differ
 //!
-//! Go keeps the PARSED statement and installs each execute-time value on the
-//! `?` marker node itself, then plans over that tree. This tier reaches
-//! execution through SQL text, so `PREPARE` keeps the text and `EXECUTE` turns
-//! the markers into the literals for their values -- the same round trip the
-//! binary protocol already takes through
-//! [`tidb_executor::bind_parameters`]. Two consequences are handled here
-//! rather than left to differ:
+//! Like Go, `PREPARE` retains the parsed statement and `EXECUTE` installs each
+//! execute-time value on a cloned `?` marker before the ordinary statement
+//! planner/executor runs it. SQL PREPARE and the binary protocol therefore
+//! share the same bound-AST execution path. Two consequences are handled here:
 //!
 //! * The value comes from the USER VARIABLE's datum at execute time, which is
 //!   Go's `usingParam.Eval` over the `ast.VariableExpr` the parser put in the
@@ -37,7 +34,7 @@
 //!   `?` -- not the bound literals. [`alias_marker_fields`] pins those names
 //!   at prepare time, before any value exists to substitute.
 //!
-//! # What is deliberately not modelled
+//! # Remaining planner differences
 //!
 //! Go's `PREPARE` runs the whole optimizer (`GeneratePlanCacheStmtWithAST`),
 //! so a statement that PARSES but cannot be PLANNED is refused at prepare
@@ -48,19 +45,6 @@
 //! only parsing happens at prepare time, so such a statement is accepted and
 //! its planning error surfaces at `EXECUTE` instead. The rejection still
 //! happens; only WHICH statement reports it differs.
-//!
-//! The PREPARED plan cache is not modelled at all -- a prepared statement is
-//! re-planned from its own text on every `EXECUTE`, so no `EXECUTE` here can
-//! report a hit.
-//!
-//! This is NOT true of the session as a whole, and the earlier wording that
-//! said "nothing here can report a hit" was wrong: the non-prepared plan
-//! cache in [`crate::non_prepared_plan_cache`] does report hits, and a
-//! `.test` case that runs a bare `SELECT` twice under
-//! `tidb_enable_non_prepared_plan_cache=1` and then reads
-//! `select @@last_plan_from_cache` is reachable through that tier. Only the
-//! `PREPARE`/`EXECUTE` shape is out of reach, and by construction rather than
-//! by omission.
 //!
 //! # Two divergences this exposed that are NOT the binding's
 //!
@@ -87,13 +71,16 @@ use tidb_executor::DriverError;
 
 use crate::{Session, StmtOutput};
 
-/// One prepared statement of a session: Go's `PlanCacheStmt`, reduced to what
-/// this tier needs to run it again.
+/// One prepared statement of a session: Go's retained `PlanCacheStmt` input
+/// plus the cache-owned physical SELECT descriptor.
 #[derive(Debug, Clone)]
 pub(crate) struct PreparedStatement {
     /// The statement text to run, with every unaliased marker-bearing select
     /// field already carrying its Go column name (see [`alias_marker_fields`]).
     sql: String,
+    /// Go `PlanCacheStmt.PreparedAst`: the one PREPARE-time parse cloned and
+    /// bound on every EXECUTE. No execute reparses restored SQL.
+    statement: Stmt,
     /// Go `PlanCacheStmt.ParamCount`: the number of `?` markers the statement
     /// carries, which fixes exactly how many values an `EXECUTE` must supply.
     param_count: usize,
@@ -105,6 +92,9 @@ pub(crate) struct PreparedStatement {
     /// physical tree for the current schema and parameter types; later hits
     /// clone and recursively rebuild that tree.
     select_plan: Option<std::sync::Arc<tidb_executor::PreparedSelectPlan>>,
+    /// The same cache-owned physical root for INSERT/UPDATE/DELETE. Its
+    /// `SelectPlan` is rebuilt and then consumed by the ordinary DML executor.
+    dml_plan: Option<std::sync::Arc<tidb_executor::PreparedDmlPlan>>,
     /// The marker orders that stand in a `LIMIT`, whose bound values Go admits
     /// only as a non-negative `int64` or a `uint64`
     /// (`CheckParamTypeInt64orUint64` / `getUintFromNode`). Captured: with
@@ -169,9 +159,39 @@ impl Session {
         }
         let param_count = tidb_executor::parameter_count(&text, self.scanner_sql_mode())?;
         let limit_markers = limit_marker_orders(&statement);
+        // Build statement-local planner state before locking the catalog: the
+        // context's sequence/key-decode snapshots consult that same catalog.
+        let planner_context = self.statement_context(false);
         // Go `GeneratePlanCacheStmtWithAST` runs `CacheableWithCtx` here, at
         // PREPARE, and stores the verdict on the `PlanCacheStmt`.
-        let cacheable = crate::prepared_plan_cache::stmt_cacheable(&mut statement);
+        let (cacheable, select_plan, dml_plan) = {
+            let catalog = self.lock_catalog()?;
+            let cacheable = self.prepared_statement_cacheable(&mut statement, &catalog);
+            let select_plan = if cacheable.is_ok() {
+                tidb_executor::build_prepared_select_plan(
+                    &statement,
+                    param_count,
+                    &catalog,
+                    self.current_database(),
+                    &planner_context,
+                )
+                .map(std::sync::Arc::new)
+            } else {
+                None
+            };
+            let dml_plan = if cacheable.is_ok() {
+                tidb_executor::build_prepared_dml_plan(
+                    &statement,
+                    param_count,
+                    &catalog,
+                    self.current_database(),
+                )?
+                .map(std::sync::Arc::new)
+            } else {
+                None
+            };
+            (cacheable, select_plan, dml_plan)
+        };
         // Only a statement that CARRIES markers is ever restored (that is what
         // binding does), so only that statement needs its column names pinned
         // against the restore. A marker-free statement keeps the text the user
@@ -181,29 +201,16 @@ impl Session {
         } else {
             text
         };
-        let select_plan = if cacheable.is_ok() {
-            let ctx = self.statement_context(false);
-            self.lock_catalog().ok().and_then(|catalog| {
-                tidb_executor::build_prepared_select_plan(
-                    &statement,
-                    param_count,
-                    &catalog,
-                    self.current_database(),
-                    &ctx,
-                )
-                .map(std::sync::Arc::new)
-            })
-        } else {
-            None
-        };
         self.prepared_statements.insert(
             name.to_owned(),
             PreparedStatement {
                 sql,
+                statement,
                 param_count,
                 limit_markers,
                 cacheable,
                 select_plan,
+                dml_plan,
             },
         );
         Ok(())
@@ -270,26 +277,40 @@ impl Session {
                 _ => return Err(DriverError::WrongArguments("LIMIT")),
             }
         }
-        if prepared.cacheable.is_ok() {
-            if let Some(cached) = prepared
-                .select_plan
-                .as_ref()
-                .and_then(|plan| self.bind_cached_prepared_select(plan, &values))
-            {
-                return self.execute_cached_prepared_select(&cached);
+        let (mut effective_statement, binding_sql) =
+            self.prepared_statement_with_binding(&prepared.statement);
+        self.rewrite_fts_for_planning(&mut effective_statement);
+        if prepared.cacheable.is_ok()
+            && self.prepared_plan_cache_allowed_for_statement(&effective_statement)
+        {
+            if let Some(cached) = prepared.select_plan.as_ref().and_then(|plan| {
+                self.bind_cached_prepared_select_for_statement(
+                    plan,
+                    &values,
+                    &effective_statement,
+                    binding_sql.as_deref(),
+                )
+            }) {
+                return self.execute_prepared_select(&cached, &prepared.sql);
+            }
+            if let Some(cached) = prepared.dml_plan.as_ref().and_then(|plan| {
+                self.bind_cached_prepared_dml_for_statement(
+                    plan,
+                    &values,
+                    &effective_statement,
+                    binding_sql.as_deref(),
+                )
+            }) {
+                return self.execute_cached_prepared_dml(&cached, &prepared.sql);
             }
         }
-        let sql = if values.is_empty() {
-            prepared.sql.clone()
-        } else {
-            tidb_executor::bind_parameters(&prepared.sql, &values, self.scanner_sql_mode())?
-        };
+        let bound = tidb_executor::bind_statement(effective_statement, &values)?;
         // Go builds the prepared statement's own plan and runs it as this
         // statement's body, so the inner statement goes through the same
         // dispatch every other statement does -- including DDL's implicit
         // commit, which is why `EXECUTE` of a prepared `CREATE TABLE` works
         // (captured).
-        let output = self.execute_statement(&sql)?;
+        let output = self.run_parsed_bound_owned_with_sql(bound, &prepared.sql)?;
         // Go `isPhysicalPlanCacheable`'s `PhysicalApply` arm runs on the
         // BUILT plan, after the AST checker said yes: a plan containing an
         // Apply is refused outright -- neither stored nor reported -- because

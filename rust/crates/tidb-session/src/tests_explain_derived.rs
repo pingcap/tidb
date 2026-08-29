@@ -261,10 +261,9 @@ fn a_derived_table_keeps_its_own_order_by_limit() {
 /// `actRows` column reports what each one really produced rather than
 /// attributing the whole subquery to one node.
 ///
-/// This is the assertion that the descent is real and not cosmetic: on three
-/// rows, `a > 1` inside the derived table passes 2 and `x.b < 3` outside it
-/// passes 1, and both counts are on their own operator. A recorder that
-/// stopped at the derived table could not tell those two apart.
+/// Predicate pushdown combines the inner and outer predicates into one
+/// coprocessor Selection. The scan still reports all three rows it reads and
+/// the Selection reports the single row that satisfies both predicates.
 #[test]
 fn explain_analyze_meters_inside_the_derived_table() {
     let mut session = derived_session();
@@ -283,10 +282,9 @@ fn explain_analyze_meters_inside_the_derived_table() {
     assert_eq!(
         act_rows,
         vec![
-            ("Selection_4".to_owned(), "1".to_owned()),
-            ("IndexLookUp_3".to_owned(), "2".to_owned()),
-            ("├─IndexRangeScan_1(Build)".to_owned(), "1".to_owned()),
-            ("TableRowIDScan_2(Probe)".to_owned(), "1".to_owned()),
+            ("TableReader_9".to_owned(), "1".to_owned()),
+            ("Selection_8".to_owned(), "1".to_owned()),
+            ("TableFullScan_7".to_owned(), "3".to_owned()),
         ]
     );
 }

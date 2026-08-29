@@ -38,6 +38,7 @@ impl From<ExecError> for DriverError {
             // The same statement-level error whichever layer raised it, so
             // callers match one variant.
             ExecError::SubqueryReturnsMoreThanOneRow => DriverError::SubqueryReturnsMoreThanOneRow,
+            ExecError::CteMaxRecursionDepth(rounds) => DriverError::CteMaxRecursionDepth(rounds),
             ExecError::MemoryExceedForQuery { conn_id } => {
                 DriverError::MemoryExceedForQuery { conn_id }
             }

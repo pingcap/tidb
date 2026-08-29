@@ -451,10 +451,21 @@ fn test_a_set_operation_is_usable_as_a_derived_table() {
 // ***** CTE reference resolution *****
 
 #[test]
-fn test_a_cte_reference_becomes_a_logical_cte_over_a_shared_class() {
-    // `tryBuildCTE` (`:4739`) plus `buildWith` (`:7994`).
+fn test_a_single_consumer_cte_is_inlined_like_go() {
+    // `UpdateCTEConsumerCount` plus `computeCTEInlineFlag`: exactly one
+    // consumer takes `buildDataSourceFromCTEMerge` instead of a CTE storage.
     let plan = build("WITH c AS (SELECT a FROM t) SELECT a FROM c");
-    let cte = find(&plan, "CTE").expect("a LogicalCTE is built for the reference");
+    assert!(find(&plan, "CTE").is_none());
+    assert!(find(&plan, "DataSource").is_some());
+}
+
+#[test]
+fn test_a_multi_consumer_cte_becomes_a_logical_cte_over_a_shared_class() {
+    let plan = build(
+        "WITH c AS (SELECT a FROM t) \
+         SELECT x.a FROM c AS x JOIN c AS y ON x.a = y.a",
+    );
+    let cte = find(&plan, "CTE").expect("multiple consumers materialize the CTE");
     let LogicalPlan::CTE(cte) = cte else {
         unreachable!()
     };
@@ -462,15 +473,16 @@ fn test_a_cte_reference_becomes_a_logical_cte_over_a_shared_class() {
     let class = cte.cte.as_ref().expect("the reference points at a class");
     assert!(class.borrow().seed_part_logical_plan.is_some());
     assert!(class.borrow().recursive_part_logical_plan.is_none());
-    // Not inlined: the consumer count is unavailable here, which is Go's
-    // "cannot determine" arm; see `cte`'s ConsumerCount narrowing.
     assert!(find(&plan, "DataSource").is_none());
 }
 
 #[test]
 fn test_a_cte_shadows_a_real_table_of_the_same_name() {
     // Go looks the CTE up FIRST, in `buildDataSource`'s `dbName.L == ""` arm.
-    let plan = build("WITH t AS (SELECT a FROM s) SELECT a FROM t");
+    let plan = build(
+        "WITH t AS (SELECT a FROM s) \
+         SELECT x.a FROM t AS x JOIN t AS y ON x.a = y.a",
+    );
     assert!(find(&plan, "CTE").is_some());
 }
 
@@ -496,7 +508,10 @@ fn test_a_ctes_column_list_renames_its_output_and_a_wrong_length_is_refused() {
 
 #[test]
 fn test_a_later_cte_may_reference_an_earlier_one() {
-    let plan = build("WITH c1 AS (SELECT a FROM t), c2 AS (SELECT a FROM c1) SELECT a FROM c2");
+    let plan = build(
+        "WITH c1 AS (SELECT a FROM t), c2 AS (SELECT a FROM c1) \
+         SELECT x.a FROM c2 AS x JOIN c2 AS y ON x.a = y.a",
+    );
     assert!(find(&plan, "CTE").is_some());
 }
 
@@ -507,7 +522,10 @@ fn test_a_non_recursive_cte_cannot_see_itself() {
     assert!(build_err("WITH c AS (SELECT a FROM c) SELECT a FROM c").contains("doesn't exist"));
     // Inside the CTE's own body, `t` is the real TABLE — the seed plan the
     // class holds is a DataSource, not a second CTE reference.
-    let plan = build("WITH t AS (SELECT a FROM t) SELECT a FROM t");
+    let plan = build(
+        "WITH t AS (SELECT a FROM t) \
+         SELECT x.a FROM t AS x JOIN t AS y ON x.a = y.a",
+    );
     let LogicalPlan::CTE(cte) = find(&plan, "CTE").expect("the outer reference") else {
         unreachable!()
     };
@@ -634,7 +652,8 @@ fn test_a_recursive_declaration_with_no_self_reference_is_an_ordinary_cte() {
     // "In this case, even if SQL specifies 'WITH RECURSIVE', the CTE is
     // non-recursive."
     let plan = build(
-        "WITH RECURSIVE c (n) AS (SELECT a FROM t UNION ALL SELECT b FROM t) SELECT n FROM c",
+        "WITH RECURSIVE c (n) AS (SELECT a FROM t UNION ALL SELECT b FROM t) \
+         SELECT x.n FROM c AS x JOIN c AS y ON x.n = y.n",
     );
     let LogicalPlan::CTE(cte) = find(&plan, "CTE").expect("a LogicalCTE") else {
         unreachable!()
@@ -670,14 +689,15 @@ fn test_a_recursive_ctes_limit_becomes_the_classs_limit_bounds() {
 #[test]
 fn test_no_sequence_is_built_unless_mpp_shared_cte_execution_is_on() {
     // `tryToBuildSequence` (`:4624`) returns the plan untouched by default.
-    let plan = build("WITH c AS (SELECT a FROM t) SELECT a FROM c");
+    let sql = "WITH c AS (SELECT a FROM t) \
+               SELECT x.a FROM c AS x JOIN c AS y ON x.a = y.a";
+    let plan = build(sql);
     assert!(!operator_names(&plan).iter().any(|tp| tp == "Sequence"));
 
     let harness = Harness::new();
     let mut builder = harness.builder();
     builder.enable_mpp_shared_cte_execution = true;
-    let plan = build_in(&mut builder, "WITH c AS (SELECT a FROM t) SELECT a FROM c")
-        .expect("the sequence form builds");
+    let plan = build_in(&mut builder, sql).expect("the sequence form builds");
     assert_eq!(plan.tp(), "Sequence");
     // The CTE producers come FIRST and the main query LAST; see
     // `logical::sequence`'s header.

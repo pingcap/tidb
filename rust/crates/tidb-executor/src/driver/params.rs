@@ -13,14 +13,12 @@
 // limitations under the License.
 
 //! Prepared-statement parameter markers: counting the `?` markers a statement
-//! carries, and replacing each with the literal for its execute-time value.
+//! carries and installing each execute-time value.
 //!
 //! Go keeps the parsed statement and installs the values on the marker nodes
-//! themselves. This tier reaches execution through SQL text, so the markers
-//! become literals and the statement is restored -- see [`bind_parameters`]
-//! for why that round trip is exact. Both directions share one AST walk
-//! ([`walk_statement_markers`]), so a statement shape that can be counted can
-//! always be bound.
+//! themselves. Retained prepared plans use that same representation through
+//! [`bind_prepared_statement`]; only the legacy text helper
+//! [`bind_parameters`] replaces markers with literals and restores SQL.
 
 use super::*;
 /// Binds a prepared statement's parameters, replacing every `?` marker with
@@ -78,15 +76,16 @@ pub fn bind_prepared_statement(stmt: &Stmt, values: &[Datum]) -> Result<Stmt, Dr
     Ok(bound_stmt)
 }
 
-/// Rebinds the parameter-marker values on the SELECT owned by a cached
-/// physical plan. The marker nodes and their stable orders remain in place;
-/// only the execute-local datums change, as in Go's cached `PreparedAst`.
-pub(crate) fn bind_prepared_select_in_place(
-    select: &mut tidb_ast::SelectStmt,
+/// Rebinds markers on the complete statement retained by a cached DML root.
+/// SELECT and DML cache entries use this same complete-statement operation;
+/// marker nodes remain present so their physical roots can rebuild
+/// parameter-derived ranges on every execution.
+pub(crate) fn bind_prepared_statement_in_place(
+    stmt: &mut Stmt,
     values: &[Datum],
 ) -> Result<(), DriverError> {
     let mut bound = 0usize;
-    install_marker_values(select, values, &mut bound)?;
+    install_statement_marker_values(stmt, values, &mut bound)?;
     if bound != values.len() {
         return Err(DriverError::WrongParamCount);
     }

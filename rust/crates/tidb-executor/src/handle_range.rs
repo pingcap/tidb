@@ -313,7 +313,7 @@ fn handle_column(table: &KvTable) -> Option<HandleColumn> {
         .then_some(())
         .map_or(
             Some(HandleColumn {
-                name: crate::driver::leaf_demand::EXTRA_HANDLE_NAME.to_owned(),
+                name: tidb_model::column::EXTRA_HANDLE_NAME.to_owned(),
                 id: tidb_model::column::EXTRA_HANDLE_ID,
                 // Go `NewExtraHandleSchemaCol`: `TypeLonglong`, signed, with
                 // `PriKeyFlag | NotNullFlag`.

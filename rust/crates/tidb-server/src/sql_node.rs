@@ -574,9 +574,6 @@ pub struct PreparedGeneral {
     template: Option<Stmt>,
     /// A schema-versioned point-get plan compiled at PREPARE time.
     point_get_plan: Option<std::sync::Arc<tidb_executor::PreparedPointGetPlan>>,
-    /// Go reports the first execution as a plan-cache miss and reuses the
-    /// point plan only after that execution completed successfully.
-    point_get_cache_ready: Arc<AtomicBool>,
     /// The reusable prepared DML plan, when admitted.
     dml_plan: Option<std::sync::Arc<tidb_executor::PreparedDmlPlan>>,
     /// A prepared SELECT descriptor backed by Go-parity physical-plan cache entries.
@@ -593,7 +590,6 @@ impl PreparedGeneral {
             result_columns,
             template: None,
             point_get_plan: None,
-            point_get_cache_ready: Arc::new(AtomicBool::new(false)),
             dml_plan: None,
             select_plan: None,
         }
@@ -614,7 +610,6 @@ impl PreparedGeneral {
             result_columns,
             template: Some(template),
             point_get_plan: None,
-            point_get_cache_ready: Arc::new(AtomicBool::new(false)),
             dml_plan: None,
             select_plan: None,
         }
@@ -635,7 +630,6 @@ impl PreparedGeneral {
             result_columns,
             template: Some(template),
             point_get_plan: None,
-            point_get_cache_ready: Arc::new(AtomicBool::new(false)),
             dml_plan,
             select_plan: None,
         }
@@ -658,7 +652,6 @@ impl PreparedGeneral {
             result_columns,
             template: Some(template),
             point_get_plan,
-            point_get_cache_ready: Arc::new(AtomicBool::new(false)),
             dml_plan: None,
             select_plan,
         }
@@ -694,20 +687,6 @@ impl PreparedGeneral {
     #[must_use]
     pub fn point_get_plan(&self) -> Option<&std::sync::Arc<tidb_executor::PreparedPointGetPlan>> {
         self.point_get_plan.as_ref()
-    }
-
-    /// Whether a successful first execution has admitted the point plan to
-    /// the prepared-plan cache.
-    #[must_use]
-    pub fn point_get_cache_ready(&self) -> bool {
-        self.point_get_cache_ready.load(Ordering::Acquire)
-    }
-
-    /// Admits the immutable point plan after its first successful execution.
-    pub fn mark_point_get_cache_ready(&self) {
-        if self.point_get_plan.is_some() {
-            self.point_get_cache_ready.store(true, Ordering::Release);
-        }
     }
 
     /// The immutable prepared SELECT cache descriptor.

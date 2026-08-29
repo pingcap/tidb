@@ -2180,30 +2180,41 @@ impl QuerySession for ClusterServerSession {
         let params = crate::pipeline_session::prepared_parameters(values);
         let sql = statement.sql().to_owned();
         let retained = statement.template();
+        let (effective_template, binding_sql) = retained.map_or((None, None), |template| {
+            let (effective, binding_sql) = self.session.prepared_statement_with_binding(template);
+            (Some(effective), binding_sql)
+        });
+        let effective = effective_template.as_ref();
         // Plan-cache validation must see the current schema before the read
         // policy is declared. Rebuilding only inside the statement lifecycle
         // would let a stale row-handle plan choose MaxTS and then fall back to
         // a newly rebuilt, potentially multi-read plan.
         self.rebuild_catalog_if_stale();
-        let resource_group = match retained {
+        let resource_group = match effective {
             Some(template) => self.session.statement_resource_group(template).to_owned(),
             None => self
                 .session
                 .statement_resource_group_sql(statement.sql())
                 .map_err(map_error)?,
         };
-        // Go's first PointGet cache miss and later hits execute the SAME
-        // planner-built PointGet plan; only `FoundInPlanCache` differs. Keep
-        // the candidate available on the miss as well, instead of asking the
-        // retired executor-local fast planner to rediscover a narrower shape.
-        let point_get_cache_hit = statement.point_get_cache_ready();
+        let cache_allowed = effective.is_some_and(|template| {
+            self.session
+                .prepared_plan_cache_allowed_for_statement(template)
+        });
         // Bind the retained point plan once and use that same plan's
         // `noSecondRead` classification for snapshot selection. The previous
         // path rebuilt the whole point matcher on every EXECUTE, discarded
         // it, then bound this cached plan separately.
-        let cached_point_get = statement
-            .point_get_plan()
-            .and_then(|plan| self.session.bind_cached_prepared_point_get(plan, &params));
+        let cached_point_get = cache_allowed
+            .then(|| statement.point_get_plan())
+            .flatten()
+            .and_then(|plan| {
+                self.session.bind_cached_prepared_point_get_for_binding(
+                    plan,
+                    &params,
+                    binding_sql.as_deref(),
+                )
+            });
         let point_read_shape = cached_point_get
             .as_ref()
             .map(|execution| execution.plan().statement_read_shape());
@@ -2212,24 +2223,36 @@ impl QuerySession for ClusterServerSession {
         // TryFastPlan this shape; the point plan it returns is what later
         // cache hits rebuild. Do not substitute the generic SELECT tree for
         // that point plan merely because both descriptors were retained.
-        let cached_select = if fast {
+        let cached_select = if fast || !cache_allowed {
             None
         } else {
-            statement
-                .select_plan()
-                .and_then(|plan| self.session.bind_cached_prepared_select(plan, &params))
+            statement.select_plan().and_then(|plan| {
+                self.session.bind_cached_prepared_select_for_statement(
+                    plan,
+                    &params,
+                    effective.expect("cacheable prepared SELECT retains a statement"),
+                    binding_sql.as_deref(),
+                )
+            })
         };
         let fast_select = cached_select.is_some();
-        let dml_cache_hit = statement.dml_plan().is_some_and(|plan| plan.cache_ready());
-        let cached_dml = statement
-            .dml_plan()
-            .and_then(|plan| self.session.bind_cached_prepared_dml(plan, &params));
+        let cached_dml = cache_allowed
+            .then(|| statement.dml_plan())
+            .flatten()
+            .and_then(|plan| {
+                self.session.bind_cached_prepared_dml_for_statement(
+                    plan,
+                    &params,
+                    effective.expect("cacheable prepared DML retains a statement"),
+                    binding_sql.as_deref(),
+                )
+            });
         let direct_dml = cached_dml.is_some();
         let direct = fast || fast_select || direct_dml;
         let bound_template = if direct {
             None
         } else {
-            retained
+            effective
                 .map(|template| tidb_executor::bind_statement(template.clone(), &params))
                 .transpose()
                 .map_err(map_error)?
@@ -2264,7 +2287,7 @@ impl QuerySession for ClusterServerSession {
             Some(transaction) if transaction.is_pessimistic() => {
                 if let Some(bound) = bound_template.as_ref() {
                     self.session.statement_prelock_keys(bound, &[])
-                } else if let Some(template) = retained {
+                } else if let Some(template) = effective {
                     self.session.statement_prelock_keys(template, &params)
                 } else {
                     Vec::new()
@@ -2272,48 +2295,26 @@ impl QuerySession for ClusterServerSession {
             }
             _ => Vec::new(),
         };
-        let execution_resource_group = resource_group.clone();
         let output =
             self.with_prelocked_statement(shape, prelock_keys, &resource_group, move |session| {
                 if fast_select {
                     let cached = cached_select
                         .as_ref()
                         .expect("cached prepared SELECT carries its execution");
-                    match session.execute_cached_prepared_select(cached) {
-                        Ok(output) => return Ok(output),
-                        Err(error)
-                            if error
-                                .to_string()
-                                .contains("prepared SELECT cache was invalidated") => {}
-                        Err(error) => return Err(map_error(error)),
-                    }
-                    let bound = tidb_executor::bind_statement(
-                        retained
-                            .expect("cached prepared SELECT has a retained template")
-                            .clone(),
-                        &params,
-                    )
-                    .map_err(map_error)?;
                     return session
-                        .run_parsed_bound_owned_with_sql(bound, &sql)
+                        .execute_prepared_select(cached, &sql)
                         .map_err(map_error);
                 }
                 if fast {
                     if let Some(cached) = cached_point_get.clone() {
-                        match session.execute_prepared_point_get(cached, point_get_cache_hit) {
-                            Ok(output) => {
-                                statement.mark_point_get_cache_ready();
-                                return Ok(output);
-                            }
+                        match session.execute_prepared_point_get(cached) {
+                            Ok(Some(output)) => return Ok(output),
                             // The cached plan's identity moved under it (a DDL
                             // between PREPARE and this EXECUTE). That is a cache
                             // MISS, not a statement failure: fall through and
                             // re-plan, exactly as Go's `GetPlanFromPlanCache`
                             // does.
-                            Err(error)
-                                if error
-                                    .to_string()
-                                    .contains("prepared point-get cache was invalidated") => {}
+                            Ok(None) => {}
                             Err(error) => return Err(map_error(error)),
                         }
                     }
@@ -2321,7 +2322,8 @@ impl QuerySession for ClusterServerSession {
                     // ordinary path. This is a cache miss, never permission to
                     // run a second, executor-local point planner.
                     let bound = tidb_executor::bind_statement(
-                        retained
+                        effective_template
+                            .as_ref()
                             .expect("fast prepared point read has a retained template")
                             .clone(),
                         &params,
@@ -2332,37 +2334,13 @@ impl QuerySession for ClusterServerSession {
                         .map_err(map_error);
                 }
                 if direct_dml {
-                    if let Some(cached) = cached_dml.clone() {
-                        match session.execute_prepared_dml(
-                            cached,
-                            dml_cache_hit,
-                            &execution_resource_group,
-                        ) {
-                            Ok(output) => {
-                                cached_dml
-                                    .as_ref()
-                                    .expect("cached DML carries its plan")
-                                    .plan()
-                                    .mark_cache_ready();
-                                return Ok(output);
-                            }
-                            Err(error)
-                                if error
-                                    .to_string()
-                                    .contains("prepared DML cache was invalidated") => {}
-                            Err(error) => return Err(map_error(error)),
-                        }
-                    }
-                    let bound = tidb_executor::bind_statement(
-                        retained
-                            .expect("cached prepared DML has a retained template")
-                            .clone(),
-                        &params,
-                    )
-                    .map_err(map_error)?;
-                    return session
-                        .run_parsed_bound_owned_with_sql(bound, &sql)
-                        .map_err(map_error);
+                    let cached = cached_dml
+                        .as_ref()
+                        .expect("direct prepared DML carries its bound statement");
+                    let output = session
+                        .execute_cached_prepared_dml(cached, &sql)
+                        .map_err(map_error)?;
+                    return Ok(output);
                 }
                 if let Some(bound) = bound_template.as_ref().cloned() {
                     session

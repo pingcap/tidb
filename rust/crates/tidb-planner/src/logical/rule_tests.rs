@@ -56,8 +56,11 @@ pub(crate) const TEST_BUILDER: PreservingFunctionBuilder = PreservingFunctionBui
 /// A [`RuleContext`] over a caller-owned allocator, for tests elsewhere in the
 /// crate as well as this file.
 pub(crate) fn test_context(allocator: &PlanIdAllocator) -> RuleContext<'_> {
+    static COLUMN_ALLOCATOR: crate::expression_rewriter::ColumnIdAllocator =
+        crate::expression_rewriter::ColumnIdAllocator::new();
     RuleContext {
         allocator,
+        column_allocator: &COLUMN_ALLOCATOR,
         builder: &TEST_BUILDER,
         use_plan_cache: false,
         // Go's `AllowDeriveTopN` defaults ON in `sessionVars`.

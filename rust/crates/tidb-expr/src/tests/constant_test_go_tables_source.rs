@@ -426,14 +426,12 @@ fn constant_folding_charset_binary_result_diverges() {}
 fn test_constant_propagation() {}
 
 /// `pkg/expression/constant_test.go:336 TestDeferredParamNotNull` reads
-/// `PlanCacheParams.GetParamValue(order)` through each typed evaluator
-/// (`ParamMarker.GetValue`). The Rust Constant stores the param marker's order
-/// but its EVALUATION seam is deliberately deferred (`constant.rs`:
-/// "deferred/parameter constant evaluation is not yet ported"), so no typed
-/// parameter read exists to drive; the eleven datum-kind rows stay Go-side
-/// evidence.
+/// `PlanCacheParams.GetParamValue(order)` through each typed evaluator.
+/// Rust's cache owner refreshes `Constant.value` before construction and
+/// `Constant::eval` now reads that current value. The per-EvalType table is
+/// still pending because this crate exposes a single Datum evaluator here.
 #[test]
-#[ignore = "go-parity-gap: ParamMarker.GetValue evaluation (session PlanCacheParams read) is unported; Constant with param_marker answers Unsupported instead"]
+#[ignore = "go-parity-gap: the eleven typed EvalInt/EvalReal/EvalDecimal/EvalString/EvalTime/EvalDuration/EvalJSON/EvalVectorFloat32 rows are not exposed as separate Rust evaluator APIs"]
 fn test_deferred_param_not_null() {}
 
 /// Typed-evaluation half of `pkg/expression/constant_test.go:403
@@ -564,5 +562,5 @@ fn vectorized_constant_fills_whole_output_chunks() {
 /// constant is reported Unsupported by `constant.rs` today, so the fill
 /// cannot be driven; nothing here fakes a value.
 #[test]
-#[ignore = "go-parity-gap: Constant-with-DeferredExpr evaluation is unported (constant.rs: 'deferred/parameter constant evaluation is not yet ported')"]
+#[ignore = "go-parity-gap: Constant-with-DeferredExpr evaluation is unported; parameter-marker constants are evaluated through their live marker values"]
 fn vectorized_constant_deferred_forms_fill_like_literals() {}

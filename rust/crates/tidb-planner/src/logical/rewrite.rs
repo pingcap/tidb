@@ -32,12 +32,13 @@
 
 use tidb_expr::aggregation::ByItems;
 use tidb_expr::column::Column;
-use tidb_expr::expr_util::normal_form::split_cnf_items;
-use tidb_expr::expr_util::predicates::contains;
-use tidb_expr::expr_util::substitute::SubstituteOptions;
-use tidb_expr::expression::Expression;
+use tidb_expr::constant::Constant;
+use tidb_expr::expr_util::normal_form::{expr_from_schema, split_cnf_items};
+use tidb_expr::expr_util::predicates::{contains, is_mutable_effects_expr};
+use tidb_expr::expr_util::substitute::{column_substitute, SubstituteOptions};
+use tidb_expr::expression::{Expression, ScalarFunction};
 use tidb_expr::schema::Schema;
-use tidb_expr::simple_expr::extract_columns;
+use tidb_expr::simple_expr::{compose_cnf_condition, extract_columns};
 
 use crate::base_arms;
 use crate::cardinality::derive_stats::estimate_cols_ndv_with_matched_len;
@@ -54,9 +55,46 @@ use super::rule::{
 };
 use super::schema_producer;
 use super::{
-    BaseLogicalPlan, LogicalExpand, LogicalLimit, LogicalMaxOneRow, LogicalPlan, LogicalSort,
-    LogicalTableDual, LogicalTopN, LogicalUnionAll, LogicalUnionScan,
+    BaseLogicalPlan, LogicalExpand, LogicalLimit, LogicalMaxOneRow, LogicalPlan, LogicalProjection,
+    LogicalSort, LogicalTableDual, LogicalTopN, LogicalUnionAll, LogicalUnionScan,
 };
+
+/// Go `ruleutil.ResolveExprAndReplace`: replace CTE-reference columns with
+/// their seed-plan columns without mutating a shared expression tree.
+fn resolve_cte_expr_and_replace(
+    expression: Expression,
+    replace: &std::collections::BTreeMap<Vec<u8>, Column>,
+) -> Expression {
+    fn replacement(
+        mut origin: Column,
+        replace: &std::collections::BTreeMap<Vec<u8>, Column>,
+    ) -> Column {
+        let Some(seed) = replace.get(origin.hash_code()) else {
+            return origin;
+        };
+        let mut seed = seed.clone();
+        seed.ret_type = origin.ret_type;
+        seed.in_operand = origin.in_operand;
+        seed
+    }
+
+    match expression {
+        Expression::Column(column) => Expression::Column(replacement(column, replace)),
+        Expression::CorrelatedColumn(mut column) => {
+            column.column = replacement(column.column, replace);
+            Expression::CorrelatedColumn(column)
+        }
+        Expression::ScalarFunction(mut function) => {
+            function.args = function
+                .args
+                .into_iter()
+                .map(|arg| resolve_cte_expr_and_replace(arg, replace))
+                .collect();
+            Expression::ScalarFunction(function)
+        }
+        other => other,
+    }
+}
 
 /// The schema an operator effectively exposes, materialized.
 ///
@@ -147,6 +185,242 @@ fn covered_condition_mask(conditions: &[Expression], access: &[Expression]) -> u
                 mask
             }
         })
+}
+
+/// Go `LogicalJoin.getProj`: make a child projection that initially exposes
+/// the child's complete schema through identity expressions.
+fn ensure_join_projection(ctx: &RuleContext<'_>, child: &mut LogicalPlan) -> Result<(), PlanError> {
+    if matches!(child, LogicalPlan::Projection(_)) {
+        return Ok(());
+    }
+    let schema = child
+        .schema()
+        .cloned()
+        .ok_or_else(|| PlanError::internal("LogicalJoin.getProj: child has no schema"))?;
+    let expressions = schema
+        .columns
+        .iter()
+        .cloned()
+        .map(Expression::Column)
+        .collect();
+    let output_names = child.output_names().to_vec();
+    let query_block_offset = child.base().base.query_block_offset();
+    let owned = std::mem::replace(child, LogicalPlan::TableDual(LogicalTableDual::default()));
+    let mut projection = LogicalProjection::new(
+        BaseLogicalPlan::new(ctx.allocator, "Projection", query_block_offset),
+        expressions,
+    );
+    projection.base.base.set_schema(Some(schema));
+    projection.base.base.set_output_names(output_names);
+    projection.base.set_children(vec![owned]);
+    *child = LogicalPlan::Projection(projection);
+    Ok(())
+}
+
+/// Go `LogicalProjection.AppendExpr`, used only by `updateEQCond`.
+fn append_join_projection_expr(
+    ctx: &RuleContext<'_>,
+    child: &mut LogicalPlan,
+    expression: Expression,
+) -> Result<Column, PlanError> {
+    if let Expression::Column(column) = expression {
+        return Ok(column);
+    }
+    let LogicalPlan::Projection(projection) = child else {
+        return Err(PlanError::internal(
+            "LogicalProjection.AppendExpr: join child is not a projection",
+        ));
+    };
+    let schema = projection
+        .base
+        .base
+        .schema()
+        .cloned()
+        .ok_or_else(|| PlanError::internal("LogicalProjection.AppendExpr: missing schema"))?;
+    let expression = column_substitute(
+        &expression,
+        &schema,
+        &projection.exprs,
+        &SubstituteOptions::new(ctx.builder),
+    );
+    let ret_type = expression.static_type().cloned().ok_or_else(|| {
+        PlanError::internal("LogicalProjection.AppendExpr: expression has no static type")
+    })?;
+    let column = Column::new(ctx.column_allocator.alloc(), ret_type);
+    projection.exprs.push(expression);
+    let mut schema = schema;
+    schema.columns.push(column.clone());
+    projection.base.base.set_schema(Some(schema));
+    Ok(column)
+}
+
+fn build_join_equality(
+    ctx: &RuleContext<'_>,
+    left: Column,
+    right: Column,
+) -> Result<ScalarFunction, PlanError> {
+    let expression = ctx
+        .builder
+        .new_function(
+            "eq",
+            Some(tidb_expr::expr_util::builder::tiny_int_type()),
+            vec![Expression::Column(left), Expression::Column(right)],
+        )
+        .map_err(|error| PlanError::internal(error.to_string()))?;
+    let Expression::ScalarFunction(function) = expression else {
+        return Err(PlanError::internal(
+            "LogicalJoin.updateEQCond: equality is not a scalar function",
+        ));
+    };
+    Ok(function)
+}
+
+/// Go `LogicalJoin.updateEQCond`'s normal-equality half.
+///
+/// Predicate pushdown can leave `expr(left) = expr(right)` in
+/// `OtherConditions`. Physical joins require `column = column`, so Go moves
+/// those conditions into `EqualConditions`, materializing either expression
+/// under a child projection when necessary. This is also the prerequisite for
+/// `JoinKeyTypeCastRewriter`: its input is the pair of DOUBLE projection
+/// columns created here, never a bare INT/VARCHAR comparison.
+fn update_join_equal_conditions(
+    ctx: &RuleContext<'_>,
+    join: &mut super::LogicalJoin,
+) -> Result<(), PlanError> {
+    let [left_schema, right_schema] = child_schemas(&LogicalPlan::Join(join.clone()))
+        .try_into()
+        .map_err(|_| PlanError::internal("LogicalJoin.updateEQCond needs two children"))?;
+
+    let mut extracted = Vec::new();
+    let mut remove = vec![false; join.other_conditions.len()];
+    for index in (0..join.other_conditions.len()).rev() {
+        let condition = &join.other_conditions[index];
+        let Expression::ScalarFunction(function) = condition else {
+            continue;
+        };
+        if function.func_name.lowercase() != "eq" || super::join::is_eq_cond_from_in(condition) {
+            continue;
+        }
+        let [left, right] = function.args.as_slice() else {
+            continue;
+        };
+        let pair = if expr_from_schema(left, &left_schema) && expr_from_schema(right, &right_schema)
+        {
+            Some((left.clone(), right.clone()))
+        } else if expr_from_schema(left, &right_schema) && expr_from_schema(right, &left_schema) {
+            Some((right.clone(), left.clone()))
+        } else {
+            None
+        };
+        if let Some(pair) = pair {
+            remove[index] = true;
+            extracted.push(pair);
+        }
+    }
+    if extracted.is_empty() {
+        return Ok(());
+    }
+    join.other_conditions = std::mem::take(&mut join.other_conditions)
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, condition)| (!remove[index]).then_some(condition))
+        .collect();
+
+    let mut left_projection = extracted
+        .iter()
+        .any(|(left, _)| !matches!(left, Expression::Column(_)));
+    let mut right_projection = extracted
+        .iter()
+        .any(|(_, right)| !matches!(right, Expression::Column(_)));
+    if left_projection {
+        ensure_join_projection(ctx, &mut join.base.children_mut()[0])?;
+    }
+    if right_projection {
+        ensure_join_projection(ctx, &mut join.base.children_mut()[1])?;
+    }
+
+    for (left_expression, right_expression) in extracted {
+        let keep_as_other =
+            is_mutable_effects_expr(&left_expression) || is_mutable_effects_expr(&right_expression);
+        let mut left_key = if left_projection {
+            append_join_projection_expr(ctx, &mut join.base.children_mut()[0], left_expression)?
+        } else {
+            let Expression::Column(column) = left_expression else {
+                unreachable!("projection need was computed from every extracted key")
+            };
+            column
+        };
+        let mut right_key = if right_projection {
+            append_join_projection_expr(ctx, &mut join.base.children_mut()[1], right_expression)?
+        } else {
+            let Expression::Column(column) = right_expression else {
+                unreachable!("projection need was computed from every extracted key")
+            };
+            column
+        };
+
+        let mut equality = build_join_equality(ctx, left_key.clone(), right_key.clone())?;
+        if !matches!(equality.args.first(), Some(Expression::Column(_))) {
+            if !left_projection {
+                ensure_join_projection(ctx, &mut join.base.children_mut()[0])?;
+                left_projection = true;
+            }
+            left_key = append_join_projection_expr(
+                ctx,
+                &mut join.base.children_mut()[0],
+                equality.args[0].clone(),
+            )?;
+        } else if let Expression::Column(column) = &equality.args[0] {
+            left_key = column.clone();
+        }
+        if !matches!(equality.args.get(1), Some(Expression::Column(_))) {
+            if !right_projection {
+                ensure_join_projection(ctx, &mut join.base.children_mut()[1])?;
+                right_projection = true;
+            }
+            right_key = append_join_projection_expr(
+                ctx,
+                &mut join.base.children_mut()[1],
+                equality.args[1].clone(),
+            )?;
+        } else if let Expression::Column(column) = &equality.args[1] {
+            right_key = column.clone();
+        }
+        if !matches!(
+            equality.args.as_slice(),
+            [Expression::Column(_), Expression::Column(_)]
+        ) {
+            equality = build_join_equality(ctx, left_key, right_key)?;
+        }
+        if keep_as_other {
+            join.other_conditions
+                .push(Expression::ScalarFunction(equality));
+        } else {
+            join.equal_conditions.push(equality);
+        }
+    }
+    Ok(())
+}
+
+fn update_join_equal_conditions_in_plan(
+    ctx: &RuleContext<'_>,
+    plan: &mut LogicalPlan,
+) -> Result<bool, PlanError> {
+    match plan {
+        LogicalPlan::Join(join) => {
+            let mut updated = join.clone();
+            update_join_equal_conditions(ctx, &mut updated)?;
+            *join = updated;
+            Ok(true)
+        }
+        LogicalPlan::Apply(apply) => {
+            let mut updated = apply.join.clone();
+            update_join_equal_conditions(ctx, &mut updated)?;
+            apply.join = updated;
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
 }
 
 /// Go `cardinality.Selectivity` over the pseudo column/index histograms that
@@ -389,6 +663,32 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
                 self.stash.push(PendingPredicates::AddSelection(split.ret));
                 Descend::Children(vec![split.left_cond, split.right_cond])
             }
+            // Go method promotion: `LogicalApply` embeds `LogicalJoin`, so
+            // `LogicalJoin.PredicatePushDown` wins over the embedded
+            // `BaseLogicalPlan` method even though logical_apply.go does not
+            // spell out another override.
+            LogicalPlan::Apply(op) => {
+                let opts = SubstituteOptions::new(self.ctx.builder);
+                let left_schema = schemas.first().unwrap_or(&own_schema);
+                let right_schema = schemas.get(1).unwrap_or(&own_schema);
+                let split = op.join.predicate_push_down_local(
+                    predicates,
+                    left_schema,
+                    right_schema,
+                    &opts,
+                    |conds| super::rule::apply_predicate_simplification_for_join(self.ctx, conds),
+                );
+                if let Some(conds) = &split.dual_conditions {
+                    if let Some(dual) =
+                        conds_to_table_dual(self.ctx, conds, Some(&own_schema), query_block_offset)
+                    {
+                        *node = dual;
+                        return Descend::Stop(Vec::new());
+                    }
+                }
+                self.stash.push(PendingPredicates::AddSelection(split.ret));
+                Descend::Children(vec![split.left_cond, split.right_cond])
+            }
             // Go `LogicalAggregation.PredicatePushDown`
             // (`logical_aggregation.go:113`).
             LogicalPlan::Aggregation(op) => {
@@ -485,26 +785,41 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
             LogicalPlan::Show(op) => {
                 Descend::Stop(op.predicate_push_down(&own_schema, &names, predicates))
             }
-            // Go `LogicalCTE.PredicatePushDown` (`logical_cte.go:96`).
-            //
-            // NARROWING: the pushable half is RECORDED on the CTE class in Go
-            // and re-optimized with the seed plan, which is its own phase. The
-            // decision itself is ported on the operator
-            // ([`super::LogicalCTE::predicate_push_down`]); what is not done
-            // here is the recording, so every predicate stays above the CTE.
+            // Go `LogicalCTE.PredicatePushDown` (`logical_cte.go:96`). The
+            // predicates still remain above this reference, while a resolved
+            // CNF copy is accumulated on the shared class so its seed can be
+            // optimized once against the DNF of every consumer.
             LogicalPlan::CTE(op) => {
-                let _decision = op.predicate_push_down(&predicates);
+                use super::cte::CtePredicatePushDown;
+
+                let decision = op.predicate_push_down(&predicates);
+                if let Some(class) = &op.cte {
+                    let mut class = class.borrow_mut();
+                    let recorded = match decision {
+                        CtePredicatePushDown::Unsupported => None,
+                        CtePredicatePushDown::RecordAlwaysTrue => {
+                            Some(Expression::Constant(Constant::new_one()))
+                        }
+                        CtePredicatePushDown::Record(predicates) => compose_cnf_condition(
+                            predicates
+                                .into_iter()
+                                .map(|predicate| {
+                                    resolve_cte_expr_and_replace(predicate, &class.column_map)
+                                })
+                                .collect(),
+                        ),
+                    };
+                    if let Some(recorded) = recorded {
+                        class.push_down_predicates.push(recorded);
+                    }
+                }
                 Descend::Stop(predicates)
             }
             // Go's base body: everything goes to `children[0]`, nothing comes
-            // back up. `LogicalApply` is here rather than with `LogicalJoin`
-            // because Go's override needs the decorrelation analysis that is a
-            // later batch; the base body is the SAFE half of it, since it only
-            // fails to push, never pushes wrongly.
+            // back up.
             base_arms![
                 Sort,
                 TopN,
-                Apply,
                 Lock,
                 CTETable,
                 TiKVSingleGather,
@@ -544,6 +859,16 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
                     })
                     .collect();
                 node.set_children(rebuilt);
+                match update_join_equal_conditions_in_plan(self.ctx, &mut node) {
+                    Ok(true) => {
+                        // Go calls `BuildKeyInfoPortal(p)` immediately after
+                        // `updateEQCond`; the inserted projections changed the
+                        // schemas and key identities this join consumes.
+                        node = build_key_info_portal(node);
+                    }
+                    Ok(false) => {}
+                    Err(error) => self.failure.record(error),
+                }
                 (node, ret)
             }
             PendingPredicates::PassThrough(mut extra) => {
@@ -930,6 +1255,7 @@ enum PendingTopN {
 
 struct PushDownTopN<'a> {
     stash: Vec<PendingTopN>,
+    allocator: &'a crate::plan_base::PlanIdAllocator,
     /// Go `SCtx().GetExprCtx()`: the builder the projection arm substitutes
     /// and constant-folds by-items through.
     builder: &'a dyn tidb_expr::expr_util::builder::FunctionBuilder,
@@ -977,7 +1303,7 @@ impl OwnedRewrite for PushDownTopN<'_> {
             // incoming TopN from above re-attaches here. The limit operator
             // itself never survives.
             LogicalPlan::Limit(op) => {
-                let converted = op.convert_to_topn();
+                let converted = op.convert_to_topn(self.allocator);
                 // Go returns the CONVERTED-and-pushed CHILD in every case —
                 // the limit operator itself never survives.
                 self.stash.push(PendingTopN::ReplaceWithChild(topn));
@@ -988,7 +1314,8 @@ impl OwnedRewrite for PushDownTopN<'_> {
             // original stays above.
             LogicalPlan::UnionAll(_) | LogicalPlan::PartitionUnionAll(_) => match topn {
                 Some(topn) => {
-                    let per_child = LogicalUnionAll::push_down_topn_for_child(&topn);
+                    let per_child =
+                        LogicalUnionAll::push_down_topn_for_child(&topn, self.allocator);
                     self.stash.push(PendingTopN::Reattach(topn));
                     Descend::Children(vec![Some(Box::new(per_child)); child_count])
                 }
@@ -1235,13 +1562,17 @@ impl OwnedRewrite for PushDownTopN<'_> {
         _child_ups: Vec<Self::Up>,
     ) -> (LogicalPlan, Self::Up) {
         match self.stash.pop() {
-            Some(PendingTopN::Reattach(topn)) => (topn.attach_child(node), ()),
+            Some(PendingTopN::Reattach(topn)) => (topn.attach_child(node, self.allocator), ()),
             Some(PendingTopN::ReattachAsSort(by_items)) => {
                 // "Add a sort if the topN has order by items."
-                let mut sort = LogicalSort {
-                    base: BaseLogicalPlan::default(),
+                let mut sort = LogicalSort::new(
+                    BaseLogicalPlan::new(
+                        self.allocator,
+                        LogicalSort::TYPE,
+                        node.query_block_offset(),
+                    ),
                     by_items,
-                };
+                );
                 sort.base.set_children(vec![node]);
                 (LogicalPlan::Sort(sort), ())
             }
@@ -1251,7 +1582,7 @@ impl OwnedRewrite for PushDownTopN<'_> {
                 let mut children = node.base_mut().take_children();
                 let child = children.pop().unwrap_or(node);
                 match topn {
-                    Some(topn) => (topn.attach_child(child), ()),
+                    Some(topn) => (topn.attach_child(child, self.allocator), ()),
                     None => (child, ()),
                 }
             }
@@ -1264,7 +1595,8 @@ impl OwnedRewrite for PushDownTopN<'_> {
 #[cfg(test)]
 #[must_use]
 pub(crate) fn push_down_topn(plan: LogicalPlan, topn: Option<LogicalTopN>) -> LogicalPlan {
-    push_down_topn_with_builder(&super::rule_tests::TEST_BUILDER, plan, topn)
+    let allocator = crate::plan_base::PlanIdAllocator::new();
+    push_down_topn_with_builder(&super::rule_tests::TEST_BUILDER, &allocator, plan, topn)
 }
 
 /// Go `base.LogicalPlan.PushDownTopN(topN)` over a whole tree, Go rule #21's
@@ -1272,11 +1604,13 @@ pub(crate) fn push_down_topn(plan: LogicalPlan, topn: Option<LogicalTopN>) -> Lo
 #[must_use]
 pub fn push_down_topn_with_builder(
     builder: &dyn tidb_expr::expr_util::builder::FunctionBuilder,
+    allocator: &crate::plan_base::PlanIdAllocator,
     plan: LogicalPlan,
     topn: Option<LogicalTopN>,
 ) -> LogicalPlan {
     let mut rewrite = PushDownTopN {
         stash: Vec::new(),
+        allocator,
         builder,
     };
     let (plan, ()) = fold_owned(&mut rewrite, plan, topn.map(Box::new));
@@ -1650,11 +1984,62 @@ impl OwnedRewrite for DeriveStatsFold {
                 }))
             }
 
+            LogicalPlan::CTE(op) => {
+                let class = op
+                    .cte
+                    .clone()
+                    .ok_or_else(|| PlanError::internal("LogicalCTE.DeriveStats: CTEClass is nil"));
+                StatsOutcome::Done(class.and_then(|class| {
+                    let class = class.borrow();
+                    let seed_plan = class.seed_part_physical_plan.as_deref().ok_or_else(|| {
+                        PlanError::internal("LogicalCTE.DeriveStats: seed physical plan is nil")
+                    })?;
+                    let seed_stats = seed_plan.stats_info().cloned().ok_or_else(|| {
+                        PlanError::internal("LogicalCTE.DeriveStats: seed stats are nil")
+                    })?;
+                    let seed_schema = class
+                        .seed_part_logical_plan
+                        .as_deref()
+                        .and_then(LogicalPlan::schema)
+                        .cloned()
+                        .ok_or_else(|| {
+                            PlanError::internal("LogicalCTE.DeriveStats: seed schema is nil")
+                        })?;
+                    let recursive = match (
+                        class.recursive_part_physical_plan.as_deref(),
+                        class.recursive_part_logical_plan.as_deref(),
+                    ) {
+                        (Some(plan), Some(logical)) => Some((
+                            plan.stats_info().cloned().ok_or_else(|| {
+                                PlanError::internal(
+                                    "LogicalCTE.DeriveStats: recursive stats are nil",
+                                )
+                            })?,
+                            logical.schema().cloned().ok_or_else(|| {
+                                PlanError::internal(
+                                    "LogicalCTE.DeriveStats: recursive schema is nil",
+                                )
+                            })?,
+                        )),
+                        (None, None) => None,
+                        _ => {
+                            return Err(PlanError::internal(
+                                "LogicalCTE.DeriveStats: recursive logical/physical plans disagree",
+                            ));
+                        }
+                    };
+                    drop(class);
+                    Ok(op.derive_stats(
+                        &seed_stats,
+                        &seed_schema,
+                        recursive.as_ref().map(|(stats, schema)| (stats, schema)),
+                        &self_schema,
+                        None,
+                        &reloads,
+                    ))
+                }))
+            }
             // -- Go overrides NOT yet ported: refuse, never fall through ---
-            LogicalPlan::CTE(_) => StatsOutcome::Done(unported_stats(
-                "utilfuncp.DoOptimize: Go derives a CTE's stats from its \
-                 OPTIMIZED seed's physical plan (logical_cte.go)",
-            )),
             LogicalPlan::TableScan(_) => StatsOutcome::Done(unported_stats(
                 "deriveStats4LogicalTableScan (core/stats.go): needs \
                  deriveStatsByFilter and ranger.BuildTableRange — the \

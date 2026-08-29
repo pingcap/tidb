@@ -206,7 +206,7 @@ use tidb_expr::{Columns, EvalError};
 
 use crate::expression_rewriter::{
     ClauseCode, ColumnIdAllocator, ExprRewriterPlanCtx, ExpressionRewriter, RewriteError,
-    RewriterEnv, RewriterHints, RewriterSessionFlags, SubQueryCtx,
+    RewriterEnv, RewriterHints, RewriterSessionFlags, ScalarSubqueryOutcome, SubQueryCtx,
 };
 use crate::logical::data_source::{DataSource, DataSourceColumn, EXTRA_HANDLE_ID};
 use crate::logical::limit::LogicalLimit;
@@ -300,8 +300,8 @@ pub struct OuterCte {
     pub is_inline: bool,
     /// Go `cteInfo.forceInlineByHintOrVar`.
     pub force_inline_by_hint_or_var: bool,
-    /// Go `cteInfo.consumerCount`; see [`cte`]'s `ConsumerCount` narrowing for
-    /// why this is always `0` here.
+    /// Go `cteInfo.consumerCount`, filled by the port of preprocess
+    /// `UpdateCTEConsumerCount` before this CTE is built.
     pub consumer_count: i32,
     /// Go `cteInfo.containRecursiveForbiddenOperator`.
     pub contain_recursive_forbidden_operator: bool,
@@ -541,6 +541,8 @@ pub struct PlanScopeResolver<'a> {
     /// The columns a marker index refers to, per [`MarkerKind`]. A kind absent
     /// from this map has no producer yet in the current build.
     marker_columns: &'a BTreeMap<MarkerKind, Vec<Column>>,
+    outer_schemas: &'a [Schema],
+    outer_names: &'a [Vec<FieldName>],
     time_zone: SessionTimeZone,
 }
 
@@ -557,6 +559,29 @@ impl<'a> PlanScopeResolver<'a> {
             schema,
             names,
             marker_columns,
+            outer_schemas: &[],
+            outer_names: &[],
+            time_zone,
+        }
+    }
+
+    /// A resolver at Go's plan-aware query-block seam, with enclosing scopes
+    /// searched from innermost to outermost after the local schema.
+    #[must_use]
+    pub const fn with_outer_scopes(
+        schema: &'a Schema,
+        names: &'a [FieldName],
+        marker_columns: &'a BTreeMap<MarkerKind, Vec<Column>>,
+        outer_schemas: &'a [Schema],
+        outer_names: &'a [Vec<FieldName>],
+        time_zone: SessionTimeZone,
+    ) -> Self {
+        Self {
+            schema,
+            names,
+            marker_columns,
+            outer_schemas,
+            outer_names,
             time_zone,
         }
     }
@@ -633,6 +658,25 @@ impl ColumnResolver for PlanScopeResolver<'_> {
         let mut column = self.schema.columns.get(index)?.clone();
         column.index = index as i64;
         Some(column)
+    }
+
+    fn resolve_expression(&self, path: &[String]) -> Option<Expression> {
+        if let Some(column) = self.resolve_column(path) {
+            return Some(Expression::Column(column));
+        }
+        for (schema, names) in self.outer_schemas.iter().zip(self.outer_names).rev() {
+            let Some(index) = find_field_name(names, path) else {
+                continue;
+            };
+            let Some(mut column) = schema.columns.get(index).cloned() else {
+                continue;
+            };
+            column.index = index as i64;
+            return Some(Expression::CorrelatedColumn(
+                tidb_expr::column::CorrelatedColumn::new(column),
+            ));
+        }
+        None
     }
 
     fn time_zone(&self) -> SessionTimeZone {
@@ -780,8 +824,134 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         names: &[FieldName],
         markers: &BTreeMap<MarkerKind, Vec<Column>>,
     ) -> Result<Expression, PlanError> {
-        let resolver = PlanScopeResolver::new(schema, names, markers, self.time_zone.clone());
+        let resolver = PlanScopeResolver::with_outer_scopes(
+            schema,
+            names,
+            markers,
+            &self.outer_schemas,
+            &self.outer_names,
+            self.time_zone.clone(),
+        );
         Ok(rewrite_expr_resolved(expr, &resolver)?)
+    }
+
+    /// Go `expressionRewriter.buildSubquery` plus
+    /// `handleScalarSubquery`, integrated into the SELECT builder. Each
+    /// scalar subquery is planned with the current plan as its enclosing
+    /// scope, replaced by the Apply output column, and the resulting logical
+    /// Apply becomes the next expression sibling's input.
+    fn lower_scalar_subqueries(
+        &mut self,
+        plan: LogicalPlan,
+        expr: &mut Expr,
+    ) -> Result<(LogicalPlan, bool), PlanError> {
+        struct Lowerer<'builder, 'plan, S: TableSource, C: Columns> {
+            builder: &'builder mut PlanBuilder<'plan, S, C>,
+            plan: Option<LogicalPlan>,
+            error: Option<PlanError>,
+            changed: bool,
+        }
+
+        impl<S: TableSource, C: Columns> tidb_ast::Visitor for Lowerer<'_, '_, S, C> {
+            fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+                if self.error.is_some() {
+                    return true;
+                }
+                let Some(expr) = node.downcast_mut::<Expr>() else {
+                    return false;
+                };
+                let Expr::Subquery(query) = expr else {
+                    return false;
+                };
+                let query = (**query).clone();
+                let Some(outer) = self.plan.take() else {
+                    self.error = Some(PlanError::internal(
+                        "scalar-subquery lowering lost its outer plan",
+                    ));
+                    return true;
+                };
+                let (outer_schema, outer_names) = snapshot_schema_and_names(&outer);
+                self.builder.outer_schemas.push(outer_schema);
+                self.builder.outer_names.push(outer_names);
+                let parent_clause = self.builder.cur_clause;
+                let modified_ctes = self.builder.prepare_cte_check_for_subquery();
+                let inner = self.builder.build_query_stmt(&query, false);
+                self.builder.reset_cte_check_for_subquery(&modified_ctes);
+                self.builder.outer_schemas.pop();
+                self.builder.outer_names.pop();
+                self.builder.cur_clause = parent_clause;
+                let inner = match inner {
+                    Ok(inner) => inner,
+                    Err(error) => {
+                        self.error = Some(error);
+                        return true;
+                    }
+                };
+
+                let mut rewriter = self.builder.expression_rewriter();
+                rewriter.as_scalar = true;
+                let applied = match rewriter.handle_scalar_subquery(
+                    outer,
+                    inner,
+                    self.builder.sub_query_hint_flags,
+                ) {
+                    Ok(ScalarSubqueryOutcome::Applied(plan)) => plan,
+                    Ok(ScalarSubqueryOutcome::EvaluateSeparately { .. }) => {
+                        self.error = Some(PlanError::internal(
+                            "uncorrelated scalar-subquery evaluation is not available to the planner",
+                        ));
+                        return true;
+                    }
+                    Err(error) => {
+                        self.error = Some(error.into());
+                        return true;
+                    }
+                };
+                let Some(Expression::Column(column)) = rewriter.ctx_stack.pop() else {
+                    self.error = Some(PlanError::internal(
+                        "scalar Apply did not publish its result column",
+                    ));
+                    return true;
+                };
+                let Some(index) = applied.schema().and_then(|schema| {
+                    schema
+                        .columns
+                        .iter()
+                        .position(|candidate| candidate.unique_id == column.unique_id)
+                }) else {
+                    self.error = Some(PlanError::internal(
+                        "scalar Apply result is absent from its schema",
+                    ));
+                    return true;
+                };
+                *expr = PlanMarker::new(MarkerKind::Column, index).as_expr();
+                self.plan = Some(applied);
+                self.changed = true;
+                true
+            }
+
+            fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+                true
+            }
+        }
+
+        let mut lowerer = Lowerer {
+            builder: self,
+            plan: Some(plan),
+            error: None,
+            changed: false,
+        };
+        use tidb_ast::Visitable as _;
+        expr.accept(&mut lowerer);
+        if let Some(error) = lowerer.error {
+            return Err(error);
+        }
+        Ok((
+            lowerer
+                .plan
+                .expect("scalar-subquery lowering retains an outer plan"),
+            lowerer.changed,
+        ))
     }
 }
 
@@ -1096,15 +1266,23 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if self.cur_clause != ClauseCode::Having {
             self.cur_clause = ClauseCode::Where;
         }
-        // Rule 3: both snapshots are taken before `plan` moves anywhere.
-        let (schema, names) = snapshot_schema_and_names(&plan);
-
         let mut conditions = Vec::new();
         // Go `splitWhere(where)` splits the AST's top-level `AND` first, then
         // `SplitCNFItems` splits the built expression; the second subsumes the
         // first once every conjunct is built, so one clause is rewritten here
         // and split afterwards.
-        let scratch = Self::clause_scratch(where_clause);
+        let mut scratch = Self::clause_scratch(where_clause);
+        let (plan, lowered_subquery) = self.lower_scalar_subqueries(plan, &mut scratch)?;
+        // Rule 3: both snapshots are taken before `plan` moves anywhere.
+        let (schema, names) = snapshot_schema_and_names(&plan);
+        let mut lowered_markers;
+        let markers = if lowered_subquery {
+            lowered_markers = markers.clone();
+            lowered_markers.insert(MarkerKind::Column, schema.columns.clone());
+            &lowered_markers
+        } else {
+            markers
+        };
         let built = self.rewrite_scalar(&scratch, &schema, &names, markers)?;
 
         for item in split_cnf_items(&built) {
@@ -1366,16 +1544,17 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     ) -> Result<(LogicalPlan, Vec<Expression>), PlanError> {
         self.opt_flag |= flags::ELIMINATE_PROJECTION;
         self.cur_clause = ClauseCode::FieldList;
-        let (schema, names) = snapshot_schema_and_names(&plan);
+        let mut plan = plan;
+        let (_, initial_names) = snapshot_schema_and_names(&plan);
         // Go `b.allNames = append(b.allNames, p.OutputNames())` (`:1782`),
         // which `evalDefaultExpr` later searches.
-        self.all_names.push(names.clone());
+        self.all_names.push(initial_names);
 
         let mut exprs = Vec::with_capacity(fields.len());
         let mut projection_columns = Vec::with_capacity(fields.len());
         let mut projection_names = Vec::with_capacity(fields.len());
         for field in fields {
-            let scratch = Self::clause_scratch(&field.expr);
+            let mut scratch = Self::clause_scratch(&field.expr);
             // `:1786` "when we build the projection for select fields, we need
             // to skip the window function ... we add fake placeholders for
             // window functions. These fake placeholders will be erased in
@@ -1385,8 +1564,18 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             let built = if aggregation::has_window_flag(&scratch) {
                 Expression::Constant(Constant::new_zero())
             } else {
-                self.rewrite_scalar(&scratch, &schema, &names, markers)?
+                // Go `rewriteWithPreprocess` returns both the rewritten
+                // expression and `np`, because a scalar subquery inserts an
+                // Apply into the projection's child. Each later field is
+                // rewritten against that updated child.
+                let (next_plan, _) = self.lower_scalar_subqueries(plan, &mut scratch)?;
+                plan = next_plan;
+                let (schema, names) = snapshot_schema_and_names(&plan);
+                let mut current_markers = markers.clone();
+                current_markers.insert(MarkerKind::Column, schema.columns.clone());
+                self.rewrite_scalar(&scratch, &schema, &names, &current_markers)?
             };
+            let (_, names) = snapshot_schema_and_names(&plan);
             let resolved_index = match &built {
                 Expression::Column(column) => usize::try_from(column.index).ok(),
                 _ => None,
@@ -1637,6 +1826,107 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         }
     }
 
+    /// Builds the logical child consumed by a single-table `UPDATE` or
+    /// `DELETE`.
+    ///
+    /// Go does not turn this child into `SELECT *`. `buildUpdate` and
+    /// `buildDelete` start from the complete `DataSource` schema, apply the
+    /// write's WHERE / ORDER BY / LIMIT, then freeze the columns the DML
+    /// executor needs in a projection. In particular, that schema retains
+    /// hidden generated columns and the row handle while dropping the
+    /// synthetic commit-ts column.
+    ///
+    /// `select` is the clause-only statement synthesized by the executor from
+    /// the DML AST. Its field list is intentionally ignored.
+    pub fn build_dml_source(
+        &mut self,
+        select: &SelectStmt,
+    ) -> Result<(LogicalPlan, u64), PlanError> {
+        self.is_for_update_read = true;
+        let mut plan = self.build_table_refs(select.from.as_ref())?;
+        let markers = BTreeMap::new();
+        if let Some(where_clause) = &select.where_clause {
+            plan = self.build_selection(plan, where_clause, &markers)?;
+        }
+        if !select.order_by.is_empty() {
+            plan = self.build_sort(plan, &select.order_by, &markers)?;
+        }
+        if let Some(limit) = &select.limit {
+            plan = self.build_limit(plan, limit)?;
+        }
+
+        // Go's UPDATE projection explicitly removes ExtraCommitTS. DELETE's
+        // column-position projection reaches the same retained single-table
+        // layout. Keep the original column identities so handle metadata and
+        // physical access paths resolve against the same DataSource columns.
+        self.opt_flag |= flags::ELIMINATE_PROJECTION;
+        let (schema, names) = snapshot_schema_and_names(&plan);
+        let kept = schema
+            .columns
+            .iter()
+            .enumerate()
+            .filter(|(_, column)| column.id != EXTRA_COMMIT_TS_ID)
+            .collect::<Vec<_>>();
+        let expressions = kept
+            .iter()
+            .map(|(_, column)| Expression::Column((*column).clone()))
+            .collect::<Vec<_>>();
+        let mut output_columns = kept
+            .iter()
+            .map(|(_, column)| (*column).clone())
+            .collect::<Vec<_>>();
+        for (index, column) in output_columns.iter_mut().enumerate() {
+            column.index = index as i64;
+        }
+        let output_names = kept
+            .iter()
+            .filter_map(|(index, _)| names.get(*index).cloned())
+            .collect::<Vec<_>>();
+        let mut projection =
+            LogicalProjection::new(self.base(LogicalProjection::TYPE), expressions);
+        projection.base.set_children(vec![plan]);
+        projection
+            .base
+            .base
+            .set_schema(Some(Schema::new(output_columns)));
+        projection.base.base.set_output_names(output_names);
+        Ok((LogicalPlan::Projection(projection), self.get_opt_flag()))
+    }
+
+    /// Go `buildUpdateLists`: rewrite correlated SET expressions against the
+    /// frozen UPDATE input, carrying every inserted Apply into the source
+    /// plan. Entries that contain no remaining subquery stay `None`; their
+    /// ordinary scalar/default lowering is owned by the Update executor.
+    pub fn build_update_dml_source(
+        &mut self,
+        select: &SelectStmt,
+        assignment_values: &[Option<Expr>],
+    ) -> Result<(LogicalPlan, Vec<Option<Expression>>, u64), PlanError> {
+        let (mut plan, _) = self.build_dml_source(select)?;
+        self.cur_clause = ClauseCode::FieldList;
+        let mut expressions = Vec::with_capacity(assignment_values.len());
+        for value in assignment_values {
+            let Some(value) = value else {
+                expressions.push(None);
+                continue;
+            };
+            let mut scratch = Self::clause_scratch(value);
+            let (next_plan, lowered) = self.lower_scalar_subqueries(plan, &mut scratch)?;
+            plan = next_plan;
+            if !lowered {
+                expressions.push(None);
+                continue;
+            }
+            let (schema, names) = snapshot_schema_and_names(&plan);
+            let mut markers = BTreeMap::new();
+            markers.insert(MarkerKind::Column, schema.columns.clone());
+            expressions.push(Some(
+                self.rewrite_scalar(&scratch, &schema, &names, &markers)?,
+            ));
+        }
+        Ok((plan, expressions, self.get_opt_flag()))
+    }
+
     /// Go `buildSelect(ctx, sel)` (`logical_plan_builder.go:4254`), on the
     /// FROM / WHERE / SELECT / ORDER BY / LIMIT spine.
     ///
@@ -1660,20 +1950,19 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // side unconditionally.
         if self.building_recursive_part_for_cte {
             if select.distinct {
-                return Err(PlanError::internal(
-                    "This version of TiDB doesn't yet support 'SELECT DISTINCT in recursive query block of Common Table Expression'",
+                return Err(PlanError::not_supported_yet(
+                    "SELECT DISTINCT in recursive query block of Common Table Expression",
                 ));
             }
             if !select.order_by.is_empty() || select.limit.is_some() {
-                return Err(PlanError::internal(
-                    "This version of TiDB doesn't yet support 'ORDER BY / LIMIT in recursive query block of Common Table Expression (except within LATERAL subqueries)'",
+                return Err(PlanError::not_supported_yet(
+                    "ORDER BY / LIMIT in recursive query block of Common Table Expression (except within LATERAL subqueries)",
                 ));
             }
             if !select.group_by.is_empty() {
-                return Err(PlanError::internal(format!(
-                    "Recursive Common Table Expression '{}' can contain neither aggregation nor window functions in recursive query block",
-                    self.gen_cte_table_name_for_error()
-                )));
+                return Err(PlanError::cte_recursive_forbids_aggregation(
+                    self.gen_cte_table_name_for_error(),
+                ));
             }
         }
 
@@ -1681,7 +1970,13 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // — Go's `defer func() { b.outerCTEs = b.outerCTEs[:l] }()`.
         let outer_cte_depth = self.outer_ctes.len();
         let current_layer_ctes = match &select.with {
-            Some(with) => match self.build_with(with) {
+            Some(with) => match self.build_with(
+                with,
+                &cte::cte_consumer_counts(
+                    &tidb_ast::QueryStmt::Select(Box::new(select.clone())),
+                    with,
+                ),
+            ) {
                 Ok(ctes) => ctes,
                 Err(error) => {
                     self.outer_ctes.truncate(outer_cte_depth);
@@ -1796,6 +2091,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let mut select_aggs = self.extract_agg_funcs_in_select_fields(&mut fields);
         let has_agg =
             !select_aggs.is_empty() || !having_aggs.is_empty() || !select.group_by.is_empty();
+        if has_agg && self.building_recursive_part_for_cte {
+            return Err(PlanError::cte_recursive_forbids_aggregation(
+                self.gen_cte_table_name_for_error(),
+            ));
+        }
         let mut having_field_base = fields.len();
         if has_agg {
             // `agg_funcs` is Go's `aggFuncList`, and the marker index of every

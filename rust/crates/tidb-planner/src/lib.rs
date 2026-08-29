@@ -46,11 +46,9 @@
 //!   logical join; its
 //!   leaves take caller-supplied access-path alternatives until access-path
 //!   enumeration is real — a named residue.
-//! * The third representation this crate once held — the DP join-reorder
-//!   driver's private catalog model — now lives WITH that driver
-//!   (`tidb-executor`'s `driver::legacy_stats`) and dies with it. This crate
-//!   keeps only the shared per-rule arithmetic in [`cardinality`], cited to
-//!   the same Go bodies both passes were read from.
+//! * The former executor-local catalog and statistics representation has been
+//!   removed. This crate keeps the shared per-rule arithmetic in
+//!   [`cardinality`], cited to the corresponding Go planner implementation.
 //!
 //! Do not add reduced plan representations here: project from the tree, or
 //! derive on it.
@@ -156,7 +154,6 @@ pub mod plan_context;
 pub mod plan_cost_ver2;
 pub mod predicate_partition;
 pub mod prepared_dml;
-pub mod projection_elimination;
 pub mod push_down_sequence;
 pub mod pushdown;
 pub mod range_detacher;

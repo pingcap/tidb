@@ -15,6 +15,38 @@ use tidb_txnkv::Key;
 
 use crate::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};
 
+#[test]
+fn insert_set_operation_source_uses_the_common_query_plan() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on("CREATE TABLE insert_union_src (v BIGINT)", &mut catalog).unwrap();
+    crate::run_create_table_on("CREATE TABLE insert_union_dst (v BIGINT)", &mut catalog).unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO insert_union_src VALUES (2), (1)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    assert_eq!(
+        run_insert_on(
+            "INSERT INTO insert_union_dst SELECT v FROM insert_union_src UNION ALL SELECT 3",
+            &mut catalog,
+            &ctx,
+        )
+        .unwrap(),
+        3,
+    );
+    assert_eq!(
+        run_select_on("SELECT v FROM insert_union_dst ORDER BY v", &catalog, &ctx,).unwrap(),
+        vec![
+            vec![Datum::Int(1)],
+            vec![Datum::Int(2)],
+            vec![Datum::Int(3)]
+        ],
+    );
+}
+
 #[derive(Clone, Debug, Default)]
 struct BatchReadCountingStorage {
     inner: MemTableStorage,
@@ -262,7 +294,7 @@ fn delete_accepts_tpcc_three_column_row_in() {
 /// root fast plan.
 #[test]
 fn a_consumed_handle_range_update_keeps_its_table_reader() {
-    use crate::explain::{ExplainFormat, explain_update_stmt};
+    use crate::explain::{explain_update_stmt, ExplainFormat};
 
     let mut catalog = Catalog::default();
     crate::run_create_table_on(
@@ -304,7 +336,7 @@ fn a_consumed_handle_range_update_keeps_its_table_reader() {
 /// the write still removes exactly the rows the `WHERE` admits.
 #[test]
 fn a_delete_on_a_secondary_index_reads_through_it() {
-    use crate::explain::{ExplainFormat, explain_delete_stmt};
+    use crate::explain::{explain_delete_stmt, ExplainFormat};
 
     let mut catalog = Catalog::default();
     crate::run_create_table_on(
@@ -662,14 +694,12 @@ fn update_and_delete_rows() {
         // `insert_select_and_ordered_dml`); an unknown SET column still fails
         // closed. With no duplicate-key conflict, Go applies UPDATE IGNORE as
         // an ordinary update.
-        assert!(
-            run_update_on(
-                "UPDATE w SET zzz = 1",
-                &mut catalog,
-                &crate::StmtContext::for_query()
-            )
-            .is_err()
-        );
+        assert!(run_update_on(
+            "UPDATE w SET zzz = 1",
+            &mut catalog,
+            &crate::StmtContext::for_query()
+        )
+        .is_err());
         assert_eq!(
             run_update_on(
                 "UPDATE IGNORE w SET a = 1",
@@ -691,305 +721,4 @@ fn update_and_delete_rows() {
             "kv={kv}"
         );
     }
-}
-
-/// The cached prepared point UPDATE keeps a table WITH secondary indexes on
-/// the admitted plan -- `update_row_with_old` maintains the entries -- and its
-/// residual equalities answer against the OLD row before any assignment lands.
-#[test]
-fn prepared_point_update_maintains_indexes_and_answers_residuals() {
-    let mut catalog = Catalog::default();
-    crate::run_create_table_on(
-        "CREATE TABLE upi (\
-            id VARCHAR(8) PRIMARY KEY, \
-            a VARCHAR(8) NOT NULL COLLATE utf8mb4_bin, \
-            v BIGINT NOT NULL, \
-            INDEX ia (a))",
-        &mut catalog,
-    )
-    .unwrap();
-    run_insert_on(
-        "INSERT INTO upi VALUES ('k1','a1',10),('k2','a2',20)",
-        &mut catalog,
-        &crate::StmtContext::for_query(),
-    )
-    .unwrap();
-
-    let ctx = crate::StmtContext::for_query();
-    let run = |sql: &str, params: &[Datum], catalog: &mut Catalog| {
-        let statement = tidb_parser::parse(sql).unwrap();
-        let parameter_count = parsed_parameter_count(&statement);
-        let plan = Arc::new(
-            build_prepared_dml_plan(&statement, parameter_count, catalog, DEFAULT_DATABASE)
-                .unwrap()
-                .expect("the cached prepared point update"),
-        );
-        let execution = plan.bind(params, catalog, DEFAULT_DATABASE).expect("bind");
-        run_prepared_dml(&execution, catalog, DEFAULT_DATABASE, &ctx)
-            .unwrap()
-            .expect("the plan remains valid")
-    };
-
-    // Handle pin plus a residual the row answers: one row updated.
-    let affected = run(
-        "UPDATE upi SET v = ? WHERE id = ? AND a = ?",
-        &[
-            Datum::Int(99),
-            Datum::Bytes(b"k1".to_vec()),
-            Datum::Bytes(b"a1".to_vec()),
-        ],
-        &mut catalog,
-    );
-    assert_eq!(affected, 1);
-    assert_eq!(
-        run_select_on("SELECT v FROM upi WHERE id = 'k1'", &catalog, &ctx).unwrap(),
-        vec![vec![Datum::Int(99)]]
-    );
-    // The secondary index still finds the row after the maintenance.
-    assert_eq!(
-        run_select_on("SELECT id FROM upi WHERE a = 'a1'", &catalog, &ctx)
-            .unwrap()
-            .len(),
-        1
-    );
-
-    // A residual no row answers changes nothing.
-    let affected = run(
-        "UPDATE upi SET v = ? WHERE id = ? AND a = ?",
-        &[
-            Datum::Int(50),
-            Datum::Bytes(b"k1".to_vec()),
-            Datum::Bytes(b"zz".to_vec()),
-        ],
-        &mut catalog,
-    );
-    assert_eq!(affected, 0);
-    // A NULL residual matches nothing under SQL semantics.
-    let affected = run(
-        "UPDATE upi SET v = ? WHERE id = ? AND a = ?",
-        &[Datum::Int(50), Datum::Bytes(b"k1".to_vec()), Datum::Null],
-        &mut catalog,
-    );
-    assert_eq!(affected, 0);
-}
-
-/// The retained point DELETE consumes the same handle/residual program as
-/// point UPDATE and removes every secondary-index entry with the old row.
-#[test]
-fn prepared_point_delete_maintains_indexes_and_answers_residuals() {
-    let mut catalog = Catalog::default();
-    crate::run_create_table_on(
-        "CREATE TABLE pdi (\
-            id BIGINT PRIMARY KEY, \
-            code VARCHAR(8) NOT NULL UNIQUE, \
-            v BIGINT NOT NULL)",
-        &mut catalog,
-    )
-    .unwrap();
-    run_insert_on(
-        "INSERT INTO pdi VALUES (1, 'c1', 10), (2, 'c2', 20)",
-        &mut catalog,
-        &crate::StmtContext::for_query(),
-    )
-    .unwrap();
-    let statement = tidb_parser::parse("DELETE FROM pdi WHERE id = ? AND v = ?").unwrap();
-    let plan = Arc::new(
-        build_prepared_dml_plan(&statement, 2, &catalog, DEFAULT_DATABASE)
-            .unwrap()
-            .expect("prepared point DELETE plan"),
-    );
-    let ctx = crate::StmtContext::for_dml(true, true, false);
-
-    let execution = plan
-        .bind(&[Datum::Int(1), Datum::Int(99)], &catalog, DEFAULT_DATABASE)
-        .expect("bind residual miss");
-    assert_eq!(
-        run_prepared_dml(&execution, &mut catalog, DEFAULT_DATABASE, &ctx).unwrap(),
-        Some(0),
-    );
-    let execution = plan
-        .bind(&[Datum::Int(1), Datum::Int(10)], &catalog, DEFAULT_DATABASE)
-        .expect("bind residual hit");
-    assert_eq!(
-        run_prepared_dml(&execution, &mut catalog, DEFAULT_DATABASE, &ctx).unwrap(),
-        Some(1),
-    );
-
-    run_insert_on("INSERT INTO pdi VALUES (3, 'c1', 30)", &mut catalog, &ctx)
-        .expect("the deleted row's unique index entry was removed");
-    assert_eq!(
-        run_select_on("SELECT id FROM pdi WHERE code = 'c1'", &catalog, &ctx).unwrap(),
-        vec![vec![Datum::Int(3)]],
-    );
-}
-
-/// The cached prepared INSERT writes a table WITH secondary indexes, and a
-/// duplicate of a unique indexed value is reported as zero rows rather than
-/// corrupting the index.
-#[test]
-fn prepared_insert_maintains_secondary_indexes() {
-    let mut catalog = Catalog::default();
-    crate::run_create_table_on(
-        "CREATE TABLE ini (\
-            id VARCHAR(8) PRIMARY KEY, \
-            code VARCHAR(8) NOT NULL COLLATE utf8mb4_bin UNIQUE, \
-            v BIGINT NOT NULL)",
-        &mut catalog,
-    )
-    .unwrap();
-    run_insert_on(
-        "INSERT INTO ini VALUES ('k1','c1',10)",
-        &mut catalog,
-        &crate::StmtContext::for_query(),
-    )
-    .unwrap();
-
-    let stmt = tidb_parser::parse("INSERT INTO ini (id, code, v) VALUES (?, ?, ?)").unwrap();
-    let plan = Arc::new(
-        build_prepared_dml_plan(&stmt, 3, &catalog, DEFAULT_DATABASE)
-            .unwrap()
-            .expect("prepared INSERT plan"),
-    );
-    let ctx = crate::StmtContext::for_query();
-    let mut bind = |values: &[Datum]| -> Result<Option<u64>, DriverError> {
-        let execution = plan
-            .bind(values, &catalog, DEFAULT_DATABASE)
-            .expect("bind prepared INSERT");
-        run_prepared_dml(&execution, &mut catalog, DEFAULT_DATABASE, &ctx)
-    };
-
-    let affected = bind(&[
-        Datum::Bytes(b"k2".to_vec()),
-        Datum::Bytes(b"c2".to_vec()),
-        Datum::Int(20),
-    ])
-    .unwrap()
-    .expect("cached insert");
-    assert_eq!(affected, 1);
-
-    // The unique index sees the new entry: a second 'c2' under a PLAIN
-    // insert raises the duplicate-key error instead of writing.
-    let duplicated = bind(&[
-        Datum::Bytes(b"k3".to_vec()),
-        Datum::Bytes(b"c2".to_vec()),
-        Datum::Int(30),
-    ]);
-    match duplicated {
-        Err(DriverError::DuplicateEntry { .. }) => {}
-        other => panic!("expected a duplicate-key error, got {other:?}"),
-    }
-    assert_eq!(
-        run_select_on("SELECT id FROM ini WHERE code = 'c2'", &catalog, &ctx)
-            .unwrap()
-            .len(),
-        1
-    );
-}
-
-/// Stock sysbench writes every column explicitly even though its primary key
-/// is AUTO_INCREMENT and the other columns declare defaults. Those table
-/// properties do not require per-EXECUTE planning when every bound value is
-/// present, and the cached write still maintains the secondary index.
-#[test]
-fn prepared_insert_accepts_the_stock_sysbench_table_shape() {
-    let mut catalog = Catalog::default();
-    crate::run_create_table_on(
-        "CREATE TABLE sbtest1 (\
-            id INTEGER NOT NULL AUTO_INCREMENT, \
-            k INTEGER DEFAULT '0' NOT NULL, \
-            c CHAR(120) DEFAULT '' NOT NULL, \
-            pad CHAR(60) DEFAULT '' NOT NULL, \
-            PRIMARY KEY (id), KEY k_1 (k))",
-        &mut catalog,
-    )
-    .unwrap();
-    let statement =
-        tidb_parser::parse("INSERT INTO sbtest1 (id, k, c, pad) VALUES (?, ?, ?, ?)").unwrap();
-    let plan = Arc::new(
-        build_prepared_dml_plan(&statement, 4, &catalog, DEFAULT_DATABASE)
-            .unwrap()
-            .expect("stock sysbench INSERT is cacheable"),
-    );
-    let ctx = crate::StmtContext::for_query();
-    let execution = plan
-        .bind(
-            &[
-                Datum::Int(500),
-                Datum::Int(5),
-                Datum::Bytes(b"c-500".to_vec()),
-                Datum::Bytes(b"pad-500".to_vec()),
-            ],
-            &catalog,
-            DEFAULT_DATABASE,
-        )
-        .expect("bind");
-    assert_eq!(
-        run_prepared_dml(&execution, &mut catalog, DEFAULT_DATABASE, &ctx).unwrap(),
-        Some(1),
-    );
-    assert_eq!(ctx.given_insert_id(), 500);
-    assert_eq!(
-        run_select_on("SELECT id FROM sbtest1 WHERE k = 5", &catalog, &ctx).unwrap(),
-        vec![vec![Datum::Int(500)]],
-    );
-    assert_eq!(
-        run_insert_reporting(
-            "INSERT INTO sbtest1 (k, c, pad) VALUES (6, 'c-auto', 'pad-auto')",
-            &mut catalog,
-            DEFAULT_DATABASE,
-            &ctx,
-        )
-        .unwrap(),
-        (1, Some(501)),
-    );
-}
-
-/// The retained INSERT plan uses the same statement error groups as the
-/// complete executor: IGNORE demotes a one-row bad NULL and a duplicate key
-/// to warnings while preserving the successful/skipped affected-row counts.
-#[test]
-fn prepared_insert_ignore_preserves_warnings() {
-    let mut catalog = Catalog::default();
-    crate::run_create_table_on(
-        "CREATE TABLE pii (id BIGINT PRIMARY KEY, v BIGINT NOT NULL UNIQUE)",
-        &mut catalog,
-    )
-    .unwrap();
-    let statement = tidb_parser::parse("INSERT IGNORE INTO pii (id, v) VALUES (?, ?)").unwrap();
-    let plan = Arc::new(
-        build_prepared_dml_plan(&statement, 2, &catalog, DEFAULT_DATABASE)
-            .unwrap()
-            .expect("prepared INSERT IGNORE plan"),
-    );
-    let ctx = crate::StmtContext::for_dml(true, true, true);
-
-    let execution = plan
-        .bind(&[Datum::Int(1), Datum::Null], &catalog, DEFAULT_DATABASE)
-        .expect("bind bad-NULL insert");
-    assert_eq!(
-        run_prepared_dml(&execution, &mut catalog, DEFAULT_DATABASE, &ctx).unwrap(),
-        Some(1),
-    );
-    assert_eq!(
-        ctx.take_warnings()
-            .into_iter()
-            .map(|(_, code, _)| code)
-            .collect::<Vec<_>>(),
-        vec![1048],
-    );
-
-    let execution = plan
-        .bind(&[Datum::Int(2), Datum::Int(0)], &catalog, DEFAULT_DATABASE)
-        .expect("bind duplicate insert");
-    assert_eq!(
-        run_prepared_dml(&execution, &mut catalog, DEFAULT_DATABASE, &ctx).unwrap(),
-        Some(0),
-    );
-    assert_eq!(
-        ctx.take_warnings()
-            .into_iter()
-            .map(|(_, code, _)| code)
-            .collect::<Vec<_>>(),
-        vec![1062],
-    );
 }

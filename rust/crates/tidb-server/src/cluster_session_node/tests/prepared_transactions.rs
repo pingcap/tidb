@@ -93,6 +93,41 @@ fn prepared_insert_reuses_the_planned_dml() {
     );
 }
 
+/// Go caches the ordinary `Insert` root, not a one-row/all-columns fast shape.
+/// Omitting a column must therefore use the same default/NULL row builder on
+/// both the first execution and the cache hit.
+#[test]
+fn prepared_insert_with_omitted_column_reuses_common_dml() {
+    use tidb_protocol::PreparedValue;
+
+    let (mut session, _) = open_session();
+    let statement = session
+        .prepare_general("INSERT INTO t (id) VALUES (?)")
+        .expect("prepare");
+
+    for (id, expected_cache) in [(111, 0), (112, 1)] {
+        let outcome = session
+            .execute_general(&statement, &[PreparedValue::SignedLongLong(id)])
+            .expect("execute");
+        assert!(matches!(outcome, GeneralExecuteOutcome::Write(_)));
+        drop(outcome);
+        assert_eq!(
+            rows(&mut session, "SELECT @@last_plan_from_cache"),
+            vec![vec![Datum::Int(expected_cache)]],
+        );
+    }
+    assert_eq!(
+        rows(
+            &mut session,
+            "SELECT id, v FROM t WHERE id BETWEEN 111 AND 112 ORDER BY id"
+        ),
+        vec![
+            vec![Datum::Int(111), Datum::Null],
+            vec![Datum::Int(112), Datum::Null]
+        ],
+    );
+}
+
 /// Go caches the point-update plan produced by `tryUpdatePointPlan`: the first
 /// EXECUTE plans and the second rebuilds that same DML plan with new values.
 /// The old Rust fast-DML arm re-matched the AST and catalog on every EXECUTE,

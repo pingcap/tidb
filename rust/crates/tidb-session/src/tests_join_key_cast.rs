@@ -24,8 +24,8 @@
 //! handle. The recorded plan names the injected column by its exact position
 //! in the statement's `AllocPlanColumnID` stream: `Column#12` for this
 //! schema (seven source ids, two `updateEQCond` casts, two
-//! `BuildKeyInfoPortal` re-allocations, then the rule's own). See
-//! `tidb_executor::driver::join_key_cast` for the verified arithmetic.
+//! `BuildKeyInfoPortal` re-allocations, then the rule's own). The production
+//! implementation lives in `tidb_planner::logical::rule_join_key_type_cast`.
 
 #![cfg(test)]
 
@@ -145,10 +145,9 @@ fn hinting_the_varchar_side_keeps_the_hash_join() {
 /// result: the mid-tree cartesian with `t3` PROBES `t3` and BUILDS the
 /// joined `(t1,t2)` side, whose rows then emit newest-first per probe row.
 /// That build-side choice is the ver2 cost comparison's -- reachable only
-/// because the row inventory models a `straight_join` subtree
-/// (`driver::join_reorder::collect_rows`) -- and the recording was made at
-/// `tidb_hash_join_concurrency=1` (mysql-tester's DSN), which the session
-/// must mirror.
+/// because the logical planner models a `straight_join` subtree -- and the
+/// recording was made at `tidb_hash_join_concurrency=1` (mysql-tester's DSN),
+/// which the session must mirror.
 #[test]
 fn the_multiway_cartesian_builds_the_joined_side() {
     let mut session = Session::new();

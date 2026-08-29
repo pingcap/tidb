@@ -67,12 +67,99 @@ mod approx_count_distinct;
 pub(crate) mod bad_null;
 pub mod cluster_storage;
 pub mod column_default;
-pub(crate) mod column_prune;
 pub mod cte_storage;
 pub mod ddl;
 pub mod ddl_label;
+pub mod ddl_sequence;
+pub mod deadlock_history;
+pub mod driver;
+pub mod error_context;
+pub mod executor;
+pub mod explain;
+pub mod expression_index;
+mod farmhash;
+pub(crate) mod foreign_key;
+pub mod generated_column;
+mod go_quote;
+pub(crate) mod handle_range;
+pub mod hash_agg;
+#[cfg(test)]
+mod hash_agg_spill_tests;
+mod hash_join;
+mod index_hints;
+pub mod index_merge_reader;
+mod index_prefix_cut;
+mod index_range;
+pub mod join;
+pub mod joiner;
+pub mod keydecoder;
+pub mod kv_table;
+pub mod limit;
+pub mod load_stats;
+pub mod mem_quota;
+pub mod mem_reader;
+pub mod mem_table;
+pub(crate) mod merge_join_plan;
+pub mod multi_way_merge;
+pub mod parallel_sort_spill_helper;
+pub mod partition_pruning;
+pub mod partition_routing;
+mod physical_cte;
+pub(crate) mod ranger_detacher;
+#[cfg(test)]
+mod tests_adapter_recordset_lockkeys_gaps;
+#[cfg(test)]
+mod tests_adapter_slow_log_ru_gaps;
+#[cfg(test)]
+mod tests_adapter_topsql_profiling_gaps;
+#[cfg(test)]
+mod tests_admin_checksum_gaps;
+#[cfg(test)]
+mod tests_aggfuncs_approx_pushdown_source;
+#[cfg(test)]
+mod tests_aggfuncs_avg_bit_count_gaps;
+#[cfg(test)]
+mod tests_aggfuncs_cume_dist_first_row_gaps;
+#[cfg(test)]
+mod tests_aggfuncs_group_concat_gaps;
+#[cfg(test)]
+mod tests_aggfuncs_json_aggs_gaps;
+#[cfg(test)]
+mod tests_aggfuncs_lead_lag_gaps;
+#[cfg(test)]
+mod tests_aggfuncs_max_min_deque_gaps;
+#[cfg(test)]
+mod tests_aggfuncs_parallel_distinct_gaps;
+#[cfg(test)]
+mod tests_analyze_broadcast_flush_gaps;
+#[cfg(test)]
+mod tests_analyze_kill_save_gaps;
+#[cfg(test)]
+mod tests_analyze_panic_recovery_source;
+#[cfg(test)]
+mod tests_batch_point_get_locking_gaps;
+#[cfg(test)]
+mod tests_batch_point_get_temporary_source;
+#[cfg(test)]
+mod tests_brie_task_surface_gaps;
+#[cfg(test)]
+mod tests_cluster_slow_query_gaps;
+#[cfg(test)]
+mod tests_compact_table_tiflash_gaps;
 #[cfg(test)]
 mod tests_ddl_b100_source;
+#[cfg(test)]
+mod tests_ddl_check_constraints;
+#[cfg(test)]
+mod tests_ddl_column_jobs;
+#[cfg(test)]
+mod tests_ddl_column_type_change;
+#[cfg(test)]
+mod tests_ddl_copr_collation;
+#[cfg(test)]
+mod tests_ddl_db_change_failpoints;
+#[cfg(test)]
+mod tests_ddl_db_change_states;
 #[cfg(test)]
 mod tests_ddl_job_submitter_worker_gaps;
 #[cfg(test)]
@@ -100,35 +187,7 @@ mod tests_ddl_partition_operations_sql;
 #[cfg(test)]
 mod tests_ddl_partition_reorganize_exchange_gaps;
 #[cfg(test)]
-mod tests_ddl_check_constraints;
-#[cfg(test)]
-mod tests_ddl_copr_collation;
-#[cfg(test)]
-mod tests_ddl_column_jobs;
-#[cfg(test)]
-mod tests_ddl_column_type_change;
-#[cfg(test)]
-mod tests_ddl_db_change_states;
-#[cfg(test)]
-mod tests_ddl_db_change_failpoints;
-#[cfg(test)]
 mod tests_ddl_table_cache;
-pub mod ddl_sequence;
-pub mod deadlock_history;
-pub mod driver;
-pub mod error_context;
-pub mod executor;
-pub mod explain;
-pub mod expression_index;
-mod farmhash;
-pub(crate) mod foreign_key;
-pub mod generated_column;
-mod go_quote;
-pub(crate) mod handle_range;
-pub mod hash_agg;
-#[cfg(test)]
-mod hash_agg_spill_tests;
-mod hash_join;
 #[cfg(test)]
 mod tests_import_into_external_id_gaps;
 #[cfg(test)]
@@ -146,6 +205,12 @@ mod tests_importer_table_import_gaps;
 #[cfg(test)]
 mod tests_importer_verify_postprocess_gaps;
 #[cfg(test)]
+mod tests_index_join_cte_build_cleanup_gaps;
+#[cfg(test)]
+mod tests_infoschema_cluster_table_gaps;
+#[cfg(test)]
+mod tests_infoschema_reader_source_gaps;
+#[cfg(test)]
 mod tests_insert_auto_random_id_source;
 #[cfg(test)]
 mod tests_insert_null_non_strict_source;
@@ -155,86 +220,16 @@ mod tests_insert_on_duplicate_key_source;
 mod tests_insert_write_gaps;
 #[cfg(test)]
 mod tests_inspection_result_gaps;
-mod index_hints;
-pub mod index_merge_reader;
-mod index_prefix_cut;
-mod index_range;
-pub mod join;
-pub mod joiner;
-pub mod keydecoder;
-pub mod kv_table;
 #[cfg(test)]
-mod tests_infoschema_cluster_table_gaps;
-#[cfg(test)]
-mod tests_infoschema_reader_source_gaps;
-pub mod limit;
-pub mod load_stats;
-pub mod mem_quota;
-pub mod mem_reader;
-pub mod mem_table;
-pub(crate) mod merge_join_plan;
-pub mod multi_way_merge;
-pub mod parallel_sort_spill_helper;
-pub mod partition_pruning;
-pub mod partition_routing;
-pub(crate) mod ranger_detacher;
-mod tidb_decode_key;
-#[cfg(test)]
-mod tests_adapter_recordset_lockkeys_gaps;
-#[cfg(test)]
-mod tests_adapter_slow_log_ru_gaps;
-#[cfg(test)]
-mod tests_adapter_topsql_profiling_gaps;
-#[cfg(test)]
-mod tests_admin_checksum_gaps;
-#[cfg(test)]
-mod tests_analyze_broadcast_flush_gaps;
-#[cfg(test)]
-mod tests_analyze_kill_save_gaps;
-#[cfg(test)]
-mod tests_analyze_panic_recovery_source;
-#[cfg(test)]
-mod tests_aggfuncs_approx_pushdown_source;
-#[cfg(test)]
-mod tests_aggfuncs_avg_bit_count_gaps;
-#[cfg(test)]
-mod tests_aggfuncs_cume_dist_first_row_gaps;
-#[cfg(test)]
-mod tests_aggfuncs_group_concat_gaps;
-#[cfg(test)]
-mod tests_aggfuncs_json_aggs_gaps;
-#[cfg(test)]
-mod tests_aggfuncs_lead_lag_gaps;
-#[cfg(test)]
-mod tests_aggfuncs_max_min_deque_gaps;
-#[cfg(test)]
-mod tests_aggfuncs_parallel_distinct_gaps;
-#[cfg(test)]
-mod tests_batch_point_get_locking_gaps;
-#[cfg(test)]
-mod tests_batch_point_get_temporary_source;
-#[cfg(test)]
-mod tests_brie_task_surface_gaps;
-#[cfg(test)]
-mod tests_cluster_slow_query_gaps;
-#[cfg(test)]
-mod tests_compact_table_tiflash_gaps;
-#[cfg(test)]
-mod tests_index_join_cte_build_cleanup_gaps;
-#[cfg(test)]
-mod tests_parallel_apply_sql_source;
-#[cfg(test)]
-mod tests_table_part2_source;
-#[cfg(test)]
-mod tests_table_part1_source;
-#[cfg(test)]
-mod tests_partition_table_sql_source;
+mod tests_join_probe_source_gaps;
 #[cfg(test)]
 mod tests_memtable_cluster_source;
 #[cfg(test)]
 mod tests_merge_join_in_disk_source;
 #[cfg(test)]
-mod tests_join_probe_source_gaps;
+mod tests_parallel_apply_sql_source;
+#[cfg(test)]
+mod tests_partition_table_sql_source;
 #[cfg(test)]
 mod tests_pkg_nested_loop_apply_source;
 #[cfg(test)]
@@ -264,7 +259,12 @@ mod tests_show_stats_meta_gaps;
 #[cfg(test)]
 mod tests_sql_flags_import_insert_gaps;
 #[cfg(test)]
+mod tests_table_part1_source;
+#[cfg(test)]
+mod tests_table_part2_source;
+#[cfg(test)]
 mod tests_tablesample_regions_gaps;
+mod tidb_decode_key;
 pub use partition_routing::{PartitionDef, PartitionKind, PartitionSpec, RangeBound};
 pub mod fts_like_rewrite;
 mod plan_trace;
@@ -287,6 +287,10 @@ pub mod table_dual;
 #[cfg(test)]
 mod tests_duplicate_entry_message_source;
 #[cfg(test)]
+mod tests_executor_part19_source;
+#[cfg(test)]
+mod tests_executor_part20_source;
+#[cfg(test)]
 mod tests_global_temp_table_source;
 #[cfg(test)]
 mod tests_index_join;
@@ -295,19 +299,15 @@ mod tests_jointest_join_source;
 #[cfg(test)]
 mod tests_loaddatatest_source;
 #[cfg(test)]
-mod tests_loadremotetest_source;
-#[cfg(test)]
 mod tests_loadremotetest_one_csv_source;
+#[cfg(test)]
+mod tests_loadremotetest_source;
 #[cfg(test)]
 mod tests_memtest_source;
 #[cfg(test)]
 mod tests_oomtest_source;
 #[cfg(test)]
 mod tests_passwordtest_source;
-#[cfg(test)]
-mod tests_executor_part19_source;
-#[cfg(test)]
-mod tests_executor_part20_source;
 pub mod tiflash_recorder;
 pub mod topn;
 pub mod topn_chunk_heap;
@@ -315,7 +315,6 @@ pub mod topn_spill;
 pub mod union_scan;
 pub mod vec_group_checker;
 pub mod view;
-mod window;
 pub mod zero_date;
 
 pub use apply::ApplyExec;
@@ -331,20 +330,24 @@ pub use ddl::{
 pub use ddl_sequence::{
     run_alter_sequence_in, run_create_sequence_in, run_drop_sequence_in, show_create_sequence,
 };
+#[cfg(test)]
+pub(crate) use driver::access::run_prepared_select_for_test;
 pub use driver::infoschema_meta;
 pub use driver::{
     access::{
         build_prepared_point_get_plan, build_prepared_select_plan, run_prepared_point_get,
-        run_prepared_select, PreparedPlanCacheEnvironment, PreparedPointGetExecution,
-        PreparedPointGetPlan, PreparedSelectExecution, PreparedSelectPlan,
+        PreparedPlanCacheEnvironment, PreparedPointGetExecution, PreparedPointGetPlan,
+        PreparedSelectExecution, PreparedSelectPlan,
     },
     bind_parameters, bind_prepared_statement, bind_statement, build_prepared_dml_plan,
-    parameter_count, parsed_parameter_count, plan_select_meta_stmt, run_delete_in, run_delete_on,
-    run_delete_stmt, run_insert_in, run_insert_on, run_insert_reporting, run_insert_stmt,
-    run_prepared_dml, run_select, run_select_meta_in, run_select_meta_on, run_select_meta_stmt,
-    run_select_on, run_set_opr_stmt, run_update_in, run_update_on, run_update_stmt, Catalog,
-    DriverError, MemTable, MysqlError, PreparedDmlExecution, PreparedDmlKind, PreparedDmlPlan,
-    SchemaErrorKind, SelectMeta, TableEntry, TxnErrorKind, VarErrorKind, ViewDef, DEFAULT_DATABASE,
+    fts_columns_are_strings, parameter_count, parsed_parameter_count, plan_select_meta_stmt,
+    run_delete_in, run_delete_on, run_delete_stmt, run_delete_stmt_with_physical, run_insert_in,
+    run_insert_on, run_insert_reporting, run_insert_stmt, run_insert_stmt_with_physical,
+    run_query_meta_stmt_with_physical, run_select, run_select_meta_in, run_select_meta_on,
+    run_select_meta_stmt, run_select_meta_stmt_with_physical, run_select_on, run_set_opr_stmt,
+    run_update_in, run_update_on, run_update_stmt, run_update_stmt_with_physical, Catalog,
+    DriverError, MemTable, MysqlError, PreparedDmlExecution, PreparedDmlPlan, SchemaErrorKind,
+    SelectMeta, TableEntry, TxnErrorKind, VarErrorKind, ViewDef, DEFAULT_DATABASE,
 };
 pub use executor::{ExecError, Executor, ExecutorMeta};
 pub use explain::{
@@ -391,25 +394,31 @@ pub use tidb_expr::{
 pub use topn::TopNExec;
 pub use view::{resolve_view_definition, run_create_view_in, run_drop_view_in, view_column_list};
 
+#[cfg(test)]
+mod tests_admin_check_admintest_source;
+#[cfg(test)]
+mod tests_analyze_suite_source;
+#[cfg(test)]
+mod tests_analyzecolumns_b132_source;
 /// Explicit isolated spill authorities for executor tests.
 #[cfg(test)]
 mod tests_distsql_test_source;
 #[cfg(test)]
-mod tests_set_show_stats_slow_query_source;
-#[cfg(test)]
 mod tests_executor_internal_source;
-#[cfg(test)]
-mod tests_executor_suite_metadata_source;
-#[cfg(test)]
-mod tests_executor_suite_statements_source;
 #[cfg(test)]
 mod tests_executor_part22_source;
 #[cfg(test)]
 mod tests_executor_part23_source;
 #[cfg(test)]
-mod tests_fktest_source;
+mod tests_executor_suite_metadata_source;
+#[cfg(test)]
+mod tests_executor_suite_statements_source;
 #[cfg(test)]
 mod tests_fktest_b134_source;
+#[cfg(test)]
+mod tests_fktest_source;
+#[cfg(test)]
+mod tests_hashagg_aggregate_suite_source;
 #[cfg(test)]
 mod tests_indexmergeread_b134_source;
 #[cfg(test)]
@@ -423,13 +432,7 @@ mod tests_jointest_hashjoin_b135_source;
 #[cfg(test)]
 mod tests_jointest_join_b135_source;
 #[cfg(test)]
-mod tests_admin_check_admintest_source;
-#[cfg(test)]
-mod tests_hashagg_aggregate_suite_source;
-#[cfg(test)]
-mod tests_analyze_suite_source;
-#[cfg(test)]
-mod tests_analyzecolumns_b132_source;
+mod tests_set_show_stats_slow_query_source;
 #[cfg(test)]
 pub(crate) mod test_temp_storage {
     use std::path::Path;

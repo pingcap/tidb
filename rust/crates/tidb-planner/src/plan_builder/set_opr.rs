@@ -229,7 +229,7 @@ fn divide_union_select_plans(
 
 /// Go `plannererrors.ErrWrongNumberOfColumnsInSelect` (MySQL 1222).
 fn wrong_number_of_columns() -> PlanError {
-    PlanError::internal("The used SELECT statements have a different number of columns")
+    PlanError::wrong_number_of_columns_in_select()
 }
 
 /// Go `*expression.Column.RetType`, which is never nil for a column a builder
@@ -672,7 +672,13 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // path, which is Go's `defer`.
         let outer_cte_depth = self.outer_ctes.len();
         let current_layer_ctes = match &set_opr.with {
-            Some(with) => match self.build_with(with) {
+            Some(with) => match self.build_with(
+                with,
+                &super::cte::cte_consumer_counts(
+                    &tidb_ast::QueryStmt::SetOpr(Box::new(set_opr.clone())),
+                    with,
+                ),
+            ) {
                 Ok(ctes) => ctes,
                 Err(error) => {
                     self.outer_ctes.truncate(outer_cte_depth);

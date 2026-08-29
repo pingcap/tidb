@@ -999,7 +999,6 @@ fn planner_statistics(stats: &ClusterTableStats, table: &TableInfo) -> TableStat
         indexes,
     )
     .with_stat_versions(stats.version, stats.last_analyze_version)
-    .with_shared_load_state(Arc::clone(&stats.load_state))
 }
 
 /// Go `Column.StatsAvailable()` / `IsColumnAnalyzedOrSynthesized`: whether
@@ -1266,7 +1265,6 @@ mod tests {
             row_count: 3_000_065,
             columns: vec![item(1, 3_000_065), item(2, 10), item(3, 3_000_065)],
             indexes: Vec::new(),
-            load_state: Default::default(),
         };
         let translated = planner_statistics(&loaded_stats, &table);
         assert!(!translated.pseudo);

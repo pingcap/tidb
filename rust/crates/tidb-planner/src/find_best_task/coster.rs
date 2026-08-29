@@ -119,11 +119,15 @@ impl Ver2Coster {
         plan.stats_info().map_or(1.0, |stats| stats.row_count())
     }
 
-    /// Go `getAvgRowSize(plan.StatsInfo(), plan.Schema().Columns)` when the
-    /// plan's `HistColl` is nil: sum `chunk.EstimateTypeWidth` for the exact
-    /// static output types. Cost formulas apply `MinRowSize` themselves.
+    /// Go `getAvgRowSize(plan.StatsInfo(), plan.Schema().Columns)`: a plan
+    /// carrying `StatsInfo.HistColl` uses DataInDiskByRows width, while a plan
+    /// with nil HistColl uses only the static type widths.
     fn row_size(plan: &PhysicalPlan) -> f64 {
-        Self::row_size_for_columns(plan.schema().into_iter().flat_map(|schema| &schema.columns))
+        Self::row_size_for_columns(
+            plan.schema().into_iter().flat_map(|schema| &schema.columns),
+            plan.stats_info()
+                .and_then(crate::stats_info::StatsInfo::hist_coll),
+        )
     }
 
     /// Go `childCanProvideOrderForStreamAgg`: look through order-preserving
@@ -149,16 +153,25 @@ impl Ver2Coster {
         }
     }
 
-    fn row_size_for_columns<'a>(columns: impl Iterator<Item = &'a Column>) -> f64 {
+    fn row_size_for_columns<'a>(
+        columns: impl Iterator<Item = &'a Column>,
+        hist_coll: Option<&crate::stats_info::HistColl>,
+    ) -> f64 {
         let columns = columns
             .map(|column| {
                 let width = column.ret_type.as_ref().map_or(0.0, |field_type| {
                     tidb_chunk::codec::estimate_type_width(field_type) as f64
                 });
-                RowSizeColumn::without_stats(width)
+                RowSizeColumn {
+                    stats: hist_coll.and_then(|hist_coll| hist_coll.column(column.unique_id)),
+                    estimated_width: width,
+                }
             })
             .collect::<Vec<_>>();
-        crate::plan_cost_ver2::plan_avg_row_size(&columns, None)
+        crate::plan_cost_ver2::plan_avg_row_size(
+            &columns,
+            hist_coll.map(|hist_coll| (hist_coll.pseudo(), hist_coll.realtime_count())),
+        )
     }
 
     fn children_cost(
@@ -204,9 +217,13 @@ impl Ver2Coster {
                         row_size: if scan.cost_columns.is_empty() {
                             Self::row_size(plan)
                         } else {
-                            Self::row_size_for_columns(scan.cost_columns.iter().filter(|column| {
-                                column.id != crate::plan_builder::EXTRA_COMMIT_TS_ID
-                            }))
+                            Self::row_size_for_columns(
+                                scan.cost_columns.iter().filter(|column| {
+                                    column.id != crate::plan_builder::EXTRA_COMMIT_TS_ID
+                                }),
+                                plan.stats_info()
+                                    .and_then(crate::stats_info::StatsInfo::hist_coll),
+                            )
                         },
                         is_child_of_inl,
                         // Go `ranger.HasFullRange(ts.Ranges, unsignedIntHandle)`;
@@ -232,7 +249,11 @@ impl Ver2Coster {
                 if scan.cost_columns.is_empty() {
                     Self::row_size(plan)
                 } else {
-                    Self::row_size_for_columns(scan.cost_columns.iter())
+                    Self::row_size_for_columns(
+                        scan.cost_columns.iter(),
+                        plan.stats_info()
+                            .and_then(crate::stats_info::StatsInfo::hist_coll),
+                    )
                 },
                 if scan.desc {
                     &self.factors.tikv_desc_scan
@@ -432,7 +453,16 @@ impl Ver2Coster {
                     .children()
                     .first()
                     .map_or(rows, |child| Self::rows(child));
-                let by_scalar = vec![false; sort.by_items.len()];
+                let by_scalar = sort
+                    .by_items
+                    .iter()
+                    .map(|item| {
+                        matches!(
+                            item.expr,
+                            tidb_expr::expression::Expression::ScalarFunction(_)
+                        )
+                    })
+                    .collect::<Vec<_>>();
                 sort_cost(
                     None,
                     (child_rows, Self::row_size(plan)),

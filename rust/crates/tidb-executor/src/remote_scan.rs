@@ -650,14 +650,15 @@ mod tests {
         ClusterSnapshot, ClusterTableStorage, MutationBuffer, SnapshotPairs,
     };
     use crate::driver::{
-        build_prepared_select_plan, run_prepared_select, run_select_on, Catalog,
-        PreparedPlanCacheEnvironment, DEFAULT_DATABASE,
+        build_prepared_select_plan, run_select_on, Catalog, PreparedPlanCacheEnvironment,
+        DEFAULT_DATABASE,
     };
     use crate::executor::{Executor, ExecutorMeta};
     use crate::join::{IndexLookupPlan, IndexLookupSource, JoinExec, JoinKind};
     use crate::kv_table::{KvColumn, KvIndex, KvTable, TableHandle};
     use crate::mem_table::MemTableSourceExec;
     use crate::predicate_pushdown::{ScanComparisonOp, ScanPredicate};
+    use crate::run_prepared_select_for_test;
     use crate::storage::{capture_storage_ops, MemTableStorage, TableStorage};
 
     /// The committed half of a cluster read, shared by the snapshot the
@@ -1365,10 +1366,6 @@ mod tests {
             ExecutorMeta::new(schema(1), 0, 32, 1024),
             outer_rows,
         ));
-        let unused_inner: Box<dyn Executor> = Box::new(MemTableSourceExec::new(
-            ExecutorMeta::new(schema(2), 0, 32, 1024),
-            Vec::new(),
-        ));
         let mut left = Column::new(1, field.clone());
         left.index = 0;
         let mut right = Column::new(2, field.clone());
@@ -1386,26 +1383,25 @@ mod tests {
             crate::RowDecodeContext::for_query(&ctx),
         );
         lookup.set_probe_parts(vec![LookupProbePart::Dynamic(0)]);
-        let mut join = JoinExec::new(
+        let mut join = JoinExec::new_index_lookup(
             ExecutorMeta::new(schema(1), 0, 32, 1024),
             JoinKind::Semi,
             vec![equality],
             outer,
-            unused_inner,
+            vec![field.clone()],
+            vec![field.clone(), field],
             ctx.clone(),
             ctx.statement_memory(),
+            IndexLookupPlan {
+                lookup_is_left: false,
+                probe_keys: vec![0],
+                probe_key_domains: Vec::new(),
+                source: IndexLookupSource::Leaf(lookup),
+                outer_not_null: Vec::new(),
+                inner_not_null: Vec::new(),
+                probe_bounds: Vec::new(),
+            },
         );
-        join.set_index_lookup_plan(IndexLookupPlan {
-            lookup_is_left: false,
-            probe_keys: vec![0],
-            source: IndexLookupSource::Leaf(lookup),
-            aggregation: None,
-            aggregation_stream_ordered: false,
-            outer_not_null: Vec::new(),
-            inner_not_null: Vec::new(),
-            probe_cast: None,
-            probe_bounds: Vec::new(),
-        });
 
         join.open().unwrap();
         let mut rows = 0;
@@ -2097,9 +2093,8 @@ mod tests {
                 .bind(&bounds, &catalog, DEFAULT_DATABASE, &ctx, &environment)
                 .expect("the integer bounds bind");
             assert_eq!(execution.cache_hit(), cache_hit);
-            let (_, rows) = run_prepared_select(&execution, &mut catalog, DEFAULT_DATABASE, &ctx)
-                .unwrap()
-                .expect("the schema is unchanged");
+            let (_, rows) =
+                run_prepared_select_for_test(&execution, &catalog, DEFAULT_DATABASE, &ctx).unwrap();
             let expected = expected
                 .into_iter()
                 .map(|value| vec![value])

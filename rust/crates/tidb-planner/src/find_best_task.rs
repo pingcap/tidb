@@ -388,6 +388,7 @@ fn enforced_merge_join_candidates(
         sort_items_for_partition: Vec::new(),
         cte_producer_status: prop.cte_producer_status,
         no_cop_push_down: prop.no_cop_push_down,
+        advisory_sort_items: Vec::new(),
         index_join_prop: None,
     };
     vec![EnumeratedJoin {
@@ -476,6 +477,7 @@ fn index_join_candidates(join: &LogicalJoin, prop: &PhysicalProperty) -> Vec<Enu
             sort_items_for_partition: Vec::new(),
             cte_producer_status: prop.cte_producer_status,
             no_cop_push_down: prop.no_cop_push_down,
+            advisory_sort_items: Vec::new(),
             index_join_prop: None,
         };
         child_props[1 - outer_idx] = PhysicalProperty {
@@ -529,6 +531,7 @@ fn hash_join_candidates(join: &LogicalJoin, prop: &PhysicalProperty) -> Vec<Enum
         sort_items_for_partition: Vec::new(),
         cte_producer_status: prop.cte_producer_status,
         no_cop_push_down: prop.no_cop_push_down,
+        advisory_sort_items: Vec::new(),
         index_join_prop: None,
     };
     let mut candidates = Vec::new();

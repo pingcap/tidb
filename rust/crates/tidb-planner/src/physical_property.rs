@@ -227,8 +227,8 @@ impl std::fmt::Display for SortItem {
 /// `property.PhysicalProperty`. This port carries the fields that decide a
 /// plan's shape -- including Go's root-only aggregation gate -- and the
 /// additional fields already consumed by the wired planner. The source's
-/// MPP partition columns, vector-search, partial-order, and advisory-order
-/// fields remain outside this layer.
+/// MPP partition columns, vector-search, and partial-order fields remain
+/// outside this layer.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PhysicalProperty {
     /// The required sort attributes, outermost first.
@@ -250,6 +250,9 @@ pub struct PhysicalProperty {
     /// Go `NoCopPushDown`: force aggregation to stay at the root. This is an
     /// essential property and must survive every child-property clone.
     pub no_cop_push_down: bool,
+    /// Go `AdvisorySortItems`: order preferred by a DataSource for TopN over
+    /// IndexMerge, but not required for property satisfaction.
+    pub advisory_sort_items: Vec<SortItem>,
     /// Go `IndexJoinProp`; present only while planning an index join's inner
     /// child and the pass-through operators admitted by Go.
     pub index_join_prop: Option<IndexJoinRuntimeProp>,
@@ -269,6 +272,7 @@ impl Default for PhysicalProperty {
             sort_items_for_partition: Vec::new(),
             cte_producer_status: CteProducerStatus::default(),
             no_cop_push_down: false,
+            advisory_sort_items: Vec::new(),
             index_join_prop: None,
         }
     }
@@ -293,6 +297,7 @@ impl PhysicalProperty {
             sort_items_for_partition: Vec::new(),
             cte_producer_status: CteProducerStatus::default(),
             no_cop_push_down: false,
+            advisory_sort_items: Vec::new(),
             index_join_prop: None,
         }
     }
@@ -312,6 +317,7 @@ impl PhysicalProperty {
             can_add_enforcer: false,
             cte_producer_status: self.cte_producer_status,
             no_cop_push_down: self.no_cop_push_down,
+            advisory_sort_items: self.advisory_sort_items.clone(),
             index_join_prop: None,
         }
     }

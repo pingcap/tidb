@@ -159,6 +159,16 @@ impl Session {
                         )
                         .as_deref()
                         != Ok("OFF"),
+                )
+                .with_cache_admission(
+                    self.vars
+                        .get_system(tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_MAX_PLAN_SIZE)
+                        .ok()
+                        .and_then(|value| value.parse::<u64>().ok())
+                        .unwrap_or(tidb_vardef::defaults::DEF_TIDB_PLAN_CACHE_MAX_PLAN_SIZE as u64),
+                    self.vars
+                        .optimizer_fix_control()
+                        .get_bool_with_default(tidb_planner::fix_control::FIX_45798, true),
                 ),
             )
         });
@@ -173,6 +183,22 @@ impl Session {
         environment
     }
 
+    pub(crate) fn prepared_plan_cache_environment_for_binding(
+        &self,
+        binding_sql: Option<&str>,
+    ) -> Option<tidb_executor::PreparedPlanCacheEnvironment> {
+        let environment = self.prepared_plan_cache_environment()?;
+        Some(
+            environment.as_ref().clone().with_binding_sql(
+                binding_sql,
+                self.vars
+                    .get_system(tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_SKIP_STATS_ON_BINDING)
+                    .as_deref()
+                    != Ok("OFF"),
+            ),
+        )
+    }
+
     /// Parses and retains the statement under this session's current SQL mode.
     pub fn prepare_ast(&self, sql: &str) -> Result<PreparedAst, DriverError> {
         let statement = self.parse_statement(sql)?;
@@ -180,27 +206,44 @@ impl Session {
         let planner_context = self.statement_context(false);
         let (point_get_plan, dml_plan, select_plan) = {
             let catalog = self.lock_catalog()?;
+            let cacheable = {
+                let mut candidate = statement.clone();
+                self.prepared_statement_cacheable(&mut candidate, &catalog)
+                    .is_ok()
+            };
             (
-                tidb_executor::build_prepared_point_get_plan(
-                    &statement,
-                    parameter_count,
-                    &catalog,
-                    self.current_database(),
-                    &self.session_time_zone(),
-                ),
-                tidb_executor::build_prepared_dml_plan(
-                    &statement,
-                    parameter_count,
-                    &catalog,
-                    self.current_database(),
-                )?,
-                tidb_executor::build_prepared_select_plan(
-                    &statement,
-                    parameter_count,
-                    &catalog,
-                    self.current_database(),
-                    &planner_context,
-                ),
+                cacheable
+                    .then(|| {
+                        tidb_executor::build_prepared_point_get_plan(
+                            &statement,
+                            parameter_count,
+                            &catalog,
+                            self.current_database(),
+                            &self.session_time_zone(),
+                        )
+                    })
+                    .flatten(),
+                if cacheable {
+                    tidb_executor::build_prepared_dml_plan(
+                        &statement,
+                        parameter_count,
+                        &catalog,
+                        self.current_database(),
+                    )?
+                } else {
+                    None
+                },
+                cacheable
+                    .then(|| {
+                        tidb_executor::build_prepared_select_plan(
+                            &statement,
+                            parameter_count,
+                            &catalog,
+                            self.current_database(),
+                            &planner_context,
+                        )
+                    })
+                    .flatten(),
             )
         };
         Ok(PreparedAst::from_parsed(
@@ -210,6 +253,35 @@ impl Session {
             dml_plan,
             select_plan,
         ))
+    }
+
+    /// Execute-time prepared-cache policy from Go `GetPlanFromPlanCache`.
+    /// The explicit statement hint and `hint_only` strategy are evaluated for
+    /// every EXECUTE because the strategy may change after PREPARE.
+    #[must_use]
+    pub fn prepared_plan_cache_allowed_for_statement(&self, statement: &Stmt) -> bool {
+        if !self.vars.prepared_plan_cache_enabled() {
+            return false;
+        }
+        let hints = crate::variables::statement_hints(statement).unwrap_or_default();
+        if hints
+            .iter()
+            .any(|hint| hint.name.eq_ignore_ascii_case("IGNORE_PLAN_CACHE"))
+        {
+            return false;
+        }
+        let hint_only = self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_STRATEGY)
+            .is_ok_and(|strategy| {
+                strategy.eq_ignore_ascii_case(
+                    tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_STRATEGY_HINT_ONLY,
+                )
+            });
+        !hint_only
+            || hints
+                .iter()
+                .any(|hint| hint.name.eq_ignore_ascii_case("USE_PLAN_CACHE"))
     }
 
     /// Go `IsSafeToReusePointGetExecutor` plus the plan-cache reuse gates of
@@ -222,7 +294,7 @@ impl Session {
     /// visibility the ordinary planner would build for it (Go serves these
     /// from its prepared plan cache inside transactions as well).
     pub(crate) fn can_reuse_prepared_point_get(&self, plan: &PreparedPointGetPlan) -> bool {
-        if !self.vars.prepared_plan_cache_enabled() || !self.session_bindings.is_empty() {
+        if !self.vars.prepared_plan_cache_enabled() {
             return false;
         }
         if self
@@ -245,10 +317,23 @@ impl Session {
         plan: &Arc<PreparedPointGetPlan>,
         values: &[Datum],
     ) -> Option<PreparedPointGetExecution> {
+        self.bind_cached_prepared_point_get_for_binding(plan, values, None)
+    }
+
+    /// Rebuilds the point plan under the same binding-aware environment key
+    /// used by ordinary cached physical plans.
+    #[must_use]
+    pub fn bind_cached_prepared_point_get_for_binding(
+        &self,
+        plan: &Arc<PreparedPointGetPlan>,
+        values: &[Datum],
+        binding_sql: Option<&str>,
+    ) -> Option<PreparedPointGetExecution> {
         if !self.can_reuse_prepared_point_get(plan) {
             return None;
         }
-        plan.bind(values, &self.session_time_zone())
+        let environment = self.prepared_plan_cache_environment_for_binding(binding_sql)?;
+        plan.bind_with_environment(values, &self.session_time_zone(), &environment)
     }
 
     /// Binds fresh values into a retained DML plan after applying the prepared
@@ -258,8 +343,19 @@ impl Session {
         plan: &Arc<PreparedDmlPlan>,
         values: &[Datum],
     ) -> Option<PreparedDmlExecution> {
+        self.bind_cached_prepared_dml_for_statement(plan, values, plan.statement(), None)
+    }
+
+    /// Binds the effective DML statement and keys it by the matching binding.
+    #[must_use]
+    pub fn bind_cached_prepared_dml_for_statement(
+        &self,
+        plan: &Arc<PreparedDmlPlan>,
+        values: &[Datum],
+        statement: &Stmt,
+        binding_sql: Option<&str>,
+    ) -> Option<PreparedDmlExecution> {
         if !self.vars.prepared_plan_cache_enabled()
-            || !self.session_bindings.is_empty()
             || self
                 .vars
                 .optimizer_fix_control()
@@ -267,9 +363,33 @@ impl Session {
         {
             return None;
         }
-        self.prepared_plan_cache_environment()?;
+        let environment = self.prepared_plan_cache_environment_for_binding(binding_sql)?;
+        {
+            let catalog = self.lock_catalog().ok()?;
+            if let Some(cached) = plan.bind_cached_for_statement(
+                values,
+                &catalog,
+                self.current_database(),
+                &environment,
+                statement,
+            ) {
+                return Some(cached);
+            }
+        }
+        // The statement context snapshots sequence/key-decode metadata from
+        // this same catalog. Build it after releasing the cache-probe guard,
+        // exactly as the PREPARE path does, then reacquire the catalog for
+        // physical enumeration.
+        let planner_context = self.statement_context(true);
         let catalog = self.lock_catalog().ok()?;
-        plan.bind(values, &catalog, self.current_database())
+        plan.bind_for_statement(
+            values,
+            &catalog,
+            self.current_database(),
+            &planner_context,
+            &environment,
+            statement,
+        )
     }
 
     /// Binds the current values into a retained SELECT after applying the
@@ -280,8 +400,21 @@ impl Session {
         plan: &Arc<PreparedSelectPlan>,
         values: &[Datum],
     ) -> Option<PreparedSelectExecution> {
+        self.bind_cached_prepared_select_for_statement(plan, values, plan.statement(), None)
+    }
+
+    /// Binds the effective SELECT statement and keys its physical tree by the
+    /// exact matched binding SQL, as Go's `newPlanCacheKeyWithMatchedBinding`
+    /// does.
+    #[must_use]
+    pub fn bind_cached_prepared_select_for_statement(
+        &self,
+        plan: &Arc<PreparedSelectPlan>,
+        values: &[Datum],
+        statement: &Stmt,
+        binding_sql: Option<&str>,
+    ) -> Option<PreparedSelectExecution> {
         if !self.vars.prepared_plan_cache_enabled()
-            || !self.session_bindings.is_empty()
             || self
                 .vars
                 .optimizer_fix_control()
@@ -289,12 +422,16 @@ impl Session {
         {
             return None;
         }
-        let environment = self.prepared_plan_cache_environment()?;
+        let environment = self.prepared_plan_cache_environment_for_binding(binding_sql)?;
         {
             let catalog = self.lock_catalog().ok()?;
-            if let Some(execution) =
-                plan.bind_cached(values, &catalog, self.current_database(), &environment)
-            {
+            if let Some(execution) = plan.bind_cached_for_statement(
+                values,
+                &catalog,
+                self.current_database(),
+                &environment,
+                statement,
+            ) {
                 return Some(execution);
             }
         }
@@ -303,12 +440,13 @@ impl Session {
         // the guard first would recursively lock the same mutex.
         let ctx = self.statement_context(false);
         let catalog = self.lock_catalog().ok()?;
-        plan.bind(
+        plan.bind_for_statement(
             values,
             &catalog,
             self.current_database(),
             &ctx,
             &environment,
+            statement,
         )
     }
 }

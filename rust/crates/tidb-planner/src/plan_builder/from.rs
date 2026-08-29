@@ -657,9 +657,6 @@ impl ViewBuildGuard {
 impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     /// Go `buildTableRefs(ctx, from)` (`:420`).
     ///
-    /// The deferred `cte.recursiveRef = false` loop is a no-op narrowing; see
-    /// this module's narrowings.
-    ///
     /// # Errors
     ///
     /// Whatever the `FROM` clause's own build returns.
@@ -667,7 +664,14 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let Some(join) = from else {
             return Ok(self.build_table_dual());
         };
-        self.build_join(join)
+        let result = self.build_join(join);
+        // Go resets this per query block. Multiple recursive SELECT blocks
+        // may each reference the CTE once; a second reference in one block
+        // is still rejected before this deferred reset runs.
+        for cte in &mut self.outer_ctes {
+            cte.recursive_ref = false;
+        }
+        result
     }
 
     /// Go `buildResultSetNode`'s `*ast.TableSource` arm over a derived table
@@ -701,6 +705,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let adopted = (self.lateral_outer_count > 0 && lateral)
             .then(|| std::mem::take(&mut self.lateral_outer_count));
 
+        let modified_ctes = self.prepare_cte_check_for_subquery();
         let built = match subquery {
             QueryStmt::Select(select) => {
                 // `:482` "b.optFlag |= rule.FlagConstantPropagation".
@@ -714,6 +719,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 self.build_set_opr(set_opr)
             }
         };
+        self.reset_cte_check_for_subquery(&modified_ctes);
 
         if let Some((saved_schemas, saved_names, saved_count)) = hidden {
             self.outer_schemas.extend(saved_schemas);

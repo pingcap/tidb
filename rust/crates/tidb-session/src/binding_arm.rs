@@ -436,7 +436,7 @@ impl Session {
     /// Returns the statement to plan. The caller keeps the original when
     /// nothing matched, so a session with no bindings pays one map-emptiness
     /// test and nothing else.
-    pub(crate) fn bind_statement_hints(&mut self, stmt: &Stmt) -> Option<Stmt> {
+    fn bind_statement_hints_with_sql(&mut self, stmt: &Stmt) -> Option<(Stmt, String)> {
         // The Go shape is a cache-size test before any digest is computed;
         // here the global "cache" is the table itself, so its side of the
         // test is a row count (see [`Self::has_global_binding_rows`]).
@@ -456,32 +456,42 @@ impl Session {
         // Session bindings shadow global ones, which is Go's order in
         // `planner.optimize`: `getBindingFromSession` first, the domain
         // handle only on a miss.
-        let hints = match self.session_bindings.match_statement(
+        let (hints, bind_sql) = match self.session_bindings.match_statement(
             &no_db_digest,
             &table_names,
             &self.current_db,
             fuzzy_enabled,
         ) {
-            Some(matched) => matched.hints.clone(),
+            Some(matched) => (matched.hints.clone(), matched.bind_sql.clone()),
             None => {
                 let global = self.load_global_bindings().ok()?;
-                global
-                    .match_statement(&no_db_digest, &table_names, &self.current_db, fuzzy_enabled)?
-                    .hints
-                    .clone()
+                let matched = global.match_statement(
+                    &no_db_digest,
+                    &table_names,
+                    &self.current_db,
+                    fuzzy_enabled,
+                )?;
+                (matched.hints.clone(), matched.bind_sql.clone())
             }
         };
         let mut bound = stmt.clone();
         binding::bind_hints(&mut bound, &hints);
         self.found_in_binding = true;
-        Some(bound)
+        Some((bound, bind_sql))
     }
 
-    /// Whether this session has any SQL bindings.  Prepared fast paths refuse
-    /// the optimization while bindings exist, because a matching binding can
-    /// replace the statement's access hints before planning.
-    pub fn has_session_bindings(&self) -> bool {
-        !self.session_bindings.is_empty()
+    pub(crate) fn bind_statement_hints(&mut self, stmt: &Stmt) -> Option<Stmt> {
+        self.bind_statement_hints_with_sql(stmt)
+            .map(|(statement, _)| statement)
+    }
+
+    /// Applies the binding selected for this EXECUTE and returns its exact
+    /// `BindSQL`, which Go includes in the prepared-plan cache key. A miss
+    /// returns an unchanged clone and no key component.
+    #[must_use]
+    pub fn prepared_statement_with_binding(&mut self, stmt: &Stmt) -> (Stmt, Option<String>) {
+        self.bind_statement_hints_with_sql(stmt)
+            .map_or_else(|| (stmt.clone(), None), |(stmt, sql)| (stmt, Some(sql)))
     }
 
     /// Whether `@@last_plan_from_binding` should report a hit, which is the

@@ -92,19 +92,6 @@ impl VecGroupChecker {
         self.split_key_iter(keys.iter().map(Vec::as_slice), collations)
     }
 
-    /// Splits the selected rows without copying their already-owned keys.
-    pub(crate) fn split_indexed(
-        &mut self,
-        indices: &[usize],
-        keys: &[Vec<Datum>],
-        collations: &[Collation],
-    ) -> Result<bool, EvalError> {
-        self.split_key_iter(
-            indices.iter().map(|index| keys[*index].as_slice()),
-            collations,
-        )
-    }
-
     fn split_key_iter<'a, I>(
         &mut self,
         keys: I,

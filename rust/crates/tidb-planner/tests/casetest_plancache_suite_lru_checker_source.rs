@@ -101,17 +101,6 @@ fn json_extract_prepared_and_non_prepared_cache_boundaries() {}
 #[ignore = "go-parity-gap: expression-index parameter cache-refusal needs executed prepared plans"]
 fn json_extract_expression_index_params_never_reuse_cached_plans() {}
 
-/// GO PORT of `plan_cache_suite_test.go:196 TestNonPreparedPlanCacheInformationSchema`.
-///
-/// Re-derived contract: over MockInfoSchema{MockSignedTable,MockUnsignedTable}
-/// (:203), Preprocess then TWO `planner.Optimize` calls of the identical
-/// `select avg(a),avg(b),avg(c) from t` both succeed without error (:208-211)
-/// and the second hits the non-prepared cache (`FoundInPlanCache == true`,
-/// :212).
-#[test]
-#[ignore = "go-parity-gap: preprocess/optimize over mock infoschema plus SessionVars.FoundInPlanCache unported"]
-fn non_prepared_cache_information_schema_aggregates_hit_on_second_optimize() {}
-
 /// GO PORT of `plan_cache_suite_test.go:216 TestNonPreparedPlanTypeRandomly`.
 ///
 /// Re-derived contract: seven tables typed int/varchar/double/decimal/year/

@@ -20,8 +20,6 @@
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
 
 use tidb_datatype::Datum;
 use tidb_planner::cardinality::pseudo::{
@@ -39,175 +37,6 @@ use tidb_planner::selectivity_greedy::{
 
 use crate::kv_table::{IndexRange, KvIndex, KvTable};
 use crate::plan_trace::PSEUDO_ROW_COUNT;
-
-/// The full statistics items resident in one stats-cache table version.
-///
-/// Go keeps this state on the domain's shared `statistics.Table`, so a load
-/// triggered while planning one statement is visible to later statements and
-/// connections until that table version is replaced. Rust eagerly carries the
-/// histogram payloads, but this state preserves the same residency contract
-/// for cardinality decisions that depend on `IsFullLoad`.
-#[derive(Debug, Default)]
-pub struct StatsLoadState {
-    loaded: Mutex<LoadedStatistics>,
-    /// Set whenever anything enters a pending set, cleared by `advance`.
-    /// Statement execution advances EVERY cached table's load state
-    /// (`Catalog::advance_statistics_loads`), and the overwhelming common case
-    /// is "nothing is pending" — one relaxed atomic read per table instead of
-    /// a lock-and-scan of eight collections.
-    has_pending: AtomicBool,
-}
-
-#[derive(Clone, Debug, Default)]
-struct LoadedStatistics {
-    columns: BTreeSet<i64>,
-    indexes: BTreeSet<i64>,
-    column_order: Vec<i64>,
-    index_order: Vec<i64>,
-    pending_columns: BTreeSet<i64>,
-    pending_indexes: BTreeSet<i64>,
-    pending_column_order: Vec<i64>,
-    pending_index_order: Vec<i64>,
-}
-
-impl StatsLoadState {
-    /// Atomically publishes one statement's loads and returns the cumulative
-    /// cache contents. `fallback_column` implements Go's determinate-mode rule:
-    /// when the statement has no analyzed full-load predicate and the table has
-    /// no resident full item at all, load its first analyzed public column.
-    pub(crate) fn mark_and_snapshot(
-        &self,
-        mut columns: BTreeSet<i64>,
-        indexes: BTreeSet<i64>,
-        fallback_column: Option<i64>,
-    ) -> (BTreeSet<i64>, BTreeSet<i64>) {
-        let mut loaded = self
-            .loaded
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if columns.is_empty() && loaded.columns.is_empty() && loaded.indexes.is_empty() {
-            columns.extend(fallback_column);
-        }
-        for id in columns {
-            if loaded.columns.insert(id) {
-                loaded.column_order.push(id);
-            }
-        }
-        for id in indexes {
-            if loaded.indexes.insert(id) {
-                loaded.index_order.push(id);
-            }
-        }
-        (loaded.columns.clone(), loaded.indexes.clone())
-    }
-
-    /// Queues statistics touched while costing a physical access path.
-    /// Logical derivation has already taken its snapshot when this runs, so
-    /// these items affect later statements without retroactively changing the
-    /// statement that triggered Go's asynchronous load.
-    fn mark_accessed(&self, columns: BTreeSet<i64>, indexes: BTreeSet<i64>) {
-        if columns.is_empty() && indexes.is_empty() {
-            return;
-        }
-        let mut loaded = self
-            .loaded
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        for id in columns {
-            if loaded.pending_columns.insert(id) {
-                loaded.pending_column_order.push(id);
-            }
-        }
-        for id in indexes {
-            if loaded.pending_indexes.insert(id) {
-                loaded.pending_index_order.push(id);
-            }
-        }
-        self.has_pending.store(true, Ordering::Relaxed);
-    }
-
-    fn advance(&self) {
-        if !self.has_pending.swap(false, Ordering::Relaxed) {
-            // Nothing queued since the last advance: Go's own load loop only
-            // ever touches tables with something to load.
-            return;
-        }
-        let mut loaded = self
-            .loaded
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let pending_columns = std::mem::take(&mut loaded.pending_columns);
-        let pending_indexes = std::mem::take(&mut loaded.pending_indexes);
-        let pending_column_order = std::mem::take(&mut loaded.pending_column_order);
-        let pending_index_order = std::mem::take(&mut loaded.pending_index_order);
-        for id in pending_column_order {
-            if pending_columns.contains(&id) && loaded.columns.insert(id) {
-                loaded.column_order.push(id);
-            }
-        }
-        for id in pending_index_order {
-            if pending_indexes.contains(&id) && loaded.indexes.insert(id) {
-                loaded.index_order.push(id);
-            }
-        }
-    }
-
-    #[cfg(test)]
-    fn snapshot(&self) -> (BTreeSet<i64>, BTreeSet<i64>) {
-        let loaded = self
-            .loaded
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        (loaded.columns.clone(), loaded.indexes.clone())
-    }
-
-    #[cfg(test)]
-    fn pending(&self) -> (BTreeSet<i64>, BTreeSet<i64>) {
-        let loaded = self
-            .loaded
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        (
-            loaded.pending_columns.clone(),
-            loaded.pending_indexes.clone(),
-        )
-    }
-
-    fn ordered_columns(&self, requested: &BTreeSet<i64>) -> Vec<i64> {
-        self.ordered_ids(requested, false)
-    }
-
-    fn ordered_indexes(&self, requested: &BTreeSet<i64>) -> Vec<i64> {
-        self.ordered_ids(requested, true)
-    }
-
-    fn ordered_ids(&self, requested: &BTreeSet<i64>, indexes: bool) -> Vec<i64> {
-        let loaded = self
-            .loaded
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let (resident, order) = if indexes {
-            (&loaded.indexes, &loaded.index_order)
-        } else {
-            (&loaded.columns, &loaded.column_order)
-        };
-        let mut ordered = Vec::with_capacity(requested.len());
-        for id in order {
-            if requested.contains(id) {
-                ordered.push(*id);
-            }
-        }
-        // Callers that deliberately model an eager payload (for example the
-        // physical index-join floor) may request IDs that were never observed
-        // by the shared residency state. Keep those IDs deterministic.
-        for id in requested {
-            if !resident.contains(id) || !ordered.contains(id) {
-                ordered.push(*id);
-            }
-        }
-        ordered
-    }
-}
 
 /// One table's loaded statistics, in the shape the estimator reads them.
 ///
@@ -246,8 +75,6 @@ pub struct TableStatistics {
     pub columns: BTreeMap<i64, ColumnStats>,
     /// Index statistics by index ID.
     pub indexes: BTreeMap<i64, IndexStats>,
-    /// Go domain-cache residency for this exact statistics-table version.
-    load_state: Arc<StatsLoadState>,
 }
 
 impl TableStatistics {
@@ -299,7 +126,6 @@ impl TableStatistics {
             last_analyze_version: 0,
             columns,
             indexes,
-            load_state: Arc::default(),
         }
     }
 
@@ -312,41 +138,6 @@ impl TableStatistics {
         self.version = version;
         self.last_analyze_version = last_analyze_version;
         self
-    }
-
-    /// Installs the state owned by the shared cluster statistics snapshot.
-    #[must_use]
-    pub fn with_shared_load_state(mut self, load_state: Arc<StatsLoadState>) -> Self {
-        self.load_state = load_state;
-        self
-    }
-
-    pub(crate) fn mark_loaded_statistics(
-        &self,
-        columns: BTreeSet<i64>,
-        indexes: BTreeSet<i64>,
-        fallback_column: Option<i64>,
-    ) -> (BTreeSet<i64>, BTreeSet<i64>) {
-        self.load_state
-            .mark_and_snapshot(columns, indexes, fallback_column)
-    }
-
-    pub(crate) fn mark_accessed_statistics(&self, columns: BTreeSet<i64>, indexes: BTreeSet<i64>) {
-        self.load_state.mark_accessed(columns, indexes);
-    }
-
-    pub(crate) fn advance_statistics_loads(&self) {
-        self.load_state.advance();
-    }
-
-    #[cfg(test)]
-    pub(crate) fn loaded_statistics(&self) -> (BTreeSet<i64>, BTreeSet<i64>) {
-        self.load_state.snapshot()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn pending_statistics(&self) -> (BTreeSet<i64>, BTreeSet<i64>) {
-        self.load_state.pending()
     }
 
     /// Go `cardinality.EstimateColumnNDV` and its `getTotalRowCount` helper.
@@ -365,12 +156,10 @@ impl TableStatistics {
     ) -> Option<f64> {
         let column = self.columns.get(&column_id)?;
         let version = column.histogram.last_update_version;
-        let ordered_indexes = self.load_state.ordered_indexes(full_loaded_indexes);
-        let ordered_columns = self.load_state.ordered_columns(full_loaded_columns);
         let analyzed_count = if full_loaded_columns.contains(&column_id) {
             column.total_row_count() as i64
         } else {
-            ordered_indexes
+            full_loaded_indexes
                 .iter()
                 .find_map(|id| {
                     self.indexes.get(id).and_then(|index| {
@@ -379,7 +168,7 @@ impl TableStatistics {
                     })
                 })
                 .unwrap_or_else(|| {
-                    ordered_columns
+                    full_loaded_columns
                         .iter()
                         .find_map(|id| {
                             self.columns.get(id).and_then(|candidate| {
@@ -407,14 +196,6 @@ pub struct ScanEstimate {
     /// Whether these numbers came from `statistics.PseudoTable` rather than
     /// from loaded statistics -- what makes `EXPLAIN` print `stats:pseudo`.
     pub pseudo: bool,
-}
-
-impl ScanEstimate {
-    /// The stats-less estimate, for a table that has never been analyzed.
-    #[must_use]
-    pub(crate) const fn pseudo(rows: f64) -> Self {
-        Self { rows, pseudo: true }
-    }
 }
 
 /// The session inputs Go reads off `PlanContext`; this tier touches none of
@@ -770,6 +551,7 @@ pub(crate) fn selectivity_with_default_string_match_selectivity(
 /// product instead treats `a >= 3 AND a <= 7` as two independent half-lines
 /// and multiplies their rates: 1107.78 rows where TiDB prints 250.00, because
 /// `[3,7]` is one BETWEEN range and neither `[3,+inf]` nor `[-inf,7]` is.
+#[cfg(test)]
 pub(crate) fn selectivity_of_conjuncts(
     conjuncts: &[&tidb_ast::Expr],
     table: &KvTable,
@@ -1717,51 +1499,6 @@ mod tests {
             statistics.estimate_column_ndv(target_id, &target_full, &BTreeSet::new()),
             Some(3000.0)
         );
-    }
-
-    #[test]
-    fn estimate_column_ndv_preserves_resident_load_precedence() {
-        let later_handle_id = 1;
-        let target_id = 2;
-        let first_predicate_id = 3;
-        let version = 42;
-        let column = |id, ndv, count| ColumnStats {
-            histogram: histogram_with_count(id, ndv, count, version),
-            topn: None,
-            cms: None,
-            stats_ver: 2,
-            unsigned: false,
-        };
-        let statistics = TableStatistics::new(
-            150_000,
-            0,
-            [
-                (later_handle_id, column(later_handle_id, 149_568, 150_000)),
-                (target_id, column(target_id, 25, 150_000)),
-                (first_predicate_id, column(first_predicate_id, 5, 149_998)),
-            ]
-            .into_iter()
-            .collect(),
-            BTreeMap::new(),
-        );
-
-        statistics.mark_loaded_statistics(
-            [first_predicate_id].into_iter().collect(),
-            BTreeSet::new(),
-            None,
-        );
-        statistics
-            .mark_accessed_statistics([later_handle_id].into_iter().collect(), BTreeSet::new());
-        statistics.advance_statistics_loads();
-        let (full_columns, full_indexes) =
-            statistics.mark_loaded_statistics(BTreeSet::new(), BTreeSet::new(), None);
-
-        let ndv = statistics
-            .estimate_column_ndv(target_id, &full_columns, &full_indexes)
-            .unwrap();
-        assert!((ndv - 25.000_333_337_777_837).abs() < 1e-12, "{ndv:.17}");
-        let joined_rows = 5.0 * statistics.row_count as f64 / ndv;
-        assert!((joined_rows - 29_999.6).abs() < 1e-9, "{joined_rows:.17}");
     }
 
     /// Go lowers row-valued IN to DNF before cardinality estimation and

@@ -121,7 +121,7 @@
 use std::collections::BTreeMap;
 
 use tidb_ast::{Expr, GroupByItem, OrderItem, SelectStmt};
-use tidb_datatype::FieldName;
+use tidb_datatype::{FieldName, FieldType, FieldTypeCode};
 use tidb_expr::aggregation::{names as agg_names, AggFuncDesc, ByItems};
 use tidb_expr::column::Column;
 use tidb_expr::expression::{CorrelatedColumn, Expression};
@@ -155,6 +155,14 @@ pub fn visit_exprs(expr: &mut Expr, f: &mut impl FnMut(&mut Expr) -> bool) {
     }
     impl<F: FnMut(&mut Expr) -> bool> tidb_ast::Visitor for Walker<'_, F> {
         fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            // Expression flags and extractors in Go are scoped to one query
+            // block: an Expr::Subquery carries HAS_SUBQUERY, but it does not
+            // inherit HAS_AGG/HAS_WINDOW from the query below it. Stop at the
+            // QueryStmt boundary while still visiting the left-hand value of
+            // IN/compare subqueries.
+            if node.is::<tidb_ast::QueryStmt>() {
+                return true;
+            }
             node.downcast_mut::<Expr>()
                 .is_some_and(|expr| (self.f)(expr))
         }
@@ -333,6 +341,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             clauses.push(&mut item.expr);
         }
 
+        let mut error_slot = None;
         for clause in clauses {
             visit_exprs(clause, &mut |node| {
                 // Only a SUBQUERY's interior is Go's concern here: an
@@ -342,10 +351,23 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     return false;
                 };
                 let mut inner = (**subquery).clone();
-                lift_correlated_aggregates(&mut inner, names, &mut lifted);
+                let inner_names = match self.subquery_source_names(&inner) {
+                    Ok(names) => names,
+                    Err(error) => {
+                        // The visitor API has no Result channel. Preserve the
+                        // first planner error and stop this subtree; it is
+                        // returned immediately after the walk.
+                        error_slot.get_or_insert(error);
+                        return true;
+                    }
+                };
+                lift_correlated_aggregates(&mut inner, names, &inner_names, &mut lifted);
                 **subquery = inner;
                 true
             });
+            if let Some(error) = error_slot.take() {
+                return Err(error);
+            }
         }
         for (index, expr) in field_exprs.into_iter().enumerate() {
             fields[index].expr = expr;
@@ -369,6 +391,36 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         }
         Ok(appended)
     }
+
+    /// Builds only a scalar subquery's local FROM scope, matching the first
+    /// phase of Go `correlatedAggregateResolver.resolveSelect`. Aggregate
+    /// ownership cannot be inferred from spelling: an unqualified `a` in
+    /// `SELECT SUM(a) FROM t` is local when `t.a` exists, even if the outer
+    /// block also has an `a`.
+    fn subquery_source_names(
+        &mut self,
+        query: &tidb_ast::QueryStmt,
+    ) -> Result<Vec<FieldName>, PlanError> {
+        let tidb_ast::QueryStmt::Select(select) = query else {
+            return Ok(Vec::new());
+        };
+        let handle_depth = self.handle_helper.depth();
+        let cte_depth = self.outer_ctes.len();
+        let result = (|| {
+            if let Some(with) = &select.with {
+                self.build_with(with, &super::cte::cte_consumer_counts(query, with))?;
+            }
+            self.build_table_refs(select.from.as_ref())
+        })();
+        while self.handle_helper.depth() > handle_depth {
+            self.handle_helper.pop_map();
+        }
+        self.outer_ctes.truncate(cte_depth);
+        let plan = result?;
+        let names = plan.output_names().to_vec();
+        plan.dismantle();
+        Ok(names)
+    }
 }
 
 /// The interior half of `correlatedAggregateResolver.Enter` (`:3163`): inside
@@ -378,6 +430,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
 fn lift_correlated_aggregates(
     subquery: &mut tidb_ast::QueryStmt,
     outer_names: &[FieldName],
+    inner_names: &[FieldName],
     lifted: &mut Vec<Expr>,
 ) {
     let tidb_ast::QueryStmt::Select(select) = subquery else {
@@ -398,7 +451,9 @@ fn lift_correlated_aggregates(
                 let Expr::Column(path) = inner else {
                     return false;
                 };
-                if find_field_name(outer_names, path).is_some() {
+                if find_field_name(inner_names, path).is_some() {
+                    reads_only_outer = false;
+                } else if find_field_name(outer_names, path).is_some() {
                     reads_outer = true;
                 } else {
                     reads_only_outer = false;
@@ -828,10 +883,19 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let mut all_aggs_first_row = true;
 
         for agg in agg_funcs {
-            let (name, args, distinct, order_by) = decompose_aggregate(agg)?;
-            let mut built_args = Vec::with_capacity(args.len());
+            let (name, args, distinct, order_by, separator) = decompose_aggregate(agg)?;
+            let mut built_args = Vec::with_capacity(args.len() + usize::from(separator.is_some()));
             for arg in args {
                 built_args.push(self.rewrite_scalar(arg, &schema, &names, markers)?);
+            }
+            if let Some(separator) = separator {
+                let mut field_type = FieldType::parser(FieldTypeCode::VarString);
+                field_type.set_charset_name(separator.charset.clone());
+                field_type.set_collation_name(separator.collation.clone());
+                built_args.push(Expression::Constant(tidb_expr::constant::Constant::new(
+                    tidb_datatype::Datum::new_string(separator.value.clone()),
+                    field_type,
+                )));
             }
             let mut descriptor = AggFuncDesc::new(self.ctx, &name, built_args, distinct)
                 .map_err(|error| PlanError::internal(format!("{error}")))?;
@@ -1065,7 +1129,13 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
 /// `GROUP_CONCAT`'s separator is Go's LAST argument — which is exactly why
 /// `buildAggregation` writes `trueArgs := aggFunc.Args[:len(aggFunc.Args)-1]`
 /// before resolving the `ORDER BY` positions (`:295`).
-type DecomposedAggregate<'a> = (String, &'a [Expr], bool, &'a [OrderItem]);
+type DecomposedAggregate<'a> = (
+    String,
+    &'a [Expr],
+    bool,
+    &'a [OrderItem],
+    Option<&'a tidb_ast::TypedString>,
+);
 
 fn decompose_aggregate(agg: &Expr) -> Result<DecomposedAggregate<'_>, PlanError> {
     match agg {
@@ -1073,17 +1143,18 @@ fn decompose_aggregate(agg: &Expr) -> Result<DecomposedAggregate<'_>, PlanError>
             name,
             distinct,
             args,
-        } => Ok((name.to_ascii_lowercase(), args, *distinct, &[])),
+        } => Ok((name.to_ascii_lowercase(), args, *distinct, &[], None)),
         Expr::GroupConcat {
             distinct,
             args,
             order_by,
-            ..
+            separator,
         } => Ok((
             agg_names::GROUP_CONCAT.to_owned(),
             args,
             *distinct,
             order_by,
+            Some(separator),
         )),
         other => Err(PlanError::internal(format!(
             "not an aggregate function: {}",

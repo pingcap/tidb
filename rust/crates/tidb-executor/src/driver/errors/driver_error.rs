@@ -343,7 +343,7 @@ pub enum DriverError {
     WindowNoInheritFrame(String),
     /// Go `plannererrors.ErrNotSupportedYet` (1235) as the window builder
     /// raises it, carrying the feature text Go names.
-    NotSupportedYet(&'static str),
+    NotSupportedYet(Cow<'static, str>),
     /// Go `plannererrors.ErrWindowFrameIllegal` (3586): a frame bound whose
     /// offset is negative, NULL or non-integral, or a `start` bound that ranks
     /// AFTER its `end` bound.

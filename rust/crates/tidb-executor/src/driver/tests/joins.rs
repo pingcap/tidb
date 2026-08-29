@@ -507,22 +507,6 @@ fn tpcc_check_seven_propagates_the_warehouse_range_to_both_leaves() {
     let QueryStmt::Select(select) = &**query else {
         panic!("not select")
     };
-    let rows = crate::driver::join_reorder::row_source(
-        select.from.as_ref().expect("FROM"),
-        select.where_clause.as_ref(),
-        &catalog,
-        "test",
-        &crate::StmtContext::for_query(),
-    )
-    .expect("the TPCC join group is modelled");
-    let order_line = rows.filters_for("order_line").expect("order_line leaf");
-    assert!(
-        order_line.iter().any(|filter| {
-            let restored = filter.restore();
-            restored.contains("`order_line`.`ol_w_id`=1") || restored.contains("`ol_w_id`=1")
-        }),
-        "o_w_id=1 must propagate through the equality edge: {order_line:?}",
-    );
     assert_eq!(
         run_select_on(sql, &catalog, &ctx).unwrap(),
         vec![vec![Datum::Int(2)]],

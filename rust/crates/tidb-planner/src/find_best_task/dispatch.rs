@@ -117,6 +117,12 @@ pub struct DispatchContext<'a> {
     /// Go `SessionVars.HashJoinConcurrency()`, stamped onto every hash-join
     /// candidate by `NewPhysicalHashJoin`.
     pub hash_join_concurrency: usize,
+    /// Go `SessionVars.MemQuotaApplyCache`, used by
+    /// `exhaustPhysicalPlans4LogicalApply` after estimating the correlated
+    /// value hit ratio.
+    pub apply_cache_capacity: i64,
+    /// Go `SessionVars.IsMPPAllowed()`, which controls MPP candidates.
+    pub mpp_allowed: bool,
     /// Go `BaseLogicalPlan.taskMap`, keyed here by `(plan id, prop key)`.
     task_map: HashMap<(i32, String), Task>,
     /// Go `SessionVars.AllocPlanColumnID`: the column-id allocator the
@@ -144,6 +150,9 @@ impl<'a> DispatchContext<'a> {
             limit_push_down_threshold: 5_000,
             enable_paging: true,
             hash_join_concurrency: 5,
+            apply_cache_capacity: 0,
+            // Go `vardef.DefTiDBAllowMPPExecution` is true.
+            mpp_allowed: true,
             task_map: HashMap::new(),
             column_ids: None,
         }
@@ -185,6 +194,20 @@ impl<'a> DispatchContext<'a> {
         self
     }
 
+    /// The same context with Go's per-session Apply-cache quota.
+    #[must_use]
+    pub const fn with_apply_cache_capacity(mut self, capacity: i64) -> Self {
+        self.apply_cache_capacity = capacity;
+        self
+    }
+
+    /// The same context with Go's resolved `IsMPPAllowed()` value.
+    #[must_use]
+    pub const fn with_mpp_allowed(mut self, allowed: bool) -> Self {
+        self.mpp_allowed = allowed;
+        self
+    }
+
     /// The same context with the session's column-id allocator attached.
     #[must_use]
     pub fn with_column_ids(
@@ -206,6 +229,9 @@ fn prop_key(prop: &PhysicalProperty) -> String {
     );
     for item in &prop.sort_items {
         let _ = write!(key, "|{}:{}", item.col, item.desc);
+    }
+    for item in &prop.advisory_sort_items {
+        let _ = write!(key, "|advisory:{}:{}", item.col, item.desc);
     }
     if let Some(runtime) = &prop.index_join_prop {
         let _ = write!(
@@ -309,7 +335,7 @@ fn exhaust_physical_plans(
             // Go's two preference slices, in order: the TopN operators
             // (`getPhysTopN`), then the LIMIT half (`getPhysLimits`).
             let mut slices = Vec::with_capacity(2);
-            let topns = physical::get_phys_topn(op, prop, ctx.allocator);
+            let topns = physical::get_phys_topn(op, prop, ctx.allocator, ctx.mpp_allowed);
             if !topns.is_empty() {
                 slices.push(topns);
             }
@@ -351,7 +377,7 @@ fn exhaust_physical_plans(
             use crate::plan_builder::from::join_hint_flags;
 
             let reduced = crate::find_best_task::project_one_join(op, plan)?;
-            let (left_columns, right_columns, _, _) = op.get_join_keys();
+            let (left_columns, right_columns, is_null_eq, _) = op.get_join_keys();
             let column = |columns: &[tidb_expr::column::Column], id: i64| {
                 columns
                     .iter()
@@ -430,9 +456,12 @@ fn exhaust_physical_plans(
                             use_outer_to_build: shape.use_outer_to_build,
                             left_join_keys: left_columns.clone(),
                             right_join_keys: right_columns.clone(),
+                            equal_conditions: op.equal_conditions.clone(),
+                            na_equal_conditions: op.na_eq_conditions.clone(),
                             left_conditions: op.left_conditions.clone(),
                             right_conditions: op.right_conditions.clone(),
                             other_conditions: op.other_conditions.clone(),
+                            default_values: op.default_values.clone(),
                         })
                     }
                     JoinStrategy::Merge {
@@ -462,6 +491,7 @@ fn exhaust_physical_plans(
                             left_conditions: op.left_conditions.clone(),
                             right_conditions: op.right_conditions.clone(),
                             other_conditions: op.other_conditions.clone(),
+                            default_values: op.default_values.clone(),
                             desc,
                         })
                     }
@@ -470,29 +500,155 @@ fn exhaust_physical_plans(
                         kind,
                         keep_outer_order,
                         ..
-                    } => PhysicalPlan::IndexJoin(physical::PhysicalIndexJoin {
-                        base,
-                        join_type: op.join_type,
-                        inner_child_idx: 1 - outer_idx,
-                        kind,
-                        keep_outer_order,
-                        inner_access_table_id: None,
-                        inner_access_index_id: None,
-                        left_join_keys: left_columns.clone(),
-                        right_join_keys: right_columns.clone(),
-                        left_conditions: op.left_conditions.clone(),
-                        right_conditions: op.right_conditions.clone(),
-                        ranges: crate::ranger::types::Ranges::default(),
-                        range_rebuild: None,
-                    }),
+                    } => {
+                        let (outer_join_keys, inner_join_keys) = if outer_idx == 0 {
+                            (left_columns.clone(), right_columns.clone())
+                        } else {
+                            (right_columns.clone(), left_columns.clone())
+                        };
+                        PhysicalPlan::IndexJoin(physical::PhysicalIndexJoin {
+                            base,
+                            join_type: op.join_type,
+                            inner_child_idx: 1 - outer_idx,
+                            kind,
+                            keep_outer_order,
+                            inner_access_table_id: None,
+                            inner_access_index_id: None,
+                            left_join_keys: left_columns.clone(),
+                            right_join_keys: right_columns.clone(),
+                            outer_join_keys,
+                            inner_join_keys,
+                            is_null_eq: is_null_eq.clone(),
+                            left_conditions: op.left_conditions.clone(),
+                            right_conditions: op.right_conditions.clone(),
+                            other_conditions: op.other_conditions.clone(),
+                            default_values: op.default_values.clone(),
+                            outer_hash_keys: Vec::new(),
+                            inner_hash_keys: Vec::new(),
+                            equal_conditions: op.equal_conditions.clone(),
+                            ranges: crate::ranger::types::Ranges::default(),
+                            key_off2_idx_off: Vec::new(),
+                            idx_col_lens: Vec::new(),
+                            compare_filters: None,
+                            range_rebuild: None,
+                        })
+                    }
                 };
                 joins.push(physical);
             }
             Ok(one(joins))
         }
-        LogicalPlan::Apply(_) => Err(PlanError::internal(
-            "exhaustPhysicalPlans4LogicalApply is not ported to the dispatcher",
-        )),
+        LogicalPlan::Apply(op) => {
+            // Go `exhaustPhysicalPlans4LogicalApply`: Apply can preserve only
+            // an order supplied by its OUTER child and never runs as MPP.
+            let outer_schema = plan
+                .children()
+                .first()
+                .and_then(LogicalPlan::schema)
+                .ok_or_else(|| PlanError::internal("LogicalApply has no outer schema"))?;
+            if prop.task_tp == TaskType::Mpp
+                || !prop.sort_items.iter().all(|item| {
+                    outer_schema
+                        .columns
+                        .iter()
+                        .any(|column| column.unique_id == item.col)
+                })
+            {
+                return Ok(Vec::new());
+            }
+
+            let outer_rows = plan
+                .children()
+                .first()
+                .and_then(LogicalPlan::stats_info)
+                .map_or(0.0, crate::stats_info::StatsInfo::row_count);
+            let stats = op.base().base.stats_info().cloned();
+            let apply_rows = stats
+                .as_ref()
+                .map_or(0.0, crate::stats_info::StatsInfo::row_count);
+            // Go `physicalop.CalcChildExpectedCnt`.
+            let outer_expected_cnt = if prop.expected_cnt < apply_rows
+                || (!prop.is_sort_item_empty()
+                    && ctx.ordering_index_selectivity_ratio > 0.0
+                    && outer_rows > apply_rows
+                    && prop.expected_cnt < outer_rows
+                    && apply_rows > 0.0)
+            {
+                let rows_to_meet_first = if prop.is_sort_item_empty() {
+                    0.0
+                } else {
+                    ((outer_rows - apply_rows) * ctx.ordering_index_selectivity_ratio).max(0.0)
+                };
+                outer_rows * prop.expected_cnt / apply_rows + rows_to_meet_first
+            } else {
+                f64::MAX
+            };
+            let outer_prop = PhysicalProperty {
+                sort_items: prop.sort_items.clone(),
+                task_tp: TaskType::Root,
+                expected_cnt: outer_expected_cnt,
+                can_add_enforcer: false,
+                sort_items_for_partition: Vec::new(),
+                cte_producer_status: prop.cte_producer_status,
+                no_cop_push_down: true,
+                advisory_sort_items: Vec::new(),
+                index_join_prop: None,
+            };
+            let inner_prop = PhysicalProperty {
+                cte_producer_status: prop.cte_producer_status,
+                no_cop_push_down: prop.no_cop_push_down,
+                ..PhysicalProperty::default()
+            };
+
+            let can_use_cache = stats.as_ref().is_some_and(|stats| {
+                if stats.row_count() == 0.0 || ctx.apply_cache_capacity <= 0 {
+                    return false;
+                }
+                let ids = op
+                    .cor_cols
+                    .iter()
+                    .map(|column| column.column.unique_id)
+                    .collect::<Vec<_>>();
+                let (ndv, _) = crate::cardinality::derive_stats::estimate_cols_ndv_with_matched_len(
+                    &ids, stats,
+                );
+                1.0 - ndv / stats.row_count() > 0.1
+            });
+            let (left_join_keys, right_join_keys, _, _) = op.join.get_join_keys();
+            let mut base = physical::BasePhysicalPlan::new(
+                ctx.allocator,
+                crate::logical::LogicalApply::TYPE,
+                op.base().base.query_block_offset(),
+            );
+            base.base.set_stats(
+                stats.map(|stats| stats.scale_by_expect_cnt(prop.expected_cnt, ctx.skew_ratio)),
+            );
+            base.base.set_schema(op.base().base.schema().cloned());
+            base.set_children_req_props(vec![Some(outer_prop), Some(inner_prop)]);
+            let apply = physical::PhysicalApply {
+                hash_join: physical::PhysicalHashJoin {
+                    base,
+                    concurrency: ctx.hash_join_concurrency,
+                    join_type: op.join.join_type,
+                    inner_child_idx: 1,
+                    use_outer_to_build: false,
+                    left_join_keys,
+                    right_join_keys,
+                    equal_conditions: op.join.equal_conditions.clone(),
+                    na_equal_conditions: op.join.na_eq_conditions.clone(),
+                    left_conditions: op.join.left_conditions.clone(),
+                    right_conditions: op.join.right_conditions.clone(),
+                    other_conditions: op.join.other_conditions.clone(),
+                    default_values: op.join.default_values.clone(),
+                },
+                can_use_cache,
+                concurrency: 0,
+                keep_order: !prop.is_sort_item_empty(),
+                outer_schema: op.cor_cols.clone(),
+                no_decorrelate: op.no_decorrelate,
+            };
+            Ok(one(vec![PhysicalPlan::Apply(apply)]))
+        }
         other => Err(PlanError::internal(format!(
             "exhaustPhysicalPlans over {} is not ported to the dispatcher",
             other.tp()
@@ -598,6 +754,9 @@ fn find_best_task_uncached(
                 prop,
                 ctx.allocator,
             ));
+        }
+        LogicalPlan::CTE(op) if op.base.children().is_empty() => {
+            return physical::find_best_task_4_logical_cte(op, prop, ctx.allocator);
         }
         LogicalPlan::Show(op) => {
             return Ok(physical::find_best_task_4_logical_show(
@@ -923,6 +1082,151 @@ fn path_matches_index_join_runtime(
     }
 }
 
+/// Go `completeIndexJoinFeedBackInfo`: return the selected access's complete
+/// prefix lengths and map every logical inner key to the chosen key column.
+/// A key left at `-1` becomes a residual equality when the parent completes
+/// `PhysicalIndexJoin`.
+fn index_join_feedback(
+    ds: &crate::logical::DataSource,
+    path: &crate::access_path::PossiblePath,
+    runtime: &crate::physical_property::IndexJoinRuntimeProp,
+    ranges: crate::ranger::types::Ranges,
+) -> crate::task::IndexJoinInfo {
+    let (access_columns, idx_col_lens) = match path {
+        crate::access_path::PossiblePath::Table { .. } if ds.handle_is_int => (
+            ds.handle_cols.iter().take(1).collect::<Vec<_>>(),
+            Vec::new(),
+        ),
+        crate::access_path::PossiblePath::Table { .. } => (
+            ds.common_handle_cols.iter().collect::<Vec<_>>(),
+            ds.common_handle_lens.clone(),
+        ),
+        crate::access_path::PossiblePath::Index { index } => {
+            let source_index = ds.indexes.get(*index);
+            let schema = ds.base.base.schema();
+            let columns = source_index
+                .into_iter()
+                .flat_map(|index| &index.columns)
+                .filter_map(|column| schema.and_then(|schema| schema.columns.get(column.offset)))
+                .collect::<Vec<_>>();
+            let lengths = source_index
+                .map(|index| index.columns.iter().map(|column| column.length).collect())
+                .unwrap_or_default();
+            (columns, lengths)
+        }
+    };
+    let fixed = equality_fixed_ids(ds);
+    let mut key_off2_idx_off = vec![-1; runtime.inner_join_keys.len()];
+    let mut matched_runtime_key = false;
+    let mut first_unmatched_index_offset = access_columns.len();
+    for (idx_off, column) in access_columns.iter().copied().enumerate() {
+        if let Some(key_off) = runtime
+            .inner_join_keys
+            .iter()
+            .position(|key| key.unique_id == column.unique_id)
+        {
+            key_off2_idx_off[key_off] = i64::try_from(idx_off).unwrap_or(i64::MAX);
+            matched_runtime_key = true;
+        } else if !fixed.contains(&column.unique_id) {
+            first_unmatched_index_offset = idx_off;
+            break;
+        }
+    }
+    let compare_filters = matched_runtime_key
+        .then(|| access_columns.get(first_unmatched_index_offset).copied())
+        .flatten()
+        .and_then(|target_col| {
+            index_join_compare_filters(
+                ds,
+                runtime,
+                target_col,
+                first_unmatched_index_offset,
+                &idx_col_lens,
+            )
+        });
+    crate::task::IndexJoinInfo {
+        table_id: ds.physical_table_id,
+        index_id: match path {
+            crate::access_path::PossiblePath::Index { index } => {
+                ds.indexes.get(*index).map(|index| index.id)
+            }
+            crate::access_path::PossiblePath::Table { .. } => None,
+        },
+        ranges,
+        idx_col_lens,
+        key_off2_idx_off,
+        compare_filters,
+    }
+}
+
+/// Go `indexJoinPathBuildColManager`: comparisons against the first index
+/// column after the equality prefix become one retained per-outer-row range
+/// manager. The expression on the other side must depend on the outer schema
+/// and must not reference the inner data source.
+fn index_join_compare_filters(
+    ds: &crate::logical::DataSource,
+    runtime: &crate::physical_property::IndexJoinRuntimeProp,
+    target_col: &tidb_expr::column::Column,
+    target_index_offset: usize,
+    idx_col_lens: &[i64],
+) -> Option<crate::physical::IndexJoinCompareFilters> {
+    let inner_schema = ds.base.base.schema()?;
+    let mut ops = Vec::new();
+    let mut args = Vec::new();
+    for condition in &runtime.other_conditions {
+        let tidb_expr::expression::Expression::ScalarFunction(function) = condition else {
+            continue;
+        };
+        let [left, right] = function.args.as_slice() else {
+            continue;
+        };
+        let name = function.func_name.lowercase();
+        let (op, argument) = if left
+            .as_column()
+            .is_some_and(|column| column.unique_id == target_col.unique_id)
+        {
+            let op = match name {
+                "ge" => crate::physical::IndexJoinCompareOp::Ge,
+                "gt" => crate::physical::IndexJoinCompareOp::Gt,
+                "lt" => crate::physical::IndexJoinCompareOp::Lt,
+                "le" => crate::physical::IndexJoinCompareOp::Le,
+                _ => continue,
+            };
+            (op, right)
+        } else if right
+            .as_column()
+            .is_some_and(|column| column.unique_id == target_col.unique_id)
+        {
+            let op = match name {
+                "ge" => crate::physical::IndexJoinCompareOp::Le,
+                "gt" => crate::physical::IndexJoinCompareOp::Lt,
+                "lt" => crate::physical::IndexJoinCompareOp::Gt,
+                "le" => crate::physical::IndexJoinCompareOp::Ge,
+                _ => continue,
+            };
+            (op, left)
+        } else {
+            continue;
+        };
+        let affected = tidb_expr::simple_expr::extract_columns(argument);
+        if affected.is_empty() || affected.iter().any(|column| inner_schema.contains(column)) {
+            continue;
+        }
+        ops.push(op);
+        args.push(argument.clone());
+    }
+    (!ops.is_empty()).then(|| crate::physical::IndexJoinCompareFilters {
+        target_col: target_col.clone(),
+        target_index_offset,
+        col_length: idx_col_lens
+            .get(target_index_offset)
+            .copied()
+            .unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+        ops,
+        args,
+    })
+}
+
 fn find_best_task_4_logical_data_source(
     ds: &crate::logical::DataSource,
     prop: &PhysicalProperty,
@@ -1165,6 +1469,14 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     ));
                 }
                 base.base.set_stats(stats.clone());
+                let scan_kind = if ranges
+                    .iter()
+                    .all(|range| range.is_full_range(handle_type.is_unsigned()))
+                {
+                    crate::access_path::ResolvedTableScanKind::Full
+                } else {
+                    crate::access_path::ResolvedTableScanKind::Range
+                };
                 let scan = PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
                     base,
                     table_id: ds.physical_table_id,
@@ -1193,7 +1505,12 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     },
                     table_scan_penalty: ds.table_scan_penalty,
                     tikv_pushdown: None,
-                    resolved_descriptor: None,
+                    resolved_descriptor: Some(crate::access_path::ResolvedTableDescriptor::new(
+                        ds.physical_table_id,
+                        common_handle.is_some(),
+                        scan_kind,
+                        crate::access_path::TableScanExplainIdSuffix::IncludePlanId,
+                    )),
                 });
                 let table_plan = if table_filters.is_empty() {
                     scan
@@ -1224,13 +1541,10 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     index_plan_finished: true,
                     keep_order,
                     expect_cnt: prop.expected_cnt as u64,
-                    index_join_info: prop.index_join_prop.as_ref().map(|_| {
-                        crate::task::IndexJoinInfo {
-                            table_id: ds.physical_table_id,
-                            index_id: None,
-                            ranges: ranges.clone(),
-                        }
-                    }),
+                    index_join_info: prop
+                        .index_join_prop
+                        .as_ref()
+                        .map(|runtime| index_join_feedback(ds, path, runtime, ranges.clone())),
                     ..crate::task::CopTask::default()
                 })
             }
@@ -1440,11 +1754,17 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     keep_order,
                     desc,
                     ranges: ranges.clone(),
-                    range_rebuild: (!ds.pushed_down_conds.is_empty()
-                        && declared_index_prefix_complete)
-                        .then(|| {
+                    // Go retains `AccessCondition` on PhysicalIndexScan, not
+                    // every pushed predicate. Rebuilding the latter would
+                    // feed residual filters back into the ranger and make a
+                    // safe parameter change look uncacheable.
+                    range_rebuild: declared_index_prefix_complete
+                        .then_some(detach.as_ref())
+                        .flatten()
+                        .filter(|result| !result.access_conds.is_empty())
+                        .map(|result| {
                             crate::physical_plan_cache::IndexRangeRebuild::new(
-                                ds.pushed_down_conds.clone(),
+                                result.access_conds.clone(),
                                 index_cols.clone(),
                                 index_lengths.clone(),
                             )
@@ -1523,7 +1843,14 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         range_rebuild: None,
                         table_scan_penalty: ds.table_scan_penalty,
                         tikv_pushdown: None,
-                        resolved_descriptor: None,
+                        resolved_descriptor: Some(
+                            crate::access_path::ResolvedTableDescriptor::new(
+                                ds.physical_table_id,
+                                !ds.common_handle_cols.is_empty(),
+                                crate::access_path::ResolvedTableScanKind::RowId,
+                                crate::access_path::TableScanExplainIdSuffix::IncludePlanId,
+                            ),
+                        ),
                     });
                     let table_plan = if table_filters.is_empty() {
                         table_scan
@@ -1555,13 +1882,10 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     index_plan_finished: false,
                     keep_order,
                     expect_cnt: prop.expected_cnt as u64,
-                    index_join_info: prop.index_join_prop.as_ref().map(|_| {
-                        crate::task::IndexJoinInfo {
-                            table_id: ds.physical_table_id,
-                            index_id: Some(source_index.id),
-                            ranges: ranges.clone(),
-                        }
-                    }),
+                    index_join_info: prop
+                        .index_join_prop
+                        .as_ref()
+                        .map(|runtime| index_join_feedback(ds, path, runtime, ranges.clone())),
                     ..crate::task::CopTask::default()
                 })
             }
@@ -1569,7 +1893,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
         let cur = if cop_answer {
             cop
         } else {
-            cop.convert_to_root_task()?
+            cop.convert_to_root_task(ctx.allocator)?
         };
         if best.invalid() || compare_task_cost(ctx.coster, &cur, &best)? {
             best = cur;
@@ -1635,7 +1959,12 @@ fn enumerate_physical_plans_4_task(
                 ctx.limit_push_down_threshold,
                 &mut state,
             );
-            let mut cur_task = match attach2_task(pp.clone_shallow(), child_tasks, ctx.column_ids) {
+            let mut cur_task = match attach2_task(
+                pp.clone_shallow(),
+                child_tasks,
+                ctx.column_ids,
+                ctx.allocator,
+            ) {
                 Ok(task) => task,
                 // An unported attach body refuses; Go has no such arm, so a
                 // refusal must SURFACE rather than silently skip a
@@ -1646,7 +1975,7 @@ fn enumerate_physical_plans_4_task(
                 continue;
             }
             if !matches!(cur_task, Task::Root(_)) && prop.task_tp == TaskType::Root {
-                cur_task = cur_task.convert_to_root_task()?;
+                cur_task = cur_task.convert_to_root_task(ctx.allocator)?;
             }
             if add_enforcer {
                 cur_task = enforce_property(prop, cur_task, ctx.allocator)?;

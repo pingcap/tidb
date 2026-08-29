@@ -22,6 +22,55 @@
 use std::collections::BTreeMap;
 
 use crate::cardinality::ndv::GroupNdv;
+use crate::cardinality::row_size::RowSizeColumnStats;
+
+/// Go `statistics.HistColl`, narrowed to the fields cost model v2 reads.
+///
+/// `property.StatsInfo.HistColl` is not interchangeable with the scalar NDV
+/// map: its PRESENCE changes `getAvgRowSize`. A base table carries a
+/// collection even when it is pseudo, while joins, projections, and
+/// aggregations construct a fresh `StatsInfo` with a nil collection.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct HistColl {
+    pseudo: bool,
+    realtime_count: i64,
+    columns: BTreeMap<i64, RowSizeColumnStats>,
+}
+
+impl HistColl {
+    /// Builds the row-size portion of one histogram collection. Column keys
+    /// are planner `Column.UniqueID`s, matching Go's generated HistColl.
+    #[must_use]
+    pub fn new(
+        pseudo: bool,
+        realtime_count: i64,
+        columns: impl IntoIterator<Item = (i64, RowSizeColumnStats)>,
+    ) -> Self {
+        Self {
+            pseudo,
+            realtime_count,
+            columns: columns.into_iter().collect(),
+        }
+    }
+
+    /// Go `HistColl.Pseudo`.
+    #[must_use]
+    pub const fn pseudo(&self) -> bool {
+        self.pseudo
+    }
+
+    /// Go `HistColl.RealtimeCount`.
+    #[must_use]
+    pub const fn realtime_count(&self) -> i64 {
+        self.realtime_count
+    }
+
+    /// The histogram for one planner column, when it is loaded.
+    #[must_use]
+    pub fn column(&self, unique_id: i64) -> Option<RowSizeColumnStats> {
+        self.columns.get(&unique_id).copied()
+    }
+}
 
 /// Go `property.StatsInfo` — the ONE port, after the unification.
 ///
@@ -37,6 +86,9 @@ use crate::cardinality::ndv::GroupNdv;
 pub struct StatsInfo {
     row_count: f64,
     col_ndvs: BTreeMap<i64, f64>,
+    /// Go `StatsInfo.HistColl`. Its presence is preserved only by operators
+    /// whose Go derivation copies the child profile or calls `Scale`.
+    hist_coll: Option<HistColl>,
     /// Go `StatsInfo.GroupNDVs`: exact NDVs of composite column groups
     /// supplied by indexes. Empty for every profile whose source has no
     /// loaded index statistics, which is Go's nil.
@@ -58,8 +110,22 @@ impl StatsInfo {
         Self {
             row_count,
             col_ndvs: col_ndvs.into_iter().collect(),
+            hist_coll: None,
             group_ndvs: Vec::new(),
         }
+    }
+
+    /// The same profile carrying Go's base-table histogram collection.
+    #[must_use]
+    pub fn with_hist_coll(mut self, hist_coll: HistColl) -> Self {
+        self.hist_coll = Some(hist_coll);
+        self
+    }
+
+    /// Returns Go `StatsInfo.HistColl`.
+    #[must_use]
+    pub const fn hist_coll(&self) -> Option<&HistColl> {
+        self.hist_coll.as_ref()
     }
 
     /// The same profile carrying group NDVs — Go's `GroupNDVs` field, set by
@@ -131,6 +197,8 @@ impl StatsInfo {
         Self {
             row_count: scaled_row_count,
             col_ndvs,
+            // Go `StatsInfo.Scale` retains the exact HistColl pointer.
+            hist_coll: self.hist_coll.clone(),
             group_ndvs,
         }
     }
@@ -172,8 +240,8 @@ impl StatsInfo {
         Self {
             row_count,
             col_ndvs,
-            // Go's DeriveLimitStats builds a fresh StatsInfo and never copies
-            // GroupNDVs into it.
+            // Go `DeriveLimitStats` retains HistColl but not GroupNDVs.
+            hist_coll: self.hist_coll.clone(),
             group_ndvs: Vec::new(),
         }
     }
@@ -196,5 +264,31 @@ fn source_min(left: f64, right: f64) -> f64 {
         left
     } else {
         right
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{HistColl, StatsInfo};
+    use crate::cardinality::row_size::{RowSizeColumnStats, RowSizeType};
+
+    #[test]
+    fn scale_and_limit_retain_hist_coll_like_go() {
+        let hist_coll = HistColl::new(
+            true,
+            100,
+            [(
+                7,
+                RowSizeColumnStats::new(RowSizeType::Long, 800, 0, 100.0, false),
+            )],
+        );
+        let profile = StatsInfo::new(100.0, [(7, 80.0)]).with_hist_coll(hist_coll);
+
+        for derived in [profile.scale(0.5, 1.0), profile.derive_limit_stats(10.0)] {
+            let retained = derived.hist_coll().expect("Go retains HistColl");
+            assert!(retained.pseudo());
+            assert_eq!(retained.realtime_count(), 100);
+            assert!(retained.column(7).is_some());
+        }
     }
 }

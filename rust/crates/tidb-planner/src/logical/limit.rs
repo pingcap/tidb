@@ -165,14 +165,15 @@ impl LogicalLimit {
     /// this limit becomes on the way down, with NO `ByItems` — so the result
     /// answers `true` to [`LogicalTopN::is_limit`].
     ///
-    /// Go allocates a fresh plan through `Init(p.SCtx(), p.QueryBlockOffset())`;
-    /// the base shell here carries the same query-block offset, and the caller
-    /// re-allocates the id when it has an allocator. Note that Go does NOT
-    /// carry `PartitionBy` across, which is why it is absent below.
+    /// Go allocates a fresh plan through `Init(p.SCtx(), p.QueryBlockOffset())`.
+    /// Go does NOT carry `PartitionBy` across, which is why it is absent below.
     #[must_use]
-    pub fn convert_to_topn(&self) -> LogicalTopN {
-        let mut base = self.base.shell();
-        base.base.set_tp(LogicalTopN::TYPE);
+    pub fn convert_to_topn(&self, allocator: &crate::plan_base::PlanIdAllocator) -> LogicalTopN {
+        let base = BaseLogicalPlan::new(
+            allocator,
+            LogicalTopN::TYPE,
+            self.base.base.query_block_offset(),
+        );
         LogicalTopN {
             base,
             by_items: Vec::new(),

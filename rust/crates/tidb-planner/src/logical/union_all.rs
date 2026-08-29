@@ -161,9 +161,15 @@ impl LogicalUnionAll {
     /// The offset is folded into the count because each branch must supply
     /// enough rows for the union's own offset to be applied ONCE, above.
     #[must_use]
-    pub fn push_down_topn_for_child(topn: &LogicalTopN) -> LogicalTopN {
-        let mut base = topn.base.shell();
-        base.set_children(Vec::new());
+    pub fn push_down_topn_for_child(
+        topn: &LogicalTopN,
+        allocator: &crate::plan_base::PlanIdAllocator,
+    ) -> LogicalTopN {
+        let base = BaseLogicalPlan::new(
+            allocator,
+            LogicalTopN::TYPE,
+            topn.base.base.query_block_offset(),
+        );
         LogicalTopN {
             base,
             by_items: topn.by_items.clone(),

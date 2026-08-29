@@ -456,7 +456,10 @@ pub fn extract_cor_columns_by_schema(
             let mut column = schema.columns[idx].clone();
             // Go's `resolveIndex` pass: `corCol.Index = schema.ColumnIndex(...)`.
             column.index = i64::try_from(idx).expect("schema length fits in i64");
-            slots[idx] = Some(CorrelatedColumn { column, data: None });
+            slots[idx] = Some(CorrelatedColumn {
+                column,
+                data: cor_col.data.clone(),
+            });
         }
     }
     slots.into_iter().flatten().collect()
@@ -880,6 +883,7 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
         names.resize(schema.len(), FieldName::default());
         let base = self.env.base(LogicalApply::TYPE);
         let mut apply = LogicalApply::new(base, tp);
+        apply.cor_cols = extract_cor_columns_by_schema_4_logical_plan(&inner, outer_schema);
         apply.no_decorrelate = mark_no_decorrelate;
         let mut plan = LogicalPlan::Apply(apply);
         plan.set_children(vec![outer, inner]);
@@ -980,10 +984,16 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
         let LogicalPlan::Join(mut join) = join else {
             unreachable!("build_semi_join returns a join");
         };
+        let cor_cols = match join.base.children() {
+            [outer, inner] => outer.schema().map_or_else(Vec::new, |outer_schema| {
+                extract_cor_columns_by_schema_4_logical_plan(inner, outer_schema)
+            }),
+            _ => Vec::new(),
+        };
         join.base.base.set_tp(LogicalApply::TYPE);
         Ok(LogicalPlan::Apply(LogicalApply {
             join,
-            cor_cols: Vec::new(),
+            cor_cols,
             no_decorrelate: mark_no_decorrelate,
             is_lateral: false,
         }))
@@ -1855,7 +1865,7 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
                 let column = self.plan_ctx.outer_schemas[i].columns[idx].clone();
                 let name = outer_names[idx].clone();
                 self.ctx_stack_append(
-                    Expression::CorrelatedColumn(CorrelatedColumn { column, data: None }),
+                    Expression::CorrelatedColumn(CorrelatedColumn::new(column)),
                     name,
                 );
                 return Ok(());

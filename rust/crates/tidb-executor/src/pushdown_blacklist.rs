@@ -37,7 +37,7 @@
 //! Go has eight `IsPushDownEnabled` call sites. Five are answered here:
 //!
 //!  * `canFuncBePushed` -- a scalar function's own name, asked at both of
-//!    Go's stores ([`blacklist_admits`]);
+//!    Go's stores;
 //!  * `columnToPBExpr`'s `enum` (under `kv.UnSpecified`) and `bit` (under
 //!    `kv.TiKV`) arms, whose asymmetry is Go's own;
 //!  * `DataSource.PredicatePushDown`, the one that decides the PLAN;
@@ -80,7 +80,6 @@
 
 use tidb_expr::expression::Expression;
 use tidb_expr::infer_pushdown::{is_push_down_enabled, ExprPushDownBlacklist, PushDownStore};
-use tidb_expr::rewriter::ColumnResolver;
 
 /// Go `ast.TypeStr(mysql.TypeBit)`, the name `columnToPBExpr` looks a BIT
 /// column up under.
@@ -89,30 +88,6 @@ const BIT_TYPE_NAME: &str = "bit";
 /// Go `columnToPBExpr`'s `mysql.TypeEnum` arm, whose blacklist key is the
 /// bare word rather than a function name.
 const ENUM_TYPE_NAME: &str = "enum";
-
-/// Go `expression.PushDownExprs` for ONE condition, restricted to the
-/// blacklist's verdicts.
-///
-/// `store` is the one Go's caller passes: `kv.UnSpecified` at
-/// `DataSource.PredicatePushDown`, `kv.TiKV` at `find_best_task`'s index and
-/// table filter split.
-pub(crate) fn blacklist_admits(
-    condition: &tidb_ast::Expr,
-    resolver: &impl ColumnResolver,
-    ctx: &crate::StmtContext,
-    store: PushDownStore,
-) -> bool {
-    let blacklist = ctx.expr_pushdown_blacklist();
-    if blacklist.is_empty() {
-        return true;
-    }
-    let Ok(rewritten) = tidb_expr::rewriter::rewrite_expr_resolved(condition, resolver) else {
-        // A condition this tier cannot even resolve is not one the blacklist
-        // has an opinion about; whatever refuses it does so on its own.
-        return true;
-    };
-    admits(&rewritten, blacklist, store)
-}
 
 /// Go `CheckAggPushDown`'s last line: `ret = IsPushDownEnabled(aggFunc.Name,
 /// storeType)`, asked of every function in a pushed aggregate, plus the

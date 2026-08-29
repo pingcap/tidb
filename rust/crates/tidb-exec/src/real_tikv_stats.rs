@@ -213,7 +213,6 @@ mod unchanged_tests {
             row_count: 0,
             columns: Vec::new(),
             indexes: Vec::new(),
-            load_state: std::sync::Arc::default(),
         }))
     }
 

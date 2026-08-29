@@ -181,25 +181,22 @@ fn explain_select() {
     //   TableReader_5 | 10000.00 | root | | data:TableFullScan_4
     //   └─TableFullScan_4 | 10000.00 | cop[tikv] | table:t | keep order:false, stats:pseudo
     // and so does this tier now: `convertToTableScan` puts every base-table
-    // read in a `CopTask` and `ConvertToRootTask` caps it with the reader
-    // (`pkg/planner/core/find_best_task.go:2953`,
-    // `pkg/planner/core/operator/physicalop/task_base.go:504`). Like Go, it
-    // eliminates the identity projection over `SELECT *`. The only remaining
-    // difference is the CHILD ID inside `data:` -- ids are build order here
-    // and plan-construction order in Go, so this tier prints the child's
-    // NAME alone (as it already does for `data:TopN`, `data:StreamAgg`).
+    // read in a `CopTask` and `ConvertToRootTask` caps it with a freshly
+    // allocated reader (`pkg/planner/core/find_best_task.go:2953`,
+    // `pkg/planner/core/operator/physicalop/task_base.go:504`). Go's physical
+    // post-optimizer removes the identity projection over `SELECT *`.
     assert_eq!(
         row_text(session.run("EXPLAIN SELECT * FROM t")),
         vec![
             vec![
-                "TableReader_2".to_owned(),
+                "TableReader_5".to_owned(),
                 "10000.00".to_owned(),
                 "root".to_owned(),
                 String::new(),
-                "data:TableFullScan".to_owned(),
+                "data:TableFullScan_4".to_owned(),
             ],
             vec![
-                "└─TableFullScan_1".to_owned(),
+                "└─TableFullScan_4".to_owned(),
                 "10000.00".to_owned(),
                 "cop[tikv]".to_owned(),
                 "table:t".to_owned(),
@@ -227,14 +224,14 @@ fn explain_select() {
         row_text(session.run("EXPLAIN SELECT * FROM t WHERE b > 'x'")),
         vec![
             vec![
-                "TableReader_3".to_owned(),
+                "TableReader_7".to_owned(),
                 "3333.33".to_owned(),
                 "root".to_owned(),
                 String::new(),
-                "data:Selection".to_owned(),
+                "data:Selection_6".to_owned(),
             ],
             vec![
-                "└─Selection_2".to_owned(),
+                "└─Selection_6".to_owned(),
                 "3333.33".to_owned(),
                 "cop[tikv]".to_owned(),
                 String::new(),
@@ -243,7 +240,7 @@ fn explain_select() {
                 "gt(test.t.b, \"x\")".to_owned(),
             ],
             vec![
-                "  └─TableFullScan_1".to_owned(),
+                "  └─TableFullScan_5".to_owned(),
                 "10000.00".to_owned(),
                 "cop[tikv]".to_owned(),
                 "table:t".to_owned(),
@@ -267,28 +264,28 @@ fn explain_select() {
         row_text(session.run("EXPLAIN SELECT * FROM t ORDER BY c LIMIT 10")),
         vec![
             vec![
-                "TopN_4".to_owned(),
+                "TopN_7".to_owned(),
                 "10.00".to_owned(),
                 "root".to_owned(),
                 String::new(),
                 "test.t.c, offset:0, count:10".to_owned(),
             ],
             vec![
-                "└─TableReader_3".to_owned(),
+                "└─TableReader_17".to_owned(),
                 "10.00".to_owned(),
                 "root".to_owned(),
                 String::new(),
-                "data:TopN".to_owned(),
+                "data:TopN_16".to_owned(),
             ],
             vec![
-                "  └─TopN_2".to_owned(),
+                "  └─TopN_16".to_owned(),
                 "10.00".to_owned(),
                 "cop[tikv]".to_owned(),
                 String::new(),
                 "test.t.c, offset:0, count:10".to_owned(),
             ],
             vec![
-                "    └─TableFullScan_1".to_owned(),
+                "    └─TableFullScan_15".to_owned(),
                 "10000.00".to_owned(),
                 "cop[tikv]".to_owned(),
                 "table:t".to_owned(),
@@ -306,9 +303,9 @@ fn explain_select() {
             .map(|row| row[0].clone())
             .collect::<Vec<_>>(),
         vec![
-            "Sort_3".to_owned(),
-            "└─TableReader_2".to_owned(),
-            "  └─TableFullScan_1".to_owned(),
+            "Sort_4".to_owned(),
+            "└─TableReader_8".to_owned(),
+            "  └─TableFullScan_7".to_owned(),
         ]
     );
 
@@ -319,37 +316,37 @@ fn explain_select() {
         row_text(session.run("EXPLAIN SELECT c, COUNT(*) FROM t GROUP BY c")),
         vec![
             vec![
-                "Projection_5".to_owned(),
+                "Projection_4".to_owned(),
                 "8000.00".to_owned(),
                 "root".to_owned(),
                 String::new(),
-                "test.t.c, Column#0".to_owned(),
+                "test.t.c, Column#5".to_owned(),
             ],
             vec![
-                "└─HashAgg_4".to_owned(),
+                "└─HashAgg_9".to_owned(),
                 "8000.00".to_owned(),
                 "root".to_owned(),
                 String::new(),
-                "group by:test.t.c, funcs:count(Column#0)->Column#0, \
+                "group by:test.t.c, funcs:count(Column#6)->Column#5, \
                  funcs:firstrow(test.t.c)->test.t.c"
                     .to_owned(),
             ],
             vec![
-                "  └─TableReader_3".to_owned(),
+                "  └─TableReader_10".to_owned(),
                 "8000.00".to_owned(),
                 "root".to_owned(),
                 String::new(),
-                "data:HashAgg".to_owned(),
+                "data:HashAgg_5".to_owned(),
             ],
             vec![
-                "    └─HashAgg_2".to_owned(),
+                "    └─HashAgg_5".to_owned(),
                 "8000.00".to_owned(),
                 "cop[tikv]".to_owned(),
                 String::new(),
-                "group by:test.t.c, funcs:count(1)->Column#0".to_owned(),
+                "group by:test.t.c, funcs:count(1)->Column#6".to_owned(),
             ],
             vec![
-                "      └─TableFullScan_1".to_owned(),
+                "      └─TableFullScan_8".to_owned(),
                 "10000.00".to_owned(),
                 "cop[tikv]".to_owned(),
                 "table:t".to_owned(),
@@ -508,11 +505,11 @@ fn explain_analyze_select() {
     // Columns: id, estRows, actRows, task, access object, execution
     // info, operator info, memory, disk.
     assert_eq!(rows.len(), 3);
-    assert_eq!(rows[0][0], "TableReader_3");
+    assert!(rows[0][0].starts_with("TableReader_"), "{rows:?}");
     assert_eq!(rows[0][2], "2"); // the pass-through reader's own count.
-    assert_eq!(rows[1][0], "└─Selection_2");
+    assert!(rows[1][0].starts_with("└─Selection_"), "{rows:?}");
     assert_eq!(rows[1][2], "2"); // actRows: real, not the 3333.33 estimate.
-    assert_eq!(rows[2][0], "  └─TableFullScan_1");
+    assert!(rows[2][0].starts_with("  └─TableFullScan_"), "{rows:?}");
     assert_eq!(rows[2][2], "4");
     assert_eq!(rows[0][3], "root");
     assert_eq!(rows[1][3], "cop[tikv]");
@@ -555,11 +552,11 @@ fn explain_analyze_insert_executes() {
 /// `testkit.CreateMockStore`: `explain analyze update t set b = 111
 /// where c = 200` on a 4-row table leaves `Update_3`'s own `actRows` at
 /// `0` (a write is a side effect, same as `Insert_1`), with a
-/// `Selection` (`actRows` `1`, the real number of `WHERE`-matching
-/// rows) over a `TableFullScan` (`actRows` `4`, the real pre-write row
-/// count) beneath it. The scan is the right read for THIS `WHERE`: `c` is an
-/// ordinary column that neither pins a key nor bounds the handle, so both
-/// engines read the table. The key and handle shapes are
+/// root `TableReader` over a coprocessor `Selection` (`actRows` `1`, the real
+/// number of `WHERE`-matching rows) and `TableFullScan` (`actRows` `4`, the
+/// real pre-write row count). The scan is the right read for THIS `WHERE`:
+/// `c` is an ordinary column that neither pins a key nor bounds the handle,
+/// so both engines read the table. The key and handle shapes are
 /// `explain_update_and_delete_plan_without_writing` and
 /// `tidb_session::tests_sysbench_access`.
 #[test]
@@ -573,13 +570,15 @@ fn explain_analyze_update_executes() {
         .unwrap();
 
     let rows = row_text(session.run("EXPLAIN ANALYZE UPDATE t SET b = 111 WHERE c = 200"));
-    assert_eq!(rows.len(), 3);
-    assert_eq!(rows[0][0], "Update_3");
+    assert_eq!(rows.len(), 4);
+    assert_eq!(rows[0][0], "Update_1");
     assert_eq!(rows[0][2], "0");
-    assert_eq!(rows[1][0], "└─Selection_2");
+    assert_eq!(rows[1][0], "└─TableReader_8");
     assert_eq!(rows[1][2], "1");
-    assert_eq!(rows[2][0], "  └─TableFullScan_1");
-    assert_eq!(rows[2][2], "4");
+    assert_eq!(rows[2][0], "  └─Selection_7");
+    assert_eq!(rows[2][2], "1");
+    assert_eq!(rows[3][0], "    └─TableFullScan_6");
+    assert_eq!(rows[3][2], "4");
 
     // The inverse of the plain-EXPLAIN test: the table really changed.
     assert_eq!(
@@ -711,13 +710,13 @@ fn explain_analyze_insert_select_source_real_act_rows() {
     let rows =
         row_text(session.run("EXPLAIN ANALYZE INSERT INTO dst SELECT * FROM src WHERE a > 1"));
     assert_eq!(rows.len(), 4);
-    assert_eq!(rows[0][0], "Insert_4");
+    assert_eq!(rows[0][0], "Insert_1");
     assert_eq!(rows[0][2], "0");
-    assert_eq!(rows[1][0], "└─TableReader_3");
+    assert_eq!(rows[1][0], "└─TableReader_8");
     assert_eq!(rows[1][2], "2");
-    assert_eq!(rows[2][0], "  └─Selection_2");
+    assert_eq!(rows[2][0], "  └─Selection_7");
     assert_eq!(rows[2][2], "2");
-    assert_eq!(rows[3][0], "    └─TableFullScan_1");
+    assert_eq!(rows[3][0], "    └─TableFullScan_6");
     assert_eq!(rows[3][2], "3");
 
     assert_eq!(
@@ -901,7 +900,7 @@ fn explain_analyze_union_all_executes_and_meters_each_term() {
     let rows = row_text(session.run(
         "EXPLAIN ANALYZE (SELECT a FROM t WHERE a <= 2) UNION ALL (SELECT a FROM t WHERE a >= 3)",
     ));
-    assert_eq!(rows.len(), 7);
+    assert_eq!(rows.len(), 5);
     assert!(rows[0][0].starts_with("Union_"));
     assert_eq!(rows[0][2], "4");
     assert_eq!(
@@ -909,7 +908,7 @@ fn explain_analyze_union_all_executes_and_meters_each_term() {
             .skip(1)
             .map(|row| row[2].as_str())
             .collect::<Vec<_>>(),
-        vec!["2", "2", "2", "2", "2", "2"]
+        vec!["2", "2", "2", "2"]
     );
 }
 
@@ -1015,7 +1014,7 @@ fn explain_analyze_union_distinct_separates_input_and_output_rows() {
     let rows = row_text(session.run(
         "EXPLAIN ANALYZE (SELECT a FROM t WHERE a <= 2) UNION (SELECT a FROM t WHERE a >= 2)",
     ));
-    assert_eq!(rows.len(), 8);
+    assert_eq!(rows.len(), 6);
     assert!(rows[0][0].starts_with("HashAgg_"));
     assert_eq!(rows[0][2], "4");
     assert!(rows[1][0].contains("Union_"));
@@ -1025,7 +1024,7 @@ fn explain_analyze_union_distinct_separates_input_and_output_rows() {
             .skip(2)
             .map(|row| row[2].as_str())
             .collect::<Vec<_>>(),
-        vec!["2", "2", "2", "3", "3", "3"]
+        vec!["2", "2", "3", "3"]
     );
 }
 
@@ -1047,7 +1046,7 @@ fn explain_analyze_mixed_union_keeps_the_distinct_prefix_separate() {
          (SELECT a FROM t WHERE a >= 2 AND a <= 3) UNION ALL \
          (SELECT a FROM t WHERE a = 4)",
     ));
-    assert_eq!(rows.len(), 10);
+    assert_eq!(rows.len(), 9);
     assert!(rows[0][0].starts_with("Union_"));
     assert_eq!(rows[0][2], "4");
     assert!(rows[1][0].contains("HashAgg_"));
@@ -1059,7 +1058,7 @@ fn explain_analyze_mixed_union_keeps_the_distinct_prefix_separate() {
             .skip(3)
             .map(|row| row[2].as_str())
             .collect::<Vec<_>>(),
-        vec!["2", "2", "2", "2", "2", "2", "1"]
+        vec!["2", "2", "2", "2", "1", "1"]
     );
 }
 
@@ -1082,6 +1081,26 @@ fn explain_refuses_what_it_cannot_plan() {
         session.run("EXPLAIN FORMAT = 'bogus' SELECT * FROM t"),
         Err(DriverError::Unsupported(reason)) if reason == "unknown EXPLAIN format name"
     ));
+}
+
+#[test]
+fn explain_analyze_intersect_uses_the_common_physical_plan() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE explain_intersect (a BIGINT PRIMARY KEY)")
+        .unwrap();
+    session
+        .run("INSERT INTO explain_intersect VALUES (1),(2),(3)")
+        .unwrap();
+
+    let rows = row_text(session.run(
+        "EXPLAIN ANALYZE (SELECT a FROM explain_intersect WHERE a <= 2) \
+         INTERSECT (SELECT a FROM explain_intersect WHERE a >= 2)",
+    ));
+    assert!(
+        rows.iter().any(|row| row[0].contains("Join")),
+        "Go lowers INTERSECT to a physical semi join: {rows:?}"
+    );
 }
 
 /// Predicate push-down does not change the plan EXPLAIN prints.

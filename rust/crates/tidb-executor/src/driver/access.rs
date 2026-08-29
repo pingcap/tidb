@@ -32,7 +32,6 @@
 //!
 use super::point_get_key::{names_no_rows, point_get_value};
 use super::*;
-use crate::predicate_pushdown::ScanColumnComparison;
 use std::sync::Arc;
 
 #[derive(Clone, Debug)]
@@ -56,7 +55,7 @@ pub(crate) enum PointResidualBound {
 /// The immutable part of Go's cached `PointGetPlan` for one prepared handle
 /// lookup. Runtime cursor state and the execute-time handle are deliberately
 /// absent: both are rebuilt for every cache hit.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct PreparedPointGetPlan {
     /// The catalog's KEY-DECODE METADATA version at resolve time — the
     /// counter DDL moves and DML never touches (`Catalog::metadata_version`).
@@ -100,6 +99,22 @@ pub struct PreparedPointGetPlan {
     contradiction: bool,
     output: FastPointOutput,
     row_decoder: crate::kv_table::PreparedPointGetRowDecoder,
+    cached_keys: std::sync::Mutex<Vec<PreparedPointCacheKey>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PreparedPointCacheKey {
+    schema_version: u64,
+    environment: PreparedPlanCacheEnvironment,
+    parameter_types: Vec<PreparedParameterType>,
+}
+
+impl PreparedPointCacheKey {
+    fn matches(&self, actual: &Self) -> bool {
+        self.schema_version == actual.schema_version
+            && self.environment == actual.environment
+            && prepared_parameter_types_compatible(&self.parameter_types, &actual.parameter_types)
+    }
 }
 
 /// Builds the always-empty plan for a schema-contradicted WHERE: nothing is
@@ -136,6 +151,7 @@ fn contradiction_plan(
         )
         .ok()?,
         output,
+        cached_keys: std::sync::Mutex::new(Vec::new()),
     })
 }
 
@@ -187,15 +203,49 @@ impl PreparedPointGetPlan {
         values: &[Datum],
         zone: &tidb_datatype::SessionTimeZone,
     ) -> Option<PreparedPointGetExecution> {
+        self.bind_with_environment(values, zone, &PreparedPlanCacheEnvironment::default())
+    }
+
+    /// Rebuilds this point plan under Go's complete prepared-plan cache key.
+    #[must_use]
+    pub fn bind_with_environment(
+        self: &Arc<Self>,
+        values: &[Datum],
+        zone: &tidb_datatype::SessionTimeZone,
+        environment: &PreparedPlanCacheEnvironment,
+    ) -> Option<PreparedPointGetExecution> {
+        let key = PreparedPointCacheKey {
+            schema_version: self.schema_version,
+            environment: environment.clone(),
+            parameter_types: values.iter().map(PreparedParameterType::of).collect(),
+        };
+        let cache_hit = self
+            .cached_keys
+            .lock()
+            .ok()
+            .is_some_and(|cached| cached.iter().any(|entry| entry.matches(&key)));
+        let execution = |handle, range_values, residuals| {
+            // Go inserts a generated plan before building or opening its
+            // executor. A runtime error therefore does not erase the plan or
+            // turn the next identical EXECUTE into another miss.
+            if !cache_hit {
+                let mut cached = self.cached_keys.lock().ok()?;
+                if !cached.iter().any(|entry| entry.matches(&key)) {
+                    cached.push(key.clone());
+                }
+            }
+            Some(PreparedPointGetExecution {
+                plan: Arc::clone(self),
+                handle,
+                range_values,
+                residuals,
+                cache_hit,
+            })
+        };
         if self.contradiction {
             // `NOT NULL col IS NULL` matched no rows at PLAN time; parameters
             // cannot change a schema fact.
-            return Some(PreparedPointGetExecution {
-                plan: Arc::clone(self),
-                handle: None,
-                range_values: None,
-                residuals: Vec::new(),
-            });
+            return execution(None, None, Vec::new());
         }
         let mut key_values = Vec::with_capacity(self.parameter_orders.len());
         for (index, handle_type) in self.pin_types.iter().enumerate() {
@@ -207,12 +257,7 @@ impl PreparedPointGetPlan {
             if value.is_null() {
                 // `handle = NULL` matches nothing; an empty result IS the
                 // answer, and no storage read may run for it.
-                return Some(PreparedPointGetExecution {
-                    plan: Arc::clone(self),
-                    handle: None,
-                    range_values: None,
-                    residuals: Vec::new(),
-                });
+                return execution(None, None, Vec::new());
             }
             key_values.push(match point_get_value(handle_type, value) {
                 Some(value) => value,
@@ -221,12 +266,7 @@ impl PreparedPointGetPlan {
                     // equal to no stored value: the empty set IS the answer,
                     // the same observable result Go's re-optimized plan
                     // produces, served without re-planning.
-                    return Some(PreparedPointGetExecution {
-                        plan: Arc::clone(self),
-                        handle: None,
-                        range_values: None,
-                        residuals: Vec::new(),
-                    });
+                    return execution(None, None, Vec::new());
                 }
                 None => return None,
             });
@@ -240,23 +280,13 @@ impl PreparedPointGetPlan {
                     let value = values.get(*order)?;
                     if value.is_null() {
                         // `residual = NULL` never passes either.
-                        return Some(PreparedPointGetExecution {
-                            plan: Arc::clone(self),
-                            handle: None,
-                            range_values: None,
-                            residuals: Vec::new(),
-                        });
+                        return execution(None, None, Vec::new());
                     }
                     ResidualCheck::Equal(
                         match point_get_value(&self.output.columns[*position].1, value) {
                             Some(value) => value,
                             None if names_no_rows(&self.output.columns[*position].1, value) => {
-                                return Some(PreparedPointGetExecution {
-                                    plan: Arc::clone(self),
-                                    handle: None,
-                                    range_values: None,
-                                    residuals: Vec::new(),
-                                });
+                                return execution(None, None, Vec::new());
                             }
                             None => return None,
                         },
@@ -280,19 +310,9 @@ impl PreparedPointGetPlan {
                 let handle = tidb_txnkv::CommonHandle::new(encoded).ok()?;
                 Some(TableHandle::Common(handle.encoded().to_vec()))
             };
-            return Some(PreparedPointGetExecution {
-                plan: Arc::clone(self),
-                handle,
-                range_values: None,
-                residuals,
-            });
+            return execution(handle, None, residuals);
         }
-        Some(PreparedPointGetExecution {
-            plan: Arc::clone(self),
-            handle: None,
-            range_values: Some(key_values),
-            residuals,
-        })
+        execution(None, Some(key_values), residuals)
     }
 
     /// Whether the catalog still names the same unpartitioned physical table.
@@ -339,6 +359,7 @@ pub struct PreparedPointGetExecution {
     /// This execute's residual predicates, parameters already resolved:
     /// `(offset into the output row, the check the decoded slot must pass)`.
     residuals: Vec<(usize, ResidualCheck)>,
+    cache_hit: bool,
 }
 
 /// The immutable half of a reusable SELECT plan.  This is the complete shared
@@ -349,6 +370,7 @@ pub struct PreparedPointGetExecution {
 pub struct PreparedSelectPlan {
     current_database: String,
     table_names: Vec<(String, String)>,
+    parameter_count: usize,
     limit_parameter_orders: Vec<usize>,
     statement: tidb_ast::Stmt,
     cached_plans: std::sync::Mutex<Vec<CachedSelectPlanEntry>>,
@@ -379,6 +401,10 @@ pub struct PreparedPlanCacheEnvironment {
     in_transaction: bool,
     autocommit: bool,
     invalidate_on_fresh_stats: bool,
+    binding_sql: String,
+    skip_stats_on_binding: bool,
+    plan_cache_max_plan_size: u64,
+    enable_generated_columns: bool,
 }
 
 impl Default for PreparedPlanCacheEnvironment {
@@ -407,6 +433,11 @@ impl PreparedPlanCacheEnvironment {
             in_transaction: false,
             autocommit: true,
             invalidate_on_fresh_stats: true,
+            binding_sql: String::new(),
+            skip_stats_on_binding: false,
+            plan_cache_max_plan_size: tidb_vardef::defaults::DEF_TIDB_PLAN_CACHE_MAX_PLAN_SIZE
+                as u64,
+            enable_generated_columns: true,
         }
     }
 
@@ -435,6 +466,44 @@ impl PreparedPlanCacheEnvironment {
         self.invalidate_on_fresh_stats = invalidate_on_fresh_stats;
         self
     }
+
+    /// Adds the two post-optimization admission inputs read by Go's
+    /// `isPlanCacheable` / `isPhysicalPlanCacheable`.
+    #[must_use]
+    pub const fn with_cache_admission(
+        mut self,
+        plan_cache_max_plan_size: u64,
+        enable_generated_columns: bool,
+    ) -> Self {
+        self.plan_cache_max_plan_size = plan_cache_max_plan_size;
+        self.enable_generated_columns = enable_generated_columns;
+        self
+    }
+
+    /// Adds Go's matched `Binding.BindSQL` to the cache key. The stats-version
+    /// component is omitted only when a binding matched and
+    /// `tidb_plan_cache_skip_stats_on_binding` is enabled.
+    #[must_use]
+    pub fn with_binding_sql(mut self, binding_sql: Option<&str>, skip_stats: bool) -> Self {
+        self.binding_sql = binding_sql.unwrap_or_default().to_owned();
+        self.skip_stats_on_binding = !self.binding_sql.is_empty() && skip_stats;
+        self
+    }
+
+    pub(crate) const fn plan_cacheability(
+        &self,
+        parameter_count: usize,
+    ) -> tidb_planner::physical_plan_cache::PlanCacheabilityContext {
+        tidb_planner::physical_plan_cache::PlanCacheabilityContext {
+            parameter_count,
+            enable_generated_columns: self.enable_generated_columns,
+            max_plan_size: self.plan_cache_max_plan_size,
+        }
+    }
+
+    pub(crate) const fn hashes_fresh_statistics(&self) -> bool {
+        self.invalidate_on_fresh_stats && !self.skip_stats_on_binding
+    }
 }
 
 /// Go's prepared-plan cache keys physical plans by the current parameter
@@ -442,14 +511,20 @@ impl PreparedPlanCacheEnvironment {
 /// type gets its own physical enumeration instead of inheriting a path chosen
 /// for an incompatible comparison domain.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum PreparedParameterType {
+pub(crate) enum PreparedParameterType {
     Null,
     Int,
     UInt,
-    Decimal,
+    Decimal {
+        precision: i32,
+        scale: i32,
+    },
     Real,
     Float32,
-    String,
+    String {
+        charset: tidb_datatype::Charset,
+        collation: tidb_datatype::Collation,
+    },
     Bytes,
     Raw,
     BinaryLiteral,
@@ -479,24 +554,16 @@ pub struct PreparedSelectExecution {
 }
 
 impl PreparedSelectPlan {
+    /// The immutable statement retained at PREPARE time.
+    #[must_use]
+    pub const fn statement(&self) -> &tidb_ast::Stmt {
+        &self.statement
+    }
+
     /// Qualified table names read by this plan, for transaction MDL tracking.
     #[must_use]
     pub fn table_names(&self) -> &[(String, String)] {
         &self.table_names
-    }
-
-    /// The immutable PREPARE-time SELECT. Statement hints do not depend on
-    /// execute-time parameter values, so resource-group selection can read
-    /// this tree without cloning the cache-owned bound AST.
-    #[must_use]
-    pub fn select_template(&self) -> &tidb_ast::SelectStmt {
-        let tidb_ast::Stmt::Query(query) = &self.statement else {
-            unreachable!("a prepared SELECT plan owns a query statement")
-        };
-        let tidb_ast::QueryStmt::Select(select) = &**query else {
-            unreachable!("a prepared SELECT plan owns a SELECT query")
-        };
-        select
     }
 
     /// On the first execution for a schema and parameter-type key, runs the
@@ -512,7 +579,37 @@ impl PreparedSelectPlan {
         ctx: &crate::StmtContext,
         environment: &PreparedPlanCacheEnvironment,
     ) -> Option<PreparedSelectExecution> {
-        self.bind_inner(values, catalog, current_database, Some(ctx), environment)
+        self.bind_for_statement(
+            values,
+            catalog,
+            current_database,
+            ctx,
+            environment,
+            &self.statement,
+        )
+    }
+
+    /// Generates and retains a plan from the statement after a matched SQL
+    /// binding has replaced its hints. The binding SQL itself belongs to
+    /// `environment`, mirroring Go's prepared-plan cache key.
+    #[must_use]
+    pub fn bind_for_statement(
+        self: &Arc<Self>,
+        values: &[Datum],
+        catalog: &Catalog,
+        current_database: &str,
+        ctx: &crate::StmtContext,
+        environment: &PreparedPlanCacheEnvironment,
+        statement: &tidb_ast::Stmt,
+    ) -> Option<PreparedSelectExecution> {
+        self.bind_inner(
+            values,
+            catalog,
+            current_database,
+            Some(ctx),
+            environment,
+            statement,
+        )
     }
 
     /// Rebuilds an existing cache entry without constructing a planner
@@ -526,7 +623,34 @@ impl PreparedSelectPlan {
         current_database: &str,
         environment: &PreparedPlanCacheEnvironment,
     ) -> Option<PreparedSelectExecution> {
-        self.bind_inner(values, catalog, current_database, None, environment)
+        self.bind_cached_for_statement(
+            values,
+            catalog,
+            current_database,
+            environment,
+            &self.statement,
+        )
+    }
+
+    /// Rebuilds an entry keyed by the currently matched binding and effective
+    /// statement, without allocating a planner context on a hit.
+    #[must_use]
+    pub fn bind_cached_for_statement(
+        self: &Arc<Self>,
+        values: &[Datum],
+        catalog: &Catalog,
+        current_database: &str,
+        environment: &PreparedPlanCacheEnvironment,
+        statement: &tidb_ast::Stmt,
+    ) -> Option<PreparedSelectExecution> {
+        self.bind_inner(
+            values,
+            catalog,
+            current_database,
+            None,
+            environment,
+            statement,
+        )
     }
 
     fn bind_inner(
@@ -536,8 +660,12 @@ impl PreparedSelectPlan {
         current_database: &str,
         ctx: Option<&crate::StmtContext>,
         environment: &PreparedPlanCacheEnvironment,
+        statement: &tidb_ast::Stmt,
     ) -> Option<PreparedSelectExecution> {
         if !self.current_database.eq_ignore_ascii_case(current_database) {
+            return None;
+        }
+        if !matches!(statement, tidb_ast::Stmt::Query(_)) {
             return None;
         }
         let parameter_types = values
@@ -560,7 +688,7 @@ impl PreparedSelectPlan {
             entry.schema_version == schema_version
                 && entry.stats_version_hash == stats_version_hash
                 && entry.environment == *environment
-                && entry.parameter_types == parameter_types
+                && prepared_parameter_types_compatible(&entry.parameter_types, &parameter_types)
                 && entry.limit_values == limit_values
         });
         let (cached_plan, generation, cache_hit) = match cached {
@@ -580,23 +708,22 @@ impl PreparedSelectPlan {
             }
             None => {
                 let ctx = ctx?;
-                let statement = crate::bind_prepared_statement(&self.statement, values).ok()?;
+                let statement = crate::bind_prepared_statement(statement, values).ok()?;
                 let tidb_ast::Stmt::Query(query) = statement else {
                     return None;
                 };
-                let tidb_ast::QueryStmt::Select(select) = query.into_inner() else {
-                    return None;
-                };
+                let query = query.into_inner();
                 cached_plans.retain(|entry| {
                     entry.schema_version == schema_version
                         && entry.stats_version_hash == stats_version_hash
                         && entry.environment == *environment
                 });
-                let mut plan = super::planner_bridge::cached_select_plan(
-                    &select,
+                let mut plan = super::planner_bridge::cached_query_plan(
+                    &query,
                     catalog,
                     current_database,
                     ctx,
+                    environment.plan_cacheability(self.parameter_count),
                 )?;
                 let generation = plan.bind(values)?;
                 let plan = Arc::new(std::sync::Mutex::new(plan));
@@ -625,7 +752,7 @@ impl PreparedSelectPlan {
         catalog: &Catalog,
         environment: &PreparedPlanCacheEnvironment,
     ) -> u64 {
-        if !environment.invalidate_on_fresh_stats {
+        if !environment.invalidate_on_fresh_stats || environment.skip_stats_on_binding {
             return 0;
         }
         self.table_names.iter().fold(0, |hash, (database, table)| {
@@ -641,15 +768,21 @@ impl PreparedSelectPlan {
 }
 
 impl PreparedParameterType {
-    fn of(value: &Datum) -> Self {
+    pub(crate) fn of(value: &Datum) -> Self {
         match value {
             Datum::Null => Self::Null,
             Datum::Int(_) => Self::Int,
             Datum::UInt(_) => Self::UInt,
-            Datum::Decimal(_) => Self::Decimal,
+            Datum::Decimal(value) => {
+                let (precision, scale) = value.precision_and_frac();
+                Self::Decimal { precision, scale }
+            }
             Datum::Real(_) => Self::Real,
             Datum::Float32(_) => Self::Float32,
-            Datum::String(_) => Self::String,
+            Datum::String(value) => Self::String {
+                charset: value.charset(),
+                collation: value.collation(),
+            },
             Datum::Bytes(_) => Self::Bytes,
             Datum::Raw(_) => Self::Raw,
             Datum::BinaryLiteral(_) => Self::BinaryLiteral,
@@ -668,6 +801,36 @@ impl PreparedParameterType {
             Datum::MaxValue => Self::MaxValue,
         }
     }
+
+    /// Go `checkTypesCompatibility4PC`: decimal precision and scale are
+    /// asymmetric. A plan generated for a wider decimal can serve a narrower
+    /// value, but the reverse must enumerate a new physical plan.
+    fn compatible_with(self, actual: Self) -> bool {
+        match (self, actual) {
+            (
+                Self::Decimal {
+                    precision: expected_precision,
+                    scale: expected_scale,
+                },
+                Self::Decimal {
+                    precision: actual_precision,
+                    scale: actual_scale,
+                },
+            ) => expected_precision >= actual_precision && expected_scale >= actual_scale,
+            _ => self == actual,
+        }
+    }
+}
+
+pub(crate) fn prepared_parameter_types_compatible(
+    expected: &[PreparedParameterType],
+    actual: &[PreparedParameterType],
+) -> bool {
+    expected.len() == actual.len()
+        && expected
+            .iter()
+            .zip(actual)
+            .all(|(expected, actual)| expected.compatible_with(*actual))
 }
 
 impl PreparedSelectExecution {
@@ -684,22 +847,62 @@ impl PreparedSelectExecution {
         self.cache_hit
     }
 
-    #[cfg(test)]
-    pub(crate) fn aggregation_families(
-        &self,
-    ) -> (
-        Option<super::planner_bridge::AggregationFamily>,
-        Option<super::planner_bridge::AggregationFamily>,
-    ) {
-        let cached = self
-            .cached_plan
-            .lock()
-            .expect("cached SELECT tree is available");
-        let (_, physical) = cached
-            .execution(self.generation)
-            .expect("cached SELECT generation is current");
-        super::planner_bridge::physical_aggregation_families(physical)
+    /// The schema identity used when the retained physical tree was built.
+    /// The ordinary statement executor compares it with the catalog while
+    /// holding the catalog guard and plans normally if a DDL moved it.
+    #[must_use]
+    pub const fn schema_version(&self) -> u64 {
+        self.schema_version
     }
+
+    /// Runs a callback while the cache-owned SELECT root is pinned to the
+    /// generation rebuilt for this execution. The callback is the ordinary
+    /// session statement funnel; this type does not own another executor.
+    pub fn with_plan<R>(
+        &self,
+        callback: impl FnOnce(&tidb_ast::Stmt, &mut tidb_planner::physical::PhysicalPlan) -> R,
+    ) -> Option<R> {
+        let mut cached = self.cached_plan.lock().ok()?;
+        let (statement, physical) = cached.execution_mut(self.generation)?;
+        Some(callback(statement, physical))
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn run_prepared_select_for_test(
+    execution: &PreparedSelectExecution,
+    catalog: &Catalog,
+    current_database: &str,
+    ctx: &crate::StmtContext,
+) -> Result<SelectMeta, DriverError> {
+    if execution.schema_version() != catalog.metadata_version()
+        || !execution
+            .plan()
+            .current_database
+            .eq_ignore_ascii_case(current_database)
+    {
+        return Err(DriverError::unsupported(
+            "prepared SELECT test execution saw a moved schema",
+        ));
+    }
+    execution
+        .with_plan(|statement, physical| {
+            let tidb_ast::Stmt::Query(query) = statement else {
+                unreachable!("a prepared query owns a query statement")
+            };
+            super::run_query_meta_stmt_with_physical(
+                query,
+                Some(physical),
+                catalog,
+                current_database,
+                ctx,
+            )
+        })
+        .ok_or_else(|| {
+            DriverError::unsupported(
+                "prepared SELECT test generation changed before executor construction",
+            )
+        })?
 }
 
 /// One residual predicate bound to an EXECUTE's parameters.
@@ -714,6 +917,13 @@ impl PreparedPointGetExecution {
     #[must_use]
     pub fn plan(&self) -> &PreparedPointGetPlan {
         &self.plan
+    }
+
+    /// Whether this execution rebuilt a point plan under an existing complete
+    /// prepared-plan cache key.
+    #[must_use]
+    pub const fn cache_hit(&self) -> bool {
+        self.cache_hit
     }
 }
 
@@ -775,7 +985,7 @@ pub fn build_prepared_point_get_plan(
     };
     let columns = entry.column_list();
     let visible = table_ref.alias.as_deref().unwrap_or(table_name);
-    let scope = PlanTrace::single_table_scope(
+    let scope = single_table_scope(
         visible,
         table_ref.alias.is_none().then(|| database.to_owned()),
         columns.clone(),
@@ -977,6 +1187,7 @@ pub fn build_prepared_point_get_plan(
         residuals,
         contradiction: false,
         output,
+        cached_keys: std::sync::Mutex::new(Vec::new()),
     })
 }
 
@@ -992,29 +1203,24 @@ pub fn build_prepared_select_plan(
     let tidb_ast::Stmt::Query(query) = stmt else {
         return None;
     };
-    let tidb_ast::QueryStmt::Select(select) = &**query else {
-        return None;
-    };
-    if parsed_parameter_count(stmt) != parameter_count
-        || !matches!(select.kind, tidb_ast::SelectStatementKind::Select)
-        || select.sql_no_cache
-    {
+    if parsed_parameter_count(stmt) != parameter_count {
         return None;
     }
     let mut table_names = Vec::new();
-    collect_prepared_table_names(&select.from, current_database, &mut table_names);
+    collect_prepared_table_names(query, current_database, &mut table_names);
     let limit_parameter_orders = prepared_limit_parameter_orders(stmt);
 
     Some(PreparedSelectPlan {
         current_database: current_database.to_owned(),
         table_names,
+        parameter_count,
         limit_parameter_orders,
         statement: stmt.clone(),
         cached_plans: std::sync::Mutex::new(Vec::new()),
     })
 }
 
-fn prepared_limit_parameter_orders(stmt: &tidb_ast::Stmt) -> Vec<usize> {
+pub(super) fn prepared_limit_parameter_orders(stmt: &tidb_ast::Stmt) -> Vec<usize> {
     struct LimitMarkerCollector {
         orders: Vec<usize>,
     }
@@ -1046,7 +1252,7 @@ fn prepared_limit_parameter_orders(stmt: &tidb_ast::Stmt) -> Vec<usize> {
 }
 
 fn collect_prepared_table_names(
-    from: &Option<tidb_ast::Join>,
+    query: &tidb_ast::QueryStmt,
     current_database: &str,
     names: &mut Vec<(String, String)>,
 ) {
@@ -1119,33 +1325,7 @@ fn collect_prepared_table_names(
         }
     }
 
-    collect_join(from, current_database, names);
-}
-
-/// Executes one rebound cached physical plan. `None` means DDL invalidated
-/// the template after admission.
-pub fn run_prepared_select(
-    execution: &PreparedSelectExecution,
-    catalog: &mut Catalog,
-    current_database: &str,
-    ctx: &crate::StmtContext,
-) -> Result<Option<SelectMeta>, DriverError> {
-    if execution.schema_version != catalog.metadata_version()
-        || !execution
-            .plan
-            .current_database
-            .eq_ignore_ascii_case(current_database)
-    {
-        return Ok(None);
-    }
-    let cached = match execution.cached_plan.lock() {
-        Ok(cached) => cached,
-        Err(_) => return Ok(None),
-    };
-    let Some((select, physical)) = cached.execution(execution.generation) else {
-        return Ok(None);
-    };
-    super::physical_builder::execute_select(select, physical, catalog, ctx).map(Some)
+    collect_query(query, current_database, names);
 }
 
 /// One `column = ?`, `column = const`, or `column IS NULL` conjunct of a
@@ -1405,13 +1585,97 @@ fn point_byte_safe(field_type: &FieldType) -> bool {
 /// source-column projection whose whole predicate is owned by the point key is
 /// returned here. Every residual operator or unsupported table shape declines
 /// to the ordinary planner below.
-pub(crate) fn try_fast_point_select(
+fn fast_point_schema(table: &KvTable, output: &FastPointOutput) -> Schema {
+    let columns = output
+        .offsets
+        .iter()
+        .zip(&output.columns)
+        .enumerate()
+        .map(|(position, (offset, (name, field_type)))| {
+            let id = table
+                .columns
+                .get(*offset)
+                .map_or(tidb_model::column::EXTRA_HANDLE_ID, |column| column.id);
+            let mut column = Column::new(id, field_type.clone());
+            column.id = id;
+            column.index = position as i64;
+            column.orig_name.clone_from(name);
+            column
+        })
+        .collect();
+    Schema::new(columns)
+}
+
+fn closed_point_ranges(keys: &[Vec<Datum>]) -> tidb_planner::ranger::types::Ranges {
+    keys.iter()
+        .map(|values| tidb_planner::ranger::types::Range {
+            low_val: values.clone(),
+            high_val: values.clone(),
+            collators: vec![tidb_datatype::Collation::Binary; values.len()],
+            low_exclude: false,
+            high_exclude: false,
+        })
+        .collect()
+}
+
+/// Go `TryFastPlan` for a query statement, producing the same complete
+/// physical root later consumed by `executorBuilder.build`. This is the
+/// optimizer stage; it never drains a source or constructs a separate
+/// executor pipeline.
+pub(crate) fn try_fast_point_physical_plan(
     select: &tidb_ast::SelectStmt,
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
-    mut trace: Option<&mut PlanTrace>,
-) -> Result<Option<SelectMeta>, DriverError> {
+) -> Result<Option<tidb_planner::physical::PhysicalPlan>, DriverError> {
+    try_fast_point_physical_plan_with_allocator(
+        select,
+        catalog,
+        current_db,
+        ctx,
+        &tidb_planner::plan_base::PlanIdAllocator::new(),
+    )
+}
+
+/// Go's fast-plan builder using the enclosing statement's plan-id counter.
+/// DML tries its point child before allocating the write root, while a plain
+/// query starts from a fresh counter; both call sites therefore share the
+/// same implementation without assigning fixed IDs by hand.
+pub(crate) fn try_fast_point_physical_plan_with_allocator(
+    select: &tidb_ast::SelectStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    plan_ids: &tidb_planner::plan_base::PlanIdAllocator,
+) -> Result<Option<tidb_planner::physical::PhysicalPlan>, DriverError> {
+    try_fast_point_physical_plan_with_allocator_mode(
+        select, catalog, current_db, ctx, plan_ids, false,
+    )
+}
+
+/// Go's `tryUpdatePointPlan` / `tryDeletePointPlan` retain the complete table
+/// row and its handle on the PointGet child instead of applying a SELECT-list
+/// projection.
+pub(crate) fn try_fast_dml_point_physical_plan_with_allocator(
+    select: &tidb_ast::SelectStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    plan_ids: &tidb_planner::plan_base::PlanIdAllocator,
+) -> Result<Option<tidb_planner::physical::PhysicalPlan>, DriverError> {
+    try_fast_point_physical_plan_with_allocator_mode(
+        select, catalog, current_db, ctx, plan_ids, true,
+    )
+}
+
+fn try_fast_point_physical_plan_with_allocator_mode(
+    select: &tidb_ast::SelectStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    plan_ids: &tidb_planner::plan_base::PlanIdAllocator,
+    dml_source: bool,
+) -> Result<Option<tidb_planner::physical::PhysicalPlan>, DriverError> {
     if ctx
         .optimizer_fix_control()
         .get_bool_with_default(tidb_planner::fix_control::FIX_52592, false)
@@ -1423,8 +1687,6 @@ pub(crate) fn try_fast_point_select(
     let Some(table_ref) = single_table_ref(&select.from) else {
         return Ok(None);
     };
-    // The ordinary source builder owns these refusal diagnostics. A fast plan
-    // must not turn either unsupported clause into an ordinary current read.
     if table_ref.as_of.is_some() || table_ref.sample.is_some() || !table_ref.partitions.is_empty() {
         return Ok(None);
     }
@@ -1432,143 +1694,119 @@ pub(crate) fn try_fast_point_select(
     let Some(entry @ TableEntry::Kv(table)) = catalog.get_in(database, name) else {
         return Ok(None);
     };
-    let table = table.clone();
+    if table.partition().is_some() {
+        return Ok(None);
+    }
     let columns = entry.column_list();
     let visible = table_ref.alias.as_deref().unwrap_or(name);
-    let mut scope = PlanTrace::single_table_scope(
+    let mut scope = single_table_scope(
         visible,
         table_ref.alias.is_none().then(|| database.to_owned()),
         columns.clone(),
     );
     scope.zone = ctx.session_zone();
-    let Some(output) = fast_point_output(select, &scope) else {
-        return Ok(None);
+    let output = if dml_source {
+        fast_dml_point_output(table)
+    } else {
+        let Some(output) = fast_point_output(select, &scope) else {
+            return Ok(None);
+        };
+        output
     };
+    let schema = fast_point_schema(table, &output);
 
-    // Go attempts BatchPointGet before PointGet. Its integer-handle arm
-    // returns before consulting index hints, while secondary and clustered
-    // indexes still pass through `indexIsAvailableByHints`.
-    let mut batch = fast_batch_partition_supported(&table)
-        .then(|| try_batch_point_get(select, &table, &columns, &scope.zone))
+    let mut batch = fast_batch_partition_supported(table)
+        .then(|| try_batch_point_get(select, table, &columns, &scope.zone))
         .transpose()?
         .flatten();
     if batch.as_ref().is_some_and(|batch| !batch.ignores_hints()) {
         let hints = crate::index_hints::single_table_scan_hints(
             select,
             Some(table_ref),
-            &table,
+            table,
             current_db,
             ctx,
         )?;
         batch = batch.filter(|batch| batch.allowed_by(&hints));
     }
     if let Some(batch) = batch {
-        let BatchPointLookup {
-            handles,
-            index,
-            plan_rows,
-            ..
-        } = batch;
-        let exec = HandleSourceExec::new_projected_with_context(
-            ExecutorMeta::new(
-                Schema::new(source_schema_columns(&output.columns)),
-                0,
-                INIT_CAP,
-                MAX_CHUNK_SIZE,
-            ),
-            table.clone(),
-            handles.clone(),
-            output.offsets,
-            crate::kv_table::RowDecodeContext::for_query(ctx),
-        );
-        if let Some(trace) = trace.as_deref_mut() {
-            let partitions = table.handle_partition_names(&handles, &scope.zone, ctx);
-            match index {
-                Some((_, index)) => trace.push_fast_index_batch_point_get(
-                    source_table_name(&scope, &table.name),
-                    plan_rows,
-                    &partitions,
-                    &index,
-                    ctx.static_partition_prune(),
-                    &batch_point_branch_estimates(catalog, &table, &partitions, plan_rows),
-                ),
-                None => trace.push_fast_batch_point_get(
-                    source_table_name(&scope, &table.name),
-                    &table,
-                    &handles,
-                    plan_rows,
-                    &partitions,
-                ),
-            }
-            trace.set_scan_act_rows(exec.produced_rows());
-        }
+        let mut base =
+            tidb_planner::physical::BasePhysicalPlan::new(plan_ids, "Batch_Point_Get", 0);
+        base.base
+            .set_stats(Some(tidb_planner::stats_info::StatsInfo::new(
+                batch.plan_rows as f64,
+                [],
+            )));
+        base.base.set_schema(Some(schema));
+        let ranges = closed_point_ranges(&batch.key_values);
         crate::index_hints::report_comment_index_hints(select, catalog, current_db, ctx);
-        if trace.as_deref().is_some_and(PlanTrace::is_plan_only) {
-            return Ok(Some((output.columns, Vec::new())));
-        }
-        let types = output
-            .columns
-            .iter()
-            .map(|(_, field_type)| field_type.clone())
-            .collect::<Vec<_>>();
-        let rows = drain_executor_rows(Box::new(exec), &types, &ctx.statement_memory())?;
-        return Ok(Some((output.columns, rows)));
+        return Ok(Some(tidb_planner::physical::PhysicalPlan::BatchPointGet(
+            tidb_planner::physical::PhysicalBatchPointGet {
+                base,
+                table_id: table.table_id,
+                index_id: batch.index.as_ref().map(|(id, _)| *id),
+                ranges,
+                range_rebuild: None,
+                keep_order: false,
+                desc: false,
+            },
+        )));
     }
 
     let hints = crate::index_hints::single_table_scan_hints(
         select,
         Some(table_ref),
-        &table,
+        table,
         current_db,
         ctx,
     )?;
     if !hints.allows_table() {
         return Ok(None);
     }
-    let Some(handle) = try_point_get(
+    let Some(point) = try_point_get(
         &PointPlanStmt::of_select(select),
-        &table,
+        table,
         &columns,
         &scope.zone,
     )?
     else {
         return Ok(None);
     };
-    if !point_get_consumes_where(select, &table, &columns, &scope.zone) {
+    if !point_get_consumes_where(select, table, &columns, &scope.zone) {
         return Ok(None);
     }
-
-    let exec = HandleSourceExec::new_projected_with_context(
-        ExecutorMeta::new(
-            Schema::new(source_schema_columns(&output.columns)),
-            0,
-            INIT_CAP,
-            MAX_CHUNK_SIZE,
-        ),
-        table.clone(),
-        handle.handle.clone().into_iter().collect(),
-        output.offsets,
-        crate::kv_table::RowDecodeContext::for_query(ctx),
-    );
-    if let Some(trace) = trace.as_deref_mut() {
-        trace.push_fast_point_get(
-            source_table_name(&scope, &table.name),
-            &table,
-            handle.handle.as_ref(),
-        );
-        trace.set_scan_act_rows(exec.produced_rows());
-    }
+    let mut base = tidb_planner::physical::BasePhysicalPlan::new(plan_ids, "Point_Get", 0);
+    base.base
+        .set_stats(Some(tidb_planner::stats_info::StatsInfo::new(1.0, [])));
+    base.base.set_schema(Some(schema));
     crate::index_hints::report_comment_index_hints(select, catalog, current_db, ctx);
-    if trace.as_deref().is_some_and(PlanTrace::is_plan_only) {
-        return Ok(Some((output.columns, Vec::new())));
-    }
-    let types = output
+    Ok(Some(tidb_planner::physical::PhysicalPlan::PointGet(
+        tidb_planner::physical::PhysicalPointGet {
+            base,
+            table_id: table.table_id,
+            index_id: point.index_id,
+            ranges: closed_point_ranges(&[point.key_values]),
+            range_rebuild: None,
+        },
+    )))
+}
+
+fn fast_dml_point_output(table: &KvTable) -> FastPointOutput {
+    let mut offsets = (0..table.columns.len()).collect::<Vec<_>>();
+    let mut columns = table
         .columns
         .iter()
-        .map(|(_, field_type)| field_type.clone())
+        .map(|column| (column.name.clone(), column.field_type.clone()))
         .collect::<Vec<_>>();
-    let rows = drain_executor_rows(Box::new(exec), &types, &ctx.statement_memory())?;
-    Ok(Some((output.columns, rows)))
+    if table.pk_handle_offset().is_none() && table.common_handle_offsets().is_empty() {
+        offsets.push(table.columns.len());
+        columns.push((
+            tidb_model::column::EXTRA_HANDLE_NAME.to_owned(),
+            FieldType::new(tidb_datatype::FieldTypeCode::LongLong)
+                .with_flags(tidb_datatype::FieldTypeFlags::NOT_NULL),
+        ));
+    }
+    FastPointOutput { offsets, columns }
 }
 
 /// Whether Rust can route Go's partitioned fast batch point plan from the
@@ -1656,52 +1894,6 @@ fn fast_point_output(select: &tidb_ast::SelectStmt, scope: &FromScope) -> Option
     Some(FastPointOutput { offsets, columns })
 }
 
-/// A plain column projection over an exact range can be returned directly by
-/// the coprocessor read. Every clause that needs another root operator keeps
-/// the ordinary pipeline for that operator to be built in the right place.
-fn handle_predicate_is_consumed(
-    where_clause: Option<&tidb_ast::Expr>,
-    table: &KvTable,
-    zone: &tidb_datatype::SessionTimeZone,
-) -> bool {
-    where_clause.is_some_and(|where_clause| {
-        predicate_is_exact_range(where_clause)
-            && crate::handle_range::build_handle_ranges(table, where_clause, zone)
-                .is_some_and(|built| built.access_count > 0 && built.residual.is_empty())
-    })
-}
-
-fn predicate_is_exact_range(predicate: &tidb_ast::Expr) -> bool {
-    match predicate {
-        tidb_ast::Expr::Paren(inner) => predicate_is_exact_range(inner),
-        tidb_ast::Expr::Binary(
-            tidb_ast::BinaryOp::LogicAnd | tidb_ast::BinaryOp::LogicOr,
-            left,
-            right,
-        ) => predicate_is_exact_range(left) && predicate_is_exact_range(right),
-        tidb_ast::Expr::Binary(
-            tidb_ast::BinaryOp::Eq
-            | tidb_ast::BinaryOp::NullEq
-            | tidb_ast::BinaryOp::Ge
-            | tidb_ast::BinaryOp::Gt
-            | tidb_ast::BinaryOp::Le
-            | tidb_ast::BinaryOp::Lt,
-            ..,
-        )
-        | tidb_ast::Expr::In { .. }
-        | tidb_ast::Expr::Between { .. }
-        | tidb_ast::Expr::Is {
-            target: tidb_ast::IsTarget::Null,
-            ..
-        } => true,
-        _ => false,
-    }
-}
-
-/// Whether every equality in a single-point `WHERE` is one of the key parts
-/// that produced the handle. `try_point_get` may also be used as a narrowed
-/// source when a common/unique key is pinned alongside an extra predicate;
-/// that shape must retain its Selection above the source.
 fn point_get_consumes_where(
     select: &tidb_ast::SelectStmt,
     table: &KvTable,
@@ -1715,32 +1907,6 @@ fn point_get_consumes_where(
         zone,
         sole_table_ref(&select.from).map_or(&[][..], |table_ref| table_ref.partitions.as_slice()),
     )
-}
-
-/// Whether a write's narrowed read path consumed its complete predicate.
-/// Go's update/delete fast plan has no Selection in this case; a range path
-/// or a point lookup with any extra equality must still evaluate the WHERE.
-pub(crate) fn write_read_path_consumes_predicate(
-    read_path: Option<&WriteReadPath>,
-    stmt: &PointPlanStmt<'_>,
-    table: &KvTable,
-    columns: &[(String, FieldType)],
-    zone: &tidb_datatype::SessionTimeZone,
-) -> bool {
-    match read_path {
-        Some(WriteReadPath::Batch(_)) => true,
-        Some(WriteReadPath::Point(_)) => point_get_predicate_is_consumed(
-            stmt.where_clause,
-            table,
-            columns,
-            zone,
-            stmt.named_partitions,
-        ),
-        Some(WriteReadPath::Ranges(..)) => {
-            handle_predicate_is_consumed(stmt.where_clause, table, zone)
-        }
-        Some(WriteReadPath::IndexRanges(..)) | None => false,
-    }
 }
 
 pub(crate) fn point_get_predicate_is_consumed(
@@ -1784,7 +1950,7 @@ pub(crate) fn point_get_predicate_is_consumed(
         && pairs.len() == 1
         && pairs[0]
             .column
-            .eq_ignore_ascii_case(crate::driver::leaf_demand::EXTRA_HANDLE_NAME)
+            .eq_ignore_ascii_case(tidb_model::column::EXTRA_HANDLE_NAME)
     {
         return true;
     }
@@ -1806,1361 +1972,6 @@ pub(crate) fn point_get_predicate_is_consumed(
 /// An unresolvable `PARTITION (p)` name answers the FULL list rather than
 /// failing here: the read has already raised 1735 for it, and this is only
 /// ever asked for a plan that got built.
-pub(crate) fn surviving_partitions(
-    select: &tidb_ast::SelectStmt,
-    table_ref: Option<&tidb_ast::TableRef>,
-    table: &KvTable,
-    zone: &tidb_datatype::SessionTimeZone,
-) -> Vec<(String, i64)> {
-    let Some(partition) = table.partition() else {
-        return Vec::new();
-    };
-    let selected = table_ref
-        .map(|table_ref| table_ref.partitions.as_slice())
-        .filter(|names| !names.is_empty())
-        .and_then(|names| {
-            crate::partition_pruning::ids_for_selected_partitions(partition, names).ok()
-        });
-    let pruned = pruned_partition_ids(select, table, zone);
-    partition
-        .definitions
-        .iter()
-        .filter(|def| selected.as_ref().is_none_or(|ids| ids.contains(&def.id)))
-        .filter(|def| pruned.as_ref().is_none_or(|ids| ids.contains(&def.id)))
-        .map(|def| (def.name.clone(), def.id))
-        .collect()
-}
-
-/// The partitions ONE LEAF of a multi-table `FROM` reads, named as declared
-/// and in definition order.
-///
-/// Go's `PartitionProcessor.rewriteDataSource` walks the WHOLE logical plan
-/// and divides every `DataSource` it finds, so a partitioned table inside a
-/// join is fanned out exactly as a single-table `SELECT`'s is -- captured
-/// over `PARTITION BY LIST (ltype)` with a predicate on a non-partitioning
-/// column, where TiDB prints
-/// `TableFullScan table:tx2, partition:p1` and `... partition:p2` under a
-/// `PartitionUnion(Probe)`. Recognising only the single-table shape is what
-/// printed one partition-less `TableFullScan table:tx2` there.
-///
-/// This is [`surviving_partitions`] MINUS the `WHERE` narrowing: a join
-/// leaf's read is restricted by its `PARTITION (p, ...)` list alone
-/// (`restricted_to_partitions` at the leaf build site), so the list named
-/// here is exactly the set the leaf's executor walks. Go additionally prunes
-/// the leaf by its own pushed-down conditions; doing that here would have to
-/// narrow the leaf's READ in the same breath, which the index and lookup
-/// arms do not yet route through one restriction point. Naming more
-/// partitions than Go is a plan that over-describes the read, never one that
-/// reads too few rows.
-pub(crate) fn leaf_read_partitions(
-    table: &KvTable,
-    named_partitions: &[String],
-) -> Vec<(String, i64)> {
-    let Some(partition) = table.partition() else {
-        return Vec::new();
-    };
-    let selected = Some(named_partitions)
-        .filter(|names| !names.is_empty())
-        .and_then(|names| {
-            crate::partition_pruning::ids_for_selected_partitions(partition, names).ok()
-        });
-    partition
-        .definitions
-        .iter()
-        .filter(|def| selected.as_ref().is_none_or(|ids| ids.contains(&def.id)))
-        .map(|def| (def.name.clone(), def.id))
-        .collect()
-}
-
-/// The estimate each surviving partition's own `DataSource` carries, in the
-/// order [`surviving_partitions`] lists them.
-///
-/// Go reads it from that partition's `PhysicalTableID`
-/// (`stats.GetStatsTable(ds.SCtx(), ds.TableInfo, ds.PhysicalTableID)`),
-/// which under static pruning is the only id `ANALYZE` ever stored a
-/// histogram under.
-pub(crate) fn surviving_partition_estimates(
-    catalog: &Catalog,
-    partitions: &[(String, i64)],
-) -> Vec<crate::access_cost::ScanEstimate> {
-    partitions
-        .iter()
-        .map(|(_, id)| {
-            let stats = catalog.table_statistics(*id);
-            crate::access_cost::ScanEstimate {
-                rows: crate::access_cost::realtime_row_count(stats.map(AsRef::as_ref)),
-                pseudo: stats.is_none_or(|stats| stats.pseudo),
-            }
-        })
-        .collect()
-}
-
-/// Whether `expr` names a scalar-subquery plan column whose eager
-/// evaluation recorded a NULL (Go's `EvaluateExprWithNull` replacement).
-pub(crate) fn single_point_handle(ranges: &[IndexRange]) -> Option<TableHandle> {
-    let [range] = ranges else {
-        return None;
-    };
-    if range.low_exclusive || range.high_exclusive {
-        return None;
-    }
-    match (range.low.as_slice(), range.high.as_slice()) {
-        ([Datum::Int(low)], [Datum::Int(high)]) if low == high => Some(TableHandle::Int(*low)),
-        ([Datum::UInt(low)], [Datum::UInt(high)]) if low == high => {
-            Some(TableHandle::Int(*low as i64))
-        }
-        _ => None,
-    }
-}
-
-/// Installs the streaming index-range source for a committed index path, and
-/// records the node `EXPLAIN` prints for it.
-#[allow(clippy::too_many_arguments)]
-fn batch_point_branch_estimates(
-    catalog: &Catalog,
-    table: &KvTable,
-    partitions: &[String],
-    point_count: usize,
-) -> Vec<f64> {
-    let Some(partition) = table.partition() else {
-        return Vec::new();
-    };
-    partitions
-        .iter()
-        .map(|name| {
-            partition
-                .definitions
-                .iter()
-                .find(|definition| definition.name == *name)
-                .and_then(|definition| catalog.table_statistics(definition.id))
-                .filter(|stats| !stats.pseudo)
-                .map_or(point_count as f64, |stats| {
-                    let rows = crate::access_cost::realtime_row_count(Some(stats.as_ref()));
-                    (point_count as f64).min(rows).max(1.0)
-                })
-        })
-        .collect()
-}
-
-/// The schema a fast-path source emits: the scope's columns in scope order,
-/// each carrying the unique id the driver's resolver hands expressions.
-pub(crate) fn source_schema_columns(columns: &[(String, FieldType)]) -> Vec<Column> {
-    columns
-        .iter()
-        .enumerate()
-        .map(|(i, (_, ft))| {
-            let mut col = Column::new((i + 1) as i64, ft.clone());
-            col.index = i as i64;
-            col
-        })
-        .collect()
-}
-
-/// Offers the source only the columns the statement reads, narrowing `scope`
-/// with it when the source takes the offer (Go's `rule_column_pruning.go`).
-///
-/// This runs BEFORE any expression is built, which is the whole point: every
-/// offset below is resolved against the narrowed scope from the start, so no
-/// already-built index has to be renumbered. It also runs before the predicate
-/// push-down, so a pushed conjunct's `column_offset` is already in narrow
-/// space -- and the kept set contains the `WHERE`'s columns because the gate
-/// collected them.
-///
-/// No "was the source replaced?" flag is needed: `accept_column_prune`
-/// defaults to refusing, so a fast-path source that cannot project simply says
-/// no and the full-width path stands. Each source answers for itself,
-/// fail-closed -- the same rule the pushed filter and row cap follow.
-pub(crate) fn prune_scan_columns(
-    select: &tidb_ast::SelectStmt,
-    scope: &mut FromScope,
-    from_source: &mut Option<Box<dyn Executor>>,
-) {
-    let Some(source) = from_source.as_mut() else {
-        return;
-    };
-    let Some(keep) = crate::column_prune::prunable_columns(select, scope) else {
-        return;
-    };
-    if keep.len() < scope.width()
-        && source
-            .table_access()
-            .is_some_and(|access| access.accept_column_prune(&keep))
-    {
-        *scope = crate::column_prune::pruned_scope(scope, &keep);
-    }
-}
-
-/// Offers the source the conjuncts it can apply itself, and reports both the
-/// `WHERE` that must still run above it (`None`: the source took all of it)
-/// and the physical Selection conditions the source accepted. Execution keeps
-/// the original built filters inside [`PushedScanFilter`]; the returned view
-/// uses the paired scan descriptions to expose Go's folded comparison
-/// constants and top-level CNF without repeating conversions or warnings.
-///
-/// Over a single base table every source below is a real streaming scan, so
-/// each answers for itself whether it can keep the promise
-/// [`crate::table_access`] describes -- an index range can (it tests every row
-/// it emits), a point get's handle source refuses. Only the residual then
-/// needs a `Selection`; when the scan takes the whole `WHERE` there is no
-/// `Selection` executor left, but the recorded plan is unchanged either way --
-/// Go prints one `Selection` over the scan for both halves (captured,
-/// `pkg/executor/zz_dump_pushdown_test.go`), and this tier prints no
-/// `TableReader`/`cop[tikv]` task to distinguish them.
-pub(crate) fn negotiate_scan_filter(
-    select: &tidb_ast::SelectStmt,
-    scope: &FromScope,
-    source: &mut Box<dyn Executor>,
-    ctx: &crate::StmtContext,
-    access_consumed_where: bool,
-    trace: Option<&mut PlanTrace>,
-) -> (Option<tidb_ast::Expr>, Vec<Expression>) {
-    if access_consumed_where {
-        return (None, Vec::new());
-    }
-    match (&select.where_clause, scope.tables.len()) {
-        (Some(predicate), 1) => {
-            let (pushed, residual) = split_scan_predicates(predicate, &scope_resolver(scope), ctx);
-            let accepted = !pushed.is_empty()
-                && source
-                    .table_access()
-                    .is_some_and(|access| access.accept_scan_filter(&pushed, ctx));
-            if accepted {
-                // `TableFullScan`'s `actRows` counts rows read, not rows kept,
-                // so it is taken from the scan itself rather than from the
-                // (now filtered) chunks leaving it.
-                if let (Some(trace), Some(scanned)) = (
-                    trace,
-                    source
-                        .table_access()
-                        .and_then(|access| access.scanned_rows_counter()),
-                ) {
-                    trace.set_scan_act_rows(scanned);
-                }
-                (residual, pushed.selection_conditions())
-            } else {
-                (Some(predicate.clone()), Vec::new())
-            }
-        }
-        (where_clause, _) => (where_clause.clone(), Vec::new()),
-    }
-}
-
-/// The conjuncts of `where_clause` the scan took, as written, when
-/// `residual` is what it left behind.
-///
-/// Go never has to recover this: `expression.PushDownExprs` hands
-/// `addPushedDownSelection4PhysicalTableScan` the two halves as two slices
-/// (`pkg/planner/core/find_best_task.go:3205`), one becoming the cop
-/// `Selection` and the other `CopTask.RootTaskConds`. This tier's driver
-/// holds the residual as an AST and the pushed half only as built
-/// expressions, so the AST of the pushed half -- which EXPLAIN needs to
-/// PRICE the cop `Selection` (`cardinality.Selectivity` takes the
-/// conditions, not the whole `WHERE`) -- is recovered by subtraction. It is
-/// exact: [`split_scan_predicates`] builds `residual` by cloning conjuncts
-/// out of this very list, in this order.
-///
-/// `None` means nothing was pushed, so there is no cop `Selection` to print.
-pub(crate) fn scan_pushed_conjuncts(
-    where_clause: &tidb_ast::Expr,
-    residual: &tidb_ast::Expr,
-) -> Option<tidb_ast::Expr> {
-    let mut whole = Vec::new();
-    collect_conjuncts(where_clause, &mut whole);
-    let mut left_behind = Vec::new();
-    collect_conjuncts(residual, &mut left_behind);
-    let mut left_behind = left_behind.into_iter().peekable();
-    let mut pushed: Vec<&tidb_ast::Expr> = Vec::new();
-    for conjunct in whole {
-        if left_behind.peek().is_some_and(|next| *next == conjunct) {
-            left_behind.next();
-            continue;
-        }
-        pushed.push(conjunct);
-    }
-    // A residual conjunct this walk never matched means the two lists are not
-    // the ones this function documents, so it claims nothing.
-    if left_behind.next().is_some() {
-        return None;
-    }
-    pushed.into_iter().cloned().reduce(|left, right| {
-        tidb_ast::Expr::Binary(
-            tidb_ast::BinaryOp::LogicAnd,
-            Box::new(left),
-            Box::new(right),
-        )
-    })
-}
-
-/// The partitions a single-table `SELECT`'s `WHERE` proves it has to read,
-/// or `None` when nothing narrows them.
-///
-/// The ranges come from the crate's ONE range builder
-/// ([`crate::index_range::detach_cond_and_build_range_for_index`]), asked for
-/// the partition expression's column exactly as it would be asked for a
-/// single-column index on it. That reuse is the point: Go prunes with the
-/// same `ranger` machinery it builds index ranges with, and a second range
-/// implementation here would be a second answer to disagree with.
-///
-/// Pruning is declined -- reading everything -- in two cases, each a
-/// SUPERSET and so never a wrong answer:
-///
-/// * a table with no partitioning;
-/// * a partition expression that is not a bare COLUMN. Go prunes `year(a)`
-///   through `MakePartitionByFnCol`'s monotonicity analysis, which this tier
-///   does not port; a monotonicity claim that is wrong drops a partition
-///   holding matching rows;
-/// * a `SELECT` with no `WHERE`, which constrains nothing.
-fn pruned_partition_ids(
-    select: &tidb_ast::SelectStmt,
-    table: &KvTable,
-    zone: &tidb_datatype::SessionTimeZone,
-) -> Option<Vec<i64>> {
-    let partition = table.partition()?;
-    let where_clause = select.where_clause.as_ref()?;
-    let tuple_partitioning = matches!(
-        partition.kind,
-        crate::PartitionKind::Key
-            | crate::PartitionKind::ListColumns { .. }
-            | crate::PartitionKind::RangeColumns { .. }
-    );
-    // A bare column is the one scalar partition expression whose own value a
-    // range over a column is. Tuple partitioning owns its named tuple.
-    let mut range_columns = Vec::with_capacity(partition.dependencies.len());
-    for dependency in &partition.dependencies {
-        let column = table
-            .columns
-            .iter()
-            .find(|column| column.name.eq_ignore_ascii_case(dependency))?;
-        if !tuple_partitioning && partition.expr_text != format!("`{}`", column.name) {
-            return None;
-        }
-        range_columns.push(crate::index_range::RangeColumn::whole(
-            column.name.clone(),
-            column.field_type.clone(),
-        ));
-    }
-    if range_columns.is_empty() {
-        return None;
-    }
-    // Go `PartitionProcessor.prune` runs its conditions through
-    // `applyPredicateSimplification` -- whose first act is
-    // `expression.PushDownNot` -- BEFORE handing them to the pruner, and its
-    // own comment gives the reason: a `not (a < 5)` the ranger cannot read
-    // yields no range at all, which reads here as "prune nothing" and leaves
-    // the `values less than (0)` partition in a plan TiDB prunes it out of.
-    let normalized = crate::partition_pruning::push_down_not(where_clause);
-    // Go `DetachCondAndBuildRangeForPartition`, which is the one ranger entry
-    // that does NOT convert its points to sort keys: a partition bound is a
-    // written value compared under the partition column's own collation, not
-    // an index's stored form.
-    let built = crate::index_range::detach_cond_and_build_range_for_partition(
-        &range_columns,
-        &normalized,
-        zone,
-    )?;
-    crate::partition_pruning::pruned_ids(partition, &built.ranges)
-}
-
-/// How `EXPLAIN` names one key part of an index.
-///
-/// An ordinary key part is the column's name. An expression index's key part
-/// is the EXPRESSION, not the hidden column the DDL rewrote it into: Go
-/// prints `` index:k1(`a` + 1, b) ``, and the hidden column's generated name
-/// appears in no user-visible output at all. The text is the one the column
-/// already stores, so the plan and `SHOW CREATE TABLE` cannot disagree.
-pub(crate) fn index_key_part_name(table: &KvTable, offset: usize) -> String {
-    let Some(column) = table.columns.get(offset) else {
-        return String::new();
-    };
-    match &column.generated {
-        Some(generated) if table.is_hidden(offset) => generated.expr_text.clone(),
-        _ => column.name.clone(),
-    }
-}
-
-/// The estimate `EXPLAIN` prints for a table read that stayed a full scan.
-///
-/// This is the same [`crate::access_cost`] answer the path choice used, so
-/// the printed plan and the costed plan cannot disagree. A table with no
-/// loaded statistics is Go's `PseudoTable`, and the estimate says so.
-pub(crate) fn full_scan_estimate(
-    catalog: &Catalog,
-    entry: &TableEntry,
-) -> crate::access_cost::ScanEstimate {
-    let stats = match entry {
-        TableEntry::Kv(table) => catalog.table_statistics(table.stats_physical_id()),
-        // A memory table's rows are computed at query time and an
-        // INFORMATION_SCHEMA view has no `mysql.stats_*` row, so there is
-        // nothing to have analyzed; Go prints the pseudo constant for these
-        // too.
-        TableEntry::Mem(_) | TableEntry::Cte(_) | TableEntry::View(_) | TableEntry::Sequence(_) => {
-            None
-        }
-    };
-    // The row count is real whenever a `mysql.stats_meta` row carries one,
-    // even when no histogram was ever analyzed -- and in that state Go prints
-    // the real count AND `stats:pseudo`. `realtime_row_count` owns the rule,
-    // so this row and the cost that chose it agree by construction.
-    crate::access_cost::ScanEstimate {
-        rows: crate::access_cost::realtime_row_count(stats.map(AsRef::as_ref)),
-        pseudo: stats.is_none_or(|stats| stats.pseudo),
-    }
-}
-
-/// `cardinality.Selectivity` for a single base table's `WHERE`.
-///
-/// This is what makes a `Selection` over a full scan print the estRows Go
-/// prints. `None` means there is no `WHERE` to estimate, and nothing else:
-/// a table with no analyzed histograms is Go's `PseudoTable`, which
-/// `Selectivity` estimates through the SAME body using pseudo histograms
-/// (`pkg/statistics/table.go:1034-1061` fills one per column), so routing it
-/// anywhere else is what made `a = 1 and b = 2` print 10.00 against TiDB's
-/// 1.00. [`crate::access_cost::selectivity`] owns both arms, and the
-/// `stats:pseudo` flag stays where it was decided
-/// ([`full_scan_estimate`]) -- which statistics exist is unchanged here, only
-/// what is computed from them.
-
-pub(crate) fn stats_selectivity(
-    catalog: &Catalog,
-    table: &KvTable,
-    scope: &FromScope,
-    where_clause: Option<&tidb_ast::Expr>,
-) -> Option<f64> {
-    stats_selectivity_with_default_string_match_selectivity(
-        catalog,
-        table,
-        scope,
-        where_clause,
-        0.0,
-    )
-}
-
-pub(crate) fn stats_selectivity_with_default_string_match_selectivity(
-    catalog: &Catalog,
-    table: &KvTable,
-    scope: &FromScope,
-    where_clause: Option<&tidb_ast::Expr>,
-    default_string_match_selectivity: f64,
-) -> Option<f64> {
-    let predicate = where_clause?;
-    let stats = catalog.table_statistics(table.stats_physical_id());
-    Some(
-        crate::access_cost::selectivity_with_default_string_match_selectivity(
-            predicate,
-            table,
-            &scope_resolver(scope),
-            stats.as_ref().map(AsRef::as_ref),
-            default_string_match_selectivity,
-        ),
-    )
-}
-
-/// `cardinality.Selectivity` for a `SELECT`'s `WHERE` over a single base
-/// table, when that table has loaded statistics.
-pub(crate) fn select_stats_selectivity(
-    select: &tidb_ast::SelectStmt,
-    catalog: &Catalog,
-    current_db: &str,
-    scope: &FromScope,
-) -> Option<f64> {
-    select_predicate_stats_selectivity(
-        select,
-        select.where_clause.as_ref()?,
-        catalog,
-        current_db,
-        scope,
-    )
-    // A predicate spanning a join has no single DataSource statistics node.
-    // Go's `Selectivity` leaves it uncovered and charges the global
-    // `selectionFactor` once.
-    .or_else(|| (scope.tables.len() > 1).then_some(tidb_planner::cost_factors::SELECTION_FACTOR))
-}
-
-/// `cardinality.Selectivity` for one residual predicate of a single-table
-/// `SELECT`. Unlike [`select_stats_selectivity`], this deliberately does not
-/// re-price access conditions already represented by a range scan.
-/// The `KvTable` a scan of this `SELECT` will actually read: the catalog
-/// handle narrowed by an explicit `PARTITION (...)` clause and then by
-/// pruning.
-///
-/// Go runs `PartitionProcessor` during LOGICAL optimization, so by the time
-/// anything asks `Selectivity` or
-/// `stats.GetStatsTable(ds.SCtx(), ds.TableInfo, ds.PhysicalTableID)` the
-/// `DataSource` IS the surviving partition and its id names that partition.
-/// Reading the catalog handle straight, as [`single_kv_table`] does, skips
-/// that step -- and static pruning stores a histogram per PHYSICAL partition
-/// and no merged one, so the lookup missed and a pruned scan printed
-/// `stats:pseudo` over 10000 rows after `ANALYZE` had just measured two.
-/// The shared planner's access lowering already narrows before its own lookup;
-/// this is the same narrowing for estimate callers that build their own handle.
-fn pruned_single_kv_table(
-    select: &tidb_ast::SelectStmt,
-    catalog: &Catalog,
-    current_db: &str,
-    zone: &tidb_datatype::SessionTimeZone,
-) -> Option<KvTable> {
-    let mut table = single_kv_table(&select.from, catalog, current_db)?;
-    if table.partition().is_none() {
-        return Some(table);
-    }
-    if let Some(table_ref) = single_table_ref(&select.from) {
-        if !table_ref.partitions.is_empty() {
-            let name = table_ref
-                .name
-                .last()
-                .map(String::as_str)
-                .unwrap_or(table.name.as_str());
-            table =
-                super::from::restricted_to_partitions(&table, &table_ref.partitions, name).ok()?;
-        }
-    }
-    if let Some(ids) = pruned_partition_ids(select, &table, zone) {
-        table.restrict_read_to_partitions(&ids);
-    }
-    Some(table)
-}
-
-pub(crate) fn select_predicate_stats_selectivity(
-    select: &tidb_ast::SelectStmt,
-    predicate: &tidb_ast::Expr,
-    catalog: &Catalog,
-    current_db: &str,
-    scope: &FromScope,
-) -> Option<f64> {
-    select_predicate_stats_selectivity_in_session(
-        select, predicate, catalog, current_db, scope, 0.0,
-    )
-}
-
-/// [`select_predicate_stats_selectivity`] with the session's raw
-/// `tidb_default_string_match_selectivity`, which Go's `Selectivity` reads
-/// for every string-match conjunct it cannot cover with statistics
-/// (`pkg/planner/cardinality/selectivity.go`: `GetStrMatchDefaultSelectivity`).
-pub(crate) fn select_predicate_stats_selectivity_in_session(
-    select: &tidb_ast::SelectStmt,
-    predicate: &tidb_ast::Expr,
-    catalog: &Catalog,
-    current_db: &str,
-    scope: &FromScope,
-    default_string_match_selectivity: f64,
-) -> Option<f64> {
-    let table = pruned_single_kv_table(select, catalog, current_db, &scope.zone)?;
-    stats_selectivity_with_default_string_match_selectivity(
-        catalog,
-        &table,
-        scope,
-        Some(predicate),
-        default_string_match_selectivity,
-    )
-}
-
-/// The loaded-statistics row count for a single-table predicate.
-///
-/// A decorrelated `EXISTS`/`NOT EXISTS` is a separate logical semi join in Go;
-/// its preserved `DataSource` therefore owns only the ordinary local
-/// predicates.  Callers that still hold the original SELECT (which also
-/// contains the subquery) use this helper with the local conjuncts so the
-/// semi join does not charge its `0.8` factor twice.  `None` means the source
-/// is not one base table or statistics are unavailable.
-pub(crate) fn select_predicate_stats_rows(
-    select: &tidb_ast::SelectStmt,
-    predicate: Option<&tidb_ast::Expr>,
-    catalog: &Catalog,
-    current_db: &str,
-    scope: &FromScope,
-) -> Option<f64> {
-    let table = pruned_single_kv_table(select, catalog, current_db, &scope.zone)?;
-    let stats = catalog.table_statistics(table.stats_physical_id());
-    let realtime = crate::access_cost::realtime_row_count(stats.map(AsRef::as_ref));
-    let selectivity = predicate
-        .map(|predicate| stats_selectivity(catalog, &table, scope, Some(predicate)).unwrap_or(1.0))
-        .unwrap_or(1.0);
-    Some(realtime * selectivity)
-}
-
-/// The full-scan estimate and stats-backed selectivity a single-table write's
-/// recorded read plan prints, resolved from the catalog by name.
-pub(crate) fn single_table_trace_estimate(
-    catalog: &Catalog,
-    database: &str,
-    name: &str,
-    visible: &str,
-    columns: &[(String, FieldType)],
-    where_clause: Option<&tidb_ast::Expr>,
-) -> (crate::access_cost::ScanEstimate, Option<f64>) {
-    let Some(entry) = catalog.get_in(database, name) else {
-        return (
-            crate::access_cost::ScanEstimate::pseudo(crate::plan_trace::PSEUDO_ROW_COUNT),
-            None,
-        );
-    };
-    let estimate = full_scan_estimate(catalog, entry);
-    let TableEntry::Kv(table) = entry else {
-        return (estimate, None);
-    };
-    let scope = PlanTrace::single_table_scope(visible, None, columns.to_vec());
-    (
-        estimate,
-        stats_selectivity(catalog, table, &scope, where_clause),
-    )
-}
-
-/// How a single-table `UPDATE`/`DELETE` FETCHES the records it then filters.
-///
-/// Both arms narrow only which records are fetched. The write's own per-row
-/// `WHERE` evaluation is unchanged and still decides which rows the statement
-/// acts on, so the affected row set is the full scan's either way -- see
-/// [`write_read_path`].
-pub(crate) enum WriteReadPath {
-    /// Go's `Point_Get`: one record, read by key -- carrying HOW it was
-    /// pinned, because the plan prints the pin (`AccessObject`). A `None`
-    /// handle is a key no row can carry, which Go also plans as a
-    /// `Point_Get` that reads nothing.
-    Point(PointGetPin),
-    /// Go's `Batch_Point_Get`: several records read directly by their
-    /// clustered or unique handles.
-    Batch(Vec<TableHandle>),
-    /// Go's `TableRangeScan`: the handle intervals the `WHERE` implies, and
-    /// the estimate `EXPLAIN` prints for them.
-    Ranges(Vec<IndexRange>, crate::access_cost::ScanEstimate),
-    /// Go's `IndexRangeScan`: the id of the index the chooser preferred, the
-    /// ranges of it the `WHERE` implies, and the estimate `EXPLAIN` prints. A
-    /// write fetches the candidate records through the index and still filters
-    /// per row above, so the ranges are a superset of the affected rows.
-    IndexRanges(i64, Vec<IndexRange>, crate::access_cost::ScanEstimate),
-}
-
-/// The read a single-table `UPDATE`/`DELETE` performs to find its target
-/// rows; `None` when nothing narrows it and the write reads the whole table.
-///
-/// Go plans a write's read from the same predicate, with the same functions,
-/// as a read's. `tryUpdatePointPlan`/`tryDeletePointPlan`
-/// (`pkg/planner/core/point_get_plan.go`) synthesize an `ast.SelectStmt` out
-/// of the write's `TableRefs`/`Where`/`Order`/`Limit` and hand it to
-/// `tryPointGetPlan` -- the SAME function a `SELECT` reaches through
-/// `TryFastPlan` -- and only when that declines does the ordinary path plan a
-/// `DataSource` whose table path gets its ranges from `deriveTablePathStats`
-/// exactly as a `SELECT`'s does. This function is that order, and it calls
-/// the same two builders the read side calls: [`try_point_get`] and
-/// [`crate::handle_range`], the crate's single range algebra.
-///
-/// The point arm is what makes `WHERE id = 500` one key lookup instead of a
-/// scan over the degenerate range `[500,500]`. A single-key range still costs
-/// a range scan against storage; a key lookup does not, and that difference
-/// is the whole reason Go replaces the read rather than narrowing it.
-///
-/// Neither arm may change the answer. A point plan is decided ONLY from
-/// equalities that pin a whole key ([`try_point_get`] is Go's
-/// `getNameValuePairs` rule: `AND` of `column = constant`, nothing else), the
-/// key's constant is moved into the column's domain first or the plan is
-/// abandoned ([`super::point_get_key`]), and the `WHERE` is still evaluated
-/// per row above the fetch -- so an extra conjunct the key did not pin still
-/// filters, and a key naming a row that does not exist simply reads nothing.
-pub(crate) fn write_read_path(
-    catalog: &Catalog,
-    database: &str,
-    name: &str,
-    stmt: &PointPlanStmt<'_>,
-    ctx: &crate::StmtContext,
-) -> Result<Option<WriteReadPath>, DriverError> {
-    let Some(TableEntry::Kv(table)) = catalog.get_in(database, name) else {
-        return Ok(None);
-    };
-    // Go's order: the fast plan first, the table path only when it declines.
-    // The column list is the table's own, because `try_point_get` reads it at
-    // the offsets `pk_handle_offset`/`KvIndex::column_offsets` name, and those
-    // are offsets into `KvTable::columns`.
-    let columns: Vec<(String, FieldType)> = table
-        .columns
-        .iter()
-        .map(|column| (column.name.clone(), column.field_type.clone()))
-        .collect();
-    let zone = &ctx.session_zone();
-    let disable_point_get = ctx
-        .optimizer_fix_control()
-        .get_bool_with_default(tidb_planner::fix_control::FIX_52592, false);
-    if let Some(batch) = (!disable_point_get)
-        .then(|| try_batch_point_get_stmt(stmt, table, &columns, zone))
-        .transpose()?
-        .flatten()
-    {
-        return Ok(Some(WriteReadPath::Batch(batch.into_handles())));
-    }
-    if let Some(handle) = (!disable_point_get)
-        .then(|| try_point_get(stmt, table, &columns, zone))
-        .transpose()?
-        .flatten()
-    {
-        return Ok(Some(WriteReadPath::Point(handle)));
-    }
-    // Go's ordinary UPDATE/DELETE path builds one DataSource and sends it
-    // through the same logical/physical search as a SELECT. The shared
-    // planner is therefore the only ordinary path chooser here too; this
-    // lowering merely consumes its exact scan receipt.
-    let select = stmt.write_select().ok_or_else(|| {
-        DriverError::unsupported("single-table write has no planner table reference")
-    })?;
-    let decision = super::planner_bridge::select_decision(&select, catalog, database, ctx)
-        .ok_or_else(|| {
-            DriverError::unsupported(format!(
-                "shared planner could not plan the read for write target {name}"
-            ))
-        })?;
-    let visible = stmt
-        .table_ref
-        .and_then(|table_ref| table_ref.alias.as_deref())
-        .unwrap_or(name);
-    let selected =
-        super::planner_bridge::AccessDecision::for_leaf(&decision.access, table.table_id, visible)
-            .ok_or_else(|| {
-                DriverError::unsupported(format!(
-                    "shared planner returned no access receipt for write target {visible}"
-                ))
-            })?;
-    match super::leaf_access::lower_planner_access(table, visible, &columns, catalog, selected)? {
-        super::leaf_access::LeafAccessPath::Table {
-            ranges: Some(ranges),
-            estimate,
-            ..
-        } => Ok(Some(WriteReadPath::Ranges(ranges, estimate))),
-        super::leaf_access::LeafAccessPath::Table { ranges: None, .. } => Ok(None),
-        super::leaf_access::LeafAccessPath::Index(path) => {
-            let (index_id, ranges, estimate) = path.into_scan_parts();
-            Ok(Some(WriteReadPath::IndexRanges(index_id, ranges, estimate)))
-        }
-    }
-}
-
-/// Splits a `WHERE` over one base table into the conjuncts the scan can apply
-/// itself and the predicate that must stay above it.
-///
-/// This is Go's `rule_predicate_push_down` split narrowed to the shape the
-/// bounded TiKV Selection lowering already speaks -- see
-/// [`crate::predicate_pushdown`] for the rule and for why the pushed half may be
-/// removed from the `Selection` only when the source promises to apply it to
-/// every row, staged writes included.
-///
-/// The residual is the remaining conjuncts re-joined with `AND` in their
-/// original order, so what runs above the scan is the `WHERE` minus exactly
-/// what moved into it. `None` means every conjunct was pushed.
-/// Go `constructBinaryOpFunction` (`expression_rewriter.go:413`) for the
-/// one shape this tier's filter description still needs: a ROW comparison
-/// `(c1, .., cn) op (v1, .., vn)` with `op` one of `>`, `>=`, `<`, `<=`
-/// becomes the DNF whose `i`-th branch ANDs prefix equalities
-/// `c1 = v1 .. c(i-1) = v(i-1)` with ONE comparison on the i-th elements --
-/// degenerated to `>` / `<` for every branch but the last when `op` is
-/// `>=` / `<=`. The three-valued logic of the expansion reproduces the row
-/// comparison's own NULL semantics element for element.
-///
-/// `None` leaves the conjunct alone: either it is not a row comparison
-/// (single-element tuples and equalities included) or its two sides are not
-/// same-length element lists, which is the caller's residual path anyway.
-fn expand_row_comparison(conjunct: &tidb_ast::Expr) -> Option<tidb_ast::Expr> {
-    let tidb_ast::Expr::Binary(
-        op @ (tidb_ast::BinaryOp::Gt
-        | tidb_ast::BinaryOp::Ge
-        | tidb_ast::BinaryOp::Lt
-        | tidb_ast::BinaryOp::Le),
-        lhs,
-        rhs,
-    ) = conjunct
-    else {
-        return None;
-    };
-    let left = row_elements(lhs)?;
-    let right = row_elements(rhs)?;
-    if left.is_empty() || left.len() != right.len() || left.len() == 1 {
-        // A one-element "row" is spelled away by the parser already; anything
-        // else here is the ordinary comparison paths' conjunct.
-        return None;
-    }
-    let mut branches = Vec::with_capacity(left.len());
-    for index in 0..left.len() {
-        let mut conjuncts = Vec::with_capacity(index + 1);
-        // Step 1.1: every PREFIX element compares equal.
-        for earlier in 0..index {
-            conjuncts.push(tidb_ast::Expr::Binary(
-                tidb_ast::BinaryOp::Eq,
-                Box::new(left[earlier].clone()),
-                Box::new(right[earlier].clone()),
-            ));
-        }
-        // Step 1.2: especially for GE/LE, every branch but the last carries
-        // the strict form.
-        let effective = if index < left.len() - 1 {
-            match op {
-                tidb_ast::BinaryOp::Ge => tidb_ast::BinaryOp::Gt,
-                tidb_ast::BinaryOp::Le => tidb_ast::BinaryOp::Lt,
-                other => *other,
-            }
-        } else {
-            *op
-        };
-        conjuncts.push(tidb_ast::Expr::Binary(
-            effective,
-            Box::new(left[index].clone()),
-            Box::new(right[index].clone()),
-        ));
-        // Step 1.3: AND the branch's sides.
-        branches.push(conjuncts.into_iter().reduce(|accumulated, next| {
-            tidb_ast::Expr::Binary(
-                tidb_ast::BinaryOp::LogicAnd,
-                Box::new(accumulated),
-                Box::new(next),
-            )
-        }));
-    }
-    // Step 2: OR the branches.
-    branches
-        .into_iter()
-        .collect::<Option<Vec<_>>>()?
-        .into_iter()
-        .reduce(|accumulated, next| {
-            tidb_ast::Expr::Binary(
-                tidb_ast::BinaryOp::LogicOr,
-                Box::new(accumulated),
-                Box::new(next),
-            )
-        })
-}
-
-/// The element list of a row value, through any parentheses. A bare
-/// parenthesised expression (`(a) > (1)`) is NOT a row: the parser models it
-/// as `Paren`, and only `(a, b)` builds [`tidb_ast::Expr::Row`].
-fn row_elements(expr: &tidb_ast::Expr) -> Option<&[tidb_ast::Expr]> {
-    match expr {
-        tidb_ast::Expr::Row(items) => Some(items),
-        _ => None,
-    }
-}
-pub(crate) fn split_scan_predicates(
-    where_clause: &tidb_ast::Expr,
-    resolver: &impl ColumnResolver,
-    ctx: &crate::StmtContext,
-) -> (PushedScanFilter, Option<tidb_ast::Expr>) {
-    let mut conjuncts = Vec::new();
-    collect_conjuncts(where_clause, &mut conjuncts);
-    let mut predicates = Vec::new();
-    let mut filters = Vec::new();
-    let mut residual: Vec<&tidb_ast::Expr> = Vec::new();
-    for conjunct in conjuncts {
-        // Go's expression rewriter lowers a row comparison
-        // `(c1, .., cn) op (v1, .., vn)` into the DNF of prefix equalities
-        // plus one degenerate comparison BEFORE pushdown decides what the
-        // coprocessor may run (`constructBinaryOpFunction`,
-        // `expression_rewriter.go:413`); this tier's ranger consumes the raw
-        // shape instead, but the filter description still needs the rewritten
-        // form, so expand it here. A conjunct that is not a row comparison
-        // keeps its own text.
-        let expanded = expand_row_comparison(conjunct);
-        let described = expanded.as_ref().unwrap_or(conjunct);
-        // Go `find_best_task.go`'s two `expression.PushDownExprs(pctx,
-        // ..., kv.TiKV)` calls, which split the index and table filters into
-        // what the coprocessor may run and what stays above it.
-        if !crate::pushdown_blacklist::blacklist_admits(
-            described,
-            resolver,
-            ctx,
-            tidb_expr::infer_pushdown::PushDownStore::TiKv,
-        ) {
-            residual.push(conjunct);
-            continue;
-        }
-        match scan_predicate(described, resolver).and_then(|mut predicate| {
-            let mut filter = rewrite_expr_resolved(described, resolver).ok()?;
-            // Go `refineArgs`: `int column <cmp> non-int constant` folds the
-            // constant into the column's type ONCE here, so the filter this
-            // scan runs on every row compares int to int. Without it the
-            // string is re-coerced per row -- the same work, and the same
-            // 1292 truncation, once for each row scanned.
-            let unrefined = filter.clone();
-            tidb_expr::builtin_compare::refine_comparisons(&mut filter, ctx).ok()?;
-            // ... and the DESCRIPTION beside it has to say the same thing:
-            // Go refines before it builds the comparison at all, so the
-            // constant it sends TiKV -- and prints -- is the refined one.
-            crate::predicate_pushdown::adopt_refined_literals(&mut predicate, &unrefined, &filter);
-            Some((predicate, filter))
-        }) {
-            Some((predicate, filter)) => {
-                predicates.push(predicate);
-                filters.push(filter);
-            }
-            None => residual.push(conjunct),
-        }
-    }
-    let residual = residual.into_iter().cloned().reduce(|left, right| {
-        tidb_ast::Expr::Binary(
-            tidb_ast::BinaryOp::LogicAnd,
-            Box::new(left),
-            Box::new(right),
-        )
-    });
-    (PushedScanFilter::new(predicates, filters), residual)
-}
-
-/// One conjunct as a coprocessor-describable predicate, when it is one.
-///
-/// The describable shapes are a column-versus-constant comparison,
-/// `IS [NOT] NULL`, `[NOT] IN` over constants, and the `OR`/`NOT` composition
-/// of those -- exactly the set TiKV's whitelist admits unconditionally
-/// (`infer_pushdown.go`'s `scalarExprSupportedByTiKV`). `AND` is absent
-/// because the caller already flattened the top-level `AND` into separate
-/// conjuncts, and a nested one inside an `OR` is described by recursing into
-/// the branch as its own conjunct list would not be.
-fn scan_predicate(
-    conjunct: &tidb_ast::Expr,
-    resolver: &impl ColumnResolver,
-) -> Option<ScanPredicate> {
-    match conjunct {
-        tidb_ast::Expr::Paren(inner) => scan_predicate(inner, resolver),
-        // `NOT x` and `!x`; the arithmetic unary operators are not predicates.
-        tidb_ast::Expr::Unary(tidb_ast::UnaryOp::Not | tidb_ast::UnaryOp::NotKeyword, inner) => {
-            Some(ScanPredicate::Not(Box::new(scan_predicate(
-                inner, resolver,
-            )?)))
-        }
-        // `x OR y`, flattened: the chain is left-associative, so flattening
-        // and re-folding preserves the same disjunction.
-        tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicOr, ..) => {
-            let mut branches = Vec::new();
-            collect_disjuncts(conjunct, &mut branches);
-            Some(ScanPredicate::Or(
-                branches
-                    .into_iter()
-                    .map(|branch| scan_predicate(branch, resolver))
-                    .collect::<Option<Vec<_>>>()?,
-            ))
-        }
-        tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicAnd, ..) => {
-            let mut branches = Vec::new();
-            collect_conjuncts(conjunct, &mut branches);
-            Some(ScanPredicate::And(
-                branches
-                    .into_iter()
-                    .map(|branch| scan_predicate(branch, resolver))
-                    .collect::<Option<Vec<_>>>()?,
-            ))
-        }
-        // Only `IS [NOT] NULL`. `IS TRUE`/`IS FALSE`/`IS UNKNOWN` are separate
-        // Go functions with their own signatures and their own NULL handling.
-        tidb_ast::Expr::Is {
-            expr,
-            target: tidb_ast::IsTarget::Null,
-            not,
-        } => {
-            let (offset, column_type) = resolve_column(expr, resolver)?;
-            Some(ScanPredicate::IsNull {
-                column_offset: offset,
-                column_type,
-                negated: *not,
-            })
-        }
-        tidb_ast::Expr::In { expr, list, not } => {
-            if list.is_empty() {
-                return None;
-            }
-            let mut literals = Vec::with_capacity(list.len());
-            for element in list {
-                let (literal, literal_type) =
-                    constant_value_and_type(element, &resolver.time_zone())?;
-                // A NULL member makes `IN` UNKNOWN rather than false for a
-                // non-matching row, and `NOT IN` UNKNOWN for every row; that
-                // is not the membership test this description promises.
-                if literal == Datum::Null {
-                    return None;
-                }
-                literals.push((literal, literal_type));
-            }
-            // Keep the existing integer-column description unchanged. Other
-            // column families continue to fail closed in the TiPB lowering.
-            if let Some((offset, column_type)) = resolve_column(expr, resolver) {
-                if column_type.eval_type() != tidb_datatype::EvalType::String {
-                    return Some(ScanPredicate::In {
-                        column_offset: offset,
-                        // A non-string column compares under `binary`, and
-                        // no `COLLATE` can change that; the adoption step
-                        // leaves it alone.
-                        collation: column_type.collation(),
-                        column_type,
-                        literals: literals.into_iter().map(|(value, _)| value).collect(),
-                        negated: *not,
-                    });
-                }
-            }
-
-            // Go `inFunctionClass.getFunction` selects `InString` from the
-            // tested expression, not from whether that expression is a bare
-            // column. Every list item is coerced to that same evaluation type.
-            let tested = scan_operand(expr, resolver)?;
-            if tested.eval_type() != tidb_datatype::EvalType::String
-                || literals.iter().any(|(value, field_type)| {
-                    field_type.eval_type() != tidb_datatype::EvalType::String
-                        || !matches!(value, Datum::String(_) | Datum::Bytes(_))
-                })
-            {
-                return None;
-            }
-            Some(ScanPredicate::ScalarIn {
-                // The tested expression's own collation, which is the derived
-                // one whenever no argument is explicit;
-                // `adopt_refined_literals` replaces it with the built
-                // expression's.
-                collation: match &tested {
-                    tidb_expr::pushdown_catalog::PbScalar::Column { field_type, .. } => {
-                        field_type.collation()
-                    }
-                    _ => tidb_datatype::Collation::Utf8Mb4Bin,
-                },
-                tested,
-                literals: literals.into_iter().map(|(value, _)| value).collect(),
-                negated: *not,
-            })
-        }
-        tidb_ast::Expr::Like {
-            expr,
-            pattern,
-            not,
-            ilike: false,
-            escape,
-        } => {
-            let (column_offset, column_type) = resolve_column(expr, resolver)?;
-            if column_type.eval_type() != tidb_datatype::EvalType::String {
-                return None;
-            }
-            let mut pattern_expr = &**pattern;
-            while let tidb_ast::Expr::Paren(inner) = pattern_expr {
-                pattern_expr = inner;
-            }
-            let pattern = match pattern_expr {
-                tidb_ast::Expr::String(pattern) | tidb_ast::Expr::RawString(pattern) => {
-                    pattern.as_bytes().to_vec()
-                }
-                _ => return None,
-            };
-            let predicate = ScanPredicate::Like {
-                column_offset,
-                // The column's, which is the derived collation whenever no
-                // argument is explicit; `adopt_refined_literals` replaces it
-                // with the built expression's.
-                collation: column_type.collation(),
-                column_type,
-                pattern,
-                escape: escape.unwrap_or_else(|| resolver.like_default_escape()),
-            };
-            Some(if *not {
-                ScanPredicate::Not(Box::new(predicate))
-            } else {
-                predicate
-            })
-        }
-        tidb_ast::Expr::Between {
-            expr,
-            low,
-            high,
-            not: false,
-        } => {
-            let (column_offset, column_type) = resolve_column(expr, resolver)?;
-            let zone = resolver.time_zone();
-            let (low, low_type) = comparison_constant(low, &column_type, &zone)?;
-            let (high, high_type) = comparison_constant(high, &column_type, &zone)?;
-            Some(ScanPredicate::And(vec![
-                ScanPredicate::Compare(ScanComparison {
-                    column_offset,
-                    collation: column_type.collation(),
-                    column_type: column_type.clone(),
-                    literal_type: low_type,
-                    op: ScanComparisonOp::Ge,
-                    literal: low,
-                    column_on_left: true,
-                }),
-                ScanPredicate::Compare(ScanComparison {
-                    column_offset,
-                    collation: column_type.collation(),
-                    column_type,
-                    literal_type: high_type,
-                    op: ScanComparisonOp::Le,
-                    literal: high,
-                    column_on_left: true,
-                }),
-            ]))
-        }
-        // A builtin call, when the push-down catalog resolves a signature TiKV
-        // evaluates for it. The whole `WHERE sin(a)` conjunct is then the
-        // Selection condition, evaluated for truth exactly as a `Selection`
-        // above the scan would evaluate it.
-        _ => scan_column_comparison(conjunct, resolver)
-            .map(ScanPredicate::ColumnCompare)
-            .or_else(|| scan_comparison(conjunct, resolver).map(ScanPredicate::Compare))
-            .or_else(|| scan_operand_call(conjunct, resolver).map(ScanPredicate::Builtin)),
-    }
-}
-
-/// One argument of a described builtin call: a column of the scanned table, an
-/// already-folded concrete constant (numeric, string, temporal, or JSON), or a
-/// nested call the catalog also resolves.
-///
-/// Anything else -- a subquery, a call whose signature TiKV does not evaluate,
-/// or a constant with no faithful TiPB leaf -- makes the whole conjunct
-/// residual, which is Go's own rule: `scalarFuncToPBExpr` returns nil as soon
-/// as one child does.
-fn scan_operand(
-    argument: &tidb_ast::Expr,
-    resolver: &impl ColumnResolver,
-) -> Option<tidb_expr::pushdown_catalog::PbScalar> {
-    use tidb_expr::pushdown_catalog::PbScalar;
-    if let tidb_ast::Expr::Paren(inner) = argument {
-        return scan_operand(inner, resolver);
-    }
-    if let tidb_ast::Expr::Column(_) = argument {
-        let (offset, field_type) = resolve_column(argument, resolver)?;
-        return Some(PbScalar::Column { offset, field_type });
-    }
-    // A constant subtree first, so a folded literal (`DATE_FORMAT(d,
-    // CONCAT('%Y','-%m'))`) is the constant Go would have folded rather than a
-    // nested call. `from_expression` carries the concrete TiPB leaf encoding
-    // for strings, temporal values, durations and JSON as well as integers.
-    if let Some((value, field_type)) = constant_value_and_type(argument, &resolver.time_zone()) {
-        return tidb_expr::pushdown_catalog::from_expression(
-            &tidb_expr::expression::Expression::Constant(tidb_expr::constant::Constant::new(
-                value, field_type,
-            )),
-        );
-    }
-    scan_operand_call(argument, resolver)
-}
-
-/// A builtin call as an operand, in either of the two spellings the parser
-/// produces for one: an explicit `Expr::Func`, and the operator form real TiDB
-/// also desugars to a named scalar function -- `MOD(a, b)` parses as the `%`
-/// binary operator, and Go's `ScalarFunction` for it is named `mod` either way.
-fn scan_operand_call(
-    argument: &tidb_ast::Expr,
-    resolver: &impl ColumnResolver,
-) -> Option<tidb_expr::pushdown_catalog::PbScalar> {
-    let (name, args): (String, Vec<&tidb_ast::Expr>) = match argument {
-        tidb_ast::Expr::Func { name, args, .. } => {
-            (name.to_ascii_lowercase(), args.iter().collect())
-        }
-        tidb_ast::Expr::Binary(op, lhs, rhs) => (
-            tidb_expr::scalar_function::binary_op_name(*op).to_owned(),
-            vec![lhs, rhs],
-        ),
-        // Go's parser lowers `candidate MEMBER OF (document)` into the plain
-        // builtin call `FuncCallExpr{FnName: json_memberof}`
-        // (`pkg/parser/expr_parser.go:200`), so `scan_predicate` sees it
-        // through the same fallthrough every other function takes -- which is
-        // why Go's cop Selection carries `json_memberof`. This tree keeps a
-        // distinct node; naming the call here restores that equivalence.
-        tidb_ast::Expr::MemberOf { expr, array } => ("json_memberof".to_owned(), vec![expr, array]),
-        tidb_ast::Expr::TimestampDiff { .. } => {
-            let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(argument, resolver).ok()?;
-            return tidb_expr::pushdown_catalog::from_expression(&rewritten);
-        }
-        _ => return None,
-    };
-    // DATE_ADD/SUB carries its INTERVAL value and unit in one AST child. The
-    // expression rewriter turns that pair into the generated
-    // `date_add_<unit>`/`date_sub_<unit>` call before Go chooses a protobuf
-    // signature; recursively scanning the raw `Expr::Interval` would lose
-    // the unit and can never form a matching catalog row.
-    if matches!(
-        name.as_str(),
-        "date_add" | "date_sub" | "adddate" | "subdate"
-    ) && args.len() == 2
-        && matches!(args[1], tidb_ast::Expr::Interval { .. })
-    {
-        let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(argument, resolver).ok()?;
-        return tidb_expr::pushdown_catalog::from_expression(&rewritten);
-    }
-    let operands = args
-        .into_iter()
-        .map(|nested| scan_operand(nested, resolver))
-        .collect::<Option<Vec<_>>>()?;
-    tidb_expr::pushdown_catalog::build_call(&name, operands)
-}
-
-/// Flattens an `OR` chain into its branches, in source order.
-fn collect_disjuncts<'a>(expr: &'a tidb_ast::Expr, out: &mut Vec<&'a tidb_ast::Expr>) {
-    match expr {
-        tidb_ast::Expr::Paren(inner) => collect_disjuncts(inner, out),
-        tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicOr, lhs, rhs) => {
-            collect_disjuncts(lhs, out);
-            collect_disjuncts(rhs, out);
-        }
-        other => out.push(other),
-    }
-}
-
-/// The scan-input offset and declared type of `expr`, when it is a plain
-/// reference to a column of the scanned table.
-fn resolve_column(
-    expr: &tidb_ast::Expr,
-    resolver: &impl ColumnResolver,
-) -> Option<(u32, FieldType)> {
-    match expr {
-        tidb_ast::Expr::Paren(inner) => resolve_column(inner, resolver),
-        tidb_ast::Expr::Column(path) => {
-            let (offset, column_type, _) = resolver.resolve(path)?;
-            Some((u32::try_from(offset).ok()?, column_type))
-        }
-        _ => None,
-    }
-}
-
-/// A constant expression's value and the exact type Go's expression builder
-/// assigns it. Evaluating the rewritten tree also admits folded arithmetic and
-/// `DATE_ADD`, rather than restricting this boundary to bare literal nodes.
-fn constant_value_and_type(
-    expr: &tidb_ast::Expr,
-    zone: &tidb_datatype::SessionTimeZone,
-) -> Option<(Datum, FieldType)> {
-    let resolver = tidb_expr::rewriter::ZonedNoResolver::new(zone.clone());
-    let rewritten = rewrite_expr_resolved(expr, &resolver).ok()?;
-    let field_type = rewritten.static_type()?.clone();
-    let value =
-        tidb_expr::eval_expression_once(&rewritten, &tidb_expr::ZonedNoColumns(zone.clone()))
-            .ok()?;
-    Some((value, field_type))
-}
-
-/// One conjunct as a column-versus-constant comparison, when it is one.
-fn scan_comparison(
-    conjunct: &tidb_ast::Expr,
-    resolver: &impl ColumnResolver,
-) -> Option<ScanComparison> {
-    let tidb_ast::Expr::Binary(op, lhs, rhs) = conjunct else {
-        return None;
-    };
-    let op = ScanComparisonOp::from_ast(*op)?;
-    // Go accepts the constant on either side and the protobuf preserves the
-    // operand order it was written in, so the side is recorded rather than
-    // normalized away.
-    let (column, value, column_on_left) = match (&**lhs, &**rhs) {
-        (tidb_ast::Expr::Column(path), other) => (path, other, true),
-        (other, tidb_ast::Expr::Column(path)) => (path, other, false),
-        _ => return None,
-    };
-    // A second column reference on the "constant" side leaves the shape.
-    let (offset, column_type, _) = resolver.resolve(column)?;
-    let zone = resolver.time_zone();
-    let (literal, literal_type) = comparison_constant(value, &column_type, &zone)?;
-    // A NULL constant makes the comparison unknown for every row; that is a
-    // whole-predicate property Go handles in the ranger, not a filter shape.
-    if literal == Datum::Null {
-        return None;
-    }
-    Some(ScanComparison {
-        column_offset: u32::try_from(offset).ok()?,
-        collation: column_type.collation(),
-        column_type,
-        literal_type,
-        op,
-        literal,
-        column_on_left,
-    })
-}
-
-/// One conjunct as a source-ordered comparison between two scan columns.
-///
-/// Go's `columnToPBExpr` sends both `ColumnRef` children when the comparison
-/// is supported by TiKV. The TiPB lowering applies the type-family gate;
-/// refusing there keeps a comparison local when the two declared types need a
-/// coercion this tier does not yet model.
-fn scan_column_comparison(
-    conjunct: &tidb_ast::Expr,
-    resolver: &impl ColumnResolver,
-) -> Option<ScanColumnComparison> {
-    let tidb_ast::Expr::Binary(op, lhs, rhs) = conjunct else {
-        return None;
-    };
-    let op = ScanComparisonOp::from_ast(*op)?;
-    let (tidb_ast::Expr::Column(left), tidb_ast::Expr::Column(right)) = (&**lhs, &**rhs) else {
-        return None;
-    };
-    let (left_offset, left_type, _) = resolver.resolve(left)?;
-    let (right_offset, right_type, _) = resolver.resolve(right)?;
-    Some(ScanColumnComparison {
-        left_offset: u32::try_from(left_offset).ok()?,
-        left_type,
-        right_offset: u32::try_from(right_offset).ok()?,
-        right_type,
-        op,
-    })
-}
-
-fn comparison_constant(
-    value: &tidb_ast::Expr,
-    column_type: &FieldType,
-    zone: &tidb_datatype::SessionTimeZone,
-) -> Option<(Datum, FieldType)> {
-    let (mut literal, mut literal_type) = constant_value_and_type(value, zone)?;
-    if column_type.code() == FieldTypeCode::NewDecimal
-        && literal_type.eval_type() == tidb_datatype::EvalType::Int
-    {
-        // `GetAccurateCmpType` selects ETDecimal for DECIMAL versus INT, and
-        // `WrapWithCastAsDecimal` folds a constant cast. Its final type is
-        // refined from the resulting MyDecimal's own precision and scale.
-        let decimal = match literal {
-            Datum::Int(value) => tidb_datatype::Decimal::from_int(value),
-            Datum::UInt(value) => tidb_datatype::Decimal::from_uint(value),
-            _ => return None,
-        };
-        let (precision, scale) = decimal.precision_and_frac();
-        literal_type = FieldType::new(FieldTypeCode::NewDecimal)
-            .with_flags(literal_type.flags())
-            .with_flen(i64::from(precision))
-            .with_decimal(i64::from(scale));
-        literal = Datum::Decimal(decimal);
-    }
-    if matches!(
-        column_type.code(),
-        FieldTypeCode::Date | FieldTypeCode::Datetime | FieldTypeCode::Timestamp
-    ) && literal_type.eval_type() == tidb_datatype::EvalType::String
-    {
-        // `GetAccurateCmpType` selects ETDatetime for a temporal column
-        // compared with a string constant. `WrapWithCastAsTime` then builds
-        // DATETIME(26,6), and constant folding leaves a MysqlTime literal.
-        // When the constant does NOT fold -- `created <= 'garbage'` -- Go's
-        // `RefineComparedConstant` returns the ORIGINAL constant unchanged
-        // (`builtin_compare.go:1588-1597`: a non-overflow conversion error is
-        // `return con, false`), and the pushed comparison carries the cast as
-        // an evaluation-time `CastStringAsTime` instead. Describe exactly
-        // that: the raw string literal beside the temporal column, with the
-        // cast deferred to the filter expression the source evaluates.
-        let target = FieldType::new(FieldTypeCode::Datetime)
-            .with_flen(26)
-            .with_decimal(tidb_datatype::MAX_FSP)
-            .with_added_flags(tidb_datatype::FieldTypeFlags::BINARY);
-        match literal.convert_to_in(&target, tidb_datatype::DEFAULT_STATEMENT_FLAGS, &zone) {
-            Ok(converted) if converted.event.is_none() => {
-                literal = converted.value;
-                literal_type = target;
-            }
-            _ => {}
-        }
-    }
-    Some((literal, literal_type))
-}
-
-/// Flattens an `AND` chain into its conjuncts.
-fn collect_conjuncts<'a>(expr: &'a tidb_ast::Expr, out: &mut Vec<&'a tidb_ast::Expr>) {
-    match expr {
-        tidb_ast::Expr::Paren(inner) => collect_conjuncts(inner, out),
-        tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicAnd, lhs, rhs) => {
-            collect_conjuncts(lhs, out);
-            collect_conjuncts(rhs, out);
-        }
-        other => out.push(other),
-    }
-}
-
-/// The single TiKV-backed table a `FROM` names, when it names exactly one.
-/// A point get applies only to that shape (Go `getSingleTableNameAndAlias`).
-/// The one plain table a `FROM` names, when it names exactly one.
-///
-/// Split out of [`single_kv_table`] because the access-path decision needs the
-/// REFERENCE, not just the table it resolves to: the `USE`/`FORCE`/`IGNORE
-/// INDEX` hints that decide which paths exist live on the reference.
 pub(crate) fn single_table_ref(from: &Option<tidb_ast::Join>) -> Option<&tidb_ast::TableRef> {
     let table_ref = sole_table_ref(from)?;
     // A `PARTITION (...)` restriction is refused by `build_from`; declining
@@ -3190,39 +2001,6 @@ pub(crate) fn sole_table_ref(from: &Option<tidb_ast::Join>) -> Option<&tidb_ast:
     Some(table_ref)
 }
 
-/// [`single_kv_table`] over [`sole_table_ref`]: the stored table a `FROM`
-/// names even when a `PARTITION (...)` list narrowed it.
-pub(crate) fn sole_kv_table(
-    from: &Option<tidb_ast::Join>,
-    catalog: &Catalog,
-    current_db: &str,
-) -> Option<KvTable> {
-    let table_ref = sole_table_ref(from)?;
-    let (database, name) = split_table_path(&table_ref.name, current_db).ok()?;
-    match catalog.get_in(database, name)? {
-        TableEntry::Kv(kv) => Some(kv.clone()),
-        TableEntry::Mem(_) | TableEntry::Cte(_) | TableEntry::View(_) | TableEntry::Sequence(_) => {
-            None
-        }
-    }
-}
-
-pub(crate) fn single_kv_table(
-    from: &Option<tidb_ast::Join>,
-    catalog: &Catalog,
-    current_db: &str,
-) -> Option<KvTable> {
-    let table_ref = single_table_ref(from)?;
-    let (database, name) = split_table_path(&table_ref.name, current_db).ok()?;
-    match catalog.get_in(database, name)? {
-        TableEntry::Kv(kv) => Some(kv.clone()),
-        // A view stores no rows, so there is no point get to try.
-        TableEntry::Mem(_) | TableEntry::Cte(_) | TableEntry::View(_) | TableEntry::Sequence(_) => {
-            None
-        }
-    }
-}
-
 /// Go `tryWhereIn2BatchPointGet`: a single-table `SELECT` whose whole `WHERE`
 /// is `column IN (constants)` over the handle or a single-column unique index
 /// reads those rows directly instead of scanning.
@@ -3237,37 +2015,44 @@ pub(crate) fn single_kv_table(
 /// `Batch_Point_Get` when the tuples pin every column of a unique index or a
 /// clustered common handle.
 pub(crate) struct BatchPointLookup {
-    handles: Vec<TableHandle>,
     index: Option<(i64, String)>,
     common_handle: bool,
     plan_rows: usize,
+    key_values: Vec<Vec<Datum>>,
 }
 
 impl BatchPointLookup {
     fn handle(handles: Vec<TableHandle>, plan_rows: usize) -> Self {
+        let key_values = handles
+            .iter()
+            .filter_map(|handle| match handle {
+                TableHandle::Int(value) => Some(vec![Datum::Int(*value)]),
+                TableHandle::Common(_) => None,
+            })
+            .collect();
         Self {
-            handles,
             index: None,
             common_handle: false,
             plan_rows,
+            key_values,
         }
     }
 
-    fn common_handle(handles: Vec<TableHandle>, plan_rows: usize) -> Self {
+    fn common_handle(key_values: Vec<Vec<Datum>>, plan_rows: usize) -> Self {
         Self {
-            handles,
             index: None,
             common_handle: true,
             plan_rows,
+            key_values,
         }
     }
 
     fn index(
-        handles: Vec<TableHandle>,
         plan_rows: usize,
         table: &KvTable,
         columns: &[(String, FieldType)],
         index: &crate::kv_table::KvIndex,
+        key_values: Vec<Vec<Datum>>,
     ) -> Self {
         let index_columns = index
             .column_offsets
@@ -3281,10 +2066,10 @@ impl BatchPointLookup {
             .collect::<Vec<_>>()
             .join(", ");
         Self {
-            handles,
             index: Some((index.id, format!("index:{}({index_columns})", index.name))),
             common_handle: false,
             plan_rows,
+            key_values,
         }
     }
 
@@ -3298,10 +2083,6 @@ impl BatchPointLookup {
             None if self.common_handle => hints.allows_common_primary(),
             None => true,
         }
-    }
-
-    pub(crate) fn into_handles(self) -> Vec<TableHandle> {
-        self.handles
     }
 }
 
@@ -3378,6 +2159,7 @@ pub(crate) fn try_batch_point_get_stmt(
             }
             if positions.len() == common_offsets.len() {
                 let mut handles = Vec::with_capacity(list.len());
+                let mut all_key_values = Vec::with_capacity(list.len());
                 for candidate in list {
                     let tidb_ast::Expr::Row(values) = candidate else {
                         return Ok(None);
@@ -3411,9 +2193,13 @@ pub(crate) fn try_batch_point_get_stmt(
                     let handle = TableHandle::Common(handle.encoded().to_vec());
                     if !handles.contains(&handle) {
                         handles.push(handle);
+                        all_key_values.push(key_values);
                     }
                 }
-                return Ok(Some(BatchPointLookup::common_handle(handles, list.len())));
+                return Ok(Some(BatchPointLookup::common_handle(
+                    all_key_values,
+                    list.len(),
+                )));
             }
         }
         for index in table.plan_indexes().cloned().collect::<Vec<_>>() {
@@ -3476,11 +2262,11 @@ pub(crate) fn try_batch_point_get_stmt(
                 }
             }
             return Ok(Some(BatchPointLookup::index(
-                handles,
                 list.len(),
                 &table,
                 columns,
                 &index,
+                index_values,
             )));
         }
         return Ok(None);
@@ -3584,11 +2370,11 @@ pub(crate) fn try_batch_point_get_stmt(
             }
         }
         return Ok(Some(BatchPointLookup::index(
-            handles,
             list.len(),
             &table,
             columns,
             &index,
+            index_values,
         )));
     }
     Ok(None)
@@ -3634,6 +2420,16 @@ impl NameValuePair {
     /// domain by [`convert_pairs_to_column_domain`].
     pub(crate) const fn value(&self) -> &Datum {
         &self.value
+    }
+}
+
+fn index_key_part_name(table: &KvTable, offset: usize) -> String {
+    let Some(column) = table.columns.get(offset) else {
+        return String::new();
+    };
+    match &column.generated {
+        Some(generated) if table.is_hidden(offset) => generated.expr_text.clone(),
+        _ => column.name.clone(),
     }
 }
 
@@ -3802,7 +2598,7 @@ impl<'a> PointPlanStmt<'a> {
     /// maintaining a separate access chooser; the Rust shared planner exposes
     /// SELECT as that same entry point, so copy the write clauses and request
     /// the complete row through `*`.
-    fn write_select(&self) -> Option<tidb_ast::SelectStmt> {
+    pub(crate) fn write_select(&self) -> Option<tidb_ast::SelectStmt> {
         let table_ref = self.table_ref?.clone();
         let mut fields = tidb_ast::SelectFieldList::default();
         fields.push(tidb_ast::SelectField::Wildcard(Vec::new()));
@@ -3862,12 +2658,10 @@ impl<'a> PointPlanStmt<'a> {
 /// second, never both.
 #[derive(Clone, Debug)]
 pub(crate) struct PointGetPin {
-    /// The resolved record handle (`None` = a key no row can carry; Go still
-    /// plans the `Point_Get` and reads nothing).
-    pub(crate) handle: Option<TableHandle>,
-    /// The UNIQUE INDEX that pinned the row, when one did: its name and its
-    /// column names, in index order. `None` is the handle pin.
-    pub(crate) index: Option<(String, Vec<String>)>,
+    /// The exact handle or unique-index values retained by Go's point plan.
+    pub(crate) key_values: Vec<Datum>,
+    /// The selected unique-index id, or `None` for a record-handle lookup.
+    pub(crate) index_id: Option<i64>,
 }
 
 pub(crate) fn try_point_get(
@@ -3928,19 +2722,15 @@ pub(crate) fn try_point_get(
         && pairs.len() == 1
         && pairs[0]
             .column
-            .eq_ignore_ascii_case(crate::driver::leaf_demand::EXTRA_HANDLE_NAME)
+            .eq_ignore_ascii_case(tidb_model::column::EXTRA_HANDLE_NAME)
     {
         let handle_type = FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
         let Some(value) = point_get_value(&handle_type, &pairs[0].value) else {
             return Ok(None);
         };
         return Ok(Some(PointGetPin {
-            handle: match value {
-                Datum::Int(value) => Some(TableHandle::Int(value)),
-                Datum::UInt(value) => Some(TableHandle::Int(value as i64)),
-                _ => return Ok(None),
-            },
-            index: None,
+            key_values: vec![value],
+            index_id: None,
         }));
     }
 
@@ -3959,15 +2749,8 @@ pub(crate) fn try_point_get(
         let handle_column = &columns[handle_offset].0;
         if pairs.len() == 1 && pairs[0].column.eq_ignore_ascii_case(handle_column) {
             return Ok(Some(PointGetPin {
-                handle: match &pairs[0].value {
-                    Datum::Int(value) => Some(TableHandle::Int(*value)),
-                    Datum::UInt(value) => Some(TableHandle::Int(*value as i64)),
-                    // Unreachable: the conversion above has already put the
-                    // value in the handle column's integer domain or refused
-                    // the plan.
-                    _ => return Ok(None),
-                },
-                index: None,
+                key_values: vec![pairs[0].value.clone()],
+                index_id: None,
             }));
         }
         // Go's `else if handlePair.value.Kind() != KindNull { return nil }`:
@@ -4007,22 +2790,17 @@ pub(crate) fn try_point_get(
             values.push(pair.value.clone());
         }
         if values.len() == table.common_handle_offsets().len() {
-            let encoded = tidb_codec::encode_key_in_timezone(zone, &values)
-                .map_err(|e| DriverError::Parse(format!("common handle encode failed: {e:?}")))?;
-            let handle = tidb_txnkv::CommonHandle::new(encoded)
-                .map_err(|e| DriverError::Parse(format!("common handle build failed: {e:?}")))?;
             // A clustered common handle IS the record key, so it prints as
             // a handle plan, not an index one.
             return Ok(Some(PointGetPin {
-                handle: Some(TableHandle::Common(handle.encoded().to_vec())),
-                index: None,
+                key_values: values,
+                index_id: None,
             }));
         }
     }
 
     // The unique-index path: every column of some unique index is pinned.
-    let mut table = table.clone();
-    for index in table.plan_indexes().cloned().collect::<Vec<_>>() {
+    for index in table.plan_indexes() {
         if !index.unique {
             continue;
         }
@@ -4060,21 +2838,9 @@ pub(crate) fn try_point_get(
         if values.len() != index.column_offsets.len() {
             continue;
         }
-        let handle = table
-            .lookup_unique(index.id, &values, zone)
-            .map_err(|e| DriverError::Parse(format!("index lookup failed: {e:?}")))?;
-        // Go `PointGetPlan.AccessObject` prints the pinning index --
-        // `table:t, index:idx(cols)` -- and no handle, even though execution
-        // resolved one through the index entry.
-        let index_columns = index
-            .column_offsets
-            .iter()
-            .filter_map(|offset| table.columns.get(*offset))
-            .map(|column| column.name.clone())
-            .collect();
         return Ok(Some(PointGetPin {
-            handle,
-            index: Some((index.name.clone(), index_columns)),
+            key_values: values,
+            index_id: Some(index.id),
         }));
     }
     Ok(None)
@@ -4171,105 +2937,4 @@ pub(crate) fn point_write_prelock_keys(
         .into_iter()
         .map(|id| tidb_codec::table_key::encode_row_key_with_handle(id, &handle.record_handle()))
         .collect()
-}
-
-#[cfg(test)]
-mod access_tests {
-    use super::*;
-
-    #[test]
-    fn point_get_rejects_either_open_endpoint() {
-        let closed = IndexRange {
-            low: vec![Datum::Int(7)],
-            high: vec![Datum::Int(7)],
-            low_exclusive: false,
-            high_exclusive: false,
-        };
-        assert_eq!(
-            single_point_handle(std::slice::from_ref(&closed)),
-            Some(TableHandle::Int(7))
-        );
-
-        let mut low_open = closed.clone();
-        low_open.low_exclusive = true;
-        assert_eq!(single_point_handle(&[low_open]), None);
-
-        let mut high_open = closed;
-        high_open.high_exclusive = true;
-        assert_eq!(single_point_handle(&[high_open]), None);
-    }
-
-    fn expand(sql: &str) -> Option<tidb_ast::Expr> {
-        let statement = tidb_parser::parse(sql).expect("query parses");
-        let Stmt::Query(query) = statement else {
-            panic!("expected query")
-        };
-        let QueryStmt::Select(select) = &*query else {
-            panic!("expected select")
-        };
-        let where_clause = select.where_clause.as_ref()?;
-        let mut conjuncts = Vec::new();
-        collect_conjuncts(where_clause, &mut conjuncts);
-        conjuncts
-            .iter()
-            .find_map(|conjunct| expand_row_comparison(conjunct))
-    }
-
-    fn where_clause_of(sql: &str) -> Option<tidb_ast::Expr> {
-        let statement = tidb_parser::parse(sql).expect("query parses");
-        let Stmt::Query(query) = statement else {
-            panic!("expected query")
-        };
-        let QueryStmt::Select(select) = &*query else {
-            panic!("expected select")
-        };
-        select.where_clause.clone()
-    }
-
-    /// The parser keeps explicit parentheses; the expansion builds its DNF
-    /// without them. Parentheses are transparent, so strip them (recursively)
-    /// before two shapes are compared.
-    fn strip_parens(expr: &tidb_ast::Expr) -> tidb_ast::Expr {
-        match expr {
-            tidb_ast::Expr::Paren(inner) => strip_parens(inner),
-            tidb_ast::Expr::Binary(op, lhs, rhs) => tidb_ast::Expr::Binary(
-                *op,
-                Box::new(strip_parens(lhs)),
-                Box::new(strip_parens(rhs)),
-            ),
-            other => other.clone(),
-        }
-    }
-
-    #[test]
-    fn a_row_comparison_expands_to_go_prefix_equality_dnf() {
-        // Go `constructBinaryOpFunction`'s default arm, spelled out for the
-        // taobench batch read's leading shape.
-        let expanded = expand("SELECT * FROM t WHERE (a, b, c) > (1, 2, 3)")
-            .expect("a row comparison expands");
-        let expected = strip_parens(
-            &where_clause_of(
-                "SELECT * FROM t WHERE a > 1 OR (a = 1 AND b > 2) OR \
-                 (a = 1 AND b = 2 AND c > 3)",
-            )
-            .expect("the expected shape parses"),
-        );
-        assert_eq!(strip_parens(&expanded), expected);
-    }
-
-    #[test]
-    fn a_ge_row_comparison_degenerates_every_branch_but_the_last() {
-        let expanded =
-            expand("SELECT * FROM t WHERE (a, b) >= (1, 2)").expect("a row comparison expands");
-        let expected = strip_parens(
-            &where_clause_of("SELECT * FROM t WHERE a > 1 OR (a = 1 AND b >= 2)")
-                .expect("the expected shape parses"),
-        );
-        assert_eq!(strip_parens(&expanded), expected);
-
-        // A one-element "row" is not a row comparison; equality and other
-        // operators keep their own paths.
-        assert!(expand("SELECT * FROM t WHERE (a, b) = (1, 2)").is_none());
-        assert!(expand("SELECT * FROM t WHERE a > 1").is_none());
-    }
 }

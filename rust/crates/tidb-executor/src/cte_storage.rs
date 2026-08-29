@@ -26,12 +26,9 @@ use std::sync::Arc;
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::row_container::{RowContainer, RowContainerChunk};
 use tidb_datatype::{Datum, FieldType};
-use tidb_expr::schema::Schema;
 use tidb_util::memory::{ArcAction, Tracker, LABEL_FOR_CTE_STORAGE};
 
-use crate::executor::{ExecError, Executor, ExecutorMeta};
-use crate::predicate_pushdown::{PushedScanFilter, ScanFilterProbe};
-use crate::table_access::TableAccess;
+use crate::executor::ExecError;
 use crate::StatementMemory;
 
 /// One open row-container and the accounting authority that owns it.
@@ -239,8 +236,8 @@ impl CteStorage {
         Ok(chunk.get_row(row_index).get_datum_row(field_types))
     }
 
-    /// Materializes every row. Used by boundaries that still require a value
-    /// matrix; CTE table scans use [`CteTableSourceExec`] and do not call it.
+    /// Materializes every row for boundaries that still require a value
+    /// matrix.
     pub fn to_rows(&self) -> Result<Vec<Vec<Datum>>, ExecError> {
         let mut rows = Vec::with_capacity(self.num_rows());
         for chunk_index in 0..self.num_chunks() {
@@ -402,135 +399,5 @@ impl CteTable {
             .skip(self.row_offset)
             .take(self.row_count)
             .collect())
-    }
-}
-
-/// Pull-based scan over a spill-backed CTE relation.
-pub(crate) struct CteTableSourceExec {
-    meta: ExecutorMeta,
-    table: CteTable,
-    chunk_index: usize,
-    row_index: usize,
-    remaining: usize,
-    filter: Option<ScanFilterProbe>,
-}
-
-impl CteTableSourceExec {
-    #[must_use]
-    pub(crate) fn new(meta: ExecutorMeta, table: CteTable) -> Self {
-        Self {
-            meta,
-            table,
-            chunk_index: 0,
-            row_index: 0,
-            remaining: 0,
-            filter: None,
-        }
-    }
-
-    fn seek_to_window(&mut self) {
-        self.chunk_index = 0;
-        self.row_index = 0;
-        let mut skip = self.table.row_offset;
-        while self.chunk_index < self.table.storage.num_chunks() {
-            let rows = self.table.storage.num_rows_of_chunk(self.chunk_index);
-            if skip < rows {
-                self.row_index = skip;
-                break;
-            }
-            skip -= rows;
-            self.chunk_index += 1;
-        }
-        self.remaining = self.table.row_count;
-    }
-}
-
-impl Executor for CteTableSourceExec {
-    fn open(&mut self) -> Result<(), ExecError> {
-        self.seek_to_window();
-        Ok(())
-    }
-
-    fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
-        req.reset();
-        if let Some(error) = self.table.storage.error() {
-            return Err(ExecError::SpillFailed(error.to_owned()));
-        }
-        let target = req
-            .required_rows()
-            .min(self.meta.max_chunk_size())
-            .min(self.remaining);
-        while req.num_rows() < target && self.remaining > 0 {
-            let chunk = self.table.storage.get_chunk(self.chunk_index)?;
-            while self.row_index < chunk.num_rows() && req.num_rows() < target && self.remaining > 0
-            {
-                let row = chunk.get_row(self.row_index);
-                self.row_index += 1;
-                self.remaining -= 1;
-                if let Some(filter) = self.filter.as_mut() {
-                    let values = row.get_datum_row(self.meta.ret_field_types());
-                    if !filter.admits(&values)? {
-                        continue;
-                    }
-                    for (column, value) in values.iter().enumerate() {
-                        req.append_datum(column, value);
-                    }
-                } else {
-                    req.append_row(row);
-                }
-            }
-            if self.row_index == chunk.num_rows() {
-                self.chunk_index += 1;
-                self.row_index = 0;
-            }
-        }
-        Ok(())
-    }
-
-    fn close(&mut self) -> Result<(), ExecError> {
-        Ok(())
-    }
-
-    fn schema(&self) -> &Schema {
-        self.meta.schema()
-    }
-
-    fn ret_field_types(&self) -> &[FieldType] {
-        self.meta.ret_field_types()
-    }
-
-    fn init_cap(&self) -> usize {
-        self.meta.init_cap()
-    }
-
-    fn max_chunk_size(&self) -> usize {
-        self.meta.max_chunk_size()
-    }
-
-    fn new_chunk(&self) -> Chunk {
-        self.meta.new_chunk()
-    }
-
-    fn table_access(&mut self) -> Option<&mut dyn TableAccess> {
-        Some(self)
-    }
-}
-
-impl TableAccess for CteTableSourceExec {
-    fn accept_scan_filter(&mut self, filter: &PushedScanFilter, ctx: &crate::StmtContext) -> bool {
-        if filter.is_empty() {
-            return false;
-        }
-        match self.filter.as_mut() {
-            Some(existing) => existing.conjoin(filter),
-            None => {
-                self.filter = Some(ScanFilterProbe::new(
-                    filter.clone(),
-                    ctx.clone(),
-                    self.meta.new_chunk(),
-                ));
-            }
-        }
-        true
     }
 }

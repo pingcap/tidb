@@ -133,16 +133,15 @@ impl Constant {
         }
     }
 
-    /// Go `Constant.Eval`: a plain literal evaluates to its value.
-    ///
-    /// The deferred-expression and parameter-marker branches (Go's
-    /// `getLazyDatum`) need an `EvalContext` and are not yet ported; a constant
-    /// carrying either is reported as unsupported rather than silently returning
-    /// the stale `Value`.
+    /// Go `Constant.Eval`: a literal or parameter marker evaluates to its
+    /// current datum. Cached-plan rebuilding refreshes a marker's datum before
+    /// executor construction, which is the Rust ownership equivalent of Go's
+    /// `ParamMarker.GetUserVar(ctx)` lookup. Deferred expressions still need a
+    /// statement evaluator and therefore fail closed here.
     pub fn eval(&self) -> Result<Datum, EvalError> {
-        if self.deferred_expr.is_some() || self.param_marker.is_some() {
+        if self.deferred_expr.is_some() {
             return Err(EvalError::Unsupported(
-                "deferred/parameter constant evaluation is not yet ported",
+                "deferred constant evaluation is not yet ported",
             ));
         }
         Ok(self.value.clone())
@@ -395,6 +394,16 @@ mod tests {
         let mut expected = vec![PARAMETER_FLAG];
         encode_int(&mut expected, 5);
         assert_eq!(c.hash_code(), expected.as_slice());
+    }
+
+    #[test]
+    fn parameter_evaluates_the_current_rebuilt_value() {
+        let mut parameter = Constant::new(Datum::Int(7), ft());
+        parameter.param_marker = Some(ParamMarker { order: 2 });
+        assert_eq!(parameter.eval().unwrap(), Datum::Int(7));
+
+        parameter.replace_cached_value(Datum::Int(11));
+        assert_eq!(parameter.eval().unwrap(), Datum::Int(11));
     }
 
     #[test]

@@ -27,11 +27,8 @@ fn planner_cost_constants_match_the_complete_go_package() {
     assert_eq!(SMALL_SCAN_THRESHOLD, 10_000.0);
     assert_eq!(DEFAULT_AGGREGATION_FACTOR, 1.5);
 
-    // The live logical-stats consumer reads the package-owned constant
-    // directly (`logical/rewrite.rs`, `logical/selection.rs`); the legacy
-    // DP model that used to re-carry it moved to `tidb-executor`'s
-    // `driver::legacy_stats`, whose own default still equals this constant
-    // and is asserted there.
+    // Live logical statistics and physical costing consume the package-owned
+    // constant directly; no executor-local cost model redefines it.
 }
 
 #[test]

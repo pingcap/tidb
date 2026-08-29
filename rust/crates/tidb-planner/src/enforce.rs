@@ -112,7 +112,7 @@ pub fn enforce_property(
         return Ok(task);
     }
     if prop.task_tp != TaskType::Mpp {
-        task = task.convert_to_root_task()?;
+        task = task.convert_to_root_task(allocator)?;
     }
     let sort_req_prop = PhysicalProperty {
         task_tp: TaskType::Root,
@@ -122,6 +122,7 @@ pub fn enforce_property(
         sort_items_for_partition: Vec::new(),
         cte_producer_status: prop.cte_producer_status,
         no_cop_push_down: prop.no_cop_push_down,
+        advisory_sort_items: Vec::new(),
         index_join_prop: None,
     };
     let child = task
@@ -130,12 +131,35 @@ pub fn enforce_property(
     let mut base = BasePhysicalPlan::new(allocator, "Sort", child.query_block_offset());
     base.base.set_stats(child.stats_info().cloned());
     base.set_children_req_props(vec![Some(sort_req_prop)]);
+    let schema = child
+        .schema()
+        .ok_or_else(|| PlanError::internal("EnforceProperty: the task plan has no schema"))?;
+    let by_items = prop
+        .sort_items
+        .iter()
+        .map(|item| {
+            schema
+                .columns
+                .iter()
+                .find(|column| column.unique_id == item.col)
+                .cloned()
+                .map(|column| {
+                    tidb_expr::aggregation::ByItems::new(
+                        tidb_expr::expression::Expression::Column(column),
+                        item.desc,
+                    )
+                })
+                .ok_or_else(|| {
+                    PlanError::internal("EnforceProperty: a sort column is absent from the task")
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let sort = PhysicalPlan::Sort(PhysicalSort {
         base,
-        by_items: prop.sort_items.clone(),
+        by_items,
         is_partial_sort: prop.is_sort_item_all_for_partition(),
     });
-    attach2_task(sort, vec![task], None)
+    attach2_task(sort, vec![task], None, allocator)
 }
 
 #[cfg(test)]
@@ -217,10 +241,17 @@ mod tests {
         let Some(PhysicalPlan::Sort(sort)) = task.plan() else {
             panic!("a Sort tops the task, got {:?}", task.plan());
         };
-        assert_eq!(
-            sort.by_items,
-            vec![SortItem::new(3, false), SortItem::new(5, true)]
-        );
+        assert_eq!(sort.by_items.len(), 2);
+        assert!(matches!(
+            &sort.by_items[0].expr,
+            tidb_expr::expression::Expression::Column(column) if column.unique_id == 3
+        ));
+        assert!(!sort.by_items[0].desc);
+        assert!(matches!(
+            &sort.by_items[1].expr,
+            tidb_expr::expression::Expression::Column(column) if column.unique_id == 5
+        ));
+        assert!(sort.by_items[1].desc);
         assert!(!sort.is_partial_sort);
         let plan = task.plan().expect("plan");
         assert!((plan.stats_info().expect("stats").row_count() - 10.0).abs() < f64::EPSILON);

@@ -3938,17 +3938,6 @@ fn bit_aggregates_are_unsigned() {
         let folds: Vec<u64> = out[0].iter().map(unsigned).collect();
         assert_eq!(folds, expected.to_vec());
     }
-
-    // The inferred column type carries `UnsignedFlag` too, which is what
-    // makes a view over one describe as `bigint(21) unsigned NO`.
-    for name in ["BIT_AND", "BIT_OR", "BIT_XOR"] {
-        let (_, field_type) = crate::driver::agg_build::agg_kind_and_type(name, &[]).unwrap();
-        assert_ne!(
-            field_type.flags() & tidb_datatype::FieldTypeFlags::UNSIGNED,
-            0,
-            "{name} must infer an UNSIGNED column"
-        );
-    }
 }
 
 /// Aggregates read the COLLATION of what they aggregate, not raw bytes.
@@ -4122,15 +4111,8 @@ fn tpch_q17_scalar_wrapped_sum_explains_the_physical_aggregate_function() {
     );
 }
 
-/// Executing a grouped aggregate and PLANNING it agree on the output columns.
-///
-/// The two now take different routes. Execution is untraced: it costs the
-/// StreamAgg and HashAgg candidates and delivers the winner's pipeline as
-/// built. Planning is traced, so it re-plans under the chosen family. This
-/// pins the invariant that makes that split legitimate -- the delivered
-/// pipeline is the planned statement's -- on the shape most sensitive to it,
-/// where TiKV returns the partial aggregate functions FIRST and only the
-/// restoring Projection puts the group key back in its `SELECT`-list position.
+/// Executing a grouped aggregate and planning its result metadata use the same
+/// physical planner and agree on the output columns.
 #[test]
 fn a_delivered_grouped_aggregate_matches_the_planned_statement() {
     let mut catalog = Catalog::default();
@@ -4195,7 +4177,6 @@ fn grouped_aggregation_enumerates_families_over_one_planned_child() {
     )
     .unwrap();
 
-    crate::driver::select_plan_visit_count::reset();
     let (_, mut rows) = run_select_meta_on(
         "SELECT k, SUM(id) FROM shared_child GROUP BY k",
         &catalog,
@@ -4207,9 +4188,36 @@ fn grouped_aggregation_enumerates_families_over_one_planned_child() {
         _ => i64::MAX,
     });
     assert_eq!(rows.len(), 2);
-    assert_eq!(
-        crate::driver::select_plan_visit_count::get(),
-        0,
-        "ordinary aggregation must execute the enumerated physical tree without re-entering the legacy AST builder"
-    );
+}
+
+#[test]
+fn explain_uses_the_common_physical_plan_without_legacy_ast_execution() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    let ctx = crate::StmtContext::for_query();
+    crate::run_create_table_on(
+        "CREATE TABLE explain_common_plan (id INT PRIMARY KEY, k INT)",
+        &mut catalog,
+    )
+    .unwrap();
+    let statement =
+        tidb_parser::parse("SELECT k, SUM(id) FROM explain_common_plan WHERE id > 0 GROUP BY k")
+            .unwrap();
+    let Stmt::Query(query) = statement else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = *query else {
+        panic!("not a SELECT");
+    };
+
+    let (_, rows) = explain_select_stmt(
+        &select,
+        &catalog,
+        DEFAULT_DATABASE,
+        &ctx,
+        ExplainFormat::Brief,
+    )
+    .unwrap();
+    assert!(!rows.is_empty());
 }

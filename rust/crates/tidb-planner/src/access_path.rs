@@ -97,6 +97,10 @@ pub enum ResolvedTableScanKind {
     Full,
     /// At least one source range restricts the table handle domain.
     Range,
+    /// The table side of an index lookup reads rows by handles emitted by
+    /// the index side. Go names this `TableRowIDScan` regardless of the
+    /// source table's ordinary handle-range classification.
+    RowId,
 }
 
 impl ResolvedTableScanKind {
@@ -106,6 +110,7 @@ impl ResolvedTableScanKind {
         match self {
             Self::Full => "TableFullScan",
             Self::Range => "TableRangeScan",
+            Self::RowId => "TableRowIDScan",
         }
     }
 }

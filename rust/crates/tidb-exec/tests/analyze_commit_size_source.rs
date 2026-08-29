@@ -167,7 +167,6 @@ fn a_real_table_s_six_histograms_fit_one_analyze_transaction() {
         row_count: 10_240,
         columns: (1..=4).map(|id| full_histogram(id, false)).collect(),
         indexes: (1..=2).map(|id| full_histogram(id, true)).collect(),
-        load_state: Default::default(),
     };
     let plan = plan_stats_write(&mut store, &catalog, &stats, now())
         .expect("a full-sized analyze result plans");
@@ -219,10 +218,9 @@ fn the_analyze_version_round_trips_through_the_stored_row() {
         row_count: 10,
         columns: vec![],
         indexes: vec![],
-        load_state: Default::default(),
     };
-    let plan = plan_stats_write(&mut store, &catalog, &stats, now())
-        .expect("a small analyze plans");
+    let plan =
+        plan_stats_write(&mut store, &catalog, &stats, now()).expect("a small analyze plans");
     apply_mutations(&mut store, &plan.mutations);
 
     let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");

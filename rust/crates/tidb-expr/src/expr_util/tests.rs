@@ -60,7 +60,11 @@ fn col(id: i64) -> Expression {
 fn cor_col(id: i64, data: Option<Datum>) -> Expression {
     let mut column = Column::new(id, int_type());
     column.index = id;
-    Expression::CorrelatedColumn(CorrelatedColumn { column, data })
+    let correlated = match data {
+        Some(value) => CorrelatedColumn::with_value(column, value),
+        None => CorrelatedColumn { column, data: None },
+    };
+    Expression::CorrelatedColumn(correlated)
 }
 
 /// Go `newLonglong(v)`.
@@ -1519,4 +1523,25 @@ fn real_function_builder_rejects_bad_arity() {
         .new_function("isnull", None, vec![col(1), col(2)])
         .is_err());
     assert!(real.new_function("isnull", None, vec![col(1)]).is_ok());
+}
+
+/// Go `compareFunctionClass.generateCmpSigs` declares both arguments in the
+/// comparison domain. INT against VARCHAR is ETReal, so rebuilding an EQ must
+/// produce the same pair of implicit DOUBLE casts as initial AST rewriting.
+#[test]
+fn real_function_builder_casts_comparison_arguments() {
+    use super::builder::FunctionBuilder;
+    let real = super::builder::RealFunctionBuilder::new(&NoColumns);
+    let mut string_column = Column::new(2, string_type());
+    string_column.index = 2;
+    let built = real
+        .new_function("eq", None, vec![col(1), Expression::Column(string_column)])
+        .unwrap();
+    let Expression::ScalarFunction(equality) = built else {
+        panic!("EQ must remain a scalar function")
+    };
+    assert!(equality.args.iter().all(|argument| matches!(
+        argument,
+        Expression::ScalarFunction(cast) if cast.func_name.lowercase() == "cast_double"
+    )));
 }

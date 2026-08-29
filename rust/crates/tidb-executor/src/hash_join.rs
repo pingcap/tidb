@@ -286,7 +286,7 @@ fn push_conjuncts<'a>(expr: &'a Expression, out: &mut Vec<&'a Expression>) {
 ///
 /// One of these joins CAN leave the nested path now: an index-family hint
 /// naming the signed-int side probes that side's handle with the computed
-/// `cast(str AS SIGNED)` key (`driver::join_key_cast`), running
+/// `cast(str AS SIGNED)` key produced by the logical planner, running
 /// [`crate::join::JoinExec`]'s index strategy. Its emission is outer-major
 /// in outer order -- the same forward order this marker pins for the
 /// nested path -- so the boundary stays order-consistent. The hash

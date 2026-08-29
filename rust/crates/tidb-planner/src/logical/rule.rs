@@ -40,14 +40,15 @@
 //!
 //! # Which rules actually run
 //!
-//! Go's list has 35 entries and ELEVEN of them have a body here. Four live in
+//! Go's list has 35 entries and TWELVE of them have a body here. Four live in
 //! this file, because their tree walks are [`super::rewrite`]'s:
 //! [`ColumnPruner`] (#1 and #29), [`BuildKeySolver`] (#3), [`PpdSolver`] (#13)
-//! and [`PushDownTopNOptimizer`] (#21). Seven more live in their own
+//! and [`PushDownTopNOptimizer`] (#21). Eight more live in their own
 //! `rule_*.rs` beside this one, each one fold and one file:
 //!
 //! * [`super::rule_result_reorder::ResultReorder`] (#2)
 //! * [`super::rule_aggregation_elimination::AggregationEliminator`] (#6)
+//! * [`super::rule_join_key_type_cast::JoinKeyTypeCastRewriter`] (#14)
 //! * [`super::rule_derive_topn_from_window::DeriveTopNFromWindow`] (#19)
 //! * [`super::rule_push_down_sequence::PushDownSequenceSolver`] (#30)
 //! * [`super::rule_eliminate_unionall_dual_item::EliminateUnionAllDualItem`]
@@ -55,7 +56,7 @@
 //! * [`super::rule_eliminate_empty_selection::EmptySelectionEliminator`] (#32)
 //! * [`super::rule_resolve_expand::ResolveExpand`] (#34)
 //!
-//! The remaining 24 are present in [`OPT_RULE_LIST`] as their name and flag —
+//! The remaining 23 are present in [`OPT_RULE_LIST`] as their name and flag —
 //! the TABLE is ported, because the order is the semantics — but they have no
 //! body yet.
 //!
@@ -226,6 +227,22 @@ pub const fn set_predicate_push_down_flag(flag: u64) -> u64 {
     flag | flags::PREDICATE_PUSH_DOWN
 }
 
+/// The rule-independent tail of Go `adjustOptimizationFlags`: when column
+/// pruning is enabled together with any later logical rule, run the second
+/// pruning pass after those rules have introduced temporary columns.
+#[must_use]
+pub const fn add_second_column_prune(flag: u64) -> u64 {
+    if flag & flags::PRUNE_COLUMNS == 0 {
+        return flag;
+    }
+    let above_prune_columns = !(flags::PRUNE_COLUMNS | (flags::PRUNE_COLUMNS - 1));
+    if flag & above_prune_columns != 0 {
+        flag | flags::PRUNE_COLUMNS_AGAIN
+    } else {
+        flag
+    }
+}
+
 /// Every rule in `optRuleList`, named by the Go type that implements it.
 ///
 /// The discriminant order is Go's EXECUTION order, so
@@ -370,7 +387,13 @@ impl RuleId {
             Self::AggregationEliminator => {
                 Some(&super::rule_aggregation_elimination::AggregationEliminator)
             }
+            Self::ProjectionEliminator => {
+                Some(&super::rule_projection_elimination::ProjectionEliminator)
+            }
             Self::PpdSolver => Some(&PpdSolver),
+            Self::JoinKeyTypeCastRewriter => {
+                Some(&super::rule_join_key_type_cast::JoinKeyTypeCastRewriter)
+            }
             Self::PushDownTopNOptimizer => Some(&PushDownTopNOptimizer),
             Self::ResultReorder => Some(&super::rule_result_reorder::ResultReorder),
             Self::DeriveTopNFromWindow => {
@@ -390,12 +413,10 @@ impl RuleId {
             | Self::DecorrelateSolver
             | Self::SemiJoinRewriter
             | Self::SkewDistinctAggRewriter
-            | Self::ProjectionEliminator
             | Self::MaxMinEliminator
             | Self::ConstantPropagationSolver
             | Self::FullTextIndexResolverWhere
             | Self::ConvertOuterToInnerJoin
-            | Self::JoinKeyTypeCastRewriter
             | Self::OuterJoinEliminator
             | Self::PartitionProcessor
             | Self::CollectPredicateColumnsPoint
@@ -551,6 +572,9 @@ pub struct RuleContext<'a> {
     /// `logicalop.AddSelection`'s `LogicalSelection` and `Conds2TableDual`'s
     /// `LogicalTableDual`.
     pub allocator: &'a PlanIdAllocator,
+    /// Go `SessionVars.AllocPlanColumnID()`, used by rules that append a
+    /// computed expression to an existing projection.
+    pub column_allocator: &'a crate::expression_rewriter::ColumnIdAllocator,
     /// Go `SCtx().GetExprCtx()`'s construction half; see
     /// [`FunctionBuilder`].
     pub builder: &'a dyn FunctionBuilder,
@@ -1119,7 +1143,7 @@ impl LogicalOptRule for PushDownTopNOptimizer {
         plan: LogicalPlan,
     ) -> Result<(LogicalPlan, bool), (LogicalPlan, PlanError)> {
         Ok((
-            super::rewrite::push_down_topn_with_builder(ctx.builder, plan, None),
+            super::rewrite::push_down_topn_with_builder(ctx.builder, ctx.allocator, plan, None),
             false,
         ))
     }

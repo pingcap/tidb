@@ -273,7 +273,6 @@ pub fn analyze_table<S: PagedMetaSnapshot>(
             .into_iter()
             .map(|built| stored_item(built, true))
             .collect(),
-        load_state: Default::default(),
     };
 
     Ok(AnalyzeReport {

@@ -80,7 +80,10 @@ fn push_replaces_the_heap_top_exactly_when_slower() {
         (2100, 1300),
     ] {
         slow_query.append(with_duration(ms(pushed)));
-        assert_eq!(user_kept(&mut slow_query, 10).last(), Some(&ms(expected_top)));
+        assert_eq!(
+            user_kept(&mut slow_query, 10).last(),
+            Some(&ms(expected_top))
+        );
     }
 
     // Data smaller than heap top will not be inserted.
@@ -109,7 +112,10 @@ fn remove_expired_drops_by_start_plus_period() {
     slow_query.append(entry(at(2), 4));
     slow_query.append(entry(at(3), 3));
     slow_query.append(entry(at(4), 2));
-    assert_eq!(user_kept(&mut slow_query, 6).last(), Some(&Duration::from_nanos(2)));
+    assert_eq!(
+        user_kept(&mut slow_query, 6).last(),
+        Some(&Duration::from_nanos(2))
+    );
 
     slow_query.remove_expired(now + Duration::from_secs(5));
     let kept = user_kept(&mut slow_query, 6);
@@ -128,12 +134,15 @@ fn remove_expired_drops_by_start_plus_period() {
     let kept = user_kept(&mut slow_query, 6);
     // (start=now+3s, period=3s) expires exactly at `now+6s`, so the two
     // now+3s entries leave together with the now+2s one; now+4s..now+6s stay.
-    assert_eq!(kept, vec![
-        Duration::from_nanos(2),
-        Duration::from_nanos(2),
-        Duration::from_nanos(1),
-        Duration::from_nanos(0),
-    ]);
+    assert_eq!(
+        kept,
+        vec![
+            Duration::from_nanos(2),
+            Duration::from_nanos(2),
+            Duration::from_nanos(1),
+            Duration::from_nanos(0),
+        ]
+    );
     assert_eq!(kept.last(), Some(&Duration::from_nanos(0)));
 }
 
@@ -149,18 +158,29 @@ fn the_recent_queue_answers_newest_first() {
         });
     }
 
-    let texts = |rows: Vec<SlowQueryInfo>| -> Vec<String> {
-        rows.into_iter().map(|row| row.sql).collect()
-    };
+    let texts =
+        |rows: Vec<SlowQueryInfo>| -> Vec<String> { rows.into_iter().map(|row| row.sql).collect() };
 
     assert_eq!(texts(q.query_recent(1)), ["ccc"]);
     assert_eq!(texts(q.query_recent(2)), ["ccc", "bbb"]);
     assert_eq!(texts(q.query_recent(6)), ["ccc", "bbb", "aaa"]);
 
-    q.append(SlowQueryInfo { sql: "ddd".to_owned(), ..SlowQueryInfo::default() });
-    q.append(SlowQueryInfo { sql: "eee".to_owned(), ..SlowQueryInfo::default() });
-    q.append(SlowQueryInfo { sql: "fff".to_owned(), ..SlowQueryInfo::default() });
-    q.append(SlowQueryInfo { sql: "ggg".to_owned(), ..SlowQueryInfo::default() });
+    q.append(SlowQueryInfo {
+        sql: "ddd".to_owned(),
+        ..SlowQueryInfo::default()
+    });
+    q.append(SlowQueryInfo {
+        sql: "eee".to_owned(),
+        ..SlowQueryInfo::default()
+    });
+    q.append(SlowQueryInfo {
+        sql: "fff".to_owned(),
+        ..SlowQueryInfo::default()
+    });
+    q.append(SlowQueryInfo {
+        sql: "ggg".to_owned(),
+        ..SlowQueryInfo::default()
+    });
 
     assert_eq!(texts(q.query_recent(3)), ["ggg", "fff", "eee"]);
     assert_eq!(

@@ -559,7 +559,7 @@ pub fn check_agg_can_push_cop_tikv(
 /// a TiKV cop task: `(None, plan)` is Go's `(nil, p.Self)` — the aggregate
 /// stays whole — and `(Some(partial), final)` is the split, the partial
 /// keeping the original plan's id and stats (Go mutates `p` into it) and the
-/// final sharing those stats above it.
+/// final sharing those stats above it and receiving a fresh physical-plan ID.
 ///
 /// The `copTaskType == kv.TiDB` firstrow-appending arm is not reachable: the
 /// only caller hands TiKV cop tasks. Go's expression context is consulted
@@ -569,6 +569,7 @@ pub fn new_partial_aggregate(
     ctx: &impl Columns,
     alloc: &ColumnIdAllocator,
     plan: crate::physical::PhysicalPlan,
+    plan_ids: &crate::plan_base::PlanIdAllocator,
 ) -> Result<
     (
         Option<crate::physical::PhysicalPlan>,
@@ -614,10 +615,27 @@ pub fn new_partial_aggregate(
     );
     // Go mutates `p` into the partial half (same plan id, same stats) and
     // Init's a NEW final of the same kind above it, with
-    // `ExpectedCnt: math.MaxFloat64` and `p`'s stats. Plan ids on this port
-    // follow the TopN-push precedent: both halves carry the original id.
+    // `ExpectedCnt: math.MaxFloat64` and `p`'s stats.
     let mut partial = plan.clone();
-    let mut final_plan = plan;
+    let mut final_base =
+        crate::physical::BasePhysicalPlan::new(plan_ids, plan.tp(), plan.query_block_offset());
+    final_base.base.set_stats(plan.stats_info().cloned());
+    final_base.set_children_req_props(vec![Some(
+        crate::physical_property::PhysicalProperty::default(),
+    )]);
+    let mut final_plan = match &plan {
+        PhysicalPlan::HashAgg(_) => PhysicalPlan::HashAgg(crate::physical::PhysicalHashAgg {
+            base: final_base,
+            agg_funcs: Vec::new(),
+            group_by_items: Vec::new(),
+        }),
+        PhysicalPlan::StreamAgg(_) => PhysicalPlan::StreamAgg(crate::physical::PhysicalStreamAgg {
+            base: final_base,
+            agg_funcs: Vec::new(),
+            group_by_items: Vec::new(),
+        }),
+        _ => unreachable!("the aggregate variant was checked above"),
+    };
     match (&mut partial, &mut final_plan) {
         (PhysicalPlan::HashAgg(part), PhysicalPlan::HashAgg(fin)) => {
             part.agg_funcs = split.partial.agg_funcs;

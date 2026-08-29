@@ -22,17 +22,14 @@ mod index_prefix_lengths;
 mod index_prefix_reads;
 mod index_ranges;
 mod indexes;
-mod join_reorder;
 mod joins;
 mod mem_quota;
 mod point_get;
-mod predicate_pushdown;
 mod primary_keys;
 mod select_clauses;
 mod set_operations;
 mod subqueries;
 mod table_round_trip;
-mod through_proj;
 
 use super::*;
 

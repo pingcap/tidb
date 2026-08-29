@@ -129,17 +129,6 @@ impl AvailablePaths {
                 None => true,
             }
     }
-
-    /// Resolves one table's hints, exactly in Go's order: collect, then
-    /// restrict, then remove the ignored, then fall back to the table path.
-    ///
-    /// The error is Go's `plannererrors.ErrKeyDoesNotExist`, raised on the
-    /// first unresolvable name.
-    pub(crate) fn resolve(table: &KvTable, hints: &[IndexHint]) -> Result<Self, DriverError> {
-        let mut accumulator = HintAccumulator::default();
-        accumulator.take_from_clause(table, hints)?;
-        Ok(accumulator.finish())
-    }
 }
 
 /// Go's `hasScanHint` / `hasUseOrForce` / `available` / `ignored` locals,
@@ -518,53 +507,6 @@ pub(crate) fn single_table_scan_hints(
         accumulator.take_comment_hints(select, table_ref, table, current_db, ctx);
     }
     Ok(accumulator.finish())
-}
-
-/// Raises Go's 1176 for any index hint in a `FROM` clause naming an index its
-/// table does not have, over EVERY table of a join rather than only the one
-/// the fast path costs.
-///
-/// Go validates per `DataSource`, so both sides of a join report it; without
-/// this walk the error would depend on which table the plan happened to
-/// narrow, which is not a rule anyone could rely on.
-pub(crate) fn validate_join_index_hints(
-    join: &tidb_ast::Join,
-    catalog: &crate::driver::Catalog,
-    current_db: &str,
-) -> Result<(), DriverError> {
-    validate_join_node(&join.left, catalog, current_db)?;
-    match &join.right {
-        Some(right) => validate_join_node(right, catalog, current_db),
-        None => Ok(()),
-    }
-}
-
-fn validate_join_node(
-    node: &tidb_ast::JoinNode,
-    catalog: &crate::driver::Catalog,
-    current_db: &str,
-) -> Result<(), DriverError> {
-    match node {
-        tidb_ast::JoinNode::Table(table_ref) => {
-            if table_ref.hints.is_empty() {
-                return Ok(());
-            }
-            let Ok((database, name)) =
-                crate::driver::split_table_path_pub(&table_ref.name, current_db)
-            else {
-                return Ok(());
-            };
-            // A name that resolves to nothing, or to something that is not a
-            // stored table, is a diagnosis for the resolver above to make.
-            let Some(crate::driver::TableEntry::Kv(table)) = catalog.get_in(database, name) else {
-                return Ok(());
-            };
-            AvailablePaths::resolve(table, &table_ref.hints).map(|_| ())
-        }
-        tidb_ast::JoinNode::Join(join) => validate_join_index_hints(join, catalog, current_db),
-        // A derived table's own `FROM` is validated when it is planned.
-        tidb_ast::JoinNode::Derived { .. } => Ok(()),
-    }
 }
 
 /// Go's COMMENT-style index hints (`/*+ use_index(t, idx) */`), which are a

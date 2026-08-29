@@ -330,7 +330,8 @@ fn tpch_q16_non_null_not_in_is_an_anti_semi_join() {
         .and_then(|row| text(row, 1).parse::<f64>().ok())
         .expect("q16 preserved input estimate");
     assert!(
-        (anti_join_rows - preserved_rows * crate::plan_trace::SELECTIVITY_FACTOR).abs() < 0.02,
+        (anti_join_rows - preserved_rows * tidb_planner::cost_factors::SELECTION_FACTOR).abs()
+            < 0.02,
         "Go LogicalJoin derives an anti-semi join from its already-filtered left child: \
          {plan:#?}",
     );
@@ -636,7 +637,8 @@ fn evaluated_scalar_predicate_is_pushed_below_a_sibling_anti_semi_join() {
          {plan:#?}",
     );
     assert!(
-        (anti_join_rows - filtered_left_rows * crate::plan_trace::SELECTIVITY_FACTOR).abs() < 0.02,
+        (anti_join_rows - filtered_left_rows * tidb_planner::cost_factors::SELECTION_FACTOR).abs()
+            < 0.02,
         "Go LogicalJoin derives an anti-semi join from its filtered left child: {plan:#?}",
     );
     assert!(
@@ -1403,39 +1405,6 @@ fn correlated_sum_predicate_pulls_above_unique_outer_join() {
     let QueryStmt::Select(select) = &**query else {
         panic!("not a SELECT");
     };
-    let reorder_select = (**select).clone();
-    let reorder_catalog = catalog.clone();
-    let reordered = std::thread::Builder::new()
-        .name("nested-correlated-sum-reorder".to_owned())
-        .stack_size(8 * 1024 * 1024)
-        .spawn(move || {
-            let reorder_ctx = crate::StmtContext::for_query();
-            let rewritten = crate::driver::subquery::rewrite_filter_in_subqueries(
-                &reorder_select,
-                &reorder_catalog,
-                "test",
-                &reorder_ctx,
-            )
-            .unwrap()
-            .expect("the outer q20 IN predicate must become a distinct join leaf");
-            crate::driver::join_reorder::reorder(
-                rewritten.from.as_ref().unwrap(),
-                &rewritten,
-                rewritten.where_clause.as_ref(),
-                &reorder_catalog,
-                "test",
-                &reorder_ctx,
-            )
-            .expect("the rewritten q20 inner join group must remain reorderable")
-        })
-        .unwrap()
-        .join()
-        .unwrap();
-    assert_eq!(
-        reordered.written_order,
-        vec![1, 0, 2],
-        "the filtered nation input must seed the rewritten q20 join group",
-    );
     let nested_select = (**select).clone();
     let nested_catalog = catalog.clone();
     let (_, nested_plan) = std::thread::Builder::new()
@@ -1518,11 +1487,12 @@ fn correlated_sum_predicate_pulls_above_unique_outer_join() {
         .parse::<f64>()
         .unwrap();
     assert!(
-        (selection_rows - aggregate_rows * crate::plan_trace::SELECTIVITY_FACTOR).abs() < 0.02,
+        (selection_rows - aggregate_rows * tidb_planner::cost_factors::SELECTION_FACTOR).abs()
+            < 0.02,
         "LogicalSelection.DeriveStats scales its aggregate child by SelectivityFactor: \
          selection={selection_rows}, aggregate={aggregate_rows}, expected={}; \
          {nested_plan:#?}",
-        aggregate_rows * crate::plan_trace::SELECTIVITY_FACTOR
+        aggregate_rows * tidb_planner::cost_factors::SELECTION_FACTOR
     );
     let selection_info = text(&nested_plan[scalar_selection], 4);
     assert!(
@@ -2411,7 +2381,7 @@ fn subqueries() {
         .expect("q4 has a preserved build reader");
     let semi_rows = text(semi_join, 1).parse::<f64>().unwrap();
     assert!(
-        (semi_rows - build_rows * crate::plan_trace::SELECTIVITY_FACTOR).abs() < 0.02,
+        (semi_rows - build_rows * tidb_planner::cost_factors::SELECTION_FACTOR).abs() < 0.02,
         "the semi selectivity must be applied once to q4's filtered orders: {plan:#?}",
     );
     assert!(
@@ -2547,7 +2517,7 @@ fn subqueries() {
         .map(|row| text(row, 1).parse::<f64>().unwrap())
         .collect::<Vec<_>>();
     assert!(
-        (semi_rows[0] - semi_rows[1] * crate::plan_trace::SELECTIVITY_FACTOR).abs() < 0.02,
+        (semi_rows[0] - semi_rows[1] * tidb_planner::cost_factors::SELECTION_FACTOR).abs() < 0.02,
         "the outer anti-semi join must derive from the inner semi join: {plan:#?}",
     );
     let statement = tidb_parser::parse(
@@ -2570,20 +2540,6 @@ fn subqueries() {
     let QueryStmt::Select(select) = &**query else {
         panic!("not a SELECT");
     };
-    let reordered = crate::driver::join_reorder::reorder(
-        select.from.as_ref().unwrap(),
-        select,
-        select.where_clause.as_ref(),
-        &catalog,
-        "test",
-        &crate::StmtContext::for_query(),
-    )
-    .expect("subquery conjuncts must not block reordering their outer join group");
-    assert_eq!(
-        reordered.written_order,
-        vec![1, 2, 3, 0],
-        "Go reorders q21's outer group before physicalizing its two semi joins",
-    );
     let (_, q21_plan) = crate::explain::explain_select_stmt(
         select,
         &catalog,

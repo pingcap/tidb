@@ -64,8 +64,6 @@ impl DmlExpression {
                 database: None,
                 columns: vec![(format!("__apply_{index}"), value_type)],
                 offset: index,
-                func_deps: Default::default(),
-                physical: None,
             });
         }
         let expression =
@@ -105,6 +103,7 @@ impl DmlExpression {
 
 pub(super) enum UpdateExpression {
     Scalar(Expression),
+    Physical(Expression),
     Applied(DmlExpression),
 }
 
@@ -117,10 +116,15 @@ impl UpdateExpression {
         Self::Applied(expression)
     }
 
+    pub(super) fn physical(expression: Expression) -> Self {
+        Self::Physical(expression)
+    }
+
     pub(super) fn eval(
         &self,
         row: &[Datum],
         scalar_row: tidb_chunk::row::Row<'_>,
+        physical_row: Option<tidb_chunk::row::Row<'_>>,
         catalog: &Catalog,
         current_db: &str,
         ctx: &crate::StmtContext,
@@ -128,6 +132,16 @@ impl UpdateExpression {
         match self {
             Self::Scalar(expression) => expression
                 .eval(ctx, scalar_row)
+                .map_err(|error| DriverError::Exec(ExecError::Eval(error))),
+            Self::Physical(expression) => expression
+                .eval(
+                    ctx,
+                    physical_row.ok_or_else(|| {
+                        DriverError::unsupported(
+                            "a planned UPDATE expression has no physical input row",
+                        )
+                    })?,
+                )
                 .map_err(|error| DriverError::Exec(ExecError::Eval(error))),
             Self::Applied(expression) => expression.eval(row, catalog, current_db, ctx),
         }
@@ -141,7 +155,7 @@ pub(super) fn dml_table_scope(
     columns: Vec<(String, FieldType)>,
     ctx: &crate::StmtContext,
 ) -> FromScope {
-    let mut scope = PlanTrace::single_table_scope(
+    let mut scope = single_table_scope(
         table_ref.alias.as_deref().unwrap_or(name),
         table_ref.alias.is_none().then(|| database.to_owned()),
         columns,

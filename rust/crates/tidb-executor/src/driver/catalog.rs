@@ -799,7 +799,7 @@ impl Catalog {
         if let TableEntry::Kv(table) = &mut source {
             table.set_name(to_name);
         }
-        let mut source = std::sync::Arc::new(source);
+        let source = std::sync::Arc::new(source);
         // Infallible: the key was present at the top of this function and
         // nothing between here and there can remove a schema.
         self.databases
@@ -1229,16 +1229,14 @@ impl Catalog {
         self.statistics.get(&table_id)
     }
 
-    /// Makes physical-access statistics queued by the preceding statement
-    /// resident before the next statement takes its logical stats snapshot.
-    pub fn advance_statistics_loads(&self) {
-        for statistics in self.statistics.values() {
-            statistics.advance_statistics_loads();
-        }
-    }
-
     /// A mutable table of `database`, for the schema-changing statements.
     pub fn table_mut_in(&mut self, database: &str, name: &str) -> Option<&mut TableEntry> {
+        // Go advances InfoSchema.SchemaMetaVersion whenever a DDL job changes
+        // table metadata. Keep that epoch separate from `version`, which also
+        // moves for ordinary row writes and transaction conflict detection.
+        // Every production caller of this accessor is a schema-changing DDL
+        // path; DML reaches the deliberately narrower `get_mut_in` instead.
+        self.bump_metadata_version();
         self.get_mut_in(database, name)
     }
 
@@ -1301,26 +1299,6 @@ impl Catalog {
         }
         self.register_in(database, name, TableEntry::Mem(table))
             .expect("the schema was just created when it was missing");
-    }
-
-    /// Registers a query-scoped spill-backed CTE in `database`, creating the
-    /// scratch schema when it does not exist.
-    pub(crate) fn register_cte_in(&mut self, database: &str, name: &str, table: crate::CteTable) {
-        let key = database.to_lowercase();
-        if !self.databases.contains_key(&key) {
-            self.next_database_id += 1;
-            self.databases.insert(
-                key,
-                Database {
-                    id: self.next_database_id,
-                    name: database.to_owned(),
-                    charset: TableCharset::default(),
-                    tables: HashMap::new(),
-                },
-            );
-        }
-        self.register_in(database, name, TableEntry::Cte(table))
-            .expect("the scratch schema was just created when it was missing");
     }
 
     /// Registers a TiKV-format-byte-backed table in `database`, or reports

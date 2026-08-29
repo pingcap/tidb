@@ -11,220 +11,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! `EXPLAIN <select>`: the plan this tier would execute, printed in the five
-//! columns Go's row format uses (`id | estRows | task | access object |
-//! operator info`).
+//! Go-shaped `EXPLAIN` and `EXPLAIN ANALYZE` over retained physical plans.
 //!
-//! # What this is, and what it deliberately is not
-//!
-//! This tier has no plan object and no cost model: [`crate::driver`] decides
-//! point-get vs batch-point-get vs index-range vs full scan, and whether a
-//! selection/sort/projection/aggregate/limit is needed, WHILE it builds the
-//! executor pipeline. So EXPLAIN here is a **plan recorder**, not an
-//! optimizer trace -- but it does not re-run those decisions to find out what
-//! they were. It runs the driver's own build path with a
-//! [`crate::plan_trace::PlanTrace`] attached: every site that commits to an
-//! executor records the matching node as a byproduct of building it. The
-//! described plan and the executed plan are therefore the same control flow,
-//! and cannot drift apart.
-//!
-//! Plain `EXPLAIN` executes nothing: the trace is built in plan-only mode, so
-//! the driver assembles the pipeline, records it, and returns before draining
-//! it -- and a write returns before writing (`EXPLAIN INSERT` inserts no row,
-//! as in Go). `EXPLAIN ANALYZE` runs the statement for real, and each node's
-//! `actRows` is metered off the executor built at that site.
-//!
-//! This module keeps only what printing needs: the format shapes, the
-//! build-order id assignment, and the tree drawing. Every operator's name,
-//! estimate and info text lives in [`crate::plan_trace`], next to the
-//! estimation model it applies.
-//!
-//! # Divergences from Go's EXPLAIN, each deliberate and named
-//!
-//! 1. **RESOLVED (was: the TABLE path reports task `root`).** Go finishes
-//!    every base-table read as a coprocessor task under a
-//!    `TableReader`/`IndexReader` root operator, and this tier now records
-//!    the same boundary for a single-table read:
-//!    [`crate::plan_trace::PlanTrace::scan_reader_or_cop_selection`] is
-//!    `convertToTableScan` ->
-//!    `addPushedDownSelection4PhysicalTableScan` -> `ConvertToRootTask`
-//!    (`pkg/planner/core/find_best_task.go:2829`, `:3198`;
-//!    `pkg/planner/core/operator/physicalop/task_base.go:504`). `EXPLAIN
-//!    SELECT id FROM t WHERE a > 0` on an unindexed table is
-//!    `TableReader root data:Selection` over `Selection cop[tikv]` over
-//!    `TableFullScan cop[tikv]`, and a bare `SELECT * FROM t` is
-//!    `TableReader root data:TableFullScan` over the scan.
-//!
-//!    The task column now means what it says, which is why the boundary is
-//!    claimed only where the SOURCE really applies the conjuncts below it
-//!    (`driver::access::negotiate_scan_filter` decides, and
-//!    [`crate::predicate_pushdown`] states the obligation a source takes on
-//!    by accepting them). A conjunct that stays above the reader is Go's own
-//!    `CopTask.RootTaskConds`
-//!    (`pkg/planner/core/operator/physicalop/task.go:47`).
-//!
-//!    Three pieces of Go's cop task are still outside it. (a) The push-down
-//!    CATALOG is narrower than Go's `expression.PushDownExprs`, so a
-//!    conjunct like `b + 1 < 10` becomes a root `Selection` here where Go
-//!    prints a cop one -- widening [`tidb_expr::pushdown_catalog`] is the
-//!    fix, and [`crate::predicate_pushdown`] names it. (b) The cop-side
-//!    `TopN` of item 2. (c) The reader's `data:` label names its child's
-//!    OPERATOR, not Go's `data:TableFullScan_4`, because ids are build order
-//!    here (item 5).
-//!
-//!    Shapes other than the single-table read reach the boundary by their
-//!    own routes and are not covered by that mechanism: a join's leaves get
-//!    their readers from
-//!    [`crate::plan_trace::PlanTrace::join_scan_readers`], an `IndexLookUp`
-//!    is already a root operator over cop children, and a partitioned read
-//!    that fans out to a `PartitionUnion` still prints no reader per branch.
-//! 2. **A cop-side `TopN` is not printed.** Go's optimizer merges an
-//!    `ORDER BY` and the `LIMIT` above it into one `TopN`
-//!    (`rule_topn_push_down`), and this tier does
-//!    the same: the driver builds a [`crate::topn::TopNExec`] where it would
-//!    otherwise have built a [`crate::sort::SortExec`] and a
-//!    [`crate::limit::LimitExec`], and the plan shows Go's
-//!    `<by items>, offset:N, count:N`. What Go additionally does is push a
-//!    SECOND `TopN` into the coprocessor task; that half is out of reach
-//!    until the distsql request can carry one, so the plan shows the root
-//!    `TopN` only.
-//!
-//!    `SELECT DISTINCT ... ORDER BY ... LIMIT` is the one query that still
-//!    shows a `Sort` and a `Limit`: this tier's dedup sits between them, so
-//!    fusing would discard rows before they were deduplicated, while Go
-//!    lands its `TopN` above the aggregation instead.
-//! 3. **The table path always shows a `Projection`.** Go elides it when a
-//!    query selects exactly the source columns. The driver builds a
-//!    [`crate::projection::ProjectionExec`] over a table scan and the
-//!    recorder prints it; over an index path it does not, so
-//!    `select * from t` on an indexed table shows a bare `IndexFullScan`
-//!    like Go. Audited live 2026-08-19.
-//! 4. **RESOLVED (was: one-phase `HashAgg`).** This said the tier had one
-//!    `HashAggExec` and no column-id allocator, so `funcs:` printed
-//!    `count(*)` rather than Go's `count(1)->Column#6`. It no longer does:
-//!    `EXPLAIN SELECT a, count(*) FROM t GROUP BY a` prints
-//!    `HashAgg ... funcs:count(Column#0)->Column#0,
-//!    funcs:firstrow(t.a)->t.a` over an `IndexReader` whose `index:HashAgg`
-//!    names the cop-side phase. Audited live 2026-08-19.
-//! 5. **Operator ids are build-order, not Go's plan-construction order.**
-//!    Ids are assigned bottom-up in the order the driver builds executors,
-//!    starting at 1 -- literally the order the trace recorded them in. Go's
-//!    counter also advances for logical operators that optimization later
-//!    removes, so `TableFullScan_4` (Go) is `TableFullScan_1` here. The NAMES
-//!    are Go's.
-//! 6. **RESOLVED (was: join `estRows` is `N/A`).** The recorder printed Go's
-//!    not-available sentinel because NDV-based cardinality estimation was
-//!    missing. It now estimates: a two-table equi-join prints
-//!    `HashJoin_7 12487.50` beside Go's `12500.00`, the two differing only
-//!    in the null-filtering the operands price. Audited live 2026-08-19.
-//! 7. **A point get keeps its Selection only when the `WHERE` says more than
-//!    the key.** Go's fast plan REPLACES the whole pipeline. So does this
-//!    one when the predicate is exactly the handle:
-//!    `explain select * from t where id = 1` is a single `Point_Get_1` row,
-//!    audited live 2026-08-19. A conjunct the handle did not pin still
-//!    filters above, and then the plan shows `Projection > Selection >
-//!    Point_Get` -- `write_read_path_consumes_predicate` makes the same call
-//!    for writes (divergence 8). Because the access path already priced those
-//!    conditions, the selection does not reduce the estimate again (see
-//!    `PlanTrace::selection`).
-//! 8. **`UPDATE`/`DELETE` take the same access paths a `SELECT` does.** Go's planner
-//!    finds the same access paths for a write as for a `SELECT`, through the
-//!    same functions: `tryUpdatePointPlan`/`tryDeletePointPlan` run
-//!    `tryPointGetPlan` over a `SelectStmt` synthesized from the write's own
-//!    clauses, and the ordinary path then costs the table and index paths.
-//!    This tier's write drivers ([`crate::driver::run_update_in`],
-//!    [`crate::driver::run_delete_in`]) take the KEY and TABLE halves of
-//!    that, in Go's order, through `driver::access::write_read_path`: a
-//!    `WHERE` that pins a whole key records `Point_Get`, several whole keys
-//!    `Batch_Point_Get`, one the ranger bounds records `TableRangeScan`, and
-//!    anything else stays `TableFullScan`.
-//!
-//!    Whether the `Selection` survives above them is decided per path by
-//!    `write_read_path_consumes_predicate`, not by divergence 7's blanket
-//!    rule: `Batch_Point_Get` always consumes the predicate, `Point_Get` and
-//!    `TableRangeScan` consume it when the `WHERE` is exactly the key or the
-//!    handle bounds it read, and an index path never does.
-//!
-//!    The INDEX path is offered too, through `write_index_range_path`: when
-//!    the chooser prefers an index the write reads through it and records
-//!    `IndexRangeScan`, so `UPDATE t SET ... WHERE a = 10` on a non-unique
-//!    `KEY ka(a)` plans the index rather than scanning the table. (A write
-//!    whose `WHERE` pins a whole UNIQUE index gets the point plan instead,
-//!    because `try_point_get` looks that key up exactly as it does for a
-//!    read.) An index path always keeps its `Selection`: the ranges are a
-//!    superset of the affected rows, so the per-row filter decides. The
-//!    recorder IS those driver
-//!    functions, so what is printed and what is read cannot drift apart: the
-//!    records a write reads are pinned by `actRows`, and the REQUEST KIND it
-//!    reads them with by [`crate::storage::capture_storage_ops`], both in
-//!    `tidb_session::tests_sysbench_access`.
-//! 9. **An empty-range `TableDual` keeps its parents.** Go's `findBestTask`
-//!    returns a `PhysicalTableDual` for a chosen path with no ranges, and
-//!    that dual REPLACES the whole `DataSource` task, so
-//!    `select * from t1 use index(a) where a < -1` over an UNSIGNED key is
-//!    one `TableDual root rows:0` row. Here the dual replaces only the
-//!    SOURCE (`PlanTrace::empty_range_table_dual`), so the plan shows
-//!    `Projection > Selection > TableDual`, for divergence 7's reason and
-//!    with divergence 7's consequence: the rows are the same either way.
-//!
-//!    Audited live 2026-08-19 and accurate: `a < -1`, `a <= -1` and `a = -1`
-//!    each plan `Projection > TableDual rows:0` (no `Selection`, the empty
-//!    range having consumed the predicate) and answer no rows. Note the fold
-//!    turns on a NEGATIVE VALUE, which is what `ranger::handle_unsigned_col`
-//!    tests -- `a < 0` is not that case and correctly keeps its
-//!    `IndexRangeScan range:[-inf,0)`, because Go's own `handleUnsignedCol`
-//!    sees `0` as non-negative and rewrites nothing either.
-//!
-//! # Shapes EXPLAIN refuses
-//!
-//! The driver executes more than this recorder has ever printed: derived
-//! tables, lateral joins, and some set-operation forms. Those build sites mark
-//! the trace refused rather than inventing a node, and the entry points below
-//! answer with the refusal they have always answered with. Non-recursive
-//! `WITH` clauses are the exception: their materialized definitions and CTE
-//! scans are now recorded as auxiliary roots, so the TPC-DS plan-tree source
-//! suite can inspect the same statement shape as Go. Operators the driver
-//! builds but the recorder has never printed (an Apply for a correlated
-//! subquery, the window stage, an aggregate query's HAVING and final
-//! projection) record no node at all, which is exactly the plan text this tier
-//! has always produced for them.
-//!
-//! # Where the estRows numbers come from
-//!
-//! Every value printed is a stats-less default read from Go's source, not a
-//! guess, and each was confirmed against a `testkit.CreateMockStore` capture
-//! of the real `EXPLAIN` output on a table with no analyzed statistics. The
-//! constants and the arithmetic over them live in [`crate::plan_trace`]:
-//!
-//! * table row count: `statistics.PseudoRowCount = 10000`
-//!   (`pkg/statistics/table.go`).
-//! * a comparison filter (`>`, `>=`, `<`, `<=`): `1.0 / pseudoLessRate` with
-//!   `pseudoLessRate = 3` (`pkg/planner/cardinality/pseudo.go`), giving
-//!   10000/3 = 3333.33 -- matching the capture.
-//! * an equality filter: `1.0 / pseudoEqualRate` with
-//!   `pseudoEqualRate = 1000` (same file).
-//! * anything else: `SelectivityFactor`, whose default is 0.8
-//!   (`vardef.DefOptSelectivityFactor`).
-//! * a GROUP BY's output cardinality: `distinctFactor = 0.8`
-//!   (`pkg/planner/cardinality/ndv.go`), giving 8000.00 -- matching the
-//!   capture.
-//! * a point get: 1.00; a batch point get: the number of handles -- both
-//!   exact, not estimates.
+//! Fresh queries, prepared cache hits, and DML all render the same physical
+//! tree that `physical_builder` lowers through the ordinary executor switch.
+//! `EXPLAIN ANALYZE` attaches row counters while draining that executor tree;
+//! plain `EXPLAIN` only renders it and never executes the target statement.
 
 use std::cell::Cell;
 use std::rc::Rc;
 
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_planner::explain::{
+    Explain as PlannerExplain, ExplainContext as PlannerExplainContext,
+    ExplainFormat as PlannerExplainFormat, ExplainOperator, ExplainTask,
+};
+use tidb_planner::physical::{PhysicalPlan, RedactMode};
 
 use crate::driver::{
-    run_delete_traced, run_insert_traced, run_select_traced, run_set_opr_traced, run_update_traced,
-    Catalog, DriverError, SelectMeta,
+    run_delete_stmt_with_physical_and_stats, run_insert_stmt_with_physical_and_stats,
+    run_update_stmt_with_physical_and_stats, Catalog, DriverError, SelectMeta,
 };
-use crate::plan_trace::{PlanNode, PlanTrace};
-
-/// The header Go's row-format EXPLAIN reports, captured from TiDB.
-const EXPLAIN_COLUMNS: [&str; 5] = ["id", "estRows", "task", "access object", "operator info"];
-
 /// The `EXPLAIN FORMAT = '...'` this tier accepts. Go's `'row'` (the
 /// default, also the explicit spelling) and `'brief'` render the identical
 /// five-column tree; `'brief'` merely drops each operator's `_N` build-order
@@ -259,39 +66,707 @@ impl ExplainFormat {
 }
 
 /// The plan a finished trace recorded, or the refusal a build site left in it.
-fn recorded(trace: PlanTrace) -> Result<PlanNode, DriverError> {
-    if let Some(reason) = trace.refusal() {
-        return Err(DriverError::unsupported(reason));
+fn planner_explain_format(format: ExplainFormat) -> PlannerExplainFormat {
+    match format {
+        ExplainFormat::Row => PlannerExplainFormat::Row,
+        ExplainFormat::Brief => PlannerExplainFormat::Brief,
+        ExplainFormat::PlanTree => PlannerExplainFormat::PlanTree,
     }
-    trace
-        .into_root()
-        .ok_or(DriverError::unsupported("EXPLAIN recorded no plan"))
 }
 
-fn recorded_roots(trace: PlanTrace) -> Result<Vec<PlanNode>, DriverError> {
-    if let Some(reason) = trace.refusal() {
-        return Err(DriverError::unsupported(reason));
-    }
-    let roots = trace.into_roots();
-    if roots.is_empty() {
-        return Err(DriverError::unsupported("EXPLAIN recorded no plan"));
-    }
-    Ok(roots)
+fn expression_text(expression: &tidb_expr::expression::Expression) -> String {
+    crate::plan_trace::physical_expression_text_with_columns(expression, &[]).unwrap_or_default()
 }
 
-/// The driver materializes a `WITH` clause before building its consumer, so
-/// the consumer's trace is still a truthful description of the executable
-/// plan.  Keep this hook as a single validation boundary for future shapes;
-/// unlike the old fail-closed branch it deliberately admits CTE-backed
-/// SELECTs so the TPC-DS source suite can compare their plans with Go.
-fn refuse_untraced_select(_select: &tidb_ast::SelectStmt) -> Result<(), DriverError> {
-    Ok(())
+fn expressions_text(expressions: &[tidb_expr::expression::Expression]) -> String {
+    expressions
+        .iter()
+        .map(expression_text)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
-fn written_cte_names(with: Option<&tidb_ast::WithClause>) -> Vec<String> {
-    with.map_or_else(Vec::new, |with| {
-        with.ctes.iter().map(|cte| cte.name.clone()).collect()
-    })
+fn by_items_text(items: &[tidb_expr::aggregation::ByItems]) -> String {
+    items
+        .iter()
+        .map(|item| {
+            let expression = expression_text(&item.expr);
+            if item.desc {
+                format!("{expression}:desc")
+            } else {
+                expression
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn join_type_text(join_type: tidb_planner::find_best_task::LogicalJoinType) -> &'static str {
+    use tidb_planner::find_best_task::LogicalJoinType;
+    match join_type {
+        LogicalJoinType::Inner => "inner join",
+        LogicalJoinType::LeftOuter => "left outer join",
+        LogicalJoinType::RightOuter => "right outer join",
+        LogicalJoinType::Semi => "semi join",
+        LogicalJoinType::AntiSemi => "anti semi join",
+        LogicalJoinType::LeftOuterSemi => "left outer semi join",
+        LogicalJoinType::AntiLeftOuterSemi => "anti left outer semi join",
+    }
+}
+
+fn join_info(
+    join_type: tidb_planner::find_best_task::LogicalJoinType,
+    left_keys: &[tidb_expr::column::Column],
+    right_keys: &[tidb_expr::column::Column],
+    left_conditions: &[tidb_expr::expression::Expression],
+    right_conditions: &[tidb_expr::expression::Expression],
+    other_conditions: &[tidb_expr::expression::Expression],
+) -> String {
+    let mut parts = vec![join_type_text(join_type).to_owned()];
+    let equal = left_keys
+        .iter()
+        .zip(right_keys)
+        .map(|(left, right)| {
+            format!(
+                "eq({}, {})",
+                expression_text(&tidb_expr::expression::Expression::Column(left.clone())),
+                expression_text(&tidb_expr::expression::Expression::Column(right.clone()))
+            )
+        })
+        .collect::<Vec<_>>();
+    if !equal.is_empty() {
+        parts.push(format!("equal:[{}]", equal.join(" ")));
+    }
+    for (name, conditions) in [
+        ("left cond", left_conditions),
+        ("right cond", right_conditions),
+        ("other cond", other_conditions),
+    ] {
+        if !conditions.is_empty() {
+            parts.push(format!("{name}:[{}]", expressions_text(conditions)));
+        }
+    }
+    parts.join(", ")
+}
+
+fn aggregate_info(
+    functions: &[tidb_expr::aggregation::AggFuncDesc],
+    group_by: &[tidb_expr::expression::Expression],
+    schema: Option<&tidb_expr::schema::Schema>,
+) -> String {
+    let mut parts = Vec::new();
+    if !group_by.is_empty() {
+        parts.push(format!("group by:{}", expressions_text(group_by)));
+    }
+    if !functions.is_empty() {
+        let functions = functions
+            .iter()
+            .enumerate()
+            .map(|(index, function)| {
+                let distinct = if function.has_distinct {
+                    "distinct "
+                } else {
+                    ""
+                };
+                let output = schema
+                    .and_then(|schema| schema.columns.get(index))
+                    .map(|column| {
+                        expression_text(&tidb_expr::expression::Expression::Column(column.clone()))
+                    })
+                    .unwrap_or_else(|| format!("Column#{index}"));
+                format!(
+                    "funcs:{}({}{})->{output}",
+                    function.base.name,
+                    distinct,
+                    expressions_text(&function.base.args)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        parts.push(functions);
+    }
+    parts.join(", ")
+}
+
+fn scan_ranges_text(ranges: &tidb_planner::ranger::types::Ranges) -> String {
+    ranges
+        .iter()
+        .map(tidb_planner::ranger::types::Range::to_display_string)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn table_name(catalog: &Catalog, table_id: i64, alias: Option<&str>) -> String {
+    alias.map_or_else(
+        || {
+            catalog
+                .kv_table_by_id(table_id)
+                .map_or_else(|| table_id.to_string(), |table| table.name.clone())
+        },
+        str::to_owned,
+    )
+}
+
+fn table_access(catalog: &Catalog, table_id: i64, alias: Option<&str>) -> String {
+    format!("table:{}", table_name(catalog, table_id, alias))
+}
+
+fn index_access(
+    catalog: &Catalog,
+    table_id: i64,
+    alias: Option<&str>,
+    index_id: i64,
+    index_name: Option<&str>,
+) -> String {
+    let table_access = table_access(catalog, table_id, alias);
+    let Some(table) = catalog.kv_table_by_id(table_id) else {
+        return index_name.map_or(table_access.clone(), |name| {
+            format!("{table_access}, index:{name}")
+        });
+    };
+    let Some(index) = table.plan_indexes().find(|index| index.id == index_id) else {
+        return index_name.map_or(table_access.clone(), |name| {
+            format!("{table_access}, index:{name}")
+        });
+    };
+    let columns = index
+        .column_offsets
+        .iter()
+        .filter_map(|offset| table.columns.get(*offset))
+        .map(|column| column.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("{table_access}, index:{}({columns})", index.name)
+}
+
+fn point_access(catalog: &Catalog, table_id: i64, index_id: Option<i64>) -> String {
+    match index_id {
+        Some(index_id) => index_access(catalog, table_id, None, index_id, None),
+        None => {
+            let access = table_access(catalog, table_id, None);
+            let Some(table) = catalog.kv_table_by_id(table_id) else {
+                return access;
+            };
+            if table.common_handle_offsets().is_empty() {
+                access
+            } else {
+                let columns = table
+                    .common_handle_offsets()
+                    .iter()
+                    .filter_map(|offset| table.columns.get(*offset))
+                    .map(|column| column.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{access}, clustered index:PRIMARY({columns})")
+            }
+        }
+    }
+}
+
+fn physical_operator_name(plan: &PhysicalPlan) -> String {
+    match plan {
+        PhysicalPlan::TableScan(scan) => scan.scan_kind().map_or_else(
+            || "TableScan".to_owned(),
+            |kind| kind.plan_type().to_owned(),
+        ),
+        PhysicalPlan::IndexScan(scan) => {
+            if scan.ranges.is_empty()
+                || tidb_planner::ranger::types::has_full_range(&scan.ranges, false)
+            {
+                "IndexFullScan".to_owned()
+            } else {
+                "IndexRangeScan".to_owned()
+            }
+        }
+        PhysicalPlan::PointGet(_) => "Point_Get".to_owned(),
+        PhysicalPlan::BatchPointGet(_) => "Batch_Point_Get".to_owned(),
+        _ => plan.tp().to_owned(),
+    }
+}
+
+fn physical_access(plan: &PhysicalPlan, catalog: &Catalog) -> String {
+    match plan {
+        PhysicalPlan::TableScan(scan) => {
+            table_access(catalog, scan.table_id, scan.table_as_name.as_deref())
+        }
+        PhysicalPlan::IndexScan(scan) => index_access(
+            catalog,
+            scan.table_id,
+            scan.table_as_name.as_deref(),
+            scan.index_id,
+            Some(&scan.index_name),
+        ),
+        PhysicalPlan::PointGet(point) => point_access(catalog, point.table_id, point.index_id),
+        PhysicalPlan::BatchPointGet(point) => point_access(catalog, point.table_id, point.index_id),
+        PhysicalPlan::CTE(cte) => {
+            if cte.cte_name.eq_ignore_ascii_case(&cte.cte_as_name) {
+                format!("CTE:{}", cte.cte_name.to_ascii_lowercase())
+            } else {
+                format!(
+                    "CTE:{} AS {}",
+                    cte.cte_name.to_ascii_lowercase(),
+                    cte.cte_as_name.to_ascii_lowercase()
+                )
+            }
+        }
+        _ => String::new(),
+    }
+}
+
+fn point_handle_text(range: &tidb_planner::ranger::types::Range) -> String {
+    range
+        .low_val
+        .first()
+        .and_then(|value| value.sql_string().ok())
+        .unwrap_or_default()
+}
+
+fn physical_operator_info(plan: &PhysicalPlan, catalog: &Catalog) -> String {
+    match plan {
+        PhysicalPlan::Selection(selection) => expressions_text(&selection.conditions),
+        PhysicalPlan::Projection(projection) => expressions_text(&projection.exprs),
+        PhysicalPlan::HashJoin(join) => join_info(
+            join.join_type,
+            &join.left_join_keys,
+            &join.right_join_keys,
+            &join.left_conditions,
+            &join.right_conditions,
+            &join.other_conditions,
+        ),
+        PhysicalPlan::MergeJoin(join) => join_info(
+            join.join_type,
+            &join.left_join_keys,
+            &join.right_join_keys,
+            &join.left_conditions,
+            &join.right_conditions,
+            &join.other_conditions,
+        ),
+        PhysicalPlan::IndexJoin(join) => join_info(
+            join.join_type,
+            &join.left_join_keys,
+            &join.right_join_keys,
+            &join.left_conditions,
+            &join.right_conditions,
+            &join.other_conditions,
+        ),
+        PhysicalPlan::Apply(apply) => join_info(
+            apply.hash_join.join_type,
+            &apply.hash_join.left_join_keys,
+            &apply.hash_join.right_join_keys,
+            &apply.hash_join.left_conditions,
+            &apply.hash_join.right_conditions,
+            &apply.hash_join.other_conditions,
+        ),
+        PhysicalPlan::Sort(sort) => by_items_text(&sort.by_items),
+        PhysicalPlan::Limit(limit) => limit.explain_info(RedactMode::Disable),
+        PhysicalPlan::TableScan(scan) => {
+            let mut parts = Vec::new();
+            if scan
+                .scan_kind()
+                .is_some_and(|kind| kind.plan_type() == "TableRangeScan")
+                && !scan.ranges.is_empty()
+            {
+                parts.push(format!("range:{}", scan_ranges_text(&scan.ranges)));
+            }
+            parts.push(format!("keep order:{}", scan.keep_order));
+            parts.push("stats:pseudo".to_owned());
+            parts.join(", ")
+        }
+        PhysicalPlan::TableDual(dual) => dual.explain_info(),
+        PhysicalPlan::CTE(cte) => cte.operator_info(),
+        PhysicalPlan::CTETable(table) => table.explain_info(),
+        PhysicalPlan::Lock(lock) => lock.explain_info(),
+        PhysicalPlan::Sequence(_) => {
+            tidb_planner::physical::PhysicalSequence::explain_info().to_owned()
+        }
+        PhysicalPlan::TableReader(reader) => reader.explain_info(),
+        PhysicalPlan::IndexScan(scan) => {
+            let mut parts = Vec::new();
+            if !scan.ranges.is_empty()
+                && !tidb_planner::ranger::types::has_full_range(&scan.ranges, false)
+            {
+                parts.push(format!("range:{}", scan_ranges_text(&scan.ranges)));
+            }
+            parts.push(format!("keep order:{}", scan.keep_order));
+            parts.push("stats:pseudo".to_owned());
+            parts.join(", ")
+        }
+        PhysicalPlan::IndexReader(reader) => format!(
+            "index:{}",
+            reader
+                .index_plan
+                .as_deref()
+                .map_or_else(String::new, |plan| plan.explain_id(false))
+        ),
+        PhysicalPlan::IndexLookUpReader(reader) => format!(
+            "index:{}, table:{}",
+            reader
+                .index_plan
+                .as_deref()
+                .map_or_else(String::new, |plan| plan.explain_id(false)),
+            reader
+                .table_plan
+                .as_deref()
+                .map_or_else(String::new, |plan| plan.explain_id(false))
+        ),
+        PhysicalPlan::PointGet(point) => {
+            let common_handle = catalog
+                .kv_table_by_id(point.table_id)
+                .is_some_and(|table| !table.common_handle_offsets().is_empty());
+            if point.index_id.is_some() || common_handle {
+                String::new()
+            } else {
+                point.ranges.first().map_or_else(String::new, |range| {
+                    format!("handle:{}", point_handle_text(range))
+                })
+            }
+        }
+        PhysicalPlan::BatchPointGet(batch) => {
+            let common_handle = catalog
+                .kv_table_by_id(batch.table_id)
+                .is_some_and(|table| !table.common_handle_offsets().is_empty());
+            let prefix = if batch.index_id.is_none() && !common_handle {
+                let handles = batch
+                    .ranges
+                    .iter()
+                    .map(point_handle_text)
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                format!("handle:[{handles}]")
+            } else {
+                String::new()
+            };
+            let order = format!("keep order:{}, desc:{}", batch.keep_order, batch.desc);
+            if prefix.is_empty() {
+                order
+            } else {
+                format!("{prefix}, {order}")
+            }
+        }
+        PhysicalPlan::IndexMergeReader(reader) => format!(
+            "type:{}, keep order:{}",
+            if reader.is_intersection_type {
+                "intersection"
+            } else {
+                "union"
+            },
+            reader.keep_order
+        ),
+        PhysicalPlan::Dml(_) => "N/A".to_owned(),
+        PhysicalPlan::TopN(topn) => format!(
+            "{}, offset:{}, count:{}",
+            by_items_text(&topn.by_items),
+            topn.offset,
+            topn.count
+        ),
+        PhysicalPlan::HashAgg(aggregation) => aggregate_info(
+            &aggregation.agg_funcs,
+            &aggregation.group_by_items,
+            aggregation.base.base.schema(),
+        ),
+        PhysicalPlan::StreamAgg(aggregation) => aggregate_info(
+            &aggregation.agg_funcs,
+            &aggregation.group_by_items,
+            aggregation.base.base.schema(),
+        ),
+        PhysicalPlan::MaxOneRow(_)
+        | PhysicalPlan::NominalSort(_)
+        | PhysicalPlan::Show(_)
+        | PhysicalPlan::ShowDDLJobs(_)
+        | PhysicalPlan::UnionAll(_) => String::new(),
+    }
+}
+
+fn runtime_rows(
+    plan: &PhysicalPlan,
+    runtime: Option<&crate::driver::physical_builder::PhysicalRuntimeStats>,
+) -> Option<u64> {
+    runtime?
+        .get(&crate::driver::physical_builder::runtime_plan_key(plan))
+        .map(|counter| counter.get())
+}
+
+fn physical_explain_operator(
+    plan: &PhysicalPlan,
+    catalog: &Catalog,
+    task: ExplainTask,
+    label: &str,
+    runtime: Option<&crate::driver::physical_builder::PhysicalRuntimeStats>,
+) -> ExplainOperator {
+    let mut children = match plan {
+        PhysicalPlan::TableReader(reader) => reader
+            .table_plan
+            .as_deref()
+            .map(|child| {
+                vec![physical_explain_operator(
+                    child,
+                    catalog,
+                    ExplainTask::Cop {
+                        request: "cop".to_owned(),
+                        store: "tikv".to_owned(),
+                    },
+                    "",
+                    runtime,
+                )]
+            })
+            .unwrap_or_default(),
+        PhysicalPlan::IndexReader(reader) => reader
+            .index_plan
+            .as_deref()
+            .map(|child| {
+                vec![physical_explain_operator(
+                    child,
+                    catalog,
+                    ExplainTask::Cop {
+                        request: "cop".to_owned(),
+                        store: "tikv".to_owned(),
+                    },
+                    "",
+                    runtime,
+                )]
+            })
+            .unwrap_or_default(),
+        PhysicalPlan::IndexLookUpReader(reader) => [
+            reader.index_plan.as_deref().map(|child| (child, "(Build)")),
+            reader.table_plan.as_deref().map(|child| (child, "(Probe)")),
+        ]
+        .into_iter()
+        .flatten()
+        .map(|(child, label)| {
+            physical_explain_operator(
+                child,
+                catalog,
+                ExplainTask::Cop {
+                    request: "cop".to_owned(),
+                    store: "tikv".to_owned(),
+                },
+                label,
+                runtime,
+            )
+        })
+        .collect(),
+        PhysicalPlan::IndexMergeReader(reader) => reader
+            .partial_plans_raw
+            .iter()
+            .map(|child| (child, "(Build)"))
+            .chain(reader.table_plan.as_deref().map(|child| (child, "(Probe)")))
+            .map(|(child, label)| {
+                physical_explain_operator(
+                    child,
+                    catalog,
+                    ExplainTask::Cop {
+                        request: "cop".to_owned(),
+                        store: "tikv".to_owned(),
+                    },
+                    label,
+                    runtime,
+                )
+            })
+            .collect(),
+        PhysicalPlan::Dml(root) => root
+            .select_plan
+            .as_deref()
+            .map(|child| {
+                vec![physical_explain_operator(
+                    child,
+                    catalog,
+                    ExplainTask::Root,
+                    "",
+                    runtime,
+                )]
+            })
+            .unwrap_or_default(),
+        _ => plan
+            .children()
+            .iter()
+            .map(|child| physical_explain_operator(child, catalog, task.clone(), "", runtime))
+            .collect(),
+    };
+
+    let labels = match plan {
+        PhysicalPlan::HashJoin(join) => {
+            let build = if join.use_outer_to_build {
+                1usize.saturating_sub(join.inner_child_idx)
+            } else {
+                join.inner_child_idx
+            };
+            Some(build)
+        }
+        PhysicalPlan::Apply(apply) => Some(1usize.saturating_sub(apply.hash_join.inner_child_idx)),
+        PhysicalPlan::IndexJoin(join) => Some(1usize.saturating_sub(join.inner_child_idx)),
+        PhysicalPlan::MergeJoin(join) => Some(
+            if join.join_type == tidb_planner::find_best_task::LogicalJoinType::RightOuter {
+                0
+            } else {
+                1
+            },
+        ),
+        _ => None,
+    };
+    if let Some(build) = labels.filter(|_| children.len() == 2) {
+        children[build].label = "(Build)".to_owned();
+        children[1 - build].label = "(Probe)".to_owned();
+        if build == 1 {
+            children.swap(0, 1);
+        }
+    }
+
+    let mut operator = ExplainOperator::new(physical_operator_name(plan), plan.id())
+        .with_task(task)
+        .with_access_object(physical_access(plan, catalog))
+        .with_operator_info(physical_operator_info(plan, catalog))
+        .with_children(children);
+    operator.label = label.to_owned();
+    if let Some(rows) = plan
+        .stats_info()
+        .map(tidb_planner::stats_info::StatsInfo::row_count)
+    {
+        operator = operator.with_estimated_rows(rows);
+    }
+    if let Some(rows) = runtime_rows(plan, runtime) {
+        operator = operator.with_actual_rows(rows);
+    }
+    operator
+}
+
+fn cte_definitions(
+    plan: &PhysicalPlan,
+    catalog: &Catalog,
+    runtime: Option<&crate::driver::physical_builder::PhysicalRuntimeStats>,
+    seen: &mut std::collections::BTreeSet<i32>,
+    out: &mut Vec<ExplainOperator>,
+) {
+    if let PhysicalPlan::CTE(cte) = plan {
+        if seen.insert(cte.id_for_storage) {
+            let mut children = vec![physical_explain_operator(
+                &cte.seed_plan,
+                catalog,
+                ExplainTask::Root,
+                "(Seed Part)",
+                runtime,
+            )];
+            if let Some(recursive) = cte.recursive_plan.as_deref() {
+                children.push(physical_explain_operator(
+                    recursive,
+                    catalog,
+                    ExplainTask::Root,
+                    "(Recursive Part)",
+                    runtime,
+                ));
+            }
+            let mut definition = ExplainOperator::new("CTE", cte.id_for_storage)
+                .with_operator_info(if cte.recursive_plan.is_some() {
+                    "Recursive CTE"
+                } else {
+                    "Non-Recursive CTE"
+                })
+                .with_children(children);
+            definition.estimated_rows = plan
+                .stats_info()
+                .map(tidb_planner::stats_info::StatsInfo::row_count);
+            out.push(definition);
+        }
+        cte_definitions(&cte.seed_plan, catalog, runtime, seen, out);
+        if let Some(recursive) = cte.recursive_plan.as_deref() {
+            cte_definitions(recursive, catalog, runtime, seen, out);
+        }
+    }
+    for child in plan.children() {
+        cte_definitions(child, catalog, runtime, seen, out);
+    }
+    match plan {
+        PhysicalPlan::TableReader(reader) => {
+            if let Some(child) = reader.table_plan.as_deref() {
+                cte_definitions(child, catalog, runtime, seen, out);
+            }
+        }
+        PhysicalPlan::IndexReader(reader) => {
+            if let Some(child) = reader.index_plan.as_deref() {
+                cte_definitions(child, catalog, runtime, seen, out);
+            }
+        }
+        PhysicalPlan::IndexLookUpReader(reader) => {
+            if let Some(child) = reader.index_plan.as_deref() {
+                cte_definitions(child, catalog, runtime, seen, out);
+            }
+            if let Some(child) = reader.table_plan.as_deref() {
+                cte_definitions(child, catalog, runtime, seen, out);
+            }
+        }
+        PhysicalPlan::Dml(root) => {
+            if let Some(child) = root.select_plan.as_deref() {
+                cte_definitions(child, catalog, runtime, seen, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn render_physical_plan(
+    physical: &PhysicalPlan,
+    catalog: &Catalog,
+    format: ExplainFormat,
+    analyze: bool,
+    runtime: Option<&crate::driver::physical_builder::PhysicalRuntimeStats>,
+) -> Result<SelectMeta, DriverError> {
+    let mut roots = vec![physical_explain_operator(
+        physical,
+        catalog,
+        ExplainTask::Root,
+        "",
+        runtime,
+    )];
+    cte_definitions(
+        physical,
+        catalog,
+        runtime,
+        &mut std::collections::BTreeSet::new(),
+        &mut roots,
+    );
+
+    let mut rows = Vec::new();
+    let mut columns = Vec::new();
+    for root in roots {
+        let mut explain = PlannerExplain::new(planner_explain_format(format), analyze, root);
+        let mut explain_context = PlannerExplainContext::default();
+        let schema = explain
+            .prepare_schema(&mut explain_context)
+            .map_err(|error| DriverError::unsupported(error.to_string()))?;
+        let rendered = explain
+            .render_result(&mut explain_context)
+            .map_err(|error| DriverError::unsupported(error.to_string()))?
+            .to_vec();
+        if columns.is_empty() {
+            let field_type = FieldType::new(FieldTypeCode::VarString);
+            columns = schema
+                .field_names
+                .into_iter()
+                .map(|name| (name.to_owned(), field_type.clone()))
+                .collect();
+        }
+        rows.extend(
+            rendered
+                .iter()
+                .map(|row| row.iter().map(|value| text(value)).collect::<Vec<_>>()),
+        );
+    }
+    Ok((columns, rows))
+}
+
+fn render_physical_query(
+    query: &tidb_ast::QueryStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    format: ExplainFormat,
+    analyze: bool,
+) -> Result<SelectMeta, DriverError> {
+    crate::driver::set_opr::validate_query_usage(query)?;
+    let mut physical = crate::driver::optimize_query_stmt(query, catalog, current_db, ctx)?;
+    let runtime = analyze
+        .then(|| crate::driver::physical_builder::execute_for_explain(&mut physical, catalog, ctx))
+        .transpose()?;
+    render_physical_plan(&physical, catalog, format, analyze, runtime.as_ref())
 }
 
 /// Plans `select` and reports the plan as EXPLAIN rows, executing nothing:
@@ -304,31 +779,14 @@ pub fn explain_select_stmt(
     ctx: &crate::StmtContext,
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
-    let cte_names = written_cte_names(select.with.as_ref());
-    // Go `pkg/planner/core/logical_plan_builder.go::computeCTEInlineFlag`
-    // removes a single-consumer non-recursive WITH before plan tracing; the
-    // The materialized definitions are retained as auxiliary trace roots.
-    let inlined_ctes;
-    let select = match crate::driver::inline_single_use_ctes(select, current_db) {
-        Some(rewritten) => {
-            inlined_ctes = rewritten;
-            &inlined_ctes
-        }
-        None => select,
-    };
-    refuse_untraced_select(select)?;
-    let mut trace = PlanTrace::planning();
-    trace.set_cte_names(cte_names);
-    run_select_traced(
-        select,
+    render_physical_query(
+        &tidb_ast::QueryStmt::Select(Box::new(select.clone())),
         catalog,
         current_db,
         ctx,
-        Some(&mut trace),
-        &tidb_planner::physical_property::PhysicalProperty::default(),
+        format,
         false,
-    )?;
-    Ok(render_roots(recorded_roots(trace)?, format))
+    )
 }
 
 /// Plain `EXPLAIN` over a supported set operation.
@@ -339,10 +797,14 @@ pub fn explain_set_opr_stmt(
     ctx: &crate::StmtContext,
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
-    let mut trace = PlanTrace::planning();
-    trace.set_cte_names(written_cte_names(set_opr.with.as_ref()));
-    run_set_opr_traced(set_opr, catalog, current_db, ctx, Some(&mut trace))?;
-    Ok(render_roots(recorded_roots(trace)?, format))
+    render_physical_query(
+        &tidb_ast::QueryStmt::SetOpr(Box::new(set_opr.clone())),
+        catalog,
+        current_db,
+        ctx,
+        format,
+        false,
+    )
 }
 
 /// `EXPLAIN ANALYZE <select>`: the same plan [`explain_select_stmt`] records,
@@ -358,28 +820,14 @@ pub fn explain_analyze_select_stmt(
     ctx: &crate::StmtContext,
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
-    let cte_names = written_cte_names(select.with.as_ref());
-    let inlined_ctes;
-    let select = match crate::driver::inline_single_use_ctes(select, current_db) {
-        Some(rewritten) => {
-            inlined_ctes = rewritten;
-            &inlined_ctes
-        }
-        None => select,
-    };
-    refuse_untraced_select(select)?;
-    let mut trace = PlanTrace::analyzing();
-    trace.set_cte_names(cte_names);
-    run_select_traced(
-        select,
+    render_physical_query(
+        &tidb_ast::QueryStmt::Select(Box::new(select.clone())),
         catalog,
         current_db,
         ctx,
-        Some(&mut trace),
-        &tidb_planner::physical_property::PhysicalProperty::default(),
-        false,
-    )?;
-    Ok(render_analyze(recorded(trace)?, format))
+        format,
+        true,
+    )
 }
 
 /// `EXPLAIN ANALYZE` over a supported set operation.
@@ -390,10 +838,14 @@ pub fn explain_analyze_set_opr_stmt(
     ctx: &crate::StmtContext,
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
-    let mut trace = PlanTrace::analyzing();
-    trace.set_cte_names(written_cte_names(set_opr.with.as_ref()));
-    run_set_opr_traced(set_opr, catalog, current_db, ctx, Some(&mut trace))?;
-    Ok(render_analyze(recorded(trace)?, format))
+    render_physical_query(
+        &tidb_ast::QueryStmt::SetOpr(Box::new(set_opr.clone())),
+        catalog,
+        current_db,
+        ctx,
+        format,
+        true,
+    )
 }
 
 /// Plans an `INSERT` and reports the plan as EXPLAIN rows, executing nothing:
@@ -409,9 +861,16 @@ pub fn explain_insert_stmt(
     ctx: &crate::StmtContext,
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
-    let mut trace = PlanTrace::planning();
-    run_insert_traced(insert, catalog, current_db, ctx, Some(&mut trace))?;
-    Ok(render(recorded(trace)?, format))
+    let physical = crate::driver::physical_dml_plan(
+        "Insert",
+        insert.source.as_deref(),
+        true,
+        None,
+        catalog,
+        current_db,
+        ctx,
+    )?;
+    render_physical_plan(&physical, catalog, format, false, None)
 }
 
 /// `EXPLAIN ANALYZE <insert>`: unlike [`explain_insert_stmt`], this really
@@ -432,9 +891,27 @@ pub fn explain_analyze_insert_stmt(
     ctx: &crate::StmtContext,
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
-    let mut trace = PlanTrace::analyzing();
-    run_insert_traced(insert, catalog, current_db, ctx, Some(&mut trace))?;
-    Ok(render_analyze(recorded(trace)?, format))
+    let mut physical = crate::driver::physical_dml_plan(
+        "Insert",
+        insert.source.as_deref(),
+        true,
+        None,
+        catalog,
+        current_db,
+        ctx,
+    )?;
+    let root_key = crate::driver::physical_builder::runtime_plan_key(&physical);
+    let mut runtime = crate::driver::physical_builder::PhysicalRuntimeStats::new();
+    run_insert_stmt_with_physical_and_stats(
+        insert,
+        catalog,
+        current_db,
+        ctx,
+        Some(&mut physical),
+        Some(&mut runtime),
+    )?;
+    runtime.insert(root_key, Rc::new(Cell::new(0)));
+    render_physical_plan(&physical, catalog, format, true, Some(&runtime))
 }
 
 /// Plans an `UPDATE` and reports the plan as EXPLAIN rows, executing nothing.
@@ -449,9 +926,19 @@ pub fn explain_update_stmt(
     ctx: &crate::StmtContext,
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
-    let mut trace = PlanTrace::planning();
-    run_update_traced(update, catalog, current_db, ctx, Some(&mut trace))?;
-    Ok(render(recorded(trace)?, format))
+    let source = crate::driver::update_source_query(update).ok_or_else(|| {
+        DriverError::unsupported("multi-table UPDATE plans are not supported yet")
+    })?;
+    let physical = crate::driver::physical_dml_plan(
+        "Update",
+        Some(&source),
+        false,
+        Some(update),
+        catalog,
+        current_db,
+        ctx,
+    )?;
+    render_physical_plan(&physical, catalog, format, false, None)
 }
 
 /// Plans a `DELETE` and reports the plan as EXPLAIN rows, executing nothing.
@@ -463,9 +950,19 @@ pub fn explain_delete_stmt(
     ctx: &crate::StmtContext,
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
-    let mut trace = PlanTrace::planning();
-    run_delete_traced(delete, catalog, current_db, ctx, Some(&mut trace))?;
-    Ok(render(recorded(trace)?, format))
+    let source = crate::driver::delete_source_query(delete).ok_or_else(|| {
+        DriverError::unsupported("multi-table DELETE plans are not supported yet")
+    })?;
+    let physical = crate::driver::physical_dml_plan(
+        "Delete",
+        Some(&source),
+        false,
+        None,
+        catalog,
+        current_db,
+        ctx,
+    )?;
+    render_physical_plan(&physical, catalog, format, false, None)
 }
 
 /// `EXPLAIN ANALYZE <update>`: unlike [`explain_update_stmt`], this really
@@ -483,9 +980,30 @@ pub fn explain_analyze_update_stmt(
     ctx: &crate::StmtContext,
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
-    let mut trace = PlanTrace::analyzing();
-    run_update_traced(update, catalog, current_db, ctx, Some(&mut trace))?;
-    Ok(render_analyze(recorded(trace)?, format))
+    let source = crate::driver::update_source_query(update).ok_or_else(|| {
+        DriverError::unsupported("multi-table UPDATE plans are not supported yet")
+    })?;
+    let mut physical = crate::driver::physical_dml_plan(
+        "Update",
+        Some(&source),
+        false,
+        Some(update),
+        catalog,
+        current_db,
+        ctx,
+    )?;
+    let root_key = crate::driver::physical_builder::runtime_plan_key(&physical);
+    let mut runtime = crate::driver::physical_builder::PhysicalRuntimeStats::new();
+    run_update_stmt_with_physical_and_stats(
+        update,
+        catalog,
+        current_db,
+        ctx,
+        Some(&mut physical),
+        Some(&mut runtime),
+    )?;
+    runtime.insert(root_key, Rc::new(Cell::new(0)));
+    render_physical_plan(&physical, catalog, format, true, Some(&runtime))
 }
 
 /// `EXPLAIN ANALYZE <delete>`: see [`explain_analyze_update_stmt`] -- the
@@ -497,288 +1015,30 @@ pub fn explain_analyze_delete_stmt(
     ctx: &crate::StmtContext,
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
-    let mut trace = PlanTrace::analyzing();
-    run_delete_traced(delete, catalog, current_db, ctx, Some(&mut trace))?;
-    Ok(render_analyze(recorded(trace)?, format))
-}
-
-/// Assigns ids bottom-up and flattens the tree into the requested text shape.
-fn render(plan: PlanNode, format: ExplainFormat) -> SelectMeta {
-    render_roots(vec![plan], format)
-}
-
-fn render_roots(plans: Vec<PlanNode>, format: ExplainFormat) -> SelectMeta {
-    let mut counter = 0;
-    let mut rows = Vec::new();
-    for plan in plans {
-        let plan = assign_ids(plan, &mut counter);
-        if matches!(format, ExplainFormat::PlanTree) {
-            flatten_plan_tree(&plan, String::new(), true, true, format, &mut rows);
-        } else {
-            flatten(&plan, String::new(), true, true, format, &mut rows);
-        }
-    }
-    let field_type = FieldType::new(FieldTypeCode::VarString);
-    let names = if matches!(format, ExplainFormat::PlanTree) {
-        ["id", "task", "access object", "operator info"].as_slice()
-    } else {
-        EXPLAIN_COLUMNS.as_slice()
-    };
-    let columns = names
-        .iter()
-        .map(|name| ((*name).to_owned(), field_type.clone()))
-        .collect();
-    (columns, rows)
-}
-
-/// The header real `EXPLAIN ANALYZE` reports (captured from TiDB): the same
-/// five `EXPLAIN` columns, with `actRows` inserted after `estRows` and
-/// `execution info`/`memory`/`disk` appended after `operator info`.
-const EXPLAIN_ANALYZE_COLUMNS: [&str; 9] = [
-    "id",
-    "estRows",
-    "actRows",
-    "task",
-    "access object",
-    "execution info",
-    "operator info",
-    "memory",
-    "disk",
-];
-
-/// Like [`render`], but for `EXPLAIN ANALYZE`: each node prints the real row
-/// count the trace metered on it during the execution that just finished, or
-/// `N/A` for an operator the driver builds without metering.
-///
-/// `execution info`, `memory`, and `disk` always print `N/A`: this tier
-/// collects no runtime timing, memory, or spill counters at all (captured Go
-/// values for those columns are non-deterministic timings/byte counts this
-/// tier has no machinery to produce, and inventing numbers for them would be
-/// worse than an honest placeholder -- the same reasoning `EXPLAIN`'s own
-/// `est_rows: None` -> `"N/A"` already uses for a join's cardinality).
-fn render_analyze(plan: PlanNode, format: ExplainFormat) -> SelectMeta {
-    let mut counter = 0;
-    let plan = assign_ids(plan, &mut counter);
-    let mut rows = Vec::new();
-    flatten_analyze(&plan, String::new(), true, true, format, &mut rows);
-    let field_type = FieldType::new(FieldTypeCode::VarString);
-    let columns = EXPLAIN_ANALYZE_COLUMNS
-        .iter()
-        .map(|name| ((*name).to_owned(), field_type.clone()))
-        .collect();
-    (columns, rows)
-}
-
-/// A plan node whose id is fixed.
-struct IdNode {
-    /// Go's operator name without the `_N` suffix (`TableFullScan`).
-    name: &'static str,
-    /// The build-order number `assign_ids` gave this node.
-    counter: usize,
-    est_rows: Option<f64>,
-    access: String,
-    info: String,
-    task: &'static str,
-    left_side_child: Option<usize>,
-    info_tail: String,
-    label: &'static str,
-    children: Vec<IdNode>,
-    /// The counter the trace metered this operator with, if it metered it.
-    act_rows: Option<Rc<Cell<u64>>>,
-}
-
-/// Numbers the tree bottom-up in the driver's own build order: a node's
-/// children are built before it, so they take the lower ids.
-fn assign_ids(node: PlanNode, counter: &mut usize) -> IdNode {
-    let children: Vec<IdNode> = node
-        .children
-        .into_iter()
-        .map(|child| assign_ids(child, counter))
-        .collect();
-    *counter += 1;
-    IdNode {
-        name: node.name,
-        counter: *counter,
-        est_rows: node.est_rows,
-        access: node.access,
-        info: node.info,
-        task: node.task,
-        left_side_child: node.left_side_child,
-        info_tail: node.info_tail,
-        label: node.label,
-        children,
-        act_rows: node.act_rows,
-    }
-}
-
-/// Go's tree drawing: the last child gets `└─`, an earlier sibling `├─`.
-///
-/// Divergence: `'brief'` drops the `_N` suffix Go's `'row'`/default format
-/// prints (captured: `Point_Get` vs `Point_Get_1`).
-fn draw_id(
-    node: &IdNode,
-    prefix: &str,
-    is_root: bool,
-    is_last: bool,
-    format: ExplainFormat,
-) -> String {
-    let name = format!("{}{}", explain_id(node, format), node.label);
-    if is_root {
-        name
-    } else if is_last {
-        format!("{prefix}└─{name}")
-    } else {
-        format!("{prefix}├─{name}")
-    }
-}
-
-/// A non-last child's descendants are prefixed with `│ ` so the branch line
-/// continues past them.
-fn child_prefix(prefix: &str, is_root: bool, is_last: bool) -> String {
-    if is_root {
-        String::new()
-    } else if is_last {
-        format!("{prefix}  ")
-    } else {
-        format!("{prefix}│ ")
-    }
-}
-
-/// Go `Plan.ExplainID().String()`: the operator name, carrying its `_N`
-/// suffix outside `format='brief'`.
-fn explain_id(node: &IdNode, format: ExplainFormat) -> String {
-    match format {
-        ExplainFormat::Row => format!("{}_{}", node.name, node.counter),
-        ExplainFormat::Brief | ExplainFormat::PlanTree => node.name.to_owned(),
-    }
-}
-
-/// The `operator info` cell. A join splices Go's `, left side:<operator>`
-/// clause into the middle of its own info here rather than at record time,
-/// because the operator that clause NAMES only has its id once the whole
-/// tree is numbered.
-fn info_text(node: &IdNode, format: ExplainFormat) -> String {
-    let left_side = match node.left_side_child {
-        Some(index) => {
-            let name = node
-                .children
-                .get(index)
-                .map_or_else(String::new, |child| explain_id(child, format));
-            format!(", left side:{name}")
-        }
-        None => String::new(),
-    };
-    let info = format!("{}{left_side}{}", node.info, node.info_tail);
-    if matches!(format, ExplainFormat::PlanTree) {
-        strip_plan_column_ids(&info)
-    } else {
-        info
-    }
-}
-
-/// Go's plan-tree printer intentionally hides the internal `Column#N`
-/// allocator and renders those expressions simply as `Column`.  Keep the
-/// allocator visible in row/brief EXPLAIN, where it is part of the contract,
-/// but normalize it at this format boundary.
-fn strip_plan_column_ids(info: &str) -> String {
-    let mut out = String::with_capacity(info.len());
-    let mut rest = info;
-    while let Some(offset) = rest.find("Column#") {
-        out.push_str(&rest[..offset]);
-        out.push_str("Column");
-        rest = &rest[offset + "Column#".len()..];
-        let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
-        rest = &rest[digits..];
-    }
-    out.push_str(rest);
-    out
-}
-
-fn est_text(est_rows: Option<f64>) -> String {
-    match est_rows {
-        Some(value) => format!("{value:.2}"),
-        None => "N/A".to_owned(),
-    }
-}
-
-fn flatten(
-    node: &IdNode,
-    prefix: String,
-    is_root: bool,
-    is_last: bool,
-    format: ExplainFormat,
-    out: &mut Vec<Vec<Datum>>,
-) {
-    out.push(vec![
-        text(&draw_id(node, &prefix, is_root, is_last, format)),
-        text(&est_text(node.est_rows)),
-        // Divergence 1: every operator here runs in the TiDB process.
-        text(node.task),
-        text(&node.access),
-        text(&info_text(node, format)),
-    ]);
-    let child_prefix = child_prefix(&prefix, is_root, is_last);
-    let last = node.children.len().saturating_sub(1);
-    for (i, child) in node.children.iter().enumerate() {
-        flatten(child, child_prefix.clone(), false, i == last, format, out);
-    }
-}
-
-/// Go's `plan_tree` format is the same drawn tree as the row format, but it
-/// intentionally omits the estimate column and operator id suffixes.  Keep
-/// this as a separate flattener instead of making callers infer columns from
-/// a five-column row: the wire metadata and values must stay in lockstep.
-fn flatten_plan_tree(
-    node: &IdNode,
-    prefix: String,
-    is_root: bool,
-    is_last: bool,
-    format: ExplainFormat,
-    out: &mut Vec<Vec<Datum>>,
-) {
-    out.push(vec![
-        text(&draw_id(node, &prefix, is_root, is_last, format)),
-        text(node.task),
-        text(&node.access),
-        text(&info_text(node, format)),
-    ]);
-    let child_prefix = child_prefix(&prefix, is_root, is_last);
-    let last = node.children.len().saturating_sub(1);
-    for (i, child) in node.children.iter().enumerate() {
-        flatten_plan_tree(child, child_prefix.clone(), false, i == last, format, out);
-    }
-}
-
-/// [`flatten`], plus the `actRows`/`execution info`/`memory`/`disk` columns
-/// `EXPLAIN ANALYZE` adds.
-fn flatten_analyze(
-    node: &IdNode,
-    prefix: String,
-    is_root: bool,
-    is_last: bool,
-    format: ExplainFormat,
-    out: &mut Vec<Vec<Datum>>,
-) {
-    let act = match &node.act_rows {
-        Some(counter) => counter.get().to_string(),
-        None => "N/A".to_owned(),
-    };
-    out.push(vec![
-        text(&draw_id(node, &prefix, is_root, is_last, format)),
-        text(&est_text(node.est_rows)),
-        text(&act),
-        text(node.task),
-        text(&node.access),
-        text("N/A"),
-        text(&info_text(node, format)),
-        text("N/A"),
-        text("N/A"),
-    ]);
-    let child_prefix = child_prefix(&prefix, is_root, is_last);
-    let last = node.children.len().saturating_sub(1);
-    for (i, child) in node.children.iter().enumerate() {
-        flatten_analyze(child, child_prefix.clone(), false, i == last, format, out);
-    }
+    let source = crate::driver::delete_source_query(delete).ok_or_else(|| {
+        DriverError::unsupported("multi-table DELETE plans are not supported yet")
+    })?;
+    let mut physical = crate::driver::physical_dml_plan(
+        "Delete",
+        Some(&source),
+        false,
+        None,
+        catalog,
+        current_db,
+        ctx,
+    )?;
+    let root_key = crate::driver::physical_builder::runtime_plan_key(&physical);
+    let mut runtime = crate::driver::physical_builder::PhysicalRuntimeStats::new();
+    run_delete_stmt_with_physical_and_stats(
+        delete,
+        catalog,
+        current_db,
+        ctx,
+        Some(&mut physical),
+        Some(&mut runtime),
+    )?;
+    runtime.insert(root_key, Rc::new(Cell::new(0)));
+    render_physical_plan(&physical, catalog, format, true, Some(&runtime))
 }
 
 fn text(value: &str) -> Datum {

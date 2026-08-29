@@ -49,11 +49,16 @@
 
 use crate::apply_cache::ApplyCache;
 use crate::executor::{ExecError, Executor, ExecutorMeta};
+use crate::joiner::{Joiner, NAAJType};
 use crate::mem_quota::StatementMemory;
 use std::sync::Arc;
 use tidb_chunk::chunk::Chunk;
+use tidb_chunk::iterator::LendingIterator;
 use tidb_datatype::{Datum, FieldType, SessionTimeZone};
+use tidb_expr::column::CorrelatedColumn;
+use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
+use tidb_expr::Columns;
 use tidb_util::memory::Tracker;
 
 #[derive(Clone)]
@@ -199,6 +204,290 @@ struct LateralPending {
     outer: Vec<Datum>,
     inner: Arc<Vec<Vec<Datum>>>,
     position: usize,
+}
+
+/// Go `NestedLoopApplyExec`: bind one outer row into the correlated cells,
+/// reopen and drain the retained physical inner executor, then delegate the
+/// join result to the same per-join-type [`Joiner`] used by ordinary joins.
+pub struct NestedLoopApplyExec<C: Columns> {
+    meta: ExecutorMeta,
+    outer: Box<dyn Executor>,
+    inner: Box<dyn Executor>,
+    outer_filter: Vec<Expression>,
+    inner_filter: Vec<Expression>,
+    outer_schema: Vec<CorrelatedColumn>,
+    outer_join: bool,
+    joiner: Box<dyn Joiner>,
+    ctx: C,
+    position: OuterCursor,
+    pending_outer: Option<Chunk>,
+    pending_inner: Option<Arc<Chunk>>,
+    inner_position: usize,
+    has_match: bool,
+    has_null: bool,
+    memory: StatementMemory,
+    tracker: Arc<Tracker>,
+    cache_config: Option<ApplyCacheConfig>,
+    cache: Option<ApplyCacheRuntime<Chunk>>,
+}
+
+impl<C: Columns> NestedLoopApplyExec<C> {
+    /// Build the serial Apply executor selected by Go's `buildApply`.
+    #[allow(clippy::too_many_arguments)]
+    #[must_use]
+    pub fn new(
+        meta: ExecutorMeta,
+        outer: Box<dyn Executor>,
+        inner: Box<dyn Executor>,
+        outer_filter: Vec<Expression>,
+        inner_filter: Vec<Expression>,
+        outer_schema: Vec<CorrelatedColumn>,
+        outer_join: bool,
+        joiner: Box<dyn Joiner>,
+        ctx: C,
+        memory: StatementMemory,
+    ) -> Self {
+        let tracker = memory.operator_tracker(meta.id());
+        Self {
+            meta,
+            outer,
+            inner,
+            outer_filter,
+            inner_filter,
+            outer_schema,
+            outer_join,
+            joiner,
+            ctx,
+            position: OuterCursor::new(),
+            pending_outer: None,
+            pending_inner: None,
+            inner_position: 0,
+            has_match: false,
+            has_null: false,
+            memory,
+            tracker,
+            cache_config: None,
+            cache: None,
+        }
+    }
+
+    /// Configure Go's `CanUseCache` path with its statement quota and key.
+    #[must_use]
+    pub fn with_cache(
+        mut self,
+        capacity: i64,
+        key_columns: Vec<usize>,
+        time_zone: SessionTimeZone,
+    ) -> Self {
+        self.cache_config = (capacity > 0).then_some(ApplyCacheConfig {
+            capacity,
+            key_columns,
+            time_zone,
+        });
+        self
+    }
+
+    fn release_cache(&mut self) {
+        if let Some(cache) = self.cache.take() {
+            self.tracker.consume(-cache.memory_consumed());
+        }
+    }
+
+    fn release_pending_inner(&mut self) {
+        if let Some(inner) = self.pending_inner.take() {
+            self.tracker.consume(-inner.memory_usage());
+        }
+    }
+
+    fn one_row_chunk(types: &[FieldType], values: &[Datum]) -> Chunk {
+        let mut chunk = Chunk::new(types, 1, 1);
+        if values.is_empty() {
+            chunk.set_num_virtual_rows(1);
+        } else {
+            for (column, value) in values.iter().enumerate() {
+                chunk.append_datum(column, value);
+            }
+        }
+        chunk
+    }
+
+    fn materialize_inner(&mut self) -> Result<Arc<Chunk>, ExecError> {
+        self.inner.open()?;
+        let inner_types = self.inner.ret_field_types().to_vec();
+        let mut relation = Chunk::new(
+            &inner_types,
+            self.inner.init_cap(),
+            self.inner.max_chunk_size(),
+        );
+        let result = (|| {
+            loop {
+                let mut input = self.inner.new_chunk();
+                self.inner.next(&mut input)?;
+                if input.num_rows() == 0 {
+                    break;
+                }
+                for index in 0..input.num_rows() {
+                    let row = input.get_row(index);
+                    if crate::joiner::eval_bool(&self.ctx, &self.inner_filter, row)?.0 {
+                        relation.append_row(row);
+                    }
+                }
+            }
+            Ok(Arc::new(relation))
+        })();
+        // Go defers and logs `InnerExec.Close`; it does not replace the
+        // execution result with a close failure.
+        let _ = self.inner.close();
+        result
+    }
+
+    fn bind_outer(&self, values: &[Datum]) -> Result<(), ExecError> {
+        for column in &self.outer_schema {
+            let index = usize::try_from(column.column.index).map_err(|_| {
+                ExecError::internal("an Apply correlated column has a negative outer index")
+            })?;
+            let value = values.get(index).cloned().ok_or_else(|| {
+                ExecError::internal(format!(
+                    "Apply correlated column {index} is outside an outer row of width {}",
+                    values.len()
+                ))
+            })?;
+            column.bind(value);
+        }
+        Ok(())
+    }
+
+    fn prepare_inner(&mut self, values: &[Datum]) -> Result<(), ExecError> {
+        self.bind_outer(values)?;
+        let cache_key = self
+            .cache
+            .as_ref()
+            .map(|cache| cache.key(values))
+            .transpose()?;
+        let cached = cache_key
+            .as_deref()
+            .and_then(|key| self.cache.as_ref().and_then(|cache| cache.get(key)));
+        let inner = if let Some(inner) = cached {
+            inner
+        } else {
+            let inner = self.materialize_inner()?;
+            if let (Some(key), Some(cache)) = (cache_key, self.cache.as_ref()) {
+                let delta = cache.set(key, Arc::clone(&inner), inner.memory_usage());
+                self.tracker.consume(delta);
+                self.memory.check()?;
+            }
+            inner
+        };
+        let inner_memory = inner.memory_usage();
+        self.tracker.consume(inner_memory);
+        if let Err(error) = self.memory.check() {
+            self.tracker.consume(-inner_memory);
+            return Err(error);
+        }
+        self.pending_inner = Some(inner);
+        self.inner_position = 0;
+        self.has_match = false;
+        self.has_null = false;
+        Ok(())
+    }
+}
+
+impl<C: Columns> Executor for NestedLoopApplyExec<C> {
+    fn open(&mut self) -> Result<(), ExecError> {
+        self.release_pending_inner();
+        self.release_cache();
+        self.pending_outer = None;
+        self.position.reset();
+        self.cache = self
+            .cache_config
+            .clone()
+            .map(ApplyCacheRuntime::<Chunk>::new);
+        self.outer.open()
+    }
+
+    fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+        req.reset();
+        let outer_types = self.outer.ret_field_types().to_vec();
+        while !req.is_full() {
+            if let (Some(outer), Some(inner)) =
+                (self.pending_outer.as_ref(), self.pending_inner.as_ref())
+            {
+                let outer_row = outer.get_row(0);
+                while self.inner_position < inner.num_rows() && !req.is_full() {
+                    let inner_row = inner.get_row(self.inner_position);
+                    let mut iterator = LendingIterator::slice(vec![inner_row]);
+                    iterator.begin();
+                    let (matched, is_null) = self.joiner.try_to_match_inners(
+                        outer_row,
+                        &mut iterator,
+                        req,
+                        NAAJType::Unknown,
+                    )?;
+                    self.has_match |= matched;
+                    self.has_null |= is_null;
+                    self.inner_position += 1;
+                }
+                if self.inner_position < inner.num_rows() {
+                    break;
+                }
+                if !self.has_match {
+                    self.joiner.on_miss_match(self.has_null, outer_row, req);
+                }
+                self.release_pending_inner();
+                self.pending_outer = None;
+                if req.is_full() {
+                    break;
+                }
+                continue;
+            }
+
+            let Some((values, agg_selected)) = self
+                .position
+                .next_row_marked(self.outer.as_mut(), &outer_types)?
+            else {
+                break;
+            };
+            let outer = Self::one_row_chunk(&outer_types, &values);
+            let selected = agg_selected
+                && crate::joiner::eval_bool(&self.ctx, &self.outer_filter, outer.get_row(0))?.0;
+            if !selected {
+                if self.outer_join {
+                    self.joiner.on_miss_match(false, outer.get_row(0), req);
+                }
+                continue;
+            }
+            self.prepare_inner(&values)?;
+            self.pending_outer = Some(outer);
+        }
+        Ok(())
+    }
+
+    fn close(&mut self) -> Result<(), ExecError> {
+        self.release_pending_inner();
+        self.release_cache();
+        self.pending_outer = None;
+        self.outer.close()
+    }
+
+    fn schema(&self) -> &Schema {
+        self.meta.schema()
+    }
+
+    fn ret_field_types(&self) -> &[FieldType] {
+        self.meta.ret_field_types()
+    }
+
+    fn init_cap(&self) -> usize {
+        self.meta.init_cap()
+    }
+
+    fn max_chunk_size(&self) -> usize {
+        self.meta.max_chunk_size()
+    }
+
+    fn new_chunk(&self) -> Chunk {
+        self.meta.new_chunk()
+    }
 }
 
 /// Go `LogicalApply` with `InnerJoin` -- what `buildLateralJoin`

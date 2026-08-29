@@ -37,6 +37,21 @@ pub(crate) fn eval_func(
     function_key: Option<usize>,
 ) -> Result<Datum, EvalError> {
     let name = name.to_ascii_uppercase();
+    // The AST evaluator is also an expression-construction entry point for
+    // session execution, so it must enforce the same function-class arity as
+    // `new_function_impl`. DATE_ADD/SUB and ADDDATE/SUBDATE retain their
+    // interval unit inside one Rust AST argument, while Go's function class
+    // counts that unit as the third argument.
+    let arity_count = if matches!(
+        name.as_str(),
+        "DATE_ADD" | "DATE_SUB" | "ADDDATE" | "SUBDATE"
+    ) && matches!(args, [_, Expr::Interval { .. }])
+    {
+        3
+    } else {
+        args.len()
+    };
+    crate::builtin_registry::verify_args_by_count(&name, arity_count)?;
     // `DATE_ADD`/`DATE_SUB`'s second argument is an `Expr::Interval` (a
     // value *and* a unit keyword), not a plain expression `eval_in` can
     // evaluate on its own — handled here, before every other function's

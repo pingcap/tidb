@@ -85,12 +85,12 @@ use crate::remote_scan::{
 /// refreshes its lookup source lazily when the generation changes.
 #[derive(Debug, Default)]
 pub(crate) struct SharedIndexJoinProbes {
-    probes: Vec<Vec<Datum>>,
+    probes: IndexJoinProbes,
     generation: u64,
 }
 
 impl SharedIndexJoinProbes {
-    pub(crate) fn publish(&mut self, probes: Vec<Vec<Datum>>) {
+    pub(crate) fn publish(&mut self, probes: IndexJoinProbes) {
         self.probes = probes;
         self.generation = self.generation.wrapping_add(1);
     }
@@ -3539,41 +3539,6 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
     }
 }
 
-/// The output slot carrying `_tidb_rowid`, if this column list has one.
-///
-/// Go appends the extra handle column LAST when it builds a heap table's
-/// `DataSource` schema, and every consumer here preserves that position, so
-/// the columns before it are exactly the stored ones.
-#[must_use]
-pub(crate) fn extra_handle_slot(columns: &[(String, tidb_datatype::FieldType)]) -> Option<usize> {
-    columns.iter().position(|(name, _)| {
-        name.eq_ignore_ascii_case(crate::driver::leaf_demand::EXTRA_HANDLE_NAME)
-    })
-}
-
-/// The TABLE column offset each of `columns` stands for, by name.
-///
-/// `None` when any of them is not a stored column of `table`, which leaves
-/// the caller to keep whatever default its source already has rather than
-/// decode the wrong slot. Hidden expression-index columns are appended after
-/// the visible ones, so a visible column's position here is the offset the
-/// row decoder wants.
-#[must_use]
-pub(crate) fn stored_column_offsets(
-    table: &crate::KvTable,
-    columns: &[(String, tidb_datatype::FieldType)],
-) -> Option<Vec<usize>> {
-    columns
-        .iter()
-        .map(|(name, _)| {
-            table
-                .columns
-                .iter()
-                .position(|column| column.name.eq_ignore_ascii_case(name))
-        })
-        .collect()
-}
-
 /// Which object an index join's inner side probes once per distinct outer
 /// key: an index of the table, or the clustered integer handle.
 ///
@@ -3639,7 +3604,6 @@ impl LookupProbeBoundOp {
 /// over each outer row and extends that probe's point range with the result.
 #[derive(Clone, Debug)]
 pub(crate) struct LookupProbeBound {
-    pub(crate) op: LookupProbeBoundOp,
     /// The compared expression, evaluated over one OUTER child's output row:
     /// every `Column.index` is already an outer-child offset.
     pub(crate) arg: Expression,
@@ -3680,6 +3644,9 @@ pub struct IndexJoinLookupExec {
     /// The complete object-key template. Empty preserves the legacy contract
     /// where the dynamic join-key tuple already is the complete probe.
     probe_parts: Vec<LookupProbePart>,
+    /// Go `PhysicalIndexJoin.IdxColLens`, aligned with the selected index or
+    /// common-handle object.
+    probe_key_prefix_lengths: Vec<i64>,
     /// The current outer batch's distinct probe tuples, in walk order.
     probes: Vec<Vec<Datum>>,
     /// The next probe to open a cursor over.
@@ -3770,6 +3737,7 @@ impl IndexJoinLookupExec {
             object,
             covering: false,
             probe_parts: Vec::new(),
+            probe_key_prefix_lengths: Vec::new(),
             probes: Vec::new(),
             next_probe: 0,
             cursor: None,
@@ -3846,7 +3814,13 @@ impl IndexJoinLookupExec {
         let first_probe = self.next_probe;
         let mut ranges = Vec::with_capacity(self.probes.len().saturating_sub(first_probe));
         while let Some((probe, bounds)) = self.next_probe_with_bounds() {
-            ranges.push(self.probe_index_range(&probe, &bounds));
+            match self.probe_index_ranges(&probe, &bounds) {
+                Ok(probe_ranges) => ranges.extend(probe_ranges),
+                Err(_) => {
+                    self.next_probe = first_probe;
+                    return;
+                }
+            }
         }
         if ranges.is_empty() {
             return;
@@ -3922,6 +3896,7 @@ impl IndexJoinLookupExec {
             object: self.object.clone(),
             covering: self.covering,
             probe_parts: self.probe_parts.clone(),
+            probe_key_prefix_lengths: self.probe_key_prefix_lengths.clone(),
             probes: Vec::new(),
             next_probe: 0,
             cursor: None,
@@ -3964,11 +3939,7 @@ impl IndexJoinLookupExec {
         };
         let shared = shared.borrow();
         if self.shared_generation != shared.generation {
-            // A composite subtree never carries bounds (the decision layer
-            // refuses them there), so the shared channel publishes keys only.
-            let keys = shared.probes.clone();
-            let bound_values = Vec::new();
-            self.set_probes(IndexJoinProbes { keys, bound_values });
+            self.set_probes(shared.probes.clone());
             self.shared_generation = shared.generation;
         }
     }
@@ -3976,6 +3947,11 @@ impl IndexJoinLookupExec {
     /// Installs the complete object-key shape built by the index ranger.
     pub(crate) fn set_probe_parts(&mut self, probe_parts: Vec<LookupProbePart>) {
         self.probe_parts = probe_parts;
+    }
+
+    /// Installs Go `PhysicalIndexJoin.IdxColLens` for equality-prefix cuts.
+    pub(crate) fn set_probe_key_prefix_lengths(&mut self, lengths: Vec<i64>) {
+        self.probe_key_prefix_lengths = lengths;
     }
 
     /// Lowers the exact `PhysicalIndexReader` family carried by the shared
@@ -4097,37 +4073,80 @@ impl IndexJoinLookupExec {
     /// configured, otherwise Go's per-row rebuilt range
     /// (`buildRangesForIndexJoin`'s last slot): the key prefix extended by the
     /// evaluated lower/upper bound on the next key column.
-    fn probe_index_range(&self, key: &[Datum], bounds: &[Datum]) -> IndexRange {
+    fn probe_index_ranges(
+        &self,
+        key: &[Datum],
+        bounds: &[Datum],
+    ) -> Result<Vec<IndexRange>, ExecError> {
         if bounds.is_empty() {
-            return IndexRange {
+            return Ok(vec![IndexRange {
                 low: key.to_vec(),
                 high: key.to_vec(),
                 low_exclusive: false,
                 high_exclusive: false,
-            };
+            }]);
         }
-        let mut low = key.to_vec();
-        let mut high = key.to_vec();
-        let mut low_exclusive = false;
-        let mut high_exclusive = false;
-        for (op, value) in self.probe_bound_ops.iter().copied().zip(bounds.iter()) {
-            match op {
-                LookupProbeBoundOp::Ge | LookupProbeBoundOp::Gt => {
-                    low.push(value.clone());
-                    low_exclusive = op == LookupProbeBoundOp::Gt;
+        if bounds.len() != self.probe_bound_ops.len() {
+            return Err(ExecError::Internal(
+                "index-join comparison values do not align with their operators".into(),
+            ));
+        }
+        let key_types = self.probe_key_types().ok_or_else(|| {
+            ExecError::unsupported("an index-join comparison target has no key type")
+        })?;
+        let target_type = key_types.get(key.len()).ok_or_else(|| {
+            ExecError::Internal("an index-join comparison target is outside its key".into())
+        })?;
+        let target = Expression::Column(tidb_expr::column::Column::new(0, target_type.clone()));
+        let conditions = self
+            .probe_bound_ops
+            .iter()
+            .copied()
+            .zip(bounds)
+            .map(|(op, value)| {
+                let constant = Expression::Constant(tidb_expr::constant::Constant::new(
+                    value.clone(),
+                    target_type.clone(),
+                ));
+                Expression::ScalarFunction(tidb_expr::scalar_function::ScalarFunction::new(
+                    tidb_ast::CiString::new(op.name()),
+                    FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                    vec![target.clone(), constant],
+                ))
+            })
+            .collect::<Vec<_>>();
+        let col_length = self
+            .probe_key_prefix_lengths
+            .get(key.len())
+            .copied()
+            .unwrap_or(crate::ddl::index_prefix::UNSPECIFIED_LENGTH);
+        let ranges = tidb_planner::ranger::ranger::build_column_range(
+            &conditions,
+            target_type,
+            col_length,
+            0,
+        )
+        .map_err(|error| {
+            ExecError::unsupported(format!(
+                "an index-join comparison range could not be built: {error:?}"
+            ))
+        })?;
+        Ok(ranges
+            .ranges
+            .into_iter()
+            .map(|range| {
+                let mut low = key.to_vec();
+                low.extend(range.low_val);
+                let mut high = key.to_vec();
+                high.extend(range.high_val);
+                IndexRange {
+                    low,
+                    high,
+                    low_exclusive: range.low_exclude,
+                    high_exclusive: range.high_exclude,
                 }
-                LookupProbeBoundOp::Lt | LookupProbeBoundOp::Le => {
-                    high.push(value.clone());
-                    high_exclusive = op == LookupProbeBoundOp::Lt;
-                }
-            }
-        }
-        IndexRange {
-            low,
-            high,
-            low_exclusive,
-            high_exclusive,
-        }
+            })
+            .collect())
     }
 
     /// The next probe's converted key tuple, bounds dropped. Callers that do
@@ -4159,7 +4178,7 @@ impl IndexJoinLookupExec {
         let Some(types) = self.probe_key_types() else {
             return Some(probe);
         };
-        probe
+        let mut probe = probe
             .into_iter()
             .enumerate()
             .map(|(at, value)| match types.get(at) {
@@ -4168,7 +4187,18 @@ impl IndexJoinLookupExec {
                 // cursor below refuses it on its own terms.
                 None => Some(value),
             })
-            .collect()
+            .collect::<Option<Vec<_>>>()?;
+        for (at, value) in probe.iter_mut().enumerate() {
+            let length = self
+                .probe_key_prefix_lengths
+                .get(at)
+                .copied()
+                .unwrap_or(crate::ddl::index_prefix::UNSPECIFIED_LENGTH);
+            if let Some(field_type) = types.get(at) {
+                crate::index_prefix_cut::cut_datum_by_prefix_len(value, length, field_type);
+            }
+        }
+        Some(probe)
     }
 
     /// The field types of the object-key columns a probe is encoded against,
@@ -4239,7 +4269,7 @@ impl IndexJoinLookupExec {
                         let Some((probe, bounds)) = self.next_probe_with_bounds() else {
                             break;
                         };
-                        ranges.push(self.probe_index_range(&probe, &bounds));
+                        ranges.extend(self.probe_index_ranges(&probe, &bounds)?);
                     }
                     if ranges.is_empty() {
                         return Ok(None);
@@ -4310,7 +4340,7 @@ impl IndexJoinLookupExec {
                 let Some((probe, bounds)) = self.next_probe_with_bounds() else {
                     break;
                 };
-                ranges.push(self.probe_index_range(&probe, &bounds));
+                ranges.extend(self.probe_index_ranges(&probe, &bounds)?);
             }
             if ranges.is_empty() {
                 return Ok(None);
@@ -4366,7 +4396,7 @@ impl IndexJoinLookupExec {
         let first_probe = self.next_probe;
         let mut ranges = Vec::with_capacity(self.probes.len().saturating_sub(first_probe));
         while let Some((probe, bounds)) = self.next_probe_with_bounds() {
-            ranges.push(self.probe_index_range(&probe, &bounds));
+            ranges.extend(self.probe_index_ranges(&probe, &bounds)?);
         }
         if ranges.is_empty() {
             self.next_probe = first_probe;
@@ -5101,6 +5131,53 @@ mod tests {
             INIT_HANDLE_BATCH
         );
         assert_eq!(lookup_initial_batch_size(MAX_HANDLE_BATCH * 2, 100), 100);
+    }
+
+    /// Go `ColWithCmpFuncManager.BuildRangesByRow` intersects every
+    /// comparison on the one target column. Two lower bounds therefore
+    /// produce one target-key slot carrying the stronger bound; they must
+    /// not be appended as two independent index columns.
+    #[test]
+    fn index_join_compare_filters_intersect_on_one_target_column() {
+        let mut table = KvTable::new(91, vec![column("a", 1), column("b", 2)]);
+        table.add_index(
+            crate::kv_table::KvIndex {
+                id: 1,
+                name: "ab".to_owned(),
+                comment: String::new(),
+                unique: false,
+                column_offsets: vec![0, 1],
+                prefix_lengths: vec![
+                    crate::ddl::index_prefix::UNSPECIFIED_LENGTH,
+                    crate::ddl::index_prefix::UNSPECIFIED_LENGTH,
+                ],
+                visible: true,
+                global: false,
+                clustered_primary: false,
+            },
+            false,
+        );
+        let mut source = IndexJoinLookupExec::new_with_context(
+            ExecutorMeta::new(Schema::default(), 0, 1, 32),
+            table,
+            LookupObject::Index(1),
+            crate::RowDecodeContext::for_test_query_utc(),
+        );
+        source.set_probe_parts(vec![LookupProbePart::Dynamic(0)]);
+        source.set_probe_key_prefix_lengths(vec![
+            crate::ddl::index_prefix::UNSPECIFIED_LENGTH,
+            crate::ddl::index_prefix::UNSPECIFIED_LENGTH,
+        ]);
+        source.set_probe_bound_ops(vec![LookupProbeBoundOp::Gt, LookupProbeBoundOp::Ge]);
+
+        let ranges = source
+            .probe_index_ranges(&[Datum::Int(7)], &[Datum::Int(10), Datum::Int(12)])
+            .unwrap();
+        let range = &ranges[0];
+        assert_eq!(range.low, [Datum::Int(7), Datum::Int(12)]);
+        assert_eq!(range.high, [Datum::Int(7), Datum::MaxValue]);
+        assert!(!range.low_exclusive);
+        assert!(!range.high_exclusive);
     }
 
     #[test]

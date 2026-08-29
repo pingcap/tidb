@@ -120,10 +120,9 @@ fn a_set_var_hint_breaks_the_cache_and_the_unhinted_twin_still_hits() {
     );
 }
 
-/// A literal's TYPE selects a different comparison and a different access
-/// path, so two statements that differ only in literal KIND must not share an
-/// entry -- Go keeps them apart through rebinding, this key keeps them apart
-/// through the parameter-kind tags.
+/// A literal's TYPE selects a different physical cache entry below the shared
+/// parameterized statement, exactly like Go's `SessionPlanCache.Get` type
+/// match. Values of one type then hit only that type's entry.
 #[test]
 fn literals_of_different_kinds_do_not_share_an_entry() {
     let mut session = cache_session();
@@ -137,7 +136,7 @@ fn literals_of_different_kinds_do_not_share_an_entry() {
     assert_eq!(
         hit(&mut session),
         "0",
-        "a decimal literal is a different key"
+        "a decimal literal needs a different typed physical entry"
     );
 
     session
@@ -146,7 +145,7 @@ fn literals_of_different_kinds_do_not_share_an_entry() {
     assert_eq!(
         hit(&mut session),
         "0",
-        "a string literal is a different key"
+        "a string literal needs a different typed physical entry"
     );
 
     // Each kind is now its own entry, and each hits only its own.
@@ -279,7 +278,7 @@ fn go_refuses_null_bit_and_hex_literals() {
 }
 
 #[test]
-fn go_refuses_a_user_variable_and_an_uncacheable_function() {
+fn go_refuses_a_user_variable_and_only_the_listed_uncacheable_functions() {
     let mut session = cache_session();
     session.run("set @v = 1").expect("set");
 
@@ -289,12 +288,121 @@ fn go_refuses_a_user_variable_and_an_uncacheable_function() {
         "select a from t where a = @v",
         "select a from t where a = @v",
     );
-    // Go's final "query has some unsupported Node" arm covers every function
-    // call this walk has not been taught, which is all of them.
+    // `ABS` is an ordinary FuncCallExpr and is not in
+    // expression.UnCacheableFunctions, so its argument is parameterized.
+    assert_eq!(
+        rows(&mut session, "select a from t where a = abs(1)"),
+        [["1"]]
+    );
+    assert_eq!(hit(&mut session), "0");
+    assert_eq!(
+        rows(&mut session, "select a from t where a = abs(2)"),
+        [["2"]]
+    );
+    assert_eq!(hit(&mut session), "1");
+
+    // `COALESCE` is explicitly in the pinned Go list.
     refused(
         &mut session,
-        "select a from t where a = abs(1)",
-        "select a from t where a = abs(2)",
+        "select a from t where a = coalesce(1, 0)",
+        "select a from t where a = coalesce(2, 0)",
+    );
+}
+
+#[test]
+fn go_checks_but_does_not_parameterize_select_fields_or_limit() {
+    let mut session = cache_session();
+
+    // Select-field literals are counted by the checker but skipped by
+    // paramReplacer, so they remain part of the parameterized SQL key.
+    assert_eq!(rows(&mut session, "select 10 from t where a = 1"), [["10"]]);
+    assert_eq!(hit(&mut session), "0");
+    assert_eq!(rows(&mut session, "select 20 from t where a = 2"), [["20"]]);
+    assert_eq!(hit(&mut session), "0");
+    assert_eq!(rows(&mut session, "select 10 from t where a = 3"), [["10"]]);
+    assert_eq!(hit(&mut session), "1");
+
+    // LIMIT is skipped by the same replacer. A different bound is a new
+    // descriptor; changing only the WHERE literal reuses it.
+    session
+        .run("select a from t where a >= 1 order by a limit 1")
+        .unwrap();
+    assert_eq!(hit(&mut session), "0");
+    session
+        .run("select a from t where a >= 1 order by a limit 2")
+        .unwrap();
+    assert_eq!(hit(&mut session), "0");
+    assert_eq!(
+        rows(
+            &mut session,
+            "select a from t where a >= 2 order by a limit 2"
+        ),
+        [["2"], ["3"]]
+    );
+    assert_eq!(hit(&mut session), "1");
+}
+
+#[test]
+fn go_admits_aggregate_fields_but_refuses_unary_operation_nodes() {
+    let mut session = cache_session();
+
+    assert_eq!(
+        rows(&mut session, "select avg(a) from t where a > 1"),
+        [["2.5000"]]
+    );
+    assert_eq!(hit(&mut session), "0");
+    assert_eq!(
+        rows(&mut session, "select avg(a) from t where a > 0"),
+        [["2.0000"]]
+    );
+    assert_eq!(hit(&mut session), "1");
+
+    // UnaryOperationExpr is absent from Go's admitted-node switch.
+    refused(
+        &mut session,
+        "select a from t where a > -2",
+        "select a from t where a > -1",
+    );
+}
+
+#[test]
+fn go_admits_custom_restore_func_call_shapes() {
+    let mut session = cache_session();
+
+    assert_eq!(
+        rows(
+            &mut session,
+            "select a from t where position('1' in '123') = a"
+        ),
+        [["1"]]
+    );
+    assert_eq!(hit(&mut session), "0");
+    assert_eq!(
+        rows(
+            &mut session,
+            "select a from t where position('2' in '123') = a"
+        ),
+        [["2"]]
+    );
+    assert_eq!(hit(&mut session), "1");
+
+    assert_eq!(
+        rows(&mut session, "select a from t where trim(' 1 ') = a"),
+        [["1"]]
+    );
+    assert_eq!(hit(&mut session), "0");
+    assert_eq!(
+        rows(&mut session, "select a from t where trim(' 2 ') = a"),
+        [["2"]]
+    );
+    assert_eq!(hit(&mut session), "1");
+
+    // TrimDirectionExpr is a separate Go AST child and is deliberately not
+    // in nonPreparedPlanCacheableChecker's admitted node list.
+    refused(
+        &mut session,
+        "select a from t where trim(leading ' ' from ' 1') = a",
+        "select a from t where trim(leading ' ' from ' 2') = a",
     );
 }
 
@@ -474,69 +582,6 @@ fn the_cache_is_bounded_by_its_size_variable() {
 }
 
 // ---------------------------------------------------------------------------
-// The mutation probe.
-// ---------------------------------------------------------------------------
-
-/// Forces two statements that MUST NOT share a plan to share a key, and shows
-/// that a row-set assertion catches it while an ordinary cached-and-correct
-/// pair keeps passing.
-///
-/// The mutation is applied to the key builder directly rather than to the
-/// session: erasing the parameter-kind tags is exactly the bug a careless
-/// parameterization makes, and it is the one this key's design prevents. The
-/// control below runs the SAME assertion over a pair whose sharing IS correct
-/// and passes, so the probe is measuring the mutation and not the harness.
-#[test]
-fn mutation_probe_a_shared_key_across_two_statements_that_must_not_share_one_is_caught() {
-    use crate::non_prepared_plan_cache::cache_key;
-    use tidb_ast::Stmt;
-
-    let mut session = cache_session();
-    let parse = |session: &mut Session, sql: &str| -> Stmt { session.parse(sql).expect("parse") };
-
-    let int_stmt = parse(&mut session, "select a from t where a = 1");
-    let str_stmt = parse(&mut session, "select a from t where a = '1'");
-    let other_int_stmt = parse(&mut session, "select a from t where a = 2");
-
-    let catalog = session.shared_catalog();
-    let catalog = catalog.lock().expect("catalog");
-
-    let int_key = cache_key(&int_stmt, &catalog, "test", true).expect("int admitted");
-    let str_key = cache_key(&str_stmt, &catalog, "test", true).expect("string admitted");
-    let other_int_key = cache_key(&other_int_stmt, &catalog, "test", true).expect("admitted");
-
-    // CONTROL: two statements that differ only in an integer literal's VALUE
-    // are correct to share, and do.
-    assert_eq!(
-        int_key, other_int_key,
-        "control: the same shape with a different integer value shares a key"
-    );
-
-    // PROBE: the integer and the string form must NOT share. They differ only
-    // in the parameter-kind tag -- strip it, as a parameterization that erased
-    // literal types would, and the keys collide.
-    assert_ne!(
-        int_key, str_key,
-        "an integer and a string literal must not share an entry"
-    );
-    let strip_kinds = |key: &str| -> String {
-        let mut parts = key.split('|').collect::<Vec<_>>();
-        // Field 2 is the parameter-kind tag run; blanking it is the mutation.
-        parts[2] = "";
-        parts.join("|")
-    };
-    assert_eq!(
-        strip_kinds(&int_key),
-        strip_kinds(&str_key),
-        "the kind tag is the ONLY thing keeping these apart, so removing it \
-         is a real mutation and not a no-op"
-    );
-    // And the control survives the same mutation, which is what makes the
-    // line above evidence rather than a tautology.
-    assert_eq!(strip_kinds(&int_key), strip_kinds(&other_int_key));
-}
-
-// ---------------------------------------------------------------------------
 // The IN-list, both directions.
 // ---------------------------------------------------------------------------
 //
@@ -630,68 +675,48 @@ fn a_duplicated_in_list_hits_and_still_returns_its_own_rows() {
     assert_eq!(hit(&mut session), "1");
 }
 
-/// The arity half of the mutation probe: a key that recorded only "an IN-list
-/// is here" -- collapsing both the placeholder run in the restored SQL and the
-/// parameter-kind run -- puts a two- and a three-element list on one entry,
-/// while the control pair, two lists of the same length, is correct to share
-/// and shares either way.
 #[test]
-fn mutation_probe_two_in_lists_of_different_lengths_forced_onto_one_key_is_caught() {
-    use crate::non_prepared_plan_cache::cache_key;
-    use tidb_ast::Stmt;
-
+fn fix_44823_controls_non_prepared_literal_and_in_list_limits() {
     let mut session = cache_session();
-    let parse = |session: &mut Session, sql: &str| -> Stmt { session.parse(sql).expect("parse") };
+    session.run("set tidb_opt_fix_control = '44823:2'").unwrap();
 
-    let two = parse(&mut session, "select a from t where a in (1, 2)");
-    let three = parse(&mut session, "select a from t where a in (1, 2, 3)");
-    let other_two = parse(&mut session, "select a from t where a in (2, 3)");
-
-    let catalog = session.shared_catalog();
-    let catalog = catalog.lock().expect("catalog");
-
-    let two_key = cache_key(&two, &catalog, "test", true).expect("admitted");
-    let three_key = cache_key(&three, &catalog, "test", true).expect("admitted");
-    let other_two_key = cache_key(&other_two, &catalog, "test", true).expect("admitted");
-
-    // CONTROL: two lists of the same length differing only in values are
-    // correct to share, and do.
-    assert_eq!(
-        two_key, other_two_key,
-        "control: the same list length with different values shares a key"
+    refused(
+        &mut session,
+        "select a from t where a in (1, 2, 3)",
+        "select a from t where a in (1, 2, 3)",
+    );
+    refused(
+        &mut session,
+        "select 1, 2 from t where a = 1",
+        "select 1, 2 from t where a = 2",
     );
 
-    // PROBE: a two- and a three-element list must NOT share.
-    assert_ne!(
-        two_key, three_key,
-        "IN-lists of different lengths must not share an entry"
-    );
+    session.run("set tidb_opt_fix_control = '44823:0'").unwrap();
+    session.run("select a from t where a in (1, 2, 3)").unwrap();
+    assert_eq!(hit(&mut session), "0");
+    session.run("select a from t where a in (2, 3, 1)").unwrap();
+    assert_eq!(hit(&mut session), "1");
+}
 
-    // The mutation: squash every run of a repeated character, which erases
-    // both `?, ?, ?` in the SQL and the per-parameter kind tags -- exactly
-    // what a key blind to an IN-list's length would carry.
-    let squash_runs = |key: &str| -> String {
-        // First the kind tags, a run of one character per parameter.
-        let mut out = String::with_capacity(key.len());
-        for ch in key.chars() {
-            if out.ends_with(ch) {
-                continue;
-            }
-            out.push(ch);
-        }
-        // Then the placeholder list itself, `?,?,?` -> `?`.
-        while out.contains("?,?") {
-            out = out.replace("?,?", "?");
-        }
-        out
-    };
-    assert_eq!(
-        squash_runs(&two_key),
-        squash_runs(&three_key),
-        "the REPEATED placeholder and kind tag are the only things keeping \
-         these apart, so squashing the runs is a real mutation, not a no-op"
-    );
-    // And the control survives the same mutation, which is what makes the
-    // line above evidence rather than a tautology.
-    assert_eq!(squash_runs(&two_key), squash_runs(&other_two_key));
+#[test]
+fn zero_arg_format_functions_fail_normally_without_parameterizer_panics() {
+    let mut session = Session::new();
+    session
+        .run("create table date_args (a datetime, b int)")
+        .unwrap();
+    session
+        .run("set tidb_enable_non_prepared_plan_cache = true")
+        .unwrap();
+
+    for sql in [
+        "select * from date_args where a = date_format()",
+        "select * from date_args where a = str_to_date()",
+        "select * from date_args where b = time_format()",
+        "select * from date_args where b = from_unixtime()",
+    ] {
+        assert!(
+            session.run(sql).is_err(),
+            "{sql} must report its arity error"
+        );
+    }
 }

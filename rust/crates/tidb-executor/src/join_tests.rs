@@ -14,7 +14,7 @@
 
 use super::*;
 use tidb_ast::CiString;
-use tidb_datatype::FieldTypeCode;
+use tidb_datatype::{Decimal, FieldTypeCode};
 use tidb_expr::column::Column;
 use tidb_expr::constant::Constant;
 use tidb_expr::scalar_function::ScalarFunction;
@@ -48,44 +48,6 @@ fn schema_with_types(types: &[FieldType]) -> Schema {
             })
             .collect(),
     )
-}
-
-#[test]
-fn grouped_index_lookup_count_and_max_match_go_null_semantics() {
-    let aggregation = IndexLookupAggregation {
-        group_offsets: vec![0],
-        input_offsets: vec![1],
-        outputs: vec![
-            IndexLookupAggregateOutput::Column(0),
-            IndexLookupAggregateOutput::Count(None),
-            IndexLookupAggregateOutput::Count(Some(1)),
-            IndexLookupAggregateOutput::Max {
-                offset: 1,
-                collation: Collation::Binary,
-            },
-        ],
-        pruned_row_count: false,
-    };
-    let rows = vec![
-        vec![Datum::Int(1), Datum::Null],
-        vec![Datum::Int(1), Datum::Int(3)],
-        vec![Datum::Int(1), Datum::Int(2)],
-        vec![Datum::Int(2), Datum::Null],
-    ];
-    assert_eq!(
-        aggregation.apply(rows.clone(), false).unwrap(),
-        vec![
-            vec![Datum::Int(1), Datum::Int(3), Datum::Int(2), Datum::Int(3)],
-            vec![Datum::Int(2), Datum::Int(1), Datum::Int(0), Datum::Null],
-        ]
-    );
-    assert_eq!(
-        aggregation.apply(rows, true).unwrap(),
-        vec![
-            vec![Datum::Int(1), Datum::Int(3), Datum::Int(2), Datum::Int(3)],
-            vec![Datum::Int(2), Datum::Int(1), Datum::Int(0), Datum::Null],
-        ]
-    );
 }
 
 /// A source that hands out prebuilt rows in `max_chunk_size` batches, so

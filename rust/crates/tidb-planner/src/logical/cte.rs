@@ -42,11 +42,11 @@
 //!
 //! # Narrowings, by name
 //!
-//! * `DeriveStats` calls `utilfuncp.DoOptimize` — it OPTIMISES the seed and
-//!   recursive parts in place before reading their stats. There is no optimizer
-//!   driver in this crate (see the [`crate`] header), so
-//!   [`LogicalCTE::derive_stats`] takes the seed's and the recursive part's
-//!   already-derived profiles and does the part that is Go's own arithmetic.
+//! * `DeriveStats` calls `utilfuncp.DoOptimize` — the optimizer driver fills
+//!   [`CteClass::seed_part_physical_plan`] and
+//!   [`CteClass::recursive_part_physical_plan`] before this operator derives
+//!   its own statistics. [`LogicalCTE::derive_stats`] performs Go's arithmetic
+//!   over those already-selected plans.
 //! * `PredicatePushDown` composes with
 //!   `ruleutil.ResolveExprAndReplace(expr, p.Cte.ColumnMap)` and
 //!   `expression.ComposeCNFCondition`; the DECISION is
@@ -89,6 +89,11 @@ pub struct CteClass {
     pub seed_part_logical_plan: Option<Box<LogicalPlan>>,
     /// Go `RecursivePartLogicalPlan`, `None` for a non-recursive CTE.
     pub recursive_part_logical_plan: Option<Box<LogicalPlan>>,
+    /// Go `SeedPartPhysicalPlan`, filled once by the optimizer and shared by
+    /// every reference to this CTE.
+    pub seed_part_physical_plan: Option<Box<crate::physical::PhysicalPlan>>,
+    /// Go `RecursivePartPhysicalPlan`; absent for a non-recursive CTE.
+    pub recursive_part_physical_plan: Option<Box<crate::physical::PhysicalPlan>>,
     /// Go `IDForStorage`.
     pub id_for_storage: i32,
     /// Go `OptFlag`: the optimiser flag set for the whole CTE.
@@ -212,10 +217,14 @@ impl LogicalCTE {
     /// See [`crate::logical::LogicalTopN::attach_child`], which is where the
     /// TopN may still collapse into a limit.
     #[must_use]
-    pub fn push_down_topn(self, topn: Option<crate::logical::LogicalTopN>) -> LogicalPlan {
+    pub fn push_down_topn(
+        self,
+        allocator: &crate::plan_base::PlanIdAllocator,
+        topn: Option<crate::logical::LogicalTopN>,
+    ) -> LogicalPlan {
         let plan = LogicalPlan::CTE(self);
         match topn {
-            Some(topn) => topn.attach_child(plan),
+            Some(topn) => topn.attach_child(plan, allocator),
             None => plan,
         }
     }
@@ -284,9 +293,18 @@ impl LogicalCTE {
                 .as_ref()
                 .is_some_and(|cte| cte.borrow().is_distinct);
             if is_distinct {
-                if let Some(distinct) = distinct_row_count {
-                    row_count = distinct;
-                }
+                row_count = distinct_row_count.unwrap_or_else(|| {
+                    let profile = StatsInfo::new(row_count, ndvs.iter().copied());
+                    let columns = self_schema
+                        .columns
+                        .iter()
+                        .map(|column| column.unique_id)
+                        .collect::<Vec<_>>();
+                    crate::cardinality::derive_stats::estimate_cols_ndv_with_matched_len(
+                        &columns, &profile,
+                    )
+                    .0
+                });
             } else {
                 row_count += recur.row_count();
             }

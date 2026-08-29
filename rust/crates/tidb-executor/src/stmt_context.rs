@@ -437,7 +437,7 @@ pub struct StmtContext {
     /// (`@@tidb_opt_join_reorder_threshold`, default `0`): the largest join
     /// group the DP join-reorder solver is allowed to enumerate. At the
     /// default no group qualifies for DP, so a stock session uses greedy
-    /// reorder -- see [`crate::driver::join_reorder`].
+    /// reorder in the shared logical planner.
     join_reorder_threshold: i32,
     /// Go `SessionVars.TiDBOptEnableAdvancedJoinReorder`
     /// (`@@tidb_opt_enable_advanced_join_reorder`, default `ON`): whether
@@ -475,13 +475,12 @@ pub struct StmtContext {
     /// Go `SessionVars.TiDBOptJoinReorderThroughProj`
     /// (`@@tidb_opt_join_reorder_through_proj`, default `OFF`): whether
     /// `extractJoinGroup` may look THROUGH a `Projection` sitting on a join
-    /// and take that join's own leaves into the group -- see
-    /// [`crate::driver::join_reorder`]'s inlining section.
+    /// and take that join's own leaves into the group.
     join_reorder_through_proj: bool,
     /// Go `SessionVars.TiDBOptJoinReorderThroughSel`
     /// (`@@tidb_opt_join_reorder_through_sel`, default `OFF`): whether
     /// `extractJoinGroupImpl` may look THROUGH a `Selection` sitting on a
-    /// join -- see [`crate::driver::join_reorder`]'s barrier section.
+    /// join.
     join_reorder_through_sel: bool,
     /// Go `SessionVars.EnableOuterJoinReorder`
     /// (`@@tidb_enable_outer_join_reorder`, default `ON`): whether an outer

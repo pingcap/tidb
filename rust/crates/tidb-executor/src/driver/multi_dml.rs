@@ -190,8 +190,6 @@ impl MultiSource {
                     database: table.qualifiable_db.clone(),
                     columns: table.columns.clone(),
                     offset: table.offset,
-                    func_deps: Default::default(),
-                    physical: None,
                 })
                 .collect(),
             coalesced: self.coalesced.clone(),
@@ -309,15 +307,8 @@ fn scan_derived_table(
             "a LATERAL derived table is not supported in multi-table DML",
         ));
     }
-    let (alias, mut columns, rows) = super::from::derived_source_relation(
-        subquery,
-        alias,
-        catalog,
-        current_db,
-        ctx,
-        None,
-        &tidb_planner::physical_property::PhysicalProperty::default(),
-    )?;
+    let (alias, mut columns, rows) =
+        super::from::derived_source_relation(subquery, alias, catalog, current_db, ctx)?;
     // The parser refuses `(SELECT ...) t (x, y)` in an UPDATE's `FROM`
     // (Go errno 1064, both the comma and the JOIN spelling), so this list is
     // empty on every statement that reaches here. It is applied anyway
@@ -662,8 +653,6 @@ fn join_sources(
             database: table.qualifiable_db.clone(),
             columns: table.columns.clone(),
             offset: table.offset,
-            func_deps: Default::default(),
-            physical: None,
         });
     }
     let mut coalesced_conditions = Vec::new();

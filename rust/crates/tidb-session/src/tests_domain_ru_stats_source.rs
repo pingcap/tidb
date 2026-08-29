@@ -125,7 +125,9 @@ impl RuStatsDeps for MockDeps {
                 };
                 let total: i64 = total.parse().expect("total_ru is an integer literal");
                 let mut table = self.table.borrow_mut();
-                table.retain(|(s, e, g, _)| (s.as_str(), e.as_str(), g.as_str()) != (*start, *end, *group));
+                table.retain(|(s, e, g, _)| {
+                    (s.as_str(), e.as_str(), g.as_str()) != (*start, *end, *group)
+                });
                 table.push((start.to_string(), end.to_string(), group.to_string(), total));
             }
             return Ok(());
@@ -195,16 +197,28 @@ impl MockDeps {
             groups: RefCell::new(vec![
                 ResourceGroupWithRuStats {
                     name: "default".to_owned(),
-                    ru_stats: Some(Consumption { rru: 200.0, wru: 150.0 }),
+                    ru_stats: Some(Consumption {
+                        rru: 200.0,
+                        wru: 150.0,
+                    }),
                 },
                 ResourceGroupWithRuStats {
                     name: "test".to_owned(),
-                    ru_stats: Some(Consumption { rru: 100.0, wru: 50.0 }),
+                    ru_stats: Some(Consumption {
+                        rru: 100.0,
+                        wru: 50.0,
+                    }),
                 },
             ]),
             infoschema: vec![
-                ResourceGroupInfo { id: 1, name: "default".to_owned() },
-                ResourceGroupInfo { id: 2, name: "test".to_owned() },
+                ResourceGroupInfo {
+                    id: 1,
+                    name: "default".to_owned(),
+                },
+                ResourceGroupInfo {
+                    id: 2,
+                    name: "test".to_owned(),
+                },
             ],
             ..Self::default()
         }
@@ -235,20 +249,52 @@ fn test_get_last_expected_time_tz<Tz: TimeZone>(tz: &Tz) {
     let now = at(tz, (2023, 12, 28), (10, 46, 23));
     let new_time = |hour, minute| at(tz, (2023, 12, 28), (hour, minute, 0));
 
-    assert_eq!(get_last_expected_time_tz(&now, chrono::Duration::minutes(5), tz), new_time(10, 45));
     assert_eq!(
-        get_last_expected_time_tz(&at(tz, (2023, 12, 28), (10, 45, 0)), chrono::Duration::minutes(5), tz),
+        get_last_expected_time_tz(&now, chrono::Duration::minutes(5), tz),
         new_time(10, 45)
     );
-    assert_eq!(get_last_expected_time_tz(&now, chrono::Duration::minutes(10), tz), new_time(10, 40));
-    assert_eq!(get_last_expected_time_tz(&now, chrono::Duration::minutes(30), tz), new_time(10, 30));
-    assert_eq!(get_last_expected_time_tz(&now, chrono::Duration::hours(1), tz), new_time(10, 0));
-    assert_eq!(get_last_expected_time_tz(&now, chrono::Duration::hours(3), tz), new_time(9, 0));
-    assert_eq!(get_last_expected_time_tz(&now, chrono::Duration::hours(4), tz), new_time(8, 0));
-    assert_eq!(get_last_expected_time_tz(&now, chrono::Duration::hours(12), tz), new_time(0, 0));
-    assert_eq!(get_last_expected_time_tz(&now, chrono::Duration::hours(24), tz), new_time(0, 0));
     assert_eq!(
-        get_last_expected_time_tz(&at(tz, (2023, 12, 28), (0, 0, 0)), chrono::Duration::hours(24), tz),
+        get_last_expected_time_tz(
+            &at(tz, (2023, 12, 28), (10, 45, 0)),
+            chrono::Duration::minutes(5),
+            tz
+        ),
+        new_time(10, 45)
+    );
+    assert_eq!(
+        get_last_expected_time_tz(&now, chrono::Duration::minutes(10), tz),
+        new_time(10, 40)
+    );
+    assert_eq!(
+        get_last_expected_time_tz(&now, chrono::Duration::minutes(30), tz),
+        new_time(10, 30)
+    );
+    assert_eq!(
+        get_last_expected_time_tz(&now, chrono::Duration::hours(1), tz),
+        new_time(10, 0)
+    );
+    assert_eq!(
+        get_last_expected_time_tz(&now, chrono::Duration::hours(3), tz),
+        new_time(9, 0)
+    );
+    assert_eq!(
+        get_last_expected_time_tz(&now, chrono::Duration::hours(4), tz),
+        new_time(8, 0)
+    );
+    assert_eq!(
+        get_last_expected_time_tz(&now, chrono::Duration::hours(12), tz),
+        new_time(0, 0)
+    );
+    assert_eq!(
+        get_last_expected_time_tz(&now, chrono::Duration::hours(24), tz),
+        new_time(0, 0)
+    );
+    assert_eq!(
+        get_last_expected_time_tz(
+            &at(tz, (2023, 12, 28), (0, 0, 0)),
+            chrono::Duration::hours(24),
+            tz
+        ),
         new_time(0, 0)
     );
 }
@@ -268,7 +314,11 @@ fn write_ru_statistics_day_by_day() {
 }
 
 fn test_write_ru_statistics_tz<Tz: TimeZone + Clone>(tz: &Tz) {
-    let mut writer = RuStatsWriter::new(MockDeps::with_default_groups(), at(tz, (2023, 12, 26), (0, 0, 1)), tz.clone());
+    let mut writer = RuStatsWriter::new(
+        MockDeps::with_default_groups(),
+        at(tz, (2023, 12, 26), (0, 0, 1)),
+        tz.clone(),
+    );
 
     // The table starts empty.
     assert_eq!(writer.deps.count_where_end(None), 0);
@@ -282,7 +332,10 @@ fn test_write_ru_statistics_tz<Tz: TimeZone + Clone>(tz: &Tz) {
     );
 
     // after 1 day, only 1 group has delta ru.
-    writer.deps.groups.borrow_mut()[1].ru_stats = Some(Consumption { rru: 500.0, wru: 50.0 });
+    writer.deps.groups.borrow_mut()[1].ru_stats = Some(Consumption {
+        rru: 500.0,
+        wru: 50.0,
+    });
     writer.start_time = at(tz, (2023, 12, 27), (0, 0, 1));
     writer
         .do_write_ru_statistics()
@@ -300,7 +353,10 @@ fn test_write_ru_statistics_tz<Tz: TimeZone + Clone>(tz: &Tz) {
     assert_eq!(writer.deps.count_where_end(Some("2023-12-28")), 0);
 
     writer.start_time = at(tz, (2023, 12, 29), (0, 0, 0));
-    writer.deps.groups.borrow_mut()[0].ru_stats = Some(Consumption { rru: 200.0, wru: 200.0 });
+    writer.deps.groups.borrow_mut()[0].ru_stats = Some(Consumption {
+        rru: 200.0,
+        wru: 200.0,
+    });
     writer
         .do_write_ru_statistics()
         .expect("fourth daily write succeeds");
@@ -311,8 +367,14 @@ fn test_write_ru_statistics_tz<Tz: TimeZone + Clone>(tz: &Tz) {
 
     // after less than 1 day, even if ru changes, no new rows inserted.
     // This is to test after restart, no unexpected data are inserted.
-    writer.deps.groups.borrow_mut()[0].ru_stats = Some(Consumption { rru: 1000.0, wru: 200.0 });
-    writer.deps.groups.borrow_mut()[1].ru_stats = Some(Consumption { rru: 500.0, wru: 2000.0 });
+    writer.deps.groups.borrow_mut()[0].ru_stats = Some(Consumption {
+        rru: 1000.0,
+        wru: 200.0,
+    });
+    writer.deps.groups.borrow_mut()[1].ru_stats = Some(Consumption {
+        rru: 500.0,
+        wru: 2000.0,
+    });
     writer.start_time = at(tz, (2023, 12, 29), (1, 0, 0));
     writer
         .do_write_ru_statistics()

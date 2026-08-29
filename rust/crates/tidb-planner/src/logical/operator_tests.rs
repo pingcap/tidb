@@ -74,7 +74,7 @@ use super::window::{
 };
 use super::{BaseLogicalPlan, LogicalPlan};
 use crate::find_best_task::LogicalJoinType;
-use crate::plan_base::PossiblePropertiesInfo;
+use crate::plan_base::{PlanIdAllocator, PossiblePropertiesInfo};
 use crate::stats_info::StatsInfo;
 
 fn column(unique_id: i64) -> Column {
@@ -1482,10 +1482,16 @@ fn limit_explain_info_is_exact_without_partitioning() {
 /// TopN with NO order — so `IsLimit()` — and does NOT carry `PartitionBy`.
 #[test]
 fn limit_converts_to_a_topn_that_is_still_a_limit() {
-    let mut limit = LogicalLimit::new(BaseLogicalPlan::with_id(1, LogicalLimit::TYPE, 4), 2, 9);
+    let allocator = PlanIdAllocator::new();
+    let mut limit = LogicalLimit::new(
+        BaseLogicalPlan::new(&allocator, LogicalLimit::TYPE, 4),
+        2,
+        9,
+    );
+    let limit_id = limit.base.base.id();
     limit.prefer_limit_to_cop = true;
     limit.partition_by = vec![crate::physical_property::SortItem::new(1, false)];
-    let topn = limit.convert_to_topn();
+    let topn = limit.convert_to_topn(&allocator);
     assert!(topn.is_limit());
     assert_eq!(topn.offset, 2);
     assert_eq!(topn.count, 9);
@@ -1493,12 +1499,14 @@ fn limit_converts_to_a_topn_that_is_still_a_limit() {
     assert!(topn.partition_by.is_empty());
     assert_eq!(topn.base.base.tp(), LogicalTopN::TYPE);
     assert_eq!(topn.base.base.query_block_offset(), 4);
+    assert_ne!(topn.base.base.id(), limit_id);
 }
 
 /// Go `LogicalTopN.AttachChild` (`logical_top_n.go:200`), dual branch: the
 /// dual absorbs the window and the TopN disappears.
 #[test]
 fn topn_attach_child_folds_into_a_table_dual() {
+    let allocator = PlanIdAllocator::new();
     let dual = |rows: usize| {
         LogicalPlan::TableDual(super::LogicalTableDual {
             base: BaseLogicalPlan::with_id(1, "TableDual", 0),
@@ -1511,7 +1519,7 @@ fn topn_attach_child_folds_into_a_table_dual() {
         2,
         3,
     );
-    let LogicalPlan::TableDual(folded) = topn.attach_child(dual(10)) else {
+    let LogicalPlan::TableDual(folded) = topn.attach_child(dual(10), &allocator) else {
         panic!("a dual child must absorb the TopN");
     };
     // min(10 - 2, 3) == 3.
@@ -1523,7 +1531,7 @@ fn topn_attach_child_folds_into_a_table_dual() {
         5,
         3,
     );
-    let LogicalPlan::TableDual(folded) = topn.attach_child(dual(4)) else {
+    let LogicalPlan::TableDual(folded) = topn.attach_child(dual(4), &allocator) else {
         panic!("a dual child must absorb the TopN");
     };
     // The offset skips past the end: nothing is left.
@@ -1535,6 +1543,10 @@ fn topn_attach_child_folds_into_a_table_dual() {
 /// `PartitionBy`.
 #[test]
 fn topn_attach_child_degrades_to_a_limit_without_by_items() {
+    let allocator = PlanIdAllocator::new();
+    for _ in 0..3 {
+        allocator.alloc();
+    }
     let mut topn = LogicalTopN::new(
         BaseLogicalPlan::with_id(2, LogicalTopN::TYPE, 0),
         vec![],
@@ -1556,7 +1568,7 @@ fn topn_attach_child_degrades_to_a_limit_without_by_items() {
         },
         vec![],
     ));
-    let LogicalPlan::Limit(limit) = topn.attach_child(child) else {
+    let LogicalPlan::Limit(limit) = topn.attach_child(child, &allocator) else {
         panic!("a TopN with no ByItems must become a Limit");
     };
     assert_eq!(limit.offset, 1);
@@ -1565,11 +1577,13 @@ fn topn_attach_child_degrades_to_a_limit_without_by_items() {
     assert_eq!(limit.partition_by.len(), 1);
     assert_eq!(limit.base.child_len(), 1);
     assert_eq!(limit.base.base.tp(), LogicalLimit::TYPE);
+    assert_eq!(limit.base.base.id(), 4);
 }
 
 /// Go `LogicalTopN.AttachChild` (`logical_top_n.go:224`), default branch.
 #[test]
 fn topn_attach_child_keeps_a_real_topn() {
+    let allocator = PlanIdAllocator::new();
     let topn = LogicalTopN::new(
         BaseLogicalPlan::with_id(2, LogicalTopN::TYPE, 0),
         vec![by(col_expr(1), false)],
@@ -1581,7 +1595,7 @@ fn topn_attach_child_keeps_a_real_topn() {
         BaseLogicalPlan::with_id(3, LogicalSelection::TYPE, 0),
         vec![],
     ));
-    let attached = topn.attach_child(child);
+    let attached = topn.attach_child(child, &allocator);
     assert!(matches!(attached, LogicalPlan::TopN(_)));
     assert_eq!(attached.children().len(), 1);
 }
@@ -1689,6 +1703,7 @@ fn union_all_repairs_only_a_child_wider_than_itself() {
 /// copy folds the offset into the count and keeps no offset of its own.
 #[test]
 fn union_all_child_topn_folds_the_offset_into_the_count() {
+    let allocator = PlanIdAllocator::new();
     let mut topn = LogicalTopN::new(
         BaseLogicalPlan::with_id(1, LogicalTopN::TYPE, 2),
         vec![by(col_expr(7), true)],
@@ -1697,7 +1712,7 @@ fn union_all_child_topn_folds_the_offset_into_the_count() {
     );
     topn.prefer_limit_to_cop = true;
     topn.partition_by = vec![crate::physical_property::SortItem::new(1, false)];
-    let child = LogicalUnionAll::push_down_topn_for_child(&topn);
+    let child = LogicalUnionAll::push_down_topn_for_child(&topn, &allocator);
     assert_eq!(child.offset, 0);
     assert_eq!(child.count, 15);
     assert!(child.prefer_limit_to_cop);
@@ -1707,6 +1722,7 @@ fn union_all_child_topn_folds_the_offset_into_the_count() {
     // PartitionBy does NOT travel with it.
     assert!(child.partition_by.is_empty());
     assert!(child.base.children().is_empty());
+    assert_ne!(child.base.base.id(), topn.base.base.id());
 }
 
 /// Go `LogicalUnionAll.DeriveStats` (`logical_union_all.go:187`): rows and
@@ -2583,7 +2599,8 @@ fn cte_drops_correlated_predicates_unless_it_is_inside_an_apply() {
 /// ABOVE the CTE, never pushed into it — and it may still collapse to a limit.
 #[test]
 fn cte_attaches_a_topn_above_itself() {
-    let plan = cte(cte_class(|_| {})).push_down_topn(None);
+    let allocator = PlanIdAllocator::new();
+    let plan = cte(cte_class(|_| {})).push_down_topn(&allocator, None);
     assert!(matches!(plan, LogicalPlan::CTE(_)));
 
     let topn = LogicalTopN::new(
@@ -2592,7 +2609,7 @@ fn cte_attaches_a_topn_above_itself() {
         0,
         5,
     );
-    let plan = cte(cte_class(|_| {})).push_down_topn(Some(topn));
+    let plan = cte(cte_class(|_| {})).push_down_topn(&allocator, Some(topn));
     assert!(matches!(plan, LogicalPlan::TopN(_)));
     assert!(matches!(plan.children()[0], LogicalPlan::CTE(_)));
 
@@ -2603,7 +2620,7 @@ fn cte_attaches_a_topn_above_itself() {
         0,
         5,
     );
-    let plan = cte(cte_class(|_| {})).push_down_topn(Some(limit_shaped));
+    let plan = cte(cte_class(|_| {})).push_down_topn(&allocator, Some(limit_shaped));
     assert!(matches!(plan, LogicalPlan::Limit(_)));
 }
 

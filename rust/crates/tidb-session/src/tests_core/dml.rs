@@ -367,6 +367,17 @@ fn correlated_subqueries_drive_update_assignments() {
         .run("INSERT INTO t2 VALUES (10,100),(10,200),(10,300),(20,400),(30,500)")
         .unwrap();
 
+    let plan = row_text(session.run(
+        "EXPLAIN UPDATE t1 SET value = \
+         (SELECT COUNT(*) FROM t2 WHERE t1.id = t2.id) \
+         WHERE t1.id = 10",
+    ));
+    assert!(
+        plan.iter()
+            .any(|row| row.first().is_some_and(|id| id.contains("Apply_"))),
+        "Go buildUpdateLists retains the correlated SET subquery in the Update child: {plan:?}"
+    );
+
     assert_eq!(
         session
             .run(

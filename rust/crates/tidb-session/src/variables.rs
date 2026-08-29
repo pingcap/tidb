@@ -295,15 +295,6 @@ impl Session {
         self.active_resource_group = resource_group;
     }
 
-    /// Applies the hints on a cached SELECT whose bound AST is retained by the
-    /// reusable physical plan rather than passed through the ordinary session
-    /// funnel again.
-    pub(crate) fn activate_select_resource_group(&mut self, select: &tidb_ast::SelectStmt) {
-        self.active_resource_group = resource_group_hint(&select.hints)
-            .unwrap_or(&self.resource_group)
-            .to_ascii_lowercase();
-    }
-
     /// Parses one text-protocol statement and resolves its statement-scoped
     /// resource group before any snapshot or transaction is opened.
     pub fn statement_resource_group_sql(&self, sql: &str) -> Result<String, DriverError> {

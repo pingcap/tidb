@@ -7,6 +7,7 @@
 //! `pkg/util/ranger` feeding `pkg/executor`'s index reader.
 
 use super::*;
+use crate::kv_table::IndexRange;
 
 fn planner_index_path(
     sql: &str,
@@ -21,26 +22,67 @@ fn planner_index_path(
     let QueryStmt::Select(select) = &**query else {
         panic!("not a select")
     };
-    let decision = crate::driver::planner_bridge::select_decision(
+    let physical = crate::driver::planner_bridge::physical_select_plan(
         select,
         catalog,
         "test",
         &crate::StmtContext::for_query(),
-    )?;
-    let access = crate::driver::planner_bridge::AccessDecision::for_leaf(
-        &decision.access,
-        table.table_id,
-        visible,
-    )?;
-    let crate::driver::planner_bridge::AccessPath::Index {
-        index_id, ranges, ..
-    } = &access.path
-    else {
-        return None;
-    };
+    )
+    .ok()?;
+    fn find_index_scan<'a>(
+        plan: &'a tidb_planner::physical::PhysicalPlan,
+        table_id: i64,
+        visible: &str,
+    ) -> Option<&'a tidb_planner::physical::PhysicalIndexScan> {
+        use tidb_planner::physical::PhysicalPlan;
+
+        match plan {
+            PhysicalPlan::IndexScan(scan)
+                if scan.table_id == table_id
+                    && scan
+                        .table_as_name
+                        .as_deref()
+                        .is_none_or(|alias| alias.eq_ignore_ascii_case(visible)) =>
+            {
+                return Some(scan);
+            }
+            PhysicalPlan::IndexReader(reader) => {
+                if let Some(scan) = reader
+                    .index_plan
+                    .as_deref()
+                    .and_then(|plan| find_index_scan(plan, table_id, visible))
+                {
+                    return Some(scan);
+                }
+            }
+            PhysicalPlan::IndexLookUpReader(reader) => {
+                if let Some(scan) = reader
+                    .index_plan
+                    .as_deref()
+                    .and_then(|plan| find_index_scan(plan, table_id, visible))
+                {
+                    return Some(scan);
+                }
+            }
+            PhysicalPlan::IndexMergeReader(reader) => {
+                if let Some(scan) = reader
+                    .partial_plans_raw
+                    .iter()
+                    .find_map(|plan| find_index_scan(plan, table_id, visible))
+                {
+                    return Some(scan);
+                }
+            }
+            _ => {}
+        }
+        plan.children()
+            .iter()
+            .find_map(|child| find_index_scan(child, table_id, visible))
+    }
+    let scan = find_index_scan(&physical, table.table_id, visible)?;
     Some((
-        *index_id,
-        ranges
+        scan.index_id,
+        scan.ranges
             .iter()
             .map(|range| IndexRange {
                 low: range.low_val.clone(),

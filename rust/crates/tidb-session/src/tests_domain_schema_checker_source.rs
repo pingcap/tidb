@@ -42,7 +42,12 @@ use tidb_domain::schema_checker::{
 /// points, in order.
 #[derive(Default)]
 struct ScriptedValidator {
-    answers: RefCell<VecDeque<(Option<tidb_domain::schema_checker::RelatedSchemaChange>, CheckResult)>>,
+    answers: RefCell<
+        VecDeque<(
+            Option<tidb_domain::schema_checker::RelatedSchemaChange>,
+            CheckResult,
+        )>,
+    >,
 }
 
 impl SchemaValidator for ScriptedValidator {
@@ -52,7 +57,10 @@ impl SchemaValidator for ScriptedValidator {
         _schema_ver: i64,
         _related_physical_table_ids: Option<&[i64]>,
         _need_check_schema_by_delta: bool,
-    ) -> (Option<tidb_domain::schema_checker::RelatedSchemaChange>, CheckResult) {
+    ) -> (
+        Option<tidb_domain::schema_checker::RelatedSchemaChange>,
+        CheckResult,
+    ) {
         self.answers
             .borrow_mut()
             .pop_front()

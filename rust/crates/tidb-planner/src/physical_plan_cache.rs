@@ -37,6 +37,140 @@ use tidb_expr::expression::Expression;
 use crate::physical::{PhysicalPlan, PhysicalTableScan};
 use crate::ranger::types::{has_full_range, Ranges};
 
+/// Session inputs read by Go's `isPlanCacheable` /
+/// `isPhysicalPlanCacheable` after physical optimization.
+#[derive(Clone, Copy, Debug)]
+pub struct PlanCacheabilityContext {
+    /// Number of prepared-statement parameters in the statement.
+    pub parameter_count: usize,
+    /// Fix 45798: whether plans accessing multi-valued indexes may be cached.
+    pub enable_generated_columns: bool,
+    /// `@@tidb_plan_cache_max_plan_size`; zero disables the size limit.
+    pub max_plan_size: u64,
+}
+
+fn cached_plan_memory_usage(plan: &PhysicalPlan) -> u64 {
+    let mut total = u64::try_from(plan.memory_usage()).unwrap_or(u64::MAX);
+    let hidden = match plan {
+        PhysicalPlan::CTE(cte) => std::iter::once(cte.seed_plan.as_ref())
+            .chain(cte.recursive_plan.as_deref())
+            .collect(),
+        PhysicalPlan::TableReader(reader) => reader.table_plan.as_deref().into_iter().collect(),
+        PhysicalPlan::IndexReader(reader) => reader.index_plan.as_deref().into_iter().collect(),
+        PhysicalPlan::IndexLookUpReader(reader) => reader
+            .index_plan
+            .as_deref()
+            .into_iter()
+            .chain(reader.table_plan.as_deref())
+            .collect(),
+        PhysicalPlan::IndexMergeReader(reader) => reader
+            .partial_plans_raw
+            .iter()
+            .chain(reader.table_plan.as_deref())
+            .collect(),
+        PhysicalPlan::Dml(dml) => dml.select_plan.as_deref().into_iter().collect(),
+        _ => Vec::new(),
+    };
+    for child in hidden {
+        total = total.saturating_add(cached_plan_memory_usage(child));
+    }
+    total
+}
+
+fn table_scan_is_full(scan: &PhysicalTableScan) -> bool {
+    let unsigned_int_handle = matches!(
+        scan.range_rebuild.as_ref(),
+        Some(TableRangeRebuild {
+            unsigned_int_handle: true,
+            ..
+        })
+    );
+    scan.ranges
+        .iter()
+        .all(|range| range.is_full_range(unsigned_int_handle))
+}
+
+fn index_scan_is_full(scan: &crate::physical::PhysicalIndexScan) -> bool {
+    scan.ranges.iter().all(|range| range.is_full_range(false))
+}
+
+fn physical_plan_cacheable(
+    plan: &PhysicalPlan,
+    context: PlanCacheabilityContext,
+    under_index_merge: bool,
+) -> Result<(), String> {
+    if !plan.base().base.noncacheable_reason().is_empty() {
+        return Err(plan.base().base.noncacheable_reason().to_owned());
+    }
+
+    let mut index_merge = under_index_merge;
+    let hidden: Vec<&PhysicalPlan> = match plan {
+        PhysicalPlan::CTE(cte) => std::iter::once(cte.seed_plan.as_ref())
+            .chain(cte.recursive_plan.as_deref())
+            .collect(),
+        PhysicalPlan::TableDual(_) if context.parameter_count > 0 => {
+            return Err("get a TableDual plan".to_owned());
+        }
+        PhysicalPlan::TableReader(reader)
+            if reader.store_type == crate::physical_table_reader::StoreType::TiFlash =>
+        {
+            return Err("TiFlash plan is un-cacheable".to_owned());
+        }
+        PhysicalPlan::Apply(_) => {
+            return Err("PhysicalApply plan is un-cacheable".to_owned());
+        }
+        PhysicalPlan::IndexMergeReader(reader) => {
+            if reader.access_mv_index && !context.enable_generated_columns {
+                return Err(
+                    "the plan with IndexMerge accessing Multi-Valued Index is un-cacheable"
+                        .to_owned(),
+                );
+            }
+            index_merge = true;
+            reader.partial_plans_raw.iter().collect()
+        }
+        PhysicalPlan::IndexScan(scan) if under_index_merge && index_scan_is_full(scan) => {
+            return Err("IndexMerge plan with full-scan is un-cacheable".to_owned());
+        }
+        PhysicalPlan::TableScan(scan) if under_index_merge && table_scan_is_full(scan) => {
+            return Err("IndexMerge plan with full-scan is un-cacheable".to_owned());
+        }
+        PhysicalPlan::TableReader(reader) => reader.table_plan.as_deref().into_iter().collect(),
+        PhysicalPlan::IndexReader(reader) => reader.index_plan.as_deref().into_iter().collect(),
+        // Go deliberately checks only the index side of IndexLookUpReader.
+        PhysicalPlan::IndexLookUpReader(reader) => {
+            reader.index_plan.as_deref().into_iter().collect()
+        }
+        PhysicalPlan::Dml(dml) => dml.select_plan.as_deref().into_iter().collect(),
+        _ => Vec::new(),
+    };
+
+    for child in hidden.into_iter().chain(plan.children()) {
+        physical_plan_cacheable(child, context, index_merge)?;
+    }
+    Ok(())
+}
+
+/// Go `isPlanCacheable` over the physical operators represented by this
+/// planner. Operators that do not exist in [`PhysicalPlan`] (Shuffle and
+/// MemTable) cannot enter this tree; every represented refusal is checked
+/// recursively, including reader-owned subplans.
+pub fn plan_cacheable(plan: &PhysicalPlan, context: PlanCacheabilityContext) -> Result<(), String> {
+    let physical = match plan {
+        PhysicalPlan::Dml(dml) => match dml.select_plan.as_deref() {
+            Some(select) => select,
+            None => return Ok(()),
+        },
+        physical => physical,
+    };
+    if context.max_plan_size > 0 && cached_plan_memory_usage(physical) > context.max_plan_size {
+        return Err(
+            "plan is too large(decided by the variable @@tidb_plan_cache_max_plan_size)".to_owned(),
+        );
+    }
+    physical_plan_cacheable(physical, context, false)
+}
+
 /// The table-scan facts retained specifically so a cache hit can rebuild its
 /// parameter-dependent ranges without re-running logical optimization.
 #[derive(Clone, Debug)]
@@ -318,11 +452,20 @@ fn bind_plan_expressions(
         PhysicalPlan::IndexJoin(join) => {
             bind_conditions(&mut join.left_conditions, context)?;
             bind_conditions(&mut join.right_conditions, context)?;
+            bind_conditions(&mut join.other_conditions, context)?;
+            if let Some(compare_filters) = &mut join.compare_filters {
+                bind_conditions(&mut compare_filters.args, context)?;
+            }
         }
         PhysicalPlan::Apply(apply) => {
             bind_conditions(&mut apply.hash_join.left_conditions, context)?;
             bind_conditions(&mut apply.hash_join.right_conditions, context)?;
             bind_conditions(&mut apply.hash_join.other_conditions, context)?;
+        }
+        PhysicalPlan::Sort(sort) => {
+            for item in &mut sort.by_items {
+                bind_expression(&mut item.expr, context)?;
+            }
         }
         PhysicalPlan::TopN(topn) => {
             for item in &mut topn.by_items {
@@ -339,12 +482,17 @@ fn bind_plan_expressions(
             &mut aggregation.group_by_items,
             context,
         )?,
-        PhysicalPlan::Sort(_)
-        | PhysicalPlan::Limit(_)
+        PhysicalPlan::Dml(dml) => {
+            for expression in dml.update_expressions.iter_mut().flatten() {
+                bind_expression(expression, context)?;
+            }
+        }
+        PhysicalPlan::Limit(_)
         | PhysicalPlan::TableScan(_)
         | PhysicalPlan::TableDual(_)
         | PhysicalPlan::MaxOneRow(_)
         | PhysicalPlan::NominalSort(_)
+        | PhysicalPlan::CTE(_)
         | PhysicalPlan::CTETable(_)
         | PhysicalPlan::Show(_)
         | PhysicalPlan::ShowDDLJobs(_)
@@ -357,8 +505,7 @@ fn bind_plan_expressions(
         | PhysicalPlan::IndexLookUpReader(_)
         | PhysicalPlan::PointGet(_)
         | PhysicalPlan::BatchPointGet(_)
-        | PhysicalPlan::IndexMergeReader(_)
-        | PhysicalPlan::Dml(_) => {}
+        | PhysicalPlan::IndexMergeReader(_) => {}
     }
     Ok(())
 }
@@ -615,6 +762,12 @@ pub fn rebuild_ranges_for_cached_plan(
 ) -> Result<(), PlanCacheRebuildError> {
     bind_plan_expressions(plan, context)?;
     match plan {
+        PhysicalPlan::CTE(cte) => {
+            rebuild_ranges_for_cached_plan(cte.seed_plan.as_mut(), context)?;
+            if let Some(recursive) = cte.recursive_plan.as_deref_mut() {
+                rebuild_ranges_for_cached_plan(recursive, context)?;
+            }
+        }
         PhysicalPlan::TableScan(scan) => rebuild_table_scan(scan, context)?,
         PhysicalPlan::IndexScan(scan) => rebuild_index_scan(scan, context)?,
         PhysicalPlan::TableReader(reader) => {
@@ -630,9 +783,6 @@ pub fn rebuild_ranges_for_cached_plan(
         PhysicalPlan::IndexLookUpReader(reader) => {
             if let Some(index_plan) = reader.index_plan.as_deref_mut() {
                 rebuild_ranges_for_cached_plan(index_plan, context)?;
-            }
-            if let Some(table_plan) = reader.table_plan.as_deref_mut() {
-                rebuild_ranges_for_cached_plan(table_plan, context)?;
             }
         }
         PhysicalPlan::IndexJoin(join) => {
@@ -677,9 +827,6 @@ pub fn rebuild_ranges_for_cached_plan(
         PhysicalPlan::IndexMergeReader(reader) => {
             for partial_plan in &mut reader.partial_plans_raw {
                 rebuild_ranges_for_cached_plan(partial_plan, context)?;
-            }
-            if let Some(table_plan) = reader.table_plan.as_deref_mut() {
-                rebuild_ranges_for_cached_plan(table_plan, context)?;
             }
         }
         PhysicalPlan::Dml(dml) => {

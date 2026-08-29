@@ -59,10 +59,7 @@ fn info_syncer_marshal() {
             json_server_id: 1,
         },
         dynamic_info: DynamicInfo {
-            labels: HashMap::from([(
-                "zone".to_owned(),
-                "ap-northeast-1a".to_owned(),
-            )]),
+            labels: HashMap::from([("zone".to_owned(), "ap-northeast-1a".to_owned())]),
         },
     };
 

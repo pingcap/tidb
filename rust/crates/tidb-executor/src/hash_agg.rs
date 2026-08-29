@@ -1587,34 +1587,6 @@ fn datum_bits(value: &Datum) -> Result<u64, ExecError> {
     })
 }
 
-/// Folds one aggregate over an explicit value list, returning its result.
-///
-/// This is the same accumulate-then-finish path a GROUP BY group takes, reached
-/// without a group key so a WINDOW FRAME can aggregate an arbitrary slice of a
-/// partition (see `crate::window`). Reusing it is what keeps SUM's
-/// integers-summed-in-the-decimal-domain rule, AVG's `div_precision_increment`
-/// division and MIN/MAX's datum comparison identical between the two callers.
-/// `collation` is the argument expression's derived collation, which is what
-/// keeps a windowed `MAX(ci_col)` agreeing with the grouped one.
-/// `None` stands for `COUNT(*)`'s absent argument; every other aggregate takes
-/// `Some(value)`, with `Some(Datum::Null)` for a NULL input. Each item pairs
-/// that first argument with the values of any further arguments, exactly the
-/// pair the GROUP BY path builds per source row.
-pub(crate) fn aggregate_rows(
-    kind: &AggKind,
-    rows: impl IntoIterator<Item = (Option<Datum>, Vec<Datum>)>,
-    div_precision_increment: u32,
-    collation: tidb_datatype::Collation,
-    output_type: &FieldType,
-) -> Result<Datum, ExecError> {
-    let mut partial = Partial::new(kind);
-    for (value, extra) in rows {
-        partial.update(value, &extra, Vec::new(), collation)?;
-    }
-    let value = partial.finish(&[], div_precision_increment)?;
-    Ok(round_avg_result(kind, output_type, value))
-}
-
 /// Go `baseAvgDecimal.AppendFinalResult2Chunk` rounds `DecimalDiv`'s hidden
 /// base-1e9 fraction words to the inferred AVG return scale before appending
 /// the value. Keeping that step here makes HashAgg, StreamAgg, and window AVG

@@ -71,6 +71,14 @@ pub trait ColumnResolver {
         Some(col)
     }
 
+    /// Resolves a column-shaped AST leaf to the complete expression Go's
+    /// plan-aware rewriter produces. Ordinary scopes return a plain column;
+    /// a nested-query scope may override this with a `CorrelatedColumn` that
+    /// retains the outer binding identity.
+    fn resolve_expression(&self, path: &[String]) -> Option<Expression> {
+        self.resolve_column(path).map(Expression::Column)
+    }
+
     /// Resolves the Go `Column.OrigName` carried by a source column. The
     /// planner uses this metadata for EXPLAIN and diagnostics after a column
     /// crosses a Projection or aggregate boundary; execution still binds by
@@ -389,7 +397,7 @@ fn binary_expression(
     left: Expression,
     right: Expression,
     resolver: &impl ColumnResolver,
-) -> Expression {
+) -> Result<Expression, EvalError> {
     let name = binary_op_name(op);
     let ret_type = crate::builtin_arithmetic::infer_arithmetic_type_with_context(
         name,
@@ -412,10 +420,18 @@ fn binary_expression(
             }
             if crate::builtin_compare::infer_compare_type(name).is_some() {
                 crate::builtin_compare::prepare_json_comparison_args(&mut args);
+                crate::builtin_compare::wrap_comparison_arguments(
+                    &mut args,
+                    resolver.connection_charset_info(),
+                )?;
             }
-            Expression::ScalarFunction(ScalarFunction::new(CiString::new(name), ret_type, args))
+            Ok(Expression::ScalarFunction(ScalarFunction::new(
+                CiString::new(name),
+                ret_type,
+                args,
+            )))
         }
-        None => scalar(name, vec![left, right]),
+        None => Ok(scalar(name, vec![left, right])),
     }
 }
 
@@ -438,12 +454,12 @@ fn rewrite_comparison(
         (Expr::Row(left), Expr::Row(right)) => rewrite_row_comparison(op, left, right, resolver),
         (Expr::Row(left), _) => Err(EvalError::OperandColumns(left.len())),
         (_, Expr::Row(_)) => Err(EvalError::OperandColumns(1)),
-        _ => Ok(binary_expression(
+        _ => binary_expression(
             op,
             rewrite_expr_resolved(left, resolver)?,
             rewrite_expr_resolved(right, resolver)?,
             resolver,
-        )),
+        ),
     }
 }
 
@@ -457,7 +473,7 @@ fn compose_comparisons(
         .next()
         .ok_or(EvalError::Unsupported("a row expression with no columns"))??;
     comparisons.try_fold(first, |condition, comparison| {
-        Ok(binary_expression(join, condition, comparison?, resolver))
+        binary_expression(join, condition, comparison?, resolver)
     })
 }
 
@@ -547,13 +563,15 @@ fn rewrite_expr_resolved_inner(
         if let Some(constant) = resolver.resolve_constant(path) {
             return Ok(constant);
         }
-        let mut col = resolver
-            .resolve_column(path)
+        let mut resolved = resolver
+            .resolve_expression(path)
             .ok_or_else(|| EvalError::UnknownColumn(path.join(".")))?;
-        if let Some(orig_name) = resolver.orig_name(path) {
-            col.orig_name = orig_name;
+        if let (Expression::Column(column), Some(orig_name)) =
+            (&mut resolved, resolver.orig_name(path))
+        {
+            column.orig_name = orig_name;
         }
-        return Ok(Expression::Column(col));
+        return Ok(resolved);
     }
     let mut built = rewrite_leaf(expr, resolver)?;
     derive_tree_collation_with_connection(&mut built, resolver.connection_charset_info())?;
@@ -669,7 +687,7 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
             // builtin_compare (eq/nulleq/ne/lt/le/gt/ge) and builtin_op
             // (logic and bit operators). Anything still uncovered keeps the
             // LongLong placeholder.
-            Ok(binary_expression(*op, left, right, resolver))
+            binary_expression(*op, left, right, resolver)
         }
         Expr::Int(_)
         | Expr::ParamMarker { .. }
@@ -1006,12 +1024,7 @@ fn rewrite_leaf_compound(
                     "an IN expression with no candidates",
                 ))??;
                 let call = comparisons.try_fold(first, |condition, comparison| {
-                    Ok(binary_expression(
-                        BinaryOp::LogicOr,
-                        condition,
-                        comparison?,
-                        resolver,
-                    ))
+                    binary_expression(BinaryOp::LogicOr, condition, comparison?, resolver)
                 })?;
                 if *not {
                     let ret_type = call
@@ -1069,8 +1082,8 @@ fn rewrite_leaf_compound(
                 (BinaryOp::Ge, BinaryOp::Le, "and")
             };
             let compare = binary_expression;
-            let lower = compare(lower_op, value.clone(), low, resolver);
-            let upper = compare(upper_op, value, high, resolver);
+            let lower = compare(lower_op, value.clone(), low, resolver)?;
+            let upper = compare(upper_op, value, high, resolver)?;
             // The joining `AND`/`OR` is a `booleanFunctions` name, so the whole
             // `BETWEEN` result is boolean-flagged: `JSON_ARRAY(x BETWEEN l AND h)`
             // is `[true]`/`[false]`, not `[1]`/`[0]`.
@@ -1383,6 +1396,20 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
         // the shared `eval_func_values` implementation runs it.
         Expr::Func { name, args, .. } => {
             let lowered = name.to_ascii_lowercase();
+            // Go resolves every FuncCallExpr through its function class
+            // before a physical operator can suppress row evaluation (for
+            // example an empty table). Keep DATE_ADD's Rust interval node
+            // aligned with Go's three internal arguments.
+            let arity_count = if matches!(
+                lowered.as_str(),
+                "date_add" | "date_sub" | "adddate" | "subdate"
+            ) && matches!(args.as_slice(), [_, Expr::Interval { .. }])
+            {
+                3
+            } else {
+                args.len()
+            };
+            crate::builtin_registry::verify_args_by_count(&lowered, arity_count)?;
             let child_resolver = FoldModeResolver::for_function(resolver, &lowered);
             if lowered == "name_const" {
                 validate_name_const_args(args)?;

@@ -27,7 +27,6 @@
 //! here for dispatch, once in the driver's runner) -- a wiring simplification
 //! to remove when the driver's runners take parsed statements.
 
-use std::cell::Cell;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -362,9 +361,6 @@ pub struct Session {
     /// Metadata snapshot cache keyed by the catalog mutation version.
     tidb_decode_key_cache:
         std::sync::Mutex<Option<(u64, Arc<tidb_executor::TidbDecodeKeySnapshot>)>>,
-    /// Suppresses the metadata snapshot while a narrow fast path builds a
-    /// statement context that cannot evaluate `TIDB_DECODE_KEY`.
-    skip_tidb_decode_key_snapshot: Cell<bool>,
     /// One connection-wide memory/disk tracker pair. Every statement gets a
     /// fresh child below these roots, so an open cursor remains counted when
     /// the client starts its next command.
@@ -546,9 +542,8 @@ pub struct Session {
     /// Go `SessionVars.RowIDShardGenerator`: retains one random shard for
     /// `@@tidb_shard_allocate_step` generated IDs across statement contexts.
     row_id_shards: Arc<std::sync::Mutex<tidb_executor::RowIdShardGenerator>>,
-    /// The session's non-prepared plan cache
-    /// (`tidb_enable_non_prepared_plan_cache`). See
-    /// [`non_prepared_plan_cache`] for what it does and does not store.
+    /// The session's non-prepared physical-plan cache
+    /// (`tidb_enable_non_prepared_plan_cache`).
     non_prepared_plan_cache: non_prepared_plan_cache::NonPreparedPlanCache,
     /// Go `SessionVars.FoundInPlanCache`: whether the statement RUNNING now
     /// found its plan in the cache. Reset for every statement.
@@ -662,7 +657,6 @@ impl Default for Session {
             catalog: SharedCatalog::default(),
             server_start_timestamp: None,
             tidb_decode_key_cache: std::sync::Mutex::new(None),
-            skip_tidb_decode_key_snapshot: Cell::new(false),
             session_memory: tidb_executor::SessionMemory::new(
                 tidb_util::memory::DEF_MEM_QUOTA_QUERY,
                 tidb_executor::OomAction::Cancel,
@@ -1393,10 +1387,6 @@ impl Session {
     ) -> Result<(StmtOutput, Option<ResultMaterializationAuthority>), DriverError> {
         self.statement_result_authority.get_mut().take();
         self.check_sandbox_mode(sql)?;
-        self.with_catalog_mut(|catalog| {
-            catalog.advance_statistics_loads();
-            Ok(())
-        })?;
         // A statement is visible to a peer's SHOW PROCESSLIST for exactly as
         // long as it runs, which is why the process list is updated here --
         // the one door every statement of this session goes through -- rather
@@ -1667,11 +1657,11 @@ mod tests_recursive_cte;
 mod tests_savepoint;
 mod tests_sequence;
 #[cfg(test)]
+mod tests_session_bootstrap_common_source;
+#[cfg(test)]
 mod tests_session_part1_source;
 #[cfg(test)]
 mod tests_session_part2_source;
-#[cfg(test)]
-mod tests_session_bootstrap_common_source;
 #[cfg(test)]
 mod tests_session_var_hooks;
 mod tests_show;

@@ -13,8 +13,8 @@
 // limitations under the License.
 
 //! Ports of the deterministic `pkg/executor.part19` slice: Go test items
-//! 1081–1140. The runnable tests use the executor's prepared-plan and fast-DML
-//! boundaries. Session account state, plan-replayer files, DDL history,
+//! 1081–1140. The runnable tests use the executor's retained physical-plan
+//! boundary and ordinary DML executors. Session account state, plan-replayer files, DDL history,
 //! transactions, remote requests, and goroutine/failpoint observations stay
 //! explicit parity gaps rather than being approximated at this crate boundary.
 
@@ -23,9 +23,10 @@ use std::sync::Arc;
 use tidb_datatype::Datum;
 
 use crate::{
-    Catalog, DEFAULT_DATABASE, PreparedPlanCacheEnvironment, StmtContext,
-    build_prepared_select_plan, run_create_table_on, run_fast_prepared_insert,
-    run_fast_prepared_update, run_insert_on, run_prepared_select, run_select_on,
+    build_prepared_dml_plan, build_prepared_select_plan, run_create_table_on,
+    run_delete_stmt_with_physical, run_insert_on, run_insert_stmt_with_physical,
+    run_prepared_select_for_test, run_select_on, run_update_stmt_with_physical, Catalog,
+    PreparedPlanCacheEnvironment, StmtContext, DEFAULT_DATABASE,
 };
 
 fn ctx() -> StmtContext {
@@ -81,21 +82,64 @@ fn cached_select_rows(
         )
         .expect("prepared values bind");
     let cache_hit = execution.cache_hit();
-    let (_, rows) = run_prepared_select(&execution, catalog, DEFAULT_DATABASE, &ctx())
-        .expect("prepared statement runs")
-        .expect("schema is unchanged");
+    let (_, rows) = run_prepared_select_for_test(&execution, catalog, DEFAULT_DATABASE, &ctx())
+        .expect("prepared statement runs");
     (cache_hit, rows)
 }
 
-fn parse_update(sql: &str) -> tidb_ast::UpdateStmt {
-    let statement = tidb_parser::parse(sql).expect("UPDATE parses");
-    let tidb_ast::Stmt::Dml(dml) = &statement else {
-        panic!("expected DML statement");
-    };
-    let tidb_ast::DmlStmt::Update(update) = &**dml else {
-        panic!("expected UPDATE statement");
-    };
-    update.as_ref().clone()
+fn execute_prepared_dml(sql: &str, values: &[Datum], catalog: &mut Catalog) -> (bool, u64) {
+    let statement = tidb_parser::parse(sql).expect("prepared DML parses");
+    let plan = Arc::new(
+        build_prepared_dml_plan(&statement, values.len(), catalog, DEFAULT_DATABASE)
+            .expect("prepared DML definition builds")
+            .expect("prepared DML is cacheable"),
+    );
+    let execution = plan
+        .bind(
+            values,
+            catalog,
+            DEFAULT_DATABASE,
+            &PreparedPlanCacheEnvironment::default(),
+        )
+        .expect("prepared DML physical root builds");
+    let cache_hit = execution.cache_hit();
+    let affected = execution
+        .with_plan(|statement, physical| {
+            let tidb_planner::physical::PhysicalPlan::Dml(_) = physical else {
+                panic!("prepared DML cache owns a DML root")
+            };
+            let tidb_ast::Stmt::Dml(dml) = statement else {
+                panic!("prepared DML cache owns a DML statement")
+            };
+            match dml.as_ref() {
+                tidb_ast::DmlStmt::Insert(insert) => run_insert_stmt_with_physical(
+                    insert,
+                    catalog,
+                    DEFAULT_DATABASE,
+                    &ctx(),
+                    Some(physical),
+                )
+                .map(|(affected, _)| affected),
+                tidb_ast::DmlStmt::Update(update) => run_update_stmt_with_physical(
+                    update,
+                    catalog,
+                    DEFAULT_DATABASE,
+                    &ctx(),
+                    Some(physical),
+                ),
+                tidb_ast::DmlStmt::Delete(delete) => run_delete_stmt_with_physical(
+                    delete,
+                    catalog,
+                    DEFAULT_DATABASE,
+                    &ctx(),
+                    Some(physical),
+                ),
+                _ => panic!("prepared DML root owns INSERT, UPDATE, or DELETE"),
+            }
+        })
+        .expect("the execution generation stays pinned")
+        .expect("ordinary DML executor runs");
+    (cache_hit, affected)
 }
 
 /// `pkg/executor/test/passwordtest/password_management_test.go:131::TestPasswordManagement`.
@@ -164,18 +208,14 @@ fn point_get_prepared_plan_uses_the_transaction_read_path() {}
 
 /// `plan_cache_test.go:263::TestPointUpdatePreparedPlan`.
 #[test]
-fn point_update_prepared_plan_reuses_the_fast_update_shape() {
+fn point_update_prepared_plan_reuses_the_ordinary_cached_update_root() {
     let mut catalog = prepared_catalog();
-    let update = parse_update("UPDATE prepared_part19 SET v = v + ? WHERE id = ?");
-    let changed = run_fast_prepared_update(
-        &update,
+    let (cache_hit, changed) = execute_prepared_dml(
+        "UPDATE prepared_part19 SET v = v + ? WHERE id = ?",
         &[Datum::Int(5), Datum::Int(2)],
         &mut catalog,
-        DEFAULT_DATABASE,
-        &ctx(),
-    )
-    .expect("fast prepared UPDATE runs")
-    .expect("point UPDATE shape is supported");
+    );
+    assert!(!cache_hit);
     assert_eq!(changed, 1);
     assert_eq!(
         run_select_on(
@@ -432,24 +472,13 @@ fn prepared_insert_writes_bound_values() {
         &mut catalog,
     )
     .expect("prepared insert table creates");
-    let statement = tidb_parser::parse("INSERT INTO prepared_insert_part19 (id, v) VALUES (?, ?)")
-        .expect("prepared INSERT parses");
-    let tidb_ast::Stmt::Dml(dml) = &statement else {
-        panic!("expected INSERT DML");
-    };
-    let tidb_ast::DmlStmt::Insert(insert) = &**dml else {
-        panic!("expected INSERT statement");
-    };
-    let result = run_fast_prepared_insert(
-        insert,
+    let (cache_hit, affected) = execute_prepared_dml(
+        "INSERT INTO prepared_insert_part19 (id, v) VALUES (?, ?)",
         &[Datum::Bytes(b"k1".to_vec()), Datum::Int(42)],
         &mut catalog,
-        DEFAULT_DATABASE,
-        &ctx(),
-    )
-    .expect("prepared INSERT runs")
-    .expect("INSERT shape is supported");
-    assert_eq!(result.0, 1);
+    );
+    assert!(!cache_hit);
+    assert_eq!(affected, 1);
     assert_eq!(
         run_select_on(
             "SELECT v FROM prepared_insert_part19 WHERE id = 'k1'",
@@ -465,16 +494,12 @@ fn prepared_insert_writes_bound_values() {
 #[test]
 fn prepared_update_rebinds_assignment_and_handle_parameters() {
     let mut catalog = prepared_catalog();
-    let update = parse_update("UPDATE prepared_part19 SET v = v + ? WHERE id = ?");
-    let changed = run_fast_prepared_update(
-        &update,
+    let (cache_hit, changed) = execute_prepared_dml(
+        "UPDATE prepared_part19 SET v = v + ? WHERE id = ?",
         &[Datum::Int(7), Datum::Int(3)],
         &mut catalog,
-        DEFAULT_DATABASE,
-        &ctx(),
-    )
-    .expect("prepared UPDATE runs")
-    .expect("UPDATE shape is supported");
+    );
+    assert!(!cache_hit);
     assert_eq!(changed, 1);
     assert_eq!(
         run_select_on(
@@ -494,8 +519,23 @@ fn prepared_update_recomputes_statement_time_values() {}
 
 /// `prepared_test.go:478::TestPreparedDelete`.
 #[test]
-#[ignore = "go-parity-gap: the executor driver has no fast prepared DELETE carrier; full behavior requires session prepared-statement dispatch"]
-fn prepared_delete_rebinds_the_handle_parameter() {}
+fn prepared_delete_rebinds_the_handle_parameter() {
+    let mut catalog = prepared_catalog();
+    let (cache_hit, changed) = execute_prepared_dml(
+        "DELETE FROM prepared_part19 WHERE id = ?",
+        &[Datum::Int(2)],
+        &mut catalog,
+    );
+    assert!(!cache_hit);
+    assert_eq!(changed, 1);
+    assert!(run_select_on(
+        "SELECT v FROM prepared_part19 WHERE id = 2",
+        &catalog,
+        &ctx(),
+    )
+    .expect("deleted row reads")
+    .is_empty());
+}
 
 /// `prepared_test.go:530::TestPrepareDealloc`.
 #[test]

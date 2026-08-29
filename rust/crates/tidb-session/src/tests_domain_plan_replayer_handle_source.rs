@@ -142,7 +142,10 @@ impl PlanReplayerDumper for MockDumper {
         _is_continues_capture: bool,
         _enable_historical_stats_for_capture: bool,
     ) -> Result<String, PlanReplayerError> {
-        Ok(format!("replayer_key_{}.zip", Utc::now().timestamp_nanos_opt().unwrap()))
+        Ok(format!(
+            "replayer_key_{}.zip",
+            Utc::now().timestamp_nanos_opt().unwrap()
+        ))
     }
 
     fn dump_plan_replayer_info(
@@ -242,8 +245,7 @@ fn plan_replayer_handle_dump_task() {
     let plan_digest = "plan-digest-1";
 
     // register task
-    *exec.state.task_rows.borrow_mut() =
-        vec![(sql_digest.to_owned(), plan_digest.to_owned())];
+    *exec.state.task_rows.borrow_mut() = vec![(sql_digest.to_owned(), plan_digest.to_owned())];
     let handle = PlanReplayerHandle::new(PlanReplayerTaskCollectorHandle::new(exec.clone()), 1);
     handle.collector.collect_plan_replayer_task().unwrap();
     assert_eq!(handle.collector.get_tasks().len(), 1);
@@ -345,7 +347,12 @@ fn plan_replayer_gc() {
         task_status: Arc::clone(&status),
     });
 
-    let results = checker.gc_dump_files(&storage, start_time, chrono::Duration::zero(), chrono::Duration::zero());
+    let results = checker.gc_dump_files(
+        &storage,
+        start_time,
+        chrono::Duration::zero(),
+        chrono::Duration::zero(),
+    );
     assert!(results.iter().all(|r| r.is_ok()), "{results:?}");
 
     // The file is gone (Go: storage.FileExists == false) ...
@@ -381,7 +388,8 @@ fn plan_replayer_gc() {
 #[test]
 fn insert_plan_replayer_status_stores_the_origin_sql_verbatim() {
     let exec = MockExec::default();
-    let origin_sql = "\nSELECT * from tableA where SUBSTRING_INDEX(tableA.columnC, '_', 1) = tableA.columnA\n";
+    let origin_sql =
+        "\nSELECT * from tableA where SUBSTRING_INDEX(tableA.columnC, '_', 1) = tableA.columnA\n";
     let record = PlanReplayerStatusRecord {
         sql_digest: "sql-digest-1".to_owned(),
         plan_digest: "plan-digest-1".to_owned(),

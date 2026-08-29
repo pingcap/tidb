@@ -135,7 +135,12 @@ fn nanos(at: DateTime<Utc>) -> i64 {
 /// Go `replayer.GeneratePlanReplayerFileName`'s three output shapes
 /// (`pkg/util/replayer/replayer.go:77-97`), which the GC's `parseTime` must
 /// accept.
-fn generate_file_name(is_capture: bool, is_continues_capture: bool, hist: bool, time_nanos: i64) -> String {
+fn generate_file_name(
+    is_capture: bool,
+    is_continues_capture: bool,
+    hist: bool,
+    time_nanos: i64,
+) -> String {
     // base64.URLEncoding of 16 random bytes; the character family (including
     // '-' and '_') is what matters to the parser, not the entropy.
     let key = "aB12-_cd==";
@@ -185,10 +190,22 @@ fn plan_replayer_different_gc() {
     for result in handler.gc_dump_files(&storage, now, hour, hour * 24 * 7) {
         result.expect("walk succeeds");
     }
-    assert!(!storage.exists(&file_path1), "capture 175h old is past the 7d cutoff");
-    assert!(storage.exists(&file_path2), "capture 161h old is inside the 7d cutoff");
-    assert!(!storage.exists(&file_path3), "plain file 2h old is past the 1h cutoff");
-    assert!(storage.exists(&file_path4), "plain file just written survives");
+    assert!(
+        !storage.exists(&file_path1),
+        "capture 175h old is past the 7d cutoff"
+    );
+    assert!(
+        storage.exists(&file_path2),
+        "capture 161h old is inside the 7d cutoff"
+    );
+    assert!(
+        !storage.exists(&file_path3),
+        "plain file 2h old is past the 1h cutoff"
+    );
+    assert!(
+        storage.exists(&file_path4),
+        "plain file just written survives"
+    );
 
     for result in handler.gc_dump_files(
         &storage,
@@ -210,7 +227,11 @@ fn dump_gc_file_parse_time() {
 
     let name1 = format!("replayer_single_xxxxxx_{now_nanos}.zip");
     let pt = parse_time(&name1).expect("name1 parses");
-    assert_eq!(pt.timestamp_nanos_opt(), Some(now_nanos), "pt.Equal(nowTime)");
+    assert_eq!(
+        pt.timestamp_nanos_opt(),
+        Some(now_nanos),
+        "pt.Equal(nowTime)"
+    );
 
     // Appending one digit overflows ParseInt's int64, as in Go.
     let name2 = format!("replayer_single_xxxxxx_{now_nanos}1.zip");

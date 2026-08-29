@@ -2437,29 +2437,6 @@ pub(crate) fn detach_cond_and_build_range_for_index<'a>(
     )
 }
 
-/// Go `DetachCondAndBuildRangeForPartition`, the one entry that does NOT
-/// convert its points to sort keys (`detachCondAndBuildRange(..., false,
-/// false)`).
-///
-/// A partition bound is a written VALUE, compared under the partition
-/// column's collation by `ForRangeColumnsPruning`/`ForListColumnPruning`. An
-/// index range is the index's stored form, which for a non-binary collation
-/// is the sort key -- so the two cannot share one representation, and Go
-/// keeps them apart with this flag rather than converting twice.
-pub(crate) fn detach_cond_and_build_range_for_partition<'a>(
-    columns: &[RangeColumn],
-    where_clause: &'a Expr,
-    zone: &tidb_datatype::SessionTimeZone,
-) -> Option<IndexRanges<'a>> {
-    detach_cond_and_build_range_for_index_with_like_default_escape(
-        columns,
-        where_clause,
-        zone,
-        b'\\',
-        false,
-    )
-}
-
 /// The statement-aware form of [`detach_cond_and_build_range_for_index`].
 /// It keeps `LIKE` range derivation aligned with the residual evaluator when
 /// SQL omitted an `ESCAPE` clause.

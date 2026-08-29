@@ -287,6 +287,20 @@ pub enum PlanErrorKind {
     UnknownDatabase(String),
     /// Go `infoschema.ErrTableNotExists`.
     UnknownTable(String),
+    /// Go `plannererrors.ErrWrongNumberOfColumnsInSelect` (1222).
+    WrongNumberOfColumnsInSelect,
+    /// Go `dbterror.ErrViewWrongList` (1353).
+    ViewWrongList,
+    /// Go `plannererrors.ErrCTERecursiveRequiresUnion` (3573).
+    CteRecursiveRequiresUnion(String),
+    /// Go `plannererrors.ErrCTERecursiveRequiresNonRecursiveFirst` (3574).
+    CteRecursiveRequiresNonRecursiveFirst(String),
+    /// Go `plannererrors.ErrCTERecursiveForbidsAggregation` (3575).
+    CteRecursiveForbidsAggregation(String),
+    /// Go `plannererrors.ErrInvalidRequiresSingleReference` (3577).
+    CteRecursiveForbiddenJoinOrder(String),
+    /// Go `plannererrors.ErrNotSupportedYet` (1235).
+    NotSupportedYet(String),
 }
 
 impl PlanError {
@@ -316,6 +330,80 @@ impl PlanError {
         Self {
             message: format!("Table '{table}' doesn't exist"),
             kind: PlanErrorKind::UnknownTable(table),
+        }
+    }
+
+    /// Go `plannererrors.ErrWrongNumberOfColumnsInSelect`.
+    #[must_use]
+    pub fn wrong_number_of_columns_in_select() -> Self {
+        Self {
+            kind: PlanErrorKind::WrongNumberOfColumnsInSelect,
+            message: "The used SELECT statements have a different number of columns".to_owned(),
+        }
+    }
+
+    /// Go `dbterror.ErrViewWrongList`.
+    #[must_use]
+    pub fn view_wrong_list() -> Self {
+        Self {
+            kind: PlanErrorKind::ViewWrongList,
+            message: "View's SELECT and view's field list have different column counts".to_owned(),
+        }
+    }
+
+    /// Go `plannererrors.ErrCTERecursiveRequiresUnion`.
+    #[must_use]
+    pub fn cte_recursive_requires_union(name: impl Into<String>) -> Self {
+        let name = name.into();
+        Self {
+            message: format!("Recursive Common Table Expression '{name}' should contain a UNION"),
+            kind: PlanErrorKind::CteRecursiveRequiresUnion(name),
+        }
+    }
+
+    /// Go `plannererrors.ErrCTERecursiveRequiresNonRecursiveFirst`.
+    #[must_use]
+    pub fn cte_recursive_requires_non_recursive_first(name: impl Into<String>) -> Self {
+        let name = name.into();
+        Self {
+            message: format!(
+                "Recursive Common Table Expression '{name}' should have one or more non-recursive query blocks followed by one or more recursive ones"
+            ),
+            kind: PlanErrorKind::CteRecursiveRequiresNonRecursiveFirst(name),
+        }
+    }
+
+    /// Go `plannererrors.ErrCTERecursiveForbidsAggregation`.
+    #[must_use]
+    pub fn cte_recursive_forbids_aggregation(name: impl Into<String>) -> Self {
+        let name = name.into();
+        Self {
+            message: format!(
+                "Recursive Common Table Expression '{name}' can contain neither aggregation nor window functions in recursive query block"
+            ),
+            kind: PlanErrorKind::CteRecursiveForbidsAggregation(name),
+        }
+    }
+
+    /// Go `plannererrors.ErrInvalidRequiresSingleReference`.
+    #[must_use]
+    pub fn cte_recursive_forbidden_join_order(name: impl Into<String>) -> Self {
+        let name = name.into();
+        Self {
+            message: format!(
+                "In recursive query block of Recursive Common Table Expression '{name}', the recursive table must be referenced only once, and not in any subquery"
+            ),
+            kind: PlanErrorKind::CteRecursiveForbiddenJoinOrder(name),
+        }
+    }
+
+    /// Go `plannererrors.ErrNotSupportedYet`.
+    #[must_use]
+    pub fn not_supported_yet(feature: impl Into<String>) -> Self {
+        let feature = feature.into();
+        Self {
+            message: format!("This version of TiDB doesn't yet support '{feature}'"),
+            kind: PlanErrorKind::NotSupportedYet(feature),
         }
     }
 

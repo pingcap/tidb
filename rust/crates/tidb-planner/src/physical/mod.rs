@@ -41,6 +41,7 @@
 //! * `MemoryUsage` returns a source-shaped estimate over the Rust layout; see
 //!   [`crate::plan_base`].
 
+use tidb_expr::expression::Expression;
 use tidb_expr::expression::{Column, CorrelatedColumn};
 use tidb_expr::schema::Schema;
 
@@ -338,12 +339,21 @@ pub struct PhysicalHashJoin {
     pub left_join_keys: Vec<tidb_expr::column::Column>,
     /// Go `BasePhysicalJoin.RightJoinKeys`.
     pub right_join_keys: Vec<tidb_expr::column::Column>,
+    /// Go `PhysicalHashJoin.EqualConditions`, retained as expressions in
+    /// addition to the derived hash keys because Apply evaluates them against
+    /// the merged child schema.
+    pub equal_conditions: Vec<tidb_expr::scalar_function::ScalarFunction>,
+    /// Go `PhysicalHashJoin.NAEqualConditions`.
+    pub na_equal_conditions: Vec<tidb_expr::scalar_function::ScalarFunction>,
     /// Go `BasePhysicalJoin.LeftConditions`.
     pub left_conditions: Vec<tidb_expr::expression::Expression>,
     /// Go `BasePhysicalJoin.RightConditions`.
     pub right_conditions: Vec<tidb_expr::expression::Expression>,
     /// Go `BasePhysicalJoin.OtherConditions`.
     pub other_conditions: Vec<tidb_expr::expression::Expression>,
+    /// Go `BasePhysicalJoin.DefaultValues`, used to pad the inner side of an
+    /// outer join when the planner supplied non-NULL defaults.
+    pub default_values: Vec<tidb_datatype::Datum>,
 }
 
 /// Go `physicalop.PhysicalMergeJoin`.
@@ -363,6 +373,9 @@ pub struct PhysicalMergeJoin {
     pub right_conditions: Vec<tidb_expr::expression::Expression>,
     /// Go `BasePhysicalJoin.OtherConditions`.
     pub other_conditions: Vec<tidb_expr::expression::Expression>,
+    /// Go `BasePhysicalJoin.DefaultValues`, used to pad the inner side of an
+    /// outer join when the planner supplied non-NULL defaults.
+    pub default_values: Vec<tidb_datatype::Datum>,
     /// Go `PhysicalMergeJoin.Desc`.
     pub desc: bool,
 }
@@ -377,6 +390,7 @@ impl Default for PhysicalMergeJoin {
             left_conditions: Vec::new(),
             right_conditions: Vec::new(),
             other_conditions: Vec::new(),
+            default_values: Vec::new(),
             desc: false,
         }
     }
@@ -389,6 +403,36 @@ impl Default for PhysicalMergeJoin {
 /// template and the resulting ranges must also be copied into the inner
 /// reader's pushed-down scan.  Keeping that state on the physical node makes
 /// cached replay independent of another optimizer pass.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IndexJoinCompareOp {
+    /// `ge`.
+    Ge,
+    /// `gt`.
+    Gt,
+    /// `lt`.
+    Lt,
+    /// `le`.
+    Le,
+}
+
+/// Go `ColWithCmpFuncManager`, retained on `PhysicalIndexJoin` after its
+/// inner access path is completed.
+#[derive(Clone, Debug)]
+pub struct IndexJoinCompareFilters {
+    /// Go `TargetCol`.
+    pub target_col: tidb_expr::column::Column,
+    /// The target column's offset in the selected index/common-handle key.
+    pub target_index_offset: usize,
+    /// Go `ColLength`.
+    pub col_length: i64,
+    /// Go `OpType`, normalized to `target_col op arg`.
+    pub ops: Vec<IndexJoinCompareOp>,
+    /// Go `opArg`, evaluated against one outer row per probe.
+    pub args: Vec<tidb_expr::expression::Expression>,
+}
+
+/// Go `PhysicalIndexJoin`, including the completed inner-path feedback used
+/// by both fresh execution and cached-plan rebuilds.
 #[derive(Clone, Debug)]
 pub struct PhysicalIndexJoin {
     /// The shared physical base and its two ordinary children.
@@ -414,12 +458,38 @@ pub struct PhysicalIndexJoin {
     pub left_join_keys: Vec<tidb_expr::column::Column>,
     /// Go `BasePhysicalJoin.RightJoinKeys`.
     pub right_join_keys: Vec<tidb_expr::column::Column>,
+    /// Go `BasePhysicalJoin.OuterJoinKeys`, narrowed by
+    /// `completePhysicalIndexJoin` to keys admitted by the chosen inner path.
+    pub outer_join_keys: Vec<tidb_expr::column::Column>,
+    /// Go `BasePhysicalJoin.InnerJoinKeys`, narrowed with
+    /// [`Self::outer_join_keys`].
+    pub inner_join_keys: Vec<tidb_expr::column::Column>,
+    /// Go `BasePhysicalJoin.IsNullEQ`, aligned with the completed lookup keys.
+    pub is_null_eq: Vec<bool>,
     /// Go `BasePhysicalJoin.LeftConditions`.
     pub left_conditions: Vec<tidb_expr::expression::Expression>,
     /// Go `BasePhysicalJoin.RightConditions`.
     pub right_conditions: Vec<tidb_expr::expression::Expression>,
+    /// Go `BasePhysicalJoin.OtherConditions`, including equalities the chosen
+    /// lookup access cannot use.
+    pub other_conditions: Vec<tidb_expr::expression::Expression>,
+    /// Go `BasePhysicalJoin.DefaultValues`.
+    pub default_values: Vec<tidb_datatype::Datum>,
+    /// Go `PhysicalIndexJoin.OuterHashKeys`.
+    pub outer_hash_keys: Vec<tidb_expr::column::Column>,
+    /// Go `PhysicalIndexJoin.InnerHashKeys`.
+    pub inner_hash_keys: Vec<tidb_expr::column::Column>,
+    /// Go's static-enumeration `EqualConditions`; consumed and cleared by
+    /// `completePhysicalIndexJoin` after the inner task returns feedback.
+    pub equal_conditions: Vec<tidb_expr::scalar_function::ScalarFunction>,
     /// The current mutable ranges owned by the index join.
     pub ranges: crate::ranger::types::Ranges,
+    /// Go `PhysicalIndexJoin.KeyOff2IdxOff`.
+    pub key_off2_idx_off: Vec<i64>,
+    /// Go `PhysicalIndexJoin.IdxColLens`.
+    pub idx_col_lens: Vec<i64>,
+    /// Go `PhysicalIndexJoin.CompareFilters`.
+    pub compare_filters: Option<IndexJoinCompareFilters>,
     /// Parameter-dependent range metadata retained for cache rebuilding.
     pub range_rebuild: Option<crate::physical_plan_cache::PointRangeRebuild>,
 }
@@ -436,9 +506,20 @@ impl Default for PhysicalIndexJoin {
             inner_access_index_id: None,
             left_join_keys: Vec::new(),
             right_join_keys: Vec::new(),
+            outer_join_keys: Vec::new(),
+            inner_join_keys: Vec::new(),
+            is_null_eq: Vec::new(),
             left_conditions: Vec::new(),
             right_conditions: Vec::new(),
+            other_conditions: Vec::new(),
+            default_values: Vec::new(),
+            outer_hash_keys: Vec::new(),
+            inner_hash_keys: Vec::new(),
+            equal_conditions: Vec::new(),
             ranges: crate::ranger::types::Ranges::default(),
+            key_off2_idx_off: Vec::new(),
+            idx_col_lens: Vec::new(),
+            compare_filters: None,
             range_rebuild: None,
         }
     }
@@ -454,9 +535,12 @@ impl Default for PhysicalHashJoin {
             use_outer_to_build: false,
             left_join_keys: Vec::new(),
             right_join_keys: Vec::new(),
+            equal_conditions: Vec::new(),
+            na_equal_conditions: Vec::new(),
             left_conditions: Vec::new(),
             right_conditions: Vec::new(),
             other_conditions: Vec::new(),
+            default_values: Vec::new(),
         }
     }
 }
@@ -466,11 +550,10 @@ impl Default for PhysicalHashJoin {
 pub struct PhysicalSort {
     /// The shared physical base.
     pub base: BasePhysicalPlan,
-    /// Go `ByItems` (`util.ByItems{Expr, Desc}`). `EnforceProperty` builds
-    /// each entry from a `property.SortItem`'s column and direction, and a
-    /// column's identity is its `UniqueID` (`EqualColumn`), so the item is
-    /// carried here as exactly that pair.
-    pub by_items: Vec<crate::physical_property::SortItem>,
+    /// Go `ByItems` (`util.ByItems{Expr, Desc}`). PhysicalSort retains the
+    /// complete expressions; only NominalSort narrows them to a physical
+    /// column-order property.
+    pub by_items: Vec<tidb_expr::aggregation::ByItems>,
     /// Go `IsPartialSort`: sort within one partition's data rather than
     /// globally; `EnforceProperty` sets it from
     /// `prop.IsSortItemAllForPartition()`.
@@ -483,8 +566,8 @@ impl PhysicalSort {
     #[must_use]
     pub fn memory_usage(&self) -> i64 {
         self.base.base.memory_usage()
-            + std::mem::size_of::<Vec<crate::physical_property::SortItem>>() as i64
-            + (self.by_items.capacity() * std::mem::size_of::<crate::physical_property::SortItem>())
+            + std::mem::size_of::<Vec<tidb_expr::aggregation::ByItems>>() as i64
+            + (self.by_items.capacity() * std::mem::size_of::<tidb_expr::aggregation::ByItems>())
                 as i64
             + std::mem::size_of::<bool>() as i64
     }
@@ -523,30 +606,25 @@ pub fn exhaust_physical_plans_4_logical_sort(
         .map(|stats| stats.scale_by_expect_cnt(prop.expected_cnt, skew_ratio));
     let mut plans = Vec::with_capacity(2);
 
-    // PhysicalSort can represent the exact item list in this enum when every
-    // item is a column. Scalar ORDER BY expressions remain fail-closed until
-    // PhysicalSort carries expression-valued ByItems instead of SortItems.
-    if let Some(items) = &sort_items {
-        let mut base = BasePhysicalPlan::new(
-            allocator,
-            crate::logical::LogicalSort::TYPE,
-            sort.base.base.query_block_offset(),
-        );
-        base.base.set_stats(stats.clone());
-        base.base.set_schema(sort.base.base.schema().cloned());
-        base.set_children_req_props(vec![Some(PhysicalProperty {
-            task_tp: prop.task_tp,
-            expected_cnt: f64::MAX,
-            cte_producer_status: prop.cte_producer_status,
-            no_cop_push_down: prop.no_cop_push_down,
-            ..PhysicalProperty::default()
-        })]);
-        plans.push(PhysicalPlan::Sort(PhysicalSort {
-            base,
-            by_items: items.clone(),
-            is_partial_sort: false,
-        }));
-    }
+    let mut base = BasePhysicalPlan::new(
+        allocator,
+        crate::logical::LogicalSort::TYPE,
+        sort.base.base.query_block_offset(),
+    );
+    base.base.set_stats(stats.clone());
+    base.base.set_schema(sort.base.base.schema().cloned());
+    base.set_children_req_props(vec![Some(PhysicalProperty {
+        task_tp: prop.task_tp,
+        expected_cnt: f64::MAX,
+        cte_producer_status: prop.cte_producer_status,
+        no_cop_push_down: prop.no_cop_push_down,
+        ..PhysicalProperty::default()
+    })]);
+    plans.push(PhysicalPlan::Sort(PhysicalSort {
+        base,
+        by_items: sort.by_items.clone(),
+        is_partial_sort: false,
+    }));
 
     if let Some(items) = sort_items {
         let mut base = BasePhysicalPlan::new(
@@ -720,7 +798,7 @@ pub fn exhaust_physical_plans_4_logical_limit(
         );
         base.base.set_stats(p.base.base.stats_info().cloned());
         base.base.set_schema(p.base.base.schema().cloned());
-        base.set_children_req_props(vec![Some(result_prop)]);
+        base.set_children_req_props(vec![Some(result_prop.clone())]);
         ret.push(PhysicalPlan::Limit(PhysicalLimit {
             base,
             partition_by: p.partition_by.clone(),
@@ -1019,6 +1097,107 @@ pub fn exhaust_physical_plans_4_logical_max_one_row(
         ..PhysicalProperty::default()
     })]);
     vec![PhysicalPlan::MaxOneRow(PhysicalMaxOneRow { base })]
+}
+
+/// Go `physicalop.PhysicalCTE`: a CTE reader plus the shared producer plans
+/// used to populate its statement-local storage. Seed and recursive plans are
+/// owned fields rather than ordinary children, matching Go's tree shape and
+/// cache-clone/rebuild traversal.
+#[derive(Clone, Debug)]
+pub struct PhysicalCTE {
+    /// The shared physical base.
+    pub base: BasePhysicalPlan,
+    /// Go `SeedPlan`.
+    pub seed_plan: Box<PhysicalPlan>,
+    /// Go `RecurPlan`.
+    pub recursive_plan: Option<Box<PhysicalPlan>>,
+    /// Go `CTE.IDForStorage`.
+    pub id_for_storage: i32,
+    /// Go `CTE.IsDistinct`.
+    pub is_distinct: bool,
+    /// Go `CTE.HasLimit`.
+    pub has_limit: bool,
+    /// Go `CTE.LimitBeg`.
+    pub limit_beg: u64,
+    /// Go `CTE.LimitEnd`.
+    pub limit_end: u64,
+    /// Go `CteAsName`.
+    pub cte_as_name: String,
+    /// Go `CteName`.
+    pub cte_name: String,
+}
+
+impl PhysicalCTE {
+    /// Go `PhysicalCTE.OperatorInfo`.
+    #[must_use]
+    pub fn operator_info(&self) -> String {
+        format!("data:CTE_{}", self.id_for_storage)
+    }
+}
+
+/// Go `findBestTask4LogicalCTE` (`physical_cte.go`): the physical seed and
+/// recursive plans were selected while `LogicalCTE.DeriveStats` optimized the
+/// CTE class. This override therefore wraps those already-selected plans in a
+/// root `PhysicalCTE`; it does not enumerate or rebuild the producer here.
+///
+/// As in Go, an index-join runtime property is rejected unconditionally, a
+/// non-root requirement is invalid in this TiKV-only implementation, and an
+/// order is accepted only when the caller permits a Sort enforcer.
+pub fn find_best_task_4_logical_cte(
+    p: &crate::logical::LogicalCTE,
+    prop: &PhysicalProperty,
+    allocator: &PlanIdAllocator,
+) -> Result<Task, PlanError> {
+    if prop.index_join_prop.is_some() || prop.task_tp != crate::task_type::TaskType::Root {
+        return Ok(Task::invalid_task());
+    }
+    if !prop.is_sort_item_empty() && !prop.can_add_enforcer {
+        return Ok(Task::invalid_task());
+    }
+    let class = p
+        .cte
+        .as_ref()
+        .ok_or_else(|| PlanError::internal("findBestTask4LogicalCTE: CTEClass is nil"))?
+        .borrow();
+    let seed_plan = class
+        .seed_part_physical_plan
+        .as_deref()
+        .ok_or_else(|| PlanError::internal("findBestTask4LogicalCTE: seed physical plan is nil"))?;
+    let mut base = BasePhysicalPlan::new(
+        allocator,
+        crate::logical::LogicalCTE::TYPE,
+        p.base.base.query_block_offset(),
+    );
+    base.base.set_stats(p.base.base.stats_info().cloned());
+    base.base.set_schema(p.base.base.schema().cloned());
+    base.base
+        .set_output_names(p.base.base.output_names().to_vec());
+    let physical = PhysicalPlan::CTE(PhysicalCTE {
+        base,
+        seed_plan: Box::new(seed_plan.deep_clone()),
+        recursive_plan: class
+            .recursive_part_physical_plan
+            .as_deref()
+            .map(PhysicalPlan::deep_clone)
+            .map(Box::new),
+        id_for_storage: class.id_for_storage,
+        is_distinct: class.is_distinct,
+        has_limit: class.has_limit,
+        limit_beg: class.limit_beg,
+        limit_end: class.limit_end,
+        cte_as_name: p.cte_as_name.clone(),
+        cte_name: p.cte_name.clone(),
+    });
+    drop(class);
+
+    let mut root = RootTask::default();
+    root.set_plan(physical);
+    let task = Task::Root(root);
+    if prop.can_add_enforcer {
+        crate::enforce::enforce_property(prop, task, allocator)
+    } else {
+        Ok(task)
+    }
 }
 
 /// Go `physicalop.PhysicalCTETable` (`physical_cte_table.go`, whole file):
@@ -1378,11 +1557,9 @@ pub fn exhaust_physical_plans_4_logical_sequence(
 /// override: an `Apply` variant simply is not a join variant, which is the
 /// same fact stated structurally. `GetCost`/ver1/ver2 delegate to
 /// core-cost bodies (`utilfuncp`) and follow the enum's cost narrowings;
-/// `Attach2Task4PhysicalApply` (core/task.go) refuses by name in
-/// [`crate::task::attach2_task`]. Go's `ExtractCorrelatedCols` override —
-/// the hash join's extraction minus columns the OUTER child's schema
-/// contains — narrows with the enum's condition-less hash join, whose own
-/// extraction is already the empty base body.
+/// `Attach2Task4PhysicalApply` lives in [`crate::task::attach2_task`]. Go's
+/// `ExtractCorrelatedCols` override is reproduced by [`PhysicalPlan`]: it is
+/// the hash join's extraction minus columns supplied by the outer child.
 #[derive(Clone, Debug, Default)]
 pub struct PhysicalApply {
     /// Go's embedded `PhysicalHashJoin`.
@@ -1814,6 +1991,10 @@ pub struct PhysicalDmlRoot {
     pub go_operator: String,
     /// The DML source plan, when present.
     pub select_plan: Option<Box<PhysicalPlan>>,
+    /// Go `Update.OrderedList` expressions whose scalar subqueries inserted
+    /// Apply operators into `select_plan`. Non-subquery SET expressions are
+    /// evaluated by the ordinary Update executor and remain `None` here.
+    pub update_expressions: Vec<Option<Expression>>,
 }
 
 /// Go `physicalop.PushedDownLimit`.
@@ -1899,7 +2080,7 @@ pub fn get_phys_limits(
         );
         base.base.set_stats(topn.base.base.stats_info().cloned());
         base.base.set_schema(topn.base.base.schema().cloned());
-        base.set_children_req_props(vec![Some(result_prop)]);
+        base.set_children_req_props(vec![Some(result_prop.clone())]);
         ret.push(PhysicalPlan::Limit(PhysicalLimit {
             base,
             partition_by: topn.partition_by.clone(),
@@ -1945,13 +2126,34 @@ pub fn get_phys_topn(
     topn: &crate::logical::LogicalTopN,
     prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
+    mpp_allowed: bool,
 ) -> Vec<PhysicalPlan> {
-    let all_task_types = [
+    let mut all_task_types = vec![
         TaskType::CopSingleRead,
         TaskType::CopMultiRead,
         TaskType::Root,
     ];
-    let mut ret = Vec::with_capacity(all_task_types.len());
+    if mpp_allowed {
+        all_task_types.push(TaskType::Mpp);
+    }
+    let advisory_sort_items = matches!(
+        topn.base.children().first(),
+        Some(crate::logical::LogicalPlan::DataSource(_))
+    )
+    .then(|| {
+        topn.by_items
+            .iter()
+            .map(|item| match &item.expr {
+                tidb_expr::expression::Expression::Column(column) => Some(
+                    crate::physical_property::SortItem::new(column.unique_id, item.desc),
+                ),
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>()
+    })
+    .flatten()
+    .filter(|items| !items.is_empty());
+    let mut ret = Vec::with_capacity(all_task_types.len() + 1);
     for tp in all_task_types {
         let result_prop = PhysicalProperty {
             task_tp: tp,
@@ -1967,7 +2169,7 @@ pub fn get_phys_topn(
         );
         base.base.set_stats(topn.base.base.stats_info().cloned());
         base.base.set_schema(topn.base.base.schema().cloned());
-        base.set_children_req_props(vec![Some(result_prop)]);
+        base.set_children_req_props(vec![Some(result_prop.clone())]);
         ret.push(PhysicalPlan::TopN(PhysicalTopN {
             base,
             by_items: topn.by_items.clone(),
@@ -1977,6 +2179,29 @@ pub fn get_phys_topn(
             prefix_col: None,
             prefix_len: 0,
         }));
+        if tp == TaskType::CopMultiRead {
+            if let Some(advisory_sort_items) = &advisory_sort_items {
+                let mut advisory_prop = result_prop.clone_essential_fields();
+                advisory_prop.advisory_sort_items = advisory_sort_items.clone();
+                let mut base = BasePhysicalPlan::new(
+                    allocator,
+                    crate::logical::LogicalTopN::TYPE,
+                    topn.base.base.query_block_offset(),
+                );
+                base.base.set_stats(topn.base.base.stats_info().cloned());
+                base.base.set_schema(topn.base.base.schema().cloned());
+                base.set_children_req_props(vec![Some(advisory_prop)]);
+                ret.push(PhysicalPlan::TopN(PhysicalTopN {
+                    base,
+                    by_items: topn.by_items.clone(),
+                    partition_by: topn.partition_by.clone(),
+                    offset: topn.offset,
+                    count: topn.count,
+                    prefix_col: None,
+                    prefix_len: 0,
+                }));
+            }
+        }
     }
     ret
 }
@@ -2234,6 +2459,8 @@ pub enum PhysicalPlan {
     MaxOneRow(PhysicalMaxOneRow),
     /// Go `physicalop.NominalSort`.
     NominalSort(NominalSort),
+    /// Go `physicalop.PhysicalCTE`.
+    CTE(PhysicalCTE),
     /// Go `physicalop.PhysicalCTETable`.
     CTETable(PhysicalCTETable),
     /// Go `physicalop.PhysicalShow`.
@@ -2288,6 +2515,7 @@ impl PhysicalPlan {
             Self::TableDual(op) => &op.base,
             Self::MaxOneRow(op) => &op.base,
             Self::NominalSort(op) => &op.base,
+            Self::CTE(op) => &op.base,
             Self::CTETable(op) => &op.base,
             Self::Show(op) => &op.base,
             Self::ShowDDLJobs(op) => &op.base,
@@ -2323,6 +2551,7 @@ impl PhysicalPlan {
             Self::TableDual(op) => &mut op.base,
             Self::MaxOneRow(op) => &mut op.base,
             Self::NominalSort(op) => &mut op.base,
+            Self::CTE(op) => &mut op.base,
             Self::CTETable(op) => &mut op.base,
             Self::Show(op) => &mut op.base,
             Self::ShowDDLJobs(op) => &mut op.base,
@@ -2502,10 +2731,114 @@ impl PhysicalPlan {
         self.stats_info().map(StatsInfo::row_count)
     }
 
-    /// Go `ExtractCorrelatedCols()` (`<6th>`). The base body returns `nil`.
+    /// Go `ExtractCorrelatedCols()` (`<6th>`), including every physical
+    /// operator override in the retained enum. Reader overrides recurse into
+    /// their pushed-down plan fields because those plans are not ordinary
+    /// children in either Go or Rust.
     #[must_use]
     pub fn extract_correlated_cols(&self) -> Vec<CorrelatedColumn> {
-        Vec::new()
+        fn expressions<'a>(
+            result: &mut Vec<CorrelatedColumn>,
+            values: impl IntoIterator<Item = &'a tidb_expr::expression::Expression>,
+        ) {
+            for expression in values {
+                result.extend(tidb_expr::simple_expr::extract_cor_columns(expression));
+            }
+        }
+
+        fn hash_join_conditions(join: &PhysicalHashJoin, result: &mut Vec<CorrelatedColumn>) {
+            for condition in join
+                .equal_conditions
+                .iter()
+                .chain(&join.na_equal_conditions)
+            {
+                result.extend(tidb_expr::simple_expr::extract_cor_columns(
+                    &tidb_expr::expression::Expression::ScalarFunction(condition.clone()),
+                ));
+            }
+            expressions(result, &join.left_conditions);
+            expressions(result, &join.right_conditions);
+            expressions(result, &join.other_conditions);
+        }
+
+        fn aggregation_conditions(
+            functions: &[tidb_expr::aggregation::AggFuncDesc],
+            group_by: &[tidb_expr::expression::Expression],
+            result: &mut Vec<CorrelatedColumn>,
+        ) {
+            expressions(result, group_by);
+            for function in functions {
+                expressions(result, function.args());
+            }
+        }
+
+        let mut result = Vec::new();
+        match self {
+            Self::Selection(op) => expressions(&mut result, &op.conditions),
+            Self::Projection(op) => expressions(&mut result, &op.exprs),
+            Self::HashJoin(op) => hash_join_conditions(op, &mut result),
+            Self::MergeJoin(op) => {
+                expressions(&mut result, &op.left_conditions);
+                expressions(&mut result, &op.right_conditions);
+                expressions(&mut result, &op.other_conditions);
+            }
+            Self::IndexJoin(op) => {
+                expressions(&mut result, &op.left_conditions);
+                expressions(&mut result, &op.right_conditions);
+            }
+            Self::Sort(op) => expressions(&mut result, op.by_items.iter().map(|item| &item.expr)),
+            Self::Apply(op) => {
+                hash_join_conditions(&op.hash_join, &mut result);
+                if let Some(outer_schema) = self.children().first().and_then(Self::schema) {
+                    result.retain(|column| !outer_schema.contains(&column.column));
+                }
+            }
+            Self::TableScan(op) => {
+                if let Some(rebuild) = &op.range_rebuild {
+                    expressions(&mut result, &rebuild.access_conditions);
+                }
+            }
+            Self::IndexScan(op) => {
+                if let Some(rebuild) = &op.range_rebuild {
+                    expressions(&mut result, &rebuild.access_conditions);
+                }
+            }
+            Self::TableReader(op) => {
+                if let Some(plan) = op.table_plan.as_deref() {
+                    result.extend(extract_correlated_cols_4_physical_plan(plan));
+                }
+            }
+            Self::IndexReader(op) => {
+                if let Some(plan) = op.index_plan.as_deref() {
+                    result.extend(extract_correlated_cols_4_physical_plan(plan));
+                }
+            }
+            Self::IndexLookUpReader(op) => {
+                if let Some(plan) = op.table_plan.as_deref() {
+                    result.extend(extract_correlated_cols_4_physical_plan(plan));
+                }
+                if let Some(plan) = op.index_plan.as_deref() {
+                    result.extend(extract_correlated_cols_4_physical_plan(plan));
+                }
+            }
+            Self::IndexMergeReader(op) => {
+                if let Some(plan) = op.table_plan.as_deref() {
+                    result.extend(extract_correlated_cols_4_physical_plan(plan));
+                }
+                for plan in &op.partial_plans_raw {
+                    result.extend(extract_correlated_cols_4_physical_plan(plan));
+                }
+            }
+            Self::TopN(op) => expressions(&mut result, op.by_items.iter().map(|item| &item.expr)),
+            Self::HashAgg(op) => {
+                aggregation_conditions(&op.agg_funcs, &op.group_by_items, &mut result);
+            }
+            Self::StreamAgg(op) => {
+                aggregation_conditions(&op.agg_funcs, &op.group_by_items, &mut result);
+            }
+            _ => {}
+        }
+        result
     }
 
     /// Go `Children()` (`<7th>`).
@@ -2666,9 +2999,12 @@ impl PhysicalPlan {
                 use_outer_to_build: op.use_outer_to_build,
                 left_join_keys: op.left_join_keys.clone(),
                 right_join_keys: op.right_join_keys.clone(),
+                equal_conditions: op.equal_conditions.clone(),
+                na_equal_conditions: op.na_equal_conditions.clone(),
                 left_conditions: op.left_conditions.clone(),
                 right_conditions: op.right_conditions.clone(),
                 other_conditions: op.other_conditions.clone(),
+                default_values: op.default_values.clone(),
             }),
             Self::MergeJoin(op) => Self::MergeJoin(PhysicalMergeJoin {
                 base: base_of(&op.base),
@@ -2678,6 +3014,7 @@ impl PhysicalPlan {
                 left_conditions: op.left_conditions.clone(),
                 right_conditions: op.right_conditions.clone(),
                 other_conditions: op.other_conditions.clone(),
+                default_values: op.default_values.clone(),
                 desc: op.desc,
             }),
             Self::IndexJoin(op) => Self::IndexJoin(PhysicalIndexJoin {
@@ -2690,9 +3027,20 @@ impl PhysicalPlan {
                 inner_access_index_id: op.inner_access_index_id,
                 left_join_keys: op.left_join_keys.clone(),
                 right_join_keys: op.right_join_keys.clone(),
+                outer_join_keys: op.outer_join_keys.clone(),
+                inner_join_keys: op.inner_join_keys.clone(),
+                is_null_eq: op.is_null_eq.clone(),
                 left_conditions: op.left_conditions.clone(),
                 right_conditions: op.right_conditions.clone(),
+                other_conditions: op.other_conditions.clone(),
+                default_values: op.default_values.clone(),
+                outer_hash_keys: op.outer_hash_keys.clone(),
+                inner_hash_keys: op.inner_hash_keys.clone(),
+                equal_conditions: op.equal_conditions.clone(),
                 ranges: op.ranges.clone(),
+                key_off2_idx_off: op.key_off2_idx_off.clone(),
+                idx_col_lens: op.idx_col_lens.clone(),
+                compare_filters: op.compare_filters.clone(),
                 range_rebuild: op.range_rebuild.clone(),
             }),
             Self::Sort(op) => Self::Sort(PhysicalSort {
@@ -2734,6 +3082,22 @@ impl PhysicalPlan {
                 by_items: op.by_items.clone(),
                 only_column: op.only_column,
             }),
+            Self::CTE(op) => Self::CTE(PhysicalCTE {
+                base: base_of(&op.base),
+                seed_plan: Box::new(op.seed_plan.deep_clone()),
+                recursive_plan: op
+                    .recursive_plan
+                    .as_deref()
+                    .map(PhysicalPlan::deep_clone)
+                    .map(Box::new),
+                id_for_storage: op.id_for_storage,
+                is_distinct: op.is_distinct,
+                has_limit: op.has_limit,
+                limit_beg: op.limit_beg,
+                limit_end: op.limit_end,
+                cte_as_name: op.cte_as_name.clone(),
+                cte_name: op.cte_name.clone(),
+            }),
             Self::CTETable(op) => Self::CTETable(PhysicalCTETable {
                 base: base_of(&op.base),
                 id_for_storage: op.id_for_storage,
@@ -2770,9 +3134,12 @@ impl PhysicalPlan {
                     use_outer_to_build: op.hash_join.use_outer_to_build,
                     left_join_keys: op.hash_join.left_join_keys.clone(),
                     right_join_keys: op.hash_join.right_join_keys.clone(),
+                    equal_conditions: op.hash_join.equal_conditions.clone(),
+                    na_equal_conditions: op.hash_join.na_equal_conditions.clone(),
                     left_conditions: op.hash_join.left_conditions.clone(),
                     right_conditions: op.hash_join.right_conditions.clone(),
                     other_conditions: op.hash_join.other_conditions.clone(),
+                    default_values: op.hash_join.default_values.clone(),
                 },
                 can_use_cache: op.can_use_cache,
                 concurrency: op.concurrency,
@@ -2844,6 +3211,7 @@ impl PhysicalPlan {
                 base: base_of(&op.base),
                 go_operator: op.go_operator.clone(),
                 select_plan: op.select_plan.clone(),
+                update_expressions: op.update_expressions.clone(),
             }),
             Self::TopN(op) => Self::TopN(PhysicalTopN {
                 base: base_of(&op.base),
@@ -2928,6 +3296,240 @@ impl PhysicalPlan {
             }
         }
     }
+}
+
+/// Go `coreusage.ExtractCorrelatedCols4PhysicalPlan`: collect the current
+/// operator's correlated expressions and then every ordinary child. Reader
+/// operators recurse into their pushed-down plan fields in their own
+/// [`PhysicalPlan::extract_correlated_cols`] override.
+#[must_use]
+pub fn extract_correlated_cols_4_physical_plan(plan: &PhysicalPlan) -> Vec<CorrelatedColumn> {
+    let mut result = plan.extract_correlated_cols();
+    for child in plan.children() {
+        result.extend(extract_correlated_cols_4_physical_plan(child));
+    }
+    result
+}
+
+fn visit_expression_correlated_columns_mut(
+    expression: &mut tidb_expr::expression::Expression,
+    visitor: &mut impl FnMut(&mut CorrelatedColumn),
+) {
+    match expression {
+        tidb_expr::expression::Expression::CorrelatedColumn(column) => visitor(column),
+        tidb_expr::expression::Expression::ScalarFunction(function) => {
+            for argument in &mut function.args {
+                visit_expression_correlated_columns_mut(argument, visitor);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn visit_physical_correlated_columns_mut(
+    plan: &mut PhysicalPlan,
+    visitor: &mut impl FnMut(&mut CorrelatedColumn),
+) {
+    fn expressions(
+        values: &mut [tidb_expr::expression::Expression],
+        visitor: &mut impl FnMut(&mut CorrelatedColumn),
+    ) {
+        for expression in values {
+            visit_expression_correlated_columns_mut(expression, visitor);
+        }
+    }
+
+    fn scalar_functions(
+        values: &mut [tidb_expr::scalar_function::ScalarFunction],
+        visitor: &mut impl FnMut(&mut CorrelatedColumn),
+    ) {
+        for function in values {
+            for argument in &mut function.args {
+                visit_expression_correlated_columns_mut(argument, visitor);
+            }
+        }
+    }
+
+    fn hash_join(join: &mut PhysicalHashJoin, visitor: &mut impl FnMut(&mut CorrelatedColumn)) {
+        scalar_functions(&mut join.equal_conditions, visitor);
+        scalar_functions(&mut join.na_equal_conditions, visitor);
+        expressions(&mut join.left_conditions, visitor);
+        expressions(&mut join.right_conditions, visitor);
+        expressions(&mut join.other_conditions, visitor);
+    }
+
+    fn aggregation(
+        functions: &mut [tidb_expr::aggregation::AggFuncDesc],
+        group_by: &mut [tidb_expr::expression::Expression],
+        visitor: &mut impl FnMut(&mut CorrelatedColumn),
+    ) {
+        expressions(group_by, visitor);
+        for function in functions {
+            expressions(&mut function.base.args, visitor);
+        }
+    }
+
+    match plan {
+        PhysicalPlan::Selection(op) => expressions(&mut op.conditions, visitor),
+        PhysicalPlan::Projection(op) => expressions(&mut op.exprs, visitor),
+        PhysicalPlan::HashJoin(op) => hash_join(op, visitor),
+        PhysicalPlan::MergeJoin(op) => {
+            expressions(&mut op.left_conditions, visitor);
+            expressions(&mut op.right_conditions, visitor);
+            expressions(&mut op.other_conditions, visitor);
+        }
+        PhysicalPlan::IndexJoin(op) => {
+            expressions(&mut op.left_conditions, visitor);
+            expressions(&mut op.right_conditions, visitor);
+        }
+        PhysicalPlan::Sort(op) => {
+            for item in &mut op.by_items {
+                visit_expression_correlated_columns_mut(&mut item.expr, visitor);
+            }
+        }
+        PhysicalPlan::Apply(op) => hash_join(&mut op.hash_join, visitor),
+        PhysicalPlan::TableScan(op) => {
+            if let Some(rebuild) = &mut op.range_rebuild {
+                expressions(&mut rebuild.access_conditions, visitor);
+            }
+        }
+        PhysicalPlan::IndexScan(op) => {
+            if let Some(rebuild) = &mut op.range_rebuild {
+                expressions(&mut rebuild.access_conditions, visitor);
+            }
+        }
+        PhysicalPlan::TableReader(op) => {
+            if let Some(plan) = op.table_plan.as_deref_mut() {
+                visit_physical_correlated_columns_mut(plan, visitor);
+            }
+        }
+        PhysicalPlan::IndexReader(op) => {
+            if let Some(plan) = op.index_plan.as_deref_mut() {
+                visit_physical_correlated_columns_mut(plan, visitor);
+            }
+        }
+        PhysicalPlan::IndexLookUpReader(op) => {
+            if let Some(plan) = op.table_plan.as_deref_mut() {
+                visit_physical_correlated_columns_mut(plan, visitor);
+            }
+            if let Some(plan) = op.index_plan.as_deref_mut() {
+                visit_physical_correlated_columns_mut(plan, visitor);
+            }
+        }
+        PhysicalPlan::IndexMergeReader(op) => {
+            if let Some(plan) = op.table_plan.as_deref_mut() {
+                visit_physical_correlated_columns_mut(plan, visitor);
+            }
+            for plan in &mut op.partial_plans_raw {
+                visit_physical_correlated_columns_mut(plan, visitor);
+            }
+        }
+        PhysicalPlan::TopN(op) => {
+            for item in &mut op.by_items {
+                visit_expression_correlated_columns_mut(&mut item.expr, visitor);
+            }
+        }
+        PhysicalPlan::HashAgg(op) => {
+            aggregation(&mut op.agg_funcs, &mut op.group_by_items, visitor);
+        }
+        PhysicalPlan::StreamAgg(op) => {
+            aggregation(&mut op.agg_funcs, &mut op.group_by_items, visitor);
+        }
+        _ => {}
+    }
+    for child in plan.base_mut().children_mut() {
+        visit_physical_correlated_columns_mut(child, visitor);
+    }
+}
+
+/// Go `coreusage.ExtractCorColumnsBySchema4PhysicalPlan`: collect the inner
+/// plan's correlated columns, allocate one shared datum cell per matching
+/// outer-schema position, point every occurrence at that cell, and resolve
+/// the returned correlated columns to their outer-row offsets.
+pub fn rebind_correlated_columns_by_schema_4_physical_plan(
+    plan: &mut PhysicalPlan,
+    schema: &Schema,
+) -> Vec<CorrelatedColumn> {
+    let extracted = extract_correlated_cols_4_physical_plan(plan);
+    let mut slots: Vec<Option<CorrelatedColumn>> = vec![None; schema.len()];
+    let mut bindings = std::collections::BTreeMap::new();
+    for correlated in extracted {
+        let index = schema.column_index(&correlated.column);
+        if index < 0 {
+            continue;
+        }
+        let index = usize::try_from(index).expect("a schema position is non-negative");
+        if slots[index].is_none() {
+            let binding = CorrelatedColumn::binding();
+            let mut column = schema.columns[index].clone();
+            column.index = i64::try_from(index).expect("a schema length fits in i64");
+            bindings.insert(column.unique_id, binding.clone());
+            slots[index] = Some(CorrelatedColumn {
+                column,
+                data: Some(binding),
+            });
+        }
+    }
+    visit_physical_correlated_columns_mut(plan, &mut |correlated| {
+        if let Some(binding) = bindings.get(&correlated.column.unique_id) {
+            correlated.data = Some(binding.clone());
+        }
+    });
+    slots.into_iter().flatten().collect()
+}
+
+/// Go `eliminatePhysicalProjection`, the first physical post-optimization
+/// pass. It removes only strict identity projections; computed expressions,
+/// reordered columns, `CalculateNoDelay`, and schema-width changes remain.
+#[must_use]
+pub fn eliminate_physical_projection(mut plan: PhysicalPlan) -> PhysicalPlan {
+    let children = std::mem::take(plan.base_mut().children_mut());
+    plan.base_mut().set_children(
+        children
+            .into_iter()
+            .map(eliminate_physical_projection)
+            .collect(),
+    );
+
+    if let PhysicalPlan::TableReader(reader) = &mut plan {
+        if reader.store_type == crate::physical_table_reader::StoreType::TiFlash {
+            if let Some(table_plan) = reader.table_plan.take() {
+                reader.table_plan = Some(Box::new(eliminate_physical_projection(*table_plan)));
+            }
+        }
+    }
+
+    let PhysicalPlan::Projection(projection) = &plan else {
+        return plan;
+    };
+    if projection.calculate_no_delay {
+        return plan;
+    }
+    let Some(child) = projection.base.children().first() else {
+        return plan;
+    };
+    let projection_schema = projection.base.base.schema().cloned().unwrap_or_default();
+    let child_schema = child.schema().cloned().unwrap_or_default();
+    let strict_identity = projection_schema.is_empty()
+        || (projection_schema.len() == child_schema.len()
+            && projection.exprs.len() == projection_schema.len()
+            && projection
+                .exprs
+                .iter()
+                .zip(&child_schema.columns)
+                .all(|(expression, column)| column.equal_column(expression)));
+    if !strict_identity {
+        return plan;
+    }
+
+    let PhysicalPlan::Projection(mut projection) = plan else {
+        unreachable!("the projection arm was checked above")
+    };
+    let mut child = projection.base.children_mut().remove(0);
+    if !projection_schema.is_empty() && matches!(child, PhysicalPlan::Projection(_)) {
+        child.base_mut().base.set_schema(Some(projection_schema));
+    }
+    child
 }
 
 #[cfg(test)]

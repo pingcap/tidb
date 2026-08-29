@@ -374,15 +374,15 @@ fn window_errors_and_refusals() {
     // in `tidb_exec::window::build_call`, not at parse time.
     assert!(matches!(
         session.run("SELECT GROUP_CONCAT(v) OVER (ORDER BY v) FROM t"),
-        Err(DriverError::NotSupportedYet(
+        Err(DriverError::NotSupportedYet(std::borrow::Cow::Borrowed(
             "group_concat as window function"
-        ))
+        )))
     ));
     assert!(matches!(
         session.run("SELECT COUNT(DISTINCT v) OVER (PARTITION BY g) FROM t"),
-        Err(DriverError::NotSupportedYet(
+        Err(DriverError::NotSupportedYet(std::borrow::Cow::Borrowed(
             "<window function>(DISTINCT ..)"
-        ))
+        )))
     ));
 
     // The four aggregates Go allows OVER that this build used to refuse

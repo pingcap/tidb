@@ -24,11 +24,20 @@
 use tidb_ast::{DdlStmt, DmlStmt, SessionStmt, Stmt};
 use tidb_executor::{Catalog, DriverError, SchemaErrorKind};
 
-use crate::{CHECK_CONSTRAINT_IS_OFF_CODE, CHECK_CONSTRAINT_IS_OFF_MESSAGE};
 use crate::warnings::UNSUPPORTED_CREATE_PARTITION_CODE;
 use crate::{
-    Session, StatementKind, StmtOutput, WarningLevel, infoschema, privilege, statement_kind_of,
+    infoschema, privilege, statement_kind_of, Session, StatementKind, StmtOutput, WarningLevel,
 };
+use crate::{CHECK_CONSTRAINT_IS_OFF_CODE, CHECK_CONSTRAINT_IS_OFF_MESSAGE};
+
+/// A planner-owned SELECT tree offered to the ordinary statement executor.
+/// `used` records whether the schema still matched while the catalog was
+/// locked; a moved schema falls through to ordinary physical planning.
+struct RetainedSelectPlan<'a> {
+    physical: &'a mut tidb_planner::physical::PhysicalPlan,
+    schema_version: u64,
+    used: &'a mut bool,
+}
 
 /// Every `information_schema` base table a top-level join tree references.
 ///
@@ -137,6 +146,27 @@ pub(crate) fn stmt_kind_name(stmt: &Stmt) -> String {
         Stmt::Admin(admin) => variant_name(&**admin),
         Stmt::Session(session) => variant_name(&**session),
     }
+}
+
+fn cached_dml_plan<'a>(
+    plan: Option<&'a mut tidb_planner::physical::PhysicalPlan>,
+    operator: &str,
+) -> Result<Option<&'a mut tidb_planner::physical::PhysicalPlan>, DriverError> {
+    let Some(plan) = plan else {
+        return Ok(None);
+    };
+    let tidb_planner::physical::PhysicalPlan::Dml(dml) = &*plan else {
+        return Err(DriverError::unsupported(
+            "prepared DML execution received a non-DML physical root",
+        ));
+    };
+    if !dml.go_operator.eq_ignore_ascii_case(operator) {
+        return Err(DriverError::unsupported(format!(
+            "prepared {operator} execution received a {} physical root",
+            dml.go_operator
+        )));
+    }
+    Ok(Some(plan))
 }
 
 impl Session {
@@ -422,13 +452,13 @@ impl Session {
     /// Executes the subset Go serves through a prepared `PointGetPlan`. The
     /// plan has already passed the statement-shape, schema, stale-read,
     /// binding, and hint gates, and each call creates fresh mutable execution
-    /// state. `cache_hit` distinguishes Go's first generated plan from later
-    /// rebuilds without sending either one through another planner.
+    /// state. The execution carries the complete binding-aware cache-key hit
+    /// result rather than receiving a protocol-local readiness flag.
     pub fn execute_prepared_point_get(
         &mut self,
         execution: tidb_executor::PreparedPointGetExecution,
-        cache_hit: bool,
-    ) -> Result<StmtOutput, DriverError> {
+    ) -> Result<Option<StmtOutput>, DriverError> {
+        let cache_hit = execution.cache_hit();
         self.active_resource_group.clone_from(&self.resource_group);
         self.begin_cached_prepared_query_boundary();
         let plan = execution.plan();
@@ -454,102 +484,74 @@ impl Session {
             tidb_executor::run_prepared_point_get(&execution, catalog, &current_db, &ctx)
         })?;
         let Some((columns, rows)) = result else {
-            return Err(DriverError::unsupported(
-                "prepared point-get cache was invalidated during the statement",
-            ));
+            return Ok(None);
         };
         self.found_in_plan_cache = cache_hit;
-        Ok(StmtOutput::Rows { columns, rows })
+        Ok(Some(StmtOutput::Rows { columns, rows }))
     }
 
-    /// Executes a reusable prepared SELECT physical tree. The plan has
-    /// already passed the same schema and session-state gates as a Go cache
-    /// hit; this method only builds fresh runtime executors and drains them.
-    pub fn execute_cached_prepared_select(
+    /// Executes a prepared SELECT through the ordinary statement and
+    /// executor funnel, offering the retained physical tree at the same seam
+    /// where a fresh plan is handed to the executor builder.
+    pub fn execute_prepared_select(
         &mut self,
-        cached: &tidb_executor::PreparedSelectExecution,
+        execution: &tidb_executor::PreparedSelectExecution,
+        sql: &str,
     ) -> Result<StmtOutput, DriverError> {
-        self.activate_select_resource_group(cached.plan().select_template());
-        let cache_hit = cached.cache_hit();
-        self.begin_cached_prepared_query_boundary();
-        self.statement_insert_id = 0;
-        self.statement_kind = StatementKind::Select;
-
-        if self.in_transaction() {
-            let plan = cached.plan();
-            self.record_mdl_related_table_names(plan.table_names());
-        }
-        let current_db = self.current_db.clone();
-        let ctx = self.statement_context(false);
-        let result = self.with_catalog_mut(|catalog| {
-            tidb_executor::run_prepared_select(&cached, catalog, &current_db, &ctx)
-        })?;
-        self.drain_eval_warnings(&ctx);
-        let Some((columns, rows)) = result else {
-            return Err(DriverError::unsupported(
-                "prepared SELECT cache was invalidated during the statement",
-            ));
-        };
-        self.found_in_plan_cache = cache_hit;
-        Ok(StmtOutput::Rows { columns, rows })
+        let mut used = false;
+        let output = execution
+            .with_plan(|statement, physical| {
+                self.run_with_columns_using(sql, false, |session| {
+                    session.begin_prepared_statement_boundary(statement);
+                    session.execute_parsed_statement_with_select_plan(
+                        sql,
+                        statement.clone(),
+                        true,
+                        physical,
+                        execution.schema_version(),
+                        &mut used,
+                    )
+                })
+                .map(|(output, _)| output)
+            })
+            .ok_or_else(|| {
+                DriverError::unsupported(
+                    "prepared SELECT plan generation changed before executor construction",
+                )
+            })??;
+        self.found_in_plan_cache = execution.cache_hit() && used;
+        Ok(output)
     }
 
-    /// Executes one retained prepared DML plan with fresh parameter values
-    /// and statement-local mutation state. The execution has already passed
-    /// the shared prepared-cache session-state admission.
-    pub fn execute_prepared_dml(
+    /// Executes a bound prepared DML statement through the ordinary statement
+    /// funnel, then publishes whether Go's complete cache key was reused.
+    /// Cache hits and misses therefore share privilege checks, metadata locks,
+    /// resource-group selection, statement context, and the DML executor.
+    pub fn execute_cached_prepared_dml(
         &mut self,
-        execution: tidb_executor::PreparedDmlExecution,
-        cache_hit: bool,
-        resource_group: &str,
+        execution: &tidb_executor::PreparedDmlExecution,
+        sql: &str,
     ) -> Result<StmtOutput, DriverError> {
-        self.active_resource_group = resource_group.to_ascii_lowercase();
-        self.begin_cached_prepared_query_boundary();
-        if !self.in_transaction() {
-            self.lock_catalog()?.clear_dirty_content();
-        }
-        let plan = execution.plan();
-        let (database, table) = plan.names();
-        match plan.kind() {
-            tidb_executor::PreparedDmlKind::Insert => {
-                self.require_named_table_privilege(database, table, privilege::GlobalPriv::Insert)?;
-            }
-            tidb_executor::PreparedDmlKind::Update => {
-                self.require_named_table_privilege(database, table, privilege::GlobalPriv::Select)?;
-                self.require_named_table_privilege(database, table, privilege::GlobalPriv::Update)?;
-            }
-            tidb_executor::PreparedDmlKind::Delete => {
-                self.require_named_table_privilege(database, table, privilege::GlobalPriv::Select)?;
-                self.require_named_table_privilege(database, table, privilege::GlobalPriv::Delete)?;
-            }
-        }
-        self.record_mdl_related_table_names(&[(database.to_owned(), table.to_owned())]);
-        self.statement_insert_id = 0;
-        self.statement_kind = StatementKind::Dml;
-        let current_db = self.current_db.clone();
-        let statement_class = match plan.kind() {
-            tidb_executor::PreparedDmlKind::Insert => tidb_executor::StatementClass::Insert,
-            tidb_executor::PreparedDmlKind::Update | tidb_executor::PreparedDmlKind::Delete => {
-                tidb_executor::StatementClass::UpdateOrDelete
-            }
-        };
-        let ctx = self
-            .fast_statement_context(true, plan.ignore_errors())
-            .with_statement_class(statement_class);
-        let result = self.with_catalog_mut(|catalog| {
-            tidb_executor::run_prepared_dml(&execution, catalog, &current_db, &ctx)
-        })?;
-        self.drain_eval_warnings(&ctx);
-        let Some(affected) = result else {
-            return Err(DriverError::unsupported(
-                "prepared DML cache was invalidated during the statement",
-            ));
-        };
-        self.statement_insert_id = ctx
-            .published_last_insert_id()
-            .unwrap_or_else(|| ctx.given_insert_id());
-        self.found_in_plan_cache = cache_hit;
-        Ok(StmtOutput::Affected(affected))
+        let output = execution
+            .with_plan(|statement, physical| {
+                self.run_with_columns_using(sql, false, |session| {
+                    session.begin_prepared_statement_boundary(statement);
+                    session.execute_parsed_statement_with_dml_plan(
+                        sql,
+                        statement.clone(),
+                        true,
+                        physical,
+                    )
+                })
+                .map(|(output, _)| output)
+            })
+            .ok_or_else(|| {
+                DriverError::unsupported(
+                    "cached DML plan generation changed before executor construction",
+                )
+            })??;
+        self.found_in_plan_cache = execution.cache_hit();
+        Ok(output)
     }
 
     /// Records one cached point read's table on the transaction's metadata-
@@ -704,7 +706,7 @@ impl Session {
     /// the stale execution itself (its statement is already stripped and its
     /// transaction already open).
     fn execute_parsed_statement_no_as_of(&mut self, stmt: Stmt) -> Result<StmtOutput, DriverError> {
-        self.execute_parsed_statement_inner("", stmt, false)
+        self.execute_parsed_statement_inner("", stmt, false, None, None)
     }
 
     fn execute_parsed_statement(
@@ -712,6 +714,55 @@ impl Session {
         sql: &str,
         stmt: Stmt,
         prepared: bool,
+    ) -> Result<StmtOutput, DriverError> {
+        self.execute_parsed_statement_with_optional_physical_plan(sql, stmt, prepared, None, None)
+    }
+
+    fn execute_parsed_statement_with_select_plan(
+        &mut self,
+        sql: &str,
+        stmt: Stmt,
+        prepared: bool,
+        physical: &mut tidb_planner::physical::PhysicalPlan,
+        schema_version: u64,
+        used: &mut bool,
+    ) -> Result<StmtOutput, DriverError> {
+        self.execute_parsed_statement_with_optional_physical_plan(
+            sql,
+            stmt,
+            prepared,
+            Some(RetainedSelectPlan {
+                physical,
+                schema_version,
+                used,
+            }),
+            None,
+        )
+    }
+
+    fn execute_parsed_statement_with_dml_plan(
+        &mut self,
+        sql: &str,
+        stmt: Stmt,
+        prepared: bool,
+        physical: &mut tidb_planner::physical::PhysicalPlan,
+    ) -> Result<StmtOutput, DriverError> {
+        self.execute_parsed_statement_with_optional_physical_plan(
+            sql,
+            stmt,
+            prepared,
+            None,
+            Some(physical),
+        )
+    }
+
+    fn execute_parsed_statement_with_optional_physical_plan(
+        &mut self,
+        sql: &str,
+        stmt: Stmt,
+        prepared: bool,
+        select_plan: Option<RetainedSelectPlan<'_>>,
+        dml_plan: Option<&mut tidb_planner::physical::PhysicalPlan>,
     ) -> Result<StmtOutput, DriverError> {
         // Go's `Preprocess` walks the AST once per statement and answers
         // every table-shaped question from that pass (`preprocess.go`); the
@@ -745,7 +796,8 @@ impl Session {
                 }
             };
         let was_autocommit_statement = !self.in_transaction();
-        let output = self.execute_parsed_statement_inner(sql, stmt, prepared)?;
+        let output =
+            self.execute_parsed_statement_inner(sql, stmt, prepared, select_plan, dml_plan)?;
         // Go's autocommit statement is its own transaction; its end writes
         // `LastTxnInfo` exactly as an explicit one's would -- the full
         // commit record for a statement that published, the start-only one
@@ -772,11 +824,59 @@ impl Session {
         Ok(output)
     }
 
+    /// Runs Go's `matchAgainstToLike` before physical planning. Prepared
+    /// cache misses and ordinary statements both call this method, so the
+    /// cache retains the same rewritten tree the normal executor receives.
+    pub(crate) fn rewrite_fts_for_planning(&self, stmt: &mut Stmt) {
+        let enabled = self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_ALTERNATIVE_LOGICAL_PLANS)
+            .is_ok_and(|value| value.eq_ignore_ascii_case("on") || value == "1");
+        if !enabled {
+            return;
+        }
+
+        let current_db = self.current_db.clone();
+        // The context takes its catalog-backed snapshots, so construct it
+        // before holding the catalog guard used by every resolved-type probe.
+        let ctx = self.statement_context(false);
+        let Ok(catalog) = self.lock_catalog() else {
+            return;
+        };
+        let columns_are_strings = |select: &tidb_ast::SelectStmt, columns: &[Vec<String>]| {
+            tidb_executor::fts_columns_are_strings(select, columns, &catalog, &current_db, &ctx)
+        };
+        struct FtsRewriter<'a> {
+            columns_are_strings: &'a tidb_executor::fts_like_rewrite::ColumnsAreStrings<'a>,
+        }
+        impl tidb_ast::Visitor for FtsRewriter<'_> {
+            fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+                if let Some(select) = node.downcast_mut::<tidb_ast::SelectStmt>() {
+                    tidb_executor::fts_like_rewrite::rewrite_select_fts(
+                        select,
+                        self.columns_are_strings,
+                    );
+                }
+                false
+            }
+
+            fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+                true
+            }
+        }
+        use tidb_ast::Visitable as _;
+        stmt.accept(&mut FtsRewriter {
+            columns_are_strings: &columns_are_strings,
+        });
+    }
+
     fn execute_parsed_statement_inner(
         &mut self,
         sql: &str,
         mut stmt: Stmt,
         prepared: bool,
+        mut select_plan: Option<RetainedSelectPlan<'_>>,
+        dml_plan: Option<&mut tidb_planner::physical::PhysicalPlan>,
     ) -> Result<StmtOutput, DriverError> {
         self.activate_statement_resource_group(&stmt);
         // Go `SelectInto` with `SelectIntoVars`: the query runs as itself and
@@ -835,12 +935,14 @@ impl Session {
             // ended, and a `BEGIN` arriving here starts from empty.
             self.discard_global_temporary_rows();
         }
-        // The non-prepared plan cache reads the SAME parse every door below
-        // uses. It only decides whether this statement's plan would already
-        // have been there; it never replaces the planning that follows.
-        if !prepared {
-            self.probe_non_prepared_plan_cache(&stmt);
-        }
+        // Go parameterizes a non-prepared statement before optimization, then
+        // sends the retained marker-bearing statement through the same plan
+        // cache as PREPARE. Keep the candidate beside this ordinary statement
+        // funnel; privilege, binding, transaction, and context setup below
+        // remain shared whether the physical plan hits or misses.
+        let non_prepared = (!prepared)
+            .then(|| self.parameterize_non_prepared_select(&stmt))
+            .flatten();
         // `apply_schema_stmt` dispatches administrative statements early.
         // EXPLAIN is the one such wrapper whose inner query/DML can own
         // `SET_VAR`, so install that direct-AST overlay before the early
@@ -919,82 +1021,7 @@ impl Session {
         // The Apply channel describes THIS statement's plan.
         self.planned_apply
             .store(false, std::sync::atomic::Ordering::Relaxed);
-        // Go's `matchAgainstToLike` rewrites a direct-boolean-context
-        // `MATCH ... AGAINST` into ILIKE predicates inside the expression
-        // rewriter, so every query block gets it -- subqueries, EXPLAIN
-        // targets and prepared bodies included. The one seam every parsed
-        // statement passes here plays that role: walk the statement and
-        // rewrite each SELECT's boolean roots in place.
-        // Gated exactly as Go gates the fallback machinery:
-        // `tidb_opt_enable_alternative_logical_plans`, default OFF -- without
-        // it only the native builtin exists, which errors here as it errors
-        // there with no FTS replica. The corpus flips the variable both ways.
-        let fts_rewrite_enabled = self
-            .vars
-            .get_system(tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_ALTERNATIVE_LOGICAL_PLANS)
-            .is_ok_and(|value| value.eq_ignore_ascii_case("on") || value == "1");
-        if fts_rewrite_enabled {
-            // Go checks the RESOLVED column's eval type; the closure answers
-            // it from this session's catalog for the one FROM shape the
-            // rewrite reaches through the AST alone -- a single named table.
-            // A join or derived FROM stays unrewritten, which is NARROWER
-            // than Go (a string column there would rewrite) and is the
-            // refusal path rather than a wrong answer.
-            let current_db = self.current_db.clone();
-            let catalog = std::sync::Arc::clone(&self.catalog);
-            let columns_are_strings = move |select: &tidb_ast::SelectStmt,
-                                            columns: &[Vec<String>]|
-                  -> bool {
-                let Some(join) = select.from.as_ref() else {
-                    return false;
-                };
-                let (tidb_ast::JoinNode::Table(table), None) = (&join.left, &join.right) else {
-                    return false;
-                };
-                let name = match table.name.as_slice() {
-                    [name] => name.clone(),
-                    [_, name] => name.clone(),
-                    _ => return false,
-                };
-                let Ok(guard) = catalog.lock() else {
-                    return false;
-                };
-                let Some(tidb_executor::TableEntry::Kv(kv)) = guard.table_in(&current_db, &name)
-                else {
-                    return false;
-                };
-                columns.iter().all(|path| {
-                    let Some(column_name) = path.last() else {
-                        return false;
-                    };
-                    kv.visible_columns().iter().any(|column| {
-                        column.name.eq_ignore_ascii_case(column_name)
-                            && column.field_type.eval_type() == tidb_datatype::EvalType::String
-                    })
-                })
-            };
-            struct FtsRewriter<'a> {
-                columns_are_strings: &'a tidb_executor::fts_like_rewrite::ColumnsAreStrings<'a>,
-            }
-            impl tidb_ast::Visitor for FtsRewriter<'_> {
-                fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
-                    if let Some(select) = node.downcast_mut::<tidb_ast::SelectStmt>() {
-                        tidb_executor::fts_like_rewrite::rewrite_select_fts(
-                            select,
-                            self.columns_are_strings,
-                        );
-                    }
-                    false
-                }
-                fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
-                    true
-                }
-            }
-            use tidb_ast::Visitable as _;
-            stmt.accept(&mut FtsRewriter {
-                columns_are_strings: &columns_are_strings,
-            });
-        }
+        self.rewrite_fts_for_planning(&mut stmt);
         // Go's row-id shard generator belongs to the TRANSACTION, so a
         // statement that IS its own transaction starts a fresh run. Inside an
         // explicit `BEGIN`/`COMMIT` the run continues across statements,
@@ -1038,8 +1065,7 @@ impl Session {
         match &stmt {
             Stmt::Query(query) => {
                 let tidb_ast::QueryStmt::Select(select) = &**query else {
-                    // A set operation runs through its own fold.
-                    let tidb_ast::QueryStmt::SetOpr(set_opr) = &**query else {
+                    let tidb_ast::QueryStmt::SetOpr(_) = &**query else {
                         unreachable!("a query is a SELECT or a set operation")
                     };
                     let current_db = self.current_db.clone();
@@ -1048,12 +1074,30 @@ impl Session {
                     information_schema_tables_in_query(query, &current_db, &mut table_names);
                     let (columns, rows) = if table_names.is_empty() {
                         self.with_catalog_mut(|catalog| {
-                            tidb_executor::run_set_opr_stmt(set_opr, catalog, &current_db, &ctx)
+                            let physical = select_plan.as_mut().and_then(|retained| {
+                                (retained.schema_version == catalog.metadata_version()).then(|| {
+                                    *retained.used = true;
+                                    &mut *retained.physical
+                                })
+                            });
+                            tidb_executor::run_query_meta_stmt_with_physical(
+                                query,
+                                physical,
+                                catalog,
+                                &current_db,
+                                &ctx,
+                            )
                         })?
                     } else {
                         let scratch =
                             self.materialize_information_schema_catalog(table_names, &ctx)?;
-                        tidb_executor::run_set_opr_stmt(set_opr, &scratch, &current_db, &ctx)?
+                        tidb_executor::run_query_meta_stmt_with_physical(
+                            query,
+                            None,
+                            &scratch,
+                            &current_db,
+                            &ctx,
+                        )?
                     };
                     self.drain_eval_warnings(&ctx);
                     return Ok(StmtOutput::Rows { columns, rows });
@@ -1080,14 +1124,65 @@ impl Session {
                 };
                 let current_db = self.current_db.clone();
                 let ctx = self.statement_context(false);
+                if let Some(parameterized) = non_prepared.as_ref() {
+                    let (effective_parameterized, binding_sql) =
+                        self.prepared_statement_with_binding(&parameterized.statement);
+                    if let Some(execution) = self.bind_non_prepared_select(
+                        parameterized,
+                        &effective_parameterized,
+                        binding_sql.as_deref(),
+                    ) {
+                        let cache_hit = execution.cache_hit();
+                        let schema_version = execution.schema_version();
+                        let result = execution.with_plan(|statement, physical| {
+                            let Stmt::Query(query) = statement else {
+                                unreachable!("a retained SELECT owns a query statement")
+                            };
+                            let tidb_ast::QueryStmt::Select(select) = query.as_ref() else {
+                                unreachable!("a retained SELECT owns a SELECT query")
+                            };
+                            self.with_catalog_mut(|catalog| {
+                                (schema_version == catalog.metadata_version())
+                                    .then(|| {
+                                        tidb_executor::run_select_meta_stmt_with_physical(
+                                            select,
+                                            Some(physical),
+                                            catalog,
+                                            &current_db,
+                                            &ctx,
+                                        )
+                                    })
+                                    .transpose()
+                            })
+                        });
+                        if let Some(Some((columns, rows))) = result.transpose()? {
+                            self.found_in_plan_cache = cache_hit;
+                            self.drain_eval_warnings(&ctx);
+                            return Ok(StmtOutput::Rows { columns, rows });
+                        }
+                    }
+                }
                 let (columns, rows) = self.with_catalog_mut(|catalog| {
-                    tidb_executor::run_select_meta_stmt(select, catalog, &current_db, &ctx)
+                    let physical = select_plan.as_mut().and_then(|retained| {
+                        (retained.schema_version == catalog.metadata_version()).then(|| {
+                            *retained.used = true;
+                            &mut *retained.physical
+                        })
+                    });
+                    tidb_executor::run_select_meta_stmt_with_physical(
+                        select,
+                        physical,
+                        catalog,
+                        &current_db,
+                        &ctx,
+                    )
                 })?;
                 self.drain_eval_warnings(&ctx);
                 Ok(StmtOutput::Rows { columns, rows })
             }
             Stmt::Dml(dml) => match &**dml {
                 DmlStmt::Insert(insert) => {
+                    let physical_plan = cached_dml_plan(dml_plan, "Insert")?;
                     let current_db = self.current_db.clone();
                     let enable_strict_not_null_check = !matches!(
                         self.vars
@@ -1115,7 +1210,13 @@ impl Session {
                         // a tree whose markers never met their execute-time
                         // values, which is a wrong answer for every binary-
                         // protocol write.
-                        tidb_executor::run_insert_stmt(insert, catalog, &current_db, &ctx)
+                        tidb_executor::run_insert_stmt_with_physical(
+                            insert,
+                            catalog,
+                            &current_db,
+                            &ctx,
+                            physical_plan,
+                        )
                     });
                     self.drain_eval_warnings(&ctx);
                     // Go `session.LastInsertID()`, the OK packet's field:
@@ -1141,6 +1242,7 @@ impl Session {
                     Ok(StmtOutput::Affected(affected))
                 }
                 DmlStmt::Update(update) => {
+                    let physical_plan = cached_dml_plan(dml_plan, "Update")?;
                     let current_db = self.current_db.clone();
                     // Go `ResetUpdateStmtCtx`, which applies the same
                     // `!strictSQLMode || stmt.IgnoreErr` rule the INSERT arm
@@ -1154,17 +1256,21 @@ impl Session {
                         // Bound AST, not SQL text: the text still carries the
                         // markers the binary protocol already replaced. See
                         // the INSERT arm above.
-                        Ok(StmtOutput::Affected(tidb_executor::run_update_stmt(
-                            update,
-                            catalog,
-                            &current_db,
-                            &ctx,
-                        )?))
+                        Ok(StmtOutput::Affected(
+                            tidb_executor::run_update_stmt_with_physical(
+                                update,
+                                catalog,
+                                &current_db,
+                                &ctx,
+                                physical_plan,
+                            )?,
+                        ))
                     });
                     self.drain_eval_warnings(&ctx);
                     output
                 }
                 DmlStmt::Delete(delete) => {
+                    let physical_plan = cached_dml_plan(dml_plan, "Delete")?;
                     let current_db = self.current_db.clone();
                     // Go `ResetDeleteStmtCtx`, which applies the same
                     // `!strictSQLMode || stmt.IgnoreErr` rule the INSERT arm
@@ -1176,12 +1282,15 @@ impl Session {
                         .with_statement_class(tidb_executor::StatementClass::UpdateOrDelete);
                     let output = self.with_staged_catalog(|catalog| {
                         // Bound AST, not SQL text -- see the UPDATE arm.
-                        Ok(StmtOutput::Affected(tidb_executor::run_delete_stmt(
-                            delete,
-                            catalog,
-                            &current_db,
-                            &ctx,
-                        )?))
+                        Ok(StmtOutput::Affected(
+                            tidb_executor::run_delete_stmt_with_physical(
+                                delete,
+                                catalog,
+                                &current_db,
+                                &ctx,
+                                physical_plan,
+                            )?,
+                        ))
                     });
                     self.drain_eval_warnings(&ctx);
                     output

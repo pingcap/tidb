@@ -24,12 +24,12 @@ use crate::kv_table::{AutoIdError, AutoIncrement, AutoRandom, AutoRandomError};
 mod correlated;
 mod defaults;
 
-use correlated::{DmlExpression, UpdateExpression, dml_table_scope};
+use correlated::{dml_table_scope, DmlExpression, UpdateExpression};
 
 pub(crate) use defaults::{
-    ColumnDefaultMeta, DefaultColumnIdentity, DefaultUse, PreparedNamedDefault,
-    PreparedOnUpdateNow, ResolvedDefaultColumn, column_default, column_metadata,
-    materialize_column_default, prepare_named_defaults, rewrite_with_prepared_defaults,
+    column_default, column_metadata, materialize_column_default, prepare_named_defaults,
+    rewrite_with_prepared_defaults, ColumnDefaultMeta, DefaultColumnIdentity, DefaultUse,
+    PreparedNamedDefault, PreparedOnUpdateNow, ResolvedDefaultColumn,
 };
 
 /// Parses and runs a plain `INSERT INTO t [(cols)] VALUES (...), ...` against
@@ -96,212 +96,172 @@ pub fn run_insert_stmt(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<(u64, Option<u64>), DriverError> {
-    run_insert_traced(insert, catalog, current_db, ctx, None)
+    run_insert_stmt_with_physical(insert, catalog, current_db, ctx, None)
 }
 
-/// The immutable INSERT plan retained inside the prepared-plan cache.
-#[derive(Debug)]
-struct PreparedInsertPlan {
-    schema_version: u64,
-    current_database: String,
-    database: String,
-    table: String,
-    table_id: i64,
-    ignore: bool,
-    parameter_orders: Vec<usize>,
-    field_types: Vec<FieldType>,
-    column_names: Vec<String>,
-    auto_increment_offset: Option<usize>,
-}
-
-/// Builds the reusable one-row VALUES plan used by stock sysbench.
-///
-/// Target resolution, column mapping, marker layout, and type metadata are
-/// fixed here. Any shape whose runtime semantics require the complete INSERT
-/// planner declines before execution.
-fn build_prepared_insert_plan(
-    statement: &Stmt,
-    parameter_count: usize,
-    catalog: &Catalog,
-    current_db: &str,
-) -> Result<Option<PreparedInsertPlan>, DriverError> {
-    if parsed_parameter_count(statement) != parameter_count {
-        return Ok(None);
-    }
-    let Stmt::Dml(dml) = statement else {
-        return Ok(None);
-    };
-    let tidb_ast::DmlStmt::Insert(insert) = dml.as_ref() else {
-        return Ok(None);
-    };
-    if insert.replace
-        || !insert.on_duplicate.is_empty()
-        || insert.source.is_some()
-        || insert.set_syntax
-        || !insert.columns_specified
-        || !insert.partitions.is_empty()
-        || !insert.returning.is_empty()
-        || insert.rows.len() != 1
-    {
-        return Ok(None);
-    }
-    let row_exprs = &insert.rows[0];
-    if row_exprs.len() != parameter_count || row_exprs.is_empty() {
-        return Ok(None);
-    }
-    let parameter_orders = row_exprs
-        .iter()
-        .map(|expression| match expression {
-            tidb_ast::Expr::ParamMarker { order, .. } if *order < parameter_count => Some(*order),
-            _ => None,
-        })
-        .collect::<Option<Vec<_>>>();
-    let Some(parameter_orders) = parameter_orders else {
-        return Ok(None);
-    };
-    let (database, table_name) = split_table_path(&insert.table, current_db)?;
-    let (database, table_name) = (database.to_owned(), table_name.to_owned());
-    let Some(TableEntry::Kv(table)) = catalog.get_in(&database, &table_name) else {
-        return Ok(None);
-    };
-    let has_clustered_handle =
-        table.pk_handle_offset().is_some() || !table.common_handle_offsets().is_empty();
-    if table.visible_column_count() != table.columns.len()
-        || !has_clustered_handle
-        || !table.foreign_keys().is_empty()
-        || table.auto_random().is_some()
-        || table.partition().is_some()
-        || table
-            .columns
-            .iter()
-            .any(|column| column.generated.is_some())
-    {
-        return Ok(None);
-    }
-    let columns = table.visible_columns();
-    if insert.columns.len() != columns.len()
-        || insert
-            .columns
-            .iter()
-            .enumerate()
-            .any(|(offset, name)| !columns[offset].name.eq_ignore_ascii_case(name))
-    {
-        return Ok(None);
-    }
-
-    Ok(Some(PreparedInsertPlan {
-        schema_version: catalog.metadata_version(),
-        current_database: current_db.to_owned(),
-        database,
-        table: table_name,
-        table_id: table.table_id,
-        ignore: insert.ignore,
-        parameter_orders,
-        field_types: columns
-            .iter()
-            .map(|column| column.field_type.clone())
-            .collect(),
-        column_names: columns.iter().map(|column| column.name.clone()).collect(),
-        auto_increment_offset: table.auto_increment_offset(),
-    }))
-}
-
-fn run_prepared_insert(
-    plan: &PreparedInsertPlan,
-    params: &[Datum],
+/// The ordinary INSERT executor with an optional already-selected physical
+/// source. A fresh statement builds its `Insert.SelectPlan` here; a prepared
+/// cache hit passes the child rebuilt by the shared cache visitor.
+pub fn run_insert_stmt_with_physical(
+    insert: &tidb_ast::InsertStmt,
     catalog: &mut Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
-) -> Result<Option<u64>, DriverError> {
-    if plan.schema_version != catalog.metadata_version()
-        || !plan.current_database.eq_ignore_ascii_case(current_db)
-    {
-        return Ok(None);
-    }
-    let Some(TableEntry::Kv(table)) = catalog.get_mut_in(&plan.database, &plan.table) else {
-        return Ok(None);
+    physical_plan: Option<&mut tidb_planner::physical::PhysicalPlan>,
+) -> Result<(u64, Option<u64>), DriverError> {
+    run_insert_stmt_with_physical_and_stats(insert, catalog, current_db, ctx, physical_plan, None)
+}
+
+pub(crate) fn run_insert_stmt_with_physical_and_stats(
+    insert: &tidb_ast::InsertStmt,
+    catalog: &mut Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    physical_plan: Option<&mut tidb_planner::physical::PhysicalPlan>,
+    runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
+) -> Result<(u64, Option<u64>), DriverError> {
+    let mut fresh = physical_plan
+        .is_none()
+        .then(|| {
+            physical_dml_plan(
+                "Insert",
+                insert.source.as_deref(),
+                true,
+                None,
+                catalog,
+                current_db,
+                ctx,
+            )
+        })
+        .transpose()?;
+    let physical_plan = physical_plan.or(fresh.as_mut());
+    let physical_source = match physical_plan {
+        Some(plan) => dml_select_plan_mut(plan, "Insert")?,
+        None => None,
     };
-    if table.table_id != plan.table_id {
-        return Ok(None);
-    }
-    // Go promotes bad NULL to an error for a one-row VALUES statement even
-    // outside strict mode, while INSERT IGNORE demotes it to a warning.
-    let null_level = crate::bad_null::NullLevel::from_is_error(!ctx.ignore_err());
-    let mut row = Vec::with_capacity(plan.field_types.len());
-    let mut rebase_auto_increment = false;
-    for (offset, order) in plan.parameter_orders.iter().enumerate() {
-        let mut value = params
-            .get(*order)
-            .cloned()
-            .ok_or(DriverError::WrongParamCount)?;
-        if plan.auto_increment_offset == Some(offset) {
-            rebase_auto_increment = match value {
-                Datum::Int(value) if value > 0 => true,
-                Datum::UInt(value) if value > 0 => true,
-                Datum::Int(0) | Datum::UInt(0) if ctx.auto_increment_zero_is_explicit() => false,
-                // Allocation, retry-id replay, and values that require
-                // expression coercion remain owned by the complete INSERT
-                // executor. Decline before casts can publish warnings.
-                _ => return Ok(None),
-            };
-        }
-        crate::bad_null::handle_bad_null(
-            &mut value,
-            &plan.field_types[offset],
-            &plan.column_names[offset],
-            null_level,
-            ctx,
-        )?;
-        row.push(cast_value_for_column(
-            value,
-            &plan.field_types[offset],
-            &plan.column_names[offset],
-            0,
-            ctx,
-        )?);
-    }
-    ctx.statement_memory()
-        .write_accountant(mem_quota::label::INSERT)
-        .account_rows(std::slice::from_ref(&row))
-        .map_err(DriverError::from)?;
-    if rebase_auto_increment {
-        let outcome = table
-            .apply_auto_increment(&mut row, ctx.auto_increment_step(), || {
-                ctx.reuse_auto_increment_id()
-            })
-            .map_err(|error| match error {
-                AutoIdError::Exhausted => DriverError::AutoincReadFailed,
-                AutoIdError::OutOfRange { value, type_name } => {
-                    DriverError::ConstantOverflows { value, type_name }
-                }
-                AutoIdError::Store(detail) => DriverError::AutoIdUnavailable(detail.0),
-            })?;
-        if let Some(placed) = outcome.placed() {
-            ctx.record_auto_increment_id(placed);
-        }
-        match outcome {
-            AutoIncrement::Given(given) => ctx.record_given_insert_id(given),
-            AutoIncrement::Absent | AutoIncrement::Reused(_) | AutoIncrement::Allocated(_) => {
-                unreachable!("the retained INSERT plan accepts only an explicit positive auto id")
+    run_insert_with_physical(insert, catalog, current_db, ctx, physical_source, runtime)
+}
+
+/// Builds one Go-shaped DML physical root and its retained `SelectPlan` from
+/// the same statement allocators. INSERT initializes its root before building
+/// a query source; UPDATE and DELETE initialize theirs after the logical read
+/// is built, except for the fast point path where the physical child is built
+/// first. Those are the allocation seams in the pinned Go builders.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn physical_dml_plan(
+    operator: &str,
+    source: Option<&tidb_ast::QueryStmt>,
+    root_before_source: bool,
+    update: Option<&tidb_ast::UpdateStmt>,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<tidb_planner::physical::PhysicalPlan, DriverError> {
+    physical_dml_plan_with_cache_mode(
+        operator,
+        source,
+        root_before_source,
+        update,
+        catalog,
+        current_db,
+        ctx,
+        false,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn physical_dml_plan_with_cache_mode(
+    operator: &str,
+    source: Option<&tidb_ast::QueryStmt>,
+    root_before_source: bool,
+    update: Option<&tidb_ast::UpdateStmt>,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    use_plan_cache: bool,
+) -> Result<tidb_planner::physical::PhysicalPlan, DriverError> {
+    use tidb_planner::physical::{BasePhysicalPlan, PhysicalDmlRoot, PhysicalPlan};
+
+    let plan_ids = tidb_planner::plan_base::PlanIdAllocator::new();
+    let column_ids = tidb_planner::expression_rewriter::ColumnIdAllocator::new();
+    let mut root_base = root_before_source.then(|| BasePhysicalPlan::new(&plan_ids, operator, 0));
+    let allow_fast_plan = update.is_none_or(update_allows_fast_plan);
+    let mut update_expressions = Vec::new();
+
+    let select_plan = match source {
+        None => None,
+        Some(tidb_ast::QueryStmt::Select(select)) if !root_before_source => {
+            if let Some(fast) = (!use_plan_cache && allow_fast_plan)
+                .then(|| {
+                    super::access::try_fast_dml_point_physical_plan_with_allocator(
+                        select, catalog, current_db, ctx, &plan_ids,
+                    )
+                })
+                .transpose()?
+                .flatten()
+            {
+                Some(fast)
+            } else {
+                root_base = Some(BasePhysicalPlan::new(&plan_ids, operator, 0));
+                let update_assignment_values = update
+                    .map(|update| {
+                        update_assignment_values_for_plan(update, catalog, current_db, ctx)
+                    })
+                    .transpose()?;
+                let (plan, expressions) =
+                    super::planner_bridge::physical_dml_source_plan_with_allocators(
+                        select,
+                        update_assignment_values.as_deref(),
+                        catalog,
+                        current_db,
+                        ctx,
+                        use_plan_cache,
+                        &plan_ids,
+                        &column_ids,
+                    )
+                    .map_err(super::planner_error_to_driver)?;
+                update_expressions = expressions;
+                Some(plan)
             }
         }
-    }
-    let lazy_duplicate_check =
-        (!ctx.constraint_check_in_place() || ctx.pessimistic_lazy_dup_check()) && !plan.ignore;
-    let shard = if table.shard_row_id_bits() > 0 {
-        ctx.next_row_id_shard(1) as i64
-    } else {
-        0
+        Some(query) => Some(
+            super::planner_bridge::physical_query_plan_with_allocators(
+                query,
+                catalog,
+                current_db,
+                ctx,
+                use_plan_cache,
+                &plan_ids,
+                &column_ids,
+            )
+            .map_err(super::planner_error_to_driver)?,
+        ),
     };
-    match table.insert_row_with_row_id_checked(&row, None, shard, ctx, lazy_duplicate_check) {
-        Ok(_) => Ok(Some(1)),
-        Err(crate::kv_table::KvTableError::DuplicateEntry { value, key }) if plan.ignore => {
-            let warning = DriverError::DuplicateEntry { value, key }.to_mysql_error();
-            ctx.append_warning_parts(warning.code, &warning.message);
-            Ok(Some(0))
-        }
-        Err(error) => Err(kv_write_error(error)),
+    let base = root_base.unwrap_or_else(|| BasePhysicalPlan::new(&plan_ids, operator, 0));
+    Ok(PhysicalPlan::Dml(PhysicalDmlRoot {
+        base,
+        go_operator: operator.to_owned(),
+        select_plan: select_plan.map(Box::new),
+        update_expressions,
+    }))
+}
+
+fn dml_select_plan_mut<'a>(
+    plan: &'a mut tidb_planner::physical::PhysicalPlan,
+    operator: &str,
+) -> Result<Option<&'a mut tidb_planner::physical::PhysicalPlan>, DriverError> {
+    let tidb_planner::physical::PhysicalPlan::Dml(root) = plan else {
+        return Err(DriverError::unsupported(
+            "DML execution received a non-DML physical root",
+        ));
+    };
+    if !root.go_operator.eq_ignore_ascii_case(operator) {
+        return Err(DriverError::unsupported(format!(
+            "{operator} execution received a {} physical root",
+            root.go_operator
+        )));
     }
+    Ok(root.select_plan.as_deref_mut())
 }
 
 struct InsertTargetLayout {
@@ -371,10 +331,10 @@ fn resolve_insert_target(
         && crate::driver::from::extra_handle_column(table).is_some()
         && named_columns
             .iter()
-            .any(|name| name.eq_ignore_ascii_case(crate::driver::leaf_demand::EXTRA_HANDLE_NAME)))
+            .any(|name| name.eq_ignore_ascii_case(tidb_model::column::EXTRA_HANDLE_NAME)))
     .then(|| {
         column_list.push((
-            crate::driver::leaf_demand::EXTRA_HANDLE_NAME.to_owned(),
+            tidb_model::column::EXTRA_HANDLE_NAME.to_owned(),
             FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
         ));
         stored_width
@@ -420,7 +380,7 @@ fn resolve_insert_target(
             default_value: None,
             not_null: false,
             no_default_value: false,
-            name: crate::driver::leaf_demand::EXTRA_HANDLE_NAME.to_owned(),
+            name: tidb_model::column::EXTRA_HANDLE_NAME.to_owned(),
             field_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
             column_info_version: 0,
             generated: false,
@@ -447,18 +407,13 @@ fn resolve_insert_target(
     })
 }
 
-/// [`run_insert_stmt`], recording the plan it builds into `trace`.
-///
-/// An `INSERT ... SELECT`'s source is traced by the very run that feeds the
-/// insert, so its `actRows` are the rows this statement really read -- there
-/// is no second, mirrored execution of the source to count them, and so no
-/// way for a source reading the target table to be counted twice.
-pub(crate) fn run_insert_traced(
+fn run_insert_with_physical(
     insert: &tidb_ast::InsertStmt,
     catalog: &mut Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
-    mut trace: Option<&mut PlanTrace>,
+    physical_source: Option<&mut tidb_planner::physical::PhysicalPlan>,
+    runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
 ) -> Result<(u64, Option<u64>), DriverError> {
     if insert.replace && !insert.on_duplicate.is_empty() {
         return Err(DriverError::unsupported("partitions are not supported yet"));
@@ -487,37 +442,23 @@ pub(crate) fn run_insert_traced(
     // pre-insert catalog and materializes those rows before the table is
     // borrowed mutably.
     let source_rows: Option<Vec<Vec<Datum>>> = match &insert.source {
-        Some(query) => Some(match &**query {
-            tidb_ast::QueryStmt::Select(select) => {
-                run_select_traced(
-                    select,
-                    catalog,
-                    current_db,
-                    ctx,
-                    trace.as_deref_mut(),
-                    &tidb_planner::physical_property::PhysicalProperty::default(),
-                    false,
-                )?
-                .1
+        Some(_) => {
+            let physical = physical_source.ok_or_else(|| {
+                DriverError::unsupported("INSERT SELECT has no retained physical child")
+            })?;
+            let (rows, collected) = super::physical_builder::execute_dml_source(
+                physical,
+                catalog,
+                ctx,
+                runtime.is_some(),
+            )?;
+            if let Some(runtime) = runtime {
+                runtime.extend(collected);
             }
-            tidb_ast::QueryStmt::SetOpr(set_opr) => {
-                // EXPLAIN has never described a set-operation source.
-                if let Some(trace) = trace.as_deref_mut() {
-                    trace.refuse("EXPLAIN of a set-operation INSERT source is not supported yet");
-                }
-                run_set_opr_stmt(set_opr, catalog, current_db, ctx)?.1
-            }
-        }),
+            Some(rows)
+        }
         None => None,
     };
-    if let Some(trace) = trace {
-        trace.write("Insert", insert.source.is_some());
-        // Plain `EXPLAIN INSERT` plans the write without performing it, as
-        // Go's does (captured: the row is not there afterward).
-        if trace.is_plan_only() {
-            return Ok((0, None));
-        }
-    }
 
     let InsertTargetLayout {
         database,
@@ -1487,6 +1428,26 @@ pub(crate) fn dml_order_by_position(expr: &tidb_ast::Expr) -> Result<Option<usiz
     }
 }
 
+enum PositionalError {
+    Malformed,
+    Zero,
+}
+
+fn positional_field_index(expr: &tidb_ast::Expr) -> Option<(&str, Result<usize, PositionalError>)> {
+    let text = match expr {
+        tidb_ast::Expr::Int(text) => text.as_str(),
+        tidb_ast::Expr::Bool(true) => "1",
+        tidb_ast::Expr::Bool(false) => "0",
+        _ => return None,
+    };
+    let index = match text.parse::<usize>() {
+        Err(_) => Err(PositionalError::Malformed),
+        Ok(0) => Err(PositionalError::Zero),
+        Ok(position) => Ok(position - 1),
+    };
+    Some((text, index))
+}
+
 /// Reorders `rows` so that position `i` holds what was at `order[i]`.
 pub(crate) fn apply_permutation<T>(rows: &mut [T], order: &[usize]) {
     let mut done = vec![false; rows.len()];
@@ -1853,908 +1814,566 @@ pub fn run_update_stmt(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<u64, DriverError> {
-    run_update_traced(update, catalog, current_db, ctx, None)
+    run_update_stmt_with_physical(update, catalog, current_db, ctx, None)
 }
 
-/// The retained write plan produced for a cacheable prepared DML statement.
+/// The ordinary UPDATE executor, optionally consuming the cached
+/// `Update.SelectPlan` selected by the shared physical planner.
+pub fn run_update_stmt_with_physical(
+    update: &tidb_ast::UpdateStmt,
+    catalog: &mut Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    physical_plan: Option<&mut tidb_planner::physical::PhysicalPlan>,
+) -> Result<u64, DriverError> {
+    run_update_stmt_with_physical_and_stats(update, catalog, current_db, ctx, physical_plan, None)
+}
+
+pub(crate) fn run_update_stmt_with_physical_and_stats(
+    update: &tidb_ast::UpdateStmt,
+    catalog: &mut Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    physical_plan: Option<&mut tidb_planner::physical::PhysicalPlan>,
+    runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
+) -> Result<u64, DriverError> {
+    let source = update_source_query(update);
+    let mut fresh = physical_plan
+        .is_none()
+        .then(|| {
+            physical_dml_plan(
+                "Update",
+                source.as_ref(),
+                false,
+                Some(update),
+                catalog,
+                current_db,
+                ctx,
+            )
+        })
+        .transpose()?;
+    let physical_plan = physical_plan.or(fresh.as_mut());
+    let (physical_source, update_expressions) = match physical_plan {
+        Some(plan) => {
+            let tidb_planner::physical::PhysicalPlan::Dml(root) = plan else {
+                return Err(DriverError::unsupported(
+                    "UPDATE execution received a non-DML physical root",
+                ));
+            };
+            if !root.go_operator.eq_ignore_ascii_case("Update") {
+                return Err(DriverError::unsupported(format!(
+                    "Update execution received a {} physical root",
+                    root.go_operator
+                )));
+            }
+            (
+                root.select_plan.as_deref_mut(),
+                Some(root.update_expressions.as_slice()),
+            )
+        }
+        None => (None, None),
+    };
+    run_update_with_physical(
+        update,
+        catalog,
+        current_db,
+        ctx,
+        physical_source,
+        update_expressions,
+        runtime,
+    )
+}
+
+pub(crate) fn update_source_query(update: &tidb_ast::UpdateStmt) -> Option<tidb_ast::QueryStmt> {
+    match &update.kind {
+        tidb_ast::UpdateKind::Single(table_ref) => super::access::PointPlanStmt::of_write(
+            update.where_clause.as_ref(),
+            &update.order_by,
+            update.limit.as_ref(),
+            table_ref,
+        )
+        .write_select(),
+        tidb_ast::UpdateKind::Multi { .. } => None,
+    }
+    .map(|select| tidb_ast::QueryStmt::Select(Box::new(select)))
+}
+
+/// Go `tryUpdatePointPlan` declines the complete fast DML plan when any SET
+/// expression contains a subquery. The ordinary builder must then attach the
+/// subquery plan while rewriting the assignment.
+pub(crate) fn update_allows_fast_plan(update: &tidb_ast::UpdateStmt) -> bool {
+    !update
+        .assignments
+        .iter()
+        .any(|assignment| super::subquery::expr_has_subquery(&assignment.value))
+}
+
+fn update_assignment_values_for_plan(
+    update: &tidb_ast::UpdateStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<Vec<Option<tidb_ast::Expr>>, DriverError> {
+    let tidb_ast::UpdateKind::Single(table_ref) = &update.kind else {
+        return Ok(Vec::new());
+    };
+    let (database, name) = single_table_name(table_ref, current_db)?;
+    let table = catalog.get_in(&database, &name).ok_or_else(|| {
+        DriverError::Schema(crate::SchemaErrorKind::UnknownTable(format!(
+            "{database}.{name}"
+        )))
+    })?;
+    let mut columns = table.column_list();
+    if statement_names_extra_handle(
+        update.where_clause.iter().chain(
+            update
+                .assignments
+                .iter()
+                .map(|assignment| &assignment.value),
+        ),
+    ) {
+        if let Some(column) = crate::driver::from::extra_handle_column(table) {
+            columns.push(column);
+        }
+    }
+    let scope = dml_table_scope(table_ref, &database, &name, columns, ctx);
+    update
+        .assignments
+        .iter()
+        .map(|assignment| {
+            let folded = super::subquery::fold_subqueries(
+                &assignment.value,
+                &scope,
+                catalog,
+                current_db,
+                ctx,
+            )?;
+            Ok(super::subquery::expr_has_subquery(&folded).then_some(folded))
+        })
+        .collect()
+}
+
+/// The retained definition and cache key for a prepared DML statement.
+///
+/// Go caches an ordinary `Insert`, `Update`, or `Delete` plan and builds
+/// the same executor for a cache hit and a miss. Rust keeps the same lifecycle
+/// contract here: this object owns only immutable PREPARE input and cache-key
+/// state. The bound statement is executed by the ordinary session DML funnel;
+/// there is no cache-only write executor.
 #[derive(Debug)]
 pub struct PreparedDmlPlan {
-    inner: PreparedDmlPlanInner,
-    cache_ready: std::sync::atomic::AtomicBool,
+    current_database: String,
+    table_names: Vec<(String, String)>,
+    parameter_count: usize,
+    limit_parameter_orders: Vec<usize>,
+    statement: Stmt,
+    cached_plans: std::sync::Mutex<Vec<CachedDmlPlanEntry>>,
 }
 
 #[derive(Debug)]
-enum PreparedDmlPlanInner {
-    Insert(PreparedInsertPlan),
-    PointDelete(PreparedPointDeletePlan),
-    PointUpdate(PreparedPointUpdatePlan),
+struct CachedDmlPlanEntry {
+    schema_version: u64,
+    stats_version_hash: u64,
+    environment: PreparedPlanCacheEnvironment,
+    parameter_types: Vec<PreparedParameterType>,
+    limit_values: Vec<u64>,
+    plan: Arc<std::sync::Mutex<CachedDmlPlan>>,
 }
 
-/// One execution rebuilt from a retained prepared DML plan.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
+struct CachedDmlPlan {
+    statement: Stmt,
+    physical: tidb_planner::physical::PhysicalPlan,
+    generation: u64,
+}
+
+impl CachedDmlPlan {
+    fn bind(&mut self, values: &[Datum]) -> Option<u64> {
+        super::bind_prepared_statement_in_place(&mut self.statement, values).ok()?;
+        self.physical
+            .rebuild_plan_for_cache_in_place(
+                &tidb_planner::physical_plan_cache::CachedPlanRebuildContext::new(values),
+            )
+            .ok()?;
+        self.generation = self.generation.wrapping_add(1);
+        Some(self.generation)
+    }
+
+    fn execution_mut(
+        &mut self,
+        generation: u64,
+    ) -> Option<(&Stmt, &mut tidb_planner::physical::PhysicalPlan)> {
+        (self.generation == generation).then_some((&self.statement, &mut self.physical))
+    }
+}
+
+/// One bound execution rebuilt from a retained prepared DML definition.
+#[derive(Debug)]
 pub struct PreparedDmlExecution {
     plan: Arc<PreparedDmlPlan>,
-    params: Vec<Datum>,
-}
-
-/// Which statement lifecycle a prepared DML plan requires.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum PreparedDmlKind {
-    /// INSERT lifecycle and privilege checks.
-    Insert,
-    /// UPDATE lifecycle and privilege checks.
-    Update,
-    /// DELETE lifecycle and privilege checks.
-    Delete,
+    cached_plan: Arc<std::sync::Mutex<CachedDmlPlan>>,
+    generation: u64,
+    cache_hit: bool,
 }
 
 impl PreparedDmlPlan {
-    /// The resolved target identity used for privileges and MDL tracking.
+    /// The immutable statement retained at PREPARE time.
     #[must_use]
-    pub fn names(&self) -> (&str, &str) {
-        match &self.inner {
-            PreparedDmlPlanInner::Insert(plan) => (&plan.database, &plan.table),
-            PreparedDmlPlanInner::PointDelete(plan) => (&plan.point.database, &plan.point.table),
-            PreparedDmlPlanInner::PointUpdate(plan) => (&plan.point.database, &plan.point.table),
-        }
+    pub const fn statement(&self) -> &Stmt {
+        &self.statement
     }
 
-    /// The statement lifecycle required by this plan.
-    #[must_use]
-    pub const fn kind(&self) -> PreparedDmlKind {
-        match &self.inner {
-            PreparedDmlPlanInner::Insert(_) => PreparedDmlKind::Insert,
-            PreparedDmlPlanInner::PointDelete(_) => PreparedDmlKind::Delete,
-            PreparedDmlPlanInner::PointUpdate(_) => PreparedDmlKind::Update,
-        }
-    }
-
-    /// Whether the statement's error policy is `IGNORE`.
-    #[must_use]
-    pub const fn ignore_errors(&self) -> bool {
-        match &self.inner {
-            PreparedDmlPlanInner::Insert(plan) => plan.ignore,
-            PreparedDmlPlanInner::PointDelete(plan) => plan.ignore,
-            PreparedDmlPlanInner::PointUpdate(_) => false,
-        }
-    }
-
-    /// Whether one successful execution admitted this plan to the cache.
-    #[must_use]
-    pub fn cache_ready(&self) -> bool {
-        self.cache_ready.load(std::sync::atomic::Ordering::Acquire)
-    }
-
-    /// Admits the plan after its first successful execution.
-    pub fn mark_cache_ready(&self) {
-        self.cache_ready
-            .store(true, std::sync::atomic::Ordering::Release);
-    }
-
-    /// Binds one EXECUTE's values after checking schema and table identity.
+    /// Binds one EXECUTE's values and checks Go's schema, session, and
+    /// parameter-type cache key. A different key is a cache miss, not a
+    /// reason to choose a different executor implementation.
     #[must_use]
     pub fn bind(
         self: &Arc<Self>,
         params: &[Datum],
         catalog: &Catalog,
         current_database: &str,
+        environment: &PreparedPlanCacheEnvironment,
     ) -> Option<PreparedDmlExecution> {
-        let valid = match &self.inner {
-            PreparedDmlPlanInner::Insert(plan) => {
-                plan.schema_version == catalog.metadata_version()
-                    && plan.current_database.eq_ignore_ascii_case(current_database)
-                    && matches!(
-                        catalog.get_in(&plan.database, &plan.table),
-                        Some(TableEntry::Kv(table)) if table.table_id == plan.table_id
-                    )
+        let ctx = crate::StmtContext::for_query();
+        self.bind_for_statement(
+            params,
+            catalog,
+            current_database,
+            &ctx,
+            environment,
+            &self.statement,
+        )
+    }
+
+    /// Binds the statement after the SQL binding selected for this EXECUTE
+    /// has replaced its hints. The matching `BindSQL` is carried by
+    /// `environment`, so changing a binding cannot hit an older entry.
+    #[must_use]
+    pub fn bind_for_statement(
+        self: &Arc<Self>,
+        params: &[Datum],
+        catalog: &Catalog,
+        current_database: &str,
+        ctx: &crate::StmtContext,
+        environment: &PreparedPlanCacheEnvironment,
+        statement: &Stmt,
+    ) -> Option<PreparedDmlExecution> {
+        self.bind_inner(
+            params,
+            catalog,
+            current_database,
+            Some(ctx),
+            environment,
+            statement,
+        )
+    }
+
+    /// Rebuilds an existing physical DML root without constructing a planner
+    /// statement context. A miss leaves physical enumeration to
+    /// [`Self::bind_for_statement`].
+    #[must_use]
+    pub fn bind_cached_for_statement(
+        self: &Arc<Self>,
+        params: &[Datum],
+        catalog: &Catalog,
+        current_database: &str,
+        environment: &PreparedPlanCacheEnvironment,
+        statement: &Stmt,
+    ) -> Option<PreparedDmlExecution> {
+        self.bind_inner(
+            params,
+            catalog,
+            current_database,
+            None,
+            environment,
+            statement,
+        )
+    }
+
+    fn bind_inner(
+        self: &Arc<Self>,
+        params: &[Datum],
+        catalog: &Catalog,
+        current_database: &str,
+        ctx: Option<&crate::StmtContext>,
+        environment: &PreparedPlanCacheEnvironment,
+        statement: &Stmt,
+    ) -> Option<PreparedDmlExecution> {
+        if !self.current_database.eq_ignore_ascii_case(current_database) {
+            return None;
+        }
+        let parameter_types = params
+            .iter()
+            .map(PreparedParameterType::of)
+            .collect::<Vec<_>>();
+        let limit_values = self
+            .limit_parameter_orders
+            .iter()
+            .map(|order| match params.get(*order) {
+                Some(Datum::Int(value)) if (0..=10_000).contains(value) => Some(*value as u64),
+                Some(Datum::UInt(value)) if *value <= 10_000 => Some(*value),
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>()?;
+        let schema_version = catalog.metadata_version();
+        let stats_version_hash = self.stats_version_hash(catalog, environment);
+        let mut cached_plans = self.cached_plans.lock().ok()?;
+        let cached = cached_plans.iter().position(|entry| {
+            entry.schema_version == schema_version
+                && entry.stats_version_hash == stats_version_hash
+                && entry.environment == *environment
+                && super::access::prepared_parameter_types_compatible(
+                    &entry.parameter_types,
+                    &parameter_types,
+                )
+                && entry.limit_values == limit_values
+        });
+        let (cached_plan, generation, cache_hit) = match cached {
+            Some(index) => {
+                let plan = Arc::clone(&cached_plans[index].plan);
+                let generation = {
+                    let mut cached = plan.lock().ok()?;
+                    cached.bind(params)
+                };
+                match generation {
+                    Some(generation) => (plan, generation, true),
+                    None => {
+                        cached_plans.remove(index);
+                        return None;
+                    }
+                }
             }
-            PreparedDmlPlanInner::PointDelete(plan) => {
-                plan.point.matches_catalog(catalog, current_database)
-            }
-            PreparedDmlPlanInner::PointUpdate(plan) => {
-                plan.point.matches_catalog(catalog, current_database)
+            None => {
+                let ctx = ctx?;
+                let bound = super::bind_prepared_statement(statement, params).ok()?;
+                let physical = cached_dml_physical_plan(
+                    &bound,
+                    catalog,
+                    current_database,
+                    ctx,
+                    environment.plan_cacheability(self.parameter_count),
+                )?;
+                // Keep the marker-bearing statement beside the root just as
+                // Go keeps PreparedAst and PlanCacheValue.Plan. The physical
+                // tree was generated from the current marker values; `bind`
+                // below performs the one recursive rebuild used to publish
+                // this retained entry.
+                let mut plan = CachedDmlPlan {
+                    statement: bound,
+                    physical,
+                    generation: 0,
+                };
+                let generation = plan.bind(params)?;
+                let plan = Arc::new(std::sync::Mutex::new(plan));
+                cached_plans.retain(|entry| {
+                    entry.schema_version == schema_version
+                        && entry.stats_version_hash == stats_version_hash
+                        && entry.environment == *environment
+                });
+                cached_plans.push(CachedDmlPlanEntry {
+                    schema_version,
+                    stats_version_hash,
+                    environment: environment.clone(),
+                    parameter_types,
+                    limit_values,
+                    plan: Arc::clone(&plan),
+                });
+                (plan, generation, false)
             }
         };
-        valid.then(|| PreparedDmlExecution {
+        Some(PreparedDmlExecution {
             plan: Arc::clone(self),
-            params: params.to_vec(),
+            cached_plan,
+            generation,
+            cache_hit,
+        })
+    }
+
+    fn stats_version_hash(
+        &self,
+        catalog: &Catalog,
+        environment: &PreparedPlanCacheEnvironment,
+    ) -> u64 {
+        if !environment.hashes_fresh_statistics() {
+            return 0;
+        }
+        self.table_names.iter().fold(0, |hash, (database, table)| {
+            let version = match catalog.get_in(database, table) {
+                Some(TableEntry::Kv(table)) => catalog
+                    .table_statistics(table.stats_physical_id())
+                    .map_or(0, |statistics| statistics.version),
+                _ => 0,
+            };
+            hash.wrapping_add(version)
         })
     }
 }
 
 impl PreparedDmlExecution {
-    /// The immutable plan this execution was rebuilt from.
+    /// The immutable PREPARE-time definition used for schema ownership.
     #[must_use]
     pub fn plan(&self) -> &PreparedDmlPlan {
         &self.plan
     }
+
+    /// Whether this execution's full Go cache key matches the last successful
+    /// execution.
+    #[must_use]
+    pub const fn cache_hit(&self) -> bool {
+        self.cache_hit
+    }
+
+    /// Runs a callback while the cache-owned DML root is pinned to the
+    /// generation rebuilt for this EXECUTE. The callback is the ordinary
+    /// session statement funnel; this type does not own another executor.
+    pub fn with_plan<R>(
+        &self,
+        callback: impl FnOnce(&Stmt, &mut tidb_planner::physical::PhysicalPlan) -> R,
+    ) -> Option<R> {
+        let mut cached = self.cached_plan.lock().ok()?;
+        let (statement, physical) = cached.execution_mut(self.generation)?;
+        Some(callback(statement, physical))
+    }
 }
 
-/// Builds the prepared DML plan selected for the retained statement.
+/// Builds the retained definition for an AST-cacheable prepared write.
+///
+/// Shape-specific physical decisions deliberately do not happen here. Go
+/// builds a normal DML root and uses the common executor builder; the session
+/// cacheability checker owns admission before this function is called.
 pub fn build_prepared_dml_plan(
     statement: &Stmt,
     parameter_count: usize,
-    catalog: &Catalog,
+    _catalog: &Catalog,
     current_db: &str,
 ) -> Result<Option<PreparedDmlPlan>, DriverError> {
-    if let Some(plan) = build_prepared_insert_plan(statement, parameter_count, catalog, current_db)?
+    if parsed_parameter_count(statement) != parameter_count
+        || !matches!(statement, Stmt::Dml(dml) if prepared_dml_kind(dml))
     {
-        return Ok(Some(PreparedDmlPlan {
-            inner: PreparedDmlPlanInner::Insert(plan),
-            cache_ready: std::sync::atomic::AtomicBool::new(false),
-        }));
-    }
-    if let Some(plan) =
-        build_prepared_point_update_plan(statement, parameter_count, catalog, current_db)?
-    {
-        return Ok(Some(PreparedDmlPlan {
-            inner: PreparedDmlPlanInner::PointUpdate(plan),
-            cache_ready: std::sync::atomic::AtomicBool::new(false),
-        }));
-    }
-    build_prepared_point_delete_plan(statement, parameter_count, catalog, current_db).map(|plan| {
-        plan.map(|plan| PreparedDmlPlan {
-            inner: PreparedDmlPlanInner::PointDelete(plan),
-            cache_ready: std::sync::atomic::AtomicBool::new(false),
-        })
-    })
-}
-
-/// Executes one rebound prepared DML plan. `None` means it was invalidated or
-/// its execute-time values require the complete statement executor.
-pub fn run_prepared_dml(
-    execution: &PreparedDmlExecution,
-    catalog: &mut Catalog,
-    current_db: &str,
-    ctx: &crate::StmtContext,
-) -> Result<Option<u64>, DriverError> {
-    match &execution.plan.inner {
-        PreparedDmlPlanInner::Insert(plan) => {
-            run_prepared_insert(plan, &execution.params, catalog, current_db, ctx)
-        }
-        PreparedDmlPlanInner::PointDelete(plan) => {
-            run_prepared_point_delete(plan, &execution.params, catalog, current_db, ctx)
-        }
-        PreparedDmlPlanInner::PointUpdate(plan) => {
-            run_prepared_point_update(plan, &execution.params, catalog, current_db, ctx)
-        }
-    }
-}
-
-/// The immutable point-update plan produced for a cacheable prepared UPDATE.
-///
-/// This is Rust's counterpart of Go `tryUpdatePointPlan`: name resolution,
-/// clustered-handle discovery, residual classification, and assignment
-/// lowering happen once. Each EXECUTE only binds values and creates fresh
-/// mutation state.
-#[derive(Debug)]
-struct PreparedPointUpdatePlan {
-    point: PreparedPointWritePlan,
-    assignments: Vec<PreparedPointAssignment>,
-}
-
-#[derive(Debug)]
-struct PreparedPointWritePlan {
-    schema_version: u64,
-    current_database: String,
-    database: String,
-    table: String,
-    table_id: i64,
-    int_handle: bool,
-    handle_parameter_orders: Vec<usize>,
-    residual_eqs: Vec<(usize, ResidualEq)>,
-    field_types: Vec<FieldType>,
-    column_names: Vec<String>,
-}
-
-/// The immutable point-delete plan produced for a cacheable prepared DELETE.
-#[derive(Debug)]
-struct PreparedPointDeletePlan {
-    point: PreparedPointWritePlan,
-    ignore: bool,
-}
-
-#[derive(Clone, Debug)]
-struct PreparedPointAssignment {
-    offset: usize,
-    value: PreparedPointAssignmentValue,
-}
-
-#[derive(Clone, Debug)]
-enum PreparedPointAssignmentValue {
-    Parameter(usize),
-    Arithmetic { sign: i8, delta: PreparedPointDelta },
-}
-
-#[derive(Clone, Debug)]
-enum PreparedPointDelta {
-    Parameter(usize),
-    Literal(Datum),
-}
-
-impl PreparedPointWritePlan {
-    fn matches_catalog(&self, catalog: &Catalog, current_database: &str) -> bool {
-        if self.schema_version != catalog.metadata_version()
-            || !self.current_database.eq_ignore_ascii_case(current_database)
-            || !matches!(
-                catalog.get_in(&self.database, &self.table),
-                Some(TableEntry::Kv(table)) if table.table_id == self.table_id
-            )
-        {
-            return false;
-        }
-        true
-    }
-}
-
-struct PreparedPointWriteBuild {
-    point: PreparedPointWritePlan,
-    handle_offsets: Vec<usize>,
-    qualifier: Option<String>,
-}
-
-fn build_prepared_point_write(
-    table_ref: &tidb_ast::TableRef,
-    predicate: Option<&tidb_ast::Expr>,
-    parameter_count: usize,
-    catalog: &Catalog,
-    current_db: &str,
-) -> Result<Option<PreparedPointWriteBuild>, DriverError> {
-    let (database, table_name) = single_table_name(table_ref, current_db)?;
-    let Some(TableEntry::Kv(table)) = catalog.get_in(&database, &table_name) else {
-        return Ok(None);
-    };
-    let int_pk_offset = table.pk_handle_offset();
-    let mut handle_offsets = table.common_handle_offsets().to_vec();
-    if let Some(offset) = int_pk_offset {
-        handle_offsets = vec![offset];
-    }
-    if handle_offsets.is_empty() {
         return Ok(None);
     }
-    let qualifier = table_ref
-        .alias
-        .as_deref()
-        .or_else(|| table_ref.name.last().map(String::as_str));
-    let columns = table.visible_columns();
-    let mut residual_eqs = Vec::new();
-    let Some(handle_expressions) = point_write_where(
-        predicate,
-        &handle_offsets,
-        qualifier,
-        columns,
-        &mut residual_eqs,
-    ) else {
-        return Ok(None);
-    };
-    let mut handle_parameter_orders = Vec::with_capacity(handle_expressions.len());
-    for expression in handle_expressions {
-        let tidb_ast::Expr::ParamMarker { order, .. } = unparen(expression) else {
-            return Ok(None);
-        };
-        if *order >= parameter_count {
-            return Ok(None);
-        }
-        handle_parameter_orders.push(*order);
-    }
-    Ok(Some(PreparedPointWriteBuild {
-        point: PreparedPointWritePlan {
-            schema_version: catalog.metadata_version(),
-            current_database: current_db.to_owned(),
-            database,
-            table: table_name,
-            table_id: table.table_id,
-            int_handle: int_pk_offset.is_some(),
-            handle_parameter_orders,
-            residual_eqs,
-            field_types: columns
-                .iter()
-                .map(|column| column.field_type.clone())
-                .collect(),
-            column_names: columns.iter().map(|column| column.name.clone()).collect(),
-        },
-        handle_offsets,
-        qualifier: qualifier.map(str::to_owned),
+    Ok(Some(PreparedDmlPlan {
+        current_database: current_db.to_owned(),
+        table_names: prepared_dml_table_names(statement, current_db),
+        parameter_count,
+        limit_parameter_orders: super::access::prepared_limit_parameter_orders(statement),
+        statement: statement.clone(),
+        cached_plans: std::sync::Mutex::new(Vec::new()),
     }))
 }
 
-/// Builds Go's cacheable clustered point-delete shape from a retained AST.
-fn build_prepared_point_delete_plan(
+fn prepared_dml_kind(dml: &tidb_ast::DmlStmt) -> bool {
+    matches!(
+        dml,
+        tidb_ast::DmlStmt::Insert(_) | tidb_ast::DmlStmt::Update(_) | tidb_ast::DmlStmt::Delete(_)
+    )
+}
+
+fn cached_dml_physical_plan(
     statement: &Stmt,
-    parameter_count: usize,
     catalog: &Catalog,
-    current_db: &str,
-) -> Result<Option<PreparedPointDeletePlan>, DriverError> {
-    if parsed_parameter_count(statement) != parameter_count {
-        return Ok(None);
-    }
+    current_database: &str,
+    ctx: &crate::StmtContext,
+    cacheability: tidb_planner::physical_plan_cache::PlanCacheabilityContext,
+) -> Option<tidb_planner::physical::PhysicalPlan> {
     let Stmt::Dml(dml) = statement else {
-        return Ok(None);
-    };
-    let tidb_ast::DmlStmt::Delete(delete) = dml.as_ref() else {
-        return Ok(None);
-    };
-    if !delete.order_by.is_empty() || delete.limit.is_some() || !delete.returning.is_empty() {
-        return Ok(None);
-    }
-    let tidb_ast::DeleteKind::Single(table_ref) = &delete.kind else {
-        return Ok(None);
-    };
-    // A partition-qualified target needs the complete table wrapper to prove
-    // that the bound handle belongs to the named partition.
-    if !table_ref.partitions.is_empty() {
-        return Ok(None);
-    }
-    let Some(built) = build_prepared_point_write(
-        table_ref,
-        delete.where_clause.as_ref(),
-        parameter_count,
-        catalog,
-        current_db,
-    )?
-    else {
-        return Ok(None);
-    };
-    Ok(Some(PreparedPointDeletePlan {
-        point: built.point,
-        ignore: delete.ignore,
-    }))
-}
-
-/// Builds Go's cacheable clustered point-update shape from a retained AST.
-fn build_prepared_point_update_plan(
-    statement: &Stmt,
-    parameter_count: usize,
-    catalog: &Catalog,
-    current_db: &str,
-) -> Result<Option<PreparedPointUpdatePlan>, DriverError> {
-    if parsed_parameter_count(statement) != parameter_count {
-        return Ok(None);
-    }
-    let Stmt::Dml(dml) = statement else {
-        return Ok(None);
-    };
-    let tidb_ast::DmlStmt::Update(update) = dml.as_ref() else {
-        return Ok(None);
-    };
-    if update.ignore
-        || !update.order_by.is_empty()
-        || update.limit.is_some()
-        || !update.returning.is_empty()
-        || update.assignments.is_empty()
-    {
-        return Ok(None);
-    }
-    let tidb_ast::UpdateKind::Single(table_ref) = &update.kind else {
-        return Ok(None);
-    };
-    let Some(built) = build_prepared_point_write(
-        table_ref,
-        update.where_clause.as_ref(),
-        parameter_count,
-        catalog,
-        current_db,
-    )?
-    else {
-        return Ok(None);
-    };
-    let PreparedPointWriteBuild {
-        point,
-        handle_offsets,
-        qualifier,
-    } = built;
-    let Some(TableEntry::Kv(table)) = catalog.get_in(&point.database, &point.table) else {
-        return Ok(None);
-    };
-    if table
-        .visible_columns()
-        .iter()
-        .any(|column| column.generated.is_some())
-    {
-        return Ok(None);
-    }
-    let qualifier = qualifier.as_deref();
-    let columns = table.visible_columns();
-    let mut assignment_offsets = Vec::with_capacity(update.assignments.len());
-    for assignment in &update.assignments {
-        let Some(offset) = columns.iter().position(|column| {
-            column
-                .name
-                .eq_ignore_ascii_case(assignment.col.last().map_or("", String::as_str))
-                && assignment_qualifier_matches(&assignment.col, qualifier)
-        }) else {
-            return Ok(None);
-        };
-        if handle_offsets.contains(&offset) || assignment_offsets.contains(&offset) {
-            return Ok(None);
-        }
-        assignment_offsets.push(offset);
-    }
-    if table.indexes().iter().any(|index| {
-        index.unique
-            && !index.clustered_primary
-            && index
-                .column_offsets
-                .iter()
-                .any(|offset| assignment_offsets.contains(offset))
-    }) || table.foreign_keys().iter().any(|foreign_key| {
-        foreign_key.cols.iter().any(|column| {
-            update.assignments.iter().any(|assignment| {
-                assignment
-                    .col
-                    .last()
-                    .is_some_and(|assigned| assigned.eq_ignore_ascii_case(column))
-            })
-        })
-    }) {
-        return Ok(None);
-    }
-
-    let assignments = update
-        .assignments
-        .iter()
-        .zip(assignment_offsets)
-        .map(|(assignment, offset)| {
-            prepare_point_assignment(&assignment.value, &assignment.col, qualifier, offset)
-                .map(|value| PreparedPointAssignment { offset, value })
-        })
-        .collect::<Option<Vec<_>>>();
-    let Some(assignments) = assignments else {
-        return Ok(None);
-    };
-
-    Ok(Some(PreparedPointUpdatePlan { point, assignments }))
-}
-
-fn bind_prepared_point_handle(
-    int_handle: bool,
-    handle_parameter_orders: &[usize],
-    params: &[Datum],
-    ctx: &crate::StmtContext,
-) -> Result<Option<TableHandle>, DriverError> {
-    let key_values = handle_parameter_orders
-        .iter()
-        .map(|order| params.get(*order).cloned())
-        .collect::<Option<Vec<_>>>()
-        .ok_or(DriverError::WrongParamCount)?;
-    if int_handle {
-        let value = match key_values.first() {
-            Some(Datum::Int(value)) => *value,
-            Some(Datum::UInt(value)) => *value as i64,
-            // A string/decimal comparison against an integer handle needs
-            // the ordinary expression coercion rules. Decline before any
-            // mutation so the complete write path can answer it.
-            _ => return Ok(None),
-        };
-        return Ok(Some(TableHandle::Int(value)));
-    }
-    let encoded =
-        tidb_codec::encode_key_in_timezone(&ctx.session_zone(), &key_values).map_err(|error| {
-            DriverError::unsupported(format!("cannot encode common handle: {error:?}"))
-        })?;
-    let handle = tidb_txnkv::CommonHandle::new(encoded).map_err(|error| {
-        DriverError::unsupported(format!("cannot encode common handle: {error:?}"))
-    })?;
-    Ok(Some(TableHandle::Common(handle.encoded().to_vec())))
-}
-
-fn prepared_point_residuals_match(
-    residual_eqs: &[(usize, ResidualEq)],
-    field_types: &[FieldType],
-    column_names: &[String],
-    old_row: &[Datum],
-    params: &[Datum],
-    ctx: &crate::StmtContext,
-) -> Result<bool, DriverError> {
-    for (offset, bound) in residual_eqs {
-        let expected = match bound {
-            ResidualEq::Param(order) => params.get(*order).cloned(),
-            ResidualEq::Constant(value) => Some(value.clone()),
-        };
-        let Some(mut expected) = expected else {
-            return Err(DriverError::WrongParamCount);
-        };
-        if expected.is_null() || old_row.get(*offset).is_none_or(Datum::is_null) {
-            return Ok(false);
-        }
-        expected = cast_value_for_update_assignment(
-            expected,
-            &field_types[*offset],
-            &column_names[*offset],
-            0,
-            ctx,
-        )?;
-        match old_row[*offset].compare(&expected, field_types[*offset].collation()) {
-            Ok(std::cmp::Ordering::Equal) => {}
-            _ => return Ok(false),
-        }
-    }
-    Ok(true)
-}
-
-/// Executes one rebound prepared point delete. `None` means execute-time
-/// coercion or DDL requires the complete DELETE executor.
-fn run_prepared_point_delete(
-    plan: &PreparedPointDeletePlan,
-    params: &[Datum],
-    catalog: &mut Catalog,
-    current_db: &str,
-    ctx: &crate::StmtContext,
-) -> Result<Option<u64>, DriverError> {
-    let point = &plan.point;
-    if point.schema_version != catalog.metadata_version()
-        || !point.current_database.eq_ignore_ascii_case(current_db)
-    {
-        return Ok(None);
-    }
-    let Some(handle) = bind_prepared_point_handle(
-        point.int_handle,
-        &point.handle_parameter_orders,
-        params,
-        ctx,
-    )?
-    else {
-        return Ok(None);
-    };
-    let old_row = {
-        let Some(TableEntry::Kv(table)) = catalog.get_mut_in(&point.database, &point.table) else {
-            return Ok(None);
-        };
-        if table.table_id != point.table_id {
-            return Ok(None);
-        }
-        table
-            .get_row_by_handle(&handle, &ctx.session_zone())
-            .map_err(kv_write_error)?
-    };
-    let Some(old_row) = old_row else {
-        return Ok(Some(0));
-    };
-    if !prepared_point_residuals_match(
-        &point.residual_eqs,
-        &point.field_types,
-        &point.column_names,
-        &old_row,
-        params,
-        ctx,
-    )? {
-        return Ok(Some(0));
-    }
-    ctx.statement_memory()
-        .write_accountant(mem_quota::label::DELETE)
-        .account_row(&old_row)
-        .map_err(DriverError::from)?;
-    if ctx.foreign_key_checks() {
-        let changes = [crate::foreign_key::ParentChange::Delete(&old_row)];
-        if let Err(error) = crate::foreign_key::cascade_parent_changes(
-            catalog,
-            &point.database,
-            &point.table,
-            &changes,
-            ctx,
-        ) {
-            if !plan.ignore {
-                return Err(error);
-            }
-            let warning = error.to_mysql_error();
-            ctx.append_warning_parts(warning.code, &warning.message);
-            return Ok(Some(0));
-        }
-    }
-    let Some(TableEntry::Kv(table)) = catalog.get_mut_in(&point.database, &point.table) else {
-        return Ok(None);
-    };
-    table
-        .delete_row_with_old(&handle, &old_row, ctx)
-        .map_err(|error| kv_read_error("row delete failed", error))?;
-    Ok(Some(1))
-}
-
-/// Executes one rebound prepared point update. `None` means DDL invalidated
-/// the retained plan before the mutation began.
-fn run_prepared_point_update(
-    plan: &PreparedPointUpdatePlan,
-    params: &[Datum],
-    catalog: &mut Catalog,
-    current_db: &str,
-    ctx: &crate::StmtContext,
-) -> Result<Option<u64>, DriverError> {
-    let point = &plan.point;
-    if point.schema_version != catalog.metadata_version()
-        || !point.current_database.eq_ignore_ascii_case(current_db)
-    {
-        return Ok(None);
-    }
-    let Some(TableEntry::Kv(table)) = catalog.get_mut_in(&point.database, &point.table) else {
-        return Ok(None);
-    };
-    if table.table_id != point.table_id {
-        return Ok(None);
-    }
-    let Some(handle) = bind_prepared_point_handle(
-        point.int_handle,
-        &point.handle_parameter_orders,
-        params,
-        ctx,
-    )?
-    else {
-        return Ok(None);
-    };
-    let Some(old_row) = table
-        .get_row_by_handle(&handle, &ctx.session_zone())
-        .map_err(kv_write_error)?
-    else {
-        return Ok(Some(0));
-    };
-    if !prepared_point_residuals_match(
-        &point.residual_eqs,
-        &point.field_types,
-        &point.column_names,
-        &old_row,
-        params,
-        ctx,
-    )? {
-        return Ok(Some(0));
-    }
-    let mut row = old_row.clone();
-    for assignment in &plan.assignments {
-        let Some(value) = assignment.value.evaluate(&row, assignment.offset, params) else {
-            return Ok(None);
-        };
-        row[assignment.offset] = cast_value_for_update_assignment(
-            value,
-            &point.field_types[assignment.offset],
-            &point.column_names[assignment.offset],
-            0,
-            ctx,
-        )?;
-    }
-    let level = crate::bad_null::NullLevel::from_is_error(ctx.strict());
-    for ((value, field_type), name) in row
-        .iter_mut()
-        .zip(point.field_types.iter())
-        .zip(point.column_names.iter())
-    {
-        crate::bad_null::handle_bad_null(value, field_type, name, level, ctx)?;
-    }
-    if row == old_row {
-        return Ok(Some(0));
-    }
-    table
-        .update_row_with_old(&handle, Some(&old_row), &row, ctx)
-        .map_err(kv_write_error)?;
-    Ok(Some(1))
-}
-
-fn unparen(expr: &tidb_ast::Expr) -> &tidb_ast::Expr {
-    match expr {
-        tidb_ast::Expr::Paren(inner) => unparen(inner),
-        other => other,
-    }
-}
-
-/// Whether one operand names THE assigned column (its last spelling matches,
-/// and any qualification matches the statement's table alias).
-fn operand_is_assigned_column(
-    expr: &tidb_ast::Expr,
-    target_path: &[String],
-    qualifier: Option<&str>,
-) -> bool {
-    match unparen(expr) {
-        tidb_ast::Expr::Column(path) => {
-            path.last().is_some_and(|leaf| {
-                target_path
-                    .last()
-                    .is_some_and(|target| leaf.eq_ignore_ascii_case(target))
-            }) && assignment_qualifier_matches(path, qualifier)
-        }
-        _ => false,
-    }
-}
-
-fn prepare_point_assignment(
-    expr: &tidb_ast::Expr,
-    target_path: &[String],
-    qualifier: Option<&str>,
-    _target_offset: usize,
-) -> Option<PreparedPointAssignmentValue> {
-    match unparen(expr) {
-        tidb_ast::Expr::ParamMarker { order, .. } => {
-            Some(PreparedPointAssignmentValue::Parameter(*order))
-        }
-        tidb_ast::Expr::Binary(
-            op @ (tidb_ast::BinaryOp::Plus | tidb_ast::BinaryOp::Minus),
-            left,
-            right,
-        ) => {
-            let sign = if matches!(op, tidb_ast::BinaryOp::Plus) {
-                1
-            } else {
-                -1
-            };
-            let delta_expr = if operand_is_assigned_column(left, target_path, qualifier)
-                && !operand_is_assigned_column(right, target_path, qualifier)
-            {
-                right.as_ref()
-            } else if matches!(op, tidb_ast::BinaryOp::Plus)
-                && operand_is_assigned_column(right, target_path, qualifier)
-                && !operand_is_assigned_column(left, target_path, qualifier)
-            {
-                left.as_ref()
-            } else {
-                return None;
-            };
-            let delta = match unparen(delta_expr) {
-                tidb_ast::Expr::ParamMarker { order, .. } => PreparedPointDelta::Parameter(*order),
-                tidb_ast::Expr::Int(text) => match text.parse::<i64>() {
-                    Ok(value) => PreparedPointDelta::Literal(Datum::Int(value)),
-                    Err(_) => PreparedPointDelta::Literal(Datum::UInt(text.parse().ok()?)),
-                },
-                _ => return None,
-            };
-            Some(PreparedPointAssignmentValue::Arithmetic { sign, delta })
-        }
-        _ => None,
-    }
-}
-
-impl PreparedPointAssignmentValue {
-    fn evaluate(&self, row: &[Datum], target_offset: usize, params: &[Datum]) -> Option<Datum> {
-        match self {
-            Self::Parameter(order) => params.get(*order).cloned(),
-            Self::Arithmetic { sign, delta } => {
-                let current = row.get(target_offset)?;
-                let delta = match delta {
-                    PreparedPointDelta::Parameter(order) => params.get(*order)?.clone(),
-                    PreparedPointDelta::Literal(value) => value.clone(),
-                };
-                if current.is_null() || delta.is_null() {
-                    return Some(Datum::Null);
-                }
-                let as_i128 = |datum: &Datum| match datum {
-                    Datum::Int(value) => Some(i128::from(*value)),
-                    Datum::UInt(value) => Some(i128::from(*value)),
-                    _ => None,
-                };
-                let base = as_i128(current)?;
-                let shift = as_i128(&delta)?;
-                let value = if *sign == 1 {
-                    base.checked_add(shift)?
-                } else {
-                    base.checked_sub(shift)?
-                };
-                match current {
-                    Datum::UInt(_) => u64::try_from(value).ok().map(Datum::UInt),
-                    _ => i64::try_from(value).ok().map(Datum::Int),
-                }
-            }
-        }
-    }
-}
-
-fn assignment_qualifier_matches(path: &[String], qualifier: Option<&str>) -> bool {
-    path.len() < 2
-        || qualifier.is_some_and(|qualifier| path[path.len() - 2].eq_ignore_ascii_case(qualifier))
-}
-
-/// One `column = ?`/`column = constant` conjunct beside a retained point
-/// write's handle pin: the OLD row must answer it before anything changes.
-#[derive(Clone, Debug)]
-enum ResidualEq {
-    Param(usize),
-    Constant(tidb_datatype::Datum),
-}
-
-/// Walks a retained point write's WHERE conjunction: EVERY clustered-key
-/// column is pinned exactly once by one `=` (returned as the key
-/// expressions, in handle order), and every remaining conjunct must be a
-/// plain column equality pushed onto `residual_eqs`. Any other shape declines
-/// the whole fast arm.
-fn point_write_where<'a>(
-    predicate: Option<&'a tidb_ast::Expr>,
-    handles: &[usize],
-    qualifier: Option<&str>,
-    columns: &[crate::kv_table::KvColumn],
-    residual_eqs: &mut Vec<(usize, ResidualEq)>,
-) -> Option<Vec<&'a tidb_ast::Expr>> {
-    fn unparenthesized(expr: &tidb_ast::Expr) -> &tidb_ast::Expr {
-        match expr {
-            tidb_ast::Expr::Paren(inner) => unparenthesized(inner),
-            other => other,
-        }
-    }
-    let mut key_exprs: Vec<Option<&tidb_ast::Expr>> = vec![None; handles.len()];
-    let mut conjuncts = Vec::new();
-    fn flatten<'a>(expr: &'a tidb_ast::Expr, out: &mut Vec<&'a tidb_ast::Expr>) {
-        match expr {
-            tidb_ast::Expr::Paren(inner) => flatten(inner, out),
-            tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicAnd, lhs, rhs) => {
-                flatten(lhs, out);
-                flatten(rhs, out);
-            }
-            other => out.push(other),
-        }
-    }
-    flatten(predicate?, &mut conjuncts);
-    for conjunct in conjuncts {
-        let tidb_ast::Expr::Binary(tidb_ast::BinaryOp::Eq, left, right) = conjunct else {
-            return None;
-        };
-        // Name a CLUSTERED-KEY column? That is a pin: every key column needs
-        // exactly one, or the shape declines.
-        let pin_index = handles.iter().position(|&offset| {
-            columns.get(offset).is_some_and(|column| {
-                is_key_column(left, &column.name, qualifier)
-                    || is_key_column(right, &column.name, qualifier)
-            })
-        });
-        if let Some(index) = pin_index {
-            if key_exprs[index].is_some() {
-                return None;
-            }
-            let handle_name = columns[handles[index]].name.as_str();
-            key_exprs[index] = Some(if is_key_column(left, handle_name, qualifier) {
-                right
-            } else {
-                left
-            });
-            continue;
-        }
-        // A residual equality names one other column; its value side must be
-        // a marker or a constant.
-        let path = match (left.as_ref(), right.as_ref()) {
-            (tidb_ast::Expr::Column(path), _) => path,
-            (_, tidb_ast::Expr::Column(path)) => path,
-            _ => return None,
-        };
-        if !assignment_qualifier_matches(path, qualifier) {
-            return None;
-        }
-        let offset = columns.iter().position(|column| {
-            column
-                .name
-                .eq_ignore_ascii_case(path.last().map_or("", String::as_str))
-        })?;
-        match unparenthesized(if matches!(left.as_ref(), tidb_ast::Expr::Column(_)) {
-            right.as_ref()
-        } else {
-            left.as_ref()
-        }) {
-            tidb_ast::Expr::ParamMarker { order, .. } => {
-                residual_eqs.push((offset, ResidualEq::Param(*order)));
-            }
-            constant => {
-                let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(
-                    constant,
-                    &tidb_expr::rewriter::ZonedNoResolver::new(
-                        // A constant references no column, so the zone only
-                        // fixes temporal literals.
-                        crate::StmtContext::for_query().session_zone(),
-                    ),
-                )
-                .ok()?;
-                let tidb_expr::expression::Expression::Constant(constant) = rewritten else {
-                    return None;
-                };
-                residual_eqs.push((offset, ResidualEq::Constant(constant.eval().ok()?)));
-            }
-        }
-    }
-    if key_exprs.iter().any(Option::is_none) {
         return None;
-    }
-    Some(key_exprs.into_iter().map(Option::unwrap).collect())
-}
-
-fn is_key_column(expr: &tidb_ast::Expr, column: &str, qualifier: Option<&str>) -> bool {
-    let tidb_ast::Expr::Column(path) = expr else {
-        return false;
     };
-    path.last()
-        .is_some_and(|name| name.eq_ignore_ascii_case(column))
-        && assignment_qualifier_matches(path, qualifier)
+    let (operator, source, update) = match dml.as_ref() {
+        tidb_ast::DmlStmt::Insert(insert) => {
+            let source = insert.source.as_deref().cloned();
+            ("Insert", source, None)
+        }
+        tidb_ast::DmlStmt::Update(update) => {
+            let tidb_ast::UpdateKind::Single(table_ref) = &update.kind else {
+                return None;
+            };
+            let source = super::access::PointPlanStmt::of_write(
+                update.where_clause.as_ref(),
+                &update.order_by,
+                update.limit.as_ref(),
+                table_ref,
+            )
+            .write_select()
+            .map(|select| tidb_ast::QueryStmt::Select(Box::new(select)))?;
+            ("Update", Some(source), Some(update.as_ref()))
+        }
+        tidb_ast::DmlStmt::Delete(delete) => {
+            let tidb_ast::DeleteKind::Single(table_ref) = &delete.kind else {
+                return None;
+            };
+            let source = super::access::PointPlanStmt::of_write(
+                delete.where_clause.as_ref(),
+                &delete.order_by,
+                delete.limit.as_ref(),
+                table_ref,
+            )
+            .write_select()
+            .map(|select| tidb_ast::QueryStmt::Select(Box::new(select)))?;
+            ("Delete", Some(source), None)
+        }
+        _ => return None,
+    };
+    let root = physical_dml_plan_with_cache_mode(
+        operator,
+        source.as_ref(),
+        operator.eq_ignore_ascii_case("Insert"),
+        update,
+        catalog,
+        current_database,
+        ctx,
+        true,
+    )
+    .ok()?;
+    tidb_planner::physical_plan_cache::plan_cacheable(&root, cacheability).ok()?;
+    Some(root)
 }
 
+fn prepared_dml_table_names(statement: &Stmt, current_database: &str) -> Vec<(String, String)> {
+    struct Collector<'a> {
+        current_database: &'a str,
+        names: Vec<(String, String)>,
+    }
+
+    impl tidb_ast::Visitor for Collector<'_> {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            let Some(table_ref) = node.downcast_ref::<tidb_ast::TableRef>() else {
+                return false;
+            };
+            if let Ok((database, table)) = split_table_path(&table_ref.name, self.current_database)
+            {
+                let name = (database.to_owned(), table.to_owned());
+                if !self.names.contains(&name) {
+                    self.names.push(name);
+                }
+            }
+            false
+        }
+
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+
+    let mut statement = statement.clone();
+    let mut collector = Collector {
+        current_database,
+        names: Vec::new(),
+    };
+    use tidb_ast::Visitable as _;
+    statement.accept(&mut collector);
+    if let Stmt::Dml(dml) = statement {
+        if let tidb_ast::DmlStmt::Insert(insert) = dml.as_ref() {
+            if let Ok((database, table)) = split_table_path(&insert.table, current_database) {
+                let target = (database.to_owned(), table.to_owned());
+                if !collector.names.contains(&target) {
+                    collector.names.push(target);
+                }
+            }
+        }
+    }
+    collector.names
+}
 /// [`run_update_stmt`], recording the plan it builds into `trace`.
 ///
 /// The read plan is the one this function performs -- the `Point_Get`,
@@ -2763,12 +2382,14 @@ fn is_key_column(expr: &tidb_ast::Expr, column: &str, qualifier: Option<&str>) -
 /// counted off the very read and predicate the update runs. The one access
 /// path a write is still never offered is a non-unique INDEX; see `explain`'s
 /// divergence 8.
-pub(crate) fn run_update_traced(
+fn run_update_with_physical(
     update: &tidb_ast::UpdateStmt,
     catalog: &mut Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
-    mut trace: Option<&mut PlanTrace>,
+    mut physical_source: Option<&mut tidb_planner::physical::PhysicalPlan>,
+    planned_update_expressions: Option<&[Option<Expression>]>,
+    runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
 ) -> Result<u64, DriverError> {
     let zone = ctx.session_zone();
     // A `RETURNING` clause is parsed and silently ignored, matching Go: the
@@ -2781,12 +2402,6 @@ pub(crate) fn run_update_traced(
         // target's row identity, which is a different read path -- see
         // `multi_dml`'s module doc. `EXPLAIN` has never described it.
         tidb_ast::UpdateKind::Multi { from, .. } => {
-            if let Some(trace) = trace.as_deref_mut() {
-                trace.refuse("multi-table UPDATE plans are not supported yet");
-                if trace.is_plan_only() {
-                    return Ok(0);
-                }
-            }
             return super::multi_dml::run_multi_update(update, from, catalog, current_db, ctx);
         }
     };
@@ -2802,6 +2417,7 @@ pub(crate) fn run_update_traced(
             table: name.clone(),
         });
     }
+    let physical_kv_source = matches!(table, TableEntry::Kv(_));
     let mut column_list = table.column_list();
     let column_meta = column_metadata(table);
     // Go gives a write's `DataSource` the same schema a read gets, so
@@ -2835,7 +2451,7 @@ pub(crate) fn run_update_traced(
         div_precision_increment: ctx.div_precision_increment(),
     };
     let mut assignments = Vec::with_capacity(update.assignments.len());
-    for assignment in &update.assignments {
+    for (assignment_index, assignment) in update.assignments.iter().enumerate() {
         let (offset, _, _) = resolver
             .resolve(&assignment.col)
             .ok_or(DriverError::unsupported("unknown column in SET"))?;
@@ -2880,7 +2496,7 @@ pub(crate) fn run_update_traced(
             // The generation expression remains the value source.
             continue;
         }
-        assignments.push((offset, assignment.value.clone()));
+        assignments.push((assignment_index, offset, assignment.value.clone()));
     }
     let dml_scope = dml_table_scope(table_ref, &database, &name, column_list.clone(), ctx);
     let predicate = match &update.where_clause {
@@ -2899,56 +2515,67 @@ pub(crate) fn run_update_traced(
         chunk
     };
     let mut set_exprs = Vec::with_capacity(assignments.len());
-    for (offset, value) in &assignments {
-        let expression = match value {
-            // Go fills a bare update DEFAULT with the target column name and
-            // resolves it through GetColDefaultValue while building the
-            // assignment. Do the same once here, before row iteration, so a
-            // computed default and any warning are statement-scoped.
-            tidb_ast::Expr::Default(None) => {
-                let value = materialize_column_default(
-                    &column_meta[*offset],
-                    DefaultUse::Expression,
-                    ctx,
-                    default_row.get_row(0),
-                )?;
-                UpdateExpression::scalar(Expression::Constant(tidb_expr::constant::Constant::new(
-                    value,
-                    column_meta[*offset].field_type.clone(),
-                )))
-            }
-            _ => {
-                let defaults = prepare_named_defaults(
-                    value,
-                    ctx,
-                    default_row.get_row(0),
-                    DefaultUse::Expression,
-                    |path| {
-                        let (column, _, _) = resolver.resolve(path).ok_or_else(|| {
-                            DriverError::UnknownColumnInClause {
-                                column: path.last().cloned().unwrap_or_default(),
-                                clause: "field list".to_owned(),
-                            }
-                        })?;
-                        Ok(ResolvedDefaultColumn {
-                            identity: DefaultColumnIdentity { table: 0, column },
-                            meta: column_meta[column].clone(),
-                        })
-                    },
-                )?;
-                if expr_has_subquery(value) {
-                    UpdateExpression::applied(DmlExpression::build_with_prepared_defaults(
-                        value,
-                        dml_scope.clone(),
-                        catalog,
-                        current_db,
+    for (assignment_index, offset, value) in &assignments {
+        let planned = physical_kv_source
+            .then(|| planned_update_expressions)
+            .flatten()
+            .and_then(|expressions| expressions.get(*assignment_index))
+            .and_then(Option::as_ref);
+        let expression = if let Some(planned) = planned {
+            UpdateExpression::physical(planned.clone())
+        } else {
+            match value {
+                // Go fills a bare update DEFAULT with the target column name and
+                // resolves it through GetColDefaultValue while building the
+                // assignment. Do the same once here, before row iteration, so a
+                // computed default and any warning are statement-scoped.
+                tidb_ast::Expr::Default(None) => {
+                    let value = materialize_column_default(
+                        &column_meta[*offset],
+                        DefaultUse::Expression,
                         ctx,
-                        &defaults,
-                    )?)
-                } else {
-                    UpdateExpression::scalar(rewrite_with_prepared_defaults(
-                        value, &resolver, &defaults,
-                    )?)
+                        default_row.get_row(0),
+                    )?;
+                    UpdateExpression::scalar(Expression::Constant(
+                        tidb_expr::constant::Constant::new(
+                            value,
+                            column_meta[*offset].field_type.clone(),
+                        ),
+                    ))
+                }
+                _ => {
+                    let defaults = prepare_named_defaults(
+                        value,
+                        ctx,
+                        default_row.get_row(0),
+                        DefaultUse::Expression,
+                        |path| {
+                            let (column, _, _) = resolver.resolve(path).ok_or_else(|| {
+                                DriverError::UnknownColumnInClause {
+                                    column: path.last().cloned().unwrap_or_default(),
+                                    clause: "field list".to_owned(),
+                                }
+                            })?;
+                            Ok(ResolvedDefaultColumn {
+                                identity: DefaultColumnIdentity { table: 0, column },
+                                meta: column_meta[column].clone(),
+                            })
+                        },
+                    )?;
+                    if expr_has_subquery(value) {
+                        UpdateExpression::applied(DmlExpression::build_with_prepared_defaults(
+                            value,
+                            dml_scope.clone(),
+                            catalog,
+                            current_db,
+                            ctx,
+                            &defaults,
+                        )?)
+                    } else {
+                        UpdateExpression::scalar(rewrite_with_prepared_defaults(
+                            value, &resolver, &defaults,
+                        )?)
+                    }
                 }
             }
         };
@@ -2960,32 +2587,11 @@ pub(crate) fn run_update_traced(
     let field_types: Vec<FieldType> = column_list.iter().map(|(_, ft)| ft.clone()).collect();
     let column_names: Vec<String> = column_list.iter().map(|(name, _)| name.clone()).collect();
     let row_limit = dml_row_limit(&update.limit)?;
-    // The records this write FETCHES: one key when the `WHERE` pins a whole
-    // key, otherwise the handle intervals it implies. See
-    // `access::write_read_path` for the Go functions this mirrors and for why
-    // neither narrowing can change which rows the statement acts on.
-    let point_plan = super::access::PointPlanStmt::of_write(
-        update.where_clause.as_ref(),
-        &update.order_by,
-        update.limit.as_ref(),
-        table_ref,
-    );
-    let read_path = super::access::write_read_path(catalog, &database, &name, &point_plan, ctx)?;
-    let predicate_consumed = match catalog.get_in(&database, &name) {
-        Some(TableEntry::Kv(table)) => super::access::write_read_path_consumes_predicate(
-            read_path.as_ref(),
-            &point_plan,
-            table,
-            &column_list,
-            &zone,
-        ),
-        _ => false,
-    };
     // Go `buildLimit` (`pkg/planner/core/logical_plan_builder.go`): `LIMIT 0`
     // replaces the whole read subtree with `LogicalTableDual{RowCount: 0}` at
     // logical build, before any access path exists -- the write reads NOTHING
     // and its plan is `Update -> TableDual`, never a capped scan.
-    if row_limit == Some(0) {
+    if !physical_kv_source && row_limit == Some(0) {
         // Go builds the whole logical plan before `buildLimit` swaps the read
         // subtree for a `TableDual`: an unupdatable target, an unknown
         // partition, or an unresolvable `ORDER BY` column still errors under
@@ -3022,39 +2628,16 @@ pub(crate) fn run_update_traced(
             &column_names,
             ctx,
         )?;
-        if let Some(trace) = trace.as_deref_mut() {
-            trace.zero_limit_table_dual();
-            trace.write("Update", true);
-        }
         return Ok(0);
     }
-    if let Some(trace) = trace.as_deref_mut() {
-        trace_dml_source(
-            trace,
-            catalog,
-            DmlTarget {
-                table_ref,
-                database: &database,
-                name: &name,
-            },
-            &column_list,
-            &update.where_clause,
-            read_path.as_ref(),
-            predicate_consumed,
-            current_db,
-            &zone,
-            ctx,
-        );
-        trace.write("Update", true);
-        if trace.is_plan_only() {
-            return Ok(0);
-        }
-    }
-    let predicate = if predicate_consumed { None } else { predicate };
+    // The retained physical child owns WHERE, ORDER BY and LIMIT exactly as
+    // it does beneath Go's Update executor. Matrix-backed mock tables have no
+    // physical executor and keep their local expression path.
+    let predicate = if physical_kv_source { None } else { predicate };
     enum SourceRows {
         Mem(Vec<Vec<Datum>>),
         Kv {
-            rows: Vec<(crate::kv_table::TableHandle, Vec<Datum>)>,
+            rows: PhysicalWriteRows,
             partition_ids: Option<Vec<i64>>,
         },
     }
@@ -3063,8 +2646,38 @@ pub(crate) fn run_update_traced(
     // inner query needs an immutable view of the complete statement snapshot,
     // including the target table itself, and no write is applied until every
     // replacement has been staged.
-    let source_rows = {
-        let entry = catalog.get_mut_in(&database, &name).ok_or_else(|| {
+    let source_rows = if physical_kv_source {
+        let partition_ids = match catalog.get_in(&database, &name) {
+            Some(TableEntry::Kv(kv)) if table_ref.partitions.is_empty() => None,
+            Some(TableEntry::Kv(kv)) => {
+                let Some(spec) = kv.partition() else {
+                    return Err(DriverError::UnknownPartition {
+                        partition: table_ref.partitions[0].clone(),
+                        table: name.clone(),
+                    });
+                };
+                Some(
+                    crate::partition_pruning::ids_for_selected_partitions(
+                        spec,
+                        &table_ref.partitions,
+                    )
+                    .map_err(|partition| DriverError::UnknownPartition {
+                        partition,
+                        table: name.clone(),
+                    })?,
+                )
+            }
+            _ => unreachable!("physical_kv_source was established above"),
+        };
+        let physical = physical_source
+            .as_deref_mut()
+            .ok_or_else(|| DriverError::unsupported("UPDATE has no retained physical child"))?;
+        SourceRows::Kv {
+            rows: execute_physical_write_rows(physical, catalog, &database, &name, ctx, runtime)?,
+            partition_ids,
+        }
+    } else {
+        let entry = catalog.get_in(&database, &name).ok_or_else(|| {
             DriverError::Schema(crate::SchemaErrorKind::UnknownTable(format!(
                 "{database}.{name}"
             )))
@@ -3079,50 +2692,8 @@ pub(crate) fn run_update_traced(
                 ));
             }
             TableEntry::Mem(mem) => SourceRows::Mem(mem.rows.clone()),
-            TableEntry::Kv(kv) => {
-                let partition_ids = if table_ref.partitions.is_empty() {
-                    None
-                } else {
-                    let Some(spec) = kv.partition() else {
-                        return Err(DriverError::UnknownPartition {
-                            partition: table_ref.partitions[0].clone(),
-                            table: name.clone(),
-                        });
-                    };
-                    Some(
-                        crate::partition_pruning::ids_for_selected_partitions(
-                            spec,
-                            &table_ref.partitions,
-                        )
-                        .map_err(|partition| {
-                            DriverError::UnknownPartition {
-                                partition,
-                                table: name.clone(),
-                            }
-                        })?,
-                    )
-                };
-                let mut source = restricted_to_partitions(kv, &table_ref.partitions, &name)?;
-                let mut rows = fetch_write_rows(&mut source, read_path.as_ref(), ctx)?;
-                order_rows_for_dml(
-                    &mut rows,
-                    &update.order_by,
-                    &field_types,
-                    &resolver,
-                    &column_names,
-                    ctx,
-                )?;
-                SourceRows::Kv {
-                    rows,
-                    partition_ids,
-                }
-            }
+            TableEntry::Kv(_) => unreachable!("byte-backed tables use the physical child"),
         }
-    };
-
-    let scanned = match &source_rows {
-        SourceRows::Mem(rows) => rows.len() as u64,
-        SourceRows::Kv { rows, .. } => rows.len() as u64,
     };
     let mut matched = 0u64;
     let mut changed = 0u64;
@@ -3142,10 +2713,10 @@ pub(crate) fn run_update_traced(
         SourceRows::Mem(rows) => {
             let mut updates = Vec::new();
             for (index, row) in rows.iter().enumerate() {
-                if row_limit.is_some_and(|cap| matched >= cap) {
+                if !physical_kv_source && row_limit.is_some_and(|cap| matched >= cap) {
                     break;
                 }
-                if let Some(new_row) = row_evaluator.compute(row, None, &mut matched)? {
+                if let Some(new_row) = row_evaluator.compute(row, None, None, &mut matched)? {
                     updates.push((index, new_row));
                 }
             }
@@ -3167,19 +2738,25 @@ pub(crate) fn run_update_traced(
             let Some(TableEntry::Kv(kv)) = catalog.get_in(&database, &name) else {
                 unreachable!("the update source kind cannot change within one statement")
             };
-            for (handle, row) in rows {
-                accountant.account_row(&row).map_err(DriverError::from)?;
-                if row_limit.is_some_and(|cap| matched >= cap) {
-                    break;
-                }
-                if let Some(mut new_row) =
-                    row_evaluator.compute(&row, extra_handle_value(&handle), &mut matched)?
-                {
+            let PhysicalWriteRows {
+                rows,
+                field_types: physical_field_types,
+            } = rows;
+            for row in rows {
+                accountant
+                    .account_row(&row.stored)
+                    .map_err(DriverError::from)?;
+                if let Some(mut new_row) = row_evaluator.compute(
+                    &row.stored,
+                    extra_handle_value(&row.handle),
+                    Some((&row.output, &physical_field_types)),
+                    &mut matched,
+                )? {
                     kv.materialize_generated(&mut new_row, ctx)
                         .map_err(kv_write_error)?;
                     if let Some(partitions) = &partition_ids {
                         if let Err(error) =
-                            kv.validate_update_partitions(&row, &new_row, partitions, ctx)
+                            kv.validate_update_partitions(&row.stored, &new_row, partitions, ctx)
                         {
                             handle_partition_write_error(
                                 kv_write_error(error),
@@ -3192,7 +2769,7 @@ pub(crate) fn run_update_traced(
                     accountant
                         .account_row(&new_row)
                         .map_err(DriverError::from)?;
-                    rewrites.push((handle, row, new_row));
+                    rewrites.push((row.handle, row.stored, new_row));
                 }
             }
         }
@@ -3295,9 +2872,6 @@ pub(crate) fn run_update_traced(
             }
         }
     }
-    if let Some(trace) = trace {
-        trace.set_dml_source_act_rows(scanned, matched, update.where_clause.is_some());
-    }
     Ok(changed)
 }
 
@@ -3323,6 +2897,7 @@ impl UpdateRowEvaluator<'_> {
         &self,
         row: &[Datum],
         handle: Option<i64>,
+        physical_input: Option<(&[Datum], &[FieldType])>,
         matched: &mut u64,
     ) -> Result<Option<Vec<Datum>>, DriverError> {
         // `_tidb_rowid` is the record HANDLE, so it joins the row only for
@@ -3341,6 +2916,10 @@ impl UpdateRowEvaluator<'_> {
         };
         let row = evaluated.as_ref();
         let chunk = row_chunk(row, self.field_types)?;
+        let physical_chunk = physical_input
+            .map(|(values, field_types)| row_chunk(values, field_types))
+            .transpose()?;
+        let physical_row = physical_chunk.as_ref().map(|chunk| chunk.get_row(0));
         if let Some(predicate) = self.predicate {
             let selected = predicate.eval(row, self.catalog, self.current_db, self.ctx)?;
             if !datum_is_true(&selected) {
@@ -3364,6 +2943,7 @@ impl UpdateRowEvaluator<'_> {
             let value = expr.eval(
                 row,
                 chunk.get_row(0),
+                physical_row,
                 self.catalog,
                 self.current_db,
                 self.ctx,
@@ -3455,20 +3035,74 @@ pub fn run_delete_stmt(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<u64, DriverError> {
-    run_delete_traced(delete, catalog, current_db, ctx, None)
+    run_delete_stmt_with_physical(delete, catalog, current_db, ctx, None)
 }
 
-/// [`run_delete_stmt`], recording the plan it builds into `trace` -- see
-/// [`run_update_traced`] for the read plan's shape and where its `actRows`
-/// come from.
-pub(crate) fn run_delete_traced(
+/// The ordinary DELETE executor, optionally consuming the cached
+/// `Delete.SelectPlan` selected by the shared physical planner.
+pub fn run_delete_stmt_with_physical(
     delete: &tidb_ast::DeleteStmt,
     catalog: &mut Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
-    mut trace: Option<&mut PlanTrace>,
+    physical_plan: Option<&mut tidb_planner::physical::PhysicalPlan>,
 ) -> Result<u64, DriverError> {
-    let zone = ctx.session_zone();
+    run_delete_stmt_with_physical_and_stats(delete, catalog, current_db, ctx, physical_plan, None)
+}
+
+pub(crate) fn run_delete_stmt_with_physical_and_stats(
+    delete: &tidb_ast::DeleteStmt,
+    catalog: &mut Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    physical_plan: Option<&mut tidb_planner::physical::PhysicalPlan>,
+    runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
+) -> Result<u64, DriverError> {
+    let source = delete_source_query(delete);
+    let mut fresh = physical_plan
+        .is_none()
+        .then(|| {
+            physical_dml_plan(
+                "Delete",
+                source.as_ref(),
+                false,
+                None,
+                catalog,
+                current_db,
+                ctx,
+            )
+        })
+        .transpose()?;
+    let physical_plan = physical_plan.or(fresh.as_mut());
+    let physical_source = match physical_plan {
+        Some(plan) => dml_select_plan_mut(plan, "Delete")?,
+        None => None,
+    };
+    run_delete_with_physical(delete, catalog, current_db, ctx, physical_source, runtime)
+}
+
+pub(crate) fn delete_source_query(delete: &tidb_ast::DeleteStmt) -> Option<tidb_ast::QueryStmt> {
+    match &delete.kind {
+        tidb_ast::DeleteKind::Single(table_ref) => super::access::PointPlanStmt::of_write(
+            delete.where_clause.as_ref(),
+            &delete.order_by,
+            delete.limit.as_ref(),
+            table_ref,
+        )
+        .write_select(),
+        tidb_ast::DeleteKind::Multi { .. } => None,
+    }
+    .map(|select| tidb_ast::QueryStmt::Select(Box::new(select)))
+}
+
+fn run_delete_with_physical(
+    delete: &tidb_ast::DeleteStmt,
+    catalog: &mut Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    mut physical_source: Option<&mut tidb_planner::physical::PhysicalPlan>,
+    runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
+) -> Result<u64, DriverError> {
     // `DELETE IGNORE` differs from a plain `DELETE` only in what it does with
     // a referential violation: Go downgrades it from a statement error to a
     // per-row skip with a warning. `QUICK` is parser-only and needs no branch.
@@ -3476,12 +3110,6 @@ pub(crate) fn run_delete_traced(
         tidb_ast::DeleteKind::Single(table_ref) => table_ref,
         // See `multi_dml`'s module doc; `EXPLAIN` has never described this.
         tidb_ast::DeleteKind::Multi { targets, from, .. } => {
-            if let Some(trace) = trace.as_deref_mut() {
-                trace.refuse("multi-table DELETE plans are not supported yet");
-                if trace.is_plan_only() {
-                    return Ok(0);
-                }
-            }
             return super::multi_dml::run_multi_delete(
                 delete, targets, from, catalog, current_db, ctx,
             );
@@ -3541,27 +3169,9 @@ pub(crate) fn run_delete_traced(
     let field_types: Vec<FieldType> = column_list.iter().map(|(_, ft)| ft.clone()).collect();
     let column_names: Vec<String> = column_list.iter().map(|(name, _)| name.clone()).collect();
     let row_limit = dml_row_limit(&delete.limit)?;
-    // As in UPDATE: the key or the handle intervals the `WHERE` implies are
-    // the records this write fetches.
-    let point_plan = super::access::PointPlanStmt::of_write(
-        delete.where_clause.as_ref(),
-        &delete.order_by,
-        delete.limit.as_ref(),
-        table_ref,
-    );
-    let read_path = super::access::write_read_path(catalog, &database, &name, &point_plan, ctx)?;
-    let predicate_consumed = match catalog.get_in(&database, &name) {
-        Some(TableEntry::Kv(table)) => super::access::write_read_path_consumes_predicate(
-            read_path.as_ref(),
-            &point_plan,
-            table,
-            &column_list,
-            &zone,
-        ),
-        _ => false,
-    };
+    let physical_kv_source = matches!(catalog.get_in(&database, &name), Some(TableEntry::Kv(_)));
     // Go `buildLimit`'s zero short-circuit; see the `Update` twin above.
-    if row_limit == Some(0) {
+    if !physical_kv_source && row_limit == Some(0) {
         // As in UPDATE: Go resolves the whole plan before `buildLimit`'s zero
         // short-circuit, so the target's writability, the partition list, and
         // the `ORDER BY` columns are checked even when nothing is read.
@@ -3595,41 +3205,22 @@ pub(crate) fn run_delete_traced(
             &column_names,
             ctx,
         )?;
-        if let Some(trace) = trace.as_deref_mut() {
-            trace.zero_limit_table_dual();
-            trace.write("Delete", true);
-        }
         return Ok(0);
     }
-    if let Some(trace) = trace.as_deref_mut() {
-        trace_dml_source(
-            trace,
-            catalog,
-            DmlTarget {
-                table_ref,
-                database: &database,
-                name: &name,
-            },
-            &column_list,
-            &delete.where_clause,
-            read_path.as_ref(),
-            predicate_consumed,
-            current_db,
-            &zone,
-            ctx,
-        );
-        trace.write("Delete", true);
-        if trace.is_plan_only() {
-            return Ok(0);
-        }
-    }
-    let predicate = if predicate_consumed { None } else { predicate };
+    let predicate = if physical_kv_source { None } else { predicate };
     enum SourceRows {
         Mem(Vec<Vec<Datum>>),
-        Kv(Vec<(crate::kv_table::TableHandle, Vec<Datum>)>),
+        Kv(PhysicalWriteRows),
     }
-    let source_rows = {
-        let entry = catalog.get_mut_in(&database, &name).ok_or_else(|| {
+    let source_rows = if physical_kv_source {
+        let physical = physical_source
+            .as_deref_mut()
+            .ok_or_else(|| DriverError::unsupported("DELETE has no retained physical child"))?;
+        SourceRows::Kv(execute_physical_write_rows(
+            physical, catalog, &database, &name, ctx, runtime,
+        )?)
+    } else {
+        let entry = catalog.get_in(&database, &name).ok_or_else(|| {
             DriverError::Schema(crate::SchemaErrorKind::UnknownTable(format!(
                 "{database}.{name}"
             )))
@@ -3642,24 +3233,8 @@ pub(crate) fn run_delete_traced(
                 return Err(DriverError::DeleteSequenceUnsupported(name.clone()));
             }
             TableEntry::Mem(mem) => SourceRows::Mem(mem.rows.clone()),
-            TableEntry::Kv(kv) => {
-                let mut source = restricted_to_partitions(kv, &table_ref.partitions, &name)?;
-                let mut rows = fetch_write_rows(&mut source, read_path.as_ref(), ctx)?;
-                order_rows_for_dml(
-                    &mut rows,
-                    &delete.order_by,
-                    &field_types,
-                    &resolver,
-                    &column_names,
-                    ctx,
-                )?;
-                SourceRows::Kv(rows)
-            }
+            TableEntry::Kv(_) => unreachable!("byte-backed tables use the physical child"),
         }
-    };
-    let scanned = match &source_rows {
-        SourceRows::Mem(rows) => rows.len() as u64,
-        SourceRows::Kv(rows) => rows.len() as u64,
     };
     let mut deleted = 0u64;
     let mut doomed: Vec<(crate::kv_table::TableHandle, Vec<Datum>)> = Vec::new();
@@ -3690,21 +3265,21 @@ pub(crate) fn run_delete_traced(
             // Selected first, deleted after: the parent-side cascade below
             // needs the table released, because it writes the DEPENDENT
             // tables the statement never named.
-            for (handle, row) in rows {
-                accountant.account_row(&row).map_err(DriverError::from)?;
-                // Go's LIMIT caps the rows DELETED, not the rows examined.
-                if row_limit.is_some_and(|cap| doomed.len() as u64 >= cap) {
-                    break;
-                }
+            for row in rows.rows {
+                accountant
+                    .account_row(&row.stored)
+                    .map_err(DriverError::from)?;
                 if dml_row_is_selected_with_handle(
-                    &row,
-                    extra_handle.then(|| extra_handle_value(&handle)).flatten(),
+                    &row.stored,
+                    extra_handle
+                        .then(|| extra_handle_value(&row.handle))
+                        .flatten(),
                     &predicate,
                     catalog,
                     current_db,
                     ctx,
                 )? {
-                    doomed.push((handle, row));
+                    doomed.push((row.handle, row.stored));
                 }
             }
         }
@@ -3750,11 +3325,6 @@ pub(crate) fn run_delete_traced(
             deleted += 1;
         }
     }
-    if let Some(trace) = trace {
-        // Every selected row IS deleted, so the delete count is also the
-        // number of rows the `WHERE` passed.
-        trace.set_dml_source_act_rows(scanned, deleted, delete.where_clause.is_some());
-    }
     Ok(deleted)
 }
 
@@ -3769,235 +3339,103 @@ pub(crate) fn run_delete_traced(
 /// A point get reads ONE key. `get_row_by_handle` is the same read
 /// `HandleSourceExec` performs for a `SELECT`'s `Point_Get`, and it answers
 /// `None` for a key no record carries -- Go's point get that finds nothing.
-fn fetch_write_rows(
-    kv: &mut crate::kv_table::KvTable,
-    read_path: Option<&super::access::WriteReadPath>,
-    ctx: &crate::StmtContext,
-) -> Result<Vec<(crate::kv_table::TableHandle, Vec<Datum>)>, DriverError> {
-    // Through `kv_read_error`, not a bare parse error: the fetch reads
-    // storage, and a retryable storage failure (a lock wait or region retry
-    // that exhausted its budget) must keep its transaction-error identity --
-    // rendering it as 1064 told a sysbench client its `UPDATE ... WHERE
-    // id=?` had a SYNTAX error.
-    let decode_failed = |e| kv_read_error("row decode failed", e);
-    let decode_context = crate::kv_table::RowDecodeContext::for_write(ctx);
-    let zone = decode_context.zone();
-    match read_path {
-        Some(super::access::WriteReadPath::Point(pin)) => {
-            let Some(handle) = pin.handle.as_ref() else {
-                return Ok(Vec::new());
-            };
-            Ok(kv
-                .get_row_by_handle_with_context(handle, &decode_context)
-                .map_err(decode_failed)?
-                .map(|row| vec![(handle.clone(), row)])
-                .unwrap_or_default())
-        }
-        Some(super::access::WriteReadPath::Ranges(ranges, _)) => kv
-            .scan_rows_with_handles_in_with_context(Some(ranges), &decode_context)
-            .map_err(decode_failed),
-        Some(super::access::WriteReadPath::Batch(handles)) => Ok(kv
-            .stored_records_batched(handles, None, &decode_context)
-            .map_err(decode_failed)?
-            .into_iter()
-            .zip(handles)
-            .filter_map(|(row, handle)| row.map(|row| (handle.clone(), row)))
-            .collect()),
-        Some(super::access::WriteReadPath::IndexRanges(index_id, ranges, _)) => {
-            // The index range narrows WHICH records are fetched, in index
-            // order; the row is then read by its handle, and the `WHERE` above
-            // still filters. Ranges over one index cover disjoint key intervals,
-            // so a handle is read at most once.
-            let mut rows = Vec::new();
-            for range in ranges {
-                for handle in kv
-                    .scan_index_range(*index_id, range, zone)
-                    .map_err(decode_failed)?
-                {
-                    if let Some(row) = kv
-                        .get_row_by_handle_with_context(&handle, &decode_context)
-                        .map_err(decode_failed)?
-                    {
-                        rows.push((handle, row));
-                    }
-                }
-            }
-            Ok(rows)
-        }
-        None => kv
-            .scan_rows_with_handles_in_with_context(None, &decode_context)
-            .map_err(decode_failed),
-    }
+struct PhysicalWriteRow {
+    handle: crate::kv_table::TableHandle,
+    stored: Vec<Datum>,
+    output: Vec<Datum>,
 }
 
-/// Records the read plan a single-table write performs to find its target
-/// rows: the read `access::write_read_path` chose -- a `Point_Get`, a
-/// `TableRangeScan`, or the full scan neither narrowed. A `Selection` remains
-/// only for the part of the `WHERE` the chosen access path did not consume.
-///
-/// The table a single-table write reads, as the statement names it.
-struct DmlTarget<'a> {
-    /// The `FROM`-side reference, which carries the alias `EXPLAIN` prints.
-    table_ref: &'a tidb_ast::TableRef,
-    /// The schema the name resolved in.
-    database: &'a str,
-    /// The stored table name.
-    name: &'a str,
+struct PhysicalWriteRows {
+    rows: Vec<PhysicalWriteRow>,
+    field_types: Vec<FieldType>,
+}
+
+fn execute_physical_write_rows(
+    physical: &mut tidb_planner::physical::PhysicalPlan,
+    catalog: &Catalog,
+    database: &str,
+    name: &str,
+    ctx: &crate::StmtContext,
+    runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
+) -> Result<PhysicalWriteRows, DriverError> {
+    let field_types = physical
+        .schema()
+        .ok_or_else(|| DriverError::unsupported("a physical write child has no schema"))?
+        .columns
+        .iter()
+        .map(|column| {
+            column.ret_type.clone().ok_or_else(|| {
+                DriverError::unsupported("a physical write child has an untyped column")
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let (rows, collected) =
+        super::physical_builder::execute_dml_source(physical, catalog, ctx, runtime.is_some())?;
+    if let Some(runtime) = runtime {
+        runtime.extend(collected);
+    }
+    let Some(TableEntry::Kv(table)) = catalog.get_in(database, name) else {
+        return Err(DriverError::unsupported(
+            "a physical write child does not read a byte-backed table",
+        ));
+    };
+    let stored_width = table.columns.len();
+    let has_extra_handle =
+        table.pk_handle_offset().is_none() && table.common_handle_offsets().is_empty();
+    let expected_width = stored_width + usize::from(has_extra_handle);
+    let rows = rows
+        .into_iter()
+        .map(|row| {
+            if row.len() < expected_width {
+                return Err(DriverError::unsupported(format!(
+                    "a physical write child returned {} columns, expected at least {expected_width}",
+                    row.len()
+                )));
+            }
+            let handle = if let Some(offset) = table.pk_handle_offset() {
+                match row.get(offset) {
+                    Some(Datum::Int(value)) => crate::kv_table::TableHandle::Int(*value),
+                    Some(Datum::UInt(value)) => crate::kv_table::TableHandle::Int(*value as i64),
+                    _ => {
+                        return Err(DriverError::unsupported(
+                            "a physical write child returned an invalid integer handle",
+                        ));
+                    }
+                }
+            } else if !table.common_handle_offsets().is_empty() {
+                let values = table
+                    .common_handle_offsets()
+                    .iter()
+                    .map(|offset| row[*offset].clone())
+                    .collect::<Vec<_>>();
+                table
+                    .common_handle_of_values(&values, &ctx.session_zone())
+                    .map_err(kv_write_error)?
+            } else {
+                match row.get(stored_width) {
+                    Some(Datum::Int(value)) => crate::kv_table::TableHandle::Int(*value),
+                    Some(Datum::UInt(value)) => crate::kv_table::TableHandle::Int(*value as i64),
+                    _ => {
+                        return Err(DriverError::unsupported(
+                            "a physical write child returned no _tidb_rowid handle",
+                        ));
+                    }
+                }
+            };
+            Ok(PhysicalWriteRow {
+                handle,
+                stored: row[..stored_width].to_vec(),
+                output: row,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(PhysicalWriteRows { rows, field_types })
 }
 
 /// Renames the scan `trace_dml_source` just recorded to the `IndexRangeScan`
 /// (or `IndexFullScan`) the write reads through, matching what the read side's
 /// `commit_index_range_source` prints for the same index and ranges.
 #[allow(clippy::too_many_arguments)]
-fn trace_write_index_scan(
-    trace: &mut PlanTrace,
-    catalog: &Catalog,
-    database: &str,
-    name: &str,
-    visible: &str,
-    index_id: i64,
-    ranges: &[crate::kv_table::IndexRange],
-    estimate: crate::access_cost::ScanEstimate,
-) {
-    let Some(super::catalog::TableEntry::Kv(table)) = catalog.get_in(database, name) else {
-        return;
-    };
-    let Some(index) = table.indexes().iter().find(|index| index.id == index_id) else {
-        return;
-    };
-    let index_columns: Vec<String> = index
-        .column_offsets
-        .iter()
-        .map(|offset| super::access::index_key_part_name(table, *offset))
-        .collect();
-    let index_columns: Vec<&str> = index_columns.iter().map(String::as_str).collect();
-    if ranges.len() == 1 && ranges[0].is_full() {
-        trace.index_full_scan(visible, &index.name, &index_columns, estimate, false);
-    } else {
-        trace.index_range_scan(visible, &index.name, &index_columns, ranges, estimate);
-    }
-}
-
-fn trace_dml_source(
-    trace: &mut PlanTrace,
-    catalog: &Catalog,
-    target: DmlTarget<'_>,
-    columns: &[(String, FieldType)],
-    where_clause: &Option<tidb_ast::Expr>,
-    read_path: Option<&super::access::WriteReadPath>,
-    predicate_consumed: bool,
-    current_db: &str,
-    zone: &tidb_datatype::SessionTimeZone,
-    ctx: &crate::StmtContext,
-) {
-    let DmlTarget {
-        table_ref,
-        database,
-        name,
-    } = target;
-    let visible = table_ref.alias.clone().unwrap_or_else(|| name.to_owned());
-    let (estimate, selectivity) = single_table_trace_estimate(
-        catalog,
-        database,
-        name,
-        &visible,
-        columns,
-        where_clause.as_ref(),
-    );
-    trace.table_full_scan(&visible, estimate, false);
-    // The same two rewrites the read side performs, from the same chooser: a
-    // range scan RENAMES the scan just recorded, because the write really
-    // does run that scan over only those ranges; a point get REPLACES it,
-    // because the write reads by key and runs no scan at all.
-    match read_path {
-        Some(super::access::WriteReadPath::Ranges(ranges, range_estimate)) => {
-            // Go's `isPointGetPath` converts a table path whose one range is
-            // a single non-null point on the integer handle to a `Point_Get`
-            // (`find_best_task.go`'s `convertToPointGet`) -- the write plan
-            // reaches it through the same ordinary `DataSource` as a read, so
-            // `UPDATE t SET ... WHERE i = 1 AND j = 1` prints `Point_Get`
-            // with the `j` conjunct as its root filter, exactly as the read
-            // side's HandleRange arm does.
-            let point = (!ctx
-                .optimizer_fix_control()
-                .get_bool_with_default(tidb_planner::fix_control::FIX_52592, false))
-            .then(|| {
-                let Some(super::catalog::TableEntry::Kv(table)) = catalog.get_in(database, name)
-                else {
-                    return None;
-                };
-                if table.pk_handle_offset().is_some() {
-                    return super::access::single_point_handle(ranges)
-                        .map(|handle| (table, Some(handle)));
-                }
-                // Go converts a COMMON-handle table path the same way
-                // (`find_best_task.go:2202`); the write reaches it through
-                // the same ordinary `DataSource` as a read, so this is the
-                // read side's HandleRange arm mirrored -- one range pinning
-                // every clustered key column as a non-nullable point.
-                (!table.common_handle_offsets().is_empty()
-                    && ranges.len() == 1
-                    && ranges[0].is_point(false)
-                    && ranges[0].low.len() == table.common_handle_offsets().len())
-                .then_some((table, None))
-            })
-            .flatten();
-            if let Some((table, handle)) = point {
-                // A `Point_Get` is a root task: no `TableReader` wraps it,
-                // whether or not the ranger consumed the whole `WHERE`.
-                trace.point_get(&visible, table, handle.as_ref(), None);
-            } else {
-                trace.table_range_scan(&visible, ranges, *range_estimate);
-                if predicate_consumed {
-                    trace.scan_reader();
-                }
-            }
-        }
-        Some(super::access::WriteReadPath::IndexRanges(index_id, ranges, range_estimate)) => {
-            trace_write_index_scan(
-                trace,
-                catalog,
-                database,
-                name,
-                &visible,
-                *index_id,
-                ranges,
-                *range_estimate,
-            );
-        }
-        Some(super::access::WriteReadPath::Batch(handles)) => {
-            if let Some(super::catalog::TableEntry::Kv(table)) = catalog.get_in(database, name) {
-                let partitions = table.handle_partition_names(handles, zone, ctx);
-                trace.batch_point_get(&visible, table, handles, handles.len(), &partitions);
-            }
-        }
-        Some(super::access::WriteReadPath::Point(pin)) => {
-            if let Some(super::catalog::TableEntry::Kv(table)) = catalog.get_in(database, name) {
-                trace.point_get(&visible, table, pin.handle.as_ref(), pin.index.as_ref());
-            }
-        }
-        None => {}
-    }
-    let Some(predicate) = where_clause.as_ref().filter(|_| !predicate_consumed) else {
-        return;
-    };
-    let scope = PlanTrace::single_table_scope(
-        &visible,
-        table_ref.alias.is_none().then(|| database.to_owned()),
-        columns.to_vec(),
-    );
-    trace.selection(
-        predicate,
-        None,
-        &Qualifier {
-            db: current_db,
-            scope: &scope,
-            catalog: Some(catalog),
-        },
-        selectivity,
-    );
-}
-
 /// Whether the `WHERE` predicate (absent = every row) selects this row.
 pub(crate) fn row_is_selected(
     row: &[Datum],
@@ -4101,10 +3539,10 @@ pub(crate) fn datum_is_true(value: &Datum) -> bool {
 /// with exactly the row it had before.
 fn statement_names_extra_handle<'a>(exprs: impl Iterator<Item = &'a tidb_ast::Expr>) -> bool {
     exprs
-        .flat_map(crate::driver::only_full_group_by::bare_columns)
+        .flat_map(crate::driver::subquery::bare_columns)
         .any(|path| {
             path.last().is_some_and(|name| {
-                name.eq_ignore_ascii_case(crate::driver::leaf_demand::EXTRA_HANDLE_NAME)
+                name.eq_ignore_ascii_case(tidb_model::column::EXTRA_HANDLE_NAME)
             })
         })
 }

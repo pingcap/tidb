@@ -32,6 +32,11 @@
 //! JSON comparisons also clear `ParseToJSONFlag` on every non-column operand,
 //! matching `generateCmpSigs`.
 
+use crate::aggregation::wrap_cast::{
+    wrap_with_cast_as_decimal, wrap_with_cast_as_duration, wrap_with_cast_as_int,
+    wrap_with_cast_as_json, wrap_with_cast_as_real, wrap_with_cast_as_string,
+    wrap_with_cast_as_time, wrap_with_cast_as_vector_float32,
+};
 use crate::builtin_arithmetic::new_return_field_type;
 use crate::constant::Constant;
 use crate::context::{Columns, EvalError};
@@ -531,6 +536,18 @@ pub fn refine_comparisons(expr: &mut Expression, ctx: &dyn Columns) -> Result<()
     for arg in &mut function.args {
         refine_comparisons(arg, ctx)?;
     }
+    refine_comparison(expr, ctx)
+}
+
+/// Runs Go `compareFunctionClass.getFunction`'s comparison-only refinement
+/// for the expression at `expr`, without rebuilding already-constructed
+/// descendants. `NewFunction` calls this root form for the one function it is
+/// constructing; [`refine_comparisons`] remains the compatibility walk for an
+/// AST tree whose nodes were built before a real function builder was wired.
+pub(crate) fn refine_comparison(expr: &mut Expression, ctx: &dyn Columns) -> Result<(), EvalError> {
+    let Expression::ScalarFunction(function) = expr else {
+        return Ok(());
+    };
     let name = function.func_name.lowercase();
     let Some(mirrored) = symmetric_op(name) else {
         return Ok(());
@@ -549,6 +566,51 @@ pub fn refine_comparisons(expr: &mut Expression, ctx: &dyn Columns) -> Result<()
     wrap_integer_operand_for_decimal_compare(left, right);
     wrap_year_operand_for_datetime_compare(left, right);
     prepare_json_comparison_args(&mut function.args);
+    wrap_comparison_arguments(&mut function.args, ctx.connection_charset_info())?;
+    Ok(())
+}
+
+/// Go `compareFunctionClass.generateCmpSigs`: cast both operands to the
+/// comparison domain chosen by `GetAccurateCmpType`.
+pub(crate) fn wrap_comparison_arguments(
+    arguments: &mut Vec<Expression>,
+    connection: (&str, &str),
+) -> Result<(), EvalError> {
+    let [left, right] = arguments.as_slice() else {
+        return Ok(());
+    };
+    fn operand(expression: &Expression) -> Option<CmpOperand<'_>> {
+        expression.static_type().map(move |field_type| CmpOperand {
+            field_type,
+            is_constant: matches!(expression, Expression::Constant(_)),
+            is_column: matches!(expression, Expression::Column(_)),
+        })
+    }
+    let (Some(left), Some(right)) = (operand(left), operand(right)) else {
+        return Ok(());
+    };
+    let comparison_type = get_accurate_cmp_type(left, right);
+    let wrap = |expression: Expression| match comparison_type {
+        EvalType::Int => wrap_with_cast_as_int(expression, None),
+        EvalType::Real => wrap_with_cast_as_real(expression),
+        EvalType::Decimal => wrap_with_cast_as_decimal(expression),
+        EvalType::String => wrap_with_cast_as_string(expression, connection),
+        EvalType::Datetime => {
+            wrap_with_cast_as_time(expression, FieldType::new(FieldTypeCode::Datetime))
+        }
+        EvalType::Timestamp => {
+            wrap_with_cast_as_time(expression, FieldType::new(FieldTypeCode::Timestamp))
+        }
+        EvalType::Duration => wrap_with_cast_as_duration(expression),
+        EvalType::Json => wrap_with_cast_as_json(expression),
+        EvalType::VectorFloat32 => wrap_with_cast_as_vector_float32(expression),
+    };
+    let wrapped = arguments
+        .iter()
+        .cloned()
+        .map(wrap)
+        .collect::<Result<Vec<_>, _>>()?;
+    *arguments = wrapped;
     Ok(())
 }
 

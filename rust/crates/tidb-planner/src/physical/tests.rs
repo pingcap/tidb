@@ -208,6 +208,107 @@ fn cached_plan_rebuilds_normal_and_reader_scan_trees_without_mutating_template()
 }
 
 #[test]
+fn cached_index_lookup_rebuilds_only_gos_index_plan() {
+    use crate::physical_plan_cache::{CachedPlanRebuildContext, TableRangeRebuild};
+
+    let invalid_table_side = PhysicalPlan::TableScan(PhysicalTableScan {
+        base: BasePhysicalPlan::with_id(901, "TableRowIDScan", 0),
+        range_rebuild: Some(TableRangeRebuild::common_handle(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )),
+        ..PhysicalTableScan::default()
+    });
+    let lookup = PhysicalPlan::IndexLookUpReader(PhysicalIndexLookUpReader {
+        base: BasePhysicalPlan::with_id(900, "IndexLookUp", 0),
+        index_plan: None,
+        table_plan: Some(Box::new(invalid_table_side)),
+        ..PhysicalIndexLookUpReader::default()
+    });
+
+    lookup
+        .rebuild_plan_for_cache(&CachedPlanRebuildContext::new(&[]))
+        .expect("Go rebuilds IndexPlan only; TablePlan has no range to rebuild");
+}
+
+#[test]
+fn physical_plan_cache_admission_matches_go_refusals() {
+    use crate::physical_plan_cache::{plan_cacheable, PlanCacheabilityContext};
+
+    let context = PlanCacheabilityContext {
+        parameter_count: 1,
+        enable_generated_columns: false,
+        max_plan_size: 0,
+    };
+    let dual = PhysicalPlan::TableDual(PhysicalTableDual {
+        base: BasePhysicalPlan::with_id(910, "TableDual", 0),
+        row_count: 0,
+    });
+    assert_eq!(
+        plan_cacheable(&dual, context),
+        Err("get a TableDual plan".to_owned())
+    );
+
+    let tiflash = PhysicalPlan::TableReader(PhysicalTableReader {
+        base: BasePhysicalPlan::with_id(911, "TableReader", 0),
+        store_type: crate::physical_table_reader::StoreType::TiFlash,
+        ..PhysicalTableReader::default()
+    });
+    assert_eq!(
+        plan_cacheable(&tiflash, context),
+        Err("TiFlash plan is un-cacheable".to_owned())
+    );
+
+    let full_scan = PhysicalPlan::IndexScan(PhysicalIndexScan {
+        base: BasePhysicalPlan::with_id(913, "IndexFullScan", 0),
+        ..PhysicalIndexScan::default()
+    });
+    let index_merge = PhysicalPlan::IndexMergeReader(PhysicalIndexMergeReader {
+        base: BasePhysicalPlan::with_id(912, "IndexMerge", 0),
+        partial_plans_raw: vec![full_scan],
+        ..PhysicalIndexMergeReader::default()
+    });
+    assert_eq!(
+        plan_cacheable(&index_merge, context),
+        Err("IndexMerge plan with full-scan is un-cacheable".to_owned())
+    );
+}
+
+#[test]
+fn physical_plan_cache_reads_noncacheable_reason_and_size() {
+    use crate::physical_plan_cache::{plan_cacheable, PlanCacheabilityContext};
+
+    let mut plan = selection(920, scan(921, &[1]));
+    plan.base_mut()
+        .base
+        .set_noncacheable_reason("planner marked this shape unsafe");
+    let unlimited = PlanCacheabilityContext {
+        parameter_count: 0,
+        enable_generated_columns: true,
+        max_plan_size: 0,
+    };
+    assert_eq!(
+        plan_cacheable(&plan, unlimited),
+        Err("planner marked this shape unsafe".to_owned())
+    );
+
+    plan.base_mut().base = BasePlan::with_id(920, "Selection", 0);
+    assert_eq!(
+        plan_cacheable(
+            &plan,
+            PlanCacheabilityContext {
+                max_plan_size: 1,
+                ..unlimited
+            }
+        ),
+        Err(
+            "plan is too large(decided by the variable @@tidb_plan_cache_max_plan_size)".to_owned()
+        )
+    );
+}
+
+#[test]
 fn cached_plan_rebuilds_the_same_tree_for_consecutive_parameter_sets() {
     use crate::physical_plan_cache::{CachedPlanRebuildContext, TableRangeRebuild};
 
@@ -285,6 +386,7 @@ fn cached_plan_rebuilds_point_batch_index_merge_and_dml_owned_trees() {
         base: BasePhysicalPlan::with_id(14, "Update", 0),
         go_operator: "Update".to_owned(),
         select_plan: Some(Box::new(index_merge)),
+        update_expressions: Vec::new(),
     });
 
     let rebuilt = template
@@ -882,6 +984,40 @@ fn a_projection_maps_the_order_or_refuses_and_drops_constant_items() {
 }
 
 #[test]
+fn a_physical_sort_retains_scalar_by_items_like_go() {
+    // Go `getPhysicalSort` copies `LogicalSort.ByItems` verbatim. Only the
+    // separate NominalSort candidate requires column-only items.
+    use crate::logical::{BaseLogicalPlan, LogicalSort};
+    use tidb_expr::aggregation::ByItems;
+
+    let allocator = PlanIdAllocator::new();
+    let field_type = FieldType::new(FieldTypeCode::LongLong);
+    let column = Column::new(1, field_type.clone());
+    let expression = Expression::ScalarFunction(ScalarFunction::new(
+        tidb_ast::CiString::new("plus"),
+        field_type,
+        vec![
+            Expression::Column(column),
+            Expression::Constant(Constant::new(
+                Datum::Int(1),
+                FieldType::new(FieldTypeCode::LongLong),
+            )),
+        ],
+    ));
+    let base = BaseLogicalPlan::new(&allocator, LogicalSort::TYPE, 0);
+    let sort = LogicalSort::new(base, vec![ByItems::new(expression.clone(), true)]);
+
+    let plans =
+        exhaust_physical_plans_4_logical_sort(&sort, &PhysicalProperty::default(), &allocator, 1.0);
+    assert_eq!(plans.len(), 1, "a scalar item has no NominalSort candidate");
+    let PhysicalPlan::Sort(physical) = &plans[0] else {
+        panic!("a PhysicalSort, got {:?}", plans[0]);
+    };
+    assert!(physical.by_items[0].expr.equal(&expression));
+    assert!(physical.by_items[0].desc);
+}
+
+#[test]
 fn a_limit_enumerates_the_three_task_types_in_order() {
     // `ExhaustPhysicalPlans4LogicalLimit` (`physical_limit.go:53`): no
     // required order admitted; one candidate per task type in Go's fixed
@@ -1087,4 +1223,45 @@ fn an_apply_copies_all_its_own_fields() {
     assert!(copy.keep_order);
     assert_eq!(copy.outer_schema.len(), 1);
     assert!(copy.no_decorrelate);
+}
+
+#[test]
+fn physical_correlated_rebind_reaches_readers_and_shares_one_outer_cell() {
+    // Go `coreusage.ExtractCorColumnsBySchema4PhysicalPlan`: reader plans are
+    // traversed and every occurrence of one outer column receives the same
+    // `*types.Datum` that Apply writes through its returned OuterSchema.
+    use std::sync::Arc;
+    use tidb_expr::expression::CorrelatedColumn;
+
+    let field_type = FieldType::new(FieldTypeCode::LongLong);
+    let outer_column = Column::new(42, field_type.clone());
+    let mut inner_selection = selection(1202, scan(1201, &[7]));
+    let PhysicalPlan::Selection(selection) = &mut inner_selection else {
+        unreachable!();
+    };
+    selection.conditions = vec![
+        Expression::CorrelatedColumn(CorrelatedColumn::new(outer_column.clone())),
+        Expression::CorrelatedColumn(CorrelatedColumn::new(outer_column.clone())),
+    ];
+    let mut inner = PhysicalPlan::TableReader(PhysicalTableReader {
+        base: BasePhysicalPlan::with_id(1203, "TableReader", 0),
+        table_plan: Some(Box::new(inner_selection)),
+        ..PhysicalTableReader::default()
+    });
+
+    let outer_schema = Schema::new(vec![outer_column]);
+    let rebound = rebind_correlated_columns_by_schema_4_physical_plan(&mut inner, &outer_schema);
+    assert_eq!(rebound.len(), 1);
+    assert_eq!(rebound[0].column.index, 0);
+    rebound[0].bind(Datum::Int(17));
+
+    let extracted = extract_correlated_cols_4_physical_plan(&inner);
+    assert_eq!(extracted.len(), 2);
+    assert!(extracted
+        .iter()
+        .all(|column| column.eval() == Datum::Int(17)));
+    let shared = rebound[0].data.as_ref().expect("outer binding");
+    assert!(extracted
+        .iter()
+        .all(|column| Arc::ptr_eq(shared, column.data.as_ref().expect("inner binding"))));
 }

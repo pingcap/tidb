@@ -90,17 +90,6 @@
 //!
 //! # Narrowings, by exact Go symbol
 //!
-//! * NARROWED: `ast.CommonTableExpression.ConsumerCount`, written by
-//!   `UpdateCTEConsumerCount` in the PREPROCESS phase.
-//!   [`tidb_ast::Cte`] has no such field and this crate has no preprocess
-//!   pass, so [`PlanBuilder::compute_cte_inline_flag`] reads a
-//!   [`super::OuterCte::consumer_count`] that is always `0`. Go's own comment
-//!   covers exactly that case ("Case the consumer count = 0 (issue #56582) ...
-//!   we can not use it to determine whether CTE can be inlined") and takes the
-//!   NOT-inlined arm, which is the safe one: the CTE is materialised into its
-//!   own storage rather than textually merged. The rest of the function —
-//!   including the `forceInlineByHintOrVar` override, which
-//!   `EnableForceInlineCTE` still drives — is present and reachable.
 //! * NARROWED: `cteInfo.limitLP base.LogicalPlan` becomes
 //!   [`super::OuterCte::limit_bounds`], a `(beg, end)` pair.
 //!   `tryBuildCTE` reads NOTHING else off that plan — its whole `switch` exists
@@ -126,10 +115,13 @@
 //!   `build_lateral_join` does not set such a flag, so the guard here takes
 //!   the strict arm — which REFUSES more than Go, never less.
 
+use std::any::Any;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use tidb_ast::{Cte, QueryStmt, SetOp, SetOprStmt, WithClause};
+use tidb_ast::{
+    Cte, QueryStmt, SelectStmt, SetOp, SetOprStmt, TableRef, Visitable, Visitor, WithClause,
+};
 use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags, IdentifierMetadata};
 use tidb_expr::column::Column;
 use tidb_expr::schema::Schema;
@@ -144,6 +136,183 @@ use crate::stats_info::StatsInfo;
 
 use super::catalog::TableSource;
 use super::PlanBuilder;
+
+#[derive(Clone, Copy)]
+enum ConsumerScopePhase {
+    Definition(usize),
+    Body,
+}
+
+struct ConsumerScope {
+    names: Vec<String>,
+    recursive: bool,
+    phase: ConsumerScopePhase,
+    next_definition: usize,
+    target_layer: bool,
+}
+
+impl ConsumerScope {
+    fn target(with: &WithClause, phase: ConsumerScopePhase) -> Self {
+        Self {
+            names: with.ctes.iter().map(|cte| cte.name.clone()).collect(),
+            recursive: with.recursive,
+            phase,
+            next_definition: 0,
+            target_layer: true,
+        }
+    }
+
+    fn shadow(with: &WithClause) -> Self {
+        Self {
+            names: with.ctes.iter().map(|cte| cte.name.clone()).collect(),
+            recursive: with.recursive,
+            phase: ConsumerScopePhase::Definition(0),
+            next_definition: 0,
+            target_layer: false,
+        }
+    }
+
+    fn visible_names(&self) -> &[String] {
+        let end = match self.phase {
+            ConsumerScopePhase::Body => self.names.len(),
+            ConsumerScopePhase::Definition(index) => index
+                .saturating_add(usize::from(self.recursive))
+                .min(self.names.len()),
+        };
+        &self.names[..end]
+    }
+}
+
+struct CteConsumerCounter<'a> {
+    scopes: Vec<ConsumerScope>,
+    select_pushes: Vec<bool>,
+    set_opr_pushes: Vec<bool>,
+    counts: &'a mut [i32],
+}
+
+impl CteConsumerCounter<'_> {
+    fn enter_scope(&mut self, node: &mut dyn Any) {
+        if let Some(select) = node.downcast_mut::<SelectStmt>() {
+            let pushed = select.with.as_ref().is_some_and(|with| {
+                self.scopes.push(ConsumerScope::shadow(with));
+                true
+            });
+            self.select_pushes.push(pushed);
+            return;
+        }
+        if let Some(set_opr) = node.downcast_mut::<SetOprStmt>() {
+            let pushed = set_opr.with.as_ref().is_some_and(|with| {
+                self.scopes.push(ConsumerScope::shadow(with));
+                true
+            });
+            self.set_opr_pushes.push(pushed);
+            return;
+        }
+        if node.is::<Cte>() {
+            let scope = self
+                .scopes
+                .last_mut()
+                .expect("a CTE is visited beneath its WITH scope");
+            let index = scope.next_definition;
+            scope.next_definition += 1;
+            scope.phase = ConsumerScopePhase::Definition(index);
+        }
+    }
+
+    fn leave_scope(&mut self, node: &mut dyn Any) {
+        if node.is::<WithClause>() {
+            self.scopes
+                .last_mut()
+                .expect("a WITH clause owns a scope")
+                .phase = ConsumerScopePhase::Body;
+            return;
+        }
+        if node.is::<SelectStmt>() {
+            if self
+                .select_pushes
+                .pop()
+                .expect("SELECT scope entries are balanced")
+            {
+                self.scopes.pop();
+            }
+            return;
+        }
+        if node.is::<SetOprStmt>()
+            && self
+                .set_opr_pushes
+                .pop()
+                .expect("set-operation scope entries are balanced")
+        {
+            self.scopes.pop();
+        }
+    }
+
+    fn update_count(&mut self, table: &TableRef) {
+        let [name] = table.name.as_slice() else {
+            return;
+        };
+        for scope in self.scopes.iter().rev() {
+            for (index, visible) in scope.visible_names().iter().enumerate().rev() {
+                if !visible.eq_ignore_ascii_case(name) {
+                    continue;
+                }
+                if scope.target_layer {
+                    self.counts[index] = self.counts[index].saturating_add(1);
+                }
+                return;
+            }
+        }
+    }
+}
+
+impl Visitor for CteConsumerCounter<'_> {
+    fn enter(&mut self, node: &mut dyn Any) -> bool {
+        self.enter_scope(node);
+        if let Some(table) = node.downcast_mut::<TableRef>() {
+            self.update_count(table);
+        }
+        false
+    }
+
+    fn leave(&mut self, node: &mut dyn Any) -> bool {
+        self.leave_scope(node);
+        true
+    }
+}
+
+/// Go `preprocessWith.UpdateCTEConsumerCount`: count unqualified references
+/// against the innermost visible CTE definition before logical planning.
+/// Definitions are visited in declaration order; a non-recursive definition
+/// sees only earlier definitions, while `WITH RECURSIVE` also sees itself.
+#[must_use]
+pub fn cte_consumer_counts(query: &QueryStmt, with: &WithClause) -> Vec<i32> {
+    let mut counts = vec![0; with.ctes.len()];
+    for (index, cte) in with.ctes.iter().enumerate() {
+        let mut definition = cte.query.clone();
+        definition.accept(&mut CteConsumerCounter {
+            scopes: vec![ConsumerScope::target(
+                with,
+                ConsumerScopePhase::Definition(index),
+            )],
+            select_pushes: Vec::new(),
+            set_opr_pushes: Vec::new(),
+            counts: &mut counts,
+        });
+    }
+
+    let mut body = query.clone();
+    match &mut body {
+        QueryStmt::Select(select) => select.with = None,
+        QueryStmt::SetOpr(set_opr) => set_opr.with = None,
+    }
+    body.accept(&mut CteConsumerCounter {
+        scopes: vec![ConsumerScope::target(with, ConsumerScopePhase::Body)],
+        select_pushes: Vec::new(),
+        set_opr_pushes: Vec::new(),
+        counts: &mut counts,
+    });
+    counts
+}
 
 /// Go `SetOutputNames` as `LogicalSchemaProducer` OVERRIDES it
 /// (`logical_schema_producer.go:44`), rather than as `BaseLogicalPlan`
@@ -163,30 +332,24 @@ fn set_own_output_names(plan: &mut LogicalPlan, names: Vec<tidb_datatype::FieldN
     }
 }
 
-/// Go `plannererrors.ErrCTERecursiveRequiresNonRecursiveFirst` (MySQL 3577).
+/// Go `plannererrors.ErrCTERecursiveRequiresNonRecursiveFirst` (MySQL 3574).
 fn err_recursive_requires_non_recursive_first(name: &str) -> PlanError {
-    PlanError::internal(format!(
-        "Recursive Common Table Expression '{name}' should have one or more non-recursive query blocks followed by one or more recursive ones"
-    ))
+    PlanError::cte_recursive_requires_non_recursive_first(name)
 }
 
-/// Go `plannererrors.ErrCTERecursiveRequiresUnion` (MySQL 3574).
+/// Go `plannererrors.ErrCTERecursiveRequiresUnion` (MySQL 3573).
 fn err_recursive_requires_union(name: &str) -> PlanError {
-    PlanError::internal(format!(
-        "Recursive Common Table Expression '{name}' can contain neither aggregation nor window functions in recursive query block"
-    ))
+    PlanError::cte_recursive_requires_union(name)
 }
 
-/// Go `plannererrors.ErrInvalidRequiresSingleReference` (MySQL 3575).
+/// Go `plannererrors.ErrInvalidRequiresSingleReference` (MySQL 3577).
 fn err_invalid_requires_single_reference(name: &str) -> PlanError {
-    PlanError::internal(format!(
-        "In recursive query block of Recursive Common Table Expression '{name}', the recursive table must be referenced only once, and not in any subquery"
-    ))
+    PlanError::cte_recursive_forbidden_join_order(name)
 }
 
 /// Go `plannererrors.ErrNotSupportedYet` (MySQL 1235).
 fn err_not_supported_yet(what: &str) -> PlanError {
-    PlanError::internal(format!("This version of TiDB doesn't yet support '{what}'"))
+    PlanError::not_supported_yet(what)
 }
 
 /// Go `plannererrors.ErrNonUniqTable` (MySQL 1066).
@@ -196,7 +359,7 @@ fn err_non_uniq_table() -> PlanError {
 
 /// Go `dbterror.ErrViewWrongList` (MySQL 1353).
 fn err_view_wrong_list() -> PlanError {
-    PlanError::internal("View's SELECT and view's field list have different column counts")
+    PlanError::view_wrong_list()
 }
 
 /// Whether `op` is one of the two operators a recursive CTE's fixpoint is
@@ -253,16 +416,25 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     /// # Errors
     ///
     /// `ErrNonUniqTable` for a duplicated name, or any CTE body's error.
-    pub fn build_with(&mut self, with: &WithClause) -> Result<Vec<usize>, PlanError> {
+    pub fn build_with(
+        &mut self,
+        with: &WithClause,
+        consumer_counts: &[i32],
+    ) -> Result<Vec<usize>, PlanError> {
         // "Check CTE name must be unique."
         self.name_map_cte.clear();
+        if consumer_counts.len() != with.ctes.len() {
+            return Err(PlanError::internal(
+                "CTE consumer counts must match the WITH definitions",
+            ));
+        }
         for cte in &with.ctes {
             if !self.name_map_cte.insert(cte.name.to_lowercase()) {
                 return Err(err_non_uniq_table());
             }
         }
         let mut ctes = Vec::with_capacity(with.ctes.len());
-        for cte in &with.ctes {
+        for (consumer_count, cte) in consumer_counts.iter().copied().zip(&with.ctes) {
             let index = self.outer_ctes.len();
             self.outer_ctes.push(super::OuterCte {
                 name: cte.name.to_lowercase(),
@@ -274,6 +446,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 storage_id: self.alloc_id_for_cte_storage,
                 seed_stat: Rc::new(RefCell::new(StatsInfo::new(0.0, []))),
                 force_inline_by_hint_or_var: self.enable_force_inline_cte,
+                consumer_count,
                 ..super::OuterCte::default()
             });
             self.alloc_id_for_cte_storage += 1;
@@ -367,7 +540,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             ..(**set_opr).clone()
         };
         if let Some(with) = &set_opr.with {
-            if let Err(error) = self.build_with(with) {
+            let counts = cte_consumer_counts(query, with);
+            if let Err(error) = self.build_with(with, &counts) {
                 self.outer_ctes.truncate(outer_depth);
                 return Err(error);
             }
@@ -658,9 +832,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     ) -> Result<LogicalPlan, PlanError> {
         let recur_schema = recur.schema().cloned().unwrap_or_default();
         if seed_schema.columns.len() != recur_schema.columns.len() {
-            return Err(PlanError::internal(
-                "The used SELECT statements have a different number of columns",
-            ));
+            return Err(PlanError::wrong_number_of_columns_in_select());
         }
         let res_schema = self.get_result_cte_schema(seed_schema);
         let mut exprs = Vec::with_capacity(recur_schema.columns.len());
@@ -921,7 +1093,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         }
         if !cte.col_name_list.is_empty() {
             if cte.col_name_list.len() != names.len() {
-                return Err(PlanError::internal("CTE columns length is not consistent"));
+                return Err(PlanError::view_wrong_list());
             }
             for (name, new_name) in names.iter_mut().zip(&cte.col_name_list) {
                 name.names.column = IdentifierMetadata::new(new_name);

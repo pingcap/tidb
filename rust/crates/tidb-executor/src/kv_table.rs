@@ -1814,6 +1814,14 @@ impl KvTable {
         &self.columns[..self.visible_column_count()]
     }
 
+    /// Columns carried by Go's logical `DataSource`, including hidden
+    /// expression-index columns. Index-join key metadata addresses index
+    /// offsets in this complete physical row layout.
+    #[must_use]
+    pub(crate) fn logical_columns(&self) -> &[KvColumn] {
+        &self.columns
+    }
+
     /// How many columns a user can name or see.
     #[must_use]
     pub fn visible_column_count(&self) -> usize {

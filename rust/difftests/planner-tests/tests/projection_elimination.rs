@@ -12,57 +12,54 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Dependency-closed vectors for the loose projection predicate in
-//! `pkg/planner/core/rule_eliminate_projection.go`.
-//!
-//! The Go integration anchor is `TestProjectionEliminator` at
-//! `pkg/planner/core/logical_plans_test.go:706`.  These tests isolate the
-//! source expression-shape and `Proj4Expand` gates; full logical expression
-//! replacement, schema mutation, and physical optimizer integration remain
-//! external.
+//! Go `canProjectionBeEliminatedLoose` over the real logical operator.
 
-use tidb_planner::projection_elimination::{
-    LogicalProjectionShape, ProjectionEliminator, ProjectionExprShape,
-};
+use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_expr::column::Column;
+use tidb_expr::constant::Constant;
+use tidb_expr::expression::Expression;
+use tidb_planner::logical::projection::LogicalProjection;
+use tidb_planner::logical::rule::RuleId;
+use tidb_planner::logical::BaseLogicalPlan;
+
+fn column(unique_id: i64) -> Expression {
+    Expression::Column(Column::new(
+        unique_id,
+        FieldType::new(FieldTypeCode::LongLong),
+    ))
+}
+
+fn projection(expressions: Vec<Expression>) -> LogicalProjection {
+    LogicalProjection::new(BaseLogicalPlan::default(), expressions)
+}
 
 #[test]
 fn empty_projection_is_loosely_eliminable_when_not_expand() {
-    let projection = LogicalProjectionShape::new(false, Vec::new());
-    assert!(ProjectionEliminator.can_eliminate_loose(&projection));
+    assert!(projection(Vec::new()).can_be_eliminated_loose());
 }
 
 #[test]
 fn direct_column_projection_is_loosely_eliminable() {
-    let projection = LogicalProjectionShape::new(
-        false,
-        vec![
-            ProjectionExprShape::Column,
-            ProjectionExprShape::Column,
-            ProjectionExprShape::Column,
-        ],
-    );
-    assert!(ProjectionEliminator.can_eliminate_loose(&projection));
+    assert!(projection(vec![column(1), column(2), column(3)]).can_be_eliminated_loose());
 }
 
 #[test]
 fn computed_expression_blocks_loose_elimination() {
-    let projection = LogicalProjectionShape::new(
-        false,
-        vec![ProjectionExprShape::Column, ProjectionExprShape::Computed],
-    );
-    assert!(!ProjectionEliminator.can_eliminate_loose(&projection));
+    let computed = Expression::Constant(Constant::new(
+        Datum::new_int(1),
+        FieldType::new(FieldTypeCode::LongLong),
+    ));
+    assert!(!projection(vec![column(1), computed]).can_be_eliminated_loose());
 }
 
 #[test]
 fn expand_projection_blocks_even_column_only_shape() {
-    let projection = LogicalProjectionShape::new(
-        true,
-        vec![ProjectionExprShape::Column, ProjectionExprShape::Column],
-    );
-    assert!(!ProjectionEliminator.can_eliminate_loose(&projection));
+    let mut projection = projection(vec![column(1), column(2)]);
+    projection.proj4_expand = true;
+    assert!(!projection.can_be_eliminated_loose());
 }
 
 #[test]
 fn source_rule_name_is_stable() {
-    assert_eq!(ProjectionEliminator.name(), "projection_eliminate");
+    assert_eq!(RuleId::ProjectionEliminator.name(), "projection_eliminate");
 }

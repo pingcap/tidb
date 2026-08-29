@@ -71,6 +71,7 @@ pub(super) fn to_mysql_error(error: ExecError) -> MysqlError {
         // spelling of each message instead of a second copy. Named one by one
         // rather than with `_` so a new executor failure has to be placed.
         error @ (ExecError::SubqueryReturnsMoreThanOneRow
+        | ExecError::CteMaxRecursionDepth(_)
         | ExecError::MemoryExceedForQuery { .. }
         | ExecError::JsonDocumentNullKey
         | ExecError::InvalidJsonCharset { .. }) => DriverError::from(error).to_mysql_error(),

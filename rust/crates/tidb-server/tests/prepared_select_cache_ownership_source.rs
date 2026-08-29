@@ -20,8 +20,8 @@ fn cached_select_execution_is_borrowed_across_the_statement_retry_boundary() {
     let session = include_str!("../../tidb-session/src/dispatch.rs");
     let executor = include_str!("../../tidb-executor/src/driver/access.rs");
 
-    assert!(server.contains("session.execute_cached_prepared_select(cached)"));
-    assert!(session.contains("cached: &tidb_executor::PreparedSelectExecution"));
+    assert!(server.contains(".execute_prepared_select(cached, &sql)"));
+    assert!(session.contains("execution: &tidb_executor::PreparedSelectExecution"));
     assert!(!executor.contains("#[derive(Clone, Debug)]\npub struct PreparedSelectExecution"));
 }
 
@@ -29,17 +29,17 @@ fn cached_select_execution_is_borrowed_across_the_statement_retry_boundary() {
 fn cached_select_hit_does_not_build_a_second_statement_context() {
     let source = include_str!("../../tidb-session/src/prepared_ast.rs");
     let function = source
-        .split_once("pub fn bind_cached_prepared_select(")
+        .split_once("pub fn bind_cached_prepared_select_for_statement(")
         .expect("prepared SELECT cache binder")
         .1;
     let cache_probe = function
-        .find("plan.bind_cached(")
+        .find("plan.bind_cached_for_statement(")
         .expect("retained physical tree is probed without a planner context");
     let planner_context = function
         .find("let ctx = self.statement_context(false);")
         .expect("a cache miss still gets a planner context");
     let cache_fill = function[planner_context..]
-        .find("plan.bind(")
+        .find("plan.bind_for_statement(")
         .map(|offset| planner_context + offset)
         .expect("a cache miss fills the retained physical tree");
 
@@ -64,7 +64,7 @@ fn cached_select_hit_rebinds_the_retained_ast_in_place() {
 
     assert!(!cache_hit_path.contains("bind_prepared_statement"));
     assert!(bind_inner.contains("bind_prepared_statement"));
-    assert!(planner.contains("bind_prepared_select_in_place(&mut self.select, values)"));
+    assert!(planner.contains("bind_prepared_statement_in_place(&mut self.statement, values)"));
     assert!(!access.contains("select: tidb_ast::SelectStmt,\n    decision:"));
 }
 
@@ -72,11 +72,11 @@ fn cached_select_hit_rebinds_the_retained_ast_in_place() {
 fn cached_select_key_reuses_the_typed_session_environment() {
     let source = include_str!("../../tidb-session/src/prepared_ast.rs");
     let binder = source
-        .split_once("pub fn bind_cached_prepared_select(")
+        .split_once("pub fn bind_cached_prepared_select_for_statement(")
         .expect("prepared SELECT cache binder")
         .1;
 
-    assert!(binder.contains("self.prepared_plan_cache_environment()"));
+    assert!(binder.contains("self.prepared_plan_cache_environment_for_binding(binding_sql)"));
     assert!(!binder.contains("PreparedPlanCacheEnvironment::new("));
     assert!(!binder.contains("get_system(\"sql_select_limit\")"));
     assert!(!binder.contains("TIDB_SNAPSHOT"));
@@ -102,7 +102,7 @@ fn cached_execution_trusts_the_shared_historical_read_admission() {
         .0;
     let binder = include_str!("../../tidb-session/src/prepared_ast.rs");
     let dml_binder = binder
-        .split_once("pub fn bind_cached_prepared_dml(")
+        .split_once("pub fn bind_cached_prepared_dml_for_statement(")
         .expect("cached DML binder")
         .1
         .split_once("pub fn bind_cached_prepared_select(")
@@ -111,7 +111,9 @@ fn cached_execution_trusts_the_shared_historical_read_admission() {
 
     assert!(!cached_execution.contains("refuse_pinned_historical_read"));
     assert!(ordinary_execution.contains("self.refuse_pinned_historical_read()?"));
-    assert!(dml_binder.contains("self.prepared_plan_cache_environment()"));
+    assert!(
+        dml_binder.contains("self.prepared_plan_cache_environment_for_binding(binding_sql)")
+    );
 }
 
 #[test]
