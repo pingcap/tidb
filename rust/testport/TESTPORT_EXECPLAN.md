@@ -844,6 +844,12 @@ For each bounded behavior cluster:
       SQL/session behavior and cannot land before the complete handle-types and
       ordinary stats-handle owners. Inventory is in
       `receipts/statistics_handle_lockstats_audit.md`.
+- [x] Audit the complete pinned `pkg/statistics/handle/ddl/testutil` package.
+      Remove the generic slice-search carrier and its two source-absent tests:
+      Go owns four blocking channel, timeout, transaction, notifier-context,
+      and handle helpers, while the Rust function exercised none of them.
+      Inventory is in
+      `receipts/statistics_handle_ddl_testutil_audit.md`.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope
@@ -989,6 +995,12 @@ For each bounded behavior cluster:
   and query context. All disconnected leaves and placeholder tests are removed
   until the complete dependency-closed package can land. Date/Author:
   2026-08-29, Codex.
+- Decision: `pkg/statistics/handle/ddl/testutil.FindEventWithTimeout` cannot be
+  replaced by searching a caller-provided slice. Channel receive ordering,
+  blocking, timer selection, notifier events, and nil-on-timeout are the
+  helper's behavior, alongside three sibling handle/transaction helpers. The
+  generic leaf is removed until the complete support package can land.
+  Date/Author: 2026-08-29, Codex.
 
 ## Surprises & Discoveries
 

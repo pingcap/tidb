@@ -47,7 +47,6 @@ pub mod constants;
 pub mod correlation;
 pub mod count_metrics;
 pub mod datum_map_cache;
-pub mod ddl_event_match;
 pub mod ddl_physical_ids;
 pub mod ddl_queue_gate;
 pub mod ddl_stats_delta;
@@ -158,7 +157,6 @@ pub use constants::{DEFAULT_HISTOGRAM_BUCKETS, DEFAULT_TOP_N_VALUE};
 pub use correlation::calc_correlation;
 pub use count_metrics::HistogramCountSummary;
 pub use datum_map_cache::DatumMapCache;
-pub use ddl_event_match::find_event_with_timeout;
 pub use ddl_physical_ids::physical_ids_for_stats_ddl;
 pub use ddl_queue_gate::{ddl_queue_disposition, DdlQueueDisposition};
 pub use ddl_stats_delta::{
