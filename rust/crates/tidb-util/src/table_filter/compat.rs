@@ -38,14 +38,6 @@ pub struct Table {
 }
 
 impl Table {
-    /// Creates a new [`Table`].
-    pub fn new(schema: impl Into<String>, name: impl Into<String>) -> Self {
-        Table {
-            schema: schema.into(),
-            name: name.into(),
-        }
-    }
-
     // Go keeps `lessThan` behind `//nolint:unused`; ported for completeness.
     #[allow(dead_code)]
     fn less_than(&self, other: &Table) -> bool {
@@ -64,7 +56,7 @@ impl fmt::Display for Table {
 }
 
 /// A set of rules based on MySQL's replication filter.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 pub struct MySQLReplicationRules {
     /// An allowlist of tables.
     #[serde(default, rename = "do-tables")]
@@ -329,7 +321,10 @@ mod tests {
     use crate::table_filter::case_insensitive;
 
     fn t(schema: &str, name: &str) -> Table {
-        Table::new(schema, name)
+        Table {
+            schema: schema.to_owned(),
+            name: name.to_owned(),
+        }
     }
 
     // Go `TestSchemaFilter`.

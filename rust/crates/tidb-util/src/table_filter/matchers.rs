@@ -85,11 +85,11 @@ pub(crate) fn new_regexp_matcher(pat: &str) -> Result<Matcher, FilterError> {
         // special case for '*'
         return Ok(Matcher::True);
     }
-    match Regex::new(pat) {
+    match crate::go_regexp::compile(pat, true) {
         Ok(re) => Ok(Matcher::Regexp(re)),
         Err(e) => Err(FilterError::new(format!(
             "error parsing regexp: {}",
-            flatten(&e.to_string())
+            flatten(&e)
         ))),
     }
 }
@@ -97,4 +97,20 @@ pub(crate) fn new_regexp_matcher(pat: &str) -> Result<Matcher, FilterError> {
 /// Collapses the multi-line `regex::Error` display into one line.
 fn flatten(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::new_regexp_matcher;
+
+    #[test]
+    fn go_perl_character_classes_are_ascii() {
+        let digits = new_regexp_matcher(r"^\d+$").unwrap();
+        assert!(digits.match_string("123"));
+        assert!(!digits.match_string("١٢٣"));
+
+        let words = new_regexp_matcher(r"^\w+$").unwrap();
+        assert!(words.match_string("tenant_1"));
+        assert!(!words.match_string("ténant"));
+    }
 }

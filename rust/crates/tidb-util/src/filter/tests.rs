@@ -16,7 +16,10 @@ use super::*;
 use std::sync::{Arc, Barrier};
 
 fn t(schema: &str, name: &str) -> Table {
-    Table::new(schema, name)
+    Table {
+        schema: schema.to_owned(),
+        name: name.to_owned(),
+    }
 }
 
 fn rules(

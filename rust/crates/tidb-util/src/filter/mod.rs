@@ -27,8 +27,6 @@ use std::collections::HashMap;
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use regex::Regex;
-use regex_syntax::ast::parse::Parser;
-use regex_syntax::ast::{self, Ast, Visitor};
 use tidb_mysql::to_lowercase as go_simple_lowercase;
 
 use crate::table_filter::{MySQLReplicationRules, Table};
@@ -162,10 +160,10 @@ impl Filter {
             let probe = if self.case_sensitive {
                 tb.clone()
             } else {
-                Table::new(
-                    go_simple_lowercase(&tb.schema),
-                    go_simple_lowercase(&tb.name),
-                )
+                Table {
+                    schema: go_simple_lowercase(&tb.schema),
+                    name: go_simple_lowercase(&tb.name),
+                }
             };
             if self.matches(&probe) {
                 tbs.push(tb.clone());
@@ -345,109 +343,10 @@ fn init_one_regex(
     case_sensitive: bool,
 ) -> Result<(), FilterError> {
     if !pattern_map.contains_key(origin) {
-        let re = compile_go_regexp(origin, case_sensitive).map_err(FilterError::Regex)?;
+        let re = crate::go_regexp::compile(origin, case_sensitive).map_err(FilterError::Regex)?;
         pattern_map.insert(origin.to_owned(), re);
     }
     Ok(())
-}
-
-#[derive(Clone, Copy)]
-struct RegexReplacement {
-    start: usize,
-    end: usize,
-    value: &'static str,
-}
-
-#[derive(Default)]
-struct GoRegexpVisitor {
-    replacements: Vec<RegexReplacement>,
-}
-
-impl GoRegexpVisitor {
-    fn perl_class(class: &ast::ClassPerl) -> RegexReplacement {
-        let value = match (&class.kind, class.negated) {
-            (ast::ClassPerlKind::Digit, false) => "[0-9]",
-            (ast::ClassPerlKind::Digit, true) => "[^0-9]",
-            (ast::ClassPerlKind::Space, false) => "[\\t\\n\\f\\r ]",
-            (ast::ClassPerlKind::Space, true) => "[^\\t\\n\\f\\r ]",
-            (ast::ClassPerlKind::Word, false) => "[0-9A-Za-z_]",
-            (ast::ClassPerlKind::Word, true) => "[^0-9A-Za-z_]",
-        };
-        RegexReplacement {
-            start: class.span.start.offset,
-            end: class.span.end.offset,
-            value,
-        }
-    }
-}
-
-impl Visitor for GoRegexpVisitor {
-    type Output = Vec<RegexReplacement>;
-    type Err = std::convert::Infallible;
-
-    fn finish(self) -> Result<Self::Output, Self::Err> {
-        Ok(self.replacements)
-    }
-
-    fn visit_pre(&mut self, node: &Ast) -> Result<(), Self::Err> {
-        match node {
-            Ast::ClassPerl(class) => self.replacements.push(Self::perl_class(class)),
-            Ast::Assertion(assertion) => {
-                let value = match assertion.kind {
-                    ast::AssertionKind::WordBoundary => Some("(?-u:\\b)"),
-                    ast::AssertionKind::NotWordBoundary => Some("(?-u:\\B)"),
-                    _ => None,
-                };
-                if let Some(value) = value {
-                    self.replacements.push(RegexReplacement {
-                        start: assertion.span.start.offset,
-                        end: assertion.span.end.offset,
-                        value,
-                    });
-                }
-            }
-            _ => {}
-        }
-        Ok(())
-    }
-
-    fn visit_class_set_item_pre(&mut self, item: &ast::ClassSetItem) -> Result<(), Self::Err> {
-        if let ast::ClassSetItem::Perl(class) = item {
-            self.replacements.push(Self::perl_class(class));
-        }
-        Ok(())
-    }
-}
-
-// Go's regexp package defines its Perl character classes and word boundaries
-// over ASCII. Rust regex deliberately makes the same spellings Unicode-aware.
-// Rewrite only those source constructs; Unicode literals, `.`, and `\p{...}`
-// retain their normal rune semantics.
-fn go_regexp_pattern(pattern: &str) -> Result<String, String> {
-    let ast = Parser::new()
-        .parse(pattern)
-        .map_err(|error| error.to_string())?;
-    let mut replacements =
-        ast::visit(&ast, GoRegexpVisitor::default()).expect("the regexp visitor is infallible");
-    if replacements.is_empty() {
-        return Ok(pattern.to_owned());
-    }
-    replacements.sort_unstable_by_key(|replacement| std::cmp::Reverse(replacement.start));
-    let mut result = pattern.to_owned();
-    for replacement in replacements {
-        result.replace_range(replacement.start..replacement.end, replacement.value);
-    }
-    Ok(result)
-}
-
-pub(crate) fn compile_go_regexp(pattern: &str, case_sensitive: bool) -> Result<Regex, String> {
-    let pattern = go_regexp_pattern(pattern)?;
-    let pattern = if case_sensitive {
-        pattern
-    } else {
-        format!("(?i){pattern}")
-    };
-    Regex::new(&pattern).map_err(|error| error.to_string())
 }
 
 // Go `initSchemaRule`.

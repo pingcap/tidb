@@ -273,6 +273,10 @@ For each bounded behavior cluster:
 - [x] Complete the pinned `pkg/config/kerneltype` package in both build
       selections, preserve its architecture/binary contract, and remove its
       duplicate external source-test carrier.
+- [x] Complete the pinned `pkg/util/table-filter` package: share the existing
+      Go-regexp authority so Perl classes and word boundaries remain ASCII,
+      remove Rust-only construction/cloning APIs, and retain all fourteen
+      source tests plus the public source-contract gates.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope

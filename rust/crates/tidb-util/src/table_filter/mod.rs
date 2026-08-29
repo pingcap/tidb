@@ -40,7 +40,7 @@ use std::fmt;
 use tidb_mysql::to_lowercase as go_simple_lowercase;
 
 /// Error returned by filter parsing.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct FilterError(String);
 
 impl FilterError {

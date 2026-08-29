@@ -54,6 +54,7 @@ pub mod filter;
 pub mod format;
 pub mod generic;
 pub mod globalconn;
+mod go_regexp;
 pub mod intest;
 pub mod intset;
 pub mod israce;

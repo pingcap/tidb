@@ -38,7 +38,13 @@ fn replication_rules_preserve_public_config_keys() {
     )
     .unwrap();
 
-    assert_eq!(rules.do_tables, vec![Table::new("sales", "orders")]);
+    assert_eq!(
+        rules.do_tables,
+        vec![Table {
+            schema: "sales".to_owned(),
+            name: "orders".to_owned(),
+        }]
+    );
     assert!(rules.do_dbs.is_empty());
     assert!(rules.ignore_tables.is_empty());
     assert_eq!(rules.ignore_dbs, vec!["archive"]);
@@ -77,5 +83,8 @@ fn case_insensitive_filters_use_go_simple_unicode_folding() {
         }),
     )
     .unwrap();
-    assert!(filter.matches(&Table::new("i", "orders")));
+    assert!(filter.matches(&Table {
+        schema: "i".to_owned(),
+        name: "orders".to_owned(),
+    }));
 }

@@ -19,7 +19,7 @@
 //! one selected rule is rejected. Rule validation and extractor configuration
 //! are shared with [`crate::table_router`].
 
-use crate::filter::{compile_go_regexp, Filter, Rules};
+use crate::filter::{Filter, Rules};
 use crate::table_filter::Table as FilterTable;
 use crate::table_router::TableRule;
 use std::fmt;
@@ -88,7 +88,10 @@ impl RouteTable {
             rule.to_lower();
         }
 
-        let target = FilterTable::new(&rule.target_schema, &rule.target_table);
+        let target = FilterTable {
+            schema: rule.target_schema.clone(),
+            name: rule.target_table.clone(),
+        };
         let (typ, rules) = if rule.table_pattern.is_empty() {
             (
                 SCHM_FILTER,
@@ -101,7 +104,10 @@ impl RouteTable {
             (
                 TBL_FILTER,
                 Rules {
-                    do_tables: vec![FilterTable::new(&rule.schema_pattern, &rule.table_pattern)],
+                    do_tables: vec![FilterTable {
+                        schema: rule.schema_pattern.clone(),
+                        name: rule.table_pattern.clone(),
+                    }],
                     do_dbs: vec![rule.schema_pattern.clone()],
                     ..Rules::default()
                 },
@@ -121,7 +127,10 @@ impl RouteTable {
 
     /// Go `Route`.
     pub fn route(&self, schema: &str, table: &str) -> Result<(String, String), RegExprRouterError> {
-        let current = FilterTable::new(schema, table);
+        let current = FilterTable {
+            schema: schema.to_owned(),
+            name: table.to_owned(),
+        };
         let mut table_rules = Vec::new();
         let mut schema_rules = Vec::new();
         for wrapper in &self.filters {
@@ -184,7 +193,10 @@ impl RouteTable {
         table: &str,
         source: &str,
     ) -> (Vec<String>, Vec<String>) {
-        let current = FilterTable::new(schema, table);
+        let current = FilterTable {
+            schema: schema.to_owned(),
+            name: table.to_owned(),
+        };
         let mut schema_rules = Vec::new();
         let mut table_rules = Vec::new();
         for wrapper in &self.filters {
@@ -228,7 +240,7 @@ impl RouteTable {
 }
 
 fn extract_value(value: &str, pattern: &str) -> String {
-    let Some(captures) = compile_go_regexp(pattern, true)
+    let Some(captures) = crate::go_regexp::compile(pattern, true)
         .ok()
         .and_then(|regexp| regexp.captures(value))
     else {
