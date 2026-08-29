@@ -36,6 +36,14 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-08-29: completed the pinned Go `pkg/util/resourcegrouptag` package
+  (one production file, one source test, one test harness, and `BUILD.bazel`).
+  Split its decoder, label classifier, and first-key extraction out of the
+  mixed Rust `pkg/kv` builder module; the builder and decode hook remain with
+  their actual Go owner. Reduced the package suite to the three source test
+  identities and gave it an independent Cargo target matching Go's package
+  test artifact. Complete inventory and WIP gates are recorded in
+  `receipts/util_resourcegrouptag.md`.
 - 2026-08-29: completed the pinned Go `pkg/util/deadlockhistory` package
   (one production file, one source test, one test harness, and `BUILD.bazel`).
   Removed the Rust-only package row renderer, key decoder, server policy, and

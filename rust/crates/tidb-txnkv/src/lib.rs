@@ -88,6 +88,7 @@ mod range_diagnostics;
 mod read_runtime;
 pub mod region;
 mod resource_group;
+mod resource_group_tag;
 mod retry;
 pub mod rpc;
 mod tiflash;
@@ -220,9 +221,11 @@ pub use read_runtime::{
     ResolvingLock, ResolvingLocksGuard, SharedReadAuthority, SharedReadOpener, SharedReadRuntime,
 };
 pub use resource_group::{
+    set_decode_table_id, ResourceGroupTagBuilder, ResourceGroupTaggedRequest,
+};
+pub use resource_group_tag::{
     decode_resource_group_tag, get_first_key_from_request, get_resource_group_label_by_key,
-    set_decode_table_id, FirstKeyRequest, ResourceGroupTagBuilder, ResourceGroupTagDecodeError,
-    ResourceGroupTaggedRequest,
+    FirstKeyRequest, ResourceGroupTagDecodeError,
 };
 pub use retry::{
     retry_backoff_upper_bound_ms, should_retry_after_failure, RETRY_BACKOFF_BASE_MS,

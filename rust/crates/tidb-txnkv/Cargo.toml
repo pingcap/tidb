@@ -43,6 +43,10 @@ path = "tests/lock_resolver_source.rs"
 name = "region_error_recovery_source"
 path = "tests/region_error_recovery_source.rs"
 
+[[test]]
+name = "resource_group_tag_source"
+path = "tests/resource_group_tag_source.rs"
+
 [[bench]]
 name = "kv"
 harness = false
