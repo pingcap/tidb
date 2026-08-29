@@ -880,6 +880,14 @@ For each bounded behavior cluster:
       aliases. Go owns integrated session ANALYZE execution, process tracking,
       metrics, warnings, cache effects, and interruption. Inventory is in
       `receipts/statistics_handle_autoanalyze_exec_audit.md`.
+- [x] Audit the complete pinned
+      `pkg/statistics/handle/autoanalyze/priorityqueue` package. Remove the
+      caller-fed queue, injected-port job runtime, compatibility leaves, 92
+      runnable slice tests, 49 ignored gap tests, and the stale origin/master
+      batch receipt. Go owns one live session/statistics/InfoSchema scheduler
+      with background maintenance, DDL integration, retries, and ANALYZE
+      effects. Inventory is in
+      `receipts/statistics_handle_autoanalyze_priorityqueue_audit.md`.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope
@@ -900,6 +908,11 @@ For each bounded behavior cluster:
 - Decision: package parity is atomic. File-, function-, batch-, or test-level
   progress cannot be reported as a completed transcreated Go package.
   Date/Author: 2026-08-28, Codex.
+- Decision: injected ports are not a substitute for an ordinary Go package
+  owner when they move metadata lookup, SQL execution, DML versioning, worker
+  lifecycle, or retry reconstruction to callers. Such unconsumed alternate
+  runtimes are removed and the package remains unclaimed until its real
+  dependencies can land atomically. Date/Author: 2026-08-29, Codex.
 - Decision: `pkg/util/traceevent` must register directly with
   `rust/third_party/tikv-client-rs/src/trace.rs`; the local
   `ClientGoTraceRegistry`, category enum, and flag wrapper are deleted rather

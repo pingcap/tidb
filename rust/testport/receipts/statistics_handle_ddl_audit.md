@@ -45,9 +45,10 @@ three modules and their tests were removed, together with an ignored empty
 handletest function that referred to the delta leaf.
 
 The source-absent `ddl_queue_gate` compatibility module and its duplicate tests
-were also removed. The underlying auto-analyze DDL behavior remains owned and
-tested by the canonical `auto_analyze_runtime` module; no Go behavior was
-removed.
+were also removed. A later whole-package audit established that the
+caller-injected `auto_analyze_runtime` was itself not the live Go
+`priorityqueue` owner and removed it too. The integrated auto-analyze DDL
+behavior remains unclaimed pending the ordinary handle/session dependencies.
 
 The root DDL package remains explicitly unclaimed until it can be wired through
 the ordinary dependency-complete handle path and validated with the complete

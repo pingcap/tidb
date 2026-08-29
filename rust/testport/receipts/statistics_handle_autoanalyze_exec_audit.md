@@ -38,9 +38,9 @@ tracing found no production caller. Rust had no `AutoAnalyze`/`RunAnalyzeStmt`
 session execution owner and none of the three Go tests was represented.
 
 The two modules, their six tests, and the duplicate root aliases were removed.
-The canonical window type inside `auto_analyze_runtime` remains for the later
-whole `priorityqueue` package audit; it is not claimed as this package's
-`ParseAutoAnalysisWindow` result.
+The minute-based window type that was inside `auto_analyze_runtime` was
+subsequently removed by the whole `priorityqueue` package audit; it was not
+this package's `ParseAutoAnalysisWindow` result.
 
 Completing `autoanalyze/exec` is not dependency-closed while the ordinary
 statistics handle/types and current-session ANALYZE execution path remain

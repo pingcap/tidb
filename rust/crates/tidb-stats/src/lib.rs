@@ -26,16 +26,13 @@
 
 #![allow(missing_docs)]
 
-pub mod analysis_interval;
 pub mod analysis_policy;
 pub mod analyze_jobs;
 pub mod analyze_results;
 pub mod analyze_table_id;
 pub mod analyze_version_policy;
 pub mod async_load;
-pub mod auto_analyze_job;
 pub mod auto_analyze_policy;
-pub mod auto_analyze_runtime;
 pub mod average_count;
 pub mod builder;
 pub mod cmsketch;
@@ -44,7 +41,6 @@ pub mod constants;
 pub mod correlation;
 pub mod count_metrics;
 pub mod datum_map_cache;
-pub mod dynamic_partition_helpers;
 pub mod estimate;
 pub mod existence_map;
 pub mod fmsketch;
@@ -56,11 +52,7 @@ pub mod index;
 pub mod index_query;
 pub mod json_metadata;
 pub mod memory_usage;
-pub mod non_partitioned_analysis;
 pub mod overlap_geometry;
-pub mod priority_calculator;
-pub mod priority_heap;
-pub mod queue_gate;
 pub mod refresher_state;
 pub mod row_estimate;
 pub mod row_sample_collector;
@@ -69,7 +61,6 @@ pub mod sample_collector;
 pub mod scalar_enum;
 pub mod scalar_geometry;
 pub mod sorted_builder;
-pub mod static_partitioned_analysis;
 pub mod stats_lock_table;
 pub mod stats_version;
 pub mod status;
@@ -77,13 +68,6 @@ pub mod table;
 pub mod weighted_reservoir;
 pub mod worker_capacity;
 
-pub use analysis_interval::{
-    average_analysis_duration_from_seconds, average_duration_query,
-    last_failed_analysis_duration_from_seconds, last_failed_duration_query,
-    AVG_DURATION_QUERY_FOR_PARTITION, AVG_DURATION_QUERY_FOR_TABLE,
-    DEFAULT_FAILED_ANALYSIS_WAIT_NANOS, JUST_FAILED, LAST_FAILED_DURATION_QUERY_FOR_PARTITION,
-    LAST_FAILED_DURATION_QUERY_FOR_TABLE, NO_RECORD,
-};
 pub use analysis_policy::{
     is_eligible_for_analysis, meets_auto_analyze_min_count, table_is_analyzed,
     DEFAULT_AUTO_ANALYZE_MIN_COUNT,
@@ -96,16 +80,7 @@ pub use analyze_results::{AnalyzeError, AnalyzeHistogramLifecycle, AnalyzeResult
 pub use analyze_table_id::{AnalyzeTableId, NON_PARTITION_TABLE_ID};
 pub use analyze_version_policy::analyze_version_matches;
 pub use async_load::{NeededStatsMap, StatsLoadItem, TableItemId, SHARD_COUNT};
-pub use auto_analyze_job::{
-    as_json_indicators, is_dynamic_partitioned_table_analysis_job, AnalysisIndicators,
-    AnalysisJobKind, Indicators, IndicatorsJSON, IndicatorsJson,
-};
 pub use auto_analyze_policy::need_analyze_table;
-pub use auto_analyze_runtime::{
-    AnalysisJobFactory, AnalysisJobRuntime, ClockPort, DdlEvent, DdlHandleOutcome, DdlRuntime,
-    InfoSchemaPort, JobHookPort, PartitionPruneMode, QueueMutationPort, RuntimeError, SessionPort,
-    SqlPort, StatisticsPort,
-};
 pub use average_count::avg_count_per_not_null_value;
 pub use builder::{
     build_column, build_column_histogram, build_hist_and_topn, try_build_column_histogram,
@@ -135,7 +110,6 @@ pub use constants::{DEFAULT_HISTOGRAM_BUCKETS, DEFAULT_TOP_N_VALUE};
 pub use correlation::calc_correlation;
 pub use count_metrics::HistogramCountSummary;
 pub use datum_map_cache::DatumMapCache;
-pub use dynamic_partition_helpers::{flatten_partition_names, get_partition_sql};
 pub use estimate::{estimate_global_singleton_by_sketches, estimate_ndv_by_gee};
 pub use existence_map::ColAndIdxExistenceMap;
 pub use fmsketch::{copy_fm_sketch, fm_sketch_ndv, merge_fm_sketch, FmSketch, MAX_SKETCH_SIZE};
@@ -153,19 +127,7 @@ pub use index::{
 pub use index_query::query_index_bytes;
 pub use json_metadata::{JsonPredicateColumn, JsonTable, TIDB_GLOBAL_STATS};
 pub use memory_usage::{ColumnMemUsage, IndexMemUsage};
-pub use non_partitioned_analysis::{
-    analyze_type, gen_sql_for_analyze_index, gen_sql_for_analyze_table, has_newly_added_index,
-    ANALYZE_INDEX, ANALYZE_TABLE,
-};
 pub use overlap_geometry::{left_overlap_percent, right_overlap_percent};
-pub use priority_calculator::{
-    calculate_priority_weight, special_event_weight, EVENT_NEW_INDEX, EVENT_NONE,
-};
-pub use priority_heap::{PriorityHeap, PriorityHeapError, PriorityHeapItem};
-pub use queue_gate::{
-    is_empty_for_test, queue_len, require_initialized, running_jobs, QueueNotInitialized,
-    NOT_INITIALIZED_ERROR_MSG,
-};
 pub use refresher_state::should_rebuild_queue;
 pub use row_estimate::{calculate_skew_ratio_counts, default_row_est, RowEstimate};
 pub use row_sample_collector::{
@@ -187,11 +149,6 @@ pub use scalar_geometry::{
     convert_datum_to_scalar,
 };
 pub use sorted_builder::SortedHistogramBuilder;
-pub use static_partitioned_analysis::{
-    gen_sql_for_analyze_static_partition, gen_sql_for_analyze_static_partition_index,
-    has_newly_added_static_partition_index, static_partition_analyze_type,
-    static_partition_table_id, ANALYZE_STATIC_PARTITION, ANALYZE_STATIC_PARTITION_INDEX,
-};
 pub use stats_lock_table::StatsLockTable;
 pub use stats_version::{
     is_analyzed, is_column_analyzed_or_synthesized, VERSION_0, VERSION_1, VERSION_2,
