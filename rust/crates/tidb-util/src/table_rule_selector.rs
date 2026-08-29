@@ -37,17 +37,26 @@ const MAX_CACHE_NUM: usize = 1024;
 /// The kind of insert operation, mirroring Go's `Insert`/`Replace`/`Append`
 /// constants.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum InsertType {
+pub struct InsertType(isize);
+
+#[allow(non_upper_case_globals)]
+impl InsertType {
     /// Insert a new rule; errors if a rule already exists at the pattern.
-    Insert,
+    pub const Insert: Self = Self(0);
     /// Replace any existing rule with this one.
-    Replace,
+    pub const Replace: Self = Self(1);
     /// Append this rule to any existing rules at the pattern.
-    Append,
+    pub const Append: Self = Self(2);
+}
+
+impl From<isize> for InsertType {
+    fn from(value: isize) -> Self {
+        Self(value)
+    }
 }
 
 /// Error returned by selector operations.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct SelectorError(String);
 
 impl SelectorError {
@@ -74,8 +83,8 @@ pub type SchemaRules<R> = HashMap<String, Vec<R>>;
 /// Schema patterns mapped to table-pattern rule maps.
 pub type TableRules<R> = HashMap<String, SchemaRules<R>>;
 
-/// Complete schema-level and table-level rule snapshots.
-pub type AllRules<R> = (SchemaRules<R>, TableRules<R>);
+/// A set of selected rules (Go `RuleSet`). `None` represents Go's nil slice.
+pub type RuleSet<R> = Vec<R>;
 
 /// Stores rules of schema/table for easy retrieval.
 pub trait Selector<R> {
@@ -90,13 +99,13 @@ pub trait Selector<R> {
     ) -> Result<(), SelectorError>;
 
     /// Returns all matched rules.
-    fn match_rules(&self, schema: &str, table: &str) -> Vec<R>;
+    fn match_rules(&self, schema: &str, table: &str) -> Option<RuleSet<R>>;
 
     /// Removes one rule.
     fn remove(&self, schema: &str, table: &str) -> Result<(), SelectorError>;
 
     /// Returns all rules: schema-level rules and table-level rules.
-    fn all_rules(&self) -> AllRules<R>;
+    fn all_rules(&self) -> (SchemaRules<R>, TableRules<R>);
 }
 
 type NodeId = usize;
@@ -235,13 +244,7 @@ struct TrieState<R> {
     nodes: Vec<Node>,
     items: Vec<Item<R>>,
     root: NodeId,
-    cache: HashMap<String, Vec<R>>,
-}
-
-impl<R: Clone> Default for TrieSelector<R> {
-    fn default() -> Self {
-        Self::new()
-    }
+    cache: HashMap<String, Option<RuleSet<R>>>,
 }
 
 impl<R: Clone> TrieSelector<R> {
@@ -438,7 +441,8 @@ impl<R: Clone> TrieState<R> {
         let mut entity: Option<ItemId> = None;
         let mut returned = false;
 
-        for i in 0..input.len() {
+        let mut i = 0;
+        while i < input.len() {
             let asterisk = self.nodes[n].asterisk;
             let question = self.nodes[n].question;
             let r_items = self.nodes[n].r_items.clone();
@@ -482,6 +486,7 @@ impl<R: Clone> TrieState<R> {
                     n = self.items[e].child.expect("inserted item has a child");
                 }
             }
+            i += go_range_width(&input[i..]);
         }
 
         if returned {
@@ -521,7 +526,7 @@ impl<R: Clone> TrieState<R> {
                     let a = self.nodes[n].asterisk.ok_or_else(not_found)?;
                     if i != p.len() - 1 {
                         return Err(SelectorError::new(format!(
-                            "pattern {pattern} is not valid"
+                            "pattern {pattern}  is not valid"
                         )));
                     }
                     items.push(a);
@@ -646,7 +651,7 @@ impl<R: Clone> TrieState<R> {
         }
     }
 
-    fn add_to_cache(&mut self, key: String, rules: Vec<R>) {
+    fn add_to_cache(&mut self, key: String, rules: Option<Vec<R>>) {
         self.cache.insert(key, rules);
         if self.cache.len() > MAX_CACHE_NUM {
             if let Some(k) = self.cache.keys().next().cloned() {
@@ -670,7 +675,7 @@ impl<R: Clone> TrieState<R> {
     ) -> Result<(), SelectorError> {
         if schema.is_empty() || rule.is_none() {
             return Err(SelectorError::new(format!(
-                "schema pattern {schema} or rule can't be empty"
+                "schema pattern {schema} or rule <nil> can't be empty"
             )));
         }
 
@@ -681,7 +686,7 @@ impl<R: Clone> TrieState<R> {
         }
     }
 
-    fn match_rules_cached(&mut self, schema: &str, table: &str) -> Vec<R> {
+    fn match_rules_cached(&mut self, schema: &str, table: &str) -> Option<Vec<R>> {
         let cache_key = quote_schema_table(schema, table);
         if let Some(rules) = self.cache.get(&cache_key) {
             return rules.clone();
@@ -693,8 +698,8 @@ impl<R: Clone> TrieState<R> {
 
         // Not found in the schema level.
         if matched_schema.is_empty() {
-            self.add_to_cache(cache_key, Vec::new());
-            return Vec::new();
+            self.add_to_cache(cache_key, None);
+            return None;
         }
 
         let mut rules: Vec<R> = matched_schema.rules.clone();
@@ -704,6 +709,7 @@ impl<R: Clone> TrieState<R> {
             rules.extend(matched_table.rules.iter().cloned());
         }
 
+        let rules = (!rules.is_empty()).then_some(rules);
         self.add_to_cache(cache_key, rules.clone());
         rules
     }
@@ -726,7 +732,7 @@ impl<R: Clone> TrieState<R> {
         if !table.is_empty() {
             let nl = self.items[schema_leaf].next_level.ok_or_else(|| {
                 SelectorError::new(format!(
-                    "table level while we track schema/table {schema}/{table} not found"
+                    "table level while we track chema/table {schema}/{table} not found"
                 ))
             })?;
 
@@ -759,7 +765,7 @@ impl<R: Clone> TrieState<R> {
         Ok(())
     }
 
-    fn all_rules_snapshot(&self) -> AllRules<R> {
+    fn all_rules_snapshot(&self) -> (SchemaRules<R>, TableRules<R>) {
         let mut table_rules: HashMap<String, HashMap<String, Vec<R>>> = HashMap::new();
         let mut schema_nodes: HashMap<String, NodeId> = HashMap::new();
         let mut schema_rules: HashMap<String, Vec<R>> = HashMap::new();
@@ -794,7 +800,7 @@ impl<R: Clone> Selector<R> for TrieSelector<R> {
         self.write().insert_rule(schema, table, rule, insert_type)
     }
 
-    fn match_rules(&self, schema: &str, table: &str) -> Vec<R> {
+    fn match_rules(&self, schema: &str, table: &str) -> Option<RuleSet<R>> {
         let cache_key = quote_schema_table(schema, table);
         if let Some(rules) = self.read().cache.get(&cache_key) {
             return rules.clone();
@@ -806,8 +812,27 @@ impl<R: Clone> Selector<R> for TrieSelector<R> {
         self.write().remove_rule(schema, table)
     }
 
-    fn all_rules(&self) -> AllRules<R> {
+    fn all_rules(&self) -> (SchemaRules<R>, TableRules<R>) {
         self.read().all_rules_snapshot()
+    }
+}
+
+// Go's `for i := range s` advances by decoded UTF-8 runes but exposes each
+// rune's byte index. Invalid encodings advance by one byte. Recursive wildcard
+// matching can produce an invalid suffix by slicing at `i+1`, so this accepts
+// bytes rather than `str`.
+fn go_range_width(input: &[u8]) -> usize {
+    let width = match input[0] {
+        0x00..=0x7f => 1,
+        0xc2..=0xdf => 2,
+        0xe0..=0xef => 3,
+        0xf0..=0xf4 => 4,
+        _ => return 1,
+    };
+    if input.len() >= width && std::str::from_utf8(&input[..width]).is_ok() {
+        width
+    } else {
+        1
     }
 }
 
@@ -882,7 +907,6 @@ mod tests {
     use super::{quote_schema_table, InsertType, Selector, TrieSelector};
     use std::collections::HashMap;
     use std::rc::Rc;
-    use std::sync::{Arc, Barrier};
 
     #[derive(Debug, PartialEq, Eq)]
     struct DummyRule {
@@ -1065,9 +1089,11 @@ mod tests {
     }
 
     fn test_match(s: &mut TrieSelector<Rule>) {
-        let mut cache: HashMap<String, Vec<Rule>> = HashMap::new();
+        let mut cache: HashMap<String, Option<Vec<Rule>>> = HashMap::new();
         for mc in match_cases() {
-            let mut rules = s.match_rules(mc.schema, mc.table);
+            let mut rules = s
+                .match_rules(mc.schema, mc.table)
+                .expect("source match case must return a non-nil RuleSet");
             let mut expected: Vec<Rule> = Vec::with_capacity(mc.matched_num);
             for i in 0..mc.matched_num {
                 expected.push(dummy(&quote_schema_table(
@@ -1078,26 +1104,26 @@ mod tests {
             sort_rules(&mut expected);
             sort_rules(&mut rules);
             assert_eq!(rules, expected, "match {}/{}", mc.schema, mc.table);
-            cache.insert(quote_schema_table(mc.schema, mc.table), expected);
+            cache.insert(quote_schema_table(mc.schema, mc.table), Some(expected));
         }
 
         // not matched cases
         for (schema, table) in [("t1", ""), ("t1", "abc"), ("xxx", "abc")] {
             let rule = s.match_rules(schema, table);
-            assert!(rule.is_empty());
+            assert!(rule.is_none());
             cache.insert(quote_schema_table(schema, table), rule);
         }
 
         // compare the internal cache (sorting each entry, like the Go test).
         let mut actual_cache = s.read().cache.clone();
-        for entry in actual_cache.values_mut() {
+        for entry in actual_cache.values_mut().flatten() {
             sort_rules(entry);
         }
         assert_eq!(actual_cache, cache);
     }
 
     #[test]
-    fn utf8_names_follow_source_byte_wildcards_without_panicking() {
+    fn utf8_matching_follows_go_string_range_indices() {
         let selector = TrieSelector::new();
         selector
             .insert("?", "", Some("one schema byte"), InsertType::Insert)
@@ -1118,33 +1144,17 @@ mod tests {
             .insert("??", "??", Some("two table bytes"), InsertType::Insert)
             .unwrap();
 
-        let expected = [
-            "literal utf8",
-            "range then byte",
-            "two schema bytes",
-            "two table bytes",
-        ];
+        let expected = ["range then byte", "two schema bytes", "two table bytes"];
         for attempt in 0..2 {
-            let mut actual = selector.match_rules("é", "é");
+            let mut actual = selector
+                .match_rules("é", "é")
+                .expect("wildcards match the two source bytes");
             actual.sort_unstable();
             assert_eq!(
                 actual, expected,
-                "attempt {attempt} must preserve byte-oriented matching, including the cache"
+                "attempt {attempt} must preserve Go string-range matching, including the cache"
             );
         }
-    }
-
-    #[test]
-    fn all_rules_preserves_utf8_range_pattern_bytes() {
-        let selector = TrieSelector::new();
-        selector
-            .insert("[é]", "", Some("rule"), InsertType::Insert)
-            .unwrap();
-
-        let (schema_rules, table_rules) = selector.all_rules();
-        assert_eq!(schema_rules.get("[é]"), Some(&vec!["rule"]));
-        assert_eq!(schema_rules.len(), 1);
-        assert!(table_rules.is_empty());
     }
 
     fn test_append(
@@ -1232,78 +1242,6 @@ mod tests {
             &mut s,
             &mut expected_schema_rules,
             &mut expected_table_rules,
-        );
-    }
-
-    #[test]
-    fn selector_supports_concurrent_callers() {
-        let selector = Arc::new(TrieSelector::<Arc<String>>::new());
-        selector
-            .insert(
-                "schema*",
-                "table*",
-                Some(Arc::new("stable".to_owned())),
-                InsertType::Insert,
-            )
-            .unwrap();
-
-        let start = Arc::new(Barrier::new(9));
-        let mut workers = Vec::new();
-        for _ in 0..8 {
-            let selector = Arc::clone(&selector);
-            let start = Arc::clone(&start);
-            workers.push(std::thread::spawn(move || {
-                start.wait();
-                for _ in 0..500 {
-                    let rules = selector.match_rules("schema1", "table1");
-                    assert_eq!(rules.len(), 1);
-                    assert_eq!(rules[0].as_str(), "stable");
-                }
-            }));
-        }
-        let writer = Arc::clone(&selector);
-        let writer_start = Arc::clone(&start);
-        workers.push(std::thread::spawn(move || {
-            writer_start.wait();
-            for index in 0..100 {
-                writer
-                    .insert(
-                        &format!("tenant{index}"),
-                        "",
-                        Some(Arc::new(index.to_string())),
-                        InsertType::Insert,
-                    )
-                    .unwrap();
-            }
-        }));
-
-        for worker in workers {
-            worker.join().unwrap();
-        }
-        let (schema_rules, table_rules) = selector.all_rules();
-        assert_eq!(schema_rules.len(), 100);
-        assert_eq!(table_rules["schema*"]["table*"][0].as_str(), "stable");
-    }
-
-    #[test]
-    fn poisoned_lock_does_not_add_a_failure_mode() {
-        let selector = TrieSelector::<String>::new();
-        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _guard = selector.inner.write().unwrap();
-            panic!("poison selector state");
-        }));
-
-        selector
-            .insert(
-                "schema*",
-                "table*",
-                Some("rule".to_owned()),
-                InsertType::Insert,
-            )
-            .unwrap();
-        assert_eq!(
-            selector.match_rules("schema1", "table1"),
-            vec!["rule".to_owned()]
         );
     }
 }

@@ -288,6 +288,10 @@ For each bounded behavior cluster:
       owner, restore the source's distinct validation errors and complete
       system-schema table, remove supplementary non-source tests, and delete
       the unused 1,448-line `tidb-exec` duplicate.
+- [x] Complete the pinned `pkg/util/table-rule-selector` package in its wired
+      `tidb-util` owner: restore Go string-range indices, nil RuleSets, open
+      insert types, and exact errors; remove the unused 1,270-line selector and
+      1,544-line column-mapping duplicates from `tidb-exec`.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope

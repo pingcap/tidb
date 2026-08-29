@@ -286,8 +286,11 @@ impl Table {
         } else {
             (go_simple_lowercase(schema), go_simple_lowercase(table))
         };
-        let (schema_rules, table_rules) =
-            Self::classify(self.selector.match_rules(&schema_match, &table_match))?;
+        let (schema_rules, table_rules) = Self::classify(
+            self.selector
+                .match_rules(&schema_match, &table_match)
+                .unwrap_or_default(),
+        )?;
 
         let selected = if table.is_empty() || table_rules.is_empty() {
             if schema_rules.len() > 1 {
@@ -336,7 +339,7 @@ impl Table {
         // The Go method deliberately does not lowercase these inputs before
         // matching, even for a case-insensitive router.
         let Ok((schema_rules, table_rules)) =
-            Self::classify(self.selector.match_rules(schema, table))
+            Self::classify(self.selector.match_rules(schema, table).unwrap_or_default())
         else {
             return (Vec::new(), Vec::new());
         };

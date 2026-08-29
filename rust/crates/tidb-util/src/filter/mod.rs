@@ -213,7 +213,7 @@ impl Filter {
                 }
             }
         }
-        let rule_set = self.selector.match_rules(a, "");
+        let rule_set = self.selector.match_rules(a, "").unwrap_or_default();
         rule_set
             .iter()
             .any(|r| r.kind == RuleKind::Db && r.is_allow_list == is_allow_check)
@@ -233,14 +233,17 @@ impl Filter {
                 if !self.match_string(&ptb.schema[1..], &tb.schema) {
                     continue;
                 }
-                let rule_set = self.selector.match_rules(&tb.name, "");
+                let rule_set = self.selector.match_rules(&tb.name, "").unwrap_or_default();
                 if rule_set.iter().any(|r| {
                     r.kind == RuleKind::TblOnlyTblPart && r.is_allow_list == is_allow_check
                 }) {
                     return true;
                 }
             }
-            let rule_set = self.selector.match_rules(&tb.schema, "");
+            let rule_set = self
+                .selector
+                .match_rules(&tb.schema, "")
+                .unwrap_or_default();
             for r in &rule_set {
                 if r.kind == RuleKind::TblOnlyDbPart
                     && r.is_allow_list == is_allow_check
@@ -249,7 +252,10 @@ impl Filter {
                     return true;
                 }
             }
-            let rule_set = self.selector.match_rules(&tb.schema, &tb.name);
+            let rule_set = self
+                .selector
+                .match_rules(&tb.schema, &tb.name)
+                .unwrap_or_default();
             if rule_set
                 .iter()
                 .any(|r| r.kind == RuleKind::TblFull && r.is_allow_list == is_allow_check)

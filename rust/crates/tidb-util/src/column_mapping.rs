@@ -418,7 +418,10 @@ impl Mapping {
             return Ok(info.clone());
         }
 
-        let rules = state.selector.match_rules(schema, table);
+        let rules = state
+            .selector
+            .match_rules(schema, table)
+            .unwrap_or_default();
         if rules.is_empty() {
             let info = MappingInfo::ignored();
             state.cache.insert(key, info.clone());
