@@ -88,7 +88,6 @@ pub mod sem_v2;
 pub mod serialization;
 pub mod servermemorylimit;
 pub mod set;
-pub mod sieve;
 pub mod size;
 pub mod sli;
 pub mod slice;
