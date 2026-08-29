@@ -49,7 +49,7 @@ fn with_extensions(extensions: Vec<ErrorMessageExtension>, test: impl FnOnce()) 
 }
 
 #[test]
-fn test_extend_by_regex() {
+fn TestExtendByRegex() {
     with_extensions(
         vec![
             extension(
@@ -133,13 +133,12 @@ fn test_extend_by_regex() {
                 tidb_errmsg::extend(Some(&mut error));
                 assert_eq!(error.message, expected);
             }
-            tidb_errmsg::extend(None);
         },
     );
 }
 
 #[test]
-fn test_extend_without_config() {
+fn TestExtendWithoutConfig() {
     with_extensions(Vec::new(), || {
         let mut error = error("Exceeded resource group quota limitation");
         tidb_errmsg::extend(Some(&mut error));
@@ -148,7 +147,7 @@ fn test_extend_without_config() {
 }
 
 #[test]
-fn test_extend_skips_invalid_regex() {
+fn TestExtendSkipsInvalidRegex() {
     with_extensions(
         vec![
             extension("[", "invalid regex"),
@@ -169,7 +168,7 @@ fn test_extend_skips_invalid_regex() {
 }
 
 #[test]
-fn test_extend_prefers_longest_pattern() {
+fn TestExtendPrefersLongestPattern() {
     with_extensions(
         vec![
             extension("^Access denied", "generic access denied message"),
@@ -191,7 +190,7 @@ fn test_extend_prefers_longest_pattern() {
 }
 
 #[test]
-fn test_extend_concurrent_with_store_global_config() {
+fn TestExtendConcurrentWithStoreGlobalConfig() {
     with_extensions(
         vec![
             extension("^Access denied", "generic access denied message"),

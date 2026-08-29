@@ -36,6 +36,13 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-08-29: completed the pinned Go `pkg/util/errmsg` package (one
+  production file, one source test, and `BUILD.bazel`). The dedicated Rust
+  owner, prepared config snapshot, and ordinary ERR-packet consumer already
+  matched Go. Removed a supplemental nil assertion and restored exactly the
+  five source test identities; both the package suite and live packet-boundary
+  regression pass. Complete inventory and WIP gates are recorded in
+  `receipts/util_errmsg.md`.
 - 2026-08-29: completed the pinned Go `pkg/util/engine` package (one
   production file, one source test, and `BUILD.bazel`). The existing three
   protobuf/PD-HTTP classifiers already matched Go. Replaced the combined
