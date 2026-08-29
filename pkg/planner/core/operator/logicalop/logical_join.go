@@ -380,6 +380,9 @@ func appendSafeConditions(
 			}
 			continue
 		}
+		if len(sf.GetArgs()) != 2 {
+			continue
+		}
 		if column, _ := expression.ValidCompareConstantPredicateHelper(
 			evalCtx, sf, true); column != nil && schema.Contains(column) {
 			conditions = append(conditions, sf)
