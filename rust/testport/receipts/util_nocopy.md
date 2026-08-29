@@ -27,7 +27,8 @@ test manifest. It also removed the legacy nocopy ExecPlan because that document
 required those non-Go artifacts and pinned a different source revision. The Go
 package has none of those artifacts. A later strict-surface re-audit also
 removed the redundant `Default` trait and compile-time `const` calls; Go has
-only ordinary no-op methods on the zero value.
+only ordinary no-op methods on the zero value. The current re-audit condensed
+the remaining porting narrative without changing runtime behavior.
 
 ## Validation
 
@@ -38,6 +39,11 @@ audit, not a repository-wide readiness claim.
 - `cargo test --offline --locked -p tidb-util --lib nocopy -- --test-threads=1` —
   passed; zero tests ran, matching the source package's test inventory.
 - `cargo fmt -p tidb-util -- --check` and `git diff --check` — passed.
+- `git diff --exit-code e2788410d8d696605e8cb002585877a063ccc909 -- pkg/util/nocopy` — passed.
+- `GOCACHE=/private/tmp/tidb-go-cache GOTOOLCHAIN=go1.25.10 go test -tags=intest,deadlock -count=1 ./pkg/util/nocopy` — passed; the source has no test files.
+- `cargo check -p tidb-util --lib --offline` — passed.
+- `rustfmt --edition 2021 --check crates/tidb-util/src/nocopy/mod.rs` — passed.
+- `git diff --check` — passed.
 
 No Go or Bazel file changed, so `make bazel_prepare` is not required.
 
@@ -46,5 +52,5 @@ No Go or Bazel file changed, so `make bazel_prepare` is not required.
 - Correctness: production marker size, ownership semantics, and methods are
   unchanged.
 - Compatibility: repository-unused Rust-only constructor and formatting
-  behavior are intentionally removed.
+  behavior are intentionally removed; the current re-audit changes only docs.
 - Performance: unchanged.

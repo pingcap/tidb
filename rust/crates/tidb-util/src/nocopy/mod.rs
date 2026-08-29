@@ -12,21 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Native Rust equivalent of `pkg/util/nocopy/nocopy.go`.
-//!
-//! Go's marker relies on `go vet` recognizing its `Lock` method. Rust makes
-//! implicit copying impossible directly: this zero-sized marker intentionally
-//! implements neither [`Copy`] nor [`Clone`]. Explicit ownership moves remain
-//! valid, just as moving an owning Rust value remains valid generally.
+//! Marker for types that must not be copied.
 
 /// Zero-sized marker that prevents an embedding Rust type from becoming
 /// implicitly copyable.
 pub struct NoCopy;
 
 impl NoCopy {
-    /// Source-compatible no-op `sync.Locker.Lock` method.
+    /// No-op lock marker method.
     pub fn lock(&self) {}
 
-    /// Source-compatible no-op `sync.Locker.Unlock` method.
+    /// No-op unlock marker method.
     pub fn unlock(&self) {}
 }
