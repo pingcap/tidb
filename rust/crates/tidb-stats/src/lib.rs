@@ -64,7 +64,6 @@ pub mod global_topn;
 mod go_pdqsort;
 mod go_stable_sort;
 pub mod histogram;
-pub mod historical_stats;
 pub mod index;
 pub mod index_query;
 pub mod init_stats_concurrency;
@@ -191,7 +190,6 @@ pub use global_topn::{
     TopnStatsMergeWorker, MAX_PARTITION_MERGE_BATCH_SIZE,
 };
 pub use histogram::{Bucket, Histogram};
-pub use historical_stats::historical_stats_version;
 pub use index::{
     copy_index, index_is_all_evicted, index_stats_validity, Index, IndexInfo, IndexValidity,
     IndexValidityContext,

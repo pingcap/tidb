@@ -806,6 +806,12 @@ For each bounded behavior cluster:
       LFU/map selection, publication, update, and benchmark surface. The root
       stays unclaimed while its LFU and metric dependencies are absent. The
       full inventory is in `receipts/statistics_handle_cache_audit.md`.
+- [x] Audit the complete pinned `pkg/statistics/handle/history` package.
+      Remove the maximum-version-only carrier and its three source-absent
+      tests. Go owns a session-backed history service with filtering,
+      transactions, SQL validation, JSON blocking, and storage writes; its
+      storage/runtime dependencies are not complete. The inventory is in
+      `receipts/statistics_handle_history_audit.md`.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope
@@ -915,6 +921,12 @@ For each bounded behavior cluster:
   Generic or scalar extracts bypass atomic publication, metrics, SQL/session
   work, LFU behavior, and cache lifecycle, so they are removed until the whole
   package can be completed. Date/Author: 2026-08-29, Codex.
+- Decision: `pkg/statistics/handle/history` is the complete history service,
+  not its final maximum-version expression. Version selection has no
+  independent API or source test and cannot substitute for filtering,
+  transactions, storage conversion, and SQL writes. The scalar carrier is
+  removed until the whole dependency-closed package can land. Date/Author:
+  2026-08-29, Codex.
 
 ## Surprises & Discoveries
 
