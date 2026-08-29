@@ -192,10 +192,11 @@ For each bounded behavior cluster:
   Go `pkg/util/checksum`. Removed public exports for Go's three private framing
   constants and the Rust-only negative-offset refusal; downstream spill tests
   now keep their own fixture geometry rather than extending the production API.
-  Retained the nested-writer view required to reproduce Go's live checksum and
-  encryption cache overlays across Rust crate ownership. Deleted the stale
-  receipt and duplicate manifest batch claim; all ten Go behavior tests remain
-  in the owning checksum module.
+  The spill consumer now retains a separate cipher-writer handle, as Go does,
+  so the Rust-only checksum accessor for its nested writer was removed while
+  preserving both live cache overlays. Deleted the stale semantic manifest and
+  historical audit plan; all ten Go behavior tests remain in the owning
+  checksum module, with source-derived signed-counter coverage alongside them.
 - 2026-08-28: audited the complete pinned Go `pkg/util/rowcodec` package:
   `BUILD.bazel`, `common.go`, `decoder.go`, `encoder.go`, `row.go`, all three
   test/harness files, and the benchmark file. Removed Rust-only framing errors,
