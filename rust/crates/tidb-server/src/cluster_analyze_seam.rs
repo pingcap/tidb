@@ -64,7 +64,7 @@ use tidb_exec::cluster_catalog::load_cluster_catalog;
 use tidb_exec::cluster_stats_load::column_types_of;
 use tidb_exec::real_tikv_analyze::{commit_cluster_analyze, ClusterAnalyzeReport};
 use tidb_exec::real_tikv_catalog::TransactionMetaSnapshot;
-use tidb_exec::real_tikv_stats::load_stats_snapshot_from_cluster;
+use tidb_exec::real_tikv_stats::refresh_stats_snapshot_from_cluster;
 use tidb_exec::stats_watch::SharedStats;
 use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
 
@@ -72,7 +72,7 @@ use crate::sql_node::{cluster_analyze_error, SqlQueryError};
 
 /// One table's physical ID paired with the declared types its stored
 /// histogram bounds decode against -- the shape
-/// [`load_stats_snapshot_from_cluster`] takes.
+/// [`refresh_stats_snapshot_from_cluster`] takes.
 type StatsTarget = (i64, BTreeMap<i64, tidb_datatype::FieldType>);
 
 /// This node's one route to the cluster's stored statistics.
@@ -126,14 +126,20 @@ where
     /// Whole-snapshot rather than one-table, because that is the only shape
     /// [`SharedStats`] publishes, and because a snapshot assembled from two
     /// timestamps is exactly what
-    /// [`load_stats_snapshot_from_cluster`] exists to prevent. A failure is
+    /// [`refresh_stats_snapshot_from_cluster`] exists to prevent. A failure is
     /// a warning: the rows are durable and the reload tick will find them.
     fn refresh_stats(&self) {
         let targets = match self.stats_targets() {
             Ok(targets) => targets,
             Err(error) => return warn_reload_failed(&error),
         };
-        match load_stats_snapshot_from_cluster(&self.opener, self.timeout, &targets) {
+        let current = self.stats.load();
+        match refresh_stats_snapshot_from_cluster(
+            &self.opener,
+            self.timeout,
+            &targets,
+            current.as_ref(),
+        ) {
             Ok(snapshot) => {
                 let receipt = tidb_exec::stats_watch::receipt_of(&snapshot);
                 self.stats.store(snapshot);

@@ -282,6 +282,78 @@ fn lite_load_keeps_metadata_and_evicts_the_histogram_payload() {
     }
 }
 
+/// Pinned Go `StatsCacheImpl.Update` does not evict an item merely because a
+/// table refreshes. It preserves an unchanged resident histogram, and when a
+/// newer histogram replaces a resident one it reloads that item in full.
+#[test]
+fn cache_update_preserves_and_refreshes_resident_histogram_payload() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let old_stats = ClusterTableStats {
+        table_id: 4242,
+        version: 440_000_000_000_000_000,
+        snapshot: 440_000_000_000_000_000,
+        last_analyze_version: 440_000_000_000_000_000,
+        modify_count: 0,
+        row_count: 10_240,
+        columns: vec![full_histogram(1, false)],
+        indexes: Vec::new(),
+    };
+    let plan = plan_stats_write(&mut store, &catalog, &old_stats, now()).expect("analyze plans");
+    apply_mutations(&mut store, &plan.mutations);
+
+    let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
+    let column_types = BTreeMap::from([(1, tidb_datatype::FieldType::new(
+        tidb_datatype::FieldTypeCode::LongLong,
+    ))]);
+    let resident = loader
+        .load_table(&mut store, old_stats.table_id, &column_types)
+        .expect("full statistics load")
+        .expect("stats_meta exists");
+    let unchanged = loader
+        .load_table_for_update(
+            &mut store,
+            old_stats.table_id,
+            &column_types,
+            Some(&resident),
+        )
+        .expect("cache update")
+        .expect("stats_meta exists");
+    assert_eq!(unchanged.columns[0].histogram.buckets.len(), 256);
+    assert_eq!(unchanged.columns[0].topn.as_ref().map(TopN::num), Some(100));
+    assert!(unchanged.columns[0].load_status.is_full_load());
+
+    let next_version = old_stats.version + 1;
+    let mut changed = full_histogram(1, false);
+    changed.histogram.last_update_version = next_version;
+    changed.histogram.buckets[0].count = 41;
+    let new_stats = ClusterTableStats {
+        version: next_version,
+        snapshot: next_version,
+        last_analyze_version: next_version,
+        row_count: 10_241,
+        columns: vec![changed],
+        ..old_stats
+    };
+    let plan = plan_stats_write(&mut store, &catalog, &new_stats, now()).expect("reanalyze plans");
+    apply_mutations(&mut store, &plan.mutations);
+    let refreshed = loader
+        .load_table_for_update(
+            &mut store,
+            new_stats.table_id,
+            &column_types,
+            Some(&resident),
+        )
+        .expect("cache refresh")
+        .expect("stats_meta exists");
+    let item = &refreshed.columns[0];
+    assert_eq!(refreshed.version, next_version);
+    assert_eq!(item.histogram.last_update_version, next_version);
+    assert_eq!(item.histogram.buckets[0].count, 41);
+    assert_eq!(item.topn.as_ref().map(TopN::num), Some(100));
+    assert!(item.load_status.is_full_load());
+}
+
 /// Go's `CMSketchAndTopNFromStorageWithHighPriority` reaches TopN through
 /// `INDEX tbl(table_id, is_index, hist_id)`. A table statistics load must not
 /// scan the cluster-wide `stats_top_n` record range.

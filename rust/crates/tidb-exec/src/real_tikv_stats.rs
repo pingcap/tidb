@@ -118,37 +118,14 @@ pub fn load_stats_item_from_cluster<
     loaded
 }
 
-/// Reads every one of `tables`' statistics through one fresh read-only
-/// transaction: one `start_ts` for every table's `mysql.stats_*` rows, not
-/// just one table's, which is what makes the result a single consistent
-/// [`StatsSnapshot`] a node can publish whole into
-/// [`crate::stats_watch::SharedStats`].
+/// Reads every one of `tables`' lite statistics through one fresh read-only
+/// transaction and returns the located `mysql.stats_*` views for later cache
+/// updates.
 ///
-/// `tables` pairs each physical table ID with the column-type map its bounds
-/// decode against ([`crate::cluster_stats_load::column_types_of`]); a caller
-/// with an already-loaded [`crate::cluster_catalog::ClusterCatalog`] builds
-/// this from the `TableInfo`s it is booting the node over.
-///
-/// A table with no `mysql.stats_meta` row becomes
-/// [`TableStatsState::Pseudo`] rather than being omitted: the node must know
-/// it *asked* and the cluster said "never analyzed", which is a different
-/// fact from never having asked at all (see the [`crate::stats_watch`]
-/// module doc).
-pub fn load_stats_snapshot_from_cluster<
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
->(
-    opener: &RealOptimisticTransactionOpener<C, L, P>,
-    timeout: Duration,
-    tables: &[(i64, BTreeMap<i64, FieldType>)],
-) -> Result<StatsSnapshot, SystemTableError> {
-    load_stats_snapshot_and_loader(opener, timeout, tables).map(|(snapshot, _)| snapshot)
-}
-
-/// [`Self::load_stats_snapshot_from_cluster`], also handing back the located
-/// `mysql.stats_*` views so a caller can reuse them for the cheap per-tick
-/// version probe without re-reading the catalog.
+/// This is pinned Go `InitStatsLite`: table meta plus column/index existence
+/// and load-state metadata are resident, while buckets, TopN, and CMSketch
+/// stay evicted until the ordinary item loader is requested by planning. A
+/// table with no `mysql.stats_meta` row becomes [`TableStatsState::Pseudo`].
 pub fn load_stats_snapshot_and_loader<
     C: StoreWriteClient,
     L: StoreWriteLoader,
@@ -167,13 +144,55 @@ pub fn load_stats_snapshot_and_loader<
         let loader = ClusterStatsLoader::locate(&catalog)?;
         let mut result = StatsSnapshot::new();
         for (table_id, column_types) in tables {
-            let state = match loader.load_table(&mut snapshot, *table_id, column_types)? {
+            let state = match loader.load_table_lite(&mut snapshot, *table_id, column_types)? {
                 Some(stats) => TableStatsState::Loaded(std::sync::Arc::new(stats)),
                 None => TableStatsState::Pseudo,
             };
             result.insert(*table_id, state);
         }
         Ok((result, loader))
+    };
+    transaction
+        .finish_without_writes()
+        .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
+    loaded
+}
+
+/// Pinned Go `StatsCacheImpl.Update`: refreshes the lite cache image while
+/// preserving already resident items whose histogram version did not move,
+/// and eagerly refreshes only changed items that were resident before.
+pub fn refresh_stats_snapshot_from_cluster<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+>(
+    opener: &RealOptimisticTransactionOpener<C, L, P>,
+    timeout: Duration,
+    tables: &[(i64, BTreeMap<i64, FieldType>)],
+    current: &StatsSnapshot,
+) -> Result<StatsSnapshot, SystemTableError> {
+    let mut transaction = opener
+        .begin_read_only()
+        .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
+    let loaded = {
+        let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
+        let catalog = load_cluster_catalog(&mut snapshot)?;
+        let loader = ClusterStatsLoader::locate(&catalog)?;
+        let mut result = StatsSnapshot::new();
+        for (table_id, column_types) in tables {
+            let current = current.get(table_id).and_then(TableStatsState::loaded);
+            let state = match loader.load_table_for_update(
+                &mut snapshot,
+                *table_id,
+                column_types,
+                current.map(|stats| stats.as_ref()),
+            )? {
+                Some(stats) => TableStatsState::Loaded(std::sync::Arc::new(stats)),
+                None => TableStatsState::Pseudo,
+            };
+            result.insert(*table_id, state);
+        }
+        Ok(result)
     };
     transaction
         .finish_without_writes()

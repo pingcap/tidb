@@ -141,7 +141,7 @@ fn json_string(value: &str) -> String {
 }
 
 /// Every table's `(table_id, column_types)` a loaded catalog holds -- exactly
-/// the argument [`load_stats_snapshot_from_cluster`] needs to boot-load
+/// the argument [`load_stats_snapshot_and_loader`] needs to boot-load
 /// statistics for every table this node serves.
 fn stats_targets(
     catalog: &ClusterCatalog,
@@ -176,20 +176,14 @@ fn current_stats_targets(
     stats_targets(&current)
 }
 
-/// Boot-loads every table a loaded catalog holds and starts following the
-/// cluster's `mysql.stats_*` for them.
+/// Boot-loads Go's lite statistics state for every table a loaded catalog
+/// holds and starts following the cluster's `mysql.stats_*` for them.
 ///
-/// This is a one-shot load over every loaded table rather than Go's lazy,
-/// per-column, async sync-load (`pkg/statistics/handle/syncload`, driven by
-/// `collect_column_stats_usage` at plan time with its own worker pool and
-/// priority channels): this node's loaded catalog is small (one process's
-/// worth of served tables, not a whole cluster's schema), so reading every
-/// table's statistics once at boot is a bounded cost, and it keeps the supply
-/// line -- plumbing only, no estimation logic -- decoupled from the planner's
-/// per-column load-on-demand path that a future estimator unit will add.
-/// Documented simplification, not a silent gap: a table analyzed for the
-/// first time after boot is picked up by [`StatsReloader`]'s tick, just not
-/// as promptly as Go's synchronous on-demand load would.
+/// Like pinned Go `InitStatsLite`, startup loads `stats_meta` plus histogram
+/// existence/load-state metadata. Buckets, TopN, and CMSketch remain evicted
+/// and planning requests individual items through the shared sync/async load
+/// path. Reloads use the same lite shape as Go `StatsCacheImpl.Update` with
+/// `loadAll=false`.
 ///
 /// Ticks at the same cadence [`spawn_catalog_reloader`] uses (`schema_lease`,
 /// not halved -- see the [`tidb_exec::stats_watch`] module doc for why there
@@ -228,7 +222,7 @@ where
             // what is published -- and the tracked set unchanged -- means the
             // expensive per-table reads (histograms, buckets, top-n, the
             // catalog they are located through) stay untouched this pass; a
-            // moved or new version falls back to the full snapshot load.
+            // moved or new version falls back to the lite snapshot load.
             let targets = current_stats_targets(&catalog);
             let ids: Vec<i64> = targets.iter().map(|(id, _)| *id).collect();
             match load_stats_meta_versions(&opener, timeout, &loader, &ids) {
@@ -236,9 +230,15 @@ where
                     if stats_snapshot_unchanged_since(shared.load().as_ref(), &versions, &targets) {
                         Ok(None)
                     } else {
-                        load_stats_snapshot_from_cluster(&opener, timeout, &targets)
-                            .map(Some)
-                            .map_err(|error| error.to_string())
+                        let current = shared.load();
+                        refresh_stats_snapshot_from_cluster(
+                            &opener,
+                            timeout,
+                            &targets,
+                            current.as_ref(),
+                        )
+                        .map(Some)
+                        .map_err(|error| error.to_string())
                     }
                 }
                 Err(error) => Err(error.to_string()),

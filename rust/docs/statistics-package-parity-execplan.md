@@ -15,7 +15,7 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - [x] (2026-08-29) Added logical predicate-column demand collection, including lineage, physical-table visitation, and operator counting.
 - [x] (2026-08-29) Wired collection and sync/async requests at Go's logical-rule position, including partition expansion, statement timeout/cache state, interesting-column collection, first-phase access-path pruning, and retained-index filtering.
 - [x] (2026-08-29) Split request dispatch from synchronous waiting and added Go's later `SyncWaitStatsLoadPoint` at its pinned logical-rule position.
-- [ ] Replace eager startup/reload statistics reads with Go's lite load and make later item requests authoritative.
+- [x] (2026-08-29) Replaced eager startup and refresh reads with Go's lite load; preserved resident unchanged payload and fully reloaded only changed resident items.
 - [ ] Wire all pinned Go `SHOW STATS_*` surfaces to the shared cache and storage semantics.
 - [ ] Inventory every production file, platform/generated variant, original test/support artifact, fixture, and validation gate in pinned `pkg/statistics`; close or explicitly retain seed-only gaps until the whole package is complete.
 - [ ] Run the Ready validation profile, including `make lint`, only after the complete package inventory is closed.
@@ -37,6 +37,9 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - Observation: pinned Go dispatches statistics work at `CollectPredicateColumnsPoint` but waits only at the later `SyncWaitStatsLoadPoint`; Rust had combined those phases and therefore blocked intervening logical rules.
   Evidence: pinned `SendLoadRequests` stores statement wait state and returns, while `SyncWaitStatsLoad` consumes that state in the later rule.
 
+- Observation: Go's periodic cache update is not equivalent to replacing the cache with a fresh lite image. A row-count-only `stats_meta.version` change preserves resident histogram payload, while a newer histogram is reloaded in full only when the old item was resident.
+  Evidence: pinned `StatsCacheImpl.Update` reuses `MetaOnly` when `LastStatsHistVersion` has not moved, and `TableStatsFromStorage(..., loadAll=false)` branches on each old item's load state and histogram version.
+
 ## Decision Log
 
 - Decision: reconstruct and test each pinned Go branch before editing Rust; do not preserve Rust-only fallback paths.
@@ -53,7 +56,7 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 
 ## Outcomes & Retrospective
 
-The exact storage item reader, logical demand collector, split request/wait rule positions, partition expansion, and newborn access-path pruning are integrated. The current milestone is not complete: Go's lite refresh lifecycle, `SHOW STATS_*` surfaces, worker concurrency/retry behavior, and the whole-package inventory remain.
+The exact storage item reader, lite bootstrap/refresh lifecycle, logical demand collector, split request/wait rule positions, partition expansion, and newborn access-path pruning are integrated. The current milestone is not complete: `SHOW STATS_*` surfaces, worker concurrency/retry behavior, and the whole-package inventory remain.
 
 ## Context and Orientation
 
@@ -107,3 +110,5 @@ Revision note (2026-08-29): created the living plan after completing exact item 
 Revision note (2026-08-29): completed the pinned first-phase interesting-column/access-path pruning behavior over Rust's newborn path representation and recorded why Go's later path-growth scoring fields are unreachable at this phase.
 
 Revision note (2026-08-29): moved synchronous waiting out of initial request dispatch and registered `SyncWaitStatsLoadPoint` at the pinned later logical-rule position.
+
+Revision note (2026-08-29): made production bootstrap and refresh consume the existing lite table loader, removed the unused snapshot wrapper, and added Go's resident-payload-preserving update behavior.

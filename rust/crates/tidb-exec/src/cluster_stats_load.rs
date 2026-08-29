@@ -296,6 +296,76 @@ impl ClusterStatsLoader {
         self.load_table_with_payload(snapshot, table_id, column_types, false)
     }
 
+    /// Pinned Go `TableStatsFromStorage(..., loadAll=false)` during a cache
+    /// update. Metadata-only refreshes preserve resident payload, while a
+    /// newer histogram is reloaded in full only when its old item was already
+    /// resident. Items that were evicted remain metadata-only.
+    pub fn load_table_for_update<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        table_id: i64,
+        column_types: &BTreeMap<i64, FieldType>,
+        current: Option<&ClusterTableStats>,
+    ) -> Result<Option<ClusterTableStats>, SystemTableError> {
+        let Some(lite) = self.load_table_lite(snapshot, table_id, column_types)? else {
+            return Ok(None);
+        };
+        let Some(current) = current else {
+            return Ok(Some(lite));
+        };
+
+        let mut updated = current.clone();
+        updated.version = lite.version;
+        updated.snapshot = lite.snapshot;
+        updated.modify_count = lite.modify_count;
+        updated.row_count = lite.row_count;
+        updated.last_analyze_version = lite.last_analyze_version;
+
+        for metadata in lite.columns.into_iter().chain(lite.indexes) {
+            let current_item = if metadata.is_index {
+                current.index(metadata.id)
+            } else {
+                current.column(metadata.id)
+            };
+            let replacement = match current_item {
+                Some(item)
+                    if item.histogram.last_update_version
+                        >= metadata.histogram.last_update_version =>
+                {
+                    let mut item = item.clone();
+                    if !item.is_index {
+                        item.histogram.tot_col_size = metadata.histogram.tot_col_size;
+                    }
+                    item
+                }
+                Some(item) if item.load_status.is_full_load() => self
+                    .load_item(
+                        snapshot,
+                        table_id,
+                        metadata.is_index,
+                        metadata.id,
+                        (!metadata.is_index)
+                            .then(|| column_types.get(&metadata.id))
+                            .flatten(),
+                        true,
+                    )?
+                    .unwrap_or(metadata),
+                _ => metadata,
+            };
+            let items = if replacement.is_index {
+                &mut updated.indexes
+            } else {
+                &mut updated.columns
+            };
+            match items.iter().position(|item| item.id == replacement.id) {
+                Some(position) => items[position] = replacement,
+                None => items.push(replacement),
+            }
+            items.sort_by_key(|item| item.id);
+        }
+        Ok(Some(updated))
+    }
+
     fn load_table_with_payload<S: MetaSnapshot>(
         &self,
         snapshot: &mut S,
