@@ -22,9 +22,10 @@ byte-identical to the pin.
 
 `rust/crates/tidb-util/src/regexpr_router` is the sole package owner. It uses
 the complete `tidb-util` filter and table-router owners, and its eight Go-named
-tests reproduce every source assertion. Two focused regressions retain the
-source `regexp` package's ASCII Perl-class behavior for route matching and
-extractors.
+tests reproduce every source assertion. The former two supplemental ASCII
+Perl-class regressions were removed because they are absent from this Go
+package's test surface; the shared Go-regexp behavior remains owned and tested
+by the filter dependency.
 
 The audit removed a second 766-line implementation from `tidb-exec`. Nothing
 outside that file imported its module; its only consumers were its own copy of
@@ -41,12 +42,10 @@ Profile: WIP; this is one completed package within the continuing repository
 audit, not a repository-wide readiness claim.
 
 - `go test ./pkg/util/regexpr-router` — passed (8 tests).
-- `cargo test -p tidb-util --locked regexpr_router::` — 10 tests passed (8
-  source tests plus 2 Go-regexp regressions).
-- `cargo test -p tidb-util --locked` — 669 tests passed, 3 existing tests
-  ignored; all integration and doc tests passed.
-- `cargo check -p tidb-exec --lib --locked` — passed.
-- `cargo fmt --all -- --check` and `git diff --check` — passed.
+- `cargo test --offline --locked -p tidb-util --lib regexpr_router:: --no-fail-fast`
+  — passed, exactly 8 tests.
+- `cargo test --offline --locked -p tidb-util --no-run` — passed.
+- `cargo fmt -p tidb-util -- --check` and `git diff --check` — passed.
 
 No Go or Bazel file changed, so `make bazel_prepare` is not required.
 

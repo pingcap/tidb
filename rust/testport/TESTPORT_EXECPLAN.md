@@ -36,6 +36,10 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-08-29: re-read the complete pinned Go `pkg/util/regexpr-router`
+  package and corrected its earlier receipt: removed the two supplemental
+  regexp tests that the Go package does not have, leaving exactly its eight
+  source tests and single canonical production owner.
 - 2026-08-29: audited every production, test, harness, benchmark, and build
   artifact in pinned Go `pkg/util/mvmap`. Removed Rust-only default and iterator
   extensions plus four supplemental tests, restored the exact two-test and

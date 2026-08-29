@@ -153,21 +153,6 @@ fn regexp_route() {
     }
 }
 
-#[test]
-fn regexp_route_keeps_go_ascii_perl_classes() {
-    let mut rules = vec![rule(r"~^tenant\d+$", "", "routed", "")];
-    let router = RouteTable::new(true, &mut rules).unwrap();
-
-    assert_eq!(
-        router.route("tenant1", "orders").unwrap(),
-        ("routed".to_owned(), "orders".to_owned())
-    );
-    assert_eq!(
-        router.route("tenant١", "orders").unwrap(),
-        ("tenant١".to_owned(), "orders".to_owned())
-    );
-}
-
 // Go TestFetchExtendColumn.
 #[test]
 fn fetch_extend_column() {
@@ -198,22 +183,6 @@ fn fetch_extend_column() {
             vec!["schema_name".into(), "source_name".into()],
             vec!["schema_s2".into(), "source_s2".into()]
         )
-    );
-}
-
-#[test]
-fn extractor_keeps_go_ascii_perl_classes() {
-    let mut route_rule = rule("tenant*", "", "target", "");
-    route_rule.schema_extractor = Some(schema_extractor("tenant_id", r"^tenant(\d+)$"));
-    let router = RouteTable::new(true, &mut [route_rule]).unwrap();
-
-    assert_eq!(
-        router.fetch_extend_column("tenant1", "orders", "source"),
-        (vec!["tenant_id".into()], vec!["1".into()])
-    );
-    assert_eq!(
-        router.fetch_extend_column("tenant١", "orders", "source"),
-        (vec!["tenant_id".into()], vec![String::new()])
     );
 }
 
