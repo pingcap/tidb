@@ -2192,3 +2192,27 @@ fn show_stats_healthy_reads_the_production_statistics_cache() {
         vec![vec!["test", "t", "", "100"]]
     );
 }
+
+/// Pinned `tests/integrationtest/r/statistics/integration.result`: TopN rows
+/// use the table/index names, decoded values, and counts produced by ANALYZE.
+#[test]
+fn show_stats_topn_matches_the_pinned_go_rows() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t(a INT, b INT, INDEX idx_a(a), UNIQUE INDEX uidx_b(b))")
+        .unwrap();
+    session
+        .run("INSERT INTO t VALUES (1,1),(1,2),(2,3)")
+        .unwrap();
+    session.run("ANALYZE TABLE t").unwrap();
+
+    assert_eq!(
+        row_text(session.run("SHOW STATS_TOPN WHERE table_name = 't'")),
+        vec![
+            vec!["test", "t", "", "a", "0", "1", "2"],
+            vec!["test", "t", "", "a", "0", "2", "1"],
+            vec!["test", "t", "", "idx_a", "1", "1", "2"],
+            vec!["test", "t", "", "idx_a", "1", "2", "1"],
+        ]
+    );
+}

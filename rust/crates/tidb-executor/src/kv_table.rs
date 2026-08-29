@@ -727,6 +727,13 @@ impl KvTable {
         std::sync::Arc::make_mut(&mut self.columns)
     }
 
+    /// All table columns in physical offset order, including hidden columns
+    /// used by expression indexes, matching `TableInfo.Columns`.
+    #[must_use]
+    pub fn columns(&self) -> &[KvColumn] {
+        &self.columns
+    }
+
     fn indexes_mut(&mut self) -> &mut Vec<KvIndex> {
         std::sync::Arc::make_mut(&mut self.indexes)
     }

@@ -18,6 +18,7 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - [x] (2026-08-29) Replaced eager startup and refresh reads with Go's lite load; preserved resident unchanged payload and fully reloaded only changed resident items.
 - [x] (2026-08-29) Corrected wired `SHOW STATS_META` traversal to honor the session partition-prune mode and suppress pseudo cache entries like `GetNonPseudoPhysicalTableStats`.
 - [x] (2026-08-29) Wired `SHOW STATS_HEALTHY` to production catalog statistics and made analyzed-row selection ignore metadata-only cache items like Go's `GetAnalyzeRowCount`.
+- [x] (2026-08-29) Wired `SHOW STATS_TOPN` through production table/index metadata and the session-aware `ValueToString` equivalent, including hidden-column-capable index type lookup.
 - [ ] Wire all pinned Go `SHOW STATS_*` surfaces to the shared cache and storage semantics.
 - [ ] Inventory every production file, platform/generated variant, original test/support artifact, fixture, and validation gate in pinned `pkg/statistics`; close or explicitly retain seed-only gaps until the whole package is complete.
 - [ ] Run the Ready validation profile, including `make lint`, only after the complete package inventory is closed.
@@ -47,6 +48,9 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 
 - Observation: Rust had the `SHOW STATS_HEALTHY` parser and an isolated helper, but no session dispatch, and its reduced `analyze_row_count` selected the first item without checking full-load status.
   Evidence: the end-to-end regression initially failed as unsupported; pinned `GetAnalyzeRowCount` sorts items and returns only the first fully loaded column or index.
+
+- Observation: Rust's TopN row helper retained Go's untyped byte type-code seam even though the production decoder accepts `FieldTypeCode`; no execution path called the helper.
+  Evidence: wiring `SHOW STATS_TOPN` required replacing that isolated byte slice with the decoder's native type slice and resolving index offsets against all table columns, including hidden expression-index columns.
 
 ## Decision Log
 
@@ -124,3 +128,5 @@ Revision note (2026-08-29): made production bootstrap and refresh consume the ex
 Revision note (2026-08-29): fixed the existing `SHOW STATS_META` production path before expanding the SHOW family; the new regression was observed failing with pseudo/global rows before the fix and passing afterward.
 
 Revision note (2026-08-29): wired `SHOW STATS_HEALTHY` through the production cache, reused the session prune-mode traversal, and aligned analyzed-row selection with full-load status.
+
+Revision note (2026-08-29): wired `SHOW STATS_TOPN` and verified the pinned integration result for a repeated column and its secondary index; the unique column/index correctly contributes no TopN rows.

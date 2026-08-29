@@ -85,7 +85,7 @@
 //! concurrent: every fetcher is a plain nested loop appending to
 //! `e.result`. There is nothing to narrow.
 
-use tidb_datatype::{core_time_from_datetime, Datum, Time, TimeType};
+use tidb_datatype::{core_time_from_datetime, Datum, FieldTypeCode, Time, TimeType};
 use tidb_stats::memory_usage::{ColumnMemUsage, IndexMemUsage};
 use tidb_stats::{Histogram, Table, TopN};
 
@@ -393,13 +393,13 @@ pub fn histogram_row<TZ: chrono::TimeZone>(
 /// Renders one encoded statistics value, Go `statistics.ValueToString`.
 ///
 /// `num_of_cols` is 0 for a column value and the index's column count for an
-/// index value; `column_types` carries the index key parts' MySQL type bytes
-/// so a composite index key can be split back into its parts. Both are Go's
-/// parameters unchanged.
+/// index value; `column_types` carries the index key parts' MySQL types so a
+/// composite index key can be split back into its parts.
 ///
 /// boundary: Go `pkg/statistics/histogram.go` `ValueToString`, which needs the
 /// session's time zone and `tablecodec.DecodeValuesBytesToStrings`.
-pub type ValueRenderer<'a, E> = &'a mut dyn FnMut(&Datum, usize, &[u8]) -> Result<String, E>;
+pub type ValueRenderer<'a, E> =
+    &'a mut dyn FnMut(&Datum, usize, &[FieldTypeCode]) -> Result<String, E>;
 
 /// Go `bucketsToRows` (:437): the `SHOW STATS_BUCKETS` rows for one histogram.
 ///
@@ -421,7 +421,7 @@ pub fn buckets_to_rows<E>(
     column_name: &str,
     num_of_cols: usize,
     histogram: &Histogram,
-    index_column_types: &[u8],
+    index_column_types: &[FieldTypeCode],
     render: ValueRenderer<'_, E>,
 ) -> Result<Vec<Vec<Datum>>, E> {
     let is_index = i64::from(num_of_cols > 0);
@@ -468,7 +468,7 @@ pub fn topn_to_rows<E>(
     num_of_cols: usize,
     is_index: bool,
     topn: Option<&TopN>,
-    column_types: &[u8],
+    column_types: &[FieldTypeCode],
     render: ValueRenderer<'_, E>,
 ) -> Result<Vec<Vec<Datum>>, E> {
     let Some(topn) = topn else {
@@ -780,7 +780,7 @@ mod tests {
             ],
             ..Histogram::default()
         };
-        let mut render = |value: &Datum, _: usize, _: &[u8]| {
+        let mut render = |value: &Datum, _: usize, _: &[FieldTypeCode]| {
             Ok::<_, std::convert::Infallible>(format!("{value:?}"))
         };
         let rows = buckets_to_rows(
@@ -812,7 +812,7 @@ mod tests {
             "i",
             2,
             &histogram,
-            &[3, 3],
+            &[FieldTypeCode::LongLong, FieldTypeCode::LongLong],
             &mut render,
         )
         .unwrap();
@@ -822,8 +822,9 @@ mod tests {
     // WRITTEN test for :411-435: a nil TopN produces no rows.
     #[test]
     fn topn_rows_are_absent_rather_than_empty_without_a_topn() {
-        let mut render =
-            |_: &Datum, _: usize, _: &[u8]| Ok::<_, std::convert::Infallible>("v".to_owned());
+        let mut render = |_: &Datum, _: usize, _: &[FieldTypeCode]| {
+            Ok::<_, std::convert::Infallible>("v".to_owned())
+        };
         let rows = topn_to_rows(
             "d",
             "t",
@@ -832,7 +833,7 @@ mod tests {
             1,
             false,
             None,
-            &[3],
+            &[FieldTypeCode::LongLong],
             &mut render,
         )
         .unwrap();
@@ -849,7 +850,7 @@ mod tests {
             1,
             false,
             Some(&topn),
-            &[3],
+            &[FieldTypeCode::LongLong],
             &mut render,
         )
         .unwrap();
