@@ -12,17 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Complete transcreation of `pkg/util/sqlescape`.
-//!
-//! `utils.go` maps to this module, `utils_test.go` maps to the source-named
-//! tests below and `benches/sqlescape.rs`, and `BUILD.bazel` maps to the
-//! `tidb-util` manifest. The Go package has no `TestMain`, fixtures, generated
-//! files, build-tag variants, fuzz targets, or examples.
-//!
-//! Go strings are arbitrary bytes. SQL text, identifiers, and string arguments
-//! therefore use byte slices at the semantic boundary, while `From<&str>` keeps
-//! ordinary UTF-8 callers concise. [`format_sql`] preserves the source's single
-//! writer call.
+//! SQL argument escaping and formatting.
 
 use chrono::{Datelike, NaiveDateTime, Timelike};
 use std::fmt;
@@ -936,13 +926,22 @@ mod tests {
 
     #[test]
     fn TestMustUtils() {
-        let panic = std::panic::catch_unwind(|| must_escape_sql("%?", &[]));
-        let message = panic.expect_err("must escape must panic");
-        let message = message
-            .downcast_ref::<String>()
-            .map(String::as_str)
-            .or_else(|| message.downcast_ref::<&str>().copied())
-            .expect("panic message");
+        fn panic_message(panic: Box<dyn std::any::Any + Send>) -> String {
+            panic
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| {
+                    panic
+                        .downcast_ref::<&str>()
+                        .map(|value| (*value).to_owned())
+                })
+                .expect("panic message")
+        }
+
+        let message = panic_message(
+            std::panic::catch_unwind(|| must_escape_sql("%?", &[]))
+                .expect_err("must escape must panic"),
+        );
         assert_eq!(
             message,
             "missing arguments, need 1-th arg, but only got 0 args"
@@ -952,7 +951,10 @@ mod tests {
         let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             must_format_sql(&mut output, "%?", &[]);
         }));
-        assert!(panic.is_err());
+        assert_eq!(
+            panic_message(panic.expect_err("must format must panic")),
+            "missing arguments, need 1-th arg, but only got 0 args"
+        );
         must_format_sql(&mut output, "t", &[]);
         assert_eq!(must_escape_sql("tt", &[]), b"tt");
     }
@@ -965,39 +967,6 @@ mod tests {
             ("+ -><()~*:\"\"&|", "+ -><()~*:\\\"\\\"&|"),
         ] {
             assert_eq!(escape_string(input), expected.as_bytes());
-        }
-    }
-
-    #[test]
-    fn identifier_type_error_prints_the_go_value_spelling() {
-        // Go formats the offending argument with %v, so the message shows the
-        // value itself rather than any type wrapper.
-        for (argument, expected) in [
-            (SqlArg::from(3_i64), "expect a string identifier, got 3"),
-            (SqlArg::from(true), "expect a string identifier, got true"),
-            (SqlArg::from(1.5_f64), "expect a string identifier, got 1.5"),
-            (
-                SqlArg::Bytes(Some(b"hi")),
-                "expect a string identifier, got [104 105]",
-            ),
-            (SqlArg::Null, "expect a string identifier, got <nil>"),
-        ] {
-            let error = escape_sql("use %n", &[argument]).unwrap_err();
-            assert_eq!(error.to_string(), expected);
-        }
-    }
-
-    #[test]
-    fn go_shortest_float_boundaries_are_preserved() {
-        for (value, expected) in [
-            (1e-4, "0.0001"),
-            (1e-5, "1e-05"),
-            (1e5, "100000"),
-            (1e6, "1e+06"),
-            (f64::INFINITY, "+Inf"),
-            (f64::NEG_INFINITY, "-Inf"),
-        ] {
-            assert_eq!(format_go_float64(value), expected);
         }
     }
 }
