@@ -17,9 +17,7 @@
 //!
 //! Lock operations carry a table's fully qualified name and, when applicable,
 //! a mapping of partition IDs to names. `None` preserves Go's nil map while
-//! `Some(empty)` preserves an explicitly allocated empty map. This leaf owns
-//! only that caller-owned payload; lock SQL, session/storage state, skipped
-//! messages, and lock/unlock lifecycle remain external.
+//! `Some(empty)` preserves an explicitly allocated empty map.
 
 use std::collections::BTreeMap;
 
@@ -30,18 +28,4 @@ pub struct StatsLockTable {
     pub partition_info: Option<BTreeMap<i64, String>>,
     /// Fully qualified schema and table name.
     pub full_name: String,
-}
-
-impl StatsLockTable {
-    /// Builds a lock payload while preserving nil versus empty partition maps.
-    #[must_use]
-    pub fn new(
-        full_name: impl Into<String>,
-        partition_info: Option<BTreeMap<i64, String>>,
-    ) -> Self {
-        Self {
-            partition_info,
-            full_name: full_name.into(),
-        }
-    }
 }

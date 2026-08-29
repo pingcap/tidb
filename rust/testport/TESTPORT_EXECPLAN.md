@@ -66,6 +66,7 @@ For each bounded behavior cluster:
   package. Removed Rust's unused metadata-only `healthy_metrics` module and
   three supplemental tests rather than claiming constants as the package.
   Full implementation is deferred to the atomic `pkg/metrics` dependency.
+  Inventory is in `receipts/statistics_handle_metrics_audit.md`.
 - 2026-08-29: completed the pinned Go `pkg/statistics/handle/logutil`
   package in `tidb-stats-handle-logutil`. Its four exported constructors now
   compose the completed shared background/error-verbose and sampled logger
@@ -831,6 +832,12 @@ For each bounded behavior cluster:
       portable scalar cases. The package remains unclaimed until the ordinary
       session/storage statistics runtime exists. The inventory is in
       `receipts/statistics_handle_updatetest_audit.md`.
+- [x] Audit the complete pinned `pkg/statistics/handle/types` package. Remove
+      the Rust-only `StatsLockTable` constructor and two source-absent tests;
+      retain direct construction of the exact shared payload used by lock
+      execution. The remaining interface family is unclaimed until the stats
+      core/handle crate boundary is split. Inventory is in
+      `receipts/statistics_handle_types_audit.md`.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope
@@ -963,6 +970,12 @@ For each bounded behavior cluster:
   checks. Its two locally pure tests do not make the package independently
   claimable; TopN merge is already tested in its production owner. All empty
   carriers are removed. Date/Author: 2026-08-29, Codex.
+- Decision: pinned `types.StatsLockTable` is a plain shared data struct. Rust
+  direct struct construction preserves the consumed contract; a public
+  convenience constructor and source-absent tests add API and validation not
+  owned by Go. The wider interface package cannot be completed inside
+  `tidb-stats` without a dependency cycle and remains explicitly unclaimed.
+  Date/Author: 2026-08-29, Codex.
 
 ## Surprises & Discoveries
 

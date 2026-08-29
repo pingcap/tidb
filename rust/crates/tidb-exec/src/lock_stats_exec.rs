@@ -361,7 +361,10 @@ pub fn populate_table_and_partition_ids(
         });
         table_with_partitions.insert(
             meta.id,
-            StatsLockTable::new(table.lowercase_full_name(), partition_info),
+            StatsLockTable {
+                partition_info,
+                full_name: table.lowercase_full_name(),
+            },
         );
     }
 
