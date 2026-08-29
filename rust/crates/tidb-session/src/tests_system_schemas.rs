@@ -393,7 +393,7 @@ fn data_lock_waits_reads_the_storage_provider_with_go_privilege_and_encoding() {
     let provider = std::sync::Arc::new(MockDataLockWaits(vec![DataLockWait {
         txn: 1,
         wait_for_txn: 2,
-        key: b"key1".to_vec(),
+        key: b"t\x80\x00\x00\x00\x00\x00\x03\xe7_r\x80\x00\x00\x00\x00\x00\x00\x01".to_vec(),
         resource_group_tag: tag.encode_tag_with_key(&[]),
     }]));
 
@@ -409,10 +409,17 @@ fn data_lock_waits_reads_the_storage_provider_with_go_privilege_and_encoding() {
     session.set_process_privilege(true);
     assert_eq!(
         row_text(session.run(
-            "SELECT `KEY`, TRX_ID, CURRENT_HOLDING_TRX_ID, SQL_DIGEST, SQL_DIGEST_TEXT \
+            "SELECT `KEY`, KEY_INFO, TRX_ID, CURRENT_HOLDING_TRX_ID, SQL_DIGEST, SQL_DIGEST_TEXT \
              FROM information_schema.DATA_LOCK_WAITS"
         )),
-        [["6B657931", "1", "2", "abcd", "NULL"]]
+        [[
+            "7480000000000003E75F728000000000000001",
+            r#"{"handle_type":"int","handle_value":"1","table_id":999}"#,
+            "1",
+            "2",
+            "abcd",
+            "NULL"
+        ]]
     );
 }
 

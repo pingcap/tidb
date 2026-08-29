@@ -751,22 +751,28 @@ impl Session {
             return Ok(Vec::new());
         };
         let waits = provider.lock_waits().map_err(DriverError::unsupported)?;
-        let snapshot = self.with_catalog_mut(|catalog| Ok(catalog.tidb_decode_key_snapshot()))?;
-        let zone = self.session_time_zone();
+        let key_info = self.with_catalog_mut(|catalog| {
+            Ok(waits
+                .iter()
+                .map(|wait| {
+                    tidb_executor::keydecoder::decode_key(&wait.key, catalog)
+                        .ok()
+                        .and_then(|decoded| serde_json::to_vec(&decoded).ok())
+                        .map(Datum::Bytes)
+                        .unwrap_or(Datum::Null)
+                })
+                .collect::<Vec<_>>())
+        })?;
 
         Ok(waits
             .into_iter()
-            .map(|wait| {
+            .zip(key_info)
+            .map(|(wait, key_info)| {
                 let mut key_hex = String::with_capacity(wait.key.len() * 2);
                 for byte in &wait.key {
                     write!(&mut key_hex, "{byte:02X}")
                         .expect("writing hexadecimal to String cannot fail");
                 }
-                let key_info = snapshot
-                    .decode(key_hex.as_bytes(), &zone)
-                    .ok()
-                    .map(Datum::Bytes)
-                    .unwrap_or(Datum::Null);
                 let digest = tidb_txnkv::decode_resource_group_tag(&wait.resource_group_tag)
                     .ok()
                     .flatten()

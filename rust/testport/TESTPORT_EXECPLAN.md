@@ -36,7 +36,17 @@ For each bounded behavior cluster:
 
 ## Progress
 
-- 2026-08-29: began the complete pinned Go `pkg/util/workloadrepo` package
+- 2026-08-29: completed the pinned Go `pkg/util/keydecoder` package (one
+  production file, one source test, one test harness, and `BUILD.bazel`). Read
+  the complete package first, then removed four supplemental Rust test
+  identities and folded the remaining assertions into the sole source-shaped
+  `TestDecodeKey`. Corrected existing-index empty values to retain Go's
+  non-nil empty slice while still honoring JSON `omitempty`. The ordinary
+  `DEADLOCKS` and `DATA_LOCK_WAITS` consumers now share this decoder;
+  `DATA_LOCK_WAITS` no longer routes raw lock keys through the unrelated
+  hexadecimal `TIDB_DECODE_KEY` builtin decoder. Complete inventory and WIP
+  gates are recorded in `receipts/util_keydecoder.md`.
+- 2026-08-29: completed the pinned Go `pkg/util/workloadrepo` package
   audit (eight production files, one test file, and `BUILD.bazel`; no package
   doc, generated, or platform variants). Added its Rust owner and ordinary
   server/session/etcd/DDL integration. The first behavioral regression exposed
