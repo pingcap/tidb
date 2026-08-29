@@ -292,6 +292,10 @@ For each bounded behavior cluster:
       `tidb-util` owner: restore Go string-range indices, nil RuleSets, open
       insert types, and exact errors; remove the unused 1,270-line selector and
       1,544-line column-mapping duplicates from `tidb-exec`.
+- [x] Complete the pinned `pkg/util/queue` package in its `tidb-util` owner and
+      remove the unused executor duplicate whose `Clear` eagerly dropped
+      backing values and whose public head/tail accessors existed only for its
+      duplicate external tests.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope
