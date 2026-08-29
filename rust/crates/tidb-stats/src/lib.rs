@@ -94,7 +94,6 @@ pub mod stats_meta_update;
 pub mod stats_read_writer;
 pub mod stats_version;
 pub mod status;
-pub mod sync_load_concurrency;
 pub mod table;
 pub mod topn_merge_task;
 pub mod weighted_reservoir;
@@ -256,7 +255,6 @@ pub use stats_version::{
     is_analyzed, is_column_analyzed_or_synthesized, VERSION_0, VERSION_1, VERSION_2,
 };
 pub use status::{StatsLoadedStatus, ALL_EVICTED, ALL_LOADED};
-pub use sync_load_concurrency::sync_load_concurrency_for_cpu;
 pub use table::{
     pseudo_hist_coll, pseudo_table, CopyIntent, HistColl, PseudoColumnInfo, PseudoIndexInfo,
     PseudoTableInfo, QueryColumn, QueryIndexInfo, QueryTableInfo, SharedColumn, SharedIndex,

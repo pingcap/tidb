@@ -819,6 +819,12 @@ For each bounded behavior cluster:
       sampled/error logging, and close/wait lifecycle. Wire `/status` to the
       shared percentage. Inventory and gates are in
       `receipts/statistics_handle_initstats.md`.
+- [x] Audit the complete pinned `pkg/statistics/handle/syncload` package.
+      Remove the CPU-threshold-only carrier, its source-absent test, and six
+      empty gap tests. Go owns a live cache/session/storage worker subsystem
+      with queues, singleflight, retries, priority, metrics, and lifecycle;
+      those dependencies are not complete. The inventory is in
+      `receipts/statistics_handle_syncload_audit.md`.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope
@@ -939,6 +945,12 @@ For each bounded behavior cluster:
   process parallelism is the native `GOMAXPROCS(0)` input; all remaining
   config, channel, atomic, logging, progress, task, and wait behavior is owned
   directly by the package. Date/Author: 2026-08-29, Codex.
+- Decision: `pkg/statistics/handle/syncload` cannot be represented by a pure
+  threshold function accepting a caller-supplied CPU count. Pinned Go probes
+  live process parallelism only as one input to an integrated cache, session,
+  storage, metrics, queue, retry, and worker lifecycle. The extracted Rust API
+  and source-absent tests are removed until the complete package can land.
+  Date/Author: 2026-08-29, Codex.
 
 ## Surprises & Discoveries
 

@@ -321,50 +321,6 @@ fn failed_to_handle_slow_stats_saving() {
     unimplemented!("storage-bound Go test")
 }
 
-// --- pkg/statistics/handle/syncload/stats_syncload_test.go ---
-
-#[ignore]
-#[test]
-fn concurrent_load_hist() {
-    // go-parity-gap: sync-load worker pool via session + storage.
-    unimplemented!("storage-bound Go test")
-}
-
-#[ignore]
-#[test]
-fn concurrent_load_hist_timeout() {
-    // go-parity-gap: sync-load timeout path via session + storage.
-    unimplemented!("storage-bound Go test")
-}
-
-#[ignore]
-#[test]
-fn concurrent_load_hist_with_panic_and_fail() {
-    // go-parity-gap: panic/failure injection into sync-load workers.
-    unimplemented!("storage-bound Go test")
-}
-
-#[ignore]
-#[test]
-fn retry() {
-    // go-parity-gap: sync-load retry policy via session + storage.
-    unimplemented!("storage-bound Go test")
-}
-
-#[ignore]
-#[test]
-fn send_load_requests_wait_too_long() {
-    // go-parity-gap: request-timeout branch of SendLoadRequests.
-    unimplemented!("storage-bound Go test")
-}
-
-#[ignore]
-#[test]
-fn sync_load_on_object_which_can_not_found_in_storage() {
-    // go-parity-gap: missing-object sync-load path via storage.
-    unimplemented!("storage-bound Go test")
-}
-
 // --- pkg/statistics/handle/updatetest/update_test.go ---
 
 #[ignore]
