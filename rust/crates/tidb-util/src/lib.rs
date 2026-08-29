@@ -47,7 +47,6 @@ pub mod disjointset;
 pub mod disk;
 pub mod disttask;
 pub mod encrypt;
-pub mod errno_summary;
 pub mod fastrand;
 pub mod filter;
 pub mod format;
