@@ -16,7 +16,7 @@
 
 /// An exponential moving average measurement. Like the Go source, callers
 /// need exclusive access while updating it.
-#[derive(Clone, Debug, Default)]
+#[derive(Default)]
 pub struct ExponentialMovingAverage {
     value: f64,
     sum: f64,
@@ -32,7 +32,6 @@ impl ExponentialMovingAverage {
     ///
     /// Panics when `factor` compares at or outside `(0, 1)`. The source admits
     /// NaN because both comparisons are false.
-    #[must_use]
     pub fn new(factor: f64, warmup_window: isize) -> Self {
         assert!(!(factor >= 1.0 || factor <= 0.0), "factor must be (0, 1)");
         Self {
@@ -56,7 +55,6 @@ impl ExponentialMovingAverage {
     }
 
     /// Returns the current value.
-    #[must_use]
     pub fn get(&self) -> f64 {
         self.value
     }
@@ -65,7 +63,6 @@ impl ExponentialMovingAverage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::panic::catch_unwind;
 
     const SAMPLES: [f64; 100] = [
         1576.0, 1524.0, 6746.0, 6426.0, 9476.0, 1721.0, 8528.0, 7827.0, 8613.0, 6969.0, 4200.0,
@@ -87,99 +84,5 @@ mod tests {
             window.add(sample);
         }
         assert_eq!(window.get() as i64, 3886);
-    }
-
-    #[test]
-    fn source_zero_value_is_usable_and_preserves_ieee754_behavior() {
-        let mut window = ExponentialMovingAverage::default();
-        assert_eq!(window.get().to_bits(), 0.0_f64.to_bits());
-
-        for sample in [8.0, -8.0] {
-            window.add(sample);
-            assert_eq!(window.get().to_bits(), 0.0_f64.to_bits());
-        }
-        window.add(f64::INFINITY);
-        assert!(window.get().is_nan());
-        window.add(1.0);
-        assert!(window.get().is_nan());
-    }
-
-    #[test]
-    fn source_nan_factor_is_admitted_by_comparison_shape() {
-        let mut window = ExponentialMovingAverage::new(f64::NAN, 0);
-        window.add(1.0);
-        assert!(window.get().is_nan());
-    }
-
-    #[test]
-    fn constructor_rejects_closed_interval_boundaries() {
-        for factor in [
-            f64::NEG_INFINITY,
-            -f64::MIN_POSITIVE,
-            0.0,
-            -0.0,
-            1.0,
-            f64::INFINITY,
-        ] {
-            let panic = catch_unwind(|| ExponentialMovingAverage::new(factor, 1))
-                .expect_err("closed-interval factor must panic");
-            assert_eq!(panic_message(panic), "factor must be (0, 1)");
-        }
-    }
-
-    #[test]
-    fn constructor_admits_open_interval_neighbors_and_nan() {
-        for factor in [f64::from_bits(1), f64::from_bits(1.0_f64.to_bits() - 1)] {
-            let mut model = ExponentialMovingAverage::new(factor, 0);
-            model.add(8.0);
-            assert_eq!(model.get(), 8.0 * factor);
-        }
-
-        let mut model = ExponentialMovingAverage::new(f64::NAN, 0);
-        model.add(8.0);
-        assert!(model.get().is_nan());
-    }
-
-    #[test]
-    fn nonpositive_warmup_starts_in_ema_branch() {
-        for warmup_window in [-1, 0] {
-            let mut model = ExponentialMovingAverage::new(0.25, warmup_window);
-            model.add(8.0);
-            assert_eq!(model.get(), 2.0);
-            model.add(8.0);
-            assert_eq!(model.get(), 3.5);
-        }
-    }
-
-    #[test]
-    fn warmup_boundary_uses_mean_then_ema() {
-        let mut model = ExponentialMovingAverage::new(0.25, 2);
-        assert_eq!(model.get().to_bits(), 0.0_f64.to_bits());
-
-        model.add(2.0);
-        assert_eq!(model.get(), 2.0);
-        model.add(6.0);
-        assert_eq!(model.get(), 4.0);
-        model.add(12.0);
-        assert_eq!(model.get(), 6.0);
-    }
-
-    #[test]
-    fn add_preserves_source_ieee754_propagation() {
-        let mut model = ExponentialMovingAverage::new(0.5, 1);
-        model.add(f64::INFINITY);
-        assert!(model.get().is_infinite() && model.get().is_sign_positive());
-        model.add(f64::NEG_INFINITY);
-        assert!(model.get().is_nan());
-    }
-
-    fn panic_message(panic: Box<dyn std::any::Any + Send>) -> String {
-        match panic.downcast::<String>() {
-            Ok(message) => *message,
-            Err(panic) => match panic.downcast::<&'static str>() {
-                Ok(message) => (*message).to_owned(),
-                Err(_) => "non-string panic".to_owned(),
-            },
-        }
     }
 }

@@ -30,9 +30,8 @@
 //!
 //! - `pkg/ddl/ddl.go` lines 215-249: `JobWrapper`, `NewJobWrapper`,
 //!   `NewJobWrapperWithArgs` (see [`JobWrapper`]).
-//! - `pkg/util/mathutil/math.go` lines 96-113: `Divide2Batches` (see
-//!   [`divide2_batches`]); it is not yet transcreated in `tidb-util`, so it is
-//!   carried here with attribution rather than duplicated as a new crate API.
+//! - `pkg/util/mathutil/math.go` lines 96-113: `Divide2Batches`, provided by
+//!   the complete `tidb-util` package owner.
 //!
 //! Narrowings, each named at its definition site:
 //!
@@ -61,6 +60,7 @@ use tidb_model::job_args::{
     BatchCreateTableArgs, CreateTableArgs, EmptyArgs, GoField, JobArgsValue,
 };
 use tidb_model::{ActionType, GoShared, GoSharedPointerSlice, GoSharedSlice};
+use tidb_util::mathutil::divide_2_batches;
 
 /// Go `mysql.SystemDB` from `pkg/parser/mysql/const.go`.
 ///
@@ -216,30 +216,6 @@ impl fmt::Display for MergeCreateTableJobsError {
 
 impl std::error::Error for MergeCreateTableJobsError {}
 
-/// Go `pkg/util/mathutil/math.go` line 98: `Divide2Batches`.
-///
-/// boundary: `mathutil.Divide2Batches` is not transcreated in `tidb-util`, so
-/// the few lines are carried here with attribution. Go's generic form is
-/// narrowed to `usize`, the only instantiation the merge slice uses.
-#[must_use]
-pub fn divide2_batches(total: usize, batches: usize) -> Vec<usize> {
-    let mut result = Vec::with_capacity(batches);
-    let mut total = total;
-    let quotient = total / batches;
-    let mut remainder = total % batches;
-    while total > 0 {
-        let mut size = quotient;
-        if remainder > 0 {
-            size += 1;
-            remainder -= 1;
-        }
-        debug_assert!(size > 0, "size should be positive");
-        result.push(size);
-        total -= size;
-    }
-    result
-}
-
 /// Go `pkg/ddl/job_submitter.go` line 125: `mergeCreateTableJobs` merges
 /// `CreateTable` jobs into `CreateTables` jobs.
 ///
@@ -290,7 +266,7 @@ pub fn merge_create_table_jobs(
         }
         let batch_count = total.div_ceil(MAX_BATCH_SIZE);
         let mut start = 0usize;
-        for batch_size in divide2_batches(total, batch_count) {
+        for batch_size in divide_2_batches(total, batch_count) {
             let batch = &jobs[start..start + batch_size];
             let new_job_w = merge_create_table_jobs_of_same_schema(batch)?;
             start += batch_size;
