@@ -29,10 +29,6 @@
 //!   here where Go serves them.
 //! * `s.health.Load()` — the 500-during-shutdown arm — narrows with the
 //!   graceful-shutdown integration; this listener lives for the process.
-//! * `initstats.InitStatsPercentage` reads 100 here: this node loads its
-//!   statistics before the SQL listener opens, which is the state Go's
-//!   gauge reports as 100 once init completes.
-
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::Arc;
@@ -129,14 +125,22 @@ pub fn start_status_listener_with_routes(
                             .and_then(|line| line.split_whitespace().nth(1))
                             .unwrap_or("");
                         let response = if path == "/status" {
+                            let init_stats_percentage =
+                                tidb_stats_handle_initstats::INIT_STATS_PERCENTAGE.load();
+                            let init_stats_percentage = if init_stats_percentage.is_nan() {
+                                init_stats_percentage
+                            } else {
+                                init_stats_percentage.min(100.0)
+                            };
                             // Go `handleStatus`: the Status struct's field
                             // order, `Content-Type: application/json`.
                             let body = format!(
                                 "{{\"connections\":{},\"version\":\"{}\",\"git_hash\":\"{}\",\
-                                 \"status\":{{\"init_stats_percentage\":100}}}}",
+                                 \"status\":{{\"init_stats_percentage\":{}}}}}",
                                 tracker.active(),
                                 version,
                                 git_hash,
+                                init_stats_percentage,
                             );
                             format!(
                                 "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
@@ -222,7 +226,7 @@ mod tests {
         assert!(
             status.contains(
                 "{\"connections\":0,\"version\":\"8.0.11-TiDB-test\",\"git_hash\":\"abc123\",\
-                 \"status\":{\"init_stats_percentage\":100}}"
+                 \"status\":{\"init_stats_percentage\":0}}"
             ),
             "Go's field order, exactly: {status}"
         );

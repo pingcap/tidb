@@ -3675,6 +3675,7 @@ dependencies = [
  "tidb-protocol",
  "tidb-session",
  "tidb-stats",
+ "tidb-stats-handle-initstats",
  "tidb-stats-handle-usage-indexusage",
  "tidb-tablecodec",
  "tidb-txnkv",
@@ -3779,6 +3780,15 @@ name = "tidb-stats-handle-cache-internal-testutil"
 version = "0.0.0"
 dependencies = [
  "tidb-stats",
+]
+
+[[package]]
+name = "tidb-stats-handle-initstats"
+version = "0.0.0"
+dependencies = [
+ "tidb-config",
+ "tidb-log",
+ "tidb-util",
 ]
 
 [[package]]

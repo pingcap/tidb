@@ -812,6 +812,13 @@ For each bounded behavior cluster:
       transactions, SQL validation, JSON blocking, and storage writes; its
       storage/runtime dependencies are not complete. The inventory is in
       `receipts/statistics_handle_history_audit.md`.
+- [x] Complete the pinned `pkg/statistics/handle/initstats` package in
+      `tidb-stats-handle-initstats`. Replace concurrency/progress arithmetic
+      carriers and five source-absent tests with the live config/runtime
+      policy, atomic percentage, bounded range worker, task processing,
+      sampled/error logging, and close/wait lifecycle. Wire `/status` to the
+      shared percentage. Inventory and gates are in
+      `receipts/statistics_handle_initstats.md`.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope
@@ -927,6 +934,11 @@ For each bounded behavior cluster:
   transactions, storage conversion, and SQL writes. The scalar carrier is
   removed until the whole dependency-closed package can land. Date/Author:
   2026-08-29, Codex.
+- Decision: `pkg/statistics/handle/initstats` is dependency-closed and must be
+  implemented as its actual concurrent worker package. Rust's effective
+  process parallelism is the native `GOMAXPROCS(0)` input; all remaining
+  config, channel, atomic, logging, progress, task, and wait behavior is owned
+  directly by the package. Date/Author: 2026-08-29, Codex.
 
 ## Surprises & Discoveries
 

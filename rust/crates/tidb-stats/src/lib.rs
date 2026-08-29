@@ -66,8 +66,6 @@ mod go_stable_sort;
 pub mod histogram;
 pub mod index;
 pub mod index_query;
-pub mod init_stats_concurrency;
-pub mod init_stats_progress;
 pub mod json_metadata;
 pub mod json_stats_version;
 pub mod lock_messages;
@@ -195,8 +193,6 @@ pub use index::{
     IndexValidityContext,
 };
 pub use index_query::query_index_bytes;
-pub use init_stats_concurrency::init_stats_concurrency;
-pub use init_stats_progress::init_stats_progress;
 pub use json_metadata::{JsonPredicateColumn, JsonTable, TIDB_GLOBAL_STATS};
 pub use json_stats_version::{json_stats_version, JSON_STATS_VERSION_0, JSON_STATS_VERSION_1};
 pub use lock_messages::{
