@@ -431,7 +431,9 @@ For each bounded behavior cluster:
 - [x] Complete the pinned `pkg/util/set` package in its `tidb-util` owner:
       restore all five concrete memory-aware constructors and tracker rules,
       retain exactly seven source tests and three benchmarks, remove public
-      generic wrapper policy, and wire HashAgg to Go's concrete string set.
+      generic wrapper and ordered-tree policy, restore the free keyed-set API
+      and current-key clone/order behavior, pre-size memory-aware constructors,
+      and wire HashAgg to Go's concrete string set.
 - [x] Complete the pinned `pkg/util/slice` package in its `tidb-util` owner,
       retain its three production functions and one source test, and remove
       four supplementary non-source tests.
