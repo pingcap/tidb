@@ -43,7 +43,6 @@ pub mod context;
 pub mod dbterror;
 pub mod disjointset;
 pub mod disk;
-pub mod disttask;
 pub mod encrypt;
 pub mod fastrand;
 pub mod filter;
