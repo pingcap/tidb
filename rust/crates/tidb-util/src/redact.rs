@@ -18,7 +18,7 @@
 //! - The redact modes are `github.com/pingcap/errors`'s string constants
 //!   `"ON"`, `"OFF"`, `"MARKER"`; the process-wide enable flag defaults to
 //!   the empty string, exactly like `errors.RedactLogEnabled`.
-//! - [`de_redact`] reproduces Go's rune-by-rune, line-by-line state machine
+//! - [`de_redact`] reproduces Go's reader/writer, rune-by-rune, line-by-line state machine
 //!   (marker `‹`/`›` with doubled delimiters escaped), including its error
 //!   on a truncated escape.
 //!
@@ -83,53 +83,52 @@ impl std::fmt::Display for RedactStringer<'_> {
     }
 }
 
-/// Go `redact.DeRedact`: de-redacts marker-wrapped content, working line by
-/// line. `remove` replaces each redacted span with `?`; otherwise it unwraps
-/// the span. `sep` is written after every scanned line (Go passes `"\n"`).
+/// Go `redact.DeRedact`: de-redacts marker-wrapped content from `input` into
+/// `output`, working line by line. `remove` replaces each redacted span with
+/// `?`; otherwise it unwraps the span. `sep` is written after every scanned
+/// line (Go passes `"\n"`).
 ///
 /// This ports Go's `bufio.Scanner`/`bufio.Reader` state machine directly: a
 /// line is scanned rune by rune; `‹` opens a span (interior `‹‹`/`››`
 /// collapse to one), `›` closes it. An unterminated `‹` is emitted verbatim
 /// at end of line (Go writes back the buffered content).
-pub fn de_redact(remove: bool, input: &str, sep: &str) -> std::io::Result<String> {
-    de_redact_bytes(remove, input.as_bytes(), sep)
-}
+pub fn de_redact(
+    remove: bool,
+    input: impl std::io::Read,
+    output: impl std::io::Write,
+    sep: &str,
+) -> std::io::Result<()> {
+    use std::io::BufRead;
 
-fn de_redact_bytes(remove: bool, input: &[u8], sep: &str) -> std::io::Result<String> {
-    let mut out = String::new();
-    for line in scan_lines(input) {
-        de_redact_line(remove, &decode_go_utf8(line), &mut out)?;
-        out.push_str(sep);
-    }
-    Ok(out)
-}
-
-/// Splits like Go's default `bufio.ScanLines`: on `\n`, dropping a single
-/// trailing `\r`, yielding a final unterminated line if non-empty, and
-/// silently stopping when a token reaches `bufio.MaxScanTokenSize`. Go's
-/// `DeRedact` deliberately does not inspect `Scanner.Err()`.
-fn scan_lines(input: &[u8]) -> Vec<&[u8]> {
     const MAX_SCAN_TOKEN_SIZE: usize = 64 * 1024;
 
-    let mut lines = Vec::new();
-    let mut start = 0usize;
-    while start < input.len() {
-        let newline = input[start..]
-            .iter()
-            .position(|byte| *byte == b'\n')
-            .map(|offset| start + offset);
-        let end = newline.unwrap_or(input.len());
-        let raw = &input[start..end];
-        if raw.len() >= MAX_SCAN_TOKEN_SIZE {
+    let mut input = std::io::BufReader::new(input);
+    let mut output = std::io::BufWriter::new(output);
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        let read = match input.read_until(b'\n', &mut line) {
+            Ok(read) => read,
+            // Go deliberately does not inspect Scanner.Err().
+            Err(_) => break,
+        };
+        if read == 0 {
             break;
         }
-        lines.push(raw.strip_suffix(b"\r").unwrap_or(raw));
-        let Some(newline) = newline else {
+        if line.last() == Some(&b'\n') {
+            line.pop();
+            if line.last() == Some(&b'\r') {
+                line.pop();
+            }
+        }
+        if line.len() >= MAX_SCAN_TOKEN_SIZE {
             break;
         };
-        start = newline + 1;
+        de_redact_line(remove, &decode_go_utf8(&line), &mut output)?;
+        let _ = std::io::Write::write_all(&mut output, sep.as_bytes());
     }
-    lines
+    let _ = std::io::Write::flush(&mut output);
+    Ok(())
 }
 
 /// Go's `bufio.Reader.ReadRune` consumes one byte for each malformed UTF-8
@@ -156,7 +155,7 @@ fn decode_go_utf8(input: &[u8]) -> String {
 }
 
 /// The per-line core of [`de_redact`], appending to `out`.
-fn de_redact_line(remove: bool, line: &str, out: &mut String) -> std::io::Result<()> {
+fn de_redact_line(remove: bool, line: &str, out: &mut impl std::io::Write) -> std::io::Result<()> {
     let chars: Vec<char> = line.chars().collect();
     let mut i = 0usize;
     let mut start = false;
@@ -205,23 +204,25 @@ fn de_redact_line(remove: bool, line: &str, out: &mut String) -> std::io::Result
                         i -= 1; // unread
                     }
                     if remove {
-                        out.push('?');
+                        let _ = std::io::Write::write_all(out, b"?");
                     } else {
-                        out.push_str(&buf);
+                        std::io::Write::write_all(out, buf.as_bytes())?;
                     }
                 }
             } else {
-                out.push(ch);
+                let mut encoded = [0; 4];
+                let _ = std::io::Write::write_all(out, ch.encode_utf8(&mut encoded).as_bytes());
             }
         } else if start {
             buf.push(ch);
         } else {
-            out.push(ch);
+            let mut encoded = [0; 4];
+            let _ = std::io::Write::write_all(out, ch.encode_utf8(&mut encoded).as_bytes());
         }
     }
     if start {
-        out.push('‹');
-        out.push_str(&buf);
+        let _ = std::io::Write::write_all(out, "‹".as_bytes());
+        let _ = std::io::Write::write_all(out, buf.as_bytes());
     }
     Ok(())
 }
@@ -229,10 +230,10 @@ fn de_redact_line(remove: bool, line: &str, out: &mut String) -> std::io::Result
 /// Go `redact.DeRedactFile`: de-redacts `input` into `output` (a path, or
 /// `"-"` for standard output), line by line with `\n` separators.
 pub fn de_redact_file(remove: bool, input: &str, output: &str) -> std::io::Result<()> {
-    use std::io::{Read, Write};
+    use std::io::Write;
 
-    let mut input_file = std::fs::File::open(input)?;
-    let mut output_file: Box<dyn Write> = if output == "-" {
+    let input_file = std::fs::File::open(input)?;
+    let output_file: Box<dyn Write> = if output == "-" {
         Box::new(std::io::stdout())
     } else {
         let mut options = std::fs::OpenOptions::new();
@@ -245,10 +246,7 @@ pub fn de_redact_file(remove: bool, input: &str, output: &str) -> std::io::Resul
         Box::new(options.open(output)?)
     };
 
-    let mut content = Vec::new();
-    input_file.read_to_end(&mut content)?;
-    let result = de_redact_bytes(remove, &content, "\n")?;
-    output_file.write_all(result.as_bytes())
+    de_redact(remove, input_file, output_file, "\n")
 }
 
 /// Go `redact.InitRedact`: sets the process-wide flag to `ON`/`OFF`.
@@ -394,7 +392,9 @@ mod tests {
             (true, "gg›ee›gg", "gg›ee›gg"),
             (false, "gg›ee›ee", "gg›ee›ee"),
         ] {
-            assert_eq!(de_redact(remove, input, "").unwrap(), output);
+            let mut actual = Vec::new();
+            de_redact(remove, input.as_bytes(), &mut actual, "").unwrap();
+            assert_eq!(String::from_utf8(actual).unwrap(), output);
         }
     }
 

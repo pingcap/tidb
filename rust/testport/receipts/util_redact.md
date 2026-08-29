@@ -29,15 +29,22 @@ and the custom semantic-manifest artifact were removed because they are not
 artifacts of this Go package. The stream-backup consumer test belongs to its
 own Go package and is not claimed here.
 
+A strict API re-audit replaced Rust's narrowed `de_redact(&str) -> String`
+convenience with Go's general reader/writer operation. It now scans arbitrary
+input line by line, writes to the caller's output, preserves Go's ignored
+scanner/flush errors and checked unwrapped-span copy, and `de_redact_file`
+uses that same ordinary path. The existing `TestDeRedact` translation exercises
+the corrected signature, so no supplemental test was added.
+
 ## Validation
 
 Profile: WIP; this is one completed package within the continuing repository
 audit, not a repository-wide readiness claim.
 
-- `cargo test -p tidb-util --locked 'redact::tests::'` — passed (3 tests).
-- `cargo test -p tidb-util --locked` — passed (649 unit tests and all integration/doc tests; 3 ignored helpers).
-- `cargo fmt --all --check` and `git diff --check` — passed.
-- `go test ./pkg/util/redact -run '^(TestRedact|TestDeRedact|TestRedactInitAndValueAndKey)$' -count=1` — blocked before this package compiled by the workspace's existing gRPC `http2.TrailerPrefix` dependency mismatch.
+- `cargo test --offline --locked -p tidb-util --lib redact::tests:: --no-fail-fast` — passed, exactly 3 tests.
+- `cargo test --offline --locked -p tidb-util --no-run` — passed.
+- `cargo fmt -p tidb-util -- --check` and `git diff --check` — passed.
+- `go test ./pkg/util/redact -run '^(TestRedact|TestDeRedact|TestRedactInitAndValueAndKey)$' -count=1` — blocked before package execution by the existing Go dependency compile error `google.golang.org/grpc/internal/transport/handler_server.go: undefined: http2.TrailerPrefix`.
 
 No Go or Bazel file changed, so `make bazel_prepare` is not required.
 

@@ -36,6 +36,10 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-08-29: re-read every pinned Go `pkg/util/redact` artifact and replaced
+  Rust's narrowed string-returning de-redaction convenience with Go's general
+  line-oriented reader/writer path. `DeRedactFile` and the exact three-test
+  surface now use that one ordinary implementation.
 - 2026-08-29: re-read every pinned Go `pkg/util/promutil` artifact and removed
   its remaining Rust-only public option aliases and `Send + Sync` interface
   restrictions. The sole noop-registry test and six direct-return factory
