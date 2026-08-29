@@ -912,6 +912,14 @@ For each bounded behavior cluster:
       priority-queue/refresher, legacy randomized scheduler, analyze-job SQL
       lifecycle, locks, time windows, server cleanup, and cache effects.
       Inventory is in `receipts/statistics_handle_autoanalyze_root_audit.md`.
+- [x] Audit the complete pinned external test packages
+      `pkg/statistics/handle/handletest` and its `analyze`, `initstats`,
+      `lockstats`, and `statstest` children. Remove two origin/master batch
+      carriers containing 72 ignored empty tests, one duplicate utility test,
+      and their stale batch receipts. The pinned packages own integrated
+      session/domain/storage/ANALYZE/lock/cache tests, not independent Rust
+      production APIs. Complete inventories are in the five
+      `receipts/statistics_handle_handletest*_audit.md` receipts.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope
