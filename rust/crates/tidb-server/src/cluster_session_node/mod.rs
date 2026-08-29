@@ -175,6 +175,7 @@ use crate::resultset_source::ResultSetSource;
 use tidb_exec::catalog_watch::SharedCatalog as SharedClusterCatalog;
 use tidb_exec::cluster_analyze::AnalyzeStatement;
 use tidb_exec::cluster_ddl::DdlStatement;
+use tidb_exec::cluster_load_stats::prepare_cluster_load_stats;
 use tidb_exec::cluster_stats_load::ClusterStatsLoader;
 use tidb_exec::cluster_stats_lock::prepare_cluster_stats_lock;
 use tidb_exec::cluster_stats_lock::ClusterStatsLockStatement;
@@ -338,6 +339,8 @@ enum StatementRoute {
     GlobalVars,
     /// One `ANALYZE TABLE`, per table it named.
     Analyze(Vec<AnalyzeStatement>),
+    /// One LOAD STATS statement awaiting its client-local file bytes.
+    LoadStats,
     /// One persisted `LOCK STATS` or `UNLOCK STATS` operation.
     StatsLock(ClusterStatsLockStatement),
 }
@@ -2026,6 +2029,9 @@ impl ClusterServerSession {
             StoredStateChange::Accounts => Ok(StatementRoute::Accounts),
             StoredStateChange::GlobalVars => Ok(StatementRoute::GlobalVars),
             StoredStateChange::Statistics => {
+                if prepare_cluster_load_stats(sql).is_some() {
+                    return Ok(StatementRoute::LoadStats);
+                }
                 match prepare_cluster_analyze(sql, self.session.current_database()) {
                     Ok(Some(tables)) if !tables.is_empty() => Ok(StatementRoute::Analyze(tables)),
                     Ok(_) => Err(SqlQueryError::unknown(
@@ -2237,6 +2243,29 @@ impl ClusterServerSession {
 }
 
 impl QuerySession for ClusterServerSession {
+    fn local_infile_path(&mut self, sql: &str) -> Result<Option<String>, SqlQueryError> {
+        let Some(statement) = prepare_cluster_load_stats(sql) else {
+            return Ok(None);
+        };
+        if statement.path.is_empty() {
+            return Err(SqlQueryError::unknown("Load Stats: file path is empty"));
+        }
+        Ok(Some(statement.path))
+    }
+
+    fn execute_local_infile(
+        &mut self,
+        sql: &str,
+        data: &[u8],
+    ) -> Result<WriteOutcome, SqlQueryError> {
+        if prepare_cluster_load_stats(sql).is_none() {
+            return Err(SqlQueryError::unknown(
+                "statement did not request a client-local file",
+            ));
+        }
+        self.run_load_stats(data)
+    }
+
     fn finish_execute_stmt(&mut self, cost: std::time::Duration) {
         self.session.finish_txn_write_throughput(cost);
     }
@@ -2398,6 +2427,11 @@ impl QuerySession for ClusterServerSession {
             StatementRoute::Accounts => return self.run_account_statement(sql).map(Some),
             StatementRoute::GlobalVars => return self.run_global_var_statement(sql).map(Some),
             StatementRoute::Analyze(tables) => return self.run_analyze(&tables).map(Some),
+            StatementRoute::LoadStats => {
+                return Err(SqlQueryError::unknown(
+                    "LOAD STATS requires client-local file transfer",
+                ))
+            }
             StatementRoute::StatsLock(statement) => {
                 return self.run_stats_lock(&statement).map(Some)
             }
@@ -2612,6 +2646,11 @@ impl QuerySession for ClusterServerSession {
             }
             StatementRoute::Analyze(tables) => {
                 return self.run_analyze(&tables).map(GeneralExecuteOutcome::Write)
+            }
+            StatementRoute::LoadStats => {
+                return Err(SqlQueryError::unknown(
+                    "LOAD STATS requires client-local file transfer",
+                ))
             }
             StatementRoute::StatsLock(statement) => {
                 return self
@@ -2889,6 +2928,11 @@ impl QuerySession for ClusterServerSession {
                 return Ok(QueryResult::new(Box::new(
                     crate::pipeline_session::affected_rows_source(0),
                 )));
+            }
+            StatementRoute::LoadStats => {
+                return Err(SqlQueryError::unknown(
+                    "LOAD STATS requires client-local file transfer",
+                ))
             }
             StatementRoute::StatsLock(statement) => {
                 self.run_stats_lock(&statement)?;

@@ -189,6 +189,8 @@ const CLIENT_MULTI_STATEMENTS: u32 = 1 << 16;
 /// `SERVER_MORE_RESULTS_EXISTS` chains. Advertised alongside
 /// `CLIENT_MULTI_STATEMENTS`, as Go does.
 const CLIENT_MULTI_RESULTS: u32 = 1 << 17;
+/// `CLIENT_LOCAL_FILES`: client-local transfer used by LOAD STATS.
+const CLIENT_LOCAL_FILES: u32 = 1 << 7;
 /// Go's `defaultCapability` (`pkg/server/server.go`) restricted to what this
 /// node actually serves.
 ///
@@ -207,7 +209,8 @@ const SERVER_CAPABILITIES: u32 = CLIENT_PROTOCOL_41
     | CLIENT_DEPRECATE_EOF
     | CLIENT_ZSTD_COMPRESSION_ALGORITHM
     | CLIENT_MULTI_STATEMENTS
-    | CLIENT_MULTI_RESULTS;
+    | CLIENT_MULTI_RESULTS
+    | CLIENT_LOCAL_FILES;
 const ER_ACCESS_DENIED_ERROR: u16 = 1045;
 const ER_UNKNOWN_COM_ERROR: u16 = 1047;
 /// SQLSTATE `08S01` for [`ER_UNKNOWN_COM_ERROR`]. Go resolves every ERR
@@ -1379,6 +1382,73 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                             status
                         }
                     };
+                    // Go executes LOAD STATS far enough to park its file
+                    // request, then the connection asks the CLIENT for that
+                    // path with a 0xfb local-infile packet and feeds the
+                    // returned packet stream back into the same statement.
+                    let local_infile_path = match engine.local_infile_path(sql) {
+                        Ok(path) => path,
+                        Err(error) => {
+                            write_query_error_at(&mut output, sequence, &error, protocol_41)?;
+                            aborted = true;
+                            break;
+                        }
+                    };
+                    if let Some(path) = local_infile_path {
+                        if capabilities & CLIENT_LOCAL_FILES == 0 {
+                            let error = SqlQueryError::new(
+                                1148,
+                                *b"42000",
+                                "The used command is not allowed with this MySQL version",
+                            );
+                            write_query_error_at(&mut output, sequence, &error, protocol_41)?;
+                            aborted = true;
+                            break;
+                        }
+                        let mut request = Vec::with_capacity(path.len() + 1);
+                        request.push(0xfb);
+                        request.extend_from_slice(path.as_bytes());
+                        write_payload(&mut output, sequence, &request)?;
+                        if let Some(compressed_sequence) = output.compressed_sequence() {
+                            reader.set_compressed_sequence(compressed_sequence);
+                        }
+                        reader.set_sequence(sequence.wrapping_add(1));
+                        let mut data = Vec::new();
+                        loop {
+                            let packet = reader.read_packet()?;
+                            if packet.is_empty() {
+                                break;
+                            }
+                            data.extend_from_slice(&packet);
+                        }
+                        if let Some(compressed_sequence) = reader.compressed_sequence() {
+                            output.set_compressed_sequence(compressed_sequence);
+                        }
+                        sequence = reader.sequence();
+                        match engine.execute_local_infile(sql, &data) {
+                            Ok(outcome) => {
+                                write_affected_rows_ok(
+                                    &mut output,
+                                    sequence,
+                                    outcome.affected_rows,
+                                    outcome.last_insert_id,
+                                    stamp(engine.wire_status()),
+                                    engine.warning_count(),
+                                    protocol_41,
+                                )?;
+                                record_client_warnings(&output, &engine);
+                                sequence = sequence.wrapping_add(1);
+                                queries += 1;
+                                continue;
+                            }
+                            Err(error) => {
+                                write_query_error_at(&mut output, sequence, &error, protocol_41)?;
+                                record_client_warnings(&output, &engine);
+                                aborted = true;
+                                break;
+                            }
+                        }
+                    }
                     // BEGIN/COMMIT/ROLLBACK update the session's transaction state and
                     // answer with an OK packet carrying the transaction status, not a
                     // result set; every other statement runs as an ordinary query.

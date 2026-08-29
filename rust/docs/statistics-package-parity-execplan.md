@@ -39,6 +39,7 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - [x] (2026-08-29) Ported `StatsTableRowCache`: atomic two-query map updates, negative column-size clamping, fixed/variable column accounting, local/global partition-index rules, sequence row-count policy, and exact ID predicate construction.
 - [x] (2026-08-29) Wired the row cache to the cluster statistics snapshot and removed the hard-coded-zero `information_schema.tables` divergence for analyzed tables.
 - [x] (2026-08-29) Removed the live cache's reduced `ClusterTableStats` authority: bootstrap, refresh, sync load, planner derivation, and row-cache reads now share canonical full `statistics.Table` objects like Go.
+- [x] (2026-08-29) Wired cluster `LOAD STATS` through Go's text-protocol client-local-file transfer, independent restricted TiKV transactions, optional history writes, final metadata publication, and the common shared-cache refresh path.
 - [ ] Wire all pinned Go `SHOW STATS_*` surfaces to the shared cache and storage semantics.
 - [ ] Inventory every production file, platform/generated variant, original test/support artifact, fixture, and validation gate in pinned `pkg/statistics`; close or explicitly retain seed-only gaps until the whole package is complete.
 - [ ] Run the Ready validation profile, including `make lint`, only after the complete package inventory is closed.
@@ -141,6 +142,9 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - Observation: pinned LOAD STATS does not use the ANALYZE replacement policy. It commits each named column/index independently, leaves unmentioned histograms intact, clears only that item's prior TopN/buckets/FM rows, persists v1 CMSketch bytes, then performs a final meta upsert that preserves columns it does not name.
   Evidence: `loadStatsFromJSON` calls the restricted-session `SaveColOrIdxStatsToStorage` wrapper once per object and `SaveMetaToStorage` last; the Rust cluster writer now has separate item and final-meta plans, with regressions proving unrelated payload retention, stale-tail removal, CMS round-trip, per-item snapshot reset, and final-meta snapshot preservation.
 
+- Observation: LOAD STATS data belongs to the MySQL connection, not the server filesystem or a cache-only executor. Go's text `handleStmt` parks a request, sends `0xfb + path`, concatenates client packets through the empty terminator, and resumes the same statement. The pinned prepared path does not call `handleFileTransInConn`, so adding a prepared-only transfer would exceed Go behavior.
+  Evidence: pinned `clientConn.getDataFromPath`, `handleStmt`, and `handleStmtExecute`; the Rust wire regression proves the text request/data/terminator/OK sequence.
+
 ## Decision Log
 
 - Decision: reconstruct and test each pinned Go branch before editing Rust; do not preserve Rust-only fallback paths.
@@ -167,9 +171,13 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
   Rationale: pinned Go caches `statistics.Table`; wrapping the executor's reduced planner view would lose eviction payload, existence-map, histogram-version, and refresh semantics and create a second source of truth.
   Date/Author: 2026-08-29 / Codex
 
+- Decision: keep LOAD STATS on the ordinary text/prepared connection path and use a dedicated restricted statistics writer underneath it.
+  Rationale: reading the path with `std::fs` would replace Go's client-local-file behavior, while reusing ANALYZE's whole-table transaction would change item independence, history, and preservation of unmentioned histograms.
+  Date/Author: 2026-08-29 / Codex
+
 ## Outcomes & Retrospective
 
-The exact storage item reader, lite bootstrap/refresh lifecycle, logical demand collector, split request/wait rule positions, partition expansion, newborn access-path pruning, and synchronous worker concurrency/retry behavior are integrated. The current milestone is not complete: remaining `SHOW STATS_*` surfaces and the whole-package inventory remain.
+The exact storage item reader, lite bootstrap/refresh lifecycle, logical demand collector, split request/wait rule positions, partition expansion, newborn access-path pruning, synchronous worker concurrency/retry behavior, several SHOW surfaces, and cluster LOAD STATS path are integrated. The current milestone is not complete: remaining SHOW and whole-package inventory work stays open.
 
 ## Context and Orientation
 
@@ -257,6 +265,8 @@ Revision note (2026-08-29): removed the ignored empty `rule_collect_column_stats
 Revision note (2026-08-29): completed the atomic inventory for pinned `pkg/statistics/handle/cache/metrics` (`metrics.go`, `BUILD.bazel`; no package-local Go tests or fixtures). New crate `tidb-stats-handle-cache-metrics` binds `miss`, `hit`, `update`, `del`, `evict`, and `reject` counter children plus the `track` and `capacity` gauges to the exact `tidb_statistics_stats_cache_op` and `tidb_statistics_stats_cache_val` families. Focused tests cover independent children, gauge identity, and `InitMetricsVars` rebinding.
 
 Revision note (2026-08-29): completed the atomic inventory for pinned `pkg/statistics/handle/cache/internal/lfu` (`key_set.go`, `key_set_shard.go`, `lfu_cache.go`, `lfu_cache_test.go`, `BUILD.bazel`). New crate `tidb-stats-handle-cache-internal-lfu` uses the Ristretto-compatible Stretto TinyLFU implementation with transparent integer keys, Go's counter/capacity/buffer settings, production internal-cost accounting, all three callback routes, 256 secondary shards, full-to-metadata eviction copies, cost tracking, dynamic capacity, close-once semantics, shared `Copy`, and buffered-write barriers. Focused tests consolidate all ten original Go cases across put/get/delete, replacement accounting, oversized rejection, length/value retention, concurrent access, metadata eviction, capacity reduction, and shared-copy behavior. Live selection remains assigned to the parent cache package and is the next integration slice.
+
+Revision note (2026-08-29): wired cluster LOAD STATS end to end. The connection now advertises and enforces `CLIENT_LOCAL_FILES`, transfers text-protocol payloads with Go's packet sequencing, parses empty/null inputs as no-ops, executes one restricted TiKV transaction per named item plus usage and final metadata transactions, emits best-effort history under the pinned gates, and refreshes the same process-wide full-table cache used by ANALYZE while propagating LOAD STATS refresh failures. A first prepared-transfer draft was removed after direct inspection showed that pinned `handleStmtExecute` does not enter `handleFileTransInConn`.
 
 Revision note (2026-08-29): corrected the common `cache/internal` ownership boundary before parent-cache integration. `StatsCacheInner` is now `Send + Sync`, and `mapcache` uses a poisoned-lock-tolerant `RwLock` instead of `RefCell`, preserving Go's shared-read behavior and COW copy independence. Focused tests cover cost replacement, deletion, copy isolation, and concurrent reads; the LFU suite proves the stronger trait does not change its behavior.
 

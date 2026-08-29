@@ -40,6 +40,7 @@ const CLIENT_SECURE_CONNECTION: u32 = 1 << 15;
 const CLIENT_PLUGIN_AUTH: u32 = 1 << 19;
 const CLIENT_CONNECT_ATTRS: u32 = 1 << 20;
 const CLIENT_DEPRECATE_EOF: u32 = 1 << 24;
+const CLIENT_LOCAL_FILES: u32 = 1 << 7;
 
 #[derive(Default)]
 struct Lifecycle {
@@ -195,6 +196,17 @@ fn authenticate_with_eof_mode(
     password: &[u8],
     deprecate_eof: bool,
 ) {
+    authenticate_with_options(client, reader, user, password, deprecate_eof, false);
+}
+
+fn authenticate_with_options(
+    client: &mut TcpStream,
+    reader: &mut PacketReader<TcpStream>,
+    user: &str,
+    password: &[u8],
+    deprecate_eof: bool,
+    local_files: bool,
+) {
     reader.set_sequence(0);
     let initial = reader.read_packet().unwrap();
     let salt = handshake_salt(&initial);
@@ -211,6 +223,9 @@ fn authenticate_with_eof_mode(
         | CLIENT_CONNECT_ATTRS;
     if deprecate_eof {
         capabilities |= CLIENT_DEPRECATE_EOF;
+    }
+    if local_files {
+        capabilities |= CLIENT_LOCAL_FILES;
     }
     let mut response = Vec::new();
     response.extend_from_slice(&capabilities.to_le_bytes());
@@ -255,6 +270,149 @@ fn assert_mysql_error(packet: &[u8], code: u16, state: &[u8; 5]) {
     assert_eq!(u16::from_le_bytes([packet[1], packet[2]]), code);
     assert_eq!(&packet[3..4], b"#");
     assert_eq!(&packet[4..9], state);
+}
+
+struct LocalInfileSession {
+    received: Arc<Mutex<Vec<u8>>>,
+}
+
+impl QuerySession for LocalInfileSession {
+    fn execute<'a>(&'a mut self, _sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+        Err(SqlQueryError::unknown("LOAD STATS must not use the query path"))
+    }
+
+    fn local_infile_path(&mut self, sql: &str) -> Result<Option<String>, SqlQueryError> {
+        Ok((sql == "LOAD STATS 'client/stats.json'")
+            .then(|| "client/stats.json".to_owned()))
+    }
+
+    fn execute_local_infile(
+        &mut self,
+        sql: &str,
+        data: &[u8],
+    ) -> Result<WriteOutcome, SqlQueryError> {
+        assert_eq!(sql, "LOAD STATS 'client/stats.json'");
+        *self.received.lock().unwrap() = data.to_vec();
+        Ok(WriteOutcome {
+            affected_rows: 0,
+            last_insert_id: 0,
+        })
+    }
+
+}
+
+struct LocalInfileFactory {
+    received: Arc<Mutex<Vec<u8>>>,
+}
+
+impl QuerySessionFactory for LocalInfileFactory {
+    type Session = LocalInfileSession;
+
+    fn open_session(&self, _context: SessionContext) -> Result<Self::Session, SqlQueryError> {
+        Ok(LocalInfileSession {
+            received: Arc::clone(&self.received),
+        })
+    }
+}
+
+#[test]
+fn load_stats_uses_client_local_infile_packets() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let received = Arc::new(Mutex::new(Vec::new()));
+    let worker_received = Arc::clone(&received);
+    let tracker = Arc::new(ConnectionTracker::default());
+    let worker_tracker = Arc::clone(&tracker);
+    let worker = std::thread::spawn(move || {
+        let (stream, peer_addr) = listener.accept().unwrap();
+        serve_mysql_connection(
+            stream,
+            peer_addr,
+            ConnectionCancellation::default(),
+            &LocalInfileFactory {
+                received: worker_received,
+            },
+            &users(),
+            &worker_tracker,
+            DEFAULT_MAX_ALLOWED_PACKET,
+        )
+        .unwrap()
+    });
+
+    let mut client = TcpStream::connect(address).unwrap();
+    let read_side = client.try_clone().unwrap();
+    let mut reader = PacketReader::new(read_side);
+    authenticate_with_options(&mut client, &mut reader, "alice", b"secret", true, true);
+    reader.set_sequence(2);
+    assert_eq!(reader.read_packet().unwrap()[0], 0);
+
+    let mut query = vec![COM_QUERY];
+    query.extend_from_slice(b"LOAD STATS 'client/stats.json'");
+    write_packet(&mut client, 0, &query);
+    reader.set_sequence(1);
+    let request = reader.read_packet().unwrap();
+    assert_eq!(request[0], 0xfb);
+    assert_eq!(&request[1..], b"client/stats.json");
+    write_packet(&mut client, 2, br#"{"database_name":"test"}"#);
+    write_packet(&mut client, 3, &[]);
+    reader.set_sequence(4);
+    assert_eq!(reader.read_packet().unwrap()[0], 0);
+    assert_eq!(
+        received.lock().unwrap().as_slice(),
+        br#"{"database_name":"test"}"#
+    );
+
+    write_packet(&mut client, 0, &[COM_QUIT]);
+    drop(client);
+    assert_eq!(worker.join().unwrap().exit, ConnectionExit::Quit);
+}
+
+#[test]
+fn load_stats_requires_client_local_files() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let received = Arc::new(Mutex::new(Vec::new()));
+    let worker_received = Arc::clone(&received);
+    let tracker = Arc::new(ConnectionTracker::default());
+    let worker_tracker = Arc::clone(&tracker);
+    let worker = std::thread::spawn(move || {
+        let (stream, peer_addr) = listener.accept().unwrap();
+        serve_mysql_connection(
+            stream,
+            peer_addr,
+            ConnectionCancellation::default(),
+            &LocalInfileFactory {
+                received: worker_received,
+            },
+            &users(),
+            &worker_tracker,
+            DEFAULT_MAX_ALLOWED_PACKET,
+        )
+        .unwrap()
+    });
+
+    let mut client = TcpStream::connect(address).unwrap();
+    let read_side = client.try_clone().unwrap();
+    let mut reader = PacketReader::new(read_side);
+    authenticate(&mut client, &mut reader, "alice", b"secret");
+    reader.set_sequence(2);
+    assert_eq!(reader.read_packet().unwrap()[0], 0);
+
+    let mut query = vec![COM_QUERY];
+    query.extend_from_slice(b"LOAD STATS 'client/stats.json'");
+    write_packet(&mut client, 0, &query);
+    reader.set_sequence(1);
+    let error = reader.read_packet().unwrap();
+    assert_mysql_error(&error, 1148, b"42000");
+    assert_eq!(
+        &error[9..],
+        b"The used command is not allowed with this MySQL version"
+    );
+    assert!(received.lock().unwrap().is_empty());
+
+    write_packet(&mut client, 0, &[COM_QUIT]);
+    drop(client);
+    assert_eq!(worker.join().unwrap().exit, ConnectionExit::Quit);
 }
 
 fn prepared_catalog() -> ConfiguredCatalog {

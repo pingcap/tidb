@@ -20,6 +20,41 @@ use crate::sql_node::{QuerySession, SqlQueryError, WriteOutcome};
 use super::{ClusterServerSession, ER_TABLEACCESS_DENIED_ERROR};
 
 impl ClusterServerSession {
+    /// Applies client-transferred LOAD STATS bytes through the cluster handle.
+    pub(super) fn run_load_stats(&mut self, data: &[u8]) -> Result<WriteOutcome, SqlQueryError> {
+        if data.is_empty() {
+            return Ok(WriteOutcome {
+                affected_rows: 0,
+                last_insert_id: 0,
+            });
+        }
+        let json = tidb_executor::load_stats::parse_stats_json(
+            std::str::from_utf8(data).map_err(|error| SqlQueryError::unknown(error.to_string()))?,
+        )
+        .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+        // Go `LoadStatsInfo.Update`: JSON `null` is a successful no-op.
+        if json.table_name.is_empty() && json.version == 0 {
+            return Ok(WriteOutcome {
+                affected_rows: 0,
+                last_insert_id: 0,
+            });
+        }
+        let historical_stats_enabled = self
+            .session
+            .vars()
+            .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS)
+            .is_ok_and(|value| tidb_exec::option_values::tidb_opt_on(&value));
+        let report = self.analyze.load_stats(&json, historical_stats_enabled)?;
+        eprintln!(
+            "{{\"event\":\"cluster_stats_loaded\",\"tables\":{},\"items\":{}}}",
+            report.table_count, report.item_count
+        );
+        Ok(WriteOutcome {
+            affected_rows: 0,
+            last_insert_id: 0,
+        })
+    }
+
     /// Runs one persisted statistics-lock operation in the internal
     /// transaction owned by the statistics handle.
     pub(super) fn run_stats_lock(

@@ -1007,6 +1007,22 @@ pub trait QuerySession {
     /// Starts one sequential query and returns its lazy result owner.
     fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError>;
 
+    /// Returns the client-local path a statement asks the connection to read.
+    fn local_infile_path(&mut self, _sql: &str) -> Result<Option<String>, SqlQueryError> {
+        Ok(None)
+    }
+
+    /// Finishes a statement after the connection transferred its local file.
+    fn execute_local_infile(
+        &mut self,
+        _sql: &str,
+        _data: &[u8],
+    ) -> Result<WriteOutcome, SqlQueryError> {
+        Err(SqlQueryError::unknown(
+            "this session does not accept client-local files",
+        ))
+    }
+
     /// Go `clientConn.addQueryMetrics`' transaction-write SLI finalizer,
     /// called after the SQL command has written its response.
     fn finish_execute_stmt(&mut self, _cost: Duration) {}
