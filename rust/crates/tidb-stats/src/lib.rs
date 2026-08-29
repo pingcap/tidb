@@ -39,7 +39,6 @@ pub mod auto_analyze_ratio;
 pub mod auto_analyze_runtime;
 pub mod auto_analyze_window;
 pub mod average_count;
-pub mod bootstrap_sql;
 pub mod builder;
 pub mod cmsketch;
 pub mod column;
@@ -65,7 +64,6 @@ pub mod non_partitioned_analysis;
 pub mod overlap_geometry;
 pub mod priority_calculator;
 pub mod priority_heap;
-pub mod pseudo_cache_policy;
 pub mod queue_gate;
 pub mod refresher_state;
 pub mod row_estimate;
@@ -120,7 +118,6 @@ pub use auto_analyze_runtime::{
 };
 pub use auto_analyze_window::{AutoAnalysisTimeWindow, UtcDayMinute};
 pub use average_count::avg_count_per_not_null_value;
-pub use bootstrap_sql::{gen_init_stats_histograms_sql, gen_init_stats_meta_sql, HistSqlOptions};
 pub use builder::{
     build_column, build_column_histogram, build_hist_and_topn, try_build_column_histogram,
     try_build_column_histogram_in_place, try_build_hist_and_topn, try_build_hist_and_topn_in_place,
@@ -178,7 +175,6 @@ pub use priority_calculator::{
     calculate_priority_weight, special_event_weight, EVENT_NEW_INDEX, EVENT_NONE,
 };
 pub use priority_heap::{PriorityHeap, PriorityHeapError, PriorityHeapItem};
-pub use pseudo_cache_policy::{should_cache_pseudo_stats, PSEUDO_CACHE_PARTITION_LIMIT};
 pub use queue_gate::{
     is_empty_for_test, queue_len, require_initialized, running_jobs, QueueNotInitialized,
     NOT_INITIALIZED_ERROR_MSG,

@@ -862,6 +862,12 @@ For each bounded behavior cluster:
       async handle/storage/session merge pipeline with 28 tests and two
       benchmarks. Inventory is in
       `receipts/statistics_handle_globalstats_audit.md`.
+- [x] Audit the complete pinned root `pkg/statistics/handle` package. Remove
+      the SQL-builder and pseudo-cache scalar leaves plus their eight tests.
+      Go owns the composed ordinary handle and transactional, storage-backed,
+      memory-aware bootstrap lifecycle; its dependency graph remains
+      incomplete. Inventory is in
+      `receipts/statistics_handle_root_audit.md`.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope
@@ -1026,6 +1032,12 @@ For each bounded behavior cluster:
   worker cancellation and panic coordination, storage publication, and
   planner-visible results. The unconsumed helper island is removed until the
   entire dependency-closed package can land. Date/Author: 2026-08-29, Codex.
+- Decision: root `pkg/statistics/handle` is the composition root, not its SQL
+  string builders or pseudo-cache threshold. Its behavior is construction,
+  notifier registration, pooled-session/cache subsystem lifecycle, and full
+  transactional bootstrap. The extracted public leaves are removed until the
+  complete ordinary handle and child packages can land together.
+  Date/Author: 2026-08-29, Codex.
 
 ## Surprises & Discoveries
 
