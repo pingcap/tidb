@@ -300,6 +300,14 @@ impl QuerySession for PipelineServerSession {
         self.session.wire_warning_count()
     }
 
+    fn warning_codes(&self) -> Vec<u16> {
+        self.session
+            .warnings()
+            .iter()
+            .map(|warning| warning.code)
+            .collect()
+    }
+
     /// Go `clientConn.initResultEncoder`'s read: this session's
     /// `@@character_set_results`.
     fn result_charset(&self) -> Cow<'_, str> {

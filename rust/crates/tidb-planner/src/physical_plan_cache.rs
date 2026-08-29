@@ -111,6 +111,9 @@ fn physical_plan_cacheable(
         PhysicalPlan::TableDual(_) if context.parameter_count > 0 => {
             return Err("get a TableDual plan".to_owned());
         }
+        PhysicalPlan::MemTable(_) => {
+            return Err("PhysicalMemTable plan is un-cacheable".to_owned());
+        }
         PhysicalPlan::TableReader(reader)
             if reader.store_type == crate::physical_table_reader::StoreType::TiFlash =>
         {
@@ -152,8 +155,8 @@ fn physical_plan_cacheable(
 }
 
 /// Go `isPlanCacheable` over the physical operators represented by this
-/// planner. Operators that do not exist in [`PhysicalPlan`] (Shuffle and
-/// MemTable) cannot enter this tree; every represented refusal is checked
+/// planner. Operators that do not exist in [`PhysicalPlan`] (such as
+/// Shuffle) cannot enter this tree; every represented refusal is checked
 /// recursively, including reader-owned subplans.
 pub fn plan_cacheable(plan: &PhysicalPlan, context: PlanCacheabilityContext) -> Result<(), String> {
     let physical = match plan {
@@ -489,6 +492,7 @@ fn bind_plan_expressions(
         }
         PhysicalPlan::Limit(_)
         | PhysicalPlan::TableScan(_)
+        | PhysicalPlan::MemTable(_)
         | PhysicalPlan::TableDual(_)
         | PhysicalPlan::MaxOneRow(_)
         | PhysicalPlan::NominalSort(_)

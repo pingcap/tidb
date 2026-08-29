@@ -237,6 +237,25 @@ pub enum StmtOutput {
     Done(bool),
 }
 
+/// One pessimistic wait-for edge returned by the active storage backend.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct DataLockWait {
+    /// Transaction waiting for the lock.
+    pub txn: u64,
+    /// Transaction currently holding the lock.
+    pub wait_for_txn: u64,
+    /// Encoded locked key.
+    pub key: Vec<u8>,
+    /// Encoded TopSQL resource-group tag.
+    pub resource_group_tag: Vec<u8>,
+}
+
+/// Storage boundary for `information_schema.DATA_LOCK_WAITS`.
+pub trait DataLockWaitsProvider: Send + Sync {
+    /// Reads the current wait-for edges from the backend.
+    fn lock_waits(&self) -> Result<Vec<DataLockWait>, String>;
+}
+
 /// The statement-owned policy a server needs to retain an eager result set.
 ///
 /// It is captured before `SET_VAR` overlays are restored, so a prepared
@@ -505,6 +524,13 @@ pub struct Session {
     /// reports. Absent on the in-process tier, whose catalog is not a
     /// cluster's.
     cluster_schema_version: Option<std::sync::Arc<dyn Fn() -> i64 + Send + Sync>>,
+    /// Go's process-global `workloadrepo.workerCtx`, installed by Domain.
+    workload_repository: Option<std::sync::Arc<tidb_workloadrepo::Worker>>,
+    /// Go Domain's node-global index-usage collector, read by
+    /// `information_schema.TIDB_INDEX_USAGE`.
+    index_usage_collector: Arc<tidb_stats::index_usage::IndexUsageCollector>,
+    /// The node's storage-backed current lock-wait reader.
+    data_lock_waits: Option<std::sync::Arc<dyn DataLockWaitsProvider>>,
     /// Parsed-products cache over the raw system-variable text, keyed by
     /// [`vars::SessionVars::generation`]. Go holds these as typed fields on
     /// `SessionVars`, updated by each variable's `SetSession` hook, so a
@@ -688,6 +714,9 @@ impl Default for Session {
             current_tso: tidb_executor::CurrentTso::default(),
             server_info_syncer: None,
             cluster_schema_version: None,
+            workload_repository: None,
+            index_usage_collector: Arc::new(tidb_stats::index_usage::IndexUsageCollector::new()),
+            data_lock_waits: None,
             mdl_related_tables: None,
             statement_var_cache: std::cell::RefCell::new(None),
             cost_env_cache: std::cell::RefCell::new(None),
@@ -804,6 +833,31 @@ impl Session {
         self.current_tso.clone()
     }
 
+    /// Updates the live `TIDB_TRX` row from the cluster transaction's native
+    /// MemBuffer authority.
+    pub fn publish_transaction_buffer_metrics(&self, keys: usize, bytes: u64) {
+        let Some(process) = self.process.as_ref() else {
+            return;
+        };
+        process.registry().transaction_buffer_metrics(
+            process.id(),
+            u64::try_from(keys).unwrap_or(u64::MAX),
+            i64::try_from(bytes).unwrap_or(i64::MAX),
+        );
+    }
+
+    /// Enters or leaves Go's `TxnLockAcquiring` state around one synchronous
+    /// pessimistic `LockKeys` call.
+    pub fn publish_transaction_lock_waiting(&self, waiting: bool) {
+        let Some(process) = self.process.as_ref() else {
+            return;
+        };
+        process.registry().transaction_state(
+            process.id(),
+            if waiting { "LockWaiting" } else { "Running" },
+        );
+    }
+
     /// Binds the node's server-info syncer, which is what
     /// `information_schema.TIDB_SERVERS_INFO` reads.
     pub fn set_server_info_syncer(
@@ -867,6 +921,30 @@ impl Session {
         source: std::sync::Arc<dyn Fn() -> i64 + Send + Sync>,
     ) {
         self.cluster_schema_version = Some(source);
+    }
+
+    /// Binds the process workload-repository worker used by its sysvars and
+    /// `ADMIN CREATE WORKLOAD SNAPSHOT`.
+    pub fn set_workload_repository(&mut self, worker: std::sync::Arc<tidb_workloadrepo::Worker>) {
+        self.workload_repository = Some(worker);
+    }
+
+    /// Installs the Domain-owned index-usage collector shared by every
+    /// session on the node.
+    pub fn set_index_usage_collector(
+        &mut self,
+        collector: Arc<tidb_stats::index_usage::IndexUsageCollector>,
+    ) {
+        self.index_usage_collector = collector;
+    }
+
+    /// Installs the same storage authority `kv.Storage.GetLockWaits` reads in
+    /// Go for `information_schema.DATA_LOCK_WAITS`.
+    pub fn set_data_lock_waits_provider(
+        &mut self,
+        provider: std::sync::Arc<dyn DataLockWaitsProvider>,
+    ) {
+        self.data_lock_waits = Some(provider);
     }
 
     /// Go `ShowDDLExec.Next` (`executor/show_ddl.go`): one row describing the

@@ -162,6 +162,16 @@ impl DirectUnaryClient for InProcessClient {
     }
 }
 
+impl tidb_txnkv::LockWaitInfoClient for InProcessClient {
+    fn get_lock_wait_info(
+        &mut self,
+        _address: &str,
+        _timeout: Duration,
+    ) -> Result<Vec<tidb_proto::KvrpcWaitForEntry>, DirectUnaryClientError> {
+        Ok(Vec::new())
+    }
+}
+
 /// Go `rpc.go`'s typed lock-recovery arms, over the same handler: the four
 /// calls the read path's lock resolver makes, each an in-process dispatch.
 impl tidb_txnkv::lock::LockRecoveryClient for InProcessClient {

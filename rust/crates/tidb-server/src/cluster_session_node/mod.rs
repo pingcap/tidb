@@ -171,6 +171,7 @@ use std::cell::Cell;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use crate::resultset_source::ResultSetSource;
 use tidb_exec::catalog_watch::SharedCatalog as SharedClusterCatalog;
 use tidb_exec::cluster_analyze::AnalyzeStatement;
 use tidb_exec::cluster_ddl::DdlStatement;
@@ -333,11 +334,33 @@ enum StatementRoute {
     Analyze(Vec<AnalyzeStatement>),
 }
 
+struct ClusterDataLockWaits {
+    transactions: Arc<dyn ClusterTransactions>,
+}
+
+impl tidb_session::DataLockWaitsProvider for ClusterDataLockWaits {
+    fn lock_waits(&self) -> Result<Vec<tidb_session::DataLockWait>, String> {
+        self.transactions.lock_waits().map(|entries| {
+            entries
+                .into_iter()
+                .map(|entry| tidb_session::DataLockWait {
+                    txn: entry.txn,
+                    wait_for_txn: entry.wait_for_txn,
+                    key: entry.key,
+                    resource_group_tag: entry.resource_group_tag,
+                })
+                .collect()
+        })
+    }
+}
+
 /// Opens one cluster-backed wide-SQL [`Session`] per authenticated connection.
 pub struct ClusterSessionFactory {
     /// The write/read capability every connection's statements open their
     /// snapshots and publish their commits through.
     transactions: Arc<dyn ClusterTransactions>,
+    /// Storage-backed wait-for graph exposed by `DATA_LOCK_WAITS`.
+    data_lock_waits: Arc<ClusterDataLockWaits>,
     /// The route a stored-schema change this node can express takes.
     ddl: Arc<dyn ClusterDdl>,
     /// The route a stored-account change takes; see
@@ -399,6 +422,10 @@ pub struct ClusterSessionFactory {
     /// storage seam, so building ~700 restored tables happens once per DDL
     /// instead of once per CONNECTION (~30MB retained each before this).
     session_kv_cache: Arc<Mutex<KvTableTemplates>>,
+    /// Go Domain's single workload-repository worker.
+    workload_repository: std::sync::OnceLock<Arc<tidb_workloadrepo::Worker>>,
+    /// Go Domain/StatsHandle's one node-global index-usage collector.
+    index_usage_collector: Arc<tidb_stats::index_usage::IndexUsageCollector>,
 }
 
 impl ClusterSessionFactory {
@@ -425,8 +452,14 @@ impl ClusterSessionFactory {
             auto_ids.as_ref(),
         )
         .skipped;
+        let index_usage_collector = Arc::new(tidb_stats::index_usage::IndexUsageCollector::new());
+        index_usage_collector.start_worker();
+        let data_lock_waits = Arc::new(ClusterDataLockWaits {
+            transactions: Arc::clone(&transactions),
+        });
         Self {
             transactions,
+            data_lock_waits,
             ddl,
             accounts,
             sysvars,
@@ -445,7 +478,19 @@ impl ClusterSessionFactory {
             schema_pins: Arc::new(schema_sync::SchemaPinRegistry::default()),
             session_stats_cache: Arc::new(Mutex::new(StatsTemplates::default())),
             session_kv_cache: Arc::new(Mutex::new(KvTableTemplates::default())),
+            workload_repository: std::sync::OnceLock::new(),
+            index_usage_collector,
         }
+    }
+
+    /// Installs Go Domain's single workload-repository worker after the
+    /// factory is placed in an `Arc` (the worker's internal-session pool keeps
+    /// only a weak reference back to it).
+    pub(crate) fn set_workload_repository(
+        &self,
+        worker: Arc<tidb_workloadrepo::Worker>,
+    ) -> Result<(), Arc<tidb_workloadrepo::Worker>> {
+        self.workload_repository.set(worker)
     }
 
     /// Replaces the factory's pin registry with the node-owned one the
@@ -567,6 +612,8 @@ impl QuerySessionFactory for ClusterSessionFactory {
             Some(&mut kv_templates),
         );
         let mut session = Session::with_catalog(Arc::new(Mutex::new(built.catalog)));
+        session.set_index_usage_collector(Arc::clone(&self.index_usage_collector));
+        session.set_data_lock_waits_provider(self.data_lock_waits.clone());
         session.set_advisory_lock_service(Arc::new(transactions::ClusterAdvisoryLockService::new(
             Arc::clone(&self.transactions),
         )));
@@ -590,6 +637,9 @@ impl QuerySessionFactory for ClusterSessionFactory {
             context.connection_id,
         )));
         session.set_server_start_timestamp(crate::real_tikv_node::server_start_unix_timestamp());
+        if let Some(worker) = self.workload_repository.get() {
+            session.set_workload_repository(Arc::clone(worker));
+        }
         if let Some(spill_storage) = self.spill_storage.as_ref() {
             session.set_spill_storage(Arc::clone(spill_storage));
         }
@@ -653,6 +703,193 @@ impl QuerySessionFactory for ClusterSessionFactory {
 
     fn session_manager(&self) -> Option<Arc<dyn tidb_util::memoryusagealarm::SessionManager>> {
         Some(Arc::new(self.processes.clone()))
+    }
+}
+
+struct WorkloadRepositorySessionPool {
+    factory: std::sync::Weak<ClusterSessionFactory>,
+    next_connection_id: std::sync::atomic::AtomicU64,
+}
+
+impl WorkloadRepositorySessionPool {
+    fn new(factory: &Arc<ClusterSessionFactory>) -> Self {
+        Self {
+            factory: Arc::downgrade(factory),
+            next_connection_id: std::sync::atomic::AtomicU64::new(1_u64 << 62),
+        }
+    }
+}
+
+impl tidb_workloadrepo::SessionPool for WorkloadRepositorySessionPool {
+    fn get(&self) -> Result<Box<dyn tidb_workloadrepo::RepositorySession>, String> {
+        use std::sync::atomic::Ordering;
+
+        let factory = self
+            .factory
+            .upgrade()
+            .ok_or_else(|| "cluster session factory is stopped".to_owned())?;
+        let connection_id = self.next_connection_id.fetch_add(1, Ordering::Relaxed);
+        let session = factory
+            .open_session(SessionContext {
+                connection_id,
+                peer_addr: "127.0.0.1:0".parse().expect("loopback socket address"),
+                identity: crate::configured_user_store::AuthenticatedIdentity::internal(),
+                secure_transport: false,
+                tls_status: None,
+                cancellation: crate::sql_node::ConnectionCancellation::default(),
+                close: crate::sql_node::ConnectionClose::default(),
+            })
+            .map_err(|error| error.message)?;
+        Ok(Box::new(WorkloadRepositorySession { session }))
+    }
+}
+
+struct WorkloadRepositorySession {
+    session: ClusterServerSession,
+}
+
+fn workload_sql_literal(value: &tidb_workloadrepo::SqlArg) -> String {
+    match value {
+        tidb_workloadrepo::SqlArg::Null => "NULL".to_owned(),
+        tidb_workloadrepo::SqlArg::UInt(value) => value.to_string(),
+        tidb_workloadrepo::SqlArg::String(value) => {
+            format!("'{}'", value.replace('\\', "\\\\").replace('\'', "''"))
+        }
+    }
+}
+
+fn bind_workload_sql(sql: &str, args: &[tidb_workloadrepo::SqlArg]) -> Result<String, String> {
+    let mut rendered = sql.to_owned();
+    for argument in args {
+        let Some(index) = rendered.find("%?") else {
+            return Err("too many workload repository SQL arguments".to_owned());
+        };
+        rendered.replace_range(index..index + 2, &workload_sql_literal(argument));
+    }
+    if rendered.contains("%?") {
+        return Err("not enough workload repository SQL arguments".to_owned());
+    }
+    Ok(rendered)
+}
+
+fn workload_arg_from_datum(
+    value: tidb_datatype::Datum,
+) -> Result<tidb_workloadrepo::SqlArg, String> {
+    match value {
+        tidb_datatype::Datum::Null => Ok(tidb_workloadrepo::SqlArg::Null),
+        tidb_datatype::Datum::UInt(value) => Ok(tidb_workloadrepo::SqlArg::UInt(value)),
+        tidb_datatype::Datum::Int(value) => u64::try_from(value)
+            .map(tidb_workloadrepo::SqlArg::UInt)
+            .map_err(|_| "negative integer in workload repository metadata".to_owned()),
+        tidb_datatype::Datum::Bytes(value) | tidb_datatype::Datum::Raw(value) => {
+            String::from_utf8(value)
+                .map(tidb_workloadrepo::SqlArg::String)
+                .map_err(|error| error.to_string())
+        }
+        tidb_datatype::Datum::String(value) => value
+            .as_utf8()
+            .map(|value| tidb_workloadrepo::SqlArg::String(value.to_owned()))
+            .map_err(|error| error.to_string()),
+        other => Err(format!(
+            "unsupported workload repository result value {other:?}"
+        )),
+    }
+}
+
+impl tidb_workloadrepo::RepositorySession for WorkloadRepositorySession {
+    fn execute(
+        &mut self,
+        sql: &str,
+        args: &[tidb_workloadrepo::SqlArg],
+    ) -> Result<Vec<Vec<tidb_workloadrepo::SqlArg>>, String> {
+        let sql = bind_workload_sql(sql, args)?;
+        if self
+            .session
+            .execute_write(&sql)
+            .map_err(|error| error.message)?
+            .is_some()
+        {
+            return Ok(Vec::new());
+        }
+        let mut result = self.session.execute(&sql).map_err(|error| error.message)?;
+        let source = result.source();
+        let mut rows = Vec::new();
+        loop {
+            let batch = source.next_batch(256)?;
+            if batch.is_empty() {
+                break;
+            }
+            for row in batch {
+                rows.push(
+                    row.into_iter()
+                        .map(workload_arg_from_datum)
+                        .collect::<Result<Vec<_>, _>>()?,
+                );
+            }
+        }
+        source.finish()?;
+        source.close()?;
+        Ok(rows)
+    }
+
+    fn schema_exists(&self, schema: &str) -> bool {
+        self.session
+            .session
+            .shared_catalog()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .has_database(schema)
+    }
+
+    fn table_info(
+        &mut self,
+        schema: &str,
+        table: &str,
+    ) -> Result<tidb_workloadrepo::TableInfo, String> {
+        let catalog = self.session.session.shared_catalog();
+        let catalog = catalog.lock().unwrap_or_else(|error| error.into_inner());
+        let entry = catalog
+            .table_in(schema, table)
+            .ok_or_else(|| format!("table `{schema}`.`{table}` does not exist"))?;
+        let columns = match entry {
+            tidb_executor::TableEntry::Kv(table) => table
+                .visible_columns()
+                .iter()
+                .map(|column| tidb_workloadrepo::Column {
+                    name: column.name.clone(),
+                    type_desc: column
+                        .field_type
+                        .type_desc(tidb_datatype::STRICT_INTEGER_DISPLAY_WIDTH),
+                    comment: column.comment.clone(),
+                })
+                .collect(),
+            _ => entry
+                .column_types()
+                .into_iter()
+                .map(|(name, field_type)| tidb_workloadrepo::Column {
+                    name,
+                    type_desc: field_type.type_desc(tidb_datatype::STRICT_INTEGER_DISPLAY_WIDTH),
+                    comment: String::new(),
+                })
+                .collect(),
+        };
+        let partitions = match entry {
+            tidb_executor::TableEntry::Kv(table) => table
+                .partition()
+                .map(|partition| {
+                    partition
+                        .definitions
+                        .iter()
+                        .map(|definition| definition.name.clone())
+                        .collect()
+                })
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        };
+        Ok(tidb_workloadrepo::TableInfo {
+            columns,
+            partitions,
+        })
     }
 }
 
@@ -854,6 +1091,8 @@ impl ClusterServerSession {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clean();
+        self.session
+            .publish_transaction_buffer_metrics(self.buffer.len(), self.buffer.memory_footprint());
         outcome
     }
 
@@ -940,7 +1179,11 @@ impl ClusterServerSession {
             if !prelock_keys.is_empty() {
                 let outcome = match self.explicit.as_ref() {
                     Some(transaction) => {
-                        Some(transaction.lock_staged_keys_with_values(prelock_keys.to_vec()))
+                        self.session.publish_transaction_lock_waiting(true);
+                        let outcome =
+                            transaction.lock_staged_keys_with_values(prelock_keys.to_vec());
+                        self.session.publish_transaction_lock_waiting(false);
+                        Some(outcome)
                     }
                     None => None,
                 };
@@ -1174,11 +1417,11 @@ impl ClusterServerSession {
             .collect();
         // Every error exit rolls the STATEMENT back -- Go's `StmtRollback`
         // runs on any statement error, transport failures included.
-        let outcome = match transaction.lock_staged_keys_with_assertions(
-            keys,
-            presume_not_exists,
-            duplicate_hints,
-        ) {
+        self.session.publish_transaction_lock_waiting(true);
+        let lock_result =
+            transaction.lock_staged_keys_with_assertions(keys, presume_not_exists, duplicate_hints);
+        self.session.publish_transaction_lock_waiting(false);
+        let outcome = match lock_result {
             Ok(outcome) => outcome,
             Err(error) => {
                 self.buffer.restore(savepoint.clone());
@@ -1873,6 +2116,14 @@ impl QuerySession for ClusterServerSession {
     /// `SHOW WARNINGS` reports (Go `ctx.WarningCount()`).
     fn warning_count(&self) -> u16 {
         self.session.wire_warning_count()
+    }
+
+    fn warning_codes(&self) -> Vec<u16> {
+        self.session
+            .warnings()
+            .iter()
+            .map(|warning| warning.code)
+            .collect()
     }
 
     /// Go `clientConn.initResultEncoder`'s read: this session's

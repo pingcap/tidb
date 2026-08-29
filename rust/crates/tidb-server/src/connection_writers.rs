@@ -256,6 +256,9 @@ pub(crate) fn write_error<O: ConnectionPacketOutput + ?Sized>(
     message: impl AsRef<[u8]>,
     protocol_41: bool,
 ) -> Result<(), MysqlConnectionError> {
+    // Go defers the counter update before writing, so a socket write failure
+    // still counts the ERR packet the server attempted to return.
+    output.record_client_error(code);
     let message = message.as_ref();
     let extended = std::str::from_utf8(message).ok().map(|message| {
         let mut error = tidb_error::mysql::SqlError {
@@ -286,6 +289,18 @@ pub(crate) fn write_payload<O: ConnectionPacketOutput + ?Sized>(
 /// framing and negotiated compression cannot diverge by command type.
 pub(crate) trait ConnectionPacketOutput {
     fn write_packet(&mut self, sequence: u8, payload: &[u8]) -> Result<u8, MysqlConnectionError>;
+
+    /// Records one client-visible ERR packet. Capture outputs keep the no-op
+    /// default; an authenticated connection attaches its user/host identity.
+    fn record_client_error(&self, _code: u16) {}
+
+    fn record_client_warning(&self, _code: u16) {}
+
+    fn compressed_sequence(&self) -> Option<u8> {
+        None
+    }
+
+    fn set_compressed_sequence(&mut self, _sequence: u8) {}
 
     fn write_packets(
         &mut self,
@@ -340,6 +355,14 @@ impl<W: Write> ConnectionPacketOutput for PacketIoWriter<W> {
         let next_sequence = self.sequence();
         self.flush()?;
         Ok(next_sequence)
+    }
+
+    fn compressed_sequence(&self) -> Option<u8> {
+        PacketIoWriter::compressed_sequence(self)
+    }
+
+    fn set_compressed_sequence(&mut self, sequence: u8) {
+        PacketIoWriter::set_compressed_sequence(self, sequence);
     }
 }
 
@@ -456,6 +479,7 @@ mod tests {
     #[derive(Default)]
     struct CapturingOutput {
         payload: Vec<u8>,
+        recorded_errors: std::sync::Mutex<Vec<u16>>,
     }
 
     impl ConnectionPacketOutput for CapturingOutput {
@@ -466,6 +490,10 @@ mod tests {
         ) -> Result<u8, MysqlConnectionError> {
             self.payload = payload.to_vec();
             Ok(sequence.wrapping_add(1))
+        }
+
+        fn record_client_error(&self, code: u16) {
+            self.recorded_errors.lock().unwrap().push(code);
         }
     }
 
@@ -502,5 +530,6 @@ mod tests {
 
         write_error(&mut output, 1, 1105, *b"HY000", [0xff, 0xfe], true).unwrap();
         assert_eq!(&output.payload[9..], &[0xff, 0xfe]);
+        assert_eq!(*output.recorded_errors.lock().unwrap(), [1045, 1045, 1105]);
     }
 }

@@ -29,6 +29,44 @@ const DEFAULT_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(1);
 const DEFAULT_GC_LIMIT: usize = 50;
 static NEXT_READ_AUTHORITY_ID: AtomicU64 = AtomicU64::new(1);
 
+/// One lock currently being resolved on behalf of a transaction.
+///
+/// This is client-go's `txnlock.ResolvingLock`: the caller transaction is
+/// waiting for `lock_txn_id`'s lock on `key` to be classified or cleaned up.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvingLock {
+    /// Start timestamp of the transaction attempting the read or write.
+    pub txn_id: u64,
+    /// Start timestamp of the transaction that owns the encountered lock.
+    pub lock_txn_id: u64,
+    /// Encountered locked key.
+    pub key: Vec<u8>,
+    /// Primary key of the lock-owning transaction.
+    pub primary: Vec<u8>,
+}
+
+#[derive(Default)]
+struct ResolvingLocks {
+    next_token: u64,
+    entries: std::collections::HashMap<u64, Vec<ResolvingLock>>,
+}
+
+/// Scope guard for client-go's `RecordResolvingLocks` / `ResolveLocksDone`.
+pub struct ResolvingLocksGuard {
+    registry: Arc<Mutex<ResolvingLocks>>,
+    token: u64,
+}
+
+impl Drop for ResolvingLocksGuard {
+    fn drop(&mut self) {
+        self.registry
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .entries
+            .remove(&self.token);
+    }
+}
+
 struct DirectUnaryStoreLivenessProbe<C>(C);
 
 impl<C> StoreLivenessProbe for DirectUnaryStoreLivenessProbe<C>
@@ -64,6 +102,7 @@ pub struct SharedReadAuthority<C, L> {
 pub struct SharedReadOpener<C, L> {
     client: C,
     region_cache: BackgroundRegionCache<L>,
+    resolving_locks: Arc<Mutex<ResolvingLocks>>,
     authority_id: u64,
 }
 
@@ -72,6 +111,7 @@ impl<C: Clone, L> Clone for SharedReadOpener<C, L> {
         Self {
             client: self.client.clone(),
             region_cache: self.region_cache.clone_opener(),
+            resolving_locks: Arc::clone(&self.resolving_locks),
             authority_id: self.authority_id,
         }
     }
@@ -105,6 +145,7 @@ where
         let opener = SharedReadOpener {
             client,
             region_cache: region_cache.opener_handle(),
+            resolving_locks: Arc::new(Mutex::new(ResolvingLocks::default())),
             authority_id,
         };
         Self {
@@ -181,6 +222,7 @@ where
         SharedReadRuntime::from_shared_authorities(
             self.client.clone(),
             self.region_cache.open_lease()?,
+            Arc::clone(&self.resolving_locks),
             self.authority_id,
         )
     }
@@ -199,6 +241,7 @@ where
 pub struct SharedReadRuntime<C, L> {
     client: Arc<Mutex<C>>,
     region_cache: BackgroundRegionCache<L>,
+    resolving_locks: Arc<Mutex<ResolvingLocks>>,
     cluster_id: u64,
     authority_id: u64,
 }
@@ -208,6 +251,7 @@ impl<C, L> Clone for SharedReadRuntime<C, L> {
         Self {
             client: Arc::clone(&self.client),
             region_cache: self.region_cache.clone(),
+            resolving_locks: Arc::clone(&self.resolving_locks),
             cluster_id: self.cluster_id,
             authority_id: self.authority_id,
         }
@@ -222,6 +266,7 @@ impl<C, L: RegionLoader> SharedReadRuntime<C, L> {
         Self {
             client: Arc::new(Mutex::new(client)),
             region_cache: BackgroundRegionCache::without_worker(region_cache),
+            resolving_locks: Arc::new(Mutex::new(ResolvingLocks::default())),
             cluster_id,
             authority_id: next_read_authority_id(),
         }
@@ -231,12 +276,14 @@ impl<C, L: RegionLoader> SharedReadRuntime<C, L> {
     fn from_shared_authorities(
         client: C,
         region_cache: BackgroundRegionCache<L>,
+        resolving_locks: Arc<Mutex<ResolvingLocks>>,
         authority_id: u64,
     ) -> Result<Self, BackgroundRegionCacheError> {
         let cluster_id = region_cache.with_cache(|cache| cache.cluster_id())?;
         Ok(Self {
             client: Arc::new(Mutex::new(client)),
             region_cache,
+            resolving_locks,
             cluster_id,
             authority_id,
         })
@@ -252,6 +299,48 @@ impl<C, L: RegionLoader> SharedReadRuntime<C, L> {
     #[must_use]
     pub fn client(&self) -> &Mutex<C> {
         self.client.as_ref()
+    }
+
+    /// Records one resolve attempt until the returned guard is dropped.
+    pub fn record_resolving_locks(
+        &self,
+        txn_id: u64,
+        locks: impl IntoIterator<Item = ResolvingLock>,
+    ) -> ResolvingLocksGuard {
+        let mut registry = self
+            .resolving_locks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let token = registry.next_token;
+        registry.next_token = registry.next_token.wrapping_add(1);
+        registry.entries.insert(
+            token,
+            locks
+                .into_iter()
+                .map(|mut lock| {
+                    lock.txn_id = txn_id;
+                    lock
+                })
+                .collect(),
+        );
+        drop(registry);
+        ResolvingLocksGuard {
+            registry: Arc::clone(&self.resolving_locks),
+            token,
+        }
+    }
+
+    /// Returns a point-in-time copy of all locks currently being resolved.
+    #[must_use]
+    pub fn resolving_locks(&self) -> Vec<ResolvingLock> {
+        self.resolving_locks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .entries
+            .values()
+            .flatten()
+            .cloned()
+            .collect()
     }
 
     /// Returns a handle to the same region-cache authority.

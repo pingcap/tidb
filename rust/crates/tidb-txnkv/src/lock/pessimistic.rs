@@ -29,7 +29,7 @@ use tidb_proto::{
 };
 
 use crate::region::RegionRecoveryLoader;
-use crate::{SharedReadRuntime, UnaryCallContext};
+use crate::{ResolvingLock, SharedReadRuntime, UnaryCallContext};
 
 use super::model::{BlockingLock, PessimisticLock};
 use super::resolver::{
@@ -85,6 +85,23 @@ where
     L: RegionRecoveryLoader,
     T: TimestampSource + ?Sized,
 {
+    let _resolving = runtime.record_resolving_locks(
+        caller_start_ts,
+        locks.iter().map(|lock| match lock {
+            BlockingLock::Optimistic(lock) => ResolvingLock {
+                txn_id: caller_start_ts,
+                lock_txn_id: lock.txn_id,
+                key: lock.key.clone(),
+                primary: lock.primary.clone(),
+            },
+            BlockingLock::Pessimistic(lock) => ResolvingLock {
+                txn_id: caller_start_ts,
+                lock_txn_id: lock.txn_id,
+                key: lock.key.clone(),
+                primary: lock.primary.clone(),
+            },
+        }),
+    );
     let mut result = LockRecoveryResult {
         statuses: Vec::with_capacity(locks.len()),
         ..LockRecoveryResult::default()

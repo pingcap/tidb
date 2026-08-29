@@ -116,6 +116,7 @@ pub trait StoreWriteClient:
     Clone
     + crate::transaction::TransactionCommandClient
     + crate::lock::LockRecoveryClient
+    + crate::LockWaitInfoClient
     + Send
     + Sync
     + 'static
@@ -125,6 +126,7 @@ impl<T> StoreWriteClient for T where
     T: Clone
         + crate::transaction::TransactionCommandClient
         + crate::lock::LockRecoveryClient
+        + crate::LockWaitInfoClient
         + Send
         + Sync
         + 'static
@@ -152,6 +154,14 @@ where
     /// The PD capability this opener routes through.
     pub fn pd(&self) -> &P {
         &self.pd
+    }
+
+    /// Opens one worker-local capability over the process-owned transport and
+    /// region cache without starting another authority.
+    pub fn open_read_runtime(&self) -> Result<SharedReadRuntime<C, L>, OptimisticCoordinatorError> {
+        self.opener
+            .open_session()
+            .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))
     }
 
     pub fn from_capabilities(
@@ -336,10 +346,7 @@ where
         key: &[u8],
         call: &crate::rpc::UnaryCallContext,
     ) -> Result<Option<Vec<u8>>, OptimisticCoordinatorError> {
-        let runtime = self
-            .opener
-            .open_session()
-            .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+        let runtime = self.open_read_runtime()?;
         if runtime.cluster_id() != self.pd.cluster_id() {
             return Err(OptimisticCoordinatorError::ClusterMismatch {
                 pd: self.pd.cluster_id(),
@@ -368,10 +375,7 @@ where
         limit: Option<usize>,
         call: &crate::rpc::UnaryCallContext,
     ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, OptimisticCoordinatorError> {
-        let runtime = self
-            .opener
-            .open_session()
-            .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+        let runtime = self.open_read_runtime()?;
         if runtime.cluster_id() != self.pd.cluster_id() {
             return Err(OptimisticCoordinatorError::ClusterMismatch {
                 pd: self.pd.cluster_id(),
@@ -413,10 +417,7 @@ where
         OptimisticCoordinatorError,
     > {
         let opened_at = Instant::now();
-        let runtime = self
-            .opener
-            .open_session()
-            .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+        let runtime = self.open_read_runtime()?;
         if runtime.cluster_id() != self.pd.cluster_id() {
             return Err(OptimisticCoordinatorError::ClusterMismatch {
                 pd: self.pd.cluster_id(),

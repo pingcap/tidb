@@ -1006,6 +1006,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             .find_table(&db_name, &table_name)
             .ok_or_else(|| PlanError::unknown_table(format!("{db_name}.{table_name}")))?;
 
+        // Go `buildDataSource` routes every virtual table through the same
+        // `LogicalMemTable` path before ordinary access-path construction.
+        if table.is_memory_table {
+            return Ok(self.build_mem_table(&db_name, &table));
+        }
+
         // `b.optFlag |= rule.FlagPartitionProcessor` — Go sets it from the
         // partition pruning mode; a table that reports a partition definition
         // needs the processor.

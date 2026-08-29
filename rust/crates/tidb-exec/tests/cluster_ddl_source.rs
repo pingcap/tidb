@@ -107,7 +107,11 @@ fn refusal(sql: &str) -> String {
     refusal_with_code(sql).1
 }
 
-pub(crate) fn plan(store: &mut MetaStore, sql: &str, start_ts: u64) -> tidb_exec::cluster_ddl::DdlWrite {
+pub(crate) fn plan(
+    store: &mut MetaStore,
+    sql: &str,
+    start_ts: u64,
+) -> tidb_exec::cluster_ddl::DdlWrite {
     match plan_ddl(store, &statement(sql), start_ts).expect("the fixture plans") {
         DdlPlan::Write(write) => *write,
         DdlPlan::AlreadySatisfied { detail, .. } => {
@@ -334,10 +338,10 @@ fn a_created_database_persists_its_resolved_charset_and_collation() {
         assert_eq!(collate, expected_collate, "{sql}");
     }
 
-    assert!(refusal(
-        "CREATE DATABASE c CHARACTER SET utf8 COLLATE utf8mb4_bin"
-    )
-    .contains("is not valid for CHARACTER SET"));
+    assert!(
+        refusal("CREATE DATABASE c CHARACTER SET utf8 COLLATE utf8mb4_bin")
+            .contains("is not valid for CHARACTER SET")
+    );
 }
 
 #[test]
@@ -805,7 +809,10 @@ fn defaults_are_validated_and_persisted_against_the_final_column_type() {
     let column = column.read();
     assert_eq!(column.default_value_bit.snapshot(), vec![1]);
     assert_eq!(
-        column.default_value.builtin_string().map(|value| value.as_bytes()),
+        column
+            .default_value
+            .builtin_string()
+            .map(|value| value.as_bytes()),
         Some(&[1][..])
     );
 
@@ -827,17 +834,19 @@ fn cluster_create_persists_a_literal_timestamp_in_utc_from_the_session_zone() {
         });
     let sql = "CREATE TABLE u6.t (a TIMESTAMP DEFAULT '2020-01-02 08:00:00')";
     let parsed = tidb_parser::parse_with_sql_mode(sql, context.sql_mode()).expect("parses");
-    let DdlStatement::CreateTable { build, .. } =
-        lower_ddl_with_context(&parsed, "u6", &context)
-            .expect("the timestamp default is admitted")
-            .expect("the statement is cluster DDL")
+    let DdlStatement::CreateTable { build, .. } = lower_ddl_with_context(&parsed, "u6", &context)
+        .expect("the timestamp default is admitted")
+        .expect("the statement is cluster DDL")
     else {
         panic!("the fixture is CREATE TABLE");
     };
     let column_handle = build.template().columns.get(0).expect("one column");
     let column = column_handle.read();
     assert_eq!(
-        column.default_value.builtin_string().map(|value| value.as_bytes()),
+        column
+            .default_value
+            .builtin_string()
+            .map(|value| value.as_bytes()),
         Some(b"2020-01-02 00:00:00".as_slice())
     );
 }
@@ -929,19 +938,72 @@ fn cluster_create_preserves_coded_default_errors() {
 
 #[test]
 fn a_statement_this_module_does_not_own_is_left_to_its_own_path() {
-    for sql in [
-        "SELECT 1",
-        "INSERT INTO u6.t VALUES (1, 2)",
-        // Every column ALTER spelling now routes to the catalog writer;
-        // partition management remains genuinely unowned.
-        "ALTER TABLE u6.t ADD PARTITION (PARTITION p1 VALUES LESS THAN (10))",
-    ] {
+    for sql in ["SELECT 1", "INSERT INTO u6.t VALUES (1, 2)"] {
         let parsed = tidb_parser::parse(sql).expect("the fixture SQL parses");
         assert!(
             lower_ddl(&parsed, "u6").expect("no refusal").is_none(),
             "`{sql}` is not a catalog change this module owns"
         );
     }
+}
+
+/// Go workloadrepo creates RANGE tables and later uses ordinary ALTER TABLE
+/// ADD/DROP PARTITION jobs. The cluster path must publish those same catalog
+/// changes rather than falling through to a cache- or repository-only path.
+#[test]
+fn workload_repository_partition_changes_use_cluster_ddl() {
+    let mut store = bootstrapped();
+    let created = plan(
+        &mut store,
+        "CREATE TABLE u6.hist (ts DATETIME NOT NULL) \
+         PARTITION BY RANGE(TO_DAYS(ts)) (\
+           PARTITION p20260830 VALUES LESS THAN (TO_DAYS('2026-08-30')),\
+           PARTITION p20260831 VALUES LESS THAN (TO_DAYS('2026-08-31')))",
+        470_100_000,
+    );
+    let table_id = created.created_id.expect("CREATE TABLE allocates an id");
+    apply(&mut store, &created);
+
+    let added = plan(
+        &mut store,
+        "ALTER TABLE u6.hist ADD PARTITION (\
+           PARTITION p20260901 VALUES LESS THAN (TO_DAYS('2026-09-01')))",
+        470_100_001,
+    );
+    assert_eq!(
+        added.diff.action_type,
+        tidb_model::ActionType::ACTION_ADD_TABLE_PARTITION
+    );
+    let added_table = stored_table(&added, table_id);
+    let definitions = added_table["partition"]["definitions"]
+        .as_array()
+        .expect("partition definitions are stored");
+    assert_eq!(definitions.len(), 3);
+    assert_eq!(definitions[2]["name"]["L"], "p20260901");
+    assert!(definitions[2]["less_than"][0]
+        .as_str()
+        .expect("the folded bound is stored as text")
+        .parse::<i64>()
+        .is_ok());
+    apply(&mut store, &added);
+
+    let dropped = plan(
+        &mut store,
+        "ALTER TABLE u6.hist DROP PARTITION p20260830",
+        470_100_002,
+    );
+    assert_eq!(
+        dropped.diff.action_type,
+        tidb_model::ActionType::ACTION_DROP_TABLE_PARTITION
+    );
+    let dropped_table = stored_table(&dropped, table_id);
+    let names = dropped_table["partition"]["definitions"]
+        .as_array()
+        .expect("partition definitions are stored")
+        .iter()
+        .map(|definition| definition["name"]["L"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(names, ["p20260831", "p20260901"]);
 }
 
 /// Go routes the single-action ALTER spelling through the same add/drop-index
@@ -961,7 +1023,10 @@ fn alter_table_index_actions_share_the_catalog_backfill_path() {
     let backfill = added.backfill.as_ref().expect("the index owes entries");
     assert!(backfill.add);
     assert!(backfill.index.read().unique);
-    assert_eq!(stored_table(&added, table_id)["index_info"][0]["idx_name"]["O"], "vi");
+    assert_eq!(
+        stored_table(&added, table_id)["index_info"][0]["idx_name"]["O"],
+        "vi"
+    );
     apply(&mut store, &added);
 
     let dropped = plan(
@@ -1010,11 +1075,9 @@ fn alter_table_rename_moves_catalog_metadata_without_reissuing_ids() {
     );
     assert_eq!(renamed.diff.action_type.0, 14, "ActionRenameTable");
     assert_eq!(renamed.diff.old_schema_id, 112);
-    assert!(renamed
-        .mutations
-        .iter()
-        .any(|mutation| mutation.kind() == OptimisticMutationKind::MetaDelete
-            && mutation.key() == key::table_kv_key(112, table_id)));
+    assert!(renamed.mutations.iter().any(|mutation| mutation.kind()
+        == OptimisticMutationKind::MetaDelete
+        && mutation.key() == key::table_kv_key(112, table_id)));
     apply(&mut store, &renamed);
     let catalog = tidb_exec::cluster_catalog::load_cluster_catalog(&mut store)
         .expect("the renamed catalog loads");
@@ -1058,8 +1121,12 @@ fn alter_table_rename_moves_catalog_metadata_without_reissuing_ids() {
         panic!("the multi-pair spelling retains every pair");
     };
     assert_eq!(pairs.len(), 2);
-    let renamed_twice = match plan_ddl(&mut store, &DdlStatement::RenameTables { pairs }, 470_000_104)
-        .expect("one atomic multi-table rename plans")
+    let renamed_twice = match plan_ddl(
+        &mut store,
+        &DdlStatement::RenameTables { pairs },
+        470_000_104,
+    )
+    .expect("one atomic multi-table rename plans")
     {
         DdlPlan::Write(write) => *write,
         DdlPlan::AlreadySatisfied { detail, .. } => panic!("expected a write, got {detail}"),
@@ -1182,23 +1249,13 @@ fn alter_auto_random_base_updates_table_info_and_the_tarid_counter_together() {
     apply(&mut store, &create);
     store.put(key::schema_version_kv_key(), b"61".to_vec());
 
-    let alter = plan(
-        &mut store,
-        "ALTER TABLE ar_alter AUTO_RANDOM_BASE=500",
-        124,
-    );
+    let alter = plan(&mut store, "ALTER TABLE ar_alter AUTO_RANDOM_BASE=500", 124);
     let table_id = create.created_id.unwrap();
-    let table: tidb_model::TableInfo = serde_json::from_slice(stored_value(
-        &alter,
-        &key::table_kv_key(112, table_id),
-    ))
-    .unwrap();
+    let table: tidb_model::TableInfo =
+        serde_json::from_slice(stored_value(&alter, &key::table_kv_key(112, table_id))).unwrap();
     assert_eq!(table.auto_rand_id, 500);
     assert_eq!(
-        stored_value(
-            &alter,
-            &key::auto_random_table_id_kv_key(112, table_id)
-        ),
+        stored_value(&alter, &key::auto_random_table_id_kv_key(112, table_id)),
         b"499"
     );
     assert_eq!(
@@ -1208,22 +1265,12 @@ fn alter_auto_random_base_updates_table_info_and_the_tarid_counter_together() {
 
     apply(&mut store, &alter);
     store.put(key::schema_version_kv_key(), b"62".to_vec());
-    let lower = plan(
-        &mut store,
-        "ALTER TABLE ar_alter AUTO_RANDOM_BASE=10",
-        125,
-    );
-    let lower_table: tidb_model::TableInfo = serde_json::from_slice(stored_value(
-        &lower,
-        &key::table_kv_key(112, table_id),
-    ))
-    .unwrap();
+    let lower = plan(&mut store, "ALTER TABLE ar_alter AUTO_RANDOM_BASE=10", 125);
+    let lower_table: tidb_model::TableInfo =
+        serde_json::from_slice(stored_value(&lower, &key::table_kv_key(112, table_id))).unwrap();
     assert_eq!(lower_table.auto_rand_id, 500);
     assert_eq!(
-        stored_value(
-            &lower,
-            &key::auto_random_table_id_kv_key(112, table_id)
-        ),
+        stored_value(&lower, &key::auto_random_table_id_kv_key(112, table_id)),
         b"499"
     );
 
@@ -1234,17 +1281,11 @@ fn alter_auto_random_base_updates_table_info_and_the_tarid_counter_together() {
         "ALTER TABLE ar_alter FORCE AUTO_RANDOM_BASE=2",
         126,
     );
-    let forced_table: tidb_model::TableInfo = serde_json::from_slice(stored_value(
-        &forced,
-        &key::table_kv_key(112, table_id),
-    ))
-    .unwrap();
+    let forced_table: tidb_model::TableInfo =
+        serde_json::from_slice(stored_value(&forced, &key::table_kv_key(112, table_id))).unwrap();
     assert_eq!(forced_table.auto_rand_id, 2);
     assert_eq!(
-        stored_value(
-            &forced,
-            &key::auto_random_table_id_kv_key(112, table_id)
-        ),
+        stored_value(&forced, &key::auto_random_table_id_kv_key(112, table_id)),
         b"1"
     );
 
@@ -1282,11 +1323,8 @@ fn alter_auto_id_cache_publishes_table_metadata_without_touching_the_counter() {
 
     let alter = plan(&mut store, "ALTER TABLE cached AUTO_ID_CACHE=100", 131);
     let table_id = create.created_id.unwrap();
-    let table: tidb_model::TableInfo = serde_json::from_slice(stored_value(
-        &alter,
-        &key::table_kv_key(112, table_id),
-    ))
-    .unwrap();
+    let table: tidb_model::TableInfo =
+        serde_json::from_slice(stored_value(&alter, &key::table_kv_key(112, table_id))).unwrap();
     assert_eq!(table.auto_id_cache, 100);
     assert_eq!(
         alter.diff.action_type,
@@ -1328,18 +1366,12 @@ fn modify_auto_random_bits_updates_table_info_and_the_tarid_counter_together() {
         "ALTER TABLE ar_bits_cluster MODIFY COLUMN id BIGINT AUTO_RANDOM(8)",
         131,
     );
-    let table: tidb_model::TableInfo = serde_json::from_slice(stored_value(
-        &alter,
-        &key::table_kv_key(112, table_id),
-    ))
-    .unwrap();
+    let table: tidb_model::TableInfo =
+        serde_json::from_slice(stored_value(&alter, &key::table_kv_key(112, table_id))).unwrap();
     assert_eq!(table.auto_random_bits, 8);
     assert_eq!(table.auto_random_range_bits, 64);
     assert_eq!(
-        stored_value(
-            &alter,
-            &key::auto_random_table_id_kv_key(112, table_id)
-        ),
+        stored_value(&alter, &key::auto_random_table_id_kv_key(112, table_id)),
         b"1"
     );
     assert_eq!(
@@ -1349,17 +1381,14 @@ fn modify_auto_random_bits_updates_table_info_and_the_tarid_counter_together() {
 
     apply(&mut store, &alter);
     store.put(key::schema_version_kv_key(), b"62".to_vec());
-    let decrease = statement(
-        "ALTER TABLE ar_bits_cluster MODIFY COLUMN id BIGINT AUTO_RANDOM(7)",
-    );
+    let decrease = statement("ALTER TABLE ar_bits_cluster MODIFY COLUMN id BIGINT AUTO_RANDOM(7)");
     assert!(matches!(
         plan_ddl(&mut store, &decrease, 132).unwrap_err(),
         DdlPlanError::InvalidAutoRandom(reason)
             if reason == "decreasing auto_random shard bits is not supported"
     ));
-    let wrong_column = statement(
-        "ALTER TABLE ar_bits_cluster MODIFY COLUMN v BIGINT AUTO_RANDOM(9)",
-    );
+    let wrong_column =
+        statement("ALTER TABLE ar_bits_cluster MODIFY COLUMN v BIGINT AUTO_RANDOM(9)");
     assert!(matches!(
         plan_ddl(&mut store, &wrong_column, 133).unwrap_err(),
         DdlPlanError::InvalidAutoRandom(reason)
@@ -1374,10 +1403,7 @@ fn modify_auto_random_bits_updates_table_info_and_the_tarid_counter_together() {
     apply(&mut store, &create_ai);
     store.put(key::schema_version_kv_key(), b"63".to_vec());
     let ai_table_id = create_ai.created_id.unwrap();
-    store.put(
-        key::auto_table_id_kv_key(112, ai_table_id),
-        b"100".to_vec(),
-    );
+    store.put(key::auto_table_id_kv_key(112, ai_table_id), b"100".to_vec());
     let converted = plan(
         &mut store,
         "ALTER TABLE ai_bits_cluster MODIFY COLUMN id BIGINT AUTO_RANDOM(5)",
@@ -1390,11 +1416,7 @@ fn modify_auto_random_bits_updates_table_info_and_the_tarid_counter_together() {
     .unwrap();
     assert_eq!(converted_table.auto_random_bits, 5);
     assert_eq!(
-        converted_table
-            .get_pk_col_info()
-            .unwrap()
-            .read()
-            .get_flag()
+        converted_table.get_pk_col_info().unwrap().read().get_flag()
             & u64::from(tidb_datatype::FieldTypeFlags::AUTO_INCREMENT),
         0
     );
@@ -1511,7 +1533,10 @@ fn table_with_two_columns(store: &mut MetaStore) -> i64 {
 }
 
 /// Reads back the `TableInfo` a write set stored for `table_id`.
-pub(crate) fn stored_table(write: &tidb_exec::cluster_ddl::DdlWrite, table_id: i64) -> serde_json::Value {
+pub(crate) fn stored_table(
+    write: &tidb_exec::cluster_ddl::DdlWrite,
+    table_id: i64,
+) -> serde_json::Value {
     serde_json::from_slice(stored_value(write, &key::table_kv_key(112, table_id)))
         .expect("a stored TableInfo")
 }
@@ -1766,7 +1791,11 @@ fn add_column_appends_a_public_nullable_column_and_refuses_rewrites() {
 
     let table_id = write.created_id.expect("CREATE TABLE allocates an id");
 
-    let write = plan(&mut store, "ALTER TABLE u6.t ADD COLUMN note VARCHAR(32)", 200);
+    let write = plan(
+        &mut store,
+        "ALTER TABLE u6.t ADD COLUMN note VARCHAR(32)",
+        200,
+    );
     apply(&mut store, &write);
     let stored = stored_table(&write, table_id);
     let columns = stored["cols"].as_array().expect("columns array");
@@ -1776,7 +1805,10 @@ fn add_column_appends_a_public_nullable_column_and_refuses_rewrites() {
     // Go `AllocateColumnID`: past the existing max, never reused.
     assert_eq!(added["id"], 3);
     assert_eq!(added["offset"], 2);
-    assert_eq!(added["state"], 5, "public immediately: no backfill was needed");
+    assert_eq!(
+        added["state"], 5,
+        "public immediately: no backfill was needed"
+    );
     assert_eq!(stored["max_col_id"], 3);
 
     // A duplicate is MySQL's own message; IF NOT EXISTS is a no-op. Both are
@@ -1893,19 +1925,15 @@ fn truncate_reallocates_the_table_id_and_restarts_the_allocators() {
             .expect("the truncated table is stored");
     assert_eq!(stored["id"], new_id);
     assert!(
-        write
-            .mutations
-            .iter()
-            .any(|mutation| mutation.key() == key::table_kv_key(112, old_id).as_slice()
-                && matches!(mutation.kind(), OptimisticMutationKind::MetaDelete)),
+        write.mutations.iter().any(|mutation| mutation.key()
+            == key::table_kv_key(112, old_id).as_slice()
+            && matches!(mutation.kind(), OptimisticMutationKind::MetaDelete)),
         "the old table key is deleted"
     );
     assert!(
-        write
-            .mutations
-            .iter()
-            .any(|mutation| mutation.key() == key::auto_table_id_kv_key(112, old_id).as_slice()
-                && matches!(mutation.kind(), OptimisticMutationKind::MetaDelete)),
+        write.mutations.iter().any(|mutation| mutation.key()
+            == key::auto_table_id_kv_key(112, old_id).as_slice()
+            && matches!(mutation.kind(), OptimisticMutationKind::MetaDelete)),
         "the observed allocator is deleted with the old id"
     );
 }
@@ -1932,9 +1960,15 @@ fn drop_column_shifts_offsets_and_takes_its_single_column_index() {
         serde_json::from_slice(stored_value(&write, &key::table_kv_key(112, table_id)))
             .expect("the altered table is stored");
     let columns = stored["cols"].as_array().expect("columns");
-    let names: Vec<_> = columns.iter().map(|c| c["name"]["O"].as_str().unwrap()).collect();
+    let names: Vec<_> = columns
+        .iter()
+        .map(|c| c["name"]["O"].as_str().unwrap())
+        .collect();
     assert_eq!(names, ["id", "a", "c"]);
-    let offsets: Vec<_> = columns.iter().map(|c| c["offset"].as_i64().unwrap()).collect();
+    let offsets: Vec<_> = columns
+        .iter()
+        .map(|c| c["offset"].as_i64().unwrap())
+        .collect();
     assert_eq!(offsets, [0, 1, 2], "the gap closes");
     assert_eq!(
         write.diff.action_type,
@@ -2072,7 +2106,15 @@ fn a_column_and_index_bundle_folds_and_backfills_together() {
     assert!(backfill.add);
     assert_eq!(backfill.index.read().name.original(), "idx_c");
     assert_eq!(
-        backfill.index.read().columns.iter_deref().next().unwrap().read().offset,
+        backfill
+            .index
+            .read()
+            .columns
+            .iter_deref()
+            .next()
+            .unwrap()
+            .read()
+            .offset,
         2,
         "the index column resolves against the bundle-added column's offset"
     );
@@ -2160,7 +2202,10 @@ fn a_modify_column_reorganizes_exactly_where_go_says_it_must() {
         "ALTER TABLE widen MODIFY COLUMN name VARCHAR(40)",
         203,
     );
-    assert!(!longer.mutations.is_empty(), "the longer varchar is planned");
+    assert!(
+        !longer.mutations.is_empty(),
+        "the longer varchar is planned"
+    );
     let shorter = refuse(
         &mut store,
         "ALTER TABLE widen MODIFY COLUMN name VARCHAR(4)",
@@ -2303,7 +2348,11 @@ fn a_create_view_publishes_a_view_table_info() {
         .expect("the view's TableInfo is written");
     let info: tidb_model::TableInfo =
         serde_json::from_slice(put.value()).expect("the published value is a TableInfo");
-    let view = info.view.as_ref().expect("the view half rides along").read();
+    let view = info
+        .view
+        .as_ref()
+        .expect("the view half rides along")
+        .read();
     assert_eq!(view.select_stmt, "SELECT `t`.`a` AS `a` FROM `u6`.`t`");
     assert_eq!(info.charset, "utf8mb4");
     assert_eq!(info.collate, "utf8mb4_bin");
@@ -2347,7 +2396,10 @@ fn a_create_view_publishes_a_view_table_info() {
         DdlPlan::Write(write) => *write,
         DdlPlan::AlreadySatisfied { detail, .. } => panic!("expected a write: {detail}"),
     };
-    assert_eq!(drop.diff.action_type, tidb_model::ActionType::ACTION_DROP_VIEW);
+    assert_eq!(
+        drop.diff.action_type,
+        tidb_model::ActionType::ACTION_DROP_VIEW
+    );
     apply(&mut store, &drop);
 
     let wrong = plan_ddl(
@@ -2370,7 +2422,10 @@ fn a_create_view_publishes_a_view_table_info() {
         107,
     )
     .expect_err("a missing view without IF EXISTS refuses");
-    assert!(format!("{missing:?}").contains("Unknown table"), "{missing:?}");
+    assert!(
+        format!("{missing:?}").contains("Unknown table"),
+        "{missing:?}"
+    );
 }
 
 #[test]
@@ -2382,10 +2437,9 @@ fn a_check_constraint_is_ignored_with_gos_warning() {
     // creates and enforces nothing. Probe 24 caught this node refusing
     // where every default-configured Go server accepts.
     let context = tidb_executor::StmtContext::for_query();
-    let parsed = tidb_parser::parse(
-        "CREATE TABLE ck (v INT CHECK (v > 0), CONSTRAINT big CHECK (v < 100))",
-    )
-    .expect("parses");
+    let parsed =
+        tidb_parser::parse("CREATE TABLE ck (v INT CHECK (v > 0), CONSTRAINT big CHECK (v < 100))")
+            .expect("parses");
     let statement = lower_ddl_with_context(&parsed, "u6", &context)
         .expect("admitted")
         .expect("a catalog change");
@@ -2445,7 +2499,10 @@ fn add_column_first_and_after_move_offsets_and_repoint_indexes() {
     assert_eq!(columns[2]["id"], 4, "mid was allocated after id/a/b");
     let index_column = &stored["index_info"][0]["idx_cols"][0];
     assert_eq!(index_column["name"]["O"], "b");
-    assert_eq!(index_column["offset"], 3, "the index follows the column it names");
+    assert_eq!(
+        index_column["offset"], 3,
+        "the index follows the column it names"
+    );
 
     // FIRST pushes everything right by one, index included.
     let write = plan(
@@ -2517,7 +2574,11 @@ fn modify_column_moves_the_column_and_refuses_a_self_anchor() {
     );
 
     // A CHANGE renames and moves in one statement.
-    let write = plan(&mut store, "ALTER TABLE u6.t CHANGE a a2 BIGINT AFTER b", 300);
+    let write = plan(
+        &mut store,
+        "ALTER TABLE u6.t CHANGE a a2 BIGINT AFTER b",
+        300,
+    );
     apply(&mut store, &write);
     let stored = stored_table(&write, table_id);
     let names: Vec<&str> = stored["cols"]
@@ -2608,7 +2669,9 @@ fn alter_index_visibility_toggles_and_refuses_a_missing_index() {
         "{error:?}"
     );
     assert!(
-        error.to_string().contains("Key 'nosuch' doesn't exist in table 't'"),
+        error
+            .to_string()
+            .contains("Key 'nosuch' doesn't exist in table 't'"),
         "{error}"
     );
 }
@@ -2619,9 +2682,9 @@ fn alter_index_visibility_toggles_and_refuses_a_missing_index() {
 /// `GetPartitionInfo` return it at all.
 #[test]
 fn cluster_create_persists_a_partition_clause() {
-    let DdlStatement::CreateTable { build, .. } = statement(
-        "CREATE TABLE u6.t (id BIGINT PRIMARY KEY) PARTITION BY HASH (id) PARTITIONS 2",
-    ) else {
+    let DdlStatement::CreateTable { build, .. } =
+        statement("CREATE TABLE u6.t (id BIGINT PRIMARY KEY) PARTITION BY HASH (id) PARTITIONS 2")
+    else {
         panic!("the fixture is CREATE TABLE");
     };
     let table = build.template();
@@ -2720,17 +2783,14 @@ fn cluster_create_table_resolves_a_placement_policy_by_id() {
     // The resolution happens at PLANNING time, not lowering, because the
     // lookup needs the same snapshot the rest of the statement plans
     // against.
-    let DdlStatement::CreateTable { build, .. } = statement(
-        "CREATE TABLE u6.t (a INT) PLACEMENT POLICY = pol",
-    ) else {
+    let DdlStatement::CreateTable { build, .. } =
+        statement("CREATE TABLE u6.t (a INT) PLACEMENT POLICY = pol")
+    else {
         panic!("the fixture is CREATE TABLE");
     };
     // Lowering must NOT refuse it -- the option reaches the planner intact.
     assert!(
-        build
-            .template()
-            .placement_policy_ref
-            .is_none(),
+        build.template().placement_policy_ref.is_none(),
         "the reference is stamped by the planner, not the lowering step"
     );
 }
@@ -2772,8 +2832,8 @@ fn cluster_truncate_reassigns_partition_ids() {
 
 /// The physical ids of one table's partitions, in definition order.
 fn partition_ids(store: &mut MetaStore, table: &str) -> Vec<i64> {
-    let catalog = tidb_exec::cluster_catalog::load_cluster_catalog(store)
-        .expect("the catalog loads");
+    let catalog =
+        tidb_exec::cluster_catalog::load_cluster_catalog(store).expect("the catalog loads");
     let (_, info) = catalog
         .find_table("u6", table)
         .unwrap_or_else(|| panic!("table {table} exists"));

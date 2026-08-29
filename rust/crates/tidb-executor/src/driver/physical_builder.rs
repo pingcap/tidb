@@ -39,6 +39,7 @@ use crate::join::{IndexLookupPlan, IndexLookupSource, IndexProbeKeyDomain, JoinE
 use crate::joiner::{new_joiner, JoinType as JoinerType, JoinerChunkSizes};
 use crate::kv_table::{IndexRange, RowDecodeContext, TableHandle, TableScanExec};
 use crate::limit::LimitExec;
+use crate::mem_table::MemTableSourceExec;
 use crate::physical_cte::{
     CteExec, CteProducer, CteTableReaderExec, SharedCteProducer, SharedCteStorage,
 };
@@ -61,7 +62,8 @@ use tidb_expr::scalar_function::ScalarFunction;
 use tidb_expr::schema::Schema;
 use tidb_planner::find_best_task::LogicalJoinType;
 use tidb_planner::physical::{
-    PhysicalBatchPointGet, PhysicalIndexScan, PhysicalPlan, PhysicalPointGet, PhysicalTableScan,
+    PhysicalBatchPointGet, PhysicalIndexScan, PhysicalMemTable, PhysicalPlan, PhysicalPointGet,
+    PhysicalTableScan,
 };
 
 use super::{Catalog, DriverError, SelectMeta, INIT_CAP, MAX_CHUNK_SIZE};
@@ -442,6 +444,59 @@ fn build_table_scan(
         source.accept_scan_estimate(rows);
     }
     Ok(Box::new(source))
+}
+
+fn build_mem_table(
+    plan: &PhysicalPlan,
+    scan: &PhysicalMemTable,
+    catalog: &Catalog,
+) -> Result<Box<dyn Executor>, DriverError> {
+    let super::TableEntry::Mem(table) = catalog
+        .table_in(&scan.db_name, &scan.table_name)
+        .ok_or_else(|| {
+            DriverError::unsupported("physical memory table is absent from the catalog")
+        })?
+    else {
+        return Err(DriverError::unsupported(
+            "PhysicalMemTable resolved to a non-memory catalog table",
+        ));
+    };
+
+    let offsets = scan
+        .columns
+        .iter()
+        .map(|column| {
+            table
+                .columns
+                .iter()
+                .position(|(name, _)| name.eq_ignore_ascii_case(&column.name))
+                .ok_or_else(|| {
+                    DriverError::unsupported(
+                        "a physical memory-table output column is absent from its table",
+                    )
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let rows = table
+        .rows
+        .iter()
+        .map(|row| {
+            offsets
+                .iter()
+                .map(|offset| {
+                    row.get(*offset).cloned().ok_or_else(|| {
+                        DriverError::unsupported(
+                            "a memory-table row is shorter than its declared schema",
+                        )
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Box::new(MemTableSourceExec::new(
+        meta(plan, plan_schema(plan)?),
+        rows,
+    )))
 }
 
 fn aggregate_function(
@@ -2444,6 +2499,7 @@ fn build_with_state(
     state: &mut BuildState,
 ) -> Result<Box<dyn Executor>, DriverError> {
     let executor: Box<dyn Executor> = match plan {
+        PhysicalPlan::MemTable(scan) => build_mem_table(plan, scan, catalog),
         PhysicalPlan::TableScan(scan) => build_table_scan(plan, scan, catalog, ctx),
         PhysicalPlan::IndexScan(scan) => build_index_reader(
             plan,

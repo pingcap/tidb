@@ -450,6 +450,23 @@ impl MutationBuffer {
         self.lock().len()
     }
 
+    /// Bytes retained by the transaction's staged key/value map.
+    ///
+    /// Go publishes the backing MemDB's allocation footprint rather than the
+    /// logical value-byte total. This buffer is a `BTreeMap`, so its native
+    /// footprint is the owned key/value capacities plus one map entry for
+    /// every staged key (including tombstones).
+    #[must_use]
+    pub fn memory_footprint(&self) -> u64 {
+        let bytes = self.lock().iter().fold(0usize, |bytes, (key, value)| {
+            bytes
+                .saturating_add(std::mem::size_of::<(Key, Option<Vec<u8>>)>())
+                .saturating_add(key.as_bytes().len())
+                .saturating_add(value.as_ref().map_or(0, Vec::capacity))
+        });
+        u64::try_from(bytes).unwrap_or(u64::MAX)
+    }
+
     /// Whether the transaction has staged nothing, so COMMIT has no work.
     #[must_use]
     pub fn is_empty(&self) -> bool {

@@ -289,6 +289,7 @@ fn physical_access(plan: &PhysicalPlan, catalog: &Catalog) -> String {
         PhysicalPlan::TableScan(scan) => {
             table_access(catalog, scan.table_id, scan.table_as_name.as_deref())
         }
+        PhysicalPlan::MemTable(scan) => format!("table:{}", scan.table_name),
         PhysicalPlan::IndexScan(scan) => index_access(
             catalog,
             scan.table_id,
@@ -373,6 +374,7 @@ fn physical_operator_info(plan: &PhysicalPlan, catalog: &Catalog) -> String {
             parts.join(", ")
         }
         PhysicalPlan::TableDual(dual) => dual.explain_info(),
+        PhysicalPlan::MemTable(_) => String::new(),
         PhysicalPlan::CTE(cte) => cte.operator_info(),
         PhysicalPlan::CTETable(table) => table.explain_info(),
         PhysicalPlan::Lock(lock) => lock.explain_info(),

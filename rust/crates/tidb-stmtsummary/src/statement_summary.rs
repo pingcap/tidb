@@ -1376,6 +1376,21 @@ impl Default for StmtSummaryByDigestMap {
 }
 
 impl StmtSummaryByDigestMap {
+    /// Returns the normalized SQL for one digest from the live global map.
+    /// Go's `SQLDigestTextRetriever` performs the same digest-only lookup.
+    #[must_use]
+    pub fn normalized_sql_for_digest(&self, digest: &str) -> Option<String> {
+        let values: Vec<Arc<Mutex<StmtSummaryByDigest>>> = {
+            let inner = self.inner.lock().unwrap();
+            inner.summary_map.values().into_iter().cloned().collect()
+        };
+        values.into_iter().find_map(|summary| {
+            let summary = summary.lock().unwrap();
+            (summary.digest == digest && !summary.normalized_sql.is_empty())
+                .then(|| summary.normalized_sql.clone())
+        })
+    }
+
     /// Go `newStmtSummaryByDigestMap`: creates an empty
     /// `stmtSummaryByDigestMap`.
     #[must_use]

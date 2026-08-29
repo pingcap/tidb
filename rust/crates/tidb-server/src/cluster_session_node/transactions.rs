@@ -94,6 +94,12 @@ pub(crate) fn sql_error(error: LockSqlError) -> SqlQueryError {
 /// implementation is [`RealClusterTransactions`]; the tests drive the same
 /// lifecycle against an in-memory committed store.
 pub trait ClusterTransactions: Send + Sync {
+    /// Reads current pessimistic lock waits from every store. A store-local
+    /// RPC failure is skipped, matching Go `tikvStore.GetLockWaits`.
+    fn lock_waits(&self) -> Result<Vec<tidb_proto::KvrpcWaitForEntry>, String> {
+        Ok(Vec::new())
+    }
+
     /// Starts preparing one ordinary autocommit snapshot without waiting for
     /// its timestamp. The first read consumes the returned future.
     fn prepare_snapshot(
@@ -825,6 +831,34 @@ where
     L: StoreWriteLoader,
     P: StorePdCapability,
 {
+    fn lock_waits(&self) -> Result<Vec<tidb_proto::KvrpcWaitForEntry>, String> {
+        let addresses = self.opener.pd().store_addresses()?;
+        let runtime = self
+            .opener
+            .open_read_runtime()
+            .map_err(|error| error.to_string())?;
+        let mut result = Vec::new();
+        for address in addresses {
+            let response = runtime
+                .client()
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .get_lock_wait_info(&address, Duration::from_secs(30));
+            if let Ok(mut entries) = response {
+                result.append(&mut entries);
+            }
+        }
+        result.extend(runtime.resolving_locks().into_iter().map(|lock| {
+            tidb_proto::KvrpcWaitForEntry {
+                txn: lock.txn_id,
+                wait_for_txn: lock.lock_txn_id,
+                key: lock.key,
+                ..tidb_proto::KvrpcWaitForEntry::default()
+            }
+        }));
+        Ok(result)
+    }
+
     fn prepare_snapshot(
         &self,
         resource_group: &str,

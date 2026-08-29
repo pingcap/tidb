@@ -308,6 +308,11 @@ impl Session {
         // Go publishes `TxnCtx.StartTS` the moment the transaction
         // activates; `@@tidb_current_ts` reads exactly that.
         self.current_tso().publish(txn.start_ts);
+        if let Some(process) = &self.process {
+            process
+                .registry()
+                .transaction_started(process.id(), txn.start_ts);
+        }
         self.txn = Some(txn);
         Ok(())
     }
@@ -393,6 +398,9 @@ impl Session {
             local_temporary_at_open,
         });
         self.current_tso().publish(ts);
+        if let Some(process) = &self.process {
+            process.registry().transaction_started(process.id(), ts);
+        }
         Ok(())
     }
 
@@ -403,6 +411,9 @@ impl Session {
     pub(crate) fn discard_stale_statement_transaction(&mut self) {
         if let Some(txn) = self.txn.take() {
             self.set_last_txn_info_started(txn.start_ts);
+        }
+        if let Some(process) = &self.process {
+            process.registry().transaction_finished(process.id());
         }
         self.current_tso().clear();
     }
@@ -515,12 +526,20 @@ impl Session {
                 // A local temporary table's rows are not in that copy -- they
                 // are in the session -- so they are put back by hand.
                 if let Some(txn) = self.txn.take() {
+                    if let Some(process) = &self.process {
+                        process
+                            .registry()
+                            .transaction_state(process.id(), "RollingBack");
+                    }
                     // Go `setLastTxnInfoBeforeTxnEnd`: an activated
                     // transaction that ends without a commit leaves the
                     // start-only record.
                     self.set_last_txn_info_started(txn.start_ts);
                     self.current_tso().clear();
                     self.restore_local_temporary_rows(txn.local_temporary_at_open);
+                    if let Some(process) = &self.process {
+                        process.registry().transaction_finished(process.id());
+                    }
                 }
                 Ok(Some(false))
             }
@@ -632,16 +651,36 @@ impl Session {
             // COMMIT with no open transaction is a no-op, as in MySQL.
             return Ok(());
         };
+        if let Some(process) = &self.process {
+            process
+                .registry()
+                .transaction_state(process.id(), "Committing");
+        }
         if txn.stale_read_ts.is_some() {
             // Go's stale transaction is read-only by construction; its
             // COMMIT publishes nothing, and `setLastTxnInfoBeforeTxnEnd`
             // leaves the start-only record (`pkg/session/session.go:1056`).
             self.set_last_txn_info_started(txn.start_ts);
             self.current_tso().clear();
+            if let Some(process) = &self.process {
+                process.registry().transaction_finished(process.id());
+            }
             return Ok(());
         }
-        let mut shared = self.lock_catalog()?;
+        let mut shared = match self.lock_catalog() {
+            Ok(shared) => shared,
+            Err(error) => {
+                if let Some(process) = &self.process {
+                    process.registry().transaction_finished(process.id());
+                }
+                return Err(error);
+            }
+        };
         if shared.version() != txn.base_version {
+            drop(shared);
+            if let Some(process) = &self.process {
+                process.registry().transaction_finished(process.id());
+            }
             return Err(DriverError::Txn(TxnErrorKind::WriteConflict));
         }
         *shared = txn.working;
@@ -653,6 +692,9 @@ impl Session {
         drop(shared);
         self.set_last_txn_info_committed(txn.start_ts, commit_ts);
         self.current_tso().clear();
+        if let Some(process) = &self.process {
+            process.registry().transaction_finished(process.id());
+        }
         Ok(())
     }
 

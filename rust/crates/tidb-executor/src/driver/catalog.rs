@@ -986,6 +986,7 @@ impl Catalog {
                     }
                     TableEntry::Mem(table) => {
                         tables.push(SourceTable {
+                            is_memory_table: true,
                             table_id: synthetic_table_id,
                             table_name: entry_name.clone(),
                             db_name: database.name.clone(),

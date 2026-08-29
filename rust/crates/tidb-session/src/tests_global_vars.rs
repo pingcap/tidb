@@ -31,6 +31,73 @@ fn two_sessions_sharing_globals() -> (Session, Session, vars::GlobalSysvars) {
     (first, second, globals)
 }
 
+// Transcreated from pinned Go `pkg/util/workloadrepo.TestSettingSQLVariables`.
+#[test]
+fn test_setting_sql_variables() {
+    let (mut session, _, _) = two_sessions_sharing_globals();
+    let worker = tidb_workloadrepo::Worker::new(None, None, None, "worker");
+    session.set_workload_repository(std::sync::Arc::clone(&worker));
+
+    for (statement, expected) in [
+        (
+            "SET GLOBAL tidb_workload_repository_active_sampling_interval = -1",
+            "0",
+        ),
+        (
+            "SET GLOBAL tidb_workload_repository_snapshot_interval = 899",
+            "900",
+        ),
+        (
+            "SET GLOBAL tidb_workload_repository_retention_days = -1",
+            "0",
+        ),
+        (
+            "SET GLOBAL tidb_workload_repository_active_sampling_interval = 601",
+            "600",
+        ),
+        (
+            "SET GLOBAL tidb_workload_repository_snapshot_interval = 7201",
+            "7200",
+        ),
+        (
+            "SET GLOBAL tidb_workload_repository_retention_days = 366",
+            "365",
+        ),
+    ] {
+        session.run(statement).unwrap();
+        let name = statement
+            .split_ascii_whitespace()
+            .nth(2)
+            .expect("SET GLOBAL variable name");
+        assert_eq!(
+            scalar_text(&mut session, &format!("SELECT @@global.{name}")),
+            Some(expected.to_owned())
+        );
+    }
+
+    for name in [
+        "tidb_workload_repository_active_sampling_interval",
+        "tidb_workload_repository_snapshot_interval",
+        "tidb_workload_repository_retention_days",
+    ] {
+        assert!(session
+            .run(&format!("SET GLOBAL {name} = 'invalid'"))
+            .is_err());
+    }
+
+    session
+        .run("SET GLOBAL tidb_workload_repository_dest = 'table'")
+        .unwrap();
+    assert!(worker.enabled());
+    session
+        .run("SET GLOBAL tidb_workload_repository_dest = ''")
+        .unwrap();
+    assert!(!worker.enabled());
+    assert!(session
+        .run("SET GLOBAL tidb_workload_repository_dest = 'invalid'")
+        .is_err());
+}
+
 #[test]
 fn statement_context_reads_global_sysvars_through_the_live_accessor() {
     let globals = vars::GlobalSysvars::new();

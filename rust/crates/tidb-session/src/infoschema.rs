@@ -184,6 +184,77 @@ fn visible_tables(
     pairs
 }
 
+/// Go `memtableRetriever.setDataFromIndexUsage`: one row for every index of
+/// every table visible to the current account, joined with the Domain's
+/// node-global usage counters. Integer primary-key handles use synthetic
+/// index ID zero because Go does not keep them in `TableInfo.Indices`.
+pub(crate) fn tidb_index_usage_rows(
+    catalog: &Catalog,
+    visibility: &SchemaVisibility,
+    collector: &tidb_stats::index_usage::IndexUsageCollector,
+) -> Vec<Vec<Datum>> {
+    use chrono::{DateTime, Local};
+    use tidb_datatype::{core_time_from_datetime, Time, TimeType};
+
+    fn usage_row(
+        schema: &str,
+        table: &str,
+        index: &str,
+        usage: tidb_stats::IndexUsageSample,
+    ) -> Vec<Datum> {
+        let last_access = if usage.last_used_at == std::time::SystemTime::UNIX_EPOCH {
+            Datum::Null
+        } else {
+            let local: DateTime<Local> = usage.last_used_at.into();
+            let core = core_time_from_datetime(local);
+            Datum::new_time(
+                Time::new(core, TimeType::Timestamp, 0)
+                    .expect("fsp 0 is valid for TIDB_INDEX_USAGE timestamps"),
+            )
+        };
+        let mut row = vec![
+            text(schema),
+            text(table),
+            text(index),
+            Datum::Int(usage.query_total as i64),
+            Datum::Int(usage.kv_req_total as i64),
+            Datum::Int(usage.row_access_total as i64),
+        ];
+        row.extend(
+            usage
+                .percentage_access
+                .into_iter()
+                .map(|value| Datum::Int(value as i64)),
+        );
+        row.push(last_access);
+        row
+    }
+
+    let mut rows = Vec::new();
+    for (schema, table_name) in visible_tables(catalog, visibility, ANY_PRIV) {
+        let Some(TableEntry::Kv(table)) = catalog.table_in(&schema, &table_name) else {
+            continue;
+        };
+        if table.pk_handle_offset().is_some() {
+            rows.push(usage_row(
+                &schema,
+                &table.name,
+                "primary",
+                collector.get_index_usage(table.table_id, 0),
+            ));
+        }
+        for index in table.indexes() {
+            rows.push(usage_row(
+                &schema,
+                &table.name,
+                &index.name.to_ascii_lowercase(),
+                collector.get_index_usage(table.table_id, index.id),
+            ));
+        }
+    }
+    rows
+}
+
 /// The rows of one `information_schema` table, computed from `catalog` and
 /// filtered by what `visibility` may see.
 #[must_use]

@@ -27,8 +27,7 @@
 //! therefore kills a peer without knowing anything about sockets.
 //!
 //! NOT MODELLED (Go has these on `ProcessInfo`, and inventing values would be
-//! worse than omitting them): the `PROCESS` privilege filter that hides other
-//! users' rows, plan/digest/memory/disk columns of
+//! worse than omitting them): plan/digest/memory/disk columns of
 //! `information_schema.processlist`, resource groups, session alias, and
 //! global-kill's server-id-routed `KILL` across instances.
 
@@ -39,6 +38,8 @@ use std::time::Instant;
 use chrono::{DateTime, Utc};
 use tidb_util::memory::Tracker;
 use tidb_util::memoryusagealarm::{ProcessInfo, SessionManager};
+
+const MAX_TRANSACTION_STMT_HISTORY: usize = 50;
 
 /// One live connection's kill mechanism, owned by the server front end.
 ///
@@ -78,6 +79,44 @@ pub struct ProcessRow {
     pub info: Option<String>,
 }
 
+/// One live transaction exposed by `information_schema.TIDB_TRX`.
+#[derive(Clone, Debug)]
+pub struct TransactionRow {
+    /// Transaction start timestamp (TSO).
+    pub start_ts: u64,
+    /// Digest of the statement currently running, if any.
+    pub current_sql_digest: Option<String>,
+    /// Source transaction-running-state label.
+    pub state: &'static str,
+    /// Lock-wait start, absent outside `LockWaiting`.
+    pub waiting_start: Option<DateTime<Utc>>,
+    /// Number of entries in the transaction memory buffer.
+    pub mem_buffer_keys: u64,
+    /// Bytes consumed by the transaction memory buffer.
+    pub mem_buffer_bytes: i64,
+    /// Owning connection ID.
+    pub session_id: u64,
+    /// Login username.
+    pub user: String,
+    /// Current schema.
+    pub db: String,
+    /// Digests executed by this transaction.
+    pub all_sql_digests: Vec<String>,
+    /// Physical table IDs touched by this transaction.
+    pub related_table_ids: Vec<i64>,
+}
+
+struct TransactionEntry {
+    start_ts: u64,
+    current_sql_digest: Option<String>,
+    state: &'static str,
+    waiting_start: Option<DateTime<Utc>>,
+    mem_buffer_keys: u64,
+    mem_buffer_bytes: i64,
+    all_sql_digests: Vec<String>,
+    related_table_ids: std::collections::HashSet<i64>,
+}
+
 /// Go `ProcessInfo.ToRowForShow`: without `FULL`, `Info` is truncated with
 /// `fmt.Sprintf("%.100v", pi.Info)`, i.e. to its first 100 characters.
 pub const PROCESS_INFO_SHOW_LIMIT: usize = 100;
@@ -103,12 +142,14 @@ struct ProcessEntry {
     state: String,
     info: Option<String>,
     digest: String,
+    digest_text: String,
     /// When the current command started, which `Time` counts from.
     since: Instant,
     started_at: DateTime<Utc>,
     mem_tracker: Option<Arc<Tracker>>,
     disk_tracker: Option<Arc<Tracker>>,
     kill: Option<Arc<dyn ProcessKillTarget>>,
+    transaction: Option<TransactionEntry>,
 }
 
 /// The server's live connection registry, shared by every connection thread.
@@ -156,11 +197,13 @@ impl ProcessRegistry {
                 state: String::new(),
                 info: None,
                 digest: String::new(),
+                digest_text: String::new(),
                 since: Instant::now(),
                 started_at: Utc::now(),
                 mem_tracker: None,
                 disk_tracker: None,
                 kill,
+                transaction: None,
             },
         );
         ProcessGuard {
@@ -174,10 +217,22 @@ impl ProcessRegistry {
     pub fn statement_started(&self, id: u64, sql: &str, state: &str) {
         if let Some(entry) = self.lock().get_mut(&id) {
             entry.info = Some(sql.to_owned());
-            entry.digest = tidb_parser::normalize_digest(sql).1.to_string();
+            let (normalized, digest) = tidb_parser::normalize_digest(sql);
+            entry.digest = digest.to_string();
+            entry.digest_text = normalized;
             entry.since = Instant::now();
             entry.started_at = Utc::now();
             entry.state = state.to_owned();
+            if let Some(transaction) = &mut entry.transaction {
+                transaction.state = "Running";
+                let digest = entry.digest.clone();
+                transaction.current_sql_digest = (!digest.is_empty()).then(|| digest.clone());
+                if !digest.is_empty()
+                    && transaction.all_sql_digests.len() < MAX_TRANSACTION_STMT_HISTORY
+                {
+                    transaction.all_sql_digests.push(digest);
+                }
+            }
         }
     }
 
@@ -188,11 +243,106 @@ impl ProcessRegistry {
         if let Some(entry) = self.lock().get_mut(&id) {
             entry.info = None;
             entry.digest.clear();
+            entry.digest_text.clear();
             entry.since = Instant::now();
             entry.started_at = Utc::now();
             entry.db = db.to_owned();
             entry.state = state.to_owned();
+            if let Some(transaction) = &mut entry.transaction {
+                transaction.state = "Idle";
+                transaction.current_sql_digest = None;
+                transaction.waiting_start = None;
+            }
         }
+    }
+
+    /// Publishes a newly activated transaction for `TIDB_TRX`.
+    pub fn transaction_started(&self, id: u64, start_ts: u64) {
+        if let Some(entry) = self.lock().get_mut(&id) {
+            let running = entry.info.is_some();
+            let digest = (!entry.digest.is_empty()).then(|| entry.digest.clone());
+            entry.transaction = Some(TransactionEntry {
+                start_ts,
+                current_sql_digest: digest.clone(),
+                state: if running { "Running" } else { "Idle" },
+                waiting_start: None,
+                mem_buffer_keys: 0,
+                mem_buffer_bytes: 0,
+                all_sql_digests: digest.into_iter().collect(),
+                related_table_ids: std::collections::HashSet::new(),
+            });
+        }
+    }
+
+    /// Removes the transaction after commit or rollback.
+    pub fn transaction_finished(&self, id: u64) {
+        if let Some(entry) = self.lock().get_mut(&id) {
+            entry.transaction = None;
+        }
+    }
+
+    /// Changes the source transaction-running-state label.
+    pub fn transaction_state(&self, id: u64, state: &'static str) {
+        if let Some(transaction) = self
+            .lock()
+            .get_mut(&id)
+            .and_then(|entry| entry.transaction.as_mut())
+        {
+            transaction.state = state;
+            transaction.waiting_start = (state == "LockWaiting").then(chrono::Utc::now);
+        }
+    }
+
+    /// Publishes the current transaction MemBuffer length and native memory
+    /// footprint. Go updates these from `LazyTxn.Len` and the MemDB footprint
+    /// hook while the transaction remains active.
+    pub fn transaction_buffer_metrics(&self, id: u64, keys: u64, bytes: i64) {
+        if let Some(transaction) = self
+            .lock()
+            .get_mut(&id)
+            .and_then(|entry| entry.transaction.as_mut())
+        {
+            transaction.mem_buffer_keys = keys;
+            transaction.mem_buffer_bytes = bytes;
+        }
+    }
+
+    /// Records one physical table used by the live transaction.
+    pub fn transaction_related_table(&self, id: u64, table_id: i64) {
+        if let Some(transaction) = self
+            .lock()
+            .get_mut(&id)
+            .and_then(|entry| entry.transaction.as_mut())
+        {
+            transaction.related_table_ids.insert(table_id);
+        }
+    }
+
+    /// Returns every live transaction in stable connection-ID order.
+    #[must_use]
+    pub fn transaction_snapshot(&self) -> Vec<TransactionRow> {
+        let mut rows = self
+            .lock()
+            .iter()
+            .filter_map(|(id, entry)| {
+                let transaction = entry.transaction.as_ref()?;
+                Some(TransactionRow {
+                    start_ts: transaction.start_ts,
+                    current_sql_digest: transaction.current_sql_digest.clone(),
+                    state: transaction.state,
+                    waiting_start: transaction.waiting_start,
+                    mem_buffer_keys: transaction.mem_buffer_keys,
+                    mem_buffer_bytes: transaction.mem_buffer_bytes,
+                    session_id: *id,
+                    user: entry.user.clone(),
+                    db: entry.db.clone(),
+                    all_sql_digests: transaction.all_sql_digests.clone(),
+                    related_table_ids: transaction.related_table_ids.iter().copied().collect(),
+                })
+            })
+            .collect::<Vec<_>>();
+        rows.sort_by_key(|row| row.session_id);
+        rows
     }
 
     /// Every live connection, ordered by identity so the list is stable.

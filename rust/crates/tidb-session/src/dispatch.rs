@@ -525,6 +525,29 @@ impl Session {
             };
             let rows = if table_name.eq_ignore_ascii_case("PROCESSLIST") {
                 self.process_list_table_rows()
+            } else if table_name.eq_ignore_ascii_case("TIDB_INDEX_USAGE") {
+                let visibility = self.schema_visibility();
+                let collector = std::sync::Arc::clone(&self.index_usage_collector);
+                self.with_catalog_mut(|catalog| {
+                    Ok(infoschema::tidb_index_usage_rows(
+                        catalog,
+                        &visibility,
+                        collector.as_ref(),
+                    ))
+                })?
+            } else if table_name.eq_ignore_ascii_case("TIDB_STATEMENTS_STATS") {
+                self.tidb_statements_stats_table_rows(&columns)
+            } else if table_name.eq_ignore_ascii_case("TIDB_TRX") {
+                self.tidb_trx_table_rows()
+            } else if table_name.eq_ignore_ascii_case("DATA_LOCK_WAITS") {
+                self.data_lock_waits_table_rows()?
+            } else if table_name.eq_ignore_ascii_case("CLIENT_ERRORS_SUMMARY_GLOBAL")
+                || table_name.eq_ignore_ascii_case("CLIENT_ERRORS_SUMMARY_BY_USER")
+                || table_name.eq_ignore_ascii_case("CLIENT_ERRORS_SUMMARY_BY_HOST")
+            {
+                self.client_errors_summary_table_rows(&table_name)?
+            } else if table_name.eq_ignore_ascii_case("MEMORY_USAGE") {
+                memory_usage_table_rows()
             } else if table_name.eq_ignore_ascii_case("MEMORY_USAGE_OPS_HISTORY") {
                 tidb_util::servermemorylimit::GLOBAL_MEMORY_OPS_HISTORY_MANAGER.get_rows()
             } else if table_name.eq_ignore_ascii_case("DEADLOCKS") {
@@ -560,6 +583,303 @@ impl Session {
             }
             Ok(scratch)
         })
+    }
+
+    /// Go `stmtSummaryRetriever.initSummaryRowsReader` for the cumulative
+    /// `TIDB_STATEMENTS_STATS` table used by the workload repository.
+    fn tidb_statements_stats_table_rows(
+        &self,
+        columns: &[(String, tidb_datatype::FieldType)],
+    ) -> Vec<Vec<tidb_datatype::Datum>> {
+        use tidb_ast::CiString;
+        use tidb_model::ColumnInfo;
+        use tidb_parser::auth::UserIdentity;
+        use tidb_stmtsummary::reader::StmtSummaryReader;
+
+        let columns = columns
+            .iter()
+            .enumerate()
+            .map(|(offset, (name, _))| ColumnInfo {
+                id: i64::try_from(offset).expect("information-schema column count fits i64"),
+                name: CiString::new(name),
+                offset: i64::try_from(offset).expect("information-schema column count fits i64"),
+                ..ColumnInfo::default()
+            })
+            .collect();
+        let user = self.login_user.as_deref().map(|login| {
+            let (username, hostname) = login.split_once('@').unwrap_or((login, ""));
+            let (auth_username, auth_hostname) = self.current_identity().unwrap_or(("", ""));
+            UserIdentity {
+                username: username.to_owned(),
+                hostname: hostname.to_owned(),
+                current_user: false,
+                auth_username: auth_username.to_owned(),
+                auth_hostname: auth_hostname.to_owned(),
+                auth_plugin: String::new(),
+            }
+        });
+        StmtSummaryReader::new(
+            user,
+            self.has_process_privilege(),
+            columns,
+            String::new(),
+            self.session_time_zone(),
+        )
+        .get_stmt_summary_cumulative_rows()
+    }
+
+    /// Pinned Go `tidbTrxTableRetriever.retrieve` for this node.
+    fn tidb_trx_table_rows(&self) -> Vec<Vec<tidb_datatype::Datum>> {
+        use chrono::{DateTime, Local};
+        use tidb_datatype::{core_time_from_datetime, Collation, Datum, MysqlEnum, Time, TimeType};
+
+        let Some(process) = self.process.as_ref() else {
+            return Vec::new();
+        };
+        let login_username = self
+            .login_user
+            .as_deref()
+            .and_then(|identity| identity.split_once('@').map(|(user, _)| user));
+        let has_process = self.has_process_privilege();
+        process
+            .registry()
+            .transaction_snapshot()
+            .into_iter()
+            .filter(|transaction| {
+                has_process
+                    || login_username.is_none_or(|username| username == transaction.user.as_str())
+            })
+            .map(|transaction| {
+                let current_sql_digest_text =
+                    transaction
+                        .current_sql_digest
+                        .as_deref()
+                        .and_then(|digest| {
+                            tidb_stmtsummary::statement_summary::STMT_SUMMARY_BY_DIGEST_MAP
+                                .normalized_sql_for_digest(digest)
+                        });
+                let start = DateTime::from_timestamp_millis((transaction.start_ts >> 18) as i64)
+                    .map(DateTime::<Local>::from)
+                    .map(|value| {
+                        Datum::new_time(
+                            Time::new(core_time_from_datetime(value), TimeType::Timestamp, 6)
+                                .expect("fsp 6 is valid"),
+                        )
+                    })
+                    .unwrap_or(Datum::Null);
+                let waiting_start = transaction
+                    .waiting_start
+                    .map(DateTime::<Local>::from)
+                    .map(|value| {
+                        Datum::new_time(
+                            Time::new(core_time_from_datetime(value), TimeType::Timestamp, 6)
+                                .expect("fsp 6 is valid"),
+                        )
+                    })
+                    .unwrap_or(Datum::Null);
+                let waiting_time = transaction
+                    .waiting_start
+                    .map(|started| {
+                        Datum::Real(
+                            chrono::Utc::now()
+                                .signed_duration_since(started)
+                                .num_microseconds()
+                                .unwrap_or(0) as f64
+                                / 1_000_000.0,
+                        )
+                    })
+                    .unwrap_or(Datum::Null);
+                let state_index = match transaction.state {
+                    "Idle" => 1,
+                    "Running" => 2,
+                    "LockWaiting" => 3,
+                    "Committing" => 4,
+                    "RollingBack" => 5,
+                    _ => 1,
+                };
+                vec![
+                    Datum::UInt(transaction.start_ts),
+                    start,
+                    transaction
+                        .current_sql_digest
+                        .clone()
+                        .map(Datum::new_string)
+                        .unwrap_or(Datum::Null),
+                    current_sql_digest_text
+                        .map(Datum::new_string)
+                        .unwrap_or(Datum::Null),
+                    Datum::new_enum(
+                        MysqlEnum::new(transaction.state, state_index),
+                        Collation::Utf8Mb4Bin,
+                    ),
+                    waiting_start,
+                    Datum::UInt(transaction.mem_buffer_keys),
+                    Datum::Int(transaction.mem_buffer_bytes),
+                    Datum::UInt(transaction.session_id),
+                    Datum::new_string(transaction.user),
+                    Datum::new_string(transaction.db),
+                    Datum::new_string(
+                        serde_json::to_string(&transaction.all_sql_digests)
+                            .expect("SQL digest strings serialize"),
+                    ),
+                    Datum::new_string(
+                        transaction
+                            .related_table_ids
+                            .iter()
+                            .map(i64::to_string)
+                            .collect::<Vec<_>>()
+                            .join(","),
+                    ),
+                    waiting_time,
+                ]
+            })
+            .collect()
+    }
+
+    /// Pinned Go `dataLockWaitsTableRetriever.retrieve` for pessimistic waits.
+    fn data_lock_waits_table_rows(
+        &mut self,
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
+        use std::fmt::Write as _;
+        use tidb_datatype::Datum;
+        use tidb_stmtsummary::statement_summary::STMT_SUMMARY_BY_DIGEST_MAP;
+
+        if !self.has_process_privilege() {
+            return Err(DriverError::SpecificAccessDenied("PROCESS".to_owned()));
+        }
+        let Some(provider) = self.data_lock_waits.as_ref().map(std::sync::Arc::clone) else {
+            return Ok(Vec::new());
+        };
+        let waits = provider.lock_waits().map_err(DriverError::unsupported)?;
+        let snapshot = self.with_catalog_mut(|catalog| Ok(catalog.tidb_decode_key_snapshot()))?;
+        let zone = self.session_time_zone();
+
+        Ok(waits
+            .into_iter()
+            .map(|wait| {
+                let mut key_hex = String::with_capacity(wait.key.len() * 2);
+                for byte in &wait.key {
+                    write!(&mut key_hex, "{byte:02X}")
+                        .expect("writing hexadecimal to String cannot fail");
+                }
+                let key_info = snapshot
+                    .decode(key_hex.as_bytes(), &zone)
+                    .ok()
+                    .map(Datum::Bytes)
+                    .unwrap_or(Datum::Null);
+                let digest = tidb_txnkv::decode_resource_group_tag(&wait.resource_group_tag)
+                    .ok()
+                    .flatten()
+                    .map(|bytes| {
+                        let mut hex = String::with_capacity(bytes.len() * 2);
+                        for byte in bytes {
+                            write!(&mut hex, "{byte:02x}")
+                                .expect("writing hexadecimal to String cannot fail");
+                        }
+                        hex
+                    });
+                let digest_text = digest
+                    .as_deref()
+                    .and_then(|digest| STMT_SUMMARY_BY_DIGEST_MAP.normalized_sql_for_digest(digest))
+                    .map(Datum::new_string)
+                    .unwrap_or(Datum::Null);
+                vec![
+                    Datum::new_string(key_hex),
+                    key_info,
+                    Datum::UInt(wait.txn),
+                    Datum::UInt(wait.wait_for_txn),
+                    digest.map(Datum::new_string).unwrap_or(Datum::Null),
+                    digest_text,
+                ]
+            })
+            .collect())
+    }
+
+    /// Pinned Go `memtableRetriever.setDataForClientErrorsSummary`.
+    fn client_errors_summary_table_rows(
+        &self,
+        table_name: &str,
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
+        use chrono::{DateTime, Local};
+        use tidb_datatype::{core_time_from_datetime, CoreTime, Datum, Time, TimeType};
+        use tidb_error::tidb::infoschema::{self, ErrorStats};
+
+        fn text(value: &str) -> Datum {
+            Datum::new_string(value.as_bytes())
+        }
+
+        fn count(value: isize) -> Datum {
+            Datum::Int(i64::try_from(value).expect("client error count fits i64"))
+        }
+
+        fn timestamp(value: Option<std::time::SystemTime>) -> Datum {
+            let time = match value {
+                Some(value) => {
+                    let local: DateTime<Local> = value.into();
+                    Time::new(core_time_from_datetime(local), TimeType::Timestamp, 0)
+                }
+                None => Time::new(CoreTime::from_raw(0), TimeType::Timestamp, 0),
+            }
+            .expect("fsp 0 is valid for client-error timestamps");
+            Datum::new_time(time)
+        }
+
+        fn message(code: u16) -> &'static str {
+            tidb_error::mysql::message_by_code(code)
+                .or_else(|| tidb_error::tidb::message_by_code(code))
+                .map_or("", |message| message.raw)
+        }
+
+        fn summary_cells(code: u16, summary: &infoschema::ErrorSummary) -> Vec<Datum> {
+            vec![
+                Datum::Int(i64::from(code)),
+                text(message(code)),
+                count(summary.error_count),
+                count(summary.warning_count),
+                timestamp(Some(summary.first_seen)),
+                timestamp(summary.last_seen),
+            ]
+        }
+
+        fn append_scoped(rows: &mut Vec<Vec<Datum>>, scope: &str, stats: ErrorStats) {
+            for (code, summary) in stats {
+                let mut row = Vec::with_capacity(7);
+                row.push(text(scope));
+                row.extend(summary_cells(code, &summary));
+                rows.push(row);
+            }
+        }
+
+        let has_process = self.has_process_privilege();
+        if !has_process
+            && (table_name.eq_ignore_ascii_case("CLIENT_ERRORS_SUMMARY_GLOBAL")
+                || table_name.eq_ignore_ascii_case("CLIENT_ERRORS_SUMMARY_BY_HOST"))
+        {
+            return Err(DriverError::SpecificAccessDenied("PROCESS".to_owned()));
+        }
+
+        let mut rows = Vec::new();
+        if table_name.eq_ignore_ascii_case("CLIENT_ERRORS_SUMMARY_GLOBAL") {
+            for (code, summary) in infoschema::global_stats() {
+                rows.push(summary_cells(code, &summary));
+            }
+        } else if table_name.eq_ignore_ascii_case("CLIENT_ERRORS_SUMMARY_BY_HOST") {
+            for (host, stats) in infoschema::host_stats() {
+                append_scoped(&mut rows, &host, stats);
+            }
+        } else {
+            let login_username = self
+                .login_user
+                .as_deref()
+                .and_then(|identity| identity.split_once('@').map(|(user, _)| user));
+            for (user, stats) in infoschema::user_stats() {
+                if !has_process && login_username.is_some_and(|login| login != user) {
+                    continue;
+                }
+                append_scoped(&mut rows, &user, stats);
+            }
+        }
+        Ok(rows)
     }
 
     pub(crate) fn execute_statement(&mut self, sql: &str) -> Result<StmtOutput, DriverError> {
@@ -737,7 +1057,14 @@ impl Session {
         for (db, table) in names {
             let db = if db.is_empty() { &current_db } else { db };
             match catalog.stored_table_id(db, table) {
-                Some(table_id) => sink.record_table(table_id, version),
+                Some(table_id) => {
+                    sink.record_table(table_id, version);
+                    if let Some(process) = &self.process {
+                        process
+                            .registry()
+                            .transaction_related_table(process.id(), table_id);
+                    }
+                }
                 None => sink.record_unresolved(),
             }
         }
@@ -767,7 +1094,14 @@ impl Session {
         for (db, table) in names {
             let db = if db.is_empty() { &current_db } else { db };
             match catalog.stored_table_id(db, table) {
-                Some(table_id) => sink.record_table(table_id, version),
+                Some(table_id) => {
+                    sink.record_table(table_id, version);
+                    if let Some(process) = &self.process {
+                        process
+                            .registry()
+                            .transaction_related_table(process.id(), table_id);
+                    }
+                }
                 None => sink.record_unresolved(),
             }
         }
@@ -1800,6 +2134,55 @@ impl Session {
         }
         Ok(())
     }
+}
+
+fn memory_usage_table_rows() -> Vec<Vec<tidb_datatype::Datum>> {
+    use std::sync::atomic::Ordering;
+
+    use tidb_datatype::{core_time_from_datetime, CoreTime, Datum, Time, TimeType};
+
+    let stats = tidb_util::memory::read_mem_stats();
+    let current_ops = tidb_util::servermemorylimit::IS_KILLING
+        .load(Ordering::SeqCst)
+        .then(|| Datum::new_string("shrink"))
+        .unwrap_or(Datum::Null);
+    let session_kill_last = tidb_util::servermemorylimit::SESSION_KILL_LAST
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .map(|value| {
+            Datum::new_time(
+                Time::new(core_time_from_datetime(value), TimeType::DateTime, 0)
+                    .expect("fsp 0 is valid"),
+            )
+        })
+        .unwrap_or(Datum::Null);
+    let zero_datetime = Datum::new_time(
+        Time::new(CoreTime::default(), TimeType::DateTime, 0).expect("fsp 0 is valid"),
+    );
+    vec![vec![
+        Datum::new_int(
+            tidb_util::cgroup::effective_memory_limit()
+                .ok()
+                .and_then(|value| i64::try_from(value).ok())
+                .unwrap_or(0),
+        ),
+        Datum::new_int(
+            i64::try_from(tidb_util::memory::SERVER_MEMORY_LIMIT.load(Ordering::SeqCst))
+                .unwrap_or(i64::MAX),
+        ),
+        Datum::new_int(stats.heap_inuse),
+        Datum::new_int(
+            i64::try_from(tidb_util::servermemorylimit::MEMORY_MAX_USED.load(Ordering::SeqCst))
+                .unwrap_or(i64::MAX),
+        ),
+        current_ops,
+        session_kill_last,
+        Datum::new_int(tidb_util::servermemorylimit::SESSION_KILL_TOTAL.load(Ordering::SeqCst)),
+        zero_datetime,
+        Datum::new_int(0),
+        Datum::new_int(0),
+        Datum::new_int(0),
+    ]]
 }
 
 impl Session {

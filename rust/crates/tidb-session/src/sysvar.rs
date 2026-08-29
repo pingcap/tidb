@@ -15,7 +15,9 @@
 //! The system-variable registry: Go `pkg/sessionctx/variable`'s `sysVars`
 //! table plus the value validation `SysVar.ValidateFromType` performs.
 //!
-//! GENERATED, NOT HAND-WRITTEN: every one of the 948 entries below was
+//! GENERATED, NOT HAND-WRITTEN: 948 base entries were captured from
+//! `sysvar.go`; the four workload-repository entries registered by Go's
+//! `pkg/util/workloadrepo.init` are merged into the same runtime registry.
 //! captured from this repository's own Go registry by iterating
 //! `variable.GetSysVars()` and printing each entry's name, scope, default,
 //! type, read-only flag, bounds and possible values. Regexing `sysvar.go`
@@ -485,6 +487,14 @@ impl SysVarDef {
                 value: "SYSTEM".to_owned(),
                 truncated: validated.truncated,
             });
+        }
+        if self.name == "tidb_workload_repository_dest" {
+            return tidb_workloadrepo::validate_dest(&validated.value)
+                .map(|value| Validated {
+                    value,
+                    truncated: validated.truncated,
+                })
+                .map_err(ValidationError::Refused);
         }
         // Go's `tidb_enable_table_partition` validation: partitioning is
         // ALWAYS on, so the closure returns `vardef.On` whatever was assigned
@@ -1003,7 +1013,7 @@ mod tests {
     /// when this table was captured.
     #[test]
     fn the_registry_is_complete_and_sorted() {
-        assert_eq!(SYS_VARS.len(), 948);
+        assert_eq!(SYS_VARS.len(), 952);
         for pair in SYS_VARS.windows(2) {
             assert!(
                 pair[0].name < pair[1].name,

@@ -36,6 +36,62 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-08-29: began the complete pinned Go `pkg/util/workloadrepo` package
+  audit (eight production files, one test file, and `BUILD.bazel`; no package
+  doc, generated, or platform variants). Added its Rust owner and ordinary
+  server/session/etcd/DDL integration. The first behavioral regression exposed
+  that catalog memory tables were incorrectly planned as TiKV table scans, so
+  the common SELECT path now carries Go's `LogicalMemTable -> PhysicalMemTable
+  -> executorBuilder` shape, including column pruning and the source plan-cache
+  refusal. Snapshot retries now retain parse errors for all five Go attempts,
+  manual initiation is serialized with worker control changes, snapshot error
+  aggregation is source ordered, and repository-table creation no longer
+  prematurely freezes insert SQL. An empty etcd value now follows Go's
+  missing-key recovery attempt before the create-revision conflict. Removed
+  thirteen tests that merely reused Go test names while asserting constants,
+  interval fields, or vector lengths; they were not source-test
+  transcreations. `TIDB_INDEX_USAGE` now enumerates visible catalog indexes
+  and reads the node-global `tidb-stats` collector, including Go's synthetic
+  integer-primary-key ID zero, seven buckets, and nullable timestamp; the
+  cluster session factory shares one collector across its sessions.
+  `TIDB_STATEMENTS_STATS` now uses the existing cumulative statement-summary
+  reader through the same ordinary memory-table query path, with session user,
+  PROCESS visibility, and the full `SessionTimeZone` boundary instead of the
+  former named-zone-only narrowing. The three client-error source tables now
+  read the existing `pkg/errno`-shaped shared counters with Go's PROCESS and
+  own-user visibility, and `FLUSH CLIENT_ERRORS_SUMMARY` clears those same
+  counters instead of succeeding as a no-op. The ordinary MySQL packet
+  boundary now records every emitted ERR packet, including authentication and
+  session-open failures, against the parsed user and peer host; successful
+  text statements publish their real warning codes at the response boundary,
+  matching Go's `clientConn.writeError`/`flush` ownership instead of counting
+  internal session errors. SQL-level regressions read all five providers from
+  their real shared collectors. Go's `TestSettingSQLVariables` now runs
+  through the ordinary `SET GLOBAL` path; it exposed and fixed a root hook bug
+  where Rust passed the original out-of-range text to the worker after the
+  sysvar layer had accepted and clamped it. Removed the crate's empty
+  aggregate-test harness and two Rust-only snapshot edge tests. Restored Go's
+  parameterized `getHouseKeeper` loop and its unarmed-timer behavior after a
+  non-owner tick or partition error. A shared repository-session test
+  authority now transcreates the source races, two-worker election handoff,
+  global/admin control, sampling and snapshot timing, stop/restart,
+  partition-create/drop/startup maintenance, housekeeper retention changes,
+  three owner-loss modes, clock calculation, and snapshot-ID recovery;
+  `TestSettingSQLVariables` remains at the ordinary session/sysvar boundary.
+  `TIDB_TRX` now reads the live process registry through ordinary memory-table
+  execution, applies Go's PROCESS/own-user filter, reports source state and
+  timestamps, records related physical table IDs, and caps statement digest
+  history at Go's 50 entries; its SQL-level visibility/history regression
+  passes. Completed transaction memory and lock-wait publication through the
+  ordinary transaction/runtime owners: `TIDB_TRX` now reports the native
+  mutation-buffer footprint, waiting timestamps, related table IDs, and
+  statement-summary-resolved current SQL text; `DATA_LOCK_WAITS` queries every
+  PD store through TiKV's `GetLockWaitInfo`, appends the node's resolving-lock
+  registry, applies Go's PROCESS visibility, and decodes key/digest metadata.
+  Prepared-statement responses now update the same warning collector as text
+  responses at the common wire boundary. The complete package inventory,
+  integration decisions, and WIP gates are recorded in
+  `receipts/util_workloadrepo.md`; this package checkpoint is complete.
 - 2026-08-29: completed the pinned Go `pkg/owner` prerequisite (three
   production files, three test files, `BUILD.bazel`, and `OWNERS`) in a new
   `tidb-owner` crate over the ordinary `tidb-pd-client` etcd authority. Added

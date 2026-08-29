@@ -3650,16 +3650,19 @@ dependencies = [
  "tidb-executor",
  "tidb-model",
  "tidb-mysql",
+ "tidb-owner",
  "tidb-parser",
  "tidb-pd-client",
  "tidb-planner",
  "tidb-proto",
  "tidb-protocol",
  "tidb-session",
+ "tidb-stats",
  "tidb-tablecodec",
  "tidb-txnkv",
  "tidb-unistore",
  "tidb-util",
+ "tidb-workloadrepo",
  "tikv-client",
  "tikv-jemalloc-sys",
  "tikv-jemallocator",
@@ -3679,6 +3682,7 @@ dependencies = [
  "tidb-datatype",
  "tidb-domain",
  "tidb-error",
+ "tidb-exec",
  "tidb-executor",
  "tidb-log",
  "tidb-metadef",
@@ -3687,10 +3691,14 @@ dependencies = [
  "tidb-naming",
  "tidb-parser",
  "tidb-planner",
+ "tidb-stats",
+ "tidb-stmtsummary",
  "tidb-tablecodec",
  "tidb-tikvutil",
+ "tidb-txnkv",
  "tidb-util",
  "tidb-vardef",
+ "tidb-workloadrepo",
  "toml",
 ]
 
@@ -3849,6 +3857,17 @@ dependencies = [
 [[package]]
 name = "tidb-vardef"
 version = "0.0.0"
+
+[[package]]
+name = "tidb-workloadrepo"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "chrono-tz",
+ "tidb-owner",
+ "tidb-pd-client",
+ "tidb-stmtsummary",
+]
 
 [[package]]
 name = "tikv-client"

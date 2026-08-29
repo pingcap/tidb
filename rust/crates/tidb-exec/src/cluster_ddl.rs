@@ -299,6 +299,27 @@ pub enum DdlStatement {
         #[allow(missing_docs)]
         context: DdlStatementContext,
     },
+    /// `ALTER TABLE ... ADD PARTITION`, validated and applied by the same
+    /// partition implementation used by the ordinary local executor.
+    AddPartitions {
+        /// The resolved database name.
+        schema: String,
+        /// The table name as written.
+        table: String,
+        /// Canonical SQL retained so the shared partition DDL implementation
+        /// parses and applies exactly the source action.
+        sql: String,
+    },
+    /// `ALTER TABLE ... DROP PARTITION`, through the ordinary partition DDL
+    /// implementation.
+    DropPartitions {
+        /// The resolved database name.
+        schema: String,
+        /// The table name as written.
+        table: String,
+        /// Canonical SQL for the shared partition DDL implementation.
+        sql: String,
+    },
     /// The single-action `ALTER TABLE ... DROP COLUMN` this node serves.
     ///
     /// Go `onDropColumn` + `isDroppableColumn`: the last column of the table,
@@ -1459,6 +1480,28 @@ fn lower_alter_table_catalog(
                 context: DdlStatementContext(tidb_executor::StmtContext::for_query()),
             }))
         }
+        tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::Add { .. }) => {
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            Ok(Some(DdlStatement::AddPartitions {
+                schema,
+                table,
+                sql: Stmt::Ddl(tidb_ast::NodeBox::new(DdlStmt::AlterTable(Box::new(
+                    alter.clone(),
+                ))))
+                .restore(),
+            }))
+        }
+        tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::Drop { .. }) => {
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            Ok(Some(DdlStatement::DropPartitions {
+                schema,
+                table,
+                sql: Stmt::Ddl(tidb_ast::NodeBox::new(DdlStmt::AlterTable(Box::new(
+                    alter.clone(),
+                ))))
+                .restore(),
+            }))
+        }
         _ => Ok(None),
     }
 }
@@ -2368,6 +2411,117 @@ pub fn plan_ddl<S: MetaSnapshot>(
     plan_ddl_with_collation(snapshot, statement, start_ts, new_collation_enabled())
 }
 
+fn apply_partition_change(
+    stored: &TableInfo,
+    schema: &str,
+    table: &str,
+    sql: &str,
+) -> Result<tidb_executor::partition_routing::PartitionSpec, DdlPlanError> {
+    use tidb_executor::ddl::StoredPartitionDefinition;
+    use tidb_executor::{Catalog, KvColumn, KvTable, TableEntry};
+
+    let partition = stored.partition.as_ref().ok_or_else(|| {
+        DdlPlanError::Admission(DdlAdmissionError::with_code(
+            1505,
+            "Partition management on a not partitioned table is not possible".to_owned(),
+        ))
+    })?;
+    let partition = partition.read();
+    let names = stored
+        .columns
+        .iter_deref()
+        .map(|column| column.read().name.original().to_owned())
+        .collect::<Vec<_>>();
+    let types = stored
+        .columns
+        .iter_deref()
+        .map(|column| column.read().field_type.clone())
+        .collect::<Vec<_>>();
+    let definitions = partition
+        .definitions
+        .snapshot()
+        .into_iter()
+        .map(|definition| StoredPartitionDefinition {
+            id: definition.id,
+            name: definition.name.original().to_owned(),
+            comment: definition.comment.clone(),
+            less_than: definition.less_than.snapshot(),
+            in_values: definition
+                .in_values
+                .snapshot()
+                .into_iter()
+                .map(|tuple| tuple.snapshot())
+                .collect(),
+            placement_policy: definition
+                .placement_policy_ref
+                .as_ref()
+                .map(|reference| reference.read().clone()),
+        })
+        .collect::<Vec<_>>();
+    let columns = partition
+        .columns
+        .snapshot()
+        .into_iter()
+        .map(|column| column.original().to_owned())
+        .collect::<Vec<_>>();
+    let spec = tidb_executor::ddl::partition_spec_from_metadata(
+        partition.partition_type,
+        &partition.expr,
+        &columns,
+        partition.is_empty_columns,
+        &definitions,
+        &names,
+        &types,
+    )
+    .map_err(|error| {
+        let error = error.to_mysql_error();
+        DdlPlanError::Admission(DdlAdmissionError::with_code(error.code, error.message))
+    })?;
+
+    let kv_columns = stored
+        .columns
+        .iter_deref()
+        .map(|column| {
+            let column = column.read();
+            KvColumn {
+                name: column.name.original().to_owned(),
+                id: column.id,
+                field_type: column.field_type.clone(),
+                column_info_version: column.version,
+                default_value: None,
+                origin_default: None,
+                comment: column.comment.clone(),
+                generated: None,
+            }
+        })
+        .collect();
+    let mut kv_table = KvTable::new(stored.id, kv_columns);
+    kv_table.name = table.to_owned();
+    kv_table.set_partition(spec);
+    let mut catalog = Catalog::default();
+    catalog.create_database(schema);
+    catalog
+        .register_kv_in(schema, table, kv_table)
+        .map_err(|error| {
+            let error = error.to_mysql_error();
+            DdlPlanError::Admission(DdlAdmissionError::with_code(error.code, error.message))
+        })?;
+    let context = tidb_executor::StmtContext::for_query();
+    tidb_executor::ddl::run_alter_table_in(sql, &mut catalog, schema, &context).map_err(
+        |error| {
+            let error = error.to_mysql_error();
+            DdlPlanError::Admission(DdlAdmissionError::with_code(error.code, error.message))
+        },
+    )?;
+    let Some(TableEntry::Kv(table)) = catalog.table_in(schema, table) else {
+        unreachable!("the temporary partition catalog retains its table")
+    };
+    Ok(table
+        .partition()
+        .expect("ALTER ADD/DROP PARTITION retains partitioning")
+        .clone())
+}
+
 /// [`plan_ddl`] with an already captured persisted collation mode.
 ///
 /// This is the source-shaped equivalent of Go carrying
@@ -3210,6 +3364,106 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 }
             }
             diff.action_type = ActionType::ACTION_MODIFY_COLUMN;
+            diff.schema_id = db_id;
+            diff.table_id = table_id;
+        }
+        DdlStatement::AddPartitions { schema, table, sql }
+        | DdlStatement::DropPartitions { schema, table, sql } => {
+            let adding = matches!(statement, DdlStatement::AddPartitions { .. });
+            let (db_id, stored) = locate_table(&catalog, schema, table)?;
+            let transformed = apply_partition_change(stored, schema, table, sql)?;
+            let old_names = stored
+                .partition
+                .as_ref()
+                .expect("the partition change validated partitioning")
+                .read()
+                .definitions
+                .snapshot()
+                .into_iter()
+                .map(|definition| definition.name.lowercase().to_owned())
+                .collect::<Vec<_>>();
+            let new_names = transformed
+                .definitions
+                .iter()
+                .map(|definition| definition.name.to_ascii_lowercase())
+                .collect::<Vec<_>>();
+            if old_names == new_names {
+                return Ok(already(format!(
+                    "partition change on `{schema}`.`{table}` is already satisfied"
+                )));
+            }
+            let added_count = transformed
+                .definitions
+                .len()
+                .saturating_sub(old_names.len());
+            let mut allocated = if added_count == 0 {
+                Vec::new().into_iter()
+            } else {
+                allocate(
+                    snapshot,
+                    &mut writes,
+                    i64::try_from(added_count).expect("partition count fits in i64"),
+                )?
+                .into_iter()
+            };
+            let old_ids = stored
+                .partition
+                .as_ref()
+                .expect("the partition change validated partitioning")
+                .read()
+                .definitions
+                .snapshot()
+                .into_iter()
+                .map(|definition| (definition.name.lowercase().to_owned(), definition.id))
+                .collect::<BTreeMap<_, _>>();
+            let definitions = transformed
+                .definitions
+                .into_iter()
+                .map(|definition| {
+                    let id = old_ids
+                        .get(&definition.name.to_ascii_lowercase())
+                        .copied()
+                        .unwrap_or_else(|| {
+                            allocated
+                                .next()
+                                .expect("one global id was allocated for every added partition")
+                        });
+                    let mut converted = tidb_model::partition::PartitionDefinition {
+                        id,
+                        name: CiString::new(definition.name),
+                        comment: definition.comment,
+                        placement_policy_ref: definition.placement_policy.map(GoShared::new),
+                        ..tidb_model::partition::PartitionDefinition::default()
+                    };
+                    converted.less_than = definition.less_than.into();
+                    converted.in_values = definition
+                        .in_values
+                        .into_iter()
+                        .map(Into::into)
+                        .collect::<Vec<_>>()
+                        .into();
+                    converted
+                })
+                .collect::<Vec<_>>();
+            let mut info = stored.clone_like_go();
+            info.partition
+                .as_ref()
+                .expect("the partition change validated partitioning")
+                .write()
+                .definitions = definitions.into();
+            info.update_ts = start_ts;
+            let table_id = info.id;
+            let encoded = value::serialize_table_info(&info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            writes.push(OptimisticMutation::meta_put(
+                key::table_kv_key(db_id, table_id),
+                encoded,
+            )?);
+            diff.action_type = if adding {
+                ActionType::ACTION_ADD_TABLE_PARTITION
+            } else {
+                ActionType::ACTION_DROP_TABLE_PARTITION
+            };
             diff.schema_id = db_id;
             diff.table_id = table_id;
         }

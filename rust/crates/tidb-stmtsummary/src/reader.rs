@@ -19,8 +19,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use chrono::{DateTime, TimeZone};
-use chrono_tz::Tz;
-use tidb_datatype::{core_time_from_datetime, Datum, Time, TimeType};
+use tidb_datatype::{core_time_from_datetime, Datum, SessionTimeZone, Time, TimeType};
 use tidb_model::ColumnInfo;
 use tidb_parser::auth::UserIdentity;
 
@@ -54,7 +53,7 @@ pub struct StmtSummaryReader<'a> {
     /// Go `checker`.
     checker: Option<StmtSummaryChecker>,
     /// Go `tz *time.Location`.
-    tz: Tz,
+    tz: SessionTimeZone,
 }
 
 impl std::fmt::Debug for StmtSummaryReader<'_> {
@@ -82,7 +81,7 @@ impl StmtSummaryReader<'static> {
         has_process_priv: bool,
         cols: Vec<ColumnInfo>,
         instance_addr: String,
-        tz: Tz,
+        tz: SessionTimeZone,
     ) -> Self {
         // initialize column value factories.
         let column_value_factories = cols
@@ -762,10 +761,10 @@ fn timestamp_datum<TZ: TimeZone>(instant: DateTime<TZ>) -> Datum {
 }
 
 /// Go `time.Unix(seconds, 0).In(tz)`.
-fn unix_seconds_in(seconds: i64, tz: Tz) -> DateTime<Tz> {
+fn unix_seconds_in(seconds: i64, tz: &SessionTimeZone) -> DateTime<SessionTimeZone> {
     DateTime::from_timestamp(seconds, 0)
         .unwrap_or_else(|| DateTime::from_timestamp_nanos(0))
-        .with_timezone(&tz)
+        .with_timezone(tz)
 }
 
 /// The element a column factory needs, which Go dereferences without a nil
@@ -794,13 +793,13 @@ pub fn column_value_factory(name: &str) -> Option<ColumnValueFactory> {
         SUMMARY_BEGIN_TIME_STR => |reader, ss_element, _, _| {
             timestamp_datum(unix_seconds_in(
                 require_element(ss_element).begin_time,
-                reader.tz,
+                &reader.tz,
             ))
         },
         SUMMARY_END_TIME_STR => |reader, ss_element, _, _| {
             timestamp_datum(unix_seconds_in(
                 require_element(ss_element).end_time,
-                reader.tz,
+                &reader.tz,
             ))
         },
         STMT_TYPE_STR => |_, _, ssbd, _| Datum::new_string(require_ssbd(ssbd).stmt_type.as_bytes()),
@@ -1241,7 +1240,7 @@ pub(crate) mod tests {
             })
             .collect();
         let mut reader: StmtSummaryReader<'a> =
-            StmtSummaryReader::new(None, true, cols, String::new(), Tz::UTC);
+            StmtSummaryReader::new(None, true, cols, String::new(), SessionTimeZone::utc());
         reader.ss_map = ss_map;
         reader
     }

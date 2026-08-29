@@ -42,11 +42,13 @@ pub(crate) fn flush_stmt(flush: &tidb_ast::FlushStmt) -> Result<StmtOutput, Driv
                 "FLUSH STATS_DELTA is not supported by this node",
             ));
         }
+        tidb_ast::FlushTarget::ClientErrorsSummary => {
+            tidb_error::tidb::infoschema::flush_stats();
+        }
         tidb_ast::FlushTarget::Status
         | tidb_ast::FlushTarget::Privileges
         | tidb_ast::FlushTarget::Hosts
-        | tidb_ast::FlushTarget::Logs(_)
-        | tidb_ast::FlushTarget::ClientErrorsSummary => {}
+        | tidb_ast::FlushTarget::Logs(_) => {}
     }
     Ok(StmtOutput::Done(true))
 }

@@ -19,10 +19,12 @@ use tidb_proto::{
     KvrpcCheckSecondaryLocksRequest, KvrpcCheckSecondaryLocksResponse, KvrpcCheckTxnStatusRequest,
     KvrpcCheckTxnStatusResponse, KvrpcContext, KvrpcResolveLockRequest, KvrpcResolveLockResponse,
 };
+use tikv_client::proto::kvrpcpb::{GetLockWaitInfoRequest, GetLockWaitInfoResponse};
 
 use crate::region::StoreLiveness;
 use crate::{
-    DirectUnaryClient, DirectUnaryRequest, DirectUnaryResponse, SynchronousBatchRequestDispatcher,
+    DirectUnaryClient, DirectUnaryRequest, DirectUnaryResponse, LockWaitInfoClient,
+    SynchronousBatchRequestDispatcher,
 };
 
 use super::batch::{
@@ -43,6 +45,7 @@ const COPROCESSOR_PATH: &str = "/tikvpb.Tikv/Coprocessor";
 const CHECK_TXN_STATUS_PATH: &str = "/tikvpb.Tikv/KvCheckTxnStatus";
 const RESOLVE_LOCK_PATH: &str = "/tikvpb.Tikv/KvResolveLock";
 const CHECK_SECONDARY_LOCKS_PATH: &str = "/tikvpb.Tikv/KvCheckSecondaryLocks";
+const GET_LOCK_WAIT_INFO_PATH: &str = "/tikvpb.Tikv/GetLockWaitInfo";
 
 /// Synchronous client-go-shaped TiKV transport capability backed by tonic.
 ///
@@ -52,6 +55,44 @@ const CHECK_SECONDARY_LOCKS_PATH: &str = "/tikvpb.Tikv/KvCheckSecondaryLocks";
 /// are created lazily, reused by address, and versioned on recreation.
 pub struct TonicCoprocessorClient {
     transport: RawTransportClient,
+}
+
+impl LockWaitInfoClient for TonicCoprocessorClient {
+    fn get_lock_wait_info(
+        &mut self,
+        address: &str,
+        timeout: Duration,
+    ) -> Result<Vec<tidb_proto::KvrpcWaitForEntry>, DirectUnaryClientError> {
+        let response = self.transport.send(
+            address,
+            RawUnaryRequest {
+                path: GET_LOCK_WAIT_INFO_PATH,
+                encoded_request: GetLockWaitInfoRequest::default().encode_to_vec(),
+                forwarded_host: None,
+            },
+            &UnaryCallContext::with_timeout(timeout),
+        )?;
+        GetLockWaitInfoResponse::decode(response.encoded_response.as_slice())
+            .map(|response| {
+                response
+                    .entries
+                    .into_iter()
+                    .map(|entry| tidb_proto::KvrpcWaitForEntry {
+                        txn: entry.txn,
+                        wait_for_txn: entry.wait_for_txn,
+                        key_hash: entry.key_hash,
+                        key: entry.key,
+                        resource_group_tag: entry.resource_group_tag,
+                        wait_time: entry.wait_time,
+                    })
+                    .collect()
+            })
+            .map_err(|error| {
+                DirectUnaryClientError::InvalidRequest(format!(
+                    "invalid GetLockWaitInfo response: {error}"
+                ))
+            })
+    }
 }
 
 impl Clone for TonicCoprocessorClient {

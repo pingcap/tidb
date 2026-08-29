@@ -116,9 +116,9 @@ pub use checker::{
 pub use client::{
     endpoint_type, inject_source_stmt, map_replica_read_type, BackoffMetadata,
     ClientReplicaReadType, DirectUnaryClient, DirectUnaryRequest, DirectUnaryResponse,
-    DriverDefaults, DriverOptions, EndpointType, PdClientConfig, PdOptions, SecurityConfig,
-    SynchronousBatchRequestDispatcher, TikvClientConfig, TikvDriverConfig, TraceInfo,
-    TxnLocalLatchesConfig,
+    DriverDefaults, DriverOptions, EndpointType, LockWaitInfoClient, PdClientConfig, PdOptions,
+    SecurityConfig, SynchronousBatchRequestDispatcher, TikvClientConfig, TikvDriverConfig,
+    TraceInfo, TxnLocalLatchesConfig,
 };
 pub use counter::{get_int64, inc_int64, CounterError, CounterStorage};
 pub use driver::mem_buffer::{
@@ -216,7 +216,9 @@ pub use range_diagnostics::{
     ensure_monotonic_key_ranges, first_out_of_bound_key_range, min_start_and_max_end_key,
     range_issues_for_key_ranges, OutOfBoundReason, RangeIssueStats,
 };
-pub use read_runtime::{SharedReadAuthority, SharedReadOpener, SharedReadRuntime};
+pub use read_runtime::{
+    ResolvingLock, ResolvingLocksGuard, SharedReadAuthority, SharedReadOpener, SharedReadRuntime,
+};
 pub use resource_group::{
     decode_resource_group_tag, get_first_key_from_request, get_resource_group_label_by_key,
     set_decode_table_id, FirstKeyRequest, ResourceGroupTagBuilder, ResourceGroupTagDecodeError,

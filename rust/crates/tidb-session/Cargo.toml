@@ -27,18 +27,23 @@ tidb-mysql = { path = "../tidb-mysql" }
 tidb-naming = { path = "../tidb-naming" }
 tidb-parser = { path = "../tidb-parser" }
 tidb-planner = { path = "../tidb-planner" }
+tidb-stats = { path = "../tidb-stats" }
+tidb-stmtsummary = { path = "../tidb-stmtsummary" }
+tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-tikvutil = { path = "../tidb-tikvutil" }
 tidb-util = { path = "../tidb-util" }
 tidb-vardef = { path = "../tidb-vardef" }
+tidb-workloadrepo = { path = "../tidb-workloadrepo" }
 tidb-log = { path = "../tidb-log" }
 toml.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 # `tests_dml_lock_keys` classifies the raw keys a DML statement leaves behind
 # as record or index keys, which is `tablecodec`'s judgement to make.
+tidb-exec = { path = "../tidb-exec" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 serde = { workspace = true }
-serde_json = { workspace = true }
 
 [lints]
 workspace = true

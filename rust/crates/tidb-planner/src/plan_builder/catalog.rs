@@ -172,6 +172,9 @@ pub struct SourceIndex {
 /// partition expression lives.
 #[derive(Clone, Debug, Default)]
 pub struct SourceTable {
+    /// Go `table.Type().IsVirtualTable()`: this table is planned through
+    /// `buildMemTable`, not `buildDataSource`.
+    pub is_memory_table: bool,
     /// Go `TableInfo.ID`.
     pub table_id: i64,
     /// Go `TableInfo.Name.O`.

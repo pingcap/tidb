@@ -20,7 +20,7 @@
 //! registry does not know is `ErrUnknownSystemVar` (1193), and reading `@@x`
 //! for an unknown name is `ErrUnknownSystemVariable` too.
 //!
-//! The registry itself is [`crate::sysvar`], which holds all 948 entries
+//! The registry itself is [`crate::sysvar`], which holds all 952 entries
 //! captured from Go's own `GetSysVars()`, and the value validation Go's
 //! `ValidateFromType` performs.
 //!

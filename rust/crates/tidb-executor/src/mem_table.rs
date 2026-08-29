@@ -12,11 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! An in-memory table source: emits rows from a provided value matrix.
-//!
-//! This source remains for catalog-backed in-memory tables. Storage-backed
-//! reads use [`crate::kv_table::TableScanExec`] and [`crate::remote_scan`]
-//! instead. It is deliberately not a port of a specific Go executor.
+//! The row source used by Go's `executorBuilder.buildMemTable` path after a
+//! `PhysicalMemTable` resolves its virtual-table rows.
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use crate::predicate_pushdown::{PushedScanFilter, ScanFilterProbe};

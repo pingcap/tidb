@@ -416,6 +416,13 @@ impl QuerySession for RealTiKvMultiServerSession {
         u16::try_from(self.statement_warnings.len()).unwrap_or(u16::MAX)
     }
 
+    fn warning_codes(&self) -> Vec<u16> {
+        self.statement_warnings
+            .iter()
+            .map(|warning| warning.code)
+            .collect()
+    }
+
     /// A catalog change is the only text-protocol OK-packet statement this
     /// multi-relation surface answers: DML over a joined pair is not lowered
     /// here, so anything else falls through to the query path unchanged.

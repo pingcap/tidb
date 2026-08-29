@@ -172,6 +172,17 @@ enum EtcdCommand {
         lease: i64,
         reply: mpsc::Sender<Result<bool, EtcdError>>,
     },
+    Create {
+        key: Vec<u8>,
+        value: Vec<u8>,
+        reply: mpsc::Sender<Result<bool, EtcdError>>,
+    },
+    CompareValueAndPut {
+        key: Vec<u8>,
+        expected_value: Vec<u8>,
+        value: Vec<u8>,
+        reply: mpsc::Sender<Result<bool, EtcdError>>,
+    },
     CompareAndPutWithLease {
         key: Vec<u8>,
         expected_mod_revision: i64,
@@ -480,6 +491,40 @@ impl EtcdClient {
         response.recv().unwrap_or(Err(EtcdError::Closed))
     }
 
+    /// Creates `key` without a lease iff it does not exist.
+    pub fn create(&self, key: &[u8], value: &[u8]) -> Result<bool, EtcdError> {
+        let (reply, response) = mpsc::channel();
+        self.shared
+            .commands
+            .send(EtcdCommand::Create {
+                key: key.to_vec(),
+                value: value.to_vec(),
+                reply,
+            })
+            .map_err(|_| EtcdError::Closed)?;
+        response.recv().unwrap_or(Err(EtcdError::Closed))
+    }
+
+    /// Replaces `key` iff its current value equals `expected_value`.
+    pub fn compare_value_and_put(
+        &self,
+        key: &[u8],
+        expected_value: &[u8],
+        value: &[u8],
+    ) -> Result<bool, EtcdError> {
+        let (reply, response) = mpsc::channel();
+        self.shared
+            .commands
+            .send(EtcdCommand::CompareValueAndPut {
+                key: key.to_vec(),
+                expected_value: expected_value.to_vec(),
+                value: value.to_vec(),
+                reply,
+            })
+            .map_err(|_| EtcdError::Closed)?;
+        response.recv().unwrap_or(Err(EtcdError::Closed))
+    }
+
     /// Replaces `key` under `lease` iff its modification revision still
     /// equals `expected_mod_revision`.
     pub fn compare_and_put_with_lease(
@@ -668,6 +713,8 @@ fn run_kv_worker(
                     let _ = reply.send(Err(EtcdError::Closed));
                 }
                 EtcdCommand::CreateWithLease { reply, .. }
+                | EtcdCommand::Create { reply, .. }
+                | EtcdCommand::CompareValueAndPut { reply, .. }
                 | EtcdCommand::CompareAndPutWithLease { reply, .. } => {
                     let _ = reply.send(Err(EtcdError::Closed));
                 }
@@ -856,6 +903,51 @@ fn run_kv_worker(
                         let txn = Txn::new()
                             .when([Compare::create_revision(key.clone(), CompareOp::Equal, 0)])
                             .and_then([put]);
+                        runtime
+                            .block_on(client.txn(txn))
+                            .map(|response| response.succeeded())
+                    },
+                );
+                let _ = reply.send(result);
+            }
+            EtcdCommand::Create { key, value, reply } => {
+                let result = across_endpoints(
+                    runtime,
+                    endpoints,
+                    &mut clients,
+                    timeout,
+                    security,
+                    |runtime, mut client| {
+                        let txn = Txn::new()
+                            .when([Compare::create_revision(key.clone(), CompareOp::Equal, 0)])
+                            .and_then([TxnOp::put(key.clone(), value.clone(), None)]);
+                        runtime
+                            .block_on(client.txn(txn))
+                            .map(|response| response.succeeded())
+                    },
+                );
+                let _ = reply.send(result);
+            }
+            EtcdCommand::CompareValueAndPut {
+                key,
+                expected_value,
+                value,
+                reply,
+            } => {
+                let result = across_endpoints(
+                    runtime,
+                    endpoints,
+                    &mut clients,
+                    timeout,
+                    security,
+                    |runtime, mut client| {
+                        let txn = Txn::new()
+                            .when([Compare::value(
+                                key.clone(),
+                                CompareOp::Equal,
+                                expected_value.clone(),
+                            )])
+                            .and_then([TxnOp::put(key.clone(), value.clone(), None)]);
                         runtime
                             .block_on(client.txn(txn))
                             .map(|response| response.succeeded())

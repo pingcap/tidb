@@ -49,9 +49,7 @@
 //! exhaust: the dual, the CTE table, and the two shows are born directly in
 //! root tasks. [`find_best_task`] routes them to those ported bodies first,
 //! exactly as Go's function-pointer wiring does. `DataSource` and
-//! `LogicalMemTable` refuse by name (`findBestTask4LogicalDataSource` is
-//! the access-path chooser this crate carries separately;
-//! `findBestTask4LogicalMemTable` recurses through the enforcer re-entry).
+//! `LogicalMemTable` use their own source-specific task builders.
 //! Joins refuse toward [`crate::find_best_task`]'s own specialized search,
 //! which owns candidate enumeration for them.
 
@@ -777,11 +775,8 @@ fn find_best_task_uncached(
         LogicalPlan::DataSource(op) => {
             return find_best_task_4_logical_data_source(op, prop, ctx);
         }
-        LogicalPlan::MemTable(_) => {
-            return Err(PlanError::internal(
-                "findBestTask4LogicalMemTable recurses through FindBestTask \
-                 for its enforcer re-entry; not ported",
-            ));
+        LogicalPlan::MemTable(op) => {
+            return find_best_task_4_logical_mem_table(plan, op, prop, ctx);
         }
         _ => {}
     }
@@ -823,6 +818,56 @@ fn find_best_task_uncached(
         return Ok(cur_task);
     }
     Ok(best_task)
+}
+
+fn find_best_task_4_logical_mem_table(
+    logical: &LogicalPlan,
+    mem_table: &crate::logical::LogicalMemTable,
+    prop: &PhysicalProperty,
+    ctx: &mut DispatchContext<'_>,
+) -> Result<Task, PlanError> {
+    if prop.index_join_prop.is_some()
+        || prop.mpp_partition_tp != crate::physical_property::MppPartitionType::Any
+    {
+        return Ok(Task::invalid_task());
+    }
+
+    if prop.can_add_enforcer {
+        let mut direct_prop = prop.clone();
+        direct_prop.can_add_enforcer = false;
+        let direct = find_best_task(logical, &direct_prop, ctx)?;
+        if !direct.invalid() {
+            return Ok(direct);
+        }
+
+        let mut unordered_prop = direct_prop;
+        unordered_prop.sort_items.clear();
+        let unordered = find_best_task(logical, &unordered_prop, ctx)?;
+        return enforce_property(prop, unordered, ctx.allocator);
+    }
+
+    if !prop.sort_items.is_empty() {
+        return Ok(Task::invalid_task());
+    }
+
+    let mut base = physical::BasePhysicalPlan::new(
+        ctx.allocator,
+        crate::logical::LogicalMemTable::TYPE,
+        mem_table.base.base.query_block_offset(),
+    );
+    base.base
+        .set_stats(mem_table.base.base.stats_info().cloned());
+    base.base.set_schema(mem_table.base.base.schema().cloned());
+    let physical = PhysicalPlan::MemTable(physical::PhysicalMemTable {
+        base,
+        db_name: mem_table.db_name.clone(),
+        table_name: mem_table.table_name.clone(),
+        columns: mem_table.columns.clone(),
+        query_time_range: mem_table.query_time_range.clone(),
+    });
+    let mut root = crate::task::RootTask::default();
+    root.set_plan(physical);
+    Ok(Task::Root(root))
 }
 
 /// Go `tryToGetDualTask` (`find_best_task.go:749`): a pushed-down constant

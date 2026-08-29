@@ -472,6 +472,73 @@ struct AcceptedConnectionIdentity {
     peer_addr: SocketAddr,
 }
 
+/// Adds Go `clientConn.user`/`peerHost` error accounting to the ordinary
+/// authenticated command writer without changing packet framing.
+struct ClientErrorRecordingOutput<O> {
+    inner: O,
+    user: String,
+    host: String,
+}
+
+impl<O> ClientErrorRecordingOutput<O> {
+    fn new(inner: O, user: String, host: String) -> Self {
+        Self { inner, user, host }
+    }
+
+    fn set_user(&mut self, user: String) {
+        self.user = user;
+    }
+}
+
+impl<O: Write> Write for ClientErrorRecordingOutput<O> {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        self.inner.write(buffer)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+impl<O: ConnectionPacketOutput> ConnectionPacketOutput for ClientErrorRecordingOutput<O> {
+    fn write_packet(&mut self, sequence: u8, payload: &[u8]) -> Result<u8, MysqlConnectionError> {
+        self.inner.write_packet(sequence, payload)
+    }
+
+    fn write_packets(
+        &mut self,
+        sequence: u8,
+        payloads: &[&[u8]],
+    ) -> Result<u8, MysqlConnectionError> {
+        self.inner.write_packets(sequence, payloads)
+    }
+
+    fn record_client_error(&self, code: u16) {
+        tidb_error::tidb::infoschema::increment_error(code, &self.user, &self.host);
+    }
+
+    fn record_client_warning(&self, code: u16) {
+        tidb_error::tidb::infoschema::increment_warning(code, &self.user, &self.host);
+    }
+
+    fn compressed_sequence(&self) -> Option<u8> {
+        self.inner.compressed_sequence()
+    }
+
+    fn set_compressed_sequence(&mut self, sequence: u8) {
+        self.inner.set_compressed_sequence(sequence);
+    }
+}
+
+fn record_client_warnings<O: ConnectionPacketOutput + ?Sized, S: QuerySession>(
+    output: &O,
+    session: &S,
+) {
+    for code in session.warning_codes() {
+        output.record_client_warning(code);
+    }
+}
+
 /// Fatal socket/protocol failure that prevents orderly command continuation.
 #[derive(Debug)]
 pub enum MysqlConnectionError {
@@ -715,7 +782,8 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     // upgrade there is exactly one TLS session and both directions run through
     // it.
     let socket = ClientStream::plain(stream);
-    let mut output = socket.clone();
+    let mut output =
+        ClientErrorRecordingOutput::new(socket.clone(), String::new(), peer_addr.ip().to_string());
     let server_capabilities = if runtime.tls.is_some() {
         SERVER_CAPABILITIES | CLIENT_SSL
     } else {
@@ -817,6 +885,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     // the protocol parser.
     let response_user = response.user.to_string_lossy().into_owned();
     let response_db_name = response.db_name.to_string_lossy().into_owned();
+    output.set_user(response_user.clone());
     // Go rejects an insecure transport immediately after parsing the full
     // handshake response, before selecting an account plugin or sending an
     // AuthSwitchRequest. Keep the returned token so the account verifier
@@ -1113,6 +1182,8 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     reader.set_max_allowed_packet(runtime.max_allowed_packet);
     let mut output = PacketIoWriter::new(output, compression)?;
     output.set_zstd_level(zstd_level);
+    let mut output =
+        ClientErrorRecordingOutput::new(output, response_user, peer_addr.ip().to_string());
 
     // The connection-lifetime half of the framing, and ALL of it: only the
     // capabilities negotiated at handshake live this long. The status word and
@@ -1322,6 +1393,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 engine.warning_count(),
                                 protocol_41,
                             )?;
+                            record_client_warnings(&output, &engine);
                             sequence = sequence.wrapping_add(1);
                             queries += 1;
                             continue;
@@ -1347,6 +1419,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 engine.warning_count(),
                                 protocol_41,
                             )?;
+                            record_client_warnings(&output, &engine);
                             sequence = sequence.wrapping_add(1);
                             queries += 1;
                             continue;
@@ -1354,6 +1427,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         Ok(None) => {}
                         Err(error) => {
                             write_query_error_at(&mut output, sequence, &error, protocol_41)?;
+                            record_client_warnings(&output, &engine);
                             aborted = true;
                             break;
                         }
@@ -1393,6 +1467,8 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 error.message,
                                 protocol_41,
                             )?;
+                            drop(result);
+                            record_client_warnings(&output, &engine);
                             aborted = true;
                             break;
                         }
@@ -1400,6 +1476,8 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                             return Err(MysqlConnectionError::PartialResult(error.message))
                         }
                     }
+                    drop(result);
+                    record_client_warnings(&output, &engine);
                 }
                 if !aborted {
                     engine.flush_multi_statement_warning();
@@ -1642,6 +1720,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                             )?,
                             Err(error) => write_query_error(&mut output, &error, protocol_41)?,
                         }
+                        record_client_warnings(&output, &engine);
                     }
                     PreparedStatement::PointRead(point_read) => {
                         // A point read binds a signed-integer clustered handle; a
@@ -1660,14 +1739,17 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 continue;
                             }
                         };
+                        let execution = engine.execute_prepared_point_read(point_read, &parameters);
+                        if execution.is_err() {
+                            let error = execution
+                                .err()
+                                .expect("the prepared point read error was just observed");
+                            write_query_error(&mut output, &error, protocol_41)?;
+                            record_client_warnings(&output, &engine);
+                            continue;
+                        }
                         let mut result =
-                            match engine.execute_prepared_point_read(point_read, &parameters) {
-                                Ok(result) => result,
-                                Err(error) => {
-                                    write_query_error(&mut output, &error, protocol_41)?;
-                                    continue;
-                                }
-                            };
+                            execution.expect("the prepared point read success was just observed");
                         if execute.cursor_flags & tidb_protocol::CURSOR_TYPE_READ_ONLY != 0 {
                             match open_prepared_cursor(
                                 &mut result,
@@ -1689,6 +1771,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                     return Err(error);
                                 }
                             }
+                            record_client_warnings(&output, &engine);
                             continue;
                         }
                         let write_result = {
@@ -1724,6 +1807,8 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 return Err(MysqlConnectionError::PartialResult(error.message))
                             }
                         }
+                        drop(result);
+                        record_client_warnings(&output, &engine);
                     }
                     PreparedStatement::General(general) => {
                         // Go's read-only cursor: the execute materializes the
@@ -1782,6 +1867,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 queries += 1;
                                 commands.stmt_execute_successes += 1;
                             }
+                            record_client_warnings(&output, &engine);
                             continue;
                         }
                         let mut write_outcome = None;
@@ -1846,6 +1932,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                             queries += 1;
                             commands.stmt_execute_successes += 1;
                         }
+                        record_client_warnings(&output, &engine);
                     }
                     PreparedStatement::Write(write) => {
                         // A write answers with one OK packet and never a result
@@ -1870,6 +1957,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 write_query_error(&mut output, &error, protocol_41)?;
                             }
                         }
+                        record_client_warnings(&output, &engine);
                     }
                 }
             }

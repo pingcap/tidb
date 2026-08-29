@@ -15,7 +15,7 @@
 //! The flat, name-ordered system-variable registry, merged from the
 //! per-subject catalog slices.
 //!
-//! Go keeps all 948 entries in one `sysVars` map in
+//! Go keeps its base entries plus dynamically registered variables in one `sysVars` map in
 //! `pkg/sessionctx/variable/sysvar.go`. Here they are grouped by SUBJECT --
 //! what each variable controls -- so a reader looking for, say, the optimizer
 //! switches opens `optimizer.rs` rather than an alphabetical shard.

@@ -1073,6 +1073,13 @@ where
         u16::try_from(self.statement_warnings.len()).unwrap_or(u16::MAX)
     }
 
+    fn warning_codes(&self) -> Vec<u16> {
+        self.statement_warnings
+            .iter()
+            .map(|warning| warning.code)
+            .collect()
+    }
+
     fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
         let process_statement = self._process.statement_started(sql, "", "autocommit");
         self.statement_warnings.clear();

@@ -342,6 +342,10 @@ impl Session {
                     self.vars
                         .reset_global(&assignment.name)
                         .map_err(var_error)?;
+                    let default = sysvar::get_sys_var(&assignment.name)
+                        .expect("the assignment named a registered sysvar")
+                        .value;
+                    self.apply_workload_repository_global(&assignment.name, default)?;
                 } else if is_instance {
                     self.vars
                         .reset_instance(&assignment.name)
@@ -402,6 +406,14 @@ impl Session {
                 self.warn_truncated_var(&assignment.name, &value);
             }
             self.append_fix_control_parse_warnings(&assignment.name, &value);
+            if is_global {
+                // `SetGlobal` stores Go's type-normalized value. Workloadrepo
+                // hooks consume that stored value too; passing the original
+                // `-1`/`7201` text would make the worker reject an assignment
+                // that the sysvar layer had already accepted and clamped.
+                let stored = self.vars.get_global(&assignment.name).map_err(var_error)?;
+                self.apply_workload_repository_global(&assignment.name, &stored)?;
+            }
             return Ok(());
         }
         let was_autocommit = self.is_autocommit();
@@ -428,6 +440,20 @@ impl Session {
             self.commit()?;
         }
         Ok(())
+    }
+
+    fn apply_workload_repository_global(&self, name: &str, value: &str) -> Result<(), DriverError> {
+        let Some(worker) = self.workload_repository.as_ref() else {
+            return Ok(());
+        };
+        let result = match name.to_ascii_lowercase().as_str() {
+            tidb_workloadrepo::REPOSITORY_DEST => worker.set_repository_dest(value),
+            tidb_workloadrepo::REPOSITORY_RETENTION_DAYS => worker.set_retention_days(value),
+            tidb_workloadrepo::REPOSITORY_SAMPLING_INTERVAL => worker.set_sampling_interval(value),
+            tidb_workloadrepo::REPOSITORY_SNAPSHOT_INTERVAL => worker.set_snapshot_interval(value),
+            _ => return Ok(()),
+        };
+        result.map_err(DriverError::unsupported)
     }
 
     /// Publishes duplicate-key diagnostics after the scope-aware writer has

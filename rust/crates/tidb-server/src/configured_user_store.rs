@@ -98,6 +98,16 @@ pub enum AuthenticationFailure {
 }
 
 impl AuthenticatedIdentity {
+    /// Identity used by Domain's internal system-session pool. Go's
+    /// `SysSessionPool` runs restricted internal SQL without a client login.
+    pub(crate) fn internal() -> Self {
+        Self {
+            identity: MatchedIdentity::new("root", "%"),
+            in_sandbox_mode: false,
+            privilege_bypassed: true,
+        }
+    }
+
     /// Canonical matched username for ordinary authentication, or the
     /// requested username retained by skip-grant admission.
     #[must_use]

@@ -845,6 +845,21 @@ pub struct PhysicalTableScan {
     pub resolved_descriptor: Option<crate::access_path::ResolvedTableDescriptor>,
 }
 
+/// Go `physicalop.PhysicalMemTable`: a root-side scan of a virtual table.
+#[derive(Clone, Debug, Default)]
+pub struct PhysicalMemTable {
+    /// The shared physical base.
+    pub base: BasePhysicalPlan,
+    /// Go `DBName.O`.
+    pub db_name: String,
+    /// Go `Table.Name.O`.
+    pub table_name: String,
+    /// Go `Columns`, after logical memory-table column pruning.
+    pub columns: Vec<crate::logical::mem_table::MemTableColumn>,
+    /// Go `QueryTimeRange`.
+    pub query_time_range: crate::logical::mem_table::QueryTimeRange,
+}
+
 impl PhysicalTableScan {
     /// Initializes one wired table scan from its resolved TiKV fields.
     #[must_use]
@@ -2453,6 +2468,8 @@ pub enum PhysicalPlan {
     Limit(PhysicalLimit),
     /// Go `physicalop.PhysicalTableScan`.
     TableScan(PhysicalTableScan),
+    /// Go `physicalop.PhysicalMemTable`.
+    MemTable(PhysicalMemTable),
     /// Go `physicalop.PhysicalTableDual`.
     TableDual(PhysicalTableDual),
     /// Go `physicalop.PhysicalMaxOneRow`.
@@ -2512,6 +2529,7 @@ impl PhysicalPlan {
             Self::Sort(op) => &op.base,
             Self::Limit(op) => &op.base,
             Self::TableScan(op) => &op.base,
+            Self::MemTable(op) => &op.base,
             Self::TableDual(op) => &op.base,
             Self::MaxOneRow(op) => &op.base,
             Self::NominalSort(op) => &op.base,
@@ -2548,6 +2566,7 @@ impl PhysicalPlan {
             Self::Sort(op) => &mut op.base,
             Self::Limit(op) => &mut op.base,
             Self::TableScan(op) => &mut op.base,
+            Self::MemTable(op) => &mut op.base,
             Self::TableDual(op) => &mut op.base,
             Self::MaxOneRow(op) => &mut op.base,
             Self::NominalSort(op) => &mut op.base,
@@ -3069,6 +3088,13 @@ impl PhysicalPlan {
                 table_scan_penalty: op.table_scan_penalty,
                 tikv_pushdown: op.tikv_pushdown.clone(),
                 resolved_descriptor: op.resolved_descriptor,
+            }),
+            Self::MemTable(op) => Self::MemTable(PhysicalMemTable {
+                base: base_of(&op.base),
+                db_name: op.db_name.clone(),
+                table_name: op.table_name.clone(),
+                columns: op.columns.clone(),
+                query_time_range: op.query_time_range.clone(),
             }),
             Self::TableDual(op) => Self::TableDual(PhysicalTableDual {
                 base: base_of(&op.base),

@@ -38,11 +38,15 @@ tidb-errmsg = { path = "../tidb-errmsg" }
 tidb-model = { path = "../tidb-model" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-pd-client = { path = "../tidb-pd-client" }
+tidb-owner = { path = "../tidb-owner" }
+tidb-workloadrepo = { path = "../tidb-workloadrepo" }
 # `pkg/domain/serverinfo`'s syncer: this node's /tidb/server/info entry.
 tidb-domain = { path = "../tidb-domain" }
 tidb-parser = { path = "../tidb-parser" }
 tidb-protocol = { path = "../tidb-protocol" }
+tidb-proto = { path = "../tidb-proto" }
 tidb-session = { path = "../tidb-session" }
+tidb-stats = { path = "../tidb-stats" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 tikv-client.workspace = true
 tidb-util = { path = "../tidb-util" }
@@ -57,7 +61,6 @@ rcgen.workspace = true
 rustls.workspace = true
 rustls-pemfile.workspace = true
 tidb-parser = { path = "../tidb-parser" }
-tidb-proto = { path = "../tidb-proto" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 
 [[test]]

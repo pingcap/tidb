@@ -2000,6 +2000,10 @@ pub fn attach2_task(
              findBestTask4LogicalCTETable (physical_cte_table.go), never \
              attached",
         )),
+        PhysicalPlan::MemTable(_) => Err(PlanError::internal(
+            "a PhysicalMemTable is born inside its own root task by \
+             findBestTask4LogicalMemTable (physical_mem_table.go), never attached",
+        )),
         PhysicalPlan::Show(_) | PhysicalPlan::ShowDDLJobs(_) => Err(PlanError::internal(
             "a PhysicalShow/PhysicalShowDDLJobs is born inside its own root \
              task by findBestTask4LogicalShow{,DDLJobs} (physical_show.go), \

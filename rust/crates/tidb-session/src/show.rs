@@ -1454,6 +1454,22 @@ impl Session {
             // `crate::load_stats_arm` for Go's three-layer split and where
             // each half lives here.
             tidb_ast::AdminStmt::LoadStats(load) => self.load_stats_stmt(load),
+            tidb_ast::AdminStmt::CreateWorkloadSnapshot => {
+                if !self.has_scoped_privilege("", "", privilege::GlobalPriv::Super) {
+                    return Err(DriverError::SpecificAccessDenied("SUPER".to_owned()));
+                }
+                let worker = self.workload_repository.as_ref().ok_or_else(|| {
+                    DriverError::NotSupportedYet("Workload repository is not enabled".into())
+                })?;
+                worker.take_snapshot().map_err(|error| {
+                    if error == "Workload repository is not enabled" {
+                        DriverError::NotSupportedYet(error.into())
+                    } else {
+                        DriverError::unsupported(error)
+                    }
+                })?;
+                Ok(Some(StmtOutput::Done(true)))
+            }
             // `ADMIN RELOAD <blacklist>`: Go's `ReloadExprPushdownBlacklist`
             // and `ReloadOptRuleBlacklist` executors, each of which reads its
             // `mysql.*` table and publishes what the optimizer consults. Both

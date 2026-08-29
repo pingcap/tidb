@@ -1147,6 +1147,12 @@ pub trait QuerySession {
         0
     }
 
+    /// MySQL warning numbers in the statement context that produced the
+    /// response. Go records each of these in `clientConn.flush`.
+    fn warning_codes(&self) -> Vec<u16> {
+        Vec::new()
+    }
+
     /// The live session status word every OK packet this session's statements
     /// produce must carry (Go `status := cc.ctx.Status()`, `pkg/server/conn.go`,
     /// read afresh per statement and passed to every `writeOkWith`/`writeEOF`).

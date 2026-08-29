@@ -250,7 +250,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
         )),
     )
     .with_cop_scans(cop_scans)
-    .with_server_info(server_info)
+    .with_server_info(Arc::clone(&server_info))
     .with_schema_pins(schema_pins)
     .with_spill_storage(spill_storage);
     let factory = match memory_arbitrator {
@@ -258,6 +258,64 @@ pub(crate) fn run_cluster_session_node_with_spill(
         None => factory,
     };
     let factory = Arc::new(factory);
+    let workload_etcd = crate::real_tikv_node::connect_schema_notifier(&config);
+    let workload_store = workload_etcd
+        .as_ref()
+        .map(|client| Arc::clone(client) as Arc<dyn tidb_workloadrepo::RepositoryStore>);
+    let workload_owner_factory = workload_etcd.as_ref().map(|client| {
+        let client = Arc::clone(client);
+        let instance_id = server_info.local_server_info().static_info.id.clone();
+        Arc::new(move |key: &str, prompt: &str| {
+            Arc::new(tidb_owner::OwnerManager::new(
+                tidb_owner::Context::background(),
+                Arc::clone(&client) as Arc<dyn tidb_owner::OwnerStore>,
+                prompt,
+                instance_id.clone(),
+                key,
+            )) as Arc<dyn tidb_owner::Manager>
+        }) as tidb_workloadrepo::OwnerFactory
+    });
+    let workload_repository = tidb_workloadrepo::Worker::new(
+        workload_store,
+        Some(Arc::new(super::WorkloadRepositorySessionPool::new(
+            &factory,
+        ))),
+        workload_owner_factory,
+        server_info.local_server_info().static_info.id.clone(),
+    );
+    let globals = users.global_vars();
+    for (name, apply) in [
+        (
+            tidb_workloadrepo::REPOSITORY_SAMPLING_INTERVAL,
+            tidb_workloadrepo::Worker::set_sampling_interval
+                as fn(&tidb_workloadrepo::Worker, &str) -> Result<(), String>,
+        ),
+        (
+            tidb_workloadrepo::REPOSITORY_SNAPSHOT_INTERVAL,
+            tidb_workloadrepo::Worker::set_snapshot_interval,
+        ),
+        (
+            tidb_workloadrepo::REPOSITORY_RETENTION_DAYS,
+            tidb_workloadrepo::Worker::set_retention_days,
+        ),
+    ] {
+        if let Ok(value) = globals.get(name) {
+            let _ = apply(&workload_repository, &value);
+        }
+    }
+    assert!(
+        factory
+            .set_workload_repository(Arc::clone(&workload_repository))
+            .is_ok(),
+        "workload repository is installed once"
+    );
+    if globals
+        .get(tidb_workloadrepo::REPOSITORY_DEST)
+        .is_ok_and(|value| value == "table")
+        && workload_repository.start().is_err()
+    {
+        workload_repository.stop();
+    }
     let skipped = render_skipped(factory.boot_skipped_tables());
     let stats_receipt = stats.receipt();
 
@@ -269,6 +327,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
             // Dropped beside it: once the registration is gone nobody waits
             // on this node, so the acknowledger has nothing left to say.
             schema_sync_ack,
+            workload_repository,
             factory,
             watcher,
             reloader,
@@ -282,6 +341,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
         move |(
             server_info_runner,
             schema_sync_ack,
+            workload_repository,
             factory,
             watcher,
             reloader,
@@ -313,6 +373,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
             stats_receipt.pseudo,
         );
             let outcome = node.run().map_err(RunConfiguredNodeError::Node);
+            workload_repository.stop();
             // The reload threads hold their own transaction openers; joining
             // them here releases those PD handles before the authority's
             // shutdown drain. The watch goes first: it nudges the reloader,
