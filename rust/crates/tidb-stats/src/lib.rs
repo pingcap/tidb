@@ -49,6 +49,7 @@ pub mod histogram;
 pub mod index;
 pub mod index_query;
 pub mod json_metadata;
+pub mod lock_stats;
 pub mod memory_usage;
 pub mod overlap_geometry;
 pub mod row_estimate;
@@ -114,6 +115,10 @@ pub use histogram::{Bucket, Histogram};
 pub use index::{copy_index, index_is_all_evicted, Index, IndexInfo};
 pub use index_query::query_index_bytes;
 pub use json_metadata::{JsonPredicateColumn, JsonTable, TIDB_GLOBAL_STATS};
+pub use lock_stats::{
+    add_locked_partitions, add_locked_tables, get_locked_tables, remove_locked_partitions,
+    remove_locked_tables, StatsLockTransaction,
+};
 pub use memory_usage::{ColumnMemUsage, IndexMemUsage};
 pub use overlap_geometry::{left_overlap_percent, right_overlap_percent};
 pub use row_estimate::{calculate_skew_ratio_counts, default_row_est, RowEstimate};

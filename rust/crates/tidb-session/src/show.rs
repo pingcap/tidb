@@ -1341,6 +1341,87 @@ impl Session {
         filter_show_output(output, like_pattern, where_clause)
     }
 
+    /// Go `ShowExec.fetchShowStatsLocked`: enumerate every physical table in
+    /// the current prune mode, intersect it with the persisted lock rows, and
+    /// emit in ascending physical-ID order.
+    fn stats_locked_stmt(
+        &mut self,
+        show: &tidb_ast::ShowStatsLockedStmt,
+    ) -> Result<StmtOutput, DriverError> {
+        let (like_pattern, where_clause) = match show.filter.as_ref() {
+            None => (None, None),
+            Some(tidb_ast::ShowStatsLockedFilter::Like(expr)) => {
+                let value = datum_text(&self.eval_value(expr)?);
+                (Some(ShowLikePattern::from_expr(expr, value, true)), None)
+            }
+            Some(tidb_ast::ShowStatsLockedFilter::Where(expr)) => (None, Some(expr)),
+        };
+        let dynamic_partition_prune = !self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
+            .is_ok_and(|mode| mode.eq_ignore_ascii_case("static"));
+        let context = self.statement_context(false);
+        let rows = {
+            let catalog = self
+                .catalog
+                .lock()
+                .map_err(|_| DriverError::CatalogPoisoned)?;
+            let locked =
+                tidb_executor::stats_lock::query_catalog_locked_tables(&catalog, &context)?;
+            let mut physical = std::collections::BTreeMap::new();
+            for database in catalog.database_names() {
+                let Some(names) = catalog.table_names(&database) else {
+                    continue;
+                };
+                for name in names {
+                    let Some(tidb_executor::TableEntry::Kv(table)) =
+                        catalog.table_in(&database, &name)
+                    else {
+                        continue;
+                    };
+                    let partitions = table
+                        .partition()
+                        .map(|partition| {
+                            partition
+                                .definitions
+                                .iter()
+                                .map(|definition| (definition.id, definition.name.clone()))
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    for target in tidb_executor::show_stats::PartitionTargets::for_table(
+                        table.table_id,
+                        &partitions,
+                        dynamic_partition_prune,
+                    ) {
+                        physical.insert(
+                            target.physical_id,
+                            (database.clone(), name.clone(), target.label),
+                        );
+                    }
+                }
+            }
+            physical
+                .into_iter()
+                .filter(|(physical_id, _)| locked.contains(physical_id))
+                .map(|(_, (database, table, partition))| {
+                    tidb_executor::show_stats::stats_locked_row(&database, &table, &partition)
+                })
+                .collect()
+        };
+        let varchar = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
+        let output = StmtOutput::Rows {
+            columns: vec![
+                ("Db_name".to_owned(), varchar()),
+                ("Table_name".to_owned(), varchar()),
+                ("Partition_name".to_owned(), varchar()),
+                ("Status".to_owned(), varchar()),
+            ],
+            rows,
+        };
+        filter_show_output(output, like_pattern, where_clause)
+    }
+
     /// Go `ShowExec.fetchShowStatsHealthy`: one health percentage for every
     /// non-pseudo physical statistics object visible under this prune mode.
     fn stats_healthy_stmt(
@@ -1979,6 +2060,8 @@ impl Session {
             // `crate::load_stats_arm` for Go's three-layer split and where
             // each half lives here.
             tidb_ast::AdminStmt::LoadStats(load) => self.load_stats_stmt(load),
+            tidb_ast::AdminStmt::LockStats(lock) => self.stats_lock_stmt(lock, true),
+            tidb_ast::AdminStmt::UnlockStats(unlock) => self.stats_lock_stmt(unlock, false),
             tidb_ast::AdminStmt::CreateWorkloadSnapshot => {
                 if !self.has_scoped_privilege("", "", privilege::GlobalPriv::Super) {
                     return Err(DriverError::SpecificAccessDenied("SUPER".to_owned()));
@@ -2454,6 +2537,7 @@ impl Session {
             tidb_ast::AdminStmt::ShowStatsHistograms(show) => {
                 self.stats_histograms_stmt(show).map(Some)
             }
+            tidb_ast::AdminStmt::ShowStatsLocked(show) => self.stats_locked_stmt(show).map(Some),
             // Go `fetchShowCollation`: one row per collation in the
             // parser's registry (`Collation | Charset | Id | Default |
             // Compiled | Sortlen | Pad_attribute`).

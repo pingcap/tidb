@@ -122,7 +122,6 @@ pub mod keydecoder;
 pub mod lack_handles;
 pub mod lazy_txn_state;
 pub mod lead_lag;
-pub mod lock_stats_exec;
 pub mod mdl_info_load;
 pub mod metrics_reader;
 pub mod minmax_deque;

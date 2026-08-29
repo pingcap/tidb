@@ -167,6 +167,7 @@ pub mod sort;
 pub mod sort_partition;
 pub mod sort_util;
 pub mod statement_pushdown;
+pub mod stats_lock;
 mod stmt_context;
 pub mod storage;
 pub mod table_access;

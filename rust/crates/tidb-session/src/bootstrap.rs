@@ -14,10 +14,10 @@
 
 //! The session-layer bootstrap: Go `pkg/session/bootstrap.go`'s
 //! `doDDLWorks`/`doDMLWorks`, reduced to the system tables this tier actually
-//! serves. Today that is four: `mysql.user` (Go `metadef.CreateUserTable`
+//! serves. This includes `mysql.user` (Go `metadef.CreateUserTable`
 //! plus `doDMLWorks`' root row -- account statements keep it in sync, see
-//! `crate::user_table`), `mysql.bind_info`, whose absence was the measured
-//! gap the GLOBAL-binding refusal pointed at, and the two blacklist tables
+//! `crate::user_table`), `mysql.bind_info`, the statistics metadata and lock
+//! tables used by `LOCK STATS`, and the two blacklist tables
 //! `ADMIN RELOAD` reads (`crate::blacklist`) -- a statement that can only
 //! report what a table holds needs the table to exist first.
 //!
@@ -70,10 +70,14 @@ impl Session {
     /// text), not a user error, so it panics rather than leaving every later
     /// binding statement to fail with a misleading missing-table message.
     pub(crate) fn bootstrap_system_tables(&mut self) {
-        let has_bind_info = self
-            .with_catalog_mut(|catalog| Ok(catalog.contains_in("mysql", "bind_info")))
+        let has_required_tables = self
+            .with_catalog_mut(|catalog| {
+                Ok(["user", "bind_info", "stats_meta", "stats_table_locked"]
+                    .into_iter()
+                    .all(|table| catalog.contains_in("mysql", table)))
+            })
             .unwrap_or(false);
-        if has_bind_info {
+        if has_required_tables {
             return;
         }
         self.run_bootstrap_statements()
@@ -94,6 +98,8 @@ impl Session {
             // names the account table rather than a bystander.
             tidb_metadef::system_tables_def::CREATE_USER_TABLE,
             tidb_metadef::system_tables_def::CREATE_BIND_INFO_TABLE,
+            tidb_metadef::system_tables_def::CREATE_STATS_META_TABLE,
+            tidb_metadef::system_tables_def::CREATE_STATS_TABLE_LOCKED_TABLE,
             // Go bootstraps these two empty (`doDDLWorks`); only an upgrade
             // from a pre-v4 cluster seeds `expr_pushdown_blacklist` rows
             // (`writeDefaultExprPushDownBlacklist`), and a fresh cluster --

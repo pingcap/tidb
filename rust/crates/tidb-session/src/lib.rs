@@ -820,6 +820,7 @@ mod show_admin;
 mod show_create_database;
 mod show_create_placement_policy;
 mod show_index;
+mod stats_lock_arm;
 pub mod sysvar;
 pub mod vars;
 pub use vars::{GlobalSysvars, SessionVars, VarError};

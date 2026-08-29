@@ -2282,3 +2282,74 @@ fn show_histograms_in_flight_emits_the_shared_queue_count() {
         row_text(session.run("SHOW HISTOGRAMS_IN_FLIGHT WHERE HistogramsInFlight > 0")).is_empty()
     );
 }
+
+/// Pinned Go `LOCK STATS` / `SHOW STATS_LOCKED`: a table-level lock persists
+/// the logical and partition IDs in one internal transaction, duplicate locks
+/// warn, and SHOW sorts the selected physical IDs.
+#[test]
+fn stats_lock_statements_and_show_locked_share_the_persisted_store() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE t(a INT) PARTITION BY RANGE(a) (\
+             PARTITION p0 VALUES LESS THAN (10), \
+             PARTITION p1 VALUES LESS THAN MAXVALUE)",
+        )
+        .unwrap();
+
+    assert!(row_text(session.run("SHOW STATS_LOCKED")).is_empty());
+    session.run("BEGIN").unwrap();
+    session.run("LOCK STATS t").unwrap();
+    session.run("ROLLBACK").unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW STATS_LOCKED")),
+        vec![
+            vec!["test", "t", "global", "locked"],
+            vec!["test", "t", "p0", "locked"],
+            vec!["test", "t", "p1", "locked"],
+        ]
+    );
+
+    session.run("LOCK STATS t").unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        vec![vec!["Warning", "1105", "skip locking locked table: test.t"]]
+    );
+    assert_eq!(
+        row_text(session.run("SHOW STATS_LOCKED WHERE Partition_name = 'p0'")),
+        vec![vec!["test", "t", "p0", "locked"]]
+    );
+
+    session.run("UNLOCK STATS t").unwrap();
+    assert!(row_text(session.run("SHOW STATS_LOCKED")).is_empty());
+}
+
+/// Pinned Go's whole-table gate: a partition cannot be unlocked while its
+/// logical table is locked, and STATIC prune mode exposes only partition IDs.
+#[test]
+fn stats_partition_unlock_obeys_the_whole_table_gate() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t(a INT) PARTITION BY HASH(a) PARTITIONS 2")
+        .unwrap();
+    session.run("LOCK STATS t").unwrap();
+    session.run("UNLOCK STATS t PARTITION(p0)").unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        vec![vec![
+            "Warning",
+            "1105",
+            "skip unlocking partitions of locked table: test.t"
+        ]]
+    );
+    session
+        .run("SET @@tidb_partition_prune_mode = 'static'")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW STATS_LOCKED")),
+        vec![
+            vec!["test", "t", "p0", "locked"],
+            vec!["test", "t", "p1", "locked"],
+        ]
+    );
+}
