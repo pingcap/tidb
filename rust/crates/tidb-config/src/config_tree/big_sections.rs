@@ -120,6 +120,18 @@ impl Default for Security {
     }
 }
 
+impl Security {
+    /// Go `Security.ClusterSecurity`.
+    pub fn cluster_security(&self) -> crate::tikvcfg::Security {
+        crate::tikvcfg::Security::new(
+            self.cluster_ssl_ca.clone(),
+            self.cluster_ssl_cert.clone(),
+            self.cluster_ssl_key.clone(),
+            self.cluster_verify_cn.clone(),
+        )
+    }
+}
+
 /// Status section of the config (Go `Status`).
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(default)]
@@ -132,10 +144,10 @@ pub struct Status {
     pub metrics_addr: String,
     /// Status server port.
     #[serde(rename = "status-port")]
-    pub status_port: u32,
+    pub status_port: usize,
     /// Metrics push interval, seconds.
     #[serde(rename = "metrics-interval")]
-    pub metrics_interval: u32,
+    pub metrics_interval: usize,
     /// Whether the status server reports.
     #[serde(rename = "report-status")]
     pub report_status: bool,
@@ -147,13 +159,13 @@ pub struct Status {
     pub record_db_label: bool,
     /// gRPC keepalive ping interval, seconds.
     #[serde(rename = "grpc-keepalive-time")]
-    pub grpc_keep_alive_time: u32,
+    pub grpc_keep_alive_time: usize,
     /// gRPC keepalive timeout, seconds.
     #[serde(rename = "grpc-keepalive-timeout")]
-    pub grpc_keep_alive_timeout: u32,
+    pub grpc_keep_alive_timeout: usize,
     /// Max concurrent streams per client connection.
     #[serde(rename = "grpc-concurrent-streams")]
-    pub grpc_concurrent_streams: u32,
+    pub grpc_concurrent_streams: usize,
     /// Initial stream window size.
     #[serde(rename = "grpc-initial-window-size")]
     pub grpc_initial_window_size: i64,
@@ -188,7 +200,7 @@ impl Default for Status {
 pub struct Performance {
     /// Max OS threads.
     #[serde(rename = "max-procs")]
-    pub max_procs: u32,
+    pub max_procs: usize,
     /// Deprecated: use `server-memory-quota`.
     #[serde(rename = "max-memory")]
     pub max_memory: u64,
@@ -200,7 +212,7 @@ pub struct Performance {
     pub stats_lease: String,
     /// Deprecated statement count limit.
     #[serde(rename = "stmt-count-limit")]
-    pub stmt_count_limit: u32,
+    pub stmt_count_limit: usize,
     /// Pseudo estimate ratio.
     #[serde(rename = "pseudo-estimate-ratio")]
     pub pseudo_estimate_ratio: f64,
@@ -248,13 +260,13 @@ pub struct Performance {
     pub stats_load_concurrency: i64,
     /// Stats-load request queue size.
     #[serde(rename = "stats-load-queue-size")]
-    pub stats_load_queue_size: u32,
+    pub stats_load_queue_size: usize,
     /// Deprecated analyze-partition concurrency quota.
     #[serde(rename = "analyze-partition-concurrency-quota")]
-    pub analyze_partition_concurrency_quota: u32,
+    pub analyze_partition_concurrency_quota: usize,
     /// Plan-replayer dump-worker concurrency.
     #[serde(rename = "plan-replayer-dump-worker-concurrency")]
-    pub plan_replayer_dump_worker_concurrency: u32,
+    pub plan_replayer_dump_worker_concurrency: usize,
     /// Enable stats-cache mem quota.
     #[serde(rename = "enable-stats-cache-mem-quota")]
     pub enable_stats_cache_mem_quota: bool,

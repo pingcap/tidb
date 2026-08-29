@@ -24,6 +24,7 @@
 //! singleton belong to the client/runtime layers, not the config shapes).
 
 use serde::{Deserialize, Serialize};
+use std::sync::{OnceLock, RwLock};
 
 /// Default stores-refresh interval in seconds (Go `DefStoresRefreshInterval`).
 pub const DEF_STORES_REFRESH_INTERVAL: u64 = 60;
@@ -139,7 +140,7 @@ impl TxnLocalLatches {
 pub struct PessimisticTxn {
     /// Max retry count for a single statement.
     #[serde(rename = "max-retry-count")]
-    pub max_retry_count: u32,
+    pub max_retry_count: usize,
 }
 
 /// Async-commit config (Go `AsyncCommit`; durations are nanoseconds).
@@ -456,6 +457,31 @@ impl Default for Config {
             zone_label: String::new(),
         }
     }
+}
+
+fn global_config() -> &'static RwLock<Config> {
+    static GLOBAL_CONFIG: OnceLock<RwLock<Config>> = OnceLock::new();
+    GLOBAL_CONFIG.get_or_init(|| RwLock::new(Config::default()))
+}
+
+/// Go client config `GetGlobalConfig`.
+pub fn get_global_config() -> Config {
+    global_config()
+        .read()
+        .expect("TiKV global config lock poisoned")
+        .clone()
+}
+
+/// Go client config `StoreGlobalConfig`.
+pub fn store_global_config(config: Config) {
+    *global_config()
+        .write()
+        .expect("TiKV global config lock poisoned") = config;
+}
+
+/// Go client config `GetTxnScopeFromConfig` (without its test failpoint).
+pub fn get_txn_scope_from_config() -> String {
+    txn_scope_or_global(&get_global_config().txn_scope)
 }
 
 /// Extracts the effective txn scope (Go `GetTxnScopeFromConfig`, without the

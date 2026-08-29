@@ -209,7 +209,7 @@ pub fn is_all_removed_config_items(items: &[String]) -> bool {
     items.iter().all(|i| removed.contains(i.as_str()))
 }
 
-const MAX_TOKEN_LIMIT: u32 = 1024 * 1024;
+const MAX_TOKEN_LIMIT: usize = 1024 * 1024;
 
 /// Options relocated into the `[instance]` section (Go
 /// `sectionMovedToInstance`): `(source_section, &[(old_name, new_name)])`;
@@ -499,6 +499,79 @@ impl Config {
     }
 }
 
+/// Go `InitializeConfig`, expressed as a fallible library operation rather
+/// than terminating the process. Returned strings are the warnings Go prints
+/// before logging is initialized; a caller running config-check prints the
+/// source success line after this function returns.
+pub fn initialize_config(
+    conf_path: Option<&std::path::Path>,
+    config_check: bool,
+    config_strict: bool,
+    enforce_cmd_args: impl FnOnce(&mut Config) -> Result<(), String>,
+) -> Result<Vec<String>, String> {
+    let mut config = super::config::get_global_config();
+    let mut warnings = Vec::new();
+
+    if let Some(path) = conf_path {
+        let text = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+        match config.load_str(path.to_string_lossy().as_ref(), &text) {
+            Ok(()) => {}
+            Err(LoadError::ValidationFailed {
+                undecoded_items, ..
+            }) if (!config_check && !config_strict)
+                || is_all_removed_config_items(&undecoded_items) =>
+            {
+                warnings.push(
+                    LoadError::ValidationFailed {
+                        conf_file: path.to_string_lossy().into_owned(),
+                        undecoded_items,
+                    }
+                    .to_string(),
+                );
+            }
+            Err(error @ LoadError::InstanceSection { .. }) => {
+                warnings.push(error.to_string());
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+
+        if config_check {
+            if let Err(warning) = config.removed_variable_check(&text) {
+                warnings.push(warning);
+            }
+        }
+    } else if config_check {
+        return Err("config check failed no config file specified for config-check".into());
+    }
+
+    enforce_cmd_args(&mut config)?;
+    if let Err(error) = config.valid() {
+        let path = conf_path
+            .map(|path| {
+                if path.is_absolute() {
+                    path.to_path_buf()
+                } else {
+                    std::env::current_dir()
+                        .map(|directory| directory.join(path))
+                        .unwrap_or_else(|_| path.to_path_buf())
+                }
+            })
+            .unwrap_or_default();
+        return Err(format!(
+            "load config file: {}\ninvalid config {error}",
+            path.display()
+        ));
+    }
+    config
+        .adjust_starter_config(config.deploy_mode == crate::deploymode::Mode::Starter)
+        .map_err(|error| format!("invalid security env vars {error}"))?;
+
+    if !config_check {
+        super::config::store_global_config(config);
+    }
+    Ok(warnings)
+}
+
 /// Delete a dotted path from a JSON object, mirroring Go's walk in
 /// `GetJSONConfig`: descend through object keys, remove the final key, and
 /// stop early if any intermediate key is missing or not an object.
@@ -522,19 +595,49 @@ mod tests {
     use super::*;
     use crate::config_tree::new_config;
 
+    fn with_temp_config(text: &str, test: impl FnOnce(&std::path::Path)) {
+        static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let id = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "tidb-config-initialize-{}-{id}.toml",
+            std::process::id()
+        ));
+        std::fs::write(&path, text).unwrap();
+        test(&path);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn initialize_config_matches_strict_and_check_contract() {
+        assert_eq!(
+            initialize_config(None, true, false, |_| Ok(())).unwrap_err(),
+            "config check failed no config file specified for config-check"
+        );
+
+        with_temp_config("unknown-option = true\n", |path| {
+            assert!(initialize_config(Some(path), false, true, |_| Ok(())).is_err());
+            let warnings = initialize_config(Some(path), false, false, |_| Ok(())).unwrap();
+            assert_eq!(warnings.len(), 1);
+            assert!(warnings[0].contains("unknown-option"));
+        });
+
+        with_temp_config("enable-batch-dml = true\n", |path| {
+            let warnings = initialize_config(Some(path), true, true, |_| Ok(())).unwrap();
+            assert_eq!(warnings.len(), 1);
+            assert!(warnings[0].contains("enable-batch-dml"));
+            assert!(warnings[0].contains("no longer supported"));
+        });
+    }
+
     // Go TestTokenLimit.
     #[test]
     fn token_limit() {
-        for (input, expected) in [(0u32, 1000u32), (99999999999u64 as u32, MAX_TOKEN_LIMIT)] {
+        for (input, expected) in [(0usize, 1000usize), (99_999_999_999, MAX_TOKEN_LIMIT)] {
             let mut c = new_config();
             let text = format!("token-limit = {input}\n");
             c.load_str("c.toml", &text).unwrap();
             assert_eq!(c.token_limit, expected);
         }
-        // A too-large literal that fits u32 but exceeds the max.
-        let mut c = new_config();
-        c.load_str("c.toml", "token-limit = 2000000\n").unwrap();
-        assert_eq!(c.token_limit, MAX_TOKEN_LIMIT);
     }
 
     // Go TestDeployModeConfig (classic-kernel path; the Rust default build

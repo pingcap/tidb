@@ -69,9 +69,9 @@ pub struct StaticInfo {
     pub ip: String,
     /// Go `Port` (`listening_port`).
     #[serde(rename = "listening_port")]
-    pub port: u32,
+    pub port: usize,
     /// Go `StatusPort`.
-    pub status_port: u32,
+    pub status_port: usize,
     /// Go `Lease`.
     pub lease: String,
     /// Go `StartTimestamp`.
@@ -144,7 +144,7 @@ pub struct TopologyInfo {
     /// Go `IP`.
     pub ip: String,
     /// Go `StatusPort`.
-    pub status_port: u32,
+    pub status_port: usize,
     /// Go `DeployPath`.
     pub deploy_path: String,
     /// Go `StartTimestamp`.

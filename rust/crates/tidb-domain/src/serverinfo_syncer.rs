@@ -649,7 +649,7 @@ fn sleep_until_stopped(
 /// key of an IPv6 node reads `/topology/tidb/[::1]:4000`. Everything else
 /// is `host:port`.
 #[must_use]
-pub fn join_host_port(host: &str, port: u32) -> String {
+pub fn join_host_port(host: &str, port: usize) -> String {
     if host.contains(':') {
         format!("[{host}]:{port}")
     } else {
@@ -763,7 +763,7 @@ mod tests {
         }
     }
 
-    fn info_at(id: &str, ip: &str, port: u32) -> ServerInfo {
+    fn info_at(id: &str, ip: &str, port: usize) -> ServerInfo {
         ServerInfo {
             static_info: StaticInfo {
                 id: id.to_owned(),

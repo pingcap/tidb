@@ -163,6 +163,13 @@ For each bounded behavior cluster:
   all five source tests including the complete twelve-row regex table and
   concurrent publication case. The complete inventory and gates are recorded
   in `receipts/b152.md`.
+- 2026-08-28: audited all 15 direct artifacts and all 39 test/harness
+  entrypoints in the pinned root `pkg/config` package, independently from its
+  three nested Go packages. Filled initialization, starter TLS, temp-storage,
+  global/TiKV publication, conversion, native `uint`, validation, cloning, and
+  reflection-order merge behavior; removed a Rust-owned external metering SDK
+  parser and a stale absent-at-pin gap. Both default and nextgen package
+  matrices pass; the atomic inventory and gates are in `receipts/b001.md`.
 - 2026-08-28: audited every production, generated catalog/table, test,
   harness, and build file in pinned Go `pkg/parser/mysql`, including its
   `tidb-error` ownership split. Removed a Rust-only test that failed on host Go

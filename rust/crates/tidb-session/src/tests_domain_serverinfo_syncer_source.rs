@@ -110,7 +110,7 @@ fn put_str(fake: &FakeEtcd, key: &str, value: &str) {
 
 /// Go `getServerInfo` (`pkg/domain/serverinfo/syncer.go:481`) under the
 /// `mockServerInfo` failpoint (`:501-508`).
-fn mock_server_info(id: &str, ip: &str, port: u32) -> ServerInfo {
+fn mock_server_info(id: &str, ip: &str, port: usize) -> ServerInfo {
     ServerInfo {
         static_info: StaticInfo {
             id: id.to_owned(),
@@ -270,7 +270,7 @@ fn startup_cleans_the_stale_server_info_at_this_address() {
 }
 
 /// The same fixture shape as Go's test: id, address, server-id getter only.
-fn mock_server_info_at(id: &str, ip: &str, port: u32) -> ServerInfo {
+fn mock_server_info_at(id: &str, ip: &str, port: usize) -> ServerInfo {
     ServerInfo {
         static_info: StaticInfo {
             id: id.to_owned(),

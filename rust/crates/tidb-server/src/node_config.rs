@@ -889,7 +889,7 @@ impl NodeConfig {
         if let Some(loaded) = source.as_mut() {
             let config = &mut loaded.config;
             config.host = host.to_string();
-            config.port = u32::from(port);
+            config.port = usize::from(port);
             config.store = tidb_config::store::StoreType("tikv".to_owned());
             config.path = pd_endpoints.join(",");
             config.max_allowed_packet = u64::try_from(max_allowed_packet).unwrap_or(u64::MAX);

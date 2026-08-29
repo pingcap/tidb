@@ -5,7 +5,7 @@
   {
    "crate": "tidb-config",
    "gopath": "pkg/config",
-   "nfuncs": 46,
+   "nfuncs": 39,
    "testdata": 0
   },
   {
@@ -273,7 +273,7 @@
    "testdata": 0
   }
  ],
- "total_funcs": 7025,
+ "total_funcs": 7018,
  "total_batches": 151,
  "batches": [
   {
@@ -281,7 +281,7 @@
    "gopath": "pkg/config",
    "base_gopath": "pkg/config",
    "crate": "tidb-config",
-   "funcs": 46,
+   "funcs": 39,
    "tier": 1,
    "pod": "pod1"
   },

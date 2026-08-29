@@ -15,12 +15,9 @@
 //! The top-level `Config` struct of Go `pkg/config/config.go`: the field
 //! tree, `DefaultConfig`/`NewConfig`, and `Valid`.
 //!
-//! Not ported here (runtime/CLI machinery, not the config data model):
-//! `InitializeConfig` (flag parsing + `os.Exit`), the global-config atomic
-//! singleton, and `Load`'s TOML-metadata undecoded/instance-section
-//! migration (which depends on the toml library's metadata API — a
-//! following tranche). `Valid`'s skip-grant-table check delegates to the
-//! process euid and is noted where it lands.
+//! `InitializeConfig` remains server-entrypoint orchestration; the config
+//! data, validation, loading, global publication, and conversion behavior
+//! live here and in the sibling modules.
 
 use std::sync::{
     atomic::{AtomicBool as StdAtomicBool, Ordering},
@@ -66,14 +63,27 @@ const DEF_TABLE_COLUMN_COUNT_LIMIT: u32 = 1017;
 const DEF_MAX_OF_TABLE_COLUMN_COUNT_LIMIT: u32 = 4096;
 const DEF_STATS_LOAD_CONCURRENCY_LIMIT: i64 = 0;
 const DEF_MAX_OF_STATS_LOAD_CONCURRENCY_LIMIT: i64 = 128;
-const DEF_STATS_LOAD_QUEUE_SIZE_LIMIT: u32 = 1;
-const DEF_MAX_OF_STATS_LOAD_QUEUE_SIZE_LIMIT: u32 = 100000;
+const DEF_STATS_LOAD_QUEUE_SIZE_LIMIT: usize = 1;
+const DEF_MAX_OF_STATS_LOAD_QUEUE_SIZE_LIMIT: usize = 100000;
 pub(crate) const DEF_DXF_RESOURCE_LIMIT: i64 = 100;
 const MIN_DXF_RESOURCE_LIMIT: i64 = 10;
 const MAX_DXF_RESOURCE_LIMIT: i64 = 100;
-const DEF_PORT: u32 = 4000;
+const DEF_PORT: usize = 4000;
 const DEF_HOST: &str = "0.0.0.0";
 const DEF_TEMP_DIR: &str = "/tmp/tidb";
+
+/// Go `EnvClusterCA`.
+pub const ENV_CLUSTER_CA: &str = "CLUSTER_CA";
+/// Go `EnvClusterCert`.
+pub const ENV_CLUSTER_CERT: &str = "CLUSTER_CERT";
+/// Go `EnvClusterKey`.
+pub const ENV_CLUSTER_KEY: &str = "CLUSTER_KEY";
+/// Go `EnvSQLCA`.
+pub const ENV_SQL_CA: &str = "SQL_CA";
+/// Go `EnvSQLCert`.
+pub const ENV_SQL_CERT: &str = "SQL_CERT";
+/// Go `EnvSQLKey`.
+pub const ENV_SQL_KEY: &str = "SQL_KEY";
 
 /// Go `encodeDefTempStorageDir`: isolate the default spill directory by the
 /// current OS user and both TiDB listen endpoints.
@@ -81,8 +91,8 @@ fn encode_def_temp_storage_dir(
     temp_dir: &std::path::Path,
     host: &str,
     status_host: &str,
-    port: u32,
-    status_port: u32,
+    port: usize,
+    status_port: usize,
 ) -> std::path::PathBuf {
     let endpoint = format!("{host}:{port}/{status_host}:{status_port}");
     temp_dir
@@ -91,73 +101,19 @@ fn encode_def_temp_storage_dir(
         .join("tmp-storage")
 }
 
-/// Azure credentials parsed from a metering storage URI.
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct AzureMeteringConfig {
-    /// Azure storage account name.
-    pub account_name: String,
-    /// Azure storage account key.
-    pub account_key: String,
-}
-
-/// Storage target parsed from Go metering SDK's `NewFromURI` contract.
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct MeteringConfig {
-    /// Storage type (`s3` or `azure`).
-    pub storage_type: String,
-    /// Bucket or Azure container.
-    pub bucket: String,
-    /// Object prefix without the leading slash.
-    pub prefix: String,
-    /// S3 region from `region-id`.
-    pub region: String,
-    /// Azure-specific settings.
-    pub azure: Option<AzureMeteringConfig>,
-}
-
-impl MeteringConfig {
-    /// Go metering SDK `config.NewFromURI`, for the storage schemes consumed
-    /// by TiDB's metering configuration.
-    pub fn from_uri(uri: &str) -> Result<MeteringConfig, String> {
-        let (storage_type, rest) = uri
-            .split_once("://")
-            .ok_or_else(|| "metering storage URI must contain a scheme".to_owned())?;
-        if !matches!(storage_type, "s3" | "azure") {
-            return Err(format!(
-                "unsupported metering storage URI scheme {storage_type:?}"
-            ));
-        }
-        let (location, query) = rest.split_once('?').unwrap_or((rest, ""));
-        let (bucket, prefix) = location.split_once('/').unwrap_or((location, ""));
-        if bucket.is_empty() {
-            return Err("metering storage URI bucket must not be empty".to_owned());
-        }
-
-        let mut region = String::new();
-        let mut account_name = String::new();
-        let mut account_key = String::new();
-        for pair in query.split('&').filter(|pair| !pair.is_empty()) {
-            let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-            match key {
-                "region-id" => region = value.to_owned(),
-                "account-name" => account_name = value.to_owned(),
-                "account-key" => account_key = value.to_owned(),
-                _ => {}
-            }
-        }
-
-        let azure = (storage_type == "azure").then_some(AzureMeteringConfig {
-            account_name,
-            account_key,
-        });
-        Ok(MeteringConfig {
-            storage_type: storage_type.to_owned(),
-            bucket: bucket.to_owned(),
-            prefix: prefix.to_owned(),
-            region,
-            azure,
+fn default_temp_storage_dir_name() -> &'static std::path::Path {
+    static DEFAULT: OnceLock<std::path::PathBuf> = OnceLock::new();
+    DEFAULT
+        .get_or_init(|| {
+            encode_def_temp_storage_dir(
+                &std::env::temp_dir(),
+                DEF_HOST,
+                &Status::default().status_host,
+                DEF_PORT,
+                Status::default().status_port,
+            )
         })
-    }
+        .as_path()
 }
 
 /// Configuration options (Go `Config`). Deprecated/upgrade-only fields are
@@ -171,7 +127,7 @@ pub struct Config {
     #[serde(rename = "advertise-address")]
     pub advertise_address: String,
     #[serde(rename = "port")]
-    pub port: u32,
+    pub port: usize,
     #[serde(rename = "cors")]
     pub cors: String,
     #[serde(rename = "store")]
@@ -185,7 +141,7 @@ pub struct Config {
     #[serde(rename = "split-table")]
     pub split_table: bool,
     #[serde(rename = "token-limit")]
-    pub token_limit: u32,
+    pub token_limit: usize,
     #[serde(rename = "max-allowed-packet")]
     pub max_allowed_packet: u64,
     #[serde(rename = "temp-dir")]
@@ -363,15 +319,9 @@ impl Default for Config {
     // Go `DefaultConfig` / `defaultConf`.
     fn default() -> Self {
         let status = Status::default();
-        let temp_storage_path = encode_def_temp_storage_dir(
-            &std::env::temp_dir(),
-            DEF_HOST,
-            &status.status_host,
-            DEF_PORT,
-            status.status_port,
-        )
-        .to_string_lossy()
-        .into_owned();
+        let temp_storage_path = default_temp_storage_dir_name()
+            .to_string_lossy()
+            .into_owned();
         Config {
             host: DEF_HOST.into(),
             advertise_address: String::new(),
@@ -504,11 +454,13 @@ pub fn get_error_message_extensions() -> Vec<ErrorMessageExtension> {
 pub fn store_global_config(config: Config) {
     let (extensions, _) = prepare_error_message_extensions(&config.error_message_extensions, true)
         .expect("ignore-invalid preparation cannot fail");
+    let tikv_config = config.get_tikv_config();
     let mut global = global_config()
         .write()
         .expect("global config lock poisoned");
     *global = config;
     super::errmsg::replace_prepared_extensions(&extensions);
+    tikvcfg::store_global_config(tikv_config);
 }
 
 /// Go `CheckTableBeforeDrop`.
@@ -526,13 +478,41 @@ pub fn init_by_ld_flags(_edition: &str, check_before_drop_ld_flag: &str) {
 
 /// Go `UpdateGlobal`.
 pub fn update_global(update: impl FnOnce(&mut Config)) {
-    let mut config = global_config()
-        .write()
-        .expect("global config lock poisoned");
+    let mut config = get_global_config();
     update(&mut config);
-    let (extensions, _) = prepare_error_message_extensions(&config.error_message_extensions, true)
-        .expect("ignore-invalid preparation cannot fail");
-    super::errmsg::replace_prepared_extensions(&extensions);
+    store_global_config(config);
+}
+
+/// Go `GetTxnScopeFromConfig`.
+pub fn get_txn_scope_from_config() -> String {
+    tikvcfg::get_txn_scope_from_config()
+}
+
+/// Go `RestoreFunc`.
+pub fn restore_func() -> impl Fn() {
+    let original = get_global_config();
+    move || store_global_config(original.clone())
+}
+
+/// Go `TableLockEnabled`.
+pub fn table_lock_enabled() -> bool {
+    get_global_config().enable_table_lock
+}
+
+/// Go `TableLockDelayClean`.
+pub fn table_lock_delay_clean() -> u64 {
+    get_global_config().delay_clean_table_lock
+}
+
+/// Go `GetMaxAllowedPacket`.
+pub fn get_max_allowed_packet() -> u64 {
+    if crate::deploymode::is_starter() {
+        let value = get_global_config().max_allowed_packet;
+        if valid_max_allowed_packet(value) {
+            return value;
+        }
+    }
+    DEF_MAX_ALLOWED_PACKET
 }
 
 /// Go `GetGlobalKeyspaceName`.
@@ -567,6 +547,95 @@ fn validate_skip_grant_table(skip_grant_table: bool, has_root: bool) -> Result<(
 }
 
 impl Config {
+    /// Go `Config.UpdateTempStoragePath`.
+    pub fn update_temp_storage_path(&mut self) {
+        let base =
+            if std::path::Path::new(&self.temp_storage_path) == default_temp_storage_dir_name() {
+                std::env::temp_dir()
+            } else {
+                std::path::PathBuf::from(&self.temp_storage_path)
+            };
+        self.temp_storage_path = encode_def_temp_storage_dir(
+            &base,
+            &self.host,
+            &self.status.status_host,
+            self.port,
+            self.status.status_port,
+        )
+        .to_string_lossy()
+        .into_owned();
+    }
+
+    /// Go `Config.AdjustStarterConfig`.
+    pub fn adjust_starter_config(&mut self, is_starter: bool) -> Result<(), String> {
+        if !is_starter {
+            return Ok(());
+        }
+        self.adjust_security_config()
+    }
+
+    fn adjust_security_config(&mut self) -> Result<(), String> {
+        fn value(name: &str) -> String {
+            std::env::var(name).unwrap_or_default()
+        }
+
+        let cluster_ca = value(ENV_CLUSTER_CA);
+        let cluster_cert = value(ENV_CLUSTER_CERT);
+        let cluster_key = value(ENV_CLUSTER_KEY);
+        let cluster_ca_overridden = !cluster_ca.is_empty();
+        let cluster_cert_overridden = !cluster_cert.is_empty();
+        let cluster_key_overridden = !cluster_key.is_empty();
+        if cluster_ca_overridden {
+            self.security.cluster_ssl_ca = cluster_ca;
+        }
+        if cluster_cert_overridden {
+            self.security.cluster_ssl_cert = cluster_cert;
+        }
+        if cluster_key_overridden {
+            self.security.cluster_ssl_key = cluster_key;
+        }
+        if cluster_ca_overridden || cluster_cert_overridden || cluster_key_overridden {
+            if cluster_cert_overridden != cluster_key_overridden {
+                return Err("CLUSTER_CERT and CLUSTER_KEY must be set together".into());
+            }
+            if !self.security.cluster_ssl_ca.is_empty()
+                && (self.security.cluster_ssl_cert.is_empty()
+                    || self.security.cluster_ssl_key.is_empty())
+            {
+                return Err(
+                    "both CLUSTER_CERT and CLUSTER_KEY must be set when CLUSTER_CA is set".into(),
+                );
+            }
+        }
+
+        let sql_ca = value(ENV_SQL_CA);
+        let sql_cert = value(ENV_SQL_CERT);
+        let sql_key = value(ENV_SQL_KEY);
+        let sql_ca_overridden = !sql_ca.is_empty();
+        let sql_cert_overridden = !sql_cert.is_empty();
+        let sql_key_overridden = !sql_key.is_empty();
+        if sql_ca_overridden {
+            self.security.ssl_ca = sql_ca;
+        }
+        if sql_cert_overridden {
+            self.security.ssl_cert = sql_cert;
+        }
+        if sql_key_overridden {
+            self.security.ssl_key = sql_key;
+        }
+        if sql_ca_overridden || sql_cert_overridden || sql_key_overridden {
+            if sql_cert_overridden != sql_key_overridden {
+                return Err("SQL_CERT and SQL_KEY must be set together".into());
+            }
+            if !self.security.ssl_ca.is_empty()
+                && (self.security.ssl_cert.is_empty() || self.security.ssl_key.is_empty())
+            {
+                return Err("both SQL_CERT and SQL_KEY must be set when SQL_CA is set".into());
+            }
+        }
+        Ok(())
+    }
+
     /// Go `Config.ResolveKeyspaceObservability`.
     pub fn resolve_keyspace_observability(
         &mut self,
@@ -602,12 +671,7 @@ impl Config {
             committer_concurrency: i64::from(tidb_tikvutil::committer_concurrency()),
             max_txn_ttl: self.performance.max_txn_ttl,
             tikv_client: self.tikv_client.clone(),
-            security: tikvcfg::Security::new(
-                self.security.cluster_ssl_ca.clone(),
-                self.security.cluster_ssl_cert.clone(),
-                self.security.cluster_ssl_key.clone(),
-                self.security.cluster_verify_cn.clone(),
-            ),
+            security: self.security.cluster_security(),
             pd_client: self.pd_client,
             pessimistic_txn: tikvcfg::PessimisticTxn {
                 max_retry_count: self.pessimistic_txn.max_retry_count,
@@ -749,8 +813,9 @@ impl Config {
             ));
         }
         // txn-local-latches / pd-client / tikv-client / trx-summary.
-        self.tikv_client.valid()?;
+        self.txn_local_latches.valid()?;
         self.pd_client.valid()?;
+        self.tikv_client.valid()?;
         self.trx_summary.valid()?;
         if self.deploy_mode != Mode::Starter {
             if self.external_workload.is_configured() {
@@ -789,7 +854,9 @@ impl Config {
             }
         }
         // Security: spilled-file encryption method (lowercased).
-        let method = self.security.spilled_file_encryption_method.to_lowercase();
+        self.security.spilled_file_encryption_method =
+            self.security.spilled_file_encryption_method.to_lowercase();
+        let method = &self.security.spilled_file_encryption_method;
         if method != SPILLED_FILE_ENCRYPTION_METHOD_PLAINTEXT
             && method != SPILLED_FILE_ENCRYPTION_METHOD_AES128_CTR
         {
@@ -901,7 +968,7 @@ mod tests {
     #[test]
     fn test_clone_conf() {
         let mut first = new_config();
-        let second = first.clone();
+        let second = crate::config_tree::helpers::clone_conf(&first).unwrap();
         assert_eq!(first, second);
 
         first.host = "example.invalid".to_owned();
@@ -985,34 +1052,6 @@ mod tests {
 
         CHECK_TABLE_BEFORE_DROP.store(original_check_table_before_drop, Ordering::Relaxed);
         store_global_config(original_global_config);
-    }
-
-    // Go TestMetering (the source test runs under the `nextgen` build tag).
-    #[cfg(feature = "nextgen")]
-    #[test]
-    fn test_metering() {
-        let mut config = new_config();
-        config.metering_storage_uri =
-            "s3://test-bucket/test-prefix?region-id=test-region".to_owned();
-        config.valid().unwrap();
-        let metering = MeteringConfig::from_uri(&config.metering_storage_uri).unwrap();
-        assert_eq!(metering.storage_type, "s3");
-        assert_eq!(metering.bucket, "test-bucket");
-        assert_eq!(metering.prefix, "test-prefix");
-        assert_eq!(metering.region, "test-region");
-
-        let mut config = new_config();
-        config.metering_storage_uri =
-            "azure://metering-data/test-prefix?account-name=test-account&account-key=test-key"
-                .to_owned();
-        config.valid().unwrap();
-        let metering = MeteringConfig::from_uri(&config.metering_storage_uri).unwrap();
-        assert_eq!(metering.storage_type, "azure");
-        assert_eq!(metering.bucket, "metering-data");
-        assert_eq!(metering.prefix, "test-prefix");
-        let azure = metering.azure.unwrap();
-        assert_eq!(azure.account_name, "test-account");
-        assert_eq!(azure.account_key, "test-key");
     }
 
     // Go TestKeyspaceObservability.
@@ -1467,7 +1506,138 @@ metric-label = "keyspace_meta_label_a"
         ] {
             c.security.spilled_file_encryption_method = m.into();
             assert_eq!(c.valid().is_ok(), ok, "method={m:?}");
+            if ok {
+                assert_eq!(
+                    c.security.spilled_file_encryption_method,
+                    m.to_lowercase(),
+                    "Go Valid lowercases the stored value"
+                );
+            }
         }
+    }
+
+    #[test]
+    fn txn_local_latches_validation_is_part_of_config_valid() {
+        let mut config = new_config();
+        config.txn_local_latches.enabled = true;
+        config.txn_local_latches.capacity = 0;
+        assert_eq!(
+            config.valid().unwrap_err(),
+            "txn-local-latches.capacity can not be 0"
+        );
+    }
+
+    #[test]
+    fn update_temp_storage_path_matches_source() {
+        let mut config = new_config();
+        config.host = "127.0.0.1".into();
+        config.status.status_host = "127.16.5.1".into();
+        config.status.status_port = 15532;
+        config.update_temp_storage_path();
+        assert_eq!(
+            std::path::Path::new(&config.temp_storage_path),
+            std::env::temp_dir()
+                .join(format!("{}_tidb", rustix::process::getuid().as_raw()))
+                .join("MTI3LjAuMC4xOjQwMDAvMTI3LjE2LjUuMToxNTUzMg==")
+                .join("tmp-storage")
+        );
+
+        config.temp_storage_path = "/configured/spill-root".into();
+        config.update_temp_storage_path();
+        assert!(config
+            .temp_storage_path
+            .starts_with("/configured/spill-root/"));
+    }
+
+    #[test]
+    fn adjust_starter_config_matches_tls_environment_contract() {
+        static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = ENV_LOCK.lock().unwrap();
+        let names = [
+            ENV_CLUSTER_CA,
+            ENV_CLUSTER_CERT,
+            ENV_CLUSTER_KEY,
+            ENV_SQL_CA,
+            ENV_SQL_CERT,
+            ENV_SQL_KEY,
+        ];
+        let previous: Vec<Option<std::ffi::OsString>> =
+            names.iter().map(std::env::var_os).collect();
+        struct RestoreEnv<'a> {
+            names: &'a [&'a str],
+            previous: Vec<Option<std::ffi::OsString>>,
+        }
+        impl Drop for RestoreEnv<'_> {
+            fn drop(&mut self) {
+                for (name, previous) in self.names.iter().zip(&self.previous) {
+                    if let Some(value) = previous {
+                        std::env::set_var(name, value);
+                    } else {
+                        std::env::remove_var(name);
+                    }
+                }
+            }
+        }
+        let _restore = RestoreEnv {
+            names: &names,
+            previous,
+        };
+        for name in names {
+            std::env::remove_var(name);
+        }
+
+        let mut config = new_config();
+        std::env::set_var(ENV_CLUSTER_CA, "/tmp/cluster-ca.pem");
+        std::env::set_var(ENV_CLUSTER_CERT, "/tmp/cluster-cert.pem");
+        std::env::set_var(ENV_CLUSTER_KEY, "/tmp/cluster-key.pem");
+        std::env::set_var(ENV_SQL_CA, "/tmp/sql-ca.pem");
+        std::env::set_var(ENV_SQL_CERT, "/tmp/sql-cert.pem");
+        std::env::set_var(ENV_SQL_KEY, "/tmp/sql-key.pem");
+        config.adjust_starter_config(true).unwrap();
+        assert_eq!(config.security.cluster_ssl_ca, "/tmp/cluster-ca.pem");
+        assert_eq!(config.security.cluster_ssl_cert, "/tmp/cluster-cert.pem");
+        assert_eq!(config.security.cluster_ssl_key, "/tmp/cluster-key.pem");
+        assert_eq!(config.security.ssl_ca, "/tmp/sql-ca.pem");
+        assert_eq!(config.security.ssl_cert, "/tmp/sql-cert.pem");
+        assert_eq!(config.security.ssl_key, "/tmp/sql-key.pem");
+
+        std::env::remove_var(ENV_CLUSTER_KEY);
+        assert_eq!(
+            new_config().adjust_starter_config(true).unwrap_err(),
+            "CLUSTER_CERT and CLUSTER_KEY must be set together"
+        );
+    }
+
+    #[test]
+    fn global_helpers_match_source() {
+        let _guard = GLOBAL_CONFIG_TEST_LOCK.lock().unwrap();
+        let restore = restore_func();
+        let mut config = new_config();
+        config.enable_table_lock = true;
+        config.delay_clean_table_lock = 5;
+        store_global_config(config);
+        assert!(table_lock_enabled());
+        assert_eq!(table_lock_delay_clean(), 5);
+        assert_eq!(get_txn_scope_from_config(), tikvcfg::GLOBAL_TXN_SCOPE);
+        update_global(|config| {
+            config.labels.insert("zone".into(), "dc-1".into());
+        });
+        assert_eq!(get_txn_scope_from_config(), "dc-1");
+
+        assert_eq!(get_max_allowed_packet(), DEF_MAX_ALLOWED_PACKET);
+
+        #[cfg(feature = "nextgen")]
+        {
+            let original_mode = crate::deploymode::get();
+            crate::deploymode::set(Mode::Starter).unwrap();
+            update_global(|config| config.max_allowed_packet = 1024);
+            assert_eq!(get_max_allowed_packet(), 1024);
+            update_global(|config| config.max_allowed_packet = 0);
+            assert_eq!(get_max_allowed_packet(), DEF_MAX_ALLOWED_PACKET);
+            crate::deploymode::set(original_mode).unwrap();
+        }
+
+        restore();
     }
 
     // Go TestStatsLoadLimit.

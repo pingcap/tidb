@@ -94,10 +94,10 @@ impl Default for RuV2Config {
 pub struct PessimisticTxn {
     /// Max retry count for a single statement.
     #[serde(rename = "max-retry-count")]
-    pub max_retry_count: u32,
+    pub max_retry_count: usize,
     /// Max deadlock events recorded in information_schema.deadlocks.
     #[serde(rename = "deadlock-history-capacity")]
-    pub deadlock_history_capacity: u32,
+    pub deadlock_history_capacity: usize,
     /// Whether retryable (in-statement) deadlocks are collected.
     #[serde(rename = "deadlock-history-collect-retryable")]
     pub deadlock_history_collect_retryable: bool,
@@ -179,10 +179,10 @@ pub struct Standby {
     pub standby_mode: bool,
     /// Max idle time (seconds) before exit.
     #[serde(rename = "max-idle-seconds")]
-    pub max_idle_seconds: u32,
+    pub max_idle_seconds: usize,
     /// Max time (seconds) to activate from standby.
     #[serde(rename = "activation-timeout")]
-    pub activation_timeout: u32,
+    pub activation_timeout: usize,
     /// Whether the idle watcher ignores session migration.
     #[serde(rename = "enable-zero-backend")]
     pub enable_zero_backend: bool,
@@ -219,10 +219,10 @@ pub struct PlanCache {
     pub enabled: bool,
     /// Capacity.
     #[serde(rename = "capacity")]
-    pub capacity: u32,
+    pub capacity: usize,
     /// Shards.
     #[serde(rename = "shards")]
-    pub shards: u32,
+    pub shards: usize,
 }
 
 /// Prepared plan cache config (Go `PreparedPlanCache`).
@@ -234,7 +234,7 @@ pub struct PreparedPlanCache {
     pub enabled: bool,
     /// Capacity.
     #[serde(rename = "capacity")]
-    pub capacity: u32,
+    pub capacity: usize,
     /// Memory guard ratio.
     #[serde(rename = "memory-guard-ratio")]
     pub memory_guard_ratio: f64,
@@ -320,6 +320,31 @@ pub struct OpenTracing {
     pub reporter: OpenTracingReporter,
 }
 
+/// The Jaeger configuration produced by Go `OpenTracing.ToTracingConfig`.
+#[derive(Clone, PartialEq, Debug)]
+pub struct TracingConfiguration {
+    /// Whether tracing is disabled.
+    pub disabled: bool,
+    /// Whether RPC metrics are enabled.
+    pub rpc_metrics: bool,
+    /// Reporter configuration.
+    pub reporter: OpenTracingReporter,
+    /// Sampler configuration.
+    pub sampler: OpenTracingSampler,
+}
+
+impl OpenTracing {
+    /// Go `OpenTracing.ToTracingConfig`.
+    pub fn to_tracing_config(&self) -> TracingConfiguration {
+        TracingConfiguration {
+            disabled: !self.enable,
+            rpc_metrics: self.rpc_metrics,
+            reporter: self.reporter.clone(),
+            sampler: self.sampler.clone(),
+        }
+    }
+}
+
 impl Default for OpenTracing {
     // From Go `defaultConf.OpenTracing`.
     fn default() -> Self {
@@ -345,7 +370,7 @@ pub struct ProxyProtocol {
     pub networks: String,
     /// Header read timeout, seconds.
     #[serde(rename = "header-timeout")]
-    pub header_timeout: u32,
+    pub header_timeout: usize,
     /// Whether the header is process-fallback-able.
     #[serde(rename = "fallbackable")]
     pub fallbackable: bool,
@@ -383,6 +408,11 @@ mod tests {
         assert!(!ot.enable);
         assert_eq!(ot.sampler.sampler_type, "const");
         assert_eq!(ot.sampler.param, 1.0);
+        let tracing = ot.to_tracing_config();
+        assert!(tracing.disabled);
+        assert!(!tracing.rpc_metrics);
+        assert_eq!(tracing.reporter, ot.reporter);
+        assert_eq!(tracing.sampler, ot.sampler);
 
         let pp = ProxyProtocol::default();
         assert_eq!(pp.header_timeout, 5);

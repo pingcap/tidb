@@ -14,7 +14,7 @@
 
 //! Source tests for the remaining uncovered parts of Go
 //! `pkg/config/config_test.go::TestConfig` and `TestDeployModeConfig`
-//! (telemetry overrides, gRPC keepalive bounds, hosted embedding).
+//! (telemetry overrides and gRPC keepalive bounds).
 
 use tidb_config::config_tree::new_config;
 
@@ -65,17 +65,4 @@ fn grpc_keepalive_timeout_minimum_matches_source() {
         conf.valid().unwrap_err(),
         "grpc-keepalive-timeout should be at least 0.05, but got 0.010000"
     );
-}
-
-// go-parity-gap: the `HostedEmbedding` config section (Go config.go
-// `HostedEmbedding`, its `configured()` helper and the
-// "hosted-embedding can only be configured for starter deploy mode" checks in
-// `Load`/`Valid`) has not been transcreated yet.
-#[test]
-#[ignore]
-fn hosted_embedding_starter_only_checks_match_source() {
-    // Go `TestConfig` opening block:
-    //   load("[hosted-embedding]") -> error containing
-    //   "hosted-embedding can only be configured for starter deploy mode";
-    //   Enabled=true / APIEndpoint set -> same error from Valid().
 }

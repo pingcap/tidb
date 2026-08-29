@@ -110,8 +110,8 @@ pub(crate) fn node_server_info(
     let mut info = tidb_domain::serverinfo::ServerInfo::default();
     info.static_info.id = tidb_domain::serverinfo_syncer::new_node_id();
     info.static_info.ip = config.advertise_address.clone();
-    info.static_info.port = u32::from(config.port);
-    info.static_info.status_port = u32::from(config.status_port);
+    info.static_info.port = usize::from(config.port);
+    info.static_info.status_port = usize::from(config.status_port);
     info.static_info.lease = format!("{}ms", config.schema_lease.as_millis());
     info.static_info.start_timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

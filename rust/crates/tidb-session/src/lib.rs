@@ -994,8 +994,8 @@ impl Session {
                 vec![
                     text(&info.static_info.id),
                     text(&info.static_info.ip),
-                    Datum::Int(i64::from(info.static_info.port)),
-                    Datum::Int(i64::from(info.static_info.status_port)),
+                    Datum::Int(info.static_info.port as i64),
+                    Datum::Int(info.static_info.status_port as i64),
                     text(&info.static_info.lease),
                     text(&info.static_info.version_info.version),
                     text(&info.static_info.version_info.git_hash),
