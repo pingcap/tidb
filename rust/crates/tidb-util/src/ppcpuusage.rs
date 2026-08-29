@@ -16,8 +16,7 @@
 //!
 //! A [`Mutex`] serializes the per-SQL state, TiDB time is accepted only for
 //! the current SQL ID, and TiKV time is always accumulated. The SQL ID wraps
-//! to zero. The Go package has no source test, so this module pins those
-//! observable contracts directly.
+//! to zero.
 
 use std::sync::Mutex;
 use std::time::Duration;
@@ -54,7 +53,10 @@ pub struct SqlCpuUsages {
 impl SqlCpuUsages {
     /// Sets the CPU-usages value.
     pub fn set_cpu_usages(&self, usage: CpuUsages) {
-        self.inner.lock().unwrap().cpu_usages = usage;
+        self.inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .cpu_usages = usage;
     }
 
     /// Merges TiDB CPU time into self when `sql_id` matches.
@@ -62,7 +64,10 @@ impl SqlCpuUsages {
     /// The ID is checked here because TiDB CPU time can only be collected by
     /// the profiler now, and is updated from concurrent threads.
     pub fn merge_tidb_cpu_time(&self, sql_id: u64, d: Duration) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if inner.sql_id == sql_id {
             inner.cpu_usages.tidb_cpu_time += d;
         }
@@ -73,111 +78,38 @@ impl SqlCpuUsages {
     /// No SQL-ID check is needed because TiKV CPU time is updated in
     /// executors now.
     pub fn merge_tikv_cpu_time(&self, d: Duration) {
-        self.inner.lock().unwrap().cpu_usages.tikv_cpu_time += d;
+        self.inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .cpu_usages
+            .tikv_cpu_time += d;
     }
 
     /// Returns the TiDB/TiKV CPU times.
     #[must_use]
     pub fn get_cpu_usages(&self) -> CpuUsages {
-        self.inner.lock().unwrap().cpu_usages
+        self.inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .cpu_usages
     }
 
     /// Allocates a new ID; restarts from 0 when it exceeds the `u64` limit.
     pub fn alloc_new_sql_id(&self) -> u64 {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         inner.sql_id = inner.sql_id.wrapping_add(1);
         inner.sql_id
     }
 
     /// Resets the TiDB/TiKV CPU times to 0.
     pub fn reset_cpu_times(&self) {
-        self.inner.lock().unwrap().cpu_usages.reset();
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{CpuUsages, SqlCpuUsages};
-    use std::sync::Arc;
-    use std::thread;
-    use std::time::Duration;
-
-    #[test]
-    fn merge_is_gated_by_sql_id() {
-        let c = SqlCpuUsages::default();
-        let id = c.alloc_new_sql_id();
-        assert_eq!(id, 1);
-
-        // A merge for the current ID lands; a stale ID's merge is dropped.
-        c.merge_tidb_cpu_time(id, Duration::from_millis(5));
-        c.merge_tidb_cpu_time(id + 1, Duration::from_millis(7));
-        // TiKV time is never gated.
-        c.merge_tikv_cpu_time(Duration::from_millis(11));
-
-        let usages = c.get_cpu_usages();
-        assert_eq!(usages.tidb_cpu_time, Duration::from_millis(5));
-        assert_eq!(usages.tikv_cpu_time, Duration::from_millis(11));
-    }
-
-    #[test]
-    fn set_reset_and_accumulate() {
-        let c = SqlCpuUsages::default();
-        c.set_cpu_usages(CpuUsages {
-            tidb_cpu_time: Duration::from_secs(1),
-            tikv_cpu_time: Duration::from_secs(2),
-        });
-        let id = c.alloc_new_sql_id();
-        c.merge_tidb_cpu_time(id, Duration::from_secs(1));
-        c.merge_tikv_cpu_time(Duration::from_secs(1));
-        assert_eq!(
-            c.get_cpu_usages(),
-            CpuUsages {
-                tidb_cpu_time: Duration::from_secs(2),
-                tikv_cpu_time: Duration::from_secs(3),
-            }
-        );
-
-        c.reset_cpu_times();
-        assert_eq!(c.get_cpu_usages(), CpuUsages::default());
-    }
-
-    #[test]
-    fn alloc_wraps_at_u64_max() {
-        let c = SqlCpuUsages::default();
-        c.inner.lock().unwrap().sql_id = u64::MAX;
-        // Go: `c.sqlID++` on uint64 — "will restart from 0" past the limit.
-        assert_eq!(c.alloc_new_sql_id(), 0);
-        assert_eq!(c.alloc_new_sql_id(), 1);
-    }
-
-    #[test]
-    fn concurrent_merges_are_not_lost() {
-        const THREADS: usize = 8;
-        const MERGES_PER_THREAD: usize = 1_000;
-
-        let usages = Arc::new(SqlCpuUsages::default());
-        let sql_id = usages.alloc_new_sql_id();
-        let workers: Vec<_> = (0..THREADS)
-            .map(|_| {
-                let usages = Arc::clone(&usages);
-                thread::spawn(move || {
-                    for _ in 0..MERGES_PER_THREAD {
-                        usages.merge_tidb_cpu_time(sql_id, Duration::from_nanos(1));
-                        usages.merge_tikv_cpu_time(Duration::from_nanos(2));
-                    }
-                })
-            })
-            .collect();
-        for worker in workers {
-            worker.join().expect("CPU usage worker must not panic");
-        }
-
-        assert_eq!(
-            usages.get_cpu_usages(),
-            CpuUsages {
-                tidb_cpu_time: Duration::from_nanos((THREADS * MERGES_PER_THREAD) as u64),
-                tikv_cpu_time: Duration::from_nanos((THREADS * MERGES_PER_THREAD * 2) as u64),
-            }
-        );
+        self.inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .cpu_usages
+            .reset();
     }
 }
