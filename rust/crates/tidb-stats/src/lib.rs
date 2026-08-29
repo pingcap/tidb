@@ -75,7 +75,6 @@ pub mod json_metadata;
 pub mod json_stats_version;
 pub mod lock_messages;
 pub mod locked_tables;
-pub mod memory_cost;
 pub mod memory_usage;
 pub mod mock_statistics_shape;
 pub mod non_partitioned_analysis;
@@ -95,8 +94,6 @@ pub mod sorted_builder;
 pub mod static_partitioned_analysis;
 pub mod stats_cache_version;
 pub mod stats_delta;
-pub mod stats_key_set;
-pub mod stats_key_set_shards;
 pub mod stats_lock_table;
 pub mod stats_meta;
 pub mod stats_meta_save_sql;
@@ -218,10 +215,6 @@ pub use lock_messages::{
     generate_stable_skipped_partitions_message, generate_stable_skipped_tables_message,
 };
 pub use locked_tables::{get_locked_tables, SELECT_LOCKED_TABLES_SQL};
-pub use memory_cost::{
-    add_memory_cost, adjust_mem_cost, effective_mem_cost, MemoryCostError, MEMORY_COST_PERCENT,
-    TEST_MODE_MEMORY_COST,
-};
 pub use memory_usage::{ColumnMemUsage, IndexMemUsage};
 pub use mock_statistics_shape::MockStatisticsTableShape;
 pub use non_partitioned_analysis::{
@@ -266,8 +259,6 @@ pub use static_partitioned_analysis::{
 };
 pub use stats_cache_version::max_stats_cache_version;
 pub use stats_delta::{stats_delta_from_rows, StatsDelta, SELECT_DELTA_SQL};
-pub use stats_key_set::StatsKeySet;
-pub use stats_key_set_shards::{StatsKeySetShards, KEY_SET_SHARD_COUNT};
 pub use stats_lock_table::StatsLockTable;
 pub use stats_meta::{stats_meta_counts, stats_meta_query, StatsMetaCounts};
 pub use stats_meta_save_sql::{stats_meta_save_sql, StatsMetaSaveUpdate};

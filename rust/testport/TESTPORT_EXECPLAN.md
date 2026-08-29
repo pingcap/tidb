@@ -782,6 +782,12 @@ For each bounded behavior cluster:
       copies, implement the complete cache contract, and remove the generic
       caller-cost surface and source-absent tests. The atomic inventory and WIP
       gates are in `receipts/statistics_handle_cache_internal_mapcache.md`.
+- [x] Audit the pinned `pkg/statistics/handle/cache/internal/lfu` package as
+      one five-artifact unit and remove its table-free key-set, shard,
+      caller-memory, source-absent test, and stale function-batch carriers.
+      The package remains explicitly unclaimed until complete pinned
+      Ristretto behavior is available. The inventory is in
+      `receipts/statistics_handle_cache_internal_lfu_audit.md`.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope
@@ -870,6 +876,11 @@ For each bounded behavior cluster:
   the cache duplicates its map entries and aggregate counter while preserving
   the same table pointers; a generic value/cost container is not equivalent.
   Date/Author: 2026-08-29, Codex.
+- Decision: LFU parity cannot use the workspace's synchronous
+  insertion-order cache; pinned Go observably depends on Ristretto's buffered
+  TinyLFU admission, primary-store update behavior, callbacks, metrics, and
+  wait/close lifecycle. A subset port would violate both behavior parity and
+  the external-package atomicity rule. Date/Author: 2026-08-29, Codex.
 
 ## Surprises & Discoveries
 
