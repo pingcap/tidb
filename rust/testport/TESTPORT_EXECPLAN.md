@@ -37,6 +37,13 @@ For each bounded behavior cluster:
 ## Progress
 
 - 2026-08-29: audited every production, test, test-harness, and build artifact
+  in pinned Go `pkg/util/systimemon`. Removed the Rust-only stoppable monitor
+  guard, public cadence constant, cleanup join, duplicate inline test, and
+  lifecycle-log test. The package now exposes only the source-shaped blocking
+  monitor; the ordinary server caller owns spawning its process-lifetime
+  thread, and the sole source backward-jump test is retained. Complete
+  inventory and WIP gates are recorded in `receipts/util_systimemon.md`.
+- 2026-08-29: audited every production, test, test-harness, and build artifact
   in pinned Go `pkg/util/texttree`. Removed the Rust API's valid-UTF-8
   narrowing: indentation now follows Go's per-invalid-byte `[]rune`
   conversion, while `PrettyIdentifier` appends identifier bytes unchanged.

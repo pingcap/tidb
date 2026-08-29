@@ -210,7 +210,7 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
     if config.store_kind == node_config::StoreKind::Unistore {
         // Go: `session.RegisterStore("unistore", mockstore.EmbedUnistoreDriver{})`
         // -- the same node code over the embedded store, no PD dialed.
-        let _system_time_monitor = start_system_time_monitor();
+        start_system_time_monitor();
         let spill_storage = open_spill_storage(&config)?;
         let memory_arbitrator = MemoryArbitratorAuthority::open(&config)?;
         if config.cluster_session {
@@ -226,7 +226,7 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
             memory_arbitrator.arbitrator(),
         );
     }
-    let _system_time_monitor = start_system_time_monitor();
+    start_system_time_monitor();
     let spill_storage = open_spill_storage(&config)?;
     let memory_arbitrator = MemoryArbitratorAuthority::open(&config)?;
     if config.cluster_session {
@@ -295,10 +295,12 @@ fn command_line_privilege_source_requires_cluster(config: &NodeConfig) -> bool {
 
 static SYSTEM_TIME_JUMP_BACKWARD_COUNT: AtomicU64 = AtomicU64::new(0);
 
-fn start_system_time_monitor() -> tidb_util::systimemon::SystemTimeMonitor {
-    tidb_util::systimemon::SystemTimeMonitor::start(SystemTime::now, || {
-        SYSTEM_TIME_JUMP_BACKWARD_COUNT.fetch_add(1, Ordering::Relaxed);
-    })
+fn start_system_time_monitor() {
+    let _ = std::thread::spawn(|| {
+        tidb_util::systimemon::start_monitor(SystemTime::now, || {
+            SYSTEM_TIME_JUMP_BACKWARD_COUNT.fetch_add(1, Ordering::Relaxed);
+        });
+    });
 }
 
 fn open_spill_storage(
