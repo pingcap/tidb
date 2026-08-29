@@ -300,6 +300,11 @@ func (n *CreateMaterializedViewStmt) AcceptInPlace(v InPlaceVisitor) bool {
 			return false
 		}
 	}
+	for _, option := range n.Options {
+		if !option.AcceptInPlace(v) {
+			return false
+		}
+	}
 	if n.Refresh != nil {
 		if n.Refresh.StartWith != nil {
 			if !n.Refresh.StartWith.AcceptInPlace(v) {
@@ -310,11 +315,6 @@ func (n *CreateMaterializedViewStmt) AcceptInPlace(v InPlaceVisitor) bool {
 			if !n.Refresh.Next.AcceptInPlace(v) {
 				return false
 			}
-		}
-	}
-	for _, option := range n.Options {
-		if !option.AcceptInPlace(v) {
-			return false
 		}
 	}
 	if n.Select != nil {
