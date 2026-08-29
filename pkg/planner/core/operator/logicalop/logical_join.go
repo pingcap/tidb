@@ -109,6 +109,9 @@ type LogicalJoin struct {
 	// allJoinLeaf is used to identify the table where the column is located during constant propagation.
 	allJoinLeaf []*expression.Schema
 
+	// innerJoinRegionCovered is set on descendants when an ancestor processes their region.
+	innerJoinRegionCovered bool
+
 	// FromDecorrelatedApply marks joins that come from decorrelating an Apply in the
 	// first logical round. It is only used to decide whether an equivalent same-order
 	// PhysicalIndexJoin candidate has already been generated.
@@ -169,6 +172,8 @@ func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) 
 
 // PredicatePushDown implements the base.LogicalPlan.<1st> interface.
 func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan base.LogicalPlan, err error) {
+	innerJoinRegionCovered := p.innerJoinRegionCovered
+	p.innerJoinRegionCovered = false
 	switch p.JoinType {
 	case base.AntiLeftOuterSemiJoin, base.LeftOuterSemiJoin, base.AntiSemiJoin:
 		// For LeftOuterSemiJoin and AntiLeftOuterSemiJoin, we can actually generate
@@ -252,14 +257,9 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		tempCond = append(tempCond, expression.ScalarFuncs2Exprs(p.EqualConditions)...)
 		tempCond = append(tempCond, p.OtherConditions...)
 		tempCond = append(tempCond, predicates...)
-		// A descendant inner join's conditions are not visible here, so a constant
-		// filter on one side of this join never reaches the far side of the region.
-		// Borrow them for the propagation below and drop them again afterwards, so
-		// they cannot land in this join's own ON clause via extractOnCondition.
-		// p.Self() excludes *LogicalApply, which embeds LogicalJoin but must not
-		// borrow conditions across the correlated boundary.
+		// LogicalApply embeds LogicalJoin but must not borrow across its correlated boundary.
 		var borrowed []expression.Expression
-		if _, isPlainJoin := p.Self().(*LogicalJoin); isPlainJoin && p.JoinType == base.InnerJoin {
+		if _, isPlainJoin := p.Self().(*LogicalJoin); isPlainJoin && p.JoinType == base.InnerJoin && !innerJoinRegionCovered {
 			evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
 			for _, child := range p.Children() {
 				borrowed = appendRegionConditions(evalCtx, borrowed, child)
@@ -332,11 +332,8 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	return ret, newnChild, err
 }
 
-// appendRegionConditions collects the conditions of the contiguous inner-join
-// region rooted at plan. Both `col = col` and `col op const` are collected, so a
-// constant sitting in a deeper ON clause can still reach the far side of the
-// region. The walk stops at anything that is not a selection or a plain inner
-// join, which keeps it inside one query block.
+// appendRegionConditions collects comparisons from a contiguous inner-join region.
+// The root sees every descendant leaf, so one solver pass covers the region.
 func appendRegionConditions(
 	evalCtx expression.EvalContext,
 	conditions []expression.Expression,
@@ -353,6 +350,7 @@ func appendRegionConditions(
 	if _, isPlainJoin := join.Self().(*LogicalJoin); !isPlainJoin {
 		return conditions
 	}
+	join.innerJoinRegionCovered = true
 	conditions = appendSafeConditions(evalCtx, conditions, expression.ScalarFuncs2Exprs(join.EqualConditions), join.Schema())
 	conditions = appendSafeConditions(evalCtx, conditions, join.OtherConditions, join.Schema())
 	for _, child := range join.Children() {
