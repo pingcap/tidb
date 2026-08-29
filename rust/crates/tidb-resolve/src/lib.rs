@@ -15,16 +15,14 @@
 //! Semantic-resolution context from `pkg/planner/core/resolve`.
 
 use std::collections::HashMap;
-use std::sync::Arc;
-
-use tidb_ast::{CiString, TableRef};
+use tidb_ast::{CiString, TableIdentity, TableRef};
 use tidb_model::{ColumnInfo, DBInfo, GoShared, TableInfo};
 
 /// Go `TableNameW`, including the AST table's pointer identity.
 #[derive(Clone, Debug)]
 pub struct TableNameW {
     /// Go embedded `*ast.TableName`.
-    pub table_name: Arc<TableRef>,
+    pub table_name: TableRef,
     /// Resolved database metadata.
     pub db_info: Option<GoShared<DBInfo>>,
     /// Resolved table metadata.
@@ -32,7 +30,7 @@ pub struct TableNameW {
 }
 
 /// Go `NodeW`: an AST node paired with a shared resolve context.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct NodeW<N> {
     /// Wrapped AST node.
     pub node: N,
@@ -68,36 +66,34 @@ impl<N> NodeW<N> {
 }
 
 /// Go `Context`, keyed by `*ast.TableName` identity rather than value.
-#[derive(Clone, Debug, Default)]
+#[derive(Debug)]
 pub struct Context {
-    table_names: HashMap<usize, TableNameW>,
+    table_names: HashMap<TableIdentity, TableNameW>,
 }
 
 impl Context {
     /// Go `NewContext`.
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            table_names: HashMap::new(),
+        }
     }
 
     /// Go `AddTableName`.
     pub fn add_table_name(&mut self, table_name: TableNameW) {
         self.table_names
-            .insert(table_name_key(&table_name.table_name), table_name);
+            .insert(table_name.table_name.identity.clone(), table_name);
     }
 
     /// Go `GetTableName`.
-    pub fn table_name(&self, table_name: &Arc<TableRef>) -> Option<&TableNameW> {
-        self.table_names.get(&table_name_key(table_name))
+    pub fn table_name(&self, table_name: &TableRef) -> Option<&TableNameW> {
+        self.table_names.get(&table_name.identity)
     }
 
     /// Go `GetTableNames`.
-    pub fn table_names(&self) -> &HashMap<usize, TableNameW> {
+    pub fn table_names(&self) -> &HashMap<TableIdentity, TableNameW> {
         &self.table_names
     }
-}
-
-fn table_name_key(table_name: &Arc<TableRef>) -> usize {
-    Arc::as_ptr(table_name) as usize
 }
 
 /// Go `ResultField`.

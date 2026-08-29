@@ -526,6 +526,7 @@ impl Parser {
     fn parse_table_no_tail(&mut self) -> PResult<SelectStmt> {
         self.expect_kw("TABLE")?;
         let table = TableRef {
+            identity: Default::default(),
             name: self.parse_table_name_path()?,
             partitions: Vec::new(),
             alias: None,

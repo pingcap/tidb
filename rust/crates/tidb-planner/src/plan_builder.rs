@@ -150,9 +150,6 @@
 //! * `rewriterPool` / `rewriterCounter` (`:229`) — DROPPED. A free-list of
 //!   `*expressionRewriter` to dodge Go's allocator. Rust constructs a rewriter
 //!   by value; pooling would be a pessimisation with no semantic content.
-//! * `resolveCtx *resolve.Context` (`:337`) — DROPPED. It caches
-//!   name-resolution results keyed by AST node pointer, which is the same
-//!   unsound key the marker scheme replaces.
 //! * `isCreateView` / `capFlag`'s `canExpandAST` (`:267`), `inUpdateStmt` /
 //!   `inDeleteStmt` (`:234`), `isSampling` (`:274`) — DROPPED. All four gate
 //!   statement kinds this batch does not build. `isSampling`'s only reader is
@@ -398,6 +395,8 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     /// Go `ctx.GetSessionVars().Location()`, which every expression rewrite
     /// runs under.
     pub time_zone: SessionTimeZone,
+    /// Go `resolveCtx`, shared by preprocessing and every recursive build.
+    pub resolve_ctx: tidb_model::GoShared<tidb_resolve::Context>,
 
     /// Go `optFlag`; see this module's section 4.
     pub opt_flag: u64,
@@ -701,6 +700,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             plan_ids,
             column_ids,
             time_zone,
+            resolve_ctx: tidb_model::GoShared::new(tidb_resolve::Context::new()),
             opt_flag: 0,
             cur_clause: ClauseCode::Unknow,
             qb_offset: Vec::new(),
@@ -1005,6 +1005,16 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             .source
             .find_table(&db_name, &table_name)
             .ok_or_else(|| PlanError::unknown_table(format!("{db_name}.{table_name}")))?;
+
+        if self.resolve_ctx.read().table_name(table_ref).is_none() {
+            self.resolve_ctx
+                .write()
+                .add_table_name(tidb_resolve::TableNameW {
+                    table_name: table_ref.clone(),
+                    db_info: table.db_info.clone(),
+                    table_info: table.table_info.clone(),
+                });
+        }
 
         // Go `buildDataSource` routes every virtual table through the same
         // `LogicalMemTable` path before ordinary access-path construction.

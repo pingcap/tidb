@@ -71,6 +71,7 @@ fn stmt_dml(dml: DmlStmt) -> Target {
 
 fn plain_table() -> TableRef {
     TableRef {
+        identity: Default::default(),
         name: vec!["t".to_string()],
         partitions: Vec::new(),
         alias: None,

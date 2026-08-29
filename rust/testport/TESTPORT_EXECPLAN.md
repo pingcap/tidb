@@ -36,6 +36,17 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-08-29: completed the pinned Go `pkg/planner/core/resolve` package (two
+  production files and `BUILD.bazel`; no package tests). Replaced the unusable
+  Arc-of-a-cloned-table key with stable per-AST-occurrence identity matching
+  Go's `*ast.TableName` map key, retained shared context across `NodeW` clones,
+  and wired the ordinary query planner through `NodeW`. Production catalog
+  tables now populate the context with shared `DBInfo`/`TableInfo`, columns,
+  and indexes. Removed the stale planner claim that Go's resolve context was
+  "unsound" and deliberately dropped, plus the expression documentation that
+  still claimed resolve/sqlexec were absent. Broader statement-family support
+  remains with its owning planner packages. Complete inventory and WIP gates
+  are recorded in `receipts/planner_core_resolve.md`.
 - 2026-08-29: completed the pinned Go `pkg/util/sqlexec` main package (two
   production files, one test harness with no functional tests, and
   `BUILD.bazel`). Added its shared Rust owner with the complete restricted and
@@ -45,9 +56,9 @@ For each bounded behavior cluster:
   pre-drained internal-SQL trait; all now use the ordinary shared interfaces,
   and timer drains the returned record set through `ExecSQL`. Added the
   Go-owned parser parameters and the resolve result-field prerequisite at
-  their actual package boundaries. The concrete session implementation,
-  planner resolve-context integration, and separate generated mock package
-  remain later package units rather than being included in this claim.
+  their actual package boundaries. The concrete session implementation and
+  separate generated mock package remain later package units rather than
+  being included in this claim.
   Complete inventory and WIP gates are recorded in
   `receipts/util_sqlexec.md`.
 - 2026-08-29: re-audited the complete pinned Go `pkg/util/sli` package and

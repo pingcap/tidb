@@ -21,7 +21,9 @@ tidb-error = { path = "../tidb-error" }
 tidb-expr = { path = "../tidb-expr" }
 tidb-funcdep = { path = "../tidb-funcdep" }
 tidb-hash = { path = "../tidb-hash" }
+tidb-model = { path = "../tidb-model" }
 tidb-parser = { path = "../tidb-parser" }
+tidb-resolve = { path = "../tidb-resolve" }
 tidb-stats = { path = "../tidb-stats" }
 tidb-util = { path = "../tidb-util" }
 

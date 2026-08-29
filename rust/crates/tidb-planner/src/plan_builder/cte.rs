@@ -381,6 +381,18 @@ const fn set_op_name(op: SetOp) -> &'static str {
 }
 
 impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
+    /// Go `PlanBuilder.Build` for a query node: install the node's shared
+    /// resolve context before recursively building its query blocks.
+    pub fn build_query_node(
+        &mut self,
+        node: &tidb_resolve::NodeW<QueryStmt>,
+        is_cte: bool,
+    ) -> Result<LogicalPlan, PlanError> {
+        self.resolve_ctx = node.resolve_context();
+        self.add_opt_flag(crate::logical::rule::flags::PRUNE_COLUMNS);
+        self.build_query_stmt(&node.node, is_cte)
+    }
+
     /// Go `buildResultSetNode`'s two statement arms (`:577-580`), which is how
     /// a CTE body, a derived table and a set-operation term all reach a plan.
     ///

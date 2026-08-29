@@ -51,8 +51,9 @@ execution paths:
 
 The concrete session implementation of these interfaces belongs to Go
 `pkg/session` and remains a later package-level integration unit. This receipt
-does not claim `pkg/session`, `pkg/planner/core/resolve`, the generated mock
-subpackage, or repository-wide parity.
+does not claim `pkg/session`, the generated mock subpackage, or repository-wide
+parity. The subsequently completed resolve package is recorded independently
+in `planner_core_resolve.md`.
 
 ## Validation
 

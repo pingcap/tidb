@@ -68,6 +68,7 @@ fn select_star_from(table: &[&str]) -> ProcedureStatement {
     select.fields.push(SelectField::Wildcard(Vec::new()));
     select.from = Some(tidb_ast::Join {
         left: tidb_ast::JoinNode::Table(tidb_ast::TableRef {
+            identity: Default::default(),
             name: table.iter().map(|name| name.to_string()).collect(),
             partitions: Vec::new(),
             alias: None,

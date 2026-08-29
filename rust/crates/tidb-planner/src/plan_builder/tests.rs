@@ -312,6 +312,7 @@ fn test_handle_less_table_gets_the_extra_row_id_handle() {
     let mut builder = harness.builder();
     let plan = builder
         .build_data_source(&tidb_ast::TableRef {
+            identity: Default::default(),
             name: vec!["t".to_owned()],
             partitions: Vec::new(),
             alias: None,

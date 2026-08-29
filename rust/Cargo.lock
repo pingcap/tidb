@@ -3377,6 +3377,7 @@ dependencies = [
  "tidb-mysql",
  "tidb-parser",
  "tidb-planner",
+ "tidb-resolve",
  "tidb-stats",
  "tidb-tablecodec",
  "tidb-txnkv",
@@ -3579,7 +3580,9 @@ dependencies = [
  "tidb-expr",
  "tidb-funcdep",
  "tidb-hash",
+ "tidb-model",
  "tidb-parser",
+ "tidb-resolve",
  "tidb-stats",
  "tidb-util",
 ]

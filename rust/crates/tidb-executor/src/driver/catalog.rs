@@ -899,6 +899,14 @@ impl Catalog {
         let mut views = Vec::new();
         let mut synthetic_table_id = -1_i64;
         for database in self.databases.values() {
+            let resolve_db_info = tidb_model::GoShared::new(tidb_model::DBInfo {
+                id: database.id,
+                name: tidb_ast::CiString::new(database.name.clone()),
+                charset: database.charset.charset.name().to_owned(),
+                collate: database.charset.collation.name().to_owned(),
+                state: tidb_model::SchemaState::PUBLIC,
+                ..tidb_model::DBInfo::default()
+            });
             for (entry_name, entry) in &database.tables {
                 match &**entry {
                     TableEntry::Kv(table) => {
@@ -962,7 +970,7 @@ impl Catalog {
                                     .collect()
                             })
                             .unwrap_or_else(|| vec![-1; table.common_handle_offsets().len()]);
-                        tables.push(SourceTable {
+                        let mut source_table = SourceTable {
                             table_id: table.table_id,
                             table_name: table.name.clone(),
                             db_name: database.name.clone(),
@@ -979,10 +987,12 @@ impl Catalog {
                             common_handle_col_offsets: table.common_handle_offsets().to_vec(),
                             common_handle_lens,
                             ..SourceTable::default()
-                        });
+                        };
+                        source_table.attach_resolve_metadata(resolve_db_info.clone());
+                        tables.push(source_table);
                     }
                     TableEntry::Mem(table) => {
-                        tables.push(SourceTable {
+                        let mut source_table = SourceTable {
                             is_memory_table: true,
                             table_id: synthetic_table_id,
                             table_name: entry_name.clone(),
@@ -1001,7 +1011,9 @@ impl Catalog {
                                 })
                                 .collect(),
                             ..SourceTable::default()
-                        });
+                        };
+                        source_table.attach_resolve_metadata(resolve_db_info.clone());
+                        tables.push(source_table);
                         synthetic_table_id -= 1;
                     }
                     TableEntry::View(view) => views.push(SourceView {

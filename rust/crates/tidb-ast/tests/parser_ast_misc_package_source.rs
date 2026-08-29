@@ -1143,6 +1143,7 @@ fn plan_replayer_stmt_restore() {
         select.fields.push(tidb_ast::SelectField::Wildcard(Vec::new()));
         select.from = Some(tidb_ast::Join {
             left: JoinNode::Table(TableRef {
+                identity: Default::default(),
                 name: vec!["t".to_string()],
                 partitions: Vec::new(),
                 alias: None,

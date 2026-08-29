@@ -51,12 +51,9 @@
 //!   opaque [`SessionVars`] marker trait. `SessionVars` itself is ported in
 //!   `tidb-session`, which sits *above* this crate, so a dependency on it
 //!   would be a cycle.
-//! - `// boundary:` Go `pkg/util/sqlexec.RestrictedSQLExecutor` — modeled as
-//!   the opaque [`SqlExecutor`] marker trait. Its `ExecRestrictedSQL`
-//!   signature names `sqlexec.OptionFuncAlias` and
-//!   `planner/core/resolve.ResultField`, neither of which is ported, and
-//!   returns `[]chunk.Row`, whose Rust counterpart is lifetime-bound to its
-//!   chunk. expropt itself only passes the executor through.
+//! - Go `pkg/util/sqlexec.RestrictedSQLExecutor` is shared from its
+//!   `tidb-sqlexec` owner. Drained rows are materialized Rust `Datum` rows so
+//!   the method set retains Go's behavior without extending a chunk borrow.
 //!
 //! Two upstream behaviors are deliberately not reproduced, both `intest`-only
 //! (Go's assertion build tag) and neither observable in release builds:

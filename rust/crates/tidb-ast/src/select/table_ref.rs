@@ -16,9 +16,58 @@
 
 use super::*;
 
+/// Stable identity of one parsed Go `*ast.TableName` node.
+///
+/// Go keys semantic-resolution metadata by the table node's pointer. Rust AST
+/// values can move, so a shared zero-sized allocation supplies the same stable
+/// identity without tying correctness to an address on the Rust stack. Cloning
+/// a table reference copies the Go-pointer identity, as copying a Go pointer
+/// does; a newly parsed or constructed reference receives a fresh identity.
+#[derive(Clone)]
+pub struct TableIdentity(std::sync::Arc<()>);
+
+impl TableIdentity {
+    /// Creates the identity of a new table-name AST node.
+    #[must_use]
+    pub fn new() -> Self {
+        Self(std::sync::Arc::new(()))
+    }
+}
+
+impl Default for TableIdentity {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Debug for TableIdentity {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_tuple("TableIdentity")
+            .field(&(std::sync::Arc::as_ptr(&self.0) as usize))
+            .finish()
+    }
+}
+
+impl PartialEq for TableIdentity {
+    fn eq(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for TableIdentity {}
+
+impl std::hash::Hash for TableIdentity {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write_usize(std::sync::Arc::as_ptr(&self.0) as usize);
+    }
+}
+
 /// A table reference in `FROM`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct TableRef {
+    /// Go `*ast.TableName` pointer identity used by semantic resolution.
+    pub identity: TableIdentity,
     /// The dotted name path, e.g. `["db", "t"]` or `["t"]`.
     pub name: Vec<String>,
     /// An optional `PARTITION (name, ...)` clause restricting which
@@ -82,6 +131,17 @@ pub struct TableRef {
     /// Parses AFTER `hints` (confirmed via `godump restore`: `t USE INDEX
     /// (a) TABLESAMPLE REGION ()` is the only order accepted).
     pub sample: Option<TableSample>,
+}
+
+impl PartialEq for TableRef {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+            && self.partitions == other.partitions
+            && self.alias == other.alias
+            && self.as_of == other.as_of
+            && self.hints == other.hints
+            && self.sample == other.sample
+    }
 }
 
 impl TableRef {
@@ -471,6 +531,7 @@ impl crate::Visitable for TableRef {
             return visitor.leave(self);
         }
         let Self {
+            identity: _,
             name,
             partitions,
             alias,

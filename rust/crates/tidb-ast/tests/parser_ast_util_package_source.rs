@@ -66,6 +66,7 @@ fn select_stmt(lock: Option<SelectLock>) -> Stmt {
 
 fn empty_table() -> TableRef {
     TableRef {
+        identity: Default::default(),
         name: vec!["t".to_string()],
         partitions: Vec::new(),
         alias: None,

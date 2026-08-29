@@ -84,6 +84,7 @@ fn select_star_from(table: &[&str]) -> NodeBox<QueryStmt> {
 fn single_join(table: &[&str]) -> Join {
     Join {
         left: tidb_ast::JoinNode::Table(TableRef {
+            identity: Default::default(),
             name: table.iter().map(|name| name.to_string()).collect(),
             partitions: Vec::new(),
             alias: None,

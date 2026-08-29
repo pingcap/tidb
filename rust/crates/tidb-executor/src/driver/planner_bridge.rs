@@ -717,12 +717,8 @@ fn planner_optimized_query_with_allocators(
     let source = catalog.planner_catalog(current_database);
     let session_zone = ctx.session_zone();
     let mut builder = PlanBuilder::new(&source, ctx, plan_ids, column_ids, session_zone.clone());
-    // Go `PlanBuilder.Build` enables column pruning before dispatching to
-    // `buildSelect`/`buildSetOpr`. This bridge enters at the Rust
-    // `build_query_stmt` seam, so carry the wrapper's mandatory flag
-    // explicitly.
-    builder.add_opt_flag(flags::PRUNE_COLUMNS);
-    let plan = builder.build_query_stmt(query, false)?;
+    let node = tidb_resolve::NodeW::new(query.clone());
+    let plan = builder.build_query_node(&node, false)?;
     optimize_built_logical(
         plan,
         builder.get_opt_flag(),
