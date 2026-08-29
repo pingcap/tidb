@@ -47,8 +47,10 @@ model, SQL-executor, mock-executor, and system-session owners. It preserves:
   quarantine, optional pessimistic transaction wrapping, and original-error
   precedence when rollback also fails;
 - normal, restricted, test-mock, and caller-option SQL execution routes,
-  current-session option identity, `ExecRowsTimeout`, transaction start TS,
-  signed duration conversion, and model-backed global-index classification.
+  a real typed TiKV request context with the internal statistics foreground
+  source, current-session option identity, `ExecRowsTimeout`, transaction
+  start TS, signed duration conversion, and model-backed global-index
+  classification.
 
 The external Go worker library is represented natively rather than exposed as
 a second Rust API. Go logging and panic-counter instrumentation are cross-cutting

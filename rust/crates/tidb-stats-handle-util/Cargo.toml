@@ -25,3 +25,4 @@ tidb-sqlexec-mock = { path = "../tidb-sqlexec-mock" }
 tidb-syssession = { path = "../tidb-syssession" }
 tidb-util = { path = "../tidb-util" }
 tidb-vardef = { path = "../tidb-vardef" }
+tikv-client.workspace = true

@@ -110,7 +110,6 @@ pub mod stats_meta;
 pub mod stats_meta_save_sql;
 pub mod stats_meta_update;
 pub mod stats_read_writer;
-pub mod stats_request_matcher;
 pub mod stats_table_snapshot;
 pub mod stats_version;
 pub mod status;
@@ -310,10 +309,6 @@ pub use stats_meta_update::{
 pub use stats_read_writer::{
     historical_stats_meta_record_required, slow_stats_saving_requires_meta_update, LEASE_OFFSET,
     SLOW_STATS_SAVE_ERROR_MESSAGE,
-};
-pub use stats_request_matcher::{
-    is_internal_stats_foreground_source, CTX_MATCHER_DESCRIPTION,
-    INTERNAL_STATS_FOREGROUND_PRIORITY_SOURCE,
 };
 pub use stats_table_snapshot::{
     stats_table_snapshots_equal, StatsItemSnapshot, StatsTableSnapshot,

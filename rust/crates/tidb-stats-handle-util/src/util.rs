@@ -29,6 +29,8 @@ use tidb_sqlexec_mock::MockRestrictedSqlExecutor;
 use tidb_syssession::{Pool as SessionPool, SessionContext};
 use tidb_util::sqlescape::SqlArg;
 use tidb_vardef::tidb_vars;
+use tikv_client::trace::TraceContext;
+use tikv_client::util::with_internal_source_type;
 
 /// Go `StatsMetaHistorySourceAnalyze`.
 pub const STATS_META_HISTORY_SOURCE_ANALYZE: &str = "analyze";
@@ -52,20 +54,10 @@ const INTERNAL_STATS_FOREGROUND_PRIORITY: &str = "StatsForegroundPriority";
 pub static USE_CURRENT_SESSION_OPT: LazyLock<Vec<OptionFuncAlias>> =
     LazyLock::new(|| vec![Arc::new(exec_option_use_current_session)]);
 
-/// Go `StatsCtx`.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct StatsExecutionContext;
-
-impl StatsExecutionContext {
-    /// Go `kv.InternalTxnStatsForegroundPriority` carried by the context.
-    #[must_use]
-    pub const fn internal_source_type(self) -> &'static str {
-        INTERNAL_STATS_FOREGROUND_PRIORITY
-    }
-}
-
 /// Shared Go `StatsCtx` value.
-pub static STATS_CONTEXT: StatsExecutionContext = StatsExecutionContext;
+pub static STATS_CONTEXT: LazyLock<TraceContext> = LazyLock::new(|| {
+    with_internal_source_type(&TraceContext::new(), INTERNAL_STATS_FOREGROUND_PRIORITY)
+});
 
 /// The complete `sessionctx.Context` and `SessionVars` surface consumed by
 /// this package.
@@ -302,7 +294,7 @@ pub fn exec<C: StatsSessionContext + ?Sized>(
     sql: &str,
     arguments: &[SqlArg<'_>],
 ) -> Result<Option<Box<dyn RecordSet>>, SqlExecError> {
-    exec_with_ctx(&STATS_CONTEXT, context, sql, arguments)
+    exec_with_ctx(&*STATS_CONTEXT, context, sql, arguments)
 }
 
 /// Go `ExecWithCtx`.
@@ -327,7 +319,7 @@ pub fn exec_rows<C: StatsSessionContext + ?Sized>(
     fail::fail_point!("ExecRowsTimeout", |_| {
         return Err(error("inject timeout error"));
     });
-    exec_rows_with_ctx(&STATS_CONTEXT, context, sql, arguments)
+    exec_rows_with_ctx(&*STATS_CONTEXT, context, sql, arguments)
 }
 
 /// Go `ExecRowsWithCtx`.
@@ -340,7 +332,7 @@ pub fn exec_rows_with_ctx<C: StatsSessionContext + ?Sized>(
     if tidb_util::intest::IN_TEST {
         if let Some(mock) = context.mock_restricted_sql_executor() {
             return mock.exec_restricted_sql(
-                &STATS_CONTEXT,
+                &*STATS_CONTEXT,
                 USE_CURRENT_SESSION_OPT.as_slice(),
                 sql,
                 arguments,
@@ -364,7 +356,7 @@ pub fn exec_with_opts<C: StatsSessionContext + ?Sized>(
 ) -> Result<(Vec<Vec<Datum>>, Vec<ResultFieldRef>), SqlExecError> {
     context
         .restricted_sql_executor()
-        .exec_restricted_sql(&STATS_CONTEXT, options, sql, arguments)
+        .exec_restricted_sql(&*STATS_CONTEXT, options, sql, arguments)
 }
 
 /// Go `DurationToTS`. `duration_nanoseconds` is the signed representation of
@@ -810,11 +802,11 @@ mod tests {
             .exec_restricted_sql(|execution_context, options, sql, arguments| {
                 let stats = execution_context
                     .as_any()
-                    .downcast_ref::<StatsExecutionContext>()
+                    .downcast_ref::<TraceContext>()
                     .unwrap();
                 assert_eq!(
-                    stats.internal_source_type(),
-                    INTERNAL_STATS_FOREGROUND_PRIORITY
+                    tikv_client::util::request_source_from_context(stats),
+                    "internal_StatsForegroundPriority"
                 );
                 assert!(exec_option(options).use_cur_session);
                 assert_eq!(sql, "select 1");

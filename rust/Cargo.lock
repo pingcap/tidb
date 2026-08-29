@@ -3771,6 +3771,15 @@ dependencies = [
  "tidb-syssession",
  "tidb-util",
  "tidb-vardef",
+ "tikv-client",
+]
+
+[[package]]
+name = "tidb-stats-handle-util-test"
+version = "0.0.0"
+dependencies = [
+ "tidb-txnkv",
+ "tikv-client",
 ]
 
 [[package]]

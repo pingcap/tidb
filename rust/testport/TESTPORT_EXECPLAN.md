@@ -36,6 +36,13 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-08-29: completed the adjacent pinned Go
+  `pkg/statistics/handle/util/test` support package. Replaced the detached
+  string predicate and its two non-Go tests with a distinct matcher over the
+  real TiKV typed request context, and changed the main package's `StatsCtx`
+  from a custom marker to that ordinary context so request-source extraction
+  observes `internal_StatsForegroundPriority`. Inventory and WIP gates are in
+  `receipts/statistics_handle_util_test.md`.
 - 2026-08-29: completed the pinned Go `pkg/statistics/handle/util` package as
   one `tidb-stats-handle-util` owner. Removed five narrowed `tidb-stats`
   implementations and their supplemental tests, restored the complete process
@@ -692,6 +699,12 @@ For each bounded behavior cluster:
       contracts, and replace its four ignored source tests with executable
       behavior. The atomic inventory and WIP gates are in
       `receipts/statistics_handle_util.md`.
+- [x] Complete the pinned `pkg/statistics/handle/util/test` support package in
+      `tidb-stats-handle-util-test`: match a typed request context, preserve
+      the wrong-type panic and exact description, remove the string-only
+      predicate and its two supplemental tests, and make ordinary `StatsCtx`
+      carry the matching request source. The atomic inventory and WIP gates
+      are in `receipts/statistics_handle_util_test.md`.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope
@@ -736,6 +749,11 @@ For each bounded behavior cluster:
   behavior uses the already shared package contracts. The partial modules and
   their duplicate tests are deleted rather than retained beside the atomic
   owner. Date/Author: 2026-08-29, Codex.
+- Decision: the `util/test.CtxMatcher` must inspect the same typed TiKV request
+  context carried by `StatsCtx`; accepting a pre-extracted string bypasses the
+  behavior the Go matcher exists to verify. The support package remains a
+  distinct crate and adds no source-absent tests. Date/Author: 2026-08-29,
+  Codex.
 
 ## Surprises & Discoveries
 
