@@ -29,6 +29,8 @@ tidb-planner = { path = "../tidb-planner" }
 tidb-tikvutil = { path = "../tidb-tikvutil" }
 tidb-util = { path = "../tidb-util" }
 tidb-vardef = { path = "../tidb-vardef" }
+tidb-log = { path = "../tidb-log" }
+toml.workspace = true
 
 [dev-dependencies]
 # `tests_dml_lock_keys` classifies the raw keys a DML statement leaves behind

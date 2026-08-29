@@ -768,6 +768,7 @@ mod stmt_ctx;
 mod table_privilege;
 mod txn;
 mod user_table;
+pub mod util_config;
 mod variables;
 pub mod varsutil;
 mod warnings;

@@ -3672,6 +3672,7 @@ dependencies = [
  "tidb-domain",
  "tidb-error",
  "tidb-executor",
+ "tidb-log",
  "tidb-metadef",
  "tidb-model",
  "tidb-mysql",
@@ -3682,6 +3683,7 @@ dependencies = [
  "tidb-tikvutil",
  "tidb-util",
  "tidb-vardef",
+ "toml",
 ]
 
 [[package]]

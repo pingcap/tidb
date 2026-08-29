@@ -37,6 +37,14 @@ For each bounded behavior cluster:
 ## Progress
 
 - 2026-08-29: audited every source and build artifact in pinned Go
+  `pkg/util/config` and its sole executor consumer. Added the one-function
+  package owner beside Rust's session-variable authority: TOML string-map
+  decoding, the lock-wait exclusion, source validation/normalization, session
+  publication, failed-variable reporting, and warning logs. The executor ZIP
+  load path has no Rust owner and remains an explicit consumer-package gap.
+  Complete inventory and WIP gates are recorded in
+  `receipts/util_config.md`.
+- 2026-08-29: audited every source and build artifact in pinned Go
   `pkg/util/replayer`. Added the single Rust package owner, moved
   `PlanReplayerTaskKey` out of the domain consumer, removed its Rust-only
   ordering and constructor API, and changed both domain test surfaces to call
