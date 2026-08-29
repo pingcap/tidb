@@ -13,16 +13,9 @@
 // limitations under the License.
 
 //! Aggregate column-statistics behavior from `pkg/statistics/column.go`.
-//!
-//! The Go implementation mutates a process-global asynchronous-load set from
-//! `ColumnStatsIsInvalid`. This dependency-closed port returns that insertion
-//! as [`ColumnValidity::load_request`], so its caller can perform the same
-//! effect without hiding it behind global state.
 
 use crate::histogram::Histogram;
-use crate::{
-    CmsSketch, ColumnMemUsage, FmSketch, StatsLoadedStatus, TableItemId, TopN, ALL_EVICTED,
-};
+use crate::{CmsSketch, ColumnMemUsage, FmSketch, StatsLoadedStatus, TopN, ALL_EVICTED};
 
 /// The column metadata used directly by `column.go`.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -208,65 +201,6 @@ pub fn copy_column(column: Option<&Column>) -> Option<Column> {
 #[must_use]
 pub fn column_is_all_evicted(column: Option<&Column>) -> bool {
     column.is_none_or(Column::is_all_evicted)
-}
-
-/// Inputs owned by `planctx.PlanContext` and `HistColl` in Go.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct ColumnValidityContext {
-    pub has_plan_context: bool,
-    pub restricted_sql: bool,
-    pub has_statement_context: bool,
-    pub cannot_trigger_load: bool,
-    pub pseudo: bool,
-    pub physical_id: i64,
-    pub sync_load_failed: bool,
-}
-
-/// Pure result of Go `ColumnStatsIsInvalid` plus its asynchronous-load effect.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ColumnValidity {
-    pub invalid: bool,
-    pub load_request: Option<TableItemId>,
-}
-
-#[must_use]
-pub fn column_stats_validity(
-    column: Option<&Column>,
-    context: ColumnValidityContext,
-    column_id: i64,
-) -> ColumnValidity {
-    if context.has_plan_context && context.restricted_sql {
-        return ColumnValidity {
-            invalid: true,
-            load_request: None,
-        };
-    }
-
-    let load_needed = column.is_none_or(|column| {
-        !column.is_stats_initialized() || column.stats_loaded_status.is_load_needed()
-    });
-    let load_request = (context.has_plan_context
-        && load_needed
-        && context.has_statement_context
-        && column_id > 0
-        && !context.cannot_trigger_load)
-        .then_some(TableItemId {
-            table_id: context.physical_id,
-            id: column_id,
-            is_index: false,
-            is_sync_load_failed: context.sync_load_failed,
-        });
-
-    let invalid = context.pseudo
-        || column.is_none_or(|column| {
-            column.total_row_count() == 0.0
-                || (!column.stats_loaded_status.is_essential_stats_loaded()
-                    && column.histogram.ndv > 0)
-        });
-    ColumnValidity {
-        invalid,
-        load_request,
-    }
 }
 
 /// Go `EmptyColumn` at the dependency-closed metadata boundary.

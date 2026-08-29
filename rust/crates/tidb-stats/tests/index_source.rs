@@ -14,8 +14,8 @@
 
 use tidb_datatype::Datum;
 use tidb_stats::{
-    copy_index, index_is_all_evicted, index_stats_validity, Bucket, CmsSketch, FmSketch, Histogram,
-    Index, IndexInfo, IndexValidityContext, StatsLoadedStatus, TopN, ALL_EVICTED,
+    copy_index, index_is_all_evicted, Bucket, CmsSketch, FmSketch, Histogram, Index, IndexInfo,
+    StatsLoadedStatus, TopN, ALL_EVICTED,
 };
 
 fn populated_index(version: i64) -> Index {
@@ -127,51 +127,4 @@ fn source_memory_excludes_fm_sketch() {
     assert_eq!(usage.cmsketch_mem_usage, 32);
     assert_eq!(usage.topn_mem_usage, 67);
     assert_eq!(usage.total_mem_usage, 110);
-}
-
-#[test]
-fn source_invalidity_queues_load_without_short_circuiting() {
-    let base = IndexValidityContext {
-        physical_id: 12,
-        ..IndexValidityContext::default()
-    };
-    let missing = index_stats_validity(None, base, 9);
-    assert!(missing.invalid);
-    assert!(missing.load_request.is_some());
-
-    let mut index = populated_index(1);
-    let valid = index_stats_validity(Some(&index), base, 9);
-    assert!(!valid.invalid);
-    assert!(valid.load_request.is_none());
-
-    index.stats_loaded_status = StatsLoadedStatus::all_evicted();
-    let partial = index_stats_validity(Some(&index), base, 9);
-    assert!(!partial.invalid);
-    assert!(partial.load_request.is_some());
-
-    for context in [
-        IndexValidityContext {
-            restricted_sql: true,
-            ..base
-        },
-        IndexValidityContext {
-            cannot_trigger_load: true,
-            ..base
-        },
-    ] {
-        assert!(index_stats_validity(None, context, 9)
-            .load_request
-            .is_none());
-    }
-    assert!(
-        index_stats_validity(
-            Some(&populated_index(1)),
-            IndexValidityContext {
-                pseudo: true,
-                ..base
-            },
-            9,
-        )
-        .invalid
-    );
 }

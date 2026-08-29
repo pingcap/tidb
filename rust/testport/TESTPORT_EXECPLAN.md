@@ -920,6 +920,13 @@ For each bounded behavior cluster:
       session/domain/storage/ANALYZE/lock/cache tests, not independent Rust
       production APIs. Complete inventories are in the five
       `receipts/statistics_handle_handletest*_audit.md` receipts.
+- [x] Audit the complete pinned `pkg/statistics/asyncload` package. Remove the
+      caller-owned sharded map, duplicate model identities, synthetic
+      validity-result load requests, and seven source-absent tests. Go owns a
+      process-global queue composed with parent statistics producers and
+      handle/storage/DDL consumers; without those consumers, the standalone
+      Rust queue was an alternate runtime rather than package parity. The
+      complete inventory is in `receipts/statistics_asyncload_audit.md`.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope

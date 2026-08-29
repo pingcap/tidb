@@ -14,9 +14,8 @@
 
 use tidb_datatype::Datum;
 use tidb_stats::{
-    column_is_all_evicted, column_stats_validity, copy_column, empty_column, Bucket, CmsSketch,
-    Column, ColumnInfo, ColumnValidityContext, FmSketch, Histogram, StatsLoadedStatus, TopN,
-    ALL_EVICTED, ALL_LOADED,
+    column_is_all_evicted, copy_column, empty_column, Bucket, CmsSketch, Column, ColumnInfo,
+    FmSketch, Histogram, StatsLoadedStatus, TopN, ALL_EVICTED, ALL_LOADED,
 };
 
 fn top_n(count: u64) -> TopN {
@@ -130,63 +129,6 @@ fn source_drop_preserves_v2_cms_but_not_v1_cms() {
     assert!(!uninitialized.is_stats_initialized());
     assert!(!uninitialized.is_all_evicted());
     assert_eq!(uninitialized.evicted_status(), ALL_EVICTED);
-}
-
-#[test]
-fn source_invalidity_truth_table_and_load_effect_match() {
-    let base = ColumnValidityContext {
-        has_plan_context: true,
-        has_statement_context: true,
-        physical_id: 12,
-        ..ColumnValidityContext::default()
-    };
-    let missing = column_stats_validity(None, base, 7);
-    assert!(missing.invalid);
-    assert_eq!(missing.load_request.unwrap().table_id, 12);
-
-    let mut column = populated_column(1);
-    let valid = column_stats_validity(Some(&column), base, 7);
-    assert!(!valid.invalid);
-    assert!(valid.load_request.is_none());
-
-    column.stats_loaded_status = StatsLoadedStatus::new(true, ALL_EVICTED);
-    let evicted = column_stats_validity(Some(&column), base, 7);
-    assert!(evicted.invalid);
-    assert!(evicted.load_request.is_some());
-
-    column.histogram.ndv = 0;
-    assert!(!column_stats_validity(Some(&column), base, 7).invalid);
-
-    for context in [
-        ColumnValidityContext {
-            restricted_sql: true,
-            ..base
-        },
-        ColumnValidityContext {
-            cannot_trigger_load: true,
-            ..base
-        },
-        ColumnValidityContext {
-            has_statement_context: false,
-            ..base
-        },
-    ] {
-        assert!(column_stats_validity(None, context, 7)
-            .load_request
-            .is_none());
-    }
-    assert!(column_stats_validity(None, base, -1).load_request.is_none());
-    assert!(
-        column_stats_validity(
-            Some(&populated_column(1)),
-            ColumnValidityContext {
-                pseudo: true,
-                ..base
-            },
-            7,
-        )
-        .invalid
-    );
 }
 
 #[test]

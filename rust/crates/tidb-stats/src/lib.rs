@@ -31,7 +31,6 @@ pub mod analyze_jobs;
 pub mod analyze_results;
 pub mod analyze_table_id;
 pub mod analyze_version_policy;
-pub mod async_load;
 pub mod average_count;
 pub mod builder;
 pub mod cmsketch;
@@ -76,7 +75,6 @@ pub use analyze_jobs::{
 pub use analyze_results::{AnalyzeError, AnalyzeHistogramLifecycle, AnalyzeResult, AnalyzeResults};
 pub use analyze_table_id::{AnalyzeTableId, NON_PARTITION_TABLE_ID};
 pub use analyze_version_policy::analyze_version_matches;
-pub use async_load::{NeededStatsMap, StatsLoadItem, TableItemId, SHARD_COUNT};
 pub use average_count::avg_count_per_not_null_value;
 pub use builder::{
     build_column, build_column_histogram, build_hist_and_topn, try_build_column_histogram,
@@ -98,10 +96,7 @@ pub use cmsketch::{
     CmsSketch, CmsSketchProto, CmsSketchProtoRow, CmsSketchProtoTopN, Hash128, MergeError,
     SharedTopNBytes, TopN, TopNEntry,
 };
-pub use column::{
-    column_is_all_evicted, column_stats_validity, copy_column, empty_column, Column, ColumnInfo,
-    ColumnValidity, ColumnValidityContext,
-};
+pub use column::{column_is_all_evicted, copy_column, empty_column, Column, ColumnInfo};
 pub use constants::{DEFAULT_HISTOGRAM_BUCKETS, DEFAULT_TOP_N_VALUE};
 pub use correlation::calc_correlation;
 pub use count_metrics::HistogramCountSummary;
@@ -116,10 +111,7 @@ pub use fmsketch_codec::{
     insert_value_with_error_policy, FmSketchCodecError, FmSketchProto,
 };
 pub use histogram::{Bucket, Histogram};
-pub use index::{
-    copy_index, index_is_all_evicted, index_stats_validity, Index, IndexInfo, IndexValidity,
-    IndexValidityContext,
-};
+pub use index::{copy_index, index_is_all_evicted, Index, IndexInfo};
 pub use index_query::query_index_bytes;
 pub use json_metadata::{JsonPredicateColumn, JsonTable, TIDB_GLOBAL_STATS};
 pub use memory_usage::{ColumnMemUsage, IndexMemUsage};

@@ -16,8 +16,8 @@
 
 use crate::histogram::Histogram;
 use crate::{
-    query_index_bytes, CmsSketch, FmSketch, IndexMemUsage, StatsLoadedStatus, TableItemId, TopN,
-    ALL_EVICTED, ALL_LOADED,
+    query_index_bytes, CmsSketch, FmSketch, IndexMemUsage, StatsLoadedStatus, TopN, ALL_EVICTED,
+    ALL_LOADED,
 };
 
 /// The index metadata used directly by `index.go` and `table.go`.
@@ -192,45 +192,4 @@ pub fn copy_index(index: Option<&Index>) -> Option<Index> {
 #[must_use]
 pub fn index_is_all_evicted(index: Option<&Index>) -> bool {
     index.is_none_or(Index::is_all_evicted)
-}
-
-/// Inputs owned by `planctx.PlanContext` and `HistColl` in Go.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct IndexValidityContext {
-    pub restricted_sql: bool,
-    pub cannot_trigger_load: bool,
-    pub pseudo: bool,
-    pub physical_id: i64,
-    pub sync_load_failed: bool,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct IndexValidity {
-    pub invalid: bool,
-    pub load_request: Option<TableItemId>,
-}
-
-/// Pure form of Go `IndexStatsIsInvalid`, retaining the source behavior that
-/// queues a load request but continues to compute validity.
-#[must_use]
-pub fn index_stats_validity(
-    index: Option<&Index>,
-    context: IndexValidityContext,
-    index_id: i64,
-) -> IndexValidity {
-    let load_request = ((index.is_none()
-        || index.is_some_and(|index| !index.stats_loaded_status.is_full_load()))
-        && !context.cannot_trigger_load
-        && !context.restricted_sql)
-        .then_some(TableItemId {
-            table_id: context.physical_id,
-            id: index_id,
-            is_index: true,
-            is_sync_load_failed: context.sync_load_failed,
-        });
-    let invalid = index.is_none_or(|index| context.pseudo || index.total_row_count() == 0.0);
-    IndexValidity {
-        invalid,
-        load_request,
-    }
 }
