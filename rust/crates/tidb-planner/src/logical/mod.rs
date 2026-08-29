@@ -349,6 +349,7 @@ pub mod projection;
 pub mod rewrite;
 pub mod rule;
 pub mod rule_aggregation_elimination;
+pub mod rule_collect_plan_stats;
 pub mod rule_derive_topn_from_window;
 pub mod rule_eliminate_empty_selection;
 pub mod rule_eliminate_unionall_dual_item;
