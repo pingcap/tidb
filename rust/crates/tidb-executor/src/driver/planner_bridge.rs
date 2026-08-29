@@ -839,6 +839,7 @@ fn optimize_built_logical(
         allow_derive_topn: true,
         disabled_rules: DisabledLogicalRules::default(),
         statistics_load: Some(&statistics_load),
+        opt_index_prune_threshold: ctx.opt_index_prune_threshold(),
     };
     let optimized = logical_optimize(&rule_context, flags, plan)
         .map_err(|(_, error)| error)?

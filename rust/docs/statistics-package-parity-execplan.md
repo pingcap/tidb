@@ -13,7 +13,8 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - [x] (2026-08-29) Persisted analyze snapshot metadata and matched outdated-statistics pseudo policy.
 - [x] (2026-08-29) Added exact secondary-index reads and per-item histogram, bucket, TopN, and CMS loading.
 - [x] (2026-08-29) Added logical predicate-column demand collection, including lineage, physical-table visitation, and operator counting.
-- [ ] Wire collection and sync/async requests at Go's logical-rule positions (completed: request seam and production loader compile; remaining: exact partition expansion, access-path pruning, timeout/cache state, and regressions).
+- [x] (2026-08-29) Wired collection and sync/async requests at Go's logical-rule position, including partition expansion, statement timeout/cache state, interesting-column collection, first-phase access-path pruning, and retained-index filtering.
+- [ ] Add Go's later `SyncWaitStatsLoadPoint` for requests registered while later logical/statistics derivation runs.
 - [ ] Replace eager startup/reload statistics reads with Go's lite load and make later item requests authoritative.
 - [ ] Wire all pinned Go `SHOW STATS_*` surfaces to the shared cache and storage semantics.
 - [ ] Inventory every production file, platform/generated variant, original test/support artifact, fixture, and validation gate in pinned `pkg/statistics`; close or explicitly retain seed-only gaps until the whole package is complete.
@@ -29,6 +30,9 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 
 - Observation: Go expands requested table items to physical partition IDs only after column and index demand is combined.
   Evidence: pinned `expandStatsNeededColumnsForStaticPruning` appends one item per `tid2pids` entry.
+
+- Observation: Rust's `PossiblePath` is the exact stage used by this pinned pruning rule: like Go before `fillIndexPath`, it has index metadata but no `FullIdxCols` or `IsSingleScan`. Consequently the pinned fallback scoring branch applies and consecutive-prefix/single-scan bonuses are unreachable at this point.
+  Evidence: pinned `scoreIndexPath` branches on nil `FullIdxCols`; Rust `access_path::PossiblePath` is documented and populated as the newborn access path.
 
 ## Decision Log
 
@@ -46,7 +50,7 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 
 ## Outcomes & Retrospective
 
-The exact storage item reader and logical demand collector are integrated and pushed. The current milestone is not complete: the planner request seam compiles, but Go's access-path pruning, static-partition expansion, and timeout/cache state still require exact implementation and focused regression evidence.
+The exact storage item reader, logical demand collector, initial request/wait state, partition expansion, and newborn access-path pruning are integrated. The current milestone is not complete: Go's later `SyncWaitStatsLoadPoint`, lite refresh lifecycle, `SHOW STATS_*` surfaces, worker concurrency/retry behavior, and the whole-package inventory remain.
 
 ## Context and Orientation
 
@@ -87,7 +91,7 @@ Checks and focused tests are safe to rerun. Statistics workers publish immutable
 
 ## Artifacts and Notes
 
-Pushed evidence includes commits `e0d5b4c1f0` (individual item loading) and `00179562d2` (logical demand collection). The current uncommitted seam compiles with:
+Pushed evidence includes commits `e0d5b4c1f0` (individual item loading), `00179562d2` (logical demand collection), and `cb732f4908` (logical request integration). The current pruning slice compiles and has focused tests for threshold-zero pruning, the no-interesting-column safety fallback, retained-index propagation, and statistics-request filtering.
 
     cargo check --locked -p tidb-session -p tidb-server
 
@@ -96,3 +100,5 @@ Pushed evidence includes commits `e0d5b4c1f0` (individual item loading) and `001
 `tidb_planner::logical::rule_collect_plan_stats::StatisticsLoadRequester` is the rule-to-runtime request interface. `tidb_executor::driver::StatisticsItemLoader` is the runtime-to-storage interface. `Catalog::request_statistics_load` owns session cache publication and wait semantics. `ClusterStatisticsItemLoader` owns production snapshot acquisition and `SharedStats` publication. These interfaces must remain narrow enough that the planner does not depend on cluster storage types, while their observable behavior remains identical to pinned Go.
 
 Revision note (2026-08-29): created the living plan after completing exact item loading and logical usage collection; recorded the three parity gaps found while reviewing the first request-seam implementation.
+
+Revision note (2026-08-29): completed the pinned first-phase interesting-column/access-path pruning behavior over Rust's newborn path representation and recorded why Go's later path-growth scoring fields are unreachable at this phase.

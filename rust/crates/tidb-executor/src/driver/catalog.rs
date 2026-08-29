@@ -1392,6 +1392,13 @@ impl Catalog {
                 {
                     continue;
                 }
+                if usage
+                    .kept_index_ids
+                    .get(&column.table_id)
+                    .is_some_and(|kept| !kept.contains(&index.id))
+                {
+                    continue;
+                }
                 items.insert(
                     tidb_model::TableItemID {
                         table_id: column.table_id,
@@ -2183,5 +2190,46 @@ mod statistics_request_tests {
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].1, 1105);
         assert_eq!(warnings[0].2, "sync load stats timeout");
+    }
+
+    #[test]
+    fn pruned_indexes_are_not_requested_for_statistics() {
+        let (mut catalog, table_id, column_id) = analyzed_lite_catalog();
+        let index_id = catalog
+            .kv_table_by_id(table_id)
+            .and_then(|table| table.indexes().first())
+            .expect("fixture index")
+            .id;
+        let statistics = crate::access_cost::TableStatistics {
+            pseudo: false,
+            row_count: 10,
+            column_load_status: [(column_id, tidb_stats::StatsLoadedStatus::all_evicted())]
+                .into_iter()
+                .collect(),
+            index_load_status: [(index_id, tidb_stats::StatsLoadedStatus::all_evicted())]
+                .into_iter()
+                .collect(),
+            column_stats_existence: [(column_id, true)].into_iter().collect(),
+            index_stats_existence: [(index_id, true)].into_iter().collect(),
+            ..crate::access_cost::TableStatistics::default()
+        };
+        catalog.set_table_statistics(table_id, Arc::new(statistics));
+        let column = tidb_model::TableItemID {
+            table_id,
+            id: column_id,
+            is_index: false,
+            is_sync_load_failed: false,
+        };
+        let usage = tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage {
+            predicate_columns: [(column, true)].into_iter().collect(),
+            kept_index_ids: [(table_id, std::collections::HashSet::new())]
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        };
+
+        let items = catalog.statistics_load_items(&usage, true);
+        assert!(items.iter().any(|item| item.table_item_id == column));
+        assert!(!items.iter().any(|item| item.table_item_id.is_index));
     }
 }

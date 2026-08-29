@@ -591,6 +591,8 @@ pub struct RuleContext<'a> {
     pub disabled_rules: DisabledLogicalRules,
     /// Go's domain `StatsHandle`, reached at this rule's exact position.
     pub statistics_load: Option<&'a dyn super::rule_collect_plan_stats::StatisticsLoadRequester>,
+    /// Go `SessionVars.OptIndexPruneThreshold`.
+    pub opt_index_prune_threshold: i32,
 }
 
 /// Go `base.LogicalOptRule` (`base/rule_base.go`).

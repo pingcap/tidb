@@ -25,10 +25,13 @@ use std::collections::{HashMap, HashSet};
 use tidb_expr::column::Column;
 use tidb_expr::expr_util::extract_columns_and_cor_columns_from_expressions;
 use tidb_expr::expression::Expression;
+use tidb_expr::simple_expr::extract_columns;
 use tidb_model::TableItemID;
 
 use super::data_source::DataSource;
+use super::fold::{fold_owned, Descend, OwnedRewrite};
 use super::rule::{LogicalOptRule, RuleContext};
+use super::rule_prune_indexes::prune_data_source;
 use super::LogicalPlan;
 use crate::plan_base::PlanError;
 
@@ -41,6 +44,9 @@ pub struct ColumnStatsUsage {
     pub visited_logical_table_ids: HashSet<i64>,
     /// Logical table ID -> physical partition IDs, for static pruning.
     pub table_partition_ids: HashMap<i64, Vec<i64>>,
+    /// Physical table ID -> index IDs retained by Go's first pruning phase.
+    /// A table is present only when pruning actually removed a path.
+    pub kept_index_ids: HashMap<i64, HashSet<i64>>,
     /// Number of logical operators visited.
     pub operator_count: u64,
 }
@@ -62,7 +68,13 @@ impl LogicalOptRule for CollectPredicateColumnsPoint {
         ctx: &RuleContext<'_>,
         plan: LogicalPlan,
     ) -> Result<(LogicalPlan, bool), (LogicalPlan, PlanError)> {
-        let usage = collect_column_stats_usage(&plan);
+        let mut pruning = InterestingColumnPruner {
+            threshold: ctx.opt_index_prune_threshold,
+            kept_index_ids: HashMap::new(),
+        };
+        let (plan, ()) = fold_owned(&mut pruning, plan, InterestingColumnsDown::default());
+        let mut usage = collect_column_stats_usage(&plan);
+        usage.kept_index_ids = pruning.kept_index_ids;
         if let Some(requester) = ctx.statistics_load {
             if let Err(error) = requester.request(&usage) {
                 return Err((plan, error));
@@ -73,6 +85,190 @@ impl LogicalOptRule for CollectPredicateColumnsPoint {
 
     fn name(&self) -> &'static str {
         "collect_predicate_columns_point"
+    }
+}
+
+#[derive(Clone, Default)]
+struct InterestingColumnsDown {
+    join_columns: Vec<Column>,
+    ordering_columns: Vec<Column>,
+}
+
+struct InterestingColumnPruner {
+    threshold: i32,
+    kept_index_ids: HashMap<i64, HashSet<i64>>,
+}
+
+impl InterestingColumnPruner {
+    fn add_node_columns(node: &LogicalPlan, down: &mut InterestingColumnsDown) {
+        match node {
+            LogicalPlan::Join(join) => {
+                for condition in &join.equal_conditions {
+                    down.join_columns
+                        .extend(condition.args.iter().flat_map(extract_columns));
+                }
+                for condition in &join.other_conditions {
+                    down.join_columns.extend(extract_columns(condition));
+                }
+            }
+            LogicalPlan::Apply(apply) => {
+                for condition in &apply.join.equal_conditions {
+                    down.join_columns
+                        .extend(condition.args.iter().flat_map(extract_columns));
+                }
+                for condition in &apply.join.other_conditions {
+                    down.join_columns.extend(extract_columns(condition));
+                }
+            }
+            LogicalPlan::Sort(sort) => {
+                for item in &sort.by_items {
+                    down.ordering_columns.extend(extract_columns(&item.expr));
+                }
+            }
+            LogicalPlan::TopN(topn) => {
+                for item in &topn.by_items {
+                    down.ordering_columns.extend(extract_columns(&item.expr));
+                }
+            }
+            LogicalPlan::Window(window) => down
+                .ordering_columns
+                .extend(window.order_by.iter().map(|item| item.col.clone())),
+            LogicalPlan::Aggregation(aggregation) => {
+                for item in &aggregation.group_by_items {
+                    down.ordering_columns.extend(extract_columns(item));
+                }
+                for function in &aggregation.agg_funcs {
+                    if matches!(
+                        function.name(),
+                        super::aggregation::AGG_FUNC_MIN | super::aggregation::AGG_FUNC_MAX
+                    ) {
+                        for argument in function.args() {
+                            down.ordering_columns.extend(extract_columns(argument));
+                        }
+                    }
+                }
+            }
+            LogicalPlan::DataSource(_)
+            | LogicalPlan::Projection(_)
+            | LogicalPlan::Selection(_)
+            | LogicalPlan::Limit(_)
+            | LogicalPlan::MaxOneRow(_)
+            | LogicalPlan::Lock(_)
+            | LogicalPlan::Sequence(_)
+            | LogicalPlan::UnionAll(_)
+            | LogicalPlan::PartitionUnionAll(_)
+            | LogicalPlan::UnionScan(_)
+            | LogicalPlan::TableScan(_)
+            | LogicalPlan::IndexScan(_)
+            | LogicalPlan::TiKVSingleGather(_)
+            | LogicalPlan::CTE(_)
+            | LogicalPlan::CTETable(_)
+            | LogicalPlan::TableDual(_)
+            | LogicalPlan::Expand(_)
+            | LogicalPlan::MemTable(_)
+            | LogicalPlan::Show(_)
+            | LogicalPlan::ShowDDLJobs(_) => {}
+        }
+    }
+
+    fn collect_for_source(source: &DataSource, down: &InterestingColumnsDown) -> Vec<Column> {
+        let Some(schema) = source.base.base.schema() else {
+            return Vec::new();
+        };
+        let mut seen = HashSet::new();
+        let mut interesting = Vec::new();
+        for condition in source.pushed_down_conds.iter().chain(&source.all_conds) {
+            let columns = extract_columns(condition);
+            if columns.iter().all(|column| schema.contains(column)) {
+                for column in columns {
+                    if seen.insert(column.unique_id) {
+                        interesting.push(column);
+                    }
+                }
+            }
+        }
+        for column in down.join_columns.iter().chain(&down.ordering_columns) {
+            if schema.contains(column) && seen.insert(column.unique_id) {
+                interesting.push(column.clone());
+            }
+        }
+        interesting
+    }
+
+    fn prune_source(&mut self, source: &mut DataSource, down: &InterestingColumnsDown) {
+        source.interesting_columns = Self::collect_for_source(source, down);
+        if let Some(kept) = prune_data_source(source, self.threshold) {
+            self.kept_index_ids
+                .entry(source.physical_table_id)
+                .or_default()
+                .extend(kept);
+        }
+    }
+}
+
+impl OwnedRewrite for InterestingColumnPruner {
+    type Down = InterestingColumnsDown;
+    type Up = ();
+
+    fn descend(
+        &mut self,
+        node: &mut LogicalPlan,
+        mut down: Self::Down,
+    ) -> Descend<Self::Down, Self::Up> {
+        if self.threshold < 0 {
+            return Descend::Stop(());
+        }
+        Self::add_node_columns(node, &mut down);
+        match node {
+            LogicalPlan::DataSource(source) => {
+                self.prune_source(source, &down);
+                Descend::Stop(())
+            }
+            LogicalPlan::IndexScan(scan) => {
+                if let Some(source) = scan.source.as_deref_mut() {
+                    // Go does not populate InterestingColumns for scan-source
+                    // wrappers in `CollectColumnStatsUsage`.
+                    if let Some(kept) = prune_data_source(source, self.threshold) {
+                        self.kept_index_ids
+                            .entry(source.physical_table_id)
+                            .or_default()
+                            .extend(kept);
+                    }
+                }
+                Descend::Children(vec![down; node.children().len()])
+            }
+            LogicalPlan::TableScan(scan) => {
+                if let Some(source) = scan.source.as_deref_mut() {
+                    if let Some(kept) = prune_data_source(source, self.threshold) {
+                        self.kept_index_ids
+                            .entry(source.physical_table_id)
+                            .or_default()
+                            .extend(kept);
+                    }
+                }
+                Descend::Children(vec![down; node.children().len()])
+            }
+            LogicalPlan::CTE(cte) => {
+                if let Some(class) = &cte.cte {
+                    let mut class = class.borrow_mut();
+                    if let Some(seed) = class.seed_part_logical_plan.take() {
+                        let (seed, ()) = fold_owned(self, *seed, InterestingColumnsDown::default());
+                        class.seed_part_logical_plan = Some(Box::new(seed));
+                    }
+                    if let Some(recursive) = class.recursive_part_logical_plan.take() {
+                        let (recursive, ()) =
+                            fold_owned(self, *recursive, InterestingColumnsDown::default());
+                        class.recursive_part_logical_plan = Some(Box::new(recursive));
+                    }
+                }
+                Descend::Children(vec![down; node.children().len()])
+            }
+            _ => Descend::Children(vec![down; node.children().len()]),
+        }
+    }
+
+    fn ascend(&mut self, node: LogicalPlan, _children: Vec<Self::Up>) -> (LogicalPlan, Self::Up) {
+        (node, ())
     }
 }
 
@@ -343,7 +539,7 @@ pub fn collect_column_stats_usage(plan: &LogicalPlan) -> ColumnStatsUsage {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::Cell;
+    use std::cell::{Cell, RefCell};
 
     use tidb_ast::CiString;
     use tidb_datatype::{FieldType, FieldTypeCode};
@@ -352,6 +548,7 @@ mod tests {
     use tidb_expr::schema::Schema;
 
     use super::*;
+    use crate::access_path::PossiblePath;
     use crate::logical::data_source::DataSourceColumn;
     use crate::logical::join::LogicalJoin;
     use crate::logical::projection::LogicalProjection;
@@ -359,9 +556,12 @@ mod tests {
     use crate::logical::selection::LogicalSelection;
     use crate::logical::BaseLogicalPlan;
     use crate::plan_base::PlanIdAllocator;
+    use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
 
     fn column(id: i64) -> Column {
-        Column::new(id, FieldType::new(FieldTypeCode::LongLong))
+        let mut column = Column::new(id, FieldType::new(FieldTypeCode::LongLong));
+        column.id = id;
+        column
     }
 
     fn base(id: i32, name: &str, schema: &[i64]) -> BaseLogicalPlan {
@@ -493,5 +693,85 @@ mod tests {
         assert!(matches!(returned, LogicalPlan::DataSource(_)));
         assert_eq!(requester.calls.get(), 1);
         assert_eq!(requester.operators.get(), 1);
+    }
+
+    #[test]
+    fn logical_rule_prunes_before_requesting_index_statistics() {
+        struct Requester {
+            kept: RefCell<HashMap<i64, HashSet<i64>>>,
+        }
+
+        impl StatisticsLoadRequester for Requester {
+            fn request(&self, usage: &ColumnStatsUsage) -> Result<(), PlanError> {
+                *self.kept.borrow_mut() = usage.kept_index_ids.clone();
+                Ok(())
+            }
+        }
+
+        let allocator = PlanIdAllocator::new();
+        let requester = Requester {
+            kept: RefCell::new(HashMap::new()),
+        };
+        let mut context = test_context(&allocator);
+        context.builder = &TEST_BUILDER;
+        context.statistics_load = Some(&requester);
+        context.opt_index_prune_threshold = 0;
+        let mut plan = source(1, 7, &[(11, 1), (12, 2)]);
+        let LogicalPlan::DataSource(source) = &mut plan else {
+            unreachable!()
+        };
+        source.physical_table_id = 7;
+        let mut first = column(1);
+        first.id = 11;
+        let mut second = column(2);
+        second.id = 12;
+        source
+            .base
+            .base
+            .set_schema(Some(Schema::new(vec![first.clone(), second.clone()])));
+        source.table_columns = vec![first.clone(), second];
+        source.indexes = vec![
+            SourceIndex {
+                id: 101,
+                columns: vec![SourceIndexColumn {
+                    offset: 0,
+                    ..SourceIndexColumn::default()
+                }],
+                ..SourceIndex::default()
+            },
+            SourceIndex {
+                id: 102,
+                columns: vec![SourceIndexColumn {
+                    offset: 1,
+                    ..SourceIndexColumn::default()
+                }],
+                ..SourceIndex::default()
+            },
+        ];
+        source.enumerated_paths = vec![
+            PossiblePath::Table {
+                is_int_handle: true,
+                primary_index: None,
+            },
+            PossiblePath::Index { index: 0 },
+            PossiblePath::Index { index: 1 },
+        ];
+        source.pushed_down_conds = vec![Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("eq"),
+            FieldType::new(FieldTypeCode::Tiny),
+            vec![Expression::Column(first.clone()), Expression::Column(first)],
+        ))];
+
+        let (returned, changed) = CollectPredicateColumnsPoint
+            .optimize(&context, plan)
+            .expect("statistics request");
+        assert!(!changed);
+        let LogicalPlan::DataSource(returned) = returned else {
+            unreachable!()
+        };
+        assert_eq!(returned.interesting_columns.len(), 1);
+        assert_eq!(returned.interesting_columns[0].unique_id, 1);
+        assert_eq!(returned.enumerated_paths.len(), 2);
+        assert_eq!(requester.kept.borrow().get(&7), Some(&HashSet::from([101])));
     }
 }

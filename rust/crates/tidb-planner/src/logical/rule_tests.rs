@@ -67,6 +67,7 @@ pub(crate) fn test_context(allocator: &PlanIdAllocator) -> RuleContext<'_> {
         allow_derive_topn: true,
         disabled_rules: DisabledLogicalRules::default(),
         statistics_load: None,
+        opt_index_prune_threshold: 20,
     }
 }
 

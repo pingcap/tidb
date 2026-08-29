@@ -60,6 +60,7 @@ pub(crate) struct StatementVarSnapshot {
     enable_pseudo_for_outdated_stats: bool,
     stats_load_sync_wait_ms: u64,
     stats_load_pseudo_timeout: bool,
+    opt_index_prune_threshold: i32,
     max_execution_time_ms: u64,
     advanced_join_reorder: bool,
     constraint_check_in_place: bool,
@@ -599,6 +600,12 @@ impl Session {
                 .map_or(true, |value| {
                     !value.eq_ignore_ascii_case("OFF") && value != "0"
                 }),
+            opt_index_prune_threshold: self
+                .vars
+                .get_system("tidb_opt_index_prune_threshold")
+                .ok()
+                .and_then(|value| value.parse::<i32>().ok())
+                .unwrap_or(20),
             max_execution_time_ms: self
                 .vars
                 .get_system("max_execution_time")
@@ -732,6 +739,7 @@ impl Session {
         let enable_pseudo_for_outdated_stats = snapshot.enable_pseudo_for_outdated_stats;
         let stats_load_sync_wait_ms = snapshot.stats_load_sync_wait_ms;
         let stats_load_pseudo_timeout = snapshot.stats_load_pseudo_timeout;
+        let opt_index_prune_threshold = snapshot.opt_index_prune_threshold;
         let max_execution_time_ms = snapshot.max_execution_time_ms;
         let advanced_join_reorder = snapshot.advanced_join_reorder;
         let constraint_check_in_place = snapshot.constraint_check_in_place;
@@ -836,6 +844,7 @@ impl Session {
                     stats_load_pseudo_timeout,
                     max_execution_time_ms,
                 )
+                .with_opt_index_prune_threshold(opt_index_prune_threshold)
                 .with_sysdate_is_now(sysdate_is_now)
                 .with_resource_group_name(self.active_resource_group.clone())
                 .with_lazy_clock(snapshot.timestamp, zone);
@@ -893,6 +902,7 @@ impl Session {
             stats_load_pseudo_timeout,
             max_execution_time_ms,
         )
+        .with_opt_index_prune_threshold(opt_index_prune_threshold)
         .with_auto_increment_step(increment, offset)
         .with_auto_increment_zero_explicit(sql_mode.has_no_auto_value_on_zero_mode())
         .with_foreign_key_checks(self.foreign_key_checks())

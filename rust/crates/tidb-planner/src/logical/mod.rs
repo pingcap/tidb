@@ -355,6 +355,7 @@ pub mod rule_eliminate_empty_selection;
 pub mod rule_eliminate_unionall_dual_item;
 pub mod rule_join_key_type_cast;
 pub mod rule_projection_elimination;
+pub mod rule_prune_indexes;
 pub mod rule_push_down_sequence;
 pub mod rule_resolve_expand;
 pub mod rule_result_reorder;
