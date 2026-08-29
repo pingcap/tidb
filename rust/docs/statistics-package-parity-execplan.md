@@ -23,6 +23,7 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - [x] (2026-08-29) Wired `SHOW STATS_HISTOGRAMS` through the shared statistics cache, including initialized-state filtering, average column size, load status, and live histogram/TopN/CMS memory usage.
 - [x] (2026-08-29) Wired `SHOW HISTOGRAMS_IN_FLIGHT` to the shared needed-item set and Go's cache-state cleanup semantics.
 - [x] (2026-08-29) Completed pinned `pkg/statistics/handle/lockstats` and `pkg/executor/lockstats` behavior across the shared policy, in-process catalog, TiKV internal transaction, session routing, privileges, warnings, errors, and `SHOW STATS_LOCKED`.
+- [x] (2026-08-29) Completed pinned `pkg/statistics/asyncload` as the process-wide 128-shard needed-item set, including monotonic full-load upgrades and removal after successful, stale-metadata, or corrupted loads.
 - [ ] Wire all pinned Go `SHOW STATS_*` surfaces to the shared cache and storage semantics.
 - [ ] Inventory every production file, platform/generated variant, original test/support artifact, fixture, and validation gate in pinned `pkg/statistics`; close or explicitly retain seed-only gaps until the whole package is complete.
 - [ ] Run the Ready validation profile, including `make lint`, only after the complete package inventory is closed.
@@ -70,6 +71,9 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 
 - Observation: pinned table-level unlock deliberately skips a target whose logical table row is unlocked, even if a partition row remains locked; partition unlock also refuses every partition while the logical table is locked.
   Evidence: pinned `RemoveLockedTables` continues before visiting partitions when the logical ID is absent, and `RemoveLockedPartitions` returns the whole-table warning before its partition loop.
+
+- Observation: pinned asynchronous-load demand is one process-wide, 128-shard map, not a session or catalog-local queue. Re-inserting an item may upgrade metadata-only demand to full load but never downgrade it.
+  Evidence: the complete pinned `pkg/statistics/asyncload/async_load.go` owns the exported singleton; its shard key is the absolute column/index ID modulo 128 and each shard has its own RW mutex.
 
 ## Decision Log
 
@@ -165,3 +169,5 @@ Revision note (2026-08-29): wired `SHOW STATS_HISTOGRAMS`, removed caller-inject
 Revision note (2026-08-29): added the shared needed-item lifecycle and wired `SHOW HISTOGRAMS_IN_FLIGHT`; delayed-load coverage observes one live item and then zero after worker cleanup.
 
 Revision note (2026-08-29): completed the atomic inventory for pinned `pkg/statistics/handle/lockstats` (`lock_stats.go`, `query_lock.go`, `unlock_stats.go`; all four original test/support files; `BUILD.bazel`) and `pkg/executor/lockstats` (both executors, executor tests, `BUILD.bazel`). The Rust mapping is `tidb-stats::lock_stats` for policy/query/delta behavior, `tidb-executor::stats_lock` plus `tidb-session::stats_lock_arm` for the in-process restricted-session equivalent, and `tidb-exec::{cluster_stats_lock,real_tikv_stats_lock}` plus the server seam for one independent TiKV transaction. Focused tests cover stable skip messages, table/partition gates, delta propagation and clamping, real persisted system-row mutations, duplicate no-write warnings, INSERT-before-SELECT privilege admission, statement warning publication, and preservation of the caller's transaction.
+
+Revision note (2026-08-29): completed the atomic inventory for pinned `pkg/statistics/asyncload` (`async_load.go`, `async_load_test.go`, `BUILD.bazel`). `tidb-stats::async_load` now owns the exact process-global 128-shard map and all four map operations; the executor's request, completion, and `SHOW HISTOGRAMS_IN_FLIGHT` cleanup paths use that singleton. The five original integration cases collapse onto two Rust integration boundaries: missing table/column/index metadata makes the cluster item loader skip publication and the worker always deletes the item, while a corrupted payload returns an error and the same unconditional deletion applies. Focused tests cover concurrent shards, full-load upgrade/no-downgrade, successful completion cleanup, and corrupted-load cleanup.
