@@ -42,38 +42,35 @@ fn lock_unpoison<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// Kill signal types (Go `killSignal` constants). When adding a new signal,
-/// the source also updates `store/driver/error/ToTiDBErr`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u32)]
-pub enum KillSignal {
-    /// No kill requested.
-    UnspecifiedKillSignal = 0,
-    /// `KILL QUERY` / connection dead.
-    QueryInterrupted = 1,
-    /// `max_execution_time` exceeded.
-    MaxExecTimeExceeded = 2,
-    /// Per-query memory quota exceeded.
-    QueryMemoryExceeded = 3,
-    /// Server memory limit exceeded.
-    ServerMemoryExceeded = 4,
-    /// Runaway-query watchdog.
-    RunawayQueryExceeded = 5,
-    /// Killed by the memory arbitrator.
-    KilledByMemArbitrator = 6,
-}
+/// Go's raw `uint32` kill signal.
+///
+/// The source field is public and may contain values outside the named
+/// constants, so this remains a transparent value instead of a closed enum.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct KillSignal(pub u32);
 
+#[allow(non_upper_case_globals)]
 impl KillSignal {
-    fn from_u32(v: u32) -> Option<KillSignal> {
-        Some(match v {
-            1 => KillSignal::QueryInterrupted,
-            2 => KillSignal::MaxExecTimeExceeded,
-            3 => KillSignal::QueryMemoryExceeded,
-            4 => KillSignal::ServerMemoryExceeded,
-            5 => KillSignal::RunawayQueryExceeded,
-            6 => KillSignal::KilledByMemArbitrator,
-            _ => return None,
-        })
+    /// No kill requested.
+    pub const UnspecifiedKillSignal: Self = Self(0);
+    /// `KILL QUERY` / connection dead.
+    pub const QueryInterrupted: Self = Self(1);
+    /// `max_execution_time` exceeded.
+    pub const MaxExecTimeExceeded: Self = Self(2);
+    /// Per-query memory quota exceeded.
+    pub const QueryMemoryExceeded: Self = Self(3);
+    /// Server memory limit exceeded.
+    pub const ServerMemoryExceeded: Self = Self(4);
+    /// Runaway-query watchdog.
+    pub const RunawayQueryExceeded: Self = Self(5);
+    /// Killed by the memory arbitrator.
+    pub const KilledByMemArbitrator: Self = Self(6);
+
+    /// Returns the source `uint32` representation.
+    #[must_use]
+    pub const fn raw(self) -> u32 {
+        self.0
     }
 }
 
@@ -108,7 +105,8 @@ pub struct ConnectionAliveRegistration(u64);
 /// Kills a query (Go `SQLKiller`).
 #[derive(Default)]
 pub struct SqlKiller {
-    signal: AtomicU32,
+    /// Go `Signal`, shared directly with storage request cancellation.
+    pub signal: AtomicU32,
     /// The connection ID.
     pub conn_id: AtomicU64,
     /// Whether the query is currently writing its result set.
@@ -189,17 +187,18 @@ impl SqlKiller {
     fn send_kill_signal_inner(&self, reason: KillSignal) {
         if self
             .signal
-            .compare_exchange(0, reason as u32, SeqCst, SeqCst)
+            .compare_exchange(0, reason.raw(), SeqCst, SeqCst)
             .is_ok()
         {
             let status = self.signal.load(SeqCst);
-            if let Some(err) = self.kill_error(status) {
-                tracing::warn!(
-                    connection_id = self.conn_id.load(SeqCst),
-                    reason = %err,
-                    "kill initiated"
-                );
-            }
+            let err = self
+                .kill_error(status)
+                .expect("a newly installed kill signal must map to an error");
+            tracing::warn!(
+                connection_id = self.conn_id.load(SeqCst),
+                reason = %err,
+                "kill initiated"
+            );
         }
     }
 
@@ -210,8 +209,8 @@ impl SqlKiller {
     }
 
     /// Gets the current kill signal.
-    pub fn get_kill_signal(&self) -> Option<KillSignal> {
-        KillSignal::from_u32(self.signal.load(SeqCst))
+    pub fn get_kill_signal(&self) -> KillSignal {
+        KillSignal(self.signal.load(SeqCst))
     }
 
     fn kill_event_reason(&self) -> String {
@@ -227,7 +226,7 @@ impl SqlKiller {
             let formatted = proto.fast_generate(&template, args);
             proto.generate_with_stack(formatted.message().to_string())
         };
-        Some(match KillSignal::from_u32(status)? {
+        Some(match KillSignal(status) {
             KillSignal::UnspecifiedKillSignal => return None,
             KillSignal::QueryInterrupted => by_args(&exeerrors::ERR_QUERY_INTERRUPTED, &[]),
             KillSignal::MaxExecTimeExceeded => by_args(&exeerrors::ERR_MAX_EXEC_TIME_EXCEEDED, &[]),
@@ -251,6 +250,7 @@ impl SqlKiller {
                     FormatArg::from(conn_id),
                 ],
             ),
+            _ => return None,
         })
     }
 
@@ -316,19 +316,21 @@ impl SqlKiller {
                 Duration::from_secs(1)
             };
             let now = Instant::now();
-            let should_check = {
-                let mut last = lock_unpoison(&self.last_check_time);
-                match *last {
-                    None => {
-                        *last = Some(now);
-                        false
-                    }
-                    Some(prev) if now.duration_since(prev) > check_dur => {
-                        *last = Some(now);
-                        true
-                    }
-                    _ => false,
+            let last = *lock_unpoison(&self.last_check_time);
+            let should_check = match last {
+                None => {
+                    *lock_unpoison(&self.last_check_time) = Some(now);
+                    false
                 }
+                Some(prev)
+                    if now
+                        .checked_duration_since(prev)
+                        .is_some_and(|elapsed| elapsed > check_dur) =>
+                {
+                    *lock_unpoison(&self.last_check_time) = Some(now);
+                    true
+                }
+                _ => false,
             };
             if should_check && !fn_alive() {
                 self.send_kill_signal_inner(KillSignal::QueryInterrupted);
@@ -337,7 +339,7 @@ impl SqlKiller {
 
         let status = self.signal.load(SeqCst);
         let err = self.kill_error(status);
-        if status == KillSignal::ServerMemoryExceeded as u32 {
+        if status == KillSignal::ServerMemoryExceeded.raw() {
             tracing::warn!(
                 conn = self.conn_id.load(SeqCst),
                 "global memory controller, NeedKill signal is received successfully"

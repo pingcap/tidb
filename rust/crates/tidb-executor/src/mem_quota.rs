@@ -648,14 +648,14 @@ impl StatementMemory {
     /// Under `LOG` it can never fail, which is exactly the captured behavior.
     pub fn check(&self) -> Result<(), ExecError> {
         match self.killer.get_kill_signal() {
-            Some(KillSignal::QueryMemoryExceeded) => Err(ExecError::MemoryExceedForQuery {
+            KillSignal::QueryMemoryExceeded => Err(ExecError::MemoryExceedForQuery {
                 conn_id: self.killer.conn_id.load(SeqCst),
             }),
-            Some(_) => self
+            KillSignal::UnspecifiedKillSignal => Ok(()),
+            _ => self
                 .killer
                 .handle_signal()
                 .map_or(Ok(()), |error| Err(ExecError::Killed(error.to_sql_error()))),
-            None => Ok(()),
         }
     }
 

@@ -41,15 +41,16 @@ use tidb_util::sqlkiller::{KillSignal, SqlKiller};
 #[test]
 fn is_session_done_input_signal_roundtrip_reads_query_interrupted_as_one() {
     let killer = SqlKiller::default();
-    assert!(
-        killer.get_kill_signal().is_none(),
+    assert_eq!(
+        killer.get_kill_signal(),
+        KillSignal::UnspecifiedKillSignal,
         "a fresh session has no kill signal"
     );
     killer.send_kill_signal(KillSignal::QueryInterrupted);
     // Go `sqlkiller.QueryInterrupted` == 1; `isSessionDone` returns exactly
     // this value as its `killed` result (pkg/ddl/executor_nokit_test.go:36).
-    assert_eq!(killer.get_kill_signal(), Some(KillSignal::QueryInterrupted));
-    assert_eq!(KillSignal::QueryInterrupted as u32, 1);
+    assert_eq!(killer.get_kill_signal(), KillSignal::QueryInterrupted);
+    assert_eq!(KillSignal::QueryInterrupted.raw(), 1);
 }
 
 // The OUTPUT half of the same Go test: `isSessionDone(sctx)` -> (true, 1)

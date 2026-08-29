@@ -364,11 +364,14 @@ fn test_session_global_time_zone() {
 #[test]
 fn test_session_kill() {
     let se = TtlSession::new(MockContext::new(), Box::new(|| {}));
-    assert!(se.context().sql_killer().get_kill_signal().is_none());
+    assert_eq!(
+        se.context().sql_killer().get_kill_signal(),
+        KillSignal::UnspecifiedKillSignal
+    );
     se.kill_stmt();
     assert_eq!(
         se.context().sql_killer().get_kill_signal(),
-        Some(KillSignal::QueryInterrupted)
+        KillSignal::QueryInterrupted
     );
 }
 
