@@ -54,3 +54,48 @@ pub fn stats_sample_logger() -> SampledLogger {
 pub fn stats_err_verbose_sample_logger() -> SampledLogger {
     SAMPLE_ERR_VERBOSE_LOGGER.clone()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tidb_util::logutil::{init_logger, new_log_config, FileLogConfig, DEFAULT_LOG_FORMAT};
+
+    #[test]
+    fn source_loggers_attach_stats_category_and_share_sampler_state() {
+        let filename = std::env::temp_dir()
+            .join(format!(
+                "tidb_stats_handle_logutil_{}.log",
+                std::process::id()
+            ))
+            .to_string_lossy()
+            .into_owned();
+        init_logger(&new_log_config(
+            "info",
+            DEFAULT_LOG_FORMAT,
+            "",
+            "",
+            FileLogConfig {
+                filename: filename.clone(),
+                max_size: 4096,
+                ..FileLogConfig::default()
+            },
+            true,
+        ))
+        .expect("initialize test logger");
+
+        stats_logger().info("ordinary stats log", &[]);
+        stats_err_verbose_logger().error("verbose stats log", &[]);
+        for _ in 0..2 {
+            stats_sample_logger().info("sampled stats log", &[]);
+            stats_err_verbose_sample_logger().error("sampled verbose stats log", &[]);
+        }
+
+        let content = std::fs::read_to_string(&filename).expect("read test log");
+        assert_eq!(content.lines().count(), 4, "content: {content}");
+        assert_eq!(content.matches("category=stats").count(), 4);
+        assert_eq!(content.matches("sampled=").count(), 2);
+        assert_eq!(content.matches("sampled stats log").count(), 1);
+        assert_eq!(content.matches("sampled verbose stats log").count(), 1);
+        let _ = std::fs::remove_file(filename);
+    }
+}
