@@ -277,6 +277,9 @@ For each bounded behavior cluster:
       Go-regexp authority so Perl classes and word boundaries remain ASCII,
       remove Rust-only construction/cloning APIs, and retain all fourteen
       source tests plus the public source-contract gates.
+- [x] Complete the pinned `pkg/util/regexpr-router` package in its wired
+      `tidb-util` owner and remove the unused 766-line `tidb-exec` duplicate
+      implementation, duplicate tests, and public module path.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope

@@ -34,7 +34,7 @@ pub const TBL_FILTER: FilterType = 1;
 pub const SCHM_FILTER: FilterType = 2;
 
 /// An error returned while constructing or applying a regexp route table.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct RegExprRouterError(String);
 
 impl RegExprRouterError {
