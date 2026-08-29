@@ -58,24 +58,18 @@ impl Trace {
 
     /// Go `Trace.rand32`, read under the trace's lock.
     #[must_use]
-    pub fn rand32(&self) -> u32 {
+    pub(crate) fn rand32(&self) -> u32 {
         self.read().rand32
     }
 
     /// Go `Trace.bits`, read under the trace's lock.
     #[must_use]
-    pub fn bits(&self) -> u64 {
+    pub(crate) fn bits(&self) -> u64 {
         self.read().bits
     }
 
-    /// Go `Trace.events`, cloned under the trace's lock.
-    #[must_use]
-    pub fn events(&self) -> Vec<Event> {
-        self.read().events.clone()
-    }
-
     /// Go `Trace.markBits`.
-    pub fn mark_bits(&self, idx: usize) {
+    pub(crate) fn mark_bits(&self, idx: usize) {
         self.write().bits |= 1 << idx;
     }
 
@@ -119,8 +113,12 @@ impl Trace {
 }
 
 impl Sink for Trace {
-    fn record(&self, event: &Event) {
+    fn record(&self, _context: &TraceContext, event: &Event) {
         self.write().events.push(event.clone());
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -293,7 +291,7 @@ impl DumpTriggerConfig {
     /// # Errors
     ///
     /// Returns Go's validation message for a malformed trigger.
-    pub fn compile(
+    pub(crate) fn compile(
         &self,
         name: &mut String,
         mapping: &mut CompiledDumpTriggerConfig,
@@ -351,7 +349,7 @@ impl DumpTriggerConfig {
 /// the trigger when they are a superset of any alternative — see
 /// [`check_truth_table`].
 #[derive(Clone, Debug, Default)]
-pub struct CompiledDumpTriggerConfig {
+pub(crate) struct CompiledDumpTriggerConfig {
     /// Go `nameMapping`: canonical trigger name to bit index.
     pub name_mapping: HashMap<String, usize>,
     /// Go `configRef`, parallel to `name_mapping` by index.
@@ -366,7 +364,7 @@ impl CompiledDumpTriggerConfig {
     /// # Errors
     ///
     /// Rejects a duplicate name, and a 65th trigger.
-    pub fn add_trigger(
+    pub(crate) fn add_trigger(
         &mut self,
         canonical_name: String,
         config: Option<&DumpTriggerConfig>,
@@ -386,7 +384,7 @@ impl CompiledDumpTriggerConfig {
 
 /// Go `truthTableForAnd`.
 #[must_use]
-pub fn truth_table_for_and(x: Vec<u64>, mut y: Vec<u64>) -> Vec<u64> {
+pub(crate) fn truth_table_for_and(x: Vec<u64>, mut y: Vec<u64>) -> Vec<u64> {
     if x.is_empty() {
         return y;
     }
@@ -414,7 +412,7 @@ fn truth_table_for_and1(x: u64, xs: &mut [u64]) {
 
 /// Go `truthTableForOr`.
 #[must_use]
-pub fn truth_table_for_or(mut x: Vec<u64>, y: Vec<u64>) -> Vec<u64> {
+pub(crate) fn truth_table_for_or(mut x: Vec<u64>, y: Vec<u64>) -> Vec<u64> {
     // not doing any deduplication because duplicate trigger condition is not
     // allowed by compile
     x.extend(y);
@@ -423,7 +421,7 @@ pub fn truth_table_for_or(mut x: Vec<u64>, y: Vec<u64>) -> Vec<u64> {
 
 /// Go `checkTruthTable`.
 #[must_use]
-pub fn check_truth_table(bits: u64, table: &[u64]) -> bool {
+pub(crate) fn check_truth_table(bits: u64, table: &[u64]) -> bool {
     for &value in table {
         // The accumulated bits satisfy this alternative when they are a
         // superset of it.
@@ -436,15 +434,22 @@ pub fn check_truth_table(bits: u64, table: &[u64]) -> bool {
 
 /// Go `CheckFlightRecorderDumpTrigger`.
 ///
-/// Go recovers the statement's `*Trace` from the context by type assertion and
-/// logs a warning when the assertion fails; this port takes it explicitly (see
-/// the module boundaries).
 pub fn check_flight_recorder_dump_trigger(
-    trace: &Trace,
+    ctx: &TraceContext,
     trigger_name: &str,
     check: impl Fn(Option<&DumpTriggerConfig>) -> bool,
 ) {
     let Some(recorder) = get_flight_recorder() else {
+        return;
+    };
+    let Some(sink) = ctx.sink() else {
+        return;
+    };
+    let Some(trace) = sink.as_any().downcast_ref::<Trace>() else {
+        logutil::bg_logger().warn(
+            "CheckFlightRecorderDumpTrigger assertion fails, sink should be a Trace object",
+            &[],
+        );
         return;
     };
     let Some(&idx) = recorder.compiled.name_mapping.get(trigger_name) else {
@@ -499,7 +504,7 @@ impl FlightRecorderConfig {
     /// # Errors
     ///
     /// Propagates the dump trigger's validation error.
-    pub fn compile(&self) -> Result<CompiledDumpTriggerConfig, String> {
+    pub(crate) fn compile(&self) -> Result<CompiledDumpTriggerConfig, String> {
         let mut name = String::new();
         let mut result = CompiledDumpTriggerConfig::default();
         let truth_table = self.dump_trigger.compile(&mut name, &mut result)?;
@@ -510,7 +515,7 @@ impl FlightRecorderConfig {
 
 /// Go `parseCategories`.
 #[must_use]
-pub fn parse_categories(categories: &[String]) -> TraceCategory {
+pub(crate) fn parse_categories(categories: &[String]) -> TraceCategory {
     let mut result = TraceCategory(0);
     let mut sub = false;
     for name in categories {
@@ -571,11 +576,12 @@ pub fn get_flight_recorder() -> Option<Arc<HttpFlightRecorder>> {
 /// Go `newHTTPFlightRecorder`.
 fn new_http_flight_recorder(
     config: FlightRecorderConfig,
+    ch: Option<Sender<Vec<Event>>>,
 ) -> Result<Arc<HttpFlightRecorder>, String> {
     let compiled = config.compile()?;
     let categories = parse_categories(&config.enabled_categories);
     let recorder = Arc::new(HttpFlightRecorder {
-        ch: None,
+        ch,
         enabled_categories: AtomicU64::new(categories.0),
         counter: AtomicI64::new(0),
         config,
@@ -615,19 +621,7 @@ pub fn start_http_flight_recorder(
     ch: Sender<Vec<Event>>,
     config: FlightRecorderConfig,
 ) -> Result<Arc<HttpFlightRecorder>, String> {
-    // Go assigns `ret.ch` after construction; the channel is part of the
-    // recorder's identity here, so it is installed before publishing.
-    let compiled = config.compile()?;
-    let categories = parse_categories(&config.enabled_categories);
-    let recorder = Arc::new(HttpFlightRecorder {
-        ch: Some(ch),
-        enabled_categories: AtomicU64::new(categories.0),
-        counter: AtomicI64::new(0),
-        config,
-        compiled,
-    });
-    store_global(Some(Arc::clone(&recorder)));
-    Ok(recorder)
+    new_http_flight_recorder(config, Some(ch))
 }
 
 /// Go `StartLogFlightRecorder`: starts the recorder that sinks to the log.
@@ -636,7 +630,7 @@ pub fn start_http_flight_recorder(
 ///
 /// Propagates the configuration's compile error.
 pub fn start_log_flight_recorder(config: FlightRecorderConfig) -> Result<(), String> {
-    new_http_flight_recorder(config).map(|_| ())
+    new_http_flight_recorder(config, None).map(|_| ())
 }
 
 impl HttpFlightRecorder {
@@ -648,43 +642,41 @@ impl HttpFlightRecorder {
 
     /// Go `HTTPFlightRecorder.enabledCategories`.
     #[must_use]
-    pub fn enabled_categories(&self) -> TraceCategory {
+    pub(crate) fn enabled_categories(&self) -> TraceCategory {
         TraceCategory(self.enabled_categories.load(Ordering::SeqCst))
     }
 
     /// Go's test-only `HTTPFlightRecorder.SetCategories`.
-    pub fn set_categories(&self, categories: TraceCategory) {
+    #[cfg(test)]
+    pub(crate) fn set_categories(&self, categories: TraceCategory) {
         self.enabled_categories
             .store(categories.0, Ordering::SeqCst);
     }
 
     /// Go's test-only `HTTPFlightRecorder.Disable`.
-    pub fn disable(&self, categories: TraceCategory) {
+    #[cfg(test)]
+    pub(crate) fn disable(&self, categories: TraceCategory) {
         self.enabled_categories
             .fetch_and(!categories.0, Ordering::SeqCst);
     }
 
     /// Go's test-only `HTTPFlightRecorder.Enable`.
-    pub fn enable(&self, categories: TraceCategory) {
+    #[cfg(test)]
+    pub(crate) fn enable(&self, categories: TraceCategory) {
         self.enabled_categories
             .fetch_or(categories.0, Ordering::SeqCst);
     }
 
     /// Go `HTTPFlightRecorder.truthTable`.
     #[must_use]
-    pub fn truth_table(&self) -> &[u64] {
+    #[cfg(test)]
+    pub(crate) fn truth_table(&self) -> &[u64] {
         &self.compiled.truth_table
-    }
-
-    /// Go `HTTPFlightRecorder.nameMapping`.
-    #[must_use]
-    pub fn name_mapping(&self) -> &HashMap<String, usize> {
-        &self.compiled.name_mapping
     }
 
     /// Go `HTTPFlightRecorder.shouldKeep`.
     #[must_use]
-    pub fn should_keep(&self, bits: u64) -> bool {
+    pub(crate) fn should_keep(&self, bits: u64) -> bool {
         check_truth_table(bits, &self.compiled.truth_table)
     }
 
@@ -701,7 +693,7 @@ impl HttpFlightRecorder {
 
     /// Go `HTTPFlightRecorder.collect`. A recorder without a channel is the
     /// log flight recorder and logs each event instead.
-    pub fn collect(&self, ctx: Option<&TraceContext>, events: Vec<Event>) {
+    pub(crate) fn collect(&self, ctx: Option<&TraceContext>, events: Vec<Event>) {
         match self.ch.as_ref() {
             None => {
                 for event in &events {

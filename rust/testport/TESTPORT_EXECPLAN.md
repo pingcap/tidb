@@ -463,6 +463,12 @@ For each bounded behavior cluster:
 - [x] Complete the pinned root `pkg/util/sem` package in its `tidb-util`
       owner, verify its full policy and cross-crate sysvar wiring, retain its
       five source tests, and remove supplementary Rust-only assertions.
+- [x] Complete the pinned root `pkg/util/traceevent` package across
+      `tidb-util`, the vendored `tikv-client`, and server initialization:
+      replace the disconnected fake client registry with live hooks, restore
+      ordinary startup registration, preserve structured fields and context,
+      remove Rust-only public/test surfaces, and port both source benchmarks.
+      The atomic inventory and WIP gates are in `receipts/util_traceevent.md`.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope
@@ -483,6 +489,12 @@ For each bounded behavior cluster:
 - Decision: package parity is atomic. File-, function-, batch-, or test-level
   progress cannot be reported as a completed transcreated Go package.
   Date/Author: 2026-08-28, Codex.
+- Decision: `pkg/util/traceevent` must register directly with
+  `rust/third_party/tikv-client-rs/src/trace.rs`; the local
+  `ClientGoTraceRegistry`, category enum, and flag wrapper are deleted rather
+  than retained as a second inactive implementation. The real vendored client
+  has the same three global hook setters and already emits events from normal
+  request, lock, and region-cache paths. Date/Author: 2026-08-29, Codex.
 
 ## Surprises & Discoveries
 
@@ -504,6 +516,16 @@ For each bounded behavior cluster:
 - The full planner test target currently encounters unrelated pre-existing
   compile errors in CTE/TopN and memory-trace test sources; scoped planner tests
   for the changed MPP property behavior pass.
+- The Rust traceevent module says client-go tracing is unavailable, but the
+  vendored Rust TiKV client already exposes category, event, and control
+  extractor hooks and uses them in production request paths. No production
+  caller registers the Rust module's fake registry, so its adapter tests prove
+  only an invented boundary and not observable behavior.
+- Pinned Go registers its client adapter from the package initializer and
+  carries the statement `*Trace` through `context.Context`. Rust has no package
+  initializer, so the native equivalent is one registration call in the
+  ordinary server startup plus a typed `Arc<Trace>` value in the vendored
+  client's immutable trace context.
 
 ## Outcomes & Retrospective
 

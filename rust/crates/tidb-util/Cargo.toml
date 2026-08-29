@@ -40,6 +40,7 @@ tidb-mysql = { path = "../tidb-mysql" }
 tidb-naming = { path = "../tidb-naming" }
 tidb-proto = { path = "../tidb-proto" }
 tidb-tikvutil = { path = "../tidb-tikvutil" }
+tikv-client.workspace = true
 aes.workspace = true
 chrono.workspace = true
 chrono-tz.workspace = true
@@ -106,6 +107,10 @@ harness = false
 
 [[bench]]
 name = "stringutil"
+harness = false
+
+[[bench]]
+name = "traceevent"
 harness = false
 
 [[bench]]

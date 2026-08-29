@@ -572,6 +572,72 @@ fn ranges_after_key(mut ranges: Vec<pdpb::KeyRange>, split_key: &[u8]) -> Vec<pd
     ranges
 }
 
+fn trace_key_field(name: &'static str, key: &[u8]) -> crate::trace::TraceField {
+    if crate::redact::need_redact() {
+        crate::trace::TraceField::new(name, "?")
+    } else {
+        crate::trace::TraceField::binary(name, key.to_vec())
+    }
+}
+
+fn trace_ranges_field(name: &'static str, ranges: &[pdpb::KeyRange]) -> crate::trace::TraceField {
+    let mut fields = vec![crate::trace::TraceField::new("count", ranges.len())];
+    if !ranges.is_empty() {
+        fields.push(crate::trace::TraceField::array(
+            "ranges",
+            ranges
+                .iter()
+                .map(|range| {
+                    crate::trace::TraceValue::Object(vec![
+                        trace_key_field("start", &range.start_key),
+                        trace_key_field("end", &range.end_key),
+                    ])
+                })
+                .collect(),
+        ));
+    }
+    crate::trace::TraceField::object(name, fields)
+}
+
+fn trace_region_value(region: &RegionWithLeader) -> crate::trace::TraceValue {
+    let epoch = region.region.region_epoch.as_ref();
+    crate::trace::TraceValue::Object(vec![
+        crate::trace::TraceField::new("regionID", region.region.id),
+        crate::trace::TraceField::new("confVer", epoch.map_or(0, |epoch| epoch.conf_ver)),
+        crate::trace::TraceField::new("version", epoch.map_or(0, |epoch| epoch.version)),
+        trace_key_field("startKey", &region.region.start_key),
+        trace_key_field("endKey", &region.region.end_key),
+    ])
+}
+
+fn trace_regions_field(
+    name: &'static str,
+    regions: &[RegionWithLeader],
+) -> crate::trace::TraceField {
+    let mut fields = vec![crate::trace::TraceField::new("count", regions.len())];
+    if !regions.is_empty() {
+        fields.push(crate::trace::TraceField::array(
+            "regions",
+            regions.iter().map(trace_region_value).collect(),
+        ));
+    }
+    crate::trace::TraceField::object(name, fields)
+}
+
+fn trace_locations_field(
+    name: &'static str,
+    locations: &[RegionWithLeader],
+) -> crate::trace::TraceField {
+    let mut fields = vec![crate::trace::TraceField::new("count", locations.len())];
+    if !locations.is_empty() {
+        fields.push(crate::trace::TraceField::array(
+            "locations",
+            locations.iter().map(trace_region_value).collect(),
+        ));
+    }
+    crate::trace::TraceField::object(name, fields)
+}
+
 fn contains_by_end(region: &RegionWithLeader, key: &[u8]) -> bool {
     if key.is_empty() {
         return region.region.end_key.is_empty();
@@ -2268,7 +2334,7 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                 "region_cache.batch_locate.start",
                 &[
                     crate::trace::TraceField::new("rangeCount", ranges.len()),
-                    crate::trace::TraceField::new("ranges", ranges.clone()),
+                    trace_ranges_field("ranges", &ranges),
                 ],
             );
         }
@@ -2337,8 +2403,8 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                 &[
                     crate::trace::TraceField::new("cachedRegionCount", cached_regions.len()),
                     crate::trace::TraceField::new("uncachedRangeCount", uncached_ranges.len()),
-                    crate::trace::TraceField::new("cachedRegions", cached_regions.clone()),
-                    crate::trace::TraceField::new("uncachedRanges", uncached_ranges.clone()),
+                    trace_regions_field("cachedRegions", &cached_regions),
+                    trace_ranges_field("uncachedRanges", &uncached_ranges),
                 ],
             );
         }
@@ -2356,7 +2422,7 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                     &[
                         crate::trace::TraceField::new("rangeCount", to_send.len()),
                         crate::trace::TraceField::new("limit", DEFAULT_REGIONS_PER_BATCH),
-                        crate::trace::TraceField::new("ranges", to_send.to_vec()),
+                        trace_ranges_field("ranges", to_send),
                     ],
                 );
             }
@@ -2376,7 +2442,7 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                     "region_cache.batch_locate.pd_response",
                     &[
                         crate::trace::TraceField::new("regionCount", regions.len()),
-                        crate::trace::TraceField::new("regions", regions.clone()),
+                        trace_regions_field("regions", &regions),
                     ],
                 );
             }
@@ -2399,7 +2465,7 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                 "region_cache.batch_locate.merged",
                 &[
                     crate::trace::TraceField::new("locationCount", result.len()),
-                    crate::trace::TraceField::new("locations", result.clone()),
+                    trace_locations_field("locations", &result),
                 ],
             );
         }

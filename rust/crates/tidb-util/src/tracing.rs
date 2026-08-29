@@ -271,9 +271,12 @@ impl Event {
 }
 
 /// Go `Sink`: the destination trace events are recorded to.
-pub trait Sink: Send + Sync {
+pub trait Sink: std::any::Any + Send + Sync {
     /// Go `Sink.Record`.
-    fn record(&self, event: &Event);
+    fn record(&self, context: &TraceContext, event: &Event);
+
+    /// Supports Go's concrete sink type assertions.
+    fn as_any(&self) -> &dyn std::any::Any;
 }
 
 /// Go `FlightRecorder`, which is exactly a [`Sink`].
@@ -682,8 +685,8 @@ pub fn start_region(context: &TraceContext, region_type: &str) -> Region {
                 Phase::Begin,
                 context.extract_trace_id(),
             );
-            sink.record(&event);
-            region.recorded = Some((event, Arc::clone(sink)));
+            sink.record(context, &event);
+            region.recorded = Some((context.clone(), event, Arc::clone(sink)));
         }
     }
     region
@@ -708,7 +711,7 @@ pub fn start_region_ex(context: &TraceContext, region_type: &str) -> (Region, Tr
 #[derive(Debug)]
 pub struct Region {
     span: Option<Span>,
-    recorded: Option<(Event, Arc<dyn Sink>)>,
+    recorded: Option<(TraceContext, Event, Arc<dyn Sink>)>,
 }
 
 impl std::fmt::Debug for dyn Sink {
@@ -729,10 +732,10 @@ impl Region {
         if let Some(span) = &mut self.span {
             span.finish();
         }
-        if let Some((event, sink)) = &mut self.recorded {
+        if let Some((context, event, sink)) = &mut self.recorded {
             event.phase = Phase::End;
             event.timestamp = SystemTime::now();
-            sink.record(event);
+            sink.record(context, event);
         }
     }
 }
@@ -930,11 +933,15 @@ mod tests {
     struct CollectingSink(Mutex<Vec<(String, Phase)>>);
 
     impl Sink for CollectingSink {
-        fn record(&self, event: &Event) {
+        fn record(&self, _context: &TraceContext, event: &Event) {
             self.0
                 .lock()
                 .unwrap()
                 .push((event.name.clone(), event.phase));
+        }
+
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
         }
     }
 

@@ -3834,6 +3834,7 @@ dependencies = [
  "tidb-naming",
  "tidb-proto",
  "tidb-tikvutil",
+ "tikv-client",
  "tracing",
  "windows-sys 0.61.2",
 ]

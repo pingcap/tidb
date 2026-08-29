@@ -12,11 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `pkg/util/traceevent` lands as a complete package: the trace-event entry
-//! point and its sinks (`traceevent.go`), the configurable flight recorder with
-//! its AND/OR dump-trigger compiler (`flightrecorder.go`), and the client-go
-//! trace bridge (`adapter.go`), with all eleven of the package's test
-//! functions.
+//! Go `pkg/util/traceevent`: trace-event sinks, the configurable flight
+//! recorder and dump-trigger compiler, and the live TiKV-client bridge.
 //!
 //! A trace event is emitted through [`trace_event`], gated by the categories
 //! the active [`HttpFlightRecorder`] enables. Recording fans out to the
@@ -26,61 +23,22 @@
 //! dropped at [`Trace::discard_or_flush`] time by evaluating the compiled
 //! dump-trigger truth table against the trigger bits the statement accumulated.
 //!
-//! # Narrowings and boundaries
-//!
-//! - **`context.Context`** → [`tracing::TraceContext`], as in `crate::tracing`.
-//!   Go's `Sink.Record(ctx, event)` carries a context that only [`LogSink`]
-//!   ever reads (to pick up the context logger); `crate::tracing::Sink::record`
-//!   takes just the event, so [`log_event`] takes the context explicitly and
-//!   [`LogSink`] logs through the background logger.
-//! - **`sink.(*Trace)` type assertions.** Go recovers the statement's `*Trace`
-//!   from the context by asserting on the `Sink` interface value, in
-//!   `GenerateTraceID`, `CheckFlightRecorderDumpTrigger`, and
-//!   `handleTraceControlExtractor`. `crate::tracing::Sink` is not downcastable
-//!   (making it so would change a trait every crate above this one
-//!   implements), so those three functions take the `&Trace` explicitly. The
-//!   assertion-failure branches become the `Option::None` arms.
-//! - **client-go `github.com/tikv/client-go/v2/trace`.** Not part of this
-//!   workspace; `adapter.go` ports against the [`adapter`] boundary types
-//!   [`ClientGoCategory`], [`TraceControlFlags`], and
-//!   [`ClientGoTraceRegistry`], which reproduce exactly the surface TiDB uses.
-//!   The concrete numeric flag values live in client-go and are not observable
-//!   here, so [`TraceControlFlags`] assigns its own bits; only the named flags
-//!   are meaningful.
-//! - **Package `init()`.** Go's init installs the default sink, puts the
-//!   process in `base` mode, and calls `RegisterWithClientGo`. Rust has no
-//!   package initializer: the mode defaults are the initial values of the
-//!   statics below, and [`register_with_client_go`] is called explicitly.
-//! - **`copyFields` / `copyFieldsWithCapacity`** guard Go against a caller
-//!   reusing a `[]zap.Field` buffer. Rust's ownership gives that invariant for
-//!   free, so the events own their `Vec<Field>` directly.
-//! - **`getCategoryName`** is dead code in Go (shadowed by
-//!   `tracing.TraceCategory.String`, which its own test exercises) and is not
-//!   duplicated here; `crate::tracing::TraceCategory::name` is the live
-//!   spelling and covers strictly more categories.
-//! - **`zapcore.NewJSONEncoder`** in `ConvertEventsForRendering` becomes
-//!   [`fields_to_json`], which renders the same field set through `serde_json`.
-//!   Go's production encoder config is used only for this Perfetto rendering
-//!   path and has no test.
-//! - The two Go benchmarks (`BenchmarkTraceEventDisabled`,
-//!   `BenchmarkTraceEventEnabled`) measure Go allocation behavior on the
-//!   disabled/enabled fast paths and are not translated.
-
 mod adapter;
 mod flightrecorder;
 
-pub use adapter::{
-    handle_client_go_is_category_enabled, handle_client_go_trace_event,
-    handle_trace_control_extractor, map_category, register_with_client_go, ClientGoCategory,
-    ClientGoTraceRegistry, IsCategoryEnabledFn, TraceControlExtractorFn, TraceControlFlags,
-    TraceEventFn,
-};
+pub use adapter::register_with_client_go;
+#[cfg(test)]
+use adapter::test_support::handle_trace_control_extractor;
 pub use flightrecorder::{
-    check_flight_recorder_dump_trigger, check_truth_table, get_flight_recorder, parse_categories,
-    start_http_flight_recorder, start_log_flight_recorder, truth_table_for_and, truth_table_for_or,
-    CompiledDumpTriggerConfig, DevDebugConfig, DumpTriggerConfig, FlightRecorderConfig,
+    check_flight_recorder_dump_trigger, get_flight_recorder, start_http_flight_recorder,
+    start_log_flight_recorder, DevDebugConfig, DumpTriggerConfig, FlightRecorderConfig,
     HttpFlightRecorder, SuspiciousEventConfig, Trace, UserCommandConfig,
     DEV_DEBUG_TYPE_EXECUTE_INTERNAL_TRACE_MISSING, DEV_DEBUG_TYPE_SEND_REQUEST_TRACE_ID_MISSING,
+};
+#[cfg(test)]
+use flightrecorder::{
+    check_truth_table, parse_categories, truth_table_for_and, truth_table_for_or,
+    CompiledDumpTriggerConfig,
 };
 
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
@@ -266,14 +224,14 @@ pub fn trace_event(ctx: &TraceContext, category: TraceCategory, name: &str, fiel
 
     // Record to flight recorder if enabled (base or full mode).
     if RECORDER_ENABLED.load(Ordering::SeqCst) {
-        flight_recorder().record(&event);
+        flight_recorder().record(ctx, &event);
         if let Some(sink) = ctx.sink() {
-            sink.record(&event);
+            sink.record(ctx, &event);
         }
     }
 
     // Record to log sink if logging is enabled (full mode).
-    current_sink().record(&event);
+    current_sink().record(ctx, &event);
 }
 
 /// Go `TraceIDFromContext`: the trace identifier carried by the context.
@@ -294,15 +252,17 @@ pub fn context_with_trace_id(ctx: &TraceContext, trace_id: &[u8]) -> TraceContex
 /// `[start_ts (8)][stmt_count (8)][random (4)]` in big-endian order.
 ///
 /// The random suffix distinguishes statement executions, and is taken from the
-/// statement's [`Trace`] when it has one (Go asserts the context sink to
-/// `*Trace`; see the module boundaries). Call once per statement execution,
-/// not per retry.
+/// statement's [`Trace`] when the context sink is one. Call once per statement
+/// execution, not per retry.
 #[must_use]
-pub fn generate_trace_id(trace: Option<&Trace>, start_ts: u64, stmt_count: u64) -> Vec<u8> {
+pub fn generate_trace_id(ctx: &TraceContext, start_ts: u64, stmt_count: u64) -> Vec<u8> {
     let mut trace_id = vec![0_u8; 20];
     trace_id[0..8].copy_from_slice(&start_ts.to_be_bytes());
     trace_id[8..16].copy_from_slice(&stmt_count.to_be_bytes());
-    let mut rand32 = trace.map_or(0, Trace::rand32);
+    let mut rand32 = ctx
+        .sink()
+        .and_then(|sink| sink.as_any().downcast_ref::<Trace>())
+        .map_or(0, Trace::rand32);
     if rand32 == 0 {
         rand32 = crate::fastrand::uint32();
     }
@@ -315,11 +275,15 @@ pub fn generate_trace_id(trace: Option<&Trace>, start_ts: u64, stmt_count: u64) 
 pub struct LogSink;
 
 impl Sink for LogSink {
-    fn record(&self, event: &Event) {
+    fn record(&self, context: &TraceContext, event: &Event) {
         if !LOGGING_ENABLED.load(Ordering::SeqCst) {
             return;
         }
-        log_event(None, event);
+        log_event(Some(context), event);
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -360,10 +324,14 @@ impl MultiSink {
 }
 
 impl Sink for MultiSink {
-    fn record(&self, event: &Event) {
+    fn record(&self, context: &TraceContext, event: &Event) {
         for sink in &self.sinks {
-            sink.record(event);
+            sink.record(context, event);
         }
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -425,7 +393,7 @@ impl RingBufferSink {
 }
 
 impl Sink for RingBufferSink {
-    fn record(&self, event: &Event) {
+    fn record(&self, _context: &TraceContext, event: &Event) {
         let mut state = self
             .state
             .lock()
@@ -440,6 +408,10 @@ impl Sink for RingBufferSink {
         let next = state.next;
         state.buf[next] = event.clone();
         state.next = (next + 1) % self.capacity;
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 

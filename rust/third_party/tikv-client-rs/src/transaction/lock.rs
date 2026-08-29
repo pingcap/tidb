@@ -550,7 +550,7 @@ async fn resolve_locks_with_context_inner(
             crate::trace::TraceField::new("accessibleLocks", accessible_locks),
         ];
         if let Err(error) = &result {
-            fields.push(crate::trace::TraceField::new("error", error.to_string()));
+            fields.push(crate::trace::TraceField::error("error", error.to_string()));
         }
         crate::trace::trace_event(
             &trace_context,

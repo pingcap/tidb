@@ -355,36 +355,141 @@ impl Category {
     }
 }
 
+/// The zap-compatible value carried by a [`TraceField`].
+#[derive(Clone, Debug)]
+pub enum TraceValue {
+    /// A string field.
+    String(String),
+    /// A Boolean field.
+    Bool(bool),
+    /// A signed integer field.
+    I64(i64),
+    /// An unsigned integer field.
+    U64(u64),
+    /// A duration field.
+    Duration(Duration),
+    /// A binary field.
+    Binary(Vec<u8>),
+    /// An array field.
+    Array(Vec<TraceValue>),
+    /// An object field.
+    Object(Vec<TraceField>),
+    /// An error field.
+    Error(String),
+}
+
+/// Values accepted by [`TraceField::new`].
+pub trait IntoTraceValue {
+    /// Convert this value to its trace-field representation.
+    fn into_trace_value(&self) -> TraceValue;
+}
+
+impl IntoTraceValue for String {
+    fn into_trace_value(&self) -> TraceValue {
+        TraceValue::String(self.clone())
+    }
+}
+
+impl IntoTraceValue for &'static str {
+    fn into_trace_value(&self) -> TraceValue {
+        TraceValue::String((*self).to_owned())
+    }
+}
+
+impl IntoTraceValue for bool {
+    fn into_trace_value(&self) -> TraceValue {
+        TraceValue::Bool(*self)
+    }
+}
+
+macro_rules! signed_trace_value {
+    ($($ty:ty),+ $(,)?) => {$(
+        impl IntoTraceValue for $ty {
+            fn into_trace_value(&self) -> TraceValue {
+                TraceValue::I64(*self as i64)
+            }
+        }
+    )+};
+}
+
+macro_rules! unsigned_trace_value {
+    ($($ty:ty),+ $(,)?) => {$(
+        impl IntoTraceValue for $ty {
+            fn into_trace_value(&self) -> TraceValue {
+                TraceValue::U64(*self as u64)
+            }
+        }
+    )+};
+}
+
+signed_trace_value!(i32, i64, isize, usize);
+unsigned_trace_value!(u32, u64);
+
+impl IntoTraceValue for Duration {
+    fn into_trace_value(&self) -> TraceValue {
+        TraceValue::Duration(*self)
+    }
+}
+
 /// Native structured field passed to a trace event handler.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TraceField {
+    /// Field name.
     pub name: String,
     value: Arc<dyn Any + Send + Sync>,
+    encoded: TraceValue,
 }
 
 impl TraceField {
+    /// Construct a scalar trace field.
     pub fn new<V>(name: impl Into<String>, value: V) -> Self
     where
-        V: Any + Send + Sync,
+        V: Any + Send + Sync + IntoTraceValue,
     {
+        let encoded = value.into_trace_value();
         Self {
             name: name.into(),
             value: Arc::new(value),
+            encoded,
         }
     }
 
+    /// Recover the original scalar value when it has type `V`.
     pub fn value<V: Any + Send + Sync>(&self) -> Option<&V> {
         self.value.downcast_ref()
     }
-}
 
-impl std::fmt::Debug for TraceField {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("TraceField")
-            .field("name", &self.name)
-            .field("value_type", &self.value.type_id())
-            .finish()
+    /// Construct a binary trace field.
+    pub fn binary(name: impl Into<String>, value: impl Into<Vec<u8>>) -> Self {
+        Self::encoded(name, TraceValue::Binary(value.into()))
+    }
+
+    /// Construct an array trace field.
+    pub fn array(name: impl Into<String>, value: Vec<TraceValue>) -> Self {
+        Self::encoded(name, TraceValue::Array(value))
+    }
+
+    /// Construct an object trace field.
+    pub fn object(name: impl Into<String>, value: Vec<TraceField>) -> Self {
+        Self::encoded(name, TraceValue::Object(value))
+    }
+
+    /// Construct an error trace field.
+    pub fn error(name: impl Into<String>, value: impl Into<String>) -> Self {
+        Self::encoded(name, TraceValue::Error(value.into()))
+    }
+
+    fn encoded(name: impl Into<String>, encoded: TraceValue) -> Self {
+        Self {
+            name: name.into(),
+            value: Arc::new(()),
+            encoded,
+        }
+    }
+
+    /// Return the structured value consumed by the registered trace handler.
+    pub fn encoded_value(&self) -> &TraceValue {
+        &self.encoded
     }
 }
 

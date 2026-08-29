@@ -205,6 +205,7 @@ pub use wire_status::{
 /// serves the cluster's whole loaded catalog through the wide-SQL session
 /// driver ([`cluster_session_node`]), so it is routed first.
 pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeError> {
+    tidb_util::traceevent::register_with_client_go();
     config.install_process_globals();
     {
         let global_config = tidb_config::config_tree::config::get_global_config();

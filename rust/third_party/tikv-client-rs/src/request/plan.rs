@@ -459,7 +459,7 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
                 crate::trace::TraceField::new("success", result.is_ok()),
             ];
             if let Err(error) = &result {
-                fields.push(crate::trace::TraceField::new("error", error.to_string()));
+                fields.push(crate::trace::TraceField::error("error", error.to_string()));
             }
             if let Ok(response) = &result {
                 if let Some(region_error) = crate::store::region_error_ref(response.as_ref()) {

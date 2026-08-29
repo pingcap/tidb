@@ -292,11 +292,12 @@ fn ring_buffer_snapshot_order() {
         fields: Vec::new(),
     };
 
-    recorder.record(&event("first", 1));
-    recorder.record(&event("second", 2));
+    let context = TraceContext::background();
+    recorder.record(&context, &event("first", 1));
+    recorder.record(&context, &event("second", 2));
     assert_eq!(extract_names(&recorder.snapshot()), ["first", "second"]);
 
-    recorder.record(&event("third", 3));
+    recorder.record(&context, &event("third", 3));
     assert_eq!(extract_names(&recorder.snapshot()), ["second", "third"]);
 }
 
@@ -316,7 +317,7 @@ fn ring_buffer_flush_to() {
             int_field("count", 2),
         ],
     };
-    recorder.record(&event);
+    recorder.record(&TraceContext::background(), &event);
 
     let events = recorder.snapshot();
     assert_eq!(events.len(), 1);
@@ -775,58 +776,61 @@ fn trace_control_extractor() {
 
     // NoSink
     crate::tracing::set_categories(TraceCategory::TIKV_REQUEST);
-    let flags = handle_trace_control_extractor(None);
-    assert!(flags.has(TraceControlFlags::TIKV_CATEGORY_REQUEST));
-    assert!(!flags.has(TraceControlFlags::IMMEDIATE_LOG));
+    let empty_context = tikv_client::trace::TraceContext::new();
+    let flags = handle_trace_control_extractor(&empty_context);
+    assert!(flags.has(tikv_client::trace::TraceControlFlags::TIKV_CATEGORY_REQUEST));
+    assert!(!flags.has(tikv_client::trace::TraceControlFlags::IMMEDIATE_LOG));
 
     // KeepFalse
-    let trace = Trace::new();
+    let trace = Arc::new(Trace::new());
+    let trace_context = empty_context.with_value::<Trace, _>(Arc::clone(&trace));
     crate::tracing::set_categories(TraceCategory::TIKV_REQUEST);
-    let flags = handle_trace_control_extractor(Some(&trace));
+    let flags = handle_trace_control_extractor(&trace_context);
     assert!(
-        !flags.has(TraceControlFlags::IMMEDIATE_LOG),
+        !flags.has(tikv_client::trace::TraceControlFlags::IMMEDIATE_LOG),
         "immediate log should not be set when keep=false"
     );
     assert!(
-        flags.has(TraceControlFlags::TIKV_CATEGORY_REQUEST),
+        flags.has(tikv_client::trace::TraceControlFlags::TIKV_CATEGORY_REQUEST),
         "request category should be set"
     );
 
     // KeepTrue: this sets keep=true.
-    let keeping = Trace::new();
+    let keeping = Arc::new(Trace::new());
     keeping.mark_bits(0);
     assert_eq!(keeping.bits(), fr.truth_table()[0]);
+    let keeping_context = empty_context.with_value::<Trace, _>(Arc::clone(&keeping));
     crate::tracing::set_categories(TraceCategory::TIKV_REQUEST);
-    let flags = handle_trace_control_extractor(Some(&keeping));
+    let flags = handle_trace_control_extractor(&keeping_context);
     assert!(
-        flags.has(TraceControlFlags::IMMEDIATE_LOG),
+        flags.has(tikv_client::trace::TraceControlFlags::IMMEDIATE_LOG),
         "immediate log should be set when keep=true"
     );
     assert!(
-        flags.has(TraceControlFlags::TIKV_CATEGORY_REQUEST),
+        flags.has(tikv_client::trace::TraceControlFlags::TIKV_CATEGORY_REQUEST),
         "request category should be set"
     );
 
     // CategoryTiKVRequest
     crate::tracing::set_categories(TraceCategory::TIKV_REQUEST);
-    let flags = handle_trace_control_extractor(Some(&trace));
-    assert!(flags.has(TraceControlFlags::TIKV_CATEGORY_REQUEST));
-    assert!(!flags.has(TraceControlFlags::TIKV_CATEGORY_WRITE_DETAILS));
-    assert!(!flags.has(TraceControlFlags::TIKV_CATEGORY_READ_DETAILS));
+    let flags = handle_trace_control_extractor(&trace_context);
+    assert!(flags.has(tikv_client::trace::TraceControlFlags::TIKV_CATEGORY_REQUEST));
+    assert!(!flags.has(tikv_client::trace::TraceControlFlags::TIKV_CATEGORY_WRITE_DETAILS));
+    assert!(!flags.has(tikv_client::trace::TraceControlFlags::TIKV_CATEGORY_READ_DETAILS));
 
     // CategoryTiKVWriteDetails
     crate::tracing::set_categories(TraceCategory::TIKV_WRITE_DETAILS);
-    let flags = handle_trace_control_extractor(Some(&trace));
-    assert!(!flags.has(TraceControlFlags::TIKV_CATEGORY_REQUEST));
-    assert!(flags.has(TraceControlFlags::TIKV_CATEGORY_WRITE_DETAILS));
-    assert!(!flags.has(TraceControlFlags::TIKV_CATEGORY_READ_DETAILS));
+    let flags = handle_trace_control_extractor(&trace_context);
+    assert!(!flags.has(tikv_client::trace::TraceControlFlags::TIKV_CATEGORY_REQUEST));
+    assert!(flags.has(tikv_client::trace::TraceControlFlags::TIKV_CATEGORY_WRITE_DETAILS));
+    assert!(!flags.has(tikv_client::trace::TraceControlFlags::TIKV_CATEGORY_READ_DETAILS));
 
     // CategoryTiKVReadDetails
     crate::tracing::set_categories(TraceCategory::TIKV_READ_DETAILS);
-    let flags = handle_trace_control_extractor(Some(&trace));
-    assert!(!flags.has(TraceControlFlags::TIKV_CATEGORY_REQUEST));
-    assert!(!flags.has(TraceControlFlags::TIKV_CATEGORY_WRITE_DETAILS));
-    assert!(flags.has(TraceControlFlags::TIKV_CATEGORY_READ_DETAILS));
+    let flags = handle_trace_control_extractor(&trace_context);
+    assert!(!flags.has(tikv_client::trace::TraceControlFlags::TIKV_CATEGORY_REQUEST));
+    assert!(!flags.has(tikv_client::trace::TraceControlFlags::TIKV_CATEGORY_WRITE_DETAILS));
+    assert!(flags.has(tikv_client::trace::TraceControlFlags::TIKV_CATEGORY_READ_DETAILS));
 
     // MultipleCategoriesAndKeep
     crate::tracing::set_categories(
@@ -834,20 +838,21 @@ fn trace_control_extractor() {
             | TraceCategory::TIKV_WRITE_DETAILS
             | TraceCategory::TIKV_READ_DETAILS,
     );
-    let flags = handle_trace_control_extractor(Some(&keeping));
-    assert!(flags.has(TraceControlFlags::IMMEDIATE_LOG));
-    assert!(flags.has(TraceControlFlags::TIKV_CATEGORY_REQUEST));
-    assert!(flags.has(TraceControlFlags::TIKV_CATEGORY_WRITE_DETAILS));
-    assert!(flags.has(TraceControlFlags::TIKV_CATEGORY_READ_DETAILS));
+    let flags = handle_trace_control_extractor(&keeping_context);
+    assert!(flags.has(tikv_client::trace::TraceControlFlags::IMMEDIATE_LOG));
+    assert!(flags.has(tikv_client::trace::TraceControlFlags::TIKV_CATEGORY_REQUEST));
+    assert!(flags.has(tikv_client::trace::TraceControlFlags::TIKV_CATEGORY_WRITE_DETAILS));
+    assert!(flags.has(tikv_client::trace::TraceControlFlags::TIKV_CATEGORY_READ_DETAILS));
 
     // ConcurrentAccess: 100 extractors racing 10 bit markers.
     crate::tracing::set_categories(TraceCategory::TIKV_REQUEST);
     let shared = Arc::new(Trace::new());
+    let shared_context = empty_context.with_value::<Trace, _>(Arc::clone(&shared));
     std::thread::scope(|scope| {
         for _ in 0..100 {
-            let shared = Arc::clone(&shared);
+            let shared_context = shared_context.clone();
             scope.spawn(move || {
-                let _ = handle_trace_control_extractor(Some(&shared));
+                let _ = handle_trace_control_extractor(&shared_context);
             });
         }
         for _ in 0..10 {
@@ -860,193 +865,38 @@ fn trace_control_extractor() {
     crate::tracing::set_categories(old_categories);
 }
 
-// `Trace::discard_or_flush` keeps a statement whose bits satisfy the compiled
-// trigger and drops one whose bits do not, and resets the trace either way.
+// `register_with_client_go` installs the real client hooks used by requests.
 #[test]
-fn trace_discard_or_flush_keeps_only_triggered_traces() {
+fn register_installs_live_client_hooks() {
     let _guard = lock_global_state();
-    let (sender, receiver) = crossbeam_channel::unbounded();
-    let mut config = FlightRecorderConfig::default();
-    config.initialize();
-    let fr = start_http_flight_recorder(sender, config).unwrap();
+    start_log_flight_recorder(all_categories_config()).unwrap();
+    flight_recorder().discard_or_flush();
+    register_with_client_go();
 
-    let dropped = Trace::new();
-    dropped.record(&Event::new(TXN_LIFECYCLE, "dropped", Phase::Instant, &[]));
-    dropped.discard_or_flush(None);
-    assert!(receiver.try_recv().is_err());
-    assert!(dropped.events().is_empty());
-
-    let kept = Trace::new();
-    kept.record(&Event::new(TXN_LIFECYCLE, "kept", Phase::Instant, &[]));
-    kept.mark_bits(0);
-    kept.discard_or_flush(None);
-    let flushed = receiver.try_recv().unwrap();
-    assert_eq!(extract_names(&flushed), ["kept"]);
-    assert_eq!(kept.bits(), 0);
-
-    fr.close();
-}
-
-// `check_flight_recorder_dump_trigger` marks the bit of a named trigger only
-// when the caller's predicate accepts its configuration.
-#[test]
-fn dump_trigger_marks_named_bits() {
-    let _guard = lock_global_state();
-    let mut config = FlightRecorderConfig::default();
-    config.initialize();
-    start_log_flight_recorder(config).unwrap();
-    let fr = get_flight_recorder().unwrap();
-
-    let trace = Trace::new();
-    check_flight_recorder_dump_trigger(&trace, "dump_trigger.does_not_exist", |_| true);
-    assert_eq!(trace.bits(), 0);
-
-    check_flight_recorder_dump_trigger(&trace, "dump_trigger.sampling", |_| false);
-    assert_eq!(trace.bits(), 0);
-
-    check_flight_recorder_dump_trigger(&trace, "dump_trigger.sampling", |conf| {
-        // The compiled config carries the sampling rate `Initialize` set.
-        conf.is_some_and(|conf| conf.sampling == 1)
-    });
-    assert_eq!(trace.bits(), 1);
-    assert!(fr.should_keep(trace.bits()));
-
-    fr.close();
-}
-
-// `CheckSampling` fires once every `sampling` calls, and `generate_trace_id`
-// lays the identifier out exactly as Go does.
-#[test]
-fn sampling_and_trace_id_layout() {
-    let _guard = lock_global_state();
-    let mut config = FlightRecorderConfig::default();
-    config.initialize();
-    config.dump_trigger.sampling = 3;
-    start_log_flight_recorder(config).unwrap();
-    let fr = get_flight_recorder().unwrap();
-    let conf = DumpTriggerConfig {
-        kind: "sampling".to_owned(),
-        sampling: 3,
-        ..DumpTriggerConfig::default()
-    };
-    assert_eq!(
-        [
-            fr.check_sampling(&conf),
-            fr.check_sampling(&conf),
-            fr.check_sampling(&conf),
-            fr.check_sampling(&conf)
+    assert!(tikv_client::trace::is_category_enabled(
+        tikv_client::trace::Category::KvRequest
+    ));
+    let context = tikv_client::trace::TraceContext::new().with_trace_id([1_u8, 2, 3]);
+    tikv_client::trace::trace_event(
+        &context,
+        tikv_client::trace::Category::KvRequest,
+        "live.client.event",
+        &[
+            tikv_client::trace::TraceField::new("key", "value"),
+            tikv_client::trace::TraceField::object(
+                "route",
+                vec![tikv_client::trace::TraceField::binary("start", [4_u8, 5])],
+            ),
         ],
-        [false, false, true, false]
     );
-    fr.close();
+    let events = flight_recorder().snapshot();
+    assert_eq!(events.last().unwrap().name, "live.client.event");
+    assert_eq!(events.last().unwrap().trace_id, [1, 2, 3]);
+    assert!(matches!(
+        &events.last().unwrap().fields[1].value,
+        Value::Object(fields)
+            if matches!(fields[0].value, Value::Binary(ref value) if value == &[4, 5])
+    ));
 
-    let trace_id = generate_trace_id(None, 0x0102_0304_0506_0708, 9);
-    assert_eq!(trace_id.len(), 20);
-    assert_eq!(&trace_id[0..8], &[1, 2, 3, 4, 5, 6, 7, 8]);
-    assert_eq!(&trace_id[8..16], &[0, 0, 0, 0, 0, 0, 0, 9]);
-    // The random suffix is non-zero, and `extract_rand_from_trace_id` reads it
-    // back the way Go's unsafe pointer cast does.
-    assert_ne!(&trace_id[16..20], &[0, 0, 0, 0]);
-    assert_eq!(
-        extract_rand_from_trace_id(&trace_id),
-        u32::from_ne_bytes([trace_id[16], trace_id[17], trace_id[18], trace_id[19]])
-    );
-    assert_eq!(extract_rand_from_trace_id(&trace_id[..19]), 0);
-}
-
-// The client-go adapter maps every category TiDB knows and falls back to
-// `unknown_client`, tagging the raw value onto the event.
-#[test]
-fn client_go_category_mapping() {
-    assert_eq!(
-        map_category(ClientGoCategory::Txn2Pc),
-        TraceCategory::TXN_2PC
-    );
-    assert_eq!(
-        map_category(ClientGoCategory::TxnLockResolve),
-        TraceCategory::TXN_LOCK_RESOLVE
-    );
-    assert_eq!(
-        map_category(ClientGoCategory::KvRequest),
-        TraceCategory::KV_REQUEST
-    );
-    assert_eq!(
-        map_category(ClientGoCategory::RegionCache),
-        TraceCategory::REGION_CACHE
-    );
-    assert_eq!(
-        map_category(ClientGoCategory::Other(77)),
-        TraceCategory::UNKNOWN_CLIENT
-    );
-}
-
-// `register_with_client_go` installs exactly the three hooks Go installs.
-#[test]
-fn register_installs_all_three_hooks() {
-    #[derive(Default)]
-    struct Registry {
-        installed: Mutex<Vec<&'static str>>,
-    }
-
-    impl ClientGoTraceRegistry for Registry {
-        fn set_trace_event_func(&self, _handler: TraceEventFn) {
-            self.installed.lock().unwrap().push("trace_event");
-        }
-        fn set_is_category_enabled_func(&self, _handler: IsCategoryEnabledFn) {
-            self.installed.lock().unwrap().push("is_category_enabled");
-        }
-        fn set_trace_control_extractor(&self, _handler: TraceControlExtractorFn) {
-            self.installed.lock().unwrap().push("trace_control");
-        }
-    }
-
-    let registry = Registry::default();
-    register_with_client_go(&registry);
-    assert_eq!(
-        *registry.installed.lock().unwrap(),
-        ["trace_event", "is_category_enabled", "trace_control"]
-    );
-}
-
-// `convert_events_for_rendering` produces the Perfetto shape, carrying the
-// phase letter, microsecond timestamp, category name, and field arguments.
-#[test]
-fn events_render_for_perfetto() {
-    let trace_id = generate_trace_id(None, 7, 8);
-    let event = Event {
-        category: STMT_PLAN,
-        name: "optimize".to_owned(),
-        phase: Phase::Begin,
-        timestamp: UNIX_EPOCH + Duration::from_micros(1_234),
-        trace_id: trace_id.clone(),
-        fields: vec![int_field("cost", 5)],
-    };
-    let rendered = convert_events_for_rendering(std::slice::from_ref(&event));
-    assert_eq!(rendered.len(), 1);
-    assert_eq!(rendered[0].name, "optimize");
-    assert_eq!(rendered[0].ts, 1_234);
-    assert_eq!(rendered[0].category, "stmt_plan");
-    assert_eq!(rendered[0].tid, extract_rand_from_trace_id(&trace_id));
-
-    let json = serde_json::to_value(&rendered[0]).unwrap();
-    assert_eq!(json["ph"], "B");
-    assert_eq!(json["args"]["cost"], 5);
-    assert_eq!(json["args"]["trace_id"], hex_encode(&trace_id));
-    // `id` and `pid` follow Go's `omitempty`/always-present tags.
-    assert!(json.get("id").is_none());
-    assert_eq!(json["pid"], 0);
-}
-
-// `MultiSink` fans one event out to each of its sinks.
-#[test]
-fn multi_sink_fans_out() {
-    let first = Arc::new(RingBufferSink::new(4));
-    let second = Arc::new(RingBufferSink::new(4));
-    let multi = MultiSink::new(vec![
-        Arc::clone(&first) as Arc<dyn Sink>,
-        Arc::clone(&second) as Arc<dyn Sink>,
-    ]);
-    multi.record(&Event::new(GENERAL, "fanned", Phase::Instant, &[]));
-    assert_eq!(extract_names(&first.snapshot()), ["fanned"]);
-    assert_eq!(extract_names(&second.snapshot()), ["fanned"]);
+    get_flight_recorder().unwrap().close();
 }
