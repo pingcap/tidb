@@ -525,6 +525,8 @@ impl Session {
             };
             let rows = if table_name.eq_ignore_ascii_case("PROCESSLIST") {
                 self.process_list_table_rows()
+            } else if table_name.eq_ignore_ascii_case("MEMORY_USAGE_OPS_HISTORY") {
+                tidb_util::servermemorylimit::GLOBAL_MEMORY_OPS_HISTORY_MANAGER.get_rows()
             } else if table_name.eq_ignore_ascii_case("DEADLOCKS") {
                 if !self.has_process_privilege() {
                     return Err(DriverError::SpecificAccessDenied("PROCESS".to_owned()));

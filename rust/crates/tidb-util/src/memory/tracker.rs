@@ -13,9 +13,7 @@
 // limitations under the License.
 
 //! Transcreation of Go `pkg/util/memory/tracker.go`'s tracker core. See the
-//! module doc for the in-progress package scope and documented deferrals
-//! (metrics gauges, GC-aware release, the `MemUsageTop1Tracker` global that
-//! belongs to the arbitrator tier).
+//! module doc for the in-progress package scope and documented deferrals.
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -32,6 +30,41 @@ use crate::sqlkiller::{KillSignal, SqlKiller};
 fn lock_unpoison<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
+
+/// Atomic pointer to the session tracker currently consuming the most memory.
+pub struct AtomicTracker {
+    slot: Mutex<Option<Arc<Tracker>>>,
+}
+
+impl AtomicTracker {
+    const fn new() -> Self {
+        Self {
+            slot: Mutex::new(None),
+        }
+    }
+
+    /// Loads the current tracker.
+    pub fn load(&self) -> Option<Arc<Tracker>> {
+        lock_unpoison(&self.slot).clone()
+    }
+
+    /// Atomically replaces `old` with `new` using pointer identity.
+    pub fn compare_and_swap(&self, old: Option<&Arc<Tracker>>, new: Option<Arc<Tracker>>) -> bool {
+        let mut slot = lock_unpoison(&self.slot);
+        let matches = match (&*slot, old) {
+            (Some(current), Some(old)) => Arc::ptr_eq(current, old),
+            (None, None) => true,
+            _ => false,
+        };
+        if matches {
+            *slot = new;
+        }
+        matches
+    }
+}
+
+/// Process-wide top-memory session tracker.
+pub static MEM_USAGE_TOP1_TRACKER: AtomicTracker = AtomicTracker::new();
 
 /// Consumption is buffered until it exceeds this (Go `TrackMemWhenExceeds`,
 /// 100MB).
@@ -648,6 +681,23 @@ impl Tracker {
         }
 
         if bs > 0 {
+            if !super::using_global_mem_arbitration() {
+                if let Some(root) = &session_root {
+                    let mem_usage = root.bytes_consumed();
+                    let min_size = super::SERVER_MEMORY_LIMIT_SESS_MIN_SIZE.load(SeqCst);
+                    if mem_usage >= 0 && mem_usage as u64 >= min_size {
+                        let mut old = MEM_USAGE_TOP1_TRACKER.load();
+                        while old.as_ref().is_none_or(|tracker| tracker.less_than(root)) {
+                            if MEM_USAGE_TOP1_TRACKER
+                                .compare_and_swap(old.as_ref(), Some(Arc::clone(root)))
+                            {
+                                break;
+                            }
+                            old = MEM_USAGE_TOP1_TRACKER.load();
+                        }
+                    }
+                }
+            }
             if let Some(root) = &session_root {
                 if root.kill_signal_transport() == KillSignalTransport::Panic {
                     if let Some(err) = root.killer.handle_signal() {

@@ -47,8 +47,10 @@ pub use pool::{
     ResourcePoolState, DEF_MAX_LIMIT, DEF_MAX_UNUSED_BLOCKS, DEF_POOL_ALLOC_ALIGN_SIZE,
 };
 pub use process::{
-    allocator_live_heap_sample, apply_process_memory_setting, install_process_arbitrator,
-    parse_server_memory_limit, validate_process_memory_setting, ProcessArbitratorRegistration,
+    allocator_live_heap_sample, apply_process_memory_setting, handle_global_mem_arbitrator_runtime,
+    install_process_arbitrator, parse_server_memory_limit, read_mem_stats,
+    using_global_mem_arbitration, validate_process_memory_setting, ProcessArbitratorRegistration,
+    SERVER_MEMORY_LIMIT, SERVER_MEMORY_LIMIT_SESS_MIN_SIZE,
 };
 pub use tracker::{
     bytes_to_string, format_bytes, KillSignalTransport, Tracker, DEF_MEM_QUOTA_QUERY,
@@ -56,7 +58,7 @@ pub use tracker::{
     LABEL_FOR_CHUNK_LIST, LABEL_FOR_CTE_STORAGE, LABEL_FOR_CURSOR_FETCH,
     LABEL_FOR_GLOBAL_ANALYZE_MEMORY, LABEL_FOR_GLOBAL_SIMPLE_LRU_CACHE, LABEL_FOR_GLOBAL_STORAGE,
     LABEL_FOR_MEM_DB, LABEL_FOR_ROW_CONTAINER, LABEL_FOR_SESSION, LABEL_FOR_SQL_TEXT,
-    TRACK_MEM_WHEN_EXCEEDS,
+    MEM_USAGE_TOP1_TRACKER, TRACK_MEM_WHEN_EXCEEDS,
 };
 
 #[cfg(test)]

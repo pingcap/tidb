@@ -392,6 +392,10 @@ impl Session {
     /// session removes the row.
     pub fn attach_process(&mut self, connection_id: u64, guard: process::ProcessGuard) {
         self.connection_id = Some(connection_id);
+        guard.set_trackers(
+            std::sync::Arc::clone(self.session_memory.session_tracker()),
+            std::sync::Arc::clone(self.session_memory.session_disk_tracker()),
+        );
         self.process = Some(guard);
     }
 

@@ -739,6 +739,7 @@ impl GlobalSysvars {
         matches!(
             name,
             tidb_vardef::tidb_vars::TIDB_SERVER_MEMORY_LIMIT
+                | tidb_vardef::tidb_vars::TIDB_SERVER_MEMORY_LIMIT_SESS_MIN_SIZE
                 | tidb_vardef::tidb_vars::TIDB_MEM_ARBITRATOR_MODE
                 | tidb_vardef::tidb_vars::TIDB_MEM_ARBITRATOR_SOFT_LIMIT
         )
@@ -755,6 +756,7 @@ impl GlobalSysvars {
     fn publish_memory_arbitration_settings(&self) {
         for name in [
             tidb_vardef::tidb_vars::TIDB_SERVER_MEMORY_LIMIT,
+            tidb_vardef::tidb_vars::TIDB_SERVER_MEMORY_LIMIT_SESS_MIN_SIZE,
             tidb_vardef::tidb_vars::TIDB_MEM_ARBITRATOR_MODE,
             tidb_vardef::tidb_vars::TIDB_MEM_ARBITRATOR_SOFT_LIMIT,
         ] {

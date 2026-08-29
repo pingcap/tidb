@@ -36,6 +36,10 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use chrono::{DateTime, Utc};
+use tidb_util::memory::Tracker;
+use tidb_util::memoryusagealarm::{ProcessInfo, SessionManager};
+
 /// One live connection's kill mechanism, owned by the server front end.
 ///
 /// Go's `KillWithNormalCloseMsg` splits exactly this way: `KILL QUERY` only
@@ -98,8 +102,12 @@ struct ProcessEntry {
     db: String,
     state: String,
     info: Option<String>,
+    digest: String,
     /// When the current command started, which `Time` counts from.
     since: Instant,
+    started_at: DateTime<Utc>,
+    mem_tracker: Option<Arc<Tracker>>,
+    disk_tracker: Option<Arc<Tracker>>,
     kill: Option<Arc<dyn ProcessKillTarget>>,
 }
 
@@ -147,7 +155,11 @@ impl ProcessRegistry {
                 db,
                 state: String::new(),
                 info: None,
+                digest: String::new(),
                 since: Instant::now(),
+                started_at: Utc::now(),
+                mem_tracker: None,
+                disk_tracker: None,
                 kill,
             },
         );
@@ -162,7 +174,9 @@ impl ProcessRegistry {
     pub fn statement_started(&self, id: u64, sql: &str, state: &str) {
         if let Some(entry) = self.lock().get_mut(&id) {
             entry.info = Some(sql.to_owned());
+            entry.digest = tidb_parser::normalize_digest(sql).1.to_string();
             entry.since = Instant::now();
+            entry.started_at = Utc::now();
             entry.state = state.to_owned();
         }
     }
@@ -173,7 +187,9 @@ impl ProcessRegistry {
     pub fn statement_finished(&self, id: u64, db: &str, state: &str) {
         if let Some(entry) = self.lock().get_mut(&id) {
             entry.info = None;
+            entry.digest.clear();
             entry.since = Instant::now();
+            entry.started_at = Utc::now();
             entry.db = db.to_owned();
             entry.state = state.to_owned();
         }
@@ -229,6 +245,43 @@ impl ProcessRegistry {
         }
         true
     }
+
+    fn set_trackers(&self, id: u64, mem: Arc<Tracker>, disk: Arc<Tracker>) {
+        if let Some(entry) = self.lock().get_mut(&id) {
+            entry.mem_tracker = Some(mem);
+            entry.disk_tracker = Some(disk);
+        }
+    }
+
+    fn process_info(&self, id: u64) -> Option<Arc<ProcessInfo>> {
+        self.lock().get(&id).map(|entry| {
+            Arc::new(ProcessInfo {
+                id,
+                user: entry.user.clone(),
+                host: entry.host.clone(),
+                db: entry.db.clone(),
+                digest: entry.digest.clone(),
+                info: entry.info.clone().unwrap_or_default(),
+                time: entry.started_at,
+                mem_tracker: entry.mem_tracker.as_ref().map(Arc::clone),
+                disk_tracker: entry.disk_tracker.as_ref().map(Arc::clone),
+                ..ProcessInfo::default()
+            })
+        })
+    }
+}
+
+impl SessionManager for ProcessRegistry {
+    fn show_process_list(&self) -> Vec<Arc<ProcessInfo>> {
+        let ids = self.lock().keys().copied().collect::<Vec<_>>();
+        ids.into_iter()
+            .filter_map(|id| self.process_info(id))
+            .collect()
+    }
+
+    fn get_process_info(&self, id: u64) -> Option<Arc<ProcessInfo>> {
+        self.process_info(id)
+    }
 }
 
 /// Removes one connection from the process list when its session is dropped.
@@ -248,6 +301,11 @@ impl ProcessGuard {
     #[must_use]
     pub const fn registry(&self) -> &ProcessRegistry {
         &self.registry
+    }
+
+    /// Installs the session memory and disk trackers exposed by ProcessInfo.
+    pub fn set_trackers(&self, mem: Arc<Tracker>, disk: Arc<Tracker>) {
+        self.registry.set_trackers(self.id, mem, disk);
     }
 }
 

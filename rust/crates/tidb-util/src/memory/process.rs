@@ -1,6 +1,15 @@
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::SeqCst};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
-use super::{parse_soft_limit_text, parse_work_mode_text, MemArbitrator};
+use super::{parse_soft_limit_text, parse_work_mode_text, MemArbitrator, MemStats};
+
+/// Process-wide `tidb_server_memory_limit` value.
+pub static SERVER_MEMORY_LIMIT: AtomicU64 = AtomicU64::new(0);
+
+/// Minimum session memory consumption eligible for server-limit killing.
+pub static SERVER_MEMORY_LIMIT_SESS_MIN_SIZE: AtomicU64 = AtomicU64::new(128 << 20);
+
+static USING_GLOBAL_MEM_ARBITRATION: AtomicBool = AtomicBool::new(false);
 
 static PROCESS_ARBITRATOR: OnceLock<Mutex<Weak<MemArbitrator>>> = OnceLock::new();
 
@@ -18,6 +27,11 @@ pub struct ProcessArbitratorRegistration {
 pub fn install_process_arbitrator(
     arbitrator: &Arc<MemArbitrator>,
 ) -> ProcessArbitratorRegistration {
+    SERVER_MEMORY_LIMIT.store(arbitrator.limit_u64(), SeqCst);
+    USING_GLOBAL_MEM_ARBITRATION.store(
+        arbitrator.work_mode() != super::ArbitratorWorkMode::Disable,
+        SeqCst,
+    );
     let installed = Arc::downgrade(arbitrator);
     *process_arbitrator()
         .lock()
@@ -32,6 +46,7 @@ impl Drop for ProcessArbitratorRegistration {
             .expect("process memory arbitrator lock poisoned");
         if current.ptr_eq(&self.installed) {
             *current = Weak::new();
+            USING_GLOBAL_MEM_ARBITRATION.store(false, SeqCst);
         }
     }
 }
@@ -41,6 +56,20 @@ impl Drop for ProcessArbitratorRegistration {
 /// An absent authority is normal for library-only sessions and is a no-op.
 pub fn apply_process_memory_setting(name: &str, value: &str) -> Result<(), String> {
     validate_process_memory_setting(name, value)?;
+    if name.eq_ignore_ascii_case("tidb_server_memory_limit_sess_min_size") {
+        let value = value
+            .parse::<u64>()
+            .map_err(|_| format!("invalid tidb_server_memory_limit_sess_min_size {value:?}"))?;
+        SERVER_MEMORY_LIMIT_SESS_MIN_SIZE.store(value, SeqCst);
+        return Ok(());
+    }
+    let server_memory_limit = name
+        .eq_ignore_ascii_case("tidb_server_memory_limit")
+        .then(|| parse_server_memory_limit(value))
+        .transpose()?;
+    if let Some(limit) = server_memory_limit {
+        SERVER_MEMORY_LIMIT.store(limit, SeqCst);
+    }
     let arbitrator = process_arbitrator()
         .lock()
         .expect("process memory arbitrator lock poisoned")
@@ -50,14 +79,16 @@ pub fn apply_process_memory_setting(name: &str, value: &str) -> Result<(), Strin
     };
     match name.to_ascii_lowercase().as_str() {
         "tidb_mem_arbitrator_mode" => {
-            arbitrator.set_work_mode(parse_work_mode_text(value));
+            let mode = parse_work_mode_text(value);
+            arbitrator.set_work_mode(mode);
+            USING_GLOBAL_MEM_ARBITRATION.store(mode != super::ArbitratorWorkMode::Disable, SeqCst);
         }
         "tidb_mem_arbitrator_soft_limit" => {
             let (bytes, ratio, mode) = parse_soft_limit_text(value);
             arbitrator.set_soft_limit(bytes, ratio, mode);
         }
         "tidb_server_memory_limit" => {
-            arbitrator.set_limit(parse_server_memory_limit(value)?);
+            arbitrator.set_limit(server_memory_limit.expect("parsed above"));
         }
         _ => return Ok(()),
     }
@@ -71,6 +102,11 @@ pub fn apply_process_memory_setting(name: &str, value: &str) -> Result<(), Strin
 pub fn validate_process_memory_setting(name: &str, value: &str) -> Result<(), String> {
     if name.eq_ignore_ascii_case("tidb_server_memory_limit") {
         parse_server_memory_limit(value)?;
+    }
+    if name.eq_ignore_ascii_case("tidb_server_memory_limit_sess_min_size") {
+        value
+            .parse::<u64>()
+            .map_err(|_| format!("invalid tidb_server_memory_limit_sess_min_size {value:?}"))?;
     }
     Ok(())
 }
@@ -144,6 +180,46 @@ pub fn allocator_live_heap_sample() -> Option<(i64, i64, i64)> {
 #[must_use]
 pub fn allocator_live_heap_sample() -> Option<(i64, i64, i64)> {
     None
+}
+
+/// Returns the process memory counters consumed by TiDB's memory controllers.
+#[must_use]
+pub fn read_mem_stats() -> MemStats {
+    let rss = crate::cgroup::current_process_memory_usage()
+        .ok()
+        .and_then(|value| i64::try_from(value).ok())
+        .unwrap_or(0);
+    if let Some((allocated, active, resident)) = allocator_live_heap_sample() {
+        return MemStats {
+            heap_alloc: allocated,
+            heap_inuse: active,
+            total_free: (resident - active).max(0),
+            mem_off_heap: (rss - resident).max(0),
+            last_gc: 0,
+        };
+    }
+    MemStats {
+        heap_alloc: rss,
+        heap_inuse: rss,
+        ..MemStats::default()
+    }
+}
+
+/// Reports whether the process is using the global memory arbitrator.
+#[must_use]
+pub fn using_global_mem_arbitration() -> bool {
+    USING_GLOBAL_MEM_ARBITRATION.load(SeqCst)
+}
+
+/// Refreshes the installed global arbitrator from current process memory.
+pub fn handle_global_mem_arbitrator_runtime() {
+    let arbitrator = process_arbitrator()
+        .lock()
+        .expect("process memory arbitrator lock poisoned")
+        .upgrade();
+    if let Some(arbitrator) = arbitrator {
+        arbitrator.handle_runtime_stats(read_mem_stats());
+    }
 }
 
 #[cfg(test)]

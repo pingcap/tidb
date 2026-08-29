@@ -650,6 +650,10 @@ impl QuerySessionFactory for ClusterSessionFactory {
             transaction_pin: None,
         })
     }
+
+    fn session_manager(&self) -> Option<Arc<dyn tidb_util::memoryusagealarm::SessionManager>> {
+        Some(Arc::new(self.processes.clone()))
+    }
 }
 
 /// One connection's wide-SQL session over cluster storage.

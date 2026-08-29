@@ -39,6 +39,7 @@ use tidb_planner::{
     configured_join_plan::ConfiguredJoinPlan, configured_order_limit::ConfiguredOrderedJoinPlan,
     prepared_dml::PreparedBindValue,
 };
+use tidb_session::process::{ProcessGuard, ProcessRegistry};
 
 use crate::cluster_privileges::PrivilegeReloader;
 use crate::configured_user_store::ConfiguredUserStore;
@@ -53,9 +54,9 @@ use crate::real_tikv_node::{
 };
 use crate::resultset_source::ResultSetSource;
 use crate::sql_node::{
-    configured_write_error, ActiveQueryCancellation, ConcurrentSqlNode, PreparedPointRead,
-    PreparedWrite, QueryResult, QuerySession, QuerySessionFactory, SessionContext, SqlQueryError,
-    WriteOutcome,
+    configured_write_error, ActiveQueryCancellation, ConcurrentSqlNode, ConnectionKillTarget,
+    PreparedPointRead, PreparedWrite, QueryResult, QuerySession, QuerySessionFactory,
+    SessionContext, SqlQueryError, WriteOutcome,
 };
 use tidb_exec::real_tikv_dml::{
     commit_configured_write, prepare_configured_write, ConfiguredWriteWarning,
@@ -81,6 +82,7 @@ pub struct RealTiKvMultiSessionFactory {
     schema_notifier: Option<Arc<tidb_pd_client::EtcdClient>>,
     spill_storage: Option<Arc<tidb_util::disk::SpillStorage>>,
     mem_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
+    processes: ProcessRegistry,
 }
 
 impl RealTiKvMultiSessionFactory {
@@ -136,6 +138,7 @@ impl RealTiKvMultiSessionFactory {
             schema_notifier,
             spill_storage: None,
             mem_arbitrator: None,
+            processes: ProcessRegistry::default(),
         }
     }
 
@@ -208,6 +211,20 @@ impl QuerySessionFactory for RealTiKvMultiSessionFactory {
             self.spill_storage.as_ref(),
             self.mem_arbitrator.as_ref(),
         );
+        let process = self.processes.register(
+            context.connection_id,
+            context.identity.username().to_owned(),
+            context.peer_addr.to_string(),
+            String::new(),
+            Some(Arc::new(ConnectionKillTarget::new(
+                context.cancellation.clone(),
+                context.close.clone(),
+            ))),
+        );
+        process.set_trackers(
+            Arc::clone(cursor_memory.session_tracker()),
+            Arc::clone(cursor_memory.session_disk_tracker()),
+        );
         Ok(RealTiKvMultiServerSession {
             reader,
             transaction_opener: self.transaction_opener.clone(),
@@ -218,7 +235,12 @@ impl QuerySessionFactory for RealTiKvMultiSessionFactory {
             time_zone: RealTiKvSessionTimeZone::default(),
             cursor_memory,
             statement_warnings: Vec::new(),
+            _process: process,
         })
+    }
+
+    fn session_manager(&self) -> Option<Arc<dyn tidb_util::memoryusagealarm::SessionManager>> {
+        Some(Arc::new(self.processes.clone()))
     }
 }
 
@@ -239,6 +261,7 @@ pub struct RealTiKvMultiServerSession {
     time_zone: RealTiKvSessionTimeZone,
     cursor_memory: tidb_executor::SessionMemory,
     statement_warnings: Vec<ConfiguredWriteWarning>,
+    _process: ProcessGuard,
 }
 
 impl QuerySession for RealTiKvMultiServerSession {

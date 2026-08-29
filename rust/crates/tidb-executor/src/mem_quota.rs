@@ -492,6 +492,18 @@ impl SessionMemory {
     pub fn bytes_consumed(&self) -> i64 {
         self.session.bytes_consumed()
     }
+
+    /// The persistent memory root stored in `sessmgr.ProcessInfo`.
+    #[must_use]
+    pub fn session_tracker(&self) -> &Arc<Tracker> {
+        &self.session
+    }
+
+    /// The persistent disk root stored in `sessmgr.ProcessInfo`.
+    #[must_use]
+    pub fn session_disk_tracker(&self) -> &Arc<Tracker> {
+        &self.disk_session
+    }
 }
 
 /// One statement's memory budget: the session tracker holding

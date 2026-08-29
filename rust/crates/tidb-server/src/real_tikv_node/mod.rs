@@ -72,6 +72,7 @@ use tidb_planner::read_only_scan::{
 };
 use tidb_planner::transaction_control::{classify_transaction_control, TransactionControl};
 use tidb_protocol::ColumnInfo;
+use tidb_session::process::{ProcessGuard, ProcessRegistry};
 use tidb_txnkv::rpc::TonicCoprocessorClient;
 use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
 use tidb_txnkv::PdRegionLoader;
@@ -85,9 +86,9 @@ use crate::resultset_source::ResultSetSource;
 use crate::session_transaction::SessionTransaction;
 use crate::sorting_result_set::SortingResultSetSource;
 use crate::sql_node::{
-    cluster_ddl_error, ActiveQueryCancellation, ConcurrentSqlNode, PreparedPointRead,
-    PreparedWrite, QueryCancellationLease, QueryResult, QuerySession, QuerySessionFactory,
-    SessionContext, SqlNodeError, SqlQueryError, WriteOutcome,
+    cluster_ddl_error, ActiveQueryCancellation, ConcurrentSqlNode, ConnectionKillTarget,
+    PreparedPointRead, PreparedWrite, QueryCancellationLease, QueryResult, QuerySession,
+    QuerySessionFactory, SessionContext, SqlNodeError, SqlQueryError, WriteOutcome,
 };
 use crate::transaction_overlay_result_set::{OverlayHandleSource, TransactionOverlayResultSet};
 use crate::wire_status::WireStatus;
@@ -284,6 +285,7 @@ pub struct RealTiKvSessionFactory<
     /// the production runner installs it before accepting connections.
     spill_storage: Option<Arc<tidb_util::disk::SpillStorage>>,
     mem_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
+    processes: ProcessRegistry,
 }
 
 impl RealTiKvSessionFactory {
@@ -382,6 +384,7 @@ impl RealTiKvSessionFactory {
             stats_reloader,
             spill_storage: None,
             mem_arbitrator: None,
+            processes: ProcessRegistry::default(),
         }
     }
 }
@@ -419,6 +422,7 @@ where
             stats_reloader: None,
             spill_storage: None,
             mem_arbitrator: None,
+            processes: ProcessRegistry::default(),
         }
     }
 
@@ -530,6 +534,20 @@ where
             self.spill_storage.as_ref(),
             self.mem_arbitrator.as_ref(),
         );
+        let process = self.processes.register(
+            context.connection_id,
+            context.identity.username().to_owned(),
+            context.peer_addr.to_string(),
+            String::new(),
+            Some(Arc::new(ConnectionKillTarget::new(
+                context.cancellation.clone(),
+                context.close.clone(),
+            ))),
+        );
+        process.set_trackers(
+            Arc::clone(cursor_memory.session_tracker()),
+            Arc::clone(cursor_memory.session_disk_tracker()),
+        );
         Ok(RealTiKvServerSession {
             inner,
             transaction_opener: self.transaction_opener.clone(),
@@ -540,7 +558,12 @@ where
             time_zone: RealTiKvSessionTimeZone::default(),
             cursor_memory,
             statement_warnings: Vec::new(),
+            _process: process,
         })
+    }
+
+    fn session_manager(&self) -> Option<Arc<dyn tidb_util::memoryusagealarm::SessionManager>> {
+        Some(Arc::new(self.processes.clone()))
     }
 }
 
@@ -580,6 +603,7 @@ pub struct RealTiKvServerSession<
     /// The warning records the most recently completed statement exposes in
     /// its OK packet. Configured DML builds them while resolving `IGNORE`.
     statement_warnings: Vec<ConfiguredWriteWarning>,
+    _process: ProcessGuard,
 }
 
 impl<T, S, C, L, P> RealTiKvServerSession<T, S, C, L, P>

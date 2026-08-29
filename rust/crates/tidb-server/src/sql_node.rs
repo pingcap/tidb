@@ -1142,6 +1142,11 @@ pub trait QuerySessionFactory: Send + Sync + 'static {
 
     /// Opens a session from already-running process authorities.
     fn open_session(&self, context: SessionContext) -> Result<Self::Session, SqlQueryError>;
+
+    /// Returns the server's session manager for process memory control.
+    fn session_manager(&self) -> Option<Arc<dyn tidb_util::memoryusagealarm::SessionManager>> {
+        None
+    }
 }
 
 /// Process-wide connection accounting with exactly-once owned-lease cleanup.
@@ -1496,6 +1501,34 @@ pub struct ConcurrentSqlNode<F: QuerySessionFactory> {
     shutdown: ShutdownHandle,
     shutdown_grace: Duration,
     connection_timeout: Duration,
+    _server_memory_limit: Option<ServerMemoryLimitRunner>,
+}
+
+struct ServerMemoryLimitRunner {
+    exit: mpsc::Sender<()>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl ServerMemoryLimitRunner {
+    fn start(manager: Arc<dyn tidb_util::memoryusagealarm::SessionManager>) -> Self {
+        let (exit, receiver) = mpsc::channel();
+        let mut handle = tidb_util::servermemorylimit::new_server_memory_limit_handle(receiver);
+        handle.set_session_manager(manager);
+        let thread = std::thread::spawn(move || handle.run());
+        Self {
+            exit,
+            thread: Some(thread),
+        }
+    }
+}
+
+impl Drop for ServerMemoryLimitRunner {
+    fn drop(&mut self) {
+        let _ = self.exit.send(());
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
 }
 
 impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
@@ -1520,6 +1553,9 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             tls.is_some(),
             tls.as_ref().map_or("none", MysqlServerTls::origin)
         );
+        let server_memory_limit = factory
+            .session_manager()
+            .map(ServerMemoryLimitRunner::start);
         Ok(Self {
             listener,
             factory,
@@ -1531,6 +1567,7 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             shutdown: ShutdownHandle::default(),
             shutdown_grace: DEFAULT_SHUTDOWN_GRACE,
             connection_timeout: config.connection_timeout,
+            _server_memory_limit: server_memory_limit,
         })
     }
 

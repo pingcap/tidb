@@ -559,6 +559,19 @@ impl SysVarDef {
             }
             return Ok(validated);
         }
+        if self.name == tidb_vardef::tidb_vars::TIDB_SERVER_MEMORY_LIMIT_SESS_MIN_SIZE {
+            let Some((mut bytes, _)) = crate::varsutil::parse_byte_size(&validated.value) else {
+                return Err(ValidationError::WrongType);
+            };
+            let truncated = bytes > 0 && bytes < 128;
+            if truncated {
+                bytes = 128;
+            }
+            return Ok(Validated {
+                value: bytes.to_string(),
+                truncated,
+            });
+        }
         // Go's `max_allowed_packet` validation (`sysvar.go:2193`): the
         // accepted value is truncated DOWN to a multiple of 1024, and the
         // rounding is reported as `ErrTruncatedWrongValue` (1292) -- which is

@@ -1734,6 +1734,106 @@ const PROCESSLIST_COLUMNS: &[InfoColumn] = &[
     },
 ];
 
+/// Go `infoschema.tableMemoryUsageOpsHistoryCols`.
+const MEMORY_USAGE_OPS_HISTORY_COLUMNS: &[InfoColumn] = &[
+    InfoColumn {
+        name: "TIME",
+        tp: FieldTypeCode::Datetime,
+        size: 64,
+        flag: NOT_NULL_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "OPS",
+        tp: FieldTypeCode::Varchar,
+        size: 20,
+        flag: NOT_NULL_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "MEMORY_LIMIT",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: NOT_NULL_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "MEMORY_CURRENT",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: NOT_NULL_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "PROCESSID",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: UNSIGNED_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "MEM",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: UNSIGNED_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "DISK",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: UNSIGNED_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "CLIENT",
+        tp: FieldTypeCode::Varchar,
+        size: 64,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "DB",
+        tp: FieldTypeCode::Varchar,
+        size: 64,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "USER",
+        tp: FieldTypeCode::Varchar,
+        size: 16,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "SQL_DIGEST",
+        tp: FieldTypeCode::Varchar,
+        size: 64,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "SQL_TEXT",
+        tp: FieldTypeCode::Varchar,
+        size: 256,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+];
+
 /// Go `infoschema.tableDeadlocksCols`.
 const DEADLOCKS_COLUMNS: &[InfoColumn] = &[
     InfoColumn {
@@ -2051,6 +2151,7 @@ const SERVED_TABLES: &[(&str, &[InfoColumn])] = &[
     ),
     ("DEADLOCKS", DEADLOCKS_COLUMNS),
     ("KEY_COLUMN_USAGE", KEY_COLUMN_USAGE_COLUMNS),
+    ("MEMORY_USAGE_OPS_HISTORY", MEMORY_USAGE_OPS_HISTORY_COLUMNS),
     ("PROCESSLIST", PROCESSLIST_COLUMNS),
     ("REFERENTIAL_CONSTRAINTS", REFERENTIAL_CONSTRAINTS_COLUMNS),
     ("SCHEMATA", SCHEMATA_COLUMNS),

@@ -155,10 +155,9 @@ pub use node_config::{
 pub use pipeline_session::{
     MaterializedResultSetSource, PipelineServerSession, PipelineSessionFactory,
 };
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::thread::JoinHandle;
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
 use real_tikv_multi_node::{run_bound_multi_node, run_configured_multi_node_with_spill};
 pub use real_tikv_multi_node::{
@@ -369,78 +368,17 @@ fn open_memory_arbitrator(
 pub(crate) struct MemoryArbitratorAuthority {
     arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
     registration: Option<tidb_util::memory::ProcessArbitratorRegistration>,
-    sampler_running: Arc<AtomicBool>,
-    sampler: Option<JoinHandle<()>>,
-}
-
-/// One runtime-stats sample for the arbitrator, in the shape Go's
-/// `memory.ReadMemStats` produces for `HandleRuntimeStats`
-/// (`pkg/util/memory/memory.go`): `heap_alloc` is the LIVE application
-/// allocation -- Go reads `runtime.MemStats.HeapAlloc`, so on the jemalloc
-/// build this is `stats.allocated`, NOT process RSS. `mem_off_heap` carries
-/// what those allocations do not cover (Go derives it from the process
-/// footprint minus its heap), and `total_free` is allocator-held-but-free
-/// memory (Go's `HeapIdle - HeapReleased`).
-///
-/// Feeding raw process RSS as `heap_alloc` made the arbitrator read freed
-/// pages the allocator retains plus non-heap pages as live heap, collapsing
-/// `heapAvailable()` and cancelling statements (`8180`) whose live working
-/// set fit the server limit; `hc_mem_inuse` (= off-heap + in-use) still tracks
-/// the real process footprint either way, which is what the OOM-risk kill
-/// must keep reacting to.
-fn sample_runtime_stats() -> Option<tidb_util::memory::MemStats> {
-    let rss = process_rss_bytes()?;
-    if let Some((allocated, active, resident)) = tidb_util::memory::allocator_live_heap_sample() {
-        return Some(tidb_util::memory::MemStats {
-            heap_alloc: allocated,
-            heap_inuse: active,
-            total_free: (resident - active).max(0),
-            mem_off_heap: (rss - resident).max(0),
-            last_gc: 0,
-        });
-    }
-    // No allocator-statistics seam (non-jemalloc build): process RSS stands
-    // in for both heap gauges because no finer-grained source exists.
-    Some(tidb_util::memory::MemStats {
-        heap_alloc: rss,
-        heap_inuse: rss,
-        ..Default::default()
-    })
-}
-
-fn process_rss_bytes() -> Option<i64> {
-    let bytes = tidb_util::cgroup::current_process_memory_usage().ok()?;
-    Some(i64::try_from(bytes).unwrap_or(i64::MAX))
 }
 
 impl MemoryArbitratorAuthority {
     pub(crate) fn open(config: &NodeConfig) -> Result<Self, RunConfiguredNodeError> {
         let arbitrator = open_memory_arbitrator(config)?;
-        let sampler_running = Arc::new(AtomicBool::new(true));
-        let sampler = arbitrator.as_ref().map(|arbitrator| {
-            let arbitrator = Arc::downgrade(arbitrator);
-            let running = Arc::clone(&sampler_running);
-            std::thread::spawn(move || {
-                while running.load(Ordering::Acquire) {
-                    if let Some(arbitrator) = arbitrator.upgrade() {
-                        if let Some(stats) = sample_runtime_stats() {
-                            arbitrator.handle_runtime_stats(stats);
-                        }
-                    } else {
-                        break;
-                    }
-                    std::thread::sleep(Duration::from_millis(100));
-                }
-            })
-        });
         let registration = arbitrator
             .as_ref()
             .map(tidb_util::memory::install_process_arbitrator);
         Ok(Self {
             arbitrator,
             registration,
-            sampler_running,
-            sampler,
         })
     }
 
@@ -451,10 +389,6 @@ impl MemoryArbitratorAuthority {
 
 impl Drop for MemoryArbitratorAuthority {
     fn drop(&mut self) {
-        self.sampler_running.store(false, Ordering::Release);
-        if let Some(sampler) = self.sampler.take() {
-            let _ = sampler.join();
-        }
         if let Some(arbitrator) = self.arbitrator.as_ref() {
             let _ = arbitrator.stop();
         }

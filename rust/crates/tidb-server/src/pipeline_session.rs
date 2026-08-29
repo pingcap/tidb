@@ -264,6 +264,10 @@ impl QuerySessionFactory for PipelineSessionFactory {
             .map_err(map_error)?;
         Ok(session)
     }
+
+    fn session_manager(&self) -> Option<Arc<dyn tidb_util::memoryusagealarm::SessionManager>> {
+        Some(Arc::new(self.processes.clone()))
+    }
 }
 
 impl QuerySession for PipelineServerSession {
