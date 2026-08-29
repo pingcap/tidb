@@ -48,7 +48,6 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 
 use tidb_planner::fix_control::OptimizerFixControl;
-use tidb_util::versioninfo::VersionInfo;
 
 use crate::sysvar::{
     alias_of, get_sys_var, SysVarDef, ValidationError, SCOPE_GLOBAL, SCOPE_INSTANCE, SCOPE_SESSION,
@@ -787,8 +786,6 @@ pub struct SessionVars {
     /// [`GlobalSysvars`] is cheap (one `Arc` bump), so every session shares
     /// the same underlying map.
     globals: Arc<GlobalSysvars>,
-    /// Immutable server identity captured when this connection opened.
-    version_info: Arc<VersionInfo>,
 }
 
 impl Default for SessionVars {
@@ -804,7 +801,6 @@ impl Default for SessionVars {
             optimizer_fix_control: OptimizerFixControl::default(),
             session_resolved: ResolvedGlobals::default(),
             globals: Arc::default(),
-            version_info: Arc::default(),
         }
     }
 }
@@ -985,12 +981,6 @@ impl SessionVars {
             return Err(VarError::UnknownSystemVariable(name.to_ascii_lowercase()));
         };
         let def = &crate::sysvar::SYS_VARS[index];
-        if def.name == "version_comment" {
-            return Ok(Cow::Owned(self.version_info.version_comment()));
-        }
-        if def.name == "version" {
-            return Ok(Cow::Borrowed(&self.version_info.server_version));
-        }
         // An INSTANCE-scoped variable has no session copy either, and its
         // node-wide value is the only one there is: without this arm a
         // `SET GLOBAL tidb_general_log = 1` would store a value that
@@ -1019,17 +1009,6 @@ impl SessionVars {
 
     pub fn get_system(&self, name: &str) -> Result<String, VarError> {
         self.system_value(name).map(Cow::into_owned)
-    }
-
-    /// Installs the immutable build identity supplied by the server startup.
-    pub fn set_version_info(&mut self, version_info: VersionInfo) {
-        self.version_info = Arc::new(version_info);
-    }
-
-    /// The immutable build/config identity read by `TIDB_VERSION()`.
-    #[must_use]
-    pub(crate) fn version_info(&self) -> Arc<VersionInfo> {
-        Arc::clone(&self.version_info)
     }
 
     /// A snapshot of the session overrides `name` (and its alias) currently
@@ -1487,22 +1466,6 @@ mod tests {
         let mut inherited = SessionVars::new();
         inherited.seed_from_globals(globals).unwrap();
         assert!(!inherited.prepared_plan_cache_enabled());
-    }
-
-    #[test]
-    fn version_identity_is_shared_until_it_changes() {
-        let mut vars = SessionVars::new();
-        let first = vars.version_info();
-        let second = vars.version_info();
-        assert!(Arc::ptr_eq(&first, &second));
-
-        let info = VersionInfo::build_default().with_configured_edition("Starter");
-        let expected = info.clone();
-        vars.set_version_info(info);
-        let changed = vars.version_info();
-
-        assert!(!Arc::ptr_eq(&first, &changed));
-        assert_eq!(*changed, expected);
     }
 
     #[test]

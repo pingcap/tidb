@@ -105,54 +105,6 @@ fn session_variables() {
     assert_eq!(session.apply_set("SELECT 1").unwrap(), None);
 }
 
-#[test]
-fn version_comment_uses_the_server_identity_snapshot() {
-    let mut session = Session::new();
-    let info = tidb_util::versioninfo::VersionInfo::build_default()
-        .with_configured_edition("Starter")
-        .with_configured_versions("v9.0.0", "8.0.11-TiDB-v9.0.0")
-        .with_runtime_environment(true, "tikv", "Classic", None);
-    let expected_tidb_info = tidb_util::printer::get_tidb_info(&info);
-    let expected_server_version = info.server_version.clone();
-    session.set_version_info(info);
-
-    assert_eq!(
-        scalar_text(&mut session, "SELECT @@version_comment"),
-        Some("TiDB Server (Apache License 2.0) Starter Edition, MySQL 8.0 compatible".to_owned())
-    );
-    assert_eq!(
-        scalar_text(&mut session, "SELECT TIDB_VERSION()"),
-        Some(expected_tidb_info)
-    );
-    assert_eq!(
-        scalar_text(&mut session, "SELECT VERSION()"),
-        Some(expected_server_version)
-    );
-    assert!(matches!(
-        session.apply_set("SET version_comment = 'changed'"),
-        Err(DriverError::Var(
-            tidb_executor::VarErrorKind::ReadOnlyVariable(_)
-        ))
-    ));
-}
-
-#[test]
-fn tidb_version_metadata_uses_the_server_identity_snapshot() {
-    let mut session = Session::new();
-    let info = tidb_util::versioninfo::VersionInfo::build_default()
-        .with_configured_edition("An Edition Whose Name Changes The Result Width");
-    let expected_flen = tidb_util::printer::get_tidb_info(&info).len() as i64;
-    session.set_version_info(info);
-
-    let StmtOutput::Rows { columns, .. } = session
-        .run_with_columns("SELECT TIDB_VERSION()")
-        .expect("TIDB_VERSION query")
-    else {
-        panic!("TIDB_VERSION must return rows");
-    };
-    assert_eq!(columns[0].1.flen(), expected_flen);
-}
-
 /// Hash-join versions are source string variables with a closed value domain:
 /// casing is accepted and retained, while every other spelling is refused by
 /// the variable-specific validation closure.

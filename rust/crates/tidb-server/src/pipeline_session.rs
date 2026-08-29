@@ -203,9 +203,6 @@ impl QuerySessionFactory for PipelineSessionFactory {
             .set_advisory_lock_service(Arc::clone(&self.advisory_locks));
         session
             .session
-            .set_version_info(context.version_info.clone());
-        session
-            .session
             .set_server_start_timestamp(crate::real_tikv_node::server_start_unix_timestamp());
         // Go sets `SessionVars.User` from the identity the handshake matched:
         // `CURRENT_USER()` reports that matched grant identity and `USER()`
@@ -698,26 +695,7 @@ mod tests {
             tls_status: None,
             cancellation: ConnectionCancellation::default(),
             close: crate::sql_node::ConnectionClose::default(),
-            version_info: tidb_util::versioninfo::VersionInfo::build_default(),
         }
-    }
-
-    #[test]
-    fn factory_installs_the_listener_version_identity() {
-        let factory = PipelineSessionFactory::default();
-        let mut context = session_context(7);
-        context.version_info =
-            tidb_util::versioninfo::VersionInfo::build_default().with_configured_edition("Starter");
-        let session = factory.open_session(context).expect("session opens");
-
-        assert_eq!(
-            session
-                .session
-                .vars()
-                .get_system("version_comment")
-                .unwrap(),
-            "TiDB Server (Apache License 2.0) Starter Edition, MySQL 8.0 compatible"
-        );
     }
 
     #[test]

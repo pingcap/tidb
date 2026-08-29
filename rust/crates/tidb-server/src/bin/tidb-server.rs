@@ -46,9 +46,9 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
     if arguments.iter().skip(1).any(|argument| argument == "-V") {
-        return match NodeConfig::version_info_for_display(arguments) {
-            Ok(info) => {
-                println!("{}", tidb_util::printer::get_tidb_info(&info));
+        return match NodeConfig::initialize_versions_for_display(arguments) {
+            Ok(()) => {
+                println!("{}", tidb_util::printer::get_tidb_info());
                 ExitCode::SUCCESS
             }
             Err(error) => {

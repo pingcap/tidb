@@ -1108,15 +1108,10 @@ impl Session {
         &self.vars
     }
 
-    /// Installs the immutable build identity captured by the SQL server.
     /// Installs the hosting server's start timestamp (Go
     /// `ServerInfo.StartTimestamp`), the `Uptime` provider's input.
     pub fn set_server_start_timestamp(&mut self, unix_seconds: i64) {
         self.server_start_timestamp = Some(unix_seconds);
-    }
-
-    pub fn set_version_info(&mut self, version_info: tidb_util::versioninfo::VersionInfo) {
-        self.vars.set_version_info(version_info);
     }
 
     /// The live `@@wait_timeout` used by the MySQL connection before reading

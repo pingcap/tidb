@@ -206,7 +206,8 @@ pub use wire_status::{
 /// serves the cluster's whole loaded catalog through the wide-SQL session
 /// driver ([`cluster_session_node`]), so it is routed first.
 pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeError> {
-    tidb_util::printer::print_tidb_info(&config.version_info, &config.startup_config_json());
+    config.install_process_globals();
+    tidb_util::printer::print_tidb_info();
     if config.store_kind == node_config::StoreKind::Unistore {
         // Go: `session.RegisterStore("unistore", mockstore.EmbedUnistoreDriver{})`
         // -- the same node code over the embedded store, no PD dialed.

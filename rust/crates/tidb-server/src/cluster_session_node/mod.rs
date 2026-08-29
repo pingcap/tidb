@@ -570,7 +570,6 @@ impl QuerySessionFactory for ClusterSessionFactory {
         session.set_advisory_lock_service(Arc::new(transactions::ClusterAdvisoryLockService::new(
             Arc::clone(&self.transactions),
         )));
-        session.set_version_info(context.version_info.clone());
         if let Some(syncer) = self.server_info.as_ref() {
             session.set_server_info_syncer(Arc::clone(syncer));
         }

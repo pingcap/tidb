@@ -118,8 +118,8 @@ pub(crate) fn node_server_info(
         .map(|since| since.as_secs() as i64)
         .unwrap_or_default();
     info.static_info.version_info = tidb_domain::serverinfo::VersionInfo {
-        version: config.version_info.server_version.clone(),
-        git_hash: config.version_info.git_hash.clone(),
+        version: tidb_mysql::runtime_versions().server_version,
+        git_hash: tidb_util::versioninfo::TIDB_GIT_HASH.to_owned(),
     };
     info
 }

@@ -175,7 +175,6 @@ fn open_session_as(node: &MockNode, user: &str) -> ClusterServerSession {
             tls_status: None,
             cancellation: ConnectionCancellation::default(),
             close: ConnectionClose::default(),
-            version_info: tidb_util::versioninfo::VersionInfo::build_default(),
         })
         .expect("the cluster session opens");
     session.execute_write("USE app").expect("USE app");

@@ -573,11 +573,10 @@ pub trait Columns {
 
     /// The process identity returned by `TIDB_VERSION()`.
     ///
-    /// Unlike ordinary information builtins, Go reads this from immutable
-    /// build/config state and does not require a session. A real statement
-    /// overrides this default with the identity captured by its server.
+    /// Unlike ordinary information builtins, Go reads this from process-wide
+    /// package and configuration state and does not require a session.
     fn tidb_info(&self) -> String {
-        tidb_util::printer::get_tidb_info(&tidb_util::versioninfo::VersionInfo::build_default())
+        tidb_util::printer::get_tidb_info()
     }
 
     /// The statement snapshot of `@@block_encryption_mode`.

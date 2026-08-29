@@ -34,7 +34,6 @@ use tidb_datatype::{
 };
 use tidb_mysql::runtime_versions;
 use tidb_util::printer::get_tidb_info;
-use tidb_util::versioninfo::VersionInfo;
 
 fn parse_expr(sql_expr: &str) -> tidb_ast::Expr {
     let statement = tidb_parser::parse(&format!("SELECT {sql_expr}")).expect("parses");
@@ -177,9 +176,7 @@ impl Columns for InfoColumns {
     }
 
     fn tidb_info(&self) -> String {
-        self.tidb_info
-            .clone()
-            .unwrap_or_else(|| get_tidb_info(&VersionInfo::build_default()))
+        self.tidb_info.clone().unwrap_or_else(get_tidb_info)
     }
 
     fn last_insert_id(&self) -> Option<u64> {
@@ -320,7 +317,7 @@ fn row_count() {
 /// Go `pkg/expression/builtin_info_test.go:249 TestTiDBVersion`.
 #[test]
 fn tidb_version() {
-    let expected = get_tidb_info(&VersionInfo::build_default());
+    let expected = get_tidb_info();
     let ctx = InfoColumns {
         tidb_info: Some(expected.clone()),
         ..InfoColumns::default()
@@ -457,7 +454,7 @@ fn vectorized_builtin_info_func() {
         current_role: Some("NONE".to_owned()),
         connection_id: Some(1),
         version: Some(runtime_versions().server_version),
-        tidb_info: Some(get_tidb_info(&VersionInfo::build_default())),
+        tidb_info: Some(get_tidb_info()),
         last_insert_id: Some(7),
         row_count: Some(10),
         ..InfoColumns::default()
@@ -468,7 +465,7 @@ fn vectorized_builtin_info_func() {
     );
     assert_eq!(
         eval_rewritten("tidb_version()", &ctx).sql_string().unwrap(),
-        get_tidb_info(&VersionInfo::build_default())
+        get_tidb_info()
     );
     assert_eq!(eval_rewritten("row_count()", &ctx), Datum::Int(10));
     assert_eq!(eval_rewritten("connection_id()", &ctx), Datum::UInt(1));

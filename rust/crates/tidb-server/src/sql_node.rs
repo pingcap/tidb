@@ -32,11 +32,10 @@ use tidb_planner::read_only_scan::ConfiguredPreparedPointReadTemplate;
 use tidb_protocol::ColumnInfo;
 use tidb_txnkv::transaction::OptimisticCommitOutcome;
 use tidb_util::globalconn::{Allocator, GlobalAllocator};
-use tidb_util::versioninfo::VersionInfo;
 
 use crate::configured_user_store::{AuthenticatedIdentity, ConfiguredUserStore};
 use crate::mysql_connection::{
-    serve_mysql_connection_with_tls_and_version_info, MysqlConnectionError, MysqlConnectionRuntime,
+    serve_mysql_connection_with_runtime, MysqlConnectionError, MysqlConnectionRuntime,
 };
 use crate::mysql_tls::{resolve_server_tls, MysqlServerTls};
 use crate::node_config::{NodeConfig, MAX_CONNECTION_WORKERS};
@@ -902,8 +901,6 @@ pub struct SessionContext {
     pub cancellation: ConnectionCancellation,
     /// Handle a `KILL` uses to end this connection.
     pub close: ConnectionClose,
-    /// Coherent build identity captured when the SQL listener started.
-    pub version_info: VersionInfo,
 }
 
 /// Query capability retained entirely inside one fixed worker thread.
@@ -1276,7 +1273,6 @@ struct WorkerPool {
 #[derive(Clone)]
 struct WorkerConnectionConfig {
     max_allowed_packet: usize,
-    version_info: VersionInfo,
     tls: Option<MysqlServerTls>,
 }
 
@@ -1489,7 +1485,6 @@ pub struct ConcurrentSqlNode<F: QuerySessionFactory> {
     users: Arc<ConfiguredUserStore>,
     tracker: Arc<ConnectionTracker>,
     max_allowed_packet: usize,
-    version_info: VersionInfo,
     /// Server TLS material, or `None` for a plaintext-only MySQL port. This is
     /// the only thing that lets a connection advertise `CLIENT_SSL`.
     tls: Option<MysqlServerTls>,
@@ -1531,7 +1526,6 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             users,
             tracker: Arc::new(ConnectionTracker::default()),
             max_allowed_packet: config.max_allowed_packet,
-            version_info: config.version_info.clone(),
             tls,
             worker_count: config.max_connections,
             shutdown: ShutdownHandle::default(),
@@ -1616,7 +1610,6 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             &self.tracker,
             WorkerConnectionConfig {
                 max_allowed_packet: self.max_allowed_packet,
-                version_info: self.version_info.clone(),
                 tls: self.tls.clone(),
             },
         )?;
@@ -1626,7 +1619,6 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
         let mut next_worker_index = warm_workers;
         let connection_config = WorkerConnectionConfig {
             max_allowed_packet: self.max_allowed_packet,
-            version_info: self.version_info.clone(),
             tls: self.tls.clone(),
         };
         let accept_result = (|| loop {
@@ -1817,7 +1809,7 @@ fn serve_connection_work<F: QuerySessionFactory>(
         cancellation,
         registration: _registration,
     } = work;
-    if let Err(error) = serve_mysql_connection_with_tls_and_version_info(
+    if let Err(error) = serve_mysql_connection_with_runtime(
         stream,
         peer_addr,
         cancellation,
@@ -1827,7 +1819,6 @@ fn serve_connection_work<F: QuerySessionFactory>(
         MysqlConnectionRuntime {
             max_allowed_packet: connection.max_allowed_packet,
             tls: connection.tls.as_ref(),
-            version_info: &connection.version_info,
         },
     ) {
         let message = error.to_string();
@@ -2234,7 +2225,7 @@ mod tests {
                 mode: "disable".to_owned(),
                 soft_limit: "0".to_owned(),
             },
-            version_info: VersionInfo::build_default(),
+            global_config: tidb_config::config_tree::Config::default(),
         }
     }
 
@@ -2313,7 +2304,6 @@ mod tests {
             &tracker,
             WorkerConnectionConfig {
                 max_allowed_packet: tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET,
-                version_info: VersionInfo::build_default(),
                 tls: None,
             },
             move |index, job: WorkerJob| {

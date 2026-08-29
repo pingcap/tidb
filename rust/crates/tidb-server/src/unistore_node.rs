@@ -259,8 +259,8 @@ pub(crate) fn run_unistore_node(
             &config.status_host,
             config.status_port,
             node.tracker(),
-            config.version_info.server_version.clone(),
-            config.version_info.git_hash.clone(),
+            tidb_mysql::runtime_versions().server_version,
+            tidb_util::versioninfo::TIDB_GIT_HASH.to_owned(),
         ) {
             Ok(server) => {
                 eprintln!(
@@ -345,8 +345,8 @@ pub(crate) fn run_unistore_cluster_session(
             &config.status_host,
             config.status_port,
             node.tracker(),
-            config.version_info.server_version.clone(),
-            config.version_info.git_hash.clone(),
+            tidb_mysql::runtime_versions().server_version,
+            tidb_util::versioninfo::TIDB_GIT_HASH.to_owned(),
             crate::http_status::StatusRoutes {
                 schema: Some(Arc::new(move || schema_factory.catalog_snapshot())),
                 // The SAME bytes the startup log prints, so the log and the

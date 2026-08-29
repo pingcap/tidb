@@ -243,10 +243,7 @@ impl ColumnResolver for ScopeResolver<'_> {
     fn tidb_info_len(&self) -> usize {
         match &self.scope.constant_context {
             Some(ctx) => ctx.tidb_info_len(),
-            None => tidb_util::printer::get_tidb_info(
-                &tidb_util::versioninfo::VersionInfo::build_default(),
-            )
-            .len(),
+            None => tidb_util::printer::get_tidb_info().len(),
         }
     }
 

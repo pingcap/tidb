@@ -138,12 +138,11 @@ pub trait ColumnResolver {
         crate::collation_derive::connection_charset_info()
     }
 
-    /// Length of the immutable server identity returned by `TIDB_VERSION()`.
+    /// Length of the process identity returned by `TIDB_VERSION()`.
     /// Go reads the process globals while building this function and uses the
     /// same rendered value to set its result width.
     fn tidb_info_len(&self) -> usize {
-        tidb_util::printer::get_tidb_info(&tidb_util::versioninfo::VersionInfo::build_default())
-            .len()
+        tidb_util::printer::get_tidb_info().len()
     }
 
     /// The third argument Go supplies to `like()` when SQL omitted `ESCAPE`.

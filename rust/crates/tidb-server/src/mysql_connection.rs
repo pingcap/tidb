@@ -28,7 +28,6 @@ use tidb_protocol::{
     PacketIoWriter, PacketReader, PreparedParameterType, PreparedParameterTypes, PreparedValue,
     DEFAULT_MAX_ALLOWED_PACKET,
 };
-use tidb_util::versioninfo::VersionInfo;
 
 use crate::auth_exchange::AuthSwitchRequest;
 use crate::configured_user_store::{AuthenticationFailure, ConfiguredUserStore};
@@ -604,8 +603,7 @@ pub fn serve_mysql_connection_with_tls<F: QuerySessionFactory>(
     max_allowed_packet: usize,
     tls: Option<&MysqlServerTls>,
 ) -> Result<ConnectionReport, MysqlConnectionError> {
-    let version_info = VersionInfo::build_default();
-    serve_mysql_connection_with_tls_and_version_info(
+    serve_mysql_connection_with_runtime(
         stream,
         peer_addr,
         cancellation,
@@ -615,7 +613,6 @@ pub fn serve_mysql_connection_with_tls<F: QuerySessionFactory>(
         MysqlConnectionRuntime {
             max_allowed_packet,
             tls,
-            version_info: &version_info,
         },
     )
 }
@@ -623,10 +620,9 @@ pub fn serve_mysql_connection_with_tls<F: QuerySessionFactory>(
 pub(crate) struct MysqlConnectionRuntime<'a> {
     pub(crate) max_allowed_packet: usize,
     pub(crate) tls: Option<&'a MysqlServerTls>,
-    pub(crate) version_info: &'a VersionInfo,
 }
 
-pub(crate) fn serve_mysql_connection_with_tls_and_version_info<F: QuerySessionFactory>(
+pub(crate) fn serve_mysql_connection_with_runtime<F: QuerySessionFactory>(
     stream: TcpStream,
     peer_addr: SocketAddr,
     cancellation: ConnectionCancellation,
@@ -734,7 +730,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         // Go `writeInitialHandshake` (`pkg/server/conn.go:496`) hardcodes this
         // one word, and only this one: the handshake precedes any session.
         status_flags: WireStatus::AUTOCOMMIT.bits(),
-        server_version: runtime.version_info.server_version.clone(),
+        server_version: tidb_mysql::runtime_versions().server_version,
         auth_plugin: AUTH_NATIVE_PASSWORD.to_owned(),
     };
     output
@@ -1058,7 +1054,6 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         }),
         cancellation: cancellation.clone(),
         close: close.clone(),
-        version_info: runtime.version_info.clone(),
     }) {
         Ok(session) => session,
         Err(error) => {

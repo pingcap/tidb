@@ -1347,7 +1347,7 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         // Go sizes this VarString from `printer.GetTiDBInfo()`.
         "tidb_version" if args.is_empty() => ft_with_flen(
             text(),
-            i64::try_from(tidb_util::printer::get_tidb_info(&Default::default()).len())
+            i64::try_from(tidb_util::printer::get_tidb_info().len())
                 .unwrap_or(i64::MAX),
         ),
         // Go `connectionIDFunctionClass` fixes an unsigned `LongLong`.

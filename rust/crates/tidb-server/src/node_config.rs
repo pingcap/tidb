@@ -30,11 +30,10 @@ use std::time::Duration;
 use base64::engine::general_purpose::URL_SAFE;
 use base64::Engine;
 use tidb_config::config_tree::Config as SourceConfig;
-use tidb_config::{deploymode, kerneltype};
+use tidb_config::kerneltype;
 use tidb_pd_client::ClusterSecurity;
 use tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET;
 use tidb_util::disk::{SpillEncryptionMethod, SpillStorageSpec};
-use tidb_util::versioninfo::VersionInfo;
 
 /// Go's `config.Instance.MaxConnections` default is 0, and
 /// `server.go`'s `checkConnectionCount` reads 0 as *unlimited*:
@@ -153,7 +152,7 @@ pub enum StoreKind {
 }
 
 /// Complete startup input consumed by the concurrent SQL node.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct NodeConfig {
     /// Go `cfg.Status.ReportStatus` (default true): whether the status
     /// HTTP listener starts.
@@ -280,8 +279,8 @@ pub struct NodeConfig {
     pub spill_storage: SpillStorageSpec,
     /// Process-wide global-memory controller policy.
     pub memory_arbitrator: MemoryArbitratorConfig,
-    /// Coherent build identity plus the optional startup edition override.
-    pub version_info: VersionInfo,
+    /// Effective Go process configuration installed before startup proceeds.
+    pub(crate) global_config: SourceConfig,
 }
 
 /// Startup configuration failure.
@@ -939,14 +938,6 @@ impl NodeConfig {
             host,
             port,
         );
-        let deploy_mode = if kerneltype::is_next_gen() {
-            Some(source.as_ref().map_or_else(
-                || deploymode::get().to_string(),
-                |loaded| loaded.config.deploy_mode.to_string(),
-            ))
-        } else {
-            None
-        };
         // Go `overrideConfig`: the flag wins; otherwise the bind host
         // stands in unless it is the wildcard, in which case Go defers to
         // a local-IP lookup the node performs later. The wildcard arm is
@@ -963,13 +954,18 @@ impl NodeConfig {
             None if host.to_string() != "0.0.0.0" => host.to_string(),
             None => String::new(),
         };
-        let version_info = configured_version_info(
-            tidb_edition.as_deref().unwrap_or_default(),
-            tidb_release_version.as_deref().unwrap_or_default(),
-            server_version.as_deref().unwrap_or_default(),
-            store,
-            deploy_mode,
-        )?;
+        let mut global_config = source.map_or_else(SourceConfig::default, |loaded| loaded.config);
+        global_config.host = host.to_string();
+        global_config.port = usize::from(port);
+        global_config.store = tidb_config::store::StoreType(store.to_owned());
+        global_config.path = pd_endpoints.join(",");
+        global_config.max_allowed_packet = u64::try_from(max_allowed_packet).unwrap_or(u64::MAX);
+        global_config.instance.max_connections =
+            u32::try_from(max_connections).expect("connection limit fits u32");
+        global_config.tidb_edition = tidb_edition.unwrap_or_default();
+        global_config.tidb_release_version = tidb_release_version.unwrap_or_default();
+        global_config.server_version = server_version.unwrap_or_default();
+        validate_version_config(&global_config)?;
 
         Ok(Self {
             report_status: main_flags.report_status.unwrap_or(true),
@@ -1024,12 +1020,12 @@ impl NodeConfig {
             cluster_security,
             spill_storage,
             memory_arbitrator,
-            version_info,
+            global_config,
         })
     }
 
-    /// Builds the identity printed by `-V` without requiring a runnable node topology.
-    pub fn version_info_for_display<I, S>(arguments: I) -> Result<VersionInfo, NodeConfigError>
+    /// Initializes the same process globals Go reads when printing `-V`.
+    pub fn initialize_versions_for_display<I, S>(arguments: I) -> Result<(), NodeConfigError>
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
@@ -1039,8 +1035,9 @@ impl NodeConfig {
         // main.go's own flag surface is consumed FIRST, so every Go spelling
         // is accepted exactly as initFlagSet accepts it; the node's options
         // remain for the loop below, untouched and in order.
-        let (main_flags, remaining) = crate::main_flags::extract_main_go_flags(arguments.collect())
-            .map_err(|error| invalid("main.go flags", &error.to_string()))?;
+        let (_main_flags, remaining) =
+            crate::main_flags::extract_main_go_flags(arguments.collect())
+                .map_err(|error| invalid("main.go flags", &error.to_string()))?;
         let mut pending = remaining.into_iter().peekable();
         let mut config_path = None;
         let mut store = None;
@@ -1070,44 +1067,21 @@ impl NodeConfig {
         let source = config_path.as_deref().map(load_source_config).transpose()?;
         let defaults = SourceConfig::default();
         let config = source.as_ref().map_or(&defaults, |loaded| &loaded.config);
-        let deploy_mode = kerneltype::is_next_gen().then(|| config.deploy_mode.to_string());
-        configured_version_info(
-            &config.tidb_edition,
-            &config.tidb_release_version,
-            &config.server_version,
-            store.as_deref().unwrap_or(&config.store.0),
-            deploy_mode,
-        )
+        let mut config = config.clone();
+        if let Some(store) = store {
+            config.store = tidb_config::store::StoreType(store);
+        }
+        validate_version_config(&config)?;
+        install_process_globals(config);
+        Ok(())
     }
 
-    /// JSON projection of every startup value this bounded node owns.
+    pub(crate) fn install_process_globals(&self) {
+        install_process_globals(self.global_config.clone());
+    }
+
     pub(crate) fn startup_config_json(&self) -> Vec<u8> {
-        serde_json::to_vec(&serde_json::json!({
-            "host": self.host.to_string(),
-            "port": self.port,
-            "path": self.pd_endpoints.join(","),
-            "store": &self.version_info.store,
-            "max-allowed-packet": self.max_allowed_packet,
-            "instance": {
-                "max_connections": self.max_connections,
-                "tidb_server_memory_limit": self.memory_arbitrator.server_memory_limit,
-                "tidb_mem_arbitrator_mode": self.memory_arbitrator.mode,
-                "tidb_mem_arbitrator_soft_limit": self.memory_arbitrator.soft_limit,
-            },
-            "lease-ms": u64::try_from(self.schema_lease.as_millis()).unwrap_or(u64::MAX),
-            "cluster-session": self.cluster_session,
-            "load-privileges": self.load_privileges,
-            "security": {
-                "auto-tls": self.auto_tls,
-                "disconnect-on-expired-password": self.disconnect_on_expired_password,
-                "enable-sem": self.sem_enabled,
-                "sem-config": self.sem_config,
-                "skip-grant-table": self.skip_grant_table,
-                "ssl-cert": self.ssl_cert.as_ref().map(|path| path.to_string_lossy().into_owned()),
-                "ssl-key": self.ssl_key.as_ref().map(|path| path.to_string_lossy().into_owned()),
-            },
-        }))
-        .expect("owned startup config projection is serializable")
+        serde_json::to_vec(&self.global_config).expect("effective global config is serializable")
     }
 
     /// Stable usage text printed by the executable for `--help`.
@@ -1131,39 +1105,62 @@ impl NodeConfig {
     }
 }
 
-fn configured_version_info(
-    edition: &str,
-    release_version: &str,
-    server_version: &str,
-    store: &str,
-    deploy_mode: Option<String>,
-) -> Result<VersionInfo, NodeConfigError> {
-    let mut info = VersionInfo::build_default();
+fn validate_version_config(config: &SourceConfig) -> Result<(), NodeConfigError> {
     if kerneltype::is_next_gen() {
-        if !edition.is_empty() || !release_version.is_empty() || !server_version.is_empty() {
+        if !config.tidb_edition.is_empty()
+            || !config.tidb_release_version.is_empty()
+            || !config.server_version.is_empty()
+        {
             return Err(invalid(
                 "--config",
                 "config options tidb-edition, tidb-release-version and server-version are not \
                  allowed to set in nextgen kernel",
             ));
         }
+        let versions = tidb_mysql::runtime_versions();
         let component =
-            tidb_mysql::normalize_tidb_release_version_for_next_gen(&info.release_version)
-                .to_owned();
-        let server_version = tidb_mysql::build_tidbx_server_version(&component)
+            tidb_mysql::normalize_tidb_release_version_for_next_gen(&versions.tidb_release_version);
+        tidb_mysql::build_tidbx_server_version(component)
             .map_err(|error| invalid("--config", &error.to_string()))?;
-        info = info.with_configured_versions(&component, &server_version);
-    } else {
-        info = info
-            .with_configured_edition(edition)
-            .with_configured_versions(release_version, server_version);
     }
-    Ok(info.with_runtime_environment(
-        tidb_config::config_tree::config::check_table_before_drop(),
-        store,
-        kerneltype::name(),
-        deploy_mode,
-    ))
+    Ok(())
+}
+
+fn install_process_globals(config: SourceConfig) {
+    if kerneltype::is_next_gen() {
+        tidb_config::deploymode::set(config.deploy_mode)
+            .expect("validated next-generation deploy mode");
+    }
+    let configured_edition = config.tidb_edition.clone();
+    let configured_release = config.tidb_release_version.clone();
+    let configured_server = config.server_version.clone();
+    tidb_config::config_tree::config::store_global_config(config);
+
+    let defaults = tidb_mysql::runtime_versions();
+    if kerneltype::is_next_gen() {
+        let release =
+            tidb_mysql::normalize_tidb_release_version_for_next_gen(&defaults.tidb_release_version)
+                .to_owned();
+        let server = tidb_mysql::build_tidbx_server_version(&release)
+            .expect("next-generation release was validated");
+        tidb_mysql::set_runtime_versions(release, server);
+        return;
+    }
+    if !configured_edition.is_empty() {
+        tidb_util::versioninfo::set_tidb_edition(configured_edition);
+    }
+    tidb_mysql::set_runtime_versions(
+        if configured_release.is_empty() {
+            defaults.tidb_release_version
+        } else {
+            configured_release
+        },
+        if configured_server.is_empty() {
+            defaults.server_version
+        } else {
+            configured_server
+        },
+    );
 }
 
 fn parse_read_table<I>(

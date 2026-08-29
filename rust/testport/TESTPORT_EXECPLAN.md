@@ -36,6 +36,15 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-08-29: audited the complete pinned Go `pkg/util/versioninfo` package
+  and re-read every `pkg/util/printer` artifact before changing its consumers.
+  Removed Rust's twelve-field per-node/per-session `VersionInfo` snapshots and
+  their cache/connection ownership tests. Build identity, edition, MySQL
+  versions, effective config, kernel type, and deploy mode now come from the
+  same process-wide owners as Go, and the ordinary handshake, sysvar,
+  `TIDB_VERSION()`, startup-log, and server-info paths all read those owners.
+  Complete inventory and WIP gates are recorded in
+  `receipts/util_versioninfo.md` and `receipts/util_printer.md`.
 - 2026-08-29: audited every production, test, test-harness, and build artifact
   in pinned Go `pkg/util/systimemon`. Removed the Rust-only stoppable monitor
   guard, public cadence constant, cleanup join, duplicate inline test, and

@@ -170,29 +170,17 @@ fn configured_sem_is_installed_before_startup_resource_admission() {
 }
 
 #[test]
-fn configured_tidb_edition_is_an_owned_server_identity() {
-    let file = ConfigFile::write(
-        "tidb_edition",
-        r#"
-tidb-edition = "Starter"
-"#,
-    );
-    let path = file.0.to_string_lossy().into_owned();
-    let mut args = required();
-    args.extend(["--config", &path]);
-
-    let config = NodeConfig::parse(args).expect("the accepted TiDB edition has a runtime owner");
-    assert_eq!(config.version_info.edition, "Starter");
-    assert_eq!(
-        config.version_info.version_comment(),
-        "TiDB Server (Apache License 2.0) Starter Edition, MySQL 8.0 compatible"
-    );
-}
-
-#[test]
 fn version_flag_prints_the_effective_source_identity_without_topology() {
-    let defaults = NodeConfig::version_info_for_display(["tidb-server", "-V"]).unwrap();
-    assert_eq!(defaults.store, "unistore");
+    let defaults = Command::new(env!("CARGO_BIN_EXE_tidb-server"))
+        .arg("-V")
+        .output()
+        .expect("run tidb-server -V");
+    assert!(defaults.status.success(), "{:?}", defaults.status);
+    assert!(
+        String::from_utf8(defaults.stdout)
+            .unwrap()
+            .contains("Store: unistore")
+    );
 
     let file = ConfigFile::write(
         "version_flag",
@@ -202,27 +190,15 @@ fn version_flag_prints_the_effective_source_identity_without_topology() {
          server-version = \"8.0.11-TiDB-v9.0.0\"\n",
     );
     let path = file.0.to_string_lossy().into_owned();
-    let expected = NodeConfig::version_info_for_display([
-        "tidb-server",
-        "-V",
-        "--config",
-        path.as_str(),
-    ])
-    .unwrap();
-    assert_eq!(expected.store, "tikv");
-    assert_eq!(expected.edition, "Starter");
-    assert_eq!(expected.release_version, "v9.0.0");
-    assert_eq!(expected.server_version, "8.0.11-TiDB-v9.0.0");
-
     let output = Command::new(env!("CARGO_BIN_EXE_tidb-server"))
         .args(["-V", "--config", path.as_str()])
         .output()
         .expect("run tidb-server -V");
     assert!(output.status.success(), "{:?}", output.status);
-    assert_eq!(
-        String::from_utf8(output.stdout).unwrap().trim_end(),
-        tidb_util::printer::get_tidb_info(&expected)
-    );
+    let output = String::from_utf8(output.stdout).unwrap();
+    assert!(output.contains("Store: tikv"), "{output}");
+    assert!(output.contains("Edition: Starter"), "{output}");
+    assert!(output.contains("Release Version: v9.0.0"), "{output}");
 }
 
 #[test]

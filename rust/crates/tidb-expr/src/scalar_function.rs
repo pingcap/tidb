@@ -1862,11 +1862,9 @@ mod tests {
         }
 
         fn tidb_info(&self) -> String {
-            self.tidb_info.clone().unwrap_or_else(|| {
-                tidb_util::printer::get_tidb_info(
-                    &tidb_util::versioninfo::VersionInfo::build_default(),
-                )
-            })
+            self.tidb_info
+                .clone()
+                .unwrap_or_else(|| tidb_util::printer::get_tidb_info())
         }
     }
 

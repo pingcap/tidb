@@ -692,7 +692,6 @@ impl Session {
         // generation; see [`StatementVarSnapshot`].
         let snapshot = self.statement_var_snapshot();
         let version = snapshot.version.clone();
-        let tidb_version_info = Some(self.vars.version_info());
         let connection_charset = snapshot.connection_charset.clone();
         let connection_collation = snapshot.connection_collation.clone();
         let zone = snapshot.time_zone.clone();
@@ -769,7 +768,7 @@ impl Session {
                 .with_static_partition_prune(static_partition_prune)
                 .with_only_full_group_by(sql_mode.has_only_full_group_by())
                 .with_new_only_full_group_by_check(new_only_full_group_by_check)
-                .with_session_state(current_db, version, tidb_version_info)
+                .with_session_state(current_db, version)
                 .with_connection_charset_info(
                     connection_charset.clone(),
                     connection_collation.clone(),
@@ -820,7 +819,7 @@ impl Session {
         .with_allow_write_row_id(allow_write_row_id)
         .with_only_full_group_by(sql_mode.has_only_full_group_by())
         .with_new_only_full_group_by_check(new_only_full_group_by_check)
-        .with_session_state(current_db, version, tidb_version_info)
+        .with_session_state(current_db, version)
         .with_connection_charset_info(connection_charset, connection_collation)
         .with_user(self.current_user.clone(), self.login_user.clone())
         .with_global_sysvar_accessor(global_sysvar_accessor)

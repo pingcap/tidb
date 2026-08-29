@@ -297,8 +297,8 @@ fn connect(database: InitialDatabase) -> (TcpStream, PacketReader<TcpStream>, st
     let fields = read_initial_handshake(&initial);
     assert_eq!(
         fields.server_version,
-        tidb_util::versioninfo::VersionInfo::build_default().server_version,
-        "the wire handshake must use the process identity snapshot"
+        tidb_mysql::runtime_versions().server_version,
+        "the wire handshake must use the process-wide server version"
     );
     write_client_response(
         &mut client,

@@ -25,9 +25,8 @@
 //! * `hostname` — already live through `tidb_util::sem`: startup calls
 //!   `sem::disable()`/`enable()`, whose hostname default is what
 //!   `effective_sysvar_default` answers. Not repeated here.
-//! * `version` — carried by `VersionInfo` (`--server-version`), which
-//!   `SessionVars::get_system` answers directly, including Go's
-//!   keep-when-empty behavior.
+//! * `version` and `version_comment` — initialized from the same process-wide
+//!   package variables Go updates before this function runs.
 //! * The `setInstanceVar` block — the registry's scope table is a static
 //!   catalog in this port; Go MUTATES `SysVar.Scope` at startup to grant
 //!   instance scope. Unported with that mutation, alongside the config
@@ -43,6 +42,14 @@ use crate::node_config::NodeConfig;
 
 /// Applies the ported `setGlobalVars` writes to the node's sysvar registry.
 pub(crate) fn set_global_vars(config: &NodeConfig, globals: &GlobalSysvars) {
+    globals.set_startup("version", tidb_mysql::runtime_versions().server_version);
+    globals.set_startup(
+        "version_comment",
+        format!(
+            "TiDB Server (Apache License 2.0) {} Edition, MySQL 8.0 compatible",
+            tidb_util::versioninfo::tidb_edition()
+        ),
+    );
     // `variable.SetSysVar(vardef.Port, fmt.Sprintf("%d", cfg.Port))`.
     globals.set_startup("port", config.port.to_string());
     // `cfg.Socket` arrives with `{Port}` already substituted (the parse did
@@ -78,8 +85,7 @@ mod tests {
     /// over the ported slice. Legs kept, in the source's order: the
     /// isolation-read-engines default and its config override, the
     /// mem-quota-query default, the socket value, and the hostname. The
-    /// version legs ride `VersionInfo` (see the module header), and the
-    /// instance-scope promotion leg is unported with `setInstanceVar`.
+    /// The instance-scope promotion leg is unported with `setInstanceVar`.
     #[test]
     fn set_global_vars_matches_gos_table() {
         // Registry defaults before any startup push (Go's first asserts).
