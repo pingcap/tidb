@@ -36,13 +36,14 @@ use tidb_exec::cluster_predicate_column::{
 };
 use tidb_exec::cluster_stats_load::{ClusterStatsItem, ClusterStatsLoader, ClusterTableStats};
 use tidb_exec::cluster_stats_write::{
-    plan_get_predicate_columns, plan_historical_stats_meta_write, plan_loaded_stats_item_write,
-    plan_loaded_stats_meta_write, plan_loaded_stats_usage_write, plan_partial_stats_write,
-    plan_stats_write,
+    load_analyze_options, plan_analyze_options_write, plan_get_predicate_columns,
+    plan_historical_stats_meta_write, plan_loaded_stats_item_write, plan_loaded_stats_meta_write,
+    plan_loaded_stats_usage_write, plan_partial_stats_write, plan_stats_write,
 };
 use tidb_exec::mysql_bootstrap::{plan_mysql_bootstrap, BootstrapEnvironment, BootstrapWrite};
 use tidb_exec::mysql_system_tables::{scan_system_table, SystemRow, SystemTableView};
 use tidb_exec::real_tikv_analyze::ANALYZE_MAX_MUTATIONS;
+use tidb_executor::analyze::{AnalyzeColumnChoice, AnalyzeOptionOverrides};
 use tidb_model::column::ColumnInfo;
 use tidb_model::table_info::TableInfo;
 use tidb_model::SchemaState;
@@ -566,6 +567,96 @@ fn loaded_stats_item_write_replaces_only_the_named_histogram() {
     let untouched = stored.column(2).expect("unmentioned column remains");
     assert_eq!(untouched.histogram.buckets.len(), 256);
     assert_eq!(untouched.topn.as_ref().map(TopN::num), Some(100));
+}
+
+/// Pinned Go reads raw options, filters stale LIST IDs through current table
+/// metadata, and REPLACEs all seven columns so newly omitted values clear.
+#[test]
+fn persisted_analyze_options_round_trip_and_replace_raw_values() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let table = TableInfo {
+        id: 4242,
+        columns: vec![
+            ColumnInfo {
+                id: 1,
+                name: CiString::new("a"),
+                offset: 0,
+                state: SchemaState::PUBLIC,
+                ..ColumnInfo::default()
+            },
+            ColumnInfo {
+                id: 2,
+                name: CiString::new("b"),
+                offset: 1,
+                state: SchemaState::PUBLIC,
+                ..ColumnInfo::default()
+            },
+        ]
+        .into(),
+        ..TableInfo::default()
+    };
+    assert!(load_analyze_options(&mut store, &catalog, &table, table.id)
+        .expect("missing row is readable")
+        .is_none());
+
+    let first = plan_analyze_options_write(
+        &mut store,
+        &catalog,
+        &table,
+        table.id,
+        AnalyzeOptionOverrides {
+            num_buckets: Some(7),
+            num_topn: Some(0),
+            num_samples: None,
+            sample_rate: Some(0.25),
+        },
+        &AnalyzeColumnChoice::Explicit(vec!["a".to_owned(), "gone".to_owned()]),
+        now(),
+    )
+    .expect("first option row plans");
+    apply_mutations(&mut store, &first.mutations);
+    assert_eq!(
+        load_analyze_options(&mut store, &catalog, &table, table.id)
+            .expect("saved row loads")
+            .expect("saved row exists"),
+        tidb_exec::cluster_stats_write::PersistedAnalyzeOptions {
+            raw: AnalyzeOptionOverrides {
+                num_buckets: Some(7),
+                num_topn: Some(0),
+                num_samples: None,
+                sample_rate: Some(0.25),
+            },
+            columns: AnalyzeColumnChoice::Explicit(vec!["a".to_owned()]),
+        }
+    );
+
+    let second = plan_analyze_options_write(
+        &mut store,
+        &catalog,
+        &table,
+        table.id,
+        AnalyzeOptionOverrides {
+            num_samples: Some(9),
+            ..AnalyzeOptionOverrides::default()
+        },
+        &AnalyzeColumnChoice::Predicate,
+        now(),
+    )
+    .expect("replacement option row plans");
+    apply_mutations(&mut store, &second.mutations);
+    assert_eq!(
+        load_analyze_options(&mut store, &catalog, &table, table.id)
+            .expect("replacement loads")
+            .expect("replacement exists"),
+        tidb_exec::cluster_stats_write::PersistedAnalyzeOptions {
+            raw: AnalyzeOptionOverrides {
+                num_samples: Some(9),
+                ..AnalyzeOptionOverrides::default()
+            },
+            columns: AnalyzeColumnChoice::Predicate,
+        }
+    );
 }
 
 /// Go `SaveAnalyzeResultToStorage` iterates only the histograms returned by a

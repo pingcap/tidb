@@ -45,6 +45,7 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - [x] (2026-08-29) Removed the live cache's reduced `ClusterTableStats` authority: bootstrap, refresh, sync load, planner derivation, and row-cache reads now share canonical full `statistics.Table` objects like Go.
 - [x] (2026-08-29) Wired cluster `LOAD STATS` through Go's text-protocol client-local-file transfer, independent restricted TiKV transactions, optional history writes, final metadata publication, and the common shared-cache refresh path.
 - [x] (2026-08-29) Wired `SHOW COLUMN_STATS_USAGE` to a fresh shared-storage snapshot, including session-location timestamps and logical/global plus all-partition traversal in both prune modes.
+- [ ] Complete pinned persisted ANALYZE options across table and partition targets; the cluster table-level raw merge, live-default resolution, independent warning-only save transaction, and schema-filtered LIST storage are wired, while partition-mode coverage remains open.
 - [ ] Wire all pinned Go `SHOW STATS_*` surfaces to the shared cache and storage semantics.
 - [ ] Inventory every production file, platform/generated variant, original test/support artifact, fixture, and validation gate in pinned `pkg/statistics`; close or explicitly retain seed-only gaps until the whole package is complete.
 - [ ] Run the Ready validation profile, including `make lint`, only after the complete package inventory is closed.
@@ -156,6 +157,9 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - Observation: the existing Rust `SHOW COLUMN_STATS_USAGE` code was only two disconnected row helpers. Pinned Go reads the complete persisted usage map through the statistics handle on every SHOW, then visits the logical table ID and every partition ID regardless of prune mode.
   Evidence: pinned `pkg/executor/show_stats.go::fetchShowColumnStatsUsage`; the production cluster session now installs a storage-backed provider and the SQL regression exercises the global and partition rows under static pruning.
 
+- Observation: pinned persisted ANALYZE options are raw planner input, not effective executor knobs. Statement values merge over stored values before the current global defaults are filled; `TOPN = 0` is present while stored `topn = -1` is absent, and LIST IDs are resolved through current table metadata so dropped columns disappear.
+  Evidence: pinned `genV2AnalyzeOptions`/`getSavedAnalyzeOpts` in `pkg/planner/core/planbuilder.go` and `saveAnalyzeOptions` in `pkg/executor/analyze.go`; the Rust storage regression replaces a row and proves raw sentinel and stale-column behavior.
+
 ## Decision Log
 
 - Decision: reconstruct and test each pinned Go branch before editing Rust; do not preserve Rust-only fallback paths.
@@ -184,6 +188,10 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 
 - Decision: keep LOAD STATS on the ordinary text/prepared connection path and use a dedicated restricted statistics writer underneath it.
   Rationale: reading the path with `std::fs` would replace Go's client-local-file behavior, while reusing ANALYZE's whole-table transaction would change item independence, history, and preservation of unmentioned histograms.
+  Date/Author: 2026-08-29 / Codex
+
+- Decision: represent explicit ANALYZE options separately from effective options and persist them through the shared `mysql.analyze_options` row codec after the statistics commit.
+  Rationale: storing filled defaults would freeze a value Go deliberately re-reads live, and folding the row into the statistics transaction would change Go's warning-only failure contract.
   Date/Author: 2026-08-29 / Codex
 
 ## Outcomes & Retrospective
@@ -258,6 +266,8 @@ Revision note (2026-08-29): wired `SHOW STATS_BUCKETS` and verified the pinned s
 Revision note (2026-08-29): wired `SHOW STATS_HISTOGRAMS`, removed caller-injected histogram-memory fields, and verified initialized column/index rows plus memory-component totals through the SQL path.
 
 Revision note (2026-08-29): added the shared needed-item lifecycle and wired `SHOW HISTOGRAMS_IN_FLIGHT`; delayed-load coverage observes one live item and then zero after worker cleanup.
+
+Revision note (2026-08-29): began the complete persisted ANALYZE-options behavior by separating raw and effective options, loading and replacing table-level `mysql.analyze_options` rows, resolving live defaults after merge, and saving through Go's later warning-only transaction. Static/dynamic partition option inheritance and persistence remain open, so this is not a completion claim.
 
 Revision note (2026-08-29): completed the atomic inventory for pinned `pkg/statistics/handle/lockstats` (`lock_stats.go`, `query_lock.go`, `unlock_stats.go`; all four original test/support files; `BUILD.bazel`) and `pkg/executor/lockstats` (both executors, executor tests, `BUILD.bazel`). The Rust mapping is `tidb-stats::lock_stats` for policy/query/delta behavior, `tidb-executor::stats_lock` plus `tidb-session::stats_lock_arm` for the in-process restricted-session equivalent, and `tidb-exec::{cluster_stats_lock,real_tikv_stats_lock}` plus the server seam for one independent TiKV transaction. Focused tests cover stable skip messages, table/partition gates, delta propagation and clamping, real persisted system-row mutations, duplicate no-write warnings, INSERT-before-SELECT privilege admission, statement warning publication, and preservation of the caller's transaction.
 

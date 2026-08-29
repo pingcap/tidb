@@ -61,7 +61,10 @@ use tidb_txnkv::PdRegionLoader;
 use tidb_exec::cluster_analyze::AnalyzeStatement;
 use tidb_exec::cluster_catalog::load_cluster_catalog;
 use tidb_exec::cluster_stats_load::column_types_of;
-use tidb_exec::real_tikv_analyze::{commit_cluster_analyze, ClusterAnalyzeReport};
+use tidb_exec::real_tikv_analyze::{
+    commit_cluster_analyze, resolve_cluster_analyze_statement, save_cluster_analyze_options,
+    ClusterAnalyzeReport,
+};
 use tidb_exec::real_tikv_catalog::TransactionMetaSnapshot;
 use tidb_exec::real_tikv_load_stats::{
     commit_cluster_load_stats, ClusterLoadStatsCommitError, ClusterLoadStatsReport,
@@ -192,8 +195,13 @@ where
     P: StorePdCapability,
 {
     fn execute(&self, statement: &AnalyzeStatement) -> Result<ClusterAnalyzeReport, SqlQueryError> {
-        let report = commit_cluster_analyze(&self.opener, statement, self.timeout)
+        let statement = resolve_cluster_analyze_statement(&self.opener, statement, self.timeout)
             .map_err(cluster_analyze_error)?;
+        let mut report = commit_cluster_analyze(&self.opener, &statement, self.timeout)
+            .map_err(cluster_analyze_error)?;
+        if let Err(error) = save_cluster_analyze_options(&self.opener, &statement, self.timeout) {
+            report.option_save_warning = Some(error.to_string());
+        }
         if let Err(error) = self.refresh_stats() {
             warn_reload_failed(&error);
         }

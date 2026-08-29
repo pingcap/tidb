@@ -111,18 +111,21 @@ impl ClusterServerSession {
         self.session.begin_routed_statement_warnings();
         for statement in tables {
             let mut statement = statement.clone();
-            if statement.columns == tidb_exec::cluster_analyze::AnalyzeColumnChoice::Default {
-                statement.columns = if self
-                    .session
-                    .vars()
-                    .get_system(tidb_vardef::tidb_vars::TIDB_ANALYZE_COLUMN_OPTIONS)
-                    .is_ok_and(|value| value.eq_ignore_ascii_case("PREDICATE"))
-                {
-                    tidb_exec::cluster_analyze::AnalyzeColumnChoice::Predicate
-                } else {
-                    tidb_exec::cluster_analyze::AnalyzeColumnChoice::All
-                };
-            }
+            statement.persist_options = self
+                .session
+                .vars()
+                .get_system(tidb_vardef::tidb_vars::TIDB_PERSIST_ANALYZE_OPTIONS)
+                .is_ok_and(|value| tidb_exec::option_values::tidb_opt_on(&value));
+            statement.default_columns = if self
+                .session
+                .vars()
+                .get_system(tidb_vardef::tidb_vars::TIDB_ANALYZE_COLUMN_OPTIONS)
+                .is_ok_and(|value| value.eq_ignore_ascii_case("PREDICATE"))
+            {
+                tidb_exec::cluster_analyze::AnalyzeColumnChoice::Predicate
+            } else {
+                tidb_exec::cluster_analyze::AnalyzeColumnChoice::All
+            };
             statement.options.memory_quota = memory_quota;
             let statement = &statement;
             let report = recover_analyze_panic(|| self.analyze.execute(statement))
@@ -136,6 +139,9 @@ impl ClusterServerSession {
                         statement.table.to_lowercase()
                     ),
                 );
+            }
+            if let Some(warning) = &report.option_save_warning {
+                self.session.append_routed_warning(1105, warning.clone());
             }
             eprintln!(
                 "{{\"event\":\"cluster_table_analyzed\",\"schema\":{},\"table\":{},\

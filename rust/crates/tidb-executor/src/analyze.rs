@@ -120,6 +120,47 @@ pub struct AnalyzeOptions {
     pub memory_quota: SampleMemoryQuota,
 }
 
+/// The ANALYZE options explicitly present in a statement or persisted row.
+/// `None` is significant: pinned Go persists and merges raw options before
+/// filling process defaults.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct AnalyzeOptionOverrides {
+    /// Explicit `WITH n BUCKETS`.
+    pub num_buckets: Option<isize>,
+    /// Explicit `WITH n TOPN`, including zero.
+    pub num_topn: Option<isize>,
+    /// Explicit `WITH n SAMPLES`.
+    pub num_samples: Option<usize>,
+    /// Explicit `WITH n SAMPLERATE`.
+    pub sample_rate: Option<f64>,
+}
+
+impl AnalyzeOptionOverrides {
+    /// Merges statement options over saved options, then fills live defaults.
+    #[must_use]
+    pub fn merge_over(self, saved: Self) -> Self {
+        Self {
+            num_buckets: self.num_buckets.or(saved.num_buckets),
+            num_topn: self.num_topn.or(saved.num_topn),
+            num_samples: self.num_samples.or(saved.num_samples),
+            sample_rate: self.sample_rate.or(saved.sample_rate),
+        }
+    }
+
+    /// Fills the current process defaults after raw-option merging.
+    #[must_use]
+    pub fn effective(self) -> AnalyzeOptions {
+        let defaults = AnalyzeOptions::default();
+        AnalyzeOptions {
+            num_buckets: self.num_buckets.unwrap_or(defaults.num_buckets),
+            num_topn: self.num_topn.unwrap_or(defaults.num_topn),
+            num_samples: self.num_samples.unwrap_or(defaults.num_samples),
+            sample_rate: self.sample_rate.or(defaults.sample_rate),
+            memory_quota: defaults.memory_quota,
+        }
+    }
+}
+
 impl Default for AnalyzeOptions {
     fn default() -> Self {
         Self {
@@ -155,6 +196,12 @@ pub struct AnalyzeStatement {
     pub table: String,
     /// Which columns the pinned planner selects before execution.
     pub columns: AnalyzeColumnChoice,
+    /// Options explicitly named by this statement, before saved-option merge.
+    pub raw_options: AnalyzeOptionOverrides,
+    /// Live global gate for reading and saving `mysql.analyze_options`.
+    pub persist_options: bool,
+    /// Live process default used only while the persisted choice is DEFAULT.
+    pub default_columns: AnalyzeColumnChoice,
     /// The effective knobs.
     pub options: AnalyzeOptions,
 }
@@ -235,7 +282,7 @@ pub fn lower_analyze_admin(
         }
     };
 
-    let mut options = AnalyzeOptions::default();
+    let mut raw_options = AnalyzeOptionOverrides::default();
     for option in &analyze.options {
         let number = |value: &str| -> Result<u64, AnalyzeError> {
             value
@@ -244,50 +291,76 @@ pub fn lower_analyze_admin(
         };
         match option.kind {
             tidb_ast::AnalyzeOptionKind::Buckets => {
-                options.num_buckets = isize::try_from(number(&option.value)?).map_err(|_| {
+                let value = number(&option.value)?;
+                if value == 0 || value > 100_000 {
+                    return Err(AnalyzeError::Unsupported(
+                        "Value of analyze option BUCKETS should be positive and not larger than 100000"
+                            .to_owned(),
+                    ));
+                }
+                raw_options.num_buckets = Some(isize::try_from(value).map_err(|_| {
                     AnalyzeError::Unsupported(format!(
                         "`{}` exceeds the native ANALYZE integer domain",
                         option.value
                     ))
-                })?;
+                })?);
             }
             tidb_ast::AnalyzeOptionKind::TopN => {
-                options.num_topn = isize::try_from(number(&option.value)?).map_err(|_| {
+                let value = number(&option.value)?;
+                if value > 100_000 {
+                    return Err(AnalyzeError::Unsupported(
+                        "Value of analyze option TOPN should not be larger than 100000".to_owned(),
+                    ));
+                }
+                raw_options.num_topn = Some(isize::try_from(value).map_err(|_| {
                     AnalyzeError::Unsupported(format!(
                         "`{}` exceeds the native ANALYZE integer domain",
                         option.value
                     ))
-                })?;
+                })?);
             }
             tidb_ast::AnalyzeOptionKind::Samples => {
-                options.num_samples = usize::try_from(number(&option.value)?).map_err(|_| {
+                let value = number(&option.value)?;
+                if value == 0 || value > 5_000_000 {
+                    return Err(AnalyzeError::Unsupported(
+                        "Value of analyze option SAMPLES should be positive and not larger than 5000000"
+                            .to_owned(),
+                    ));
+                }
+                raw_options.num_samples = Some(usize::try_from(value).map_err(|_| {
                     AnalyzeError::Unsupported(format!(
                         "`{}` exceeds the native sample-size domain",
                         option.value
                     ))
-                })?;
+                })?);
             }
             tidb_ast::AnalyzeOptionKind::SampleRate => {
                 let rate = option.value.parse::<f64>().map_err(|_| {
                     AnalyzeError::Unsupported(format!("`{}` is not a rate", option.value))
                 })?;
-                if !(0.0..=1.0).contains(&rate) {
-                    return Err(AnalyzeError::Unsupported(format!(
-                        "SAMPLERATE must be in [0, 1], not `{}`",
-                        option.value
-                    )));
+                if rate <= 0.0 || rate > 1.0 {
+                    return Err(AnalyzeError::Unsupported(
+                        "Value of analyze option SAMPLERATE should not larger than 1.000000, and should be greater than 0"
+                            .to_owned(),
+                    ));
                 }
-                options.sample_rate = Some(rate);
+                raw_options.sample_rate = Some(rate);
             }
             // Analyze v2 stores no CMSketch at all, so accepting a size for
             // one would be accepting a knob with no effect.
             tidb_ast::AnalyzeOptionKind::CmSketchDepth
             | tidb_ast::AnalyzeOptionKind::CmSketchWidth => {
-                return Err(AnalyzeError::Unsupported(
-                    "CMSKETCH DEPTH/WIDTH have no effect on this node: analyze v2 stores no \
-                     CMSketch"
-                        .to_owned(),
-                ))
+                let value = number(&option.value)?;
+                if value == 0 {
+                    let name = match option.kind {
+                        tidb_ast::AnalyzeOptionKind::CmSketchDepth => "CMSKETCH DEPTH",
+                        tidb_ast::AnalyzeOptionKind::CmSketchWidth => "CMSKETCH WIDTH",
+                        _ => unreachable!(),
+                    };
+                    return Err(AnalyzeError::Unsupported(format!(
+                        "Value of analyze option {name} should be positive"
+                    )));
+                }
             }
             tidb_ast::AnalyzeOptionKind::NdvRate => {
                 return Err(AnalyzeError::Unsupported(
@@ -296,6 +369,13 @@ pub fn lower_analyze_admin(
             }
         }
     }
+    if raw_options.num_samples.is_some() && raw_options.sample_rate.is_some() {
+        return Err(AnalyzeError::Unsupported(
+            "You can only either set the value of the sample num or set the value of the sample rate. Don't set both of them"
+                .to_owned(),
+        ));
+    }
+    let options = raw_options.effective();
 
     let mut tables = Vec::with_capacity(analyze.tables.len());
     for path in &analyze.tables {
@@ -316,6 +396,9 @@ pub fn lower_analyze_admin(
             schema,
             table,
             columns: columns.clone(),
+            raw_options,
+            persist_options: true,
+            default_columns: AnalyzeColumnChoice::All,
             options,
         });
     }

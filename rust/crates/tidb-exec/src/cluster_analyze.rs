@@ -86,8 +86,8 @@ use crate::mysql_system_tables::{SystemRow, SystemTableError, SystemTableView};
 use crate::system_row_write::origin_default;
 
 pub use tidb_executor::analyze::{
-    AnalyzeColumnChoice, AnalyzeOptions, AnalyzeStatement, SampleMemoryExceeded, SampleMemoryQuota,
-    MEM_QUOTA_ANALYZE_VARIABLE, STATS_VERSION_2,
+    AnalyzeColumnChoice, AnalyzeOptionOverrides, AnalyzeOptions, AnalyzeStatement,
+    SampleMemoryExceeded, SampleMemoryQuota, MEM_QUOTA_ANALYZE_VARIABLE, STATS_VERSION_2,
 };
 
 /// Whether this statement is an `ANALYZE TABLE` this node runs, and against

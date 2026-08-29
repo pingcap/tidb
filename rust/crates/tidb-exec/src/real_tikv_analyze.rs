@@ -43,7 +43,8 @@ use crate::cluster_analyze::{
 use crate::cluster_catalog::load_cluster_catalog;
 use crate::cluster_stats_load::ClusterStatsLoader;
 use crate::cluster_stats_write::{
-    plan_get_predicate_columns, plan_partial_stats_write, plan_stats_write, StatsWritePlan,
+    load_analyze_options, plan_analyze_options_write, plan_get_predicate_columns,
+    plan_partial_stats_write, plan_stats_write, StatsWritePlan,
 };
 use crate::mysql_bootstrap::utc_now_timestamp;
 use crate::mysql_system_tables::SystemTableError;
@@ -114,6 +115,112 @@ pub struct ClusterAnalyzeReport {
     pub topn_count: usize,
     /// Whether predicate-column selection found no collected column.
     pub predicate_columns_empty: bool,
+    /// Nonfatal pinned-Go `saveAnalyzeOptions` failure, if any.
+    pub option_save_warning: Option<String>,
+}
+
+/// Reads and merges the saved table-level ANALYZE options before execution.
+pub fn resolve_cluster_analyze_statement<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+>(
+    opener: &RealOptimisticTransactionOpener<C, L, P>,
+    statement: &AnalyzeStatement,
+    timeout: Duration,
+) -> Result<AnalyzeStatement, ClusterAnalyzeError> {
+    if !statement.persist_options {
+        return Ok(statement.clone());
+    }
+    let mut transaction = opener
+        .begin_read_only()
+        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+    let saved = {
+        let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
+        let catalog = load_cluster_catalog(&mut snapshot)
+            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+        let table = find_statement_table(&catalog, statement)?;
+        load_analyze_options(&mut snapshot, &catalog, table, table.id)
+            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?
+    };
+    transaction
+        .finish_without_writes()
+        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+
+    let mut resolved = statement.clone();
+    if let Some(saved) = saved {
+        resolved.raw_options = statement.raw_options.merge_over(saved.raw);
+        if resolved.columns == AnalyzeColumnChoice::Default {
+            resolved.columns = saved.columns;
+        }
+    }
+    let memory_quota = resolved.options.memory_quota;
+    resolved.options = resolved.raw_options.effective();
+    resolved.options.memory_quota = memory_quota;
+    Ok(resolved)
+}
+
+/// Saves the merged raw options in Go's later, independent restricted
+/// transaction. Callers treat failure as a statement warning.
+pub fn save_cluster_analyze_options<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+>(
+    opener: &RealOptimisticTransactionOpener<C, L, P>,
+    statement: &AnalyzeStatement,
+    timeout: Duration,
+) -> Result<(), ClusterAnalyzeError> {
+    if !statement.persist_options {
+        return Ok(());
+    }
+    let mut transaction = opener
+        .begin(32, MAX_OPTIMISTIC_TRANSACTION_BYTES)
+        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+    let plan = {
+        let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
+        let catalog = load_cluster_catalog(&mut snapshot)
+            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+        let table = find_statement_table(&catalog, statement)?;
+        plan_analyze_options_write(
+            &mut snapshot,
+            &catalog,
+            table,
+            table.id,
+            statement.raw_options,
+            &statement.columns,
+            utc_now_timestamp(),
+        )
+        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?
+    };
+    let outcome = transaction
+        .commit(plan.mutations, &UnaryCallContext::with_timeout(timeout))
+        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+    classify_commit_outcome(&outcome)
+}
+
+fn find_statement_table<'catalog>(
+    catalog: &'catalog crate::cluster_catalog::ClusterCatalog,
+    statement: &AnalyzeStatement,
+) -> Result<&'catalog tidb_model::table_info::TableInfo, ClusterAnalyzeError> {
+    catalog
+        .databases
+        .iter()
+        .find(|database| database.info.name.lowercase() == statement.schema.to_lowercase().as_str())
+        .and_then(|database| {
+            database
+                .tables
+                .iter()
+                .find(|stored| stored.name.lowercase() == statement.table.to_lowercase().as_str())
+        })
+        .ok_or_else(|| {
+            ClusterAnalyzeError::Other(
+                SystemTableError::Missing {
+                    name: format!("{}.{}", statement.schema, statement.table),
+                }
+                .to_string(),
+            )
+        })
 }
 
 /// Why an `ANALYZE TABLE` transaction did not produce a committed report.
@@ -168,26 +275,7 @@ pub fn commit_cluster_analyze<C: StoreWriteClient, L: StoreWriteLoader, P: Store
         let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
         let catalog = load_cluster_catalog(&mut snapshot)
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-        let table = catalog
-            .databases
-            .iter()
-            .find(|database| {
-                database.info.name.lowercase() == statement.schema.to_lowercase().as_str()
-            })
-            .and_then(|database| {
-                database.tables.iter().find(|stored| {
-                    stored.name.lowercase() == statement.table.to_lowercase().as_str()
-                })
-            })
-            .ok_or_else(|| {
-                ClusterAnalyzeError::Other(
-                    SystemTableError::Missing {
-                        name: format!("{}.{}", statement.schema, statement.table),
-                    }
-                    .to_string(),
-                )
-            })?
-            .clone();
+        let table = find_statement_table(&catalog, statement)?.clone();
         // The sample rate Go derives from `RealtimeCount`: what the table's
         // previous `ANALYZE` (or delta flush) said it holds.
         let realtime_count = ClusterStatsLoader::locate(&catalog)
@@ -247,6 +335,7 @@ pub fn commit_cluster_analyze<C: StoreWriteClient, L: StoreWriteLoader, P: Store
         bucket_count: write.bucket_count,
         topn_count: write.topn_count,
         predicate_columns_empty,
+        option_save_warning: None,
     };
     // The commit mints its own deadline here rather than inheriting one from
     // function entry: everything above it -- the catalog read, the previous
@@ -275,8 +364,9 @@ fn selected_columns<S: crate::cluster_catalog::MetaSnapshot>(
 ) -> Result<(Option<HashSet<i64>>, StatsWritePlan, bool), crate::cluster_stats_write::StatsWriteError>
 {
     match &statement.columns {
-        AnalyzeColumnChoice::All | AnalyzeColumnChoice::Default => {
-            Ok((None, StatsWritePlan::default(), false))
+        AnalyzeColumnChoice::All => Ok((None, StatsWritePlan::default(), false)),
+        AnalyzeColumnChoice::Default => {
+            selected_columns_for_choice(snapshot, catalog, table, &statement.default_columns)
         }
         AnalyzeColumnChoice::Predicate => {
             let current = table
@@ -307,6 +397,25 @@ fn selected_columns<S: crate::cluster_catalog::MetaSnapshot>(
             Ok((Some(selected), StatsWritePlan::default(), false))
         }
     }
+}
+
+fn selected_columns_for_choice<S: crate::cluster_catalog::MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &crate::cluster_catalog::ClusterCatalog,
+    table: &tidb_model::table_info::TableInfo,
+    choice: &AnalyzeColumnChoice,
+) -> Result<(Option<HashSet<i64>>, StatsWritePlan, bool), crate::cluster_stats_write::StatsWriteError>
+{
+    let statement = AnalyzeStatement {
+        schema: String::new(),
+        table: String::new(),
+        columns: choice.clone(),
+        raw_options: Default::default(),
+        persist_options: false,
+        default_columns: AnalyzeColumnChoice::All,
+        options: Default::default(),
+    };
+    selected_columns(snapshot, catalog, table, &statement)
 }
 
 fn add_mandatory_columns(table: &tidb_model::table_info::TableInfo, selected: &mut HashSet<i64>) {

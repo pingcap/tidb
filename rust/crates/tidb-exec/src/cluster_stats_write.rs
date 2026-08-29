@@ -59,6 +59,7 @@ use tidb_datatype::{
     parse_time, ConversionFlags, Datum, FieldType, FieldTypeCode, Time, TimeType, MAX_FSP,
     UNSPECIFIED_LENGTH,
 };
+use tidb_executor::analyze::{AnalyzeColumnChoice, AnalyzeOptionOverrides};
 use tidb_meta::{key, value};
 use tidb_model::table_info::TableInfo;
 use tidb_model::TableItemID;
@@ -147,12 +148,163 @@ pub struct StatsWritePlan {
     pub topn_count: usize,
 }
 
+/// One row read from pinned Go's `mysql.analyze_options`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PersistedAnalyzeOptions {
+    /// Raw options, before live defaults are filled.
+    pub raw: AnalyzeOptionOverrides,
+    /// Persisted `DEFAULT`/`ALL`/`PREDICATE`/`LIST` choice.
+    pub columns: AnalyzeColumnChoice,
+}
+
 impl StatsWritePlan {
     /// Whether the plan writes nothing.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.mutations.is_empty()
     }
+}
+
+/// Loads and schema-filters one persisted ANALYZE option row.
+pub fn load_analyze_options<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    table: &TableInfo,
+    physical_id: i64,
+) -> Result<Option<PersistedAnalyzeOptions>, StatsWriteError> {
+    let view = SystemTableView::locate(
+        catalog,
+        "analyze_options",
+        &[
+            "table_id",
+            "sample_num",
+            "sample_rate",
+            "buckets",
+            "topn",
+            "column_choice",
+            "column_ids",
+        ],
+    )?;
+    let pairs = scan_system_table_prefixed(snapshot, &view, &[Datum::Int(physical_id)])?;
+    let Some((key, value)) = pairs.into_iter().next() else {
+        return Ok(None);
+    };
+    let row = SystemRow::parse_in_timezone(&view, &key, &value, None)?;
+    if row.i64("table_id")? != Some(physical_id) {
+        return Ok(None);
+    }
+    let sample_num = row.i64("sample_num")?.filter(|value| *value > 0);
+    let sample_rate = row.f64("sample_rate")?.filter(|value| *value > 0.0);
+    let buckets = row.i64("buckets")?.filter(|value| *value > 0);
+    let topn = row.i64("topn")?.filter(|value| *value >= 0);
+    let raw = AnalyzeOptionOverrides {
+        num_buckets: buckets.and_then(|value| isize::try_from(value).ok()),
+        num_topn: topn.and_then(|value| isize::try_from(value).ok()),
+        num_samples: sample_num.and_then(|value| usize::try_from(value).ok()),
+        sample_rate,
+    };
+    let columns = match row.enum_label("column_choice")?.as_deref() {
+        Some("ALL") => AnalyzeColumnChoice::All,
+        Some("PREDICATE") => AnalyzeColumnChoice::Predicate,
+        Some("LIST") => {
+            let ids = row
+                .bytes("column_ids")?
+                .and_then(|bytes| String::from_utf8(bytes).ok())
+                .unwrap_or_default();
+            let mut names = Vec::new();
+            for id in ids.split(',').filter_map(|id| id.parse::<i64>().ok()) {
+                if let Some(column) = table
+                    .cols()
+                    .iter_deref()
+                    .find(|column| column.read().id == id)
+                {
+                    names.push(column.read().name.original().to_owned());
+                }
+            }
+            AnalyzeColumnChoice::Explicit(names)
+        }
+        _ => AnalyzeColumnChoice::Default,
+    };
+    Ok(Some(PersistedAnalyzeOptions { raw, columns }))
+}
+
+/// Plans pinned Go `saveAnalyzeOptions` for one physical table.
+pub fn plan_analyze_options_write<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    table: &TableInfo,
+    physical_id: i64,
+    raw: AnalyzeOptionOverrides,
+    columns: &AnalyzeColumnChoice,
+    now: Time,
+) -> Result<StatsWritePlan, StatsWriteError> {
+    let stored = locate(catalog, "analyze_options")?;
+    let mut rows = StatsRows::open(snapshot, stored, &["table_id"], physical_id)?;
+    let identity = vec![format!("{:?}", Datum::Int(physical_id))];
+    let mut values = rows
+        .existing_values(&identity)
+        .cloned()
+        .unwrap_or(defaults_row(stored, now)?);
+    set(stored, &mut values, "table_id", Datum::Int(physical_id));
+    set(
+        stored,
+        &mut values,
+        "sample_num",
+        Datum::Int(raw.num_samples.map_or(0, |value| value as i64)),
+    );
+    set(
+        stored,
+        &mut values,
+        "sample_rate",
+        Datum::Real(raw.sample_rate.unwrap_or(0.0)),
+    );
+    set(
+        stored,
+        &mut values,
+        "buckets",
+        Datum::Int(raw.num_buckets.map_or(0, |value| value as i64)),
+    );
+    set(
+        stored,
+        &mut values,
+        "topn",
+        Datum::Int(raw.num_topn.map_or(-1, |value| value as i64)),
+    );
+    let (choice, ids) = match columns {
+        AnalyzeColumnChoice::Default => ("DEFAULT", String::new()),
+        AnalyzeColumnChoice::All => ("ALL", String::new()),
+        AnalyzeColumnChoice::Predicate => ("PREDICATE", String::new()),
+        AnalyzeColumnChoice::Explicit(names) => {
+            let ids = names
+                .iter()
+                .filter_map(|name| {
+                    table
+                        .cols()
+                        .iter_deref()
+                        .find(|column| column.read().name.lowercase() == name.to_lowercase())
+                        .map(|column| column.read().id.to_string())
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            ("LIST", ids)
+        }
+    };
+    set(
+        stored,
+        &mut values,
+        "column_choice",
+        Datum::Bytes(choice.as_bytes().to_vec()),
+    );
+    set(
+        stored,
+        &mut values,
+        "column_ids",
+        Datum::Bytes(ids.into_bytes()),
+    );
+    let mut plan = StatsWritePlan::default();
+    rows.store(snapshot, catalog, &values, &mut plan)?;
+    rows.publish_watermark(catalog, &mut plan)?;
+    Ok(plan)
 }
 
 /// Plans the write of one table's statistics.
