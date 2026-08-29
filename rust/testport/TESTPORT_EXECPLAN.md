@@ -170,6 +170,13 @@ For each bounded behavior cluster:
   reflection-order merge behavior; removed a Rust-owned external metering SDK
   parser and a stale absent-at-pin gap. Both default and nextgen package
   matrices pass; the atomic inventory and gates are in `receipts/b001.md`.
+- 2026-08-28: audited the complete three-artifact pinned
+  `pkg/config/configtypes` package independently from root `pkg/config`.
+  Removed public Rust APIs that actually modeled `docker/go-units` and Go's
+  `time` package, removed a duplicate source-test carrier, restored the pinned
+  dependency's full numeric grammar, and made duration overflow handling match
+  the Go standard library. The Go package, Rust owner, and downstream log and
+  server boundaries pass as recorded in `receipts/config_configtypes.md`.
 - 2026-08-28: audited every production, generated catalog/table, test,
   harness, and build file in pinned Go `pkg/parser/mysql`, including its
   `tidb-error` ownership split. Removed a Rust-only test that failed on host Go

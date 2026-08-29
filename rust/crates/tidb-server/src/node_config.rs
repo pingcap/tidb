@@ -30,7 +30,6 @@ use std::time::Duration;
 use base64::engine::general_purpose::URL_SAFE;
 use base64::Engine;
 use tidb_config::config_tree::Config as SourceConfig;
-use tidb_config::configtypes::parse_go_duration;
 use tidb_config::{deploymode, kerneltype};
 use tidb_pd_client::ClusterSecurity;
 use tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET;
@@ -452,8 +451,15 @@ fn collect_toml_leaves(table: &toml::Table, prefix: &str, leaves: &mut BTreeSet<
 }
 
 fn parse_file_schema_lease(value: &str) -> Result<Duration, NodeConfigError> {
-    let nanos = parse_go_duration(value)
-        .or_else(|_| parse_go_duration(&format!("{value}s")))
+    let parse = |value: &str| {
+        serde_json::from_value::<tidb_config::configtypes::Duration>(serde_json::Value::String(
+            value.to_owned(),
+        ))
+        .map(|duration| duration.0)
+        .map_err(|error| error.to_string())
+    };
+    let nanos = parse(value)
+        .or_else(|_| parse(&format!("{value}s")))
         .map_err(|reason| invalid("lease", &reason))?;
     if nanos < 0 {
         return Err(invalid("lease", "value must not be negative"));

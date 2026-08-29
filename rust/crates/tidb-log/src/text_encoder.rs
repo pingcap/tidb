@@ -340,7 +340,9 @@ fn append_value(out: &mut String, v: &Value) {
             add_element_separator(out);
             append_string_with_quote(
                 out,
-                tidb_config::configtypes::format_go_duration(*ns).as_bytes(),
+                tidb_config::configtypes::Duration(*ns)
+                    .to_string()
+                    .as_bytes(),
             );
         }
         Value::Binary(bytes) => {
@@ -669,7 +671,9 @@ fn append_json_value(out: &mut String, value: &Value) {
         }
         Value::Duration(value) => append_json_string(
             out,
-            tidb_config::configtypes::format_go_duration(*value).as_bytes(),
+            tidb_config::configtypes::Duration(*value)
+                .to_string()
+                .as_bytes(),
         ),
         Value::Binary(value) => append_json_string(out, base64_std(value).as_bytes()),
         Value::ByteString(value) => append_json_string(out, value),
