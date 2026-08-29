@@ -2600,6 +2600,26 @@ impl Session {
                 if show.kind == tidb_ast::ShowInspectionKind::StatsHealthy {
                     return self.stats_healthy_stmt(show.filter.as_ref()).map(Some);
                 }
+                if show.kind == tidb_ast::ShowInspectionKind::HistogramsInFlight {
+                    let (like_pattern, where_clause) = match show.filter.as_ref() {
+                        None => (None, None),
+                        Some(tidb_ast::ShowInspectionFilter::Like(expr)) => {
+                            let value = datum_text(&self.eval_value(expr)?);
+                            (Some(ShowLikePattern::from_expr(expr, value, true)), None)
+                        }
+                        Some(tidb_ast::ShowInspectionFilter::Where(expr)) => (None, Some(expr)),
+                    };
+                    let count = self
+                        .with_catalog_mut(|catalog| Ok(catalog.clean_needed_statistics_items()))?;
+                    let output = StmtOutput::Rows {
+                        columns: vec![(
+                            "HistogramsInFlight".to_owned(),
+                            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                        )],
+                        rows: vec![tidb_executor::show_stats::histograms_in_flight_row(count)],
+                    };
+                    return filter_show_output(output, like_pattern, where_clause).map(Some);
+                }
                 if show.kind != tidb_ast::ShowInspectionKind::ProcessList {
                     return Ok(None);
                 }

@@ -2268,3 +2268,17 @@ fn show_stats_histograms_matches_the_pinned_go_rows() {
         assert_eq!(total, histogram + topn + cms);
     }
 }
+
+/// Pinned Go `fetchShowHistogramsInFlight` always emits its one counter row,
+/// even when the global needed-item set is empty.
+#[test]
+fn show_histograms_in_flight_emits_the_shared_queue_count() {
+    let mut session = Session::new();
+    assert_eq!(
+        row_text(session.run("SHOW HISTOGRAMS_IN_FLIGHT")),
+        vec![vec!["0"]]
+    );
+    assert!(
+        row_text(session.run("SHOW HISTOGRAMS_IN_FLIGHT WHERE HistogramsInFlight > 0")).is_empty()
+    );
+}

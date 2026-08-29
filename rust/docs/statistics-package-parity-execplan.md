@@ -21,6 +21,7 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - [x] (2026-08-29) Wired `SHOW STATS_TOPN` through production table/index metadata and the session-aware `ValueToString` equivalent, including hidden-column-capable index type lookup.
 - [x] (2026-08-29) Wired `SHOW STATS_BUCKETS` through the same production traversal and decoder, preserving cumulative count, repeat, bounds, and bucket NDV.
 - [x] (2026-08-29) Wired `SHOW STATS_HISTOGRAMS` through the shared statistics cache, including initialized-state filtering, average column size, load status, and live histogram/TopN/CMS memory usage.
+- [x] (2026-08-29) Wired `SHOW HISTOGRAMS_IN_FLIGHT` to the shared needed-item set and Go's cache-state cleanup semantics.
 - [ ] Wire all pinned Go `SHOW STATS_*` surfaces to the shared cache and storage semantics.
 - [ ] Inventory every production file, platform/generated variant, original test/support artifact, fixture, and validation gate in pinned `pkg/statistics`; close or explicitly retain seed-only gaps until the whole package is complete.
 - [ ] Run the Ready validation profile, including `make lint`, only after the complete package inventory is closed.
@@ -59,6 +60,9 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 
 - Observation: Rust already aggregated column/index memory like Go, but histogram bytes were a caller-injected field that every production construction boundary discarded.
   Evidence: the full `Column`/`Index` types had `MemoryUsage`, while cluster-loaded and in-process planner statistics retained only the histogram, TopN, and CMS payloads. Moving measurement onto `Histogram` makes all ordinary construction paths report the resident payload without a SHOW-specific cache.
+
+- Observation: `SHOW HISTOGRAMS_IN_FLIGHT` is not a thread counter. Go sweeps its global needed-item set against current cache load state and counts only entries that still require loading.
+  Evidence: pinned `CleanFakeItemsForShowHistInFlights` deletes missing tables and already-satisfied column/index items before returning the count.
 
 ## Decision Log
 
@@ -146,3 +150,5 @@ Revision note (2026-08-29): wired `SHOW STATS_TOPN` and verified the pinned inte
 Revision note (2026-08-29): wired `SHOW STATS_BUCKETS` and verified the pinned single-value row under `WITH 0 TOPN`.
 
 Revision note (2026-08-29): wired `SHOW STATS_HISTOGRAMS`, removed caller-injected histogram-memory fields, and verified initialized column/index rows plus memory-component totals through the SQL path.
+
+Revision note (2026-08-29): added the shared needed-item lifecycle and wired `SHOW HISTOGRAMS_IN_FLIGHT`; delayed-load coverage observes one live item and then zero after worker cleanup.

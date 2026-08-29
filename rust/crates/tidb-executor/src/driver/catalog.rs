@@ -104,6 +104,7 @@ pub trait StatisticsItemLoader: Send + Sync {
 struct StatisticsCache {
     values: std::sync::RwLock<HashMap<i64, Arc<crate::access_cost::TableStatistics>>>,
     loader: std::sync::RwLock<Option<Arc<dyn StatisticsItemLoader>>>,
+    needed_items: std::sync::Mutex<HashMap<tidb_model::TableItemID, bool>>,
 }
 
 impl std::fmt::Debug for StatisticsCache {
@@ -1268,6 +1269,28 @@ impl Catalog {
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(loader);
     }
 
+    /// Go `storage.CleanFakeItemsForShowHistInFlights`: remove queue entries
+    /// whose cache state no longer requires a load and return the number that
+    /// remain genuinely needed.
+    pub fn clean_needed_statistics_items(&self) -> i64 {
+        let mut items = self
+            .statistics
+            .needed_items
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        items.retain(|item, full_load| {
+            let Some(statistics) = self.table_statistics(item.table_id) else {
+                return false;
+            };
+            if item.is_index {
+                statistics.index_is_load_needed(item.id)
+            } else {
+                statistics.column_is_load_needed(item.id, *full_load)
+            }
+        });
+        i64::try_from(items.len()).unwrap_or(i64::MAX)
+    }
+
     fn statistics_load_items(
         &self,
         usage: &tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage,
@@ -1481,6 +1504,19 @@ impl Catalog {
         let Some(loader) = loader else {
             return Ok(());
         };
+        {
+            let mut needed = self
+                .statistics
+                .needed_items
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            for item in &items {
+                needed
+                    .entry(item.table_item_id)
+                    .and_modify(|full_load| *full_load |= item.full_load)
+                    .or_insert(item.full_load);
+            }
+        }
         let cache = Arc::clone(&self.statistics);
         let resource_group = context.resource_group_name().to_owned();
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
@@ -1493,6 +1529,15 @@ impl Catalog {
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
                 for (table_id, statistics) in tables {
                     values.insert(*table_id, Arc::clone(statistics));
+                }
+            }
+            {
+                let mut needed = cache
+                    .needed_items
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                for item in &items {
+                    needed.remove(&item.table_item_id);
                 }
             }
             let _ = sender.send(loaded.map(|_| ()));
@@ -2210,6 +2255,37 @@ mod statistics_request_tests {
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].1, 1105);
         assert_eq!(warnings[0].2, "sync load stats timeout");
+    }
+
+    #[test]
+    fn histograms_in_flight_cleans_completed_statistics_items() {
+        let (mut catalog, table_id, column_id) = analyzed_lite_catalog();
+        catalog.set_statistics_item_loader(Arc::new(RecordingLoader {
+            delay: std::time::Duration::from_millis(40),
+            ..RecordingLoader::default()
+        }));
+        let usage = tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage {
+            predicate_columns: [(
+                tidb_model::TableItemID {
+                    table_id,
+                    id: column_id,
+                    is_index: false,
+                    is_sync_load_failed: false,
+                },
+                true,
+            )]
+            .into_iter()
+            .collect(),
+            ..Default::default()
+        };
+        let context = crate::StmtContext::for_query().with_stats_load_policy(0, true, 0);
+
+        catalog
+            .request_statistics_load(&usage, &context)
+            .expect("start asynchronous load");
+        assert_eq!(catalog.clean_needed_statistics_items(), 1);
+        std::thread::sleep(std::time::Duration::from_millis(80));
+        assert_eq!(catalog.clean_needed_statistics_items(), 0);
     }
 
     #[test]
