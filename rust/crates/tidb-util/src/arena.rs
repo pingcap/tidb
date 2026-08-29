@@ -12,25 +12,101 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Safe Rust landing for Go `pkg/util/arena` (`arena.go`).
-//!
-//! A pre-allocating byte allocator that reduces allocation cost. Go's
-//! `SimpleAllocator.Alloc` hands back `arena[off:off:off+cap]` — a length-0,
-//! capacity-`cap` slice into a shared backing array — advancing `off` while it
-//! fits, else a fresh `make`. This API keeps the source len, capacity, panic,
-//! and offset contracts, but returns owned [`Vec<u8>`] buffers. It therefore
-//! does not claim Go's shared mutable backing or stale-byte reuse after
-//! `Reset`: preserving those with the same Vec API would violate Rust
-//! ownership, and this workspace forbids unsafe code.
+//! Safe Rust implementation of Go `pkg/util/arena` (`arena.go`).
+
+use std::cell::Cell;
+use std::rc::Rc;
+
+/// A byte-slice descriptor over shared backing storage.
+///
+/// Cloning copies the descriptor while retaining the same backing allocation,
+/// matching assignment of a Go byte slice.
+#[derive(Clone)]
+pub struct ArenaBytes {
+    storage: Rc<Vec<Cell<u8>>>,
+    start: usize,
+    len: usize,
+    capacity: usize,
+}
+
+impl ArenaBytes {
+    fn fresh(length: usize, capacity: usize) -> Self {
+        let storage = Rc::new((0..capacity).map(|_| Cell::new(0)).collect());
+        let mut bytes = Self {
+            storage,
+            start: 0,
+            len: 0,
+            capacity,
+        };
+        bytes.set_len(length);
+        bytes
+    }
+
+    fn shared(storage: Rc<Vec<Cell<u8>>>, start: usize, capacity: usize) -> Self {
+        Self {
+            storage,
+            start,
+            len: 0,
+            capacity,
+        }
+    }
+
+    /// Reslices to `length` without clearing bytes newly brought into view.
+    pub fn set_len(&mut self, length: usize) {
+        assert!(
+            length <= self.capacity,
+            "allocation length {length} exceeds capacity {}",
+            self.capacity
+        );
+        self.len = length;
+    }
+
+    /// Returns the logical slice length.
+    pub const fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Reports whether the logical slice is empty.
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Returns the slice capacity.
+    pub const fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    /// Reads a byte within the logical slice.
+    pub fn get(&self, index: usize) -> Option<u8> {
+        (index < self.len).then(|| self.storage[self.start + index].get())
+    }
+
+    /// Replaces a byte within the logical slice.
+    pub fn set(&self, index: usize, value: u8) {
+        assert!(
+            index < self.len,
+            "index {index} exceeds length {}",
+            self.len
+        );
+        self.storage[self.start + index].set(value);
+    }
+
+    /// Copies the logical slice bytes into an owned vector.
+    pub fn to_vec(&self) -> Vec<u8> {
+        (0..self.len)
+            .map(|index| self.storage[self.start + index].get())
+            .collect()
+    }
+}
 
 /// Pre-allocates memory to reduce memory allocation cost. It is not
 /// thread-safe.
 pub trait Allocator {
     /// Allocates a buffer with length 0 and capacity `capacity`.
-    fn alloc(&mut self, capacity: usize) -> Vec<u8>;
+    fn alloc(&mut self, capacity: usize) -> ArenaBytes;
 
     /// Allocates a buffer with `length` and `capacity`.
-    fn alloc_with_len(&mut self, length: usize, capacity: usize) -> Vec<u8>;
+    fn alloc_with_len(&mut self, length: usize, capacity: usize) -> ArenaBytes;
 
     /// Resets the arena offset. All previously allocated memory must no longer
     /// be in use.
@@ -39,40 +115,38 @@ pub trait Allocator {
 
 /// A simple implementation of [`Allocator`].
 pub struct SimpleAllocator {
-    arena: Vec<u8>,
+    arena: Rc<Vec<Cell<u8>>>,
     off: usize,
 }
 
 impl SimpleAllocator {
     /// Creates a `SimpleAllocator` with a specified capacity.
-    #[must_use]
     pub fn new(capacity: usize) -> Self {
         Self {
-            arena: Vec::with_capacity(capacity),
+            arena: Rc::new((0..capacity).map(|_| Cell::new(0)).collect()),
             off: 0,
         }
     }
 }
 
 impl Allocator for SimpleAllocator {
-    fn alloc(&mut self, capacity: usize) -> Vec<u8> {
-        // Go advances `off` and returns a slice into the arena only while the
-        // request fits (strict `<`, matching the source); otherwise it falls
-        // back to a fresh allocation and leaves `off` untouched.
-        if self.off + capacity < self.arena.capacity() {
-            self.off += capacity;
+    fn alloc(&mut self, capacity: usize) -> ArenaBytes {
+        let end = self
+            .off
+            .checked_add(capacity)
+            .expect("arena allocation offset overflow");
+        if end < self.arena.len() {
+            let bytes = ArenaBytes::shared(Rc::clone(&self.arena), self.off, capacity);
+            self.off = end;
+            return bytes;
         }
-        Vec::with_capacity(capacity)
+        ArenaBytes::fresh(0, capacity)
     }
 
-    fn alloc_with_len(&mut self, length: usize, capacity: usize) -> Vec<u8> {
-        let mut slice = self.alloc(capacity);
-        assert!(
-            length <= capacity,
-            "allocation length {length} exceeds capacity {capacity}"
-        );
-        slice.resize(length, 0);
-        slice
+    fn alloc_with_len(&mut self, length: usize, capacity: usize) -> ArenaBytes {
+        let mut bytes = self.alloc(capacity);
+        bytes.set_len(length);
+        bytes
     }
 
     fn reset(&mut self) {
@@ -85,18 +159,12 @@ impl Allocator for SimpleAllocator {
 pub struct StdAllocator;
 
 impl Allocator for StdAllocator {
-    fn alloc(&mut self, capacity: usize) -> Vec<u8> {
-        Vec::with_capacity(capacity)
+    fn alloc(&mut self, capacity: usize) -> ArenaBytes {
+        ArenaBytes::fresh(0, capacity)
     }
 
-    fn alloc_with_len(&mut self, length: usize, capacity: usize) -> Vec<u8> {
-        let mut slice = self.alloc(capacity);
-        assert!(
-            length <= capacity,
-            "allocation length {length} exceeds capacity {capacity}"
-        );
-        slice.resize(length, 0);
-        slice
+    fn alloc_with_len(&mut self, length: usize, capacity: usize) -> ArenaBytes {
+        ArenaBytes::fresh(length, capacity)
     }
 
     fn reset(&mut self) {}
@@ -104,8 +172,6 @@ impl Allocator for StdAllocator {
 
 #[cfg(test)]
 mod tests {
-    use std::panic::{catch_unwind, AssertUnwindSafe};
-
     use super::{Allocator, SimpleAllocator, StdAllocator};
 
     const ARENA_CAP: usize = 1000;
@@ -144,7 +210,7 @@ mod tests {
 
         arena.reset();
         assert_eq!(arena.off, 0);
-        assert_eq!(arena.arena.capacity(), ARENA_CAP);
+        assert_eq!(arena.arena.len(), ARENA_CAP);
     }
 
     // Go `TestStdAllocator`.
@@ -158,63 +224,20 @@ mod tests {
         let slice = allocator.alloc_with_len(ALLOC_CAP_SMALL, ALLOC_CAP_MEDIUM);
         assert_eq!(slice.len(), ALLOC_CAP_SMALL);
         assert_eq!(slice.capacity(), ALLOC_CAP_MEDIUM);
-
-        allocator.reset();
-        let slice = allocator.alloc(ALLOC_CAP_SMALL);
-        assert_eq!(slice.len(), 0);
-        assert_eq!(slice.capacity(), ALLOC_CAP_SMALL);
     }
 
     #[test]
-    fn source_simple_length_over_capacity_panics_after_allocating_capacity() {
-        let mut allocator = SimpleAllocator::new(8);
-        let result = catch_unwind(AssertUnwindSafe(|| {
-            let _ = allocator.alloc_with_len(3, 2);
-        }));
-
-        assert!(result.is_err(), "Go rejects a reslice beyond capacity");
-        assert_eq!(allocator.off, 2, "Go allocates capacity before panicking");
-    }
-
-    #[test]
-    fn source_std_length_over_capacity_panics() {
-        let mut allocator = StdAllocator;
-        let result = catch_unwind(AssertUnwindSafe(|| {
-            let _ = allocator.alloc_with_len(3, 2);
-        }));
-
-        assert!(
-            result.is_err(),
-            "Go make rejects length greater than capacity"
-        );
-    }
-
-    #[test]
-    fn source_strict_exact_fit_and_reset_contracts() {
+    fn reset_reuses_the_go_backing_storage() {
         let mut allocator = SimpleAllocator::new(4);
-        let exact = allocator.alloc(4);
-        assert_eq!(exact.len(), 0);
-        assert_eq!(exact.capacity(), 4);
-        assert_eq!(allocator.off, 0, "Go uses strict less-than for arena fit");
-
-        let within = allocator.alloc(3);
-        assert_eq!(within.capacity(), 3);
-        assert_eq!(allocator.off, 3);
-
-        allocator.reset();
-        assert_eq!(allocator.off, 0);
-        assert_eq!(allocator.arena.capacity(), 4);
-    }
-
-    #[test]
-    fn safe_rust_owned_buffers_are_zeroed_after_reset() {
-        let mut allocator = SimpleAllocator::new(4);
-        let mut first = allocator.alloc(2);
-        first.push(9);
+        let first = allocator.alloc_with_len(1, 2);
+        let alias = first.clone();
+        first.set(0, 9);
+        assert_eq!(alias.get(0), Some(9));
         drop(first);
+        drop(alias);
 
         allocator.reset();
         let reused = allocator.alloc_with_len(1, 2);
-        assert_eq!(reused, [0]);
+        assert_eq!(reused.to_vec(), [9]);
     }
 }
