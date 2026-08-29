@@ -36,6 +36,7 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - [x] (2026-08-29) Ported the parent cache's atomic wrapper, ordered metadata refresh, batched publication, cancellation, targeted-update version policy, health gauges, and histogram-version-aware reuse; made the cluster storage image construct the canonical full `statistics.Table` before deriving the planner view.
 - [x] (2026-08-29) Ported `StatsTableRowCache`: atomic two-query map updates, negative column-size clamping, fixed/variable column accounting, local/global partition-index rules, sequence row-count policy, and exact ID predicate construction.
 - [x] (2026-08-29) Wired the row cache to the cluster statistics snapshot and removed the hard-coded-zero `information_schema.tables` divergence for analyzed tables.
+- [x] (2026-08-29) Removed the live cache's reduced `ClusterTableStats` authority: bootstrap, refresh, sync load, planner derivation, and row-cache reads now share canonical full `statistics.Table` objects like Go.
 - [ ] Wire all pinned Go `SHOW STATS_*` surfaces to the shared cache and storage semantics.
 - [ ] Inventory every production file, platform/generated variant, original test/support artifact, fixture, and validation gate in pinned `pkg/statistics`; close or explicitly retain seed-only gaps until the whole package is complete.
 - [ ] Run the Ready validation profile, including `make lint`, only after the complete package inventory is closed.
@@ -119,6 +120,9 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - Observation: Rust's `information_schema.tables` documentation explicitly fixed statistics sizes at the never-analyzed zero fallback, while pinned Go refreshes a separate process-wide `StatsTableRowCache` only when a requested projection needs its four size columns.
   Evidence: pinned `infoschema_reader.go` calls `UpdateByID` for table and partition IDs, including the logical table for global-index size, before calling `EstimateDataLength`.
   Evidence: the session global publisher updated the two ANALYZE atomics only; the new `vardef::STATS_CACHE_MEM_QUOTA` is populated from the same resolved global image before `StatsCache::new` reads it.
+
+- Observation: the live Rust cache still published decoded `ClusterTableStats` storage rows after the parent cache crate had been taught to own full tables. That made sync loading replace storage DTOs and forced every planner/catalog consumer to reconstruct another full table.
+  Evidence: pinned `StatsCacheImpl.Update` and `statsSyncLoad.updateCachedItem` both publish `*statistics.Table`; `TableStatsState::Loaded` now carries that same canonical Rust object and `ClusterTableStats` remains only at storage decode/write boundaries.
 
 ## Decision Log
 
@@ -244,3 +248,5 @@ Revision note (2026-08-29): ported the pinned parent cache's `StatsCacheImpl`, `
 Revision note (2026-08-29): ported the complete pinned `stats_table_row_cache.go` behavior into the parent cache crate. Focused tests cover all-or-nothing two-read updates, negative-size clamping, missing-key zeros, exact ID SQL predicate text, fixed and variable columns, partition row aggregation, and the split between table-level global indexes and partition-level local indexes. The cache's executor-facing restricted-read adapter and `information_schema` consumption remain integration work, so this source completion does not yet close the parent package claim.
 
 Revision note (2026-08-29): completed the row-cache consumer path. A cluster catalog image now refreshes the process-wide cache from the same loaded `stats_meta` and column-histogram image, includes logical and physical partition IDs, computes the four Go size values from the original `TableInfo`, and carries them into `information_schema.tables`. The production regression observes `TABLE_ROWS=3000065`, `AVG_ROW_LENGTH=24`, `DATA_LENGTH=72001560`, and `INDEX_LENGTH=0` instead of the previous documented zeros. Parent-package closure still depends on replacing the parallel `StatsSnapshot` full-table ownership path with `StatsCacheImpl`.
+
+Revision note (2026-08-29): replaced `StatsSnapshot`'s decoded storage-row payload with canonical `tidb_stats::Table` objects. Lite bootstrap converts once at the storage boundary; periodic refresh copies the canonical column/index maps and preserves or reloads resident payload according to pinned `TableStatsFromStorage`; sync load uses `ColumnMapWritable`/`IndexMapWritable`; planner and `information_schema` consumers read the same table object. The remaining parent-cache closure is to make the live owner itself `StatsCacheImpl` rather than the snapshot publisher.

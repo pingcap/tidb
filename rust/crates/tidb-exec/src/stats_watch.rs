@@ -13,7 +13,7 @@
 // limitations under the License.
 
 //! The statistics supply line into a node: a shared, atomically swapped table
-//! of [`ClusterTableStats`](crate::cluster_stats_load::ClusterTableStats),
+//! of canonical [`tidb_stats::Table`] values,
 //! plumbing only -- no estimation logic lives here.
 //!
 //! # Shape
@@ -41,7 +41,7 @@
 //!   rather than inventing a zero-row histogram, so the estimator (a parallel
 //!   unit) can make the same fallback decision Go makes.
 //! * [`TableStatsState::Loaded`]: real statistics, current as of
-//!   `ClusterTableStats::version`.
+//!   `tidb_stats::Table::version`.
 //!
 //! # Refresh cadence
 //!
@@ -62,7 +62,8 @@ use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use crate::cluster_stats_load::{ClusterStatsItem, ClusterTableStats};
+use crate::cluster_stats_load::ClusterStatsItem;
+use tidb_stats::{Column, CopyIntent, Index, Table};
 
 /// One table's statistics state, as this node currently knows it.
 ///
@@ -74,8 +75,8 @@ pub enum TableStatsState {
     /// analyzed. Not the same as a table with zero rows analyzed -- that
     /// table would have a `stats_meta` row and simply no histograms.
     Pseudo,
-    /// Loaded statistics, current as of `ClusterTableStats::version`.
-    Loaded(Arc<ClusterTableStats>),
+    /// Loaded statistics, current as of `Table::version`.
+    Loaded(Arc<Table>),
 }
 
 impl TableStatsState {
@@ -91,7 +92,7 @@ impl TableStatsState {
 
     /// The loaded statistics, when this table is not pseudo.
     #[must_use]
-    pub fn loaded(&self) -> Option<&Arc<ClusterTableStats>> {
+    pub fn loaded(&self) -> Option<&Arc<Table>> {
         match self {
             Self::Pseudo => None,
             Self::Loaded(stats) => Some(stats),
@@ -183,28 +184,80 @@ impl SharedStats {
         let Some(TableStatsState::Loaded(current)) = guard.get(&table_id) else {
             return false;
         };
-        let items = if item.is_index {
-            &current.indexes
+        let full_loaded = item.load_status.is_full_load();
+        let mut table = current.copy_as(if item.is_index {
+            CopyIntent::IndexMapWritable
         } else {
-            &current.columns
-        };
-        if let Some(existing) = items.iter().find(|existing| existing.id == item.id) {
-            if existing.load_status.is_full_load() || !item.load_status.is_full_load() {
+            CopyIntent::ColumnMapWritable
+        });
+        if item.is_index {
+            let Some(existing) = current.hist_coll.get_index(item.id) else {
+                return false;
+            };
+            let existing = existing
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            // Go returns true for an already-satisfied index request even
+            // though it does not publish another table.
+            if existing.is_full_load() || !full_loaded {
+                return true;
+            }
+            table.hist_coll.set_index(
+                item.id,
+                Index {
+                    cmsketch: item.cms,
+                    top_n: item.topn,
+                    fm_sketch: None,
+                    info: existing.info.clone(),
+                    histogram: item.histogram,
+                    stats_loaded_status: item.load_status,
+                    stats_version: item.stats_ver,
+                    physical_id: existing.physical_id,
+                },
+            );
+            if item.stats_ver > 0 {
+                if let Some(existence) = &table.existence_map {
+                    existence
+                        .write()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .insert_index(item.id, true);
+                }
+                table.hist_coll.stats_version = i32::try_from(item.stats_ver).unwrap_or(i32::MAX);
+            }
+        } else {
+            let Some(existing) = current.hist_coll.get_column(item.id) else {
+                return false;
+            };
+            let existing = existing
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if existing.is_full_load() || !full_loaded {
                 return false;
             }
-        }
-
-        let mut table = current.as_ref().clone();
-        let items = if item.is_index {
-            &mut table.indexes
-        } else {
-            &mut table.columns
-        };
-        match items.iter().position(|existing| existing.id == item.id) {
-            Some(position) => items[position] = item,
-            None => {
-                items.push(item);
-                items.sort_by_key(|item| item.id);
+            let available =
+                item.stats_ver != 0 || item.histogram.ndv > 0 || item.histogram.null_count > 0;
+            table.hist_coll.set_column(
+                item.id,
+                Column {
+                    cmsketch: item.cms,
+                    top_n: item.topn,
+                    fm_sketch: None,
+                    info: existing.info.clone(),
+                    histogram: item.histogram,
+                    stats_loaded_status: item.load_status,
+                    physical_id: existing.physical_id,
+                    stats_version: item.stats_ver,
+                    is_handle: existing.is_handle,
+                },
+            );
+            if let Some(existence) = &table.existence_map {
+                existence
+                    .write()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .insert_column(item.id, available);
+            }
+            if item.stats_ver > 0 {
+                table.hist_coll.stats_version = i32::try_from(item.stats_ver).unwrap_or(i32::MAX);
             }
         }
         let mut snapshot = guard.as_ref().clone();
@@ -442,21 +495,21 @@ mod tests {
     use std::time::Instant;
 
     use tidb_stats::histogram::Histogram;
+    use tidb_stats::{HistColl, Table};
 
     use super::*;
 
     fn loaded_at(table_id: i64, version: u64) -> (i64, TableStatsState) {
         (
             table_id,
-            TableStatsState::Loaded(Arc::new(ClusterTableStats {
-                table_id,
+            TableStatsState::Loaded(Arc::new(Table {
+                existence_map: None,
+                hist_coll: HistColl::new(table_id, 0, 0, 0, 0),
                 version,
-                snapshot: 0,
                 last_analyze_version: 0,
-                modify_count: 0,
-                row_count: 0,
-                columns: Vec::new(),
-                indexes: Vec::new(),
+                last_stats_hist_version: 0,
+                table_info_update_ts: 0,
+                is_pk_handle: false,
             })),
         )
     }
@@ -492,11 +545,26 @@ mod tests {
 
     #[test]
     fn sync_load_replaces_only_the_evicted_item_without_mutating_held_snapshots() {
-        let mut table = match loaded_at(1, 42).1 {
+        let table = match loaded_at(1, 42).1 {
             TableStatsState::Loaded(table) => table.as_ref().clone(),
             TableStatsState::Pseudo => unreachable!(),
         };
-        table.columns = vec![item(1, tidb_stats::StatsLoadedStatus::all_evicted())];
+        let evicted = item(1, tidb_stats::StatsLoadedStatus::all_evicted());
+        table.hist_coll.set_column(
+            1,
+            Column {
+                info: Some(tidb_stats::ColumnInfo {
+                    id: 1,
+                    name: "a".to_owned(),
+                    primary_key: false,
+                }),
+                histogram: evicted.histogram,
+                stats_loaded_status: evicted.load_status,
+                stats_version: evicted.stats_ver,
+                physical_id: 1,
+                ..Column::default()
+            },
+        );
         let shared = SharedStats::new(StatsSnapshot::from([(
             1,
             TableStatsState::Loaded(Arc::new(table)),
@@ -504,15 +572,33 @@ mod tests {
         let held = shared.load();
 
         assert!(shared.update_item(1, item(1, tidb_stats::StatsLoadedStatus::full_load())));
-        assert!(held[&1].loaded().unwrap().columns[0]
-            .load_status
+        assert!(held[&1]
+            .loaded()
+            .unwrap()
+            .hist_coll
+            .get_column(1)
+            .unwrap()
+            .read()
+            .unwrap()
             .is_all_evicted());
-        assert!(shared.load()[&1].loaded().unwrap().columns[0]
-            .load_status
+        assert!(shared.load()[&1]
+            .loaded()
+            .unwrap()
+            .hist_coll
+            .get_column(1)
+            .unwrap()
+            .read()
+            .unwrap()
             .is_full_load());
         assert!(!shared.update_item(1, item(1, tidb_stats::StatsLoadedStatus::all_evicted())));
-        assert!(shared.load()[&1].loaded().unwrap().columns[0]
-            .load_status
+        assert!(shared.load()[&1]
+            .loaded()
+            .unwrap()
+            .hist_coll
+            .get_column(1)
+            .unwrap()
+            .read()
+            .unwrap()
             .is_full_load());
     }
 
@@ -541,33 +627,36 @@ mod tests {
     #[test]
     fn a_histogram_carrying_table_still_reports_its_version() {
         // Guards against the receipt/version accessors only ever having been
-        // exercised on an empty `ClusterTableStats`.
-        let stats = ClusterTableStats {
-            table_id: 9,
-            version: 42,
-            snapshot: 42,
-            last_analyze_version: 42,
-            modify_count: 3,
-            row_count: 100,
-            columns: vec![crate::cluster_stats_load::ClusterStatsItem {
-                id: 1,
-                is_index: false,
-                stats_ver: 2,
-                flag: 0,
-                load_status: tidb_stats::StatsLoadedStatus::full_load(),
+        // exercised on an empty canonical table.
+        let hist_coll = HistColl::new(9, 100, 3, 1, 0);
+        hist_coll.set_column(
+            1,
+            Column {
+                info: Some(tidb_stats::ColumnInfo {
+                    id: 1,
+                    name: "a".to_owned(),
+                    primary_key: false,
+                }),
                 histogram: Histogram {
                     id: 1,
                     ndv: 10,
-                    null_count: 0,
                     last_update_version: 42,
-                    tot_col_size: 0,
-                    correlation: 0.0,
-                    buckets: Vec::new(),
+                    ..Histogram::default()
                 },
-                topn: None,
-                cms: None,
-            }],
-            indexes: Vec::new(),
+                stats_loaded_status: tidb_stats::StatsLoadedStatus::full_load(),
+                stats_version: 2,
+                physical_id: 9,
+                ..Column::default()
+            },
+        );
+        let stats = Table {
+            existence_map: None,
+            hist_coll,
+            version: 42,
+            last_analyze_version: 42,
+            last_stats_hist_version: 42,
+            table_info_update_ts: 0,
+            is_pk_handle: false,
         };
         let state = TableStatsState::Loaded(Arc::new(stats));
         assert_eq!(state.version(), Some(42));

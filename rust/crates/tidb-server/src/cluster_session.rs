@@ -41,7 +41,6 @@ use tidb_datatype::FieldTypeFlags;
 use tidb_exec::cluster_catalog::ClusterCatalog;
 #[cfg(test)]
 use tidb_exec::cluster_stats_load::ClusterStatsItem;
-use tidb_exec::cluster_stats_load::ClusterTableStats;
 use tidb_exec::stats_watch::{StatsSnapshot, TableStatsState};
 use tidb_executor::access_cost::TableStatistics;
 use tidb_executor::cluster_storage::ClusterTableStorage;
@@ -394,7 +393,7 @@ impl StatsTableRowSource for SnapshotTableRowSource<'_> {
                     .and_then(TableStatsState::loaded)
                     .map(|stats| TableRowCount {
                         table_id: *table_id,
-                        count: stats.row_count,
+                        count: u64::try_from(stats.hist_coll.realtime_count).unwrap_or_default(),
                     })
             })
             .collect())
@@ -405,10 +404,15 @@ impl StatsTableRowSource for SnapshotTableRowSource<'_> {
             .iter()
             .filter_map(|table_id| self.stats.get(table_id).and_then(TableStatsState::loaded))
             .flat_map(|stats| {
-                stats.columns.iter().map(|column| ColumnLength {
-                    table_id: stats.table_id,
-                    histogram_id: column.id,
-                    total_size: column.histogram.tot_col_size,
+                stats.hist_coll.stable_columns().into_iter().map(|column| {
+                    let column = column
+                        .read()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    ColumnLength {
+                        table_id: stats.hist_coll.physical_id,
+                        histogram_id: column.item_id(),
+                        total_size: column.histogram.tot_col_size,
+                    }
                 })
             })
             .collect())
@@ -1022,11 +1026,7 @@ const UNSIGNED_FLAG: u32 = 1 << 5;
 /// the other. A histogram whose `hist_id` names no current column or index --
 /// a dropped one whose stats rows have not been GC'd -- is skipped, because
 /// the estimator keys on the live schema.
-pub(crate) fn planner_statistics(stats: &ClusterTableStats, table: &TableInfo) -> TableStatistics {
-    planner_statistics_from_table(stats.to_statistics_table(table).as_ref(), table)
-}
-
-fn planner_statistics_from_table(stats: &tidb_stats::Table, table: &TableInfo) -> TableStatistics {
+pub(crate) fn planner_statistics(stats: &tidb_stats::Table, table: &TableInfo) -> TableStatistics {
     let existence = stats.existence_map.as_ref().map(|map| {
         map.read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -1182,6 +1182,7 @@ mod tests {
     use std::collections::BTreeMap;
     use tidb_ast::CiString;
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+    use tidb_exec::cluster_stats_load::ClusterTableStats;
     use tidb_executor::cluster_storage::{ClusterSnapshot, MutationBuffer, SnapshotPairs};
     use tidb_executor::storage::StorageError;
     use tidb_model::column::{ColumnDefaultValue, ColumnInfo};
@@ -1385,14 +1386,14 @@ mod tests {
             columns: vec![item(1, 3_000_065), item(2, 10), item(3, 3_000_065)],
             indexes: Vec::new(),
         };
-        let translated = planner_statistics(&loaded_stats, &table);
+        let loaded_stats = loaded_stats.to_statistics_table(&table);
+        let translated = planner_statistics(loaded_stats.as_ref(), &table);
         assert!(!translated.pseudo);
         assert_eq!(
             translated.columns.keys().copied().collect::<Vec<_>>(),
             vec![1, 2, 3]
         );
-        let snapshot =
-            StatsSnapshot::from([(table.id, TableStatsState::Loaded(Arc::new(loaded_stats)))]);
+        let snapshot = StatsSnapshot::from([(table.id, TableStatsState::Loaded(loaded_stats))]);
         let (storage, _, _) = cluster_storage();
         let (mut session, skipped) = session_with_cluster_storage(
             &one_table_catalog(table),

@@ -178,74 +178,21 @@ impl ClusterTableStats {
         let mut existence = ColAndIdxExistenceMap::new(self.columns.len(), self.indexes.len());
 
         for item in &self.columns {
-            let metadata = table_info.cols().iter_deref().find_map(|column| {
-                let column = column.read();
-                (column.id == item.id).then(|| {
-                    let primary_key =
-                        column.field_type.flags() & tidb_datatype::FieldTypeFlags::PRI_KEY != 0;
-                    (
-                        ColumnInfo {
-                            id: column.id,
-                            name: column.name.lowercase().to_owned(),
-                            primary_key,
-                        },
-                        table_info.pk_is_handle && primary_key,
-                    )
-                })
-            });
-            let Some((metadata, is_handle)) = metadata else {
+            let Some(column) = item.to_column(self.table_id, table_info) else {
                 continue;
             };
             existence.insert_column(
                 item.id,
                 item.stats_ver != 0 || item.histogram.ndv > 0 || item.histogram.null_count > 0,
             );
-            hist_coll.set_column(
-                item.id,
-                Column {
-                    cmsketch: item.cms.clone(),
-                    top_n: item.topn.clone(),
-                    info: Some(metadata),
-                    histogram: item.histogram.clone(),
-                    stats_loaded_status: item.load_status,
-                    physical_id: self.table_id,
-                    stats_version: item.stats_ver,
-                    is_handle,
-                    ..Column::default()
-                },
-            );
+            hist_coll.set_column(item.id, column);
         }
         for item in &self.indexes {
-            let metadata = table_info.indices.iter_deref().find_map(|index| {
-                let index = index.read();
-                (index.id == item.id).then(|| IndexInfo {
-                    id: index.id,
-                    name: index.name.lowercase().to_owned(),
-                    columns: index
-                        .columns
-                        .iter_deref()
-                        .map(|column| column.read().name.lowercase().to_owned())
-                        .collect(),
-                    mv_index: index.mv_index,
-                })
-            });
-            let Some(metadata) = metadata else {
+            let Some(index) = item.to_index(self.table_id, table_info) else {
                 continue;
             };
             existence.insert_index(item.id, item.stats_ver != 0);
-            hist_coll.set_index(
-                item.id,
-                Index {
-                    cmsketch: item.cms.clone(),
-                    top_n: item.topn.clone(),
-                    info: Some(metadata),
-                    histogram: item.histogram.clone(),
-                    stats_loaded_status: item.load_status,
-                    stats_version: item.stats_ver,
-                    physical_id: self.table_id,
-                    ..Index::default()
-                },
-            );
+            hist_coll.set_index(item.id, index);
         }
 
         Arc::new(Table {
@@ -256,6 +203,63 @@ impl ClusterTableStats {
             last_stats_hist_version: self.last_analyze_version,
             table_info_update_ts: table_info.update_ts,
             is_pk_handle: table_info.pk_is_handle,
+        })
+    }
+}
+
+impl ClusterStatsItem {
+    fn to_column(&self, table_id: i64, table_info: &TableInfo) -> Option<Column> {
+        let (metadata, is_handle) = table_info.cols().iter_deref().find_map(|column| {
+            let column = column.read();
+            (column.id == self.id).then(|| {
+                let primary_key =
+                    column.field_type.flags() & tidb_datatype::FieldTypeFlags::PRI_KEY != 0;
+                (
+                    ColumnInfo {
+                        id: column.id,
+                        name: column.name.lowercase().to_owned(),
+                        primary_key,
+                    },
+                    table_info.pk_is_handle && primary_key,
+                )
+            })
+        })?;
+        Some(Column {
+            cmsketch: self.cms.clone(),
+            top_n: self.topn.clone(),
+            info: Some(metadata),
+            histogram: self.histogram.clone(),
+            stats_loaded_status: self.load_status,
+            physical_id: table_id,
+            stats_version: self.stats_ver,
+            is_handle,
+            ..Column::default()
+        })
+    }
+
+    fn to_index(&self, table_id: i64, table_info: &TableInfo) -> Option<Index> {
+        let metadata = table_info.indices.iter_deref().find_map(|index| {
+            let index = index.read();
+            (index.id == self.id).then(|| IndexInfo {
+                id: index.id,
+                name: index.name.lowercase().to_owned(),
+                columns: index
+                    .columns
+                    .iter_deref()
+                    .map(|column| column.read().name.lowercase().to_owned())
+                    .collect(),
+                mv_index: index.mv_index,
+            })
+        })?;
+        Some(Index {
+            cmsketch: self.cms.clone(),
+            top_n: self.topn.clone(),
+            info: Some(metadata),
+            histogram: self.histogram.clone(),
+            stats_loaded_status: self.load_status,
+            stats_version: self.stats_ver,
+            physical_id: table_id,
+            ..Index::default()
         })
     }
 }
@@ -414,70 +418,130 @@ impl ClusterStatsLoader {
     /// update. Metadata-only refreshes preserve resident payload, while a
     /// newer histogram is reloaded in full only when its old item was already
     /// resident. Items that were evicted remain metadata-only.
-    pub fn load_table_for_update<S: MetaSnapshot>(
+    pub fn load_statistics_table_for_update<S: MetaSnapshot>(
         &self,
         snapshot: &mut S,
-        table_id: i64,
+        table_info: &TableInfo,
         column_types: &BTreeMap<i64, FieldType>,
-        current: Option<&ClusterTableStats>,
-    ) -> Result<Option<ClusterTableStats>, SystemTableError> {
+        current: Option<&Table>,
+    ) -> Result<Option<Arc<Table>>, SystemTableError> {
+        let table_id = table_info.id;
         let Some(lite) = self.load_table_lite(snapshot, table_id, column_types)? else {
             return Ok(None);
         };
         let Some(current) = current else {
-            return Ok(Some(lite));
+            return Ok(Some(lite.to_statistics_table(table_info)));
         };
 
-        let mut updated = current.clone();
+        let mut updated = current.copy_as(tidb_stats::CopyIntent::BothMapsWritable);
         updated.version = lite.version;
-        updated.snapshot = lite.snapshot;
-        updated.modify_count = lite.modify_count;
-        updated.row_count = lite.row_count;
-        updated.last_analyze_version = lite.last_analyze_version;
+        updated.hist_coll.realtime_count = i64::try_from(lite.row_count).unwrap_or(i64::MAX);
+        updated.hist_coll.modify_count = lite.modify_count;
+        updated.last_analyze_version = updated.last_analyze_version.max(lite.last_analyze_version);
+        updated.last_stats_hist_version = lite.last_analyze_version;
+        updated.table_info_update_ts = table_info.update_ts;
 
         for metadata in lite.columns.into_iter().chain(lite.indexes) {
-            let current_item = if metadata.is_index {
-                current.index(metadata.id)
-            } else {
-                current.column(metadata.id)
-            };
-            let replacement = match current_item {
-                Some(item)
-                    if item.histogram.last_update_version
-                        >= metadata.histogram.last_update_version =>
-                {
-                    let mut item = item.clone();
-                    if !item.is_index {
-                        item.histogram.tot_col_size = metadata.histogram.tot_col_size;
+            if metadata.is_index {
+                let current_item = current.hist_coll.get_index(metadata.id);
+                let replacement = match current_item {
+                    Some(item)
+                        if item
+                            .read()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .histogram
+                            .last_update_version
+                            >= metadata.histogram.last_update_version =>
+                    {
+                        Some(
+                            item.read()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                .clone(),
+                        )
                     }
-                    item
+                    Some(item)
+                        if item
+                            .read()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .is_full_load() =>
+                    {
+                        self.load_item(snapshot, table_id, true, metadata.id, None, true)?
+                            .and_then(|item| item.to_index(table_id, table_info))
+                    }
+                    Some(_) => metadata.to_index(table_id, table_info),
+                    None => None,
+                };
+                if let Some(existence) = &updated.existence_map {
+                    existence
+                        .write()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .insert_index(metadata.id, metadata.stats_ver != 0);
                 }
-                Some(item) if item.load_status.is_full_load() => self
-                    .load_item(
-                        snapshot,
-                        table_id,
-                        metadata.is_index,
-                        metadata.id,
-                        (!metadata.is_index)
-                            .then(|| column_types.get(&metadata.id))
-                            .flatten(),
-                        true,
-                    )?
-                    .unwrap_or(metadata),
-                _ => metadata,
-            };
-            let items = if replacement.is_index {
-                &mut updated.indexes
+                if metadata.stats_ver != 0 {
+                    updated.hist_coll.stats_version =
+                        i32::try_from(metadata.stats_ver).unwrap_or(i32::MAX);
+                }
+                if let Some(replacement) = replacement {
+                    updated.hist_coll.set_index(metadata.id, replacement);
+                }
             } else {
-                &mut updated.columns
-            };
-            match items.iter().position(|item| item.id == replacement.id) {
-                Some(position) => items[position] = replacement,
-                None => items.push(replacement),
+                let current_item = current.hist_coll.get_column(metadata.id);
+                let replacement = match current_item {
+                    Some(item)
+                        if item
+                            .read()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .histogram
+                            .last_update_version
+                            >= metadata.histogram.last_update_version =>
+                    {
+                        let mut item = item
+                            .read()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .clone();
+                        item.histogram.tot_col_size = metadata.histogram.tot_col_size;
+                        Some(item)
+                    }
+                    Some(item)
+                        if item
+                            .read()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .is_full_load() =>
+                    {
+                        self.load_item(
+                            snapshot,
+                            table_id,
+                            false,
+                            metadata.id,
+                            column_types.get(&metadata.id),
+                            true,
+                        )?
+                        .and_then(|item| item.to_column(table_id, table_info))
+                    }
+                    Some(_) => metadata.to_column(table_id, table_info),
+                    None => None,
+                };
+                if let Some(existence) = &updated.existence_map {
+                    existence
+                        .write()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .insert_column(
+                            metadata.id,
+                            metadata.stats_ver != 0
+                                || metadata.histogram.ndv > 0
+                                || metadata.histogram.null_count > 0,
+                        );
+                }
+                if metadata.stats_ver != 0 {
+                    updated.hist_coll.stats_version =
+                        i32::try_from(metadata.stats_ver).unwrap_or(i32::MAX);
+                }
+                if let Some(replacement) = replacement {
+                    updated.hist_coll.set_column(metadata.id, replacement);
+                }
             }
-            items.sort_by_key(|item| item.id);
         }
-        Ok(Some(updated))
+        Ok(Some(Arc::new(updated)))
     }
 
     fn load_table_with_payload<S: MetaSnapshot>(

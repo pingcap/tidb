@@ -143,21 +143,14 @@ fn json_string(value: &str) -> String {
 /// Every table's `(table_id, column_types)` a loaded catalog holds -- exactly
 /// the argument [`load_stats_snapshot_and_loader`] needs to boot-load
 /// statistics for every table this node serves.
-fn stats_targets(
-    catalog: &ClusterCatalog,
-) -> Vec<(
-    i64,
-    std::collections::BTreeMap<i64, tidb_datatype::FieldType>,
-)> {
+fn stats_targets(catalog: &ClusterCatalog) -> Vec<tidb_exec::real_tikv_stats::StatsTarget> {
     catalog
         .databases
         .iter()
         .flat_map(|database| database.tables.iter())
-        .map(|table| {
-            (
-                table.id,
-                tidb_exec::cluster_stats_load::column_types_of(table),
-            )
+        .map(|table| tidb_exec::real_tikv_stats::StatsTarget {
+            table: table.clone(),
+            column_types: tidb_exec::cluster_stats_load::column_types_of(table),
         })
         .collect()
 }
@@ -166,12 +159,7 @@ fn stats_targets(
 /// schema follower. Go's statistics handle does the equivalent on every
 /// cache update: a DDL must not leave a newly added table, or a changed column
 /// type, outside later `mysql.stats_*` reads.
-fn current_stats_targets(
-    catalog: &SharedCatalog,
-) -> Vec<(
-    i64,
-    std::collections::BTreeMap<i64, tidb_datatype::FieldType>,
-)> {
+fn current_stats_targets(catalog: &SharedCatalog) -> Vec<tidb_exec::real_tikv_stats::StatsTarget> {
     let current = catalog.load();
     stats_targets(&current)
 }
@@ -224,7 +212,7 @@ where
             // catalog they are located through) stay untouched this pass; a
             // moved or new version falls back to the lite snapshot load.
             let targets = current_stats_targets(&catalog);
-            let ids: Vec<i64> = targets.iter().map(|(id, _)| *id).collect();
+            let ids: Vec<i64> = targets.iter().map(|target| target.table.id).collect();
             match load_stats_meta_versions(&opener, timeout, &loader, &ids) {
                 Ok(versions) => {
                     if stats_snapshot_unchanged_since(shared.load().as_ref(), &versions, &targets) {
@@ -325,7 +313,12 @@ mod tests {
         assert_eq!(
             current_stats_targets(&shared)
                 .into_iter()
-                .map(|(table_id, columns)| (table_id, columns.into_keys().collect::<Vec<_>>()))
+                .map(|target| {
+                    (
+                        target.table.id,
+                        target.column_types.into_keys().collect::<Vec<_>>(),
+                    )
+                })
                 .collect::<Vec<_>>(),
             vec![(11, vec![101])]
         );
@@ -337,7 +330,12 @@ mod tests {
         assert_eq!(
             current_stats_targets(&shared)
                 .into_iter()
-                .map(|(table_id, columns)| (table_id, columns.into_keys().collect::<Vec<_>>()))
+                .map(|target| {
+                    (
+                        target.table.id,
+                        target.column_types.into_keys().collect::<Vec<_>>(),
+                    )
+                })
                 .collect::<Vec<_>>(),
             vec![(22, vec![202])]
         );

@@ -26,6 +26,7 @@
 
 use std::collections::BTreeMap;
 
+use tidb_ast::CiString;
 use tidb_datatype::{Datum, Time, TimeType};
 use tidb_exec::cluster_catalog::{
     load_cluster_catalog, ClusterCatalogError, MetaPairs, MetaSnapshot,
@@ -34,6 +35,9 @@ use tidb_exec::cluster_stats_load::{ClusterStatsItem, ClusterStatsLoader, Cluste
 use tidb_exec::cluster_stats_write::plan_stats_write;
 use tidb_exec::mysql_bootstrap::{plan_mysql_bootstrap, BootstrapEnvironment, BootstrapWrite};
 use tidb_exec::real_tikv_analyze::ANALYZE_MAX_MUTATIONS;
+use tidb_model::column::ColumnInfo;
+use tidb_model::table_info::TableInfo;
+use tidb_model::SchemaState;
 use tidb_stats::cmsketch::TopN;
 use tidb_stats::histogram::{Bucket, Histogram};
 use tidb_txnkv::transaction::{
@@ -306,22 +310,37 @@ fn cache_update_preserves_and_refreshes_resident_histogram_payload() {
     let column_types = BTreeMap::from([(1, tidb_datatype::FieldType::new(
         tidb_datatype::FieldTypeCode::LongLong,
     ))]);
+    let table_info = TableInfo {
+        id: old_stats.table_id,
+        columns: vec![ColumnInfo {
+            id: 1,
+            name: CiString::new("a"),
+            field_type: column_types[&1].clone(),
+            state: SchemaState::PUBLIC,
+            ..ColumnInfo::default()
+        }]
+        .into(),
+        ..TableInfo::default()
+    };
     let resident = loader
         .load_table(&mut store, old_stats.table_id, &column_types)
         .expect("full statistics load")
-        .expect("stats_meta exists");
+        .expect("stats_meta exists")
+        .to_statistics_table(&table_info);
     let unchanged = loader
-        .load_table_for_update(
+        .load_statistics_table_for_update(
             &mut store,
-            old_stats.table_id,
+            &table_info,
             &column_types,
-            Some(&resident),
+            Some(resident.as_ref()),
         )
         .expect("cache update")
         .expect("stats_meta exists");
-    assert_eq!(unchanged.columns[0].histogram.buckets.len(), 256);
-    assert_eq!(unchanged.columns[0].topn.as_ref().map(TopN::num), Some(100));
-    assert!(unchanged.columns[0].load_status.is_full_load());
+    let unchanged_column = unchanged.hist_coll.get_column(1).expect("column exists");
+    let unchanged_column = unchanged_column.read().unwrap();
+    assert_eq!(unchanged_column.histogram.buckets.len(), 256);
+    assert_eq!(unchanged_column.top_n.as_ref().map(TopN::num), Some(100));
+    assert!(unchanged_column.is_full_load());
 
     let next_version = old_stats.version + 1;
     let mut changed = full_histogram(1, false);
@@ -338,20 +357,21 @@ fn cache_update_preserves_and_refreshes_resident_histogram_payload() {
     let plan = plan_stats_write(&mut store, &catalog, &new_stats, now()).expect("reanalyze plans");
     apply_mutations(&mut store, &plan.mutations);
     let refreshed = loader
-        .load_table_for_update(
+        .load_statistics_table_for_update(
             &mut store,
-            new_stats.table_id,
+            &table_info,
             &column_types,
-            Some(&resident),
+            Some(resident.as_ref()),
         )
         .expect("cache refresh")
         .expect("stats_meta exists");
-    let item = &refreshed.columns[0];
+    let item = refreshed.hist_coll.get_column(1).expect("column exists");
+    let item = item.read().unwrap();
     assert_eq!(refreshed.version, next_version);
     assert_eq!(item.histogram.last_update_version, next_version);
     assert_eq!(item.histogram.buckets[0].count, 41);
-    assert_eq!(item.topn.as_ref().map(TopN::num), Some(100));
-    assert!(item.load_status.is_full_load());
+    assert_eq!(item.top_n.as_ref().map(TopN::num), Some(100));
+    assert!(item.is_full_load());
 }
 
 /// Go's `CMSketchAndTopNFromStorageWithHighPriority` reaches TopN through

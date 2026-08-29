@@ -26,6 +26,7 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use tidb_datatype::FieldType;
+use tidb_model::table_info::TableInfo;
 use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
 use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
 
@@ -34,6 +35,16 @@ use crate::cluster_stats_load::{ClusterStatsItem, ClusterStatsLoader, ClusterTab
 use crate::mysql_system_tables::SystemTableError;
 use crate::real_tikv_catalog::TransactionMetaSnapshot;
 use crate::stats_watch::{StatsSnapshot, TableStatsState};
+
+/// One cache-refresh target: the complete schema object Go passes through
+/// `TableStatsFromStorage`, plus the derived bound-decoding map.
+#[derive(Clone, Debug)]
+pub struct StatsTarget {
+    /// The current schema metadata for the physical table.
+    pub table: TableInfo,
+    /// Declared column types used to decode stored histogram bounds.
+    pub column_types: BTreeMap<i64, FieldType>,
+}
 
 /// Reads one table's statistics through one fresh read-only transaction.
 ///
@@ -133,7 +144,7 @@ pub fn load_stats_snapshot_and_loader<
 >(
     opener: &RealOptimisticTransactionOpener<C, L, P>,
     timeout: Duration,
-    tables: &[(i64, BTreeMap<i64, FieldType>)],
+    tables: &[StatsTarget],
 ) -> Result<(StatsSnapshot, ClusterStatsLoader), SystemTableError> {
     let mut transaction = opener
         .begin_read_only()
@@ -143,12 +154,16 @@ pub fn load_stats_snapshot_and_loader<
         let catalog = load_cluster_catalog(&mut snapshot)?;
         let loader = ClusterStatsLoader::locate(&catalog)?;
         let mut result = StatsSnapshot::new();
-        for (table_id, column_types) in tables {
-            let state = match loader.load_table_lite(&mut snapshot, *table_id, column_types)? {
-                Some(stats) => TableStatsState::Loaded(std::sync::Arc::new(stats)),
-                None => TableStatsState::Pseudo,
-            };
-            result.insert(*table_id, state);
+        for target in tables {
+            let table_id = target.table.id;
+            let state =
+                match loader.load_table_lite(&mut snapshot, table_id, &target.column_types)? {
+                    Some(stats) => {
+                        TableStatsState::Loaded(stats.to_statistics_table(&target.table))
+                    }
+                    None => TableStatsState::Pseudo,
+                };
+            result.insert(table_id, state);
         }
         Ok((result, loader))
     };
@@ -168,7 +183,7 @@ pub fn refresh_stats_snapshot_from_cluster<
 >(
     opener: &RealOptimisticTransactionOpener<C, L, P>,
     timeout: Duration,
-    tables: &[(i64, BTreeMap<i64, FieldType>)],
+    tables: &[StatsTarget],
     current: &StatsSnapshot,
 ) -> Result<StatsSnapshot, SystemTableError> {
     let mut transaction = opener
@@ -179,18 +194,19 @@ pub fn refresh_stats_snapshot_from_cluster<
         let catalog = load_cluster_catalog(&mut snapshot)?;
         let loader = ClusterStatsLoader::locate(&catalog)?;
         let mut result = StatsSnapshot::new();
-        for (table_id, column_types) in tables {
-            let current = current.get(table_id).and_then(TableStatsState::loaded);
-            let state = match loader.load_table_for_update(
+        for target in tables {
+            let table_id = target.table.id;
+            let current = current.get(&table_id).and_then(TableStatsState::loaded);
+            let state = match loader.load_statistics_table_for_update(
                 &mut snapshot,
-                *table_id,
-                column_types,
+                &target.table,
+                &target.column_types,
                 current.map(|stats| stats.as_ref()),
             )? {
-                Some(stats) => TableStatsState::Loaded(std::sync::Arc::new(stats)),
+                Some(stats) => TableStatsState::Loaded(stats),
                 None => TableStatsState::Pseudo,
             };
-            result.insert(*table_id, state);
+            result.insert(table_id, state);
         }
         Ok(result)
     };
@@ -238,14 +254,15 @@ pub fn load_stats_meta_versions<C: StoreWriteClient, L: StoreWriteLoader, P: Sto
 pub fn stats_snapshot_unchanged_since(
     current: &StatsSnapshot,
     versions: &BTreeMap<i64, Option<u64>>,
-    targets: &[(i64, BTreeMap<i64, FieldType>)],
+    targets: &[StatsTarget],
 ) -> bool {
     if current.len() != targets.len() {
         return false;
     }
-    for (table_id, _) in targets {
-        let version = versions.get(table_id).copied().flatten();
-        match current.get(table_id) {
+    for target in targets {
+        let table_id = target.table.id;
+        let version = versions.get(&table_id).copied().flatten();
+        match current.get(&table_id) {
             Some(state) if state.version() == version => {}
             _ => return false,
         }
@@ -256,24 +273,32 @@ pub fn stats_snapshot_unchanged_since(
 #[cfg(test)]
 mod unchanged_tests {
     use super::*;
-    use crate::cluster_stats_load::ClusterTableStats;
     use crate::stats_watch::TableStatsState;
+    use tidb_stats::{HistColl, Table};
 
     fn loaded(table_id: i64, version: u64) -> TableStatsState {
-        TableStatsState::Loaded(std::sync::Arc::new(ClusterTableStats {
-            table_id,
+        TableStatsState::Loaded(std::sync::Arc::new(Table {
+            existence_map: None,
+            hist_coll: HistColl::new(table_id, 0, 0, 0, 0),
             version,
-            snapshot: 0,
             last_analyze_version: 0,
-            modify_count: 0,
-            row_count: 0,
-            columns: Vec::new(),
-            indexes: Vec::new(),
+            last_stats_hist_version: 0,
+            table_info_update_ts: 0,
+            is_pk_handle: false,
         }))
     }
 
-    fn targets(ids: &[i64]) -> Vec<(i64, BTreeMap<i64, FieldType>)> {
-        ids.iter().map(|id| (*id, BTreeMap::new())).collect()
+    fn targets(ids: &[i64]) -> Vec<StatsTarget> {
+        ids.iter()
+            .map(|id| {
+                let mut table = TableInfo::default();
+                table.id = *id;
+                StatsTarget {
+                    table,
+                    column_types: BTreeMap::new(),
+                }
+            })
+            .collect()
     }
 
     #[test]

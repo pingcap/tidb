@@ -51,7 +51,6 @@
 //! [`RealClusterDdl::refresh_catalog`]: crate::cluster_session_node::RealClusterDdl
 //! [`SharedStats`]: tidb_exec::stats_watch::SharedStats
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tidb_pd_client::PdClient;
@@ -64,16 +63,11 @@ use tidb_exec::cluster_catalog::load_cluster_catalog;
 use tidb_exec::cluster_stats_load::column_types_of;
 use tidb_exec::real_tikv_analyze::{commit_cluster_analyze, ClusterAnalyzeReport};
 use tidb_exec::real_tikv_catalog::TransactionMetaSnapshot;
-use tidb_exec::real_tikv_stats::refresh_stats_snapshot_from_cluster;
+use tidb_exec::real_tikv_stats::{refresh_stats_snapshot_from_cluster, StatsTarget};
 use tidb_exec::stats_watch::SharedStats;
 use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
 
 use crate::sql_node::{cluster_analyze_error, SqlQueryError};
-
-/// One table's physical ID paired with the declared types its stored
-/// histogram bounds decode against -- the shape
-/// [`refresh_stats_snapshot_from_cluster`] takes.
-type StatsTarget = (i64, BTreeMap<i64, tidb_datatype::FieldType>);
 
 /// This node's one route to the cluster's stored statistics.
 ///
@@ -166,7 +160,10 @@ where
                 .databases
                 .iter()
                 .flat_map(|database| database.tables.iter())
-                .map(|table| (table.id, column_types_of(table)))
+                .map(|table| StatsTarget {
+                    table: table.clone(),
+                    column_types: column_types_of(table),
+                })
                 .collect()
         };
         transaction
