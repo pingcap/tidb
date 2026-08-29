@@ -58,7 +58,7 @@ func (m *MemArbitrator) waitNotiferForTest() {
 }
 
 func (m *MemArbitrator) restartEntryForTest(entry *rootPoolEntry, ctx *ArbitrationContext) {
-	require.True(testState, m.RestartEntryByContext(rootPoolWrap{entry}, ctx))
+	require.True(testState, m.restartEntryByContextForTest(entry, ctx))
 }
 
 func (m *MemArbitrator) checkAwaitFree() {
@@ -86,12 +86,12 @@ func (m *MemArbitrator) addRootPoolForTest(
 	p *ResourcePool,
 	ctx *ArbitrationContext,
 ) *rootPoolEntry {
-	entry, err := m.addRootPool(p)
+	_, entry, err := m.addRootPool(p)
 	if err != nil {
 		panic(err)
 	}
 	require.True(testState, entry != nil)
-	require.True(testState, m.RestartEntryByContext(rootPoolWrap{entry}, ctx))
+	require.True(testState, m.restartEntryByContextForTest(entry, ctx))
 	return entry
 }
 
@@ -752,6 +752,11 @@ func (m *MemArbitrator) wrapblockedState() blockedState {
 func (m *MemArbitrator) restartForTest() bool {
 	m.weakWake()
 	return m.asyncRun(defTaskTickDur)
+}
+
+func (m *MemArbitrator) restartEntryByContextForTest(entry rootPoolWrap, ctx *ArbitrationContext) bool {
+	ok, _ := m.RestartEntryByContext(entry, ctx)
+	return ok
 }
 
 func BenchmarkWrapList(b *testing.B) {
@@ -3067,7 +3072,7 @@ func TestBench(t *testing.T) {
 			wg.Go(func() {
 				<-ch1
 
-				root, err := m.EmplaceRootPool(uint64(i))
+				_, root, err := m.EmplaceRootPool(uint64(i))
 				require.NoError(t, err)
 				cancelCh := make(chan struct{})
 				cancelEvent := 0
@@ -3091,11 +3096,11 @@ func TestBench(t *testing.T) {
 					false,
 					true,
 				)
-				if !m.RestartEntryByContext(root, ctx) {
-					panic(fmt.Errorf("failed to init root pool with session-id %d", root.entry.pool.uid))
+				if !m.restartEntryByContextForTest(root, ctx) {
+					panic(fmt.Errorf("failed to init root pool with session-id %d", root.pool.uid))
 				}
 
-				b := ConcurrentBudget{Pool: root.entry.pool}
+				b := ConcurrentBudget{Pool: root.pool}
 
 				for j := 0; j < 200; j += 1 {
 					if b.Used.Add(m.limit()/150) > b.Capacity {
@@ -3140,7 +3145,7 @@ func TestBench(t *testing.T) {
 			wg.Go(func() {
 				<-ch1
 
-				root, err := m.EmplaceRootPool(uint64(i))
+				_, root, err := m.EmplaceRootPool(uint64(i))
 				require.NoError(t, err)
 				cancelCh := make(chan struct{})
 				cancelEvent := atomic.Int64{}
@@ -3178,11 +3183,11 @@ func TestBench(t *testing.T) {
 					true,
 				)
 
-				if !m.RestartEntryByContext(root, ctx) {
-					panic(fmt.Errorf("failed to init root pool with session-id %d", root.entry.pool.uid))
+				if !m.restartEntryByContextForTest(root, ctx) {
+					panic(fmt.Errorf("failed to init root pool with session-id %d", root.pool.uid))
 				}
 
-				b := ConcurrentBudget{Pool: root.entry.pool}
+				b := ConcurrentBudget{Pool: root.pool}
 
 				for j := 0; j < 200; j += 1 {
 					if b.Used.Add(m.limit()/150) > b.Capacity {

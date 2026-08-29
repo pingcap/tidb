@@ -1120,23 +1120,13 @@ func (m *memArbitrator) intoBigBudget() bool {
 		return false
 	}
 
-	root, err := m.EmplaceRootPool(m.uid)
+	ok, root, err := m.EmplaceRootPool(m.uid)
+
 	if err != nil {
 		panic(err)
-	}
-
-	{ // internal session stats
-		delta := int64(0)
-		if oriCtx := root.entry.ctx.Load(); oriCtx != nil {
-			if oriHelper, ok := oriCtx.arbitrateHelper.(*memArbitrator); ok && oriHelper.isInternal {
-				delta--
-			}
-		}
+	} else if ok {
 		if m.isInternal {
-			delta++
-		}
-		if delta != 0 {
-			globalArbitrator.metrics.pools.internalSession.Add(delta)
+			globalArbitrator.metrics.pools.internalSession.Add(1)
 		}
 	}
 
@@ -1167,7 +1157,7 @@ func (m *memArbitrator) intoBigBudget() bool {
 
 	m.addBigBudgetUsed(smallUsed)
 
-	m.bigBudget().Pool = root.entry.pool
+	m.bigBudget().Pool = root.pool
 
 	if m.reserveSize > 0 {
 		m.reserveBigBudget(m.reserveSize)

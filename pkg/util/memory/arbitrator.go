@@ -1248,22 +1248,20 @@ func (m *MemArbitrator) getRootPoolEntry(uid uint64) *rootPoolEntry {
 	return nil
 }
 
-type rootPoolWrap struct {
-	entry *rootPoolEntry
-}
+type rootPoolWrap = *rootPoolEntry
 
 // FindRootPool finds the root pool by ID
 func (m *MemArbitrator) FindRootPool(uid uint64) rootPoolWrap {
 	if e := m.getRootPoolEntry(uid); e != nil {
-		return rootPoolWrap{e}
+		return e
 	}
-	return rootPoolWrap{}
+	return nil
 }
 
 // EmplaceRootPool emplaces a new root pool with the given uid (uid < 0 means the internal pool)
-func (m *MemArbitrator) EmplaceRootPool(uid uint64) (rootPoolWrap, error) {
+func (m *MemArbitrator) EmplaceRootPool(uid uint64) (bool, rootPoolWrap, error) {
 	if e := m.getRootPoolEntry(uid); e != nil {
-		return rootPoolWrap{e}, nil
+		return false, e, nil
 	}
 
 	pool := &ResourcePool{
@@ -1272,29 +1270,27 @@ func (m *MemArbitrator) EmplaceRootPool(uid uint64) (rootPoolWrap, error) {
 		limit:          DefMaxLimit,
 		allocAlignSize: 1,
 	}
-	entry, err := m.addRootPool(pool)
-	return rootPoolWrap{entry}, err
+	ok, entry, err := m.addRootPool(pool)
+	return ok, entry, err
 }
 
-func (m *MemArbitrator) addRootPool(pool *ResourcePool) (*rootPoolEntry, error) {
+func (m *MemArbitrator) addRootPool(pool *ResourcePool) (bool, *rootPoolEntry, error) {
 	if b := pool.capacity(); b != 0 {
-		return nil, fmt.Errorf("%s: has %d bytes budget left", pool.name, b)
+		return false, nil, fmt.Errorf("%s: has %d bytes budget left", pool.name, b)
 	}
 	if pool.mu.budget.pool != nil {
-		return nil, fmt.Errorf("%s: already started with pool %s", pool.name, pool.mu.budget.pool.Name())
+		return false, nil, fmt.Errorf("%s: already started with pool %s", pool.name, pool.mu.budget.pool.Name())
 	}
 	if pool.reserved != 0 {
-		return nil, fmt.Errorf("%s: has %d reserved budget left", pool.name, pool.reserved)
+		return false, nil, fmt.Errorf("%s: has %d reserved budget left", pool.name, pool.reserved)
 	}
 
-	entry, ok := m.entryMap.emplace(pool)
-
-	if !ok {
-		return nil, fmt.Errorf("%s: already exists", pool.name)
+	if entry, ok := m.entryMap.emplace(pool); !ok {
+		return false, nil, fmt.Errorf("%s: already exists", pool.name)
+	} else {
+		m.rootPoolNum.Add(1)
+		return true, entry, nil
 	}
-
-	m.rootPoolNum.Add(1)
-	return entry, nil
 }
 
 func (m *MemArbitrator) doAdjustSoftLimit() {
@@ -1969,8 +1965,7 @@ func (m *MemArbitrator) asyncRun(duration time.Duration) bool {
 }
 
 // RestartEntryByContext starts the root pool with the given context
-func (m *MemArbitrator) RestartEntryByContext(p rootPoolWrap, ctx *ArbitrationContext) (bool, func()) {
-	entry := p.entry
+func (m *MemArbitrator) RestartEntryByContext(entry rootPoolWrap, ctx *ArbitrationContext) (bool, func()) {
 	if entry == nil {
 		return false, nil
 	}
