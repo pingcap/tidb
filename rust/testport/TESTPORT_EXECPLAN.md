@@ -36,6 +36,13 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-08-29: audited every production, test, harness, benchmark, and build
+  artifact in pinned Go `pkg/util/mvmap`. Removed Rust-only default and iterator
+  extensions plus four supplemental tests, restored the exact two-test and
+  two-benchmark surface, and replaced DISTINCT aggregation's bypassing
+  `HashSet` with the canonical packed map. Complete inventory, consumer
+  integration decision, and WIP gates are recorded in
+  `receipts/util_mvmap.md`.
 - 2026-08-29: audited every production, test, benchmark, and build artifact in
   pinned Go `pkg/util/globalconn`. Restored the global-kill test's injected
   connection-ID widths and source-shaped lock-free-pool layout, removed a

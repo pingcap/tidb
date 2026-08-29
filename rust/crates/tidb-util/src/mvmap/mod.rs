@@ -22,9 +22,9 @@
 //! same key share one chain — [`DataStore::get`] filters by comparing the stored
 //! key bytes.
 //!
-//! The arena/address layout is preserved exactly, since [`Iter`] walks the entry
-//! arena in insertion order and [`MVMap::get`] depends on the chain plus the
-//! byte-equality filter. Go's returned `[][]byte` alias the internal arenas;
+//! The arena/address layout is preserved exactly, since [`Iterator`] walks the
+//! entry arena in insertion order and [`MVMap::get`] depends on the chain plus
+//! the byte-equality filter. Go's returned `[][]byte` alias the internal arenas;
 //! the Rust equivalent returns `&[u8]` borrowed from `&self`.
 
 mod fnv;
@@ -145,15 +145,6 @@ pub struct MVMap {
     length: usize,
 }
 
-// A derived `Default` would leave the arenas empty and skip the reserved first
-// entry, producing an `MVMap` that panics on the first `put`. `Default` must be
-// the same valid, initialized map as `new`.
-impl Default for MVMap {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl MVMap {
     /// Creates a new multi-value map.
     #[must_use]
@@ -222,9 +213,9 @@ impl MVMap {
 
     /// Creates an iterator over the map's key/value pairs in insertion order.
     #[must_use]
-    pub fn new_iterator(&self) -> Iter<'_> {
+    pub fn new_iterator(&self) -> Iterator<'_> {
         // The first entry is empty, so init entry_cur to 1.
-        Iter {
+        Iterator {
             m: self,
             slice_cur: 0,
             entry_cur: 1,
@@ -233,17 +224,15 @@ impl MVMap {
 }
 
 /// Iterates over an [`MVMap`] (Go's `Iterator`).
-pub struct Iter<'a> {
+pub struct Iterator<'a> {
     m: &'a MVMap,
     slice_cur: usize,
     entry_cur: usize,
 }
 
-impl<'a> Iterator for Iter<'a> {
-    type Item = (&'a [u8], &'a [u8]);
-
+impl<'a> Iterator<'a> {
     /// Returns the next key/value pair, or `None` when exhausted.
-    fn next(&mut self) -> Option<Self::Item> {
+    pub fn next(&mut self) -> Option<(&'a [u8], &'a [u8])> {
         loop {
             if self.slice_cur >= self.m.entry_store.slices.len() {
                 return None;
@@ -302,36 +291,5 @@ mod tests {
             assert_eq!((as_str(key), as_str(val)), expected);
         }
         assert_eq!(it.next(), None);
-    }
-
-    // Go `BenchmarkMVMapPut` body, run as a functional test. The larger item
-    // count also exercises the entry- and data-arena slice rollover paths.
-    #[test]
-    fn bench_mvmap_put() {
-        const N: u64 = 10000;
-        let mut m = MVMap::new();
-        for i in 0..N {
-            let buffer = i.to_be_bytes();
-            m.put(&buffer, &buffer);
-        }
-        assert_eq!(m.len(), N as usize);
-    }
-
-    // Go `BenchmarkMVMapGet` body, run as a functional test; it preserves the
-    // benchmark's inner correctness check (each distinct key maps to exactly one
-    // value equal to the key).
-    #[test]
-    fn bench_mvmap_get() {
-        const N: u64 = 10000;
-        let mut m = MVMap::new();
-        for i in 0..N {
-            let buffer = i.to_be_bytes();
-            m.put(&buffer, &buffer);
-        }
-        for i in 0..N {
-            let buffer = i.to_be_bytes();
-            let val = m.get(&buffer, Vec::new());
-            assert!(val.len() == 1 && val[0] == &buffer[..]);
-        }
     }
 }

@@ -34,7 +34,7 @@ pub(super) fn fnv_hash64(data: &[u8]) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{fnv_hash64, OFFSET64, PRIME64};
+    use super::fnv_hash64;
 
     // Go `TestFNVHash` compares `fnvHash64` against the standard library's
     // `hash/fnv` `New64` (FNV-1). Rust has no `hash/fnv`, so the reference value
@@ -44,32 +44,5 @@ mod tests {
     fn fnv_hash() {
         let b = [0xcb, 0xf2, 0x9c, 0xe4, 0x84, 0x22, 0x23, 0x25];
         assert_eq!(fnv_hash64(&b), 5886032377557422844);
-    }
-
-    #[test]
-    fn source_constants_and_boundary_vectors_are_exact() {
-        assert_eq!(OFFSET64, 14_695_981_039_346_656_037);
-        assert_eq!(PRIME64, 1_099_511_628_211);
-        for (data, expected) in [
-            (&[][..], 0xcbf29ce484222325),
-            (&[0][..], 0xaf63bd4c8601b7df),
-            (&[0xff][..], 0xaf63bd4c8601b720),
-            (&[0, 0xff, 0x80, 0x7f][..], 0x4a3cb47f9b54e61d),
-            (
-                &[0xcb, 0xf2, 0x9c, 0xe4, 0x84, 0x22, 0x23, 0x25][..],
-                0x51af634308c212fc,
-            ),
-            (&b"foobar"[..], 0x340d8765a4dda9c2),
-        ] {
-            assert_eq!(fnv_hash64(data), expected, "{data:02x?}");
-        }
-    }
-
-    #[test]
-    fn source_step_order_and_wrapping_are_exact() {
-        let multiplied = OFFSET64.wrapping_mul(PRIME64);
-        assert_eq!(multiplied, 0xaf63bd4c8601b7df);
-        assert_eq!(fnv_hash64(&[0xff]), multiplied ^ 0xff);
-        assert_ne!(fnv_hash64(&[0xff]), (OFFSET64 ^ 0xff).wrapping_mul(PRIME64));
     }
 }
