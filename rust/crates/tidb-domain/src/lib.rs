@@ -149,6 +149,7 @@ pub mod domainutil;
 pub mod historical_stats;
 pub mod optimize_trace;
 pub mod plan_replayer;
+pub mod replayer;
 pub mod ru_stats;
 pub mod schema_checker;
 pub mod serverinfo;

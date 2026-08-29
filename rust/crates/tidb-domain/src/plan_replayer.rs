@@ -49,10 +49,6 @@
 //!
 //! ## Narrowings, all named
 //!
-//! - `// boundary:` Go `pkg/util/replayer.PlanReplayerTaskKey` →
-//!   [`PlanReplayerTaskKey`]. `pkg/util/replayer` has no Rust home yet; the
-//!   key is two strings and is reproduced here rather than left dangling, so
-//!   the collapse is a re-export when that package lands.
 //! - `// boundary:` Go `PlanReplayerDumpTask`'s dump payload — `TblStats`,
 //!   `StartTS`, `SessionBindings`, `EncodedPlan`, `SessionVars`,
 //!   `ExecStmts`, `Analyze`, `HistoricalStatsTS`, `DebugTrace` and `Zf
@@ -165,6 +161,8 @@ use std::sync::{Mutex, RwLock};
 
 use chrono::{DateTime, Utc};
 
+use crate::replayer::PlanReplayerTaskKey;
+
 /// Go `"select sql_digest, plan_digest from mysql.plan_replayer_task"`
 /// (`plan_replayer.go:305`).
 pub const COLLECT_ALL_TASKS_SQL: &str =
@@ -218,27 +216,6 @@ impl std::fmt::Display for PlanReplayerError {
 }
 
 impl std::error::Error for PlanReplayerError {}
-
-/// Go `replayer.PlanReplayerTaskKey` (`pkg/util/replayer/replayer.go:36`).
-///
-/// boundary: `pkg/util/replayer` has no Rust home yet.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct PlanReplayerTaskKey {
-    /// Go `PlanReplayerTaskKey.SQLDigest`.
-    pub sql_digest: String,
-    /// Go `PlanReplayerTaskKey.PlanDigest`.
-    pub plan_digest: String,
-}
-
-impl PlanReplayerTaskKey {
-    /// Build a key from its two digests.
-    pub fn new(sql_digest: impl Into<String>, plan_digest: impl Into<String>) -> Self {
-        Self {
-            sql_digest: sql_digest.into(),
-            plan_digest: plan_digest.into(),
-        }
-    }
-}
 
 /// Go `PlanReplayerStatusRecord` (`plan_replayer.go:563`): one row of
 /// `mysql.plan_replayer_status`.
@@ -1145,6 +1122,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
+    use crate::replayer::generate_plan_replayer_file_name;
 
     /// Upstream `plan_replayer_test.go` is reachable in part:
     /// `TestDumpGCFileParseTime` and `TestPlanReplayerDifferentGC` are
@@ -1257,8 +1235,15 @@ mod tests {
         t.timestamp_nanos_opt().unwrap()
     }
 
+    fn task_key(sql_digest: &str, plan_digest: &str) -> PlanReplayerTaskKey {
+        PlanReplayerTaskKey {
+            sql_digest: sql_digest.to_owned(),
+            plan_digest: plan_digest.to_owned(),
+        }
+    }
+
     /// TRANSCREATED from `TestDumpGCFileParseTime`
-    /// (`plan_replayer_test.go:98`), including its four named file shapes.
+    /// (`plan_replayer_test.go:98`), including all eight generator calls.
     #[test]
     fn dump_gc_file_parse_time() {
         let now = Utc::now();
@@ -1276,15 +1261,18 @@ mod tests {
         let name4 = "extract_-brq6zKMarD9ayaifkHc4A==_1678168728477502000.zip";
         assert!(parse_time(name4).is_ok());
 
-        // The four generated shapes of `replayer.generatePlanReplayerFileName`.
-        for prefix in [
-            "replayer",
-            "capture_replayer",
-            "capture_normal_replayer",
-            "extract",
-        ] {
-            let name = format!("{prefix}_-brq6zKMarD9ayaifkHc4A==_{}.zip", nanos(now));
-            assert_eq!(parse_time(&name).unwrap(), now, "{name}");
+        for is_capture in [false, true] {
+            for is_continues_capture in [false, true] {
+                for enable_historical_stats_for_capture in [false, true] {
+                    let name = generate_plan_replayer_file_name(
+                        is_capture,
+                        is_continues_capture,
+                        enable_historical_stats_for_capture,
+                    )
+                    .unwrap();
+                    assert!(parse_time(&name).is_ok(), "{name}");
+                }
+            }
         }
     }
 
@@ -1392,7 +1380,7 @@ mod tests {
         };
         let status = Arc::new(PlanReplayerDumpTaskStatus::new());
         status.set_task_finished(&PlanReplayerDumpTask {
-            key: PlanReplayerTaskKey::new("a", "b"),
+            key: task_key("a", "b"),
             ..PlanReplayerDumpTask::default()
         });
         let mut checker: DumpFileGcChecker<MockExec> =
@@ -1620,7 +1608,7 @@ mod tests {
             ..MockExec::default()
         };
         assert_eq!(
-            check_unhandled_replayer_task(&exec, &PlanReplayerTaskKey::new("a", "b")),
+            check_unhandled_replayer_task(&exec, &task_key("a", "b")),
             Ok(true)
         );
         assert_eq!(check_plan_replayer_task_exists(&exec, "a", "b"), Ok(false));
@@ -1634,11 +1622,11 @@ mod tests {
             ..MockExec::default()
         };
         assert_eq!(
-            check_unhandled_replayer_task(&exec, &PlanReplayerTaskKey::new("a", "b")),
+            check_unhandled_replayer_task(&exec, &task_key("a", "b")),
             Ok(false)
         );
         assert_eq!(
-            check_unhandled_replayer_task(&exec, &PlanReplayerTaskKey::new("z", "b")),
+            check_unhandled_replayer_task(&exec, &task_key("z", "b")),
             Ok(true)
         );
         assert_eq!(check_plan_replayer_task_exists(&exec, "a", "b"), Ok(true));
@@ -1660,10 +1648,7 @@ mod tests {
         };
         let handle = PlanReplayerTaskCollectorHandle::new(exec);
         handle.collect_plan_replayer_task().unwrap();
-        assert_eq!(
-            handle.get_tasks(),
-            vec![PlanReplayerTaskKey::new("345", "345")]
-        );
+        assert_eq!(handle.get_tasks(), vec![task_key("345", "345")]);
 
         let empty = PlanReplayerTaskCollectorHandle::new(MockExec {
             task_rows: Some(vec![]),
@@ -1686,12 +1671,9 @@ mod tests {
             fail_query: true,
             ..MockExec::default()
         });
-        handle.setup_tasks(vec![PlanReplayerTaskKey::new("old", "old")]);
+        handle.setup_tasks(vec![task_key("old", "old")]);
         assert!(handle.collect_plan_replayer_task().is_err());
-        assert_eq!(
-            handle.get_tasks(),
-            vec![PlanReplayerTaskKey::new("old", "old")]
-        );
+        assert_eq!(handle.get_tasks(), vec![task_key("old", "old")]);
     }
 
     /// WRITTEN. The task set is replaced wholesale, and `remove_task` takes
@@ -1699,15 +1681,12 @@ mod tests {
     #[test]
     fn setup_replaces_the_task_set_and_remove_takes_one_key() {
         let handle = PlanReplayerTaskCollectorHandle::new(MockExec::default());
-        handle.setup_tasks(vec![
-            PlanReplayerTaskKey::new("a", "a"),
-            PlanReplayerTaskKey::new("b", "b"),
-        ]);
+        handle.setup_tasks(vec![task_key("a", "a"), task_key("b", "b")]);
         assert_eq!(handle.get_tasks().len(), 2);
-        handle.remove_task(&PlanReplayerTaskKey::new("a", "a"));
-        assert_eq!(handle.get_tasks(), vec![PlanReplayerTaskKey::new("b", "b")]);
-        handle.setup_tasks(vec![PlanReplayerTaskKey::new("c", "c")]);
-        assert_eq!(handle.get_tasks(), vec![PlanReplayerTaskKey::new("c", "c")]);
+        handle.remove_task(&task_key("a", "a"));
+        assert_eq!(handle.get_tasks(), vec![task_key("b", "b")]);
+        handle.setup_tasks(vec![task_key("c", "c")]);
+        assert_eq!(handle.get_tasks(), vec![task_key("c", "c")]);
     }
 
     /// WRITTEN. The running set is a claim: the second occupant is refused
@@ -1716,7 +1695,7 @@ mod tests {
     fn a_running_task_key_can_only_be_occupied_once() {
         let status = PlanReplayerDumpTaskStatus::new();
         let task = PlanReplayerDumpTask {
-            key: PlanReplayerTaskKey::new("s", "p"),
+            key: task_key("s", "p"),
             ..PlanReplayerDumpTask::default()
         };
         assert!(status.occupy_running_task_key(&task));
@@ -1732,7 +1711,7 @@ mod tests {
     fn the_finished_set_records_and_clears() {
         let status = PlanReplayerDumpTaskStatus::new();
         let task = PlanReplayerDumpTask {
-            key: PlanReplayerTaskKey::new("s", "p"),
+            key: task_key("s", "p"),
             ..PlanReplayerDumpTask::default()
         };
         assert!(!status.check_task_key_finished_before(&task));
@@ -1807,7 +1786,7 @@ mod tests {
     fn a_finished_continuous_capture_is_skipped_before_occupying() {
         let w = worker(MockExec::default(), MockDumper::default());
         let task = PlanReplayerDumpTask {
-            key: PlanReplayerTaskKey::new("s", "p"),
+            key: task_key("s", "p"),
             is_continues_capture: true,
             ..PlanReplayerDumpTask::default()
         };
@@ -1823,7 +1802,7 @@ mod tests {
     fn an_occupied_key_is_left_to_its_owner() {
         let w = worker(MockExec::default(), MockDumper::default());
         let task = PlanReplayerDumpTask {
-            key: PlanReplayerTaskKey::new("s", "p"),
+            key: task_key("s", "p"),
             ..PlanReplayerDumpTask::default()
         };
         assert!(w.status.occupy_running_task_key(&task));
@@ -1837,7 +1816,7 @@ mod tests {
     fn only_a_continuous_capture_is_marked_finished() {
         let w = worker(MockExec::default(), MockDumper::default());
         let one_shot = PlanReplayerDumpTask {
-            key: PlanReplayerTaskKey::new("s", "p"),
+            key: task_key("s", "p"),
             is_capture: true,
             ..PlanReplayerDumpTask::default()
         };
@@ -1846,7 +1825,7 @@ mod tests {
         assert_eq!(w.status.running_task_status_len(), 0);
 
         let continuous = PlanReplayerDumpTask {
-            key: PlanReplayerTaskKey::new("s2", "p2"),
+            key: task_key("s2", "p2"),
             is_continues_capture: true,
             ..PlanReplayerDumpTask::default()
         };
@@ -1864,7 +1843,7 @@ mod tests {
         };
         let w = worker(exec, MockDumper::default());
         let task = PlanReplayerDumpTask {
-            key: PlanReplayerTaskKey::new("s", "p"),
+            key: task_key("s", "p"),
             is_continues_capture: true,
             ..PlanReplayerDumpTask::default()
         };
@@ -1902,7 +1881,7 @@ mod tests {
         ] {
             let w = worker(exec, dumper);
             let task = PlanReplayerDumpTask {
-                key: PlanReplayerTaskKey::new("s", "p"),
+                key: task_key("s", "p"),
                 is_continues_capture: true,
                 ..PlanReplayerDumpTask::default()
             };
@@ -1919,7 +1898,7 @@ mod tests {
         let mut w = worker(MockExec::default(), MockDumper::default());
         w.set_enable_historical_stats_for_capture(true);
         let task = PlanReplayerDumpTask {
-            key: PlanReplayerTaskKey::new("s", "p"),
+            key: task_key("s", "p"),
             is_capture: true,
             ..PlanReplayerDumpTask::default()
         };
@@ -1947,8 +1926,8 @@ mod tests {
     fn only_a_non_continuous_task_is_removed_from_the_collector() {
         let h =
             PlanReplayerHandle::new(PlanReplayerTaskCollectorHandle::new(MockExec::default()), 4);
-        let one_shot = PlanReplayerTaskKey::new("a", "a");
-        let continuous = PlanReplayerTaskKey::new("b", "b");
+        let one_shot = task_key("a", "a");
+        let continuous = task_key("b", "b");
         h.collector
             .setup_tasks(vec![one_shot.clone(), continuous.clone()]);
 
@@ -1968,7 +1947,7 @@ mod tests {
             PlanReplayerHandle::new(PlanReplayerTaskCollectorHandle::new(MockExec::default()), 1);
         full.collector.setup_tasks(vec![one_shot.clone()]);
         assert!(full.send_task(PlanReplayerDumpTask {
-            key: PlanReplayerTaskKey::new("z", "z"),
+            key: task_key("z", "z"),
             ..PlanReplayerDumpTask::default()
         }));
         assert!(!full.send_task(PlanReplayerDumpTask {
@@ -1984,21 +1963,15 @@ mod tests {
         let h =
             PlanReplayerHandle::new(PlanReplayerTaskCollectorHandle::new(MockExec::default()), 2);
         h.send_task(PlanReplayerDumpTask {
-            key: PlanReplayerTaskKey::new("1", "1"),
+            key: task_key("1", "1"),
             ..PlanReplayerDumpTask::default()
         });
         h.send_task(PlanReplayerDumpTask {
-            key: PlanReplayerTaskKey::new("2", "2"),
+            key: task_key("2", "2"),
             ..PlanReplayerDumpTask::default()
         });
-        assert_eq!(
-            h.dump_handle.drain_task().unwrap().key,
-            PlanReplayerTaskKey::new("1", "1")
-        );
-        assert_eq!(
-            h.dump_handle.drain_task().unwrap().key,
-            PlanReplayerTaskKey::new("2", "2")
-        );
+        assert_eq!(h.dump_handle.drain_task().unwrap().key, task_key("1", "1"));
+        assert_eq!(h.dump_handle.drain_task().unwrap().key, task_key("2", "2"));
     }
 
     /// WRITTEN. A closed handle panics on send, as Go does.
@@ -2016,12 +1989,12 @@ mod tests {
     fn the_worker_loop_drains_the_channel_and_exits_on_close() {
         let (tx, rx) = std::sync::mpsc::sync_channel(2);
         tx.send(PlanReplayerDumpTask {
-            key: PlanReplayerTaskKey::new("a", "a"),
+            key: task_key("a", "a"),
             ..PlanReplayerDumpTask::default()
         })
         .unwrap();
         tx.send(PlanReplayerDumpTask {
-            key: PlanReplayerTaskKey::new("b", "b"),
+            key: task_key("b", "b"),
             ..PlanReplayerDumpTask::default()
         })
         .unwrap();

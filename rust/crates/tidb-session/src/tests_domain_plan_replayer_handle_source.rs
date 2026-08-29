@@ -52,9 +52,10 @@ use tidb_domain::plan_replayer::{
     DumpFileGcChecker, DumpFileStorage, GcStatusHook, InternalSqlExecutor, PlanReplayerDumpTask,
     PlanReplayerDumpTaskStatus, PlanReplayerDumper, PlanReplayerError, PlanReplayerHandle,
     PlanReplayerStatusRecord, PlanReplayerTaskCollectorHandle, PlanReplayerTaskDumpWorker,
-    PlanReplayerTaskKey, RestrictedSqlExecutor, ServerInfo, ServerInfoSource,
-    COLLECT_ALL_TASKS_SQL, DELETE_STATUS_BY_TOKEN_SQL, INSERT_SUCCESS_STATUS_SQL,
+    RestrictedSqlExecutor, ServerInfo, ServerInfoSource, COLLECT_ALL_TASKS_SQL,
+    DELETE_STATUS_BY_TOKEN_SQL, INSERT_SUCCESS_STATUS_SQL,
 };
+use tidb_domain::replayer::PlanReplayerTaskKey;
 
 /// A shared model of `mysql.plan_replayer_task` (digest pairs) and
 /// `mysql.plan_replayer_status` (success rows per sql_digest), plus a log of
@@ -168,9 +169,16 @@ impl ServerInfoSource for MockInfo {
     }
 }
 
+fn task_key(sql_digest: &str, plan_digest: &str) -> PlanReplayerTaskKey {
+    PlanReplayerTaskKey {
+        sql_digest: sql_digest.to_owned(),
+        plan_digest: plan_digest.to_owned(),
+    }
+}
+
 /// The Go test's registered task pair (`'123','123'`), as a key.
 fn key_123() -> PlanReplayerTaskKey {
-    PlanReplayerTaskKey::new("123", "123")
+    task_key("123", "123")
 }
 
 /// Go `pkg/domain/plan_replayer_handle_test.go:30::TestPlanReplayerHandleCollectTask`.
@@ -206,7 +214,7 @@ fn plan_replayer_handle_collect_task() {
     collector.collect_plan_replayer_task().unwrap();
     let tasks = collector.get_tasks();
     assert_eq!(tasks.len(), 1);
-    assert_eq!(tasks[0], PlanReplayerTaskKey::new("345", "345"));
+    assert_eq!(tasks[0], task_key("345", "345"));
 
     // assert 2 unhandled tasks: '123' status row now carries fail_reason,
     // so the `fail_reason is null` probe stops seeing it.
@@ -215,7 +223,7 @@ fn plan_replayer_handle_collect_task() {
     let tasks = collector.get_tasks();
     assert_eq!(tasks.len(), 2);
     assert!(tasks.contains(&key_123()));
-    assert!(tasks.contains(&PlanReplayerTaskKey::new("345", "345")));
+    assert!(tasks.contains(&task_key("345", "345")));
 
     // The probe that hid '123' in scenario 3 was the exact statement Go
     // builds with fmt.Sprintf (plan_replayer.go:523-525).
@@ -252,7 +260,7 @@ fn plan_replayer_handle_dump_task() {
 
     // capture task and dump: the executor's capture path calls SendTask.
     let task = PlanReplayerDumpTask {
-        key: PlanReplayerTaskKey::new(sql_digest, plan_digest),
+        key: task_key(sql_digest, plan_digest),
         is_capture: true,
         is_continues_capture: false,
         ..PlanReplayerDumpTask::default()
@@ -288,7 +296,7 @@ fn plan_replayer_handle_dump_task() {
     assert_eq!(handle.collector.get_tasks().len(), 1);
 
     let star_task = PlanReplayerDumpTask {
-        key: PlanReplayerTaskKey::new(sql_digest, "*"),
+        key: task_key(sql_digest, "*"),
         is_capture: true,
         is_continues_capture: true,
         ..PlanReplayerDumpTask::default()
@@ -320,7 +328,7 @@ fn plan_replayer_gc() {
     let status = Arc::new(PlanReplayerDumpTaskStatus::default());
     // A finished continuous-capture task, to observe clearFinishedTask.
     let finished = PlanReplayerDumpTask {
-        key: PlanReplayerTaskKey::new("123", "capture"),
+        key: task_key("123", "capture"),
         is_capture: true,
         is_continues_capture: true,
         ..PlanReplayerDumpTask::default()

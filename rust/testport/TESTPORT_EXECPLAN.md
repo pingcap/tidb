@@ -36,6 +36,13 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-08-29: audited every source and build artifact in pinned Go
+  `pkg/util/replayer`. Added the single Rust package owner, moved
+  `PlanReplayerTaskKey` out of the domain consumer, removed its Rust-only
+  ordering and constructor API, and changed both domain test surfaces to call
+  the real filename generator and directory getter. Complete inventory,
+  native storage/writer boundaries, and WIP gates are recorded in
+  `receipts/util_replayer.md`.
 - 2026-08-29: audited every production and build artifact in pinned Go
   `pkg/util/domainutil` plus its startup publication. Removed the second
   independent Rust repair registry and all package-only Rust tests, retained

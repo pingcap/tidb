@@ -3269,6 +3269,7 @@ dependencies = [
 name = "tidb-domain"
 version = "0.0.0"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "chrono-tz",
  "getrandom 0.3.4",

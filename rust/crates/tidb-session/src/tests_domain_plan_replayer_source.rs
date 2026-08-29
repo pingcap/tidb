@@ -17,18 +17,9 @@
 //! `TestSendTask`, against `tidb_domain::plan_replayer` — the
 //! transcreation of `pkg/domain/plan_replayer.go`.
 //!
-//! Narrowings this port documents (all carried by the transcreation's own
-//! boundaries, not invented here):
-//! - Go creates its files through `replayer.GeneratePlanReplayerFile`
-//!   (`pkg/util/replayer`, unported) with the embedded timestamp overridden
-//!   by the `InjectPlanReplayerFileNameTimeField` failpoint. The names here
-//!   are Go's exact output formats, written straight into a real
-//!   `file://`-style directory storage behind the [`DumpFileStorage`]
-//!   boundary (`extstore.NewExtStorage(ctx, "file://...")`).
-//! - Go's `replayer.GetPlanReplayerDirName()` is the fixed sub-directory the
-//!   dump files land in; the GC only ever sees base names, so the port uses
-//!   the directory name Go initializes it to (`plan_replayer`,
-//!   `pkg/util/replayer/replayer.go` `planReplayerDirName`).
+//! Go's failpoint-injected timestamps are represented as fixture data in the
+//! GC test. The parse-time test calls the real transcreated
+//! `GeneratePlanReplayerFileName` for all eight flag combinations.
 
 #![cfg(test)]
 
@@ -42,6 +33,7 @@ use tidb_domain::plan_replayer::{
     parse_time, DumpFileGcChecker, DumpFileStorage, InternalSqlExecutor, PlanReplayerDumpTask,
     PlanReplayerError, PlanReplayerHandle, PlanReplayerTaskCollectorHandle, RestrictedSqlExecutor,
 };
+use tidb_domain::replayer::{generate_plan_replayer_file_name, get_plan_replayer_dir_name};
 
 /// `extstore.NewExtStorage(ctx, "file://<root>", "")`: real files under a
 /// scratch root, addressed by storage-relative paths.
@@ -135,7 +127,7 @@ fn nanos(at: DateTime<Utc>) -> i64 {
 /// Go `replayer.GeneratePlanReplayerFileName`'s three output shapes
 /// (`pkg/util/replayer/replayer.go:77-97`), which the GC's `parseTime` must
 /// accept.
-fn generate_file_name(
+fn fixture_file_name_at(
     is_capture: bool,
     is_continues_capture: bool,
     hist: bool,
@@ -157,7 +149,7 @@ fn generate_file_name(
 #[test]
 fn plan_replayer_different_gc() {
     let storage = DirStorage::new("different_gc");
-    let dir_name = "plan_replayer";
+    let dir_name = get_plan_replayer_dir_name();
 
     let now = Utc::now();
     let hour = chrono::Duration::hours(1);
@@ -166,22 +158,22 @@ fn plan_replayer_different_gc() {
     // capture cutoff, one plain replayer past the 1-hour default cutoff, and
     // one brand-new plain replayer.
     let time1 = nanos(now - hour * 7 * 25);
-    let file_name1 = generate_file_name(true, false, false, time1);
+    let file_name1 = fixture_file_name_at(true, false, false, time1);
     let file_path1 = format!("{dir_name}/{file_name1}");
     storage.write(&file_path1);
 
     let time2 = nanos(now - hour * 7 * 23);
-    let file_name2 = generate_file_name(true, false, false, time2);
+    let file_name2 = fixture_file_name_at(true, false, false, time2);
     let file_path2 = format!("{dir_name}/{file_name2}");
     storage.write(&file_path2);
 
     let time3 = nanos(now - hour * 2);
-    let file_name3 = generate_file_name(false, false, false, time3);
+    let file_name3 = fixture_file_name_at(false, false, false, time3);
     let file_path3 = format!("{dir_name}/{file_name3}");
     storage.write(&file_path3);
 
     let time4 = nanos(now);
-    let file_name4 = generate_file_name(false, false, false, time4);
+    let file_name4 = fixture_file_name_at(false, false, false, time4);
     let file_path4 = format!("{dir_name}/{file_name4}");
     storage.write(&file_path4);
 
@@ -247,7 +239,8 @@ fn dump_gc_file_parse_time() {
     for is_capture in [false, true] {
         for is_continues_capture in [false, true] {
             for hist in [false, true] {
-                let name = generate_file_name(is_capture, is_continues_capture, hist, now_nanos);
+                let name = generate_plan_replayer_file_name(is_capture, is_continues_capture, hist)
+                    .expect("name generation succeeds");
                 assert!(
                     parse_time(&name).is_ok(),
                     "generated name {name} must parse"
