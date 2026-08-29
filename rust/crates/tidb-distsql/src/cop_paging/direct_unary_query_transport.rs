@@ -1589,11 +1589,11 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         })??;
         if let Some(lock) = locked {
             if let Some(callback) = &self.event_callback {
-                callback(tidb_txnkv::wrap_cop_meet_lock(Some(
+                callback(tidb_txnkv::wrap_cop_meet_lock(Some(Arc::new(
                     tidb_txnkv::CopMeetLock {
-                        lock_info: Some(lock.clone()),
+                        lock_info: Some(Arc::new(lock.clone())),
                     },
-                )));
+                ))));
             }
             let action = self
                 .locked_response_delegate

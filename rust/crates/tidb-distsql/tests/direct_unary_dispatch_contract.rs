@@ -241,7 +241,7 @@ fn locked_response_publishes_the_exact_transaction_event_before_recovery() {
         observed
             .lock()
             .expect("lock event observation")
-            .as_ref(),
+            .as_deref(),
         Some(&lock)
     );
 }

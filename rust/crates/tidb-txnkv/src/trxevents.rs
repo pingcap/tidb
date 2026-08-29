@@ -36,21 +36,21 @@ pub type EventType = isize;
 pub const EVENT_TYPE_COP_MEET_LOCK: EventType = 0;
 
 /// Coprocessor-read lock observation.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default)]
 pub struct CopMeetLock {
     /// Exact kvproto lock information, or Go's nil `*kvrpcpb.LockInfo`.
-    pub lock_info: Option<KvrpcLockInfo>,
+    pub lock_info: Option<Arc<KvrpcLockInfo>>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default)]
 enum TransactionEventInner {
     #[default]
     Unset,
-    CopMeetLock(Option<CopMeetLock>),
+    CopMeetLock(Option<Arc<CopMeetLock>>),
 }
 
 /// A transaction event with the source package's private tag and payload.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default)]
 pub struct TransactionEvent {
     inner: TransactionEventInner,
     event_type: EventType,
@@ -67,7 +67,7 @@ impl TransactionEvent {
             return None;
         }
         match &self.inner {
-            TransactionEventInner::CopMeetLock(event) => event.as_ref(),
+            TransactionEventInner::CopMeetLock(event) => event.as_deref(),
             TransactionEventInner::Unset => {
                 panic!("interface conversion: interface is nil, not *trxevents.CopMeetLock")
             }
@@ -77,7 +77,7 @@ impl TransactionEvent {
 
 /// Wraps a coprocessor-lock event, preserving a typed nil pointer.
 #[must_use]
-pub const fn wrap_cop_meet_lock(event: Option<CopMeetLock>) -> TransactionEvent {
+pub fn wrap_cop_meet_lock(event: Option<Arc<CopMeetLock>>) -> TransactionEvent {
     TransactionEvent {
         inner: TransactionEventInner::CopMeetLock(event),
         event_type: EVENT_TYPE_COP_MEET_LOCK,

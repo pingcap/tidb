@@ -37,6 +37,12 @@ For each bounded behavior cluster:
 ## Progress
 
 - 2026-08-29: audited every production and build artifact in pinned Go
+  `pkg/util/trxevents` and its ordinary Distsql callback path. Replaced owned
+  deep-copy payloads with source-shaped shared pointers, removed value equality
+  absent from Go, and deleted the five-test Rust-only suite for the testless Go
+  package while retaining downstream callback coverage. Complete inventory and
+  WIP gates are recorded in `receipts/util_trxevents.md`.
+- 2026-08-29: audited every production and build artifact in pinned Go
   `pkg/util/tikvutil` plus all three pinned consumers. Replaced Rust's private
   atomic and extra public default/getter/setter API with the single public
   source-shaped atomic, wired config and sysvar consumers directly, and

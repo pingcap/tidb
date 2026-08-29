@@ -351,14 +351,14 @@ fn select_client_options_deliver_typed_transaction_events() {
             _request: &TransportRequest,
             _dispatch: &QueryDispatch,
         ) -> Result<Option<Self::Response>, String> {
-            self.callback.as_ref().expect("send event callback")(
-                wrap_cop_meet_lock(Some(CopMeetLock {
-                    lock_info: Some(KvrpcLockInfo {
+            self.callback.as_ref().expect("send event callback")(wrap_cop_meet_lock(Some(
+                Arc::new(CopMeetLock {
+                    lock_info: Some(Arc::new(KvrpcLockInfo {
                         key: b"locked".to_vec(),
                         ..KvrpcLockInfo::default()
-                    }),
-                })),
-            );
+                    })),
+                }),
+            )));
             Ok(self.response.take())
         }
     }
