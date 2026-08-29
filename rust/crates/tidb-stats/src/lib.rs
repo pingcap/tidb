@@ -35,9 +35,7 @@ pub mod analyze_version_policy;
 pub mod async_load;
 pub mod auto_analyze_job;
 pub mod auto_analyze_policy;
-pub mod auto_analyze_ratio;
 pub mod auto_analyze_runtime;
-pub mod auto_analyze_window;
 pub mod average_count;
 pub mod builder;
 pub mod cmsketch;
@@ -103,14 +101,11 @@ pub use auto_analyze_job::{
     AnalysisJobKind, Indicators, IndicatorsJSON, IndicatorsJson,
 };
 pub use auto_analyze_policy::need_analyze_table;
-pub use auto_analyze_ratio::{parse_auto_analyze_ratio, DEFAULT_AUTO_ANALYZE_RATIO};
 pub use auto_analyze_runtime::{
-    AnalysisJobFactory, AnalysisJobRuntime,
-    AutoAnalysisTimeWindow as RuntimeAutoAnalysisTimeWindow, ClockPort, DdlEvent, DdlHandleOutcome,
-    DdlRuntime, InfoSchemaPort, JobHookPort, PartitionPruneMode, QueueMutationPort, RuntimeError,
-    SessionPort, SqlPort, StatisticsPort,
+    AnalysisJobFactory, AnalysisJobRuntime, ClockPort, DdlEvent, DdlHandleOutcome, DdlRuntime,
+    InfoSchemaPort, JobHookPort, PartitionPruneMode, QueueMutationPort, RuntimeError, SessionPort,
+    SqlPort, StatisticsPort,
 };
-pub use auto_analyze_window::{AutoAnalysisTimeWindow, UtcDayMinute};
 pub use average_count::avg_count_per_not_null_value;
 pub use builder::{
     build_column, build_column_histogram, build_hist_and_topn, try_build_column_histogram,

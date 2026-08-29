@@ -874,6 +874,12 @@ For each bounded behavior cluster:
       package with 11 artifacts and 28 integrated tests; its handle and type
       dependencies remain incomplete. Inventory is in
       `receipts/statistics_handle_storage_audit.md`.
+- [x] Audit the complete pinned `pkg/statistics/handle/autoanalyze/exec`
+      package. Remove an unconsumed ratio-parser leaf, a duplicate window
+      compatibility module, their six source-absent tests, and duplicate root
+      aliases. Go owns integrated session ANALYZE execution, process tracking,
+      metrics, warnings, cache effects, and interruption. Inventory is in
+      `receipts/statistics_handle_autoanalyze_exec_audit.md`.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope
@@ -1050,6 +1056,12 @@ For each bounded behavior cluster:
   production consumers and omitted storage execution, typed conversion,
   cache publication, history, and worker lifecycle. They and the empty test
   carriers are removed until the complete dependency-closed package can land.
+  Date/Author: 2026-08-29, Codex.
+- Decision: `pkg/statistics/handle/autoanalyze/exec` is defined by current
+  session execution and its process, metrics, warning, cache, and interruption
+  effects. Private ratio/window parsing cannot stand alone as the package, and
+  Go has no public parser API or parser-only tests. Rust's detached helpers and
+  aliases are removed until the full execution owner can land.
   Date/Author: 2026-08-29, Codex.
 
 ## Surprises & Discoveries
