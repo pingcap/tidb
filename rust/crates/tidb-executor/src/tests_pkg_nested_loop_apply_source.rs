@@ -54,15 +54,23 @@ fn stmt_label_matrix_source() {
         ("delete from label", "Delete"),
         ("delete from label where c1 = 1", "Delete"),
         ("delete from label where c2 = 1", "Delete"),
-        ("delete from label where c2 = 1 order by c3 limit 1", "Delete"),
+        (
+            "delete from label where c2 = 1 order by c3 limit 1",
+            "Delete",
+        ),
         ("update label set c3 = 3", "Update"),
         ("update label set c3 = 3 where c1 = 1", "Update"),
         ("update label set c3 = 3 where c2 = 1", "Update"),
-        ("update label set c3 = 3 where c2 = 1 order by c3 limit 1", "Update"),
+        (
+            "update label set c3 = 3 where c2 = 1 order by c3 limit 1",
+            "Update",
+        ),
         ("import into label from '/file.csv'", "ImportInto"),
     ];
     for (sql, label) in cases {
-        let stmt = ctx().parse(sql).unwrap_or_else(|error| panic!("parse {sql:?}: {error:?}"));
+        let stmt = ctx()
+            .parse(sql)
+            .unwrap_or_else(|error| panic!("parse {sql:?}: {error:?}"));
         assert_eq!(stmt.label(), *label, "label of {sql:?}");
     }
 }
@@ -82,15 +90,19 @@ fn nested_loop_apply_filtered_correlation_source() {
     let mut catalog = Catalog::default();
     run_create_table_on("create table t_outer (c0 bigint)", &mut catalog).unwrap();
     run_create_table_on("create table t_inner (c1 bigint)", &mut catalog).unwrap();
-    run_insert_on("insert into t_outer values 1, 2, 3, 4, 5, 6", &mut catalog, &ctx())
-        .unwrap_or_else(|_| {
-            run_insert_on(
-                "insert into t_outer values (1), (2), (3), (4), (5), (6)",
-                &mut catalog,
-                &ctx(),
-            )
-            .unwrap()
-        });
+    run_insert_on(
+        "insert into t_outer values 1, 2, 3, 4, 5, 6",
+        &mut catalog,
+        &ctx(),
+    )
+    .unwrap_or_else(|_| {
+        run_insert_on(
+            "insert into t_outer values (1), (2), (3), (4), (5), (6)",
+            &mut catalog,
+            &ctx(),
+        )
+        .unwrap()
+    });
     run_insert_on(
         "insert into t_inner values (1), (2), (3), (4), (5), (6)",
         &mut catalog,
@@ -203,19 +215,3 @@ fn move_info_schema_to_front_source() {
         ],
     );
 }
-
-/// Go `pkg/executor/mppcoordmanager/mpp_coordinator_manager_test.go:60::TestDetectAndDelete`:
-/// with coordinators registered at `startTs`, `startTs + maxLifeTime`,
-/// `startTs + detectFrequency`, `startTs + 1min` and `startTs + 20s`,
-/// `detectAndDelete(startTs + maxLifeTime + 2min)` must delete exactly the
-/// OVERDUE-and-CLOSED entries (gather ids 1, 4, 5) and keep 2 and 3.
-#[test]
-#[ignore = "go-parity-gap: MPPCoordinatorManager (the InstanceMPPCoordinatorManager registry, its maxLifeTime/detectFrequency sweeper and detectAndDelete, pkg/executor/mppcoordmanager/mpp_coordinator_manager.go:33-:90) is not transcreated; tidb-txnkv's mpp module models versions/tasks/dispatch but no coordinator registry"]
-fn mpp_coordinator_detect_and_delete_gap() {}
-
-/// Go `pkg/executor/main_test.go:34::TestMain` is the SUITE BOOTSTRAP for the
-/// `executor_test` package: it registers the CustomFatalReporter scheme and
-/// testsetup opts and then runs the suite. It pins no executor behavior.
-#[test]
-#[ignore = "skipped-reason: Go TestMain is package-suite bootstrap (scheme registration + testsetup), not a behavioral test; there is no per-test contract to port"]
-fn executor_suite_test_main() {}

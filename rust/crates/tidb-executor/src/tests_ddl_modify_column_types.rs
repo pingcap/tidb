@@ -17,14 +17,14 @@
 //! rewrite (Go pkg/ddl/modify_column.go:840 `checkNullValue` /
 //! `pkg/ddl/column.go` `updateColumnWorker` semantics transcreated in
 //! `ddl/alter_table.rs::modify_column_action` and
-//! `kv_table::KvTable::modify_column`). Tests whose contract needs the
-//! online-DDL job machinery (reorg state machine, failpoint hooks, region
-//! splits) live in the sibling `tests_ddl_modify_column_reorg_gaps` module.
+//! `kv_table::KvTable::modify_column`). Contracts requiring the online-DDL
+//! job machinery (reorg state machine, failpoint hooks, and region splits)
+//! remain unimplemented and are not represented as Rust tests.
 //!
 //! Everything asserted below was measured against the live engine in this
 //! workspace; where Go's observable outcome differs, the assertion pins the
 //! measured Rust behavior, the comment cites Go's expectation with its
-//! symbol location, and the divergence is recorded in the batch receipt.
+//! symbol location. Such divergence cases are not Go-parity evidence.
 
 use crate::{
     run_alter_table_in, run_create_table_on, run_insert_on, run_select_on, Catalog, KvColumn,
@@ -88,82 +88,145 @@ fn modify_column_between_string_types_shrinks_expands_and_remaps_enum_set_member
 
     // varchar to varchar
     run_create_table_on("CREATE TABLE tt (a VARCHAR(10))", &mut catalog).unwrap();
-    run_insert_on("INSERT INTO tt VALUES ('111'),('10000')", &mut catalog, &ctx()).unwrap();
+    run_insert_on(
+        "INSERT INTO tt VALUES ('111'),('10000')",
+        &mut catalog,
+        &ctx(),
+    )
+    .unwrap();
     alter(&mut catalog, "ALTER TABLE tt CHANGE a a VARCHAR(5)").expect("Go: shrink succeeds");
     assert_eq!(column_flen(&catalog, "tt", "a"), 5, "Go: GetFlen == 5");
-    assert_eq!(text_rows(&catalog, "SELECT * FROM tt"), vec![["111"], ["10000"]]);
+    assert_eq!(
+        text_rows(&catalog, "SELECT * FROM tt"),
+        vec![["111"], ["10000"]]
+    );
     let error = alter(&mut catalog, "ALTER TABLE tt CHANGE a a VARCHAR(4)")
         .expect_err("Go: [types:1265]Data truncated for column 'a', value is '10000'");
     assert_eq!(code_of(&error), 1265);
-    assert_eq!(message_of(&error), "Data truncated for column 'a', value is '10000'");
+    assert_eq!(
+        message_of(&error),
+        "Data truncated for column 'a', value is '10000'"
+    );
     alter(&mut catalog, "ALTER TABLE tt CHANGE a a VARCHAR(100)").expect("Go: widen succeeds");
-    assert_eq!(text_rows(&catalog, "SELECT length(a) FROM tt"), vec![["3"], ["5"]]);
+    assert_eq!(
+        text_rows(&catalog, "SELECT length(a) FROM tt"),
+        vec![["3"], ["5"]]
+    );
 
     // char to char
     let mut catalog = Catalog::default();
     run_create_table_on("CREATE TABLE tt (a CHAR(10))", &mut catalog).unwrap();
-    run_insert_on("INSERT INTO tt VALUES ('111'),('10000')", &mut catalog, &ctx()).unwrap();
+    run_insert_on(
+        "INSERT INTO tt VALUES ('111'),('10000')",
+        &mut catalog,
+        &ctx(),
+    )
+    .unwrap();
     alter(&mut catalog, "ALTER TABLE tt CHANGE a a CHAR(5)").expect("Go: shrink succeeds");
     assert_eq!(column_flen(&catalog, "tt", "a"), 5);
-    assert_eq!(text_rows(&catalog, "SELECT * FROM tt"), vec![["111"], ["10000"]]);
+    assert_eq!(
+        text_rows(&catalog, "SELECT * FROM tt"),
+        vec![["111"], ["10000"]]
+    );
     let error = alter(&mut catalog, "ALTER TABLE tt CHANGE a a CHAR(4)")
         .expect_err("Go: [types:1265]Data truncated ... '10000'");
     assert_eq!(code_of(&error), 1265);
-    assert_eq!(message_of(&error), "Data truncated for column 'a', value is '10000'");
+    assert_eq!(
+        message_of(&error),
+        "Data truncated for column 'a', value is '10000'"
+    );
     alter(&mut catalog, "ALTER TABLE tt CHANGE a a CHAR(100)").expect("Go: widen succeeds");
-    assert_eq!(text_rows(&catalog, "SELECT length(a) FROM tt"), vec![["3"], ["5"]]);
+    assert_eq!(
+        text_rows(&catalog, "SELECT length(a) FROM tt"),
+        vec![["3"], ["5"]]
+    );
 
     // binary to binary: the stored values are zero-padded, so ANY shrink is
     // refused with the padded value in the message, and a widen re-pads.
     let mut catalog = Catalog::default();
     run_create_table_on("CREATE TABLE tt (a BINARY(10))", &mut catalog).unwrap();
-    run_insert_on("INSERT INTO tt VALUES ('111'),('10000')", &mut catalog, &ctx()).unwrap();
-    let error = alter(&mut catalog, "ALTER TABLE tt CHANGE a a BINARY(5)").expect_err(
-        "Go: [types:1265]Data truncated ... '111\\x00\\x00\\x00\\x00\\x00\\x00\\x00'",
-    );
+    run_insert_on(
+        "INSERT INTO tt VALUES ('111'),('10000')",
+        &mut catalog,
+        &ctx(),
+    )
+    .unwrap();
+    let error = alter(&mut catalog, "ALTER TABLE tt CHANGE a a BINARY(5)")
+        .expect_err("Go: [types:1265]Data truncated ... '111\\x00\\x00\\x00\\x00\\x00\\x00\\x00'");
     assert_eq!(code_of(&error), 1265);
     assert_eq!(
         message_of(&error),
         "Data truncated for column 'a', value is '111\0\0\0\0\0\0\0'"
     );
-    assert_eq!(column_flen(&catalog, "tt", "a"), 10, "Go: the type is unchanged");
+    assert_eq!(
+        column_flen(&catalog, "tt", "a"),
+        10,
+        "Go: the type is unchanged"
+    );
     assert_eq!(
         text_rows(&catalog, "SELECT * FROM tt"),
         vec![["111\0\0\0\0\0\0\0"], ["10000\0\0\0\0\0"]]
     );
-    let error = alter(&mut catalog, "ALTER TABLE tt CHANGE a a BINARY(4)").expect_err(
-        "Go: [types:1265]Data truncated ... '111\\x00\\x00\\x00\\x00\\x00\\x00\\x00'",
-    );
+    let error = alter(&mut catalog, "ALTER TABLE tt CHANGE a a BINARY(4)")
+        .expect_err("Go: [types:1265]Data truncated ... '111\\x00\\x00\\x00\\x00\\x00\\x00\\x00'");
     assert_eq!(code_of(&error), 1265);
     alter(&mut catalog, "ALTER TABLE tt CHANGE a a BINARY(12)").expect("Go: widen succeeds");
     assert_eq!(
         text_rows(&catalog, "SELECT * FROM tt"),
         vec![["111\0\0\0\0\0\0\0\0\0"], ["10000\0\0\0\0\0\0\0"]]
     );
-    assert_eq!(text_rows(&catalog, "SELECT length(a) FROM tt"), vec![["12"], ["12"]]);
+    assert_eq!(
+        text_rows(&catalog, "SELECT length(a) FROM tt"),
+        vec![["12"], ["12"]]
+    );
 
     // varbinary to varbinary
     let mut catalog = Catalog::default();
     run_create_table_on("CREATE TABLE tt (a VARBINARY(10))", &mut catalog).unwrap();
-    run_insert_on("INSERT INTO tt VALUES ('111'),('10000')", &mut catalog, &ctx()).unwrap();
+    run_insert_on(
+        "INSERT INTO tt VALUES ('111'),('10000')",
+        &mut catalog,
+        &ctx(),
+    )
+    .unwrap();
     alter(&mut catalog, "ALTER TABLE tt CHANGE a a VARBINARY(5)").expect("Go: shrink succeeds");
     assert_eq!(column_flen(&catalog, "tt", "a"), 5);
-    assert_eq!(text_rows(&catalog, "SELECT * FROM tt"), vec![["111"], ["10000"]]);
+    assert_eq!(
+        text_rows(&catalog, "SELECT * FROM tt"),
+        vec![["111"], ["10000"]]
+    );
     let error = alter(&mut catalog, "ALTER TABLE tt CHANGE a a VARBINARY(4)")
         .expect_err("Go: [types:1265]Data truncated ... '10000'");
     assert_eq!(code_of(&error), 1265);
     alter(&mut catalog, "ALTER TABLE tt CHANGE a a VARBINARY(12)").expect("Go: widen succeeds");
-    assert_eq!(text_rows(&catalog, "SELECT * FROM tt"), vec![["111"], ["10000"]]);
-    assert_eq!(text_rows(&catalog, "SELECT length(a) FROM tt"), vec![["3"], ["5"]]);
+    assert_eq!(
+        text_rows(&catalog, "SELECT * FROM tt"),
+        vec![["111"], ["10000"]]
+    );
+    assert_eq!(
+        text_rows(&catalog, "SELECT length(a) FROM tt"),
+        vec![["3"], ["5"]]
+    );
 
     // varchar to char
     let mut catalog = Catalog::default();
     run_create_table_on("CREATE TABLE tt (a VARCHAR(10))", &mut catalog).unwrap();
-    run_insert_on("INSERT INTO tt VALUES ('111'),('10000')", &mut catalog, &ctx()).unwrap();
+    run_insert_on(
+        "INSERT INTO tt VALUES ('111'),('10000')",
+        &mut catalog,
+        &ctx(),
+    )
+    .unwrap();
     alter(&mut catalog, "ALTER TABLE tt CHANGE a a CHAR(10)").expect("Go: conversion succeeds");
-    assert!(column_code_is_char(&catalog, "tt", "a"), "Go: GetType() == mysql.TypeString");
+    assert!(
+        column_code_is_char(&catalog, "tt", "a"),
+        "Go: GetType() == mysql.TypeString"
+    );
     assert_eq!(column_flen(&catalog, "tt", "a"), 10);
-    assert_eq!(text_rows(&catalog, "SELECT * FROM tt"), vec![["111"], ["10000"]]);
+    assert_eq!(
+        text_rows(&catalog, "SELECT * FROM tt"),
+        vec![["111"], ["10000"]]
+    );
     let error = alter(&mut catalog, "ALTER TABLE tt CHANGE a a CHAR(4)")
         .expect_err("Go: [types:1265]Data truncated ... '10000'");
     assert_eq!(code_of(&error), 1265);
@@ -176,30 +239,57 @@ fn modify_column_between_string_types_shrinks_expands_and_remaps_enum_set_member
     let error = alter(&mut catalog, "ALTER TABLE tt CHANGE a a SET('111', '2222')")
         .expect_err("Go: [types:1265]Data truncated ... '10000'");
     assert_eq!(code_of(&error), 1265);
-    alter(&mut catalog, "ALTER TABLE tt CHANGE a a SET('111', '10000')")
-        .expect("Go: conversion succeeds");
-    assert_eq!(text_rows(&catalog, "SELECT * FROM tt"), vec![["111"], ["10000"]]);
+    alter(
+        &mut catalog,
+        "ALTER TABLE tt CHANGE a a SET('111', '10000')",
+    )
+    .expect("Go: conversion succeeds");
+    assert_eq!(
+        text_rows(&catalog, "SELECT * FROM tt"),
+        vec![["111"], ["10000"]]
+    );
 
     // set to set
-    alter(&mut catalog, "ALTER TABLE tt CHANGE a a SET('10000', '111')")
-        .expect("Go: re-ordering succeeds");
-    assert_eq!(text_rows(&catalog, "SELECT * FROM tt"), vec![["111"], ["10000"]]);
+    alter(
+        &mut catalog,
+        "ALTER TABLE tt CHANGE a a SET('10000', '111')",
+    )
+    .expect("Go: re-ordering succeeds");
+    assert_eq!(
+        text_rows(&catalog, "SELECT * FROM tt"),
+        vec![["111"], ["10000"]]
+    );
 
     // set to enum
-    let error = alter(&mut catalog, "ALTER TABLE tt CHANGE a a ENUM('111', '2222')")
-        .expect_err("Go: [types:1265]Data truncated ... '10000'");
+    let error = alter(
+        &mut catalog,
+        "ALTER TABLE tt CHANGE a a ENUM('111', '2222')",
+    )
+    .expect_err("Go: [types:1265]Data truncated ... '10000'");
     assert_eq!(code_of(&error), 1265);
-    alter(&mut catalog, "ALTER TABLE tt CHANGE a a ENUM('111', '10000')")
-        .expect("Go: conversion succeeds");
-    assert_eq!(text_rows(&catalog, "SELECT * FROM tt"), vec![["111"], ["10000"]]);
-    alter(&mut catalog, "ALTER TABLE tt CHANGE a a ENUM('10000', '111')")
-        .expect("Go: re-ordering succeeds");
+    alter(
+        &mut catalog,
+        "ALTER TABLE tt CHANGE a a ENUM('111', '10000')",
+    )
+    .expect("Go: conversion succeeds");
+    assert_eq!(
+        text_rows(&catalog, "SELECT * FROM tt"),
+        vec![["111"], ["10000"]]
+    );
+    alter(
+        &mut catalog,
+        "ALTER TABLE tt CHANGE a a ENUM('10000', '111')",
+    )
+    .expect("Go: re-ordering succeeds");
     assert_eq!(
         text_rows(&catalog, "SELECT * FROM tt WHERE a = 1"),
         vec![["10000"]],
         "Go: the numeric filter addresses the enum INDEX, so the re-map moves values"
     );
-    assert_eq!(text_rows(&catalog, "SELECT * FROM tt WHERE a = 2"), vec![["111"]]);
+    assert_eq!(
+        text_rows(&catalog, "SELECT * FROM tt WHERE a = 2"),
+        vec![["111"]]
+    );
 
     // Go closes with the non-strict arm (`set @@sql_mode=""` + `show
     // warnings`); this tier has no session sql_mode switch, so the
@@ -222,7 +312,12 @@ fn modify_column_between_string_types_shrinks_expands_and_remaps_enum_set_member
 fn modify_column_null_to_not_null_rejects_rows_holding_nulls() {
     let mut catalog = Catalog::default();
     run_create_table_on("CREATE TABLE tt (a BIGINT, b INT)", &mut catalog).unwrap();
-    run_insert_on("INSERT INTO tt VALUES (1,1),(2,2),(3,3)", &mut catalog, &ctx()).unwrap();
+    run_insert_on(
+        "INSERT INTO tt VALUES (1,1),(2,2),(3,3)",
+        &mut catalog,
+        &ctx(),
+    )
+    .unwrap();
     // Go reaches this state via its failpoint; synchronously it is just a row.
     run_insert_on("INSERT INTO tt VALUES (NULL, NULL)", &mut catalog, &ctx()).unwrap();
 
@@ -231,7 +326,10 @@ fn modify_column_null_to_not_null_rejects_rows_holding_nulls() {
     assert_eq!(code_of(&error), 1265, "divergence: Go answers 1138");
     assert_eq!(message_of(&error), "Data truncated for column 'a' at row 4");
     // The rows survive the refused alteration.
-    assert_eq!(text_rows(&catalog, "SELECT * FROM tt"), vec![["1", "1"], ["2", "2"], ["3", "3"], ["NULL", "NULL"]]);
+    assert_eq!(
+        text_rows(&catalog, "SELECT * FROM tt"),
+        vec![["1", "1"], ["2", "2"], ["3", "3"], ["NULL", "NULL"]]
+    );
 }
 
 // Go `modify_column_test.go:1044::TestModifyIntegerColumn`, value halves.
@@ -254,7 +352,12 @@ fn modify_integer_column_boundary_values_are_refused_or_converted_exactly() {
     ] {
         let mut catalog = Catalog::default();
         run_create_table_on("CREATE TABLE t (a BIGINT)", &mut catalog).unwrap();
-        run_insert_on(&format!("INSERT INTO t VALUES ({value})"), &mut catalog, &ctx()).unwrap();
+        run_insert_on(
+            &format!("INSERT INTO t VALUES ({value})"),
+            &mut catalog,
+            &ctx(),
+        )
+        .unwrap();
         let error = alter(&mut catalog, "ALTER TABLE t MODIFY COLUMN a INT")
             .expect_err("Go: boundary value must be refused");
         let message = message_of(&error);
@@ -267,8 +370,12 @@ fn modify_integer_column_boundary_values_are_refused_or_converted_exactly() {
     // In-range boundaries pass and keep their values.
     let mut catalog = Catalog::default();
     run_create_table_on("CREATE TABLE t (a INT)", &mut catalog).unwrap();
-    run_insert_on("INSERT INTO t VALUES (2147483647), (-2147483648), (0)", &mut catalog, &ctx())
-        .unwrap();
+    run_insert_on(
+        "INSERT INTO t VALUES (2147483647), (-2147483648), (0)",
+        &mut catalog,
+        &ctx(),
+    )
+    .unwrap();
     alter(&mut catalog, "ALTER TABLE t MODIFY COLUMN a BIGINT")
         .expect("Go: signed -> wider signed passes");
     assert_eq!(
@@ -289,14 +396,25 @@ fn modify_integer_column_boundary_values_are_refused_or_converted_exactly() {
     let mut catalog = Catalog::default();
     run_create_table_on("CREATE TABLE t (a BIGINT UNSIGNED)", &mut catalog).unwrap();
     run_insert_on("INSERT INTO t VALUES (65536)", &mut catalog, &ctx()).unwrap();
-    let error = alter(&mut catalog, "ALTER TABLE t MODIFY COLUMN a SMALLINT UNSIGNED")
-        .expect_err("Go: [maxValOfNewCol+1, maxValOfOldCol] fail");
+    let error = alter(
+        &mut catalog,
+        "ALTER TABLE t MODIFY COLUMN a SMALLINT UNSIGNED",
+    )
+    .expect_err("Go: [maxValOfNewCol+1, maxValOfOldCol] fail");
     assert!(message_of(&error).contains("Data truncated for column 'a'"));
     let mut catalog = Catalog::default();
     run_create_table_on("CREATE TABLE t (a BIGINT UNSIGNED)", &mut catalog).unwrap();
-    run_insert_on("INSERT INTO t VALUES (65535), (0), (1)", &mut catalog, &ctx()).unwrap();
-    alter(&mut catalog, "ALTER TABLE t MODIFY COLUMN a SMALLINT UNSIGNED")
-        .expect("Go: [0, maxValOfNewCol] pass");
+    run_insert_on(
+        "INSERT INTO t VALUES (65535), (0), (1)",
+        &mut catalog,
+        &ctx(),
+    )
+    .unwrap();
+    alter(
+        &mut catalog,
+        "ALTER TABLE t MODIFY COLUMN a SMALLINT UNSIGNED",
+    )
+    .expect("Go: [0, maxValOfNewCol] pass");
 
     // unsigned -> signed: above the new signed maximum is refused, at it passes.
     let mut catalog = Catalog::default();
@@ -342,8 +460,16 @@ fn modify_string_column_pass_fail_matrix_follows_char_spacing_semantics() {
     for (old_type, new_type, value, passes) in cases {
         let mut catalog = Catalog::default();
         run_create_table_on(&format!("CREATE TABLE t (a {old_type})"), &mut catalog).unwrap();
-        run_insert_on(&format!("INSERT INTO t VALUES ('{value}')"), &mut catalog, &ctx()).unwrap();
-        let outcome = alter(&mut catalog, &format!("ALTER TABLE t MODIFY COLUMN a {new_type}"));
+        run_insert_on(
+            &format!("INSERT INTO t VALUES ('{value}')"),
+            &mut catalog,
+            &ctx(),
+        )
+        .unwrap();
+        let outcome = alter(
+            &mut catalog,
+            &format!("ALTER TABLE t MODIFY COLUMN a {new_type}"),
+        );
         assert_eq!(
             outcome.is_ok(),
             passes,
@@ -379,8 +505,14 @@ fn modify_column_charset_columns_follow_the_table_default_when_unset() {
     .unwrap();
     let (a_charset, a_collation) = column_charset(&catalog, "t_mcc", "a");
     let (b_charset, b_collation) = column_charset(&catalog, "t_mcc", "b");
-    assert_eq!((a_charset.as_str(), a_collation.as_str()), ("utf8", "utf8_bin"));
-    assert_eq!((b_charset.as_str(), b_collation.as_str()), ("utf8", "utf8_bin"));
+    assert_eq!(
+        (a_charset.as_str(), a_collation.as_str()),
+        ("utf8", "utf8_bin")
+    );
+    assert_eq!(
+        (b_charset.as_str(), b_collation.as_str()),
+        ("utf8", "utf8_bin")
+    );
 
     alter(&mut catalog, "ALTER TABLE t_mcc MODIFY COLUMN a VARCHAR(8)").unwrap();
     let (a_charset, a_collation) = column_charset(&catalog, "t_mcc", "a");
@@ -429,7 +561,10 @@ fn multi_schema_modify_column_positions_keep_column_identity() {
     .expect("Go: the swapped multi-MODIFY succeeds");
 
     let ids_after = catalog_column_ids(&catalog, "t");
-    assert_eq!(ids_before, ids_after, "Go: the offset and ID of b are unchanged");
+    assert_eq!(
+        ids_before, ids_after,
+        "Go: the offset and ID of b are unchanged"
+    );
     // The moves land the columns back in their declared order (a after b,
     // then b after a), with `b` — Go's Columns[1] — again at offset 1.
     assert_eq!(catalog_column_names(&catalog, "t"), vec!["a", "b", "c"]);
@@ -480,5 +615,9 @@ fn catalog_column_names(catalog: &Catalog, table: &str) -> Vec<String> {
     let Some(TableEntry::Kv(table)) = catalog.table_in("test", table) else {
         panic!("table {table} is registered");
     };
-    table.columns.iter().map(|column| column.name.clone()).collect()
+    table
+        .columns
+        .iter()
+        .map(|column| column.name.clone())
+        .collect()
 }

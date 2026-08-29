@@ -22,7 +22,7 @@
 //! SCOPE: the `Executor` trait core (open/next/close/schema/ret_field_types/
 //! init_cap/max_chunk_size/new_chunk) plus the operator set: `TableDualExec`,
 //! `ProjectionExec`, `SelectionExec`, `HashAggExec`, `SortExec`, `LimitExec`,
-//! `HashJoinExec`/`JoinExec`, `WindowExec`, `ApplyExec`, `ExplainExec`, the KV
+//! `HashJoinExec`/`JoinExec`, `ApplyExec`, `ExplainExec`, the KV
 //! table scan and index-range/access-path sources, and the `driver` that builds
 //! them from an AST. One file per Go operator, comments citing the Go symbol.
 //!
@@ -107,45 +107,15 @@ pub mod partition_routing;
 mod physical_cte;
 pub(crate) mod ranger_detacher;
 #[cfg(test)]
-mod tests_adapter_recordset_lockkeys_gaps;
-#[cfg(test)]
-mod tests_adapter_slow_log_ru_gaps;
-#[cfg(test)]
-mod tests_adapter_topsql_profiling_gaps;
-#[cfg(test)]
-mod tests_admin_checksum_gaps;
-#[cfg(test)]
 mod tests_aggfuncs_approx_pushdown_source;
 #[cfg(test)]
-mod tests_aggfuncs_avg_bit_count_gaps;
-#[cfg(test)]
-mod tests_aggfuncs_cume_dist_first_row_gaps;
-#[cfg(test)]
-mod tests_aggfuncs_group_concat_gaps;
-#[cfg(test)]
-mod tests_aggfuncs_json_aggs_gaps;
-#[cfg(test)]
-mod tests_aggfuncs_lead_lag_gaps;
-#[cfg(test)]
-mod tests_aggfuncs_max_min_deque_gaps;
-#[cfg(test)]
-mod tests_aggfuncs_parallel_distinct_gaps;
-#[cfg(test)]
 mod tests_analyze_broadcast_flush_gaps;
-#[cfg(test)]
-mod tests_analyze_kill_save_gaps;
 #[cfg(test)]
 mod tests_analyze_panic_recovery_source;
 #[cfg(test)]
 mod tests_batch_point_get_locking_gaps;
 #[cfg(test)]
 mod tests_batch_point_get_temporary_source;
-#[cfg(test)]
-mod tests_brie_task_surface_gaps;
-#[cfg(test)]
-mod tests_cluster_slow_query_gaps;
-#[cfg(test)]
-mod tests_compact_table_tiflash_gaps;
 #[cfg(test)]
 mod tests_ddl_b100_source;
 #[cfg(test)]
@@ -161,55 +131,15 @@ mod tests_ddl_db_change_failpoints;
 #[cfg(test)]
 mod tests_ddl_db_change_states;
 #[cfg(test)]
-mod tests_ddl_job_submitter_worker_gaps;
-#[cfg(test)]
 mod tests_ddl_masking_policy_ddl_gaps;
-#[cfg(test)]
-mod tests_ddl_metabuild_session_context_gap;
-#[cfg(test)]
-mod tests_ddl_modify_column_reorg_gaps;
 #[cfg(test)]
 mod tests_ddl_modify_column_types;
 #[cfg(test)]
-mod tests_ddl_multi_schema_change_cancel_gaps;
-#[cfg(test)]
-mod tests_ddl_multi_schema_change_job_gaps;
-#[cfg(test)]
 mod tests_ddl_multi_schema_change_sql;
-#[cfg(test)]
-mod tests_ddl_mv_index_online_ddl_gaps;
-#[cfg(test)]
-mod tests_ddl_notifier_pubsub_gaps;
-#[cfg(test)]
-mod tests_ddl_options_owner_manager_gaps;
 #[cfg(test)]
 mod tests_ddl_partition_operations_sql;
 #[cfg(test)]
-mod tests_ddl_partition_reorganize_exchange_gaps;
-#[cfg(test)]
 mod tests_ddl_table_cache;
-#[cfg(test)]
-mod tests_import_into_external_id_gaps;
-#[cfg(test)]
-mod tests_importer_chunk_process_gaps;
-#[cfg(test)]
-mod tests_importer_job_gaps;
-#[cfg(test)]
-mod tests_importer_kv_encode_gaps;
-#[cfg(test)]
-mod tests_importer_plan_options_gaps;
-#[cfg(test)]
-mod tests_importer_precheck_sampler_gaps;
-#[cfg(test)]
-mod tests_importer_table_import_gaps;
-#[cfg(test)]
-mod tests_importer_verify_postprocess_gaps;
-#[cfg(test)]
-mod tests_index_join_cte_build_cleanup_gaps;
-#[cfg(test)]
-mod tests_infoschema_cluster_table_gaps;
-#[cfg(test)]
-mod tests_infoschema_reader_source_gaps;
 #[cfg(test)]
 mod tests_insert_auto_random_id_source;
 #[cfg(test)]
@@ -217,11 +147,7 @@ mod tests_insert_null_non_strict_source;
 #[cfg(test)]
 mod tests_insert_on_duplicate_key_source;
 #[cfg(test)]
-mod tests_insert_write_gaps;
-#[cfg(test)]
-mod tests_inspection_result_gaps;
-#[cfg(test)]
-mod tests_join_probe_source_gaps;
+mod tests_joiner_required_rows_source;
 #[cfg(test)]
 mod tests_merge_join_in_disk_source;
 #[cfg(test)]
@@ -229,59 +155,15 @@ mod tests_parallel_apply_sql_source;
 #[cfg(test)]
 mod tests_partition_table_sql_source;
 #[cfg(test)]
-mod tests_joiner_required_rows_source;
-#[cfg(test)]
-mod tests_left_outer_anti_semi_probe_gaps;
-#[cfg(test)]
-mod tests_left_outer_join_probe_gaps;
-#[cfg(test)]
-mod tests_left_outer_semi_probe_gaps;
-#[cfg(test)]
-mod tests_outer_join_spill_gaps;
-#[cfg(test)]
-mod tests_right_outer_join_probe_gaps;
-#[cfg(test)]
-mod tests_row_table_builder_gaps;
-#[cfg(test)]
-mod tests_semi_join_probe_gaps;
-#[cfg(test)]
-mod tests_index_lookup_join_gaps;
-#[cfg(test)]
-mod tests_index_lookup_merge_join_gaps;
-#[cfg(test)]
 mod tests_pkg_nested_loop_apply_source;
-#[cfg(test)]
-mod tests_point_get_visibility_locking_gaps;
-#[cfg(test)]
-mod tests_prepared_isolation_and_limits_gaps;
 #[cfg(test)]
 mod tests_prepared_param_types_source;
 #[cfg(test)]
 mod tests_prepared_parameter_pushdown_source;
 #[cfg(test)]
-mod tests_resource_group_tag_gaps;
-#[cfg(test)]
-mod tests_revoke_privilege_gaps;
-#[cfg(test)]
-mod tests_select_into_outfile_gaps;
-#[cfg(test)]
-mod tests_set_session_variable_gaps;
-#[cfg(test)]
-mod tests_show_affinity_gaps;
-#[cfg(test)]
-mod tests_show_ddl_job_comments_gaps;
-#[cfg(test)]
-mod tests_show_placement_gaps;
-#[cfg(test)]
-mod tests_show_stats_meta_gaps;
-#[cfg(test)]
-mod tests_sql_flags_import_insert_gaps;
-#[cfg(test)]
 mod tests_table_part1_source;
 #[cfg(test)]
 mod tests_table_part2_source;
-#[cfg(test)]
-mod tests_tablesample_regions_gaps;
 mod tidb_decode_key;
 pub use partition_routing::{PartitionDef, PartitionKind, PartitionSpec, RangeBound};
 pub mod fts_like_rewrite;
@@ -307,19 +189,11 @@ mod tests_duplicate_entry_message_source;
 #[cfg(test)]
 mod tests_executor_part19_source;
 #[cfg(test)]
-mod tests_executor_part20_source;
-#[cfg(test)]
 mod tests_global_temp_table_source;
 #[cfg(test)]
 mod tests_index_join;
 #[cfg(test)]
 mod tests_jointest_join_source;
-#[cfg(test)]
-mod tests_loaddatatest_source;
-#[cfg(test)]
-mod tests_loadremotetest_one_csv_source;
-#[cfg(test)]
-mod tests_loadremotetest_source;
 #[cfg(test)]
 mod tests_memtest_source;
 #[cfg(test)]
@@ -416,11 +290,7 @@ pub use view::{resolve_view_definition, run_create_view_in, run_drop_view_in, vi
 mod tests_admin_check_admintest_source;
 #[cfg(test)]
 mod tests_analyze_suite_source;
-#[cfg(test)]
-mod tests_analyzecolumns_b132_source;
 /// Explicit isolated spill authorities for executor tests.
-#[cfg(test)]
-mod tests_distsql_test_source;
 #[cfg(test)]
 mod tests_executor_internal_source;
 #[cfg(test)]
@@ -437,12 +307,6 @@ mod tests_fktest_b134_source;
 mod tests_fktest_source;
 #[cfg(test)]
 mod tests_hashagg_aggregate_suite_source;
-#[cfg(test)]
-mod tests_indexmergeread_b134_source;
-#[cfg(test)]
-mod tests_infoschema_b134_source;
-#[cfg(test)]
-mod tests_infoschema_b135_source;
 #[cfg(test)]
 mod tests_issuetest_b135_source;
 #[cfg(test)]

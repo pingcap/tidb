@@ -43,7 +43,12 @@ fn insert_update_tracker_bytes_return_to_baseline_on_cleanup() {
     for id in 1..=3 {
         let memory = statement(&session);
         let ctx = StmtContext::for_query().with_statement_memory(memory.clone());
-        run_insert_on(&format!("insert into t (id) values ({id})"), &mut catalog, &ctx).unwrap();
+        run_insert_on(
+            &format!("insert into t (id) values ({id})"),
+            &mut catalog,
+            &ctx,
+        )
+        .unwrap();
         memory.finish_statement();
         assert_eq!(
             session.bytes_consumed(),
@@ -72,29 +77,11 @@ fn insert_update_tracker_bytes_return_to_baseline_on_cleanup() {
     }
 
     // The writes actually landed.
-    let rows = run_select_on("select id from t order by id", &catalog, &StmtContext::for_query())
-        .unwrap();
+    let rows = run_select_on(
+        "select id from t order by id",
+        &catalog,
+        &StmtContext::for_query(),
+    )
+    .unwrap();
     assert_eq!(rows.len(), 3);
 }
-
-/// Go `pkg/executor/test/memtest/mem_test.go:50::TestGlobalMemArbitrator`:
-/// the process-global arbitrator driven through `SET GLOBAL
-/// tidb_mem_arbitrator_mode` / `tidb_mem_arbitrator_soft_limit` /
-/// `tidb_mem_arbitrator_wait_averse` / `tidb_mem_arbitrator_query_reserved`
-/// (session-scope refusals, `default` resets, `auto`/float-rate soft-limit
-/// parsing, resource-group hints, `[executor:8180]` cancellation reasons and
-/// the arbitrator's ExecMetrics counters). The sysvar SET/SELECT surface and
-/// the process-global singleton plus resource groups live above this tier;
-/// the arbitrator CORE those variables drive is separately pinned by
-/// `mem_quota.rs`'s unit tests (`a_statement_root_registers_and_releases_its_global_arbitrator_pool`,
-/// `nolimit_skips_global_memory_arbitration_but_reserve_promotes_immediately`)
-/// over `tidb-util`'s `MemArbitrator`.
-#[test]
-#[ignore = "go-parity-gap: SET GLOBAL/@ arbitrator variables, the global-arbitrator singleton, resource groups and 8180 cancellation text are session/process surfaces unported at this tier"]
-fn global_mem_arbitrator_modes_limits_and_cancel_reasons() {}
-
-/// Go `pkg/executor/test/memtest/main_test.go:26::TestMain`: goleak and
-/// config bootstrap only.
-#[test]
-#[ignore = "go-parity-gap: memtest TestMain is goleak/config suite bootstrap; no statement behavior"]
-fn memtest_main_is_bootstrap_only() {}

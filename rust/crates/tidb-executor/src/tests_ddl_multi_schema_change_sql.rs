@@ -16,13 +16,9 @@
 //! observable contract is this tier's synchronous, in-order application of
 //! one ALTER TABLE's action list (`ddl/alter_table.rs::run_alter_table_in`):
 //! the success paths and the per-statement outcomes the Go tests assert
-//! without online-DDL machinery. Everything that needs the job queue --
-//! `newCancelJobHook` cancellation, `testfailpoint` hooks, sub-job schema
-//! states, `putTheSameDDLJobTwice` racing submissions -- is ported in the
-//! sibling `tests_ddl_multi_schema_change_job_gaps` module; the parallel
-//! double-submission tests whose serialized second run reproduces the loser's
-//! outcome stay here, following the `db_change_ddl_conflicts_source.rs`
-//! precedent for Go's `db_change_test.go` parallel tests.
+//! without online-DDL machinery. The job-queue contracts—cancellation,
+//! failpoint hooks, sub-job schema states, and racing submissions—remain
+//! unimplemented and therefore are not represented as Rust tests.
 //!
 //! Go's job-build-time combination refusals (`checkOperateSameColAndIdx`,
 //! `pkg/ddl/multi_schema_change.go:350`, error template
@@ -31,8 +27,7 @@
 //! statement, atomically. This tier applies the actions in order instead, so
 //! each such statement below observes the SEQUENTIAL outcome -- measured on
 //! this engine in this session and pinned per arm with Go's expectation
-//! cited. The divergence (atomic combination refusal vs ordered application)
-//! is recorded in the batch receipt.
+//! cited. These divergence cases are not Go-parity evidence.
 
 use crate::{
     run_alter_table_in, run_create_table_on, run_insert_on, run_rename_table_in, run_select_on,
@@ -90,7 +85,10 @@ fn index_names(catalog: &Catalog, table: &str) -> Vec<String> {
     let Some(crate::TableEntry::Kv(kv)) = catalog.table_in("test", table) else {
         panic!("table {table} missing");
     };
-    kv.indexes().iter().map(|index| index.name.clone()).collect()
+    kv.indexes()
+        .iter()
+        .map(|index| index.name.clone())
+        .collect()
 }
 
 /// Go `multi_schema_change_test.go:166::TestMultiSchemaChangeRenameColumns`
@@ -113,7 +111,10 @@ fn multi_schema_change_rename_columns_applies_both_actions() {
     )
     .expect("Go: both actions apply");
     assert_eq!(text_rows(&catalog, "select c from t"), vec![["2"]]);
-    assert_eq!(text_rows(&catalog, "select * from t"), vec![["1", "2", "3"]]);
+    assert_eq!(
+        text_rows(&catalog, "select * from t"),
+        vec![["1", "2", "3"]]
+    );
 }
 
 /// Go `multi_schema_change_test.go:170-197::TestMultiSchemaChangeRenameColumns`
@@ -129,33 +130,63 @@ fn multi_schema_change_rename_columns_applies_both_actions() {
 fn multi_schema_change_rename_columns_combinations_answer_sequential_outcomes() {
     // add and rename to the same column name
     let mut catalog = Catalog::default();
-    run_create_table_on("create table t (a int default 1, b int default 2)", &mut catalog).unwrap();
+    run_create_table_on(
+        "create table t (a int default 1, b int default 2)",
+        &mut catalog,
+    )
+    .unwrap();
     run_insert_on("insert into t values ()", &mut catalog, &ctx()).unwrap();
     let error = alter(
         &mut catalog,
         "alter table t rename column b to c, add column c int",
     )
     .expect_err("Go: 8200 Unsupported operate same column 'c'");
-    assert_eq!(code_of(&error), 1060, "sequential: rename lands, add collides");
+    assert_eq!(
+        code_of(&error),
+        1060,
+        "sequential: rename lands, add collides"
+    );
     assert_eq!(message_of(&error), "Duplicate column name 'c'");
 
     // add a column positioned AFTER the renamed-away column
     let mut catalog = Catalog::default();
-    run_create_table_on("create table t (a int default 1, b int default 2)", &mut catalog).unwrap();
+    run_create_table_on(
+        "create table t (a int default 1, b int default 2)",
+        &mut catalog,
+    )
+    .unwrap();
     let error = alter(
         &mut catalog,
         "alter table t rename column b to c, add column e int after b",
     )
     .expect_err("Go: 8200 Unsupported operate same column");
-    assert_eq!(code_of(&error), 1091, "sequential: AFTER anchor 'b' is gone");
-    assert_eq!(message_of(&error), "Can't DROP 'b'; check that column/key exists");
+    assert_eq!(
+        code_of(&error),
+        1091,
+        "sequential: AFTER anchor 'b' is gone"
+    );
+    assert_eq!(
+        message_of(&error),
+        "Can't DROP 'b'; check that column/key exists"
+    );
 
     // drop and rename the same column
     let mut catalog = Catalog::default();
-    run_create_table_on("create table t (a int default 1, b int default 2)", &mut catalog).unwrap();
-    let error = alter(&mut catalog, "alter table t drop column b, rename column b to c")
-        .expect_err("Go: 8200 Unsupported operate same column 'b'");
-    assert_eq!(code_of(&error), 1054, "sequential: rename source 'b' is gone");
+    run_create_table_on(
+        "create table t (a int default 1, b int default 2)",
+        &mut catalog,
+    )
+    .unwrap();
+    let error = alter(
+        &mut catalog,
+        "alter table t drop column b, rename column b to c",
+    )
+    .expect_err("Go: 8200 Unsupported operate same column 'b'");
+    assert_eq!(
+        code_of(&error),
+        1054,
+        "sequential: rename source 'b' is gone"
+    );
     assert_eq!(message_of(&error), "Unknown column 'b' in 't'");
 
     // add an index over a column the same statement renames away
@@ -171,7 +202,10 @@ fn multi_schema_change_rename_columns_combinations_answer_sequential_outcomes() 
     )
     .expect_err("Go: 8200 Unsupported operate same column");
     assert_eq!(code_of(&error), 1091, "sequential: key part 'b' is gone");
-    assert_eq!(message_of(&error), "Can't DROP 'b'; check that column/key exists");
+    assert_eq!(
+        message_of(&error),
+        "Can't DROP 'b'; check that column/key exists"
+    );
 }
 
 /// Go `multi_schema_change_test.go:273-279::TestMultiSchemaChangeAlterColumns`
@@ -199,7 +233,7 @@ fn multi_schema_change_alter_columns_applies_rename_and_default() {
         "test",
         tidb_parser::SqlMode::default(),
     )
-        .unwrap();
+    .unwrap();
     run_insert_on("insert into t values ()", &mut catalog, &ctx()).unwrap();
     assert_eq!(text_rows(&catalog, "select * from t"), vec![["1", "3"]]);
 }
@@ -219,11 +253,15 @@ fn multi_schema_change_alter_columns_combinations_apply_sequentially() {
         "alter table t alter column b set default 3, modify column b double",
     ] {
         let mut catalog = Catalog::default();
-        run_create_table_on("create table t (a int default 1, b int default 2)", &mut catalog)
-            .unwrap();
+        run_create_table_on(
+            "create table t (a int default 1, b int default 2)",
+            &mut catalog,
+        )
+        .unwrap();
         run_insert_on("insert into t values ()", &mut catalog, &ctx()).unwrap();
-        alter(&mut catalog, sql)
-            .unwrap_or_else(|error| panic!("Go refuses {sql} with 8200; sequential apply failed: {error:?}"));
+        alter(&mut catalog, sql).unwrap_or_else(|error| {
+            panic!("Go refuses {sql} with 8200; sequential apply failed: {error:?}")
+        });
     }
 }
 
@@ -253,7 +291,7 @@ fn multi_schema_change_change_columns_applies_rename_and_change() {
         "test",
         tidb_parser::SqlMode::default(),
     )
-        .unwrap();
+    .unwrap();
     run_insert_on("insert into t values ()", &mut catalog, &ctx()).unwrap();
     assert_eq!(text_rows(&catalog, "select e, c from t"), vec![["3", "2"]]);
 }
@@ -267,17 +305,34 @@ fn multi_schema_change_change_columns_applies_rename_and_change() {
 fn multi_schema_change_change_columns_combinations_answer_sequential_outcomes() {
     // change and drop the same column
     let mut catalog = Catalog::default();
-    run_create_table_on("create table t (a int default 1, b int default 2)", &mut catalog).unwrap();
-    let error = alter(&mut catalog, "alter table t change column b c double, drop column b")
-        .expect_err("Go: 8200 Unsupported operate same column 'b'");
+    run_create_table_on(
+        "create table t (a int default 1, b int default 2)",
+        &mut catalog,
+    )
+    .unwrap();
+    let error = alter(
+        &mut catalog,
+        "alter table t change column b c double, drop column b",
+    )
+    .expect_err("Go: 8200 Unsupported operate same column 'b'");
     assert_eq!(code_of(&error), 1091, "sequential: 'b' was renamed to 'c'");
-    assert_eq!(message_of(&error), "Can't DROP 'b'; check that column/key exists");
+    assert_eq!(
+        message_of(&error),
+        "Can't DROP 'b'; check that column/key exists"
+    );
 
     // change and add the same column name
     let mut catalog = Catalog::default();
-    run_create_table_on("create table t (a int default 1, b int default 2)", &mut catalog).unwrap();
-    let error = alter(&mut catalog, "alter table t change column b c double, add column c int")
-        .expect_err("Go: 8200 Unsupported operate same column 'c'");
+    run_create_table_on(
+        "create table t (a int default 1, b int default 2)",
+        &mut catalog,
+    )
+    .unwrap();
+    let error = alter(
+        &mut catalog,
+        "alter table t change column b c double, add column c int",
+    )
+    .expect_err("Go: 8200 Unsupported operate same column 'c'");
     assert_eq!(code_of(&error), 1060);
     assert_eq!(message_of(&error), "Duplicate column name 'c'");
 
@@ -294,7 +349,10 @@ fn multi_schema_change_change_columns_combinations_answer_sequential_outcomes() 
     )
     .expect_err("Go: 8200 Unsupported operate same column");
     assert_eq!(code_of(&error), 1091, "sequential: key part 'b' is gone");
-    assert_eq!(message_of(&error), "Can't DROP 'b'; check that column/key exists");
+    assert_eq!(
+        message_of(&error),
+        "Can't DROP 'b'; check that column/key exists"
+    );
 }
 
 /// Go `multi_schema_change_test.go:148::TestMultiSchemaChangeDropColumnsParallel`.
@@ -321,7 +379,10 @@ fn multi_schema_change_drop_columns_parallel_second_run_reports_1091() {
         .expect("Go: both submissions succeed");
     }
     let warnings = session.take_warnings();
-    let notes: Vec<_> = warnings.iter().filter(|(_, code, _)| *code == 1091).collect();
+    let notes: Vec<_> = warnings
+        .iter()
+        .filter(|(_, code, _)| *code == 1091)
+        .collect();
     assert_eq!(notes.len(), 2, "one note per guarded column: {warnings:?}");
 
     let mut catalog = Catalog::default();
@@ -330,7 +391,10 @@ fn multi_schema_change_drop_columns_parallel_second_run_reports_1091() {
     let error = alter(&mut catalog, "alter table t drop column b, drop column c")
         .expect_err("Go: second submission is 1091 ErrCantDropFieldOrKey");
     assert_eq!(code_of(&error), 1091);
-    assert_eq!(message_of(&error), "Can't DROP 'b'; check that column/key exists");
+    assert_eq!(
+        message_of(&error),
+        "Can't DROP 'b'; check that column/key exists"
+    );
 }
 
 /// Go `multi_schema_change_test.go:483::TestMultiSchemaChangeDropIndexesParallel`.
@@ -423,9 +487,15 @@ fn multi_schema_change_drop_indexes_removes_all_and_use_index_answers_1176() {
     .unwrap();
     run_insert_on("insert into t values (1, 2)", &mut catalog, &ctx()).unwrap();
 
-    alter(&mut catalog, "alter table t drop index a, drop index b, drop index idx")
-        .expect("Go: the drop succeeds (MustCancelFailed -- already non-revertible)");
-    assert!(index_names(&catalog, "t").is_empty(), "all three indexes dropped");
+    alter(
+        &mut catalog,
+        "alter table t drop index a, drop index b, drop index idx",
+    )
+    .expect("Go: the drop succeeds (MustCancelFailed -- already non-revertible)");
+    assert!(
+        index_names(&catalog, "t").is_empty(),
+        "all three indexes dropped"
+    );
     for missing in ["a", "b", "idx"] {
         let error = run_select_on(
             &format!("select * from t use index ({missing})"),
@@ -456,29 +526,50 @@ fn multi_schema_change_rename_indexes_applies_and_combinations_measured() {
         &mut catalog,
     )
     .unwrap();
-    alter(&mut catalog, "alter table t rename index t to x, rename index t1 to x1")
-        .expect("Go: both renames apply");
+    alter(
+        &mut catalog,
+        "alter table t rename index t to x, rename index t1 to x1",
+    )
+    .expect("Go: both renames apply");
     run_select_on("select * from t use index (x)", &catalog, &ctx()).expect("new name serves");
     run_select_on("select * from t use index (x1)", &catalog, &ctx()).expect("new name serves");
     for gone in ["t", "t1"] {
-        let error = run_select_on(&format!("select * from t use index ({gone})"), &catalog, &ctx())
-            .expect_err("Go: 1176 ErrKeyDoesNotExist");
+        let error = run_select_on(
+            &format!("select * from t use index ({gone})"),
+            &catalog,
+            &ctx(),
+        )
+        .expect_err("Go: 1176 ErrKeyDoesNotExist");
         assert_eq!(code_of(&error), 1176);
     }
 
     // drop and rename the same index
     let mut catalog = Catalog::default();
-    run_create_table_on("create table t (a int, b int, c int, index t(a))", &mut catalog).unwrap();
-    let error = alter(&mut catalog, "alter table t drop index t, rename index t to t1")
-        .expect_err("Go: 8200 Unsupported operate same index 't'");
+    run_create_table_on(
+        "create table t (a int, b int, c int, index t(a))",
+        &mut catalog,
+    )
+    .unwrap();
+    let error = alter(
+        &mut catalog,
+        "alter table t drop index t, rename index t to t1",
+    )
+    .expect_err("Go: 8200 Unsupported operate same index 't'");
     assert_eq!(code_of(&error), 1176, "sequential: source 't' was dropped");
     assert_eq!(message_of(&error), "Key 't' doesn't exist in table 't'");
 
     // add and rename to the same index name
     let mut catalog = Catalog::default();
-    run_create_table_on("create table t (a int, b int, c int, index t(a))", &mut catalog).unwrap();
-    let error = alter(&mut catalog, "alter table t add index t1(b), rename index t to t1")
-        .expect_err("Go: 8200 Unsupported operate same index");
+    run_create_table_on(
+        "create table t (a int, b int, c int, index t(a))",
+        &mut catalog,
+    )
+    .unwrap();
+    let error = alter(
+        &mut catalog,
+        "alter table t add index t1(b), rename index t to t1",
+    )
+    .expect_err("Go: 8200 Unsupported operate same index");
     assert_eq!(code_of(&error), 1061, "sequential: target 't1' now exists");
     assert_eq!(message_of(&error), "Duplicate key name 't1'");
 
@@ -490,9 +581,16 @@ fn multi_schema_change_rename_indexes_applies_and_combinations_measured() {
     )
     .unwrap();
     run_insert_on("insert into t values ()", &mut catalog, &ctx()).unwrap();
-    let error = alter(&mut catalog, "alter table t drop column a, rename index t to x")
-        .expect_err("Go: the rename silently no-ops (index already gone with the column)");
-    assert_eq!(code_of(&error), 1176, "sequential: 't' went with the column");
+    let error = alter(
+        &mut catalog,
+        "alter table t drop column a, rename index t to x",
+    )
+    .expect_err("Go: the rename silently no-ops (index already gone with the column)");
+    assert_eq!(
+        code_of(&error),
+        1176,
+        "sequential: 't' went with the column"
+    );
     assert_eq!(text_rows(&catalog, "select * from t"), vec![["2", "3"]]);
 }
 
@@ -540,7 +638,11 @@ fn multi_schema_change_alter_index_mixed_with_modify_applies() {
 fn multi_schema_change_alter_index_combinations_answer_sequential_outcomes() {
     // alter the same index twice
     let mut catalog = Catalog::default();
-    run_create_table_on("create table t (a int, b int, index idx(a, b))", &mut catalog).unwrap();
+    run_create_table_on(
+        "create table t (a int, b int, index idx(a, b))",
+        &mut catalog,
+    )
+    .unwrap();
     alter(
         &mut catalog,
         "alter table t alter index idx visible, alter index idx invisible",
@@ -558,17 +660,27 @@ fn multi_schema_change_alter_index_combinations_answer_sequential_outcomes() {
 
     // drop and alter the same index
     let mut catalog = Catalog::default();
-    run_create_table_on("create table t (a int, b int, index idx(a, b))", &mut catalog).unwrap();
-    let error = alter(&mut catalog, "alter table t drop index idx, alter index idx visible")
-        .expect_err("Go: 8200 Unsupported operate same index");
+    run_create_table_on(
+        "create table t (a int, b int, index idx(a, b))",
+        &mut catalog,
+    )
+    .unwrap();
+    let error = alter(
+        &mut catalog,
+        "alter table t drop index idx, alter index idx visible",
+    )
+    .expect_err("Go: 8200 Unsupported operate same index");
     assert_eq!(code_of(&error), 1176, "sequential: 'idx' was dropped");
     assert_eq!(message_of(&error), "Key 'idx' doesn't exist in table 't'");
 
     // add and alter the same index
     let mut catalog = Catalog::default();
     run_create_table_on("create table t (a int, b int)", &mut catalog).unwrap();
-    alter(&mut catalog, "alter table t add index idx(a, b), alter index idx invisible")
-        .expect("Go: 1176 ErrKeyDoesNotExist; sequential: the added index is altered");
+    alter(
+        &mut catalog,
+        "alter table t add index idx(a, b), alter index idx invisible",
+    )
+    .expect("Go: 1176 ErrKeyDoesNotExist; sequential: the added index is altered");
     let Some(crate::TableEntry::Kv(table)) = catalog.table_in("test", "t") else {
         panic!("table t missing");
     };
@@ -590,8 +702,11 @@ fn multi_schema_change_modify_column_order_by_states_all_orders_apply() {
     let mut catalog = Catalog::default();
     run_create_table_on("create table t (a int, b int)", &mut catalog).unwrap();
     run_insert_on("insert into t values (1, 1)", &mut catalog, &ctx()).unwrap();
-    alter(&mut catalog, "alter table t modify column b smallint, add column d int")
-        .expect("modify then add");
+    alter(
+        &mut catalog,
+        "alter table t modify column b smallint, add column d int",
+    )
+    .expect("modify then add");
 
     let mut catalog = Catalog::default();
     run_create_table_on("create table t (a int, b int)", &mut catalog).unwrap();
@@ -612,7 +727,11 @@ fn multi_schema_change_modify_column_order_by_states_all_orders_apply() {
     .expect("positional modify, adds, modify");
 
     let mut catalog = Catalog::default();
-    run_create_table_on("create table t (id bigint, c1 bigint, c2 bigint)", &mut catalog).unwrap();
+    run_create_table_on(
+        "create table t (id bigint, c1 bigint, c2 bigint)",
+        &mut catalog,
+    )
+    .unwrap();
     alter(
         &mut catalog,
         "alter table t modify column c2 int after id, modify column id int after c2",
@@ -629,23 +748,32 @@ fn multi_schema_change_modify_column_order_by_states_all_orders_apply() {
     );
 
     let mut catalog = Catalog::default();
-    run_create_table_on("create table t1 (id bigint, c1 bigint, c2 bigint)", &mut catalog).unwrap();
-    alter(&mut catalog, "alter table t1 modify column c2 int, drop column id")
-        .expect("modify with drop");
+    run_create_table_on(
+        "create table t1 (id bigint, c1 bigint, c2 bigint)",
+        &mut catalog,
+    )
+    .unwrap();
+    alter(
+        &mut catalog,
+        "alter table t1 modify column c2 int, drop column id",
+    )
+    .expect("modify with drop");
 }
 
 fn column_order(catalog: &Catalog, table: &str) -> Vec<String> {
     let Some(crate::TableEntry::Kv(kv)) = catalog.table_in("test", table) else {
         panic!("table {table} missing");
     };
-    kv.columns.iter().map(|column| column.name.clone()).collect()
+    kv.columns
+        .iter()
+        .map(|column| column.name.clone())
+        .collect()
 }
 
 // Go `multi_schema_change_test.go:738-748::TestMultiSchemaChangeNoSubJobs`:
-// the `add column if not exists` notes path is gap-ported in
-// `tests_ddl_multi_schema_change_job_gaps` (this tier's
-// `add_column_action` matches the parsed `IF NOT EXISTS` flag away at
-// `alter_table.rs:150` and answers 1060 instead of two Note 1060s).
+// the `add column if not exists` notes path remains unimplemented: this
+// tier's `add_column_action` matches the parsed `IF NOT EXISTS` flag away at
+// `alter_table.rs:150` and answers 1060 instead of two Note 1060s.
 
 /// Go `multi_schema_change_test.go:364-392::TestMultiSchemaChangeRenameTable`
 /// tail half (the racing rename-under-failpoint is the gap): after the table
@@ -668,7 +796,7 @@ fn multi_schema_change_rename_table_then_alter_leaves_consistent_table() {
         "test",
         tidb_parser::SqlMode::default(),
     )
-        .expect("Go: rename to t1");
+    .expect("Go: rename to t1");
     assert_eq!(text_rows(&catalog, "select * from t1"), vec![["1", "2"]]);
 
     alter(
@@ -705,9 +833,16 @@ fn multi_schema_change_expression_index_combinations_measured() {
     let mut catalog = Catalog::default();
     run_create_table_on("create table t (a int, b int)", &mut catalog).unwrap();
     run_insert_on("insert into t values (1, 2), (2, 1)", &mut catalog, &ctx()).unwrap();
-    let error = alter(&mut catalog, "alter table t drop column a, add unique index idx((a + b))")
-        .expect_err("Go: 8200 Unsupported operate same column");
-    assert_eq!(code_of(&error), 1054, "sequential: expression reads dropped 'a'");
+    let error = alter(
+        &mut catalog,
+        "alter table t drop column a, add unique index idx((a + b))",
+    )
+    .expect_err("Go: 8200 Unsupported operate same column");
+    assert_eq!(
+        code_of(&error),
+        1054,
+        "sequential: expression reads dropped 'a'"
+    );
 
     // add column c, change column a d bigint, add index idx((a + a))
     let mut catalog = Catalog::default();
@@ -718,7 +853,11 @@ fn multi_schema_change_expression_index_combinations_measured() {
         "alter table t add column c int, change column a d bigint, add index idx((a + a))",
     )
     .expect_err("Go: 8200 Unsupported operate same column");
-    assert_eq!(code_of(&error), 1054, "sequential: expression reads renamed-away 'a'");
+    assert_eq!(
+        code_of(&error),
+        1054,
+        "sequential: expression reads renamed-away 'a'"
+    );
 
     // add column c default 10, add index idx1((a + b)), add unique index idx2((a + b))
     let mut catalog = Catalog::default();
@@ -729,8 +868,15 @@ fn multi_schema_change_expression_index_combinations_measured() {
         "alter table t add column c int default 10, add index idx1((a + b)), add unique index idx2((a + b))",
     )
     .expect_err("Go: 1062 ErrDupEntry");
-    assert_eq!(code_of(&error), 1062, "unique index backfill collides on a+b = 3");
-    assert_eq!(text_rows(&catalog, "select * from t"), vec![["1", "2", "10"], ["2", "1", "10"]]);
+    assert_eq!(
+        code_of(&error),
+        1062,
+        "unique index backfill collides on a+b = 3"
+    );
+    assert_eq!(
+        text_rows(&catalog, "select * from t"),
+        vec![["1", "2", "10"], ["2", "1", "10"]]
+    );
 }
 
 /// Go `multi_schema_change_test.go:725-737::TestMultiSchemaChangeWithExpressionIndex`

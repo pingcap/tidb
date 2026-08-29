@@ -1715,10 +1715,7 @@ fn try_fast_point_physical_plan_with_allocator_mode(
     };
     let schema = fast_point_schema(table, &output);
 
-    let mut batch = fast_batch_partition_supported(table)
-        .then(|| try_batch_point_get(select, table, &columns, &scope.zone))
-        .transpose()?
-        .flatten();
+    let mut batch = try_batch_point_get(select, table, &columns, &scope.zone)?;
     if batch.as_ref().is_some_and(|batch| !batch.ignores_hints()) {
         let hints = crate::index_hints::single_table_scan_hints(
             select,
@@ -1807,28 +1804,6 @@ fn fast_dml_point_output(table: &KvTable) -> FastPointOutput {
         ));
     }
     FastPointOutput { offsets, columns }
-}
-
-/// Whether Rust can route Go's partitioned fast batch point plan from the
-/// handles retained after key lookup. Secondary-index values are no longer
-/// available at that point, so every partition dependency must be part of a
-/// clustered handle; other valid plans fall back to the ordinary index path.
-fn fast_batch_partition_supported(table: &KvTable) -> bool {
-    table.partition().is_none_or(|partition| {
-        let handle_offsets = table
-            .pk_handle_offset()
-            .into_iter()
-            .chain(table.common_handle_offsets().iter().copied())
-            .collect::<Vec<_>>();
-        !handle_offsets.is_empty()
-            && !partition.dependencies.is_empty()
-            && matches!(partition.expr, tidb_expr::expression::Expression::Column(_))
-            && partition.dependencies.iter().all(|dependency| {
-                handle_offsets
-                    .iter()
-                    .any(|offset| table.columns[*offset].name.eq_ignore_ascii_case(dependency))
-            })
-    })
 }
 
 #[cfg(test)]
@@ -2135,7 +2110,6 @@ pub(crate) fn try_batch_point_get_stmt(
             };
             names.push(name);
         }
-        let mut table = table.clone();
         // A clustered composite primary key is represented by the common
         // handle offsets, not by a KvIndex. Its encoded datum key is the
         // record handle itself, so it can use the same direct lookup source as
@@ -2250,20 +2224,9 @@ pub(crate) fn try_batch_point_get_stmt(
                 }
                 index_values.push(key_values);
             }
-            let mut handles = Vec::with_capacity(index_values.len());
-            for handle in table
-                .lookup_unique_batched(index.id, &index_values, zone)
-                .map_err(|e| DriverError::Parse(format!("index batch lookup failed: {e:?}")))?
-                .into_iter()
-                .flatten()
-            {
-                if !handles.contains(&handle) {
-                    handles.push(handle);
-                }
-            }
             return Ok(Some(BatchPointLookup::index(
                 list.len(),
-                &table,
+                table,
                 columns,
                 &index,
                 index_values,
@@ -2324,7 +2287,6 @@ pub(crate) fn try_batch_point_get_stmt(
     }
 
     // The unique-index path.
-    let mut table = table.clone();
     for index in table.plan_indexes().cloned().collect::<Vec<_>>() {
         if !index.unique || index.column_offsets.len() != 1 {
             continue;
@@ -2358,20 +2320,9 @@ pub(crate) fn try_batch_point_get_stmt(
             .into_iter()
             .map(|value| vec![value])
             .collect::<Vec<_>>();
-        let mut handles = Vec::with_capacity(index_values.len());
-        for handle in table
-            .lookup_unique_batched(index.id, &index_values, zone)
-            .map_err(|e| DriverError::Parse(format!("index batch lookup failed: {e:?}")))?
-            .into_iter()
-            .flatten()
-        {
-            if !handles.contains(&handle) {
-                handles.push(handle);
-            }
-        }
         return Ok(Some(BatchPointLookup::index(
             list.len(),
-            &table,
+            table,
             columns,
             &index,
             index_values,

@@ -33,8 +33,8 @@
 //!
 //! The white-box halves that have no Rust seam (the per-row memory-delta
 //! contracts, the two-partial `MergePartialResult` merges, and the
-//! `SlidingWindowAggFunc.Slide` overflow order) are recorded as `#[ignore]`
-//! gap tests in the sibling `tests_aggfuncs_mem_merge_slide_gaps` module.
+//! `SlidingWindowAggFunc.Slide` overflow order) remain unimplemented and are
+//! not represented as Rust tests.
 
 use crate::{run_select_on, Catalog, StmtContext};
 use tidb_datatype::{time_from_days, Collation, Datum, FieldType, FieldTypeCode, MySqlDuration};
@@ -275,9 +275,8 @@ fn sum_on_empty_input_appends_null_like_go() {
 /// `buildApproxPercentile` picks the typed accumulator from the ARGUMENT's
 /// eval type (`builder.go:172-200`), which is what a SQL argument carries.
 /// `TypeFloat` and `TypeDouble` share Go's `percentileOriginal4Real`
-/// accumulator, so the real-domain pin here covers both; the Float-code
-/// STORAGE cell itself is pinned separately as a gap (see
-/// `tests_aggfuncs_mem_merge_slide_gaps::percentile_over_float_storage_cell`).
+/// accumulator, so the real-domain pin here covers both. A Float-code storage
+/// cell remains unimplemented and is not claimed by this test.
 #[test]
 fn approx_percentile_rank_selects_the_third_value_in_every_domain() {
     let catalog = five_row_catalog(

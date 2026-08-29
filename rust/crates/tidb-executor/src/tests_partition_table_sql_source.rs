@@ -137,27 +137,51 @@ fn point_get_over_range_and_list_partitions_data() {
         &mut catalog,
         "insert into tlist values(1,1), (2,2), (3,3), (4,4), (5,5), (6,6), (7,7), (8,8), (9,9), (10,10), (11,11), (12,12), (NULL, NULL)",
     );
-    let values: String = (1..=100i64).map(|i| format!("({i})")).collect::<Vec<_>>().join(",");
-    must_insert(&mut catalog, &format!("insert into trange1 values {values}"));
-    must_insert(&mut catalog, &format!("insert into trange2 values {values}"));
+    let values: String = (1..=100i64)
+        .map(|i| format!("({i})"))
+        .collect::<Vec<_>>()
+        .join(",");
+    must_insert(
+        &mut catalog,
+        &format!("insert into trange1 values {values}"),
+    );
+    must_insert(
+        &mut catalog,
+        &format!("insert into trange2 values {values}"),
+    );
 
     // Point lookups at the fixed points (Go draws x in 1..100 a hundred
     // times); every value must come back through the partitioned unique key.
     for x in [1i64, 12, 29, 30, 31, 59, 60, 61, 89, 90, 91, 100] {
         assert_eq!(
-            run_select_on(&format!("select a from trange1 where a = {x}"), &catalog, &ctx()).unwrap(),
+            run_select_on(
+                &format!("select a from trange1 where a = {x}"),
+                &catalog,
+                &ctx()
+            )
+            .unwrap(),
             vec![vec![int(x)]],
             "trange1 a={x}",
         );
         assert_eq!(
-            run_select_on(&format!("select a from trange2 where a = {x}"), &catalog, &ctx()).unwrap(),
+            run_select_on(
+                &format!("select a from trange2 where a = {x}"),
+                &catalog,
+                &ctx()
+            )
+            .unwrap(),
             vec![vec![Datum::UInt(x as u64)]],
             "trange2 a={x}",
         );
     }
     for y in [1i64, 4, 5, 8, 9, 12] {
         assert_eq!(
-            run_select_on(&format!("select a from tlist where a = {y}"), &catalog, &ctx()).unwrap(),
+            run_select_on(
+                &format!("select a from tlist where a = {y}"),
+                &catalog,
+                &ctx()
+            )
+            .unwrap(),
             vec![vec![int(y)]],
             "tlist a={y}",
         );
@@ -166,7 +190,12 @@ fn point_get_over_range_and_list_partitions_data() {
     // Table-dual arms: a = 200 matches no partition, so the query is empty.
     for table in ["trange1", "trange2", "tlist"] {
         assert_eq!(
-            run_select_on(&format!("select a from {table} where a = 200"), &catalog, &ctx()).unwrap(),
+            run_select_on(
+                &format!("select a from {table} where a = 200"),
+                &catalog,
+                &ctx()
+            )
+            .unwrap(),
             Vec::<Vec<Datum>>::new(),
             "{table} a=200",
         );
@@ -213,9 +242,15 @@ fn batch_get_and_point_get_hash_partition_differential() {
     )
     .unwrap();
     run_create_table_on("create table tregular(a int, unique key(a))", &mut catalog).unwrap();
-    let values: String = (1..=100i64).map(|i| format!("({i})")).collect::<Vec<_>>().join(",");
+    let values: String = (1..=100i64)
+        .map(|i| format!("({i})"))
+        .collect::<Vec<_>>()
+        .join(",");
     must_insert(&mut catalog, &format!("insert into thash values {values}"));
-    must_insert(&mut catalog, &format!("insert into tregular values {values}"));
+    must_insert(
+        &mut catalog,
+        &format!("insert into tregular values {values}"),
+    );
 
     for x in [1i64, 25, 50, 75, 100] {
         assert_eq!(
@@ -232,8 +267,14 @@ fn batch_get_and_point_get_hash_partition_differential() {
         "4, 17, 33, 60, 88",
     ] {
         assert_eq!(
-            select_sorted(&catalog, &format!("select a from thash where a in ({points})")),
-            select_sorted(&catalog, &format!("select a from tregular where a in ({points})")),
+            select_sorted(
+                &catalog,
+                &format!("select a from thash where a in ({points})")
+            ),
+            select_sorted(
+                &catalog,
+                &format!("select a from tregular where a in ({points})")
+            ),
             "batchget in ({points})",
         );
     }
@@ -265,28 +306,52 @@ fn batch_get_for_range_and_list_partition_differential() {
     run_create_table_on("create table tregular1(a int, unique key(a))", &mut catalog).unwrap();
     run_create_table_on("create table tregular2(a int, unique key(a))", &mut catalog).unwrap();
     must_insert(&mut catalog, "insert into tlist values(1,1), (2,2), (3,3), (4,4), (5,5), (6,6), (7,7), (8,8), (9,9), (10,10), (11,11), (12,12)");
-    let values: String = (1..=100i64).map(|i| format!("({i})")).collect::<Vec<_>>().join(",");
+    let values: String = (1..=100i64)
+        .map(|i| format!("({i})"))
+        .collect::<Vec<_>>()
+        .join(",");
     must_insert(&mut catalog, &format!("insert into trange values {values}"));
     must_insert(&mut catalog, &format!("insert into thash values {values}"));
-    must_insert(&mut catalog, &format!("insert into tregular1 values {values}"));
+    must_insert(
+        &mut catalog,
+        &format!("insert into tregular1 values {values}"),
+    );
     must_insert(&mut catalog, "insert into tregular2 values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10), (11), (12)");
 
     for points in ["7, 21, 35, 49, 63, 77, 91", "1, 30, 60, 90, 100", "5"] {
         // Go's thash is `a int unsigned` and its tregular1 `a int`; testkit
         // compares TEXT, so the UInt/Int datum split is not observable there.
         assert_eq!(
-            rows_text(&select_sorted(&catalog, &format!("select a from thash where a in ({points})"))),
-            rows_text(&select_sorted(&catalog, &format!("select a from tregular1 where a in ({points})"))),
+            rows_text(&select_sorted(
+                &catalog,
+                &format!("select a from thash where a in ({points})")
+            )),
+            rows_text(&select_sorted(
+                &catalog,
+                &format!("select a from tregular1 where a in ({points})")
+            )),
         );
         assert_eq!(
-            rows_text(&select_sorted(&catalog, &format!("select a from trange where a in ({points})"))),
-            rows_text(&select_sorted(&catalog, &format!("select a from tregular1 where a in ({points})"))),
+            rows_text(&select_sorted(
+                &catalog,
+                &format!("select a from trange where a in ({points})")
+            )),
+            rows_text(&select_sorted(
+                &catalog,
+                &format!("select a from tregular1 where a in ({points})")
+            )),
         );
     }
     for points in ["2, 5, 11", "1, 4, 8, 12", "9"] {
         assert_eq!(
-            rows_text(&select_sorted(&catalog, &format!("select a from tlist where a in ({points})"))),
-            rows_text(&select_sorted(&catalog, &format!("select a from tregular2 where a in ({points})"))),
+            rows_text(&select_sorted(
+                &catalog,
+                &format!("select a from tlist where a in ({points})")
+            )),
+            rows_text(&select_sorted(
+                &catalog,
+                &format!("select a from tregular2 where a in ({points})")
+            )),
         );
     }
 }
@@ -324,13 +389,18 @@ fn order_by_limit_partitions_match_regular() {
         .collect::<Vec<_>>()
         .join(",");
     for table in ["trange", "thash", "tregular"] {
-        must_insert(&mut catalog, &format!("insert into {table} values {values}"));
+        must_insert(
+            &mut catalog,
+            &format!("insert into {table} values {values}"),
+        );
     }
 
     for (x, y) in [(17i64, 3i64), (300, 550), (620, 5), (0, 1001)] {
         let regular = select_sorted(
             &catalog,
-            &format!("select * from tregular use index(idx_a) where a > {x} order by a, b limit {y}"),
+            &format!(
+                "select * from tregular use index(idx_a) where a > {x} order by a, b limit {y}"
+            ),
         );
         for table in ["trange", "thash"] {
             assert_eq!(
@@ -445,32 +515,57 @@ fn dml_partitions_match_regular() {
         .collect::<Vec<_>>()
         .join(", ");
     for table in ["tinner", "thash", "trange"] {
-        must_insert(&mut catalog, &format!("insert into {table} values {values}"));
+        must_insert(
+            &mut catalog,
+            &format!("insert into {table} values {values}"),
+        );
     }
 
     // update (Go: `update %v set col=col+x where col>l and col<r`)
     for table in ["tinner", "thash", "trange"] {
-        run_update_on(&format!("update {table} set b = b + 17 where a > 5000 and a < 25000"), &mut catalog, &ctx())
-            .unwrap();
+        run_update_on(
+            &format!("update {table} set b = b + 17 where a > 5000 and a < 25000"),
+            &mut catalog,
+            &ctx(),
+        )
+        .unwrap();
     }
     // replace (Go: `replace into %v(a, b) values (...)`)
     for table in ["tinner", "thash", "trange"] {
-        must_insert(&mut catalog, &format!("replace into {table}(a, b) values (7, 700), (15000, 3)"));
+        must_insert(
+            &mut catalog,
+            &format!("replace into {table}(a, b) values (7, 700), (15000, 3)"),
+        );
     }
     // insert
     for table in ["tinner", "thash", "trange"] {
-        must_insert(&mut catalog, &format!("insert into {table} values (39000, 1), (9999, 9999)"));
+        must_insert(
+            &mut catalog,
+            &format!("insert into {table} values (39000, 1), (9999, 9999)"),
+        );
     }
     // delete
     for table in ["tinner", "thash", "trange"] {
-        run_delete_on(&format!("delete from {table} where b > 20000 and b < 39000"), &mut catalog, &ctx())
-            .unwrap();
+        run_delete_on(
+            &format!("delete from {table} where b > 20000 and b < 39000"),
+            &mut catalog,
+            &ctx(),
+        )
+        .unwrap();
     }
 
     let reference = select_sorted(&catalog, "select * from tinner");
     assert!(!reference.is_empty());
-    assert_eq!(select_sorted(&catalog, "select * from thash"), reference, "hash twin after DML");
-    assert_eq!(select_sorted(&catalog, "select * from trange"), reference, "range twin after DML");
+    assert_eq!(
+        select_sorted(&catalog, "select * from thash"),
+        reference,
+        "hash twin after DML"
+    );
+    assert_eq!(
+        select_sorted(&catalog, "select * from trange"),
+        reference,
+        "range twin after DML"
+    );
 }
 
 /// Go `pkg/executor/partition_table_test.go:1353::TestUnion`: `union all` and
@@ -496,7 +591,10 @@ fn union_partitions_match_regular() {
         .collect::<Vec<_>>()
         .join(", ");
     for table in ["t", "thash", "trange"] {
-        must_insert(&mut catalog, &format!("insert into {table} values {values}"));
+        must_insert(
+            &mut catalog,
+            &format!("insert into {table} values {values}"),
+        );
     }
 
     for utype in ["union all", "union distinct"] {
@@ -506,13 +604,23 @@ fn union_partitions_match_regular() {
         );
         let reference = select_sorted(&catalog, &regular);
         assert!(!reference.is_empty());
-        let hash_form = regular.replace(" from t ", " from thash ").replace(" from t ", " from thash ");
-        assert_eq!(select_sorted(&catalog, &hash_form), reference, "hash {utype}");
+        let hash_form = regular
+            .replace(" from t ", " from thash ")
+            .replace(" from t ", " from thash ");
+        assert_eq!(
+            select_sorted(&catalog, &hash_form),
+            reference,
+            "hash {utype}"
+        );
         let range_hash = format!(
             "select * from trange where a >= 100 and a <= 9000 and b >= 0 and b <= 39000 {utype} \
              select * from thash where a >= 8000 and a <= 20000 and b >= 100 and b <= 30000"
         );
-        assert_eq!(select_sorted(&catalog, &range_hash), reference, "range+hash {utype}");
+        assert_eq!(
+            select_sorted(&catalog, &range_hash),
+            reference,
+            "range+hash {utype}"
+        );
     }
 }
 
@@ -525,7 +633,11 @@ fn union_partitions_match_regular() {
 fn subqueries_partitions_match_regular() {
     let mut catalog = Catalog::default();
     run_create_table_on("create table touter (a int, b int, index(a))", &mut catalog).unwrap();
-    run_create_table_on("create table tinner (a int, b int, c int, index(a))", &mut catalog).unwrap();
+    run_create_table_on(
+        "create table tinner (a int, b int, c int, index(a))",
+        &mut catalog,
+    )
+    .unwrap();
     run_create_table_on(
         "create table thash (a int, b int, c int, index(a)) partition by hash(a) partitions 4",
         &mut catalog,
@@ -543,7 +655,14 @@ fn subqueries_partitions_match_regular() {
         .join(", ");
     must_insert(&mut catalog, &format!("insert into touter values {outer}"));
     let inner: String = (0..80i64)
-        .map(|i| format!("({}, {}, {})", (i * 503 + 17) % 40000, (i * 89 + 4) % 40000, (i * 29 + 1) % 40000))
+        .map(|i| {
+            format!(
+                "({}, {}, {})",
+                (i * 503 + 17) % 40000,
+                (i * 89 + 4) % 40000,
+                (i * 29 + 1) % 40000
+            )
+        })
         .collect::<Vec<_>>()
         .join(", ");
     for table in ["tinner", "thash", "trange"] {
@@ -614,10 +733,16 @@ fn split_region_pruned_reads_match_regular() {
         .collect::<Vec<_>>()
         .join(", ");
     for table in ["tnormal", "thash", "trange"] {
-        must_insert(&mut catalog, &format!("insert into {table} values {values}"));
+        must_insert(
+            &mut catalog,
+            &format!("insert into {table} values {values}"),
+        );
     }
 
-    let reference = select_sorted(&catalog, "select * from tnormal where a >= 1 and a <= 15000");
+    let reference = select_sorted(
+        &catalog,
+        "select * from tnormal where a >= 1 and a <= 15000",
+    );
     assert_eq!(
         select_sorted(&catalog, "select * from trange where a >= 1 and a <= 15000"),
         reference
@@ -626,9 +751,15 @@ fn split_region_pruned_reads_match_regular() {
         select_sorted(&catalog, "select * from thash where a >= 1 and a <= 15000"),
         reference
     );
-    let reference = select_sorted(&catalog, "select * from tnormal where a in (1, 10001, 20001)");
+    let reference = select_sorted(
+        &catalog,
+        "select * from tnormal where a in (1, 10001, 20001)",
+    );
     assert_eq!(
-        select_sorted(&catalog, "select * from trange where a in (1, 10001, 20001)"),
+        select_sorted(
+            &catalog,
+            "select * from trange where a in (1, 10001, 20001)"
+        ),
         reference
     );
     assert_eq!(
@@ -659,8 +790,14 @@ fn parallel_apply_limit_on_range_columns_partition_data() {
         &mut catalog,
     )
     .unwrap();
-    must_insert(&mut catalog, "insert into t_outer values ('key1', 10, 'payload1')");
-    must_insert(&mut catalog, "insert into t_part values (10, 'key1', 'flag1', 0.001, 1, 'row1')");
+    must_insert(
+        &mut catalog,
+        "insert into t_outer values ('key1', 10, 'payload1')",
+    );
+    must_insert(
+        &mut catalog,
+        "insert into t_part values (10, 'key1', 'flag1', 0.001, 1, 'row1')",
+    );
     assert_eq!(
         run_select_on(
             "select payload from t_outer o where ifnull((\
@@ -750,7 +887,11 @@ fn unsigned_partition_column_reads_match_regular() {
         &mut catalog,
     )
     .unwrap();
-    run_create_table_on("create table tnormal_pk (a int unsigned, b int, primary key(a))", &mut catalog).unwrap();
+    run_create_table_on(
+        "create table tnormal_pk (a int unsigned, b int, primary key(a))",
+        &mut catalog,
+    )
+    .unwrap();
     run_create_table_on(
         "create table thash_uniq (a int unsigned, b int, unique key(a)) partition by hash (a) partitions 3",
         &mut catalog,
@@ -762,7 +903,11 @@ fn unsigned_partition_column_reads_match_regular() {
         &mut catalog,
     )
     .unwrap();
-    run_create_table_on("create table tnormal_uniq (a int unsigned, b int, unique key(a))", &mut catalog).unwrap();
+    run_create_table_on(
+        "create table tnormal_uniq (a int unsigned, b int, unique key(a))",
+        &mut catalog,
+    )
+    .unwrap();
     // 60 DISTINCT unsigned keys spanning [0, 400000), deterministic partners.
     let values: String = (0..60i64)
         .map(|i| {
@@ -771,53 +916,97 @@ fn unsigned_partition_column_reads_match_regular() {
         })
         .collect::<Vec<_>>()
         .join(", ");
-    for table in ["thash_pk", "trange_pk", "tnormal_pk", "thash_uniq", "trange_uniq", "tnormal_uniq"] {
-        must_insert(&mut catalog, &format!("insert into {table} values {values}"));
+    for table in [
+        "thash_pk",
+        "trange_pk",
+        "tnormal_pk",
+        "thash_uniq",
+        "trange_uniq",
+        "tnormal_uniq",
+    ] {
+        must_insert(
+            &mut catalog,
+            &format!("insert into {table} values {values}"),
+        );
     }
 
-    for (scan, lookup) in [("a > 200000", "a < 260000"), ("a < 6789", "a > 140000"), ("a > 350000", "a > 6789")] {
-        let reference = select_sorted(&catalog, &format!("select * from tnormal_pk use index(primary) where {scan}"));
+    for (scan, lookup) in [
+        ("a > 200000", "a < 260000"),
+        ("a < 6789", "a > 140000"),
+        ("a > 350000", "a > 6789"),
+    ] {
+        let reference = select_sorted(
+            &catalog,
+            &format!("select * from tnormal_pk use index(primary) where {scan}"),
+        );
         assert!(!reference.is_empty());
         for table in ["trange_pk", "thash_pk"] {
             assert_eq!(
-                select_sorted(&catalog, &format!("select * from {table} use index(primary) where {scan}")),
+                select_sorted(
+                    &catalog,
+                    &format!("select * from {table} use index(primary) where {scan}")
+                ),
                 reference,
                 "{table} scan {scan}",
             );
         }
-        let reference = select_sorted(&catalog, &format!("select a from tnormal_uniq use index(a) where {scan}"));
+        let reference = select_sorted(
+            &catalog,
+            &format!("select a from tnormal_uniq use index(a) where {scan}"),
+        );
         for table in ["trange_uniq", "thash_uniq"] {
             assert_eq!(
-                select_sorted(&catalog, &format!("select a from {table} use index(a) where {scan}")),
+                select_sorted(
+                    &catalog,
+                    &format!("select a from {table} use index(a) where {scan}")
+                ),
                 reference,
                 "{table} indexreader {scan}",
             );
         }
-        let reference = select_sorted(&catalog, &format!("select * from tnormal_uniq use index(a) where {lookup}"));
+        let reference = select_sorted(
+            &catalog,
+            &format!("select * from tnormal_uniq use index(a) where {lookup}"),
+        );
         for table in ["trange_uniq", "thash_uniq"] {
             assert_eq!(
-                select_sorted(&catalog, &format!("select * from {table} use index(a) where {lookup}")),
+                select_sorted(
+                    &catalog,
+                    &format!("select * from {table} use index(a) where {lookup}")
+                ),
                 reference,
                 "{table} indexlookup {lookup}",
             );
         }
     }
     for point in [7i64, 100_007, 200_011, 300_013, 393_329] {
-        let reference = select_sorted(&catalog, &format!("select * from tnormal_pk use index(primary) where a = {point}"));
+        let reference = select_sorted(
+            &catalog,
+            &format!("select * from tnormal_pk use index(primary) where a = {point}"),
+        );
         let expected_len = usize::from(point % 6666 == 7);
         assert_eq!(reference.len(), expected_len, "point {point} fixture");
         for table in ["trange_pk", "thash_pk"] {
             assert_eq!(
-                select_sorted(&catalog, &format!("select * from {table} use index(primary) where a = {point}")),
+                select_sorted(
+                    &catalog,
+                    &format!("select * from {table} use index(primary) where a = {point}")
+                ),
                 reference,
                 "{table} point {point}",
             );
         }
     }
-    let reference = select_sorted(&catalog, "select * from tnormal_pk where a in (7, 100007, 200011)");
+    let reference = select_sorted(
+        &catalog,
+        "select * from tnormal_pk where a in (7, 100007, 200011)",
+    );
     for table in ["trange_pk", "thash_pk"] {
         assert_eq!(
-            select_sorted(&catalog, &format!("select * from {table} where a in (7, 100007, 200011)")),
+            select_sorted(
+                &catalog,
+                &format!("select * from {table} where a in (7, 100007, 200011)")
+            ),
             reference,
             "{table} batchget",
         );
@@ -850,21 +1039,35 @@ fn direct_reading_with_agg_matches_regular() {
         &mut catalog,
     )
     .unwrap();
-    run_create_table_on(&format!("create table tregular1(a int, b int, {index})"), &mut catalog).unwrap();
-    run_create_table_on(&format!("create table tregular2(a int, b int, {index})"), &mut catalog).unwrap();
+    run_create_table_on(
+        &format!("create table tregular1(a int, b int, {index})"),
+        &mut catalog,
+    )
+    .unwrap();
+    run_create_table_on(
+        &format!("create table tregular2(a int, b int, {index})"),
+        &mut catalog,
+    )
+    .unwrap();
     let wide: String = (0..100i64)
         .map(|i| format!("({}, {})", (i * 11 + 1) % 1100, (i * 17 + 2) % 2000))
         .collect::<Vec<_>>()
         .join(", ");
     must_insert(&mut catalog, &format!("insert into trange values {wide}"));
     must_insert(&mut catalog, &format!("insert into thash values {wide}"));
-    must_insert(&mut catalog, &format!("insert into tregular1 values {wide}"));
+    must_insert(
+        &mut catalog,
+        &format!("insert into tregular1 values {wide}"),
+    );
     let narrow: String = (0..60i64)
         .map(|i| format!("({}, {})", i % 12 + 1, (i * 7 + 1) % 20))
         .collect::<Vec<_>>()
         .join(", ");
     must_insert(&mut catalog, &format!("insert into tlist values {narrow}"));
-    must_insert(&mut catalog, &format!("insert into tregular2 values {narrow}"));
+    must_insert(
+        &mut catalog,
+        &format!("insert into tregular2 values {narrow}"),
+    );
 
     for hint in ["stream_agg", "hash_agg"] {
         for x in [5i64, 299, 300, 499, 500, 1099] {
@@ -926,9 +1129,15 @@ fn partition_table_different_join_matches_regular() {
         .collect::<Vec<_>>()
         .join(", ");
     must_insert(&mut catalog, &format!("insert into thash values {values}"));
-    must_insert(&mut catalog, &format!("insert into tregular1 values {values}"));
+    must_insert(
+        &mut catalog,
+        &format!("insert into tregular1 values {values}"),
+    );
     must_insert(&mut catalog, &format!("insert into trange values {values}"));
-    must_insert(&mut catalog, &format!("insert into tregular2 values {values}"));
+    must_insert(
+        &mut catalog,
+        &format!("insert into tregular2 values {values}"),
+    );
 
     // hash_join: range x hash partitioned vs regular x regular.
     for (x1, x2) in [(5i64, 299i64), (500, 100), (1099, 7)] {
@@ -985,93 +1194,3 @@ fn partition_table_different_join_matches_regular() {
         );
     }
 }
-
-/// Go `pkg/executor/partition_table_test.go:2117::TestDropGlobalIndex`: after
-/// `alter table p add unique idx(id) global`, `alter table p drop index idx`
-/// must remove the global index online.
-#[test]
-#[ignore = "go-parity-gap: GLOBAL index DDL is not supported -- `alter table p add unique idx(id) global` is rejected with DriverError PartitionGlobalIndexNeeded(\"idx\") on this engine (measured this session), so the drop path has no object to operate on"]
-fn drop_global_index_gap() {}
-
-/// Go `pkg/executor/partition_table_test.go:2134::TestSelectLockOnPartitionTable`:
-/// `select ... for update` over a partitioned table under optimistic and
-/// pessimistic transactions, including the second-session update that must
-/// either write-conflict (optimistic) or block (pessimistic).
-#[test]
-#[ignore = "go-parity-gap: multi-session transactions with optimistic write-conflict / pessimistic lock-blocking semantics have no surface in this tier; the driver parses FOR UPDATE but models no locks"]
-fn select_lock_on_partition_table_gap() {}
-
-/// Go `pkg/executor/partition_table_test.go:2267::TestIssue26251`: a
-/// pessimistic `select ... for update` over a partition join must block a
-/// concurrent session's locked read until rollback (regression for the
-/// missing lock on partition-table scans).
-#[test]
-#[ignore = "go-parity-gap: cross-session pessimistic lock blocking (goroutine + channel timing) has no transaction or lock surface in this tier"]
-fn issue26251_lock_order_gap() {}
-
-/// Go `pkg/executor/partition_table_test.go:2305::TestLeftJoinForUpdate`:
-/// `partition left join normal for update` must lock the partitioned side's
-/// rows (and only the matched rows per the union-scan rules) against a
-/// concurrent update.
-#[test]
-#[ignore = "go-parity-gap: FOR UPDATE row locking across a left join with concurrent-session verification has no transaction surface in this tier"]
-fn left_join_for_update_gap() {}
-
-/// Go `pkg/executor/partition_table_test.go:2389::TestIssue31024`: an index
-/// merge over a RANGE partitioning on `to_days(c_datetime)` under `for update`
-/// must lock the matched rows against a concurrent update (issue #31024).
-#[test]
-#[ignore = "go-parity-gap: pessimistic locking of index-merge reads over to_days() range partitions has no transaction surface in this tier"]
-fn issue31024_lock_gap() {}
-
-/// Go `pkg/executor/partition_table_test.go:2434::TestGlobalIndexWithSelectLock`:
-/// `for update` reads over GLOBAL unique indexes (IndexLookUp / IndexReader /
-/// Point_Get / Batch_Point_Get / IndexMerge plans) must lock through the
-/// global index.
-#[test]
-#[ignore = "go-parity-gap: GLOBAL indexes are rejected at DDL time (DriverError PartitionGlobalIndexNeeded) and FOR UPDATE locking has no tier surface, so both halves of this test are out of scope"]
-fn global_index_select_lock_gap() {}
-
-/// Go `pkg/executor/partition_table_test.go:123::TestPartitionInfoDisable`: a
-/// table whose `Partition` block exists with `Enable = false` and `Num = 0`
-/// (the pre-4.0 upgrade artifact) must read through the unpartitioned path
-/// without panicking, in static prune mode.
-#[test]
-#[ignore = "go-parity-gap: the port stores partitioning through table_partition::build_table_partitioning at CREATE time; there is no surface to synthesize the Enable=false/Num=0 meta state Go's test mutates by hand (tbInfo.Partition.Enable = false), and the Batch_Point_Get/TableReader plan assertions have no explain surface"]
-fn partition_info_disable_gap() {}
-
-/// Go `pkg/executor/partition_table_test.go:1683::TestDirectReadingWithUnionScan`:
-/// inside an open transaction, inflight (uncommitted) rows must be visible to
-/// scans over partitioned and regular tables alike (the UnionScan executor),
-/// under ignore/use-index reads with order by.
-#[test]
-#[ignore = "go-parity-gap: the test's whole fixture is an open transaction (`begin` + inserts + rollback) so the union-scan merge of in-flight mem-buffer rows over partitioned tables has no session-transaction surface in this tier"]
-fn direct_reading_with_union_scan_gap() {}
-
-/// Go `pkg/executor/partition_table_test.go:1263::TestMPPQueryExplainInfo`:
-/// with TiFlash replicas set on every partition and `tidb_enforce_mpp=1`,
-/// pruned reads must plan to MPP and `MustPartition` must observe the
-/// surviving partition set.
-#[test]
-#[ignore = "go-parity-gap: TiFlash replicas (UpdateTableReplicaInfo), tidb_enforce_mpp planning and the MustPartition explain observer are MPP/plan-surface behavior with no tier analog"]
-fn mpp_query_explain_gap() {}
-
-/// Go `pkg/executor/partition_table_test.go:755::TestDirectReadingwithIndexJoin`
-/// and `:868::TestDynamicPruningUnderIndexJoin`: index joins (and their
-/// dynamic-pruning variants) over partitioned tables, asserted through
-/// `explain`/`explain format='brief'` operator shapes under a
-/// forceDynamicPrune failpoint.
-#[test]
-#[ignore = "go-parity-gap: both tests assert explain operator trees (IndexJoin over partition scans, partition:pN labels) driven under the forceDynamicPrune failpoint; the driver has no explain text or failpoint surface, and the data halves are covered by the join differentials in partition_table_different_join_matches_regular"]
-fn direct_reading_index_join_plan_gaps() {}
-
-/// The plan-shape assertions the running ports above had to drop: Go's
-/// `MustHavePlan(sql, "Point_Get"|"Batch_Point_Get"|"IndexLookUp"|...)`,
-/// `EXPLAIN FORMAT='brief'` one-line outputs (including the
-/// `partition:dual`/`partition:p0,p1` labels), `tk.MustPartition`,
-/// `tk.HasTiFlashPlan`, and the `LIMIT_TO_COP`/`USE_INDEX_MERGE(t, b, c)`
-/// hint-driven explain variants across
-/// `pkg/executor/partition_table_test.go:37/123/169/371/628/755/868/928/1029/1263/1468/1541/1757/1880/2434`.
-#[test]
-#[ignore = "go-parity-gap: explain-text plan shapes (`Point_Get ... partition:dual`, `MustPartition p0,p1`, HasTiFlashPlan, LIMIT_TO_COP hints) have no surface; this tier plans and executes but does not render Go's operator trees"]
-fn partition_plan_shape_gaps() {}

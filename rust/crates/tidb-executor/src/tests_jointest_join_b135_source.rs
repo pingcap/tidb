@@ -17,7 +17,7 @@
 //! variables, worker cleanup, failpoints, memory quotas, and prepared
 //! statements are retained as explicit gaps.
 
-use crate::{Catalog, StmtContext, run_create_table_on, run_insert_on, run_select_on};
+use crate::{run_create_table_on, run_insert_on, run_select_on, Catalog, StmtContext};
 use tidb_datatype::Datum;
 
 fn ctx() -> StmtContext {
@@ -94,42 +94,3 @@ fn join2_outer_and_duplicate_rows() {
         9
     );
 }
-
-/// The session-variable, hint-warning, user-variable, derived-table, and
-/// plan-order portions of Go `TestJoin2` are not represented by the catalog
-/// driver.
-#[test]
-#[ignore = "go-parity-gap: join strategy/session variables, warning state, user variables, and plan-order assertions are unported"]
-fn join2_session_and_strategy_arms() {}
-
-/// Go `join_test.go:290::TestJoinLeak`: close a partially consumed concurrent
-/// hash join without leaking workers.
-#[test]
-#[ignore = "go-parity-gap: result-set lifecycle, concurrent hash-join workers, and transaction setup are unported"]
-fn join_leak_on_partial_close() {}
-
-/// Go `join_test.go:313::TestNullEmptyAwareSemiJoin`: NULL/empty-aware
-/// anti-semi semantics are already exercised by the data-level correlated
-/// apply carriers; this source case additionally requires five forced join
-/// strategies and the full hint/session surface.
-#[test]
-#[ignore = "go-parity-gap: five forced join strategies, session hints, and NULL-aware semi-join planner paths are unported here"]
-fn null_empty_aware_semi_join() {}
-
-/// Go `join_test.go:708::TestIssue18070`: query-memory cancellation for index
-/// hash and index merge joins.
-#[test]
-#[ignore = "go-parity-gap: session memory quota, OOM action, and index-join OOM failpoint are unported"]
-fn issue18070_index_join_oom() {}
-
-/// Go `join_test.go:732::TestIssue20779`: injected inner lookup error is
-/// returned while consuming an index-hash-join result.
-#[test]
-#[ignore = "go-parity-gap: IndexHashJoin failpoint and session result-consumption surface are unported"]
-fn issue20779_index_hash_join_error() {}
-
-/// Go `join_test.go:753::TestIssue30211`: injected index-join panic, plan
-/// cache execution, and memory cancellation.
-#[test]
-#[ignore = "go-parity-gap: index-join failpoints, PREPARE/EXECUTE plan cache, and session OOM action are unported"]
-fn issue30211_index_join_panic_and_plan_cache() {}

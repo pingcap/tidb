@@ -8,6 +8,66 @@
 
 use super::*;
 
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+
+use crate::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};
+use tidb_txnkv::Key;
+
+#[derive(Clone, Debug, Default)]
+struct BatchGetCountingStorage {
+    inner: MemTableStorage,
+    batch_gets: Arc<AtomicUsize>,
+}
+
+impl TableStorage for BatchGetCountingStorage {
+    fn get(&mut self, key: &Key) -> Result<Vec<u8>, StorageError> {
+        self.inner.get(key)
+    }
+
+    fn batch_get(&mut self, keys: &[Key]) -> Result<HashMap<Key, Vec<u8>>, StorageError> {
+        self.batch_gets.fetch_add(1, Ordering::Relaxed);
+        self.inner.batch_get(keys)
+    }
+
+    fn set(&mut self, key: Key, value: Vec<u8>) -> Result<(), StorageError> {
+        self.inner.set(key, value)
+    }
+
+    fn delete(&mut self, key: Key) -> Result<(), StorageError> {
+        self.inner.delete(key)
+    }
+
+    fn iter(
+        &mut self,
+        start: Option<&Key>,
+        upper_bound: Option<&Key>,
+    ) -> Result<Box<dyn StorageIterator>, StorageError> {
+        self.inner.iter(start, upper_bound)
+    }
+
+    fn iter_reverse(
+        &mut self,
+        upper_bound: Option<&Key>,
+        lower_bound: Option<&Key>,
+    ) -> Result<Box<dyn StorageIterator>, StorageError> {
+        self.inner.iter_reverse(upper_bound, lower_bound)
+    }
+
+    fn key_count(&self) -> usize {
+        self.inner.key_count()
+    }
+
+    fn clear(&mut self) {
+        self.inner.clear();
+    }
+
+    fn clone_box(&self) -> Box<dyn TableStorage> {
+        Box::new(self.clone())
+    }
+}
+
 #[test]
 fn cached_physical_plan_rebuilds_and_executes_the_retained_tree() {
     let mut catalog = Catalog::default();
@@ -1245,20 +1305,21 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
         &mut catalog,
     )
     .unwrap();
+    let batch_gets = Arc::new(AtomicUsize::new(0));
+    let Some(TableEntry::Kv(table)) = catalog.get_mut_in(DEFAULT_DATABASE, "bd") else {
+        panic!("expected a kv table");
+    };
+    let _ = table.replace_storage(Box::new(BatchGetCountingStorage {
+        inner: MemTableStorage::new(),
+        batch_gets: Arc::clone(&batch_gets),
+    }));
     run_insert_on(
         "INSERT INTO bd VALUES (1, 'a', 10)",
         &mut catalog,
         &crate::StmtContext::for_query(),
     )
     .unwrap();
-    let Some(TableEntry::Kv(table)) = catalog.get_table_for_test("bd") else {
-        panic!("expected a kv table");
-    };
-    let columns = table
-        .columns
-        .iter()
-        .map(|c| (c.name.clone(), c.field_type.clone()))
-        .collect::<Vec<_>>();
+    batch_gets.store(0, Ordering::Relaxed);
     let decides = |sql: &str| {
         let stmt = tidb_parser::parse(sql).unwrap();
         let Stmt::Query(query) = &stmt else {
@@ -1267,25 +1328,61 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
         let QueryStmt::Select(select) = &**query else {
             panic!("not a select")
         };
-        try_batch_point_get(
+        try_fast_point_physical_plan(
             select,
-            table,
-            &columns,
-            &tidb_datatype::SessionTimeZone::utc(),
+            &catalog,
+            DEFAULT_DATABASE,
+            &crate::StmtContext::for_query(),
         )
         .unwrap()
-        .map(BatchPointLookup::into_handles)
+        .and_then(|plan| match plan {
+            tidb_planner::physical::PhysicalPlan::BatchPointGet(plan) => Some((
+                plan.index_id.is_some(),
+                plan.ranges
+                    .into_iter()
+                    .map(|range| range.low_val)
+                    .collect::<Vec<_>>(),
+            )),
+            _ => None,
+        })
     };
 
     assert_eq!(
         decides("SELECT v FROM bd WHERE id IN (1, 2)"),
-        Some(vec![TableHandle::Int(1), TableHandle::Int(2)]),
-        "the handle path does not probe, as the single point get does not"
+        Some((false, vec![vec![Datum::Int(1)], vec![Datum::Int(2)]])),
+        "the handle plan retains its two point ranges"
     );
     assert_eq!(
         decides("SELECT v FROM bd WHERE code IN ('a', 'zz')"),
-        Some(vec![TableHandle::Int(1)]),
-        "the index path probes, so a missing key yields no handle"
+        Some((
+            true,
+            vec![
+                vec![Datum::String(tidb_datatype::StringDatum::new(
+                    b"a".to_vec(),
+                    tidb_datatype::Collation::Utf8Mb4Bin,
+                ))],
+                vec![Datum::String(tidb_datatype::StringDatum::new(
+                    b"zz".to_vec(),
+                    tidb_datatype::Collation::Utf8Mb4Bin,
+                ))],
+            ],
+        )),
+        "the index plan retains every key and performs no planning-time lookup"
+    );
+    assert_eq!(
+        batch_gets.load(Ordering::Relaxed),
+        0,
+        "Go's fast-plan builder records index values without reading storage"
+    );
+    assert_eq!(
+        run_select_on(
+            "SELECT v FROM bd WHERE code IN ('a', 'zz')",
+            &catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap(),
+        vec![vec![Datum::Int(10)]],
+        "the common executor resolves the retained index keys"
     );
     // Rejected shapes.
     assert_eq!(decides("SELECT v FROM bd WHERE id NOT IN (1)"), None);

@@ -426,6 +426,13 @@ both `oltp_read_only` and `oltp_read_write`.
   tests are gone. Go's signed/unsigned/common-handle keep-order comparator now
   lives directly in its only owner, the retained physical builder, so the
   empty `batch_point_get` executor module is gone too.
+- [x] 2026-08-28: removed the remaining planning-time unique-index BatchGet
+  from `tryWhereIn2BatchPointGet`. Pinned Go records every converted
+  `IndexValue` on `BatchPointGetPlan` and performs index/record reads only in
+  executor construction and execution; Rust now retains the same complete
+  point ranges and lets the common physical builder resolve missing keys.
+  The decision regression now inspects `PhysicalBatchPointGet` rather than a
+  deleted executor-local `BatchPointLookup::into_handles` seam.
 - [x] 2026-08-28: changed the retained prepared unique-secondary PointGet
   from an index range cursor to Go's direct index-key `Get` followed by the
   record-key `Get`. The request-shape regression first observed one Get plus
@@ -491,6 +498,30 @@ both `oltp_read_only` and `oltp_read_write`.
   unavailable-transport traits. No physical builder constructed it and no
   PD HTTP or diagnostics RPC implementation backed it; cluster-table receipts
   now record that full runtime gap directly.
+- [x] 2026-08-28: deleted the orphaned
+  `tests_memtable_cluster_source.rs` after comparing it with pinned Go's
+  `PhysicalMemTable` and `executorBuilder.buildMemTable`. Its invented
+  `ClusterConfigSource`/`LogStream` boundary bypassed both common planning and
+  executor construction, and the removed production façade made the test fail
+  to compile. The batch receipt now records all four source tests as explicit
+  common-builder gaps instead of calling mock-boundary behavior a port.
+- [x] 2026-08-28: removed the dead `fast_batch_partition_supported` policy.
+  The fast-plan entrypoint already rejects every partitioned table before the
+  helper ran, so it could only return true; Go has no corresponding second
+  gate. This leaves the still-real partitioned fast-plan gap visible at the
+  entrypoint instead of preserving an inert Rust-only policy beside it.
+- [x] 2026-08-28: compared Go's `PhysicalWindow` enumeration and
+  `executorBuilder.buildWindow`/`windowexec.Build` path with the live Rust
+  dispatcher. Removed two duplicated failing `TestWindowExecutorsBasic`
+  claims, fourteen empty ignored window-test placeholders, and the crate-level
+  `WindowExec` claim: Rust has no physical window variant or live window
+  executor, so those artifacts were not parity evidence. The missing operator
+  remains an explicit implementation gap rather than a test-shaped facade.
+- [x] 2026-08-28: corrected the live TopN documentation after reading pinned
+  Go `sortexec/topn.go` and `executorBuilder.buildTopN`: Go assigns
+  `ExecutorConcurrency` and activates worker concurrency on the spill path,
+  matching the wired Rust builder. The old "unparallel, in memory" label was
+  false even though the implementation itself already followed Go.
 - [x] 2026-08-28: deleted the self-only `mutation_checker` implementation.
   Live DML never called its narrowed table/transaction traits, so enabling
   `tidb_enable_mutation_checker` still has no Go-equivalent enforcement; the
@@ -2078,6 +2109,31 @@ WIP validation commands:
     cargo test -q -p difftest-planner-tests --test all
     cargo check -q -p tidb-planner -p tidb-exec
     cd ..
+    git diff --check
+
+Progress receipt (2026-08-28, false test-parity inventory removal): comparison
+with the pinned Go sources showed that Rust's ignored empty functions carried
+names and prose for real Go tests but executed no setup, assertion, planner, or
+executor behavior. Removed 1,399 such `#[test]` declarations from
+`tidb-executor`, including whole files when they contained no runnable or
+non-empty test. Mixed files retained every executable test. Removed their
+module registrations and the stale `pkg/executor.part1`–`part24`,
+`pkg/executor/internal`, `pkg/ddl.part8`, and `pkg/ddl.part9` testport claims;
+those partial-package receipts cannot establish the repository's required
+atomic Go-package parity. Missing Go behavior remains missing rather than
+being counted as a skipped Rust test. The audit leaves zero ignored tests with
+an empty body in `tidb-executor`; 59 ignored tests with non-empty bodies remain
+for separate behavioral comparison.
+
+The same pass removed stale comments that pointed at deleted gap modules and
+kept the explicit missing-capability statements beside the runnable subset.
+No production DDL behavior was changed. Exact WIP validation commands:
+
+    cd rust
+    cargo check -p tidb-executor --tests --message-format short
+    cd ..
+    jq empty rust/testport/MANIFEST.json
+    make lint
     git diff --check
 
 Plan revision note (2026-08-27): created after the user confirmed the

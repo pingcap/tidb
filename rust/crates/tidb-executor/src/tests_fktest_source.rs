@@ -39,8 +39,7 @@ fn create(catalog: &mut Catalog, sql: &str) {
 }
 
 fn insert(catalog: &mut Catalog, sql: &str) {
-    run_insert_on(sql, catalog, &ctx())
-        .unwrap_or_else(|error| panic!("insert {sql:?}: {error:?}"));
+    run_insert_on(sql, catalog, &ctx()).unwrap_or_else(|error| panic!("insert {sql:?}: {error:?}"));
 }
 
 fn expect_insert_error(catalog: &mut Catalog, sql: &str, code: u16) -> crate::DriverError {
@@ -84,7 +83,10 @@ fn rows_text(catalog: &Catalog, sql: &str) -> Vec<Vec<String>> {
 fn foreign_key_on_insert_child_table() {
     let mut catalog = Catalog::default();
     create(&mut catalog, "create table t_data (id int, a int, b int)");
-    insert(&mut catalog, "insert into t_data (id, a, b) values (1, 1, 1), (2, 2, 2)");
+    insert(
+        &mut catalog,
+        "insert into t_data (id, a, b) values (1, 1, 1), (2, 2, 2)",
+    );
 
     // foreignKeyTestCase1 cases 1-4: unique/non-unique indexes over exactly
     // the FK columns and over FK+extra columns. (Cases 5-8 additionally
@@ -116,13 +118,34 @@ fn foreign_key_on_insert_child_table() {
         insert(&mut catalog, "insert into t1 (id, a, b) values (1, 1, 1)");
         insert(&mut catalog, "insert into t2 (id, a, b) values (1, 1, 1)");
         // NULL FK components pass the check in Go for every non-notNull case.
-        insert(&mut catalog, "insert into t2 (id, a, b) values (2, null, 1)");
-        insert(&mut catalog, "insert into t2 (id, a, b) values (3, 1, null)");
-        insert(&mut catalog, "insert into t2 (id, a, b) values (4, null, null)");
+        insert(
+            &mut catalog,
+            "insert into t2 (id, a, b) values (2, null, 1)",
+        );
+        insert(
+            &mut catalog,
+            "insert into t2 (id, a, b) values (3, 1, null)",
+        );
+        insert(
+            &mut catalog,
+            "insert into t2 (id, a, b) values (4, null, null)",
+        );
         // Orphans on either component fail 1452.
-        expect_insert_error(&mut catalog, "insert into t2 (id, a, b) values (5, 1, 0)", 1452);
-        expect_insert_error(&mut catalog, "insert into t2 (id, a, b) values (6, 0, 1)", 1452);
-        expect_insert_error(&mut catalog, "insert into t2 (id, a, b) values (7, 2, 2)", 1452);
+        expect_insert_error(
+            &mut catalog,
+            "insert into t2 (id, a, b) values (5, 1, 0)",
+            1452,
+        );
+        expect_insert_error(
+            &mut catalog,
+            "insert into t2 (id, a, b) values (6, 0, 1)",
+            1452,
+        );
+        expect_insert_error(
+            &mut catalog,
+            "insert into t2 (id, a, b) values (7, 2, 2)",
+            1452,
+        );
         // INSERT ... SELECT enforces per source row.
         run_delete_on("delete from t2", &mut catalog, &ctx()).expect("delete");
         insert(
@@ -148,7 +171,10 @@ fn foreign_key_on_insert_child_table() {
 
     // Case-10: the FK column is covered by the integer handle PK and HAS a
     // default — `insert into t2 (id) values (10)` fills a=0 and fails 1452.
-    create(&mut catalog, "create table t1 (id int,a int, primary key(id))");
+    create(
+        &mut catalog,
+        "create table t1 (id int,a int, primary key(id))",
+    );
     create(
         &mut catalog,
         "create table t2 (id int key,a int not null default 0, index (a), foreign key fk(a) references t1(id))",
@@ -181,46 +207,6 @@ fn foreign_key_on_insert_child_table() {
     );
 }
 
-/// Go `foreign_key_test.go:178::TestForeignKeyOnInsertDuplicateUpdateChildTable`:
-/// Go checks the FINAL (post-ODKU-assignment) child values against the
-/// parent — `on duplicate key update a = 100` fails 1452 while `update a =
-/// 12, b = 22` succeeds even when the would-be-inserted values are missing.
-/// Measured this session the check here runs against the INSERT values
-/// instead: `update a = 100` is allowed (orphan state), `update a = 12,
-/// b = 22` errors 1452 when the inserted values (14, 26) are missing — the
-/// reverse of Go on both arms.
-#[test]
-#[ignore = "go-parity-gap: ODKU child FK check inspects insert values, not the updated values (both arm directions diverge)"]
-fn foreign_key_on_insert_duplicate_update_child_table() {}
-
-/// The NULL-assignment arm of Go
-/// `foreign_key_test.go:178::TestForeignKeyOnInsertDuplicateUpdateChildTable`:
-/// Go executes `on duplicate key update a = null` (NULL child keys never
-/// reference anything). Measured this session: the same statement fails here
-/// with `ForeignKeyNoReferencedRow` — the ODKU write path checks the new
-/// values without the NULL exemption its insert path has.
-#[test]
-#[ignore = "go-parity-gap: ODKU NULL child-key assignment errors 1452 instead of passing"]
-fn foreign_key_odku_null_child_key_passes() {}
-
-/// The transaction arms of Go
-/// `foreign_key_test.go:178::TestForeignKeyOnInsertDuplicateUpdateChildTable`
-/// (`begin`/`rollback` visibility and in-txn parent deletion).
-#[test]
-#[ignore = "go-parity-gap: explicit transactions unported"]
-fn foreign_key_odku_in_txn() {}
-
-/// Go `foreign_key_test.go:279::TestForeignKeyCheckAndLock`: two sessions'
-/// optimistic/pessimistic transactions interleave child inserts with parent
-/// updates/deletes; conflicts surface as `Write conflict` and the
-/// pessimistic arms as `[planner:1451]Cannot delete or update a parent row …`.
-///
-/// go-parity-gap: needs multi-session transactions, lock records and
-/// fair-locking variables.
-#[test]
-#[ignore = "go-parity-gap: multi-session txn locking (Write conflict / pessimistic 1451) unported"]
-fn foreign_key_check_and_lock() {}
-
 /// Go `foreign_key_test.go:501::TestForeignKeyOnInsertOnDuplicateParentTableCheck`
 /// (notNull primary-key arms + case-10): parent-side ODKU updates that would
 /// orphan a referenced key fail 1451 (`ErrRowIsReferenced2`), plain parent
@@ -229,13 +215,22 @@ fn foreign_key_check_and_lock() {}
 #[test]
 fn foreign_key_on_insert_on_duplicate_parent_table_check() {
     let mut catalog = Catalog::default();
-    create(&mut catalog, "create table t1 (id int, a int, b int, unique index(id), unique index(a, b))");
+    create(
+        &mut catalog,
+        "create table t1 (id int, a int, b int, unique index(id), unique index(a, b))",
+    );
     create(
         &mut catalog,
         "create table t2 (b int, name varchar(10), a int, id int, unique index(id), unique index (a,b), foreign key fk(a, b) references t1(a, b))",
     );
-    insert(&mut catalog, "insert into t1 (id, a, b) values (1, 11, 21),(2, 12, 22), (3, 13, 23), (4, 14, 24)");
-    insert(&mut catalog, "insert into t2 (id, a, b, name) values (1, 11, 21, 'a')");
+    insert(
+        &mut catalog,
+        "insert into t1 (id, a, b) values (1, 11, 21),(2, 12, 22), (3, 13, 23), (4, 14, 24)",
+    );
+    insert(
+        &mut catalog,
+        "insert into t2 (id, a, b, name) values (1, 11, 21, 'a')",
+    );
 
     // Parent ODKU rewrites that keep the referenced (a, b) succeed, exactly
     // as in Go's two-statement sequence: 12 -> 112 -> 1112, 13 -> 1013.
@@ -269,7 +264,11 @@ fn foreign_key_on_insert_on_duplicate_parent_table_check() {
     // Rewriting the referenced (a, b) of a parent row fails 1451 (plain
     // UPDATE form; Go drives the same assertion through the ODKU form, which
     // is the arm gap below — this tier's ODKU path skips the parent check).
-    expect_update_error(&mut catalog, "update t1 set a=a+10, b=b+20 where id = 11", 1451);
+    expect_update_error(
+        &mut catalog,
+        "update t1 set a=a+10, b=b+20 where id = 11",
+        1451,
+    );
 
     // Parent DELETE of a referenced key fails 1451 (Go's pessimistic arms).
     let error = run_delete_on("delete from t1 where id = 11", &mut catalog, &ctx())
@@ -281,19 +280,6 @@ fn foreign_key_on_insert_on_duplicate_parent_table_check() {
     );
 }
 
-/// The `insert into t1 (id, a, b) values (11, 11, 21) on duplicate key
-/// update a=a+10, b=b+20` arm of Go
-/// `foreign_key_test.go:501::TestForeignKeyOnInsertOnDuplicateParentTableCheck`
-/// (the referenced key is rewritten through ODKU — Go fails it with
-/// `ErrRowIsReferenced2`, 1451) and the case-10 tail, which runs under
-/// `set @@foreign_key_checks=0`, a session toggle with no statement surface
-/// here (the toggle itself is pinned by `StmtContext::with_foreign_key_checks`).
-/// Measured this session: the parent-side ODKU path skips the child-reference
-/// check entirely, so the 1451 arm cannot be pinned.
-#[test]
-#[ignore = "go-parity-gap: parent-side ODKU skips the 1451 check; @@foreign_key_checks=0 has no SQL surface"]
-fn foreign_key_parent_odku_and_checks_off_arms() {}
-
 /// Go `foreign_key_test.go:570::TestForeignKeyConcurrentInsertChildTable`:
 /// ten goroutines insert 20 valid child rows each (`a` = `cnt%4+1`, all
 /// present in `t1`); no statement may fail. The inserts here run on one
@@ -302,18 +288,28 @@ fn foreign_key_parent_odku_and_checks_off_arms() {}
 #[test]
 fn foreign_key_concurrent_insert_child_table_all_rows_valid() {
     let mut catalog = Catalog::default();
-    create(&mut catalog, "create table t1 (id int, a int, primary key (id))");
+    create(
+        &mut catalog,
+        "create table t1 (id int, a int, primary key (id))",
+    );
     create(
         &mut catalog,
         "create table t2 (id int, a int, index(a), foreign key fk(a) references t1(id))",
     );
-    insert(&mut catalog, "insert into t1 (id, a) values (1, 11),(2, 12), (3, 13), (4, 14)");
+    insert(
+        &mut catalog,
+        "insert into t1 (id, a) values (1, 11),(2, 12), (3, 13), (4, 14)",
+    );
     for worker in 0..10 {
         for cnt in 0..20 {
             let id = cnt % 4 + 1;
             insert(
                 &mut catalog,
-                &format!("insert into t2 (id, a) values ({}, {})", worker * 20 + cnt, id),
+                &format!(
+                    "insert into t2 (id, a) values ({}, {})",
+                    worker * 20 + cnt,
+                    id
+                ),
             );
         }
     }

@@ -57,7 +57,11 @@ fn cell(datum: &Datum) -> String {
         Datum::UInt(value) => value.to_string(),
         Datum::Real(value) => {
             let rendered = format!("{value}");
-            if rendered.contains('.') { rendered } else { format!("{rendered}") }
+            if rendered.contains('.') {
+                rendered
+            } else {
+                format!("{rendered}")
+            }
         }
         Datum::Decimal(value) => value.to_string(),
         Datum::String(text) => String::from_utf8_lossy(text.bytes()).into_owned(),
@@ -128,11 +132,17 @@ fn group_concat_result_multiset_is_row_order_insensitive() {
 fn aggregate_family_group_values_match_the_go_definitions() {
     let mut catalog = Catalog::default();
     create(&mut catalog, "CREATE TABLE t(a bigint, b bigint)");
-    insert(&mut catalog, "insert into t values (1,1),(3,1),(null,1),(2,2),(2,2),(6,2)");
+    insert(
+        &mut catalog,
+        "insert into t values (1,1),(3,1),(null,1),(2,2),(2,2),(6,2)",
+    );
 
     // count skips NULLs (Go `countPartial`): b=1 holds {1,3,NULL} -> 2,
     // b=2 holds {2,2,6} -> 3.
-    assert_eq!(select(&catalog, "select count(a) from t group by b"), [[Datum::Int(2)], [Datum::Int(3)]]);
+    assert_eq!(
+        select(&catalog, "select count(a) from t group by b"),
+        [[Datum::Int(2)], [Datum::Int(3)]]
+    );
     // SUM over an integer argument returns a widened DECIMAL (Go `typeInfer4Sum`).
     let rows = select(&catalog, "select sum(a) from t group by b");
     assert_eq!(cell(&rows[0][0]), "4");
@@ -141,13 +151,28 @@ fn aggregate_family_group_values_match_the_go_definitions() {
     let rows = select(&catalog, "select avg(a) from t group by b");
     assert_eq!(cell(&rows[0][0]), "2.0000");
     assert_eq!(cell(&rows[1][0]), "3.3333");
-    assert_eq!(select(&catalog, "select max(a) from t group by b"), [[Datum::Int(3)], [Datum::Int(6)]]);
-    assert_eq!(select(&catalog, "select min(a) from t group by b"), [[Datum::Int(1)], [Datum::Int(2)]]);
+    assert_eq!(
+        select(&catalog, "select max(a) from t group by b"),
+        [[Datum::Int(3)], [Datum::Int(6)]]
+    );
+    assert_eq!(
+        select(&catalog, "select min(a) from t group by b"),
+        [[Datum::Int(1)], [Datum::Int(2)]]
+    );
     // The bit family folds in the unsigned 64-bit domain (Go `func_bitfuncs.go`):
     // b=1: OR(1,3)=3, XOR(1,3)=2, AND(1,3)=1; b=2: OR(2,2,6)=6, XOR=6, AND=2.
-    assert_eq!(select(&catalog, "select bit_or(a) from t group by b"), [[Datum::UInt(3)], [Datum::UInt(6)]]);
-    assert_eq!(select(&catalog, "select bit_xor(a) from t group by b"), [[Datum::UInt(2)], [Datum::UInt(6)]]);
-    assert_eq!(select(&catalog, "select bit_and(a) from t group by b"), [[Datum::UInt(1)], [Datum::UInt(2)]]);
+    assert_eq!(
+        select(&catalog, "select bit_or(a) from t group by b"),
+        [[Datum::UInt(3)], [Datum::UInt(6)]]
+    );
+    assert_eq!(
+        select(&catalog, "select bit_xor(a) from t group by b"),
+        [[Datum::UInt(2)], [Datum::UInt(6)]]
+    );
+    assert_eq!(
+        select(&catalog, "select bit_and(a) from t group by b"),
+        [[Datum::UInt(1)], [Datum::UInt(2)]]
+    );
     // b=1 mean 2: var_pop = ((1-2)^2+(3-2)^2)/2 = 1; var_samp = 2/1 = 2;
     // stddev_pop = 1; stddev_samp = sqrt(2). b=2 mean 10/3: var_pop = 32/9;
     // var_samp = 16/3; stddev_pop = sqrt(32/9); stddev_samp = sqrt(16/3)
@@ -162,16 +187,32 @@ fn aggregate_family_group_values_match_the_go_definitions() {
             .collect()
     };
     let values = approx("select var_pop(a) from t group by b");
-    assert!((values[0] - 1.0).abs() < 1e-12 && (values[1] - 32.0 / 9.0).abs() < 1e-12, "{values:?}");
+    assert!(
+        (values[0] - 1.0).abs() < 1e-12 && (values[1] - 32.0 / 9.0).abs() < 1e-12,
+        "{values:?}"
+    );
     let values = approx("select var_samp(a) from t group by b");
-    assert!((values[0] - 2.0).abs() < 1e-12 && (values[1] - 16.0 / 3.0).abs() < 1e-12, "{values:?}");
+    assert!(
+        (values[0] - 2.0).abs() < 1e-12 && (values[1] - 16.0 / 3.0).abs() < 1e-12,
+        "{values:?}"
+    );
     let values = approx("select stddev_pop(a) from t group by b");
-    assert!((values[0] - 1.0).abs() < 1e-12 && (values[1] - (32.0f64 / 9.0).sqrt()).abs() < 1e-12, "{values:?}");
+    assert!(
+        (values[0] - 1.0).abs() < 1e-12 && (values[1] - (32.0f64 / 9.0).sqrt()).abs() < 1e-12,
+        "{values:?}"
+    );
     let values = approx("select stddev_samp(a) from t group by b");
-    assert!((values[0] - 2.0f64.sqrt()).abs() < 1e-12 && (values[1] - (16.0f64 / 3.0).sqrt()).abs() < 1e-12, "{values:?}");
+    assert!(
+        (values[0] - 2.0f64.sqrt()).abs() < 1e-12
+            && (values[1] - (16.0f64 / 3.0).sqrt()).abs() < 1e-12,
+        "{values:?}"
+    );
     // BJKST sketch (Go `partialResult4ApproxCountDistinct`): 2 distinct per group.
     assert_eq!(
-        select(&catalog, "select approx_count_distinct(a) from t group by b"),
+        select(
+            &catalog,
+            "select approx_count_distinct(a) from t group by b"
+        ),
         [[Datum::Int(2)], [Datum::Int(2)]]
     );
     // Ordinal rank k = min(ceil(N * P/100), N), 1-indexed
@@ -217,7 +258,10 @@ fn cross_join_grouped_avg_sums_to_the_go_value() {
     // the gap rows); the no-groupby/no-data tails are pinned directly:
     let mut catalog = Catalog::default();
     create(&mut catalog, "create table t(c int, c1 int)");
-    assert_eq!(select(&catalog, "select count(c) from t"), [[Datum::Int(0)]]);
+    assert_eq!(
+        select(&catalog, "select count(c) from t"),
+        [[Datum::Int(0)]]
+    );
     assert!(select(&catalog, "select count(c) from t group by c1").is_empty());
 }
 
@@ -234,7 +278,10 @@ fn cross_join_grouped_avg_sums_to_the_go_value() {
 #[test]
 fn parallel_hash_agg_group_keys_stay_case_sensitive() {
     let mut catalog = Catalog::default();
-    create(&mut catalog, "create table test_parallel_hash_agg(k varchar(30), v int)");
+    create(
+        &mut catalog,
+        "create table test_parallel_hash_agg(k varchar(30), v int)",
+    );
     for _ in 0..20 {
         insert(
             &mut catalog,
@@ -253,107 +300,3 @@ fn parallel_hash_agg_group_keys_stay_case_sensitive() {
         assert_eq!(cell(&row[1]), "20", "each key sums the twenty ones");
     }
 }
-
-/// Go `aggregate_test.go:128::TestParallelStreamAggGroupConcat` and
-/// `aggregate_test.go:174::TestIssue20658`, parallel arms: with
-/// `tidb_streamagg_concurrency` 2/4/8 the explain plan shows a `Shuffle`
-/// above the stream aggregate and the parallel results must agree with the
-/// serial run (multiset or within 1e-3).
-///
-/// go-parity-gap: the shuffle/parallel stream-agg driver, the concurrency
-/// variables and explain output are unported on this tier; the data-level
-/// halves are the two running tests above.
-#[test]
-#[ignore = "go-parity-gap: parallel stream-agg (tidb_streamagg_concurrency + Shuffle plan) is unported on this tier"]
-fn stream_agg_parallel_concurrency_plan_and_agreement() {}
-
-/// Go `aggregate_test.go:249::TestAggInDisk`, observability arm: under
-/// `tidb_mem_quota_query = 4194304` the `desc analyze` plan's HashAgg lines
-/// must report non-zero DISK usage, and the `sum_int` result queries must
-/// answer 4060200.
-///
-/// go-parity-gap: `desc analyze` output, the query-quota spill wiring on the
-/// SQL path, and `sum_int` (see `sum_int_distinct_semantics`) are unported.
-#[test]
-#[ignore = "go-parity-gap: desc-analyze disk usage column + SQL-path query quota spill + sum_int are unported"]
-fn agg_in_disk_reports_disk_usage_in_plan() {}
-
-/// Go `aggregate_test.go:39::TestHashAggRuntimeStat`: the
-/// `HashAggRuntimeStats` string (`partial_worker:{wall_time:20s, ...},
-/// final_worker:{...}`), `Clone`, and `Merge` doubling both halves.
-///
-/// go-parity-gap: the executor runtime-stats surface (Go
-/// `pkg/executor/aggregate/hash_agg_worker.go`'s `AggWorkerStat` and
-/// `HashAggRuntimeStats.String/Clone/Merge`) is unported, the same gap the
-/// join-side stats tests record in `tests_join_probe_source_gaps`.
-#[test]
-#[ignore = "go-parity-gap: HashAggRuntimeStats/AggWorkerStat (aggregate pkg runtime stats, String/Clone/Merge) unported; Executor carries no runtime-stats surface in this workspace"]
-fn hash_agg_runtime_stats_format_clone_and_merge() {}
-
-/// Go `aggregate_test.go:76::TestSumIntDistinct`: `sum_int(distinct a)` over
-/// signed/unsigned bigint pairs answers 6/6 globally and 3/3 per group, and
-/// an all-NULL table answers `<nil> <nil>`.
-///
-/// go-parity-gap: measured — `sum_int` parses as a keyword but has no
-/// aggregate arm in this tier's driver (`agg_build.rs` maps
-/// COUNT/SUM/MIN/MAX/AVG/bit/variance/JSON aggregates only), so the probe
-/// `select sum_int(a) from t` errors "no such function".
-#[test]
-#[ignore = "go-parity-gap: sum_int has no aggregate arm in this tier's driver (agg_build.rs), so the sum_int(distinct ...) SQL shape cannot run"]
-fn sum_int_distinct_semantics() {}
-
-/// Go `aggregate_test.go:96::TestSumIntMockCopPushDown`: with
-/// `agg_to_cop(), hash_agg()` the `explain format='brief'` plan shows
-/// `HashAgg` under `cop[tikv]` with `sum_int(test.t.a)`/`sum_int(test.t.b)`
-/// pushdown, and the query answers `3 3`.
-///
-/// go-parity-gap: no coprocessor pushdown plan/explain text on this tier,
-/// and `sum_int` is unported (see `sum_int_distinct_semantics`).
-#[test]
-#[ignore = "go-parity-gap: cop[tikv] pushdown plan text and sum_int aggregate are unported"]
-fn sum_int_mock_cop_push_down_plan_and_result() {}
-
-/// Go `aggregate_test.go:293::TestRandomPanicConsume`: with the
-/// `ConsumeRandomPanic` failpoints armed over the aggregate/join/copr
-/// consume sites, twenty query shapes are driven to a random panic ten times
-/// each and every failure renders `failpoint panic: ERROR 1105 (HY000): Out
-/// Of Memory Quota![conn=1]` or `context canceled`.
-///
-/// go-parity-gap: the percentage-panic failpoints and the random concurrency
-/// driver are unported.
-#[test]
-#[ignore = "go-parity-gap: ConsumeRandomPanic failpoints (aggregate/copr/join consume sites) and the random-concurrency loop are unported"]
-fn random_panic_consume_renders_the_oom_error() {}
-
-/// Go `aggregate_test.go:426::TestParallelHashAgg`, second half: a
-/// list-partitioned `tlist` and an unpartitioned `tnormal` aggregate
-/// identically under `tidb_partition_prune_mode` `dynamic` and `static`,
-/// for min/max/sum/count.
-///
-/// go-parity-gap: `set tidb_partition_prune_mode` has no SQL surface on this
-/// tier, so the static/dynamic comparison cannot run.
-#[test]
-#[ignore = "go-parity-gap: tidb_partition_prune_mode static/dynamic switch has no SQL surface on this tier"]
-fn parallel_hash_agg_partition_prune_parity() {}
-
-/// Go `aggregate_test.go:501::TestIssue50849`: with the
-/// `injectHashAggClosePanic` failpoint armed, closing the hash-agg result set
-/// of `select /*+hash_agg()*/ sum(t1.a) from t t1 join t t2` returns an error
-/// that carries a stack (`errors.HasStack`).
-///
-/// go-parity-gap: the close-path panic failpoint and Go's stack-carrying
-/// error wrapper are unported.
-#[test]
-#[ignore = "go-parity-gap: injectHashAggClosePanic failpoint and the errors.HasStack surface are unported"]
-fn hash_agg_close_panic_carries_stack() {}
-
-/// Go `aggregate_test.go:529::TestStreamAggPendingMemDeltaBatching`: with
-/// `streamAggMemDeltaFlushForTest` armed as a panic, small per-group
-/// GROUP_CONCAT deltas must never cross the flush threshold while
-/// large-string groups must trigger the pendingMemDelta flush mid-group.
-///
-/// go-parity-gap: the pendingMemDelta batching optimization and its
-/// `streamAggMemDeltaFlushForTest` failpoint are unported.
-#[test]
-#[ignore = "go-parity-gap: stream-agg pendingMemDelta batching + streamAggMemDeltaFlushForTest failpoint are unported"]
-fn stream_agg_pending_mem_delta_batching_thresholds() {}

@@ -181,7 +181,8 @@ fn admin_check_passes_over_enum_unique_index_tables_in_every_named_form() {
     // tier has the one consistency path, so a second pass stands in.
     let mut table = kv_table_of(&catalog, "admin_test");
     assert_eq!(
-        admin_check::check_table(&mut table, Some("uk_status"), &context).expect("index check again"),
+        admin_check::check_table(&mut table, Some("uk_status"), &context)
+            .expect("index check again"),
         1
     );
     drop(table);
@@ -197,7 +198,10 @@ fn admin_check_passes_over_enum_unique_index_tables_in_every_named_form() {
         "insert into admin_test values (1, 'alice'), (2, 'bob'), (3, 'charlie')",
     );
     let mut table = kv_table_of(&catalog, "admin_test");
-    assert_eq!(admin_check::check_table(&mut table, None, &context).expect("table check"), 1);
+    assert_eq!(
+        admin_check::check_table(&mut table, None, &context).expect("table check"),
+        1
+    );
     assert_eq!(
         admin_check::check_table(&mut table, Some("uk_name"), &context).expect("index check"),
         1
@@ -227,16 +231,6 @@ fn admin_check_passes_over_enum_unique_index_tables_in_every_named_form() {
     );
 }
 
-/// Go `admin_test.go:2345::TestAdminCheckTableWithEnumAndPointGet`,
-/// plan-shape halves: the unique-index enum queries must plan `Point_Get` /
-/// `Batch_Point_Get` with a secondary-index access object — the plan shapes
-/// that exercise the fast check's `verifyIndexSideQuery`.
-///
-/// go-parity-gap: this tier's driver produces no explain output.
-#[test]
-#[ignore = "go-parity-gap: no explain/plan output on this tier (Point_Get/Batch_Point_Get access-object text unported)"]
-fn admin_check_enum_pointget_plan_shape() {}
-
 /// Go `admin_test.go:2488::TestFastCheckTableConcurrent`: five sessions run
 /// `admin check table` over a 100-row table concurrently and all pass.
 ///
@@ -264,7 +258,8 @@ fn admin_check_table_runs_concurrently_over_one_hundred_rows() {
             let catalog = std::sync::Arc::clone(&catalog);
             std::thread::spawn(move || {
                 let mut table = {
-                    let Some(crate::TableEntry::Kv(table)) = catalog.table_in("test", "t_concurrent")
+                    let Some(crate::TableEntry::Kv(table)) =
+                        catalog.table_in("test", "t_concurrent")
                     else {
                         panic!("t_concurrent is not stored as bytes");
                     };
@@ -276,72 +271,13 @@ fn admin_check_table_runs_concurrently_over_one_hundred_rows() {
         })
         .collect();
     for worker in workers {
-        let checked = worker.join().expect("check thread joins").expect("check passes");
+        let checked = worker
+            .join()
+            .expect("check thread joins")
+            .expect("check passes");
         assert_eq!(checked, 1);
     }
 }
-
-/// Go `admin_test.go:2099::TestAdminCheckGlobalIndexWithClusterIndex`: a
-/// hash-partitioned clustered table with `unique key uidx_a(a) GLOBAL`;
-/// Go deletes a row, an index entry, and re-adds a wrong entry across
-/// partitions, requiring the 8223/8134 inconsistency errors each time.
-///
-/// go-parity-gap: measured refusal — `CREATE TABLE ... unique key uidx_a(a)
-/// global ... partition by hash(c) partitions 5` is refused by this tier
-/// ("a GLOBAL index (uidx_a) is not supported by this node: it maintains
-/// only per-partition index entries, so a unique constraint spanning the
-/// partitions would not be enforced"), so the global-index storage shape the
-/// whole test corrupts does not exist here.
-#[test]
-#[ignore = "go-parity-gap: GLOBAL unique index on a hash-partitioned table is refused at CREATE TABLE on this tier (per-partition index entries only), so there is no global-index storage to corrupt"]
-fn admin_check_global_index_with_cluster_index_corruption_shapes() {}
-
-/// Go `admin_test.go:2194::TestAdminCheckGlobalIndexDuringDDL`: while
-/// `ALTER TABLE ... TRUNCATE PARTITION p1` walks its schema states, failpoint
-/// hooks (`afterWaitSchemaSynced`, `mockDMLExecution`) run `admin check
-/// table` in between and require it to pass in 4 different schema states.
-///
-/// go-parity-gap: DDL job schema-state interleaving hooks and the
-/// `truncate partition` reorganization machinery are unported; this tier has
-/// no point at which a check could run mid-DDL.
-#[test]
-#[ignore = "go-parity-gap: DDL schema-state failpoint hooks (afterWaitSchemaSynced/mockDMLExecution) and truncate-partition state machine are unported"]
-fn admin_check_global_index_during_ddl_schema_states() {}
-
-/// Go `admin_test.go:2287::TestFastAdminCheckWithError`: with the
-/// `mockFastCheckTableError` failpoint returning an error from the fast
-/// check workers, `admin check table` on a table with ten indexes fails
-/// instead of blocking on the worker pool.
-///
-/// go-parity-gap: the fast (checksum) table check with its worker pool and
-/// the `mockFastCheckTableError` failpoint are unported.
-#[test]
-#[ignore = "go-parity-gap: fast checksum table check + mockFastCheckTableError failpoint unported"]
-fn fast_admin_check_error_does_not_block() {}
-
-/// Go `admin_test.go:2305::TestFastAdminCheckQuickPassSkipBucketed`: a
-/// consistent table exits the fast check at the global checksum quick pass,
-/// while an inconsistent one falls back to bucketed refinement (observed via
-/// the `mockFastCheckTableBucketedCalled` failpoint).
-///
-/// go-parity-gap: the checksum quick-pass/bucketed-refinement staging of the
-/// fast check is unported, and with it the failpoint the test observes.
-#[test]
-#[ignore = "go-parity-gap: fast-check global-checksum quick pass and bucketed refinement staging are unported (mockFastCheckTableBucketedCalled has no seam)"]
-fn fast_admin_check_quick_pass_skips_bucketed_refinement() {}
-
-/// Go `admin_test.go:2521::TestFastAdminCheckPropagateSessionVarsToSysSession`:
-/// the fast check's internal system session must inherit the user session's
-/// `tidb_mem_quota_query`, `tidb_distsql_scan_concurrency`,
-/// `tidb_executor_concurrency`, `max_execution_time` and
-/// `tikv_client_read_timeout` (asserted inside the
-/// `fastCheckTableAfterInitSessCtx` failpoint).
-///
-/// go-parity-gap: the fast check does not open an internal system session on
-/// this tier, so there is no propagation boundary to observe.
-#[test]
-#[ignore = "go-parity-gap: fast-check internal sys-session variable propagation (fastCheckTableAfterInitSessCtx) is unported"]
-fn fast_admin_check_propagates_session_vars_to_sys_session() {}
 
 /// Go `admintest/main_test.go:27::TestMain` and (with the same shape)
 /// `aggregate/main_test.go:25::TestMain`: `testsetup.SetupForCommonTest`,

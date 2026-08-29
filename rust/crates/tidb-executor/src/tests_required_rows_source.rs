@@ -328,9 +328,6 @@ fn limit_required_rows() {
 // wider than the quota, else the child's init cap); this tier has no
 // `DeleteExec`/`newDMLChildChunk` seam -- DML runs through
 // `crate::driver::dml` with no per-width chunk sizing to pin.
-#[test]
-#[ignore]
-fn dml_child_chunk_init_cap_by_row_width() {}
 
 /// Go `pkg/executor/executor_required_rows_test.go:251::TestSortRequiredRows`.
 ///
@@ -344,9 +341,6 @@ fn dml_child_chunk_init_cap_by_row_width() {}
 // up to `max_chunk_size` per call (`append_sorted_rows_into(req, batch)`)
 // without consulting the parent request's required rows, so none of Go's
 // per-request output expectations can be pinned on it.
-#[test]
-#[ignore]
-fn sort_required_rows() {}
 
 /// Go `pkg/executor/executor_required_rows_test.go:321::TestTopNRequiredRows`.
 ///
@@ -633,38 +627,3 @@ fn projection_unparallel_required_rows() {
         executor.close().unwrap();
     }
 }
-
-/// Go `pkg/executor/executor_required_rows_test.go:660::TestStreamAggRequiredRows`.
-///
-/// Go's case table (pkg/executor/executor_required_rows_test.go:719-748) aggregates
-/// DISTINCT over the Double column, grouped by the Long column, with the
-/// `divGenerator` patterns: the groups are `integer_count / factor`, so each
-/// case pins both the OUTPUT batching and which child chunks the streaming
-/// aggregation had to read to produce it.
-// go-parity-gap: Go's `StreamAggExec.Next` fills the parent's request exactly
-// (`req.IsFull()`, emitting one row per completed group), and the ported
-// `crate::hash_agg::GroupedStreamAggExec::next` instead fills to
-// `max_chunk_size` regardless of the request -- the per-request batching
-// contract these three cases pin (Sum over 1,000,000 one-row groups,
-// Avg over three 1024-row groups, Max over 1023.5-row groups, all DISTINCT
-// via Go's `divGenerator`) is unported.
-#[test]
-#[ignore]
-fn stream_agg_required_rows() {}
-
-/// Go `pkg/executor/executor_required_rows_test.go:719::TestMergeJoinRequiredRows`.
-///
-/// Go builds a merge join through the executor builder over a one-row inner
-/// and a 10,000,000-row outer (both always `(1, 1)`), requests a random
-/// 1..maxChunkSize rows 100 times for each of RightOuterJoin/LeftOuterJoin/
-/// LeftOuterSemiJoin/AntiLeftOuterSemiJoin, and its data source PANICS unless
-/// every join `Next` relays the remaining request verbatim to the driving
-/// child (`pkg/executor/join/merge_join.go:347`:
-/// `fetchNextOuterGroup(ctx, e, req.RequiredRows()-req.NumRows())`).
-// go-parity-gap: the Rust merge join (`crate::join::JoinExec` with a
-// `MergeJoinPlan`) pulls fixed max-chunk-size batches from its children while
-// filling whole key groups and never relays the parent's per-call required
-// rows, so the per-call child contract cannot be pinned.
-#[test]
-#[ignore]
-fn merge_join_required_rows_relay_to_driving_child() {}

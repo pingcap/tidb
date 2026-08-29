@@ -26,8 +26,8 @@ use crate::{
     run_create_table_on, run_delete_on, run_insert_on, run_select_meta_in, run_select_on,
     run_update_on, Catalog, StmtContext,
 };
+use tidb_datatype::Collation;
 use tidb_datatype::{Datum, StringDatum};
-use tidb_datatype::{Collation};
 
 fn ctx() -> StmtContext {
     StmtContext::for_query()
@@ -38,18 +38,15 @@ fn create(catalog: &mut Catalog, sql: &str) {
 }
 
 fn insert(catalog: &mut Catalog, sql: &str) {
-    run_insert_on(sql, catalog, &ctx())
-        .unwrap_or_else(|error| panic!("insert {sql:?}: {error:?}"));
+    run_insert_on(sql, catalog, &ctx()).unwrap_or_else(|error| panic!("insert {sql:?}: {error:?}"));
 }
 
 fn select(catalog: &Catalog, sql: &str) -> Vec<Vec<Datum>> {
-    run_select_on(sql, catalog, &ctx())
-        .unwrap_or_else(|error| panic!("select {sql:?}: {error:?}"))
+    run_select_on(sql, catalog, &ctx()).unwrap_or_else(|error| panic!("select {sql:?}: {error:?}"))
 }
 
 fn select_err(catalog: &Catalog, sql: &str) -> crate::DriverError {
-    run_select_on(sql, catalog, &ctx())
-        .expect_err(&format!("select {sql:?} must fail"))
+    run_select_on(sql, catalog, &ctx()).expect_err(&format!("select {sql:?} must fail"))
 }
 
 /// Go `testkit.Rows` compares `fmt.Sprintf("%v")` per cell, so NULL prints
@@ -102,7 +99,11 @@ fn union2_matrix() {
         &["1", "2"],
     );
     assert_rows(&catalog, "select 1 union all select 1", &["1", "1"]);
-    assert_rows(&catalog, "select 1 union all select 1 union select 1", &["1"]);
+    assert_rows(
+        &catalog,
+        "select 1 union all select 1 union select 1",
+        &["1"],
+    );
     assert_rows(
         &catalog,
         "select 1 as a union (select 2) order by a limit 1",
@@ -214,7 +215,10 @@ fn union2_matrix() {
 
     // issue 5703
     create(&mut catalog, "create table tdate(a date)");
-    insert(&mut catalog, "insert into tdate value ('2017-01-01'), ('2017-01-02')");
+    insert(
+        &mut catalog,
+        "insert into tdate value ('2017-01-01'), ('2017-01-02')",
+    );
     assert_rows(
         &catalog,
         "(select a from tdate where a < 0) union (select a from tdate where a > 0) order by a",
@@ -257,8 +261,14 @@ fn union2_matrix() {
     assert_eq!(error.clone().to_mysql_error().code, 1221, "{error:?}");
 
     // These shapes are LEGAL in Go and must keep running here.
-    select(&catalog, "(select a from t0 limit 1) union all select a from t0 limit 1");
-    select(&catalog, "(select a from t0 order by a) union all select a from t0 order by a");
+    select(
+        &catalog,
+        "(select a from t0 limit 1) union all select a from t0 limit 1",
+    );
+    select(
+        &catalog,
+        "(select a from t0 order by a) union all select a from t0 order by a",
+    );
 
     create(&mut catalog, "create table t(a int)");
     insert(&mut catalog, "insert into t value(1),(2),(3)");
@@ -282,7 +292,11 @@ fn union2_matrix() {
         "(select a from t order by a desc limit 2) union all select 33 as a order by a desc limit 2",
         &["33", "3"],
     );
-    assert_rows(&catalog, "select 1 union select 1 union all select 1", &["1", "1"]);
+    assert_rows(
+        &catalog,
+        "select 1 union select 1 union all select 1",
+        &["1", "1"],
+    );
 
     // Chunk-boundary regression (Go sets tidb_init_chunk_size=2; the count is
     // the pinned value over 2^6 rows per side).
@@ -305,7 +319,10 @@ fn union2_matrix() {
     );
 
     create(&mut catalog, "create table t8141(a int, b int)");
-    insert(&mut catalog, "insert into t8141 value(1,2),(1,1),(2,2),(2,2),(3,2),(3,2)");
+    insert(
+        &mut catalog,
+        "insert into t8141 value(1,2),(1,1),(2,2),(2,2),(3,2),(3,2)",
+    );
     assert_rows(
         &catalog,
         "select count(*) from (select a as c, a as d from t8141 union all select a, b from t8141) t",
@@ -331,7 +348,10 @@ fn union2_matrix() {
     );
 
     // #issue 23832: bit/float/double/int union a literal, ordered numerically.
-    create(&mut catalog, "create table tbit(a bit(20), b float, c double, d int)");
+    create(
+        &mut catalog,
+        "create table tbit(a bit(20), b float, c double, d int)",
+    );
     insert(
         &mut catalog,
         "insert into tbit values(10, 10, 10, 10), (1, -1, 2, -2), (2, -2, 1, 1), (2, 1.1, 2.1, 10.1)",
@@ -343,22 +363,6 @@ fn union2_matrix() {
     );
 }
 
-/// Go `executor_test.go:1108::TestUnion2`, arms this tier cannot reproduce
-/// faithfully, each measured this session:
-/// - `order by (select a+1)` over a UNION (issue 8189) is rejected with
-///   `Unsupported("a set operation's ORDER BY must name an output column")`
-///   where Go orders [1,2,3];
-/// - `(select a,b from t1 limit 2) union all (select a,b from t2 order by a
-///   limit 1) order by t1.b` (issue 8196) returns rows where Go rejects with
-///   `[planner:1250]Table 't1' from one of the SELECTs cannot be used in
-///   global ORDER clause`;
-/// - `(select a from t order by a) union all select a from t limit 1 union
-///   all select a from t limit 1` returns rows where Go rejects with
-///   `ErrWrongUsage` (1221).
-#[test]
-#[ignore = "go-parity-gap: union-leaf ORDER BY subquery + global-ORDER-BY 1250/1221 validations unported"]
-fn union2_divergent_arms() {}
-
 /// Go `executor_test.go:1352::TestUnionLimit`: 60 rows over a 30-partition
 /// hash table read through the union executor's worker-count limit path.
 #[test]
@@ -369,29 +373,14 @@ fn union_limit_over_hash_partitions_runs() {
         "create table union_limit (id int) partition by hash(id) partitions 30",
     );
     for i in 0..60 {
-        insert(&mut catalog, &format!("insert into union_limit values ({i})"));
+        insert(
+            &mut catalog,
+            &format!("insert into union_limit values ({i})"),
+        );
     }
     let rows = select(&catalog, "select * from union_limit limit 10");
     assert_eq!(rows.len(), 10, "Go only requires the query to succeed");
 }
-
-/// Go `executor_test.go:1365::TestLowResolutionTSORead`: with
-/// `tidb_low_resolution_tso=on`, reads run against a stale ts and writes fail
-/// (`update` errors; `for update` reads error until the variable is off or
-/// pessimistic-autocommit is on).
-///
-/// go-parity-gap: needs the session variable and the stale-read txn path.
-#[test]
-#[ignore = "go-parity-gap: tidb_low_resolution_tso session variable unported"]
-fn low_resolution_tso_blocks_writes() {}
-
-/// Go `executor_test.go:1428::TestLowResolutionTSOReadScope`: the variable
-/// set GLOBALly flips `UseLowResolutionTSO()` for NEW sessions only.
-///
-/// go-parity-gap: needs global variable propagation across sessions.
-#[test]
-#[ignore = "go-parity-gap: global variable scope propagation unported"]
-fn low_resolution_tso_global_scope() {}
 
 /// Go `executor_test.go:1439::TestAdapterStatement`: the compiled statement
 /// keeps its ORIGIN text (`select 1`, the create-table text) and the GBK
@@ -406,29 +395,11 @@ fn adapter_statement_keeps_origin_text() {
     let stmt = ctx().parse("select 1").expect("parse");
     assert_eq!(stmt.node_text().original_text(), b"select 1");
     let stmt = ctx().parse("create table test.t (a int)").expect("parse");
-    assert_eq!(stmt.node_text().original_text(), b"create table test.t (a int)");
+    assert_eq!(
+        stmt.node_text().original_text(),
+        b"create table test.t (a int)"
+    );
 }
-
-/// The GBK arm of Go `executor_test.go:1439::TestAdapterStatement`: parsing
-/// with `CharsetClient("gbk")` renders the body as UTF-8 text ('表1') while
-/// `OriginText` keeps the raw `\\xb1\\xed1` bytes.
-#[test]
-#[ignore = "go-parity-gap: client charset (gbk) parse handshake unported"]
-fn adapter_statement_gbk_client_charset() {}
-
-/// Go `executor_test.go:1467::TestIsPointGet` and
-/// `:1501::TestClusteredIndexIsPointGet`: `IsPointGetWithPKOrUniqueKeyByAutoCommit`
-/// classifies queries against `mysql.help_topic` (pk lookup true, unique-key
-/// lookups on other columns false, projection forms false) and clustered
-/// `primary key (c, a)` tables (full pk equality true, partial false, extra
-/// conjunct false).
-///
-/// go-parity-gap: needs the planner's point-get classification exposed on a
-/// built plan; the prepared-path equivalent
-/// (`build_prepared_point_get_plan`) answers a different contract.
-#[test]
-#[ignore = "go-parity-gap: IsPointGetWithPKOrUniqueKeyByAutoCommit plan classification unported"]
-fn is_point_get_classification() {}
 
 /// Go `executor_test.go:1493::TestPointGetOrderby`: ordering a point lookup
 /// by a column outside the table is a planner error —
@@ -460,12 +431,15 @@ fn column_name_resolution() {
     insert(&mut catalog, "insert t values(1,1)");
 
     let names = |sql: &str| -> Vec<String> {
-        let (columns, _) =
-            run_select_meta_in(sql, &catalog, "test", &ctx()).unwrap_or_else(|e| panic!("{sql}: {e:?}"));
+        let (columns, _) = run_select_meta_in(sql, &catalog, "test", &ctx())
+            .unwrap_or_else(|e| panic!("{sql}: {e:?}"));
         columns.into_iter().map(|(name, _)| name).collect()
     };
 
-    assert_eq!(names("select 1 + c, count(*) from t"), vec!["1 + c", "count(*)"]);
+    assert_eq!(
+        names("select 1 + c, count(*) from t"),
+        vec!["1 + c", "count(*)"]
+    );
     assert_eq!(
         names("select (c) > all (select c from t) from t"),
         vec!["(c) > all (select c from t)"]
@@ -479,15 +453,11 @@ fn column_name_resolution() {
     );
     assert_eq!(names("select if(1,c,c) from t"), vec!["if(1,c,c)"]);
     // Issue 9639: window function next to an expression.
-    assert_eq!(names("select 1+1, row_number() over() num from t"), vec!["1+1", "num"]);
+    assert_eq!(
+        names("select 1+1, row_number() over() num from t"),
+        vec!["1+1", "num"]
+    );
 }
-
-/// The `fields[0].Table.Name`/`TableAsName`/`DBName` slice of Go
-/// `executor_test.go:1534::TestColumnName` (`t` / `t2` / `test` for
-/// `select c as a from t as t2`; all empty for a constant expression).
-#[test]
-#[ignore = "go-parity-gap: result-field table/db name metadata not carried by SelectMeta"]
-fn column_name_table_metadata() {}
 
 /// Go `executor_test.go:1624::TestSelectVar`'s tail: `SQL_BIG_RESULT`,
 /// `SQL_SMALL_RESULT` and `SQL_BUFFER_RESULT` selects run against a grouped
@@ -503,13 +473,6 @@ fn select_var_read_hints_run() {
         assert_eq!(rows_text(&rows), vec![vec!["1"], vec!["2"]], "sql: {sql}");
     }
 }
-
-/// The `@a := d+1` head of Go `executor_test.go:1624::TestSelectVar`: user
-/// variable assignment inside the select list observes row order
-/// (`<nil> 2`, `2 3`, `3 2`).
-#[test]
-#[ignore = "go-parity-gap: user-variable assignment in the select list unported"]
-fn select_var_assignment_follows_row_order() {}
 
 /// Go `executor_test.go:1640::TestHistoryRead`, ported at the MVCC boundary
 /// this tier owns (`Catalog::allocate_tso`/`record_commit`/`state_as_of`,
@@ -553,52 +516,6 @@ fn history_read_snapshot_state_sees_only_older_rows() {
     }
 }
 
-/// The `set @@tidb_snapshot` surface of Go `executor_test.go:1640::TestHistoryRead`:
-/// too-old snapshots and future timestamps are rejected without updating
-/// `SnapshotTS`, writes under a snapshot are denied, and `''` clears it.
-#[test]
-#[ignore = "go-parity-gap: @@tidb_snapshot session variable + write denial unported"]
-fn history_read_snapshot_variable_surface() {}
-
-/// Go `executor_test.go:1708::TestHistoryReadInTxn`: snapshot + explicit
-/// transaction combinations (optimistic/pessimistic/READ-COMMITTED, snapshot
-/// set before or inside the txn) read the snapshot infoschema and reject
-/// writes; `ExecRestrictedSQL` with a pinned snapshot does not reset the
-/// session's snapshot.
-///
-/// go-parity-gap: needs explicit transactions and the session snapshot
-/// infoschema.
-#[test]
-#[ignore = "go-parity-gap: transactions + snapshot infoschema unported"]
-fn history_read_in_txn() {}
-
-/// Go `executor_test.go:1833::TestCurrentTimestampValueSelection`:
-/// `current_timestamp` column defaults capture ONE evaluation with the
-/// column's fsp (`t0` none, `t1` 1 digit, `t2` 2 digits + ON UPDATE), the
-/// captured value round-trips through equality filters, and
-/// `current_timestamp(2)` values move after a later `now()`.
-///
-/// go-parity-gap: default evaluation needs the session clock
-/// (`Unsupported("no session clock (SET timestamp)")` measured this
-/// session).
-#[test]
-#[ignore = "go-parity-gap: session clock for current_timestamp defaults unported"]
-fn current_timestamp_value_selection() {}
-
-/// Go `executor_test.go:1868::TestAdmin`: `admin cancel ddl jobs` reports
-/// `DDL Job:1 not found`, `admin show ddl` reports owner/ddl-info rows,
-/// `admin show ddl job queries` echoes history queries, `admin check table`
-/// rejects an injected inconsistent index, and `admin checksum table`
-/// returns mocktikv's xor checksums (`0 2 2` / `1 1 1`).
-///
-/// go-parity-gap: the ADMIN family beyond CHECK TABLE/INDEX (job cancel,
-/// show ddl, checksum) has no executor here; the check-table corruption
-/// contract is pinned by `admin_check_index_reports_each_corruption_shape`
-/// in the metadata module.
-#[test]
-#[ignore = "go-parity-gap: admin cancel/show-ddl/checksum executors unported"]
-fn admin_job_and_checksum_statements() {}
-
 /// Go `executor_test.go:2157::TestMaxOneRow`: a scalar subquery returning
 /// more than one row fails with `[executor:1242]Subquery returns more than 1
 /// row` at read time.
@@ -618,39 +535,6 @@ fn max_one_row_scalar_subquery_is_1242() {
     assert_eq!(sql_error.message, "Subquery returns more than 1 row");
 }
 
-/// Go `executor_test.go:2177::TestIsFastPlan`: `IsFastPlan` classifies point
-/// reads, `select 1`, variable reads and SET statements as fast plans while
-/// full scans are not, read back through `ShowProcess`.
-///
-/// go-parity-gap: needs the ShowProcess/plan surface.
-#[test]
-#[ignore = "go-parity-gap: IsFastPlan + ShowProcess plan surface unported"]
-fn is_fast_plan_classification() {}
-
-/// Go `executor_test.go:2212::TestGlobalMemoryControl2`: the instance-level
-/// `tidb_server_memory_limit` (1GB) with `tidb_mem_oom_action=cancel` cancels
-/// a 500MB join with `ErrMemoryExceedForInstance` while the session disk
-/// tracker stays untouched.
-///
-/// go-parity-gap: the server memory limit handle (`dom.ServerMemoryLimitHandle`)
-/// is not wired into this tier; only per-query quotas are enforced.
-#[test]
-#[ignore = "go-parity-gap: instance-level ServerMemoryLimitHandle unported"]
-fn global_memory_control_cancels_the_biggest_session() {}
-
-/// Go `executor_test.go:2249::TestSignalCheckpointForSort`: under
-/// failpoint-injected sort checkpoints, `select * from t order by a` over a
-/// `tidb_mem_quota_query=100000000` quota cancels with
-/// `ErrMemoryExceedForQuery`.
-///
-/// go-parity-gap: the failpoints (`sortexec/SignalCheckpointForSort`,
-/// `chunk/SignalCheckpointForSort`) that inflate the sort's accounting are
-/// the trigger, and this tier's SELECT sort does not account memory (only
-/// writes and cached-selection chunks do, see `driver::tests::mem_quota`).
-#[test]
-#[ignore = "go-parity-gap: sort checkpoint failpoints + read-side sort accounting unported"]
-fn signal_checkpoint_for_sort_cancels_under_quota() {}
-
 /// Go `executor_test.go:2275::TestSessionRootTrackerDetach`, ported at the
 /// session/ statement tracker boundary (`SessionMemory`/`StatementMemory`,
 /// Go's `ResetContextOfStmt` shape): while a statement is live the session
@@ -665,26 +549,21 @@ fn session_root_tracker_fallback_detaches_after_the_statement() {
     let session = crate::SessionMemory::new(10_000_000, crate::OomAction::Cancel, 1);
     let statement = session.statement();
     assert!(
-        statement.session_tracker().get_fallback_for_test(false).is_some(),
+        statement
+            .session_tracker()
+            .get_fallback_for_test(false)
+            .is_some(),
         "Go: MemTracker.GetFallbackForTest(false) is non-nil while the result set is open"
     );
     statement.finish_statement();
     assert!(
-        statement.session_tracker().get_fallback_for_test(false).is_none(),
+        statement
+            .session_tracker()
+            .get_fallback_for_test(false)
+            .is_none(),
         "Go: after rs.Close() GetFallbackForTest(false) is nil"
     );
 }
-
-/// Go `executor_test.go:2295::TestProcessInfoOfSubQuery`: a session running
-/// `select 1, (select sleep(count(1) + 2) from t)` is visible through
-/// `information_schema.processlist` with its TxnStart and info text while it
-/// runs.
-///
-/// go-parity-gap: needs the processlist memtable + the SLEEP builtin wired
-/// to the statement runtime.
-#[test]
-#[ignore = "go-parity-gap: information_schema.processlist + running-statement info unported"]
-fn process_info_of_sub_query() {}
 
 /// Go `executor_test.go:2312::TestIssues49377`: parenthesized UNION ALL
 /// leaves with their own ORDER BY/LIMIT fold into the outer union — a
@@ -693,7 +572,10 @@ fn process_info_of_sub_query() {}
 #[test]
 fn issues49377_parenthesized_union_leaves() {
     let mut catalog = Catalog::default();
-    create(&mut catalog, "create table employee (employee_id int, name varchar(20), dept_id int)");
+    create(
+        &mut catalog,
+        "create table employee (employee_id int, name varchar(20), dept_id int)",
+    );
     insert(
         &mut catalog,
         "insert into employee values (1, 'Furina', 1), (2, 'Klee', 1), (3, 'Eula', 1), (4, 'Diluc', 2), (5, 'Tartaglia', 2)",
@@ -757,15 +639,6 @@ fn issues49377_parenthesized_union_leaves() {
     );
 }
 
-/// Go `executor_test.go:2345::TestIssues40463`: a fuzz-found query over
-/// ENUM/SET/YEAR tables with zero-date defaults must simply succeed. The
-/// tables cannot be BUILT here: `create table s (a enum('bkdv0','9rqy') not
-/// null default 'neud', …)` fails with `InvalidDefault("a")` (measured this
-/// session) — ENUM/SET column defaults are unported.
-#[test]
-#[ignore = "go-parity-gap: ENUM/SET column defaults (InvalidDefault at create) unported"]
-fn issues40463_enum_set_zero_defaults_query() {}
-
 /// Go `executor_test.go:2363::TestIssue38756`: `SQRT(1)` evaluates per row,
 /// DISTINCT collapses it, and a constant DOUBLE cast DISTINCTs to one row.
 #[test]
@@ -782,7 +655,10 @@ fn issue38756_sqrt_and_distinct() {
         vec![vec!["1"]]
     );
     assert_eq!(
-        rows_text(&select(&catalog, "SELECT DISTINCT cast(1 as double) FROM t")),
+        rows_text(&select(
+            &catalog,
+            "SELECT DISTINCT cast(1 as double) FROM t"
+        )),
         vec![vec!["1"]]
     );
 }
@@ -802,24 +678,12 @@ fn issue50043_alter_drop_default_then_write() {
     run_alter(&mut catalog, "alter table t alter column c2 drop default");
     run_update_on("update t set c2 = 5 where c1 = 0", &mut catalog, &ctx())
         .expect("update over the dropped default");
-    assert_rows(&catalog, "select * from t order by c1,c2", &["0 5.00000000000000000"]);
+    assert_rows(
+        &catalog,
+        "select * from t order by c1,c2",
+        &["0 5.00000000000000000"],
+    );
 }
-
-/// The INSERT … ON DUPLICATE KEY UPDATE arms of Go
-/// `executor_test.go:2375::TestIssue50043`: Go collapses `(0, NULL)` and
-/// `(1, 1)` to `(0, 5)` and `(1, 5)` with no warnings. Measured this
-/// session: the same statements yield THREE rows here — `(0, 5)`, `(1, 5)`,
-/// `(1, 5)` — so the ODKU write path violates the unique index instead of
-/// updating in place.
-#[test]
-#[ignore = "go-parity-gap: ODKU over multiple unique keys inserts duplicate rows instead of updating"]
-fn issue50043_odku_arms() {}
-
-/// Go `executor_test.go:2379::TestIssue50043WithPipelinedDML` runs the same
-/// arms after `set @@tidb_dml_type=bulk` (skipped on next-gen kernels).
-#[test]
-#[ignore = "skipped-reason: @@tidb_dml_type=bulk pipelined-DML session variable has no Rust surface; SQL arms pinned by issue50043_alter_drop_default_then_write"]
-fn issue50043_with_pipelined_dml() {}
 
 /// Go `executor_test.go:2418::TestIssue51324`, running arms: inserts missing
 /// values against nullable columns default to NULL (including the `DEFAULT`
@@ -829,7 +693,10 @@ fn issue50043_with_pipelined_dml() {}
 #[test]
 fn issue51324_insert_default_and_null_contract() {
     let mut catalog = Catalog::default();
-    create(&mut catalog, "create table t (id int key, a int, b enum('a', 'b'))");
+    create(
+        &mut catalog,
+        "create table t (id int key, a int, b enum('a', 'b'))",
+    );
     let no_default = |catalog: &mut Catalog, sql: &str| {
         let error = run_insert_on(sql, catalog, &ctx()).expect_err(sql);
         assert_eq!(error.clone().to_mysql_error().code, 1364, "{error:?}");
@@ -841,7 +708,10 @@ fn issue51324_insert_default_and_null_contract() {
     no_default(&mut catalog, "insert into t values ()");
     insert(&mut catalog, "insert into t set id = 1");
     insert(&mut catalog, "insert into t set id = 2, a = NULL, b = NULL");
-    insert(&mut catalog, "insert into t set id = 3, a = DEFAULT, b = DEFAULT");
+    insert(
+        &mut catalog,
+        "insert into t set id = 3, a = DEFAULT, b = DEFAULT",
+    );
     assert_rows(
         &catalog,
         "select * from t order by id",
@@ -854,19 +724,34 @@ fn issue51324_insert_default_and_null_contract() {
         let error = run_insert_on("insert into t set id = 4", &mut catalog, &ctx())
             .expect_err("no default after drop default");
         assert_eq!(error.clone().to_mysql_error().code, 1364, "{error:?}");
-        assert_eq!(error.to_mysql_error().message, "Field 'a' doesn't have a default value");
+        assert_eq!(
+            error.to_mysql_error().message,
+            "Field 'a' doesn't have a default value"
+        );
     }
     insert(&mut catalog, "insert into t set id = 5, a = NULL, b = NULL");
     {
-        let error = run_insert_on("insert into t set id = 6, a = DEFAULT, b = DEFAULT", &mut catalog, &ctx())
-            .expect_err("DEFAULT reads the dropped default");
+        let error = run_insert_on(
+            "insert into t set id = 6, a = DEFAULT, b = DEFAULT",
+            &mut catalog,
+            &ctx(),
+        )
+        .expect_err("DEFAULT reads the dropped default");
         assert_eq!(error.clone().to_mysql_error().code, 1364, "{error:?}");
-        assert_eq!(error.to_mysql_error().message, "Field 'a' doesn't have a default value");
+        assert_eq!(
+            error.to_mysql_error().message,
+            "Field 'a' doesn't have a default value"
+        );
     }
     assert_rows(
         &catalog,
         "select * from t order by id",
-        &["1 <nil> <nil>", "2 <nil> <nil>", "3 <nil> <nil>", "5 <nil> <nil>"],
+        &[
+            "1 <nil> <nil>",
+            "2 <nil> <nil>",
+            "3 <nil> <nil>",
+            "5 <nil> <nil>",
+        ],
     );
     run_update_on("update t set id = id + 10", &mut catalog, &ctx()).expect("pk update");
     assert_rows(
@@ -882,7 +767,10 @@ fn issue51324_insert_default_and_null_contract() {
 
     // Not-null columns: 1364 for missing defaults, 1048 for NULLs.
     drop_table(&mut catalog, "t");
-    create(&mut catalog, "create table t (id int key, a int not null, b enum('a', 'b') not null)");
+    create(
+        &mut catalog,
+        "create table t (id int key, a int not null, b enum('a', 'b') not null)",
+    );
     let insert_err = |catalog: &mut Catalog, sql: &str, code: u16, message: &str| {
         let error = run_insert_on(sql, catalog, &ctx()).expect_err(sql);
         assert_eq!(error.clone().to_mysql_error().code, code, "{error:?}");
@@ -920,22 +808,6 @@ fn issue51324_insert_default_and_null_contract() {
     );
 }
 
-/// The `insert ignore` arms of Go `executor_test.go:2418::TestIssue51324`:
-/// Go downgrades 1364/1048 to warnings and inserts default/zero rows
-/// (`4 0 a`, `5 0 `, …). Measured this session: `insert ignore` here still
-/// ERRORS with `NoDefaultForField`/`ColumnCannotBeNull`, so the
-/// downgrade-to-warning behavior has no surface.
-#[test]
-#[ignore = "go-parity-gap: insert ignore does not downgrade 1364/1048 to warnings"]
-fn issue51324_insert_ignore_warning_arms() {}
-
-/// The add-column OriginDefaultValue arms of Go
-/// `executor_test.go:2418::TestIssue51324` (`alter table t add column …`
-/// then insert-ignore warning sequences).
-#[test]
-#[ignore = "go-parity-gap: insert ignore does not downgrade 1364/1048 to warnings (add-column arms)"]
-fn issue51324_add_column_origin_default_arms() {}
-
 /// Go `executor_test.go:2488::TestDecimalDivPrecisionIncrement`: `a/b`'s
 /// scale follows `div_precision_increment` (4 default, 7, 30), and `avg`
 /// builds on it (`8.5000` at 4; `avg(a/b)` = `1.21428571` at 4, then
@@ -943,16 +815,17 @@ fn issue51324_add_column_origin_default_arms() {}
 #[test]
 fn decimal_div_precision_increment() {
     let mut catalog = Catalog::default();
-    create(&mut catalog, "create table t (a decimal(3,0), b decimal(3,0))");
+    create(
+        &mut catalog,
+        "create table t (a decimal(3,0), b decimal(3,0))",
+    );
     insert(&mut catalog, "insert into t values (8, 7), (9, 7)");
 
     let div = |precision: u32| -> Vec<String> {
         let statement = ctx().with_week_and_division_scale(0, precision);
         let (_, rows) = run_select_meta_in("select a/b from t", &catalog, "test", &statement)
             .expect("division");
-        rows.iter()
-            .map(|row| render(&row[0]))
-            .collect()
+        rows.iter().map(|row| render(&row[0])).collect()
     };
     assert_eq!(div(4), vec!["1.1429", "1.2857"]);
     assert_eq!(div(7), vec!["1.1428571", "1.2857143"]);
@@ -966,8 +839,8 @@ fn decimal_div_precision_increment() {
 
     let avg = |precision: u32| -> String {
         let statement = ctx().with_week_and_division_scale(0, precision);
-        let (_, rows) = run_select_meta_in("select avg(a) from t", &catalog, "test", &statement)
-            .expect("avg");
+        let (_, rows) =
+            run_select_meta_in("select avg(a) from t", &catalog, "test", &statement).expect("avg");
         render(&rows[0][0])
     };
     assert_eq!(avg(4), "8.5000");
@@ -982,16 +855,6 @@ fn decimal_div_precision_increment() {
     assert_eq!(avg_div(10), "1.21428571428571428550");
 }
 
-/// Go `executor_test.go:2512::TestIssue48756`: `SUBTIME(BIT_OR(b), '1
-/// 1:1:1.000002')` grouped by id yields `2012-05-18 08:05:05.999998` and a
-/// 1292 `Incorrect time value:` warning for the second group.
-///
-/// go-parity-gap: measured this session — the expression returns NULL here
-/// and the warning surface has no counterpart.
-#[test]
-#[ignore = "go-parity-gap: SUBTIME(BIT_OR(..)) evaluation + warning surface unported"]
-fn issue48756_subtime_bit_or() {}
-
 /// Go `executor_test.go:2547::TestIssue50308`, running arm: assigning an
 /// out-of-range timestamp via UPDATE fails with Go's exact
 /// `[types:1292]Incorrect timestamp value: '2099-01-01'` and leaves the row
@@ -1001,48 +864,20 @@ fn issue50308_update_out_of_range_timestamp_is_1292() {
     let mut catalog = Catalog::default();
     create(&mut catalog, "create table t(a timestamp)");
     insert(&mut catalog, "insert into t values('2000-01-01')");
-    let error = run_update_on("update t set a=cast('2099-01-01' as date)", &mut catalog, &ctx())
-        .expect_err("out-of-range timestamp");
+    let error = run_update_on(
+        "update t set a=cast('2099-01-01' as date)",
+        &mut catalog,
+        &ctx(),
+    )
+    .expect_err("out-of-range timestamp");
     let sql_error = error.clone().to_mysql_error();
     assert_eq!(sql_error.code, 1292, "{error:?}");
-    assert_eq!(
-        sql_error.message,
-        "Incorrect timestamp value: '2099-01-01'",
-    );
+    assert_eq!(sql_error.message, "Incorrect timestamp value: '2099-01-01'",);
     assert_eq!(
         rows_text(&select(&catalog, "select * from t")),
         vec![vec!["2000-01-01 00:00:00"]]
     );
 }
-
-/// The `insert ignore`/`update ignore` arms of Go
-/// `executor_test.go:2547::TestIssue50308`: Go downgrades the 1292 to a
-/// warning and stores the zero date. Measured this session: `insert ignore
-/// into t values(cast('2099-01-01' as date))` errors with
-/// `IncorrectTemporalValue` here instead.
-#[test]
-#[ignore = "go-parity-gap: insert/update ignore does not downgrade 1292 to a warning + zero date"]
-fn issue50308_ignore_arms_store_zero_date() {}
-
-/// Go `executor_test.go:2563::TestQueryWithKill`: cancelling a running
-/// query's context mid-flight is safe for the executor (10 goroutines loop
-/// `select a from tkq where b = 1` while a canceller fires at random).
-///
-/// go-parity-gap: the query-kill path (SQLKiller + context cancellation) is
-/// unported; the mem_quota kill boundary is pinned in
-/// `driver::tests::mem_quota`.
-#[test]
-#[ignore = "go-parity-gap: context-cancel/SQLKiller query kill path unported"]
-fn query_with_kill_is_safe() {}
-
-/// Go `executor_test.go:2624::TestIssue63329`: with TiFlash replicas marked
-/// available and cached tables, `READ_FROM_STORAGE(tiflash[t1], tiflash[t2])`
-/// joins return both rows, ten times.
-///
-/// go-parity-gap: TiFlash replica metadata + storage hints unported.
-#[test]
-#[ignore = "go-parity-gap: TiFlash replica + READ_FROM_STORAGE hints unported"]
-fn issue63329_tiflash_cached_join() {}
 
 /// Go `executor_test.go:2656::TestIssue52984`: a named window
 /// (`partition by p order by o rows between 0 preceding and 0 following`)
@@ -1064,16 +899,13 @@ fn issue52984_named_window_self_frame_runs_repeatedly() {
         for row in &rows {
             let v = render(&row[2]);
             let sum = render(&row[3]);
-            assert_eq!(v, sum, "rows between 0 preceding and 0 following pins the row");
+            assert_eq!(
+                v, sum,
+                "rows between 0 preceding and 0 following pins the row"
+            );
         }
     }
 }
-
-/// Go `pkg/executor/test/executor/main_test.go:27::TestMain`: suite
-/// bootstrap (goleak + config), no behavior to port.
-#[test]
-#[ignore = "skipped-reason: goleak/config suite bootstrap, no Rust behavior (b004/b010/b127 TestMain precedent)"]
-fn executor_suite_main_is_bootstrap() {}
 
 // ---- shared helpers below ----
 
@@ -1108,5 +940,8 @@ fn delete_on_removes_matched_rows() {
     insert(&mut catalog, "insert into t values (1), (2)");
     let deleted = run_delete_on("delete from t where a = 1", &mut catalog, &ctx()).expect("delete");
     assert_eq!(deleted, 1);
-    assert_eq!(rows_text(&select(&catalog, "select * from t")), vec![vec!["2"]]);
+    assert_eq!(
+        rows_text(&select(&catalog, "select * from t")),
+        vec![vec!["2"]]
+    );
 }

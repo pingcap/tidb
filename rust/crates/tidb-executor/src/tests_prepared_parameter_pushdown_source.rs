@@ -114,12 +114,3 @@ fn parameter_predicate_pushes_into_the_scan_and_keeps_the_cached_plan() {
         vec![vec![Datum::Int(6), Datum::Int(6), Datum::Int(6)]]
     );
 }
-
-/// Go's recorded `Plan` columns for this test (IndexReader/TableReader/
-/// IndexLookUp/Limit/TopN trees with `gt(plus(test.t.a, 0), 1)`-style pushed
-/// conditions): Go pins each physical tree in explain text. This tier has no
-/// prepared-statement EXPLAIN; `explain_select_stmt` plans concrete
-/// statements only.
-#[test]
-#[ignore = "go-parity-gap: EXPLAIN for a prepared statement's bound execution is not available (crate::explain::explain_select_stmt takes a concrete SelectStmt); Go's golden plan trees (prepare_suite_out.json, TestParameterPushDown) stay unrecorded"]
-fn parameter_pushdown_golden_plan_text_is_recorded() {}

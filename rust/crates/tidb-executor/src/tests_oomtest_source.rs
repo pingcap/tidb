@@ -84,7 +84,10 @@ fn update_exec_charges_the_session_query_quota() {
     .unwrap_err();
     assert!(is_memory_exceeded(&error), "expected 8175, got {error:?}");
     assert_eq!(
-        rows(&catalog, "select id, a, b from t_MemTracker4UpdateExec order by id"),
+        rows(
+            &catalog,
+            "select id, a, b from t_MemTracker4UpdateExec order by id"
+        ),
         vec![
             vec![Datum::Int(1), Datum::Int(1), Datum::Int(1)],
             vec![Datum::Int(2), Datum::Int(2), Datum::Int(2)],
@@ -123,7 +126,12 @@ fn insert_replace_and_insert_select_charge_the_session_query_quota() {
     .unwrap();
     // Go's source table `t` (same shape, 3 rows) for the INSERT...SELECT arms.
     run_create_table_on("create table t_src (id int, a int, b int)", &mut catalog).unwrap();
-    run_insert_on("insert into t_src values (1,1,1), (2,2,2), (3,3,3)", &mut catalog, &permitting()).unwrap();
+    run_insert_on(
+        "insert into t_src values (1,1,1), (2,2,2), (3,3,3)",
+        &mut catalog,
+        &permitting(),
+    )
+    .unwrap();
 
     // INSERT over the quota: 8175, nothing written.
     let error = run_insert_on(
@@ -137,7 +145,10 @@ fn insert_replace_and_insert_select_charge_the_session_query_quota() {
     // idx_a, and the covering-index read decode is a pre-existing gap this
     // batch must not exercise.)
     assert_eq!(
-        rows(&catalog, "select id, a, b from t_MemTracker4InsertAndReplaceExec"),
+        rows(
+            &catalog,
+            "select id, a, b from t_MemTracker4InsertAndReplaceExec"
+        ),
         Vec::<Vec<Datum>>::new()
     );
 
@@ -175,7 +186,10 @@ fn insert_replace_and_insert_select_charge_the_session_query_quota() {
     .unwrap_err();
     assert!(is_memory_exceeded(&error), "expected 8175, got {error:?}");
     assert_eq!(
-        rows(&catalog, "select id, a, b from t_MemTracker4InsertAndReplaceExec order by id"),
+        rows(
+            &catalog,
+            "select id, a, b from t_MemTracker4InsertAndReplaceExec order by id"
+        ),
         vec![
             vec![Datum::Int(1), Datum::Int(1), Datum::Int(1)],
             vec![Datum::Int(2), Datum::Int(2), Datum::Int(2)],
@@ -192,8 +206,10 @@ fn insert_replace_and_insert_select_charge_the_session_query_quota() {
         &permitting(),
     )
     .unwrap();
-    let mut final_rows =
-        rows(&catalog, "select id, a, b from t_MemTracker4InsertAndReplaceExec");
+    let mut final_rows = rows(
+        &catalog,
+        "select id, a, b from t_MemTracker4InsertAndReplaceExec",
+    );
     // Datum does not implement Ord; the rendered text form sorts stably
     // for this integer-only fixture.
     final_rows.sort_by_key(|row: &Vec<Datum>| {
@@ -239,7 +255,12 @@ fn delete_exec_charges_the_session_query_quota() {
     .unwrap();
 
     // Go first deletes at the default quota and requires NO trip.
-    run_delete_on("delete from MemTracker4DeleteExec1", &mut catalog, &permitting()).unwrap();
+    run_delete_on(
+        "delete from MemTracker4DeleteExec1",
+        &mut catalog,
+        &permitting(),
+    )
+    .unwrap();
     assert_eq!(
         rows(&catalog, "select id from MemTracker4DeleteExec1"),
         Vec::<Vec<Datum>>::new()
@@ -253,23 +274,22 @@ fn delete_exec_charges_the_session_query_quota() {
         &permitting(),
     )
     .unwrap();
-    let error =
-        run_delete_on("delete from MemTracker4DeleteExec1", &mut catalog, &cancelling()).unwrap_err();
+    let error = run_delete_on(
+        "delete from MemTracker4DeleteExec1",
+        &mut catalog,
+        &cancelling(),
+    )
+    .unwrap_err();
     assert!(is_memory_exceeded(&error), "expected 8175, got {error:?}");
     assert_eq!(
         rows(&catalog, "select id from MemTracker4DeleteExec1"),
-        vec![vec![Datum::Int(1)], vec![Datum::Int(2)], vec![Datum::Int(3)]]
+        vec![
+            vec![Datum::Int(1)],
+            vec![Datum::Int(2)],
+            vec![Datum::Int(3)]
+        ]
     );
 }
-
-/// Go `oom_test.go`'s multi-table-delete arm (`delete t1, t2 from t1 join t2
-/// ...` with `EnabledRateLimitAction`, the `disableFixedRowCountHint`
-/// failpoint and quota 500): the multi-table DELETE syntax, the coprocessor
-/// failpoint and the rateLimitAction-delegates-to-fallback log message have
-/// no Rust surface.
-#[test]
-#[ignore = "go-parity-gap: multi-table DELETE, the disableFixedRowCountHint failpoint and rateLimitAction fallback logging (oom_test.go:186-220) are unported"]
-fn multi_table_delete_rate_limit_action_delegates_to_fallback() {}
 
 /// Go `pkg/executor/test/oomtest/oom_test.go:292::TestOOMActionPriority`:
 /// after a five-way join completes, the surviving OOM action is the
@@ -284,8 +304,12 @@ fn after_the_query_the_surviving_oom_action_is_the_log_level_one() {
     let mut catalog = Catalog::default();
     for name in ["t0", "t1", "t2", "t3", "t4"] {
         run_create_table_on(&format!("create table {name}(a int)"), &mut catalog).unwrap();
-        run_insert_on(&format!("insert into {name} values(1)"), &mut catalog, &permitting())
-            .unwrap();
+        run_insert_on(
+            &format!("insert into {name} values(1)"),
+            &mut catalog,
+            &permitting(),
+        )
+        .unwrap();
     }
 
     let statement = session.statement();
@@ -298,7 +322,13 @@ fn after_the_query_the_surviving_oom_action_is_the_log_level_one() {
     .unwrap();
     assert_eq!(
         got,
-        vec![vec![Datum::Int(1), Datum::Int(1), Datum::Int(1), Datum::Int(1), Datum::Int(1)]],
+        vec![vec![
+            Datum::Int(1),
+            Datum::Int(1),
+            Datum::Int(1),
+            Datum::Int(1),
+            Datum::Int(1)
+        ]],
         "Go: .Check(testkit.Rows(\"1 1 1 1 1\"))"
     );
 
@@ -314,9 +344,3 @@ fn after_the_query_the_surviving_oom_action_is_the_log_level_one() {
     );
     statement.finish_statement();
 }
-
-/// Go `pkg/executor/test/oomtest/oom_test.go:37::TestMain`: goleak, the
-/// `oomCapture` zap hook registration and config bootstrap only.
-#[test]
-#[ignore = "go-parity-gap: oomtest TestMain is goleak/log-hook suite bootstrap; no statement behavior"]
-fn oomtest_main_is_bootstrap_only() {}

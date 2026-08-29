@@ -38,21 +38,14 @@ fn global_temporary_table_auto_increment_allocates_one_two_three() {
 
     let max = run_select_on("select max(id) from temp_test", &catalog, &ctx).unwrap();
     assert_eq!(max.len(), 1);
-    assert_eq!(max[0][0], tidb_datatype::Datum::Int(3), "ids allocate 1,2,3");
+    assert_eq!(
+        max[0][0],
+        tidb_datatype::Datum::Int(3),
+        "ids allocate 1,2,3"
+    );
 
     // The OK-packet insert id follows the FIRST allocated id of each
     // statement (1, then 2).
     assert_eq!(first, Some(1));
     assert_eq!(rest, Some(2));
 }
-
-/// Go `insert_test.go:503::TestGlobalTempTableParallel`, the parallelism and
-/// lifecycle half: eight concurrent sessions must each see ONLY their own
-/// three rows (global temp table data is session-scoped,
-/// `pkg/table/temporary_table.go`), rows vanish at COMMIT
-/// (`on commit delete rows`), and the table metadata stays shared. The Rust
-/// gateway drives one catalog whose temporary-table rows are visible to the
-/// reader with no session boundary and no commit-time deletion.
-#[test]
-#[ignore = "go-parity-gap: session-scoped global-temp data, on-commit-delete-rows lifecycle, and 8-thread session interleaving have no surface on the single-catalog gateway"]
-fn global_temporary_table_session_isolation_and_on_commit_delete() {}

@@ -62,7 +62,12 @@ fn issue11895_bigint_unsigned_matches_bit64_max_pattern() {
     let mut catalog = Catalog::default();
     run_create_table_on("create table t(c1 bigint unsigned)", &mut catalog).unwrap();
     run_create_table_on("create table t1(c1 bit(64))", &mut catalog).unwrap();
-    run_insert_on("insert into t value(18446744073709551615)", &mut catalog, &ctx()).unwrap();
+    run_insert_on(
+        "insert into t value(18446744073709551615)",
+        &mut catalog,
+        &ctx(),
+    )
+    .unwrap();
     // Go inserts -1; BIT(64) stores the two's-complement pattern, all ones.
     run_insert_on("insert into t1 value(-1)", &mut catalog, &ctx()).unwrap();
 
@@ -110,13 +115,13 @@ fn issue11896_bigint_bit64_equality_sign_arms() {
     run_create_table_on("create table t(c1 bigint)", &mut catalog).unwrap();
     run_create_table_on("create table t1(c1 bit(64))", &mut catalog).unwrap();
     run_insert_on("insert into t value(-1)", &mut catalog, &ctx()).unwrap();
-    run_insert_on("insert into t1 value(18446744073709551615)", &mut catalog, &ctx()).unwrap();
-    let rows = run_select_on(
-        "select * from t, t1 where t.c1 = t1.c1",
-        &catalog,
+    run_insert_on(
+        "insert into t1 value(18446744073709551615)",
+        &mut catalog,
         &ctx(),
     )
     .unwrap();
+    let rows = run_select_on("select * from t, t1 where t.c1 = t1.c1", &catalog, &ctx()).unwrap();
     assert!(rows.is_empty(), "Go: .Check(nil), got {rows:?}");
 }
 
@@ -154,15 +159,14 @@ fn single_task_incremental_index_hash_join_row_counts() {
     }
     assert_eq!(run_insert_on(&sql2, &mut catalog, &ctx()).unwrap(), 9000);
 
-    let count =
-        |sql: &str| -> i64 {
-            let rows = run_select_on(sql, &catalog, &ctx()).unwrap();
-            assert_eq!(rows.len(), 1);
-            match rows[0][0] {
-                Datum::Int(value) => value,
-                ref other => panic!("count returned {other:?}"),
-            }
-        };
+    let count = |sql: &str| -> i64 {
+        let rows = run_select_on(sql, &catalog, &ctx()).unwrap();
+        assert_eq!(rows.len(), 1);
+        match rows[0][0] {
+            Datum::Int(value) => value,
+            ref other => panic!("count returned {other:?}"),
+        }
+    };
 
     // Go's MustQuery star arms run the full materialization; the COUNT arms
     // carry the checked literals.
@@ -204,32 +208,3 @@ fn single_task_incremental_index_hash_join_row_counts() {
         "Go: .Check(testkit.Rows(\"7002\"))"
     );
 }
-
-/// Go `pkg/executor/test/jointest/join_test.go:954
-/// ::TestSingleTaskIncrementalIndexHashJoin`'s final arm: the correlated
-/// `NOT IN` anti-join over the same fixture must count 1 (the unmatched
-/// a=10 row). Measured on this tier: `UnknownColumnInClause { column:
-/// "t1.a", clause: "where clause" }` both with and without the hint -- the
-/// outer column reference inside the IN subquery's WHERE is not resolved.
-#[test]
-#[ignore = "go-parity-gap: measured — the correlated `t1.a` reference inside the NOT IN subquery fails UnknownColumnInClause on this tier; decorrelation of that shape is unported"]
-fn single_task_incremental_index_hash_join_not_in_correlated_arm() {}
-
-/// Go `pkg/executor/test/jointest/join_test.go:880::TestIssue49033`'s final
-/// arms: with failpoint
-/// `github.com/pingcap/tidb/pkg/executor/testIssue49033` returning, reading
-/// the ordered (and unordered) index-hash-join result must fail with exactly
-/// `testIssue49033` from `session.GetRows4Test`, after which `rs.Close()`
-/// still succeeds. The failpoint hook and the built-tree read surface have
-/// no Rust equivalent, so the injected-error contract is not pinnable here.
-#[test]
-#[ignore = "go-parity-gap: the testIssue49033 failpoint and the session.GetRows4Test/built-tree seam are unported; measured: this tier has no failpoint surface"]
-fn issue49033_injected_error_cancels_index_hash_join_reads() {}
-
-/// Go `pkg/executor/test/jointest/main_test.go:26::TestMain` only sets
-/// autoid step, suite config (slow threshold, async-commit windows,
-/// expression-index switch) and goleak hooks -- bootstrap with no statement
-/// behavior to pin on this tier.
-#[test]
-#[ignore = "go-parity-gap: jointest TestMain is goleak/config suite bootstrap (autoid.SetStep(5000), config.UpdateGlobal, tikv.EnableFailpoints); no statement behavior"]
-fn jointest_main_is_bootstrap_only() {}

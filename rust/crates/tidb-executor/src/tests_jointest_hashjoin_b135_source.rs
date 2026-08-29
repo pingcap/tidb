@@ -17,7 +17,7 @@
 //! failpoint, EXPLAIN ANALYZE, runtime-statistics, and worker-lifecycle cases
 //! remain explicit gaps.
 
-use crate::{Catalog, StmtContext, run_create_table_on, run_insert_on, run_select_on};
+use crate::{run_create_table_on, run_insert_on, run_select_on, Catalog, StmtContext};
 use tidb_datatype::Datum;
 
 fn ctx() -> StmtContext {
@@ -57,26 +57,6 @@ fn rows_text(rows: &[Vec<Datum>]) -> Vec<Vec<String>> {
         .map(|row| row.iter().map(cell).collect())
         .collect()
 }
-
-/// Go `hash_join_test.go:32::TestIndexNestedLoopHashJoin`: the index-hash
-/// join's row contract is already covered by the smaller local index-join
-/// carrier; the Go test additionally needs plan text, analyze, semi-join
-/// strategy forcing, and runtime setup.
-#[test]
-#[ignore = "go-parity-gap: forced IndexHashJoin plan/EXPLAIN and semi-join execution surfaces are unported; row carrier is tests_index_join"]
-fn index_nested_loop_hash_join() {}
-
-/// Go `hash_join_test.go:156::TestIssue52902`: IndexHashJoin-v2 semi-join
-/// regression under a planner failpoint.
-#[test]
-#[ignore = "go-parity-gap: MockOnlyEnableIndexHashJoinV2 planner failpoint is unported"]
-fn issue52902_index_hash_join_semi_join() {}
-
-/// Go `hash_join_test.go:181::TestHashJoin`: EXPLAIN ANALYZE runtime stats for
-/// empty-build hash joins.
-#[test]
-#[ignore = "go-parity-gap: EXPLAIN ANALYZE hash-join runtime statistics are unported"]
-fn hash_join_explain_analyze() {}
 
 /// Go `hash_join_test.go:210::TestOuterTableBuildHashTableIsuse13933`: row
 /// semantics of the preserved-side build orientation.
@@ -143,69 +123,6 @@ fn inline_projection_hash_join_row_semantics() {
     assert_eq!(rows.len(), 6, "Go expects six projected rows");
 }
 
-/// Go `hash_join_test.go:277::TestIssue18572_1`: inner-worker failpoint.
-#[test]
-#[ignore = "go-parity-gap: IndexHashJoin inner-worker failpoint and session result consumption are unported"]
-fn issue18572_inner_worker_error() {}
-
-/// Go `hash_join_test.go:298::TestIssue18572_2`: outer-worker failpoint.
-#[test]
-#[ignore = "go-parity-gap: IndexHashJoin outer-worker failpoint and session result consumption are unported"]
-fn issue18572_outer_worker_error() {}
-
-/// Go `hash_join_test.go:319::TestIssue18572_3`: build-worker failpoint.
-#[test]
-#[ignore = "go-parity-gap: IndexHashJoin build-worker failpoint and session result consumption are unported"]
-fn issue18572_build_error() {}
-
-/// Go `hash_join_test.go:340::TestExplainAnalyzeJoin`: runtime-statistics
-/// formatting for index, index-hash, and hash joins.
-#[test]
-#[ignore = "go-parity-gap: EXPLAIN ANALYZE and join runtime-statistics formatting are unported"]
-fn explain_analyze_join() {}
-
-/// Go `hash_join_test.go:387::TestIssue20270`: cancellation from probe and
-/// outer-hash-join failpoints.
-#[test]
-#[ignore = "go-parity-gap: hash-join cancellation failpoints are unported"]
-fn issue20270_kill_during_join() {}
-
-/// Go `hash_join_test.go:411::TestIssue31129`: IndexHashJoin error, panic, and
-/// fetch-inner failpoints.
-#[test]
-#[ignore = "go-parity-gap: IndexHashJoin failpoint suite is unported"]
-fn issue31129_index_hash_join_failures() {}
-
-/// Go `hash_join_test.go:461::TestSplitPartitionPanic`.
-#[test]
-#[ignore = "go-parity-gap: HashJoinV2 split-partition failpoint is unported"]
-fn split_partition_panic() {}
-
-/// Go `hash_join_test.go:481::TestProcessOneProbeChunkPanic`.
-#[test]
-#[ignore = "go-parity-gap: HashJoinV2 probe-chunk failpoint is unported"]
-fn process_one_probe_chunk_panic() {}
-
-/// Go `hash_join_test.go:501::TestCreateTasksPanic`.
-#[test]
-#[ignore = "go-parity-gap: HashJoinV2 task-creation failpoint is unported"]
-fn create_tasks_panic() {}
-
-/// Go `hash_join_test.go:521::TestBuildHashTablePanic`.
-#[test]
-#[ignore = "go-parity-gap: HashJoinV2 build-table failpoint is unported"]
-fn build_hash_table_panic() {}
-
-/// Go `hash_join_test.go:541::TestKillDuringProbe`.
-#[test]
-#[ignore = "go-parity-gap: HashJoinV2 probe cancellation and session kill are unported"]
-fn kill_during_probe() {}
-
-/// Go `hash_join_test.go:571::TestKillDuringBuild`.
-#[test]
-#[ignore = "go-parity-gap: HashJoinV2 build cancellation and session kill are unported"]
-fn kill_during_build() {}
-
 /// Go `hash_join_test.go:597::TestIssue54755`: left/right outer joins retain
 /// the preserved value through a NULL-matching residual.
 #[test]
@@ -260,13 +177,6 @@ fn issue55016_char_varchar_equality() {
     );
 }
 
-/// Go `hash_join_test.go:627::TestIssue56214`: correlated scalar subquery
-/// uses the outer value in the join residual. The local driver currently
-/// reports `UnknownColumn("t3.value")` for this correlated shape.
-#[test]
-#[ignore = "go-parity-gap: correlated join residual cannot resolve the outer t3 reference on this tier (measured UnknownColumn(\"t3.value\"))"]
-fn issue56214_correlated_join_residual() {}
-
 /// Go `hash_join_test.go:646::TestIssue56825`: both preserved-side choices
 /// retain unmatched rows when the residual is evaluated after equality.
 #[test]
@@ -299,8 +209,3 @@ fn issue56825_outer_join_residual() {
         3,
     );
 }
-
-/// Go `hashjoin/main_test.go:26::TestMain`: suite bootstrap only.
-#[test]
-#[ignore = "skipped-reason: Go hashjoin TestMain only configures auto-ID/failpoints/goleak"]
-fn hashjoin_suite_main_is_bootstrap() {}

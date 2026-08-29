@@ -4207,12 +4207,12 @@ fn explain_uses_the_common_physical_plan_without_legacy_ast_execution() {
     let Stmt::Query(query) = statement else {
         panic!("not a query");
     };
-    let QueryStmt::Select(select) = *query else {
+    let QueryStmt::Select(select) = &*query else {
         panic!("not a SELECT");
     };
 
     let (_, rows) = explain_select_stmt(
-        &select,
+        select,
         &catalog,
         DEFAULT_DATABASE,
         &ctx,

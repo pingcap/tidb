@@ -90,7 +90,8 @@ use crate::topn_spill::{SpilledRun, TopNSpillAction, SPILL_CHUNK_SIZE};
 /// this many times the retained row count.
 const TOP_N_COMPACTION_FACTOR: usize = 4;
 
-/// Go `sortexec.TopNExec` (unparallel, in memory).
+/// Go `sortexec.TopNExec`: bounded in memory until spill, then using the
+/// statement's executor concurrency for its spill workers.
 pub struct TopNExec<C: Columns> {
     meta: ExecutorMeta,
     /// Go `ByItems`.

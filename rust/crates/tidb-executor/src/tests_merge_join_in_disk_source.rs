@@ -26,8 +26,8 @@
 //! the hash join's worker-concurrency dimension -- all execution-mode or
 //! plan-text surface this tier does not have.
 
-use crate::{run_create_table_on, run_insert_on, run_select_on, Catalog, StmtContext};
 use crate::mem_quota::OomAction;
+use crate::{run_create_table_on, run_insert_on, run_select_on, Catalog, StmtContext};
 use tidb_datatype::Datum;
 
 fn ctx() -> StmtContext {
@@ -103,7 +103,12 @@ fn shuffle_merge_join_in_disk_rows_under_log_quota() {
     let mut catalog = Catalog::default();
     run_create_table_on("create table t(c1 int, c2 int)", &mut catalog).unwrap();
     run_create_table_on("create table t1(c1 int, c2 int)", &mut catalog).unwrap();
-    run_insert_on("insert into t values (1,1),(2,2),(3,3),(4,4)", &mut catalog, &ctx()).unwrap();
+    run_insert_on(
+        "insert into t values (1,1),(2,2),(3,3),(4,4)",
+        &mut catalog,
+        &ctx(),
+    )
+    .unwrap();
     let values: String = (1..=1024i64)
         .step_by(4)
         .map(|i| {
@@ -119,12 +124,21 @@ fn shuffle_merge_join_in_disk_rows_under_log_quota() {
         })
         .collect::<Vec<_>>()
         .join(",");
-    run_insert_on(&format!("insert into t1 values {values}"), &mut catalog, &ctx()).unwrap();
+    run_insert_on(
+        &format!("insert into t1 values {values}"),
+        &mut catalog,
+        &ctx(),
+    )
+    .unwrap();
 
     let sql = "select /*+ TIDB_SMJ(t) */ * from t1 left outer join t on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20";
     let log_ctx = StmtContext::for_query().with_mem_quota(1, OomAction::Log);
     let rows = select_sorted(&catalog, sql, &log_ctx);
-    assert_eq!(rows.len(), 1005, "1 matched row plus i = 21..1024 unmatched");
+    assert_eq!(
+        rows.len(),
+        1005,
+        "1 matched row plus i = 21..1024 unmatched"
+    );
     // The matched row: t1 (1,1) joined to t (1,1) -- Go's "1 1 1 1".
     assert_eq!(
         rows[0],
@@ -172,9 +186,18 @@ fn vectorized_merge_join_smj_matches_hj_rows() {
         (vec![chunk_size], vec![chunk_size]),
         (vec![chunk_size], vec![chunk_size + 1]),
         (vec![chunk_size + 1], vec![chunk_size + 1]),
-        (vec![1, 1, 1], vec![chunk_size + 1, chunk_size * 5 + 5, chunk_size - 5]),
-        (vec![0, 0, chunk_size], vec![chunk_size + 1, chunk_size * 5 + 5, chunk_size - 5]),
-        (vec![chunk_size + 1, 0, chunk_size], vec![chunk_size + 1, chunk_size * 5 + 5, chunk_size - 5]),
+        (
+            vec![1, 1, 1],
+            vec![chunk_size + 1, chunk_size * 5 + 5, chunk_size - 5],
+        ),
+        (
+            vec![0, 0, chunk_size],
+            vec![chunk_size + 1, chunk_size * 5 + 5, chunk_size - 5],
+        ),
+        (
+            vec![chunk_size + 1, 0, chunk_size],
+            vec![chunk_size + 1, chunk_size * 5 + 5, chunk_size - 5],
+        ),
     ];
 
     for (index, (t1_sizes, t2_sizes)) in cases.iter().enumerate() {
@@ -189,10 +212,20 @@ fn vectorized_merge_join_smj_matches_hj_rows() {
         run_create_table_on("create table tl (a int, b int)", &mut catalog).unwrap();
         run_create_table_on("create table tr (a int, b int)", &mut catalog).unwrap();
         if !t1_sizes.is_empty() {
-            run_insert_on(&format!("insert into tl values {}", rows_of(t1_sizes)), &mut catalog, &ctx()).unwrap();
+            run_insert_on(
+                &format!("insert into tl values {}", rows_of(t1_sizes)),
+                &mut catalog,
+                &ctx(),
+            )
+            .unwrap();
         }
         if !t2_sizes.is_empty() {
-            run_insert_on(&format!("insert into tr values {}", rows_of(t2_sizes)), &mut catalog, &ctx()).unwrap();
+            run_insert_on(
+                &format!("insert into tr values {}", rows_of(t2_sizes)),
+                &mut catalog,
+                &ctx(),
+            )
+            .unwrap();
         }
         // Go's join shape: inner equi-join on a with b-range predicates on
         // EACH side (pushed to the scan in Go's explains). The satisfiable
@@ -202,7 +235,10 @@ fn vectorized_merge_join_smj_matches_hj_rows() {
         let hj = "select /*+ TIDB_HJ(tl, tr) */ * from tl, tr where tl.a = tr.a and tl.b > 5 and tr.b < 50";
         let smj_rows = select_sorted(&catalog, smj, &ctx());
         let hj_rows = select_sorted(&catalog, hj, &ctx());
-        assert_eq!(smj_rows, hj_rows, "case {index} ({t1_sizes:?} x {t2_sizes:?}): SMJ and HJ must agree");
+        assert_eq!(
+            smj_rows, hj_rows,
+            "case {index} ({t1_sizes:?} x {t2_sizes:?}): SMJ and HJ must agree"
+        );
         // And the reverse orientation, as Go runs runTest(t2, t1) for each
         // case.
         let smj_rev = "select /*+ TIDB_SMJ(tr, tl) */ * from tr, tl where tr.a = tl.a and tr.b > 5 and tl.b < 50";
@@ -214,23 +250,6 @@ fn vectorized_merge_join_smj_matches_hj_rows() {
         );
     }
 }
-
-/// Go `pkg/executor/join/test/mergejoin/merge_join_test.go:242::TestVectorizedShuffleMergeJoin`:
-/// the same corner-case matrix executed under
-/// `tidb_merge_join_concurrency = 4`, where the plan must be
-/// `Shuffle -> MergeJoin` with `ShuffleReceiver` leaves and the results must
-/// equal the hash-join plan's.
-#[test]
-#[ignore = "go-parity-gap: the shuffle operator stack (Shuffle/ShuffleReceiver with concurrency 4 around the merge join) and the explain-text assertions that pin it have no tier surface; the row-equivalence half is pinned by vectorized_merge_join_smj_matches_hj_rows"]
-fn vectorized_shuffle_merge_join_gap() {}
-
-/// Go's tracker assertions (`merge_join_test.go:76-79` and :107-110): with
-/// the 1-byte quota and LOG action, the session/stmt MemTracker and
-/// DiskTracker must end at zero consumed with a POSITIVE peak -- the proof
-/// the join actually spilled.
-#[test]
-#[ignore = "go-parity-gap: Go asserts executor-level MemTracker/DiskTracker peaks (BytesConsumed == 0, MaxConsumed > 0) off the session variables; this tier's StatementMemory budget exposes no peak counters and the merge-join spill flag is exercised in the crate's join spill tests, not through the statement driver"]
-fn merge_join_tracker_and_shuffle_gaps() {}
 
 /// Go `pkg/executor/join_pkg_test.go:82::TestJoinExec`, data dimension: an
 /// inner hash join over identical (bigint, double) sources joined on BOTH
@@ -251,8 +270,18 @@ fn join_exec_inner_equi_rows_source() {
             .map(|i| format!("({i}, {i}.0)"))
             .collect::<Vec<_>>()
             .join(",");
-        run_insert_on(&format!("insert into tl values {values}"), &mut catalog, &ctx()).unwrap();
-        run_insert_on(&format!("insert into tr values {values}"), &mut catalog, &ctx()).unwrap();
+        run_insert_on(
+            &format!("insert into tl values {values}"),
+            &mut catalog,
+            &ctx(),
+        )
+        .unwrap();
+        run_insert_on(
+            &format!("insert into tr values {values}"),
+            &mut catalog,
+            &ctx(),
+        )
+        .unwrap();
 
         let result = run_select_on(
             "select tl.a, tl.b, tr.a, tr.b from tl, tr where tl.a = tr.a and tl.b = tr.b order by tl.a",
@@ -274,30 +303,13 @@ fn join_exec_inner_equi_rows_source() {
             visited.insert(val);
         }
         for key in 0..rows {
-            assert!(visited.contains(&key), "key {key} missing from the join result");
+            assert!(
+                visited.contains(&key),
+                "key {key} missing from the join result"
+            );
         }
     }
 }
-
-/// Go `pkg/executor/join_pkg_test.go:82::TestJoinExec`'s sweep dimensions
-/// that are execution-mode surface: worker concurrency {1, 4} and the
-/// `testRowContainerSpill` failpoint that forces
-/// `RowContainer.AlreadySpilledSafeForTest() == casTest.disk`.
-#[test]
-#[ignore = "go-parity-gap: the hash join's worker-concurrency knobs and the RowContainer spill flag (AlreadySpilledSafeForTest under the testRowContainerSpill failpoint) are executor internals without a statement-driver surface; spill-correctness itself is pinned at the JoinExec level in join_merge_path_tests"]
-fn join_exec_spill_and_concurrency_gaps() {}
-
-/// Go `pkg/executor/join_pkg_test.go:30::TestHashJoinV2UnderApply`: under
-/// apply, the SAME hash join executor instance is `Open`ed/`Close`d 10 times
-/// and must produce the full join each time. This tier's apply does not
-/// re-open a shared child executor -- the inner plan is re-RUN per outer row
-/// through the driver -- so the re-open contract has no analog; the closest
-/// engine-visible fact (a join inside a correlated inner side re-executes
-/// correctly for every outer row) is pinned by
-/// `join_under_apply_repeated_inner_rows` below.
-#[test]
-#[ignore = "go-parity-gap: the test pins executor re-open/rescan of ONE shared hash join instance under apply (10 open/next/close cycles); this tier's apply re-runs a fresh inner plan per outer row (crate::apply run_inner) instead of re-opening a shared child"]
-fn hash_join_apply_reopen_gap() {}
 
 /// The apply-over-join composition Go's `TestHashJoinV2UnderApply` exists to
 /// protect (an apply whose inner side is a join, re-executed per outer row),
@@ -309,9 +321,24 @@ fn join_under_apply_repeated_inner_rows() {
     run_create_table_on("create table t_outer(a int)", &mut catalog).unwrap();
     run_create_table_on("create table tl(a bigint, b double)", &mut catalog).unwrap();
     run_create_table_on("create table tr(a bigint, b double)", &mut catalog).unwrap();
-    run_insert_on("insert into t_outer values (1),(2),(3)", &mut catalog, &ctx()).unwrap();
-    run_insert_on("insert into tl values (0,0),(1,1),(2,2)", &mut catalog, &ctx()).unwrap();
-    run_insert_on("insert into tr values (0,0),(1,1),(2,2)", &mut catalog, &ctx()).unwrap();
+    run_insert_on(
+        "insert into t_outer values (1),(2),(3)",
+        &mut catalog,
+        &ctx(),
+    )
+    .unwrap();
+    run_insert_on(
+        "insert into tl values (0,0),(1,1),(2,2)",
+        &mut catalog,
+        &ctx(),
+    )
+    .unwrap();
+    run_insert_on(
+        "insert into tr values (0,0),(1,1),(2,2)",
+        &mut catalog,
+        &ctx(),
+    )
+    .unwrap();
     // The inner join (3 rows) is re-executed once per outer row; the scalar
     // count filters on the outer key so each outer row re-reads the join.
     assert_eq!(

@@ -82,7 +82,10 @@ fn batch_point_get_over_a_global_temporary_table_reads_only_session_rows() {
         text_rows(&catalog, "select * from t1 where id in (1, 2, 3)"),
         vec![vec!["1".to_owned(), "1".to_owned()]],
     );
-    assert_eq!(text_rows(&catalog, "select * from t1 where id in (2, 3)"), Vec::<Vec<String>>::new());
+    assert_eq!(
+        text_rows(&catalog, "select * from t1 where id in (2, 3)"),
+        Vec::<Vec<String>>::new()
+    );
 }
 
 /// Go `pkg/executor/batch_point_get_test.go:224-226::TestPointGetForTemporaryTable`,
@@ -116,7 +119,9 @@ fn explain_of_a_global_temporary_table_batch_get_names_batch_point_get() {
         })
         .collect::<Vec<_>>();
     assert!(
-        operators.iter().any(|name| name.contains("Batch_Point_Get")),
+        operators
+            .iter()
+            .any(|name| name.contains("Batch_Point_Get")),
         "expected a Batch_Point_Get operator, got {operators:?}"
     );
 }
@@ -130,5 +135,8 @@ fn point_get_over_a_global_temporary_table_reads_only_session_rows() {
         text_rows(&catalog, "select * from t1 where id = 1"),
         vec![vec!["1".to_owned(), "1".to_owned()]],
     );
-    assert_eq!(text_rows(&catalog, "select * from t1 where id = 2"), Vec::<Vec<String>>::new());
+    assert_eq!(
+        text_rows(&catalog, "select * from t1 where id = 2"),
+        Vec::<Vec<String>>::new()
+    );
 }

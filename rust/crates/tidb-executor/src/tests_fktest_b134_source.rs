@@ -216,13 +216,6 @@ fn foreign_key_on_delete_cascade2() {
     assert!(rows(&catalog, "select id,pid from t").is_empty());
 }
 
-/// Go `TestForeignKeyGenerateCascadeAST` (:1224) compares restored AST text
-/// for generated cascade DELETE/UPDATE statements. The Rust cascade engine
-/// applies row changes directly and has no public AST generator to compare.
-#[test]
-#[ignore = "go-parity-gap: GenCascadeDeleteAST/GenCascadeSetNullAST/GenCascadeUpdateAST are not exposed in tidb-executor"]
-fn foreign_key_generate_cascade_ast() {}
-
 /// Go `TestForeignKeyOnDeleteSetNull` (:1276): deleting a parent nulls the
 /// child key instead of deleting the child row.
 #[test]
@@ -332,85 +325,3 @@ fn foreign_key_on_update_cascade2() {
         ],
     );
 }
-
-/// Go `TestDMLExplainAnalyzeFKInfo` (:1918) checks FK runtime-plan nodes and
-/// timing fields. This tier has no EXPLAIN ANALYZE runtime-stat tree.
-#[test]
-#[ignore = "go-parity-gap: DML EXPLAIN ANALYZE FK runtime-plan nodes are unported"]
-fn dml_explain_analyze_fk_info() {}
-
-/// Go `TestForeignKeyOnInsertOnDuplicateUpdate` (:1949) exercises parent and
-/// child FK checks through INSERT ... ON DUPLICATE KEY UPDATE, including
-/// transaction rollback. The current ODKU path is already recorded as a
-/// separate FK gap and is not restated with weaker assertions here.
-#[test]
-#[ignore = "go-parity-gap: ODKU FK check ordering and transaction rollback are not parity-complete"]
-fn foreign_key_on_insert_on_duplicate_update() {}
-
-/// Go `TestExplainAnalyzeDMLWithFKInfo` (:1994) pins the full FK operator tree
-/// for INSERT/UPDATE/DELETE. No equivalent plan renderer exists in this crate.
-#[test]
-#[ignore = "go-parity-gap: full DML EXPLAIN ANALYZE FK operator tree is unported"]
-fn explain_analyze_dml_with_fk_info() {}
-
-/// Go `TestForeignKeyRuntimeStats` (:2327) tests Clone/Merge/String on Go's
-/// FK runtime-stat structs. The Rust statement context has no equivalent
-/// public FK runtime-stat value type.
-#[test]
-#[ignore = "go-parity-gap: FK runtime-stat structs and String formatting are unported"]
-fn foreign_key_runtime_stats() {}
-
-/// Go `TestPrivilegeCheckInForeignKeyCascade` (:2346) requires users, roles,
-/// and privilege checks inside cascade sub-statements.
-#[test]
-#[ignore = "go-parity-gap: users/roles and cascade privilege checks are unported"]
-fn privilege_check_in_foreign_key_cascade() {}
-
-/// Go `TestForeignKeyIssue39732` (:2403) combines prepared statements,
-/// statement summaries, authentication, and a cascading delete.
-#[test]
-#[ignore = "go-parity-gap: prepared statement/authentication/statement-summary FK path is unported"]
-fn foreign_key_issue39732() {}
-
-/// Go `TestForeignKeyOnReplaceIntoChildTable` (:2421) covers REPLACE's
-/// delete-then-insert FK ordering and transaction behavior. The local DML
-/// surface does not yet expose the complete REPLACE FK contract.
-#[test]
-#[ignore = "go-parity-gap: REPLACE child-side FK ordering and transaction rollback are incomplete"]
-fn foreign_key_on_replace_into_child_table() {}
-
-/// Go `TestForeignKeyLargeTxnErr` (:2483) requires the TiKV transaction-size
-/// limiter to be exercised by a large cascade.
-#[test]
-#[ignore = "go-parity-gap: TiKV transaction-size limit and large cascade are unported"]
-fn foreign_key_large_txn_err() {}
-
-/// Go `TestForeignKeyAndLockView` (:2513) observes a lock-waiting transaction
-/// through INFORMATION_SCHEMA.TIDB_TRX and then checks deadlock handling.
-#[test]
-#[ignore = "go-parity-gap: pessimistic locks, deadlocks, and TIDB_TRX are unported"]
-fn foreign_key_and_lock_view() {}
-
-/// Go `TestFKBuild` (:2543) injects an infoschema syncer failpoint while
-/// renaming a referenced table, then verifies the FK remains usable.
-#[test]
-#[ignore = "go-parity-gap: infoschema syncer failpoint and rename-table FK rebuild are unported"]
-fn fk_build() {}
-
-/// Go `TestLockKeysInDML` (:2561) asserts that a child INSERT holds the
-/// parent key until commit and delays another transaction's parent UPDATE.
-#[test]
-#[ignore = "go-parity-gap: multi-session transaction lock-key timing is unported"]
-fn lock_keys_in_dml() {}
-
-/// Go `TestLockKeysInInsertIgnore` (:2594) is the INSERT IGNORE variant of
-/// the parent-key lock timing test, including fair-locking configuration.
-#[test]
-#[ignore = "go-parity-gap: INSERT IGNORE lock-key timing and fair locking are unported"]
-fn lock_keys_in_insert_ignore() {}
-
-/// Go `pkg/executor/test/fktest/main_test.go:26::TestMain` is suite
-/// bootstrap/goleak setup rather than product behavior.
-#[test]
-#[ignore = "skipped-reason: Go suite bootstrap/goleak has no Rust test behavior"]
-fn fktest_main_is_bootstrap() {}

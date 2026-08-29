@@ -19,12 +19,7 @@ fn strict() -> StmtContext {
     StmtContext::for_dml(false, true, false)
 }
 
-fn expect_duplicate(
-    catalog: &mut Catalog,
-    sql: &str,
-    value: &str,
-    key: &str,
-) {
+fn expect_duplicate(catalog: &mut Catalog, sql: &str, value: &str, key: &str) {
     let error = run_insert_reporting(sql, catalog, "test", &strict()).unwrap_err();
     assert!(
         matches!(
@@ -63,13 +58,35 @@ fn duplicate_entry_message_names_the_new_value_and_key_across_type_shapes() {
         &mut catalog,
     )
     .unwrap();
-    run_insert_reporting("insert into t value (34, '12Ak')", &mut catalog, "test", &strict()).unwrap();
-    expect_duplicate(&mut catalog, "insert into t value (34, '12Ak')", "12Ak", "t.b");
-    expect_duplicate(&mut catalog, "insert into t value (34, '12ak')", "12ak", "t.b");
+    run_insert_reporting(
+        "insert into t value (34, '12Ak')",
+        &mut catalog,
+        "test",
+        &strict(),
+    )
+    .unwrap();
+    expect_duplicate(
+        &mut catalog,
+        "insert into t value (34, '12Ak')",
+        "12Ak",
+        "t.b",
+    );
+    expect_duplicate(
+        &mut catalog,
+        "insert into t value (34, '12ak')",
+        "12ak",
+        "t.b",
+    );
 
     // :456-461 datetime primary key.
     run_create_table_on("create table t2 (a datetime primary key)", &mut catalog).unwrap();
-    run_insert_reporting("insert into t2 values ('2020-01-01')", &mut catalog, "test", &strict()).unwrap();
+    run_insert_reporting(
+        "insert into t2 values ('2020-01-01')",
+        &mut catalog,
+        "test",
+        &strict(),
+    )
+    .unwrap();
     expect_duplicate(
         &mut catalog,
         "insert into t2 values ('2020-01-01')",
@@ -84,7 +101,13 @@ fn duplicate_entry_message_names_the_new_value_and_key_across_type_shapes() {
 
     // :471-474 datetime unique.
     run_create_table_on("create table t4 (a datetime unique)", &mut catalog).unwrap();
-    run_insert_reporting("insert into t4 values ('2020-01-01')", &mut catalog, "test", &strict()).unwrap();
+    run_insert_reporting(
+        "insert into t4 values ('2020-01-01')",
+        &mut catalog,
+        "test",
+        &strict(),
+    )
+    .unwrap();
     expect_duplicate(
         &mut catalog,
         "insert into t4 values ('2020-01-01')",
@@ -99,8 +122,13 @@ fn duplicate_entry_message_names_the_new_value_and_key_across_type_shapes() {
         &mut catalog,
     )
     .unwrap();
-    run_insert_reporting("insert into t5 values ('2020-01-01', 1, 'aSDd')", &mut catalog, "test", &strict())
-        .unwrap();
+    run_insert_reporting(
+        "insert into t5 values ('2020-01-01', 1, 'aSDd')",
+        &mut catalog,
+        "test",
+        &strict(),
+    )
+    .unwrap();
     expect_duplicate(
         &mut catalog,
         "insert into t5 values ('2020-01-01', 1, 'ASDD')",
@@ -112,8 +140,13 @@ fn duplicate_entry_message_names_the_new_value_and_key_across_type_shapes() {
         &mut catalog,
     )
     .unwrap();
-    run_insert_reporting("insert into t6 values ('2020-01-01', 1, 'aSDd')", &mut catalog, "test", &strict())
-        .unwrap();
+    run_insert_reporting(
+        "insert into t6 values ('2020-01-01', 1, 'aSDd')",
+        &mut catalog,
+        "test",
+        &strict(),
+    )
+    .unwrap();
     expect_duplicate(
         &mut catalog,
         "insert into t6 values ('2020-01-01', 1, 'ASDD')",
@@ -128,10 +161,20 @@ fn duplicate_entry_message_names_the_new_value_and_key_across_type_shapes() {
     )
     .unwrap();
     let ignore = StmtContext::for_dml(false, true, true);
-    run_insert_reporting("insert ignore into t7 values ('$', 'C', 10)", &mut catalog, "test", &ignore)
-        .unwrap();
-    run_insert_reporting("insert ignore into t7 values ('$', 'C', 10)", &mut catalog, "test", &ignore)
-        .unwrap();
+    run_insert_reporting(
+        "insert ignore into t7 values ('$', 'C', 10)",
+        &mut catalog,
+        "test",
+        &ignore,
+    )
+    .unwrap();
+    run_insert_reporting(
+        "insert ignore into t7 values ('$', 'C', 10)",
+        &mut catalog,
+        "test",
+        &ignore,
+    )
+    .unwrap();
     let warnings = ignore.take_warnings();
     assert!(
         warnings.iter().any(|(_, code, message)| *code == 1062
@@ -140,9 +183,18 @@ fn duplicate_entry_message_names_the_new_value_and_key_across_type_shapes() {
     );
 
     // :499-503 bigint unsigned maximum handle (issue 12420).
-    run_create_table_on("create table t8(a bigint unsigned primary key)", &mut catalog).unwrap();
-    run_insert_reporting("insert into t8 values(18446744073709551615)", &mut catalog, "test", &strict())
-        .unwrap();
+    run_create_table_on(
+        "create table t8(a bigint unsigned primary key)",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_reporting(
+        "insert into t8 values(18446744073709551615)",
+        &mut catalog,
+        "test",
+        &strict(),
+    )
+    .unwrap();
     expect_duplicate(
         &mut catalog,
         "insert into t8 values(18446744073709551615)",
@@ -150,15 +202,3 @@ fn duplicate_entry_message_names_the_new_value_and_key_across_type_shapes() {
         "t8.PRIMARY",
     );
 }
-
-/// Go `insert_test.go:451-455/:462-465/:494-497`: inside
-/// `begin optimistic`/`begin pessimistic` transactions a duplicate that
-/// only surfaces at COMMIT (the write was masked by a later `delete` of the
-/// conflicting key, or the pessimistic second write) fails the COMMIT with
-/// `previous statement: <sql>: [kv:1062]Duplicate entry ...`, naming the
-/// offending statement. The Rust gateway executes each statement committed
-/// against the catalog as it runs; there is no buffered-transaction replay
-/// that could re-raise a masked duplicate at commit time.
-#[test]
-#[ignore = "go-parity-gap: transaction-conflict duplicate reporting (previous statement: ... at COMMIT) needs the optimistic/pessimistic txn buffer + commit replay; the gateway commits statements immediately"]
-fn duplicate_entry_txn_conflict_names_the_previous_statement() {}

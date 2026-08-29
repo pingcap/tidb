@@ -70,10 +70,28 @@ fn on_duplicate_key_values_form_and_constant_assignments_match_mysql_affected_ro
     let insert =
         |sql: &str, catalog: &mut Catalog| run_insert_reporting(sql, catalog, "test", &ctx);
 
-    run_create_table_on("create table t1(a1 bigint primary key, b1 bigint)", &mut catalog).unwrap();
-    run_create_table_on("create table t2(a2 bigint primary key, b2 bigint)", &mut catalog).unwrap();
-    assert_eq!(insert("insert into t1 values(1, 100)", &mut catalog).unwrap().0, 1);
-    assert_eq!(insert("insert into t2 values(1, 200)", &mut catalog).unwrap().0, 1);
+    run_create_table_on(
+        "create table t1(a1 bigint primary key, b1 bigint)",
+        &mut catalog,
+    )
+    .unwrap();
+    run_create_table_on(
+        "create table t2(a2 bigint primary key, b2 bigint)",
+        &mut catalog,
+    )
+    .unwrap();
+    assert_eq!(
+        insert("insert into t1 values(1, 100)", &mut catalog)
+            .unwrap()
+            .0,
+        1
+    );
+    assert_eq!(
+        insert("insert into t2 values(1, 200)", &mut catalog)
+            .unwrap()
+            .0,
+        1
+    );
 
     // insert_test.go:100-103: changed duplicate -> 2 affected, row updated.
     assert_eq!(
@@ -103,7 +121,11 @@ fn on_duplicate_key_values_form_and_constant_assignments_match_mysql_affected_ro
     // insert_test.go:218-223: five values, two of them duplicates that
     // CHANGE -> 3 inserts + 2*2 = 7 affected rows.
     run_create_table_on("create table t3(a int primary key, b int)", &mut catalog).unwrap();
-    insert("insert into t3 values(1,1),(2,2),(3,3),(4,4),(5,5)", &mut catalog).unwrap();
+    insert(
+        "insert into t3 values(1,1),(2,2),(3,3),(4,4),(5,5)",
+        &mut catalog,
+    )
+    .unwrap();
     assert_eq!(
         insert(
             "insert into t3 values(4,14),(5,15),(6,16),(7,17),(8,18) on duplicate key update b = b + 10",
@@ -115,7 +137,16 @@ fn on_duplicate_key_values_form_and_constant_assignments_match_mysql_affected_ro
     );
     assert_eq!(
         select_text(&catalog, "select * from t3 order by a"),
-        [["1", "1"], ["2", "2"], ["3", "3"], ["4", "14"], ["5", "15"], ["6", "16"], ["7", "17"], ["8", "18"]],
+        [
+            ["1", "1"],
+            ["2", "2"],
+            ["3", "3"],
+            ["4", "14"],
+            ["5", "15"],
+            ["6", "16"],
+            ["7", "17"],
+            ["8", "18"]
+        ],
     );
 
     // insert_test.go:118-121: the assignment's LHS must exist in the target
@@ -136,8 +167,17 @@ fn on_duplicate_key_values_form_and_constant_assignments_match_mysql_affected_ro
 
     // insert_test.go:253-258: decimal primary key under the `SET` syntax;
     // the duplicate routes into the UPDATE and reads back as `1.0000`.
-    run_create_table_on("create table td(c1 decimal(6,4), primary key(c1))", &mut catalog).unwrap();
-    assert_eq!(insert("insert into td set c1 = 0.1", &mut catalog).unwrap().0, 1);
+    run_create_table_on(
+        "create table td(c1 decimal(6,4), primary key(c1))",
+        &mut catalog,
+    )
+    .unwrap();
+    assert_eq!(
+        insert("insert into td set c1 = 0.1", &mut catalog)
+            .unwrap()
+            .0,
+        1
+    );
     assert_eq!(
         insert(
             "insert into td set c1 = 0.1 on duplicate key update c1 = 1",
@@ -147,32 +187,8 @@ fn on_duplicate_key_values_form_and_constant_assignments_match_mysql_affected_ro
         .0,
         2
     );
-    assert_eq!(select_text(&catalog, "select * from td use index(primary)"), [["1.0000"]]);
+    assert_eq!(
+        select_text(&catalog, "select * from td use index(primary)"),
+        [["1.0000"]]
+    );
 }
-
-/// Go `insert_test.go:35::TestInsertOnDuplicateKeyWithBinlog`, the arms this
-/// tier cannot reproduce (each verified on the Rust surface):
-///
-/// * `insert into t1 select a2, b2 from t2 on duplicate key update b1 = a2`
-///   (`insert_test.go:73-75`, pins 2 affected and `select * from t1` ->
-///   `1 1`) needs an assignment that references the QUERY SOURCE columns;
-///   Rust fails with `UnknownColumn("a2")`.
-/// * the ambiguous-column arm `... on duplicate key update a = b` pins
-///   `[planner:1052]Column 'b' in field list is ambiguous`
-///   (`insert_test.go:130-134`).
-/// * `... on duplicate key update a1 = values(b2)` pins a 1054 for the
-///   unknown `VALUES()` argument (`insert_test.go:148-152`); Rust evaluates
-///   the statement instead of erroring.
-/// * the issue-28078 arms (`insert_test.go:231-248`) and the composite-PK
-///   derived-table arms (`insert_test.go:143-152`) reference source columns
-///   (`b.b2`, `tmp.c`) in their assignments.
-/// * the issue-56829 arm (`insert_test.go:250-251` with the CREATE at
-///   :235-245) needs a session clock for `CURRENT_TIMESTAMP ON UPDATE`
-///   (Rust: "no session clock"), plus an index-vs-table read consistency
-///   check over a virtual generated column.
-/// * `tk.CheckLastMessage("Records: 1  Duplicates: 1  Warnings: 0")` and the
-///   `forceWriteBinlog` failpoint (`insert_test.go:38`) have no gateway
-///   surface.
-#[test]
-#[ignore = "go-parity-gap: ODKU assignments cannot reference SELECT-source columns on this tier (measured UnknownColumn(\"a2\")); ambiguous-column/VALUES()-arg errors, the CURRENT_TIMESTAMP session clock, the OK-packet info string and the binlog failpoint have no surface"]
-fn on_duplicate_key_assignments_cannot_reference_query_source_columns() {}

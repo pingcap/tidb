@@ -141,196 +141,25 @@ fn drop_column_in_column_test() {
 // missing Rust carrier rather than silently substituting a weaker assertion.
 
 // affinity_test.go
-#[test]
-#[ignore = "go-parity-gap: affinity key-range construction and PD affinity groups are not modeled by tidb-executor"]
-fn affinity_build_group_definitions_table() {}
-#[test]
-#[ignore = "go-parity-gap: affinity key-range construction and PD affinity groups are not modeled by tidb-executor"]
-fn affinity_build_group_definitions_partition() {}
-#[test]
-#[ignore = "go-parity-gap: missing partition affinity metadata and PD client are not modeled by tidb-executor"]
-fn affinity_build_group_definitions_partition_missing() {}
-#[test]
-#[ignore = "go-parity-gap: affinity DDL lifecycle and PD interaction require the online DDL/domain PD tier"]
-fn affinity_pd_interaction() {}
-#[test]
-#[ignore = "go-parity-gap: dropping a database must clean PD affinity groups, which are not modeled by tidb-executor"]
-fn affinity_drop_database() {}
 
 // attributes_sql_test.go
-#[test]
-#[ignore = "go-parity-gap: table and partition attributes plus information_schema.attributes are not modeled"]
-fn alter_table_partition_attributes() {}
-#[test]
-#[ignore = "go-parity-gap: TRUNCATE TABLE attribute identity preservation requires TiDB metadata and job history"]
-fn truncate_table_attributes() {}
-#[test]
-#[ignore = "go-parity-gap: RENAME TABLE attribute identity preservation requires TiDB metadata and job history"]
-fn rename_table_attributes() {}
-#[test]
-#[ignore = "go-parity-gap: RECOVER TABLE and GC metadata are not modeled by tidb-executor"]
-fn recover_table_attributes() {}
-#[test]
-#[ignore = "go-parity-gap: FLASHBACK TABLE, GC, and attribute history require the cluster/session tier"]
-fn flashback_table_attributes() {}
-#[test]
-#[ignore = "go-parity-gap: DROP TABLE attribute cleanup through GC is not modeled by tidb-executor"]
-fn drop_table_attributes() {}
-#[test]
-#[ignore = "go-parity-gap: recreate-name attribute cleanup requires the GC worker and persistent metadata"]
-fn create_with_same_name_attributes() {}
-#[test]
-#[ignore = "go-parity-gap: partition attribute exchange/drop/truncate needs the online DDL metadata tier"]
-fn partition_attributes() {}
 
 // backfill_metrics_test.go
-#[test]
-#[ignore = "go-parity-gap: Prometheus backfill metric vectors and table-ID cleanup are not modeled"]
-fn backfill_metrics_cleanup_by_table_id() {}
-#[test]
-#[ignore = "go-parity-gap: partition backfill metric registration and cleanup are not modeled"]
-fn backfill_metrics_cleanup_partitioned_table() {}
-#[test]
-#[ignore = "go-parity-gap: Prometheus metric registry idempotence is outside tidb-executor"]
-fn backfill_metrics_idempotent_cleanup() {}
 
 // backfilling_dist_scheduler_test.go
-#[test]
-#[ignore = "go-parity-gap: distributed backfill scheduler runtime and region planning are not modeled"]
-fn backfilling_scheduler_local_mode() {}
-#[test]
-#[ignore = "go-parity-gap: CalculateRegionBatch belongs to the unported distributed backfill scheduler"]
-fn calculate_region_batch() {}
-#[test]
-#[ignore = "go-parity-gap: global-sort backfill scheduler, object storage, and task manager are not modeled"]
-fn backfilling_scheduler_global_sort_mode() {}
-#[test]
-#[ignore = "go-parity-gap: LitBackfillScheduler task-step state machine is not modeled"]
-fn get_next_step() {}
-#[test]
-#[ignore = "go-parity-gap: BackfillTaskMeta version defaults belong to the unported DDL backfill package"]
-fn backfill_task_meta_version() {}
 
 // backfilling_test.go
-#[test]
-#[ignore = "go-parity-gap: DoneTaskKeeper is part of the online DDL backfill worker"]
-fn done_task_keeper() {}
-#[test]
-#[ignore = "go-parity-gap: retryable backfill error classification is not exposed by tidb-executor"]
-fn backfill_retryable_errors() {}
-#[test]
-#[ignore = "go-parity-gap: fixed-collation index condition backfill checker is not modeled"]
-fn build_index_condition_checker_uses_fixed_collation() {}
-#[test]
-#[ignore = "go-parity-gap: backfill type selection requires the online DDL reorg package"]
-fn pick_backfill_type() {}
-#[test]
-#[ignore = "go-parity-gap: reorg expression context and session SQL mode are not modeled"]
-fn reorg_expr_context() {}
-#[test]
-#[ignore = "go-parity-gap: reorg table mutate context requires the DDL worker/session tier"]
-fn reorg_table_mutate_context() {}
-#[test]
-#[ignore = "go-parity-gap: reorg DistSQL context and NotFillCache flag are not modeled"]
-fn reorg_dist_sql_ctx_not_fill_cache() {}
-#[test]
-#[ignore = "go-parity-gap: range validation/fill uses the online backfill range planner"]
-fn validate_and_fill_ranges() {}
-#[test]
-#[ignore = "go-parity-gap: table-scan worker batch tuning is not modeled"]
-fn tune_table_scan_worker_batch_size() {}
-#[test]
-#[ignore = "go-parity-gap: range splitting by TiKV keys and regions is not modeled"]
-fn split_ranges_by_keys() {}
 
 // backfilling_txn_executor_test.go
-#[test]
-#[ignore = "go-parity-gap: ingest worker sizing belongs to the unported backfill executor"]
-fn expected_ingest_worker_cnt() {}
 
 // bdr/bdr_test.go
-#[test]
-#[ignore = "go-parity-gap: BDR role add-column policy is not modeled by tidb-executor"]
-fn bdr_is_add_column_denied() {}
-#[test]
-#[ignore = "go-parity-gap: BDR role modify-column policy is not modeled by tidb-executor"]
-fn bdr_is_modify_column_denied() {}
-#[test]
-#[ignore = "go-parity-gap: BDR action policy and model.JobArgs decoding are not modeled here"]
-fn bdr_is_denied() {}
 
 // cancel_test.go
-#[test]
-#[ignore = "go-parity-gap: cancellation across online DDL schema states needs failpoints and job workers"]
-fn cancel_various_jobs() {}
-#[test]
-#[ignore = "go-parity-gap: unique-index backfill rollback/cancellation is not modeled"]
-fn cancel_for_add_unique_index() {}
-#[test]
-#[ignore = "go-parity-gap: cancelling a queued DDL job requires the online DDL job queue"]
-fn cancel_job_before_run() {}
 
 // cluster.go / cluster_test.go
-#[test]
-#[ignore = "go-parity-gap: flashback cluster PD schedule save/restore requires infosync and failpoints"]
-fn flashback_close_and_reset_pd_schedule() {}
-#[test]
-#[ignore = "go-parity-gap: rejecting DDL during flashback requires the cluster flashback job"]
-fn add_ddl_during_flashback() {}
-#[test]
-#[ignore = "go-parity-gap: flashback global-variable changes require session variables and GC"]
-fn global_variables_on_flashback() {}
-#[test]
-#[ignore = "go-parity-gap: flashback cancellation state transitions require the online DDL job queue"]
-fn cancel_flashback_cluster() {}
 
 // column_change_test.go
-#[test]
-#[ignore = "go-parity-gap: auto-random metadata-key conflict retries require TiDB meta allocators and failpoints"]
-fn modify_auto_rand_column_with_meta_key_changed() {}
-#[test]
-#[ignore = "go-parity-gap: partitioning dependency error is observed through concurrent online DDL hooks"]
-fn issue_40135() {}
 
 // column_modify_test.go
-#[test]
-#[ignore = "go-parity-gap: concurrent ADD/DROP COLUMN schema-state probing requires online DDL workers"]
-fn add_and_drop_column() {}
-#[test]
-#[ignore = "go-parity-gap: concurrent INSERT during DROP COLUMN requires online DDL schema states"]
-fn drop_column() {}
-#[test]
-#[ignore = "go-parity-gap: CHANGE COLUMN integration matrix uses session SQL modes and TiDB error codes"]
-fn change_column() {}
-#[test]
-#[ignore = "go-parity-gap: generated-column temporary-table DDL and transaction semantics are not modeled"]
-fn virtual_column_ddl() {}
-#[test]
-#[ignore = "go-parity-gap: transaction behavior through write-only columns requires online DDL hooks"]
-fn transaction_with_write_only_column() {}
-#[test]
-#[ignore = "go-parity-gap: generated-column DML interleaving requires online DDL failpoints"]
-fn add_generated_column_and_insert() {}
-#[test]
-#[ignore = "go-parity-gap: changing-column/index generated names are internal online DDL metadata"]
-fn column_type_change_gen_unique_changing_name() {}
-#[test]
-#[ignore = "go-parity-gap: reorg checkpoint progress and region range reload require the DDL owner"]
-fn modify_column_reorg_checkpoint() {}
-#[test]
-#[ignore = "go-parity-gap: generated-column index rebuild and unsupported-DDL errors need the full session tier"]
-fn issue_37611() {}
 
 // column_test.go
-#[test]
-#[ignore = "go-parity-gap: grouped ADD COLUMN schema states and job history are not modeled"]
-fn add_columns() {}
-#[test]
-#[ignore = "go-parity-gap: grouped DROP COLUMN schema states and job history are not modeled"]
-fn drop_columns() {}
-#[test]
-#[ignore = "go-parity-gap: writes in StateWriteOnly require failpoint-controlled online DDL"]
-fn write_data_write_only_mode() {}
-#[test]
-#[ignore = "go-parity-gap: index rebuild counts during MODIFY COLUMN require the backfill worker"]
-fn modify_column_with_index() {}

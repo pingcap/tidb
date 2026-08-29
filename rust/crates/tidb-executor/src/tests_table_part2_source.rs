@@ -30,22 +30,11 @@
 
 #![cfg(test)]
 
-use crate::{Catalog, StmtContext, run_create_table_on, run_insert_on, run_select_on};
+use crate::{run_create_table_on, run_insert_on, run_select_on, Catalog, StmtContext};
 
 fn query_ctx() -> StmtContext {
     StmtContext::for_query()
 }
-
-/// `pkg/table/tables/test/partition/main_test.go:24::TestMain` is the Go
-/// goleak/common-test harness, not a behavior test.
-#[test]
-#[ignore = "go-parity-gap: Go TestMain/goleak harness is not a Rust behavior test surface"]
-fn partition_test_main() {}
-
-/// `pkg/table/tables/test/partition/partition_test.go:47::TestPartitionTableUsesTableCollationSnapshot`.
-#[test]
-#[ignore = "go-parity-gap: table-collation snapshot construction and alternate collator modes are not exposed by the Rust executor driver"]
-fn partition_table_uses_table_collation_snapshot() {}
 
 /// `pkg/table/tables/test/partition/partition_test.go:111::TestPartitionAddRecord`.
 /// The storage-level AddRecord portion is represented by the SQL driver's
@@ -132,14 +121,6 @@ fn partition_get_physical_id_preserves_definition_ids() {
     }
 }
 
-/// `partition_test.go:310::TestGeneratePartitionExpr` checks Go's private
-/// `PartitionExpr` upper-bound expression rendering. The Rust driver stores
-/// the parsed partition expression and folded bounds, but does not expose the
-/// Go expression-rendering object or its exact `lt(t.id, bound)` strings.
-#[test]
-#[ignore = "go-parity-gap: private PartitionExpr upper-bound rendering has no Rust API"]
-fn generate_partition_expr() {}
-
 /// `partition_test.go:341::TestLocatePartition`; this retains the row-level
 /// LIST COLUMNS routing contract while omitting Go's concurrent EXPLAIN probe.
 #[test]
@@ -166,33 +147,6 @@ fn locate_partition_routes_list_columns_rows() {
         vec![vec![tidb_datatype::Datum::Int(2)]]
     );
 }
-
-/// `partition_test.go:384::TestIssue31629` covers the complete DDL metadata
-/// matrix and rejection errors. The data driver has no metadata-inspection
-/// equivalent for the Go `GetPartitionColumnNames` interface.
-#[test]
-#[ignore = "go-parity-gap: complete partition-column metadata/rejection matrix has no Rust metadata test API"]
-fn issue31629() {}
-
-/// `partition_test.go:444::TestExchangePartitionStates`.
-#[test]
-#[ignore = "go-parity-gap: concurrent EXCHANGE PARTITION schema-state transitions and MDL are not transcreated"]
-fn exchange_partition_states() {}
-
-/// `partition_test.go:554::TestExchangePartitionCheckConstraintStates`.
-#[test]
-#[ignore = "go-parity-gap: concurrent EXCHANGE PARTITION check-constraint state transitions are not transcreated"]
-fn exchange_partition_check_constraint_states() {}
-
-/// `partition_test.go:667::TestExchangePartitionCheckConstraintStatesTwo`.
-#[test]
-#[ignore = "go-parity-gap: EXCHANGE PARTITION with evolving check-constraint metadata has no Rust session/DDL state machine"]
-fn exchange_partition_check_constraint_states_two() {}
-
-/// `partition_test.go:737::TestAddKeyPartitionStates`.
-#[test]
-#[ignore = "go-parity-gap: ADD PARTITION DDL state transitions, MDL, and concurrent sessions are not transcreated"]
-fn add_key_partition_states() {}
 
 /// `partition_test.go:878::TestKeyPartitionTableBasic`; the executor's
 /// partition SQL carrier already exercises the full key-pruning/data family
@@ -225,41 +179,6 @@ fn key_partition_table_basic_is_carried_by_partition_sql_tests() {
         vec![vec![tidb_datatype::Datum::Int(1)]]
     );
 }
-
-/// `partition_test.go:1303::TestKeyPartitionTableAllFeildType`.
-#[test]
-#[ignore = "go-parity-gap: the exhaustive BIT/numeric/time/string/ENUM/SET key-partition fixture and EXPLAIN assertions are not one Rust test surface"]
-fn key_partition_table_all_field_type() {}
-
-/// `partition_test.go:2130::TestPruneModeWarningInfo`.
-#[test]
-#[ignore = "go-parity-gap: session-level tidb_partition_prune_mode warning lifecycle is owned by tidb-session, not this executor driver"]
-fn prune_mode_warning_info() {}
-
-/// `partition_test.go:2143::TestPartitionByIntListExtensivePart`.
-#[test]
-#[ignore = "go-parity-gap: randomized concurrent DDL reorganization and DML state testing are not transcreated"]
-fn partition_by_int_list_extensive_part() {}
-
-/// `partition_test.go:2258::TestPartitionByIntExtensivePart`.
-#[test]
-#[ignore = "go-parity-gap: randomized ALTER TABLE partitioning with concurrent DML is not transcreated"]
-fn partition_by_int_extensive_part() {}
-
-/// `partition_test.go:2347::TestGlobalIndexPartitionByIntExtensivePart`.
-#[test]
-#[ignore = "go-parity-gap: global-index partition DDL and concurrent reorganization are not supported by this executor tier"]
-fn global_index_partition_by_int_extensive_part() {}
-
-/// `partition_test.go:2484::TestPartitionByExtensivePart`.
-#[test]
-#[ignore = "go-parity-gap: randomized string partition reorganization, concurrent DML, and SHOW CREATE verification are not transcreated"]
-fn partition_by_extensive_part() {}
-
-/// `partition_test.go:2592::TestReorgPartExtensivePart`.
-#[test]
-#[ignore = "go-parity-gap: failpoint-driven REORGANIZE PARTITION state transitions and concurrent DML are not transcreated"]
-fn reorg_part_extensive_part() {}
 
 /// `partition_test.go:3221::TestPointGetKeyPartitioning`.
 #[test]
@@ -295,12 +214,6 @@ fn point_get_key_partitioning_returns_the_matching_row() {
     );
 }
 
-/// `partition_test.go:3231::TestExplainPartition` is represented by the
-/// executable partition data tests; exact Go EXPLAIN text is a separate gap.
-#[test]
-#[ignore = "go-parity-gap: Go's EXPLAIN FORMAT=brief operator and partition-label text has no Rust explain-text parity surface"]
-fn explain_partition() {}
-
 /// `partition_test.go:3257::TestPruningOverflow`; the data-level predicate
 /// must still find the inserted row when the partition expression multiplies
 /// large signed values.
@@ -332,135 +245,9 @@ fn pruning_overflow_keeps_the_matching_row() {
     );
 }
 
-/// `partition_test.go:3266::TestPartitionCoverage`.
-#[test]
-#[ignore = "go-parity-gap: dynamic/static prune-mode warnings, ALTER PARTITION metadata, and EXPLAIN coverage assertions are not one executor-only surface"]
-fn partition_coverage() {}
-
-/// `partition_test.go:3355::TestAlterTablePartitionRollback`.
-#[test]
-#[ignore = "go-parity-gap: cancelled ALTER TABLE PARTITION rollback under concurrent MDL sessions is not transcreated"]
-fn alter_table_partition_rollback() {}
-
 // The next six entries are complete carriers already exercised by the owning
 // modules. They stay in this source-backed inventory so the manifest remains
 // one-to-one without duplicating private implementation tests here.
-
-/// `pkg/table/tblctx/buffers_test.go:65::TestEncodeRow`.
-#[test]
-#[ignore = "go-parity-carrier: complete behavior carrier is tblctx::tests::encode_row"]
-fn encode_row() {}
-
-/// `buffers_test.go:147::TestEncodeBufferReserve`.
-#[test]
-#[ignore = "go-parity-carrier: complete behavior carrier is tblctx::tests::encode_buffer_reserve"]
-fn encode_buffer_reserve() {}
-
-/// `buffers_test.go:184::TestCheckRowBuffer`.
-#[test]
-#[ignore = "go-parity-carrier: complete behavior carrier is tblctx::tests::check_row_buffer"]
-fn check_row_buffer() {}
-
-/// `buffers_test.go:203::TestMutateBuffersGetter`.
-#[test]
-#[ignore = "go-parity-carrier: complete behavior carrier is tblctx::tests::mutate_buffers_getter"]
-fn mutate_buffers_getter() {}
-
-/// `buffers_test.go:217::TestEnsureCapacityAndReset`.
-#[test]
-#[ignore = "go-parity-carrier: complete behavior carrier is tblctx::tests::ensure_capacity_and_reset_matches_go"]
-fn ensure_capacity_and_reset() {}
-
-/// `pkg/table/tblsession/table_test.go:39::TestSessionMutateContextFields`.
-#[test]
-#[ignore = "go-parity-carrier: complete behavior carrier is tblsession::tests::session_mutate_context_fields"]
-fn session_mutate_context_fields() {}
-
-/// `pkg/table/temptable/ddl_test.go:48::TestAddLocalTemporaryTable`.
-#[test]
-#[ignore = "go-parity-gap: local temporary-table DDL needs session-local infoschema, storage bootstrap, and temporary data overlay"]
-fn add_local_temporary_table() {}
-
-/// `ddl_test.go:110::TestRemoveLocalTemporaryTable`.
-#[test]
-#[ignore = "go-parity-gap: local temporary-table drop and row cleanup need the unported session storage overlay"]
-fn remove_local_temporary_table() {}
-
-/// `ddl_test.go:156::TestTruncateLocalTemporaryTable`.
-#[test]
-#[ignore = "go-parity-gap: local temporary-table truncate and physical record cleanup need the unported session storage overlay"]
-fn truncate_local_temporary_table() {}
-
-/// `pkg/table/temptable/interceptor_test.go:52::TestGetKeyAccessedTableID`.
-#[test]
-#[ignore = "go-parity-gap: temporary-table snapshot interceptor is not transcreated"]
-fn get_key_accessed_table_id() {}
-
-/// `interceptor_test.go:116::TestGetRangeAccessedTableID`.
-#[test]
-#[ignore = "go-parity-gap: temporary-table snapshot interceptor is not transcreated"]
-fn get_range_accessed_table_id() {}
-
-/// `interceptor_test.go:220::TestNotTableRange`.
-#[test]
-#[ignore = "go-parity-gap: temporary-table snapshot interceptor is not transcreated"]
-fn not_table_range() {}
-
-/// `interceptor_test.go:254::TestGetSessionTemporaryTableKey`.
-#[test]
-#[ignore = "go-parity-gap: session temporary-table key overlay is not transcreated"]
-fn get_session_temporary_table_key() {}
-
-/// `interceptor_test.go:330::TestInterceptorTemporaryTableInfoByID`.
-#[test]
-#[ignore = "go-parity-gap: temporary-table infoschema lookup interceptor is not transcreated"]
-fn interceptor_temporary_table_info_by_id() {}
-
-/// `interceptor_test.go:379::TestInterceptorOnGet`.
-#[test]
-#[ignore = "go-parity-gap: temporary-table snapshot Get interception is not transcreated"]
-fn interceptor_on_get() {}
-
-/// `interceptor_test.go:552::TestInterceptorBatchGetTemporaryTableKeys`.
-#[test]
-#[ignore = "go-parity-gap: temporary-table BatchGet interception is not transcreated"]
-fn interceptor_batch_get_temporary_table_keys() {}
-
-/// `interceptor_test.go:739::TestInterceptorOnBatchGet`.
-#[test]
-#[ignore = "go-parity-gap: temporary-table snapshot OnBatchGet interception is not transcreated"]
-fn interceptor_on_batch_get() {}
-
-/// `interceptor_test.go:963::TestCreateUnionIter`.
-#[test]
-#[ignore = "go-parity-gap: temporary/session union iterator over snapshot and session data is not transcreated"]
-fn create_union_iter() {}
-
-/// `interceptor_test.go:1103::TestErrorCreateUnionIter`.
-#[test]
-#[ignore = "go-parity-gap: temporary/session union iterator error cleanup is not transcreated"]
-fn error_create_union_iter() {}
-
-/// `interceptor_test.go:1233::TestIterTable`.
-#[test]
-#[ignore = "go-parity-gap: temporary-table iterator interception is not transcreated"]
-fn iter_table() {}
-
-/// `interceptor_test.go:1385::TestOnIter`.
-#[test]
-#[ignore = "go-parity-gap: temporary-table forward iterator interception is not transcreated"]
-fn on_iter() {}
-
-/// `interceptor_test.go:1594::TestOnIterReverse`.
-#[test]
-#[ignore = "go-parity-gap: temporary-table reverse iterator interception is not transcreated"]
-fn on_iter_reverse() {}
-
-/// `pkg/table/temptable/main_test.go:38::TestMain` is the Go goleak/common
-/// test harness.
-#[test]
-#[ignore = "go-parity-gap: Go TestMain/goleak harness is not a Rust behavior test surface"]
-fn temporary_table_test_main() {}
 
 fn partition_fixture() -> crate::PartitionSpec {
     use crate::{PartitionDef, PartitionKind, PartitionSpec, RangeBound};

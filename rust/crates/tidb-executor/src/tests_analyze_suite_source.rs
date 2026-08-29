@@ -119,7 +119,12 @@ fn text_of_encoded(datum: &Datum) -> String {
 
 fn topn_counts(topn: Option<&tidb_stats::cmsketch::TopN>) -> Vec<u64> {
     let mut counts = topn
-        .map(|topn| topn.entries().iter().map(|entry| entry.count).collect::<Vec<_>>())
+        .map(|topn| {
+            topn.entries()
+                .iter()
+                .map(|entry| entry.count)
+                .collect::<Vec<_>>()
+        })
         .unwrap_or_default();
     counts.sort_unstable();
     counts
@@ -148,13 +153,22 @@ fn analyze_partition_publishes_per_partition_then_partition_scoped_statistics() 
          PARTITION p3 VALUES LESS THAN (21))",
     );
     for i in 1..21 {
-        insert(&mut catalog, &format!("insert into t values ({i}, {i}, 'hello')"));
+        insert(
+            &mut catalog,
+            &format!("insert into t values ({i}, {i}, 'hello')"),
+        );
     }
     let (table_id, partition_ids) = {
         let table = kv_table_of(&catalog, "t");
         let ids = table
             .partition()
-            .map(|partition| partition.definitions.iter().map(|d| d.id).collect::<Vec<_>>())
+            .map(|partition| {
+                partition
+                    .definitions
+                    .iter()
+                    .map(|d| d.id)
+                    .collect::<Vec<_>>()
+            })
             .unwrap_or_default();
         (table.table_id, ids)
     };
@@ -173,13 +187,23 @@ fn analyze_partition_publishes_per_partition_then_partition_scoped_statistics() 
         assert_eq!(statistics.indexes.len(), 1, "IdxNum");
         for column in statistics.columns.values() {
             assert!(
-                column.histogram.len() + column.topn.as_ref().map_or(0, tidb_stats::cmsketch::TopN::num) > 0,
+                column.histogram.len()
+                    + column
+                        .topn
+                        .as_ref()
+                        .map_or(0, tidb_stats::cmsketch::TopN::num)
+                    > 0,
                 "column histogram has content"
             );
         }
         for index in statistics.indexes.values() {
             assert!(
-                index.histogram.len() + index.topn.as_ref().map_or(0, tidb_stats::cmsketch::TopN::num) > 0,
+                index.histogram.len()
+                    + index
+                        .topn
+                        .as_ref()
+                        .map_or(0, tidb_stats::cmsketch::TopN::num)
+                    > 0,
                 "index histogram has content"
             );
         }
@@ -200,7 +224,10 @@ fn analyze_partition_publishes_per_partition_then_partition_scoped_statistics() 
          PARTITION p3 VALUES LESS THAN (21))",
     );
     for i in 1..21 {
-        insert(&mut catalog, &format!("insert into t values ({i}, {i}, 'hello')"));
+        insert(
+            &mut catalog,
+            &format!("insert into t values ({i}, {i}, 'hello')"),
+        );
     }
     let mut table = kv_table_of(&catalog, "t");
     let mut p0 = table.clone();
@@ -228,7 +255,10 @@ fn analyze_partition_publishes_per_partition_then_partition_scoped_statistics() 
 #[test]
 fn analyze_extract_topn_entries_and_counts_from_index_and_column() {
     let mut catalog = Catalog::default();
-    create(&mut catalog, "create table te(a int primary key, b int, index index_b(b))");
+    create(
+        &mut catalog,
+        "create table te(a int primary key, b int, index index_b(b))",
+    );
     for i in 0..10 {
         insert(&mut catalog, &format!("insert into te values ({i}, {i})"));
     }
@@ -280,7 +310,10 @@ fn analyze_extract_topn_entries_and_counts_from_index_and_column() {
 #[test]
 fn analyze_full_sampling_on_virtual_column_index() {
     let mut catalog = Catalog::default();
-    create(&mut catalog, "create table sampling_index_virtual_col(a int, b int as (a+1), index idx(b))");
+    create(
+        &mut catalog,
+        "create table sampling_index_virtual_col(a int, b int as (a+1), index idx(b))",
+    );
     insert(
         &mut catalog,
         "insert into sampling_index_virtual_col (a) values (1), (2), (null), (3), (4), (null), (5), (5), (5), (5)",
@@ -300,16 +333,16 @@ fn analyze_full_sampling_on_virtual_column_index() {
         .histogram
         .buckets
         .iter()
-        .map(|bucket| (int_of_encoded(&bucket.lower_bound), int_of_encoded(&bucket.upper_bound)))
+        .map(|bucket| {
+            (
+                int_of_encoded(&bucket.lower_bound),
+                int_of_encoded(&bucket.upper_bound),
+            )
+        })
         .collect();
     assert_eq!(
         bounds,
-        vec![
-            (2, 2),
-            (3, 3),
-            (4, 4),
-            (5, 5),
-        ],
+        vec![(2, 2), (3, 3), (4, 4), (5, 5),],
         "show stats_buckets rows"
     );
 
@@ -351,7 +384,10 @@ fn analyze_collation_sort_keys_shape_topn_and_histograms() {
         "create table t (a char(10) collate utf8mb4_unicode_ci not null, \
          b char(20) collate utf8mb4_general_ci not null, key idxa(a), key idxb(b))",
     );
-    insert(&mut catalog, "insert into t values ('#', 'C'), ('$', 'c'), ('a', 'a')");
+    insert(
+        &mut catalog,
+        "insert into t values ('#', 'C'), ('$', 'c'), ('a', 'a')",
+    );
     let mut table = kv_table_of(&catalog, "t");
     let options = AnalyzeOptions {
         num_buckets: 2,
@@ -370,7 +406,11 @@ fn analyze_collation_sort_keys_shape_topn_and_histograms() {
                 .iter()
                 .map(|entry| {
                     (
-                        entry.encoded.iter().map(|byte| format!("{byte:02x}")).collect::<String>(),
+                        entry
+                            .encoded
+                            .iter()
+                            .map(|byte| format!("{byte:02x}"))
+                            .collect::<String>(),
                         entry.count,
                     )
                 })
@@ -398,8 +438,14 @@ fn analyze_collation_sort_keys_shape_topn_and_histograms() {
         "general_ci keys: a → \\x00A (1), C and c → \\x00C (2)"
     );
     // The indexes repeat the column keys.
-    assert_eq!(key_bytes(statistics.indexes[&1].topn.as_ref()), key_bytes(column_a.topn.as_ref()));
-    assert_eq!(key_bytes(statistics.indexes[&2].topn.as_ref()), key_bytes(column_b.topn.as_ref()));
+    assert_eq!(
+        key_bytes(statistics.indexes[&1].topn.as_ref()),
+        key_bytes(column_a.topn.as_ref())
+    );
+    assert_eq!(
+        key_bytes(statistics.indexes[&2].topn.as_ref()),
+        key_bytes(column_b.topn.as_ref())
+    );
 
     // Histogram rows, Go's `select is_index, hist_id, distinct_count,
     // null_count, tot_col_size, stats_ver, correlation from
@@ -409,19 +455,43 @@ fn analyze_collation_sort_keys_shape_topn_and_histograms() {
     };
     assert_eq!(
         shape(3, 0, 6, 2, 1.0),
-        shape(column_a.histogram.ndv, column_a.histogram.null_count, column_a.histogram.tot_col_size, column_a.stats_ver, column_a.histogram.correlation)
+        shape(
+            column_a.histogram.ndv,
+            column_a.histogram.null_count,
+            column_a.histogram.tot_col_size,
+            column_a.stats_ver,
+            column_a.histogram.correlation
+        )
     );
     assert_eq!(
         shape(2, 0, 6, 2, -0.5),
-        shape(column_b.histogram.ndv, column_b.histogram.null_count, column_b.histogram.tot_col_size, column_b.stats_ver, column_b.histogram.correlation)
+        shape(
+            column_b.histogram.ndv,
+            column_b.histogram.null_count,
+            column_b.histogram.tot_col_size,
+            column_b.stats_ver,
+            column_b.histogram.correlation
+        )
     );
     assert_eq!(
         shape(3, 0, 6, 2, 0.0),
-        shape(statistics.indexes[&1].histogram.ndv, statistics.indexes[&1].histogram.null_count, statistics.indexes[&1].histogram.tot_col_size, statistics.indexes[&1].stats_ver, statistics.indexes[&1].histogram.correlation)
+        shape(
+            statistics.indexes[&1].histogram.ndv,
+            statistics.indexes[&1].histogram.null_count,
+            statistics.indexes[&1].histogram.tot_col_size,
+            statistics.indexes[&1].stats_ver,
+            statistics.indexes[&1].histogram.correlation
+        )
     );
     assert_eq!(
         shape(2, 0, 6, 2, 0.0),
-        shape(statistics.indexes[&2].histogram.ndv, statistics.indexes[&2].histogram.null_count, statistics.indexes[&2].histogram.tot_col_size, statistics.indexes[&2].stats_ver, statistics.indexes[&2].histogram.correlation)
+        shape(
+            statistics.indexes[&2].histogram.ndv,
+            statistics.indexes[&2].histogram.null_count,
+            statistics.indexes[&2].histogram.tot_col_size,
+            statistics.indexes[&2].stats_ver,
+            statistics.indexes[&2].histogram.correlation
+        )
     );
 }
 
@@ -447,10 +517,24 @@ fn analyze_clustered_varchar_primary_key_buckets_without_topn() {
 
         // show stats_topn is empty: no TopN entries anywhere.
         for column in statistics.columns.values() {
-            assert_eq!(column.topn.as_ref().map_or(0, tidb_stats::cmsketch::TopN::num), 0, "no column TopN");
+            assert_eq!(
+                column
+                    .topn
+                    .as_ref()
+                    .map_or(0, tidb_stats::cmsketch::TopN::num),
+                0,
+                "no column TopN"
+            );
         }
         for index in statistics.indexes.values() {
-            assert_eq!(index.topn.as_ref().map_or(0, tidb_stats::cmsketch::TopN::num), 0, "no index TopN");
+            assert_eq!(
+                index
+                    .topn
+                    .as_ref()
+                    .map_or(0, tidb_stats::cmsketch::TopN::num),
+                0,
+                "no index TopN"
+            );
         }
 
         // show stats_buckets: PRIMARY and a both carry one [1111, 1111] bucket.
@@ -524,10 +608,22 @@ fn analyze_partition_verify_per_partition_and_global_ndv() {
         assert_eq!(statistics.row_count, 100);
         let columns: Vec<_> = statistics.columns.values().collect();
         assert_eq!(columns.len(), 3);
-        assert_eq!(columns[1].histogram.ndv, 1, "partition b: one distinct value");
+        assert_eq!(
+            columns[1].histogram.ndv, 1,
+            "partition b: one distinct value"
+        );
         assert_eq!(columns[0].histogram.ndv, 100, "partition a");
         assert_eq!(columns[2].histogram.ndv, 100, "partition c");
-        assert_eq!(statistics.indexes.values().next().expect("idx_c").histogram.ndv, 100);
+        assert_eq!(
+            statistics
+                .indexes
+                .values()
+                .next()
+                .expect("idx_c")
+                .histogram
+                .ndv,
+            100
+        );
         catalog.set_table_statistics(*physical_id, Arc::new(statistics));
     }
 
@@ -538,7 +634,11 @@ fn analyze_partition_verify_per_partition_and_global_ndv() {
     assert_eq!(columns[1].histogram.ndv, 1, "global b: one distinct value");
     assert_eq!(columns[0].histogram.ndv, 1000, "global a");
     assert_eq!(columns[2].histogram.ndv, 1000, "global c");
-    assert_eq!(global.indexes.values().next().expect("idx_c").histogram.ndv, 1000, "global idx_c");
+    assert_eq!(
+        global.indexes.values().next().expect("idx_c").histogram.ndv,
+        1000,
+        "global idx_c"
+    );
 }
 
 /// Go `analyze_test.go:1989::TestIssue55438`: a numeric column with a
@@ -566,7 +666,10 @@ fn analyze_numeric_generated_column_with_index_succeeds() {
 fn analyze_single_sample_scales_topn_count_to_the_table() {
     let mut catalog = Catalog::default();
     create(&mut catalog, "create table t (a int)");
-    insert(&mut catalog, "insert into t values (0),(0),(0),(0),(0),(0),(0),(0),(0),(0)");
+    insert(
+        &mut catalog,
+        "insert into t values (0),(0),(0),(0),(0),(0),(0),(0),(0),(0)",
+    );
     let mut table = kv_table_of(&catalog, "t");
     let options = AnalyzeOptions {
         num_topn: 1,
@@ -578,7 +681,11 @@ fn analyze_single_sample_scales_topn_count_to_the_table() {
     let column = statistics.columns.values().next().expect("column a");
     let topn = column.topn.as_ref().expect("one topn kept");
     assert_eq!(topn.num(), 1, "with 1 topn");
-    assert_eq!(topn.entries()[0].count, 10, "1 sample of 10 rows scales to 10");
+    assert_eq!(
+        topn.entries()[0].count,
+        10,
+        "1 sample of 10 rows scales to 10"
+    );
 }
 
 /// Go `analyze_test.go:2154::TestIssue66918`: a JSON base column with a
@@ -592,11 +699,18 @@ fn analyze_stored_generated_column_from_json_with_unique_index() {
         &mut catalog,
         "CREATE TABLE t (j JSON, g VARCHAR(255) GENERATED ALWAYS AS (json_extract(j, '$.v')) STORED, UNIQUE INDEX g_idx (g))",
     );
-    insert(&mut catalog, "INSERT INTO t(j) VALUES ('{\"v\":1}'), ('{\"v\":2}')");
+    insert(
+        &mut catalog,
+        "INSERT INTO t(j) VALUES ('{\"v\":1}'), ('{\"v\":2}')",
+    );
     let mut table = kv_table_of(&catalog, "t");
     let statistics = analyze_kv_table(&mut table, &AnalyzeOptions::default(), None, &ctx())
         .unwrap_or_else(|error| panic!("analyze must not panic or fail: {error:?}"));
-    assert_eq!(statistics.columns.len(), 2, "j and the stored g are both analyzed");
+    assert_eq!(
+        statistics.columns.len(),
+        2,
+        "j and the stored g are both analyzed"
+    );
     assert_eq!(statistics.indexes.len(), 1, "g_idx is analyzed");
     for column in statistics.columns.values() {
         assert_eq!(column.stats_ver, 2, "v2 stats");
@@ -604,7 +718,10 @@ fn analyze_stored_generated_column_from_json_with_unique_index() {
     for index in statistics.indexes.values() {
         assert_eq!(index.stats_ver, 2, "v2 stats");
     }
-    assert!(statistics.columns.contains_key(&2), "the stored generated column is analyzed");
+    assert!(
+        statistics.columns.contains_key(&2),
+        "the stored generated column is analyzed"
+    );
 }
 
 /// Go `analyze_bench_test.go:29::BenchmarkAnalyzePartition`: a 1000-partition
@@ -617,342 +734,3 @@ fn analyze_stored_generated_column_from_json_with_unique_index() {
 fn benchmark_analyze_partition_is_out_of_scope_scale() {
     // skipped-reason: benchmark + out-of-scope scale.
 }
-
-/// Go `analyze_test.go:132::TestAnalyzeReplicaReadFollower`: `analyze table
-/// t` with the session's replica read set to Follower.
-///
-/// go-parity-gap: replica-read modes are a kv-request property
-/// (`kv.ReplicaReadType`) with no surface on this tier.
-#[test]
-#[ignore = "go-parity-gap: kv replica-read follower mode is unported"]
-fn analyze_replica_read_follower() {}
-
-/// Go `analyze_test.go:144::TestAnalyzeRestrict`: `analyze` through
-/// `ExecuteInternal` returns no rows, and the `cancel_on_ctx`/`kill_query`
-/// subtests stop a running v2 analyze and record the failure in
-/// mysql.analyze_jobs.
-///
-/// go-parity-gap: internal-execute context cancellation, KILL routing, the
-/// `mockAnalyzeRequestWaitForCancel` failpoint and the analyze_jobs failure
-/// records are unported.
-#[test]
-#[ignore = "go-parity-gap: internal-execute cancel/kill + mockAnalyzeRequestWaitForCancel failpoint + analyze_jobs failure records are unported"]
-fn analyze_restrict_cancel_and_kill() {}
-
-/// Go `analyze_test.go:256::TestAnalyzeTooLongColumns`: a JSON column whose
-/// one value is 65535 x's long (`MaxFieldVarCharLength`); Go requires the
-/// analyzed column to keep `Len()==0`, `TopN.Num()==0`, and
-/// `TotColSize==65559`.
-///
-/// go-parity-gap (measured): the histogram length IS 0 and the total column
-/// size IS 65559 on this tier, but the sampler keeps the too-long value as a
-/// TopN entry (`TopN.Num()==1` where Go has 0), so the full Go assertion set
-/// cannot be pinned without weakening it.
-#[test]
-#[ignore = "go-parity-gap: too-long JSON value lands in TopN (num 1) on this tier where Go keeps TopN empty (hist len 0 and tot_col_size 65559 do match)"]
-fn analyze_too_long_columns_keep_histogram_empty() {}
-
-/// Go `analyze_test.go:280::TestFailedAnalyzeRequestV2`: the
-/// `buildStatsFromResult` failpoint makes `analyze table t index idx_b`
-/// (a global index over a hash-partitioned table) fail with the mock error.
-///
-/// go-parity-gap: the failpoint and the partitioned global-index analyze
-/// path are unported (GLOBAL index refused at CREATE TABLE on this tier).
-#[test]
-#[ignore = "go-parity-gap: buildStatsFromResult failpoint + partitioned global-index analyze are unported"]
-fn failed_analyze_request_v2_reports_the_mock_error() {}
-
-/// Go `analyze_test.go:359::TestAnalyzeFullSamplingOnIndexWithVirtualColumnOrPrefixColumn`,
-/// prefix-column half: samples for `index idx(a(1))` must truncate to the
-/// one-character prefix (Go: TopN a:3, single [b,b] bucket).
-///
-/// go-parity-gap (measured): this tier's sampler does not truncate samples
-/// to the index prefix — the probe build reports NDV 4 with buckets
-/// ab/ac/bb and TopN a:1 instead of Go's TopN a:3 + [b,b] bucket.
-#[test]
-#[ignore = "go-parity-gap: prefix-index sample truncation is unported (this tier samples full values: NDV 4, TopN a:1 vs Go's TopN a:3 + [b,b] bucket)"]
-fn analyze_prefix_index_truncates_samples() {}
-
-/// Go `analyze_test.go:452::TestSnapshotAnalyzeAndMaxTSAnalyze`: with
-/// `injectAnalyzeSnapshot` pinned to an earlier startTS, analyze reads the
-/// snapshot (count 3 vs 6) and a stale snapshot does not rewrite
-/// mysql.stats_meta.
-///
-/// go-parity-gap: the snapshot-TS injection failpoint and the
-/// mysql.stats_meta snapshot column are unported.
-#[test]
-#[ignore = "go-parity-gap: injectAnalyzeSnapshot failpoint + mysql.stats_meta snapshot column are unported"]
-fn snapshot_analyze_and_max_ts_analyze() {}
-
-/// Go `analyze_test.go:458::TestAdjustSampleRateNote`, note-text half: after
-/// the analyze, `show warnings` renders `Note 1105 Analyze use auto adjusted
-/// sample rate 0.500000 for table test.t, reason to use this rate is "use
-/// min(1, 110000/220000) as the sample-rate=0.5"`.
-///
-/// go-parity-gap: the Note/reason message builder is unported; the RATE it
-/// prints is pinned in `analyze_auto_adjusted_sample_rate_boundaries`.
-#[test]
-#[ignore = "go-parity-gap: the auto-adjusted-sample-rate Note text builder (pkg/executor analyze warnings) is unported; rate math pinned separately"]
-fn analyze_sample_rate_note_text() {}
-
-/// Go `analyze_test.go:492::TestAnalyzeIndex`: `analyze table t1 index k
-/// with 0 topn, 4 buckets` builds index-side buckets, before and after
-/// `drop stats`.
-///
-/// go-parity-gap (measured): this tier refuses `ANALYZE TABLE ... INDEX`
-/// ("this node does not run ANALYZE TABLE ... INDEX: it rewrites a table's
-/// whole statistics..."), and `drop stats` has no surface.
-#[test]
-#[ignore = "go-parity-gap: ANALYZE TABLE ... INDEX is refused on this tier and drop stats is unported"]
-fn analyze_index_builds_index_buckets() {}
-
-/// Go `analyze_test.go:562::TestAnalyzeSamplingWorkPanic`: the
-/// `mockAnalyzeSamplingBuildWorkerPanic` / `mockAnalyzeSamplingMergeWorkerPanic`
-/// failpoints turn a v2 sampling analyze into an error.
-///
-/// go-parity-gap: the sampling build/merge worker panic failpoints are
-/// unported (the panic-recovery boundary exists — see
-/// `tests_analyze_panic_recovery_source` — but not these injection sites).
-#[test]
-#[ignore = "go-parity-gap: mockAnalyzeSamplingBuildWorkerPanic/mockAnalyzeSamplingMergeWorkerPanic failpoints are unported"]
-fn analyze_sampling_work_panic_becomes_error() {}
-
-/// Go `analyze_test.go:583::TestSmallTableAnalyzeV2`: with
-/// `calcSampleRateByStorageCount` returning 1, a small table and its three
-/// partitions analyze at rate 1 with the matching Note rows, and
-/// `show column_stats_usage`/`show stats_meta` report per-partition rows.
-///
-/// go-parity-gap: the failpoint, the Note texts, and the
-/// column_stats_usage/stats_meta SHOW fetchers driven there are unported;
-/// the rate value is pinned in `analyze_auto_adjusted_sample_rate_boundaries`.
-#[test]
-#[ignore = "go-parity-gap: calcSampleRateByStorageCount failpoint + per-partition Note/SHOW surfaces are unported"]
-fn small_table_analyze_v2_notes_and_partition_rows() {}
-
-/// Go `analyze_test.go:629::TestAnalyzeColumnsAfterAnalyzeAll`: after
-/// `analyze table t all columns`, `analyze table t columns b` keeps column
-/// a's outdated stats instead of deleting them, and the second analyze's
-/// version lands only on the re-analyzed column.
-///
-/// go-parity-gap: column-list analyze is refused on this tier ("this node
-/// analyzes every column of the table...") and the mysql.stats_* per-column
-/// versioning storage it exercises is the cluster tier's.
-#[test]
-#[ignore = "go-parity-gap: column-scope analyze is refused on this tier; per-column stats-version storage (mysql.stats_*) is the cluster tier's"]
-fn analyze_columns_after_analyze_all_keeps_outdated_column_stats() {}
-
-/// Go `analyze_test.go:701::TestAnalyzeSampleRateReason`: the empty-table
-/// branch of the reason text — `TiDB assumes that the table is empty, use
-/// sample-rate=1` after rows were inserted and flushed.
-///
-/// go-parity-gap: the reason-text builder is unported (the rate, 1.0, is
-/// pinned in `analyze_auto_adjusted_sample_rate_boundaries`).
-#[test]
-#[ignore = "go-parity-gap: the empty-table sample-rate reason text builder is unported"]
-fn analyze_sample_rate_empty_table_reason() {}
-
-/// Go `analyze_test.go:721::TestAnalyzeColumnsErrorAndWarning`: `analyze
-/// table t columns c` fails with ErrAnalyzeMissColumn (8137, "Column 'c' in
-/// ANALYZE column option does not exist in table 't'"), and `analyze table
-/// t predicate columns` with no collected predicate columns falls back to
-/// all-columns with a Warning 1105.
-///
-/// go-parity-gap (measured): this tier refuses the whole `columns` clause
-/// with a clause-level Unsupported error before any column resolution, so
-/// neither the 8137 miss-column error nor the predicate-columns fallback
-/// warning exists.
-#[test]
-#[ignore = "go-parity-gap: columns-clause refusal happens before column resolution on this tier (no 8137 ErrAnalyzeMissColumn, no predicate-columns fallback warning)"]
-fn analyze_columns_miss_column_and_predicate_fallback() {}
-
-/// Go `analyze_test.go:836::TestKillAutoAnalyze` and
-/// `analyze_test.go:840::TestKillAutoAnalyzeIndex`: `HandleAutoAnalyze` with
-/// the kill failpoints — pending/running kills mark the job failed with
-/// ErrQueryInterrupted and keep the table version, a finished kill keeps
-/// `finished` with the version advanced.
-///
-/// go-parity-gap: auto-analyze driving, the mock kill failpoints, and
-/// mysql.analyze_jobs are unported.
-#[test]
-#[ignore = "go-parity-gap: HandleAutoAnalyze + mockKill*AnalyzeJob failpoints + mysql.analyze_jobs are unported"]
-fn kill_auto_analyze_by_status() {}
-
-/// Go `analyze_test.go:904::TestAnalyzeJob`: the analyze-job lifecycle —
-/// `AddNewAnalyzeJob` inserts the pending row, `StartAnalyzeJob` flips it to
-/// running with progress (9m0s remaining, 0.1 progress for the test hint),
-/// `UpdateAnalyzeJobProgress` dumps to mysql.analyze_jobs only past the
-/// 5s/10M thresholds, and `FinishAnalyzeJob` stamps the end time, result and
-/// NULL process_id.
-///
-/// The threshold/threshold-dump core (MAX_DELTA, DUMP_TIME_INTERVAL,
-/// `AnalyzeProgress.update_at`) is ALREADY pinned source-for-source by the
-/// sibling crate's `tidb-stats/tests/analyze_jobs_source.rs` (pre-existing
-/// carrier); the SQL SHOW ANALYZE STATUS rendering half is unported here.
-#[test]
-#[ignore = "skipped-reason: progress/threshold core already pinned by tidb-stats/tests/analyze_jobs_source.rs; SHOW ANALYZE STATUS rendering + AddNewAnalyzeJob/StartAnalyzeJob session surface unported on this tier"]
-fn analyze_job_lifecycle_rows() {}
-
-/// Go `analyze_test.go:998::TestInsertAnalyzeJobWithLongInstance`: an
-/// analyze job inserted with a 66-character instance name reads back with
-/// that instance through show analyze status.
-///
-/// go-parity-gap: `InsertAnalyzeJob` (the mysql.analyze_jobs write path) and
-/// its SHOW rendering are unported.
-#[test]
-#[ignore = "go-parity-gap: InsertAnalyzeJob storage write + instance rendering are unported"]
-fn insert_analyze_job_with_long_instance() {}
-
-/// Go `analyze_test.go:1016::TestShowAanalyzeStatusJobInfo`: the job_info
-/// strings — `analyze table all indexes, columns b, c, d with 2 buckets, 2
-/// topn, 1 samplerate` and its column-list/persisted-option variants.
-///
-/// go-parity-gap: the job-info builder for analyze variants is unported.
-#[test]
-#[ignore = "go-parity-gap: the analyze job_info builder (all-indexes/columns normalization) is unported"]
-fn show_analyze_status_job_info_variants() {}
-
-/// Go `analyze_test.go:1053::TestAnalyzePartitionTableWithDynamicMode`:
-/// persisted table-level analyze options (mysql.analyze_options) merged with
-/// statement options under dynamic pruning.
-///
-/// go-parity-gap: mysql.analyze_options persistence is unported on this
-/// tier.
-#[test]
-#[ignore = "go-parity-gap: mysql.analyze_options persistence + dynamic-mode merge are unported"]
-fn analyze_partition_table_dynamic_mode_options() {}
-
-/// Go `analyze_test.go:1147::TestAnalyzePartitionTableStaticToDynamic`:
-/// static-mode partition analyze saves partition-level options; the dynamic
-/// analyze ignores them and re-analyzes everything with table-level options.
-///
-/// go-parity-gap: mysql.analyze_options + named-partition analyze + stats
-/// reload (`TableStatsFromStorage`) are unported.
-#[test]
-#[ignore = "go-parity-gap: mysql.analyze_options partition rows + named-partition analyze + TableStatsFromStorage reload are unported"]
-fn analyze_partition_table_static_to_dynamic_options() {}
-
-/// Go `analyze_test.go:1284::TestAnalyzePartitionUnderDynamic`: dynamic-mode
-/// partition analyze ignores columns/options with a Warning 8244 for
-/// missing partition columns, and legacy v1 stats force a full rewrite.
-///
-/// go-parity-gap: named-partition analyze refusals, persisted options, the
-/// 8244 warning and the stats-version compatibility rewrite are unported.
-#[test]
-#[ignore = "go-parity-gap: dynamic-mode partition analyze warnings (8244) + stats-version compat rewrite + persisted options are unported"]
-fn analyze_partition_under_dynamic_mode() {}
-
-/// Go `analyze_test.go:1365::TestAnalyzePartitionStaticModeMismatchKeepsColumnScope`:
-/// a partition with incompatible v1 stats must not change the column scope
-/// of another partition's re-analyze.
-///
-/// go-parity-gap: named-partition analyze + stats-version mismatch handling
-/// are unported (named partitions are refused here).
-#[test]
-#[ignore = "go-parity-gap: named-partition analyze + v1/v2 version-mismatch handling are unported"]
-fn analyze_partition_static_mismatch_keeps_column_scope() {}
-
-/// Go `analyze_test.go:1409::TestAnalyzePartitionStaticToDynamic` (the
-/// failpoint-forced variant): partition options saved under static mode are
-/// ignored once dynamic, with Warning 8244 for p0's missing column d.
-///
-/// go-parity-gap: the forceDynamicPrune failpoint, persisted partition
-/// options and the 8244 warning are unported.
-#[test]
-#[ignore = "go-parity-gap: forceDynamicPrune failpoint + persisted partition options + 8244 warning are unported"]
-fn analyze_partition_static_to_dynamic_forced() {}
-
-/// Go `analyze_test.go:1493::TestIssue35056Related`: adding columns to a
-/// partitioned table, analyzing partitions with different column scopes,
-/// then a dynamic partition analyze must not panic.
-///
-/// go-parity-gap: ADD COLUMN + named-partition column-scope analyze are
-/// unported on this tier.
-#[test]
-#[ignore = "go-parity-gap: ADD COLUMN on partitioned tables + named-partition column-scope analyze are unported"]
-fn issue35056_partition_analyze_after_add_column() {}
-
-/// Go `analyze_test.go:1528::TestIssue35044`: after static partition
-/// analyzes, the dynamic partition analyze merges a global column histogram
-/// whose NDV is 6.
-///
-/// go-parity-gap: the merged global histogram read-back
-/// (`TableStatsFromStorage`) is unported; this tier builds the global
-/// histogram by re-scanning.
-#[test]
-#[ignore = "go-parity-gap: merged-global histogram read-back via TableStatsFromStorage is unported"]
-fn issue35044_dynamic_partition_analyze_merges_ndv() {}
-
-/// Go `analyze_test.go:1563::TestAutoAnalyzeAwareGlobalVariableChange`:
-/// HandleAutoAnalyze reads @@global.tidb_enable_analyze_snapshot /
-/// tidb_analyze_version, and the snapshot analyze with injected
-/// base counts preserves concurrent count/modify_count deltas.
-///
-/// go-parity-gap: HandleAutoAnalyze and the injectBaseCount/
-/// injectBaseModifyCount/injectAnalyzeSnapshot failpoints are unported.
-#[test]
-#[ignore = "go-parity-gap: HandleAutoAnalyze + injectAnalyzeSnapshot/injectBaseCount/injectBaseModifyCount failpoints are unported"]
-fn auto_analyze_aware_of_global_variable_change() {}
-
-/// Go `analyze_test.go:1625::TestAnalyzeColumnsSkipMVIndexJsonCol`:
-/// `analyze table t columns a` on a table with a multi-valued index skips
-/// the MV index (its own analyze job), warns about missing column b, and
-/// leaves the JSON column uninitialized while the other items initialize.
-///
-/// go-parity-gap (measured): the multi-valued index is refused at CREATE
-/// TABLE ("a multi-valued index (CAST(... AS ... ARRAY)) is not supported
-/// yet") and column-scope analyze is refused, so the skip/warn/job_info
-/// behavior has no surface here.
-#[test]
-#[ignore = "go-parity-gap: multi-valued index refused at CREATE TABLE + column-scope analyze refused on this tier"]
-fn analyze_columns_skip_mv_index_json_column() {}
-
-/// Go `analyze_test.go:1660::TestAnalyzeMVIndex`: analyzing multi-valued
-/// indexes end to end — analyze_jobs per MV index, async loading via
-/// LoadNeededHistograms, explain stats labels, and the exact
-/// histograms/TopN/buckets of the MV index statistics.
-///
-/// go-parity-gap: multi-valued indexes are refused at CREATE TABLE on this
-/// tier (measured), and the IndexMerge/async-load/explain surfaces are
-/// unported.
-#[test]
-#[ignore = "go-parity-gap: multi-valued index storage + IndexMerge explain/async-load surfaces are unported"]
-fn analyze_mv_index_end_to_end() {}
-
-/// Go `analyze_test.go:2028::TestGeneratedColumns`: statistics scope for
-/// generated columns — the base JSON column IS analyzed, the virtual
-/// generated column is NOT (TiKV cannot evaluate it), the stored generated
-/// column IS, the unused JSON column is NOT (skip_column_types), and both
-/// indexes ARE.
-///
-/// go-parity-gap (measured): this tier analyzes every visible column
-/// including virtual generated columns (the in-process scan materializes
-/// them — the same contract `tidb-session/src/tests_analyze.rs` pins), and
-/// tidb_analyze_skip_column_types has no analyze-side reader here, so Go's
-/// not-analyzed rows cannot be pinned.
-#[test]
-#[ignore = "go-parity-gap: this tier analyzes virtual generated columns (scan materializes them) and has no tidb_analyze_skip_column_types reader, so Go's not-analyzed scope cannot be pinned"]
-fn generated_columns_statistics_scope() {}
-
-/// Go `analyze_test.go:2081::TestSkipStatsForGeneratedColumnsOnSkippedColumns`:
-/// with `tidb_analyze_skip_column_types='json,text,blob'` even `all columns`
-/// skips the JSON column AND the generated columns that depend on it; with
-/// the skip removed the stored column comes back.
-///
-/// go-parity-gap: tidb_analyze_skip_column_types has no analyze-side reader
-/// on this tier (measured), so the dependency-skipping behavior cannot run.
-#[test]
-#[ignore = "go-parity-gap: tidb_analyze_skip_column_types has no analyze-side reader on this tier"]
-fn skip_stats_for_generated_columns_on_skipped_columns() {}
-
-/// Go `analyze_test.go:2181::TestAnalyzeIndexedGeneratedColumnOnSkippedColumn`:
-/// with JSON skipped, a STORED generated column with an index over it still
-/// analyzes (pingcap/tidb#67114 — the old code panicked with "index out of
-/// range [-1]").
-///
-/// go-parity-gap: depends on tidb_analyze_skip_column_types, which has no
-/// analyze-side reader on this tier; the no-panic analyze of an indexed
-/// stored generated column from JSON IS pinned by
-/// `analyze_stored_generated_column_from_json_with_unique_index`.
-#[test]
-#[ignore = "go-parity-gap: tidb_analyze_skip_column_types has no analyze-side reader; the no-panic half is pinned by analyze_stored_generated_column_from_json_with_unique_index"]
-fn analyze_indexed_generated_column_on_skipped_column() {}

@@ -23,9 +23,9 @@ use std::sync::Arc;
 use std::thread;
 
 use tidb_datatype::{BinaryJSON, Collation, Datum, Decimal, FieldType, FieldTypeCode};
-use tidb_expr::{NoColumns, column::Column, expression::Expression};
+use tidb_expr::{column::Column, expression::Expression, NoColumns};
 
-use crate::apply_cache::{ApplyCache, apply_cache_kv_mem};
+use crate::apply_cache::{apply_cache_kv_mem, ApplyCache};
 use crate::vec_group_checker::VecGroupChecker;
 use tidb_chunk::chunk::Chunk;
 
@@ -143,11 +143,9 @@ fn vec_group_checker_datarace_owns_variable_length_and_complex_values() {
             .split_evaluated(&source, &[Collation::Binary])
             .expect("first key evaluates");
         source[0][0] = replacement;
-        assert!(
-            checker
-                .split_evaluated(&[vec![original]], &[Collation::Binary])
-                .expect("second key evaluates")
-        );
+        assert!(checker
+            .split_evaluated(&[vec![original]], &[Collation::Binary])
+            .expect("second key evaluates"));
     }
 }
 
@@ -247,137 +245,3 @@ fn issue_53867_reset_discards_unconsumed_groups() {
     checker.reset();
     assert!(checker.is_exhausted());
 }
-
-/// Go `pkg/executor/internal/applycache/main_test.go:27::TestMain` only
-/// installs the Go test process harness; it has no behavior to reproduce.
-#[test]
-#[ignore = "skipped-reason: Go TestMain is process bootstrap/goleak setup, not a behavior test"]
-fn apply_cache_test_main_is_bootstrap_only() {}
-
-/// Go `pkg/executor/internal/calibrateresource/main_test.go:27::TestMain` only
-/// installs the Go test process harness; it has no behavior to reproduce.
-#[test]
-#[ignore = "skipped-reason: Go TestMain is process bootstrap/goleak setup, not a behavior test"]
-fn calibrate_resource_test_main_is_bootstrap_only() {}
-
-/// Go `pkg/executor/internal/pdhelper/main_test.go:27::TestMain` only installs
-/// the Go test process harness; it has no behavior to reproduce.
-#[test]
-#[ignore = "skipped-reason: Go TestMain is process bootstrap/goleak setup, not a behavior test"]
-fn pd_helper_test_main_is_bootstrap_only() {}
-
-/// Go `pkg/executor/internal/querywatch/main_test.go:27::TestMain` only installs
-/// the Go test process harness; it has no behavior to reproduce.
-#[test]
-#[ignore = "skipped-reason: Go TestMain is process bootstrap/goleak setup, not a behavior test"]
-fn query_watch_test_main_is_bootstrap_only() {}
-
-/// Go `pkg/executor/internal/vecgroupchecker/main_test.go:27::TestMain` only
-/// installs the Go test process harness; it has no behavior to reproduce.
-#[test]
-#[ignore = "skipped-reason: Go TestMain is process bootstrap/goleak setup, not a behavior test"]
-fn vec_group_checker_test_main_is_bootstrap_only() {}
-
-/// Go `pkg/executor/internal/calibrateresource/calibrate_resource_test.go:40::TestCalibrateResource`
-/// drives `calibrateresource.Executor.Next` (`calibrate_resource.go:133-264`)
-/// through session SQL, failpoint metrics, PD resource control, and cluster
-/// metadata, none of which exists in the Rust executor crate.
-#[test]
-#[ignore = "go-parity-gap: CALIBRATE RESOURCE needs Go session SQL, PD resource control, failpoint metrics, and cluster metadata (pkg/executor/internal/calibrateresource/calibrate_resource.go:133)"]
-fn calibrate_resource_matches_session_and_pd_resource_control() {}
-
-/// Go `pkg/executor/internal/exec/executor_test.go:35::TestNextIOAccAddInputCountsRowsWithZeroCols`
-/// covers the private `nextIOAcc` accumulator (`exec/executor.go:42-89`),
-/// including reuse and allocation behavior; no equivalent Rust accumulator is
-/// exposed by `tidb-executor`.
-#[test]
-#[ignore = "go-parity-gap: private nextIOAcc reuse and RUV2 child accounting (pkg/executor/internal/exec/executor.go:42) have no Rust test surface"]
-fn next_io_acc_add_input_counts_rows_with_zero_cols() {}
-
-/// Go `pkg/executor/internal/exec/executor_test.go:73::TestRUV2ExecutorMetricByTypeIncludesConcreteExecutorTypes`
-/// pins the private concrete-type mapping in `exec/executor.go:91-160`; Rust
-/// does not expose the Go runtime-type/RUV2 metric registry.
-#[test]
-#[ignore = "go-parity-gap: Go concrete executor type to RUV2 metric mapping (pkg/executor/internal/exec/executor.go:91) is not modeled in Rust"]
-fn ruv2_executor_metric_by_type_includes_concrete_executor_types() {}
-
-/// Go `pkg/executor/internal/exec/indexusage_test.go:39::TestIndexUsageReporter`
-/// exercises `IndexUsageReporter` (`exec/indexusage.go:29-132`) through a live
-/// domain's asynchronous statistics reporter; that domain/index-usage path is
-/// absent from this crate.
-#[test]
-#[ignore = "go-parity-gap: live domain statistics and asynchronous IndexUsageReporter (pkg/executor/internal/exec/indexusage.go:29) are unported"]
-fn index_usage_reporter_records_point_get_and_cop_usage() {}
-
-/// Go `pkg/executor/internal/exec/indexusage_test.go:217::TestIndexUsageReporterWithRealData`
-/// verifies SQL plan selection and sampled index usage through the Go testkit;
-/// Rust has no equivalent index-usage collector or analyze-backed domain.
-#[test]
-#[ignore = "go-parity-gap: SQL-driven index usage collection and analyze statistics (pkg/executor/internal/exec/indexusage_test.go:217) are unported"]
-fn index_usage_reporter_with_real_data() {}
-
-/// Go `pkg/executor/internal/exec/indexusage_test.go:288::TestIndexUsageReporterWithPartitionTable`
-/// verifies partition physical-table samples through `IndexUsageReporter`
-/// (`indexusage.go:73-115`), requiring Go partition metadata and statistics.
-#[test]
-#[ignore = "go-parity-gap: partition index-usage reporting through the Go domain/statistics handle (pkg/executor/internal/exec/indexusage.go:73) is unported"]
-fn index_usage_reporter_with_partition_table() {}
-
-/// Go `pkg/executor/internal/exec/indexusage_test.go:359::TestIndexUsageReporterWithGlobalIndex`
-/// verifies global-index point/batch usage through the same reporter and
-/// physical/global index metadata (`indexusage.go:49-115`).
-#[test]
-#[ignore = "go-parity-gap: global-index usage metadata and domain reporter (pkg/executor/internal/exec/indexusage.go:49) are unported"]
-fn index_usage_reporter_with_global_index() {}
-
-/// Go `pkg/executor/internal/exec/indexusage_test.go:409::TestDisableIndexUsageReporter`
-/// verifies `tidb_enable_collect_execution_info` suppresses later samples via
-/// the session/domain collector (`indexusage.go:29-47`), which Rust does not
-/// implement.
-#[test]
-#[ignore = "go-parity-gap: session execution-info switch and index usage collector (pkg/executor/internal/exec/indexusage_test.go:409) are unported"]
-fn disable_index_usage_reporter() {}
-
-/// Go `pkg/executor/internal/exec/indexusage_test.go:447::TestIndexUsageReporterWithClusterIndex`
-/// verifies clustered, common-handle, nonclustered-PK, and index-merge samples;
-/// the required Go index metadata/statistics path is absent.
-#[test]
-#[ignore = "go-parity-gap: clustered-index usage reporting needs Go table metadata and statistics handles (pkg/executor/internal/exec/indexusage_test.go:447)"]
-fn index_usage_reporter_with_cluster_index() {}
-
-/// Go `pkg/executor/internal/mpp/local_mpp_coordinator_test.go:25::TestNeedReportExecutionSummary`
-/// tests `needReportExecutionSummary` (`local_mpp_coordinator.go:461-486`) over
-/// physical-plan/exchange nodes; Rust has no local MPP coordinator plan tree.
-#[test]
-#[ignore = "go-parity-gap: local MPP physical-plan exchange coordinator (pkg/executor/internal/mpp/local_mpp_coordinator.go:461) is unported"]
-fn need_report_execution_summary() {}
-
-/// Go `pkg/executor/internal/mpp/local_mpp_coordinator_test.go:72::TestZoneHelperTryQuickFill`
-/// tests `taskZoneInfoHelper.tryQuickFillWithUncertainZones`
-/// (`local_mpp_coordinator.go:319-350`) over TiFlash task metadata; that
-/// coordinator/store metadata surface is absent from Rust.
-#[test]
-#[ignore = "go-parity-gap: TiFlash task-zone metadata and local MPP coordinator (pkg/executor/internal/mpp/local_mpp_coordinator.go:319) are unported"]
-fn zone_helper_try_quick_fill() {}
-
-/// Go `pkg/executor/internal/pdhelper/pd_test.go:42::TestTTLCache` verifies
-/// `PDHelper.GetApproximateTableCountFromStorage` (`pd.go:38-87`) caches by
-/// table identity with capacity and TTL; Rust has no PD helper or TTL cache
-/// seam.
-#[test]
-#[ignore = "go-parity-gap: PDHelper approximate-count storage callback and TTL cache (pkg/executor/internal/pdhelper/pd.go:38) are unported"]
-fn ttl_cache() {}
-
-/// Go `pkg/executor/internal/querywatch/query_watch_test.go:33::TestQueryWatch`
-/// drives `AddExecutor.Next` (`query_watch.go:165-199`) through resource-group
-/// runaway watches, failpoints, asynchronous GC, and information-schema rows.
-#[test]
-#[ignore = "go-parity-gap: runaway query-watch SQL, resource groups, failpoints, and session/domain tables (pkg/executor/internal/querywatch/query_watch.go:165) are unported"]
-fn query_watch() {}
-
-/// Go `pkg/executor/internal/querywatch/query_watch_test.go:207::TestQueryWatchIssue56897`
-/// checks query-watch matching across `USE` statements through the same
-/// runaway-watch executor (`query_watch.go:165-199`), which Rust does not have.
-#[test]
-#[ignore = "go-parity-gap: query-watch matching across USE statements (pkg/executor/internal/querywatch/query_watch.go:165) is unported"]
-fn query_watch_issue_56897() {}

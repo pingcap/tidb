@@ -15,7 +15,10 @@
 //! expression surface), so the OK-packet value is the pinned observable, as
 //! documented per test.
 
-use crate::{run_alter_table_in, run_create_table_on, run_insert_reporting, run_select_on, Catalog, StmtContext};
+use crate::{
+    run_alter_table_in, run_create_table_on, run_insert_reporting, run_select_on, Catalog,
+    StmtContext,
+};
 use tidb_datatype::Datum;
 
 fn dml_ctx() -> StmtContext {
@@ -54,26 +57,44 @@ fn auto_random_allocates_positive_ids_for_null_zero_and_omitted_and_caps_rebase(
     .unwrap();
 
     // insert_test.go:314-318: explicit NULL allocates.
-    let (_, insert_id) = run_insert_reporting("insert into ar(id) values (null)", &mut catalog, "test", &ctx)
-        .unwrap();
+    let (_, insert_id) = run_insert_reporting(
+        "insert into ar(id) values (null)",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .unwrap();
     let ids = select_ints(&catalog, "select id from ar");
     assert_eq!(ids.len(), 1);
     assert!(ids[0] > 0, "allocated id must be positive, got {}", ids[0]);
-    assert_eq!(insert_id, Some(ids[0] as u64), "OK-packet id is the allocated value");
+    assert_eq!(
+        insert_id,
+        Some(ids[0] as u64),
+        "OK-packet id is the allocated value"
+    );
     crate::run_delete_on("delete from ar", &mut catalog, &ctx).unwrap();
 
     // insert_test.go:319-329: explicit 0 is rewritten to an allocated value.
-    let (_, insert_id) = run_insert_reporting("insert into ar(id) values (0)", &mut catalog, "test", &ctx)
-        .unwrap();
+    let (_, insert_id) =
+        run_insert_reporting("insert into ar(id) values (0)", &mut catalog, "test", &ctx).unwrap();
     let ids = select_ints(&catalog, "select id from ar");
     assert_eq!(ids.len(), 1);
-    assert!(ids[0] > 0, "0 must be rewritten to a positive id, got {}", ids[0]);
+    assert!(
+        ids[0] > 0,
+        "0 must be rewritten to a positive id, got {}",
+        ids[0]
+    );
     assert_eq!(insert_id, Some(ids[0] as u64));
     crate::run_delete_on("delete from ar", &mut catalog, &ctx).unwrap();
 
     // insert_test.go:330-340: an omitted auto_random column allocates.
-    let (_, insert_id) = run_insert_reporting("insert into ar(name) values ('a')", &mut catalog, "test", &ctx)
-        .unwrap();
+    let (_, insert_id) = run_insert_reporting(
+        "insert into ar(name) values ('a')",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .unwrap();
     let ids = select_ints(&catalog, "select id from ar");
     assert_eq!(ids.len(), 1);
     assert!(ids[0] > 0);
@@ -133,7 +154,11 @@ fn multi_auto_random_allocates_consecutive_ids_within_one_statement() {
         assert!(ids[0] > 0, "{statement}");
         assert_eq!(ids[1], ids[0] + 1, "{statement}");
         assert_eq!(ids[2], ids[0] + 2, "{statement}");
-        assert_eq!(insert_id, Some(ids[0] as u64), "{statement}: first id reported");
+        assert_eq!(
+            insert_id,
+            Some(ids[0] as u64),
+            "{statement}: first id reported"
+        );
         crate::run_delete_on("delete from ar", &mut catalog, &ctx).unwrap();
     }
 }
@@ -159,31 +184,23 @@ fn auto_random_stores_explicit_zero_with_no_auto_value_on_zero() {
     // Go reaches that via SetLastInsertID(e.lastInsertID) with lastInsertID
     // still 0 (insert_common.go:1483). The gateway reports None (nothing
     // allocated), which leaves the session value at its initial 0.
-    let (_, insert_id) = run_insert_reporting("insert into ar(id) values (0)", &mut catalog, "test", &ctx)
-        .unwrap();
+    let (_, insert_id) =
+        run_insert_reporting("insert into ar(id) values (0)", &mut catalog, "test", &ctx).unwrap();
     let ids = select_ints(&catalog, "select id from ar");
     assert_eq!(ids, [0]);
     assert_eq!(insert_id, None);
     crate::run_delete_on("delete from ar", &mut catalog, &ctx).unwrap();
 
     // insert_test.go:412-417: NULL still allocates a positive id.
-    let (_, insert_id) = run_insert_reporting("insert into ar(id) values (null)", &mut catalog, "test", &ctx)
-        .unwrap();
+    let (_, insert_id) = run_insert_reporting(
+        "insert into ar(id) values (null)",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .unwrap();
     let ids = select_ints(&catalog, "select id from ar");
     assert_eq!(ids.len(), 1);
     assert!(ids[0] > 0);
     assert_eq!(insert_id, Some(ids[0] as u64));
 }
-
-/// Go `insert_test.go:270::TestAllocateContinuousRowID`: five concurrent
-/// sessions each insert 10 batches of 21 rows into an unclustered table and
-/// require `select _tidb_rowid` to return 21 rows whose implicit ids step by
-/// one -- pins BOTH the implicit-handle visibility and the allocator's
-/// batch-continuity (`pkg/meta/autoid`'s per-statement batch, `plus`(base,
-/// 1) increments). Measured on this tier: `select _tidb_rowid` fails with
-/// `UnknownColumnInClause { column: "_tidb_rowid", clause: "field list" }`,
-/// and the gateway drives one catalog with no concurrent-session
-/// interleaving.
-#[test]
-#[ignore = "go-parity-gap: _tidb_rowid is not a selectable column on this tier (measured UnknownColumnInClause) and there is no multi-session interleaving to pin the autoid batch continuity against"]
-fn allocate_continuous_row_id_is_session_safe_and_selectable() {}

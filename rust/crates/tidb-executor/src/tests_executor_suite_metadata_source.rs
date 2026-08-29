@@ -47,27 +47,6 @@ fn kv_table_of(catalog: &Catalog, name: &str) -> crate::kv_table::KvTable {
     table.clone()
 }
 
-/// Go `executor_test.go:84::TestTimezonePushDown`: the system time-zone NAME
-/// (never the literal `System`) must be pushed into the coprocessor
-/// `DAGRequest.TimeZoneName` for every pushdowned read.
-///
-/// go-parity-gap: the assertion lives on the marshalled `tipb.DAGRequest`
-/// (`req.Data` unmarshalled in the `CheckSelectRequestHook`); this tier has
-/// no coprocessor request to inspect.
-#[test]
-#[ignore = "go-parity-gap: DAGRequest time-zone pushdown field unported (no coprocessor request)"]
-fn timezone_push_down_names_the_system_zone_in_the_dag_request() {}
-
-/// Go `executor_test.go:115::TestNotFillCacheFlag`: `SQL_NO_CACHE` sets
-/// `kv.Request.NotFillCache`, `SQL_CACHE` and the plain form clear it.
-///
-/// go-parity-gap: `NotFillCache` is a `kv.Request` field (`pkg/kv/key.go`),
-/// set by `SelectRequestBuilder` and read by the client cache layer; no
-/// request object exists here.
-#[test]
-#[ignore = "go-parity-gap: kv.Request.NotFillCache flag unported"]
-fn not_fill_cache_flag_follows_the_sql_no_cache_hint() {}
-
 /// Go `executor_test.go:146::TestCheckIndex`, ported at the
 /// [`admin_check::check_table`] boundary the `ADMIN CHECK INDEX` statement
 /// drives (Go `pkg/executor/check_table_index.go:110::CheckTableExec.Next` ->
@@ -92,7 +71,10 @@ fn admin_check_index_reports_each_corruption_shape() {
         &mut catalog,
         "create table t (pk int primary key, c int default 1, c1 int default 1, unique key c(c))",
     );
-    insert(&mut catalog, "insert into t (pk, c, c1) values (1, 10, 11), (2, 20, 21)");
+    insert(
+        &mut catalog,
+        "insert into t (pk, c, c1) values (1, 10, 11), (2, 20, 21)",
+    );
 
     let context = crate::RowDecodeContext::for_test_query_utc();
     let mut consistent = kv_table_of(&catalog, "t");
@@ -191,50 +173,6 @@ fn admin_check_index_reports_each_corruption_shape() {
     assert_eq!((table_count, index.as_str(), index_count), (3, "c", 2));
 }
 
-/// Go `executor_test.go:262::TestTimestampDefaultValueTimeZone`: a
-/// `TIMESTAMP` column's default is stored in UTC and rendered in the SESSION
-/// time zone, so `show create table` under `+08:00` / `+00:00` / `-08:00`
-/// prints `14:46:14` / `06:46:14` / `22:46:14` for one stored instant, and
-/// an existing column's rows re-render when the zone changes.
-///
-/// go-parity-gap: the pinned rendering happens in `SET time_zone` +
-/// `SHOW CREATE TABLE`, neither of which this tier has (no session time-zone
-/// statement surface, no show-create executor).
-#[test]
-#[ignore = "go-parity-gap: session time_zone statement + SHOW CREATE TABLE rendering unported"]
-fn timestamp_default_value_renders_in_the_session_time_zone() {}
-
-/// Go `executor_test.go:359::TestTiDBCurrentTS`: `@@tidb_current_ts` is 0
-/// outside a transaction, equals the txn start ts inside, changes on
-/// re-`begin`, returns to 0 after commit, and is read-only
-/// (`ErrIncorrectScope` on assignment).
-///
-/// go-parity-gap: the variable needs the session transaction context
-/// (`SessionVars.TxnCtx.StartTS`); this tier has no transaction surface.
-#[test]
-#[ignore = "go-parity-gap: @@tidb_current_ts / transaction context unported"]
-fn tidb_current_ts_tracks_the_transaction() {}
-
-/// Go `executor_test.go:384::TestTiDBLastTxnInfo`: `@@tidb_last_txn_info`
-/// records the last committed/rolled-back transaction's start/commit ts,
-/// survives reads, is untouched by point-get short paths (commit ts
-/// `MaxUint64`), and is read-only.
-///
-/// go-parity-gap: needs committed transactions, `SessionVars.LastCommitTS`
-/// and the session-variable read path.
-#[test]
-#[ignore = "go-parity-gap: @@tidb_last_txn_info / LastCommitTS session state unported"]
-fn tidb_last_txn_info_records_each_transaction_outcome() {}
-
-/// Go `executor_test.go:499::TestTiDBLastQueryInfo`: `@@tidb_last_query_info`
-/// advances its start/for-update ts per statement, feeds the lock-wait view,
-/// and coexists with `@@tidb_last_txn_info`.
-///
-/// go-parity-gap: needs the session's `TxnCtx` and pessimistic transactions.
-#[test]
-#[ignore = "go-parity-gap: @@tidb_last_query_info session state unported"]
-fn tidb_last_query_info_advances_per_statement() {}
-
 /// Go `executor_test.go:560::TestPartitionHashCode`: five concurrent
 /// sessions each run `select * from t` five times over an empty table
 /// hash-partitioned on its primary key; the test is a race regression for
@@ -280,14 +218,6 @@ fn duplicate_entry_error_names_the_value_and_key() {
     assert_eq!(sql_error.message, "Duplicate entry '1' for key 't.a'");
 }
 
-/// The redaction half of Go `executor_test.go:579::TestPrevStmtDesensitization`:
-/// with `@@global.tidb_redact_log=1` the statement digest prints
-/// `insert into \`t\` values ( ... )` and the 1062 message masks the value
-/// as '?'.
-#[test]
-#[ignore = "go-parity-gap: tidb_redact_log PrevStmt digest redaction unported"]
-fn prev_stmt_desensitization_masks_literals_under_redact_log() {}
-
 /// Go `executor_test.go:593::TestIssue19148`: `where a > any_value(a)` must
 /// not corrupt the referenced column's flag — Go requires
 /// `tblInfo.Meta().Columns[0].GetFlag() == 0` after the query.
@@ -302,90 +232,3 @@ fn any_value_comparison_leaves_the_column_flag_untouched() {
     let flag = table.columns[0].field_type.flags();
     assert_eq!(flag, 0, "Go requires GetFlag() == 0 after the query");
 }
-
-/// Go `executor_test.go:608::TestUnreasonablyClose`: closing every operator
-/// (`PhysicalHashJoin` … `PhysicalUnionAll`) WITHOUT calling `Open` first
-/// must not panic, proven by building 21 SQL shapes through the planner and
-/// calling `e.Close()` directly.
-///
-/// go-parity-gap: needs the planner→executor-builder seam
-/// (`NewMockExecutorBuilderForTest`) exposed per plan shape; this tier only
-/// runs whole statements through the driver.
-#[test]
-#[ignore = "go-parity-gap: per-operator executor build + close-without-open seam unported"]
-fn unreasonably_close_without_open_never_panics() {}
-
-/// Go `executor_test.go:747::TestTwiceCloseUnionExec`: a union/agg tree
-/// closed twice must not leak, and a failpoint-injected Open error must
-/// surface as `mock StreamAggExec.baseExecutor.Open returned error`.
-///
-/// go-parity-gap: needs the failpoint harness and the built executor tree.
-#[test]
-#[ignore = "go-parity-gap: failpoint-injected StreamAgg Open error + built tree double close unported"]
-fn twice_close_union_exec_does_not_leak() {}
-
-/// Go `executor_test.go:791::TestApplyCache`: `explain analyze` of an apply
-/// over an indexed correlated subquery prints the apply-cache verdict in the
-/// operator info — `cache:ON, cacheHitRatio:88.889%` when the outer side
-/// repeats values (9 identical rows) and `cache:OFF` when all 9 are distinct.
-///
-/// go-parity-gap: needs `explain analyze` operator-info text with the apply
-/// cache statistics (`ApplyCache` hit-ratio rendering).
-#[test]
-#[ignore = "go-parity-gap: explain-analyze apply-cache hit-ratio text unported"]
-fn apply_cache_verdict_follows_outer_side_cardinality() {}
-
-/// Go `executor_test.go:836::TestCollectDMLRuntimeStats`: DML statements
-/// record root runtime stats (`time…loops…Get…num_rpc…total_time`,
-/// `lock_keys…`, `check_insert {… prefetch … rpc {BatchGet …} }`) readable
-/// through `ShowProcess`.
-///
-/// go-parity-gap: runtime stats collection is deferred in this tier (see the
-/// crate doc's DEFERRED note).
-#[test]
-#[ignore = "go-parity-gap: DML runtime-stats collation strings unported"]
-fn collect_dml_runtime_stats_strings() {}
-
-/// Go `executor_test.go:905::TestTableSampleTemporaryTable`: `tablesample
-/// regions()` over a GLOBAL temporary table returns an empty result (and
-/// keeps doing so inside transactions and under `tidb_snapshot`), while over
-/// a LOCAL temporary table it is rejected with `TABLESAMPLE clause can not
-/// be applied to local temporary tables`.
-///
-/// go-parity-gap: the statement executor rejects `TABLESAMPLE` wholesale
-/// (`Unsupported("TABLESAMPLE is not supported yet")`), so neither arm's
-/// behavior is reachable yet.
-#[test]
-#[ignore = "go-parity-gap: TABLESAMPLE executor unported (global-temp empty read / local-temp 1174 error)"]
-fn tablesample_on_temporary_tables() {}
-
-/// Go `executor_test.go:958::TestGetResultRowsCount`:
-/// `StmtCtx.GetResultRowsCount()` reports the result-set size of the LAST
-/// statement (10 / 0 / 3 for the selects, 0 for insert/replace/update).
-///
-/// go-parity-gap: this tier's `StmtContext` carries warnings and memory
-/// state but no result-rows counter; the row counts themselves are pinned by
-/// the statement tests (e.g. `union2_matrix`).
-#[test]
-#[ignore = "go-parity-gap: StmtCtx.GetResultRowsCount counter unported"]
-fn get_result_rows_count_of_the_last_statement() {}
-
-/// Go `executor_test.go:992::TestAdminShowDDLJobs`: `admin show ddl jobs`
-/// lists history jobs with schema names, supports `where job_type='create
-/// table'`, and renders START/END_TIME in the session time zone.
-///
-/// go-parity-gap: needs the DDL job history table
-/// (`mysql.tidb_ddl_history`) and the `admin show ddl jobs` executor.
-#[test]
-#[ignore = "go-parity-gap: admin show ddl jobs / history-job store unported"]
-fn admin_show_ddl_jobs_lists_history() {}
-
-/// Go `executor_test.go:1072::TestAdminShowDDLJobsInfo`: the `job_type`
-/// column names each DDL flavor — `alter table placement`, `rename tables`,
-/// `alter table partition placement`, `alter table cache`/`nocache`.
-///
-/// go-parity-gap: same missing surface as `admin_show_ddl_jobs_lists_history`;
-/// the job_type labels are only observable through `admin show ddl jobs`.
-#[test]
-#[ignore = "go-parity-gap: admin show ddl jobs job_type labels unported"]
-fn admin_show_ddl_jobs_reports_job_types() {}

@@ -29,7 +29,7 @@
 //! This tier has no session chunk-size control and no observable union
 //! concurrency; the row contract below is the rest of the test.
 
-use crate::{Catalog, StmtContext, run_create_table_on, run_insert_on, run_select_on};
+use crate::{run_create_table_on, run_insert_on, run_select_on, Catalog, StmtContext};
 
 fn catalog_with_t() -> Catalog {
     let mut catalog = Catalog::default();
@@ -79,11 +79,3 @@ select a from t";
     assert_eq!(sorted, expected);
     assert_eq!(rows.len(), 24, "UNION ALL keeps duplicates across branches");
 }
-
-/// Go `pkg/executor/executor_failpoint_test.go:426-427::TestIssue21441`:
-/// the derived wrapper must apply `ORDER BY a LIMIT 4` and `LIMIT 7, 4` to the
-/// concatenated rows. The current error is the concrete unsupported surface,
-/// not an approximation of the Go result.
-#[test]
-#[ignore = "go-parity-gap: derived UNION output-column ORDER BY resolution returns Unsupported(physical expression does not resolve in its child) at rust/crates/tidb-executor/src/driver/physical_builder.rs:207"]
-fn issue21441_union_all_derived_windows() {}
