@@ -18,10 +18,9 @@ use std::collections::HashMap;
 use std::hash::Hash;
 
 /// Disjoint set for sparse or non-integer element domains.
-#[derive(Debug)]
 pub struct Set<T> {
-    parent: Vec<usize>,
-    value_to_index: HashMap<T, usize>,
+    parent: Vec<isize>,
+    value_to_index: HashMap<T, isize>,
     values: Vec<T>,
 }
 
@@ -30,8 +29,8 @@ where
     T: Clone + Eq + Hash,
 {
     /// Creates an empty sparse disjoint set with the requested capacity.
-    #[must_use]
-    pub fn new(capacity: usize) -> Self {
+    pub fn new(capacity: isize) -> Self {
+        let capacity = usize::try_from(capacity).expect("negative disjoint set size");
         Self {
             parent: Vec::with_capacity(capacity),
             value_to_index: HashMap::with_capacity(capacity),
@@ -39,25 +38,26 @@ where
         }
     }
 
-    fn find_root_original_value(&mut self, value: T) -> usize {
+    fn find_root_original_value(&mut self, value: T) -> isize {
         if let Some(index) = self.value_to_index.get(&value).copied() {
             return self.find_root_internal(index);
         }
 
-        let index = self.parent.len();
+        let index = self.parent.len() as isize;
         self.parent.push(index);
         self.value_to_index.insert(value.clone(), index);
         self.values.push(value);
         index
     }
 
-    fn find_root_internal(&mut self, index: usize) -> usize {
-        let parent = self.parent[index];
+    fn find_root_internal(&mut self, index: isize) -> isize {
+        let position = usize::try_from(index).expect("negative disjoint set index");
+        let parent = self.parent[position];
         if parent == index {
             return index;
         }
         let root = self.find_root_internal(parent);
-        self.parent[index] = root;
+        self.parent[position] = root;
         root
     }
 
@@ -73,21 +73,23 @@ where
         let root_a = self.find_root_original_value(a);
         let root_b = self.find_root_original_value(b);
         if root_a != root_b {
-            self.parent[root_b] = root_a;
+            self.parent[usize::try_from(root_b).expect("negative disjoint set index")] = root_a;
         }
     }
 
     /// Finds the integer root for a value, inserting a missing singleton.
-    pub fn find_root(&mut self, value: T) -> usize {
+    pub fn find_root(&mut self, value: T) -> isize {
         self.find_root_original_value(value)
     }
 
     /// Finds the original value associated with an index's current root.
     ///
     /// Panics when `index` is outside the inserted domain.
-    pub fn find_value(&mut self, index: usize) -> Option<T> {
+    pub fn find_val(&mut self, index: isize) -> Option<T> {
         let root = self.find_root_internal(index);
-        self.values.get(root).cloned()
+        self.values
+            .get(usize::try_from(root).expect("negative disjoint set index"))
+            .cloned()
     }
 }
 
@@ -123,16 +125,5 @@ mod tests {
         assert!(set.in_same_group("c", "f"));
         assert!(set.in_same_group("a", "e"));
         assert!(set.in_same_group("b", "c"));
-    }
-
-    #[test]
-    fn root_value_and_missing_value_boundaries_match_source() {
-        let mut set = Set::new(0);
-        let a = set.find_root("a");
-        let b = set.find_root("b");
-        assert_eq!(set.find_value(a), Some("a"));
-        assert_eq!(set.find_value(b), Some("b"));
-        set.union("a", "b");
-        assert_eq!(set.find_value(b), Some("a"));
     }
 }

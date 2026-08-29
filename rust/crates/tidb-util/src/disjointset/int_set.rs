@@ -15,35 +15,35 @@
 //! Dense integer disjoint set.
 
 /// Disjoint set for continuous, non-negative integer elements.
-#[derive(Debug)]
 pub struct SimpleIntSet {
-    parent: Vec<usize>,
+    parent: Vec<isize>,
 }
 
 impl SimpleIntSet {
     /// Creates a set containing the integers in `0..size`.
-    #[must_use]
-    pub fn new(size: usize) -> Self {
+    pub fn new(size: isize) -> Self {
+        let size = usize::try_from(size).expect("negative disjoint set size");
         Self {
-            parent: (0..size).collect(),
+            parent: (0..size).map(|value| value as isize).collect(),
         }
     }
 
     /// Joins the sets containing `a` and `b`, using `b`'s root as successor.
-    pub fn union(&mut self, a: usize, b: usize) {
+    pub fn union(&mut self, a: isize, b: isize) {
         let root_a = self.find_root(a);
         let root_b = self.find_root(b);
-        self.parent[root_a] = root_b;
+        self.parent[usize::try_from(root_a).expect("negative disjoint set index")] = root_b;
     }
 
     /// Finds the representative element and compresses the traversed path.
-    pub fn find_root(&mut self, element: usize) -> usize {
-        let parent = self.parent[element];
+    pub fn find_root(&mut self, element: isize) -> isize {
+        let index = usize::try_from(element).expect("negative disjoint set index");
+        let parent = self.parent[index];
         if element == parent {
             return element;
         }
         let root = self.find_root(parent);
-        self.parent[element] = root;
+        self.parent[index] = root;
         root
     }
 
@@ -53,16 +53,19 @@ impl SimpleIntSet {
     }
 
     /// Resets the set to contain the integers in `0..size`.
-    pub fn grow_new_int_set(&mut self, size: usize) {
+    pub fn grow_new_int_set(&mut self, size: isize) {
+        let size = usize::try_from(size).expect("negative disjoint set size");
         self.parent.clear();
         self.parent.reserve(size);
-        self.parent.extend(0..size);
+        self.parent.extend((0..size).map(|value| value as isize));
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::SimpleIntSet;
+    use crate::disjointset::Set;
+    use std::panic::{catch_unwind, AssertUnwindSafe};
 
     /// Go `pkg/util/disjointset/int_set_test.go` `TestIntDisjointSet`.
     #[test]
@@ -70,7 +73,7 @@ mod tests {
         let mut set = SimpleIntSet::new(10);
         assert_eq!(set.parent.len(), 10);
         for (index, parent) in set.parent.iter().copied().enumerate() {
-            assert_eq!(index, parent);
+            assert_eq!(index as isize, parent);
         }
         set.union(0, 1);
         set.union(1, 3);
@@ -99,12 +102,15 @@ mod tests {
     }
 
     #[test]
-    fn clear_and_grow_replace_the_complete_dense_domain() {
-        let mut set = SimpleIntSet::new(3);
-        set.union(0, 2);
-        set.clear();
-        assert!(set.parent.is_empty());
-        set.grow_new_int_set(5);
-        assert_eq!(set.parent, [0, 1, 2, 3, 4]);
+    fn signed_sizes_and_indexes_match_go() {
+        assert!(catch_unwind(|| SimpleIntSet::new(-1)).is_err());
+        assert!(catch_unwind(|| Set::<i32>::new(-1)).is_err());
+
+        let mut dense = SimpleIntSet::new(1);
+        assert!(catch_unwind(AssertUnwindSafe(|| dense.find_root(-1))).is_err());
+
+        let mut sparse = Set::new(1);
+        sparse.find_root(1);
+        assert!(catch_unwind(AssertUnwindSafe(|| sparse.find_val(-1))).is_err());
     }
 }

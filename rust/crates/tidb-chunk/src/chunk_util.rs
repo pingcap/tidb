@@ -264,7 +264,7 @@ impl ColumnSwapHelper {
         for (&input_index, output_indexes) in &self.input_idx_to_output_idxes {
             let root = owners.find_root(input_index);
             let owner_index = owners
-                .find_value(root)
+                .find_val(root)
                 .expect("every disjoint-set root has an input index");
             merged
                 .entry(owner_index)
