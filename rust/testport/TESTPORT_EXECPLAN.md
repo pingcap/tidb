@@ -270,6 +270,9 @@ For each bounded behavior cluster:
       Rust-only invalid enum variant with Go's integer-backed mode semantics,
       preserve the package documentation contract, and remove the duplicate
       external source-test carrier.
+- [x] Complete the pinned `pkg/config/kerneltype` package in both build
+      selections, preserve its architecture/binary contract, and remove its
+      duplicate external source-test carrier.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope
