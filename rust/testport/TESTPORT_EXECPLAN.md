@@ -856,6 +856,12 @@ For each bounded behavior cluster:
       gap test. Go owns an integrated notifier/session/storage/cache/handle
       package whose dependencies and 24 integration tests are not complete in
       Rust. Inventory is in `receipts/statistics_handle_ddl_audit.md`.
+- [x] Audit the complete pinned `pkg/statistics/handle/globalstats` package.
+      Remove four disconnected layout/SQL/task/TopN carriers, their tests, two
+      empty gap tests, and stale port claims. Go owns a complete blocking and
+      async handle/storage/session merge pipeline with 28 tests and two
+      benchmarks. Inventory is in
+      `receipts/statistics_handle_globalstats_audit.md`.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope
@@ -1014,6 +1020,12 @@ For each bounded behavior cluster:
   locks, and end-to-end DDL ordering. The disconnected subscriber and helper
   leaves are removed until that dependency-closed owner can land atomically.
   Date/Author: 2026-08-29, Codex.
+- Decision: `pkg/statistics/handle/globalstats` is not an independently
+  callable TopN algorithm. Its observable behavior includes partition/table
+  resolution, storage loading, missing-stat policy, FMS/CMS/histogram merging,
+  worker cancellation and panic coordination, storage publication, and
+  planner-visible results. The unconsumed helper island is removed until the
+  entire dependency-closed package can land. Date/Author: 2026-08-29, Codex.
 
 ## Surprises & Discoveries
 

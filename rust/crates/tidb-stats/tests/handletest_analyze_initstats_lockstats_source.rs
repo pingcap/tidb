@@ -97,13 +97,6 @@ fn correlation() {
     unreachable!("gated by go-parity-gap ignore")
 }
 
-// handletest/handle_test.go::TestMergeGlobalTopN
-#[test]
-#[ignore = "go-parity-gap: merges partition-level TopN into global stats through session ANALYZE on a partitioned table; combined merge entrypoint not ported to tidb-stats"]
-fn merge_global_topn() {
-    unreachable!("gated by go-parity-gap ignore")
-}
-
 // handletest/handle_test.go::TestStaticPartitionPruneMode
 #[test]
 #[ignore = "go-parity-gap: session-driven ANALYZE under static partition prune mode; no session harness"]

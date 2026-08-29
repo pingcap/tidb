@@ -76,14 +76,6 @@ fn source_prune_topn() {
     unreachable!("gated by go-parity-gap ignore")
 }
 
-// merge_global_test.go::TestMergePartTopNAndHistToGlobal (+ the declarative
-// cases in merge_global_cases_test.go)
-#[test]
-#[ignore = "go-parity-gap: MergePartTopNAndHistToGlobal (combined partition TopN+histogram global merge) is not ported to tidb-stats; only the TopN-only merge lives in global_topn.rs"]
-fn source_merge_part_topn_and_hist_to_global() {
-    unreachable!("gated by go-parity-gap ignore")
-}
-
 // integration_test.go::TestExpBackoffEstimation
 #[test]
 #[ignore = "go-parity-gap: needs a session context plus loaded column stats through the statistics handle; no storage/session surface exists inside tidb-stats"]

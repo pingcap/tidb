@@ -53,9 +53,6 @@ pub mod existence_map;
 pub mod fmsketch;
 pub mod fmsketch_codec;
 pub mod gc_batch_count;
-pub mod global_stats_layout;
-pub mod global_stats_sql_index;
-pub mod global_topn;
 mod go_pdqsort;
 mod go_stable_sort;
 pub mod histogram;
@@ -87,7 +84,6 @@ pub mod stats_read_writer;
 pub mod stats_version;
 pub mod status;
 pub mod table;
-pub mod topn_merge_task;
 pub mod weighted_reservoir;
 pub mod worker_capacity;
 
@@ -164,13 +160,6 @@ pub use fmsketch_codec::{
     insert_value_with_error_policy, FmSketchCodecError, FmSketchProto,
 };
 pub use gc_batch_count::gc_batch_count;
-pub use global_stats_layout::{new_global_stats_layout, GlobalStatsLayout};
-pub use global_stats_sql_index::to_sql_index;
-pub use global_topn::{
-    merge_global_stats_topn, merge_global_stats_topn_by_concurrency, merge_part_topn_2_global_topn,
-    GlobalTopNMerge, GlobalTopNMergeError, StatsWrapper, TopNMergeOptions, TopnStatsMergeResponse,
-    TopnStatsMergeWorker, MAX_PARTITION_MERGE_BATCH_SIZE,
-};
 pub use histogram::{Bucket, Histogram};
 pub use index::{
     copy_index, index_is_all_evicted, index_stats_validity, Index, IndexInfo, IndexValidity,
@@ -241,6 +230,5 @@ pub use table::{
     StatsInfo, Table, TableMemoryUsage, PSEUDO_ROW_COUNT, PSEUDO_VERSION,
 };
 pub use tidb_stats_handle_util::*;
-pub use topn_merge_task::TopnStatsMergeTask;
 pub use weighted_reservoir::{WeightedReservoir, WeightedSample};
 pub use worker_capacity::{worker_capacity_available, worker_concurrency_changed};
