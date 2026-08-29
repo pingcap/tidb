@@ -21,6 +21,6 @@ use std::sync::mpsc::Receiver;
 ///
 /// Buffered and later values are drained, and an open sender keeps this call
 /// blocked.
-pub fn clear<T>(channel: Receiver<T>) {
+pub fn clear<T>(channel: &Receiver<T>) {
     for _ in channel {}
 }

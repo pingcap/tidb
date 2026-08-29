@@ -4,9 +4,11 @@
 - Go inventory: `BUILD.bazel`, `channel.go`
 - Rust owner: `rust/crates/tidb-util/src/channel.rs`
 
-Go exposes one `Clear` function and no package tests. Rust now accepts its
-native receive-channel type and drains it until every sender disconnects. The
-former `IntoIterator` signature also accepted vectors and arbitrary iterables,
+Go exposes one `Clear` function and no package tests. Rust accepts a borrowed
+native receive-channel handle and drains it until every sender disconnects.
+Borrowing preserves Go's copyable channel-handle behavior: the caller can
+still observe the disconnected receiver after `clear` returns. The former
+`IntoIterator` signature also accepted vectors and arbitrary iterables,
 behavior absent from Go; that surface and its two synthetic tests were
 removed, together with the retired semantic manifest.
 
