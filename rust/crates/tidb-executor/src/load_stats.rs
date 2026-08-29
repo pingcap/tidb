@@ -23,9 +23,8 @@
 //! * `pkg/statistics/handle/storage/json.go` (`TableStatsFromJSON`) turns one
 //!   `JSONTable` into a `statistics.Table`: histograms decoded from their
 //!   proto form, CMSketch/TopN rebuilt, stats version resolved.
-//!   [`table_statistics_from_json`] is that function, producing the
-//!   [`TableStatistics`] this tier's planner reads instead of a
-//!   `statistics.Table`.
+//!   [`statistics_table_from_json`] is that function; the planner's reduced
+//!   view is derived from the resulting canonical table.
 //! * `pkg/statistics/handle/storage/stats_read_writer.go`
 //!   (`LoadStatsFromJSONNoUpdate`) resolves WHICH physical tables the dump
 //!   feeds -- the table itself, or its partitions by name plus the `global`
@@ -63,6 +62,7 @@
 
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
+use std::sync::{Arc, RwLock};
 
 use base64::Engine as _;
 use flate2::read::GzDecoder;
@@ -77,7 +77,11 @@ use tidb_stats::cmsketch::{
     cmsketch_and_topn_from_proto, CmsSketchProto, CmsSketchProtoRow, CmsSketchProtoTopN,
 };
 use tidb_stats::histogram::Histogram;
-use tidb_stats::{JsonBucket, JsonCmSketch, JsonColumn, JsonHistogram};
+use tidb_stats::{
+    fm_sketch_from_proto, ColAndIdxExistenceMap, Column, ColumnInfo, FmSketchProto, HistColl,
+    Index, IndexInfo, JsonBucket, JsonCmSketch, JsonColumn, JsonFmSketch, JsonHistogram,
+    StatsLoadedStatus, Table,
+};
 pub use tidb_stats::{JsonTable, TIDB_GLOBAL_STATS};
 
 use crate::access_cost::TableStatistics;
@@ -264,6 +268,17 @@ fn cmsketch_from_json(
     Ok(cmsketch_and_topn_from_proto(Some(&native)))
 }
 
+/// Go `statistics.FMSketchFromProto` for the JSON proto-shaped value.
+fn fmsketch_from_json(proto: Option<&JsonFmSketch>) -> Option<tidb_stats::FmSketch> {
+    proto.and_then(|proto| {
+        let native = FmSketchProto {
+            mask: proto.mask,
+            hashset: proto.hashset.clone().unwrap_or_default(),
+        };
+        fm_sketch_from_proto(Some(&native))
+    })
+}
+
 /// Go `TableStatsFromJSON`'s stats-version resolution, shared by the column
 /// and index arms verbatim:
 ///
@@ -313,10 +328,13 @@ const STATS_CONVERSION_FLAGS: ConversionFlags = ConversionFlags::from_bits(
 
 /// One dumped column into the estimator's [`ColumnStats`]: Go
 /// `TableStatsFromJSON`'s column arm.
-fn column_stats_from_json(
+fn column_from_json(
     column: &crate::kv_table::KvColumn,
     json: &JsonColumn,
-) -> Result<ColumnStats, LoadStatsError> {
+    physical_id: i64,
+    is_handle: bool,
+    primary_key: bool,
+) -> Result<Column, LoadStatsError> {
     let proto = json
         .histogram
         .as_ref()
@@ -349,22 +367,32 @@ fn column_stats_from_json(
     histogram.tot_col_size = json.tot_col_size;
     histogram.correlation = json.correlation;
     let (cms, topn) = cmsketch_from_json(json.cm_sketch.as_ref())?;
-    Ok(ColumnStats {
+    Ok(Column {
+        cmsketch: cms,
+        top_n: topn,
+        fm_sketch: fmsketch_from_json(json.fm_sketch.as_ref()),
+        info: Some(ColumnInfo {
+            id: column.id,
+            name: column.name.to_lowercase(),
+            primary_key,
+        }),
         histogram,
-        topn,
-        cms,
-        stats_ver: resolve_stats_version(json),
-        unsigned: column.field_type.is_unsigned(),
+        stats_loaded_status: StatsLoadedStatus::full_load(),
+        physical_id,
+        stats_version: resolve_stats_version(json),
+        is_handle,
     })
 }
 
 /// One dumped index into [`IndexStats`]: Go `TableStatsFromJSON`'s index arm,
 /// which sets id/null-count/version/correlation on the histogram and nothing
 /// else -- crucially NO `ConvertTo`, because index bounds are key bytes.
-fn index_stats_from_json(
+fn index_from_json(
+    table: &KvTable,
     index: &crate::kv_table::KvIndex,
     json: &JsonColumn,
-) -> Result<IndexStats, LoadStatsError> {
+    physical_id: i64,
+) -> Result<Index, LoadStatsError> {
     let proto = json
         .histogram
         .as_ref()
@@ -375,33 +403,59 @@ fn index_stats_from_json(
     histogram.last_update_version = json.last_update_version;
     histogram.correlation = json.correlation;
     let (cms, topn) = cmsketch_from_json(json.cm_sketch.as_ref())?;
-    Ok(IndexStats {
+    Ok(Index {
+        cmsketch: cms,
+        top_n: topn,
+        fm_sketch: None,
+        info: Some(IndexInfo {
+            id: index.id,
+            name: index.name.to_lowercase(),
+            columns: index
+                .column_offsets
+                .iter()
+                .map(|offset| {
+                    table
+                        .columns()
+                        .get(*offset)
+                        .expect("index column offset outside table columns")
+                        .name
+                        .to_lowercase()
+                })
+                .collect(),
+            mv_index: table.mv_key_part_source(index.id).is_some(),
+        }),
         histogram,
-        topn,
-        cms,
-        stats_ver: resolve_stats_version(json),
-        num_columns: index.column_offsets.len(),
-        unique: index.unique,
+        stats_loaded_status: StatsLoadedStatus::full_load(),
+        stats_version: resolve_stats_version(json),
+        physical_id,
     })
 }
 
 /// Go `storage.TableStatsFromJSON`: one `JSONTable` (the whole file, or one
-/// `partitions` entry) against one table's schema, producing the
-/// [`TableStatistics`] to publish for one physical table id.
+/// `partitions` entry) against one table's schema, producing the canonical
+/// full statistics table for one physical table id.
 ///
 /// Name resolution mirrors Go's double loop exactly: a dumped entry that
 /// matches no current column or index is DROPPED silently (the schema moved
 /// on since the dump), and a column with no dumped entry simply has no
 /// statistics -- the estimator falls back to its per-column pseudo rates for
 /// it, which is also what Go's `StatsAvailable` gate reaches.
-pub fn table_statistics_from_json(
+pub fn statistics_table_from_json(
     table: &KvTable,
+    physical_id: i64,
     json: &JsonTable,
-) -> Result<TableStatistics, LoadStatsError> {
-    let mut indexes = BTreeMap::new();
+) -> Result<Table, LoadStatsError> {
+    let mut hist_coll = HistColl::new(
+        physical_id,
+        json.count,
+        json.modify_count,
+        json.columns.as_ref().map_or(0, BTreeMap::len),
+        json.indices.as_ref().map_or(0, BTreeMap::len),
+    );
+    let mut existence = ColAndIdxExistenceMap::new(table.columns().len(), table.indexes().len());
     if let Some(dumped) = &json.indices {
         for (name, entry) in dumped {
-            let Some(entry) = entry else { continue };
+            let entry = entry.as_ref().expect("index stats JSON entry is null");
             for index in table.indexes() {
                 // Go: `idxInfo.Name.L != id` -- the LOWERCASED schema name
                 // against the raw map key. Dumps write lowercase keys
@@ -410,39 +464,169 @@ pub fn table_statistics_from_json(
                 if index.name.to_lowercase() != *name {
                     continue;
                 }
-                indexes.insert(index.id, index_stats_from_json(index, entry)?);
+                let item = index_from_json(table, index, entry, physical_id)?;
+                if item.stats_version != 0 {
+                    hist_coll.stats_version = item.stats_version as i32;
+                }
+                hist_coll.set_index(index.id, item);
+                existence.insert_index(index.id, true);
             }
         }
     }
-    let mut columns = BTreeMap::new();
     if let Some(dumped) = &json.columns {
         for (name, entry) in dumped {
-            let Some(entry) = entry else { continue };
-            for column in table.visible_columns() {
+            let entry = entry.as_ref().expect("column stats JSON entry is null");
+            for (offset, column) in table.columns().iter().enumerate() {
                 // Same rule as the index loop: `colInfo.Name.L != id`.
                 if column.name.to_lowercase() != *name {
                     continue;
                 }
-                columns.insert(column.id, column_stats_from_json(column, entry)?);
+                let is_handle = table.pk_handle_offset() == Some(offset);
+                let primary_key = is_handle
+                    || table.indexes().iter().any(|index| {
+                        index.name.eq_ignore_ascii_case("PRIMARY")
+                            && index.column_offsets.contains(&offset)
+                    });
+                let item = column_from_json(column, entry, physical_id, is_handle, primary_key)?;
+                if item.stats_version != 0 {
+                    hist_coll.stats_version = item.stats_version as i32;
+                }
+                hist_coll.set_column(column.id, item);
+                existence.insert_column(column.id, true);
             }
         }
     }
-    // `TableStatistics::new` applies Go `GetStatsTable`'s pseudo rule to the
-    // dump's own `count`/`modify_count`, the same numbers Go installs through
-    // `SaveMetaToStorage` at the end of `loadStatsFromJSON` -- so a dump of
-    // an empty table (count 0) still reads as pseudo here, exactly as a Go
-    // node reloading that `stats_meta` row would decide.
-    Ok(TableStatistics::new(
-        json.count,
-        json.modify_count,
+    Ok(Table {
+        existence_map: Some(Arc::new(RwLock::new(existence))),
+        hist_coll,
+        version: 0,
+        last_analyze_version: 0,
+        last_stats_hist_version: 0,
+        table_info_update_ts: 0,
+        is_pk_handle: table.pk_handle_offset().is_some(),
+    })
+}
+
+/// The common planner view of a canonical Go-compatible statistics table.
+pub fn table_statistics_from_table(stats: &Table, table: &KvTable) -> TableStatistics {
+    let columns = table
+        .columns()
+        .iter()
+        .map(|column| (column.id, column.field_type.is_unsigned()))
+        .collect::<Vec<_>>();
+    let indexes = table
+        .indexes()
+        .iter()
+        .map(|index| (index.id, index.column_offsets.len(), index.unique))
+        .collect::<Vec<_>>();
+    table_statistics_from_table_schema(stats, &columns, &indexes)
+}
+
+/// The common planner view when the caller owns Go `TableInfo` rather than
+/// an executor `KvTable`. Tuple fields are column `(id, unsigned)` and index
+/// `(id, column_count, unique)` metadata.
+pub fn table_statistics_from_table_schema(
+    stats: &Table,
+    schema_columns: &[(i64, bool)],
+    schema_indexes: &[(i64, usize, bool)],
+) -> TableStatistics {
+    let existence = stats.existence_map.as_ref().map(|map| {
+        map.read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    });
+    let mut column_stats_existence = BTreeMap::new();
+    let mut index_stats_existence = BTreeMap::new();
+    let mut columns = BTreeMap::new();
+    let mut indexes = BTreeMap::new();
+    let mut column_load_status = BTreeMap::new();
+    let mut index_load_status = BTreeMap::new();
+    for column in stats.hist_coll.stable_columns() {
+        let column = column
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let id = column.item_id();
+        column_stats_existence.insert(
+            id,
+            existence
+                .as_ref()
+                .is_some_and(|map| map.has_analyzed(id, false)),
+        );
+        if !column.stats_available() {
+            continue;
+        }
+        let unsigned = schema_columns
+            .iter()
+            .find(|schema| schema.0 == id)
+            .is_some_and(|schema| schema.1);
+        columns.insert(
+            id,
+            ColumnStats {
+                histogram: column.histogram.clone(),
+                topn: column.top_n.clone(),
+                cms: column.cmsketch.clone(),
+                stats_ver: column.stats_version,
+                unsigned,
+            },
+        );
+        column_load_status.insert(id, column.stats_loaded_status);
+    }
+    for index in stats.hist_coll.stable_indices() {
+        let index = index
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let id = index.item_id();
+        index_stats_existence.insert(
+            id,
+            existence
+                .as_ref()
+                .is_some_and(|map| map.has_analyzed(id, true)),
+        );
+        if !index.is_analyzed() && index.histogram.ndv == 0 && index.histogram.null_count == 0 {
+            continue;
+        }
+        let Some(schema) = schema_indexes.iter().find(|schema| schema.0 == id) else {
+            continue;
+        };
+        indexes.insert(
+            id,
+            IndexStats {
+                histogram: index.histogram.clone(),
+                topn: index.top_n.clone(),
+                cms: index.cmsketch.clone(),
+                stats_ver: index.stats_version,
+                num_columns: schema.1,
+                unique: schema.2,
+            },
+        );
+        index_load_status.insert(id, index.stats_loaded_status);
+    }
+    TableStatistics::new(
+        stats.hist_coll.realtime_count,
+        stats.hist_coll.modify_count,
         columns,
         indexes,
-    ))
+    )
+    .with_stat_versions(stats.version, stats.last_analyze_version)
+    .with_load_statuses(column_load_status, index_load_status)
+    .with_stats_existence(column_stats_existence, index_stats_existence)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn column(id: i64, name: &str) -> crate::kv_table::KvColumn {
+        crate::kv_table::KvColumn {
+            id,
+            name: name.to_owned(),
+            field_type: FieldType::new(FieldTypeCode::LongLong),
+            column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+            default_value: None,
+            origin_default: None,
+            comment: String::new(),
+            generated: None,
+        }
+    }
 
     /// The v4.0-era inference: no `stats_ver` key plus a real NDV must read
     /// as version 1, or every pre-2021 fixture's histogram goes unused.
@@ -492,5 +676,77 @@ mod tests {
             serde_json::to_value(converted).expect("converted JSON"),
             serde_json::to_value(source).expect("source JSON")
         );
+    }
+
+    /// Go `TableStatsFromJSON` walks `TableInfo.Columns`, including hidden
+    /// expression-index columns, and retains the FM sketch on the canonical
+    /// column object.
+    #[test]
+    fn json_builds_full_table_including_hidden_columns_and_fm_sketch() {
+        let mut schema = KvTable::new(41, vec![column(1, "a")]);
+        schema.set_pk_handle_offset(0);
+        schema.add_hidden_column(column(2, "_V$_expr"));
+        let dumped = JsonTable {
+            count: 9,
+            modify_count: 2,
+            columns: Some(BTreeMap::from([
+                (
+                    "a".to_owned(),
+                    Some(JsonColumn {
+                        histogram: Some(JsonHistogram {
+                            ndv: 1,
+                            ..JsonHistogram::default()
+                        }),
+                        stats_ver: Some(2),
+                        ..JsonColumn::default()
+                    }),
+                ),
+                (
+                    "_v$_expr".to_owned(),
+                    Some(JsonColumn {
+                        histogram: Some(JsonHistogram {
+                            ndv: 3,
+                            ..JsonHistogram::default()
+                        }),
+                        fm_sketch: Some(JsonFmSketch {
+                            mask: 7,
+                            hashset: Some(vec![11, 13]),
+                        }),
+                        stats_ver: Some(2),
+                        ..JsonColumn::default()
+                    }),
+                ),
+            ])),
+            ..JsonTable::default()
+        };
+
+        let stats = statistics_table_from_json(&schema, 99, &dumped).expect("load dump");
+        assert_eq!(stats.hist_coll.physical_id, 99);
+        assert_eq!(stats.hist_coll.column_count(), 2);
+        assert_eq!(stats.hist_coll.stats_version, 2);
+        assert!(stats.is_pk_handle);
+        let handle = stats.hist_coll.get_column(1).expect("handle stats");
+        assert!(handle.read().unwrap().is_handle);
+        let hidden = stats.hist_coll.get_column(2).expect("hidden stats");
+        let hidden = hidden.read().unwrap();
+        assert_eq!(hidden.physical_id, 99);
+        assert!(hidden.stats_loaded_status.is_full_load());
+        assert_eq!(
+            tidb_stats::fm_sketch_to_proto(hidden.fm_sketch.as_ref()),
+            FmSketchProto {
+                mask: 7,
+                hashset: vec![11, 13],
+            }
+        );
+        assert!(stats
+            .existence_map
+            .as_ref()
+            .unwrap()
+            .read()
+            .unwrap()
+            .has_analyzed(2, false));
+        drop(hidden);
+        let planner = table_statistics_from_table(&stats, &schema);
+        assert!(planner.columns.contains_key(&2));
     }
 }

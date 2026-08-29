@@ -53,23 +53,15 @@
 //! preserved here because changing it would make this tier accept dumps Go
 //! rejects silently.
 //!
-//! # What is deliberately not here
-//!
-//! * **`mysql.stats_*` writes.** Go's `loadStatsFromJSON` persists each
-//!   histogram through `SaveColOrIdxStatsToStorage` and the meta through
-//!   `SaveMetaToStorage`, then `statsHandler.Update` republishes the cache.
-//!   This tier's catalog IS its statistics store
-//!   ([`tidb_executor::driver::Catalog::set_table_statistics`]), the same
-//!   single publish `ANALYZE` uses (`crate::analyze_arm`) -- a second copy in
-//!   table form would have no reader.
-//! * **The `LoadStatsVarKey` handshake.** "previous load stats option isn't
-//!   closed normally" guards Go's two-phase executor/connection split, which
-//!   does not exist when the same call both parses and applies the file.
+//! The `LoadStatsVarKey` handshake is specific to Go's two-phase
+//! executor/connection local-infile split. This call receives and applies the
+//! file in one step, so there is no intermediate connection state to guard.
 
 use std::sync::Arc;
 
 use tidb_executor::load_stats::{
-    parse_stats_json, table_statistics_from_json, JsonTable, TIDB_GLOBAL_STATS,
+    parse_stats_json, statistics_table_from_json, table_statistics_from_table, JsonTable,
+    TIDB_GLOBAL_STATS,
 };
 use tidb_executor::{DriverError, SchemaErrorKind, TableEntry};
 
@@ -137,9 +129,10 @@ impl Session {
             // unpartitioned table, or a dump without a partitions object,
             // loads the top-level histograms into the table's own id.
             if partition_definitions.is_empty() || json.partitions.is_none() {
-                let statistics = table_statistics_from_json(&table, json)
+                let statistics = statistics_table_from_json(&table, table.table_id, json)
                     .map_err(|error| DriverError::unsupported(error.to_string()))?;
-                catalog.set_table_statistics(table.table_id, Arc::new(statistics));
+                let planner = table_statistics_from_table(&statistics, &table);
+                catalog.set_table_statistics(table.table_id, Arc::new(planner));
                 return Ok(());
             }
 
@@ -152,14 +145,16 @@ impl Session {
                 let Some(Some(entry)) = partitions.get(&definition_name.to_lowercase()) else {
                     continue;
                 };
-                let statistics = table_statistics_from_json(&table, entry)
+                let statistics = statistics_table_from_json(&table, *physical_id, entry)
                     .map_err(|error| DriverError::unsupported(error.to_string()))?;
-                catalog.set_table_statistics(*physical_id, Arc::new(statistics));
+                let planner = table_statistics_from_table(&statistics, &table);
+                catalog.set_table_statistics(*physical_id, Arc::new(planner));
             }
             if let Some(Some(global)) = partitions.get(TIDB_GLOBAL_STATS) {
-                let statistics = table_statistics_from_json(&table, global)
+                let statistics = statistics_table_from_json(&table, table.table_id, global)
                     .map_err(|error| DriverError::unsupported(error.to_string()))?;
-                catalog.set_table_statistics(table.table_id, Arc::new(statistics));
+                let planner = table_statistics_from_table(&statistics, &table);
+                catalog.set_table_statistics(table.table_id, Arc::new(planner));
             }
             Ok(())
         })

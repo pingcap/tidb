@@ -48,7 +48,6 @@ use tidb_executor::driver::{Catalog, SequenceDef, ViewDef};
 use tidb_executor::kv_table::{KvColumn, KvIndex, KvTable, TableAutoId};
 use tidb_executor::storage::TableStorage;
 use tidb_model::{GoShared, SchemaState, TableInfo};
-use tidb_planner::cardinality::row_count_estimator::{ColumnStats, IndexStats};
 use tidb_session::{Session, SharedCatalog};
 use tidb_stats_handle_cache::{
     ColumnLength, StatsTableRowSource, TableRowCount, TABLE_ROW_STATS_CACHE,
@@ -1017,129 +1016,25 @@ pub(crate) fn kv_index(
 /// scaling in the estimator reads off a column.
 const UNSIGNED_FLAG: u32 = 1 << 5;
 
-/// Translates one table's loaded `mysql.stats_*` rows into the shape the
-/// planner's estimator reads.
-///
-/// This is the ONE place the storage form and the estimation form meet: the
-/// loader ([`tidb_exec::cluster_stats_load`]) owns how a histogram is stored,
-/// [`tidb_planner::cardinality`] owns how it is read, and neither has to know
-/// the other. A histogram whose `hist_id` names no current column or index --
-/// a dropped one whose stats rows have not been GC'd -- is skipped, because
-/// the estimator keys on the live schema.
+/// Adapts Go `TableInfo` metadata to the common canonical-table planner view.
 pub(crate) fn planner_statistics(stats: &tidb_stats::Table, table: &TableInfo) -> TableStatistics {
-    let existence = stats.existence_map.as_ref().map(|map| {
-        map.read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    });
-    let column_stats_existence = stats
-        .hist_coll
-        .stable_columns()
-        .into_iter()
+    let columns = table
+        .cols()
+        .iter_deref()
         .map(|column| {
-            let id = column
-                .read()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .item_id();
-            (
-                id,
-                existence
-                    .as_ref()
-                    .is_some_and(|existence| existence.has_analyzed(id, false)),
-            )
-        })
-        .collect();
-    let index_stats_existence = stats
-        .hist_coll
-        .stable_indices()
-        .into_iter()
-        .map(|index| {
-            let id = index
-                .read()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .item_id();
-            (
-                id,
-                existence
-                    .as_ref()
-                    .is_some_and(|existence| existence.has_analyzed(id, true)),
-            )
-        })
-        .collect();
-    let mut columns = std::collections::BTreeMap::new();
-    let mut column_load_status = std::collections::BTreeMap::new();
-    for column in table.cols().iter_deref() {
-        let (id, unsigned) = {
             let column = column.read();
             (column.id, column.field_type.flags() & UNSIGNED_FLAG != 0)
-        };
-        let Some(item) = stats.hist_coll.get_column(id) else {
-            continue;
-        };
-        let item = item
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if !item.stats_available() {
-            continue;
-        }
-        columns.insert(
-            id,
-            ColumnStats {
-                histogram: item.histogram.clone(),
-                topn: item.top_n.clone(),
-                cms: item.cmsketch.clone(),
-                stats_ver: item.stats_version,
-                unsigned,
-            },
-        );
-        column_load_status.insert(id, item.stats_loaded_status);
-    }
-    let mut indexes = std::collections::BTreeMap::new();
-    let mut index_load_status = std::collections::BTreeMap::new();
-    for index in table.indices.iter_deref() {
-        let (id, num_columns, unique) = {
+        })
+        .collect::<Vec<_>>();
+    let indexes = table
+        .indices
+        .iter_deref()
+        .map(|index| {
             let index = index.read();
             (index.id, index.columns.len(), index.unique)
-        };
-        let Some(item) = stats.hist_coll.get_index(id) else {
-            continue;
-        };
-        let item = item
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if !item.is_analyzed() && item.histogram.ndv == 0 && item.histogram.null_count == 0 {
-            continue;
-        }
-        indexes.insert(id, index_statistics(&item, num_columns, unique));
-        index_load_status.insert(id, item.stats_loaded_status);
-    }
-    // `TableStatistics::new` decides `pseudo` -- Go's `GetStatsTable` reaches
-    // it both from an uninitialized histogram set and from a zero row count,
-    // and that rule lives in one place for both tiers. The two TSOs ride
-    // along unchanged: `SHOW STATS_META` renders them verbatim as
-    // `Update_time` and `Last_analyze_time`, so no field of the stored row is
-    // lost in this translation.
-    TableStatistics::new(
-        stats.hist_coll.realtime_count,
-        stats.hist_coll.modify_count,
-        columns,
-        indexes,
-    )
-    .with_stat_versions(stats.version, stats.last_analyze_version)
-    .with_load_statuses(column_load_status, index_load_status)
-    .with_stats_existence(column_stats_existence, index_stats_existence)
-}
-
-/// One index histogram, with the two schema facts the estimator needs that
-/// the stored row does not carry.
-fn index_statistics(item: &tidb_stats::Index, num_columns: usize, unique: bool) -> IndexStats {
-    IndexStats {
-        histogram: item.histogram.clone(),
-        topn: item.top_n.clone(),
-        cms: item.cmsketch.clone(),
-        stats_ver: item.stats_version,
-        num_columns,
-        unique,
-    }
+        })
+        .collect::<Vec<_>>();
+    tidb_executor::load_stats::table_statistics_from_table_schema(stats, &columns, &indexes)
 }
 
 /// The public-column offsets of a clustered composite handle, in key order.
