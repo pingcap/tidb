@@ -29,3 +29,7 @@ tokio-stream = { workspace = true, features = ["net"] }
 [[test]]
 name = "all"
 path = "tests/all.rs"
+
+[[test]]
+name = "engine_source"
+path = "tests/engine_source.rs"

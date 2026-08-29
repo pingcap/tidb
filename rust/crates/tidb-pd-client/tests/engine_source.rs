@@ -12,13 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Semantic boundary tests for accepted Go package `pkg/util/engine`.
+//! Source-shaped tests for Go `pkg/util/engine`.
+//! aggregate-test: standalone
 
 use tidb_pd_client::{
-    is_tiflash, is_tiflash_http_response, is_tiflash_write_http_response, PdNodeState, PdStore,
-    PdStoreState,
+    is_tiflash_http_response, is_tiflash_write_http_response, PdNodeState, PdStore, PdStoreState,
 };
-use tidb_proto::metapb;
 
 fn pd_store(labels: &[(&str, &str)]) -> PdStore {
     PdStore {
@@ -33,57 +32,40 @@ fn pd_store(labels: &[(&str, &str)]) -> PdStore {
     }
 }
 
-fn protobuf_store(labels: &[(&str, &str)]) -> metapb::Store {
-    metapb::Store {
-        labels: labels
-            .iter()
-            .map(|(key, value)| metapb::StoreLabel {
-                key: (*key).to_owned(),
-                value: (*value).to_owned(),
-            })
-            .collect(),
-        ..Default::default()
+#[test]
+fn TestIsTiFlashHTTPResp() {
+    let cases = [
+        (vec![("engine", "tiflash")], true),
+        (vec![("engine", "tiflash"), ("engine_role", "write")], true),
+        (vec![("engine", "tiflash_compute")], true),
+        (vec![("engine", "not_tiflash")], false),
+        (vec![], false),
+    ];
+
+    for (labels, expected) in cases {
+        assert_eq!(
+            is_tiflash_http_response(&pd_store(&labels)),
+            expected,
+            "labels: {labels:?}"
+        );
     }
 }
 
 #[test]
-fn store_engine_labels_match_classic_and_nextgen_source_rules() {
+fn TestIsTiFlashWriteHTTPResp() {
     let cases = [
-        (vec![("engine", "tiflash")], true, true),
-        (
-            vec![("engine", "tiflash"), ("engine_role", "write")],
-            true,
-            true,
-        ),
-        (vec![("engine", "tiflash_compute")], true, false),
-        (
-            vec![("zone", "z1"), ("engine", "tiflash_compute")],
-            true,
-            false,
-        ),
-        (vec![("engine", "not_tiflash")], false, false),
-        (vec![("Engine", "tiflash")], false, false),
-        (vec![], false, false),
+        (vec![("engine", "tiflash")], true),
+        (vec![("engine", "tiflash"), ("engine_role", "write")], true),
+        (vec![("engine", "tiflash_compute")], false),
+        (vec![("engine", "not_tiflash")], false),
+        (vec![], false),
     ];
 
-    for (labels, expected_tiflash, expected_write) in cases {
-        let normalized = pd_store(&labels);
+    for (labels, expected) in cases {
         assert_eq!(
-            is_tiflash_http_response(&normalized),
-            expected_tiflash,
-            "normalized labels: {labels:?}"
-        );
-        assert_eq!(
-            is_tiflash_write_http_response(&normalized),
-            expected_write,
-            "normalized labels: {labels:?}"
-        );
-
-        let protobuf = protobuf_store(&labels);
-        assert_eq!(
-            is_tiflash(&protobuf),
-            expected_tiflash,
-            "protobuf labels: {labels:?}"
+            is_tiflash_write_http_response(&pd_store(&labels)),
+            expected,
+            "labels: {labels:?}"
         );
     }
 }

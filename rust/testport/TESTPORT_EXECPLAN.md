@@ -36,6 +36,13 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-08-29: completed the pinned Go `pkg/util/engine` package (one
+  production file, one source test, and `BUILD.bazel`). The existing three
+  protobuf/PD-HTTP classifiers already matched Go. Replaced the combined
+  supplemental Rust matrix with exactly the two Go source identities and
+  their five cases each, and registered the package as a standalone Cargo
+  test. Complete inventory and WIP gates are recorded in
+  `receipts/util_engine.md`.
 - 2026-08-29: completed the pinned Go `pkg/util/cteutil` package (one
   production file, one source test, one test harness, and `BUILD.bazel`).
   Restored the explicit closed/open/reference-counted lifecycle in the
