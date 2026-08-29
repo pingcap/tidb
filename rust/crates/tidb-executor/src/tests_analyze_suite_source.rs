@@ -19,6 +19,7 @@
 //! The tests exercise the statistics behavior implemented by this crate's
 //! analyze engine ([`crate::analyze::kv::analyze_kv_table`]).
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use tidb_datatype::Datum;
@@ -186,6 +187,74 @@ fn full_sampling_keeps_nulls_out_of_column_and_index_distributions() {
             })
             .collect::<Vec<_>>(),
         vec![(3, 3, 1, 1), (4, 4, 2, 1)]
+    );
+}
+
+/// Go `pkg/statistics/integration_test.go::TestSingleColumnIndexNDV`: every
+/// single-column index retains the source column's NDV and NULL count.
+#[test]
+fn single_column_index_ndv_and_null_count_match_the_column() {
+    let mut catalog = Catalog::default();
+    create(
+        &mut catalog,
+        "create table t(a int, b int, c varchar(20), d varchar(20), \
+         index idx_a(a), index idx_b(b), index idx_c(c), index idx_d(d))",
+    );
+    let mut values = Vec::with_capacity(96);
+    for _ in 0..32 {
+        values.extend(["(1,1,'xxx','zzz')", "(2,2,'yyy','zzz')", "(1,3,null,'zzz')"]);
+    }
+    insert(
+        &mut catalog,
+        &format!("insert into t values {}", values.join(",")),
+    );
+
+    let mut table = kv_table_of(&catalog, "t");
+    let column_names = table
+        .visible_columns()
+        .iter()
+        .map(|column| (column.id, column.name.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let index_names = table
+        .indexes()
+        .iter()
+        .map(|index| (index.id, index.name.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let statistics = analyze_kv_table(&mut table, &AnalyzeOptions::default(), None, &ctx())
+        .unwrap_or_else(|error| panic!("analyze failed: {error:?}"));
+
+    let columns = statistics
+        .columns
+        .iter()
+        .map(|(id, column)| {
+            (
+                column_names[id].as_str(),
+                (column.histogram.ndv, column.histogram.null_count),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let indexes = statistics
+        .indexes
+        .iter()
+        .map(|(id, index)| {
+            (
+                index_names[id].as_str(),
+                (index.histogram.ndv, index.histogram.null_count),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    assert_eq!(
+        columns,
+        BTreeMap::from([("a", (2, 0)), ("b", (3, 0)), ("c", (2, 32)), ("d", (1, 0)),])
+    );
+    assert_eq!(
+        indexes,
+        BTreeMap::from([
+            ("idx_a", (2, 0)),
+            ("idx_b", (3, 0)),
+            ("idx_c", (2, 32)),
+            ("idx_d", (1, 0)),
+        ])
     );
 }
 

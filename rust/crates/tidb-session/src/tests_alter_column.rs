@@ -37,6 +37,21 @@
 use crate::tests_support::*;
 use crate::*;
 
+/// Go `pkg/statistics/integration_test.go::TestIssue44369`: renaming a column
+/// covered by a composite index must not leave the loaded statistics bound to
+/// stale schema metadata during the next range-estimation query.
+#[test]
+fn renamed_indexed_column_keeps_loaded_statistics_usable() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (a INT, b INT, INDEX iab(a,b))")
+        .unwrap();
+    session.run("INSERT INTO t VALUES (1,1)").unwrap();
+    session.run("ANALYZE TABLE t").unwrap();
+    session.run("ALTER TABLE t RENAME COLUMN b TO bb").unwrap();
+    assert!(row_text(session.run("SELECT * FROM t WHERE a = 10 AND bb > 20")).is_empty());
+}
+
 /// Go: `create table mc(a int key nonclustered, b int, c int)` then
 /// `alter table mc modify column a int key` / `... c int unique`, both of
 /// which must fail -- MODIFY may not ADD a constraint -- and leave the table
