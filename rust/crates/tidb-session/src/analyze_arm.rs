@@ -38,15 +38,12 @@
 //!   convergence node enforces. This tier applies no table privileges to
 //!   ordinary reads either, so a check on this one statement would be the
 //!   only one and would refuse scripts nothing else refuses.
-//! * **Transaction interaction.** The analysis runs against the catalog THIS
-//!   statement sees, so inside an explicit transaction it reads the
-//!   transaction's rows and a `ROLLBACK` discards the statistics with them.
-//!   Captured: TiDB's survive the rollback, because its `ANALYZE` writes
-//!   through an INTERNAL session and the statistics were never the rolling-back
-//!   transaction's to discard. Named rather than papered over -- making the
-//!   write escape the transaction would also make the READ escape it, and
-//!   sampling rows the statement cannot see is the worse of the two errors.
-//!   Pinned by `tests_analyze::analyze_inside_a_transaction_rolls_back_with_it`.
+//! * **Transaction interaction.** The analysis reads the catalog THIS
+//!   statement sees, including its transaction's rows, while statistics are
+//!   published through the process-wide catalog cache. This is Go's split:
+//!   analyze workers read the statement snapshot and `SaveAnalyzeResultToStorage`
+//!   uses a stats-handle internal session, so a user `ROLLBACK` cannot discard
+//!   the published statistics.
 
 use std::sync::Arc;
 

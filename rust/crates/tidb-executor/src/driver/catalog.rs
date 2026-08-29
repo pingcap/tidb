@@ -83,6 +83,17 @@ struct Database {
     tables: HashMap<String, std::sync::Arc<TableEntry>>,
 }
 
+/// Go's process-wide statistics handle cache.
+///
+/// Catalog clones are transaction and stale-read images of schema/table
+/// state. Statistics are neither: the stats handle publishes one cache for
+/// every session, including sessions currently reading through an older
+/// transaction image.
+#[derive(Debug, Default)]
+struct StatisticsCache {
+    values: std::sync::RwLock<HashMap<i64, Arc<crate::access_cost::TableStatistics>>>,
+}
+
 /// A catalog of databases and their tables, the position Go's `infoschema`
 /// occupies. Database and table names are case-insensitive, as in MySQL.
 #[derive(Clone, Debug)]
@@ -146,7 +157,7 @@ pub struct Catalog {
     /// lives on the catalog rather than on a table because it is loaded from
     /// `mysql.stats_*` on its own cadence (see `tidb-exec`'s `stats_watch`),
     /// so the two are published independently.
-    statistics: HashMap<i64, Arc<crate::access_cost::TableStatistics>>,
+    statistics: Arc<StatisticsCache>,
     /// The store's commit history, shared by every clone of this catalog
     /// (working copies, sessions on the same store): a monotonic TSO-shaped
     /// allocator plus a bounded ring of committed snapshots, which is what
@@ -312,7 +323,7 @@ impl Default for Catalog {
             version: 0,
             metadata_version: 0,
             shadowed_by_local_temporary: Vec::new(),
-            statistics: HashMap::new(),
+            statistics: Arc::default(),
             commit_history: Arc::new(std::sync::Mutex::new(CommitHistory::default())),
             temporary_sweep: None,
         };
@@ -1205,7 +1216,11 @@ impl Catalog {
         table_id: i64,
         statistics: Arc<crate::access_cost::TableStatistics>,
     ) {
-        self.statistics.insert(table_id, statistics);
+        self.statistics
+            .values
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(table_id, statistics);
     }
 
     /// One table's loaded statistics; `None` is Go's `PseudoTable`.
@@ -1213,8 +1228,13 @@ impl Catalog {
     pub fn table_statistics(
         &self,
         table_id: i64,
-    ) -> Option<&Arc<crate::access_cost::TableStatistics>> {
-        self.statistics.get(&table_id)
+    ) -> Option<Arc<crate::access_cost::TableStatistics>> {
+        self.statistics
+            .values
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&table_id)
+            .cloned()
     }
 
     /// A mutable table of `database`, for the schema-changing statements.

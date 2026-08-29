@@ -147,7 +147,8 @@ impl OwnedRewrite for InitStats<'_> {
             return Descend::Children(vec![(); node.children().len()]);
         };
         let statistics = self.catalog.table_statistics(source.table_id);
-        let row_count = crate::access_cost::realtime_row_count(statistics.map(AsRef::as_ref));
+        let statistics = statistics.as_deref();
+        let row_count = crate::access_cost::realtime_row_count(statistics);
         let loaded_columns = statistics
             .map(|statistics| statistics.columns.keys().copied().collect())
             .unwrap_or_default();
@@ -222,7 +223,6 @@ impl OwnedRewrite for InitStats<'_> {
             self.catalog.get_in(&source.db_name, &source.table_name),
             source.table_stats.clone(),
         ) {
-            let statistics = statistics.map(AsRef::as_ref);
             source.table_path_count_after_access =
                 crate::handle_range::build_handle_ranges(table, predicate, self.zone)
                     .map(|built| {

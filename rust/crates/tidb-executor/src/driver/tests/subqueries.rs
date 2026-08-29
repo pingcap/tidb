@@ -1894,7 +1894,7 @@ fn tpcc_conditions_ten_and_twelve_decorrelate_scalar_sums() {
     };
     let mut history_stats = catalog
         .table_statistics(history_id)
-        .map(|stats| (**stats).clone())
+        .map(|stats| (*stats).clone())
         .unwrap();
     for histogram in [
         &mut history_stats.columns.get_mut(&h_c_w_id).unwrap().histogram,

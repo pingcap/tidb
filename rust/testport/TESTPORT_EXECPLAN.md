@@ -946,6 +946,12 @@ For each bounded behavior cluster:
       prefix, ignore the codec error, and render the undecoded suffix as one
       bytes datum. Do not fake `NewPseudoHistogramReuseChunk` with an identity
       token while Rust still lacks Go's `Tp` plus shared `Bounds` structure.
+- [x] Move the in-process statistics cache out of transactional catalog clone
+      semantics. Catalog images now share one stats-handle cache, so ANALYZE
+      reads the user transaction's rows but its publication survives ROLLBACK
+      and cannot be overwritten by a later commit of an older catalog image.
+      Physical scan EXPLAIN now reads that retained statistics identity, as
+      Go does, instead of unconditionally printing `stats:pseudo`.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope

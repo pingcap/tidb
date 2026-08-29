@@ -78,6 +78,17 @@ fn expression_text(expression: &tidb_expr::expression::Expression) -> String {
     crate::plan_trace::physical_expression_text_with_columns(expression, &[]).unwrap_or_default()
 }
 
+/// Go appends `stats:pseudo` only when a scan's `StatsInfo.StatsVersion` is
+/// `statistics.PseudoVersion` (and no statement-specific `UsedStatsInfo`
+/// replaces it). Rust carries that same bit on the retained histogram
+/// collection.
+fn scan_uses_pseudo_statistics(base: &tidb_planner::physical::BasePhysicalPlan) -> bool {
+    base.base
+        .stats_info()
+        .and_then(tidb_planner::stats_info::StatsInfo::hist_coll)
+        .is_none_or(tidb_planner::stats_info::HistColl::pseudo)
+}
+
 fn expressions_text(expressions: &[tidb_expr::expression::Expression]) -> String {
     expressions
         .iter()
@@ -370,7 +381,9 @@ fn physical_operator_info(plan: &PhysicalPlan, catalog: &Catalog) -> String {
                 parts.push(format!("range:{}", scan_ranges_text(&scan.ranges)));
             }
             parts.push(format!("keep order:{}", scan.keep_order));
-            parts.push("stats:pseudo".to_owned());
+            if scan_uses_pseudo_statistics(&scan.base) {
+                parts.push("stats:pseudo".to_owned());
+            }
             parts.join(", ")
         }
         PhysicalPlan::TableDual(dual) => dual.explain_info(),
@@ -390,7 +403,9 @@ fn physical_operator_info(plan: &PhysicalPlan, catalog: &Catalog) -> String {
                 parts.push(format!("range:{}", scan_ranges_text(&scan.ranges)));
             }
             parts.push(format!("keep order:{}", scan.keep_order));
-            parts.push("stats:pseudo".to_owned());
+            if scan_uses_pseudo_statistics(&scan.base) {
+                parts.push("stats:pseudo".to_owned());
+            }
             parts.join(", ")
         }
         PhysicalPlan::IndexReader(reader) => format!(
