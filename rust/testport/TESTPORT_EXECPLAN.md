@@ -36,6 +36,13 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-08-29: completed the pinned Go `pkg/util/cdcutil` package (one
+  production file, one external test, one test-support file, and
+  `BUILD.bazel`). Added the formerly absent Rust owner against the production
+  PD-etcd boundary, including both key generations, state/checkpoint rules,
+  safe-TS filtering, grouping, messages, and source logging. The single source
+  test identity covers both upstream subtests. Complete inventory and WIP
+  gates are recorded in `receipts/util_cdcutil.md`.
 - 2026-08-29: completed the pinned Go `pkg/util/resourcegrouptag` package
   (one production file, one source test, one test harness, and `BUILD.bazel`).
   Split its decoder, label classifier, and first-key extraction out of the

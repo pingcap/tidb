@@ -3281,6 +3281,7 @@ dependencies = [
  "tidb-model",
  "tidb-mysql",
  "tidb-vardef",
+ "tracing",
 ]
 
 [[package]]
