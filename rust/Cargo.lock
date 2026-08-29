@@ -3752,8 +3752,25 @@ dependencies = [
  "sha2",
  "tidb-codec",
  "tidb-datatype",
+ "tidb-stats-handle-util",
  "tidb-txnkv",
  "tidb-util",
+]
+
+[[package]]
+name = "tidb-stats-handle-util"
+version = "0.0.0"
+dependencies = [
+ "fail",
+ "tidb-ast",
+ "tidb-datatype",
+ "tidb-model",
+ "tidb-resolve",
+ "tidb-sqlexec",
+ "tidb-sqlexec-mock",
+ "tidb-syssession",
+ "tidb-util",
+ "tidb-vardef",
 ]
 
 [[package]]

@@ -1,0 +1,27 @@
+[package]
+name = "tidb-stats-handle-util"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB statistics handle utility package."
+
+[lints]
+workspace = true
+
+[features]
+failpoints = ["dep:fail", "fail/failpoints", "tidb-util/failpoints"]
+intest = ["tidb-util/intest"]
+
+[dependencies]
+fail = { version = "0.4", optional = true }
+tidb-ast = { path = "../tidb-ast" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-model = { path = "../tidb-model" }
+tidb-resolve = { path = "../tidb-resolve" }
+tidb-sqlexec = { path = "../tidb-sqlexec" }
+tidb-sqlexec-mock = { path = "../tidb-sqlexec-mock" }
+tidb-syssession = { path = "../tidb-syssession" }
+tidb-util = { path = "../tidb-util" }
+tidb-vardef = { path = "../tidb-vardef" }

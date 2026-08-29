@@ -35,7 +35,6 @@ pub mod analyze_version_policy;
 pub mod async_load;
 pub mod auto_analyze_job;
 pub mod auto_analyze_policy;
-pub mod auto_analyze_process_set;
 pub mod auto_analyze_ratio;
 pub mod auto_analyze_runtime;
 pub mod auto_analyze_window;
@@ -85,7 +84,6 @@ pub mod memory_usage;
 pub mod mock_statistics_shape;
 pub mod non_partitioned_analysis;
 pub mod overlap_geometry;
-pub mod partition_table_id_cache;
 pub mod pending_delta_ids;
 pub mod predicate_column_queries;
 pub mod predicate_column_query_mode;
@@ -101,19 +99,16 @@ pub mod sample_collector;
 pub mod scalar_enum;
 pub mod scalar_geometry;
 pub mod sorted_builder;
-pub mod special_global_index;
 pub mod static_partitioned_analysis;
 pub mod stats_cache_inner;
 pub mod stats_cache_version;
 pub mod stats_delta;
 pub mod stats_key_set;
 pub mod stats_key_set_shards;
-pub mod stats_lease;
 pub mod stats_lock_table;
 pub mod stats_meta;
 pub mod stats_meta_save_sql;
 pub mod stats_meta_update;
-pub mod stats_pool;
 pub mod stats_read_writer;
 pub mod stats_request_matcher;
 pub mod stats_table_snapshot;
@@ -151,7 +146,6 @@ pub use auto_analyze_job::{
     AnalysisJobKind, Indicators, IndicatorsJSON, IndicatorsJson,
 };
 pub use auto_analyze_policy::need_analyze_table;
-pub use auto_analyze_process_set::AutoAnalyzeProcessSet;
 pub use auto_analyze_ratio::{parse_auto_analyze_ratio, DEFAULT_AUTO_ANALYZE_RATIO};
 pub use auto_analyze_runtime::{
     AnalysisJobFactory, AnalysisJobRuntime,
@@ -259,7 +253,6 @@ pub use non_partitioned_analysis::{
     ANALYZE_INDEX, ANALYZE_TABLE,
 };
 pub use overlap_geometry::{left_overlap_percent, right_overlap_percent};
-pub use partition_table_id_cache::PartitionTableIdCache;
 pub use pending_delta_ids::collect_pending_delta_ids;
 pub use predicate_column_queries::{
     cleanup_column_ids_argument, CLEANUP_DROPPED_COLUMN_STATS_USAGE_QUERY,
@@ -297,7 +290,6 @@ pub use scalar_geometry::{
     convert_datum_to_scalar,
 };
 pub use sorted_builder::SortedHistogramBuilder;
-pub use special_global_index::{is_special_global_index, IndexColumnInfo};
 pub use static_partitioned_analysis::{
     gen_sql_for_analyze_static_partition, gen_sql_for_analyze_static_partition_index,
     has_newly_added_static_partition_index, static_partition_analyze_type,
@@ -308,7 +300,6 @@ pub use stats_cache_version::max_stats_cache_version;
 pub use stats_delta::{stats_delta_from_rows, StatsDelta, SELECT_DELTA_SQL};
 pub use stats_key_set::StatsKeySet;
 pub use stats_key_set_shards::{StatsKeySetShards, KEY_SET_SHARD_COUNT};
-pub use stats_lease::StatsLease;
 pub use stats_lock_table::StatsLockTable;
 pub use stats_meta::{stats_meta_counts, stats_meta_query, StatsMetaCounts};
 pub use stats_meta_save_sql::{stats_meta_save_sql, StatsMetaSaveUpdate};
@@ -316,7 +307,6 @@ pub use stats_meta_update::{
     stats_meta_update_sql, DeltaUpdate, StatsMetaUpdateSql, StatsMetaVersionUpdate,
     UPDATE_STATS_META_VERSION_QUERY,
 };
-pub use stats_pool::StatsPool;
 pub use stats_read_writer::{
     historical_stats_meta_record_required, slow_stats_saving_requires_meta_update, LEASE_OFFSET,
     SLOW_STATS_SAVE_ERROR_MESSAGE,
@@ -339,6 +329,7 @@ pub use table::{
     StatsInfo, Table, TableMemoryUsage, PSEUDO_ROW_COUNT, PSEUDO_VERSION,
 };
 pub use table_id_filter::build_in_table_ids_string;
+pub use tidb_stats_handle_util::*;
 pub use topn_merge_task::TopnStatsMergeTask;
 pub use usage_collector::{
     GlobalCollector, SessionCollector, DEFAULT_CHANNEL_SIZE, DEFAULT_TIMEOUT,

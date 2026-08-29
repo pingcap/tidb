@@ -30,7 +30,8 @@ return value; unexpected calls panic; `verify` and drop reject missing calls.
 This retains the generated artifact's observable test-double contract without
 adding a second SQL interface or a third-party Rust mocking framework. The
 statistics consumer's `intest` context-value dispatch belongs to the complete
-`pkg/statistics/handle/util` package and is not claimed here.
+`pkg/statistics/handle/util` package and is integrated by the owner recorded in
+`statistics_handle_util.md`.
 
 ## Validation
 

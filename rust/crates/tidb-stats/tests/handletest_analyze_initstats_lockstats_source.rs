@@ -70,9 +70,10 @@ fn column_ids() {
 
 // handletest/handle_test.go::TestDurationToTS
 #[test]
-#[ignore = "go-parity-gap: handle/util.DurationToTS is not ported to tidb-stats (oracle.ComposeTS of millisecond duration)"]
 fn duration_to_ts() {
-    unreachable!("gated by go-parity-gap ignore")
+    assert_eq!(tidb_stats::duration_to_ts(0), 0);
+    assert_eq!(tidb_stats::duration_to_ts(1_000_000), 1 << 18);
+    assert_eq!(tidb_stats::duration_to_ts(12_345_678), 12 << 18);
 }
 
 // handletest/handle_test.go::TestVersion

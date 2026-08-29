@@ -39,6 +39,7 @@ members = [
     "crates/tidb-syssession",
     "crates/tidb-datatype",
     "crates/tidb-stats",
+    "crates/tidb-stats-handle-util",
     "crates/tidb-codec",
     "crates/tidb-txnkv",
     "crates/tidb-tablecodec",

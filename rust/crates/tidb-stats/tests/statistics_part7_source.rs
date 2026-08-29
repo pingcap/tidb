@@ -21,7 +21,6 @@
 //!
 //! Portable tests live here; go-parity gaps carry `#[ignore]` markers below.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -29,10 +28,8 @@ use std::time::{Duration, Instant};
 use tidb_datatype::{
     BinaryLiteral, CoreTime, Datum, Decimal, MySqlDuration, Time, TimeType,
 };
-use tidb_stats::index_usage::{
-    IndexUsageCollector, SessionIndexUsageCollector as _, StmtIndexUsageCollector,
-};
-use tidb_stats::{enum_range_values, new_index_usage_sample, IndexColumnInfo};
+use tidb_stats::index_usage::{IndexUsageCollector, StmtIndexUsageCollector};
+use tidb_stats::{enum_range_values, new_index_usage_sample};
 
 // -------------------------------------------------------------------------
 // scalar_test.go::TestCalcFraction
@@ -499,50 +496,6 @@ fn source_gc_index_usage_removes_dropped_indexes_and_tables() {
 }
 
 // -------------------------------------------------------------------------
-// util_test.go::TestIsSpecialGlobalIndex
-// -------------------------------------------------------------------------
-
-/// util_test.go::TestIsSpecialGlobalIndex — the six-index DDL fixture
-/// classifies as follows: plain unique/local indexes (`b`, `c`) and their
-/// non-global expression/prefix twins (`b_s`, `d_s`) are NOT special, while
-/// the global expression index (`ub_s`) and the global prefix index (`ud_s`)
-/// ARE. The Go test derives the column facts from DDL'd table info; the
-/// classification primitive takes those facts directly.
-#[test]
-fn source_is_special_global_index_classifies_ddl_fixture() {
-    // b: unique global index on a regular column -> not special.
-    assert!(!tidb_stats::is_special_global_index(
-        true,
-        &[IndexColumnInfo::regular()]
-    ));
-    // c: local index on a regular column -> not special.
-    assert!(!tidb_stats::is_special_global_index(
-        false,
-        &[IndexColumnInfo::regular()]
-    ));
-    // b_s: local expression index (virtual generated column) -> not special.
-    assert!(!tidb_stats::is_special_global_index(
-        false,
-        &[IndexColumnInfo::virtual_generated()]
-    ));
-    // d_s: local prefix index -> not special.
-    assert!(!tidb_stats::is_special_global_index(
-        false,
-        &[IndexColumnInfo::prefix()]
-    ));
-    // ub_s: UNIQUE global index on an expression -> special.
-    assert!(tidb_stats::is_special_global_index(
-        true,
-        &[IndexColumnInfo::virtual_generated()]
-    ));
-    // ud_s: UNIQUE global index on a prefix -> special.
-    assert!(tidb_stats::is_special_global_index(
-        true,
-        &[IndexColumnInfo::prefix()]
-    ));
-}
-
-// -------------------------------------------------------------------------
 // go-parity-gap markers. Each `#[ignore]`d test names one Go test from the
 // part7 slice whose behavior has no Rust surface yet.
 // -------------------------------------------------------------------------
@@ -628,27 +581,6 @@ fn source_dump_stats_delta_persists_init_time() {
 #[test]
 #[ignore = "go-parity-gap: pessimistic-txn-blocked dump merge timing lives in the handle's usage writer with KV storage; outside tidb-stats"]
 fn source_dump_stats_delta_merge_keeps_earliest_init_time() {
-    unreachable!("gated by go-parity-gap ignore")
-}
-
-// handle/util/util_test.go::TestCallSCtxFailed
-#[test]
-#[ignore = "go-parity-gap: CallWithSCtx session-pool acquire/release semantics need the session layer; outside tidb-stats"]
-fn source_call_sctx_failed() {
-    unreachable!("gated by go-parity-gap ignore")
-}
-
-// handle/util/util_test.go::TestCallWithSCtxSyncsStmtCtxTimeZone
-#[test]
-#[ignore = "go-parity-gap: CallWithSCtx stmt-context timezone sync needs the session layer; outside tidb-stats"]
-fn source_call_with_sctx_syncs_stmt_ctx_time_zone() {
-    unreachable!("gated by go-parity-gap ignore")
-}
-
-// handle/util/util_test.go::TestTableItemByIDForInitStatsAvoidsV1PartitionScan
-#[test]
-#[ignore = "go-parity-gap: TableInfoGetter.TableItemByIDForInitStats over a mock infoschema is not ported into tidb-stats (no tidb-model dependency)"]
-fn source_table_item_by_id_for_init_stats_avoids_v1_partition_scan() {
     unreachable!("gated by go-parity-gap ignore")
 }
 

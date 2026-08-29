@@ -36,6 +36,14 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-08-29: completed the pinned Go `pkg/statistics/handle/util` package as
+  one `tidb-stats-handle-util` owner. Removed five narrowed `tidb-stats`
+  implementations and their supplemental tests, restored the complete process
+  tracker, signed lease, worker/session pool facade, versioned table lookup,
+  session synchronization, transaction, executor, timestamp, and model-backed
+  index behavior, and replaced all four historical ignored package-test gaps
+  with executable tests. Complete inventory and WIP gates are recorded in
+  `receipts/statistics_handle_util.md`.
 - 2026-08-29: completed the pinned Go `pkg/planner/core/resolve` package (two
   production files and `BUILD.bazel`; no package tests). Replaced the unusable
   Arc-of-a-cloned-table key with stable per-AST-occurrence identity matching
@@ -678,6 +686,12 @@ For each bounded behavior cluster:
       and the generated restricted-executor mock's full three-method
       contract without introducing a second SQL interface. The atomic
       inventory and WIP gates are in `receipts/util_sqlexec_mock.md`.
+- [x] Complete the pinned `pkg/statistics/handle/util` package in a distinct
+      `tidb-stats-handle-util` owner: remove five partial policy modules,
+      implement every production artifact over shared model/executor/session
+      contracts, and replace its four ignored source tests with executable
+      behavior. The atomic inventory and WIP gates are in
+      `receipts/statistics_handle_util.md`.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope
@@ -716,6 +730,12 @@ For each bounded behavior cluster:
   generation mechanics. `pkg/util/sqlexec/mock` owns a native strict recorder
   over the already-complete Rust executor trait; it does not own or duplicate
   SQL execution behavior. Date/Author: 2026-08-29, Codex.
+- Decision: `pkg/statistics/handle/util` is one owner rather than five
+  independent statistics leaves. Its worker dependency is implemented
+  natively with the source-observable pool policy, while SQL/session/model
+  behavior uses the already shared package contracts. The partial modules and
+  their duplicate tests are deleted rather than retained beside the atomic
+  owner. Date/Author: 2026-08-29, Codex.
 
 ## Surprises & Discoveries
 
