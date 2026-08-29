@@ -311,6 +311,9 @@ For each bounded behavior cluster:
       owner: restore signed index results and empty `-1`, remove Rust-only
       saturating rank policy, retain its four source tests, restore all 21
       benchmark cases, and migrate the HashAgg percentile caller.
+- [x] Complete the pinned `pkg/util/size` package in its `tidb-util` owner,
+      retain all twenty source constants with Go ABI sizing, and remove the
+      supplementary Rust test absent from this test-free Go package.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope
