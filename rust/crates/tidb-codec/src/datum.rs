@@ -324,7 +324,7 @@ impl Encoder {
 
     fn string_key(self, value: &StringDatum) -> Vec<u8> {
         if self.use_new_collation {
-            value.collation().immutable_key(value.bytes())
+            value.collation().immutable_key(value.bytes()).into_owned()
         } else {
             value.bytes().to_vec()
         }

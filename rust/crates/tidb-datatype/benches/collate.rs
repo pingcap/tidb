@@ -79,9 +79,7 @@ fn main() {
             measure(
                 &format!("Benchmark{collation_name}_ImmutableKey{length_name}"),
                 || {
-                    // Rust owns returned keys, so the source ImmutableKey
-                    // operation has the same executable implementation.
-                    black_box(collation.key(black_box(&value)));
+                    black_box(collation.immutable_key(black_box(&value)));
                 },
             );
         }

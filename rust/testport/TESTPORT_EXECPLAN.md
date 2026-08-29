@@ -198,6 +198,18 @@ For each bounded behavior cluster:
   unsigned hash tag, and collation initialization/runtime selection. The full
   `tidb-codec` suite passes (45 unit + 163 integration), and the complete
   `tidb-datatype` dependency suite passes (424 tests).
+- 2026-08-28: audited the complete pinned Go `pkg/util/collate` package: all 35
+  production, generated, generator-input, test, benchmark, harness, and build
+  artifacts. The checkout package is byte-identical to the pin. Removed stale
+  unresolved-finding documentation; restored caller spelling on successful
+  substitution, borrowed `ImmutableKey` storage for binary collators,
+  arbitrary-byte wildcard compilation, the source pinyin panic, and Go's UCA
+  9.0 missing-map zero value. The data generator checks all seven images and
+  the 11-test/45-benchmark inventory is fully assigned. The complete
+  `tidb-datatype` and `tidb-codec` suites pass, benchmark targets compile, and
+  downstream executor owners compile. Go `ucadata` passes; the root Go package
+  is blocked by unrelated host-toolchain `checkMapABI` and
+  `http2.TrailerPrefix` build failures.
 
 - [x] Pin the comparison baseline to Go commit
       `e2788410d8d696605e8cb002585877a063ccc909`.

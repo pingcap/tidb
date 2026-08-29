@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::borrow::Cow;
 use std::cmp::Ordering;
 
 use crate::{
@@ -222,6 +223,27 @@ fn test_utf8_collator_key() {
     }
 }
 
+#[test]
+fn immutable_binary_keys_borrow_the_source_storage() {
+    let value = b"value  ";
+    assert!(matches!(
+        Collation::Binary.immutable_key(value),
+        Cow::Borrowed(bytes) if std::ptr::eq(bytes.as_ptr(), value.as_ptr())
+    ));
+    assert!(matches!(
+        Collation::Utf8Mb4Bin.immutable_key(value),
+        Cow::Borrowed(bytes) if bytes == b"value" && std::ptr::eq(bytes.as_ptr(), value.as_ptr())
+    ));
+    assert!(matches!(
+        Collator::DerivedBinary.immutable_key(value),
+        Cow::Borrowed(bytes) if std::ptr::eq(bytes.as_ptr(), value.as_ptr())
+    ));
+    assert!(matches!(
+        Collation::Utf8Mb4GeneralCi.immutable_key(value),
+        Cow::Owned(_)
+    ));
+}
+
 /// Go `pkg/util/collate/collate_test.go` `TestGetCollator`.
 #[test]
 fn test_get_collator() {
@@ -414,6 +436,16 @@ fn mode_id_and_helper_functions_follow_source() {
         "utf8mb4_bin"
     );
     assert_eq!(
+        substitute_missing_collation_to_default("UTF8MB4_BIN"),
+        "UTF8MB4_BIN",
+        "Go returns the caller's spelling after a successful registry lookup"
+    );
+    assert_eq!(
+        substitute_missing_collation_to_default("utf8mb3_bin"),
+        "utf8mb3_bin",
+        "Go does not expose the registry's utf8mb3 alias canonicalization"
+    );
+    assert_eq!(
         get_supported_collation_by_name("utf8mb4_0900_as_cs")
             .unwrap_err()
             .to_string(),
@@ -479,10 +511,20 @@ fn wildcard_patterns_follow_each_source_collator_family() {
     let reordered = get_collator("binary").pattern("%_", b'\\');
     assert!(reordered.is_match(b"x"));
     assert!(reordered.is_match(b"xyz"));
+
+    for collator in [
+        Collator::DerivedBinary,
+        Collator::New(Collation::Binary),
+        Collator::New(Collation::Utf8Mb4GeneralCi),
+    ] {
+        let invalid = collator.pattern([0xff], b'\\');
+        assert!(invalid.is_match(&[0xff]));
+        assert!(!invalid.is_match(b"x"));
+    }
 }
 
 #[test]
-#[should_panic(expected = "utf8mb4_zh_pinyin_tidb_as_cs is not implemented")]
+#[should_panic(expected = "implement me")]
 fn pinyin_stub_preserves_source_panic() {
     let _ = Collation::Utf8Mb4ZhPinyinTiDbAsCs.key(b"value");
 }

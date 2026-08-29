@@ -17,6 +17,7 @@
 //! The generated images are exact little-endian conversions of TiDB's Go
 //! tables. Runtime keys remain the source-defined big-endian weight stream.
 
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
@@ -105,9 +106,12 @@ impl Collator {
         }
     }
 
-    /// Rust-owned equivalent of Go's allocation-aware `ImmutableKey`.
-    pub fn immutable_key(self, value: &[u8]) -> Vec<u8> {
-        self.key(value)
+    /// Go's allocation-aware `ImmutableKey`; binary collators borrow input.
+    pub fn immutable_key<'a>(self, value: &'a [u8]) -> Cow<'a, [u8]> {
+        match self {
+            Self::New(collation) => collation.immutable_key(value),
+            Self::DerivedBinary => Cow::Borrowed(value),
+        }
     }
 
     /// Returns the key without PAD SPACE preprocessing.
@@ -127,7 +131,8 @@ impl Collator {
     }
 
     /// Compiles a wildcard pattern with this collator's equality semantics.
-    pub fn pattern(self, pattern: &str, escape: u8) -> WildcardPattern {
+    pub fn pattern(self, pattern: impl AsRef<[u8]>, escape: u8) -> WildcardPattern {
+        let pattern = pattern.as_ref();
         match self {
             Self::DerivedBinary => WildcardPattern::unicode(pattern, escape, PatternMatcher::Exact),
             Self::New(collation) => collation.pattern(pattern, escape),
@@ -260,7 +265,9 @@ pub fn collation_name_to_id(name: &str) -> i32 {
 pub fn get_supported_collation_by_name(name: &str) -> Result<CollationInfo, CollationError> {
     let row = charset_collation_by_name(name)?;
     if new_collation_enabled() && Collation::from_name(&row.name).is_none() {
-        return Err(CollationError::UnsupportedCollation(name.to_owned()));
+        return Err(CollationError::UnsupportedCollation(
+            name.chars().take(64).collect(),
+        ));
     }
     Ok(row)
 }
@@ -268,7 +275,7 @@ pub fn get_supported_collation_by_name(name: &str) -> Result<CollationInfo, Coll
 /// Substitutes the default for a missing or currently unsupported collation.
 pub fn substitute_missing_collation_to_default(name: &str) -> String {
     get_supported_collation_by_name(name)
-        .map(|row| row.name)
+        .map(|_| name.to_owned())
         .unwrap_or_else(|_| Collation::DEFAULT.name().to_owned())
 }
 
@@ -392,8 +399,8 @@ pub struct WildcardPattern {
 }
 
 impl WildcardPattern {
-    fn binary(pattern: &str, escape: u8) -> Self {
-        let units: Vec<_> = pattern.as_bytes().iter().copied().map(u32::from).collect();
+    fn binary(pattern: &[u8], escape: u8) -> Self {
+        let units: Vec<_> = pattern.iter().copied().map(u32::from).collect();
         let (pattern, types) = compile_pattern(units, u32::from(escape));
         Self {
             pattern,
@@ -403,8 +410,8 @@ impl WildcardPattern {
         }
     }
 
-    fn unicode(pattern: &str, escape: u8, matcher: PatternMatcher) -> Self {
-        let units: Vec<_> = pattern.chars().map(|character| character as u32).collect();
+    fn unicode(pattern: &[u8], escape: u8, matcher: PatternMatcher) -> Self {
+        let units = go_runes(pattern);
         let (pattern, types) = compile_pattern(units, u32::from(escape));
         Self {
             pattern,
@@ -564,7 +571,8 @@ const GB18030_CHINESE_CI: &[u8; 0x11_0000 * 4] =
 
 impl Collation {
     /// Compiles this collation's wildcard matcher.
-    pub fn pattern(self, pattern: &str, escape: u8) -> WildcardPattern {
+    pub fn pattern(self, pattern: impl AsRef<[u8]>, escape: u8) -> WildcardPattern {
+        let pattern = pattern.as_ref();
         match self {
             Self::Binary | Self::Gb18030Bin => WildcardPattern::binary(pattern, escape),
             // `gbkBinPattern` embeds `derivedBinPattern`, so gbk_bin matches by
@@ -591,7 +599,7 @@ impl Collation {
                 WildcardPattern::unicode(pattern, escape, PatternMatcher::Gb18030ChineseCi)
             }
             Self::Utf8Mb4ZhPinyinTiDbAsCs => {
-                panic!("utf8mb4_zh_pinyin_tidb_as_cs is not implemented")
+                panic!("implement me")
             }
         }
     }
@@ -611,7 +619,7 @@ impl Collation {
             Self::GbkChineseCi => chinese_ci_compare(left, right, gbk_chinese_ci_weight),
             Self::Gb18030ChineseCi => chinese_ci_compare(left, right, gb18030_chinese_ci_weight),
             Self::Utf8Mb4ZhPinyinTiDbAsCs => {
-                panic!("utf8mb4_zh_pinyin_tidb_as_cs is not implemented")
+                panic!("implement me")
             }
         }
     }
@@ -631,14 +639,20 @@ impl Collation {
             Self::GbkChineseCi => chinese_ci_key(value, true, gbk_chinese_ci_weight),
             Self::Gb18030ChineseCi => chinese_ci_key(value, true, gb18030_chinese_ci_weight),
             Self::Utf8Mb4ZhPinyinTiDbAsCs => {
-                panic!("utf8mb4_zh_pinyin_tidb_as_cs is not implemented")
+                panic!("implement me")
             }
         }
     }
 
-    /// Rust-owned equivalent of Go's allocation-aware `ImmutableKey`.
-    pub fn immutable_key(self, value: &[u8]) -> Vec<u8> {
-        self.key(value)
+    /// Go's allocation-aware `ImmutableKey`; binary collators borrow input.
+    pub fn immutable_key<'a>(self, value: &'a [u8]) -> Cow<'a, [u8]> {
+        match self {
+            Self::Binary | Self::Utf8Mb40900Bin => Cow::Borrowed(value),
+            Self::AsciiBin | Self::Latin1Bin | Self::Utf8Bin | Self::Utf8Mb4Bin => {
+                Cow::Borrowed(trim_trailing_spaces(value))
+            }
+            _ => Cow::Owned(self.key(value)),
+        }
     }
 
     /// Returns the source key without the collation's PAD SPACE preprocessing.
@@ -658,7 +672,7 @@ impl Collation {
             Self::GbkChineseCi => chinese_ci_key(value, false, gbk_chinese_ci_weight),
             Self::Gb18030ChineseCi => chinese_ci_key(value, false, gb18030_chinese_ci_weight),
             Self::Utf8Mb4ZhPinyinTiDbAsCs => {
-                panic!("utf8mb4_zh_pinyin_tidb_as_cs is not implemented")
+                panic!("implement me")
             }
         }
     }
@@ -679,7 +693,7 @@ impl Collation {
                 go_rune_count(value) * 16
             }
             Self::Utf8Mb4ZhPinyinTiDbAsCs => {
-                panic!("utf8mb4_zh_pinyin_tidb_as_cs is not implemented")
+                panic!("implement me")
             }
         }
     }
@@ -962,11 +976,12 @@ fn uca_0900_weight(codepoint: u32) -> (u64, u64) {
             .try_into()
             .expect("fixed UCA 9.0 table width"),
     );
-    if first != 0xFFFD || (0xD800..=0xDFFF).contains(&codepoint) {
+    if first != 0xFFFD {
         return (first, 0);
     }
-    long_weight(UNICODE_0900_LONG, 27, codepoint)
-        .expect("generated UCA 9.0 long-rune marker must have an expansion record")
+    // Go's map lookup returns the zero value for the surrogate entries whose
+    // generated table contains the marker but whose long-rune map has no row.
+    long_weight(UNICODE_0900_LONG, 27, codepoint).unwrap_or((0, 0))
 }
 
 fn long_uca_weight(codepoint: u32) -> Option<(u64, u64)> {
@@ -1239,6 +1254,12 @@ mod tests {
                 0
             );
         }
+    }
+
+    #[test]
+    fn uca_0900_surrogate_marker_uses_go_map_zero_value() {
+        assert_eq!(super::uca_0900_weight(0xD800), (0, 0));
+        assert_eq!(super::uca_0900_weight(0xDFFF), (0, 0));
     }
 
     #[test]
