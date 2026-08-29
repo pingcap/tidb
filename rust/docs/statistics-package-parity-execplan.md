@@ -104,6 +104,9 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - Observation: two ignored planner integration files still described `CollectColumnStatsUsage` and its logical-rule carrier as unported after both had been wired. Keeping those empty tests made the test inventory contradict production behavior.
   Evidence: both files contained only ignored empty functions; `logical::rule_collect_plan_stats` now owns the collector, rule positions, partition expansion, and request/wait tests.
 
+- Observation: the Rust `StatsCacheInner` and map backend were not shareable across threads, although Go publishes one cache to every session. The LFU backend was thread-safe, but the common trait could not form the parent cache's process-wide ownership boundary.
+  Evidence: `StatsCacheInner` lacked `Send + Sync` and `MapCache` stored its map in `RefCell`; a compile-time shared-cache boundary rejected both before the parent package could be wired.
+
 ## Decision Log
 
 - Decision: reconstruct and test each pinned Go branch before editing Rust; do not preserve Rust-only fallback paths.
@@ -216,3 +219,5 @@ Revision note (2026-08-29): removed the ignored empty `rule_collect_column_stats
 Revision note (2026-08-29): completed the atomic inventory for pinned `pkg/statistics/handle/cache/metrics` (`metrics.go`, `BUILD.bazel`; no package-local Go tests or fixtures). New crate `tidb-stats-handle-cache-metrics` binds `miss`, `hit`, `update`, `del`, `evict`, and `reject` counter children plus the `track` and `capacity` gauges to the exact `tidb_statistics_stats_cache_op` and `tidb_statistics_stats_cache_val` families. Focused tests cover independent children, gauge identity, and `InitMetricsVars` rebinding.
 
 Revision note (2026-08-29): completed the atomic inventory for pinned `pkg/statistics/handle/cache/internal/lfu` (`key_set.go`, `key_set_shard.go`, `lfu_cache.go`, `lfu_cache_test.go`, `BUILD.bazel`). New crate `tidb-stats-handle-cache-internal-lfu` uses the Ristretto-compatible Stretto TinyLFU implementation with transparent integer keys, Go's counter/capacity/buffer settings, production internal-cost accounting, all three callback routes, 256 secondary shards, full-to-metadata eviction copies, cost tracking, dynamic capacity, close-once semantics, shared `Copy`, and buffered-write barriers. Focused tests consolidate all ten original Go cases across put/get/delete, replacement accounting, oversized rejection, length/value retention, concurrent access, metadata eviction, capacity reduction, and shared-copy behavior. Live selection remains assigned to the parent cache package and is the next integration slice.
+
+Revision note (2026-08-29): corrected the common `cache/internal` ownership boundary before parent-cache integration. `StatsCacheInner` is now `Send + Sync`, and `mapcache` uses a poisoned-lock-tolerant `RwLock` instead of `RefCell`, preserving Go's shared-read behavior and COW copy independence. Focused tests cover cost replacement, deletion, copy isolation, and concurrent reads; the LFU suite proves the stronger trait does not change its behavior.

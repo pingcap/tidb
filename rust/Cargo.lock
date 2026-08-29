@@ -3863,6 +3863,7 @@ version = "0.0.0"
 dependencies = [
  "tidb-stats",
  "tidb-stats-handle-cache-internal",
+ "tidb-stats-handle-cache-internal-testutil",
 ]
 
 [[package]]

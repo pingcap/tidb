@@ -20,7 +20,7 @@ use tidb_stats::Table;
 
 /// Go `StatsCacheInner`.
 #[allow(clippy::len_without_is_empty)] // The pinned Go interface has Len, but no IsEmpty.
-pub trait StatsCacheInner {
+pub trait StatsCacheInner: Send + Sync {
     /// Go `Get`.
     fn get(&self, table_id: i64) -> Option<Arc<Table>>;
 

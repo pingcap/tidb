@@ -13,3 +13,6 @@ workspace = true
 [dependencies]
 tidb-stats = { path = "../tidb-stats" }
 tidb-stats-handle-cache-internal = { path = "../tidb-stats-handle-cache-internal" }
+
+[dev-dependencies]
+tidb-stats-handle-cache-internal-testutil = { path = "../tidb-stats-handle-cache-internal-testutil" }

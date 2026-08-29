@@ -14,9 +14,8 @@
 
 //! Go `pkg/statistics/handle/cache/internal/mapcache`.
 
-use std::cell::{Ref, RefCell};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock, RwLockReadGuard};
 
 use tidb_stats::Table;
 use tidb_stats_handle_cache_internal::StatsCacheInner;
@@ -45,7 +44,7 @@ struct State {
 
 /// Go `MapCache`.
 pub struct MapCache {
-    state: RefCell<State>,
+    state: RwLock<State>,
 }
 
 impl MapCache {
@@ -54,15 +53,17 @@ impl MapCache {
     #[allow(clippy::new_without_default)] // Pinned Go has NewMapCache, not a zero-value constructor.
     pub fn new() -> Self {
         Self {
-            state: RefCell::new(State {
+            state: RwLock::new(State {
                 tables: HashMap::new(),
                 mem_usage: 0,
             }),
         }
     }
 
-    fn state(&self) -> Ref<'_, State> {
-        self.state.borrow()
+    fn state(&self) -> RwLockReadGuard<'_, State> {
+        self.state
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// Go `Keys`.
@@ -82,7 +83,10 @@ impl StatsCacheInner for MapCache {
 
     fn put(&self, table_id: i64, table: Arc<Table>) -> bool {
         let cost = table.memory_usage().total_mem_usage;
-        let mut state = self.state.borrow_mut();
+        let mut state = self
+            .state
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(item) = state.tables.get_mut(&table_id) {
             let old_cost = item.cost;
             item.value = table;
@@ -103,7 +107,10 @@ impl StatsCacheInner for MapCache {
     }
 
     fn del(&self, table_id: i64) {
-        let mut state = self.state.borrow_mut();
+        let mut state = self
+            .state
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(item) = state.tables.remove(&table_id) {
             state.mem_usage = state.mem_usage.wrapping_sub(item.cost);
         }
@@ -128,7 +135,7 @@ impl StatsCacheInner for MapCache {
     fn copy(&self) -> Box<dyn StatsCacheInner> {
         let state = self.state();
         Box::new(Self {
-            state: RefCell::new(State {
+            state: RwLock::new(State {
                 tables: state
                     .tables
                     .iter()
@@ -146,4 +153,46 @@ impl StatsCacheInner for MapCache {
     fn trigger_evict(&self) {}
 
     fn wait_for_async_updates(&self) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tidb_stats_handle_cache_internal_testutil::new_mock_statistics_table;
+
+    #[test]
+    fn source_put_replace_delete_and_copy() {
+        let cache = MapCache::new();
+        let first = new_mock_statistics_table(1, 1, true, false, false);
+        let first_cost = first.memory_usage().total_mem_usage;
+        assert!(cache.put(1, first));
+        assert_eq!(cache.len(), 1);
+        assert_eq!(cache.cost(), first_cost);
+
+        let replacement = new_mock_statistics_table(2, 1, true, false, false);
+        let replacement_cost = replacement.memory_usage().total_mem_usage;
+        assert!(cache.put(1, replacement));
+        assert_eq!(cache.cost(), replacement_cost);
+
+        let copy = cache.copy();
+        cache.del(1);
+        assert_eq!(cache.len(), 0);
+        assert_eq!(copy.len(), 1);
+        assert_eq!(copy.cost(), replacement_cost);
+    }
+
+    #[test]
+    fn shared_reads_are_safe() {
+        let cache = Arc::new(MapCache::new());
+        cache.put(1, new_mock_statistics_table(1, 1, true, false, false));
+        std::thread::scope(|scope| {
+            for _ in 0..32 {
+                let cache = Arc::clone(&cache);
+                scope.spawn(move || {
+                    assert!(cache.get(1).is_some());
+                    assert_eq!(cache.values().len(), 1);
+                });
+            }
+        });
+    }
 }
