@@ -36,6 +36,10 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-08-29: re-read the complete testless pinned Go `pkg/util/nocopy`
+  package and removed its remaining Rust-only `Default` and compile-time call
+  surfaces. The unit marker still provides Go's constructible zero value and
+  ordinary no-op lock methods without `Copy` or `Clone`.
 - 2026-08-29: re-read the complete pinned Go `pkg/util/regexpr-router`
   package and corrected its earlier receipt: removed the two supplemental
   regexp tests that the Go package does not have, leaving exactly its eight

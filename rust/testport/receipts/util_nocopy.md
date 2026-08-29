@@ -18,23 +18,26 @@ copying an embedding owner after use.
 `rust/crates/tidb-util/src/nocopy/mod.rs` owns the complete package. Rust
 preserves the zero-sized marker and two no-op methods, while implementing
 neither `Copy` nor `Clone`; this is the native enforcement of the Go vet
-contract. `Default` represents Go's constructible zero value.
+contract. The unit struct itself represents Go's directly constructible zero
+value.
 
 The audit removed the Rust-only public constructor and `Debug` behavior, one
 supplemental unit test, one compile-fail doctest, and the separate semantic
 test manifest. It also removed the legacy nocopy ExecPlan because that document
 required those non-Go artifacts and pinned a different source revision. The Go
-package has none of those artifacts.
+package has none of those artifacts. A later strict-surface re-audit also
+removed the redundant `Default` trait and compile-time `const` calls; Go has
+only ordinary no-op methods on the zero value.
 
 ## Validation
 
 Profile: WIP; this completes one package in the continuing package-by-package
 audit, not a repository-wide readiness claim.
 
-- `cargo check -p tidb-util --all-targets --locked` — passed.
-- `cargo test -q -p tidb-util nocopy --lib --locked -- --test-threads=1` —
+- `cargo check --offline --locked -p tidb-util --all-targets` — passed.
+- `cargo test --offline --locked -p tidb-util --lib nocopy -- --test-threads=1` —
   passed; zero tests ran, matching the source package's test inventory.
-- `cargo fmt --all --check` and `git diff --check` — passed.
+- `cargo fmt -p tidb-util -- --check` and `git diff --check` — passed.
 
 No Go or Bazel file changed, so `make bazel_prepare` is not required.
 

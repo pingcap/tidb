@@ -21,13 +21,12 @@
 
 /// Zero-sized marker that prevents an embedding Rust type from becoming
 /// implicitly copyable.
-#[derive(Default)]
 pub struct NoCopy;
 
 impl NoCopy {
     /// Source-compatible no-op `sync.Locker.Lock` method.
-    pub const fn lock(&self) {}
+    pub fn lock(&self) {}
 
     /// Source-compatible no-op `sync.Locker.Unlock` method.
-    pub const fn unlock(&self) {}
+    pub fn unlock(&self) {}
 }
