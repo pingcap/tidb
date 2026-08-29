@@ -32,13 +32,15 @@ use tidb_exec::cluster_catalog::{
     load_cluster_catalog, ClusterCatalogError, MetaPairs, MetaSnapshot,
 };
 use tidb_exec::cluster_stats_load::{ClusterStatsItem, ClusterStatsLoader, ClusterTableStats};
-use tidb_exec::cluster_stats_write::plan_stats_write;
+use tidb_exec::cluster_stats_write::{
+    plan_loaded_stats_item_write, plan_loaded_stats_meta_write, plan_stats_write,
+};
 use tidb_exec::mysql_bootstrap::{plan_mysql_bootstrap, BootstrapEnvironment, BootstrapWrite};
 use tidb_exec::real_tikv_analyze::ANALYZE_MAX_MUTATIONS;
 use tidb_model::column::ColumnInfo;
 use tidb_model::table_info::TableInfo;
 use tidb_model::SchemaState;
-use tidb_stats::cmsketch::TopN;
+use tidb_stats::cmsketch::{CmsSketch, TopN};
 use tidb_stats::histogram::{Bucket, Histogram};
 use tidb_txnkv::transaction::{
     OptimisticMutationKind, MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES,
@@ -474,5 +476,128 @@ fn one_item_load_uses_only_that_items_key_ranges() {
     assert_eq!(
         store.scans,
         vec![histogram_prefix, bucket_prefix, topn_prefix]
+    );
+}
+
+/// Go `SaveColOrIdxStatsToStorage` replaces only the loaded object's payload,
+/// preserves unrelated histograms, stores the CMSketch without embedded
+/// TopN, and clears stale buckets/TopN rows for that object.
+#[test]
+fn loaded_stats_item_write_replaces_only_the_named_histogram() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let table_id = 4242;
+    let initial = ClusterTableStats {
+        table_id,
+        version: 440_000_000_000_000_000,
+        snapshot: 439_000_000_000_000_000,
+        last_analyze_version: 440_000_000_000_000_000,
+        last_stats_hist_version: 440_000_000_000_000_000,
+        modify_count: 7,
+        row_count: 10_240,
+        columns: vec![full_histogram(1, false), full_histogram(2, false)],
+        indexes: Vec::new(),
+    };
+    let plan = plan_stats_write(&mut store, &catalog, &initial, now()).expect("analyze plans");
+    apply_mutations(&mut store, &plan.mutations);
+
+    let version = initial.version + 10;
+    let mut loaded = full_histogram(1, false);
+    loaded.stats_ver = 1;
+    loaded.histogram.last_update_version = version;
+    loaded.histogram.buckets.truncate(2);
+    loaded.histogram.ndv = 17;
+    let mut topn = TopN::new(1);
+    topn.append(b"replacement", 9);
+    loaded.topn = Some(topn);
+    let mut cms = CmsSketch::new(2, 16);
+    cms.insert_bytes_by_count(b"replacement", 9);
+    loaded.cms = Some(cms);
+    let plan = plan_loaded_stats_item_write(
+        &mut store,
+        &catalog,
+        table_id,
+        55,
+        &loaded,
+        version,
+        now(),
+    )
+    .expect("LOAD STATS item plans");
+    apply_mutations(&mut store, &plan.mutations);
+
+    let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
+    let column_types = BTreeMap::from([
+        (
+            1,
+            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+        ),
+        (
+            2,
+            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+        ),
+    ]);
+    let stored = loader
+        .load_table(&mut store, table_id, &column_types)
+        .expect("statistics reload")
+        .expect("stats_meta exists");
+    assert_eq!(stored.version, version);
+    assert_eq!(stored.snapshot, 0, "REPLACE leaves snapshot at its default");
+    assert_eq!(stored.modify_count, 0);
+    assert_eq!(stored.row_count, 55);
+    let replaced = stored.column(1).expect("loaded column remains");
+    assert_eq!(replaced.histogram.ndv, 17);
+    assert_eq!(replaced.histogram.buckets.len(), 2);
+    assert_eq!(replaced.topn.as_ref().map(TopN::num), Some(1));
+    assert_eq!(
+        replaced
+            .cms
+            .as_ref()
+            .map(|sketch| sketch.query_bytes(b"replacement")),
+        Some(9)
+    );
+    let untouched = stored.column(2).expect("unmentioned column remains");
+    assert_eq!(untouched.histogram.buckets.len(), 256);
+    assert_eq!(untouched.topn.as_ref().map(TopN::num), Some(100));
+}
+
+/// Go's final `SaveMetaToStorage` is an upsert update, not the per-item
+/// `REPLACE`; when a dump contains no matching histogram it updates the
+/// counters/version without resetting the prior analyze snapshot.
+#[test]
+fn loaded_stats_final_meta_update_preserves_unnamed_columns() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let table_id = 4242;
+    let initial = ClusterTableStats {
+        table_id,
+        version: 440_000_000_000_000_000,
+        snapshot: 439_000_000_000_000_000,
+        last_analyze_version: 440_000_000_000_000_000,
+        last_stats_hist_version: 440_000_000_000_000_000,
+        modify_count: 7,
+        row_count: 10_240,
+        columns: Vec::new(),
+        indexes: Vec::new(),
+    };
+    let plan = plan_stats_write(&mut store, &catalog, &initial, now()).expect("analyze plans");
+    apply_mutations(&mut store, &plan.mutations);
+
+    let version = initial.version + 1;
+    let plan = plan_loaded_stats_meta_write(
+        &mut store,
+        &catalog,
+        table_id,
+        55,
+        3,
+        version,
+        now(),
+    )
+    .expect("LOAD STATS final meta plans");
+    apply_mutations(&mut store, &plan.mutations);
+
+    let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
+    assert_eq!(
+        loader.load_meta(&mut store, table_id).expect("meta loads"),
+        Some((version, initial.snapshot, 3, 55, version))
     );
 }

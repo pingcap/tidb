@@ -58,6 +58,7 @@ use std::collections::BTreeMap;
 use tidb_datatype::{ConversionFlags, Datum, FieldType, FieldTypeCode, Time, UNSPECIFIED_LENGTH};
 use tidb_meta::{key, value};
 use tidb_model::table_info::TableInfo;
+use tidb_stats::encode_cmsketch_without_topn;
 use tidb_stats::histogram::Bucket;
 use tidb_txnkv::transaction::OptimisticMutation;
 
@@ -86,6 +87,8 @@ pub enum StatsWriteError {
     Encode(RowEncodeError),
     /// A histogram bound could not be converted to the blob the column stores.
     Bound(String),
+    /// A loaded CMSketch could not be encoded for `stats_histograms`.
+    Cms(String),
 }
 
 impl std::fmt::Display for StatsWriteError {
@@ -95,6 +98,7 @@ impl std::fmt::Display for StatsWriteError {
             Self::Read(error) => write!(formatter, "{error}"),
             Self::Encode(error) => write!(formatter, "{error}"),
             Self::Bound(detail) => write!(formatter, "a histogram bound did not convert: {detail}"),
+            Self::Cms(detail) => write!(formatter, "a CMSketch did not encode: {detail}"),
         }
     }
 }
@@ -158,6 +162,287 @@ pub fn plan_stats_write<S: MetaSnapshot>(
     plan_buckets(snapshot, catalog, stats, now, &mut plan)?;
     plan_topn(snapshot, catalog, stats, now, &mut plan)?;
     Ok(plan)
+}
+
+/// Plans Go `SaveColOrIdxStatsToStorage` for one object loaded from JSON.
+///
+/// Unlike ANALYZE, LOAD STATS replaces only the named histogram and its
+/// bucket/TopN/FM rows. Statistics for schema objects absent from the dump
+/// remain untouched. Go runs this once in an independent restricted-session
+/// transaction for every loaded column and index.
+pub fn plan_loaded_stats_item_write<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    table_id: i64,
+    count: i64,
+    item: &ClusterStatsItem,
+    version: u64,
+    now: Time,
+) -> Result<StatsWritePlan, StatsWriteError> {
+    let mut plan = StatsWritePlan::default();
+    plan_loaded_meta(snapshot, catalog, table_id, count, version, now, &mut plan)?;
+    plan_loaded_topn(snapshot, catalog, table_id, item, now, &mut plan)?;
+    plan_loaded_fm_delete(snapshot, catalog, table_id, item, &mut plan)?;
+    plan_loaded_histogram(snapshot, catalog, table_id, item, version, now, &mut plan)?;
+    plan_loaded_buckets(snapshot, catalog, table_id, item, now, &mut plan)?;
+    Ok(plan)
+}
+
+/// Plans Go `SaveMetaToStorage(..., refreshLastHistVer=true)` after every
+/// object and predicate-usage write for one JSON table has completed.
+/// Existing columns not named by that statement (notably `snapshot`) are
+/// preserved by the `ON DUPLICATE KEY UPDATE` branch.
+pub fn plan_loaded_stats_meta_write<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    table_id: i64,
+    count: i64,
+    modify_count: i64,
+    version: u64,
+    now: Time,
+) -> Result<StatsWritePlan, StatsWriteError> {
+    let mut plan = StatsWritePlan::default();
+    let table = locate(catalog, "stats_meta")?;
+    let mut rows = StatsRows::open(snapshot, table, &["table_id"], table_id)?;
+    let identity = vec![format!("{:?}", Datum::Int(table_id))];
+    let mut values = rows
+        .existing_values(&identity)
+        .cloned()
+        .unwrap_or(defaults_row(table, now)?);
+    set(table, &mut values, "table_id", Datum::Int(table_id));
+    set(table, &mut values, "version", Datum::UInt(version));
+    set(table, &mut values, "count", Datum::Int(count));
+    set(table, &mut values, "modify_count", Datum::Int(modify_count));
+    set(
+        table,
+        &mut values,
+        "last_stats_histograms_version",
+        Datum::UInt(version),
+    );
+    rows.store(snapshot, catalog, &values, &mut plan)?;
+    rows.publish_watermark(catalog, &mut plan)?;
+    Ok(plan)
+}
+
+fn plan_loaded_meta<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    table_id: i64,
+    count: i64,
+    version: u64,
+    now: Time,
+    plan: &mut StatsWritePlan,
+) -> Result<(), StatsWriteError> {
+    let table = locate(catalog, "stats_meta")?;
+    let mut rows = StatsRows::open(snapshot, table, &["table_id"], table_id)?;
+    let mut values = defaults_row(table, now)?;
+    set(table, &mut values, "table_id", Datum::Int(table_id));
+    set(table, &mut values, "version", Datum::UInt(version));
+    set(table, &mut values, "count", Datum::Int(count));
+    set(table, &mut values, "modify_count", Datum::Int(0));
+    set(
+        table,
+        &mut values,
+        "last_stats_histograms_version",
+        Datum::UInt(version),
+    );
+    rows.store(snapshot, catalog, &values, plan)?;
+    rows.publish_watermark(catalog, plan)
+}
+
+fn plan_loaded_histogram<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    table_id: i64,
+    item: &ClusterStatsItem,
+    version: u64,
+    now: Time,
+    plan: &mut StatsWritePlan,
+) -> Result<(), StatsWriteError> {
+    let table = locate(catalog, "stats_histograms")?;
+    let mut rows = StatsRows::open(
+        snapshot,
+        table,
+        &["table_id", "is_index", "hist_id"],
+        table_id,
+    )?;
+    let mut values = defaults_row(table, now)?;
+    set(table, &mut values, "table_id", Datum::Int(table_id));
+    set(
+        table,
+        &mut values,
+        "is_index",
+        Datum::Int(i64::from(item.is_index)),
+    );
+    set(table, &mut values, "hist_id", Datum::Int(item.id));
+    set(
+        table,
+        &mut values,
+        "distinct_count",
+        Datum::Int(item.histogram.ndv),
+    );
+    set(
+        table,
+        &mut values,
+        "null_count",
+        Datum::Int(item.histogram.null_count),
+    );
+    set(
+        table,
+        &mut values,
+        "tot_col_size",
+        Datum::Int(item.histogram.tot_col_size.max(0)),
+    );
+    set(table, &mut values, "version", Datum::UInt(version));
+    let cms = encode_cmsketch_without_topn(item.cms.as_ref())
+        .map_err(|error| StatsWriteError::Cms(error.to_string()))?;
+    set(
+        table,
+        &mut values,
+        "cm_sketch",
+        cms.map_or(Datum::Null, Datum::Bytes),
+    );
+    set(table, &mut values, "stats_ver", Datum::Int(item.stats_ver));
+    set(
+        table,
+        &mut values,
+        "correlation",
+        Datum::Real(item.histogram.correlation),
+    );
+    rows.store(snapshot, catalog, &values, plan)?;
+    rows.publish_watermark(catalog, plan)?;
+    plan.histogram_count += 1;
+    Ok(())
+}
+
+fn loaded_item_prefix(table_id: i64, item: &ClusterStatsItem) -> Vec<String> {
+    [
+        Datum::Int(table_id),
+        Datum::Int(i64::from(item.is_index)),
+        Datum::Int(item.id),
+    ]
+    .iter()
+    .map(|value| format!("{value:?}"))
+    .collect()
+}
+
+fn plan_loaded_buckets<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    table_id: i64,
+    item: &ClusterStatsItem,
+    now: Time,
+    plan: &mut StatsWritePlan,
+) -> Result<(), StatsWriteError> {
+    let table = locate(catalog, "stats_buckets")?;
+    let mut rows = StatsRows::open(
+        snapshot,
+        table,
+        &["table_id", "is_index", "hist_id", "bucket_id"],
+        table_id,
+    )?;
+    let mut previous_count = 0_i64;
+    for (bucket_id, bucket) in item.histogram.buckets.iter().enumerate() {
+        let mut values = defaults_row(table, now)?;
+        set(table, &mut values, "table_id", Datum::Int(table_id));
+        set(
+            table,
+            &mut values,
+            "is_index",
+            Datum::Int(i64::from(item.is_index)),
+        );
+        set(table, &mut values, "hist_id", Datum::Int(item.id));
+        set(
+            table,
+            &mut values,
+            "bucket_id",
+            Datum::Int(bucket_id as i64),
+        );
+        set(
+            table,
+            &mut values,
+            "count",
+            Datum::Int(bucket.count - previous_count),
+        );
+        previous_count = bucket.count;
+        set(table, &mut values, "repeats", Datum::Int(bucket.repeat));
+        set(table, &mut values, "ndv", Datum::Int(bucket.ndv));
+        set(
+            table,
+            &mut values,
+            "lower_bound",
+            bound_blob(&bucket.lower_bound)?,
+        );
+        set(
+            table,
+            &mut values,
+            "upper_bound",
+            bound_blob(&bucket.upper_bound)?,
+        );
+        rows.store(snapshot, catalog, &values, plan)?;
+        plan.bucket_count += 1;
+    }
+    rows.retract_prefix(&loaded_item_prefix(table_id, item), plan)?;
+    rows.publish_watermark(catalog, plan)
+}
+
+fn plan_loaded_topn<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    table_id: i64,
+    item: &ClusterStatsItem,
+    now: Time,
+    plan: &mut StatsWritePlan,
+) -> Result<(), StatsWriteError> {
+    let table = locate(catalog, "stats_top_n")?;
+    let mut rows = StatsRows::open(
+        snapshot,
+        table,
+        &["table_id", "is_index", "hist_id", "value"],
+        table_id,
+    )?;
+    if let Some(topn) = &item.topn {
+        for entry in topn.entries() {
+            let mut values = defaults_row(table, now)?;
+            set(table, &mut values, "table_id", Datum::Int(table_id));
+            set(
+                table,
+                &mut values,
+                "is_index",
+                Datum::Int(i64::from(item.is_index)),
+            );
+            set(table, &mut values, "hist_id", Datum::Int(item.id));
+            set(
+                table,
+                &mut values,
+                "value",
+                Datum::Bytes(entry.encoded.clone()),
+            );
+            set(table, &mut values, "count", Datum::UInt(entry.count));
+            rows.store(snapshot, catalog, &values, plan)?;
+            plan.topn_count += 1;
+        }
+    }
+    rows.retract_prefix(&loaded_item_prefix(table_id, item), plan)?;
+    rows.publish_watermark(catalog, plan)
+}
+
+fn plan_loaded_fm_delete<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    table_id: i64,
+    item: &ClusterStatsItem,
+    plan: &mut StatsWritePlan,
+) -> Result<(), StatsWriteError> {
+    let table = locate(catalog, "stats_fm_sketch")?;
+    let mut rows = StatsRows::open(
+        snapshot,
+        table,
+        &["table_id", "is_index", "hist_id"],
+        table_id,
+    )?;
+    rows.retract_prefix(&loaded_item_prefix(table_id, item), plan)?;
+    rows.publish_watermark(catalog, plan)
 }
 
 fn plan_meta<S: MetaSnapshot>(
@@ -458,8 +743,39 @@ impl<'table> StatsRows<'table> {
         Ok(())
     }
 
+    fn existing_values(&self, identity: &[String]) -> Option<&RowValues> {
+        self.existing.get(identity).map(|(_, values)| values)
+    }
+
     fn retract_remaining(&mut self, plan: &mut StatsWritePlan) -> Result<(), StatsWriteError> {
         for (key, stored) in std::mem::take(&mut self.existing).into_values() {
+            if self.clustered {
+                plan.mutations
+                    .extend(delete_clustered_row(self.table, &stored)?);
+            } else {
+                plan.mutations
+                    .extend(delete_row(self.table, &key, &stored)?);
+            }
+        }
+        Ok(())
+    }
+
+    fn retract_prefix(
+        &mut self,
+        prefix: &[String],
+        plan: &mut StatsWritePlan,
+    ) -> Result<(), StatsWriteError> {
+        let identities = self
+            .existing
+            .keys()
+            .filter(|identity| identity.starts_with(prefix))
+            .cloned()
+            .collect::<Vec<_>>();
+        for identity in identities {
+            let (key, stored) = self
+                .existing
+                .remove(&identity)
+                .expect("identity came from the existing map");
             if self.clustered {
                 plan.mutations
                     .extend(delete_clustered_row(self.table, &stored)?);
