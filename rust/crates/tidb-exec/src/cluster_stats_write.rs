@@ -55,11 +55,15 @@
 
 use std::collections::BTreeMap;
 
-use tidb_datatype::{ConversionFlags, Datum, FieldType, FieldTypeCode, Time, UNSPECIFIED_LENGTH};
+use tidb_datatype::{
+    parse_time, ConversionFlags, Datum, FieldType, FieldTypeCode, Time, TimeType, MAX_FSP,
+    UNSPECIFIED_LENGTH,
+};
 use tidb_meta::{key, value};
 use tidb_model::table_info::TableInfo;
 use tidb_stats::encode_cmsketch_without_topn;
 use tidb_stats::histogram::Bucket;
+use tidb_stats::JsonPredicateColumn;
 use tidb_txnkv::transaction::OptimisticMutation;
 
 use crate::cluster_catalog::{ClusterCatalog, MetaSnapshot};
@@ -89,6 +93,8 @@ pub enum StatsWriteError {
     Bound(String),
     /// A loaded CMSketch could not be encoded for `stats_histograms`.
     Cms(String),
+    /// A predicate-column timestamp could not be parsed as Go TIMESTAMP(6).
+    PredicateTime(String),
 }
 
 impl std::fmt::Display for StatsWriteError {
@@ -99,6 +105,12 @@ impl std::fmt::Display for StatsWriteError {
             Self::Encode(error) => write!(formatter, "{error}"),
             Self::Bound(detail) => write!(formatter, "a histogram bound did not convert: {detail}"),
             Self::Cms(detail) => write!(formatter, "a CMSketch did not encode: {detail}"),
+            Self::PredicateTime(detail) => {
+                write!(
+                    formatter,
+                    "a predicate-column timestamp did not parse: {detail}"
+                )
+            }
         }
     }
 }
@@ -222,6 +234,79 @@ pub fn plan_loaded_stats_meta_write<S: MetaSnapshot>(
     rows.store(snapshot, catalog, &values, &mut plan)?;
     rows.publish_watermark(catalog, &mut plan)?;
     Ok(plan)
+}
+
+/// Plans Go `SaveColumnStatsUsageToStorage` for one physical table.
+///
+/// The Go helper uses one restricted-session transaction for the complete
+/// predicate-column slice and `REPLACE`s each four-column row, including
+/// explicit NULL timestamps. It parses dump timestamps as UTC TIMESTAMP(6)
+/// before converting them through the restricted session's time zone; this
+/// cluster path uses UTC too, so the stored wall-clock value is identical.
+pub fn plan_loaded_stats_usage_write<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    table_id: i64,
+    predicate_columns: &[JsonPredicateColumn],
+    now: Time,
+) -> Result<StatsWritePlan, StatsWriteError> {
+    let mut plan = StatsWritePlan::default();
+    let table = locate(catalog, "column_stats_usage")?;
+    let mut rows = StatsRows::open(snapshot, table, &["table_id", "column_id"], table_id)?;
+    for column in predicate_columns {
+        let mut values = defaults_row(table, now)?;
+        set(table, &mut values, "table_id", Datum::Int(table_id));
+        set(table, &mut values, "column_id", Datum::Int(column.id));
+        set(
+            table,
+            &mut values,
+            "last_used_at",
+            predicate_time(table, "last_used_at", column.last_used_at.as_deref())?,
+        );
+        set(
+            table,
+            &mut values,
+            "last_analyzed_at",
+            predicate_time(
+                table,
+                "last_analyzed_at",
+                column.last_analyzed_at.as_deref(),
+            )?,
+        );
+        rows.store(snapshot, catalog, &values, &mut plan)?;
+    }
+    rows.publish_watermark(catalog, &mut plan)?;
+    Ok(plan)
+}
+
+fn predicate_time(
+    table: &TableInfo,
+    column: &str,
+    value: Option<&str>,
+) -> Result<Datum, StatsWriteError> {
+    let Some(value) = value else {
+        return Ok(Datum::Null);
+    };
+    let parsed = parse_time(
+        value,
+        TimeType::Timestamp,
+        MAX_FSP,
+        false,
+        false,
+        false,
+        &chrono::Utc,
+    )
+    .map_err(|error| StatsWriteError::PredicateTime(format!("{value:?}: {error}")))?;
+    let field_type = table
+        .find_public_column_by_name(column)
+        .ok_or_else(|| StatsWriteError::MissingTable(format!("mysql.column_stats_usage.{column}")))?
+        .read()
+        .field_type
+        .clone();
+    Datum::Time(parsed.time)
+        .convert_to(&field_type, ConversionFlags::from_bits(0))
+        .map(|converted| converted.value)
+        .map_err(|error| StatsWriteError::PredicateTime(format!("{value:?}: {error}")))
 }
 
 fn plan_loaded_meta<S: MetaSnapshot>(
@@ -936,7 +1021,8 @@ fn read_rows_with_keys<S: MetaSnapshot>(
     };
     let mut rows = Vec::new();
     for (key, value) in pairs {
-        let parsed = SystemRow::parse(&view, &key, &value)?;
+        let timezone = tidb_datatype::SessionTimeZone::utc();
+        let parsed = SystemRow::parse_in_timezone(&view, &key, &value, Some(&timezone))?;
         let mut values = RowValues::new();
         for column in table.cols().iter_deref() {
             let (id, name) = {

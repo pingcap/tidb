@@ -33,15 +33,18 @@ use tidb_exec::cluster_catalog::{
 };
 use tidb_exec::cluster_stats_load::{ClusterStatsItem, ClusterStatsLoader, ClusterTableStats};
 use tidb_exec::cluster_stats_write::{
-    plan_loaded_stats_item_write, plan_loaded_stats_meta_write, plan_stats_write,
+    plan_loaded_stats_item_write, plan_loaded_stats_meta_write, plan_loaded_stats_usage_write,
+    plan_stats_write,
 };
 use tidb_exec::mysql_bootstrap::{plan_mysql_bootstrap, BootstrapEnvironment, BootstrapWrite};
+use tidb_exec::mysql_system_tables::{scan_system_table, SystemRow, SystemTableView};
 use tidb_exec::real_tikv_analyze::ANALYZE_MAX_MUTATIONS;
 use tidb_model::column::ColumnInfo;
 use tidb_model::table_info::TableInfo;
 use tidb_model::SchemaState;
 use tidb_stats::cmsketch::{CmsSketch, TopN};
 use tidb_stats::histogram::{Bucket, Histogram};
+use tidb_stats::JsonPredicateColumn;
 use tidb_txnkv::transaction::{
     OptimisticMutationKind, MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES,
 };
@@ -599,5 +602,83 @@ fn loaded_stats_final_meta_update_preserves_unnamed_columns() {
     assert_eq!(
         loader.load_meta(&mut store, table_id).expect("meta loads"),
         Some((version, initial.snapshot, 3, 55, version))
+    );
+}
+
+/// Pinned Go `SaveColumnStatsUsageForTable` runs one transaction for the
+/// complete slice and REPLACEs all four values, so an explicit nil timestamp
+/// clears an older stored value instead of preserving it.
+#[test]
+fn loaded_stats_usage_replaces_timestamps_in_one_plan() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let table_id = 4242;
+    let first = plan_loaded_stats_usage_write(
+        &mut store,
+        &catalog,
+        table_id,
+        &[JsonPredicateColumn {
+            id: 7,
+            last_used_at: Some("2026-08-29 01:02:03.123456".to_owned()),
+            last_analyzed_at: Some("2026-08-28 04:05:06.000007".to_owned()),
+        }],
+        now(),
+    )
+    .expect("predicate usage plans");
+    apply_mutations(&mut store, &first.mutations);
+
+    let replacement = plan_loaded_stats_usage_write(
+        &mut store,
+        &catalog,
+        table_id,
+        &[JsonPredicateColumn {
+            id: 7,
+            last_used_at: None,
+            last_analyzed_at: Some("2026-08-30 08:09:10.000011".to_owned()),
+        }],
+        now(),
+    )
+    .expect("replacement usage plans");
+    apply_mutations(&mut store, &replacement.mutations);
+
+    let table = catalog
+        .databases
+        .iter()
+        .find(|database| database.info.name.lowercase() == "mysql")
+        .and_then(|database| {
+            database
+                .tables
+                .iter()
+                .find(|table| table.name.lowercase() == "column_stats_usage")
+        })
+        .expect("column_stats_usage exists");
+    let view = SystemTableView::project(
+        "mysql.column_stats_usage",
+        table,
+        &["table_id", "column_id", "last_used_at", "last_analyzed_at"],
+    );
+    let rows = scan_system_table(&mut store, &view).expect("usage rows scan");
+    let row = rows
+        .iter()
+        .map(|(key, value)| {
+            let timezone = tidb_datatype::SessionTimeZone::utc();
+            SystemRow::parse_in_timezone(&view, key, value, Some(&timezone))
+                .expect("usage row decodes")
+        })
+        .find(|row| {
+            row.i64("table_id").unwrap() == Some(table_id)
+                && row.i64("column_id").unwrap() == Some(7)
+        })
+        .expect("replacement row exists");
+    assert!(row
+        .stored_datum("last_used_at")
+        .unwrap()
+        .unwrap()
+        .is_null());
+    let expected = Time::from_date_checked(2026, 8, 30, 8, 9, 10, 0, TimeType::Timestamp, 0)
+        .expect("a fixed calendar timestamp is valid");
+    assert_eq!(
+        row.datum("last_analyzed_at").unwrap(),
+        Some(&Datum::Time(expected))
     );
 }

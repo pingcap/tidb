@@ -87,6 +87,96 @@ pub use tidb_stats::{JsonTable, TIDB_GLOBAL_STATS};
 use crate::access_cost::TableStatistics;
 use crate::kv_table::KvTable;
 
+/// The `TableInfo` subset Go `TableStatsFromJSON` reads.
+///
+/// Keeping this schema-only contract independent of [`KvTable`] lets the
+/// cluster storage path convert against its canonical `model.TableInfo`
+/// without constructing an executor table or duplicating JSON semantics.
+#[derive(Clone, Debug)]
+pub struct LoadStatsTableSchema {
+    /// Columns in schema order, including hidden columns.
+    pub columns: Vec<LoadStatsColumnSchema>,
+    /// Indexes in schema order.
+    pub indexes: Vec<LoadStatsIndexSchema>,
+    /// Go `TableInfo.PKIsHandle`.
+    pub pk_is_handle: bool,
+}
+
+/// One schema column used while restoring statistics JSON.
+#[derive(Clone, Debug)]
+pub struct LoadStatsColumnSchema {
+    /// Go `ColumnInfo.ID`.
+    pub id: i64,
+    /// Go `ColumnInfo.Name.L`.
+    pub name: String,
+    /// Go `ColumnInfo.FieldType`.
+    pub field_type: FieldType,
+    /// Whether this column carries the primary-key flag.
+    pub primary_key: bool,
+}
+
+/// One schema index used while restoring statistics JSON.
+#[derive(Clone, Debug)]
+pub struct LoadStatsIndexSchema {
+    /// Go `IndexInfo.ID`.
+    pub id: i64,
+    /// Go `IndexInfo.Name.L`.
+    pub name: String,
+    /// Lowercase index-column names.
+    pub columns: Vec<String>,
+    /// Go `IndexInfo.MVIndex`.
+    pub mv_index: bool,
+}
+
+impl LoadStatsTableSchema {
+    /// Builds the schema contract from the ordinary executor table.
+    #[must_use]
+    pub fn from_kv_table(table: &KvTable) -> Self {
+        let primary_index_offsets = table
+            .indexes()
+            .iter()
+            .find(|index| index.name.eq_ignore_ascii_case("PRIMARY"))
+            .map(|index| index.column_offsets.as_slice())
+            .unwrap_or_default();
+        Self {
+            columns: table
+                .columns()
+                .iter()
+                .enumerate()
+                .map(|(offset, column)| LoadStatsColumnSchema {
+                    id: column.id,
+                    name: column.name.to_lowercase(),
+                    field_type: column.field_type.clone(),
+                    primary_key: table.pk_handle_offset() == Some(offset)
+                        || primary_index_offsets.contains(&offset),
+                })
+                .collect(),
+            indexes: table
+                .indexes()
+                .iter()
+                .map(|index| LoadStatsIndexSchema {
+                    id: index.id,
+                    name: index.name.to_lowercase(),
+                    columns: index
+                        .column_offsets
+                        .iter()
+                        .map(|offset| {
+                            table
+                                .columns()
+                                .get(*offset)
+                                .expect("index column offset outside table columns")
+                                .name
+                                .to_lowercase()
+                        })
+                        .collect(),
+                    mv_index: table.mv_key_part_source(index.id).is_some(),
+                })
+                .collect(),
+            pk_is_handle: table.pk_handle_offset().is_some(),
+        }
+    }
+}
+
 /// Why a dump could not be loaded. Go surfaces each of these as the
 /// statement's error, so the text names what the caller can act on.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -329,7 +419,7 @@ const STATS_CONVERSION_FLAGS: ConversionFlags = ConversionFlags::from_bits(
 /// One dumped column into the estimator's [`ColumnStats`]: Go
 /// `TableStatsFromJSON`'s column arm.
 fn column_from_json(
-    column: &crate::kv_table::KvColumn,
+    column: &LoadStatsColumnSchema,
     json: &JsonColumn,
     physical_id: i64,
     is_handle: bool,
@@ -388,8 +478,7 @@ fn column_from_json(
 /// which sets id/null-count/version/correlation on the histogram and nothing
 /// else -- crucially NO `ConvertTo`, because index bounds are key bytes.
 fn index_from_json(
-    table: &KvTable,
-    index: &crate::kv_table::KvIndex,
+    index: &LoadStatsIndexSchema,
     json: &JsonColumn,
     physical_id: i64,
 ) -> Result<Index, LoadStatsError> {
@@ -410,19 +499,8 @@ fn index_from_json(
         info: Some(IndexInfo {
             id: index.id,
             name: index.name.to_lowercase(),
-            columns: index
-                .column_offsets
-                .iter()
-                .map(|offset| {
-                    table
-                        .columns()
-                        .get(*offset)
-                        .expect("index column offset outside table columns")
-                        .name
-                        .to_lowercase()
-                })
-                .collect(),
-            mv_index: table.mv_key_part_source(index.id).is_some(),
+            columns: index.columns.clone(),
+            mv_index: index.mv_index,
         }),
         histogram,
         stats_loaded_status: StatsLoadedStatus::full_load(),
@@ -445,6 +523,19 @@ pub fn statistics_table_from_json(
     physical_id: i64,
     json: &JsonTable,
 ) -> Result<Table, LoadStatsError> {
+    statistics_table_from_json_schema(
+        &LoadStatsTableSchema::from_kv_table(table),
+        physical_id,
+        json,
+    )
+}
+
+/// Go `storage.TableStatsFromJSON` against the canonical schema-only subset.
+pub fn statistics_table_from_json_schema(
+    table: &LoadStatsTableSchema,
+    physical_id: i64,
+    json: &JsonTable,
+) -> Result<Table, LoadStatsError> {
     let mut hist_coll = HistColl::new(
         physical_id,
         json.count,
@@ -452,11 +543,11 @@ pub fn statistics_table_from_json(
         json.columns.as_ref().map_or(0, BTreeMap::len),
         json.indices.as_ref().map_or(0, BTreeMap::len),
     );
-    let mut existence = ColAndIdxExistenceMap::new(table.columns().len(), table.indexes().len());
+    let mut existence = ColAndIdxExistenceMap::new(table.columns.len(), table.indexes.len());
     if let Some(dumped) = &json.indices {
         for (name, entry) in dumped {
             let entry = entry.as_ref().expect("index stats JSON entry is null");
-            for index in table.indexes() {
+            for index in &table.indexes {
                 // Go: `idxInfo.Name.L != id` -- the LOWERCASED schema name
                 // against the raw map key. Dumps write lowercase keys
                 // (`GenJSONTableFromStats` uses `.Name.L`), so an uppercase
@@ -464,7 +555,7 @@ pub fn statistics_table_from_json(
                 if index.name.to_lowercase() != *name {
                     continue;
                 }
-                let item = index_from_json(table, index, entry, physical_id)?;
+                let item = index_from_json(index, entry, physical_id)?;
                 if item.stats_version != 0 {
                     hist_coll.stats_version = item.stats_version as i32;
                 }
@@ -476,18 +567,14 @@ pub fn statistics_table_from_json(
     if let Some(dumped) = &json.columns {
         for (name, entry) in dumped {
             let entry = entry.as_ref().expect("column stats JSON entry is null");
-            for (offset, column) in table.columns().iter().enumerate() {
+            for column in &table.columns {
                 // Same rule as the index loop: `colInfo.Name.L != id`.
                 if column.name.to_lowercase() != *name {
                     continue;
                 }
-                let is_handle = table.pk_handle_offset() == Some(offset);
-                let primary_key = is_handle
-                    || table.indexes().iter().any(|index| {
-                        index.name.eq_ignore_ascii_case("PRIMARY")
-                            && index.column_offsets.contains(&offset)
-                    });
-                let item = column_from_json(column, entry, physical_id, is_handle, primary_key)?;
+                let is_handle = table.pk_is_handle && column.primary_key;
+                let item =
+                    column_from_json(column, entry, physical_id, is_handle, column.primary_key)?;
                 if item.stats_version != 0 {
                     hist_coll.stats_version = item.stats_version as i32;
                 }
@@ -503,7 +590,7 @@ pub fn statistics_table_from_json(
         last_analyze_version: 0,
         last_stats_hist_version: 0,
         table_info_update_ts: 0,
-        is_pk_handle: table.pk_handle_offset().is_some(),
+        is_pk_handle: table.pk_is_handle,
     })
 }
 
@@ -520,6 +607,15 @@ pub fn table_statistics_from_table(stats: &Table, table: &KvTable) -> TableStati
         .map(|index| (index.id, index.column_offsets.len(), index.unique))
         .collect::<Vec<_>>();
     table_statistics_from_table_schema(stats, &columns, &indexes)
+}
+
+/// Restores one non-partitioned executor table and derives its planner view.
+pub fn table_statistics_from_json(
+    table: &KvTable,
+    json: &JsonTable,
+) -> Result<TableStatistics, LoadStatsError> {
+    let statistics = statistics_table_from_json(table, table.table_id, json)?;
+    Ok(table_statistics_from_table(&statistics, table))
 }
 
 /// The common planner view when the caller owns Go `TableInfo` rather than

@@ -61,7 +61,7 @@ use std::fmt;
 use tidb_codec::table_key::cut_row_key_prefix;
 use tidb_codec::table_key::encode_index_seek_key;
 use tidb_codec::{decode as decode_datums, encode_key, encode_row_key, gen_table_record_prefix};
-use tidb_datatype::{Datum, FieldType};
+use tidb_datatype::{Datum, FieldType, SessionTimeZone};
 use tidb_model::schema_state::SchemaState;
 use tidb_model::table_info::TableInfo;
 use tidb_tablecodec::{decode_index_handle, decode_table_row_to_map};
@@ -534,12 +534,23 @@ impl<'view> SystemRow<'view> {
         key: &[u8],
         value: &[u8],
     ) -> Result<Self, SystemTableError> {
-        let mut values = decode_table_row_to_map(value, &view.types, None).map_err(|error| {
-            SystemTableError::Decode {
-                name: view.name.clone(),
-                detail: error.to_string(),
-            }
-        })?;
+        Self::parse_in_timezone(view, key, value, None)
+    }
+
+    /// Decodes a system row whose projection may contain TIMESTAMP columns.
+    pub fn parse_in_timezone(
+        view: &'view SystemTableView,
+        key: &[u8],
+        value: &[u8],
+        timezone: Option<&SessionTimeZone>,
+    ) -> Result<Self, SystemTableError> {
+        let mut values =
+            decode_table_row_to_map(value, &view.types, timezone).map_err(|error| {
+                SystemTableError::Decode {
+                    name: view.name.clone(),
+                    detail: error.to_string(),
+                }
+            })?;
         for (column, datum) in decode_handle_columns(view, key)? {
             if let Some(id) = view.ids.get(&column) {
                 values.insert(*id, datum);
