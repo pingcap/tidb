@@ -290,6 +290,33 @@ pub struct ProcessGuard {
     id: u64,
 }
 
+/// Keeps one process-list statement active until its result set is finished.
+pub struct ProcessStatementGuard {
+    registry: ProcessRegistry,
+    id: u64,
+    db: String,
+    state: String,
+    finished: bool,
+}
+
+impl ProcessStatementGuard {
+    /// Finishes the statement now. Dropping an unfinished guard does the same.
+    pub fn finish(mut self) {
+        self.registry
+            .statement_finished(self.id, &self.db, &self.state);
+        self.finished = true;
+    }
+}
+
+impl Drop for ProcessStatementGuard {
+    fn drop(&mut self) {
+        if !self.finished {
+            self.registry
+                .statement_finished(self.id, &self.db, &self.state);
+        }
+    }
+}
+
 impl ProcessGuard {
     /// The registered connection's identity.
     #[must_use]
@@ -306,6 +333,25 @@ impl ProcessGuard {
     /// Installs the session memory and disk trackers exposed by ProcessInfo.
     pub fn set_trackers(&self, mem: Arc<Tracker>, disk: Arc<Tracker>) {
         self.registry.set_trackers(self.id, mem, disk);
+    }
+
+    /// Publishes one running statement for the lifetime of the returned guard.
+    #[must_use]
+    pub fn statement_started(
+        &self,
+        sql: &str,
+        db: impl Into<String>,
+        state: impl Into<String>,
+    ) -> ProcessStatementGuard {
+        let state = state.into();
+        self.registry.statement_started(self.id, sql, &state);
+        ProcessStatementGuard {
+            registry: self.registry.clone(),
+            id: self.id,
+            db: db.into(),
+            state,
+            finished: false,
+        }
     }
 }
 
@@ -366,7 +412,7 @@ mod tests {
     #[test]
     fn running_statement_becomes_info_and_is_cleared_again() {
         let registry = ProcessRegistry::default();
-        let _guard = registry.register(1, String::new(), String::new(), "test".to_owned(), None);
+        let guard = registry.register(1, String::new(), String::new(), "test".to_owned(), None);
         registry.statement_started(1, "select 1", "autocommit");
         let rows = registry.snapshot();
         assert_eq!(rows[0].info.as_deref(), Some("select 1"));
@@ -375,6 +421,12 @@ mod tests {
         let rows = registry.snapshot();
         assert_eq!(rows[0].info, None);
         assert_eq!(rows[0].db, "mysql");
+
+        {
+            let _statement = guard.statement_started("select 2", "test", "autocommit");
+            assert_eq!(registry.snapshot()[0].info.as_deref(), Some("select 2"));
+        }
+        assert_eq!(registry.snapshot()[0].info, None);
     }
 
     #[test]

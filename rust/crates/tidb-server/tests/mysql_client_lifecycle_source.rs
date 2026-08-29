@@ -294,6 +294,7 @@ fn prepared_point_range_keeps_its_two_marker_contract() {
     )
     .unwrap();
     let read = PreparedPointRead::new(
+        "SELECT balance FROM campaign27.rows WHERE id >= ? AND id <= ?".to_owned(),
         template,
         vec![prepared_balance_column()],
         vec![FieldType::new(FieldTypeCode::LongLong)],
@@ -367,6 +368,7 @@ impl QuerySession for PreparedSession {
         let template = prepare_configured_point_read(sql, &prepared_catalog())
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
         PreparedPointRead::new(
+            sql.to_owned(),
             template,
             vec![prepared_balance_column()],
             vec![FieldType::new(FieldTypeCode::LongLong)],
@@ -412,7 +414,7 @@ impl QuerySession for PreparedSession {
     fn prepare_write(&mut self, sql: &str) -> Result<PreparedWrite, SqlQueryError> {
         let template = prepare_configured_write(sql, &prepared_catalog())
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        Ok(PreparedWrite::new(template))
+        Ok(PreparedWrite::new(sql.to_owned(), template))
     }
 
     fn execute_prepared_write(
@@ -1922,7 +1924,7 @@ impl QuerySession for LongDataSession {
     fn prepare_write(&mut self, sql: &str) -> Result<PreparedWrite, SqlQueryError> {
         let template = prepare_configured_write(sql, &long_data_catalog())
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        Ok(PreparedWrite::new(template))
+        Ok(PreparedWrite::new(sql.to_owned(), template))
     }
 
     fn execute_prepared_write(

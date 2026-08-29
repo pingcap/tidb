@@ -196,6 +196,15 @@ fn kill_sess_if_needed(s: &mut SessionToBeKilled, bt: u64, sm: &dyn SessionManag
         return;
     }
 
+    #[allow(unused_mut)]
+    let mut bt = bt;
+    #[cfg(feature = "failpoints")]
+    let _ = fail::eval("issue42662_2", |value| {
+        if value.as_deref() == Some("true") {
+            bt = 1;
+        }
+    });
+
     let instance_stats = crate::memory::read_mem_stats();
     let heap_inuse = u64::try_from(instance_stats.heap_inuse).unwrap_or(0);
     if heap_inuse > MEMORY_MAX_USED.load(Ordering::SeqCst) {
@@ -282,9 +291,14 @@ struct MemoryOpsHistory {
     kill_time: DateTime<Utc>,
     memory_limit: u64,
     memory_current: u64,
-    /// id,user,host,db,command,time,state,info,digest,mem,... in Go
-    /// `ProcessInfo.ToRow` order.
-    process_info_datum: Vec<Datum>,
+    process_id: Datum,
+    mem: Datum,
+    disk: Datum,
+    client: Datum,
+    db: Datum,
+    user: Datum,
+    sql_digest: Datum,
+    sql_text: Datum,
 }
 
 struct MemoryOpsState {
@@ -319,7 +333,29 @@ impl MemoryOpsHistoryManager {
             kill_time,
             memory_limit,
             memory_current,
-            process_info_datum: process_info_to_row(info, kill_time),
+            process_id: Datum::new_uint(info.id),
+            mem: Datum::new_int(info.mem_tracker.as_ref().map_or(0, |t| t.bytes_consumed())),
+            disk: Datum::new_int(info.disk_tracker.as_ref().map_or(0, |t| t.bytes_consumed())),
+            client: Datum::new_string(
+                if info.port.is_empty() {
+                    info.host.clone()
+                } else {
+                    join_host_port(&info.host, &info.port)
+                }
+                .into_bytes(),
+            ),
+            db: if info.db.is_empty() {
+                Datum::Null
+            } else {
+                Datum::new_string(info.db.as_bytes())
+            },
+            user: Datum::new_string(info.user.as_bytes()),
+            sql_digest: Datum::new_string(info.digest.as_bytes()),
+            sql_text: if info.info.is_empty() {
+                Datum::Null
+            } else {
+                Datum::new_string(info.info.as_bytes())
+            },
         };
         // Go takes a value copy of the SQL-text datum before applying the
         // `%.256v` truncation, so the truncation never reaches the stored
@@ -357,14 +393,14 @@ impl MemoryOpsHistoryManager {
                 Datum::new_string("SessionKill"),     // OPS
                 Datum::new_uint(info.memory_limit),   // MEMORY_LIMIT
                 Datum::new_uint(info.memory_current), // MEMORY_CURRENT
-                info.process_info_datum[0].clone(),   // PROCESSID
-                info.process_info_datum[9].clone(),   // MEM
-                info.process_info_datum[13].clone(),  // DISK
-                info.process_info_datum[2].clone(),   // CLIENT
-                info.process_info_datum[3].clone(),   // DB
-                info.process_info_datum[1].clone(),   // USER
-                info.process_info_datum[8].clone(),   // SQL_DIGEST
-                info.process_info_datum[7].clone(),   // SQL_TEXT
+                info.process_id.clone(),              // PROCESSID
+                info.mem.clone(),                     // MEM
+                info.disk.clone(),                    // DISK
+                info.client.clone(),                  // CLIENT
+                info.db.clone(),                      // DB
+                info.user.clone(),                    // USER
+                info.sql_digest.clone(),              // SQL_DIGEST
+                info.sql_text.clone(),                // SQL_TEXT
             ]);
         }
         rows
@@ -383,69 +419,6 @@ fn join_host_port(host: &str, port: &str) -> String {
     } else {
         format!("{host}:{port}")
     }
-}
-
-/// Go `ProcessInfo.ToRow(tz)` (via `ToRowForShow(true)`) over the narrowed
-/// snapshot, in the source's 20-column order so the history indices match.
-///
-/// boundary: command (`mysql.Command2Str`), state (`serverStatus2Str`), the
-/// `StmtCtx` memory-arbitration columns, and `ppcpuusage.CPUUsages` are not
-/// modeled by the snapshot; command/state land as NULL and the CPU times as
-/// zero.
-fn process_info_to_row(info: &ProcessInfo, now: DateTime<Utc>) -> Vec<Datum> {
-    let info_datum = if info.info.is_empty() {
-        Datum::Null
-    } else {
-        Datum::new_string(info.info.as_bytes())
-    };
-    let elapsed = (now - info.time).num_seconds().max(0) as u64;
-    let db = if info.db.is_empty() {
-        Datum::Null
-    } else {
-        Datum::new_string(info.db.as_bytes())
-    };
-    let host = if info.port.is_empty() {
-        info.host.clone()
-    } else {
-        join_host_port(&info.host, &info.port)
-    };
-    let bytes_consumed = info.mem_tracker.as_ref().map_or(0, |t| t.bytes_consumed());
-    let disk_consumed = info.disk_tracker.as_ref().map_or(0, |t| t.bytes_consumed());
-    let txn_start = if info.cur_txn_start_ts > 0 {
-        // Go `oracle.GetTimeFromTS`: physical milliseconds in the high bits.
-        let physical_ms = (info.cur_txn_start_ts >> 18) as i64;
-        let physical = DateTime::<Utc>::from_timestamp_millis(physical_ms)
-            .unwrap_or(super::memoryusagealarm::ZERO_TIME);
-        format!(
-            "{}({})",
-            physical.format("%m-%d %H:%M:%S%.3f"),
-            info.cur_txn_start_ts
-        )
-    } else {
-        String::new()
-    };
-    vec![
-        Datum::new_uint(info.id),                               // 0 id
-        Datum::new_string(info.user.as_bytes()),                // 1 user
-        Datum::new_string(host.as_bytes()),                     // 2 host
-        db,                                                     // 3 db
-        Datum::Null,                                            // 4 command (boundary)
-        Datum::new_uint(elapsed),                               // 5 time
-        Datum::Null,                                            // 6 state (boundary)
-        info_datum,                                             // 7 info
-        Datum::new_string(info.digest.as_bytes()),              // 8 digest
-        Datum::new_int(bytes_consumed),                         // 9 mem
-        Datum::Null,                                            // 10 mem arbitration (boundary)
-        Datum::Null,                             // 11 wait arbitrate start (boundary)
-        Datum::Null,                             // 12 wait arbitrate bytes (boundary)
-        Datum::new_int(disk_consumed),           // 13 disk
-        Datum::new_string(txn_start.as_bytes()), // 14 txn start
-        Datum::new_string(info.resource_group_name.as_bytes()), // 15 resource group
-        Datum::new_string(info.session_alias.as_bytes()), // 16 session alias
-        Datum::new_uint(info.affected_rows),     // 17 affected rows
-        Datum::new_int(0),                       // 18 tidb cpu (boundary)
-        Datum::new_int(0),                       // 19 tikv cpu (boundary)
-    ]
 }
 
 #[cfg(test)]

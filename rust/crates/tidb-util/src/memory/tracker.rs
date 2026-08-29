@@ -685,7 +685,7 @@ impl Tracker {
                 if let Some(root) = &session_root {
                     let mem_usage = root.bytes_consumed();
                     let min_size = super::SERVER_MEMORY_LIMIT_SESS_MIN_SIZE.load(SeqCst);
-                    if mem_usage >= 0 && mem_usage as u64 >= min_size {
+                    if mem_usage as u64 >= min_size {
                         let mut old = MEM_USAGE_TOP1_TRACKER.load();
                         while old.as_ref().is_none_or(|tracker| tracker.less_than(root)) {
                             if MEM_USAGE_TOP1_TRACKER

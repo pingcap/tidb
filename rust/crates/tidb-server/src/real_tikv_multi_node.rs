@@ -266,6 +266,7 @@ pub struct RealTiKvMultiServerSession {
 
 impl QuerySession for RealTiKvMultiServerSession {
     fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+        let process_statement = self._process.statement_started(sql, "", "autocommit");
         self.statement_warnings.clear();
         let cancellation = Arc::new(CancelHandle::default());
         let cancellation_registration: Arc<dyn ActiveQueryCancellation> = cancellation.clone();
@@ -282,7 +283,8 @@ impl QuerySession for RealTiKvMultiServerSession {
             return Ok(QueryResult::new(Box::new(OrderedMultiJoinResultSet {
                 inner,
                 _cancellation_lease: cancellation_lease,
-            })));
+            }))
+            .with_process_statement(process_statement));
         }
         let ConfiguredQueryRoute::Join { plan, tail, .. } = route else {
             unreachable!("local empty route returned above")
@@ -296,13 +298,16 @@ impl QuerySession for RealTiKvMultiServerSession {
                 .attach(join)
                 .map_err(|error| SqlQueryError::unknown(error.to_string()))?,
             None => {
-                return self.finish_unordered_query(join, cancellation_lease);
+                return self
+                    .finish_unordered_query(join, cancellation_lease)
+                    .map(|result| result.with_process_statement(process_statement));
             }
         };
         Ok(QueryResult::new(Box::new(OrderedMultiJoinResultSet {
             inner,
             _cancellation_lease: cancellation_lease,
-        })))
+        }))
+        .with_process_statement(process_statement))
     }
 
     fn prepare_point_read(&mut self, sql: &str) -> Result<PreparedPointRead, SqlQueryError> {
@@ -327,7 +332,7 @@ impl QuerySession for RealTiKvMultiServerSession {
                 .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
             (result_columns, result_field_types)
         };
-        PreparedPointRead::new(template, result_columns, result_field_types)
+        PreparedPointRead::new(sql.to_owned(), template, result_columns, result_field_types)
     }
 
     fn execute_prepared_point_read<'a>(
@@ -335,6 +340,9 @@ impl QuerySession for RealTiKvMultiServerSession {
         statement: &PreparedPointRead,
         parameters: &[i64],
     ) -> Result<QueryResult<'a>, SqlQueryError> {
+        let process_statement = self
+            ._process
+            .statement_started(statement.sql(), "", "autocommit");
         let field_types = statement.result_field_types().to_vec();
         let authority = tidb_session::ResultMaterializationAuthority::new(
             self.cursor_memory.statement(),
@@ -364,14 +372,15 @@ impl QuerySession for RealTiKvMultiServerSession {
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
         let result = complete_real_tikv_query(query, cancellation_lease);
         Ok(shape_prepared_point_read_result(result, statement)
-            .with_cursor_materialization(field_types, authority))
+            .with_cursor_materialization(field_types, authority)
+            .with_process_statement(process_statement))
     }
 
     fn prepare_write(&mut self, sql: &str) -> Result<PreparedWrite, SqlQueryError> {
         let catalog = configured_catalog_from_tables(&self.reader)?;
         let template = prepare_configured_write(sql, &catalog)
             .map_err(|error| refusal_aware_error(&self.table_refusals, error.to_string()))?;
-        Ok(PreparedWrite::new(template))
+        Ok(PreparedWrite::new(sql.to_owned(), template))
     }
 
     fn execute_prepared_write(
@@ -379,6 +388,9 @@ impl QuerySession for RealTiKvMultiServerSession {
         statement: &PreparedWrite,
         parameters: &[PreparedBindValue],
     ) -> Result<WriteOutcome, SqlQueryError> {
+        let _process_statement = self
+            ._process
+            .statement_started(statement.sql(), "", "autocommit");
         self.statement_warnings.clear();
         let bound = statement
             .template()
@@ -411,6 +423,7 @@ impl QuerySession for RealTiKvMultiServerSession {
     /// The default schema is the first served table's, which is the same
     /// relation the command line named first.
     fn execute_write(&mut self, sql: &str) -> Result<Option<WriteOutcome>, SqlQueryError> {
+        let _process_statement = self._process.statement_started(sql, "", "autocommit");
         // `SET time_zone` updates this session's own zone rather than reaching
         // storage: every subsequent read from either relation and every
         // `TIMESTAMP` write literal consult it from here on, mirroring

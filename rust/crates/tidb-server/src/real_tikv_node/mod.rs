@@ -1074,6 +1074,7 @@ where
     }
 
     fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+        let process_statement = self._process.statement_started(sql, "", "autocommit");
         self.statement_warnings.clear();
         let cancellation = Arc::new(CancelHandle::default());
         let cancellation_lease = self.context.cancellation.install(cancellation.clone());
@@ -1083,6 +1084,7 @@ where
         let plan = ReadOnlyScanPlan::lower(sql, self.inner.configured_table())
             .map_err(|error| refusal_aware_error(&self.table_refusals, error.to_string()))?;
         self.execute_read(plan, cancellation, cancellation_lease)
+            .map(|result| result.with_process_statement(process_statement))
     }
 
     fn prepare_point_read(&mut self, sql: &str) -> Result<PreparedPointRead, SqlQueryError> {
@@ -1110,7 +1112,7 @@ where
                 .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
             (result_columns, result_field_types)
         };
-        PreparedPointRead::new(template, result_columns, result_field_types)
+        PreparedPointRead::new(sql.to_owned(), template, result_columns, result_field_types)
     }
 
     fn execute_prepared_point_read<'a>(
@@ -1118,6 +1120,9 @@ where
         statement: &PreparedPointRead,
         parameters: &[i64],
     ) -> Result<QueryResult<'a>, SqlQueryError> {
+        let process_statement = self
+            ._process
+            .statement_started(statement.sql(), "", "autocommit");
         let field_types = statement.result_field_types().to_vec();
         let authority = tidb_session::ResultMaterializationAuthority::new(
             self.cursor_memory.statement(),
@@ -1135,7 +1140,8 @@ where
         let warnings = result.warning_count();
         let result = result.with_statement_status(warnings, statement_status);
         Ok(shape_prepared_point_read_result(result, statement)
-            .with_cursor_materialization(field_types, authority))
+            .with_cursor_materialization(field_types, authority)
+            .with_process_statement(process_statement))
     }
 
     fn prepare_write(&mut self, sql: &str) -> Result<PreparedWrite, SqlQueryError> {
@@ -1143,10 +1149,11 @@ where
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
         let template = prepare_configured_write(sql, &catalog)
             .map_err(|error| refusal_aware_error(&self.table_refusals, error.to_string()))?;
-        Ok(PreparedWrite::new(template))
+        Ok(PreparedWrite::new(sql.to_owned(), template))
     }
 
     fn execute_write(&mut self, sql: &str) -> Result<Option<WriteOutcome>, SqlQueryError> {
+        let _process_statement = self._process.statement_started(sql, "", "autocommit");
         // `SET time_zone` updates this session's own zone rather than reaching
         // storage at all: every read's DAG request and every write's
         // `TIMESTAMP` literal conversion consult it from here on.
@@ -1192,6 +1199,9 @@ where
         statement: &PreparedWrite,
         parameters: &[PreparedBindValue],
     ) -> Result<WriteOutcome, SqlQueryError> {
+        let _process_statement = self
+            ._process
+            .statement_started(statement.sql(), "", "autocommit");
         self.commit_bound_write(statement.template(), parameters)
     }
 

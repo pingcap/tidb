@@ -472,6 +472,7 @@ pub(crate) struct CursorMaterializationAuthority {
 /// or TiKV.
 #[derive(Clone, Debug)]
 pub struct PreparedPointRead {
+    sql: String,
     template: ConfiguredPreparedPointReadTemplate,
     result_columns: Vec<ColumnInfo>,
     result_field_types: Vec<tidb_datatype::FieldType>,
@@ -480,6 +481,7 @@ pub struct PreparedPointRead {
 impl PreparedPointRead {
     /// Creates a concrete prepared definition after parser/catalog admission.
     pub fn new(
+        sql: String,
         template: ConfiguredPreparedPointReadTemplate,
         result_columns: Vec<ColumnInfo>,
         result_field_types: Vec<tidb_datatype::FieldType>,
@@ -492,10 +494,17 @@ impl PreparedPointRead {
             )));
         }
         Ok(Self {
+            sql,
             template,
             result_columns,
             result_field_types,
         })
+    }
+
+    /// The statement text retained at prepare time.
+    #[must_use]
+    pub fn sql(&self) -> &str {
+        &self.sql
     }
 
     /// Returns the immutable typed template retained by this connection.
@@ -532,14 +541,21 @@ impl PreparedPointRead {
 /// immutable planner template is bound afresh for each execute.
 #[derive(Clone, Debug)]
 pub struct PreparedWrite {
+    sql: String,
     template: ConfiguredPreparedWriteTemplate,
 }
 
 impl PreparedWrite {
     /// Creates a concrete prepared write after parser/catalog admission.
     #[must_use]
-    pub const fn new(template: ConfiguredPreparedWriteTemplate) -> Self {
-        Self { template }
+    pub const fn new(sql: String, template: ConfiguredPreparedWriteTemplate) -> Self {
+        Self { sql, template }
+    }
+
+    /// The statement text retained at prepare time.
+    #[must_use]
+    pub fn sql(&self) -> &str {
+        &self.sql
     }
 
     /// Returns the immutable typed template retained by this connection.
@@ -842,6 +858,69 @@ impl<'a> QueryResult<'a> {
     #[must_use]
     pub fn into_source(self) -> Box<dyn ResultSetSource + 'a> {
         self.source.inner
+    }
+
+    /// Retains the process-list statement until this result set is finished.
+    #[must_use]
+    pub fn with_process_statement(
+        self,
+        statement: tidb_session::process::ProcessStatementGuard,
+    ) -> Self {
+        let Self {
+            source,
+            cursor_materialization,
+            warnings,
+            status,
+        } = self;
+        Self {
+            source: BoxedResultSetSource {
+                inner: Box::new(ProcessTrackedResultSet {
+                    inner: source.inner,
+                    statement: Some(statement),
+                }),
+            },
+            cursor_materialization,
+            warnings,
+            status,
+        }
+    }
+}
+
+struct ProcessTrackedResultSet<'a> {
+    inner: Box<dyn ResultSetSource + 'a>,
+    statement: Option<tidb_session::process::ProcessStatementGuard>,
+}
+
+impl ResultSetSource for ProcessTrackedResultSet<'_> {
+    fn next_batch(&mut self, max_rows: usize) -> Result<Vec<Vec<tidb_datatype::Datum>>, String> {
+        self.inner.next_batch(max_rows)
+    }
+
+    fn supports_text_batch(&self) -> bool {
+        self.inner.supports_text_batch()
+    }
+
+    fn next_text_batch(
+        &mut self,
+        max_rows: usize,
+    ) -> Result<Option<Box<dyn tidb_exec::distsql_recordset::TextResultBatch>>, String> {
+        self.inner.next_text_batch(max_rows)
+    }
+
+    fn columns(&mut self) -> Result<Vec<ColumnInfo>, String> {
+        self.inner.columns()
+    }
+
+    fn finish(&mut self) -> Result<(), String> {
+        let result = self.inner.finish();
+        self.statement.take();
+        result
+    }
+
+    fn close(&mut self) -> Result<(), String> {
+        let result = self.inner.close();
+        self.statement.take();
+        result
     }
 }
 
