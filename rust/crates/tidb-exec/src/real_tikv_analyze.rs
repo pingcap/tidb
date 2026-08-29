@@ -27,6 +27,7 @@
 //! makes a Go TiDB's concurrent `ANALYZE` a plain write conflict at prewrite:
 //! both write the same keys, and exactly one of them commits.
 
+use std::collections::HashSet;
 use std::fmt;
 use std::time::Duration;
 
@@ -36,10 +37,14 @@ use tidb_txnkv::transaction::{
 };
 use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
 
-use crate::cluster_analyze::{analyze_table, lower_analyze, AnalyzeError, AnalyzeStatement};
+use crate::cluster_analyze::{
+    analyze_table, lower_analyze, AnalyzeColumnChoice, AnalyzeError, AnalyzeStatement,
+};
 use crate::cluster_catalog::load_cluster_catalog;
 use crate::cluster_stats_load::ClusterStatsLoader;
-use crate::cluster_stats_write::plan_stats_write;
+use crate::cluster_stats_write::{
+    plan_get_predicate_columns, plan_partial_stats_write, plan_stats_write, StatsWritePlan,
+};
 use crate::mysql_bootstrap::utc_now_timestamp;
 use crate::mysql_system_tables::SystemTableError;
 use crate::pessimistic_lock_error::{commit_outcome_to_sql_error, LockSqlError};
@@ -196,16 +201,27 @@ pub fn commit_cluster_analyze<C: StoreWriteClient, L: StoreWriteLoader, P: Store
                     .flatten()
             })
             .map(|stats| realtime_count_of(stats.row_count));
+        let (mut selected, cleanup) = selected_columns(&mut snapshot, &catalog, &table, statement)
+            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+        if let Some(selected) = selected.as_mut() {
+            add_mandatory_columns(&table, selected);
+        }
         let report = analyze_table(
             &mut snapshot,
             &table,
             &statement.options,
             realtime_count,
             start_ts,
+            selected.as_ref(),
         )
         .map_err(|error: AnalyzeError| ClusterAnalyzeError::Other(error.to_string()))?;
-        let write = plan_stats_write(&mut snapshot, &catalog, &report.stats, utc_now_timestamp())
-            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+        let mut write = if selected.is_some() {
+            plan_partial_stats_write(&mut snapshot, &catalog, &report.stats, utc_now_timestamp())
+        } else {
+            plan_stats_write(&mut snapshot, &catalog, &report.stats, utc_now_timestamp())
+        }
+        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+        write.mutations.splice(0..0, cleanup.mutations);
         (report, write)
     };
     let (report, write) = planned;
@@ -245,6 +261,94 @@ pub fn commit_cluster_analyze<C: StoreWriteClient, L: StoreWriteLoader, P: Store
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
     classify_commit_outcome(&outcome)?;
     Ok(receipt)
+}
+
+fn selected_columns<S: crate::cluster_catalog::MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &crate::cluster_catalog::ClusterCatalog,
+    table: &tidb_model::table_info::TableInfo,
+    statement: &AnalyzeStatement,
+) -> Result<(Option<HashSet<i64>>, StatsWritePlan), crate::cluster_stats_write::StatsWriteError> {
+    match &statement.columns {
+        AnalyzeColumnChoice::All | AnalyzeColumnChoice::Default => {
+            Ok((None, StatsWritePlan::default()))
+        }
+        AnalyzeColumnChoice::Predicate => {
+            let current = table
+                .cols()
+                .iter_deref()
+                .map(|column| column.read().id)
+                .collect::<Vec<_>>();
+            let (columns, cleanup) =
+                plan_get_predicate_columns(snapshot, catalog, table.id, &current)?;
+            Ok((Some(columns.into_iter().collect()), cleanup))
+        }
+        AnalyzeColumnChoice::Explicit(names) => {
+            let mut selected = HashSet::new();
+            for name in names {
+                let column = table
+                    .cols()
+                    .iter_deref()
+                    .find(|column| column.read().name.lowercase() == name.to_lowercase())
+                    .ok_or_else(|| {
+                        crate::cluster_stats_write::StatsWriteError::MissingTable(format!(
+                            "column `{name}` does not exist in `{}`",
+                            table.name.original()
+                        ))
+                    })?;
+                selected.insert(column.read().id);
+            }
+            Ok((Some(selected), StatsWritePlan::default()))
+        }
+    }
+}
+
+fn add_mandatory_columns(table: &tidb_model::table_info::TableInfo, selected: &mut HashSet<i64>) {
+    for index in table.indices.iter_deref() {
+        let index = index.read();
+        if index.state != tidb_model::SchemaState::PUBLIC || index.mv_index {
+            continue;
+        }
+        for indexed in index.columns.iter_deref() {
+            let offset = indexed.read().offset;
+            if let Some(column) = table.cols().get(offset as usize) {
+                selected.insert(column.read().id);
+            }
+        }
+    }
+    if table.pk_is_handle {
+        for column in table.cols().iter_deref() {
+            let column = column.read();
+            if column.get_flag() & u64::from(tidb_datatype::FieldTypeFlags::PRI_KEY) != 0 {
+                selected.insert(column.id);
+            }
+        }
+    }
+    loop {
+        let before = selected.len();
+        for column in table.cols().iter_deref() {
+            let column = column.read();
+            if !selected.contains(&column.id) {
+                continue;
+            }
+            for dependency in column.dependences.snapshot() {
+                if let Some(base) = table.cols().iter_deref().find(|candidate| {
+                    dependency.as_utf8().is_ok_and(|dependency| {
+                        candidate
+                            .read()
+                            .name
+                            .lowercase()
+                            .eq_ignore_ascii_case(dependency)
+                    })
+                }) {
+                    selected.insert(base.read().id);
+                }
+            }
+        }
+        if selected.len() == before {
+            break;
+        }
+    }
 }
 
 fn classify_commit_outcome(outcome: &OptimisticCommitOutcome) -> Result<(), ClusterAnalyzeError> {

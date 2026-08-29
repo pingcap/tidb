@@ -31,14 +31,14 @@ use tidb_datatype::{Datum, Time, TimeType};
 use tidb_exec::cluster_catalog::{
     load_cluster_catalog, ClusterCatalogError, MetaPairs, MetaSnapshot,
 };
-use tidb_exec::cluster_stats_load::{ClusterStatsItem, ClusterStatsLoader, ClusterTableStats};
-use tidb_exec::cluster_stats_write::{
-    plan_historical_stats_meta_write, plan_loaded_stats_item_write,
-    plan_get_predicate_columns, plan_loaded_stats_meta_write, plan_loaded_stats_usage_write,
-    plan_stats_write,
-};
 use tidb_exec::cluster_predicate_column::{
     load_column_stats_usage, load_column_stats_usage_for_table,
+};
+use tidb_exec::cluster_stats_load::{ClusterStatsItem, ClusterStatsLoader, ClusterTableStats};
+use tidb_exec::cluster_stats_write::{
+    plan_get_predicate_columns, plan_historical_stats_meta_write, plan_loaded_stats_item_write,
+    plan_loaded_stats_meta_write, plan_loaded_stats_usage_write, plan_partial_stats_write,
+    plan_stats_write,
 };
 use tidb_exec::mysql_bootstrap::{plan_mysql_bootstrap, BootstrapEnvironment, BootstrapWrite};
 use tidb_exec::mysql_system_tables::{scan_system_table, SystemRow, SystemTableView};
@@ -280,9 +280,10 @@ fn lite_load_keeps_metadata_and_evicts_the_histogram_payload() {
     apply_mutations(&mut store, &plan.mutations);
 
     let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
-    let column_types = BTreeMap::from([(1, tidb_datatype::FieldType::new(
-        tidb_datatype::FieldTypeCode::LongLong,
-    ))]);
+    let column_types = BTreeMap::from([(
+        1,
+        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+    )]);
     let loaded = loader
         .load_table_lite(&mut store, 4242, &column_types)
         .expect("lite statistics load")
@@ -320,9 +321,10 @@ fn cache_update_preserves_and_refreshes_resident_histogram_payload() {
     apply_mutations(&mut store, &plan.mutations);
 
     let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
-    let column_types = BTreeMap::from([(1, tidb_datatype::FieldType::new(
-        tidb_datatype::FieldTypeCode::LongLong,
-    ))]);
+    let column_types = BTreeMap::from([(
+        1,
+        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+    )]);
     let table_info = TableInfo {
         id: old_stats.table_id,
         columns: vec![ColumnInfo {
@@ -411,9 +413,10 @@ fn topn_load_uses_the_declared_secondary_index() {
     store.scans.clear();
 
     let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
-    let column_types = BTreeMap::from([(1, tidb_datatype::FieldType::new(
-        tidb_datatype::FieldTypeCode::LongLong,
-    ))]);
+    let column_types = BTreeMap::from([(
+        1,
+        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+    )]);
     let loaded = loader
         .load_table(&mut store, stats.table_id, &column_types)
         .expect("full statistics load")
@@ -457,7 +460,14 @@ fn one_item_load_uses_only_that_items_key_ranges() {
     let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
     let field_type = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
     let loaded = loader
-        .load_item(&mut store, stats.table_id, false, 1, Some(&field_type), true)
+        .load_item(
+            &mut store,
+            stats.table_id,
+            false,
+            1,
+            Some(&field_type),
+            true,
+        )
         .expect("one item loads")
         .expect("the histogram exists");
     assert_eq!(loaded.id, 1);
@@ -471,10 +481,8 @@ fn one_item_load_uses_only_that_items_key_ranges() {
         tidb_metadef::system::STATS_HISTOGRAMS_TABLE_ID,
         &encoded_item,
     );
-    let bucket_prefix = tidb_codec::encode_row_key(
-        tidb_metadef::system::STATS_BUCKETS_TABLE_ID,
-        &encoded_item,
-    );
+    let bucket_prefix =
+        tidb_codec::encode_row_key(tidb_metadef::system::STATS_BUCKETS_TABLE_ID, &encoded_item);
     let topn_prefix = tidb_codec::table_key::encode_index_seek_key(
         tidb_metadef::system::STATS_TOP_NTABLE_ID,
         1,
@@ -520,16 +528,9 @@ fn loaded_stats_item_write_replaces_only_the_named_histogram() {
     let mut cms = CmsSketch::new(2, 16);
     cms.insert_bytes_by_count(b"replacement", 9);
     loaded.cms = Some(cms);
-    let plan = plan_loaded_stats_item_write(
-        &mut store,
-        &catalog,
-        table_id,
-        55,
-        &loaded,
-        version,
-        now(),
-    )
-    .expect("LOAD STATS item plans");
+    let plan =
+        plan_loaded_stats_item_write(&mut store, &catalog, table_id, 55, &loaded, version, now())
+            .expect("LOAD STATS item plans");
     apply_mutations(&mut store, &plan.mutations);
 
     let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
@@ -567,6 +568,78 @@ fn loaded_stats_item_write_replaces_only_the_named_histogram() {
     assert_eq!(untouched.topn.as_ref().map(TopN::num), Some(100));
 }
 
+/// Go `SaveAnalyzeResultToStorage` iterates only the histograms returned by a
+/// partial-column analyze, replacing their payload without deleting older
+/// statistics for unselected columns.
+#[test]
+fn partial_analyze_write_preserves_unselected_histograms() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let table_id = 4242;
+    let initial = ClusterTableStats {
+        table_id,
+        version: 440_000_000_000_000_000,
+        snapshot: 439_000_000_000_000_000,
+        last_analyze_version: 440_000_000_000_000_000,
+        last_stats_hist_version: 440_000_000_000_000_000,
+        modify_count: 0,
+        row_count: 10_240,
+        columns: vec![full_histogram(1, false), full_histogram(2, false)],
+        indexes: Vec::new(),
+    };
+    let plan = plan_stats_write(&mut store, &catalog, &initial, now()).expect("analyze plans");
+    apply_mutations(&mut store, &plan.mutations);
+
+    let mut replacement = full_histogram(1, false);
+    replacement.histogram.buckets.truncate(2);
+    replacement.histogram.ndv = 17;
+    let partial = ClusterTableStats {
+        version: initial.version + 1,
+        last_analyze_version: initial.version + 1,
+        last_stats_hist_version: initial.version + 1,
+        columns: vec![replacement],
+        ..initial
+    };
+    let plan = plan_partial_stats_write(&mut store, &catalog, &partial, now())
+        .expect("partial analyze plans");
+    apply_mutations(&mut store, &plan.mutations);
+
+    let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
+    let column_types = BTreeMap::from([
+        (
+            1,
+            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+        ),
+        (
+            2,
+            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+        ),
+    ]);
+    let stored = loader
+        .load_table(&mut store, table_id, &column_types)
+        .expect("statistics reload")
+        .expect("stats_meta exists");
+    assert_eq!(stored.column(1).expect("selected column").histogram.ndv, 17);
+    assert_eq!(
+        stored
+            .column(1)
+            .expect("selected column")
+            .histogram
+            .buckets
+            .len(),
+        2
+    );
+    assert_eq!(
+        stored
+            .column(2)
+            .expect("unselected column remains")
+            .histogram
+            .buckets
+            .len(),
+        256
+    );
+}
+
 /// Pinned Go's negative-count branch uses UPDATE rather than REPLACE: only
 /// the two version markers move, while count/modify/snapshot stay intact.
 #[test]
@@ -590,16 +663,9 @@ fn loaded_stats_negative_count_preserves_existing_meta_values() {
 
     let version = initial.version + 1;
     let item = full_histogram(1, false);
-    let plan = plan_loaded_stats_item_write(
-        &mut store,
-        &catalog,
-        table_id,
-        -1,
-        &item,
-        version,
-        now(),
-    )
-    .expect("negative-count item plans");
+    let plan =
+        plan_loaded_stats_item_write(&mut store, &catalog, table_id, -1, &item, version, now())
+            .expect("negative-count item plans");
     apply_mutations(&mut store, &plan.mutations);
 
     let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
@@ -638,16 +704,8 @@ fn loaded_stats_final_meta_update_preserves_unnamed_columns() {
     apply_mutations(&mut store, &plan.mutations);
 
     let version = initial.version + 1;
-    let plan = plan_loaded_stats_meta_write(
-        &mut store,
-        &catalog,
-        table_id,
-        55,
-        3,
-        version,
-        now(),
-    )
-    .expect("LOAD STATS final meta plans");
+    let plan = plan_loaded_stats_meta_write(&mut store, &catalog, table_id, 55, 3, version, now())
+        .expect("LOAD STATS final meta plans");
     apply_mutations(&mut store, &plan.mutations);
 
     let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
@@ -725,11 +783,7 @@ fn loaded_stats_usage_replaces_timestamps_in_one_plan() {
                 && row.i64("column_id").unwrap() == Some(7)
         })
         .expect("replacement row exists");
-    assert!(row
-        .stored_datum("last_used_at")
-        .unwrap()
-        .unwrap()
-        .is_null());
+    assert!(row.stored_datum("last_used_at").unwrap().unwrap().is_null());
     let expected = Time::from_date_checked(2026, 8, 30, 8, 9, 10, 0, TimeType::Timestamp, 0)
         .expect("a fixed calendar timestamp is valid");
     assert_eq!(
@@ -771,8 +825,8 @@ fn predicate_column_load_and_cleanup_match_the_pinned_storage_contract() {
         name: "+08:00".to_owned(),
         offset_secs: 8 * 60 * 60,
     };
-    let usage = load_column_stats_usage(&mut store, &catalog, &plus_eight)
-        .expect("all usage loads");
+    let usage =
+        load_column_stats_usage(&mut store, &catalog, &plus_eight).expect("all usage loads");
     let item = |id| tidb_model::TableItemID {
         table_id,
         id,
@@ -787,9 +841,8 @@ fn predicate_column_load_and_cleanup_match_the_pinned_storage_contract() {
         )
     );
 
-    let (columns, cleanup) =
-        plan_get_predicate_columns(&mut store, &catalog, table_id, &[7])
-            .expect("cleanup and predicate read plan");
+    let (columns, cleanup) = plan_get_predicate_columns(&mut store, &catalog, table_id, &[7])
+        .expect("cleanup and predicate read plan");
     assert_eq!(columns, vec![7]);
     assert!(!cleanup.is_empty());
     apply_mutations(&mut store, &cleanup.mutations);
@@ -812,16 +865,8 @@ fn loaded_stats_history_requires_the_exact_current_meta_version() {
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4242;
     let version = 440_000_000_000_000_000;
-    let meta = plan_loaded_stats_meta_write(
-        &mut store,
-        &catalog,
-        table_id,
-        55,
-        3,
-        version,
-        now(),
-    )
-    .expect("LOAD STATS final meta plans");
+    let meta = plan_loaded_stats_meta_write(&mut store, &catalog, table_id, 55, 3, version, now())
+        .expect("LOAD STATS final meta plans");
     apply_mutations(&mut store, &meta.mutations);
 
     assert!(plan_historical_stats_meta_write(
@@ -873,5 +918,8 @@ fn loaded_stats_history_requires_the_exact_current_meta_version() {
     assert_eq!(row.i64("modify_count").unwrap(), Some(3));
     assert_eq!(row.i64("count").unwrap(), Some(55));
     assert_eq!(row.u64("version").unwrap(), Some(version));
-    assert_eq!(row.bytes("source").unwrap().as_deref(), Some(b"load stats".as_slice()));
+    assert_eq!(
+        row.bytes("source").unwrap().as_deref(),
+        Some(b"load stats".as_slice())
+    );
 }

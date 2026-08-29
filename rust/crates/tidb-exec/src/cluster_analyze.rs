@@ -70,7 +70,7 @@
 //! refused by name rather than approximated, because a wrong histogram is
 //! worse than no histogram: the planner trusts it. See [`AnalyzeError`].
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use tidb_datatype::UNSPECIFIED_LENGTH;
 use tidb_executor::analyze::AnalyzeError as ComputeError;
@@ -86,7 +86,7 @@ use crate::mysql_system_tables::{SystemRow, SystemTableError, SystemTableView};
 use crate::system_row_write::origin_default;
 
 pub use tidb_executor::analyze::{
-    AnalyzeOptions, AnalyzeStatement, SampleMemoryExceeded, SampleMemoryQuota,
+    AnalyzeColumnChoice, AnalyzeOptions, AnalyzeStatement, SampleMemoryExceeded, SampleMemoryQuota,
     MEM_QUOTA_ANALYZE_VARIABLE, STATS_VERSION_2,
 };
 
@@ -194,8 +194,9 @@ pub fn analyze_table<S: PagedMetaSnapshot>(
     options: &AnalyzeOptions,
     realtime_count: Option<i64>,
     version: u64,
+    selected_column_ids: Option<&HashSet<i64>>,
 ) -> Result<AnalyzeReport, AnalyzeError> {
-    let plan = cluster_analyze_plan(table)?;
+    let plan = cluster_analyze_plan(table, selected_column_ids)?;
     let mut run = AnalyzeRun::start(&plan, options, realtime_count)?;
 
     let names: Vec<&str> = plan
@@ -308,7 +309,10 @@ fn stored_item(built: AnalyzedHistogram, is_index: bool) -> ClusterStatsItem {
 /// Every refusal here is about a value this tier cannot reproduce from the
 /// stored bytes; the shape rules the two tiers share (which TopN is
 /// suppressed, which slots exist) are [`AnalyzePlan`]'s own.
-fn cluster_analyze_plan(table: &TableInfo) -> Result<AnalyzePlan, AnalyzeError> {
+fn cluster_analyze_plan(
+    table: &TableInfo,
+    selected_column_ids: Option<&HashSet<i64>>,
+) -> Result<AnalyzePlan, AnalyzeError> {
     if table.partition.is_some() {
         return Err(AnalyzeError::unsupported(format!(
             "this node does not analyze the partitioned table `{}`: its statistics are one set \
@@ -321,6 +325,9 @@ fn cluster_analyze_plan(table: &TableInfo) -> Result<AnalyzePlan, AnalyzeError> 
     for column in table.cols().iter_deref() {
         let column = column.read();
         if column.state != SchemaState::PUBLIC || column.hidden {
+            continue;
+        }
+        if selected_column_ids.is_some_and(|selected| !selected.contains(&column.id)) {
             continue;
         }
         // A VIRTUAL generated column has no bytes in the stored row to

@@ -173,11 +173,32 @@ pub fn plan_stats_write<S: MetaSnapshot>(
     stats: &ClusterTableStats,
     now: Time,
 ) -> Result<StatsWritePlan, StatsWriteError> {
+    plan_stats_write_impl(snapshot, catalog, stats, now, true)
+}
+
+/// Plans an ANALYZE write that replaces only the histogram items present in
+/// `stats`, matching Go's partial-column analyze storage behavior.
+pub fn plan_partial_stats_write<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    stats: &ClusterTableStats,
+    now: Time,
+) -> Result<StatsWritePlan, StatsWriteError> {
+    plan_stats_write_impl(snapshot, catalog, stats, now, false)
+}
+
+fn plan_stats_write_impl<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    stats: &ClusterTableStats,
+    now: Time,
+    replace_all: bool,
+) -> Result<StatsWritePlan, StatsWriteError> {
     let mut plan = StatsWritePlan::default();
     plan_meta(snapshot, catalog, stats, now, &mut plan)?;
-    plan_histograms(snapshot, catalog, stats, now, &mut plan)?;
-    plan_buckets(snapshot, catalog, stats, now, &mut plan)?;
-    plan_topn(snapshot, catalog, stats, now, &mut plan)?;
+    plan_histograms(snapshot, catalog, stats, now, replace_all, &mut plan)?;
+    plan_buckets(snapshot, catalog, stats, now, replace_all, &mut plan)?;
+    plan_topn(snapshot, catalog, stats, now, replace_all, &mut plan)?;
     Ok(plan)
 }
 
@@ -772,6 +793,7 @@ fn plan_histograms<S: MetaSnapshot>(
     catalog: &ClusterCatalog,
     stats: &ClusterTableStats,
     now: Time,
+    replace_all: bool,
     plan: &mut StatsWritePlan,
 ) -> Result<(), StatsWriteError> {
     let table = locate(catalog, "stats_histograms")?;
@@ -829,7 +851,7 @@ fn plan_histograms<S: MetaSnapshot>(
     // A histogram this `ANALYZE` no longer produces -- a dropped index, a
     // column that became unanalyzable -- must lose its row, or the loader
     // would keep handing the planner statistics for something that is gone.
-    rows.retract_remaining(plan)?;
+    retract_analyzed_items(&mut rows, stats, replace_all, plan)?;
     rows.publish_watermark(catalog, plan)
 }
 
@@ -838,6 +860,7 @@ fn plan_buckets<S: MetaSnapshot>(
     catalog: &ClusterCatalog,
     stats: &ClusterTableStats,
     now: Time,
+    replace_all: bool,
     plan: &mut StatsWritePlan,
 ) -> Result<(), StatsWriteError> {
     let table = locate(catalog, "stats_buckets")?;
@@ -894,7 +917,7 @@ fn plan_buckets<S: MetaSnapshot>(
     // A shorter histogram than last time leaves its tail behind, and a stale
     // bucket read back as part of this histogram would be a range the table
     // no longer has.
-    rows.retract_remaining(plan)?;
+    retract_analyzed_items(&mut rows, stats, replace_all, plan)?;
     rows.publish_watermark(catalog, plan)
 }
 
@@ -903,6 +926,7 @@ fn plan_topn<S: MetaSnapshot>(
     catalog: &ClusterCatalog,
     stats: &ClusterTableStats,
     now: Time,
+    replace_all: bool,
     plan: &mut StatsWritePlan,
 ) -> Result<(), StatsWriteError> {
     let table = locate(catalog, "stats_top_n")?;
@@ -939,8 +963,30 @@ fn plan_topn<S: MetaSnapshot>(
             plan.topn_count += 1;
         }
     }
-    rows.retract_remaining(plan)?;
+    retract_analyzed_items(&mut rows, stats, replace_all, plan)?;
     rows.publish_watermark(catalog, plan)
+}
+
+fn retract_analyzed_items(
+    rows: &mut StatsRows<'_>,
+    stats: &ClusterTableStats,
+    replace_all: bool,
+    plan: &mut StatsWritePlan,
+) -> Result<(), StatsWriteError> {
+    if replace_all {
+        return rows.retract_remaining(plan);
+    }
+    for item in stats.columns.iter().chain(&stats.indexes) {
+        rows.retract_prefix(
+            &[
+                format!("{:?}", Datum::Int(stats.table_id)),
+                format!("{:?}", Datum::Int(i64::from(item.is_index))),
+                format!("{:?}", Datum::Int(item.id)),
+            ],
+            plan,
+        )?;
+    }
+    Ok(())
 }
 
 /// One `mysql.stats_*` table's current rows for one analyzed table, addressed

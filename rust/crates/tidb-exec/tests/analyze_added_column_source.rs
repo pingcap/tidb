@@ -40,9 +40,7 @@ use std::collections::BTreeMap;
 use tidb_codec::encode_row_key;
 use tidb_datatype::Datum;
 use tidb_exec::cluster_analyze::{analyze_table, AnalyzeOptions};
-use tidb_exec::cluster_catalog::{
-    ClusterCatalogError, MetaPairs, MetaSnapshot, PagedMetaSnapshot,
-};
+use tidb_exec::cluster_catalog::{ClusterCatalogError, MetaPairs, MetaSnapshot, PagedMetaSnapshot};
 use tidb_exec::table_info_build::{build_table_info, ClusteredIndexDefMode};
 use tidb_model::column::ColumnDefaultValue;
 use tidb_model::table_info::TableInfo;
@@ -143,6 +141,7 @@ fn a_column_added_after_the_rows_analyzes_as_its_origin_default() {
         &AnalyzeOptions::default(),
         None,
         440_000_000_000_000_000,
+        None,
     )
     .expect("a table whose added column has a materialisable default analyzes");
     assert_eq!(report.scanned_rows, 100);

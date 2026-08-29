@@ -45,12 +45,13 @@
 //!   uses a stats-handle internal session, so a user `ROLLBACK` cannot discard
 //!   the published statistics.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
-use tidb_executor::analyze::kv::analyze_kv_table;
+use tidb_executor::analyze::kv::analyze_kv_table_columns;
 use tidb_executor::analyze::panic_recovery::recover_analyze_panic;
 use tidb_executor::analyze::{
-    lower_analyze_admin, AnalyzeOptions, AnalyzeStatement, SampleMemoryQuota,
+    lower_analyze_admin, AnalyzeColumnChoice, AnalyzeOptions, AnalyzeStatement, SampleMemoryQuota,
     MEM_QUOTA_ANALYZE_VARIABLE,
 };
 use tidb_executor::{DriverError, SchemaErrorKind, TableEntry};
@@ -65,6 +66,42 @@ pub(crate) enum AnalyzePanicPhase {
     Worker,
     /// Go's result handler, after statistics are computed but before publish.
     Result,
+}
+
+fn merge_partial_statistics(
+    old: Option<Arc<tidb_executor::access_cost::TableStatistics>>,
+    mut fresh: tidb_executor::access_cost::TableStatistics,
+    partial: bool,
+) -> tidb_executor::access_cost::TableStatistics {
+    if !partial {
+        return fresh;
+    }
+    let Some(old) = old else {
+        return fresh;
+    };
+    let mut merged = (*old).clone();
+    merged.row_count = fresh.row_count;
+    merged.modify_count = fresh.modify_count;
+    merged.version = fresh.version;
+    merged.last_analyze_version = fresh.last_analyze_version;
+    merged.columns.append(&mut fresh.columns);
+    merged.indexes.append(&mut fresh.indexes);
+    merged
+        .column_load_status
+        .append(&mut fresh.column_load_status);
+    merged
+        .index_load_status
+        .append(&mut fresh.index_load_status);
+    merged
+        .column_stats_existence
+        .append(&mut fresh.column_stats_existence);
+    merged
+        .index_stats_existence
+        .append(&mut fresh.index_stats_existence);
+    merged.pseudo = merged.row_count == 0
+        || (merged.column_stats_existence.values().all(|exists| !exists)
+            && merged.index_stats_existence.values().all(|exists| !exists));
+    merged
 }
 
 #[cfg(test)]
@@ -130,6 +167,34 @@ impl Session {
         let schema = statement.schema.clone();
         let name = statement.table.clone();
         let ctx = self.statement_context(false);
+        let choice = match &statement.columns {
+            AnalyzeColumnChoice::Default
+                if self
+                    .vars()
+                    .get_system(tidb_vardef::tidb_vars::TIDB_ANALYZE_COLUMN_OPTIONS)
+                    .is_ok_and(|value| value.eq_ignore_ascii_case("PREDICATE")) =>
+            {
+                AnalyzeColumnChoice::Predicate
+            }
+            AnalyzeColumnChoice::Default => AnalyzeColumnChoice::All,
+            choice => choice.clone(),
+        };
+        let predicate_ids = if choice == AnalyzeColumnChoice::Predicate {
+            let usage = match self.column_stats_usage.clone() {
+                Some(provider) => provider
+                    .load_column_stats_usage(&self.session_time_zone(), &self.active_resource_group)
+                    .map_err(DriverError::unsupported)?,
+                None => std::collections::HashMap::new(),
+            };
+            let ids = usage
+                .keys()
+                .filter(|item| item.table_id != 0 && !item.is_index)
+                .map(|item| (item.table_id, item.id))
+                .collect::<HashSet<_>>();
+            Some(ids)
+        } else {
+            None
+        };
         self.with_catalog_mut(|catalog| {
             let (table_id, partition_ids, table) = match catalog.table_in(&schema, &name) {
                 Some(TableEntry::Kv(kv)) => (
@@ -174,16 +239,91 @@ impl Session {
                 .map(|physical_id| (*physical_id, realtime_count(*physical_id)))
                 .collect::<Vec<_>>();
             let global_count = realtime_count(table_id);
+            let mut selected = match &choice {
+                AnalyzeColumnChoice::All | AnalyzeColumnChoice::Default => None,
+                AnalyzeColumnChoice::Predicate => Some(
+                    predicate_ids
+                        .as_ref()
+                        .into_iter()
+                        .flat_map(|items| items.iter())
+                        .filter_map(|(usage_table, column)| {
+                            (*usage_table == table_id).then_some(*column)
+                        })
+                        .collect::<HashSet<_>>(),
+                ),
+                AnalyzeColumnChoice::Explicit(names) => {
+                    let mut ids = HashSet::new();
+                    for name in names {
+                        let column = table
+                            .visible_columns()
+                            .iter()
+                            .find(|column| column.name.eq_ignore_ascii_case(name))
+                            .ok_or_else(|| {
+                                DriverError::unsupported(format!(
+                                    "column `{name}` does not exist in `{schema}`.`{}`",
+                                    statement.table
+                                ))
+                            })?;
+                        ids.insert(column.id);
+                    }
+                    Some(ids)
+                }
+            };
+            if let Some(selected) = selected.as_mut() {
+                for index in table.indexes() {
+                    for offset in &index.column_offsets {
+                        if let Some(column) = table.columns().get(*offset) {
+                            selected.insert(column.id);
+                        }
+                    }
+                }
+                if table.pk_handle_offset().is_some() {
+                    selected.insert(table.visible_columns()[table.pk_handle_offset().unwrap()].id);
+                }
+                loop {
+                    let before = selected.len();
+                    for column in table.columns() {
+                        if !selected.contains(&column.id) {
+                            continue;
+                        }
+                        if let Some(generated) = &column.generated {
+                            for dependency in &generated.dependencies {
+                                if let Some(base) = table
+                                    .columns()
+                                    .iter()
+                                    .find(|base| base.name.eq_ignore_ascii_case(dependency))
+                                {
+                                    selected.insert(base.id);
+                                }
+                            }
+                        }
+                    }
+                    if selected.len() == before {
+                        break;
+                    }
+                }
+            }
             recover_analyze_panic(|| {
                 #[cfg(test)]
                 inject_analyze_panic_for_test(AnalyzePanicPhase::Worker);
 
                 if partition_ids.is_empty() {
                     let mut table = table;
-                    let statistics = analyze_kv_table(&mut table, options, global_count, &ctx)
-                        .map_err(|error| DriverError::unsupported(error.to_string()))?;
+                    let statistics = analyze_kv_table_columns(
+                        &mut table,
+                        options,
+                        global_count,
+                        &ctx,
+                        selected.as_ref(),
+                    )
+                    .map_err(|error| DriverError::unsupported(error.to_string()))?;
                     #[cfg(test)]
                     inject_analyze_panic_for_test(AnalyzePanicPhase::Result);
+                    let statistics = merge_partial_statistics(
+                        catalog.table_statistics(table_id),
+                        statistics,
+                        selected.is_some(),
+                    );
                     catalog.set_table_statistics(table_id, Arc::new(statistics));
                     return Ok(());
                 }
@@ -192,9 +332,19 @@ impl Session {
                 for (physical_id, realtime_count) in partition_counts {
                     let mut partition = table.clone();
                     partition.restrict_read_to_partitions(&[physical_id]);
-                    let statistics =
-                        analyze_kv_table(&mut partition, options, realtime_count, &ctx)
-                            .map_err(|error| DriverError::unsupported(error.to_string()))?;
+                    let statistics = analyze_kv_table_columns(
+                        &mut partition,
+                        options,
+                        realtime_count,
+                        &ctx,
+                        selected.as_ref(),
+                    )
+                    .map_err(|error| DriverError::unsupported(error.to_string()))?;
+                    let statistics = merge_partial_statistics(
+                        catalog.table_statistics(physical_id),
+                        statistics,
+                        selected.is_some(),
+                    );
                     partition_statistics.push((physical_id, Arc::new(statistics)));
                 }
 
@@ -207,10 +357,19 @@ impl Session {
                     None
                 } else {
                     let mut global = table;
-                    Some(Arc::new(
-                        analyze_kv_table(&mut global, options, global_count, &ctx)
-                            .map_err(|error| DriverError::unsupported(error.to_string()))?,
-                    ))
+                    let statistics = analyze_kv_table_columns(
+                        &mut global,
+                        options,
+                        global_count,
+                        &ctx,
+                        selected.as_ref(),
+                    )
+                    .map_err(|error| DriverError::unsupported(error.to_string()))?;
+                    Some(Arc::new(merge_partial_statistics(
+                        catalog.table_statistics(table_id),
+                        statistics,
+                        selected.is_some(),
+                    )))
                 };
                 #[cfg(test)]
                 inject_analyze_panic_for_test(AnalyzePanicPhase::Result);

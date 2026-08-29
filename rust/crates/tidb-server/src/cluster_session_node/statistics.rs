@@ -110,6 +110,18 @@ impl ClusterServerSession {
         let memory_quota = self.analyze_memory_quota();
         for statement in tables {
             let mut statement = statement.clone();
+            if statement.columns == tidb_exec::cluster_analyze::AnalyzeColumnChoice::Default {
+                statement.columns = if self
+                    .session
+                    .vars()
+                    .get_system(tidb_vardef::tidb_vars::TIDB_ANALYZE_COLUMN_OPTIONS)
+                    .is_ok_and(|value| value.eq_ignore_ascii_case("PREDICATE"))
+                {
+                    tidb_exec::cluster_analyze::AnalyzeColumnChoice::Predicate
+                } else {
+                    tidb_exec::cluster_analyze::AnalyzeColumnChoice::All
+                };
+            }
             statement.options.memory_quota = memory_quota;
             let statement = &statement;
             let report = recover_analyze_panic(|| self.analyze.execute(statement))

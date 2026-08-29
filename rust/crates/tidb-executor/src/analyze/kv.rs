@@ -43,6 +43,7 @@
 //! one case that has no position to map to.
 
 use std::collections::BTreeMap;
+use std::collections::HashSet;
 
 use tidb_planner::cardinality::row_count_estimator::{ColumnStats, IndexStats};
 use tidb_stats::cmsketch::TopN;
@@ -69,8 +70,20 @@ pub fn analyze_kv_table(
     realtime_count: Option<i64>,
     ctx: &crate::StmtContext,
 ) -> Result<TableStatistics, AnalyzeError> {
+    analyze_kv_table_columns(table, options, realtime_count, ctx, None)
+}
+
+/// Runs ANALYZE over the selected column IDs. `None` means all columns.
+pub fn analyze_kv_table_columns(
+    table: &mut KvTable,
+    options: &AnalyzeOptions,
+    realtime_count: Option<i64>,
+    ctx: &crate::StmtContext,
+    selected_column_ids: Option<&HashSet<i64>>,
+) -> Result<TableStatistics, AnalyzeError> {
     let decode_context = RowDecodeContext::for_analyze(ctx);
-    let plan = kv_analyze_plan(table, &decode_context)?;
+    let (plan, source_positions, source_indexes) =
+        kv_analyze_plan(table, &decode_context, selected_column_ids)?;
     let rows = table
         .scan_rows_with_handles_recomputed(&decode_context)
         .map_err(|error| {
@@ -79,22 +92,25 @@ pub fn analyze_kv_table(
                 table.name
             ))
         })?;
-    let analyzed_columns = plan.columns().len();
     let mut run = AnalyzeRun::start(&plan, options, realtime_count)?;
     for (_, row) in &rows {
-        run.push(&row[..analyzed_columns])?;
+        let selected = source_positions
+            .iter()
+            .map(|position| row[*position].clone())
+            .collect::<Vec<_>>();
+        run.push(&selected)?;
     }
     let analyzed = run.finish()?;
 
     let visible = table.visible_columns();
     let mut columns = BTreeMap::new();
     for (position, built) in analyzed.columns.into_iter().enumerate() {
-        let unsigned = visible[position].field_type.is_unsigned();
+        let unsigned = visible[source_positions[position]].field_type.is_unsigned();
         columns.insert(built.id, column_statistics(built, unsigned));
     }
     let mut indexes = BTreeMap::new();
     for (position, built) in analyzed.indexes.into_iter().enumerate() {
-        let stored = &table.indexes()[position];
+        let stored = &table.indexes()[source_indexes[position]];
         indexes.insert(
             built.id,
             index_statistics(built, stored.column_offsets.len(), stored.unique),
@@ -180,10 +196,16 @@ fn index_statistics(built: AnalyzedHistogram, num_columns: usize, unique: bool) 
 fn kv_analyze_plan(
     table: &KvTable,
     context: &RowDecodeContext,
-) -> Result<AnalyzePlan, AnalyzeError> {
+    selected_column_ids: Option<&HashSet<i64>>,
+) -> Result<(AnalyzePlan, Vec<usize>, Vec<usize>), AnalyzeError> {
     let visible = table.visible_columns();
     let mut columns = Vec::with_capacity(visible.len());
-    for column in visible {
+    let mut source_positions = Vec::with_capacity(visible.len());
+    let mut remapped = BTreeMap::new();
+    for (source_position, column) in visible.iter().enumerate() {
+        if selected_column_ids.is_some_and(|selected| !selected.contains(&column.id)) {
+            continue;
+        }
         let qualified = format!("`{}`.`{}`", table.name, column.name);
         let collation = AnalyzedColumn::sampling_collation(&column.field_type, &qualified)?;
         columns.push(AnalyzedColumn {
@@ -204,10 +226,13 @@ fn kv_analyze_plan(
                     ))
                 })?,
         });
+        remapped.insert(source_position, columns.len() - 1);
+        source_positions.push(source_position);
     }
 
     let mut indexes = Vec::with_capacity(table.indexes().len());
-    for index in table.indexes() {
+    let mut source_indexes = Vec::with_capacity(table.indexes().len());
+    for (source_index, index) in table.indexes().iter().enumerate() {
         let mut column_positions = Vec::with_capacity(index.column_offsets.len());
         for offset in &index.column_offsets {
             if *offset >= visible.len() {
@@ -217,7 +242,13 @@ fn kv_analyze_plan(
                     index.name, table.name
                 )));
             }
-            column_positions.push(*offset);
+            let Some(position) = remapped.get(offset).copied() else {
+                continue;
+            };
+            column_positions.push(position);
+        }
+        if column_positions.len() != index.column_offsets.len() {
+            continue;
         }
         indexes.push(AnalyzedIndex {
             id: index.id,
@@ -227,7 +258,9 @@ fn kv_analyze_plan(
             column_positions,
             prefix_lengths: index.prefix_lengths.clone(),
         });
+        source_indexes.push(source_index);
     }
 
     AnalyzePlan::new(columns, indexes, &table.name)
+        .map(|plan| (plan, source_positions, source_indexes))
 }

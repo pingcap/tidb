@@ -153,8 +153,23 @@ pub struct AnalyzeStatement {
     pub schema: String,
     /// The table's name.
     pub table: String,
+    /// Which columns the pinned planner selects before execution.
+    pub columns: AnalyzeColumnChoice,
     /// The effective knobs.
     pub options: AnalyzeOptions,
+}
+
+/// Pinned Go analyze column choice before persisted/default resolution.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AnalyzeColumnChoice {
+    /// Resolve through `tidb_analyze_column_options` at execution.
+    Default,
+    /// Analyze every analyzable column.
+    All,
+    /// Load persisted predicate columns and union mandatory index/PK columns.
+    Predicate,
+    /// Analyze these source names plus mandatory index/PK columns.
+    Explicit(Vec<String>),
 }
 
 /// Whether this statement is an `ANALYZE TABLE` this engine runs, and against
@@ -200,8 +215,9 @@ pub fn lower_analyze_admin(
             "this node does not analyze named partitions".to_owned(),
         ));
     }
-    match &analyze.target {
-        tidb_ast::AnalyzeTarget::Default | tidb_ast::AnalyzeTarget::AllColumns => {}
+    let columns = match &analyze.target {
+        tidb_ast::AnalyzeTarget::Default => AnalyzeColumnChoice::Default,
+        tidb_ast::AnalyzeTarget::AllColumns => AnalyzeColumnChoice::All,
         tidb_ast::AnalyzeTarget::Index(_) => {
             return Err(AnalyzeError::Unsupported(
                 "this node does not run ANALYZE TABLE ... INDEX: it rewrites a table's whole \
@@ -210,19 +226,14 @@ pub fn lower_analyze_admin(
                     .to_owned(),
             ))
         }
-        tidb_ast::AnalyzeTarget::PredicateColumns | tidb_ast::AnalyzeTarget::Columns(_) => {
-            return Err(AnalyzeError::Unsupported(
-                "this node analyzes every column of the table; a column list would leave the \
-                 unnamed columns' histograms stamped with a version their rows no longer match"
-                    .to_owned(),
-            ))
-        }
+        tidb_ast::AnalyzeTarget::PredicateColumns => AnalyzeColumnChoice::Predicate,
+        tidb_ast::AnalyzeTarget::Columns(names) => AnalyzeColumnChoice::Explicit(names.clone()),
         tidb_ast::AnalyzeTarget::Histogram { .. } => {
             return Err(AnalyzeError::Unsupported(
                 "this node does not run UPDATE/DROP HISTOGRAM ON".to_owned(),
             ))
         }
-    }
+    };
 
     let mut options = AnalyzeOptions::default();
     for option in &analyze.options {
@@ -304,6 +315,7 @@ pub fn lower_analyze_admin(
         tables.push(AnalyzeStatement {
             schema,
             table,
+            columns: columns.clone(),
             options,
         });
     }
@@ -418,11 +430,6 @@ impl AnalyzePlan {
         indexes: Vec<AnalyzedIndex>,
         table_name: &str,
     ) -> Result<Self, AnalyzeError> {
-        if columns.is_empty() {
-            return Err(AnalyzeError::Unsupported(format!(
-                "`{table_name}` has no analyzable column"
-            )));
-        }
         let mut unique_covered = vec![false; columns.len()];
         for index in &indexes {
             for position in &index.column_positions {
