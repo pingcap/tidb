@@ -36,6 +36,12 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-08-29: completed the pinned Go `pkg/statistics/handle/logutil`
+  package in `tidb-stats-handle-logutil`. Its four exported constructors now
+  compose the completed shared background/error-verbose and sampled logger
+  facilities with the exact statistics category, five-/ten-minute windows,
+  and first-one policy. The source package has no tests, so none were added.
+  Inventory and WIP gates are in `receipts/statistics_handle_logutil.md`.
 - 2026-08-29: completed the adjacent pinned Go
   `pkg/statistics/handle/util/test` support package. Replaced the detached
   string predicate and its two non-Go tests with a distinct matcher over the
@@ -705,6 +711,11 @@ For each bounded behavior cluster:
       predicate and its two supplemental tests, and make ordinary `StatsCtx`
       carry the matching request source. The atomic inventory and WIP gates
       are in `receipts/statistics_handle_util_test.md`.
+- [x] Complete the pinned `pkg/statistics/handle/logutil` package in
+      `tidb-stats-handle-logutil`: preserve all four category-tagged logger
+      constructors and both source sampling policies over the shared logutil
+      owner, without adding tests to the source-test-free package. The atomic
+      inventory and WIP gates are in `receipts/statistics_handle_logutil.md`.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope
@@ -754,6 +765,10 @@ For each bounded behavior cluster:
   behavior the Go matcher exists to verify. The support package remains a
   distinct crate and adds no source-absent tests. Date/Author: 2026-08-29,
   Codex.
+- Decision: `pkg/statistics/handle/logutil` composes the already complete
+  `pkg/util/logutil` owner. It must not introduce another sink, sampler, or
+  logging policy; cloned sampled handles retain the one shared per-factory
+  state required by Go. Date/Author: 2026-08-29, Codex.
 
 ## Surprises & Discoveries
 
