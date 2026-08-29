@@ -39,7 +39,6 @@ pub mod cgroup;
 pub mod channel;
 pub mod checksum;
 pub mod column_mapping;
-pub mod compress;
 pub mod context;
 pub mod dbterror;
 pub mod disjointset;
