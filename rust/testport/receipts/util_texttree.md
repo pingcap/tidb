@@ -26,10 +26,10 @@ in Go, indentation is iterated as Unicode code points, consuming each invalid
 UTF-8 byte as one replacement character; `PrettyIdentifier` then appends the
 identifier's original bytes without decoding them.
 
-The audit removed the previous valid-UTF-8-only `&str`/`String` narrowing and
-two duplicate supplemental test groups. Both original Go tests remain, plus
-one regression covering the arbitrary-byte behavior that the old Rust API
-could not represent. The ordinary consumers in `tidb-util::plancodec` and
+The audit removed the previous valid-UTF-8-only `&str`/`String` narrowing,
+duplicate supplemental test groups, Rust-only `must_use` diagnostics, and the
+remaining arbitrary-byte supplemental regression. Exactly the two Go test
+identities remain. The ordinary consumers in `tidb-util::plancodec` and
 `tidb-planner::explain` convert the result to `String` only at their
 source-guaranteed valid-UTF-8 plan metadata boundary.
 
@@ -55,9 +55,6 @@ Passed:
   crates/tidb-util/src/plancodec.rs crates/tidb-planner/src/explain/mod.rs`
 - `git diff --check`
 
-A temporary direct Go probe confirmed the malformed-byte outputs
-`efbfbd7ce2948220` and `e29480ff`; it was removed after use.
-
 The broader `cargo check --offline --locked -p tidb-util -p tidb-planner
 --all-targets` reached two existing unrelated `tidb-planner` integration-test
 compile errors: a missing `RuleContext.column_allocator` initializer and a
@@ -68,8 +65,8 @@ No Go or Bazel file changed, so `make bazel_prepare` is not required.
 
 ## Risk
 
-- Correctness: the full source surface and both consumers are covered; the
-  byte-domain regression is verified against a direct Go oracle.
+- Correctness: the full source surface and both consumers are covered by the
+  pinned implementation and source tests.
 - Compatibility: the public Rust return type is now byte-preserving
   `GoString`; both existing valid-UTF-8 production consumers are adapted.
 - Performance: valid input still performs one rune pass and one output

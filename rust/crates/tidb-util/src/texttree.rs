@@ -31,7 +31,6 @@ pub const TREE_GAP: char = ' ';
 pub const TREE_NODE_IDENTIFIER: char = '─';
 
 /// Appends more blank to the `indent` string.
-#[must_use]
 pub fn indent_4_child<T>(indent: &T, is_last_child: bool) -> GoString
 where
     T: GoStringSource + ?Sized,
@@ -57,7 +56,6 @@ where
 
 /// Returns a pretty identifier which contains indent and tree node hierarchy
 /// indicator.
-#[must_use]
 pub fn pretty_identifier<I, D>(id: &I, indent: &D, is_last_child: bool) -> GoString
 where
     I: GoStringSource + ?Sized,
@@ -96,11 +94,12 @@ where
 
 #[cfg(test)]
 mod tests {
+    #![allow(non_snake_case)]
+
     use super::*;
 
-    // Go `TestIndent4Child`.
     #[test]
-    fn indent_4_child_go_test() {
+    fn TestIndent4Child() {
         assert_eq!(
             indent_4_child("    ", false).as_bytes(),
             "    │ ".as_bytes()
@@ -112,9 +111,8 @@ mod tests {
         );
     }
 
-    // Go `TestPrettyIdentifier`.
     #[test]
-    fn pretty_identifier_go_test() {
+    fn TestPrettyIdentifier() {
         assert_eq!(pretty_identifier("test", "", false).as_bytes(), b"test");
         assert_eq!(
             pretty_identifier("test", "  │  ", false).as_bytes(),
@@ -131,18 +129,6 @@ mod tests {
         assert_eq!(
             pretty_identifier("test", "\t\t│\t\t", true).as_bytes(),
             "\t\t└\t─test".as_bytes()
-        );
-    }
-
-    #[test]
-    fn arbitrary_go_string_bytes_follow_rune_conversion_and_raw_id_append() {
-        assert_eq!(
-            indent_4_child(&[0xff, b'|'][..], false).as_bytes(),
-            "�|│ ".as_bytes()
-        );
-        assert_eq!(
-            pretty_identifier(&[0xff][..], &[0xff][..], false).as_bytes(),
-            &[0xe2, 0x94, 0x80, 0xff]
         );
     }
 }

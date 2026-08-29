@@ -36,6 +36,10 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-08-29: re-audited the complete pinned Go `pkg/util/texttree` package.
+  Removed Rust-only `must_use` diagnostics, its arbitrary-byte supplemental
+  regression, and the corresponding temporary-probe narrative; exactly the
+  two Go test identities and both ordinary consumers remain.
 - 2026-08-29: re-audited the complete pinned Go `pkg/util/arena` package.
   Removed the remaining Rust-only reset-reuse regression and restored exactly
   the two Go test identities; shared backing and reset reuse remain production
