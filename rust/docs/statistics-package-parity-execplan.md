@@ -34,6 +34,7 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - [x] (2026-08-29) Completed pinned `pkg/statistics/handle/cache/internal/lfu` with buffered TinyLFU admission, cost eviction, the 256-shard secondary table set, metadata-only eviction, dynamic capacity, and wait barriers.
 - [x] (2026-08-29) Ported the pinned parent cache's full-table core: global LFU/map selection, runtime quota backing, hit/miss/update/delete accounting, lifecycle max version, copy-on-write update, in-place update, capacity, eviction, wait, and close behavior.
 - [x] (2026-08-29) Ported the parent cache's atomic wrapper, ordered metadata refresh, batched publication, cancellation, targeted-update version policy, health gauges, and histogram-version-aware reuse; made the cluster storage image construct the canonical full `statistics.Table` before deriving the planner view.
+- [x] (2026-08-29) Ported `StatsTableRowCache`: atomic two-query map updates, negative column-size clamping, fixed/variable column accounting, local/global partition-index rules, sequence row-count policy, and exact ID predicate construction.
 - [ ] Wire all pinned Go `SHOW STATS_*` surfaces to the shared cache and storage semantics.
 - [ ] Inventory every production file, platform/generated variant, original test/support artifact, fixture, and validation gate in pinned `pkg/statistics`; close or explicitly retain seed-only gaps until the whole package is complete.
 - [ ] Run the Ready validation profile, including `make lint`, only after the complete package inventory is closed.
@@ -113,6 +114,9 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 
 - Observation: the cluster loader constructed the reduced planner statistics directly from storage rows, bypassing Go's full cached `statistics.Table` ownership boundary. That lost the existence map, load-state payload, eviction cost, schema update timestamp, and histogram-refresh version as one coherent object.
   Evidence: `ClusterTableStats` fed `TableStatistics` directly; it now first produces a canonical `tidb_stats::Table`, and the planner view is derived from that table.
+
+- Observation: Rust's `information_schema.tables` documentation explicitly fixed statistics sizes at the never-analyzed zero fallback, while pinned Go refreshes a separate process-wide `StatsTableRowCache` only when a requested projection needs its four size columns.
+  Evidence: pinned `infoschema_reader.go` calls `UpdateByID` for table and partition IDs, including the logical table for global-index size, before calling `EstimateDataLength`.
   Evidence: the session global publisher updated the two ANALYZE atomics only; the new `vardef::STATS_CACHE_MEM_QUOTA` is populated from the same resolved global image before `StatsCache::new` reads it.
 
 ## Decision Log
@@ -235,3 +239,5 @@ Revision note (2026-08-29): completed the atomic inventory for pinned `pkg/stati
 Revision note (2026-08-29): corrected the common `cache/internal` ownership boundary before parent-cache integration. `StatsCacheInner` is now `Send + Sync`, and `mapcache` uses a poisoned-lock-tolerant `RwLock` instead of `RefCell`, preserving Go's shared-read behavior and COW copy independence. Focused tests cover cost replacement, deletion, copy isolation, and concurrent reads; the LFU suite proves the stronger trait does not change its behavior.
 
 Revision note (2026-08-29): ported the pinned parent cache's `StatsCacheImpl`, `Update`, batch-update, healthy-distribution, and version-offset behavior. Refresh now preserves resident payload only when the latest histogram version permits it, deletes removed physical IDs, skips per-table load failures, observes cancellation before each row, publishes ten-row batches, and prevents targeted refreshes from advancing the lifecycle maximum. The production cluster storage image now converts to the full shared `tidb_stats::Table`, and the reduced planner statistics are derived from that object. Live `StatsSnapshot` ownership still needs consolidation onto this cache, and `stats_table_row_cache.go` remains outstanding, so the parent Go package is not yet claimed complete.
+
+Revision note (2026-08-29): ported the complete pinned `stats_table_row_cache.go` behavior into the parent cache crate. Focused tests cover all-or-nothing two-read updates, negative-size clamping, missing-key zeros, exact ID SQL predicate text, fixed and variable columns, partition row aggregation, and the split between table-level global indexes and partition-level local indexes. The cache's executor-facing restricted-read adapter and `information_schema` consumption remain integration work, so this source completion does not yet close the parent package claim.

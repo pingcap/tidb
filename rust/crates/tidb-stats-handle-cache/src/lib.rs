@@ -14,8 +14,9 @@
 
 //! Go `pkg/statistics/handle/cache` full-table cache core.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, LazyLock, RwLock};
 use std::time::Duration;
 
 use tidb_stats::{CopyIntent, Table};
@@ -87,6 +88,198 @@ pub enum UpdateError<E> {
     Source(E),
     /// The caller's context was cancelled while rows were being processed.
     Cancelled,
+}
+
+/// One `mysql.stats_meta` row consumed by Go `getRowCountTables`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TableRowCount {
+    /// Physical table ID.
+    pub table_id: i64,
+    /// Persisted row count.
+    pub count: u64,
+}
+
+/// One non-index `mysql.stats_histograms` row consumed by Go `getColLengthTables`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ColumnLength {
+    /// Physical table ID.
+    pub table_id: i64,
+    /// Column histogram ID.
+    pub histogram_id: i64,
+    /// Persisted total column size. Negative values are clamped to zero.
+    pub total_size: i64,
+}
+
+/// Restricted-SQL boundary used by Go `StatsTableRowCache.UpdateByID`.
+pub trait StatsTableRowSource {
+    /// Source error type.
+    type Error;
+
+    /// Reads `table_id, count` from `mysql.stats_meta` for the requested IDs.
+    fn table_row_counts(&self, table_ids: &[i64]) -> Result<Vec<TableRowCount>, Self::Error>;
+
+    /// Reads non-index `table_id, hist_id, tot_col_size` rows.
+    fn column_lengths(&self, table_ids: &[i64]) -> Result<Vec<ColumnLength>, Self::Error>;
+}
+
+#[derive(Default)]
+struct StatsTableRowCacheState {
+    table_rows: HashMap<i64, u64>,
+    column_lengths: HashMap<(i64, i64), u64>,
+}
+
+/// Go `StatsTableRowCache`, the process-wide information-schema size cache.
+#[derive(Default)]
+pub struct StatsTableRowCache {
+    state: RwLock<StatsTableRowCacheState>,
+}
+
+/// Go `TableRowStatsCache`.
+pub static TABLE_ROW_STATS_CACHE: LazyLock<StatsTableRowCache> =
+    LazyLock::new(StatsTableRowCache::default);
+
+impl StatsTableRowCache {
+    /// Go `GetTableRows`.
+    #[must_use]
+    pub fn get_table_rows(&self, table_id: i64) -> u64 {
+        self.state
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .table_rows
+            .get(&table_id)
+            .copied()
+            .unwrap_or_default()
+    }
+
+    /// Go `GetColLength`.
+    #[must_use]
+    pub fn get_column_length(&self, table_id: i64, histogram_id: i64) -> u64 {
+        self.state
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .column_lengths
+            .get(&(table_id, histogram_id))
+            .copied()
+            .unwrap_or_default()
+    }
+
+    /// Go `UpdateByID`. Neither map changes unless both restricted reads succeed.
+    pub fn update_by_id<S>(&self, source: &S, table_ids: &[i64]) -> Result<(), S::Error>
+    where
+        S: StatsTableRowSource,
+    {
+        let table_rows = source.table_row_counts(table_ids)?;
+        let column_lengths = source.column_lengths(table_ids)?;
+        let mut state = self
+            .state
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state
+            .table_rows
+            .extend(table_rows.into_iter().map(|row| (row.table_id, row.count)));
+        state
+            .column_lengths
+            .extend(column_lengths.into_iter().map(|row| {
+                (
+                    (row.table_id, row.histogram_id),
+                    u64::try_from(row.total_size.max(0)).expect("nonnegative i64 fits u64"),
+                )
+            }));
+        Ok(())
+    }
+
+    /// Go `EstimateDataLength`.
+    #[must_use]
+    pub fn estimate_data_length(&self, table: &tidb_model::TableInfo) -> (u64, u64, u64, u64) {
+        let mut row_count = self.get_table_rows(table.id);
+        let (mut data_length, mut index_length) =
+            self.get_data_and_index_length(table, table.id, row_count);
+        if let Some(partition) = table.get_partition_info() {
+            row_count = 0;
+            data_length = 0;
+            for definition in partition.read().definitions.snapshot() {
+                let partition_rows = self.get_table_rows(definition.id);
+                row_count = row_count.wrapping_add(partition_rows);
+                let (partition_data, partition_index) =
+                    self.get_data_and_index_length(table, definition.id, partition_rows);
+                data_length = data_length.wrapping_add(partition_data);
+                index_length = index_length.wrapping_add(partition_index);
+            }
+        }
+        let average_row_length = if row_count == 0 {
+            0
+        } else {
+            data_length / row_count
+        };
+        if table.is_sequence() {
+            row_count = 1;
+        }
+        (row_count, average_row_length, data_length, index_length)
+    }
+
+    /// Go `GetDataAndIndexLength`.
+    #[must_use]
+    pub fn get_data_and_index_length(
+        &self,
+        table: &tidb_model::TableInfo,
+        physical_id: i64,
+        row_count: u64,
+    ) -> (u64, u64) {
+        let mut column_lengths = vec![0_u64; table.columns.len()];
+        let mut data_length = 0_u64;
+        for (offset, column) in table.columns.iter_deref().enumerate() {
+            let column = column.read();
+            if column.state != tidb_model::SchemaState::PUBLIC {
+                continue;
+            }
+            let storage_length = column.field_type.storage_length();
+            let length = if storage_length == tidb_datatype::VAR_STORAGE_LEN {
+                self.get_column_length(physical_id, column.id)
+            } else {
+                row_count.wrapping_mul(storage_length as u64)
+            };
+            data_length = data_length.wrapping_add(length);
+            column_lengths[offset] = length;
+        }
+
+        let partitioned = table.get_partition_info().is_some();
+        let mut index_length = 0_u64;
+        for index in table.indices.iter_deref() {
+            let index = index.read();
+            if index.state != tidb_model::SchemaState::PUBLIC {
+                continue;
+            }
+            if partitioned {
+                if index.global && table.id != physical_id {
+                    continue;
+                }
+                if !index.global && table.id == physical_id {
+                    continue;
+                }
+            }
+            for index_column in index.columns.iter_deref() {
+                let index_column = index_column.read();
+                let length = if index_column.length == tidb_datatype::UNSPECIFIED_LENGTH {
+                    column_lengths[index_column.offset as usize]
+                } else {
+                    row_count.wrapping_mul(index_column.length as u64)
+                };
+                index_length = index_length.wrapping_add(length);
+            }
+        }
+        (data_length, index_length)
+    }
+}
+
+/// Go `buildInTableIDsString`.
+#[must_use]
+pub fn build_in_table_ids_string(table_ids: &[i64]) -> String {
+    let ids = table_ids
+        .iter()
+        .map(i64::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("table_id in ({ids})")
 }
 
 /// Go `StatsCache`: the full-table cache and its lifecycle maximum version.
@@ -772,5 +965,169 @@ mod tests {
             Err(UpdateError::Cancelled)
         );
         assert_eq!(cache.len(), 0);
+    }
+
+    struct TableRowSource {
+        rows: Result<Vec<TableRowCount>, &'static str>,
+        lengths: Result<Vec<ColumnLength>, &'static str>,
+    }
+
+    impl StatsTableRowSource for TableRowSource {
+        type Error = &'static str;
+
+        fn table_row_counts(&self, _table_ids: &[i64]) -> Result<Vec<TableRowCount>, Self::Error> {
+            self.rows.clone()
+        }
+
+        fn column_lengths(&self, _table_ids: &[i64]) -> Result<Vec<ColumnLength>, Self::Error> {
+            self.lengths.clone()
+        }
+    }
+
+    fn table_info_with_indexes() -> tidb_model::TableInfo {
+        use tidb_datatype::{FieldType, FieldTypeCode, UNSPECIFIED_LENGTH};
+        use tidb_model::go_runtime::{GoShared, GoSharedPointerSlice};
+        use tidb_model::{ColumnInfo, IndexColumn, IndexInfo, SchemaState, TableInfo};
+
+        let fixed = GoShared::new(ColumnInfo {
+            id: 1,
+            offset: 0,
+            field_type: FieldType::parser(FieldTypeCode::LongLong),
+            state: SchemaState::PUBLIC,
+            ..ColumnInfo::default()
+        });
+        let variable = GoShared::new(ColumnInfo {
+            id: 2,
+            offset: 1,
+            field_type: FieldType::parser(FieldTypeCode::Varchar),
+            state: SchemaState::PUBLIC,
+            ..ColumnInfo::default()
+        });
+        let index_column = || {
+            GoSharedPointerSlice::from_handles(vec![Some(GoShared::new(IndexColumn {
+                offset: 0,
+                length: UNSPECIFIED_LENGTH,
+                ..IndexColumn::default()
+            }))])
+        };
+        let local = GoShared::new(IndexInfo {
+            columns: index_column(),
+            state: SchemaState::PUBLIC,
+            ..IndexInfo::default()
+        });
+        let global = GoShared::new(IndexInfo {
+            columns: index_column(),
+            state: SchemaState::PUBLIC,
+            global: true,
+            ..IndexInfo::default()
+        });
+        TableInfo {
+            id: 100,
+            columns: GoSharedPointerSlice::from_handles(vec![Some(fixed), Some(variable)]),
+            indices: GoSharedPointerSlice::from_handles(vec![Some(local), Some(global)]),
+            ..TableInfo::default()
+        }
+    }
+
+    #[test]
+    fn source_table_row_cache_updates_atomically_and_clamps_column_length() {
+        let cache = StatsTableRowCache::default();
+        cache
+            .update_by_id(
+                &TableRowSource {
+                    rows: Ok(vec![TableRowCount {
+                        table_id: 1,
+                        count: 7,
+                    }]),
+                    lengths: Ok(vec![ColumnLength {
+                        table_id: 1,
+                        histogram_id: 2,
+                        total_size: -9,
+                    }]),
+                },
+                &[1],
+            )
+            .unwrap();
+        assert_eq!(cache.get_table_rows(1), 7);
+        assert_eq!(cache.get_column_length(1, 2), 0);
+
+        assert_eq!(
+            cache.update_by_id(
+                &TableRowSource {
+                    rows: Ok(vec![TableRowCount {
+                        table_id: 1,
+                        count: 99,
+                    }]),
+                    lengths: Err("histogram read failed"),
+                },
+                &[1],
+            ),
+            Err("histogram read failed")
+        );
+        assert_eq!(cache.get_table_rows(1), 7);
+        assert_eq!(
+            build_in_table_ids_string(&[3, -2, 9]),
+            "table_id in (3,-2,9)"
+        );
+    }
+
+    #[test]
+    fn source_table_row_cache_estimates_partition_and_global_indexes() {
+        use tidb_model::go_runtime::{GoShared, GoSharedSlice};
+        use tidb_model::{PartitionDefinition, PartitionInfo};
+
+        let cache = StatsTableRowCache::default();
+        cache
+            .update_by_id(
+                &TableRowSource {
+                    rows: Ok(vec![
+                        TableRowCount {
+                            table_id: 100,
+                            count: 7,
+                        },
+                        TableRowCount {
+                            table_id: 101,
+                            count: 2,
+                        },
+                        TableRowCount {
+                            table_id: 102,
+                            count: 3,
+                        },
+                    ]),
+                    lengths: Ok(vec![
+                        ColumnLength {
+                            table_id: 101,
+                            histogram_id: 2,
+                            total_size: 3,
+                        },
+                        ColumnLength {
+                            table_id: 102,
+                            histogram_id: 2,
+                            total_size: 4,
+                        },
+                    ]),
+                },
+                &[],
+            )
+            .unwrap();
+        let mut table = table_info_with_indexes();
+        table.partition = Some(GoShared::new(PartitionInfo {
+            enable: true,
+            definitions: GoSharedSlice::from_vec(vec![
+                PartitionDefinition {
+                    id: 101,
+                    ..PartitionDefinition::default()
+                },
+                PartitionDefinition {
+                    id: 102,
+                    ..PartitionDefinition::default()
+                },
+            ]),
+            ..PartitionInfo::default()
+        }));
+
+        // Data: (2 * 8 + 3) + (3 * 8 + 4) = 47. Local index: 40.
+        // Global index is calculated once at table level from 7 rows: 56.
+        assert_eq!(cache.estimate_data_length(&table), (5, 9, 47, 96));
     }
 }

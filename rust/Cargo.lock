@@ -3843,6 +3843,8 @@ name = "tidb-stats-handle-cache"
 version = "0.0.0"
 dependencies = [
  "tidb-config",
+ "tidb-datatype",
+ "tidb-model",
  "tidb-stats",
  "tidb-stats-handle-cache-internal",
  "tidb-stats-handle-cache-internal-lfu",
