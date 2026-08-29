@@ -1507,24 +1507,24 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	ViewDefiner                            "view definer"
 	ViewName                               "view name"
 	ViewFieldList                          "create view statement field list"
-	MViewCreateOptionListOpt               "materialized view create options"
-	MViewCreateOptionList                  "materialized view create option list"
-	MViewCreateOption                      "materialized view create option"
+	MViewTableOptionListOpt                "materialized view table options"
+	MViewTableOptionList                   "materialized view table option list"
+	MViewTableOption                       "materialized view table option"
+	MViewRefreshClause                     "materialized view refresh clause"
+	MViewRefreshOnClauseOpt                "materialized view refresh ON clause"
+	MViewStartWithOrNextOpt                "materialized view START WITH/NEXT option list"
+	MViewStartWithOrNext                   "materialized view START WITH/NEXT option"
+	MViewRefreshClauseOpt                  "optional materialized view refresh clause"
+	MViewAttributesOpt                     "optional materialized view attributes"
 	MLogCreateOptionListOpt                "materialized view log create options"
 	MLogCreateOptionList                   "materialized view log create option list"
 	MLogCreateOption                       "materialized view log create option"
-	MViewRefreshClause                     "materialized view refresh clause"
-	MViewRefreshOnClauseOpt                "materialized view refresh clause option"
-	MViewStartWithOpt                      "materialized view START WITH option"
-	MViewNextOpt                           "materialized view NEXT option"
-	MViewStartWithOrNextOpt                "materialized view START WITH/NEXT option list"
-	MViewStartWithOrNext                   "materialized view START WITH/NEXT option"
 	MLogPurgeClauseOpt                     "materialized view log optional PURGE clause"
 	MLogPurgeClause                        "materialized view log PURGE clause"
+	AlterMLogPurgeClause                   "ALTER materialized view log PURGE clause"
 	MLogAccumulationAlertClauseOpt         "materialized view log optional ALERT ROWS clause"
 	MLogAccumulationAlertClause            "materialized view log ALERT ROWS clause"
 	MLogStartWithOpt                       "materialized view log START WITH option"
-	MLogNextOpt                            "materialized view log NEXT option"
 	AlterMaterializedViewAction            "ALTER MATERIALIZED VIEW action"
 	AlterMaterializedViewActionList        "ALTER MATERIALIZED VIEW action list"
 	AlterMaterializedViewLogAction         "ALTER MATERIALIZED VIEW LOG action"
@@ -5630,36 +5630,36 @@ ViewCheckOption:
  *
  *******************************************************************/
 CreateMaterializedViewStmt:
-	"CREATE" "MATERIALIZED" "VIEW" TableName '(' ColumnList ')' MViewCreateOptionListOpt "AS" CreateViewSelectOpt
+	"CREATE" "MATERIALIZED" "VIEW" TableName '(' ColumnList ')' MViewTableOptionListOpt MViewRefreshClauseOpt MViewAttributesOpt "AS" CreateViewSelectOpt
 	{
 		opts := $8.(*mviewCreateOptions)
 		$$ = &ast.CreateMaterializedViewStmt{
 			ViewName:   $4.(*ast.TableName),
 			Cols:       $6.([]ast.CIStr),
 			Comment:    opts.comment,
-			Refresh:    opts.refresh,
-			Attributes: opts.attributes,
+			Refresh:    $9.(*ast.MViewRefreshClause),
+			Attributes: $10.(string),
 			Options:    opts.options,
-			Select:     $10.(ast.StmtNode).(ast.ResultSetNode),
+			Select:     $12.(ast.StmtNode).(ast.ResultSetNode),
 		}
 	}
 
-MViewCreateOptionListOpt:
+MViewTableOptionListOpt:
 	/* EMPTY */
 	{
 		$$ = &mviewCreateOptions{}
 	}
-|	MViewCreateOptionList
+|	MViewTableOptionList
 	{
 		$$ = $1
 	}
 
-MViewCreateOptionList:
-	MViewCreateOption
+MViewTableOptionList:
+	MViewTableOption
 	{
 		$$ = $1
 	}
-|	MViewCreateOptionList MViewCreateOption
+|	MViewTableOptionList MViewTableOption
 	{
 		opts := $1.(*mviewCreateOptions)
 		opt := $2.(*mviewCreateOptions)
@@ -5668,18 +5668,6 @@ MViewCreateOptionList:
 				yylex.AppendError(yylex.Errorf("Duplicate COMMENT specified in CREATE MATERIALIZED VIEW"))
 			}
 			opts.hasComment, opts.comment = true, opt.comment
-		}
-		if opt.hasRefresh {
-			if opts.hasRefresh {
-				yylex.AppendError(yylex.Errorf("Duplicate REFRESH clause specified in CREATE MATERIALIZED VIEW"))
-			}
-			opts.hasRefresh, opts.refresh = true, opt.refresh
-		}
-		if opt.hasAttributes {
-			if opts.hasAttributes {
-				yylex.AppendError(yylex.Errorf("Duplicate ATTRIBUTES specified in CREATE MATERIALIZED VIEW"))
-			}
-			opts.hasAttributes, opts.attributes = true, opt.attributes
 		}
 		if opt.hasShardRowIDBits {
 			if opts.hasShardRowIDBits {
@@ -5697,18 +5685,10 @@ MViewCreateOptionList:
 		$$ = opts
 	}
 
-MViewCreateOption:
+MViewTableOption:
 	"COMMENT" "=" stringLit
 	{
 		$$ = &mviewCreateOptions{hasComment: true, comment: $3}
-	}
-|	MViewRefreshClause
-	{
-		$$ = &mviewCreateOptions{hasRefresh: true, refresh: $1.(*ast.MViewRefreshClause)}
-	}
-|	"ATTRIBUTES" EqOpt stringLit
-	{
-		$$ = &mviewCreateOptions{hasAttributes: true, attributes: $3}
 	}
 |	"SHARD_ROW_ID_BITS" EqOpt LengthNum
 	{
@@ -5723,6 +5703,26 @@ MViewCreateOption:
 			hasPreSplitRegion: true,
 			options: []*ast.TableOption{{Tp: ast.TableOptionPreSplitRegion, UintValue: $3.(uint64)}},
 		}
+	}
+
+MViewRefreshClauseOpt:
+	/* EMPTY */
+	{
+		$$ = (*ast.MViewRefreshClause)(nil)
+	}
+|	MViewRefreshClause
+	{
+		$$ = $1
+	}
+
+MViewAttributesOpt:
+	/* EMPTY */
+	{
+		$$ = ""
+	}
+|	"ATTRIBUTES" EqOpt stringLit
+	{
+		$$ = $3
 	}
 
 MViewRefreshClause:
@@ -5746,6 +5746,7 @@ MViewRefreshOnClauseOpt:
 MViewStartWithOrNextOpt:
 	/* EMPTY */
 	{
+		// NOTE: don't use typed-nil here, otherwise `$2 != nil` checks may be wrong (Go interface nil gotcha).
 		$$ = nil
 	}
 |	MViewStartWithOrNext
@@ -5761,26 +5762,6 @@ MViewStartWithOrNext:
 |	"NEXT" Expression
 	{
 		$$ = &ast.MViewRefreshClause{Next: $2.(ast.ExprNode)}
-	}
-
-MViewStartWithOpt:
-	/* EMPTY */
-	{
-		$$ = nil
-	}
-|	"START" "WITH" Expression
-	{
-		$$ = $3
-	}
-
-MViewNextOpt:
-	/* EMPTY */
-	{
-		$$ = nil
-	}
-|	"NEXT" Expression
-	{
-		$$ = $2
 	}
 
 CreateMaterializedViewLogStmt:
@@ -5862,7 +5843,7 @@ MLogPurgeClause:
 		if $2 != nil {
 			startWith = $2.(ast.ExprNode)
 		}
-		$$ = &ast.MLogPurgeClause{StartWith: startWith, Next: $4.(ast.ExprNode)}
+		$$ = &ast.MLogPurgeClause{Immediate: false, StartWith: startWith, Next: $4}
 	}
 
 MLogStartWithOpt:
@@ -5873,16 +5854,6 @@ MLogStartWithOpt:
 |	"START" "WITH" Expression
 	{
 		$$ = $3
-	}
-
-MLogNextOpt:
-	/* EMPTY */
-	{
-		$$ = nil
-	}
-|	"NEXT" Expression
-	{
-		$$ = $2
 	}
 
 MLogAccumulationAlertClauseOpt:
@@ -5922,16 +5893,15 @@ AlterMaterializedViewAction:
 	{
 		$$ = &ast.AlterMaterializedViewAction{Tp: ast.AlterMaterializedViewActionComment, Comment: $3}
 	}
-|	"REFRESH" MViewStartWithOpt MViewNextOpt
+|	"REFRESH" MViewStartWithOrNextOpt
 	{
-		var startWith, next ast.ExprNode
+		refresh := &ast.MViewRefreshClause{Method: ast.MViewRefreshMethodFast}
 		if $2 != nil {
-			startWith = $2.(ast.ExprNode)
+			schedule := $2.(*ast.MViewRefreshClause)
+			refresh.StartWith = schedule.StartWith
+			refresh.Next = schedule.Next
 		}
-		if $3 != nil {
-			next = $3.(ast.ExprNode)
-		}
-		$$ = &ast.AlterMaterializedViewAction{Tp: ast.AlterMaterializedViewActionRefresh, Refresh: &ast.MViewRefreshClause{Method: ast.MViewRefreshMethodFast, StartWith: startWith, Next: next}}
+		$$ = &ast.AlterMaterializedViewAction{Tp: ast.AlterMaterializedViewActionRefresh, Refresh: refresh}
 	}
 |	"ATTRIBUTES" EqOpt stringLit
 	{
@@ -5955,24 +5925,23 @@ AlterMaterializedViewLogActionList:
 	}
 
 AlterMaterializedViewLogAction:
-	"PURGE" "IMMEDIATE"
+	AlterMLogPurgeClause
 	{
-		$$ = &ast.AlterMaterializedViewLogAction{Tp: ast.AlterMaterializedViewLogActionPurge, Purge: &ast.MLogPurgeClause{Immediate: true}}
-	}
-|	"PURGE" MLogStartWithOpt MLogNextOpt
-	{
-		var startWith, next ast.ExprNode
-		if $2 != nil {
-			startWith = $2.(ast.ExprNode)
-		}
-		if $3 != nil {
-			next = $3.(ast.ExprNode)
-		}
-		$$ = &ast.AlterMaterializedViewLogAction{Tp: ast.AlterMaterializedViewLogActionPurge, Purge: &ast.MLogPurgeClause{StartWith: startWith, Next: next}}
+		$$ = &ast.AlterMaterializedViewLogAction{Tp: ast.AlterMaterializedViewLogActionPurge, Purge: $1.(*ast.MLogPurgeClause)}
 	}
 |	"ADD" ColumnKeywordOpt '(' ColumnList ')'
 	{
 		$$ = &ast.AlterMaterializedViewLogAction{Tp: ast.AlterMaterializedViewLogActionAddColumn, Cols: $4.([]ast.CIStr)}
+	}
+
+AlterMLogPurgeClause:
+	MLogPurgeClause
+	{
+		$$ = $1
+	}
+|	"PURGE"
+	{
+		$$ = &ast.MLogPurgeClause{}
 	}
 
 DropMaterializedViewStmt:

@@ -1821,16 +1821,16 @@ func (n *CreateMaterializedViewStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain("= ")
 		ctx.WriteString(n.Comment)
 	}
-	if n.Refresh != nil {
-		ctx.WritePlain(" ")
-		if err := n.Refresh.Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while restore CreateMaterializedViewStmt.Refresh")
-		}
-	}
 	for i, option := range n.Options {
 		ctx.WritePlain(" ")
 		if err := option.Restore(ctx); err != nil {
 			return errors.Annotatef(err, "An error occurred while restore CreateMaterializedViewStmt.TableOption[%d]", i)
+		}
+	}
+	if n.Refresh != nil {
+		ctx.WritePlain(" ")
+		if err := n.Refresh.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore CreateMaterializedViewStmt.Refresh")
 		}
 	}
 	if n.Attributes != "" {
@@ -1859,6 +1859,13 @@ func (n *CreateMaterializedViewStmt) Accept(v Visitor) (Node, bool) {
 		}
 		n.ViewName = node.(*TableName)
 	}
+	for i, option := range n.Options {
+		node, ok := option.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Options[i] = node.(*TableOption)
+	}
 	if n.Refresh != nil {
 		if n.Refresh.StartWith != nil {
 			node, ok := n.Refresh.StartWith.Accept(v)
@@ -1874,13 +1881,6 @@ func (n *CreateMaterializedViewStmt) Accept(v Visitor) (Node, bool) {
 			}
 			n.Refresh.Next = node.(ExprNode)
 		}
-	}
-	for i, option := range n.Options {
-		node, ok := option.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.Options[i] = node.(*TableOption)
 	}
 	if n.Select != nil {
 		node, ok := n.Select.Accept(v)
