@@ -90,8 +90,11 @@ For each bounded behavior cluster:
   file in pinned Go `pkg/util/encrypt`. Removed the public export of Go's
   private default block-size constant, Rust-only equality/cloning semantics
   from the error representation, and a negative-offset guard absent from Go's
-  `Reader.ReadAt` path. Repinned its complete package receipt; all 17 behavior
-  tests pass and downstream encrypted-spill consumers compile.
+  `Reader.ReadAt` path. A second source audit restored Go's wrapping `int64`
+  writer/cursor arithmetic, made PKCS#7 unpadding borrow the original input,
+  and matched each pinned Go cipher constructor's invalid-IV panic. Repinned
+  its complete package receipt; all 17 source tests and three source-derived
+  regressions pass with downstream encrypted-spill and expression consumers.
 - 2026-08-28: audited every production, test, benchmark, harness, and build
   file in pinned Go `pkg/util/fastrand`. The owning module already contains
   `TestRand` and the real benchmark target contains all four Go benchmark

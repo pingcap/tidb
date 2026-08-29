@@ -201,7 +201,7 @@ where
             .xor_key_stream(&mut self.buffer[..self.used]);
         let result = match self.underlying.write(&self.buffer[..self.used]) {
             Ok(n) => {
-                self.flushed_user_data_count += n as i64;
+                self.flushed_user_data_count = self.flushed_user_data_count.wrapping_add(n as i64);
                 if n < self.used {
                     Err(io::Error::new(io::ErrorKind::WriteZero, "short write"))
                 } else {
@@ -314,8 +314,8 @@ where
         }
         let block_size = self.cipher.encrypt_block_size;
         let offset_in_block = offset % block_size;
-        let counter = (offset / block_size) * self.cipher.aes_block_count;
-        let mut cursor = offset - offset_in_block;
+        let counter = (offset / block_size).wrapping_mul(self.cipher.aes_block_count);
+        let mut cursor = offset.wrapping_sub(offset_in_block);
         let mut block_offset = offset_in_block as usize;
         let mut buffer = vec![0; block_size as usize];
         let mut stream = self.cipher.stream(counter as u64);
@@ -331,7 +331,7 @@ where
                     };
                 }
             }
-            cursor += result.n as i64;
+            cursor = cursor.wrapping_add(result.n as i64);
             stream.xor_key_stream(&mut buffer[..result.n]);
             let available = &buffer[block_offset..result.n];
             let copied = available.len().min(destination.len() - total);
@@ -391,6 +391,22 @@ mod tests {
             } else {
                 ReadAtResult::ok(copied)
             }
+        }
+    }
+
+    struct RecordingReader {
+        offsets: Arc<Mutex<Vec<i64>>>,
+    }
+
+    impl ReadAt for RecordingReader {
+        fn read_at(&self, destination: &mut [u8], offset: i64) -> ReadAtResult {
+            let mut offsets = self.offsets.lock().expect("recorded offsets");
+            offsets.push(offset);
+            if offsets.len() > 1 {
+                return ReadAtResult::io(0, io::Error::other("stop after one block"));
+            }
+            destination.fill(0);
+            ReadAtResult::ok(destination.len())
         }
     }
 
@@ -458,6 +474,42 @@ mod tests {
         assert_reads(
             Reader::new(Reader::new(file, &cipher1), &cipher2),
             logical_length,
+        );
+    }
+
+    #[test]
+    fn flushed_offset_wraps_like_the_source_int64_counter() {
+        let file = MemoryFile::default();
+        let cipher = CtrCipher::new().expect("cipher");
+        let mut writer = Writer::new(file, &cipher);
+        writer.flushed_user_data_count = i64::MAX;
+        assert_eq!(writer.write(b"x").unwrap(), 1);
+        writer.flush_buffer().unwrap();
+        assert_eq!(writer.get_cache_data_offset(), i64::MIN);
+    }
+
+    #[test]
+    fn read_cursor_wraps_like_source_int64_arithmetic() {
+        let offsets = Arc::new(Mutex::new(Vec::new()));
+        let cipher = CtrCipher::new().expect("cipher");
+        let reader = Reader::new(
+            RecordingReader {
+                offsets: Arc::clone(&offsets),
+            },
+            &cipher,
+        );
+        let mut destination = [0; 2];
+
+        let result = reader.read_at(&mut destination, i64::MAX);
+
+        assert_eq!(result.n, 1);
+        assert_eq!(
+            result.error.expect("injected read error").to_string(),
+            "stop after one block"
+        );
+        assert_eq!(
+            *offsets.lock().expect("recorded offsets"),
+            vec![i64::MAX - 1023, i64::MIN]
         );
     }
 }

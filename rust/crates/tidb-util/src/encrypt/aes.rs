@@ -103,7 +103,7 @@ pub fn pkcs7_pad(data: &[u8], block_size: usize) -> Vec<u8> {
 
 /// Removes PKCS#7 padding.
 #[allow(clippy::manual_is_multiple_of)] // `% 0` preserves Go's zero-block panic.
-pub fn pkcs7_unpad(data: &[u8], block_size: usize) -> Result<Vec<u8>, EncryptError> {
+pub fn pkcs7_unpad(data: &[u8], block_size: usize) -> Result<&[u8], EncryptError> {
     if data.is_empty() || data.len() % block_size != 0 {
         return Err(EncryptError::InvalidPaddingSize);
     }
@@ -118,7 +118,7 @@ pub fn pkcs7_unpad(data: &[u8], block_size: usize) -> Result<Vec<u8>, EncryptErr
     {
         return Err(EncryptError::InvalidPadding);
     }
-    Ok(data[..data.len() - pad_len].to_vec())
+    Ok(&data[..data.len() - pad_len])
 }
 
 fn encrypt_ecb_blocks(cipher: &AesCipher, source: &[u8]) -> Vec<u8> {
@@ -174,7 +174,8 @@ pub fn aes_decrypt_with_ecb(data: &[u8], key: &[u8]) -> Result<Vec<u8>, EncryptE
     if !data.len().is_multiple_of(AES_BLOCK_SIZE) {
         return Err(EncryptError::CorruptedData);
     }
-    pkcs7_unpad(&decrypt_ecb_blocks(&cipher, data), AES_BLOCK_SIZE)
+    let decrypted = decrypt_ecb_blocks(&cipher, data);
+    pkcs7_unpad(&decrypted, AES_BLOCK_SIZE).map(<[u8]>::to_vec)
 }
 
 /// Derives an AES key using MySQL's historical XOR-folding algorithm.
@@ -192,19 +193,20 @@ pub fn derive_key_mysql(key: &[u8], block_size: usize) -> Vec<u8> {
     derived
 }
 
-fn validate_iv(iv: &[u8]) -> [u8; AES_BLOCK_SIZE] {
-    assert_eq!(
-        iv.len(),
-        AES_BLOCK_SIZE,
-        "cipher.NewCBCEncrypter: IV length must equal block size"
-    );
+fn validate_iv(iv: &[u8], panic_message: &str) -> [u8; AES_BLOCK_SIZE] {
+    if iv.len() != AES_BLOCK_SIZE {
+        panic!("{panic_message}");
+    }
     iv.try_into().expect("validated AES IV")
 }
 
 /// Encrypts arbitrary-length data using AES-CBC and PKCS#7 padding.
 pub fn aes_encrypt_with_cbc(data: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8>, EncryptError> {
     let cipher = AesCipher::new(key)?;
-    let mut previous = validate_iv(iv);
+    let mut previous = validate_iv(
+        iv,
+        "cipher.NewCBCEncrypter: IV length must equal block size",
+    );
     let mut destination = pkcs7_pad(data, AES_BLOCK_SIZE);
     for block in destination.chunks_exact_mut(AES_BLOCK_SIZE) {
         for (value, prior) in block.iter_mut().zip(previous) {
@@ -220,7 +222,10 @@ pub fn aes_encrypt_with_cbc(data: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8
 /// Decrypts AES-CBC data and removes PKCS#7 padding.
 pub fn aes_decrypt_with_cbc(data: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8>, EncryptError> {
     let cipher = AesCipher::new(key)?;
-    let mut previous = validate_iv(iv);
+    let mut previous = validate_iv(
+        iv,
+        "cipher.NewCBCDecrypter: IV length must equal block size",
+    );
     if !data.len().is_multiple_of(AES_BLOCK_SIZE) {
         return Err(EncryptError::CorruptedData);
     }
@@ -235,7 +240,7 @@ pub fn aes_decrypt_with_cbc(data: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8
         }
         previous = ciphertext;
     }
-    pkcs7_unpad(&destination, AES_BLOCK_SIZE)
+    pkcs7_unpad(&destination, AES_BLOCK_SIZE).map(<[u8]>::to_vec)
 }
 
 fn increment_counter(counter: &mut [u8; AES_BLOCK_SIZE]) {
@@ -249,7 +254,7 @@ fn increment_counter(counter: &mut [u8; AES_BLOCK_SIZE]) {
 
 fn aes_crypt_with_ofb(data: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8>, EncryptError> {
     let cipher = AesCipher::new(key)?;
-    let mut feedback = validate_iv(iv);
+    let mut feedback = validate_iv(iv, "cipher.NewOFB: IV length must equal block size");
     let mut destination = Vec::with_capacity(data.len());
     for chunk in data.chunks(AES_BLOCK_SIZE) {
         cipher.encrypt_block(&mut feedback);
@@ -270,7 +275,7 @@ pub fn aes_decrypt_with_ofb(data: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8
 
 fn aes_crypt_with_ctr(data: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8>, EncryptError> {
     let cipher = AesCipher::new(key)?;
-    let mut counter = validate_iv(iv);
+    let mut counter = validate_iv(iv, "bad IV length");
     let mut destination = Vec::with_capacity(data.len());
     for chunk in data.chunks(AES_BLOCK_SIZE) {
         let mut mask = counter;
@@ -294,7 +299,7 @@ pub fn aes_decrypt_with_ctr(data: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8
 /// Encrypts data using full-block AES-CFB.
 pub fn aes_encrypt_with_cfb(data: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8>, EncryptError> {
     let cipher = AesCipher::new(key)?;
-    let mut feedback = validate_iv(iv);
+    let mut feedback = validate_iv(iv, "cipher.newCFB: IV length must equal block size");
     let mut destination = Vec::with_capacity(data.len());
     for chunk in data.chunks(AES_BLOCK_SIZE) {
         let mut mask = feedback;
@@ -311,7 +316,7 @@ pub fn aes_encrypt_with_cfb(data: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8
 /// Decrypts data using full-block AES-CFB.
 pub fn aes_decrypt_with_cfb(data: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8>, EncryptError> {
     let cipher = AesCipher::new(key)?;
-    let mut feedback = validate_iv(iv);
+    let mut feedback = validate_iv(iv, "cipher.newCFB: IV length must equal block size");
     let mut destination = Vec::with_capacity(data.len());
     for chunk in data.chunks(AES_BLOCK_SIZE) {
         let mut mask = feedback;
@@ -392,6 +397,60 @@ mod tests {
         ];
         for (data, block_size) in invalid {
             assert!(pkcs7_unpad(&from_hex(data), block_size).is_err());
+        }
+
+        let padded = from_hex("0A0B0C0D04040404");
+        let unpadded = pkcs7_unpad(&padded, 8).expect("valid padding");
+        assert_eq!(unpadded.as_ptr(), padded.as_ptr());
+    }
+
+    fn assert_panics_with(operation: impl FnOnce() + std::panic::UnwindSafe, expected: &str) {
+        let panic = std::panic::catch_unwind(operation).expect_err("operation must panic");
+        let message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .expect("string panic");
+        assert_eq!(message, expected);
+    }
+
+    #[test]
+    fn invalid_iv_panics_match_the_go_cipher_constructor() {
+        let key = b"1234567890123456";
+        assert_panics_with(
+            || {
+                let _ = aes_encrypt_with_cbc(b"x", key, b"short");
+            },
+            "cipher.NewCBCEncrypter: IV length must equal block size",
+        );
+        assert_panics_with(
+            || {
+                let _ = aes_decrypt_with_cbc(&[], key, b"short");
+            },
+            "cipher.NewCBCDecrypter: IV length must equal block size",
+        );
+        assert_panics_with(
+            || {
+                let _ = aes_encrypt_with_ofb(b"x", key, b"short");
+            },
+            "cipher.NewOFB: IV length must equal block size",
+        );
+        assert_panics_with(
+            || {
+                let _ = aes_encrypt_with_ctr(b"x", key, b"short");
+            },
+            "bad IV length",
+        );
+        for operation in [
+            aes_encrypt_with_cfb as StreamOperation,
+            aes_decrypt_with_cfb,
+        ] {
+            assert_panics_with(
+                || {
+                    let _ = operation(b"x", key, b"short");
+                },
+                "cipher.newCFB: IV length must equal block size",
+            );
         }
     }
 
