@@ -26,6 +26,7 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - [x] (2026-08-29) Completed pinned `pkg/statistics/asyncload` as the process-wide 128-shard needed-item set, including monotonic full-load upgrades and removal after successful, stale-metadata, or corrupted loads.
 - [x] (2026-08-29) Completed pinned `pkg/statistics/handle/syncload`, including per-item global singleflight, configured bounded priority queues and workers, timeout demotion, one retry with lease-derived backoff, panic recovery, live skip-type policy, stale-DDL guards, and the split request/wait contract.
 - [x] (2026-08-29) Completed pinned `pkg/statistics/util` and removed the executor's duplicate partial JSON statistics model; dump/load now shares the complete Go object shape, ordering, global marker, and memory accounting from `tidb-stats`.
+- [x] (2026-08-29) Completed pinned `pkg/statistics/handle/metrics` as its own Rust crate, preserving every health-bucket index, exclusive bound, compatibility label, shared gauge child, and historical-dump result counter.
 - [ ] Wire all pinned Go `SHOW STATS_*` surfaces to the shared cache and storage semantics.
 - [ ] Inventory every production file, platform/generated variant, original test/support artifact, fixture, and validation gate in pinned `pkg/statistics`; close or explicitly retain seed-only gaps until the whole package is complete.
 - [ ] Run the Ready validation profile, including `make lint`, only after the complete package inventory is closed.
@@ -85,6 +86,9 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 
 - Observation: pinned `pkg/statistics/util` owns the full statistics JSON object model, while Rust had split it into a predicate-only `tidb-stats` type and a separate executor-only load type that omitted FM sketch, usage timestamps, and historical state.
   Evidence: pinned `json_objects.go` defines `JSONTable`, `JSONColumn`, and `JSONPredicateColumn` together; the executor consumes that package rather than declaring a second representation.
+
+- Observation: pinned handle metrics do not define a second health calculation. They only fix bucket identities/configuration and bind child handles to the shared `tidb_statistics_stats_healthy` and `tidb_statistics_historical_stats` metric families.
+  Evidence: pinned `pkg/statistics/handle/metrics/metrics.go` contains only constants, `HealthyBucketConfigs`, three metric variables, and `InitMetricsVars`; bucket population remains in `pkg/statistics/handle/cache`.
 
 ## Decision Log
 
@@ -186,3 +190,5 @@ Revision note (2026-08-29): completed the atomic inventory for pinned `pkg/stati
 Revision note (2026-08-29): completed the atomic inventory for pinned `pkg/statistics/handle/syncload` (`stats_syncload.go`, `stats_syncload_test.go`, `BUILD.bazel`). The Rust mapping is `tidb-executor::driver::catalog::sync_load` for singleflight, queues, workers, retry, panic recovery, and result transport; `Catalog::{request_statistics_load,wait_statistics_load,load_needed_histograms}` for the planner/domain lifecycle; and `ClusterStatisticsItemLoader` for fresh per-item storage snapshots, live `tidb_analyze_skip_column_types`, stale metadata checks, and shared-cache publication. Focused tests cover deduplication, both retry causes, terminal item errors, bounded admission timeout, urgent-task precedence, split synchronous request/wait semantics, explicit asynchronous draining, corrupted-item cleanup, and stale-column cleanup.
 
 Revision note (2026-08-29): completed the atomic inventory for pinned `pkg/statistics/util` (`json_objects.go`, `BUILD.bazel`; no package-local Go tests or fixtures). `tidb-stats::json_metadata` now owns the complete table, column/index, histogram, CMS, FM, and predicate-usage JSON shapes, `TiDBGlobalStats`, predicate ordering, and `TotalMemoryUsage`; `tidb-executor::load_stats` imports that shared model instead of retaining a second partial definition. Focused tests cover stable sorting/global identity, component protobuf-size summation, and the existing load-stat JSON conversion path.
+
+Revision note (2026-08-29): completed the atomic inventory for pinned `pkg/statistics/handle/metrics` (`metrics.go`, `BUILD.bazel`; no package-local Go tests or fixtures). New crate `tidb-stats-handle-metrics` owns the exact ten bucket indices/configs and binds ordered gauge children plus the `dump/success` and `dump/fail` counters to the correctly named and labeled shared Prometheus families. Focused tests cover the complete config sequence, compatibility labels, child count/order, rebinding, gauge writes, and distinct historical-result counters. Health-bucket population remains assigned to the separate pinned cache package, matching Go ownership.

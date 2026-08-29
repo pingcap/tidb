@@ -3812,6 +3812,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-stats-handle-metrics"
+version = "0.0.0"
+dependencies = [
+ "prometheus 0.14.0",
+]
+
+[[package]]
 name = "tidb-stats-handle-usage-collector"
 version = "0.0.0"
 
