@@ -36,6 +36,7 @@
 //! table, not of the histogram. [`crate::histogram::Bucket::count`] below is
 //! cumulative, exactly as Go's in-memory `Bucket.Count` is.
 
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use tidb_datatype::{Collation, Datum, DatumValueError};
@@ -209,32 +210,20 @@ impl Drop for BuilderMemoryBuffer {
     }
 }
 
-/// The knobs `ANALYZE ... WITH n BUCKETS, m TOPN` sets, plus the session
-/// defaults they are compared against.
-///
-/// Go asks `isAnalyzeDefaultValue(numTopN, vardef.AnalyzeDefaultNumTopN)`
-/// before it prunes anything: a user who named a TopN size meant it, and the
-/// heuristics that would silently return fewer entries are switched off. The
-/// defaults therefore have to travel with the values rather than be assumed.
+/// The knobs `ANALYZE ... WITH n BUCKETS, m TOPN` sets.
 #[derive(Clone, Copy, Debug)]
 pub struct BuildOptions {
     /// `WITH n BUCKETS`, or the session default.
     pub num_buckets: isize,
     /// `WITH m TOPN`, or the session default.
     pub num_topn: isize,
-    /// `tidb_analyze_default_num_buckets`.
-    pub default_num_buckets: u64,
-    /// `tidb_analyze_default_num_topn`.
-    pub default_num_topn: u64,
 }
 
 impl Default for BuildOptions {
     fn default() -> Self {
         Self {
-            num_buckets: crate::constants::DEFAULT_HISTOGRAM_BUCKETS as isize,
-            num_topn: crate::constants::DEFAULT_TOP_N_VALUE as isize,
-            default_num_buckets: crate::constants::DEFAULT_HISTOGRAM_BUCKETS as u64,
-            default_num_topn: crate::constants::DEFAULT_TOP_N_VALUE as u64,
+            num_buckets: tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS.load(Ordering::SeqCst) as isize,
+            num_topn: tidb_vardef::ANALYZE_DEFAULT_NUM_TOP_N.load(Ordering::SeqCst) as isize,
         }
     }
 }
@@ -491,7 +480,10 @@ pub fn try_build_hist_and_topn_tracked<E>(
     let sample_num = samples.len() as i64;
     let sample_factor = count as f64 / sample_num as f64;
     let num_topn = options.num_topn;
-    let allow_pruning = is_analyze_default_value(num_topn, options.default_num_topn);
+    let allow_pruning = is_analyze_default_value(
+        num_topn,
+        tidb_vardef::ANALYZE_DEFAULT_NUM_TOP_N.load(Ordering::SeqCst),
+    );
     let policy = TopNPolicy {
         num_topn,
         allow_pruning,
@@ -620,7 +612,10 @@ pub fn try_build_hist_and_topn_tracked<E>(
         // to describe, and asking for 256 of them would only split a smooth
         // distribution into noise.
         if len_topn < num_topn as i64
-            && is_analyze_default_value(options.num_buckets, options.default_num_buckets)
+            && is_analyze_default_value(
+                options.num_buckets,
+                tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS.load(Ordering::SeqCst),
+            )
         {
             num_buckets = (remaining_ndv / BUCKET_NDV_DIVISOR).max(1).min(num_buckets);
         }
@@ -856,4 +851,59 @@ fn sort_builder_samples(samples: &mut [SampleItem]) -> Result<(), DatumValueErro
         }
     });
     error.map_or(Ok(()), Err)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{prune_topn_item, TopNWithRange};
+
+    fn topn(count: u64, value: u8) -> TopNWithRange {
+        TopNWithRange {
+            encoded: vec![value],
+            count,
+            start_idx: 0,
+            end_idx: 0,
+        }
+    }
+
+    fn assert_topns_equal(expected: &[TopNWithRange], actual: &[TopNWithRange]) {
+        assert_eq!(actual.len(), expected.len());
+        for (expected, actual) in expected.iter().zip(actual) {
+            assert_eq!(actual.encoded, expected.encoded);
+            assert_eq!(actual.count, expected.count);
+            assert_eq!(actual.start_idx, expected.start_idx);
+            assert_eq!(actual.end_idx, expected.end_idx);
+        }
+    }
+
+    /// Pinned Go `statistics_test.go::TestPruneTopN`.
+    #[test]
+    fn prune_topn_matches_all_source_cases() {
+        let input = vec![topn(100_000, 1)];
+        let output = prune_topn_item(input.clone(), 2, 0, 100_010, 500_050);
+        assert_topns_equal(&input, &output);
+
+        let input = vec![
+            topn(30_000, 1),
+            topn(30_000, 2),
+            topn(20_000, 3),
+            topn(20_000, 4),
+        ];
+        let output = prune_topn_item(input.clone(), 5, 0, 100_000, 10_000_000);
+        assert_topns_equal(&input, &output);
+
+        let input: Vec<_> = (0..10).map(|value| topn(10_000, value)).collect();
+        let output = prune_topn_item(input.clone(), 100, 0, 100_000, 10_000_000);
+        assert_topns_equal(&input, &output);
+
+        let input = vec![topn(3_000, 1), topn(3_000, 2)];
+        let output = prune_topn_item(input.clone(), 4_002, 0, 10_000, 10_000);
+        assert_topns_equal(&input, &output);
+
+        let expected: Vec<_> = (0..10).map(|value| topn(90, value)).collect();
+        let mut input = expected.clone();
+        input.extend((90..150).map(|value| topn(1, value)));
+        let output = prune_topn_item(input, 150, 0, 1_500, 1_500);
+        assert_topns_equal(&expected, &output);
+    }
 }

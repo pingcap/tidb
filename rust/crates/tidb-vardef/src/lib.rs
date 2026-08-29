@@ -29,16 +29,25 @@
 //! and the sysvar `TypeFlag` already live in `tidb-exec`
 //! (`sysvar_scope`/`sysvar_type`). Still DEFERRED from the full package: the
 //! remainder of the mutable `var (...)` block of runtime-tunable global sysvar
-//! backing stores (many need config/system-memory-derived initializers,
+//! backing stores, apart from the two ANALYZE defaults above (many need
+//! config/system-memory-derived initializers,
 //! `rate.Limiter`, or typed pointers, and are runtime state better wired when
 //! the session layer consumes them, not on the simple-query path),
 //! `sysvar.go`'s `SysVar` struct together with the `GetSysVar`/`SetSysVar`
 //! global registry (the singleton the rewrite deliberately replaces with
 //! explicit wiring), and `runtime.go`.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 static ENABLE_MDL: AtomicBool = AtomicBool::new(false);
+
+/// Go `vardef.AnalyzeDefaultNumBuckets`.
+pub static ANALYZE_DEFAULT_NUM_BUCKETS: AtomicU64 =
+    AtomicU64::new(defaults::DEF_TIDB_ANALYZE_DEFAULT_NUM_BUCKETS as u64);
+
+/// Go `vardef.AnalyzeDefaultNumTopN`.
+pub static ANALYZE_DEFAULT_NUM_TOP_N: AtomicU64 =
+    AtomicU64::new(defaults::DEF_TIDB_ANALYZE_DEFAULT_NUM_TOP_N as u64);
 
 /// Go `IsMDLEnabled` with the process-global kernel selection made explicit.
 ///

@@ -927,6 +927,20 @@ For each bounded behavior cluster:
       handle/storage/DDL consumers; without those consumers, the standalone
       Rust queue was an alternate runtime rather than package parity. The
       complete inventory is in `receipts/statistics_asyncload_audit.md`.
+- [x] Remove the two legacy partial `pkg/statistics` batch receipts, their
+      duplicate carrier, and 33 ignored empty test functions. They compared
+      `origin/master`, counted missing behavior as skipped coverage, and did
+      not constitute a package-atomic claim against the pinned source. Keep
+      only executable behavior while the complete root-package audit remains
+      in progress.
+- [x] Fill pinned `pkg/statistics/statistics_test.go::TestPruneTopN` in the
+      private builder owner. All five source cases now execute without
+      exporting the private pruning helper or adding a compatibility wrapper.
+- [x] Replace Rust's caller-supplied ANALYZE default fields with Go's two
+      `vardef` process atomics. The statistics builder now reads the globals
+      directly, and the existing validated `SET GLOBAL` publication path
+      updates them. Remove the duplicate three-test sample carrier after the
+      pinned root test became the single executable owner.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope

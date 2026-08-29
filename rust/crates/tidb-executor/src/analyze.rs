@@ -104,9 +104,7 @@ impl std::error::Error for AnalyzeError {}
 /// The knobs one `ANALYZE TABLE ... WITH ...` statement set.
 ///
 /// Every field is already the *effective* value: the statement's, or the
-/// session default when the statement named none. Which of the two it was
-/// still matters -- Go switches its TopN and bucket-count heuristics off for
-/// a value the user chose -- so the defaults travel alongside.
+/// session default when the statement named none.
 #[derive(Clone, Copy, Debug)]
 pub struct AnalyzeOptions {
     /// `WITH n BUCKETS`.
@@ -117,10 +115,6 @@ pub struct AnalyzeOptions {
     pub num_samples: usize,
     /// `WITH r SAMPLERATE`; `None` derives it from the table's row count.
     pub sample_rate: Option<f64>,
-    /// `tidb_analyze_default_num_buckets`.
-    pub default_num_buckets: u64,
-    /// `tidb_analyze_default_num_topn`.
-    pub default_num_topn: u64,
     /// `tidb_mem_quota_analyze`: the bound on what the kept sample may
     /// occupy. Go's default is `-1`, no bound.
     pub memory_quota: SampleMemoryQuota,
@@ -129,12 +123,12 @@ pub struct AnalyzeOptions {
 impl Default for AnalyzeOptions {
     fn default() -> Self {
         Self {
-            num_buckets: tidb_stats::constants::DEFAULT_HISTOGRAM_BUCKETS as isize,
-            num_topn: tidb_stats::constants::DEFAULT_TOP_N_VALUE as isize,
+            num_buckets: tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS
+                .load(std::sync::atomic::Ordering::SeqCst) as isize,
+            num_topn: tidb_vardef::ANALYZE_DEFAULT_NUM_TOP_N
+                .load(std::sync::atomic::Ordering::SeqCst) as isize,
             num_samples: 0,
             sample_rate: None,
-            default_num_buckets: tidb_stats::constants::DEFAULT_HISTOGRAM_BUCKETS as u64,
-            default_num_topn: tidb_stats::constants::DEFAULT_TOP_N_VALUE as u64,
             memory_quota: SampleMemoryQuota::unlimited(),
         }
     }
@@ -147,8 +141,6 @@ impl AnalyzeOptions {
         BuildOptions {
             num_buckets: self.num_buckets,
             num_topn: self.num_topn,
-            default_num_buckets: self.default_num_buckets,
-            default_num_topn: self.default_num_topn,
         }
     }
 }
@@ -872,15 +864,11 @@ mod tests {
         let options = AnalyzeOptions {
             num_buckets: -1,
             num_topn: -2,
-            default_num_buckets: u64::MAX,
-            default_num_topn: u64::MAX - 1,
             ..AnalyzeOptions::default()
         };
         let built = options.build_options();
         assert_eq!(built.num_buckets, -1);
         assert_eq!(built.num_topn, -2);
-        assert_eq!(built.default_num_buckets, u64::MAX);
-        assert_eq!(built.default_num_topn, u64::MAX - 1);
     }
 
     #[test]

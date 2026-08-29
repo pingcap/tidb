@@ -3758,6 +3758,7 @@ dependencies = [
  "tidb-stats-handle-util",
  "tidb-txnkv",
  "tidb-util",
+ "tidb-vardef",
 ]
 
 [[package]]

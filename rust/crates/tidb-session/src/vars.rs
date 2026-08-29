@@ -301,6 +301,14 @@ impl GlobalSysvars {
         ));
         let tmp_storage = effective(tidb_vardef::tidb_vars::TIDB_ENABLE_TMP_STORAGE_ON_OOM);
         let tmp_storage_on_oom = !(tmp_storage.eq_ignore_ascii_case("off") || tmp_storage == "0");
+        let analyze_default_num_buckets =
+            effective(tidb_vardef::tidb_vars::TIDB_ANALYZE_DEFAULT_NUM_BUCKETS)
+                .parse::<u64>()
+                .expect("validated analyze bucket default is an unsigned integer");
+        let analyze_default_num_top_n =
+            effective(tidb_vardef::tidb_vars::TIDB_ANALYZE_DEFAULT_NUM_TOP_N)
+                .parse::<u64>()
+                .expect("validated analyze TopN default is an unsigned integer");
         let mut publish = self
             .resolved
             .write()
@@ -310,6 +318,16 @@ impl GlobalSysvars {
             oom_action,
             tmp_storage_on_oom,
         });
+        if self.publishes_runtime_settings {
+            tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS.store(
+                analyze_default_num_buckets,
+                std::sync::atomic::Ordering::SeqCst,
+            );
+            tidb_vardef::ANALYZE_DEFAULT_NUM_TOP_N.store(
+                analyze_default_num_top_n,
+                std::sync::atomic::Ordering::SeqCst,
+            );
+        }
     }
 
     /// The typed process-wide statement-memory policy Go exposes through
@@ -1345,6 +1363,66 @@ impl SessionVars {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct RestoreAnalyzeDefaults {
+        buckets: u64,
+        top_n: u64,
+    }
+
+    impl Drop for RestoreAnalyzeDefaults {
+        fn drop(&mut self) {
+            tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS
+                .store(self.buckets, std::sync::atomic::Ordering::SeqCst);
+            tidb_vardef::ANALYZE_DEFAULT_NUM_TOP_N
+                .store(self.top_n, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn global_analyze_defaults_update_the_vardef_backing_values() {
+        let _restore = RestoreAnalyzeDefaults {
+            buckets: tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS
+                .load(std::sync::atomic::Ordering::SeqCst),
+            top_n: tidb_vardef::ANALYZE_DEFAULT_NUM_TOP_N.load(std::sync::atomic::Ordering::SeqCst),
+        };
+        let globals = GlobalSysvars::new();
+
+        globals
+            .set(
+                tidb_vardef::tidb_vars::TIDB_ANALYZE_DEFAULT_NUM_BUCKETS,
+                "4".to_owned(),
+            )
+            .unwrap();
+        globals
+            .set(
+                tidb_vardef::tidb_vars::TIDB_ANALYZE_DEFAULT_NUM_TOP_N,
+                "5".to_owned(),
+            )
+            .unwrap();
+        assert_eq!(
+            tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS.load(std::sync::atomic::Ordering::SeqCst),
+            4
+        );
+        assert_eq!(
+            tidb_vardef::ANALYZE_DEFAULT_NUM_TOP_N.load(std::sync::atomic::Ordering::SeqCst),
+            5
+        );
+
+        globals
+            .reset(tidb_vardef::tidb_vars::TIDB_ANALYZE_DEFAULT_NUM_BUCKETS)
+            .unwrap();
+        globals
+            .reset(tidb_vardef::tidb_vars::TIDB_ANALYZE_DEFAULT_NUM_TOP_N)
+            .unwrap();
+        assert_eq!(
+            tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS.load(std::sync::atomic::Ordering::SeqCst),
+            tidb_vardef::defaults::DEF_TIDB_ANALYZE_DEFAULT_NUM_BUCKETS as u64
+        );
+        assert_eq!(
+            tidb_vardef::ANALYZE_DEFAULT_NUM_TOP_N.load(std::sync::atomic::Ordering::SeqCst),
+            tidb_vardef::defaults::DEF_TIDB_ANALYZE_DEFAULT_NUM_TOP_N as u64
+        );
+    }
 
     #[test]
     fn empty_statement_restore_preserves_the_session_generation() {

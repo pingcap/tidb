@@ -19,6 +19,7 @@ tidb-codec = { path = "../tidb-codec" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-util = { path = "../tidb-util" }
+tidb-vardef = { path = "../tidb-vardef" }
 tidb-stats-handle-util = { path = "../tidb-stats-handle-util" }
 
 [dev-dependencies]
