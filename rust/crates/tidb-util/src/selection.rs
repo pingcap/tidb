@@ -29,16 +29,12 @@ pub trait Selectable {
     fn less(&self, i: usize, j: usize) -> bool;
     /// Swaps the elements at `i` and `j`.
     fn swap(&mut self, i: usize, j: usize);
-    /// Reports whether the collection is empty.
-    fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
 }
 
 /// Performs the introselect algorithm on `data` and returns the index of the
 /// `k`-th smallest value (`k` starts from 1), or `-1` if `data` is empty.
 pub fn select<T: Selectable + ?Sized>(data: &mut T, k: isize) -> isize {
-    if data.is_empty() {
+    if data.len() == 0 {
         return -1;
     }
     introselect(data, 0, data.len() as isize - 1, k - 1, 6)
@@ -210,6 +206,8 @@ fn partition5<T: Selectable + ?Sized>(data: &mut T, left: isize, right: isize) -
 
 #[cfg(test)]
 mod tests {
+    #![allow(non_snake_case)]
+
     use super::{select, Selectable};
     use crate::fastrand;
 
@@ -239,17 +237,15 @@ mod tests {
         TestSlice((0..size as i32).collect())
     }
 
-    // Go `TestSelection`.
     #[test]
-    fn selection() {
+    fn TestSelection() {
         let mut data = TestSlice(vec![1, 2, 3, 4, 5]);
         let index = select(&mut data, 3);
         assert_eq!(data.0[index as usize], 3);
     }
 
-    // Go `TestSelectionWithDuplicate`.
     #[test]
-    fn selection_with_duplicate() {
+    fn TestSelectionWithDuplicate() {
         let mut data = TestSlice(vec![1, 2, 3, 3, 5]);
         let index = select(&mut data, 3);
         assert_eq!(data.0[index as usize], 3);
@@ -257,9 +253,8 @@ mod tests {
         assert_eq!(data.0[index as usize], 5);
     }
 
-    // Go `TestSelectionWithRandomCase`.
     #[test]
-    fn selection_with_random_case() {
+    fn TestSelectionWithRandomCase() {
         let mut data = random_test_case(1_000_000);
         let index = select(&mut data, 500_000);
         let actual = data.0[index as usize];
@@ -268,9 +263,8 @@ mod tests {
         assert_eq!(expected, actual);
     }
 
-    // Go `TestSelectionWithSerialCase`.
     #[test]
-    fn selection_with_serial_case() {
+    fn TestSelectionWithSerialCase() {
         let mut data = serial_test_case(1_000_000);
         // sort in reverse order
         data.0.sort_unstable_by(|a, b| b.cmp(a));

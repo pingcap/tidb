@@ -18,7 +18,9 @@ is byte-identical to the pin.
 restored Go's signed index result (`-1` for empty input), removed Rust's
 unsupported `Option` and saturating rank-zero policy, retained exactly the
 four Go unit tests, and restored the source quickselect comparison behind the
-existing test-export boundary. `rust/crates/tidb-util/benches/selection.rs`
+existing test-export boundary. The Rust-only public `Selectable::is_empty`
+convenience was removed; the interface now has exactly Go's `Len`, `Less`, and
+`Swap` operations. `rust/crates/tidb-util/benches/selection.rs`
 contains all seven source sizes and all three source algorithms for each size.
 
 The sole production consumer, HashAgg approximate percentile, now consumes

@@ -36,6 +36,10 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-08-29: re-audited the complete pinned Go `pkg/util/selection`
+  package. Removed the Rust-only public `Selectable::is_empty` operation and
+  restored the exact four Go test identities; the benchmark-only quickselect
+  remains behind its native test-export boundary.
 - 2026-08-29: re-audited the complete pinned Go `pkg/util/ppcpuusage`
   package, which has no test artifact. Removed its remaining Rust-only
   signed-overflow regression and `must_use` diagnostic; the production owner
