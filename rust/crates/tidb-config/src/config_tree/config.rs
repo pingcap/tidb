@@ -668,7 +668,9 @@ impl Config {
     pub fn get_tikv_config(&self) -> tikvcfg::Config {
         let zone_label = self.labels.get("zone").cloned().unwrap_or_default();
         tikvcfg::Config {
-            committer_concurrency: i64::from(tidb_tikvutil::committer_concurrency()),
+            committer_concurrency: i64::from(
+                tidb_tikvutil::COMMITTER_CONCURRENCY.load(std::sync::atomic::Ordering::SeqCst),
+            ),
             max_txn_ttl: self.performance.max_txn_ttl,
             tikv_client: self.tikv_client.clone(),
             security: self.security.cluster_security(),
@@ -1338,12 +1340,14 @@ metric-label = "keyspace_meta_label_a"
 
         impl Drop for Restore {
             fn drop(&mut self) {
-                tidb_tikvutil::set_committer_concurrency(self.0);
+                tidb_tikvutil::COMMITTER_CONCURRENCY
+                    .store(self.0, std::sync::atomic::Ordering::SeqCst);
             }
         }
 
-        let _restore = Restore(tidb_tikvutil::committer_concurrency());
-        tidb_tikvutil::set_committer_concurrency(512);
+        let _restore =
+            Restore(tidb_tikvutil::COMMITTER_CONCURRENCY.load(std::sync::atomic::Ordering::SeqCst));
+        tidb_tikvutil::COMMITTER_CONCURRENCY.store(512, std::sync::atomic::Ordering::SeqCst);
 
         let mut config = new_config();
         config.performance.committer_concurrency = 7;

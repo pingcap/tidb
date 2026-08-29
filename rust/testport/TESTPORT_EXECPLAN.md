@@ -36,6 +36,18 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-08-29: audited every production and build artifact in pinned Go
+  `pkg/util/tikvutil` plus all three pinned consumers. Replaced Rust's private
+  atomic and extra public default/getter/setter API with the single public
+  source-shaped atomic, wired config and sysvar consumers directly, and
+  removed the package's Rust-only unit test. Complete inventory and WIP gates
+  are recorded in `receipts/util_tikvutil.md`.
+- 2026-08-29: audited every production and build-tag artifact in pinned Go
+  `pkg/util/israce`. The production mapping already matched both source build
+  variants. Removed the two Rust-only unit tests, retired semantic-gate
+  manifest, and stale standalone audit plan; the ordinary printer remains the
+  source-shaped consumer. Complete inventory and WIP gates are recorded in
+  `receipts/util_israce.md`.
 - 2026-08-29: audited the complete pinned Go `pkg/util/versioninfo` package
   and re-read every `pkg/util/printer` artifact before changing its consumers.
   Removed Rust's twelve-field per-node/per-session `VersionInfo` snapshots and

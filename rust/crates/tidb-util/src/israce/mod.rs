@@ -16,20 +16,3 @@
 
 /// Whether this build uses the source-equivalent race configuration.
 pub const RACE_ENABLED: bool = cfg!(feature = "race");
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[cfg(not(feature = "race"))]
-    #[test]
-    fn default_build_reports_race_disabled() {
-        const { assert!(!RACE_ENABLED) };
-    }
-
-    #[cfg(feature = "race")]
-    #[test]
-    fn race_build_reports_race_enabled() {
-        const { assert!(RACE_ENABLED) };
-    }
-}

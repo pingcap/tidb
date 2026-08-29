@@ -425,11 +425,12 @@ fn committer_concurrency_updates_the_process_authority() {
 
     impl Drop for Restore {
         fn drop(&mut self) {
-            tidb_tikvutil::set_committer_concurrency(self.0);
+            tidb_tikvutil::COMMITTER_CONCURRENCY.store(self.0, std::sync::atomic::Ordering::SeqCst);
         }
     }
 
-    let _restore = Restore(tidb_tikvutil::committer_concurrency());
+    let _restore =
+        Restore(tidb_tikvutil::COMMITTER_CONCURRENCY.load(std::sync::atomic::Ordering::SeqCst));
     let (mut first, mut second, globals) = two_sessions_sharing_globals();
 
     globals.load_from_cluster([(
@@ -437,7 +438,7 @@ fn committer_concurrency_updates_the_process_authority() {
         "256".to_owned(),
     )]);
     assert_eq!(
-        tidb_tikvutil::committer_concurrency(),
+        tidb_tikvutil::COMMITTER_CONCURRENCY.load(std::sync::atomic::Ordering::SeqCst),
         256,
         "loading the live cluster table must initialize the process authority"
     );
@@ -450,7 +451,7 @@ fn committer_concurrency_updates_the_process_authority() {
         Some("1024".to_owned())
     );
     assert_eq!(
-        tidb_tikvutil::committer_concurrency(),
+        tidb_tikvutil::COMMITTER_CONCURRENCY.load(std::sync::atomic::Ordering::SeqCst),
         1024,
         "the live atomic must follow the accepted GLOBAL assignment"
     );
@@ -460,7 +461,7 @@ fn committer_concurrency_updates_the_process_authority() {
         "2048".to_owned(),
     )]);
     assert_eq!(
-        tidb_tikvutil::committer_concurrency(),
+        tidb_tikvutil::COMMITTER_CONCURRENCY.load(std::sync::atomic::Ordering::SeqCst),
         1024,
         "loading transaction scratch state must not publish it"
     );
@@ -471,14 +472,14 @@ fn committer_concurrency_updates_the_process_authority() {
         )
         .unwrap();
     assert_eq!(
-        tidb_tikvutil::committer_concurrency(),
+        tidb_tikvutil::COMMITTER_CONCURRENCY.load(std::sync::atomic::Ordering::SeqCst),
         1024,
         "validated but uncommitted scratch state must remain private"
     );
 
     globals.replace_from(&scratch);
     assert_eq!(
-        tidb_tikvutil::committer_concurrency(),
+        tidb_tikvutil::COMMITTER_CONCURRENCY.load(std::sync::atomic::Ordering::SeqCst),
         4096,
         "committed cluster state must publish atomically with the live table"
     );
@@ -486,8 +487,9 @@ fn committer_concurrency_updates_the_process_authority() {
         .reset(tidb_vardef::tidb_vars::TIDB_COMMITTER_CONCURRENCY)
         .unwrap();
     assert_eq!(
-        tidb_tikvutil::committer_concurrency(),
-        tidb_tikvutil::DEFAULT_COMMITTER_CONCURRENCY
+        tidb_tikvutil::COMMITTER_CONCURRENCY.load(std::sync::atomic::Ordering::SeqCst),
+        i32::try_from(tidb_vardef::defaults::DEF_TIDB_COMMITTER_CONCURRENCY)
+            .expect("committer concurrency default fits i32")
     );
 }
 

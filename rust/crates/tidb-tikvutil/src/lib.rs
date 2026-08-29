@@ -14,40 +14,7 @@
 
 //! Process-wide TiKV client settings owned by `pkg/util/tikvutil`.
 
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::atomic::AtomicI32;
 
-/// Default value of the `tidb_committer_concurrency` system variable.
-pub const DEFAULT_COMMITTER_CONCURRENCY: i32 = 128;
-
-static COMMITTER_CONCURRENCY: AtomicI32 = AtomicI32::new(DEFAULT_COMMITTER_CONCURRENCY);
-
-/// Returns the committer concurrency used when constructing TiKV clients.
-#[must_use]
-pub fn committer_concurrency() -> i32 {
-    COMMITTER_CONCURRENCY.load(Ordering::SeqCst)
-}
-
-/// Publishes a validated `tidb_committer_concurrency` value process-wide.
-pub fn set_committer_concurrency(value: i32) {
-    COMMITTER_CONCURRENCY.store(value, Ordering::SeqCst);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    struct Restore(i32);
-
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            set_committer_concurrency(self.0);
-        }
-    }
-
-    #[test]
-    fn committer_concurrency_is_process_wide() {
-        let _restore = Restore(committer_concurrency());
-        set_committer_concurrency(321);
-        assert_eq!(committer_concurrency(), 321);
-    }
-}
+/// Go `CommitterConcurrency`.
+pub static COMMITTER_CONCURRENCY: AtomicI32 = AtomicI32::new(128);

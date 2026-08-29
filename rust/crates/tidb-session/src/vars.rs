@@ -651,8 +651,11 @@ impl GlobalSysvars {
             .expect("global sysvar lock poisoned")
             .get(tidb_vardef::tidb_vars::TIDB_COMMITTER_CONCURRENCY)
             .and_then(|value| value.parse::<i32>().ok())
-            .unwrap_or(tidb_tikvutil::DEFAULT_COMMITTER_CONCURRENCY);
-        tidb_tikvutil::set_committer_concurrency(value);
+            .unwrap_or(
+                i32::try_from(tidb_vardef::defaults::DEF_TIDB_COMMITTER_CONCURRENCY)
+                    .expect("committer concurrency default fits i32"),
+            );
+        tidb_tikvutil::COMMITTER_CONCURRENCY.store(value, std::sync::atomic::Ordering::SeqCst);
     }
 
     fn publish_redaction_mode(&self) {
