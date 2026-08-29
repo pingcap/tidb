@@ -194,6 +194,45 @@ pub struct BucketLocation {
 }
 
 impl Histogram {
+    /// Go `(*Histogram).MemoryUsage`: zero for an empty histogram and the
+    /// resident histogram allocation otherwise.
+    ///
+    /// Go keeps bounds in a `chunk.Chunk`; this representation keeps each
+    /// bound beside its bucket, so the same ownership rule is expressed as
+    /// the histogram value, reserved bucket storage, and bound payloads.
+    #[must_use]
+    pub fn memory_usage(&self) -> i64 {
+        if self.buckets.is_empty() {
+            return 0;
+        }
+        let datum_size = std::mem::size_of::<Datum>();
+        let bucket_storage = self
+            .buckets
+            .capacity()
+            .wrapping_mul(std::mem::size_of::<Bucket>());
+        let bound_payloads = self.buckets.iter().fold(0_usize, |total, bucket| {
+            total
+                .wrapping_add(
+                    bucket
+                        .lower_bound
+                        .estimated_mem_usage()
+                        .saturating_sub(datum_size),
+                )
+                .wrapping_add(
+                    bucket
+                        .upper_bound
+                        .estimated_mem_usage()
+                        .saturating_sub(datum_size),
+                )
+        });
+        i64::try_from(
+            std::mem::size_of::<Self>()
+                .wrapping_add(bucket_storage)
+                .wrapping_add(bound_payloads),
+        )
+        .unwrap_or(i64::MAX)
+    }
+
     /// Creates an empty histogram with the source metadata and allocation
     /// hint from Go `NewHistogram`.
     #[must_use]

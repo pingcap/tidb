@@ -2232,3 +2232,39 @@ fn show_stats_buckets_matches_the_pinned_go_row() {
         ]]
     );
 }
+
+/// Pinned Go `ShowExec.fetchShowStatsHistogram`: initialized columns and
+/// indexes share the normal statistics cache, report load state, and expose
+/// the four resident-memory components.
+#[test]
+fn show_stats_histograms_matches_the_pinned_go_rows() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t(a INT, b INT, INDEX idx_a(a))")
+        .unwrap();
+    session
+        .run("INSERT INTO t VALUES (1, NULL),(2, 2)")
+        .unwrap();
+    session.run("ANALYZE TABLE t WITH 0 TOPN").unwrap();
+
+    let rows = row_text(
+        session
+            .run("SHOW STATS_HISTOGRAMS WHERE table_name = 't' AND column_name IN ('a', 'idx_a')"),
+    );
+    assert_eq!(rows.len(), 2);
+    assert_eq!(&rows[0][0..5], ["test", "t", "", "a", "0"]);
+    assert_eq!(&rows[1][0..5], ["test", "t", "", "idx_a", "1"]);
+    assert_eq!(rows[0][6], "2");
+    assert_eq!(rows[0][7], "0");
+    assert_eq!(rows[0][10], "allLoaded");
+    assert_eq!(rows[1][8], "0");
+    assert_eq!(rows[1][10], "allLoaded");
+    for row in &rows {
+        let total = row[11].parse::<i64>().unwrap();
+        let histogram = row[12].parse::<i64>().unwrap();
+        let topn = row[13].parse::<i64>().unwrap();
+        let cms = row[14].parse::<i64>().unwrap();
+        assert!(histogram > 0);
+        assert_eq!(total, histogram + topn + cms);
+    }
+}

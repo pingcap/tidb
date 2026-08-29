@@ -48,7 +48,6 @@ fn populated_index(version: i64) -> Index {
         stats_loaded_status: StatsLoadedStatus::full_load(),
         stats_version: version,
         physical_id: 12,
-        histogram_memory_usage: 11,
     }
 }
 
@@ -121,10 +120,14 @@ fn source_drop_and_test_only_evict_match_status_boundaries() {
 #[test]
 fn source_memory_excludes_fm_sketch() {
     let index = populated_index(1);
+    let histogram_memory = index.histogram.memory_usage();
     let usage = index.memory_usage();
     assert_eq!(usage.index_id, 9);
-    assert_eq!(usage.histogram_mem_usage, 11);
+    assert_eq!(usage.histogram_mem_usage, histogram_memory);
     assert_eq!(usage.cmsketch_mem_usage, 32);
     assert_eq!(usage.topn_mem_usage, 67);
-    assert_eq!(usage.total_mem_usage, 110);
+    assert_eq!(
+        usage.total_mem_usage,
+        histogram_memory + usage.cmsketch_mem_usage + usage.topn_mem_usage
+    );
 }

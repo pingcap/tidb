@@ -191,7 +191,6 @@ fn source_table_memory_aggregates_components_and_tracking() {
     {
         let column = table.hist_coll.get_column(2).unwrap();
         let mut column = column.write().unwrap();
-        column.histogram_memory_usage = 11;
         let mut top_n = TopN::new(1);
         top_n.append(&[1], 1);
         column.top_n = Some(top_n);
@@ -199,7 +198,6 @@ fn source_table_memory_aggregates_components_and_tracking() {
     {
         let index = table.hist_coll.get_index(3).unwrap();
         let mut index = index.write().unwrap();
-        index.histogram_memory_usage = 13;
         let mut top_n = TopN::new(1);
         top_n.append(&[2], 1);
         index.top_n = Some(top_n);

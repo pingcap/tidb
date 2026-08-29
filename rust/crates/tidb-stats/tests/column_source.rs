@@ -51,7 +51,6 @@ fn populated_column(stats_version: i64) -> Column {
         physical_id: 11,
         stats_version,
         is_handle: true,
-        histogram_memory_usage: 17,
     }
 }
 
@@ -95,19 +94,23 @@ fn source_v2_count_keeps_the_topn_precondition() {
 #[test]
 fn source_memory_usage_composes_every_optional_payload() {
     let column = populated_column(1);
+    let histogram_memory = column.histogram.memory_usage();
     let usage = column.memory_usage();
     assert_eq!(usage.column_id, 7);
-    assert_eq!(usage.histogram_mem_usage, 17);
+    assert_eq!(usage.histogram_mem_usage, histogram_memory);
     assert_eq!(usage.cmsketch_mem_usage, 32);
     assert_eq!(usage.topn_mem_usage, 65);
     assert_eq!(usage.fmsketch_mem_usage, 16);
-    assert_eq!(usage.total_mem_usage, 130);
+    assert_eq!(
+        usage.total_mem_usage,
+        histogram_memory + usage.cmsketch_mem_usage + usage.topn_mem_usage + usage.fmsketch_mem_usage
+    );
 
     let mut minimal = column;
     minimal.cmsketch = None;
     minimal.top_n = None;
     minimal.fm_sketch = None;
-    assert_eq!(minimal.memory_usage().total_mem_usage, 17);
+    assert_eq!(minimal.memory_usage().total_mem_usage, histogram_memory);
 }
 
 #[test]

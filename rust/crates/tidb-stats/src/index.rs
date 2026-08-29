@@ -41,8 +41,6 @@ pub struct Index {
     pub stats_loaded_status: StatsLoadedStatus,
     pub stats_version: i64,
     pub physical_id: i64,
-    /// Memory already measured by the source-owned histogram representation.
-    pub histogram_memory_usage: i64,
 }
 
 impl Index {
@@ -127,10 +125,10 @@ impl Index {
     pub fn memory_usage(&self) -> IndexMemUsage {
         let mut usage = IndexMemUsage {
             index_id: self.item_id(),
-            histogram_mem_usage: self.histogram_memory_usage,
+            histogram_mem_usage: self.histogram.memory_usage(),
             ..IndexMemUsage::default()
         };
-        let mut total = self.histogram_memory_usage;
+        let mut total = usage.histogram_mem_usage;
         if let Some(cmsketch) = &self.cmsketch {
             usage.cmsketch_mem_usage = cmsketch.memory_usage() as i64;
             total = total.wrapping_add(usage.cmsketch_mem_usage);

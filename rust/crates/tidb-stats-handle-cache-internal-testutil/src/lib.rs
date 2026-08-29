@@ -14,23 +14,15 @@
 
 //! Go `pkg/statistics/handle/cache/internal/testutil`.
 
-use std::mem::size_of;
 use std::sync::Arc;
 
 use tidb_stats::{
-    Bucket, CmsSketch, Column, ColumnInfo, HistColl, Histogram, Index, IndexInfo,
-    StatsLoadedStatus, Table, TopN,
+    CmsSketch, Column, ColumnInfo, HistColl, Histogram, Index, IndexInfo, StatsLoadedStatus, Table,
+    TopN,
 };
 
-fn histogram() -> (Histogram, i64) {
-    let histogram = Histogram::new(0, 10, 0, 0, 1, 0);
-    let memory_usage = size_of::<Histogram>().wrapping_add(
-        histogram
-            .buckets
-            .capacity()
-            .wrapping_mul(size_of::<Bucket>()),
-    );
-    (histogram, memory_usage as i64)
+fn histogram() -> Histogram {
+    Histogram::new(0, 10, 0, 0, 1, 0)
 }
 
 fn top_n() -> TopN {
@@ -40,10 +32,10 @@ fn top_n() -> TopN {
 }
 
 fn column(id: i64, with_cms: bool, with_top_n: bool, with_hist: bool) -> Column {
-    let (histogram, histogram_memory_usage) = if with_hist {
+    let histogram = if with_hist {
         histogram()
     } else {
-        (Histogram::default(), 0)
+        Histogram::default()
     };
     Column {
         cmsketch: with_cms.then(|| CmsSketch::new(1, 1)),
@@ -54,16 +46,15 @@ fn column(id: i64, with_cms: bool, with_top_n: bool, with_hist: bool) -> Column 
         }),
         histogram,
         stats_loaded_status: StatsLoadedStatus::full_load(),
-        histogram_memory_usage,
         ..Column::default()
     }
 }
 
 fn index(id: i64, with_cms: bool, with_top_n: bool, with_hist: bool) -> Index {
-    let (histogram, histogram_memory_usage) = if with_hist {
+    let histogram = if with_hist {
         histogram()
     } else {
-        (Histogram::default(), 0)
+        Histogram::default()
     };
     Index {
         cmsketch: with_cms.then(|| CmsSketch::new(1, 1)),
@@ -74,7 +65,6 @@ fn index(id: i64, with_cms: bool, with_top_n: bool, with_hist: bool) -> Index {
         }),
         histogram,
         stats_loaded_status: StatsLoadedStatus::full_load(),
-        histogram_memory_usage,
         ..Index::default()
     }
 }

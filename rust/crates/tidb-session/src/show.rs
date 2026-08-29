@@ -1416,6 +1416,154 @@ impl Session {
         filter_show_output(output, like_pattern, where_clause)
     }
 
+    /// Go `ShowExec.fetchShowStatsHistogram`: expose every initialized
+    /// resident column and index statistics object through the ordinary
+    /// statistics cache traversal.
+    fn stats_histograms_stmt(
+        &mut self,
+        show: &tidb_ast::ShowStatsHistogramsStmt,
+    ) -> Result<StmtOutput, DriverError> {
+        let (like_pattern, where_clause) = match show.filter.as_ref() {
+            None => (None, None),
+            Some(tidb_ast::ShowStatsHistogramsFilter::Like(expr)) => {
+                let value = datum_text(&self.eval_value(expr)?);
+                (Some(ShowLikePattern::from_expr(expr, value, true)), None)
+            }
+            Some(tidb_ast::ShowStatsHistogramsFilter::Where(expr)) => (None, Some(expr)),
+        };
+        let dynamic_partition_prune = !self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
+            .is_ok_and(|mode| mode.eq_ignore_ascii_case("static"));
+        let zone = chrono::Local;
+        let rows = self.with_catalog_mut(|catalog| {
+            let mut rows = Vec::new();
+            for database in catalog.database_names() {
+                let Some(names) = catalog.table_names(&database) else {
+                    continue;
+                };
+                for name in names {
+                    let Some(tidb_executor::TableEntry::Kv(table)) =
+                        catalog.table_in(&database, &name)
+                    else {
+                        continue;
+                    };
+                    let partitions = table
+                        .partition()
+                        .map(|partition| {
+                            partition
+                                .definitions
+                                .iter()
+                                .map(|definition| (definition.id, definition.name.clone()))
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    for target in tidb_executor::show_stats::PartitionTargets::for_table(
+                        table.table_id,
+                        &partitions,
+                        dynamic_partition_prune,
+                    ) {
+                        let Some(statistics) = catalog.table_statistics(target.physical_id) else {
+                            continue;
+                        };
+                        if statistics.pseudo {
+                            continue;
+                        }
+                        for (offset, column) in table.columns().iter().enumerate() {
+                            let Some(column_stats) = statistics.columns.get(&column.id) else {
+                                continue;
+                            };
+                            let Some(status) = statistics.column_load_status.get(&column.id) else {
+                                continue;
+                            };
+                            if !status.stats_initialized() {
+                                continue;
+                            }
+                            let row_size =
+                                tidb_planner::cardinality::row_size::RowSizeColumnStats::new(
+                                    tidb_planner::cardinality::row_size::RowSizeType::from_field_type_code(
+                                        column.field_type.code(),
+                                    ),
+                                    column_stats.histogram.tot_col_size,
+                                    column_stats.histogram.null_count,
+                                    column_stats.total_row_count(),
+                                    table.pk_handle_offset() == Some(offset),
+                                );
+                            let avg_col_size =
+                                tidb_planner::cardinality::row_size::avg_col_size(
+                                    &row_size,
+                                    statistics.row_count,
+                                    false,
+                                );
+                            rows.push(tidb_executor::show_stats::histogram_row(
+                                &database,
+                                &name,
+                                &target.label,
+                                &column.name,
+                                false,
+                                &column_stats.histogram,
+                                avg_col_size,
+                                status.status_to_string(),
+                                column_stats.memory_usage().into(),
+                                &zone,
+                            ));
+                        }
+                        for index in table.indexes() {
+                            let Some(index_stats) = statistics.indexes.get(&index.id) else {
+                                continue;
+                            };
+                            let Some(status) = statistics.index_load_status.get(&index.id) else {
+                                continue;
+                            };
+                            if !status.stats_initialized() {
+                                continue;
+                            }
+                            rows.push(tidb_executor::show_stats::histogram_row(
+                                &database,
+                                &name,
+                                &target.label,
+                                &index.name,
+                                true,
+                                &index_stats.histogram,
+                                0.0,
+                                status.status_to_string(),
+                                index_stats.memory_usage().into(),
+                                &zone,
+                            ));
+                        }
+                    }
+                }
+            }
+            Ok(rows)
+        })?;
+        let varchar = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
+        let longlong = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
+        let double = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Double);
+        let tiny = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Tiny);
+        let datetime = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Datetime);
+        let output = StmtOutput::Rows {
+            columns: vec![
+                ("Db_name".to_owned(), varchar()),
+                ("Table_name".to_owned(), varchar()),
+                ("Partition_name".to_owned(), varchar()),
+                ("Column_name".to_owned(), varchar()),
+                ("Is_index".to_owned(), tiny()),
+                ("Update_time".to_owned(), datetime()),
+                ("Distinct_count".to_owned(), longlong()),
+                ("Null_count".to_owned(), longlong()),
+                ("Avg_col_size".to_owned(), double()),
+                ("Correlation".to_owned(), double()),
+                ("Load_status".to_owned(), varchar()),
+                ("Total_mem_usage".to_owned(), longlong()),
+                ("Hist_mem_usage".to_owned(), longlong()),
+                ("Topn_mem_usage".to_owned(), longlong()),
+                ("Cms_mem_usage".to_owned(), longlong()),
+            ],
+            rows,
+        };
+        filter_show_output(output, like_pattern, where_clause)
+    }
+
     /// Go `ShowExec.fetchShowStatsTopN`: render every resident TopN value
     /// through the session-aware statistics value decoder.
     fn stats_topn_stmt(
@@ -2303,6 +2451,9 @@ impl Session {
             }
             tidb_ast::AdminStmt::ShowStatsTopN(show) => self.stats_topn_stmt(show).map(Some),
             tidb_ast::AdminStmt::ShowStatsBuckets(show) => self.stats_buckets_stmt(show).map(Some),
+            tidb_ast::AdminStmt::ShowStatsHistograms(show) => {
+                self.stats_histograms_stmt(show).map(Some)
+            }
             // Go `fetchShowCollation`: one row per collation in the
             // parser's registry (`Collation | Charset | Id | Default |
             // Compiled | Sortlen | Pad_attribute`).

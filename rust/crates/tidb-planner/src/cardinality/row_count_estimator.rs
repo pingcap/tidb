@@ -41,6 +41,7 @@ use tidb_codec::encode_key;
 use tidb_datatype::{Collation, Datum};
 use tidb_stats::cmsketch::{CmsSketch, TopN};
 use tidb_stats::histogram::{Histogram, OutOfRangeContext};
+use tidb_stats::memory_usage::{ColumnMemUsage, IndexMemUsage};
 
 use super::pseudo::{
     pseudo_equal_count, pseudo_row_count_by_scalar_ranges, pseudo_row_count_by_signed_int_ranges,
@@ -182,6 +183,28 @@ fn topn_total_count(topn: Option<&TopN>) -> u64 {
 }
 
 impl ColumnStats {
+    /// Go `(*statistics.Column).MemoryUsage` for the payload retained by this
+    /// statistics object.
+    #[must_use]
+    pub fn memory_usage(&self) -> ColumnMemUsage {
+        let histogram_mem_usage = self.histogram.memory_usage();
+        let cmsketch_mem_usage = self.cms.as_ref().map_or(0, |cms| cms.memory_usage() as i64);
+        let topn_mem_usage = self
+            .topn
+            .as_ref()
+            .map_or(0, |topn| topn.memory_usage() as i64);
+        ColumnMemUsage {
+            column_id: self.histogram.id,
+            histogram_mem_usage,
+            cmsketch_mem_usage,
+            fmsketch_mem_usage: 0,
+            topn_mem_usage,
+            total_mem_usage: histogram_mem_usage
+                .wrapping_add(cmsketch_mem_usage)
+                .wrapping_add(topn_mem_usage),
+        }
+    }
+
     /// Go `Column.TotalRowCount`: version 2 folds TopN back in.
     #[must_use]
     pub fn total_row_count(&self) -> f64 {
@@ -214,6 +237,27 @@ impl ColumnStats {
 }
 
 impl IndexStats {
+    /// Go `(*statistics.Index).MemoryUsage` for the payload retained by this
+    /// statistics object.
+    #[must_use]
+    pub fn memory_usage(&self) -> IndexMemUsage {
+        let histogram_mem_usage = self.histogram.memory_usage();
+        let cmsketch_mem_usage = self.cms.as_ref().map_or(0, |cms| cms.memory_usage() as i64);
+        let topn_mem_usage = self
+            .topn
+            .as_ref()
+            .map_or(0, |topn| topn.memory_usage() as i64);
+        IndexMemUsage {
+            index_id: self.histogram.id,
+            histogram_mem_usage,
+            cmsketch_mem_usage,
+            topn_mem_usage,
+            total_mem_usage: histogram_mem_usage
+                .wrapping_add(cmsketch_mem_usage)
+                .wrapping_add(topn_mem_usage),
+        }
+    }
+
     /// Go `Index.TotalRowCount`.
     #[must_use]
     pub fn total_row_count(&self) -> f64 {

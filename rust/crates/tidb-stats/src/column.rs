@@ -40,8 +40,6 @@ pub struct Column {
     pub physical_id: i64,
     pub stats_version: i64,
     pub is_handle: bool,
-    /// Memory already measured by the source-owned histogram representation.
-    pub histogram_memory_usage: i64,
 }
 
 impl Column {
@@ -94,16 +92,16 @@ impl Column {
         }
     }
 
-    /// Go `MemoryUsage`, with the histogram component supplied by its locked
-    /// source owner and all integer additions retaining Go `int64` wrapping.
+    /// Go `MemoryUsage`, with all integer additions retaining Go `int64`
+    /// wrapping.
     #[must_use]
     pub fn memory_usage(&self) -> ColumnMemUsage {
         let mut usage = ColumnMemUsage {
             column_id: self.info.as_ref().expect("column has no metadata").id,
-            histogram_mem_usage: self.histogram_memory_usage,
+            histogram_mem_usage: self.histogram.memory_usage(),
             ..ColumnMemUsage::default()
         };
-        let mut total = self.histogram_memory_usage;
+        let mut total = usage.histogram_mem_usage;
         if let Some(cmsketch) = &self.cmsketch {
             usage.cmsketch_mem_usage = cmsketch.memory_usage() as i64;
             total = total.wrapping_add(usage.cmsketch_mem_usage);
