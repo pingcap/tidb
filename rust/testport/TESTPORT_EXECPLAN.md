@@ -424,6 +424,10 @@ For each bounded behavior cluster:
 - [x] Complete the pinned `pkg/util/vitess` package in its `tidb-util` owner:
       retain the exact five-row source test and remove Rust-only API policy,
       expanded package narrative, named key constant, and supplemental vectors.
+- [x] Complete the pinned `pkg/util/watcher` package in its `tidb-util` owner:
+      restore Go's three polling lock phases, no-follow child metadata,
+      platform file identity, signed sizes, real ticker, and exact single test;
+      remove injected-ticker, lifecycle-policy, accessor, doc, and test extras.
 - [x] Complete the pinned `pkg/util/table-rule-selector` package in its wired
       `tidb-util` owner: restore Go string-range indices, nil RuleSets, open
       insert types, and exact errors; remove the unused 1,270-line selector and
