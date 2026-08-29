@@ -2157,6 +2157,8 @@ impl KvTable {
             };
             let handle = tidb_tablecodec::decode_handle_in_index_value(&value)
                 .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
+            let handle = handle
+                .ok_or_else(|| KvTableError::Decode("index value contains no handle".to_owned()))?;
             let handle = match handle {
                 tidb_txnkv::Handle::Int(value) => TableHandle::Int(value.value()),
                 tidb_txnkv::Handle::Common(common) => {
@@ -2695,22 +2697,18 @@ impl KvTable {
                     tidb_codec::Handle::Common(parts)
                 }
             };
-            let defaults = self
-                .columns
-                .iter()
-                .map(|column| {
-                    column
-                        .origin_default_value(context.origin_default_flags(), context.zone())
-                        .map_err(|error| KvTableError::Decode(error.to_string()))
-                })
-                .collect::<Result<Vec<_>, _>>()?;
+            let default_datum = |index: usize| {
+                self.columns[index]
+                    .origin_default_value(context.origin_default_flags(), context.zone())
+                    .map_err(|error| error.to_string())
+            };
             return tidb_codec::decode_row_to_datums(
                 entry,
                 &columns,
                 &tidb_codec::DecodeRowOptions {
                     handle_column_ids: &handle_column_ids,
                     handle: Some(&codec_handle),
-                    defaults: Some(&defaults),
+                    default_datum: Some(&default_datum),
                     timezone: Some(context.zone()),
                     ..tidb_codec::DecodeRowOptions::default()
                 },

@@ -59,10 +59,6 @@ fn row_header_metadata_offsets_and_column_lookup_follow_source_layout() {
     assert!(!row.column_is_null(7, false));
     assert_eq!(row.value(0), Ok(&b"ab"[..]));
     assert_eq!(row.value(1), Ok(&b"cd"[..]));
-    assert_eq!(
-        row.value_range(2),
-        Err(RowCodecError::ValueIndexOutOfRange { index: 2, count: 2 })
-    );
 }
 
 #[test]
@@ -113,14 +109,6 @@ fn common_row_format_predicates_and_malformed_boundaries_are_explicit() {
             found: ROW_CODEC_VERSION - 1
         })
     );
-    assert!(matches!(
-        RowLayout::parse(&[ROW_CODEC_VERSION, 0, 1, 0, 0]),
-        Err(RowCodecError::InsufficientBytes {
-            section: "row header",
-            ..
-        })
-    ));
-
     let mut decreasing = vec![ROW_CODEC_VERSION, 0];
     put_u16(&mut decreasing, 2);
     put_u16(&mut decreasing, 0);
@@ -142,6 +130,20 @@ fn common_row_format_predicates_and_malformed_boundaries_are_explicit() {
 #[should_panic]
 fn is_new_format_panics_on_empty_input_like_go() {
     let _ = is_new_format(&[]);
+}
+
+#[test]
+#[should_panic]
+fn truncated_row_header_panics_like_go() {
+    let _ = RowLayout::parse(&[ROW_CODEC_VERSION, 0, 1, 0, 0]);
+}
+
+#[test]
+#[should_panic]
+fn out_of_range_value_index_panics_like_go() {
+    let encoded = [ROW_CODEC_VERSION, 0, 0, 0, 0, 0];
+    let (row, _) = RowLayout::parse(&encoded).unwrap();
+    let _ = row.value_range(0);
 }
 
 #[test]

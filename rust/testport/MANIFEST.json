@@ -161,7 +161,7 @@
   {
    "crate": "tidb-tablecodec",
    "gopath": "pkg/tablecodec",
-   "nfuncs": 37,
+   "nfuncs": 36,
    "testdata": 0
   },
   {
@@ -207,7 +207,7 @@
    "testdata": 0
   },
   {
-   "crate": "tidb-protocol",
+   "crate": "tidb-codec",
    "gopath": "pkg/util/rowcodec",
    "nfuncs": 21,
    "testdata": 0
@@ -425,7 +425,7 @@
    "gopath": "pkg/tablecodec",
    "base_gopath": "pkg/tablecodec",
    "crate": "tidb-tablecodec",
-   "funcs": 37,
+   "funcs": 36,
    "tier": 3,
    "pod": "pod3"
   },

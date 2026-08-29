@@ -1754,7 +1754,7 @@ fn zero_carries_no_sign_on_every_go_value_path() {
     }
 }
 
-/// The one place Go DOES keep a negative zero, and why this crate declines to.
+/// The one place Go keeps a negative zero, preserved only by raw decoders.
 ///
 /// `FromBin` sets `d.negative = mask != 0` straight from the sign bit and only
 /// resets to `zeroMyDecimal` when `digitsInt == 0 && digitsFrac == 0` -- so a
@@ -1771,12 +1771,10 @@ fn zero_carries_no_sign_on_every_go_value_path() {
 /// from a `MyDecimal` whose sign is already cleared on every value path (see
 /// [`zero_carries_no_sign_on_every_go_value_path`]), so TiDB never WRITES
 /// `0x7f` for a zero -- only a corrupt or foreign encoder can. Reproducing it
-/// would mean deleting this type's `negative && !is_zero` normalization, which
-/// is what keeps "zero compares and renders unsigned" true by construction for
-/// every arithmetic result rather than op-by-op as Go does. This test pins the
-/// deviation so it stays a known, deliberate one instead of drifting.
+/// is why the raw decoder preserves the sign only when Go does, while ordinary
+/// construction and arithmetic continue to normalize zero.
 #[test]
-fn from_bin_normalizes_a_non_canonical_negative_zero_that_go_preserves() {
+fn from_bin_preserves_a_non_canonical_negative_zero_like_go() {
     // Agreed rows: canonical zero, and the `frac == 0` payload Go itself
     // normalizes via the `digitsInt == 0 && digitsFrac == 0` reset.
     for (bin, precision, frac, rendered) in [(vec![0x80_u8], 1, 0, "0"), (vec![0x7f_u8], 1, 0, "0")]
@@ -1787,17 +1785,18 @@ fn from_bin_normalizes_a_non_canonical_negative_zero_that_go_preserves() {
         assert!(!value.is_negative(), "FromBin({bin:x?}) kept a sign");
     }
 
-    // The deviating row. Go yields "-0.00" comparing -1 against zero; this
-    // crate yields "0.00" comparing equal.
-    let (value, _, _) = Decimal::from_bin(&[0x7f, 0x00], 2, 2).expect("FromBin(7f 00)");
-    assert_eq!(value.to_string(), "0.00", "Go renders -0.00 here");
+    // Go keeps the sign when a non-zero fractional digit count prevents its
+    // zero-reset branch.
+    let (value, consumed, _) = Decimal::from_bin(&[0x7f, 0x00], 2, 2).expect("FromBin(7f 00)");
+    assert_eq!(consumed, 1);
+    assert_eq!(value.to_string(), "-0.00");
     assert!(value.is_zero());
-    assert!(!value.is_negative());
+    assert!(value.is_negative());
     assert_eq!(
         value.cmp(&Decimal::from_literal("0.00")),
-        std::cmp::Ordering::Equal,
-        "Go's Compare returns -1 here"
+        std::cmp::Ordering::Less,
     );
+    assert_eq!(value.to_bin(2, 2).unwrap().0, [0x7f]);
 }
 
 /// The previous pad-both-sides comparison, kept as the differential
@@ -1931,4 +1930,14 @@ fn ord_cmp_keeps_go_documented_equalities() {
     let zero = Decimal::parse_mysql("0.00").0;
     assert_eq!(neg_zero.cmp(&zero), std::cmp::Ordering::Equal);
     assert_eq!(zero.cmp(&neg_zero), std::cmp::Ordering::Equal);
+}
+
+#[test]
+fn to_bin_keeps_low_81_integer_digits_on_word_overflow() {
+    use super::Decimal;
+
+    let overwide = Decimal::from_literal(&format!("1{}", "0".repeat(81)));
+    let (encoded, _) = overwide.to_bin(81, 0).unwrap();
+    let (zero, _) = Decimal::from_literal("0").to_bin(81, 0).unwrap();
+    assert_eq!(encoded, zero);
 }

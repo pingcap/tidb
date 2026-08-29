@@ -567,6 +567,9 @@ impl KvTable {
                 Ok(entry) => {
                     let handle = decode_handle_in_index_value(&entry)
                         .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
+                    let handle = handle.ok_or_else(|| {
+                        KvTableError::Decode("index value contains no handle".to_owned())
+                    })?;
                     return Ok(Some(convert_handle(&handle)));
                 }
                 Err(StorageError::NotFound) => {}
@@ -636,9 +639,12 @@ impl KvTable {
                 entries
                     .get(&key)
                     .map(|entry| {
-                        decode_handle_in_index_value(entry)
-                            .map(|handle| convert_handle(&handle))
-                            .map_err(|error| KvTableError::Decode(format!("{error:?}")))
+                        let handle = decode_handle_in_index_value(entry)
+                            .map_err(|error| KvTableError::Decode(format!("{error:?}")))?
+                            .ok_or_else(|| {
+                                KvTableError::Decode("index value contains no handle".to_owned())
+                            })?;
+                        Ok(convert_handle(&handle))
                     })
                     .transpose()
             })
@@ -690,6 +696,8 @@ pub(in crate::kv_table) fn index_entry_handle(
     if index.unique && index_kv_is_unique(value) {
         let handle = decode_handle_in_index_value(value)
             .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
+        let handle = handle
+            .ok_or_else(|| KvTableError::Decode("index value contains no handle".to_owned()))?;
         return Ok(convert_handle(&handle));
     }
     // The handle is appended to the key after the indexed values.

@@ -172,10 +172,11 @@ pub fn decimal_bin_size(precision: i32, frac: i32) -> Result<usize, DecimalCodec
     {
         return Err(DecimalCodecError::BadNumber);
     }
-    Ok(words_int as usize * CODEC_WORD_SIZE
-        + DIG2BYTES[x_int as usize]
-        + words_frac as usize * CODEC_WORD_SIZE
-        + DIG2BYTES[x_frac as usize])
+    let size = words_int * CODEC_WORD_SIZE as i32
+        + DIG2BYTES[x_int as usize] as i32
+        + words_frac * CODEC_WORD_SIZE as i32
+        + DIG2BYTES[x_frac as usize] as i32;
+    usize::try_from(size).map_err(|_| DecimalCodecError::BadNumber)
 }
 
 /// Go `MyDecimal`'s codec-relevant view: sign, integer/fraction digit counts,
@@ -197,7 +198,8 @@ impl MyDecimalWords {
         let storage_scale = d.storage_scale as usize;
         // The Rust coefficient is left-padded to at least the storage scale, so
         // the integer digit count is the non-fraction remainder.
-        let mut digits_int = digits.len() - storage_scale;
+        let source_digits_int = digits.len() - storage_scale;
+        let mut digits_int = source_digits_int;
         let mut digits_frac = storage_scale;
 
         let words_int0 = digits_to_words(digits_int);
@@ -218,7 +220,7 @@ impl MyDecimalWords {
         let mut word: i32 = 0;
         let mut inner = 0usize;
         let mut remaining = digits_int;
-        let mut si = digits_int;
+        let mut si = source_digits_int;
         while remaining > 0 {
             remaining -= 1;
             si -= 1;
@@ -242,7 +244,7 @@ impl MyDecimalWords {
         word = 0;
         inner = 0;
         remaining = digits_frac;
-        let mut fi = digits_int;
+        let mut fi = source_digits_int;
         while remaining > 0 {
             remaining -= 1;
             word = i32::from(digits[fi] - b'0') + word * 10;
@@ -328,12 +330,15 @@ impl MyDecimalWords {
         if coefficient.is_empty() {
             coefficient.push(b'0');
         }
-        Decimal::new_with_storage(
-            self.negative,
-            DecimalDigits::from_ascii(coefficient),
-            digits_frac.max(0) as u32,
-            digits_frac.max(0) as u32,
-        )
+        let digits = DecimalDigits::from_ascii(coefficient);
+        let scale = digits_frac.max(0) as u32;
+        if digits_frac > 0 {
+            Decimal::new_with_storage_preserving_zero_sign(self.negative, digits, scale, scale)
+        } else {
+            // Go `FromBin` resets to `zeroMyDecimal` only when both digit
+            // counts are zero, clearing a non-canonical sign at scale zero.
+            Decimal::new_with_storage(self.negative, digits, scale, scale)
+        }
     }
 
     /// Go `removeLeadingZeros`: index of the first significant word and the
@@ -701,7 +706,7 @@ impl Decimal {
         let result_frac = result_frac as u32;
         let storage_scale = raw.storage_scale.max(result_frac);
         let digits = pad_scale(&raw.digits, raw.storage_scale, storage_scale);
-        Ok(Decimal::new_with_storage(
+        Ok(Decimal::new_with_storage_preserving_zero_sign(
             negative,
             digits,
             result_frac,

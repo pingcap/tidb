@@ -116,7 +116,7 @@ impl SessionTimeZone {
     pub fn is_utc(&self) -> bool {
         match self {
             Self::Local => false,
-            Self::Fixed { offset_secs, .. } => *offset_secs == 0,
+            Self::Fixed { name, offset_secs } => name == "UTC" && *offset_secs == 0,
             Self::Named(zone) => *zone == Tz::UTC,
         }
     }
@@ -305,6 +305,11 @@ mod tests {
         assert!(SessionTimeZone::utc().is_utc());
         assert!(SessionTimeZone::Named(chrono_tz::UTC).is_utc());
         assert!(!SessionTimeZone::Named(chrono_tz::America::Los_Angeles).is_utc());
+        assert!(!SessionTimeZone::Fixed {
+            name: "+00:00".to_owned(),
+            offset_secs: 0,
+        }
+        .is_utc());
         assert!(!SessionTimeZone::Fixed {
             name: "+08:00".to_owned(),
             offset_secs: 8 * 3600,

@@ -45,16 +45,13 @@ pub use column::{
     TypedColumnError,
 };
 pub use datum::{
-    cut_one, decode, decode_one, decode_range, decode_range_typed, encode_key,
-    encode_key_in_timezone, encode_value, encode_value_in_timezone, estimate_value_size, hash_code,
-    peek_one_len, DecodeRangeError, Encoder, BYTES_FLAG, COMPACT_BYTES_FLAG, DECIMAL_FLAG,
-    DURATION_FLAG, FLOAT_FLAG, INT_FLAG, JSON_FLAG, MAX_FLAG, NIL_FLAG, UINT_FLAG, UVARINT_FLAG,
-    VARINT_FLAG, VECTOR_FLOAT32_FLAG,
+    cut_one, decode, decode_one, decode_range, encode_key, encode_key_in_timezone, encode_value,
+    encode_value_in_timezone, estimate_value_size, hash_code, DecodeRangeError, Encoder,
+    BYTES_FLAG, COMPACT_BYTES_FLAG, DECIMAL_FLAG, DURATION_FLAG, FLOAT_FLAG, INT_FLAG, JSON_FLAG,
+    MAX_FLAG, NIL_FLAG, UINT_FLAG, UVARINT_FLAG, VARINT_FLAG, VECTOR_FLOAT32_FLAG,
 };
-pub use decimal::{
-    decimal_encoded_len, decode_decimal, decode_decimal_with_fault, encode_decimal_fixed,
-    inspect_decimal, DecimalWireMetadata,
-};
+pub(crate) use decimal::decimal_encoded_len;
+pub use decimal::{decode_decimal, encode_decimal_fixed};
 pub use duration::{
     decode_duration, encode_duration, RawDuration, RawDurationParts, MAX_DURATION_FSP,
 };
@@ -76,13 +73,11 @@ pub use package::{
     convert_by_collation, convert_by_collation_string, cut_column_id, decode_as_datetime,
     decode_as_float32, decode_one_typed, decode_one_typed_in_timezone, encode_hash_datum,
     encode_mysql_time, equal_rows, hash_column, hash_group_key, hash_group_key_in_timezone,
-    hash_row, serialize_keys, set_raw_values, value_size_of_signed_int, value_size_of_unsigned_int,
-    HashColumnOutput, SerializeMode,
+    hash_row, serialize_keys, set_raw_values, HashColumnOutput, SerializeMode,
 };
+pub(crate) use package::{value_size_of_signed_int, value_size_of_unsigned_int};
 pub use row_decoder::{decode_raw_int, decode_raw_uint, RawRowValue, RowDecodeError, RowDecoder};
-pub use row_encoder::{
-    encode_raw_int, encode_raw_row, encode_raw_uint, RawRowColumn, RowEncodeError,
-};
+pub use row_encoder::{encode_raw_int, encode_raw_row, encode_raw_uint, RawRowColumn};
 pub use row_index::{
     decode_table_id, encode_row_key, gen_table_record_prefix, get_key_kind, KeyKind,
 };

@@ -13,67 +13,9 @@
 // limitations under the License.
 
 use crate::CodecError;
-use tidb_datatype::{Decimal, DecimalCodecWarning};
+use tidb_datatype::{decimal_bin_size, Decimal, DecimalCodecWarning};
 
-const DIGITS_PER_WORD: usize = 9;
-const DIGITS_TO_BYTES: [usize; 10] = [0, 1, 1, 2, 2, 3, 3, 4, 4, 4];
-// `MyDecimal.WriteBin` accepts all nine base-1e9 words (81 digits), even
-// though SQL's declared DECIMAL width is capped at 65.
-const MAX_DECIMAL_PRECISION: usize = 81;
-const MAX_DECIMAL_SCALE: usize = 30;
-
-/// Physical metadata carried by one Go `MyDecimal.WriteBin` payload.
-///
-/// This is intentionally separate from [`Decimal`]: callers that only need
-/// to frame a value can inspect the schema precision/scale and exact byte
-/// length without materializing a numeric value or applying SQL rounding,
-/// overflow, or warning policy.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct DecimalWireMetadata {
-    precision: u8,
-    scale: u8,
-    payload_len: usize,
-}
-
-impl DecimalWireMetadata {
-    /// Returns the source precision byte.
-    pub const fn precision(self) -> u8 {
-        self.precision
-    }
-
-    /// Returns the source scale byte.
-    pub const fn scale(self) -> u8 {
-        self.scale
-    }
-
-    /// Returns the complete payload length, including precision and scale.
-    pub const fn payload_len(self) -> usize {
-        self.payload_len
-    }
-}
-
-/// Inspects one decimal payload without deserializing its coefficient.
-///
-/// The returned remainder starts after the exact `DecimalPeak`-equivalent
-/// payload.  This boundary owns only physical shape and framing; converting
-/// to a SQL decimal and deciding truncation/overflow behavior remain the
-/// caller's responsibility.
-pub fn inspect_decimal(input: &[u8]) -> Result<(&[u8], DecimalWireMetadata), CodecError> {
-    let payload_len = peek_decimal_len(input)?;
-    let precision = *input.first().ok_or(CodecError::InsufficientBytes)?;
-    let scale = *input.get(1).ok_or(CodecError::InsufficientBytes)?;
-    if input.len() < payload_len {
-        return Err(CodecError::InsufficientBytes);
-    }
-    Ok((
-        &input[payload_len..],
-        DecimalWireMetadata {
-            precision,
-            scale,
-            payload_len,
-        },
-    ))
-}
+const MAX_DECIMAL_SCALE: i64 = 30;
 
 /// Appends TiDB/MySQL's mem-comparable decimal representation at the shape the
 /// value carries.
@@ -92,7 +34,7 @@ pub fn inspect_decimal(input: &[u8]) -> Result<(&[u8], DecimalWireMetadata), Cod
 /// shape, which is Go's unset `Datum.length`.
 pub fn encode_decimal(buffer: &mut Vec<u8>, decimal: &Decimal) -> Result<(), CodecError> {
     let (precision, scale) = decimal.storage_shape();
-    encode_decimal_fixed(buffer, decimal, precision as usize, scale as usize)
+    encode_decimal_fixed(buffer, decimal, precision, scale)
 }
 
 /// Appends TiDB/MySQL's fixed-schema decimal representation.
@@ -106,19 +48,29 @@ pub fn encode_decimal(buffer: &mut Vec<u8>, decimal: &Decimal) -> Result<(), Cod
 pub fn encode_decimal_fixed(
     buffer: &mut Vec<u8>,
     decimal: &Decimal,
-    precision: usize,
-    scale: usize,
+    precision: i64,
+    scale: i64,
 ) -> Result<(), CodecError> {
-    let (precision, scale) = decimal_shape(decimal, precision, scale)?;
+    let (precision, scale) = if precision == 0 {
+        let (precision, scale) = derived_decimal_shape(decimal)?;
+        (precision as i64, (scale as i64).min(MAX_DECIMAL_SCALE))
+    } else {
+        (precision, scale.min(MAX_DECIMAL_SCALE))
+    };
+    // Go appends these two bytes before `WriteBin`, including when `WriteBin`
+    // rejects the signed shape. Preserve that partial-buffer contract.
+    buffer.push(precision as u8);
+    buffer.push(scale as u8);
     // The mem-comparable payload is exactly Go `MyDecimal.WriteBin`, ported and
     // byte-verified once in `tidb-datatype`; this codec only frames it with the
     // precision/scale header and maps the soft truncation/overflow signal to a
     // typed error for the caller's statement context.
     let (payload, warning) = decimal
-        .to_bin(precision as i32, scale as i32)
+        .to_bin(
+            i32::try_from(precision).map_err(|_| CodecError::DecimalOutOfRange)?,
+            i32::try_from(scale).map_err(|_| CodecError::DecimalOutOfRange)?,
+        )
         .map_err(|_| CodecError::DecimalOutOfRange)?;
-    buffer.push(precision as u8);
-    buffer.push(scale as u8);
     buffer.extend_from_slice(&payload);
     match warning {
         None => Ok(()),
@@ -131,43 +83,39 @@ pub fn encode_decimal_fixed(
 ///
 /// This is the source-equivalent of Go `valueSizeOfDecimal`: it validates the
 /// requested shape but does not encode or apply the caller's error policy.
-pub fn decimal_encoded_len(
+pub(crate) fn decimal_encoded_len(
     decimal: &Decimal,
-    precision: usize,
-    scale: usize,
+    precision: i64,
+    scale: i64,
 ) -> Result<usize, CodecError> {
-    let (precision, scale) = decimal_shape(decimal, precision, scale)?;
-    Ok(2 + decimal_binary_len(precision, scale)?)
+    let (precision, scale) = if precision == 0 {
+        let (precision, scale) = derived_decimal_shape(decimal)?;
+        (precision as i64, scale as i64)
+    } else {
+        (precision, scale)
+    };
+    if precision < 0 || scale < 0 {
+        return Err(CodecError::DecimalOutOfRange);
+    }
+    Ok(2 + decimal_binary_len(precision as usize, scale as usize)?)
 }
 
 /// Decodes one TiDB/MySQL decimal, returning its precision and scale metadata.
 pub fn decode_decimal(input: &[u8]) -> Result<(&[u8], Decimal, u8, u8), CodecError> {
-    decode_decimal_with_fault(input, false)
-}
-
-/// Source `errorInDecodeDecimal` failpoint seam.
-///
-/// Rust tests pass `true` explicitly rather than mutating process-global
-/// failpoint state. Production callers use [`decode_decimal`].
-pub fn decode_decimal_with_fault(
-    input: &[u8],
-    inject_error: bool,
-) -> Result<(&[u8], Decimal, u8, u8), CodecError> {
-    if inject_error {
-        return Err(CodecError::InjectedFailure("errorInDecodeDecimal"));
+    if input.len() < 3 {
+        return Err(CodecError::InsufficientBytes);
     }
-    let precision = *input.first().ok_or(CodecError::InsufficientBytes)?;
-    let scale = *input.get(1).ok_or(CodecError::InsufficientBytes)?;
-    validate_decimal_shape(usize::from(precision), usize::from(scale))?;
+    let precision = input[0];
+    let scale = input[1];
     let binary_len = decimal_binary_len(usize::from(precision), usize::from(scale))?;
-    let binary = input
-        .get(2..2 + binary_len)
-        .ok_or(CodecError::InsufficientBytes)?;
+    if binary_len == 0 {
+        panic!("Go MyDecimal.FromBin indexes an empty decimal payload");
+    }
     // The payload is Go `MyDecimal.FromBin`, ported and round-trip-verified in
     // `tidb-datatype`. A soft truncation warning is not an error here, matching
     // Go `FromBin` returning the value alongside it.
     let (value, _consumed, _warning) =
-        Decimal::from_bin(binary, i32::from(precision), i32::from(scale))
+        Decimal::from_bin(&input[2..], i32::from(precision), i32::from(scale))
             .map_err(|_| CodecError::InvalidEncoding("invalid decimal payload"))?;
     Ok((&input[2 + binary_len..], value, precision, scale))
 }
@@ -176,48 +124,20 @@ pub fn decode_decimal_with_fault(
 pub(crate) fn peek_decimal_len(input: &[u8]) -> Result<usize, CodecError> {
     let precision = usize::from(*input.first().ok_or(CodecError::InsufficientBytes)?);
     let scale = usize::from(*input.get(1).ok_or(CodecError::InsufficientBytes)?);
-    validate_decimal_shape(precision, scale)?;
     Ok(2 + decimal_binary_len(precision, scale)?)
 }
 
 fn decimal_binary_len(precision: usize, scale: usize) -> Result<usize, CodecError> {
-    validate_decimal_shape(precision, scale)?;
-    let integer = precision - scale;
-    Ok(integer / DIGITS_PER_WORD * 4
-        + DIGITS_TO_BYTES[integer % DIGITS_PER_WORD]
-        + scale / DIGITS_PER_WORD * 4
-        + DIGITS_TO_BYTES[scale % DIGITS_PER_WORD])
+    decimal_bin_size(precision as i32, scale as i32).map_err(|_| CodecError::DecimalOutOfRange)
 }
 
-fn decimal_shape(
-    decimal: &Decimal,
-    precision: usize,
-    scale: usize,
-) -> Result<(usize, usize), CodecError> {
-    if precision != 0 {
-        validate_decimal_shape(precision, scale)?;
-        return Ok((precision, scale));
-    }
-
+fn derived_decimal_shape(decimal: &Decimal) -> Result<(usize, usize), CodecError> {
     let source_scale = decimal.storage_scale() as usize;
     let coefficient = decimal.coefficient_digits();
     let integer_end = coefficient.len() - source_scale;
     let integer_digits = coefficient[..integer_end].trim_start_matches('0').len();
     let precision = (integer_digits + source_scale).max(1);
-    let scale = source_scale.min(MAX_DECIMAL_SCALE);
-    validate_decimal_shape(precision, scale)?;
-    Ok((precision, scale))
-}
-
-fn validate_decimal_shape(precision: usize, scale: usize) -> Result<(), CodecError> {
-    if precision == 0
-        || precision > MAX_DECIMAL_PRECISION
-        || scale > MAX_DECIMAL_SCALE
-        || scale > precision
-    {
-        return Err(CodecError::DecimalOutOfRange);
-    }
-    Ok(())
+    Ok((precision, source_scale))
 }
 
 // The mem-comparable decimal PAYLOAD codec (Go `MyDecimal.WriteBin`/`FromBin`)

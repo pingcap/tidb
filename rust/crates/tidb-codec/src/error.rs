@@ -31,8 +31,6 @@ pub enum CodecError {
     DecimalOverflow,
     /// The value tag needs a typed codec that has not crossed this boundary.
     UnsupportedValueTag(u8),
-    /// A named source failpoint injected its production error path.
-    InjectedFailure(&'static str),
 }
 
 impl fmt::Display for CodecError {
@@ -51,7 +49,6 @@ impl fmt::Display for CodecError {
             Self::UnsupportedValueTag(flag) => {
                 write!(formatter, "unsupported encoded value tag {flag}")
             }
-            Self::InjectedFailure(name) => write!(formatter, "injected codec failure: {name}"),
         }
     }
 }

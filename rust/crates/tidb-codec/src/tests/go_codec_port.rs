@@ -1049,6 +1049,15 @@ fn test_hash_group_decimal_shape_errors() {
     if let Ok(buf) = result.map_err(|_| ()) {
         assert_eq!(buf.len(), 3);
     }
+
+    let unspecified = FieldType::new(FieldTypeCode::NewDecimal);
+    assert_eq!(
+        hash_group_key(
+            &[Datum::new_decimal(Decimal::from_literal("1.5"))],
+            &unspecified
+        ),
+        Err(CodecError::DecimalOutOfRange)
+    );
 }
 
 /// Shared row/type fixture for the hash tests, mirroring the subset of Go
@@ -1312,6 +1321,21 @@ fn test_value_size_of_unsigned_int_matches_uvarint_len() {
             );
         }
     }
+}
+
+/// Go `codec.go::valueSizeOfDecimal` computes the natural length before
+/// `EncodeDecimal` clamps the write scale to `MaxDecimalScale`.
+#[test]
+fn test_value_size_of_decimal_keeps_unclamped_natural_scale() {
+    let decimal = Decimal::from_literal(&format!("0.{}", "1".repeat(40)));
+    assert_eq!(decimal_encoded_len(&decimal, 0, 0), Ok(20));
+
+    let mut encoded = Vec::new();
+    assert_eq!(
+        encode_decimal_fixed(&mut encoded, &decimal, 0, 0),
+        Err(CodecError::DecimalTruncated)
+    );
+    assert_eq!(encoded.len(), 21);
 }
 
 /// Go `codec_test.go::TestHashChunkColumns` — per-row column hashes agree with

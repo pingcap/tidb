@@ -126,7 +126,7 @@ pub fn insert_encoded_row<'a>(
 
 /// Go `hashDatum`: encode one typed datum with the statement time zone, then
 /// hash the exact `codec.EncodeValue` bytes.
-pub fn hash_datum<TZ: TimeZone>(
+pub fn hash_datum<TZ: TimeZone + 'static>(
     timezone: &TZ,
     value: &Datum,
 ) -> Result<u64, tidb_codec::CodecError> {
@@ -140,7 +140,7 @@ pub fn hash_datum<TZ: TimeZone>(
 /// partial bytes are still hashed. Rust's codec returns only the error, so a
 /// policy that chooses to continue must supply the exact partial bytes at
 /// this boundary. A strict policy simply returns the error.
-pub fn hash_datum_with_error_policy<TZ: TimeZone, E>(
+pub fn hash_datum_with_error_policy<TZ: TimeZone + 'static, E>(
     timezone: &TZ,
     value: &Datum,
     mut handle_error: impl FnMut(&Datum, tidb_codec::CodecError) -> Result<Vec<u8>, E>,
@@ -154,7 +154,7 @@ pub fn hash_datum_with_error_policy<TZ: TimeZone, E>(
 }
 
 /// Go `hashRow`: stream each typed datum's value encoding into one hash.
-pub fn hash_row<TZ: TimeZone>(
+pub fn hash_row<TZ: TimeZone + 'static>(
     timezone: &TZ,
     values: &[Datum],
 ) -> Result<u64, tidb_codec::CodecError> {
@@ -167,7 +167,7 @@ pub fn hash_row<TZ: TimeZone>(
 /// the source's repeated reset/write sequence. A downgraded error contributes
 /// the partial bytes returned by the policy, after which later values are
 /// still encoded and hashed.
-pub fn hash_row_with_error_policy<TZ: TimeZone, E>(
+pub fn hash_row_with_error_policy<TZ: TimeZone + 'static, E>(
     timezone: &TZ,
     values: &[Datum],
     mut handle_error: impl FnMut(&Datum, tidb_codec::CodecError) -> Result<Vec<u8>, E>,
@@ -185,7 +185,7 @@ pub fn hash_row_with_error_policy<TZ: TimeZone, E>(
 }
 
 /// Go `FMSketch.InsertValue` over a typed datum.
-pub fn insert_value<TZ: TimeZone>(
+pub fn insert_value<TZ: TimeZone + 'static>(
     sketch: &mut FmSketch,
     timezone: &TZ,
     value: &Datum,
@@ -195,7 +195,7 @@ pub fn insert_value<TZ: TimeZone>(
 }
 
 /// Go `FMSketch.InsertValue` with an explicit statement error policy.
-pub fn insert_value_with_error_policy<TZ: TimeZone, E>(
+pub fn insert_value_with_error_policy<TZ: TimeZone + 'static, E>(
     sketch: &mut FmSketch,
     timezone: &TZ,
     value: &Datum,
@@ -206,7 +206,7 @@ pub fn insert_value_with_error_policy<TZ: TimeZone, E>(
 }
 
 /// Go `FMSketch.InsertRowValue` over typed row datums.
-pub fn insert_row_value<TZ: TimeZone>(
+pub fn insert_row_value<TZ: TimeZone + 'static>(
     sketch: &mut FmSketch,
     timezone: &TZ,
     values: &[Datum],
@@ -216,7 +216,7 @@ pub fn insert_row_value<TZ: TimeZone>(
 }
 
 /// Go `FMSketch.InsertRowValue` with an explicit per-datum error policy.
-pub fn insert_row_value_with_error_policy<TZ: TimeZone, E>(
+pub fn insert_row_value_with_error_policy<TZ: TimeZone + 'static, E>(
     sketch: &mut FmSketch,
     timezone: &TZ,
     values: &[Datum],

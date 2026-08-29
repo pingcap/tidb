@@ -164,6 +164,40 @@ For each bounded behavior cluster:
   encryption cache overlays across Rust crate ownership. Deleted the stale
   receipt and duplicate manifest batch claim; all ten Go behavior tests remain
   in the owning checksum module.
+- 2026-08-28: audited the complete pinned Go `pkg/util/rowcodec` package:
+  `BUILD.bazel`, `common.go`, `decoder.go`, `encoder.go`, `row.go`, all three
+  test/harness files, and the benchmark file. Removed Rust-only framing errors,
+  static default arrays, checksum copying, and divergent handle predicates;
+  restored Go's lazy defaults, map reuse, map-vs-chunk decimal/time behavior,
+  payload-driven large-row ID promotion, strict BIT encoding, raw-checksum
+  mutation/prefix semantics, old-byte cache prefixes, and unchecked packed-time
+  extraction. The 27-test package suite and its four framing sub-suites pass,
+  and `tidb-codec`, `tidb-tablecodec`, and `tidb-executor` compile together.
+- 2026-08-28: audited the complete pinned Go root `pkg/tablecodec` package:
+  `BUILD.bazel`, `OWNERS`, `tablecodec.go`, `tablecodec_test.go`,
+  `bench_test.go`, and `main_test.go`. Removed Rust-only wrapper APIs and typed
+  malformed-input refusals; restored Go's V0/V1 handle decoding, nullable
+  extensible handles, full-column restored-value offsets, mem-comparable binary
+  padding, prefix truncation, row portal, unflattening, and panic behavior.
+  The 55-test package suite passes, including all 469 Go-generated prefix
+  vectors, and the executor compiles against the nullable handle contract.
+- 2026-08-28: audited the complete pinned Go
+  `pkg/tablecodec/rowindexcodec` package independently: `BUILD.bazel`,
+  `rowindexcodec.go`, `rowindexcodec_test.go`, and `main_test.go`. The existing
+  `tidb-codec` implementation already matches the minimal 11-byte prefix
+  classifier exactly. Removed an unrelated root-tablecodec test from the
+  rowindexcodec source suite; the original four-row test table and explicit
+  prefix-boundary coverage pass (2/2 tests).
+- 2026-08-28: audited the complete pinned Go `pkg/util/codec` package: all six
+  production files, five test/harness files, the benchmark file, and
+  `BUILD.bazel`. Removed the Rust-only decimal metadata and injected-failure
+  APIs, folded typed and untyped range decoding into Go's single optional-type
+  path, and narrowed Go-private framing/value-size helpers. Restored Go's
+  malformed peek/remainder behavior, typed range restoration, decimal error,
+  size, header, negative-zero and 81-digit boundaries, UTC timestamp guard,
+  unsigned hash tag, and collation initialization/runtime selection. The full
+  `tidb-codec` suite passes (45 unit + 163 integration), and the complete
+  `tidb-datatype` dependency suite passes (424 tests).
 
 - [x] Pin the comparison baseline to Go commit
       `e2788410d8d696605e8cb002585877a063ccc909`.

@@ -25,7 +25,10 @@ fn int(value: i64) -> Handle {
 }
 
 fn partition(partition_id: i64, value: i64) -> Handle {
-    Handle::Partition(PartitionHandle::new(partition_id, IntHandle::new(value)))
+    Handle::Partition(PartitionHandle::new(
+        partition_id,
+        Some(IntHandle::new(value).into()),
+    ))
 }
 
 fn common(value: i64) -> (CommonHandle, Vec<u8>) {
@@ -139,7 +142,10 @@ fn common_handles_remain_canonical_point_ranges() {
 #[test]
 fn partition_wrapped_common_handle_uses_physical_table_id() {
     let (common, stored) = common(8);
-    let handles = [Handle::Partition(PartitionHandle::new(17, common))];
+    let handles = [Handle::Partition(PartitionHandle::new(
+        17,
+        Some(common.into()),
+    ))];
 
     let (ranges, hints) = table_handles_to_kv_ranges(9, &handles);
     assert_eq!(hints, [1]);

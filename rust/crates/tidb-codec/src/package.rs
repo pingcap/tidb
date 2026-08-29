@@ -18,10 +18,13 @@
 //! This keeps the wire and equality behavior in the codec package without
 //! importing an executor-owned column container into the dependency leaf.
 
+use std::any::Any;
+
 use chrono::{TimeZone, Utc};
+use chrono_tz::Tz;
 use tidb_datatype::{
     parse_enum_value, parse_set_value, BinaryLiteral, BinaryLiteralWidth, Datum, EvalType,
-    FieldType, FieldTypeCode, FieldTypeFlags, MySqlDuration, Time, TimeType,
+    FieldType, FieldTypeCode, FieldTypeFlags, MySqlDuration, SessionTimeZone, Time, TimeType,
 };
 
 use crate::{
@@ -47,7 +50,7 @@ pub enum SerializeMode {
 pub type HashColumnOutput = (Vec<Option<Vec<u8>>>, Vec<bool>);
 
 /// Source `valueSizeOfSignedInt`, including the datum tag.
-pub const fn value_size_of_signed_int(mut value: i64) -> usize {
+pub(crate) const fn value_size_of_signed_int(mut value: i64) -> usize {
     if value < 0 {
         value = 0_i64.wrapping_sub(value).wrapping_sub(1);
     }
@@ -61,7 +64,7 @@ pub const fn value_size_of_signed_int(mut value: i64) -> usize {
 }
 
 /// Source `valueSizeOfUnsignedInt`, including the datum tag.
-pub const fn value_size_of_unsigned_int(mut value: u64) -> usize {
+pub(crate) const fn value_size_of_unsigned_int(mut value: u64) -> usize {
     let mut size = 2;
     value >>= 7;
     while value > 0 {
@@ -82,14 +85,14 @@ pub fn convert_by_collation_string(raw: &str, field_type: &FieldType) -> Vec<u8>
 }
 
 /// Source `EncodeMySQLTime`.
-pub fn encode_mysql_time<TZ: TimeZone>(
+pub fn encode_mysql_time<TZ: TimeZone + 'static>(
     timezone: &TZ,
     mut value: Time,
     target: Option<TimeType>,
     output: &mut Vec<u8>,
 ) -> Result<(), CodecError> {
     let kind = target.unwrap_or(value.kind());
-    if kind == TimeType::Timestamp {
+    if kind == TimeType::Timestamp && !timezone_is_utc(timezone) {
         value
             .convert_time_zone(timezone, &Utc)
             .map_err(|_| CodecError::InvalidEncoding("invalid MySQL timestamp"))?;
@@ -101,6 +104,17 @@ pub fn encode_mysql_time<TZ: TimeZone>(
             .map_err(|_| CodecError::InvalidEncoding("invalid MySQL time"))?,
     );
     Ok(())
+}
+
+fn timezone_is_utc<TZ: TimeZone + 'static>(timezone: &TZ) -> bool {
+    let timezone = timezone as &dyn Any;
+    timezone.is::<Utc>()
+        || timezone
+            .downcast_ref::<Tz>()
+            .is_some_and(|timezone| *timezone == Tz::UTC)
+        || timezone
+            .downcast_ref::<SessionTimeZone>()
+            .is_some_and(SessionTimeZone::is_utc)
 }
 
 /// Source `DecodeAsDateTime`.
@@ -362,7 +376,7 @@ pub fn hash_group_key(
 }
 
 /// Source `HashGroupKey` with the session time zone used for timestamps.
-pub fn hash_group_key_in_timezone<TZ: TimeZone>(
+pub fn hash_group_key_in_timezone<TZ: TimeZone + 'static>(
     timezone: &TZ,
     values: &[Datum],
     field_type: &FieldType,
@@ -401,8 +415,8 @@ pub fn hash_group_key_in_timezone<TZ: TimeZone>(
                     encode_decimal_fixed(
                         &mut output,
                         value,
-                        field_type.flen().max(0) as usize,
-                        field_type.decimal().max(0) as usize,
+                        field_type.flen(),
+                        field_type.decimal(),
                     )?;
                 }
                 (EvalType::Datetime | EvalType::Timestamp, Datum::Time(value)) => {

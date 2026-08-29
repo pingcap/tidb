@@ -229,30 +229,21 @@ impl PreparedPointGetRowDecoder {
                 }
             });
             let codec_handle = codec_handle.transpose()?;
-            let defaults = self
-                .has_origin_defaults
-                .then(|| {
-                    self.columns
-                        .iter()
-                        .map(|output| {
-                            output
-                                .column
-                                .origin_default_value(
-                                    context.origin_default_flags(),
-                                    context.zone(),
-                                )
-                                .map_err(|error| KvTableError::Decode(error.to_string()))
-                        })
-                        .collect::<Result<Vec<_>, _>>()
-                })
-                .transpose()?;
+            let default_datum = |index: usize| {
+                self.columns[index]
+                    .column
+                    .origin_default_value(context.origin_default_flags(), context.zone())
+                    .map_err(|error| error.to_string())
+            };
             return tidb_codec::decode_row_to_datums(
                 value,
                 &self.v2_columns,
                 &tidb_codec::DecodeRowOptions {
                     handle_column_ids: &self.v2_handle_column_ids,
                     handle: codec_handle.as_ref(),
-                    defaults: defaults.as_deref(),
+                    default_datum: self.has_origin_defaults.then_some(
+                        &default_datum as &(dyn Fn(usize) -> Result<Datum, String> + '_),
+                    ),
                     timezone: Some(context.zone()),
                     ..tidb_codec::DecodeRowOptions::default()
                 },

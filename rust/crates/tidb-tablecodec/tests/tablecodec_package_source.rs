@@ -19,8 +19,8 @@ use std::collections::BTreeMap;
 /// Go `time.UTC`, the zone these source tests encode and decode in.
 const UTC: tidb_datatype::SessionTimeZone = tidb_datatype::SessionTimeZone::Named(chrono_tz::UTC);
 use tidb_codec::{
-    cut_one, decode_decimal_with_fault, decode_int, decode_one, decode_table_id, encode_int,
-    encode_key, encode_row, encode_value, Encoder,
+    cut_one, decode_int, decode_one, decode_table_id, encode_bytes, encode_int, encode_key,
+    encode_row, encode_value, ColumnInfo, Encoder, BYTES_FLAG, DECIMAL_FLAG,
 };
 use tidb_datatype::{
     BinaryLiteral, BinaryLiteralWidth, Collation, CoreTime, Datum, Decimal, FieldType,
@@ -36,16 +36,17 @@ use tidb_tablecodec::table_key::{
 };
 use tidb_tablecodec::{
     cut_index_key, cut_index_key_by_ids, cut_table_row, decode_column_value,
-    decode_handle_in_index_value, decode_index_handle, decode_table_row_into_map,
+    decode_handle_in_index_value, decode_index_handle, decode_index_kv, decode_table_row_into_map,
     decode_table_row_to_map, decode_temp_index_value, encode_handle_in_unique_index_value,
     encode_old_table_row, encode_table_row, encode_table_value,
     filter_overwritten_temp_index_values, generate_index_key, generate_index_value,
     get_table_index_key_range, index_key_to_temp_index_key, index_kv_is_unique, is_index_key,
     is_record_key, is_table_key, is_temp_index_key, is_untouched_index_kv, split_index_value,
     temp_index_key_to_index_key, temp_index_value_is_untouched, truncate_index_value,
-    unflatten_datum, unflatten_datums, verify_table_ids_for_ranges, IndexColumn, IndexInfo,
-    TableColumn, TableInfo, TableKeyRange, TempIndexValue, TempIndexValueElem, COMMON_HANDLE_FLAG,
-    INDEX_ID_MASK, INDEX_VERSION_FLAG, PARTITION_ID_FLAG, UNCOMMITTED_INDEX_KV_FLAG,
+    unflatten_datum, unflatten_datums, verify_table_ids_for_ranges, HandleStatus, IndexColumn,
+    IndexInfo, TableColumn, TableInfo, TableKeyRange, TempIndexValue, TempIndexValueElem,
+    COMMON_HANDLE_FLAG, INDEX_ID_MASK, INDEX_VERSION_FLAG, PARTITION_ID_FLAG,
+    UNCOMMITTED_INDEX_KV_FLAG,
 };
 use tidb_txnkv::{CommonHandle, Handle, IntHandle, PartitionHandle};
 
@@ -58,7 +59,7 @@ fn common_handle(encoded: Vec<u8>) -> Handle {
 }
 
 fn partition_handle(partition_id: i64, handle: Handle) -> Handle {
-    PartitionHandle::new(partition_id, handle).into()
+    PartitionHandle::new(partition_id, Some(handle)).into()
 }
 
 fn field(code: FieldTypeCode) -> FieldType {
@@ -323,7 +324,10 @@ fn test_cut_key() {
 /// Source: `tablecodec_test.go::TestDecodeBadDecical`.
 #[test]
 fn test_decode_bad_decical() {
-    assert!(decode_decimal_with_fault(&[1, 0, 0], true).is_err());
+    let malformed = [DECIMAL_FLAG, 1, 0];
+    assert!(std::panic::catch_unwind(|| decode_one(&malformed))
+        .expect("malformed decimal decoding must not panic")
+        .is_err());
 }
 
 /// Source: `tablecodec_test.go::TestIndexKey`.
@@ -615,7 +619,7 @@ fn test_decode_index_handle_with_partition_id_in_key_and_value() {
     encode_int(&mut value, 42);
     value.resize(10, 0);
     value[0] = 0;
-    let handle = decode_index_handle(&key, &value, 1).unwrap();
+    let handle = decode_index_handle(&key, &value, 1).unwrap().unwrap();
     let expected = partition_handle(42, int_handle(999));
     assert!(handle.equal(&expected));
     let Handle::Partition(partition) = handle else {
@@ -913,6 +917,72 @@ fn restored_values_use_exact_collation_spelling() {
     }
 }
 
+/// Source: `decodeRestoredValuesV5` rebuilds `_bin` padding with
+/// `rowcodec.BytesFlag + codec.EncodeBytes`, not the compact value encoding.
+#[test]
+fn clustered_v1_bin_padding_restores_memcomparable_bytes() {
+    let field_type = field(FieldTypeCode::Varchar).with_collation(Collation::Utf8Mb4Bin);
+    let columns = [ColumnInfo {
+        id: 1,
+        is_pk_handle: false,
+        virtual_generated: false,
+        field_type,
+    }];
+    let indexed = encode_key(&[Datum::new_collation_string(
+        b"ab",
+        Collation::Utf8Mb4Bin,
+    )])
+    .unwrap();
+    let key = encode_index_seek_key(1, 1, &indexed);
+    let mut restored = Vec::new();
+    encode_row(None, &[1], &[Datum::UInt(2)], &mut restored).unwrap();
+    let mut value = vec![0, INDEX_VERSION_FLAG, 1];
+    value.extend_from_slice(&restored);
+
+    let decoded = decode_index_kv(
+        true,
+        &key,
+        &value,
+        1,
+        HandleStatus::NotNeeded,
+        &columns,
+    )
+    .unwrap();
+    let mut expected = vec![BYTES_FLAG];
+    encode_bytes(&mut expected, b"ab  ");
+    assert_eq!(decoded, [expected]);
+}
+
+/// Source: `decodeIndexKvGeneral` decodes a V0 common-handle segment through
+/// `decodeHandleInIndexKey`, so a single integer datum becomes an IntHandle
+/// before old-value re-encoding.
+#[test]
+fn extensible_v0_single_integer_common_handle_reencodes_as_varint() {
+    let indexed = encode_key(&[Datum::Int(7)]).unwrap();
+    let key = encode_index_seek_key(1, 1, &indexed);
+    let handle = encode_key(&[Datum::Int(2022)]).unwrap();
+    let mut value = vec![0, COMMON_HANDLE_FLAG];
+    value.extend_from_slice(&(handle.len() as u16).to_be_bytes());
+    value.extend_from_slice(&handle);
+    let columns = [ColumnInfo {
+        id: 1,
+        is_pk_handle: false,
+        virtual_generated: false,
+        field_type: field(FieldTypeCode::LongLong),
+    }];
+
+    let decoded = decode_index_kv(
+        true,
+        &key,
+        &value,
+        1,
+        HandleStatus::Default,
+        &columns,
+    )
+    .unwrap();
+    assert_eq!(decoded[1], encode_value(&[Datum::Int(2022)]).unwrap());
+}
+
 /// Source support: V1 uniqueness is carried only by a common handle.
 #[test]
 fn clustered_v1_uniqueness_requires_common_handle() {
@@ -1024,10 +1094,30 @@ fn unique_index_handle_raw_bytes_round_trip_signed_domain() {
     for value in [i64::MIN, -1, 0, 1, i64::MAX] {
         let encoded = encode_handle_in_unique_index_value(&int_handle(value), false);
         assert_eq!(
-            decode_handle_in_index_value(&encoded).unwrap().int_value(),
+            decode_handle_in_index_value(&encoded)
+                .unwrap()
+                .unwrap()
+                .int_value(),
             Some(value)
         );
     }
+}
+
+/// Source behavior: `DecodeHandleInIndexValue` returns nil when an extensible
+/// value has no handle segment, and preserves a partition segment by wrapping
+/// that nil handle.
+#[test]
+fn extensible_index_value_preserves_missing_handle() {
+    assert!(decode_handle_in_index_value(&[0; 10]).unwrap().is_none());
+
+    let mut encoded = vec![0, PARTITION_ID_FLAG];
+    encode_int(&mut encoded, 42);
+    let handle = decode_handle_in_index_value(&encoded).unwrap().unwrap();
+    let Handle::Partition(partition) = handle else {
+        panic!("expected partition handle");
+    };
+    assert_eq!(partition.partition_id(), 42);
+    assert!(std::panic::catch_unwind(|| partition.inner()).is_err());
 }
 
 /// Source support: new row decoder can still consume explicitly constructed
@@ -1067,8 +1157,38 @@ fn row_portals_decode_into_existing_maps() {
         existing,
         BTreeMap::from([(1, Datum::Int(8)), (99, Datum::Int(99))])
     );
-    decode_table_row_into_map(&[], &columns, Some(&UTC), &mut existing).unwrap();
-    assert_eq!(existing[&99], Datum::Int(99));
+}
+
+/// Source: `DecodeRowToDatumMap` calls `rowcodec.IsNewFormat` before either
+/// old/new row decoder sees the input.
+#[test]
+#[should_panic]
+fn row_portal_panics_on_empty_input_like_go() {
+    let _ = decode_table_row_to_map(&[], &BTreeMap::new(), Some(&UTC));
+}
+
+/// Source: `UnflattenDatums` ranges over datums and indexes field types. Extra
+/// field types are ignored; too few field types panic.
+#[test]
+fn unflatten_datums_ignores_unused_field_types() {
+    let mut values = [Datum::Int(1)];
+    unflatten_datums(
+        &mut values,
+        &[
+            field(FieldTypeCode::LongLong),
+            field(FieldTypeCode::Varchar),
+        ],
+        Some(&UTC),
+    )
+    .unwrap();
+    assert_eq!(values, [Datum::Int(1)]);
+}
+
+#[test]
+#[should_panic]
+fn unflatten_datums_panics_when_field_types_are_short_like_go() {
+    let mut values = [Datum::Int(1)];
+    let _ = unflatten_datums(&mut values, &[], Some(&UTC));
 }
 
 /// Source support: `DecodeHandleToDatumMap` does not decode common-handle

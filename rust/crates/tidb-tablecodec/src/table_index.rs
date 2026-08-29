@@ -18,19 +18,16 @@ use std::collections::{BTreeMap, HashSet};
 use std::fmt;
 
 use tidb_datatype::{
-    is_bin_collation, Collation, Datum, FieldType, FieldTypeCode, SessionTimeZone,
-    UNSPECIFIED_LENGTH,
+    is_bin_collation, Datum, FieldType, FieldTypeCode, SessionTimeZone, UNSPECIFIED_LENGTH,
 };
 use tidb_txnkv::{CommonHandle, Handle, IntHandle, PartitionHandle};
 
 use crate::table_row::{decode_column_value, TableRowError};
-use tidb_codec::table_key::{
-    encode_index_seek_key, encode_table_index_prefix, gen_table_index_prefix, RECORD_ROW_KEY_LEN,
-};
+use tidb_codec::table_key::encode_index_seek_key;
 use tidb_codec::{
-    cut_one, decode_int, decode_one, decode_row_to_old_bytes, encode_int, encode_row, encode_value,
-    is_new_format, CodecError, ColumnInfo, Encoder, RowPackageError, INT_FLAG, ROW_CODEC_VERSION,
-    UINT_FLAG,
+    cut_one, decode_int, decode_one, decode_row_to_old_bytes, encode_bytes, encode_int, encode_row,
+    encode_value, CodecError, ColumnInfo, Encoder, RowPackageError, BYTES_FLAG, INT_FLAG,
+    ROW_CODEC_VERSION,
 };
 
 const ID_LEN: usize = 8;
@@ -52,7 +49,7 @@ fn handle_partition_id(handle: &Handle) -> Option<i64> {
 }
 
 fn partition_handle(partition_id: i64, handle: Handle) -> Handle {
-    PartitionHandle::new(partition_id, handle).into()
+    PartitionHandle::new(partition_id, Some(handle)).into()
 }
 
 fn common_handle(encoded: impl Into<Vec<u8>>) -> Result<Handle, CodecError> {
@@ -344,9 +341,7 @@ pub fn get_table_index_key_range(table_id: i64, index_id: i64) -> (Vec<u8>, Vec<
 
 /// Cuts `length` encoded index columns and returns the remaining handle suffix.
 pub fn cut_index_key(key: &[u8], length: usize) -> Result<(Vec<Vec<u8>>, &[u8]), TableIndexError> {
-    let mut remaining = key
-        .get(INDEX_VALUES_OFFSET..)
-        .ok_or(TableIndexError::Invalid("invalid index key"))?;
+    let mut remaining = &key[INDEX_VALUES_OFFSET..];
     let mut values = Vec::with_capacity(length);
     for _ in 0..length {
         let (value, tail) = cut_one(remaining)?;
@@ -427,13 +422,9 @@ fn rewrite_index_id(
 /// Reports whether the key contains a temporary index ID.
 #[must_use]
 pub fn is_temp_index_key(key: &[u8]) -> bool {
-    key.get(PREFIX_LEN..PREFIX_LEN + ID_LEN)
-        .and_then(|bytes| bytes.try_into().ok())
-        .map(|bytes: [u8; 8]| {
-            let index_id = tidb_codec::decode_cmp_uint_to_int(u64::from_be_bytes(bytes));
-            TEMP_INDEX_PREFIX | index_id == index_id
-        })
-        .unwrap_or(false)
+    let bytes: [u8; 8] = key[PREFIX_LEN..PREFIX_LEN + ID_LEN].try_into().unwrap();
+    let index_id = tidb_codec::decode_cmp_uint_to_int(u64::from_be_bytes(bytes));
+    TEMP_INDEX_PREFIX | index_id == index_id
 }
 
 /// Reports whether a key has the complete record-key prefix shape.
@@ -505,15 +496,8 @@ fn encode_partition_id(output: &mut Vec<u8>, partition_id: i64) {
 
 /// Decodes an eight-byte legacy integer-handle index value.
 pub fn decode_int_handle_in_index_value(data: &[u8]) -> Result<Handle, TableIndexError> {
-    let bytes = data
-        .get(..ID_LEN)
-        .ok_or(TableIndexError::Invalid("short integer index handle"))?;
-    Ok(IntHandle::new(i64::from_be_bytes(
-        bytes
-            .try_into()
-            .map_err(|_| TableIndexError::Invalid("short integer index handle"))?,
-    ))
-    .into())
+    let bytes: [u8; 8] = data[..ID_LEN].try_into().unwrap();
+    Ok(IntHandle::new(i64::from_be_bytes(bytes)).into())
 }
 
 /// Decodes a handle carried in a non-unique index-key suffix.
@@ -623,14 +607,7 @@ fn split_extensible_index_value(
     value: &[u8],
     header_len: usize,
 ) -> Result<IndexValueSegments, TableIndexError> {
-    let tail_len = usize::from(
-        *value
-            .first()
-            .ok_or(TableIndexError::Invalid("empty index value"))?,
-    );
-    if value.len() < header_len + tail_len {
-        return Err(TableIndexError::Invalid("invalid index-value tail"));
-    }
+    let tail_len = usize::from(value[0]);
     let tail = &value[value.len() - tail_len..];
     let mut options = &value[header_len..value.len() - tail_len];
     let mut segments = IndexValueSegments::default();
@@ -638,29 +615,13 @@ fn split_extensible_index_value(
         segments.int_handle = Some(tail[..ID_LEN].to_vec());
     }
     if options.first() == Some(&COMMON_HANDLE_FLAG) {
-        let length_bytes = options
-            .get(1..3)
-            .ok_or(TableIndexError::Invalid("short common-handle length"))?;
-        let length =
-            usize::from(u16::from_be_bytes(length_bytes.try_into().map_err(
-                |_| TableIndexError::Invalid("short common-handle length"),
-            )?));
+        let length = usize::from(u16::from_be_bytes(options[1..3].try_into().unwrap()));
         let end = 3 + length;
-        segments.common_handle = Some(
-            options
-                .get(3..end)
-                .ok_or(TableIndexError::Invalid("short common handle"))?
-                .to_vec(),
-        );
+        segments.common_handle = Some(options[3..end].to_vec());
         options = &options[end..];
     }
     if options.first() == Some(&PARTITION_ID_FLAG) {
-        segments.partition_id = Some(
-            options
-                .get(1..9)
-                .ok_or(TableIndexError::Invalid("short partition ID"))?
-                .to_vec(),
-        );
+        segments.partition_id = Some(options[1..9].to_vec());
         options = &options[9..];
     }
     if options.first() == Some(&RESTORE_DATA_FLAG) {
@@ -670,21 +631,25 @@ fn split_extensible_index_value(
 }
 
 /// Decodes a unique-index value handle, including partition wrapping.
-pub fn decode_handle_in_index_value(value: &[u8]) -> Result<Handle, TableIndexError> {
+pub fn decode_handle_in_index_value(value: &[u8]) -> Result<Option<Handle>, TableIndexError> {
     if value.len() <= MAX_OLD_ENCODE_VALUE_LEN {
-        return decode_int_handle_in_index_value(value);
+        return decode_int_handle_in_index_value(value).map(Some);
     }
     let segments = split_index_value(value)?;
-    let mut handle = if let Some(encoded) = segments.int_handle {
-        decode_int_handle_in_index_value(&encoded)?
-    } else if let Some(encoded) = segments.common_handle {
-        common_handle(encoded)?
-    } else {
-        return Err(TableIndexError::Invalid("index value has no handle"));
-    };
+    let mut handle = segments
+        .int_handle
+        .as_deref()
+        .map(decode_int_handle_in_index_value)
+        .transpose()?;
+    if let Some(encoded) = segments.common_handle {
+        handle = Some(common_handle(encoded)?);
+    }
     if let Some(encoded) = segments.partition_id {
         let (_, partition_id) = decode_int(&encoded)?;
-        handle = partition_handle(partition_id, handle);
+        handle = Some(match handle {
+            Some(handle) => partition_handle(partition_id, handle),
+            None => PartitionHandle::new(partition_id, None).into(),
+        });
     }
     Ok(handle)
 }
@@ -694,7 +659,7 @@ pub fn decode_index_handle(
     key: &[u8],
     value: &[u8],
     columns_len: usize,
-) -> Result<Handle, TableIndexError> {
+) -> Result<Option<Handle>, TableIndexError> {
     let (_, suffix) = cut_index_key(key, columns_len)?;
     if !suffix.is_empty() {
         let mut handle = decode_handle_in_index_key(suffix)?;
@@ -704,7 +669,7 @@ pub fn decode_index_handle(
                 handle = partition_handle(partition_id, inner_handle(&handle).clone());
             }
         }
-        return Ok(handle);
+        return Ok(Some(handle));
     }
     if value.len() >= ID_LEN {
         return decode_handle_in_index_value(value);
@@ -718,13 +683,14 @@ pub fn index_kv_is_unique(value: &[u8]) -> bool {
     if value.len() <= MAX_OLD_ENCODE_VALUE_LEN {
         return value.len() == ID_LEN;
     }
-    split_index_value(value).is_ok_and(|segments| {
-        if index_value_version(value) == 1 {
-            segments.common_handle.is_some()
-        } else {
-            segments.int_handle.is_some() || segments.common_handle.is_some()
-        }
-    })
+    let version = index_value_version(value);
+    if version == 1 {
+        split_extensible_index_value(value, 3)
+            .is_ok_and(|segments| segments.common_handle.is_some())
+    } else {
+        split_extensible_index_value(value, 1)
+            .is_ok_and(|segments| segments.int_handle.is_some() || segments.common_handle.is_some())
+    }
 }
 
 /// Decodes one rune the way Go's `utf8.DecodeRune` does: a valid sequence
@@ -788,8 +754,7 @@ pub fn truncate_index_value(
     let Some(bytes) = value.as_raw_bytes().map(<[u8]>::to_vec) else {
         return Ok(());
     };
-    let length = usize::try_from(index_column.length)
-        .map_err(|_| TableIndexError::Metadata("negative index prefix length"))?;
+    let length = usize::try_from(index_column.length).unwrap();
     let collation = table_column.field_type.collation();
     match table_column.field_type.charset_name() {
         "binary" | "ascii" => {
@@ -825,16 +790,9 @@ pub fn truncate_index_values(
     index: &IndexInfo,
     values: &mut [Datum],
 ) -> Result<(), TableIndexError> {
-    if values.len() != index.columns.len() {
-        return Err(TableIndexError::Metadata(
-            "index values and columns count mismatch",
-        ));
-    }
-    for (value, index_column) in values.iter_mut().zip(&index.columns) {
-        let table_column = table
-            .columns
-            .get(index_column.offset)
-            .ok_or(TableIndexError::Metadata("invalid index column offset"))?;
+    for (position, value) in values.iter_mut().enumerate() {
+        let index_column = &index.columns[position];
+        let table_column = &table.columns[index_column.offset];
         truncate_index_value(value, index_column, table_column)?;
     }
     Ok(())
@@ -1113,6 +1071,7 @@ fn decode_restored_values(
         &offsets,
         &[],
         None,
+        &[],
         None,
     )?)
 }
@@ -1145,28 +1104,17 @@ fn decode_restored_values_v5(
     restored: &[u8],
 ) -> Result<Vec<Vec<u8>>, TableIndexError> {
     let restore_columns = restored_columns(use_new_collation, columns);
-    // The rowcodec payload contains ONLY columns whose collation loses data.
-    // Its output layout must therefore be dense over that subset. Mapping the
-    // full index+handle column list here leaves a hole for every ordinary
-    // integer common-handle component and makes a valid value fail with
-    // InvalidOutputOffset.
-    let offsets = restore_columns
+    let offsets = columns
         .iter()
         .enumerate()
         .map(|(index, column)| (column.id, index))
         .collect::<BTreeMap<_, _>>();
     let restored_values =
-        decode_row_to_old_bytes(restored, &restore_columns, &offsets, &[], None, None)?;
-    for (restored_column, restored_value) in restore_columns.iter().zip(restored_values) {
+        decode_row_to_old_bytes(restored, &restore_columns, &offsets, &[], None, &[], None)?;
+    for (index, restored_value) in restored_values.into_iter().enumerate() {
         if restored_value.is_empty() {
             continue;
         }
-        let index = columns
-            .iter()
-            .position(|column| column.id == restored_column.id)
-            .ok_or(TableIndexError::Metadata(
-                "restored column is not in the decode projection",
-            ))?;
         if is_bin_collation(columns[index].field_type.collation_name()) {
             let original = decode_column_value(&results[index], &columns[index].field_type, None)?;
             let count_type = FieldType::new(FieldTypeCode::LongLong).with_unsigned(true);
@@ -1181,10 +1129,9 @@ fn decode_restored_values_v5(
                 .into_raw_bytes()
                 .ok_or(TableIndexError::Invalid("invalid restored string"))?;
             bytes.resize(bytes.len() + padding, b' ');
-            results[index] = tidb_codec::encode_value(&[Datum::new_collation_string(
-                bytes,
-                columns[index].field_type.collation(),
-            )])?;
+            let mut encoded = vec![BYTES_FLAG];
+            encode_bytes(&mut encoded, &bytes);
+            results[index] = encoded;
         } else {
             results[index] = restored_value;
         }
@@ -1237,11 +1184,16 @@ pub fn decode_index_kv(
     let handle = if let Some(encoded) = segments.int_handle.as_deref() {
         decode_int_handle_in_index_value(encoded)?
     } else if let Some(encoded) = segments.common_handle {
-        common_handle(encoded)?
+        if index_value_version(value) == 1 {
+            common_handle(encoded)?
+        } else {
+            decode_handle_in_index_key(&encoded)?
+        }
     } else {
         decode_handle_in_index_key(suffix)?
     };
-    if index_value_version(value) == 1 && !handle.is_int() {
+    if index_value_version(value) == 1 {
+        assert!(!handle.is_int(), "IntHandle.NumCols is unsupported");
         let handle_columns = columns.get(columns_len..).unwrap_or_default();
         let restored = segments.restored_values.as_deref().unwrap_or_default();
         let mut encoded = encoded_handle_columns(&handle)?;
@@ -1549,50 +1501,10 @@ pub fn temp_index_value_is_untouched(value: &[u8]) -> bool {
     value.last() == Some(&UNCOMMITTED_INDEX_KV_FLAG)
 }
 
-/// Produces the canonical single-byte non-unique local index value.
-#[must_use]
-pub fn legacy_non_unique_index_value() -> Vec<u8> {
-    vec![b'0']
-}
-
-/// Returns the canonical table-index prefix, retained here so all tablecodec
-/// operations have one import surface.
-#[must_use]
-pub fn table_index_prefix(table_id: i64) -> Vec<u8> {
-    gen_table_index_prefix(table_id)
-}
-
-/// Returns the canonical table-index key, retained here so all tablecodec
-/// operations have one import surface.
-#[must_use]
-pub fn table_index_key(table_id: i64, index_id: i64) -> Vec<u8> {
-    encode_table_index_prefix(table_id, index_id)
-}
-
-/// Returns true when bytes are a rowcodec restored-data segment.
-#[must_use]
-pub fn is_restored_data(value: &[u8]) -> bool {
-    is_new_format(value)
-}
-
-/// Returns the field type used for restored binary-collation padding counts.
-#[must_use]
-pub fn restored_padding_field_type() -> FieldType {
-    FieldType::new(FieldTypeCode::LongLong)
-        .with_unsigned(true)
-        .with_collation(Collation::Binary)
-}
-
-/// Exposes the source integer-handle datum flag used in index-key suffixes.
-pub const INDEX_INT_HANDLE_FLAG: u8 = INT_FLAG;
-/// Exposes the source unsigned datum flag used by restored padding.
-pub const INDEX_UINT_FLAG: u8 = UINT_FLAG;
-/// Encoded table record key width used by tablecodec allocation sizing.
-pub const TABLE_RECORD_ROW_KEY_LEN: usize = RECORD_ROW_KEY_LEN;
-
 #[cfg(test)]
 mod source_tests {
     use super::*;
+    use tidb_datatype::Collation;
 
     fn long_column(id: i64, offset: usize) -> TableColumn {
         TableColumn {
@@ -1723,7 +1635,7 @@ mod source_tests {
             assert_eq!(a, Datum::Int(3));
             assert_eq!(b, Datum::Int(2));
 
-            let decoded_handle = decode_index_handle(&key, &value, 1).unwrap();
+            let decoded_handle = decode_index_handle(&key, &value, 1).unwrap().unwrap();
             assert!(!decoded_handle.is_int());
             assert_eq!(
                 decoded_handle.encoded(),
@@ -1832,7 +1744,7 @@ mod source_tests {
                 let (_, primary) = decode_one(&decoded[1]).unwrap();
                 assert_eq!(indexed, Datum::Int(1));
                 assert_eq!(primary.as_raw_bytes().unwrap(), b"abc");
-                let decoded_handle = decode_index_handle(&key, value, 1).unwrap();
+                let decoded_handle = decode_index_handle(&key, value, 1).unwrap().unwrap();
                 assert!(!decoded_handle.is_int());
                 assert_eq!(
                     decoded_handle.encoded(),
@@ -2020,7 +1932,10 @@ mod source_tests {
         assert_eq!(a, Datum::Int(1));
         assert_eq!(b, Datum::Int(2));
         assert_eq!(
-            decode_index_handle(&key, &value, 1).unwrap().encoded(),
+            decode_index_handle(&key, &value, 1)
+                .unwrap()
+                .unwrap()
+                .encoded(),
             handle.encoded()
         );
     }

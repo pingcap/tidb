@@ -102,7 +102,7 @@ fn key(literal: &str) -> Vec<u8> {
 }
 
 /// The key an INDEX column builds: one schema-fixed precision for every row.
-fn column_key(literal: &str, precision: usize, scale: usize) -> Vec<u8> {
+fn column_key(literal: &str, precision: i64, scale: i64) -> Vec<u8> {
     let mut buffer = vec![0x06];
     encode_decimal_fixed(&mut buffer, &decimal(literal), precision, scale).unwrap();
     buffer

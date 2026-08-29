@@ -1112,7 +1112,7 @@ pub fn query_value_with_encoder<E>(
 }
 
 /// Native typed Go `QueryValue` using the requested session time zone.
-pub fn query_value<TZ: chrono::TimeZone>(
+pub fn query_value<TZ: chrono::TimeZone + 'static>(
     cms: Option<&CmsSketch>,
     topn: Option<&TopN>,
     value: &Datum,

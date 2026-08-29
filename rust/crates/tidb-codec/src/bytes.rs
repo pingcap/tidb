@@ -92,6 +92,21 @@ pub(crate) fn peek_bytes_len(input: &[u8], reverse: bool) -> Result<usize, Codec
             .ok_or(CodecError::InsufficientBytes)?;
         let marker = group[GROUP_SIZE];
         let padding = if reverse { marker } else { MARKER - marker };
+        offset += GROUP_SIZE + 1;
+        if padding != 0 {
+            return Ok(offset);
+        }
+    }
+}
+
+fn validated_bytes_len(input: &[u8], reverse: bool) -> Result<usize, CodecError> {
+    let mut offset = 0;
+    loop {
+        let group = input
+            .get(offset..offset + GROUP_SIZE + 1)
+            .ok_or(CodecError::InsufficientBytes)?;
+        let marker = group[GROUP_SIZE];
+        let padding = if reverse { marker } else { MARKER - marker };
         if padding > GROUP_SIZE as u8 {
             return Err(CodecError::InvalidEncoding("invalid bytes marker"));
         }
@@ -110,7 +125,7 @@ pub(crate) fn peek_bytes_len(input: &[u8], reverse: bool) -> Result<usize, Codec
 }
 
 fn decode_bytes_inner(input: &[u8], reverse: bool) -> Result<(&[u8], Vec<u8>), CodecError> {
-    let encoded_len = peek_bytes_len(input, reverse)?;
+    let encoded_len = validated_bytes_len(input, reverse)?;
     let mut output = Vec::with_capacity(encoded_len);
     for group in input[..encoded_len].chunks_exact(GROUP_SIZE + 1) {
         let padding = if reverse {

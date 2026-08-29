@@ -37,8 +37,7 @@ fn raw_decoder_looks_up_sorted_partitions_without_typed_schema_state() {
             tidb_codec::RawRowColumn { id: 1, value: None },
         ],
         &mut encoded,
-    )
-    .expect("source row encoding");
+    );
     encoded.extend_from_slice(b"suffix");
 
     let (decoder, remainder) = RowDecoder::parse(&encoded).expect("source row decoding");
@@ -118,15 +117,12 @@ fn raw_decoder_keeps_row_layout_boundary_errors_typed() {
         ))
     );
 
+}
+
+#[test]
+#[should_panic]
+fn raw_decoder_truncated_data_panics_like_go() {
     let mut truncated = vec![ROW_CODEC_VERSION, 0, 1, 0, 0, 0, 7];
     truncated.extend_from_slice(&1_u16.to_le_bytes());
-    assert!(matches!(
-        RowDecoder::parse(&truncated),
-        Err(RowDecodeError::Layout(
-            tidb_codec::RowCodecError::InsufficientBytes {
-                section: "row data",
-                ..
-            }
-        ))
-    ));
+    let _ = RowDecoder::parse(&truncated);
 }

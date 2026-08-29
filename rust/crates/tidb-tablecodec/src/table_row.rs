@@ -20,8 +20,9 @@ use std::fmt;
 use chrono::Utc;
 
 use tidb_datatype::{
-    parse_enum_value, parse_set_value, BinaryLiteralIntOutcome, Collation, Datum, FieldType,
-    FieldTypeCode, MySqlDuration, MysqlEnum, SessionTimeZone, Time, TimeType,
+    parse_enum_value, parse_set_value, BinaryLiteralIntOutcome, BinaryLiteralWidth, CoreTime,
+    Datum, FieldType, FieldTypeCode, MySqlDuration, MysqlEnum, PackedTime, SessionTimeZone, Time,
+    TimeType,
 };
 
 use tidb_codec::{
@@ -50,8 +51,6 @@ pub enum TableRowError {
     Row(RowPackageError),
     /// A temporal, enum, set, or bit conversion failed.
     Datatype(String),
-    /// A caller-provided output offset was outside the result.
-    InvalidOutputOffset(usize),
 }
 
 impl fmt::Display for TableRowError {
@@ -65,9 +64,6 @@ impl fmt::Display for TableRowError {
             Self::Codec(error) => error.fmt(formatter),
             Self::Row(error) => error.fmt(formatter),
             Self::Datatype(error) => formatter.write_str(error),
-            Self::InvalidOutputOffset(offset) => {
-                write!(formatter, "invalid row output offset {offset}")
-            }
         }
     }
 }
@@ -87,7 +83,7 @@ impl From<RowPackageError> for TableRowError {
 }
 
 /// Converts one typed SQL datum to tablecodec's persisted scalar form.
-pub fn flatten_datum(
+fn flatten_datum(
     timezone: Option<&SessionTimeZone>,
     datum: &Datum,
 ) -> Result<Datum, TableRowError> {
@@ -165,26 +161,34 @@ pub fn unflatten_datum(
                 FieldTypeCode::Timestamp => TimeType::Timestamp,
                 _ => TimeType::DateTime,
             };
-            let mut value = Time::from_packed_uint(packed, kind, field_type.decimal())
-                .map_err(|error| TableRowError::Datatype(error.to_string()))?;
+            let parts = PackedTime::from_raw(packed).parts();
+            let mut value = Time::new(
+                CoreTime::from_date(
+                    parts.year,
+                    parts.month,
+                    parts.day,
+                    parts.hour,
+                    parts.minute,
+                    parts.second,
+                    parts.microsecond,
+                ),
+                kind,
+                field_type.decimal(),
+            )
+            .map_err(|error| TableRowError::Datatype(error.to_string()))?;
             if kind == TimeType::Timestamp && !value.is_zero() {
-                if let Some(timezone) = timezone {
-                    value
-                        .convert_time_zone(&Utc, timezone)
-                        .map_err(|error| TableRowError::Datatype(error.to_string()))?;
-                }
+                value
+                    .convert_time_zone(&Utc, timezone.expect("Go Unflatten timezone"))
+                    .map_err(|error| TableRowError::Datatype(error.to_string()))?;
             }
             Datum::Time(value)
         }
-        FieldTypeCode::Duration => Datum::Duration(
-            MySqlDuration::from_nanoseconds(
-                datum
-                    .as_int()
-                    .ok_or(TableRowError::InvalidDatum("duration"))?,
-                field_type.decimal(),
-            )
-            .map_err(|error| TableRowError::Datatype(error.to_string()))?,
-        ),
+        FieldTypeCode::Duration => Datum::Duration(MySqlDuration::from_raw_parts(
+            datum
+                .as_int()
+                .ok_or(TableRowError::InvalidDatum("duration"))?,
+            field_type.decimal(),
+        )),
         FieldTypeCode::Enum => {
             let number = datum.as_uint().ok_or(TableRowError::InvalidDatum("enum"))?;
             let value = field_type
@@ -202,12 +206,13 @@ pub fn unflatten_datum(
             )
         }
         FieldTypeCode::Bit => {
-            let byte_size = ((field_type.flen().max(0) + 7) >> 3) as u8;
+            let byte_size = (field_type.flen() + 7) >> 3;
+            let width =
+                BinaryLiteralWidth::try_from(u8::try_from(byte_size).expect("Invalid byteSize"))
+                    .expect("Invalid byteSize");
             Datum::Bit(tidb_datatype::BinaryLiteral::from_uint(
                 datum.as_uint().ok_or(TableRowError::InvalidDatum("bit"))?,
-                tidb_datatype::BinaryLiteralWidth::try_from(byte_size)
-                    .map_err(|error| TableRowError::Datatype(error.to_string()))?
-                    .into(),
+                Some(width),
             ))
         }
         _ => datum,
@@ -322,10 +327,11 @@ pub fn decode_table_row_into_map(
     timezone: Option<&SessionTimeZone>,
     result: &mut BTreeMap<i64, Datum>,
 ) -> Result<(), TableRowError> {
-    if bytes.is_empty() || bytes == [NIL_FLAG] {
+    let new_format = is_new_format(bytes);
+    if bytes == [NIL_FLAG] {
         return Ok(());
     }
-    if is_new_format(bytes) {
+    if new_format {
         let columns = columns
             .iter()
             .map(|(id, field_type)| ColumnInfo {
@@ -335,7 +341,7 @@ pub fn decode_table_row_into_map(
                 field_type: field_type.clone(),
             })
             .collect::<Vec<_>>();
-        result.extend(decode_row_to_map(bytes, &columns, timezone)?);
+        decode_row_to_map(bytes, &columns, timezone, result)?;
         return Ok(());
     }
 
@@ -408,7 +414,7 @@ pub fn decode_handle_to_datum_map(
                 .as_ref()
                 .unwrap()
                 .get(index)
-                .ok_or(TableRowError::InvalidDatum("common handle column"))?;
+                .expect("Go CommonHandle.EncodedCol index");
             decode_one(encoded)?.1
         };
         row.insert(*column_id, unflatten_datum(raw, field_type, timezone)?);
@@ -432,9 +438,7 @@ pub fn cut_table_row(
         let (value, tail) = cut_one(tail)?;
         remaining = tail;
         if let Some(offset) = column_offsets.get(&column_id).copied() {
-            let slot = row
-                .get_mut(offset)
-                .ok_or(TableRowError::InvalidOutputOffset(offset))?;
+            let slot = &mut row[offset];
             if slot.is_none() {
                 found += 1;
             }
@@ -450,20 +454,8 @@ pub fn unflatten_datums(
     field_types: &[FieldType],
     timezone: Option<&SessionTimeZone>,
 ) -> Result<(), TableRowError> {
-    if datums.len() != field_types.len() {
-        return Err(TableRowError::ColumnCountMismatch {
-            values: datums.len(),
-            column_ids: field_types.len(),
-        });
-    }
-    for (datum, field_type) in datums.iter_mut().zip(field_types) {
-        *datum = unflatten_datum(datum.clone(), field_type, timezone)?;
+    for (index, datum) in datums.iter_mut().enumerate() {
+        *datum = unflatten_datum(datum.clone(), &field_types[index], timezone)?;
     }
     Ok(())
-}
-
-/// Returns the binary collation used by tablecodec's test/setup path.
-#[must_use]
-pub const fn tablecodec_binary_collation() -> Collation {
-    Collation::Binary
 }

@@ -15,8 +15,7 @@
 //! Source-shaped tests for `pkg/util/rowcodec/encoder.go`.
 
 use tidb_codec::{
-    encode_raw_int, encode_raw_row, encode_raw_uint, ColumnLookup, RawRowColumn, RowEncodeError,
-    RowLayout,
+    encode_raw_int, encode_raw_row, encode_raw_uint, ColumnLookup, RawRowColumn, RowLayout,
 };
 
 #[test]
@@ -62,8 +61,7 @@ fn row_encoder_sorts_partitions_and_keeps_opaque_value_boundaries() {
             RawRowColumn { id: 2, value: None },
         ],
         &mut encoded,
-    )
-    .expect("source row encoder");
+    );
 
     assert_eq!(encoded[0], 0xaa);
     let (row, remainder) = RowLayout::parse(&encoded[1..]).expect("encoded row layout");
@@ -93,8 +91,7 @@ fn row_encoder_selects_large_metadata_for_ids_or_payload() {
             },
         ],
         &mut encoded,
-    )
-    .expect("large IDs select four-byte metadata");
+    );
     let (row, remainder) = RowLayout::parse(&encoded).expect("large row layout");
     assert!(remainder.is_empty());
     assert!(row.header().is_large());
@@ -110,21 +107,33 @@ fn row_encoder_selects_large_metadata_for_ids_or_payload() {
             value: Some(&large_payload),
         }],
         &mut encoded,
-    )
-    .expect("payload length selects four-byte offsets");
+    );
     let (row, _) = RowLayout::parse(&encoded).expect("large payload row layout");
     assert!(row.header().is_large());
     assert_eq!(row.offsets(), &[65_536]);
     assert_eq!(row.value(0).expect("large value").len(), 65_536);
+
+    encoded.clear();
+    encode_raw_row(
+        &[
+            RawRowColumn {
+                id: -1,
+                value: Some(&large_payload),
+            },
+            RawRowColumn {
+                id: 1,
+                value: Some(b"x"),
+            },
+        ],
+        &mut encoded,
+    );
+    let (row, _) = RowLayout::parse(&encoded).unwrap();
+    assert_eq!(row.not_null_column_ids(), &[1, 255]);
 }
 
 #[test]
-fn row_encoder_rejects_header_count_overflow() {
+#[should_panic]
+fn row_encoder_panics_on_header_count_overflow_like_go() {
     let columns = vec![RawRowColumn { id: 1, value: None }; usize::from(u16::MAX) + 1];
-    assert_eq!(
-        encode_raw_row(&columns, &mut Vec::new()),
-        Err(RowEncodeError::TooManyColumns {
-            count: usize::from(u16::MAX) + 1,
-        })
-    );
+    encode_raw_row(&columns, &mut Vec::new());
 }

@@ -18,9 +18,10 @@ use std::collections::BTreeMap;
 
 use tidb_codec::{
     calculate_raw_checksum, decode_one, decode_row_to_datums, decode_row_to_map,
-    decode_row_to_old_bytes, encode_row, encode_row_with_checksum, encode_value, is_new_format,
-    is_row_key, remove_keyspace_prefix, ColumnInfo, DatumColumn, DecodeRowOptions, Handle,
-    RowChecksumPolicy, RowData, RowLayout, RowPackageError,
+    decode_row_to_old_bytes, encode_int, encode_raw_row, encode_raw_uint, encode_row,
+    encode_row_with_checksum, encode_value, is_new_format, is_row_key, remove_keyspace_prefix,
+    ColumnInfo, DatumColumn, DecodeRowOptions, Handle, RawRowColumn, RowChecksumPolicy, RowData,
+    RowLayout, RowPackageError,
 };
 use tidb_datatype::{
     BinaryJSON, BinaryLiteral, BinaryLiteralWidth, Collation, CoreTime, Datum, Decimal, FieldType,
@@ -129,7 +130,14 @@ fn test_encode_large_small_reuse_bug() {
 
     buffer.clear();
     encode_row(None, &[1], &[Datum::Int(2)], &mut buffer).unwrap();
-    let decoded = decode_row_to_map(&buffer, &[column(1, FieldTypeCode::LongLong)], None).unwrap();
+    let mut decoded = BTreeMap::new();
+    decode_row_to_map(
+        &buffer,
+        &[column(1, FieldTypeCode::LongLong)],
+        None,
+        &mut decoded,
+    )
+    .unwrap();
     assert_eq!(decoded.get(&1), Some(&Datum::Int(2)));
     assert!(!RowLayout::parse(&buffer).unwrap().0.header().is_large());
 }
@@ -158,8 +166,14 @@ fn encoder_uses_go_column_count_and_multi_error_semantics() {
         &mut buffer,
     )
     .unwrap();
-    let decoded = decode_row_to_map(&buffer[1..], &[column(1, FieldTypeCode::LongLong)], None)
-        .unwrap();
+    let mut decoded = BTreeMap::new();
+    decode_row_to_map(
+        &buffer[1..],
+        &[column(1, FieldTypeCode::LongLong)],
+        None,
+        &mut decoded,
+    )
+    .unwrap();
     assert_eq!(decoded.get(&1), Some(&Datum::Int(2)));
 }
 
@@ -240,6 +254,46 @@ fn test_decode_decimal_fsp_not_match() {
         decoded.values[0].as_decimal().unwrap().to_string(),
         "11.990"
     );
+    let mut decoded_map = BTreeMap::new();
+    decode_row_to_map(&encoded, &columns, None, &mut decoded_map).unwrap();
+    assert_eq!(
+        decoded_map[&1].as_decimal().unwrap().to_string(),
+        "11.9900"
+    );
+}
+
+/// Source: `decoder.go::decodeColDatum` and `decodeColToChunk` call
+/// `types.Time.FromPackedUint`, which extracts fields without validating the
+/// resulting calendar value.
+#[test]
+fn packed_time_decode_defers_calendar_validation_like_go() {
+    let ymd = ((2020_u64 * 13 + 1) << 5) | 1;
+    let hms = 31_u64 << 12;
+    let packed = (ymd << 17 | hms) << 24;
+    let mut payload = Vec::new();
+    encode_raw_uint(&mut payload, packed);
+    let mut encoded = Vec::new();
+    encode_raw_row(
+        &[RawRowColumn {
+            id: 1,
+            value: Some(&payload),
+        }],
+        &mut encoded,
+    );
+    let columns = [column(1, FieldTypeCode::Datetime)];
+
+    let mut decoded_map = BTreeMap::new();
+    decode_row_to_map(&encoded, &columns, None, &mut decoded_map).unwrap();
+    let Datum::Time(map_value) = decoded_map[&1] else {
+        panic!("expected time datum");
+    };
+    assert_eq!(map_value.core_time().hour(), 31);
+
+    let decoded = decode_row_to_datums(&encoded, &columns, &DecodeRowOptions::default()).unwrap();
+    let Datum::Time(chunk_value) = decoded.values[0] else {
+        panic!("expected time datum");
+    };
+    assert_eq!(chunk_value.core_time().hour(), 31);
 }
 
 /// Source: `rowcodec_test.go::TestTypesNewRowCodec`.
@@ -350,15 +404,19 @@ fn test_nil_and_default() {
     ];
     let mut encoded = Vec::new();
     encode_row(None, &[1], &[Datum::Int(1)], &mut encoded).unwrap();
+    let mut decoded_map = BTreeMap::from([(99, Datum::Int(99))]);
+    decode_row_to_map(&encoded, &columns, None, &mut decoded_map).unwrap();
     assert_eq!(
-        decode_row_to_map(&encoded, &columns, None).unwrap(),
-        BTreeMap::from([(1, Datum::Int(1))])
+        decoded_map,
+        BTreeMap::from([(1, Datum::Int(1)), (99, Datum::Int(99))])
     );
+    let defaults = [Datum::Null, Datum::UInt(9)];
+    let default_datum = |index: usize| Ok(defaults[index].clone());
     let decoded = decode_row_to_datums(
         &encoded,
         &columns,
         &DecodeRowOptions {
-            defaults: Some(&[Datum::Null, Datum::UInt(9)]),
+            default_datum: Some(&default_datum),
             ..DecodeRowOptions::default()
         },
     )
@@ -391,6 +449,7 @@ fn test_varint_compatibility() {
         &BTreeMap::from([(1, 0), (2, 1)]),
         &[],
         None,
+        &[],
         None,
     )
     .unwrap();
@@ -448,6 +507,7 @@ fn test_old_row_codec() {
         &BTreeMap::from([(1, 0), (2, 1), (3, 2), (4, 3)]),
         &[],
         None,
+        &[],
         None,
     )
     .unwrap();
@@ -463,6 +523,7 @@ fn test_old_row_codec() {
         &BTreeMap::from([(-1, 0)]),
         &[-1],
         Some(&Handle::Int(42)),
+        &[],
         None,
     )
     .unwrap();
@@ -839,6 +900,25 @@ fn test_encode_decode_row_with_checksum() {
     encode_row(None, &[], &[], &mut raw).unwrap();
     let decoded = decode_row_to_datums(&raw, &[], &DecodeRowOptions::default()).unwrap();
     assert_eq!(decoded.checksum, None);
+    let mut expected = crc32fast::Hasher::new();
+    expected.update(&raw);
+    expected.update(&[0]);
+    let mut int_handle = Vec::new();
+    encode_int(&mut int_handle, 1);
+    expected.update(&int_handle);
+    assert_eq!(
+        calculate_raw_checksum(
+            &mut raw,
+            None,
+            &[],
+            &[],
+            b"unused-key",
+            &Handle::Int(1),
+            &[],
+        )
+        .unwrap(),
+        expected.finalize()
+    );
 
     raw.clear();
     encode_row_with_checksum(
@@ -853,9 +933,65 @@ fn test_encode_decode_row_with_checksum() {
     assert_ne!(decoded.checksum, Some(0));
     assert_eq!(decoded.checksum_version, 2);
     assert_eq!(
-        calculate_raw_checksum(&raw, None, &[], &[], b"unused-key", &Handle::Int(1)).unwrap(),
+        calculate_raw_checksum(
+            &mut raw,
+            None,
+            &[],
+            &[],
+            b"unused-key",
+            &Handle::Int(1),
+            &[],
+        )
+        .unwrap(),
         decoded.checksum.unwrap()
     );
+
+    let mut prefixed = b"prefix".to_vec();
+    encode_row_with_checksum(
+        None,
+        &[1],
+        &[Datum::new_bytes(b"aaaa")],
+        &RowChecksumPolicy::RawHandle(Handle::Int(1)),
+        &mut prefixed,
+    )
+    .unwrap();
+    let (layout, remainder) = RowLayout::parse(&prefixed[b"prefix".len()..]).unwrap();
+    assert!(remainder.is_empty());
+    let stored_checksum = layout.checksum().unwrap().checksum();
+    let mut handle_bytes = Vec::new();
+    encode_int(&mut handle_bytes, 1);
+    let mut hasher = crc32fast::Hasher::new();
+    hasher.update(&prefixed[..prefixed.len() - 4]);
+    hasher.update(&handle_bytes);
+    assert_eq!(stored_checksum, hasher.finalize());
+
+    let row = &mut prefixed[b"prefix".len()..];
+    let recalculated = calculate_raw_checksum(
+        row,
+        None,
+        &[1],
+        &[Datum::new_bytes(b"b")],
+        b"unused-key",
+        &Handle::Int(1),
+        b"crc-prefix",
+    )
+    .unwrap();
+    let mut decoded = BTreeMap::new();
+    decode_row_to_map(
+        row,
+        &[column(1, FieldTypeCode::String)],
+        None,
+        &mut decoded,
+    )
+    .unwrap();
+    assert_eq!(decoded[&1].as_raw_bytes(), Some(&b"baaa"[..]));
+    let (layout, _) = RowLayout::parse(row).unwrap();
+    let mut expected = crc32fast::Hasher::new();
+    expected.update(b"crc-prefix");
+    expected.update(&row[..row.len() - 5]);
+    expected.update(&[layout.checksum().unwrap().header()]);
+    expected.update(&handle_bytes);
+    assert_eq!(recalculated, expected.finalize());
 }
 
 /// Source: `rowcodec_test.go::TestDecodeWithCommitTS`.
@@ -1106,7 +1242,8 @@ fn test_types_new_row_codec_full_table_with_old_format_outputs() {
         encode_row(Some(&utc), &case_ids, &case_inputs, &mut encoded).unwrap();
 
         // Decode to datum map: every ID exists, including explicit NULLs.
-        let map = decode_row_to_map(&encoded, &case_columns, Some(&utc)).unwrap();
+        let mut map = BTreeMap::new();
+        decode_row_to_map(&encoded, &case_columns, Some(&utc), &mut map).unwrap();
         assert_eq!(map.len(), case_ids.len());
         for (index, &id) in case_ids.iter().enumerate() {
             let got = map
@@ -1137,7 +1274,8 @@ fn test_types_new_row_codec_full_table_with_old_format_outputs() {
             .map(|(index, &id)| (id, index))
             .collect();
         let old =
-            decode_row_to_old_bytes(&encoded, &case_columns, &offsets, &[], None, None).unwrap();
+            decode_row_to_old_bytes(&encoded, &case_columns, &offsets, &[], None, &[], None)
+                .unwrap();
         assert_eq!(old.len(), case_columns.len());
         for (index, bytes) in old.iter().enumerate() {
             let (remainder, got) = decode_one(bytes).unwrap();
@@ -1174,6 +1312,7 @@ fn test_varint_compatibility_matches_encode_value_byte_for_byte() {
         &BTreeMap::from([(1, 0), (2, 1)]),
         &[],
         None,
+        &[],
         None,
     )
     .unwrap();
@@ -1202,13 +1341,21 @@ fn test_nil_and_default_missing_columns_take_null_or_encoded_defaults() {
     assert_eq!(decoded.values, [Datum::Int(1), Datum::Null]);
 
     let encoded_default = encode_value(&[Datum::UInt(9)]).unwrap();
+    let default_bytes = |index: usize| {
+        Ok(if index == 1 {
+            encoded_default.clone()
+        } else {
+            Vec::new()
+        })
+    };
     let old = decode_row_to_old_bytes(
         &encoded,
         &columns,
         &BTreeMap::from([(1, 0), (2, 1)]),
         &[],
         None,
-        Some(&[None, Some(encoded_default.clone())]),
+        &[],
+        Some(&default_bytes),
     )
     .unwrap();
     assert_eq!(old[0], encode_value(&[Datum::Int(1)]).unwrap());
@@ -1236,16 +1383,19 @@ fn test_decode_row_with_handle_materializes_typed_handle_into_old_bytes() {
         ];
         let mut encoded = Vec::new();
         encode_row(None, &[10], &[Datum::Int(1)], &mut encoded).unwrap();
+        let cache_bytes = b"cache-prefix";
         let old = decode_row_to_old_bytes(
             &encoded,
             &columns,
             &BTreeMap::from([(-1, 0), (10, 1)]),
             &[-1],
             Some(&Handle::Int(10_000)),
+            cache_bytes,
             None,
         )
         .unwrap();
-        let (_, handle_value) = decode_one(&old[0]).unwrap();
+        assert!(old[0].starts_with(cache_bytes));
+        let (_, handle_value) = decode_one(&old[0][cache_bytes.len()..]).unwrap();
         let (_, stored_value) = decode_one(&old[1]).unwrap();
         let expected_handle = if unsigned {
             Datum::UInt(10_000)

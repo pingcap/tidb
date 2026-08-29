@@ -185,6 +185,25 @@ impl Decimal {
         scale: u32,
         storage_scale: u32,
     ) -> Self {
+        Self::new_with_storage_sign(negative, digits, scale, storage_scale, false)
+    }
+
+    fn new_with_storage_preserving_zero_sign(
+        negative: bool,
+        digits: impl Into<DecimalDigits>,
+        scale: u32,
+        storage_scale: u32,
+    ) -> Self {
+        Self::new_with_storage_sign(negative, digits, scale, storage_scale, true)
+    }
+
+    fn new_with_storage_sign(
+        negative: bool,
+        digits: impl Into<DecimalDigits>,
+        scale: u32,
+        storage_scale: u32,
+        preserve_zero_sign: bool,
+    ) -> Self {
         let mut digits = digits.into();
         debug_assert!(storage_scale >= scale);
         // Left-pad `digits` to at least the storage scale, then strip any
@@ -198,7 +217,7 @@ impl Decimal {
         }
         let is_zero = digits.bytes().all(|b| b == b'0');
         Decimal {
-            negative: negative && !is_zero,
+            negative: negative && (preserve_zero_sign || !is_zero),
             digits,
             scale,
             storage_scale,

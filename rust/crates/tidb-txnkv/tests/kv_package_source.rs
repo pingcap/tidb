@@ -180,12 +180,12 @@ fn TestHandle() {
     assert_eq!(decoded[1].as_raw_bytes(), Some(b"abc".as_slice()));
     assert_eq!(common.to_string(), "{100, abc}");
 
-    let partition_int = Handle::from(PartitionHandle::new(2, int.clone()));
+    let partition_int = Handle::from(PartitionHandle::new(2, Some(int.clone())));
     assert!(partition_int.equal(&int));
     assert!(int.equal(&partition_int));
 
     let next = Handle::from(next);
-    let partition_common = Handle::from(PartitionHandle::new(1, next.clone()));
+    let partition_common = Handle::from(PartitionHandle::new(1, Some(next.clone())));
     assert!(partition_common.equal(&next));
     assert!(next.equal(&partition_common));
 }
@@ -281,9 +281,18 @@ fn partial_handles() -> Vec<(Handle, i32)> {
     )
     .expect("common");
     vec![
-        (Handle::from(PartitionHandle::new(1, IntHandle::new(1))), 1),
-        (Handle::from(PartitionHandle::new(2, IntHandle::new(1))), 2),
-        (Handle::from(PartitionHandle::new(1, IntHandle::new(3))), 5),
+        (
+            Handle::from(PartitionHandle::new(1, Some(IntHandle::new(1).into()))),
+            1,
+        ),
+        (
+            Handle::from(PartitionHandle::new(2, Some(IntHandle::new(1).into()))),
+            2,
+        ),
+        (
+            Handle::from(PartitionHandle::new(1, Some(IntHandle::new(3).into()))),
+            5,
+        ),
         (Handle::from(IntHandle::new(1)), 3),
         (Handle::from(decimal), 4),
     ]
@@ -302,7 +311,10 @@ fn TestHandleMapWithPartialHandle() {
     assert_eq!(map.len(), 5);
     map.delete(&handles[0].0);
     assert_eq!(map.get(&handles[0].0), None);
-    map.delete(&Handle::from(PartitionHandle::new(3, IntHandle::new(1))));
+    map.delete(&Handle::from(PartitionHandle::new(
+        3,
+        Some(IntHandle::new(1).into()),
+    )));
     assert_eq!(map.len(), 4);
 }
 

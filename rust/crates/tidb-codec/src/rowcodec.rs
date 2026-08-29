@@ -27,16 +27,16 @@ use chrono::Utc;
 use crc32fast::Hasher;
 use tidb_datatype::{
     deserialize_vector_float32, parse_enum_value, parse_set_value, BinaryJSON, BinaryLiteral,
-    BinaryLiteralWidth, Datum, FieldType, FieldTypeCode, MySqlDuration, SessionTimeZone, Time,
-    TimeType,
+    BinaryLiteralWidth, CoreTime, Datum, FieldType, FieldTypeCode, MySqlDuration, SessionTimeZone,
+    Time, TimeType, TruncationPolicy,
 };
 
 use crate::{
     decode_decimal, decode_float, decode_raw_int, decode_raw_uint, encode_compact_bytes,
     encode_decimal_fixed, encode_float, encode_raw_int, encode_raw_row, encode_raw_uint,
     encode_uvarint, encode_varint, CodecError, RawRowColumn, RawRowValue, RowDecoder,
-    RowEncodeError, COMPACT_BYTES_FLAG, DECIMAL_FLAG, FLOAT_FLAG, INT_FLAG, JSON_FLAG, NIL_FLAG,
-    UINT_FLAG, UVARINT_FLAG, VARINT_FLAG, VECTOR_FLOAT32_FLAG,
+    COMPACT_BYTES_FLAG, DECIMAL_FLAG, FLOAT_FLAG, INT_FLAG, JSON_FLAG, NIL_FLAG, UINT_FLAG,
+    UVARINT_FLAG, VARINT_FLAG, VECTOR_FLOAT32_FLAG,
 };
 
 const CHECKSUM_VERSION_RAW_HANDLE: u8 = 2;
@@ -169,14 +169,14 @@ pub struct DecodedRow {
 }
 
 /// Runtime inputs for the chunk-equivalent row decoder.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct DecodeRowOptions<'a> {
     /// Column IDs stored by an integer or common handle.
     pub handle_column_ids: &'a [i64],
     /// Row handle, when this scan has one.
     pub handle: Option<&'a Handle>,
-    /// Default output values in requested-column order.
-    pub defaults: Option<&'a [Datum]>,
+    /// Go `ChunkDecoder.defDatum`, invoked only for a missing column.
+    pub default_datum: Option<&'a (dyn Fn(usize) -> Result<Datum, String> + 'a)>,
     /// Optional pseudo-column receiving the commit timestamp.
     pub commit_ts_column_id: Option<i64>,
     /// Optional pseudo-column reserved for a row checksum.
@@ -218,12 +218,12 @@ pub enum RowPackageError {
         /// Recovered accessor error.
         cause: String,
     },
+    /// Error returned by Go's default datum/bytes callback.
+    DefaultValue(String),
     /// A persisted scalar is malformed.
     InvalidValue(&'static str),
     /// A lower-level row framing error.
     Decode(crate::RowDecodeError),
-    /// A lower-level row construction error.
-    Encode(RowEncodeError),
     /// A scalar codec error.
     Codec(CodecError),
     /// A datatype operation failed.
@@ -244,7 +244,7 @@ impl fmt::Display for RowPackageError {
                 }
                 Ok(())
             }
-            Self::UnknownFieldType(code) => write!(formatter, "unknown row field type {code:?}"),
+            Self::UnknownFieldType(code) => write!(formatter, "unknown type {}", code.mysql_type()),
             Self::InvalidChecksumType => formatter.write_str("invalid type for checksum"),
             Self::ChecksumDatumType {
                 datum,
@@ -262,9 +262,9 @@ impl fmt::Display for RowPackageError {
                 formatter,
                 "encode datum({datum}) as {field_type} for checksum: {cause}"
             ),
+            Self::DefaultValue(error) => formatter.write_str(error),
             Self::InvalidValue(kind) => write!(formatter, "invalid persisted {kind} value"),
             Self::Decode(error) => error.fmt(formatter),
-            Self::Encode(error) => error.fmt(formatter),
             Self::Codec(error) => error.fmt(formatter),
             Self::Datatype(error) => formatter.write_str(error),
         }
@@ -276,12 +276,6 @@ impl std::error::Error for RowPackageError {}
 impl From<crate::RowDecodeError> for RowPackageError {
     fn from(error: crate::RowDecodeError) -> Self {
         Self::Decode(error)
-    }
-}
-
-impl From<RowEncodeError> for RowPackageError {
-    fn from(error: RowEncodeError) -> Self {
-        Self::Encode(error)
     }
 }
 
@@ -337,12 +331,12 @@ pub fn encode_row_with_checksum(
         .collect::<Vec<_>>();
 
     let start = buffer.len();
-    encode_raw_row(&entries, buffer)?;
+    encode_raw_row(&entries, buffer);
     if let RowChecksumPolicy::RawHandle(handle) = checksum {
         buffer[start + 1] |= crate::ROW_FLAG_CHECKSUM;
         buffer.push(CHECKSUM_VERSION_RAW_HANDLE);
         let mut hasher = Hasher::new();
-        hasher.update(&buffer[start..]);
+        hasher.update(buffer);
         hasher.update(&handle.checksum_bytes());
         buffer.extend_from_slice(&hasher.finalize().to_le_bytes());
     }
@@ -380,7 +374,12 @@ fn encode_value_datum(
         Datum::Enum(value, _) => encode_raw_uint(&mut output, value.value()),
         Datum::Set(value, _) => encode_raw_uint(&mut output, value.value()),
         Datum::BinaryLiteral(value) | Datum::Bit(value) => {
-            encode_raw_uint(&mut output, binary_literal_to_uint(value))
+            let (encoded, error) =
+                value.to_int_with_policy(TruncationPolicy::STRICT, |_| unreachable!());
+            if let Some(error) = error {
+                return Err(RowPackageError::Datatype(error.to_string()));
+            }
+            encode_raw_uint(&mut output, encoded)
         }
         Datum::Real(value) | Datum::Float32(value) => encode_float(&mut output, *value),
         Datum::Decimal(value) => {
@@ -389,7 +388,7 @@ fn encode_value_datum(
             // one. `(0, 0)` (no column involved) is Go's unset `Datum.length`,
             // which `EncodeDecimal` itself resolves to `PrecisionAndFrac`.
             let (precision, scale) = value.storage_shape();
-            encode_decimal_fixed(&mut output, value, precision as usize, scale as usize)?;
+            encode_decimal_fixed(&mut output, value, precision, scale)?;
         }
         Datum::Json(value) => output.extend_from_slice(&value.encoded()),
         Datum::VectorFloat32(value) => value.serialize_to(&mut output),
@@ -406,15 +405,15 @@ pub fn decode_row_to_map(
     row_data: &[u8],
     columns: &[ColumnInfo],
     timezone: Option<&SessionTimeZone>,
-) -> Result<BTreeMap<i64, Datum>, RowPackageError> {
+    output: &mut BTreeMap<i64, Datum>,
+) -> Result<(), RowPackageError> {
     let (decoder, _) = RowDecoder::parse(row_data)?;
-    let mut output = BTreeMap::new();
     for column in columns {
         match decoder.column(column.id)? {
             RawRowValue::NotNull { bytes, .. } => {
                 output.insert(
                     column.id,
-                    decode_column_datum(bytes, &column.field_type, timezone)?,
+                    decode_column_datum(bytes, &column.field_type, timezone, DecodeTarget::Map)?,
                 );
             }
             RawRowValue::Null => {
@@ -423,7 +422,7 @@ pub fn decode_row_to_map(
             RawRowValue::Missing => {}
         }
     }
-    Ok(output)
+    Ok(())
 }
 
 /// Decodes a row into requested output columns, including defaults, integer
@@ -456,6 +455,7 @@ pub fn decode_row_to_datums(
                     bytes,
                     &column.field_type,
                     options.timezone,
+                    DecodeTarget::Chunk,
                 )?);
             }
             RawRowValue::Null => values.push(Datum::Null),
@@ -468,13 +468,11 @@ pub fn decode_row_to_datums(
                 )? {
                     values.push(value);
                 } else {
-                    values.push(
-                        options
-                            .defaults
-                            .and_then(|values| values.get(index))
-                            .cloned()
-                            .unwrap_or(Datum::Null),
-                    );
+                    values.push(if let Some(default_datum) = options.default_datum {
+                        default_datum(index).map_err(RowPackageError::DefaultValue)?
+                    } else {
+                        Datum::Null
+                    });
                 }
             }
         }
@@ -492,46 +490,56 @@ pub fn decode_row_to_datums(
 /// Checksum version 1 extends the CRC with the raw key; later versions extend
 /// it with the encoded handle, preserving the v8.3 compatibility branch.
 pub fn calculate_raw_checksum(
-    row_data: &[u8],
+    row_data: &mut [u8],
     timezone: Option<&SessionTimeZone>,
     column_ids: &[i64],
     values: &[Datum],
     key: &[u8],
     handle: &Handle,
+    buffer: &[u8],
 ) -> Result<u32, RowPackageError> {
-    let (decoder, _) = RowDecoder::parse(row_data)?;
-    let layout = decoder.layout();
-    let checksum = layout
-        .checksum()
-        .ok_or(RowPackageError::InvalidValue("row checksum"))?;
-    let header = layout.header();
-    let data_start = crate::ROW_HEADER_LEN
-        + header.column_count() * header.column_id_width()
-        + usize::from(header.not_null_count()) * header.offset_width();
-    let body_end = data_start + layout.data().len();
-    let mut body = row_data
-        .get(..body_end)
-        .ok_or(RowPackageError::InvalidValue("row body"))?
-        .to_vec();
-    for (index, &column_id) in column_ids.iter().enumerate() {
-        let value = &values[index];
-        let RawRowValue::NotNull { index, .. } = decoder.column(column_id)? else {
-            continue;
-        };
-        let Some(encoded) = encode_value_datum(timezone, value)? else {
-            continue;
-        };
-        let range = layout
-            .value_range(index)
-            .map_err(crate::RowDecodeError::from)?;
-        let destination = &mut body[data_start + range.start..data_start + range.end];
+    let (body_end, checksum_header, checksum_version, replacements) = {
+        let (decoder, _) = RowDecoder::parse(row_data)?;
+        let layout = decoder.layout();
+        let checksum = layout.checksum();
+        let header = layout.header();
+        let data_start = crate::ROW_HEADER_LEN
+            + header.column_count() * header.column_id_width()
+            + usize::from(header.not_null_count()) * header.offset_width();
+        let body_end = data_start + layout.data().len();
+        let mut replacements = Vec::new();
+        for (input_index, &column_id) in column_ids.iter().enumerate() {
+            let value = &values[input_index];
+            if value.is_null() {
+                return Err(RowPackageError::UnsupportedEncodeType(0));
+            }
+            let encoded =
+                encode_value_datum(timezone, value)?.expect("non-NULL datum has encoded row bytes");
+            let RawRowValue::NotNull { index, .. } = decoder.column(column_id)? else {
+                continue;
+            };
+            let range = layout
+                .value_range(index)
+                .map_err(crate::RowDecodeError::from)?;
+            replacements.push((data_start + range.start..data_start + range.end, encoded));
+        }
+        (
+            body_end,
+            checksum.map_or(0, |checksum| checksum.header()),
+            checksum.map_or(0, |checksum| checksum.version()),
+            replacements,
+        )
+    };
+    for (range, encoded) in replacements {
+        let destination = &mut row_data[range];
         let copied = destination.len().min(encoded.len());
         destination[..copied].copy_from_slice(&encoded[..copied]);
     }
-    body.push(checksum.header());
     let mut hasher = Hasher::new();
-    hasher.update(&body);
-    if checksum.version() == 1 {
+    hasher.update(buffer);
+    hasher.update(&row_data[..body_end]);
+    hasher.update(&[checksum_header]);
+    if checksum_version == 1 {
         hasher.update(key);
     } else {
         hasher.update(&handle.checksum_bytes());
@@ -547,7 +555,8 @@ pub fn decode_row_to_old_bytes(
     output_offsets: &BTreeMap<i64, usize>,
     handle_column_ids: &[i64],
     handle: Option<&Handle>,
-    default_bytes: Option<&[Option<Vec<u8>>]>,
+    cache_bytes: &[u8],
+    default_bytes: Option<&dyn Fn(usize) -> Result<Vec<u8>, String>>,
 ) -> Result<Vec<Vec<u8>>, RowPackageError> {
     let (decoder, _) = RowDecoder::parse(row_data)?;
     let mut values = vec![Vec::new(); output_offsets.len()];
@@ -557,12 +566,15 @@ pub fn decode_row_to_old_bytes(
             RawRowValue::NotNull { bytes, .. } => encode_old_raw(column, bytes)?,
             RawRowValue::Null => vec![NIL_FLAG],
             RawRowValue::Missing => {
-                if let Some(encoded) = encode_old_handle(column, handle_column_ids, handle)? {
+                if let Some(encoded) =
+                    encode_old_handle(column, handle_column_ids, handle, cache_bytes)?
+                {
                     encoded
                 } else {
                     default_bytes
-                        .and_then(|defaults| defaults.get(index))
-                        .and_then(Clone::clone)
+                        .map(|default_bytes| default_bytes(index))
+                        .transpose()
+                        .map_err(RowPackageError::DefaultValue)?
                         .filter(|value| !value.is_empty())
                         .unwrap_or_else(|| vec![NIL_FLAG])
                 }
@@ -600,15 +612,15 @@ fn encode_old_handle(
     column: &ColumnInfo,
     handle_column_ids: &[i64],
     handle: Option<&Handle>,
+    cache_bytes: &[u8],
 ) -> Result<Option<Vec<u8>>, RowPackageError> {
     if column.field_type.need_restored_data() {
         return Ok(None);
     }
     match handle {
-        Some(Handle::Int(value))
-            if column.is_pk_handle || handle_column_ids.first() == Some(&column.id) =>
-        {
-            let mut output = Vec::with_capacity(9);
+        Some(Handle::Int(value)) if column.is_pk_handle || column.id == -1 => {
+            let mut output = cache_bytes.to_vec();
+            output.reserve(9);
             if column.field_type.is_unsigned() {
                 output.push(UINT_FLAG);
                 crate::encode_uint(&mut output, *value as u64);
@@ -637,9 +649,7 @@ fn decode_handle_column(
         return Ok(None);
     };
     match handle {
-        Handle::Int(value)
-            if column.is_pk_handle || handle_column_ids.first() == Some(&column.id) =>
-        {
+        Handle::Int(value) if column.id == handle_column_ids[0] => {
             Ok(Some(if column.field_type.is_unsigned() {
                 Datum::UInt(*value as u64)
             } else {
@@ -647,18 +657,20 @@ fn decode_handle_column(
             }))
         }
         Handle::Common(parts) => {
+            if column.field_type.need_restored_data() {
+                return Ok(None);
+            }
             let Some(index) = handle_column_ids.iter().position(|id| *id == column.id) else {
                 return Ok(None);
             };
             let Some(encoded) = parts.get(index) else {
                 return Ok(None);
             };
-            let (remainder, datum) =
-                crate::decode_one_typed_in_timezone(encoded, &column.field_type, timezone)?;
-            if !remainder.is_empty() {
-                return Err(RowPackageError::InvalidValue("common handle"));
-            }
-            Ok(Some(datum))
+            Ok(
+                crate::decode_one_typed_in_timezone(encoded, &column.field_type, timezone)
+                    .ok()
+                    .map(|(_, datum)| datum),
+            )
         }
         Handle::Int(_) => Ok(None),
     }
@@ -668,6 +680,7 @@ fn decode_column_datum(
     bytes: &[u8],
     field_type: &FieldType,
     timezone: Option<&SessionTimeZone>,
+    target: DecodeTarget,
 ) -> Result<Datum, RowPackageError> {
     let code = field_type.code();
     Ok(match code {
@@ -702,7 +715,10 @@ fn decode_column_datum(
         }
         FieldTypeCode::NewDecimal => {
             let (_, mut value, _, encoded_scale) = decode_decimal(bytes)?;
-            if field_type.decimal() >= 0 && i64::from(encoded_scale) > field_type.decimal() {
+            if target == DecodeTarget::Chunk
+                && field_type.decimal() >= 0
+                && i64::from(encoded_scale) > field_type.decimal()
+            {
                 value = value.round_to_scale(field_type.decimal() as i32);
             }
             Datum::Decimal(value)
@@ -713,11 +729,29 @@ fn decode_column_datum(
                 FieldTypeCode::Timestamp => TimeType::Timestamp,
                 _ => TimeType::DateTime,
             };
-            let mut value =
-                Time::from_packed_uint(decode_raw_uint(bytes)?, kind, field_type.decimal())
-                    .map_err(|error| RowPackageError::Datatype(error.to_string()))?;
-            if kind == TimeType::Timestamp {
-                if let Some(timezone) = timezone {
+            // Go `Time.FromPackedUint` only extracts bit fields. Calendar
+            // validity is checked later by the operation that needs it.
+            let parts = tidb_datatype::PackedTime::from_raw(decode_raw_uint(bytes)?).parts();
+            let mut value = Time::new(
+                CoreTime::from_date(
+                    parts.year,
+                    parts.month,
+                    parts.day,
+                    parts.hour,
+                    parts.minute,
+                    parts.second,
+                    parts.microsecond,
+                ),
+                kind,
+                field_type.decimal(),
+            )
+            .map_err(|error| RowPackageError::Datatype(error.to_string()))?;
+            if kind == TimeType::Timestamp && !value.is_zero() {
+                if target == DecodeTarget::Map {
+                    value
+                        .convert_time_zone(&Utc, timezone.expect("Go map decoder timezone"))
+                        .map_err(|error| RowPackageError::Datatype(error.to_string()))?;
+                } else if let Some(timezone) = timezone {
                     value
                         .convert_time_zone(&Utc, timezone)
                         .map_err(|error| RowPackageError::Datatype(error.to_string()))?;
@@ -725,10 +759,10 @@ fn decode_column_datum(
             }
             Datum::Time(value)
         }
-        FieldTypeCode::Duration => Datum::Duration(
-            MySqlDuration::from_nanoseconds(decode_raw_int(bytes)?, field_type.decimal())
-                .map_err(|error| RowPackageError::Datatype(error.to_string()))?,
-        ),
+        FieldTypeCode::Duration => Datum::Duration(MySqlDuration::from_raw_parts(
+            decode_raw_int(bytes)?,
+            field_type.decimal(),
+        )),
         FieldTypeCode::Enum => {
             let value = decode_raw_uint(bytes)?;
             Datum::Enum(
@@ -748,20 +782,19 @@ fn decode_column_datum(
             )
         }
         FieldTypeCode::Bit => {
-            let byte_size = ((field_type.flen().max(0) + 7) >> 3) as u8;
-            let width = BinaryLiteralWidth::try_from(byte_size)
-                .map_err(|error| RowPackageError::Datatype(error.to_string()))?;
+            let byte_size = (field_type.flen() + 7) >> 3;
+            let width =
+                BinaryLiteralWidth::try_from(u8::try_from(byte_size).expect("Invalid byteSize"))
+                    .expect("Invalid byteSize");
             Datum::Bit(BinaryLiteral::from_uint(
                 decode_raw_uint(bytes)?,
                 Some(width),
             ))
         }
-        FieldTypeCode::Json => {
-            let (&type_code, value) = bytes
-                .split_first()
-                .ok_or(RowPackageError::InvalidValue("JSON"))?;
-            Datum::Json(BinaryJSON::from_encoded_parts(type_code, value.to_vec()))
-        }
+        FieldTypeCode::Json => Datum::Json(BinaryJSON::from_encoded_parts(
+            bytes[0],
+            bytes[1..].to_vec(),
+        )),
         FieldTypeCode::VectorFloat32 => {
             let (value, _) = deserialize_vector_float32(bytes)
                 .map_err(|error| RowPackageError::Datatype(error.to_string()))?;
@@ -771,8 +804,10 @@ fn decode_column_datum(
     })
 }
 
-fn binary_literal_to_uint(value: &BinaryLiteral) -> u64 {
-    binary_literal_bytes_to_uint(value.as_bytes())
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum DecodeTarget {
+    Map,
+    Chunk,
 }
 
 fn binary_literal_bytes_to_uint(bytes: &[u8]) -> u64 {
@@ -968,7 +1003,7 @@ fn append_length_value(buffer: &mut Vec<u8>, value: &[u8]) {
 }
 
 fn field_type_to_flag(field_type: &FieldType) -> u8 {
-    match field_type.code() {
+    match field_type.array_element_code() {
         FieldTypeCode::Tiny
         | FieldTypeCode::Short
         | FieldTypeCode::Int24

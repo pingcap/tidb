@@ -28,7 +28,9 @@ use crate::charset::{
 };
 use crate::{CharsetError, Collation, CollationInfo, Encoding, TransformOp};
 
-static NEW_COLLATION_ENABLED: AtomicBool = AtomicBool::new(false);
+// Go initializes this to enabled in `pkg/util/collate.init`; bootstrap later
+// replaces it with the cluster's persisted compatibility setting.
+static NEW_COLLATION_ENABLED: AtomicBool = AtomicBool::new(true);
 
 /// Source `DefaultLen`, used when a string datum has no known length.
 pub const DEFAULT_LEN: usize = 0;

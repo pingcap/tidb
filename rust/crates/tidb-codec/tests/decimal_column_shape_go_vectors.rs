@@ -18,10 +18,12 @@
 //! decodes back to `11.99`, so all fifteen self-round-trip row tests passed
 //! while every decimal column on disk differed from TiDB's bytes and every
 //! row/TiCDC checksum computed over them disagreed
-//! (`rust/docs/codec-divergence-inventory.md` F13). Only bytes Go wrote can
-//! fail here, which is why this fixture exists.
+//! before the package parity audit. Only bytes Go wrote can fail here, which is
+//! why this fixture exists.
 //!
 //! Fixture: `generate_decimal_column_rows.go` beside the `.hex`.
+
+use std::collections::BTreeMap;
 
 use tidb_codec::{decode_row_to_map, encode_key, encode_row, encode_value, ColumnInfo};
 use tidb_datatype::{
@@ -152,7 +154,8 @@ fn encode(ids: &[i64], values: &[Datum]) -> Vec<u8> {
 
 fn decode(row: &[u8], columns: &[ColumnInfo]) -> Vec<String> {
     let utc = SessionTimeZone::utc();
-    let decoded = decode_row_to_map(row, columns, Some(&utc)).unwrap();
+    let mut decoded = BTreeMap::new();
+    decode_row_to_map(row, columns, Some(&utc), &mut decoded).unwrap();
     decoded
         .values()
         .map(|datum| datum.as_decimal().unwrap().to_string())

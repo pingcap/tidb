@@ -172,7 +172,7 @@ pub fn decode_comparable_uvarint(input: &[u8]) -> Result<(&[u8], u64), CodecErro
 pub fn decode_comparable_varint(input: &[u8]) -> Result<(&[u8], i64), CodecError> {
     let (&tag, mut remain) = input.split_first().ok_or(CodecError::InsufficientBytes)?;
     if (NEGATIVE_TAG_END..=POSITIVE_TAG_START).contains(&tag) {
-        return Ok((remain, i64::from(tag) - i64::from(NEGATIVE_TAG_END)));
+        return Ok((input, i64::from(tag) - i64::from(NEGATIVE_TAG_END)));
     }
     let (length, mut value) = if tag < NEGATIVE_TAG_END {
         (usize::from(NEGATIVE_TAG_END - tag), u64::MAX)

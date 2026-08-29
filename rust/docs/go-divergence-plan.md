@@ -32,17 +32,14 @@ is hit*, and the difference is large:
   `useLocalTransactionState=true` reads a status bit we always set wrong, on
   every transaction. Silent application-level data loss, today, with no unusual
   input.
-- **#188 fires on every decimal column** — an ordinary schema choice.
 - **#202 fires on `ALTER TABLE ... ADD COLUMN ... FIRST`** — a common migration.
-- **#189 needs a negative zero with non-zero scale arriving as bytes.** Nearly
-  nobody writes one.
 - **#196 needs a non-ASCII identifier** whose simple and full case mappings
   differ — Greek final sigma, Turkish dotted I.
 - **JSON u64** needs a literal past `i64::MAX`.
 
-So the honest order is **consequence × reachability**: #186, #188 and #202 are
-the ones costing real users real data right now; #189, #196 and the JSON u64
-case are real bugs that a fixture should pin and that can wait behind them.
+So the honest order is **consequence × reachability**: #186 and #202 are the
+remaining examples that can cost real users data; #196 and the JSON u64 case
+need their distinguishing fixtures before implementation.
 
 **4. Nothing here has been triaged for false positives.** About 170 findings are
 derived from reading two sources, and this project's premises have been
@@ -99,12 +96,11 @@ These persist. A wrong query answer is wrong once; a wrong byte is wrong forever
 and is read by every node, including nodes that were not running when we wrote
 it.
 
-**Decide the decimal representation first** (#191). `Datum::Decimal` holds a
-digit‑string reimplementation while a faithful `MyDecimal` port sits beside it
-unused, and eight of ten decimal findings are against the reimplementation. Both
-#188 (declared precision not carried) and #189 (negative zero unrepresentable)
-are downstream of it. Fixing them against the reimplementation is work that gets
-thrown away if the value path moves.
+The pinned package audit has closed the decimal storage findings that originally
+occupied this position: declared shapes now reach every physical encoder, and
+raw `FromBin`/JSON decoding preserves Go's non-canonical negative zero without
+letting ordinary construction or arithmetic mint one. The Go-produced byte
+fixtures remain the acceptance oracle.
 
 Then, independently of each other:
 
@@ -179,7 +175,6 @@ the lost‑update work.
 | #186 status flags | small — one seam, three call sites | wire capture to confirm |
 | #187 long data | medium — a buffer with a lifecycle | wire capture |
 | Coprocessor flags + warnings | small — two missing calls | a live query |
-| #188 declared decimal shape | medium, **blocked on #191** | Go byte fixture |
 | #202 name-keyed column refs | large — representation change | fixtures + DDL cases |
 | #191 decimal representation | **large, decide before building** | read why `decimal.rs` exists |
 | #196 identifier case | small **if** the one-line check confirms it | one Go/Rust comparison |
