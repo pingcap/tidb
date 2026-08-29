@@ -563,6 +563,54 @@ fn loaded_stats_item_write_replaces_only_the_named_histogram() {
     assert_eq!(untouched.topn.as_ref().map(TopN::num), Some(100));
 }
 
+/// Pinned Go's negative-count branch uses UPDATE rather than REPLACE: only
+/// the two version markers move, while count/modify/snapshot stay intact.
+#[test]
+fn loaded_stats_negative_count_preserves_existing_meta_values() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let table_id = 4242;
+    let initial = ClusterTableStats {
+        table_id,
+        version: 440_000_000_000_000_000,
+        snapshot: 439_000_000_000_000_000,
+        last_analyze_version: 440_000_000_000_000_000,
+        last_stats_hist_version: 440_000_000_000_000_000,
+        modify_count: 7,
+        row_count: 10_240,
+        columns: Vec::new(),
+        indexes: Vec::new(),
+    };
+    let plan = plan_stats_write(&mut store, &catalog, &initial, now()).expect("analyze plans");
+    apply_mutations(&mut store, &plan.mutations);
+
+    let version = initial.version + 1;
+    let item = full_histogram(1, false);
+    let plan = plan_loaded_stats_item_write(
+        &mut store,
+        &catalog,
+        table_id,
+        -1,
+        &item,
+        version,
+        now(),
+    )
+    .expect("negative-count item plans");
+    apply_mutations(&mut store, &plan.mutations);
+
+    let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
+    assert_eq!(
+        loader.load_meta(&mut store, table_id).expect("meta loads"),
+        Some((
+            version,
+            initial.snapshot,
+            initial.modify_count,
+            initial.row_count,
+            version,
+        ))
+    );
+}
+
 /// Go's final `SaveMetaToStorage` is an upsert update, not the per-item
 /// `REPLACE`; when a dump contains no matching histogram it updates the
 /// counters/version without resetting the prior analyze snapshot.
@@ -617,11 +665,11 @@ fn loaded_stats_usage_replaces_timestamps_in_one_plan() {
         &mut store,
         &catalog,
         table_id,
-        &[JsonPredicateColumn {
+        &[Some(JsonPredicateColumn {
             id: 7,
             last_used_at: Some("2026-08-29 01:02:03.123456".to_owned()),
             last_analyzed_at: Some("2026-08-28 04:05:06.000007".to_owned()),
-        }],
+        })],
         now(),
     )
     .expect("predicate usage plans");
@@ -631,11 +679,14 @@ fn loaded_stats_usage_replaces_timestamps_in_one_plan() {
         &mut store,
         &catalog,
         table_id,
-        &[JsonPredicateColumn {
-            id: 7,
-            last_used_at: None,
-            last_analyzed_at: Some("2026-08-30 08:09:10.000011".to_owned()),
-        }],
+        &[
+            None,
+            Some(JsonPredicateColumn {
+                id: 7,
+                last_used_at: None,
+                last_analyzed_at: Some("2026-08-30 08:09:10.000011".to_owned()),
+            }),
+        ],
         now(),
     )
     .expect("replacement usage plans");

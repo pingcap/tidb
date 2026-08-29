@@ -70,6 +70,7 @@ pub mod cluster_auto_id;
 pub mod cluster_catalog;
 pub mod cluster_ddl;
 pub mod cluster_index_id;
+pub mod cluster_load_stats;
 pub mod cluster_privilege_load;
 pub mod cluster_sequence;
 pub mod cluster_stats_load;

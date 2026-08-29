@@ -247,13 +247,13 @@ pub fn plan_loaded_stats_usage_write<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
     table_id: i64,
-    predicate_columns: &[JsonPredicateColumn],
+    predicate_columns: &[Option<JsonPredicateColumn>],
     now: Time,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let mut plan = StatsWritePlan::default();
     let table = locate(catalog, "column_stats_usage")?;
     let mut rows = StatsRows::open(snapshot, table, &["table_id", "column_id"], table_id)?;
-    for column in predicate_columns {
+    for column in predicate_columns.iter().flatten() {
         let mut values = defaults_row(table, now)?;
         set(table, &mut values, "table_id", Datum::Int(table_id));
         set(table, &mut values, "column_id", Datum::Int(column.id));
@@ -320,6 +320,23 @@ fn plan_loaded_meta<S: MetaSnapshot>(
 ) -> Result<(), StatsWriteError> {
     let table = locate(catalog, "stats_meta")?;
     let mut rows = StatsRows::open(snapshot, table, &["table_id"], table_id)?;
+    if count < 0 {
+        let identity = vec![format!("{:?}", Datum::Int(table_id))];
+        let Some(mut values) = rows.existing_values(&identity).cloned() else {
+            // Go's UPDATE matches no row and still lets the histogram write
+            // continue; it does not synthesize a stats_meta row here.
+            return Ok(());
+        };
+        set(table, &mut values, "version", Datum::UInt(version));
+        set(
+            table,
+            &mut values,
+            "last_stats_histograms_version",
+            Datum::UInt(version),
+        );
+        rows.store(snapshot, catalog, &values, plan)?;
+        return rows.publish_watermark(catalog, plan);
+    }
     let mut values = defaults_row(table, now)?;
     set(table, &mut values, "table_id", Datum::Int(table_id));
     set(table, &mut values, "version", Datum::UInt(version));

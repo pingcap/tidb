@@ -42,7 +42,7 @@ pub struct JsonTable {
     pub table_name: String,
     /// Predicate-column usage records.
     #[serde(default)]
-    pub predicate_columns: Option<Vec<JsonPredicateColumn>>,
+    pub predicate_columns: Option<Vec<Option<JsonPredicateColumn>>>,
     /// Realtime row count.
     #[serde(default)]
     pub count: i64,
@@ -61,7 +61,12 @@ impl JsonTable {
     /// Go `(*JSONTable).Sort`.
     pub fn sort(&mut self) {
         if let Some(columns) = &mut self.predicate_columns {
-            columns.sort_by_key(|column| column.id);
+            columns.sort_by_key(|column| {
+                column
+                    .as_ref()
+                    .expect("nil JSONPredicateColumn in JSONTable.Sort")
+                    .id
+            });
         }
     }
 }

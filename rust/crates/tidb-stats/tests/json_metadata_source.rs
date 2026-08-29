@@ -23,10 +23,10 @@ use tidb_stats::{
 fn source_json_table_sort_orders_predicate_columns_by_id() {
     let mut table = JsonTable {
         predicate_columns: Some(vec![
-            JsonPredicateColumn::new(9),
-            JsonPredicateColumn::new(2),
-            JsonPredicateColumn::new(-1),
-            JsonPredicateColumn::new(2),
+            Some(JsonPredicateColumn::new(9)),
+            Some(JsonPredicateColumn::new(2)),
+            Some(JsonPredicateColumn::new(-1)),
+            Some(JsonPredicateColumn::new(2)),
         ]),
         ..JsonTable::default()
     };
@@ -37,7 +37,7 @@ fn source_json_table_sort_orders_predicate_columns_by_id() {
             .as_ref()
             .expect("predicate columns")
             .iter()
-            .map(|column| column.id)
+            .map(|column| column.as_ref().expect("non-nil predicate column").id)
             .collect::<Vec<_>>(),
         vec![-1, 2, 2, 9]
     );
