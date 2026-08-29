@@ -13,8 +13,8 @@
 // limitations under the License.
 
 //! Batch b047 (`pkg/statistics.part6`) — Go unit tests from
-//! `pkg/statistics/handle/lockstats` (query/unlock), `pkg/statistics/handle/storage`
-//! (dump/gc/read/stats_read_writer), `pkg/statistics/handle/syncload`,
+//! `pkg/statistics/handle/storage` (dump/gc/read/stats_read_writer),
+//! `pkg/statistics/handle/syncload`,
 //! read from `origin/master`.
 //!
 //! Almost every test in this slice drives the statistics handle through a mock
@@ -22,75 +22,10 @@
 //! `RestrictedSQLExecutor`). Those behaviors are marked `#[ignore]` with a
 //! `go-parity-gap` reason until the owning Rust surface exists; they are never
 //! approximated. The pure slices that ARE ported are pinned elsewhere:
-//! - `TestGenerateSkippedTablesMessage` / `TestGenerateSkippedPartitionsMessage`
-//!   → `lock_messages_source.rs`
-//! - `TestGetTablesLockedStatuses` → `locked_tables_source.rs`
-//! - `TestGetStatsDeltaFromTableLocked` → `stats_delta_source.rs`
 //! - slow-stats-saving lease-threshold decisions → `stats_read_writer_source.rs`
 //! - GC `forCount` batching → `gc_batch_count_source.rs`
 
 use tidb_stats::gc_batch_count;
-
-// --- pkg/statistics/handle/lockstats/query_lock_test.go ---
-
-// TestGetTablesLockedStatuses' pure filtering slice is pinned exactly by
-// locked_tables_source::source_locked_table_filter_returns_only_requested_locked_ids
-// and ::source_locked_table_filter_empty_locked_set_is_empty.
-
-#[ignore]
-#[test]
-fn query_locked_tables_session_execution() {
-    // go-parity-gap: requires the mocked RestrictedSQLExecutor/session layer.
-    unimplemented!("session-bound Go test")
-}
-
-// --- pkg/statistics/handle/lockstats/unlock_stats_test.go ---
-
-#[test]
-fn source_unlock_stats_pure_slice_is_pinned_elsewhere() {
-    // The row-shape rule of TestGetStatsDeltaFromTableLocked (first row →
-    // (count, modify_count), empty result → zeros, error passthrough) is pinned
-    // by stats_delta_source::source_empty_delta_rows_use_zero_values,
-    // source_delta_rows_read_the_first_count_and_modify_count, and
-    // source_delta_query_errors_are_returned_unchanged. Re-derive one case here
-    // via the same public API to keep the Go case visible in this batch.
-    let rows = [(1_i64, 1_i64)];
-    assert_eq!(
-        tidb_stats::stats_delta_from_rows::<&str>(Ok(&rows)).map(|d| (d.count, d.modify_count)),
-        Ok((1, 1))
-    );
-}
-
-#[ignore]
-#[test]
-fn update_stats_and_unlock_table() {
-    // go-parity-gap: failpoint-guarded UPDATE/DELETE against mysql tables via
-    // session executor; not ported to tidb-stats.
-    unimplemented!("storage-bound Go test")
-}
-
-#[ignore]
-#[test]
-fn remove_locked_tables() {
-    // go-parity-gap: DELETE FROM mysql.stats_table_locked driven through the
-    // session executor; not ported to tidb-stats.
-    unimplemented!("storage-bound Go test")
-}
-
-#[ignore]
-#[test]
-fn remove_locked_partitions() {
-    // go-parity-gap: partition-scoped unlock SQL via session executor.
-    unimplemented!("storage-bound Go test")
-}
-
-#[ignore]
-#[test]
-fn remove_locked_partitions_failed_if_the_whole_table_is_locked() {
-    // go-parity-gap: whole-table-lock rejection path needs the storage-backed
-    // lock lookup.
-    unimplemented!("storage-bound Go test")
-}
 
 // --- pkg/statistics/handle/main_test.go ---
 // TestMain harness (testkit bootstrap) — skipped-reason: Go test harness, not

@@ -838,6 +838,12 @@ For each bounded behavior cluster:
       execution. The remaining interface family is unclaimed until the stats
       core/handle crate boundary is split. Inventory is in
       `receipts/statistics_handle_types_audit.md`.
+- [x] Audit the complete pinned `pkg/statistics/handle/lockstats` package.
+      Remove three deterministic leaf modules, their eight tests, one duplicate
+      batch test, and five empty gap tests. The actual package is transactional
+      SQL/session behavior and cannot land before the complete handle-types and
+      ordinary stats-handle owners. Inventory is in
+      `receipts/statistics_handle_lockstats_audit.md`.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope
@@ -976,6 +982,13 @@ For each bounded behavior cluster:
   owned by Go. The wider interface package cannot be completed inside
   `tidb-stats` without a dependency cycle and remains explicitly unclaimed.
   Date/Author: 2026-08-29, Codex.
+- Decision: `pkg/statistics/handle/lockstats` is not its message formatter,
+  set intersection, or first-row decoder. Its observable behavior is one
+  transaction-wrapped session owner performing ordered lock/unlock SQL,
+  timestamp updates, partition-to-global delta propagation, warnings, errors,
+  and query context. All disconnected leaves and placeholder tests are removed
+  until the complete dependency-closed package can land. Date/Author:
+  2026-08-29, Codex.
 
 ## Surprises & Discoveries
 

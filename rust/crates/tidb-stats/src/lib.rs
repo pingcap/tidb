@@ -68,8 +68,6 @@ pub mod index;
 pub mod index_query;
 pub mod json_metadata;
 pub mod json_stats_version;
-pub mod lock_messages;
-pub mod locked_tables;
 pub mod memory_usage;
 pub mod non_partitioned_analysis;
 pub mod overlap_geometry;
@@ -86,7 +84,6 @@ pub mod scalar_enum;
 pub mod scalar_geometry;
 pub mod sorted_builder;
 pub mod static_partitioned_analysis;
-pub mod stats_delta;
 pub mod stats_lock_table;
 pub mod stats_meta;
 pub mod stats_meta_save_sql;
@@ -194,10 +191,6 @@ pub use index::{
 pub use index_query::query_index_bytes;
 pub use json_metadata::{JsonPredicateColumn, JsonTable, TIDB_GLOBAL_STATS};
 pub use json_stats_version::{json_stats_version, JSON_STATS_VERSION_0, JSON_STATS_VERSION_1};
-pub use lock_messages::{
-    generate_stable_skipped_partitions_message, generate_stable_skipped_tables_message,
-};
-pub use locked_tables::{get_locked_tables, SELECT_LOCKED_TABLES_SQL};
 pub use memory_usage::{ColumnMemUsage, IndexMemUsage};
 pub use non_partitioned_analysis::{
     analyze_type, gen_sql_for_analyze_index, gen_sql_for_analyze_table, has_newly_added_index,
@@ -239,7 +232,6 @@ pub use static_partitioned_analysis::{
     has_newly_added_static_partition_index, static_partition_analyze_type,
     static_partition_table_id, ANALYZE_STATIC_PARTITION, ANALYZE_STATIC_PARTITION_INDEX,
 };
-pub use stats_delta::{stats_delta_from_rows, StatsDelta, SELECT_DELTA_SQL};
 pub use stats_lock_table::StatsLockTable;
 pub use stats_meta::{stats_meta_counts, stats_meta_query, StatsMetaCounts};
 pub use stats_meta_save_sql::{stats_meta_save_sql, StatsMetaSaveUpdate};
