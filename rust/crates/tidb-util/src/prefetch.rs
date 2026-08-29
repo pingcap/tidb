@@ -15,9 +15,8 @@
 //! Background-prefetching reader for `pkg/util/prefetch`.
 //!
 //! A zero-capacity channel preserves the source's one-buffer-ahead contract.
-//! [`new_reader_with_close`] accepts the separate close operation needed by
-//! cancellable streams; [`new_reader`] is the convenience form for plain Rust
-//! [`Read`] values whose close operation is only cancellation and drop.
+//! [`new_reader`] accepts the separate close operation needed to represent
+//! Go's `io.ReadCloser` with Rust's standard I/O traits.
 
 use std::io::{self, Cursor, Read};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
@@ -119,22 +118,10 @@ pub struct PrefetchReader {
     closed: bool,
 }
 
-/// Creates a new [`PrefetchReader`] over `reader`, prefetching `prefetch_size`
-/// bytes total (split across two ping-pong buffers). `range_size` is the total
-/// size of the data range being read.
-pub fn new_reader<R: Read + Send + 'static>(
-    reader: R,
-    range_size: i64,
-    prefetch_size: usize,
-) -> PrefetchReader {
-    new_reader_with_close(reader, range_size, prefetch_size, || Ok(()))
-}
-
-/// Creates a prefetch reader whose close operation is invoked before the
-/// producer is joined. The callback may close a shared socket or response body
-/// to unblock an in-flight read, and its result is returned by
-/// [`PrefetchReader::close`].
-pub fn new_reader_with_close<R, C>(
+/// Go `NewReader`. The callback represents the source `io.ReadCloser.Close`:
+/// it is invoked before the producer is joined and may unblock an in-flight
+/// source read.
+pub fn new_reader<R, C>(
     reader: R,
     range_size: i64,
     prefetch_size: usize,
@@ -219,18 +206,12 @@ impl Read for PrefetchReader {
     }
 }
 
-impl Drop for PrefetchReader {
-    fn drop(&mut self) {
-        let _ = self.close();
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{new_reader, new_reader_with_close, PrefetchReader};
+    use super::{new_reader, PrefetchReader};
     use std::io::{Cursor, ErrorKind, Read};
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{mpsc, Arc, Condvar, Mutex};
+    use std::sync::Arc;
     use std::time::{Duration, Instant};
 
     fn eventually(cond: impl Fn() -> bool) {
@@ -248,7 +229,7 @@ mod tests {
     #[test]
     fn basic() {
         let source = Cursor::new(b"01234567890".to_vec());
-        let mut r = new_reader(source, 11, 3);
+        let mut r = new_reader(source, 11, 3, || Ok(()));
 
         let mut buf1 = [0u8; 1];
         assert_eq!(r.read(&mut buf1).unwrap(), 1);
@@ -270,13 +251,13 @@ mod tests {
         assert_eq!(r.read(&mut buf4).unwrap(), 0); // Go: io.EOF
 
         let source = Cursor::new(b"01234567890".to_vec());
-        let mut r = new_reader(source, 11, 3);
+        let mut r = new_reader(source, 11, 3, || Ok(()));
         let mut buf = [0u8; 11];
         assert_eq!(r.read(&mut buf).unwrap(), 11);
         assert_eq!(r.read(&mut buf).unwrap(), 0); // Go: io.EOF
 
         let source = Cursor::new(b"01234".to_vec());
-        let mut r = new_reader(source, 5, 100);
+        let mut r = new_reader(source, 5, 100, || Ok(()));
         let mut buf = [0u8; 11];
         assert_eq!(r.read(&mut buf).unwrap(), 5);
         assert_eq!(r.read(&mut buf).unwrap(), 0); // Go: io.EOF
@@ -294,7 +275,7 @@ mod tests {
     // converted to end-of-stream.
     #[test]
     fn convert_unexpected_eof() {
-        let mut r = new_reader(UnexpectedEofReader, 10, 10);
+        let mut r = new_reader(UnexpectedEofReader, 10, 10, || Ok(()));
         let mut buf = [0u8; 10];
         let err = r.read(&mut buf).unwrap_err();
         assert_eq!(err.kind(), ErrorKind::UnexpectedEof);
@@ -304,61 +285,8 @@ mod tests {
     #[test]
     fn close_before_drain_read() {
         let source = Cursor::new(vec![0u8; 1024]);
-        let mut r: PrefetchReader = new_reader(source, 1024, 2);
+        let mut r: PrefetchReader = new_reader(source, 1024, 2, || Ok(()));
         assert!(r.close().is_ok());
-    }
-
-    #[test]
-    fn close_returns_the_source_error_once() {
-        let close_count = Arc::new(AtomicUsize::new(0));
-        let observed = Arc::clone(&close_count);
-        let source = Cursor::new(vec![0u8; 1024]);
-        let mut reader = new_reader_with_close(source, 1024, 2, move || {
-            observed.fetch_add(1, Ordering::SeqCst);
-            Err(std::io::Error::other("source close failed"))
-        });
-
-        assert_eq!(
-            reader.close().unwrap_err().to_string(),
-            "source close failed"
-        );
-        assert_eq!(close_count.load(Ordering::SeqCst), 1);
-        assert!(reader.close().is_ok());
-        assert_eq!(close_count.load(Ordering::SeqCst), 1);
-    }
-
-    struct BlockingReader {
-        closed: Arc<(Mutex<bool>, Condvar)>,
-    }
-
-    impl Read for BlockingReader {
-        fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
-            let (closed, wake) = &*self.closed;
-            let mut closed = closed.lock().unwrap();
-            while !*closed {
-                closed = wake.wait(closed).unwrap();
-            }
-            Ok(0)
-        }
-    }
-
-    #[test]
-    fn close_unblocks_an_inflight_source_read() {
-        let closed = Arc::new((Mutex::new(false), Condvar::new()));
-        let source = BlockingReader {
-            closed: Arc::clone(&closed),
-        };
-        let close_state = Arc::clone(&closed);
-        let mut reader = new_reader_with_close(source, 1, 2, move || {
-            let (closed, wake) = &*close_state;
-            *closed.lock().unwrap() = true;
-            wake.notify_all();
-            Ok(())
-        });
-        let (finished, result) = mpsc::sync_channel(0);
-        std::thread::spawn(move || finished.send(reader.close()).unwrap());
-
-        assert!(result.recv_timeout(Duration::from_secs(1)).unwrap().is_ok());
     }
 
     struct FragmentReader {
@@ -403,7 +331,7 @@ mod tests {
             frag_size: 3,
         };
         // prefetch = 10B, so the two ping-pong buffers are 5B each.
-        let mut prefetch_reader = new_reader(frag, 10, 10);
+        let mut prefetch_reader = new_reader(frag, 10, 10, || Ok(()));
         // With no read yet, one ping-pong buffer is fully filled.
         eventually(|| i.load(Ordering::SeqCst) == 5);
         // After a small read, one buffer serves the read and the other fills.
