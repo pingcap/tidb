@@ -772,10 +772,16 @@ For each bounded behavior cluster:
       `receipts/statistics_handle_usage_audit.md`.
 - [x] Complete the pinned `pkg/statistics/handle/cache/internal` interface
       package in `tidb-stats-handle-cache-internal`: bind it to shared actual
-      statistics tables, preserve all eleven methods and shared receivers,
+      statistics tables, preserve all eleven pointer-receiver methods,
       and remove the generic value, extra method, and source-absent mock tests.
       The atomic inventory and WIP gates are in
       `receipts/statistics_handle_cache_internal.md`.
+- [x] Complete the pinned `pkg/statistics/handle/cache/internal/mapcache`
+      package in `tidb-stats-handle-cache-internal-mapcache`: derive cost from
+      actual statistics tables, retain shared pointers across independent map
+      copies, implement the complete cache contract, and remove the generic
+      caller-cost surface and source-absent tests. The atomic inventory and WIP
+      gates are in `receipts/statistics_handle_cache_internal_mapcache.md`.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope
@@ -860,6 +866,10 @@ For each bounded behavior cluster:
   Rust therefore must not implement that unlanded TODO by exposing a generic
   value contract or additional collection conveniences. Date/Author:
   2026-08-29, Codex.
+- Decision: map-cache cost is table behavior, not a caller argument. Copying
+  the cache duplicates its map entries and aggregate counter while preserving
+  the same table pointers; a generic value/cost container is not equivalent.
+  Date/Author: 2026-08-29, Codex.
 
 ## Surprises & Discoveries
 

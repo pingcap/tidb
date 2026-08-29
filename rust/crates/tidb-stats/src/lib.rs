@@ -75,7 +75,6 @@ pub mod json_metadata;
 pub mod json_stats_version;
 pub mod lock_messages;
 pub mod locked_tables;
-pub mod map_cache;
 pub mod memory_cost;
 pub mod memory_usage;
 pub mod mock_statistics_shape;
@@ -219,7 +218,6 @@ pub use lock_messages::{
     generate_stable_skipped_partitions_message, generate_stable_skipped_tables_message,
 };
 pub use locked_tables::{get_locked_tables, SELECT_LOCKED_TABLES_SQL};
-pub use map_cache::MapCache;
 pub use memory_cost::{
     add_memory_cost, adjust_mem_cost, effective_mem_cost, MemoryCostError, MEMORY_COST_PERCENT,
     TEST_MODE_MEMORY_COST,

@@ -18,8 +18,9 @@ has no generated, platform-specific, test, fixture, or benchmark artifacts.
 
 `StatsCacheInner` has exactly the pinned eleven-method surface. It operates on
 shared `tidb_stats::Table` values, preserving Go `*statistics.Table` identity
-without copying table contents. Every method takes a shared receiver because
-both pinned implementations synchronize or otherwise mutate internally.
+without copying table contents. Mutating pointer-receiver methods use Rust
+interior mutability in concrete implementations; the interface does not add a
+Go-absent thread-safety bound.
 
 The former `tidb-stats` trait was removed because it generalized the table to
 an arbitrary value type, exposed a source-absent `is_empty` method, required

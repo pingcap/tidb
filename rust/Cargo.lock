@@ -3767,6 +3767,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-stats-handle-cache-internal-mapcache"
+version = "0.0.0"
+dependencies = [
+ "tidb-stats",
+ "tidb-stats-handle-cache-internal",
+]
+
+[[package]]
 name = "tidb-stats-handle-internal"
 version = "0.0.0"
 dependencies = [

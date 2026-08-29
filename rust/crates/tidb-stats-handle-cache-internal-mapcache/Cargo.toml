@@ -1,0 +1,15 @@
+[package]
+name = "tidb-stats-handle-cache-internal-mapcache"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB statistics handle map cache."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-stats = { path = "../tidb-stats" }
+tidb-stats-handle-cache-internal = { path = "../tidb-stats-handle-cache-internal" }
