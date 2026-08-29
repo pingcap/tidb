@@ -556,6 +556,15 @@ SELECT t2.a,t2.b,t3.a,t3.b,t4.a,t4.b
 show warnings;
 drop table if exists t1, t2, t3, t4;
 
+# TestIssue64789
+drop table if exists t0, t1;
+CREATE TABLE t0(c0 TEXT);
+CREATE TABLE t1(c0 TEXT);
+INSERT INTO t0 VALUES ('s\n');
+INSERT INTO t1 VALUES ('s ');
+SELECT * FROM t0 JOIN t1 ON t0.c0 > t1.c0 WHERE true OR (CASE false WHEN true THEN FIND_IN_SET(t1.c0, t1.c0) ELSE t1.c0 END) HAVING t0.c0 <= t1.c0;
+SELECT * FROM t0 JOIN t1 ON t0.c0 > t1.c0 WHERE true HAVING t0.c0 <= t1.c0;
+
 # TestIssue56270
 drop table if exists t0, v0;
 drop view if exists v0;
