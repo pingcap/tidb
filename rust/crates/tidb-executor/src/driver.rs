@@ -268,6 +268,7 @@ use tidb_expr::schema::Schema;
 pub mod access;
 mod agg_build;
 mod catalog;
+pub(crate) use catalog::sync_load;
 mod dml;
 mod errors;
 mod from;

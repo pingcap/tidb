@@ -3681,6 +3681,7 @@ dependencies = [
  "tidb-txnkv",
  "tidb-unistore",
  "tidb-util",
+ "tidb-vardef",
  "tidb-workloadrepo",
  "tikv-client",
  "tikv-jemalloc-sys",

@@ -350,6 +350,7 @@ struct ClusterStatisticsItemLoader {
     transactions: Arc<dyn ClusterTransactions>,
     catalog: Arc<SharedClusterCatalog>,
     stats: Arc<SharedStats>,
+    global_vars: GlobalSysvars,
 }
 
 impl tidb_executor::driver::StatisticsItemLoader for ClusterStatisticsItemLoader {
@@ -360,6 +361,11 @@ impl tidb_executor::driver::StatisticsItemLoader for ClusterStatisticsItemLoader
     ) -> Result<Vec<(i64, Arc<tidb_executor::access_cost::TableStatistics>)>, String> {
         let catalog = self.catalog.load();
         let loader = ClusterStatsLoader::locate(&catalog).map_err(|error| error.to_string())?;
+        let skipped_column_types = self
+            .global_vars
+            .get(tidb_vardef::tidb_vars::TIDB_ANALYZE_SKIP_COLUMN_TYPES)
+            .map(|value| tidb_session::varsutil::parse_analyze_skip_column_types(&value))
+            .unwrap_or_default();
         let mut updated = std::collections::BTreeSet::new();
         for requested in items {
             let item = requested.table_item_id;
@@ -371,6 +377,14 @@ impl tidb_executor::driver::StatisticsItemLoader for ClusterStatisticsItemLoader
             else {
                 continue;
             };
+            if item.is_index
+                && !table
+                    .indices
+                    .iter_deref()
+                    .any(|index| index.read().id == item.id)
+            {
+                continue;
+            }
             let column_type = (!item.is_index)
                 .then(|| {
                     table.cols().iter_deref().find_map(|column| {
@@ -379,6 +393,17 @@ impl tidb_executor::driver::StatisticsItemLoader for ClusterStatisticsItemLoader
                     })
                 })
                 .flatten();
+            if !item.is_index && column_type.is_none() {
+                continue;
+            }
+            if column_type.as_ref().is_some_and(|field_type| {
+                skipped_column_types.contains(tidb_datatype::type_to_str(
+                    field_type.code(),
+                    field_type.charset_name(),
+                ))
+            }) {
+                continue;
+            }
             let snapshot = self.transactions.open_snapshot(resource_group)?;
             let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
             let loaded = loader
@@ -694,6 +719,7 @@ impl QuerySessionFactory for ClusterSessionFactory {
                 transactions: Arc::clone(&self.transactions),
                 catalog: Arc::clone(&self.catalog),
                 stats: Arc::clone(&self.stats),
+                global_vars: self.global_vars.clone(),
             }));
         let mut session = Session::with_catalog(Arc::new(Mutex::new(built.catalog)));
         session.set_index_usage_collector(Arc::clone(&self.index_usage_collector));

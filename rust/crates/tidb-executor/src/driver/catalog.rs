@@ -24,6 +24,9 @@
 
 use super::*;
 use crate::kv_table::TableCharset;
+
+pub(crate) mod sync_load;
+
 /// An in-memory table: named, typed columns plus row values.
 #[derive(Clone, Debug, Default)]
 pub struct MemTable {
@@ -104,6 +107,7 @@ pub trait StatisticsItemLoader: Send + Sync {
 struct StatisticsCache {
     values: std::sync::RwLock<HashMap<i64, Arc<crate::access_cost::TableStatistics>>>,
     loader: std::sync::RwLock<Option<Arc<dyn StatisticsItemLoader>>>,
+    sync_load: std::sync::OnceLock<Arc<sync_load::SyncLoadService>>,
 }
 
 impl std::fmt::Debug for StatisticsCache {
@@ -127,6 +131,20 @@ impl std::fmt::Debug for StatisticsCache {
                     .is_some(),
             )
             .finish()
+    }
+}
+
+fn enqueue_sync_load_failures(
+    requested_items: &[tidb_model::StatsLoadItem],
+    remaining_items: &std::collections::HashSet<tidb_model::TableItemID>,
+) {
+    for requested in requested_items {
+        if !remaining_items.contains(&requested.table_item_id) {
+            continue;
+        }
+        let mut item = requested.table_item_id;
+        item.is_sync_load_failed = true;
+        tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(item, requested.full_load);
     }
 }
 
@@ -1261,11 +1279,15 @@ impl Catalog {
 
     /// Installs the domain statistics worker used by logical optimization.
     pub fn set_statistics_item_loader(&mut self, loader: Arc<dyn StatisticsItemLoader>) {
+        let service_loader = Arc::clone(&loader);
         *self
             .statistics
             .loader
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(loader);
+        self.statistics.sync_load.get_or_init(|| {
+            sync_load::SyncLoadService::new(service_loader, Arc::downgrade(&self.statistics))
+        });
     }
 
     /// Go `storage.CleanFakeItemsForShowHistInFlights`: remove queue entries
@@ -1292,6 +1314,60 @@ impl Catalog {
             }
         }
         really_needed
+    }
+
+    /// Go `storage.LoadNeededHistograms`: drains the process-wide asynchronous
+    /// demand on the domain tick. Each item is attempted at most once and is
+    /// removed even when storage returns an error; a later item remains queued
+    /// when an earlier load fails.
+    pub fn load_needed_histograms(&self, resource_group: &str) -> Result<(), String> {
+        let loader = self
+            .statistics
+            .loader
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let Some(loader) = loader else {
+            return Ok(());
+        };
+        let needed = &tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS;
+        for requested in needed.all_items() {
+            let item = requested.table_item_id;
+            let valid_metadata = if item.is_index {
+                self.kv_table_by_id(item.table_id)
+                    .is_some_and(|table| table.indexes().iter().any(|index| index.id == item.id))
+            } else {
+                item.id > 0
+                    && self.kv_table_by_id(item.table_id).is_some_and(|table| {
+                        table.columns.iter().any(|column| column.id == item.id)
+                    })
+            };
+            let load_needed = self
+                .table_statistics(item.table_id)
+                .is_some_and(|statistics| {
+                    if item.is_index {
+                        statistics.index_is_load_needed(item.id)
+                    } else {
+                        statistics.column_is_load_needed(item.id, requested.full_load)
+                    }
+                });
+            if !valid_metadata || !load_needed {
+                needed.delete(item);
+                continue;
+            }
+            let loaded = loader.load_items(std::slice::from_ref(&requested), resource_group);
+            needed.delete(item);
+            let tables = loaded?;
+            let mut values = self
+                .statistics
+                .values
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            for (table_id, statistics) in tables {
+                values.insert(table_id, statistics);
+            }
+        }
+        Ok(())
     }
 
     fn statistics_load_items(
@@ -1498,42 +1574,18 @@ impl Catalog {
         if items.is_empty() {
             return Ok(());
         }
-        let loader = self
-            .statistics
-            .loader
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone();
-        let Some(loader) = loader else {
+        if wait.is_zero() {
+            for item in &items {
+                tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
+                    .insert(item.table_item_id, item.full_load);
+            }
+            return Ok(());
+        }
+        let Some(service) = self.statistics.sync_load.get() else {
             return Ok(());
         };
-        for item in &items {
-            tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
-                .insert(item.table_item_id, item.full_load);
-        }
-        let cache = Arc::clone(&self.statistics);
-        let resource_group = context.resource_group_name().to_owned();
-        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-        std::thread::spawn(move || {
-            let loaded = loader.load_items(&items, &resource_group);
-            if let Ok(tables) = &loaded {
-                let mut values = cache
-                    .values
-                    .write()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                for (table_id, statistics) in tables {
-                    values.insert(*table_id, Arc::clone(statistics));
-                }
-            }
-            for item in &items {
-                tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.delete(item.table_item_id);
-            }
-            let _ = sender.send(loaded.map(|_| ()));
-        });
-        if wait.is_zero() {
-            return Ok(());
-        }
-        context.install_pending_statistics_load(receiver, wait);
+        let receivers = service.request(&items, context.resource_group_name(), wait);
+        context.install_pending_statistics_load(receivers, items, wait);
         Ok(())
     }
 
@@ -1548,34 +1600,51 @@ impl Catalog {
         let Some(pending) = context.take_pending_statistics_load() else {
             return Ok(());
         };
-        match pending.receiver.recv_timeout(pending.timeout) {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(error)) => {
-                context.report_sync_stats_failed();
-                if context.stats_load_pseudo_timeout() {
-                    context
-                        .set_skip_plan_cache("sync-load timed out and fell back to pseudo stats");
-                    context.append_warning_parts(1105, &error);
-                    Ok(())
-                } else {
-                    Err(tidb_planner::plan_base::PlanError::internal(error))
+        let now = std::time::Instant::now();
+        let deadline = now.checked_add(pending.timeout).unwrap_or(now);
+        let requested_items = pending.items;
+        let mut remaining_items = requested_items
+            .iter()
+            .map(|item| item.table_item_id)
+            .collect::<std::collections::HashSet<_>>();
+        for receiver in pending.receivers {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            match receiver.recv_timeout(remaining) {
+                Ok(sync_load::SyncLoadOutcome::TransportError(error)) => {
+                    tracing::warn!(error = %error, "synchronous statistics load request failed");
+                }
+                Ok(sync_load::SyncLoadOutcome::Item { item, error }) => {
+                    if let Some(error) = error {
+                        tracing::warn!(error = %error, "synchronous statistics item load failed");
+                    } else {
+                        remaining_items.remove(&item);
+                    }
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    enqueue_sync_load_failures(&requested_items, &remaining_items);
+                    context.report_sync_stats_failed();
+                    if context.stats_load_pseudo_timeout() {
+                        context.set_skip_plan_cache(
+                            "sync-load timed out and fell back to pseudo stats",
+                        );
+                        context.append_warning_parts(1105, "sync load stats timeout");
+                        return Ok(());
+                    }
+                    return Err(tidb_planner::plan_base::PlanError::internal(
+                        "sync load stats timeout",
+                    ));
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    enqueue_sync_load_failures(&requested_items, &remaining_items);
+                    context.report_sync_stats_failed();
+                    return Err(tidb_planner::plan_base::PlanError::internal(
+                        "sync load stats channel closed unexpectedly",
+                    ));
                 }
             }
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
-                if context.stats_load_pseudo_timeout() =>
-            {
-                context.report_sync_stats_failed();
-                context.set_skip_plan_cache("sync-load timed out and fell back to pseudo stats");
-                context.append_warning_parts(1105, "sync load stats timeout");
-                Ok(())
-            }
-            Err(error) => {
-                context.report_sync_stats_failed();
-                Err(tidb_planner::plan_base::PlanError::internal(
-                    error.to_string(),
-                ))
-            }
         }
+        enqueue_sync_load_failures(&requested_items, &remaining_items);
+        Ok(())
     }
 
     /// One table's loaded statistics; `None` is Go's `PseudoTable`.
@@ -2127,6 +2196,8 @@ impl ColumnResolver for TableResolver<'_> {
 mod statistics_request_tests {
     use super::*;
 
+    static STATS_LOAD_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[derive(Default)]
     struct RecordingLoader {
         requests: std::sync::Mutex<Vec<tidb_model::StatsLoadItem>>,
@@ -2178,6 +2249,7 @@ mod statistics_request_tests {
 
     #[test]
     fn determinate_load_requests_one_analyzed_column_per_visited_table() {
+        let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
         let (mut catalog, table_id, column_id) = analyzed_lite_catalog();
         let loader = Arc::new(RecordingLoader::default());
         catalog.set_statistics_item_loader(loader.clone());
@@ -2207,24 +2279,21 @@ mod statistics_request_tests {
     }
 
     #[test]
-    fn timeout_marks_failure_warns_and_refuses_plan_cache() {
+    fn a_singleflight_transport_timeout_is_diagnostic_not_pseudo_fallback() {
+        let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
         let (mut catalog, table_id, column_id) = analyzed_lite_catalog();
         catalog.set_statistics_item_loader(Arc::new(RecordingLoader {
             delay: std::time::Duration::from_millis(40),
             ..RecordingLoader::default()
         }));
+        let requested = tidb_model::TableItemID {
+            table_id,
+            id: column_id,
+            is_index: false,
+            is_sync_load_failed: false,
+        };
         let usage = tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage {
-            predicate_columns: [(
-                tidb_model::TableItemID {
-                    table_id,
-                    id: column_id,
-                    is_index: false,
-                    is_sync_load_failed: false,
-                },
-                true,
-            )]
-            .into_iter()
-            .collect(),
+            predicate_columns: [(requested, true)].into_iter().collect(),
             visited_logical_table_ids: [table_id].into_iter().collect(),
             ..Default::default()
         };
@@ -2233,20 +2302,26 @@ mod statistics_request_tests {
         catalog
             .request_statistics_load(&usage, &context)
             .expect("request only starts the load");
+        std::thread::sleep(std::time::Duration::from_millis(10));
         assert!(!context.sync_stats_failed());
         catalog
             .wait_statistics_load(&context)
-            .expect("pseudo fallback converts the timeout to a warning");
-        assert!(context.sync_stats_failed());
-        assert!(context.skip_plan_cache());
-        let warnings = context.take_warnings();
-        assert_eq!(warnings.len(), 1);
-        assert_eq!(warnings[0].1, 1105);
-        assert_eq!(warnings[0].2, "sync load stats timeout");
+            .expect("Go logs an individual singleflight timeout and continues");
+        assert!(!context.sync_stats_failed());
+        assert!(!context.skip_plan_cache());
+        assert!(context.take_warnings().is_empty());
+        let mut failed = requested;
+        failed.is_sync_load_failed = true;
+        assert!(tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
+            .all_items()
+            .iter()
+            .any(|item| item.table_item_id == failed));
+        tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.delete(failed);
     }
 
     #[test]
     fn histograms_in_flight_cleans_completed_statistics_items() {
+        let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
         let (mut catalog, table_id, column_id) = analyzed_lite_catalog();
         catalog.set_statistics_item_loader(Arc::new(RecordingLoader {
             delay: std::time::Duration::from_millis(40),
@@ -2272,12 +2347,15 @@ mod statistics_request_tests {
             .request_statistics_load(&usage, &context)
             .expect("start asynchronous load");
         assert_eq!(catalog.clean_needed_statistics_items(), 1);
-        std::thread::sleep(std::time::Duration::from_millis(80));
+        catalog
+            .load_needed_histograms("")
+            .expect("domain tick drains asynchronous demand");
         assert_eq!(catalog.clean_needed_statistics_items(), 0);
     }
 
     #[test]
     fn failed_async_load_removes_the_corrupted_item() {
+        let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
         let (mut catalog, table_id, column_id) = analyzed_lite_catalog();
         let loader = Arc::new(RecordingLoader {
             failure: Some("corrupted histogram bound".to_owned()),
@@ -2299,26 +2377,55 @@ mod statistics_request_tests {
         catalog
             .request_statistics_load(&usage, &context)
             .expect("start asynchronous load");
-        for _ in 0..100 {
-            if !tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
-                .all_items()
-                .iter()
-                .any(|item| item.table_item_id == requested)
-                && !loader
-                    .requests
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .is_empty()
-            {
-                return;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
-        panic!("a failed load must consume its process-wide needed item");
+        assert!(catalog.load_needed_histograms("").is_err());
+        assert!(!tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
+            .all_items()
+            .iter()
+            .any(|item| item.table_item_id == requested));
+        assert_eq!(
+            loader
+                .requests
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .as_slice(),
+            &[tidb_model::StatsLoadItem {
+                table_item_id: requested,
+                full_load: true,
+            }]
+        );
+    }
+
+    #[test]
+    fn async_domain_tick_drops_stale_column_metadata_without_storage_read() {
+        let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
+        let (mut catalog, table_id, _column_id) = analyzed_lite_catalog();
+        let loader = Arc::new(RecordingLoader::default());
+        catalog.set_statistics_item_loader(loader.clone());
+        let dropped = tidb_model::TableItemID {
+            table_id,
+            id: 99_999,
+            is_index: false,
+            is_sync_load_failed: false,
+        };
+        tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(dropped, true);
+
+        catalog
+            .load_needed_histograms("")
+            .expect("stale metadata is a successful skip");
+        assert!(loader
+            .requests
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_empty());
+        assert!(!tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
+            .all_items()
+            .iter()
+            .any(|item| item.table_item_id == dropped));
     }
 
     #[test]
     fn pruned_indexes_are_not_requested_for_statistics() {
+        let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
         let (mut catalog, table_id, column_id) = analyzed_lite_catalog();
         let index_id = catalog
             .kv_table_by_id(table_id)

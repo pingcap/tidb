@@ -52,6 +52,7 @@ tidb-stats-handle-usage-indexusage = { path = "../tidb-stats-handle-usage-indexu
 tidb-txnkv = { path = "../tidb-txnkv" }
 tikv-client.workspace = true
 tidb-util = { path = "../tidb-util" }
+tidb-vardef = { path = "../tidb-vardef" }
 serde_json = { workspace = true }
 tidb-config = { path = "../tidb-config" }
 toml.workspace = true

@@ -1122,14 +1122,18 @@ impl StmtContext {
 
     pub(crate) fn install_pending_statistics_load(
         &self,
-        receiver: std::sync::mpsc::Receiver<Result<(), String>>,
+        receivers: Vec<std::sync::mpsc::Receiver<crate::driver::sync_load::SyncLoadOutcome>>,
+        items: Vec<tidb_model::StatsLoadItem>,
         timeout: std::time::Duration,
     ) {
         *self
             .pending_statistics_load
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) =
-            Some(PendingStatisticsLoad { receiver, timeout });
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(PendingStatisticsLoad {
+            receivers,
+            items,
+            timeout,
+        });
     }
 
     pub(crate) fn take_pending_statistics_load(&self) -> Option<PendingStatisticsLoad> {
@@ -2340,7 +2344,8 @@ impl StmtContext {
 }
 
 pub(crate) struct PendingStatisticsLoad {
-    pub(crate) receiver: std::sync::mpsc::Receiver<Result<(), String>>,
+    pub(crate) receivers: Vec<std::sync::mpsc::Receiver<crate::driver::sync_load::SyncLoadOutcome>>,
+    pub(crate) items: Vec<tidb_model::StatsLoadItem>,
     pub(crate) timeout: std::time::Duration,
 }
 
