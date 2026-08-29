@@ -282,6 +282,27 @@ fn analyze_materializes_virtual_and_stored_generated_columns() {
         .unwrap();
 }
 
+/// Pinned Go warns when predicate-column storage has no row for the table,
+/// even though mandatory index columns still make the analysis executable.
+#[test]
+fn analyze_predicate_columns_without_collected_usage_warns() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a INT, KEY idx_a(a))").unwrap();
+
+    assert_eq!(
+        session.run("ANALYZE TABLE t PREDICATE COLUMNS").unwrap(),
+        StmtResult::Affected(0)
+    );
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        vec![vec![
+            "Warning",
+            "1105",
+            "No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
+        ]]
+    );
+}
+
 /// The in-process session is the second production consumer of the shared
 /// analyze engine. Go's two failpoints live in separate goroutines; this tier
 /// is synchronous, so both enter through one panic boundary but remain two

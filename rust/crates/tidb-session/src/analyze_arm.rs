@@ -195,7 +195,7 @@ impl Session {
         } else {
             None
         };
-        self.with_catalog_mut(|catalog| {
+        let result = self.with_catalog_mut(|catalog| {
             let (table_id, partition_ids, table) = match catalog.table_in(&schema, &name) {
                 Some(TableEntry::Kv(kv)) => (
                     kv.table_id,
@@ -270,6 +270,16 @@ impl Session {
                 }
             };
             if let Some(selected) = selected.as_mut() {
+                if choice == AnalyzeColumnChoice::Predicate && selected.is_empty() {
+                    ctx.append_warning_parts(
+                        1105,
+                        &format!(
+                            "No predicate column has been collected yet for table {}.{}, so only indexes and the columns composing the indexes will be analyzed",
+                            schema.to_lowercase(),
+                            name.to_lowercase()
+                        ),
+                    );
+                }
                 for index in table.indexes() {
                     for offset in &index.column_offsets {
                         if let Some(column) = table.columns().get(*offset) {
@@ -382,7 +392,9 @@ impl Session {
                 Ok(())
             })
             .map_err(|error| DriverError::unsupported(error.rendered_message().to_owned()))?
-        })
+        });
+        self.drain_context_warnings(&ctx);
+        result
     }
 
     /// Go's analyze memory quota, as one `ANALYZE` reads it.

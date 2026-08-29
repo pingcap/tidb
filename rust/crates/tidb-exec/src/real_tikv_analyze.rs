@@ -112,6 +112,8 @@ pub struct ClusterAnalyzeReport {
     pub bucket_count: usize,
     /// TopN entries stored.
     pub topn_count: usize,
+    /// Whether predicate-column selection found no collected column.
+    pub predicate_columns_empty: bool,
 }
 
 /// Why an `ANALYZE TABLE` transaction did not produce a committed report.
@@ -201,8 +203,9 @@ pub fn commit_cluster_analyze<C: StoreWriteClient, L: StoreWriteLoader, P: Store
                     .flatten()
             })
             .map(|stats| realtime_count_of(stats.row_count));
-        let (mut selected, cleanup) = selected_columns(&mut snapshot, &catalog, &table, statement)
-            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+        let (mut selected, cleanup, predicate_columns_empty) =
+            selected_columns(&mut snapshot, &catalog, &table, statement)
+                .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         if let Some(selected) = selected.as_mut() {
             add_mandatory_columns(&table, selected);
         }
@@ -222,9 +225,9 @@ pub fn commit_cluster_analyze<C: StoreWriteClient, L: StoreWriteLoader, P: Store
         }
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         write.mutations.splice(0..0, cleanup.mutations);
-        (report, write)
+        (report, write, predicate_columns_empty)
     };
-    let (report, write) = planned;
+    let (report, write, predicate_columns_empty) = planned;
 
     if write.is_empty() {
         transaction
@@ -243,6 +246,7 @@ pub fn commit_cluster_analyze<C: StoreWriteClient, L: StoreWriteLoader, P: Store
         histogram_count: write.histogram_count,
         bucket_count: write.bucket_count,
         topn_count: write.topn_count,
+        predicate_columns_empty,
     };
     // The commit mints its own deadline here rather than inheriting one from
     // function entry: everything above it -- the catalog read, the previous
@@ -268,10 +272,11 @@ fn selected_columns<S: crate::cluster_catalog::MetaSnapshot>(
     catalog: &crate::cluster_catalog::ClusterCatalog,
     table: &tidb_model::table_info::TableInfo,
     statement: &AnalyzeStatement,
-) -> Result<(Option<HashSet<i64>>, StatsWritePlan), crate::cluster_stats_write::StatsWriteError> {
+) -> Result<(Option<HashSet<i64>>, StatsWritePlan, bool), crate::cluster_stats_write::StatsWriteError>
+{
     match &statement.columns {
         AnalyzeColumnChoice::All | AnalyzeColumnChoice::Default => {
-            Ok((None, StatsWritePlan::default()))
+            Ok((None, StatsWritePlan::default(), false))
         }
         AnalyzeColumnChoice::Predicate => {
             let current = table
@@ -281,7 +286,8 @@ fn selected_columns<S: crate::cluster_catalog::MetaSnapshot>(
                 .collect::<Vec<_>>();
             let (columns, cleanup) =
                 plan_get_predicate_columns(snapshot, catalog, table.id, &current)?;
-            Ok((Some(columns.into_iter().collect()), cleanup))
+            let empty = columns.is_empty();
+            Ok((Some(columns.into_iter().collect()), cleanup, empty))
         }
         AnalyzeColumnChoice::Explicit(names) => {
             let mut selected = HashSet::new();
@@ -298,7 +304,7 @@ fn selected_columns<S: crate::cluster_catalog::MetaSnapshot>(
                     })?;
                 selected.insert(column.read().id);
             }
-            Ok((Some(selected), StatsWritePlan::default()))
+            Ok((Some(selected), StatsWritePlan::default(), false))
         }
     }
 }

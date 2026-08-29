@@ -108,6 +108,7 @@ impl ClusterServerSession {
         // `SET GLOBAL tidb_mem_quota_analyze` last stored. Its default, `-1`,
         // is no bound.
         let memory_quota = self.analyze_memory_quota();
+        self.session.begin_routed_statement_warnings();
         for statement in tables {
             let mut statement = statement.clone();
             if statement.columns == tidb_exec::cluster_analyze::AnalyzeColumnChoice::Default {
@@ -126,6 +127,16 @@ impl ClusterServerSession {
             let statement = &statement;
             let report = recover_analyze_panic(|| self.analyze.execute(statement))
                 .map_err(|error| SqlQueryError::unknown(error.rendered_message()))??;
+            if report.predicate_columns_empty {
+                self.session.append_routed_warning(
+                    1105,
+                    format!(
+                        "No predicate column has been collected yet for table {}.{}, so only indexes and the columns composing the indexes will be analyzed",
+                        statement.schema.to_lowercase(),
+                        statement.table.to_lowercase()
+                    ),
+                );
+            }
             eprintln!(
                 "{{\"event\":\"cluster_table_analyzed\",\"schema\":{},\"table\":{},\
                  \"table_id\":{},\"version\":{},\"scanned_rows\":{},\"sampled_rows\":{},\
