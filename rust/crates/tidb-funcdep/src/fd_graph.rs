@@ -74,7 +74,7 @@ impl FdEdge {
     /// Go `fdEdge.isEquivalence`: `{xyz} == {xyz}`.
     #[cfg(test)]
     fn is_equivalence(&self) -> bool {
-        self.equiv && self.from == self.to
+        self.equiv && self.from.equals(&self.to)
     }
 
     /// Go `fdEdge.implies`: whether this edge is at least as strong as
@@ -89,7 +89,7 @@ impl FdEdge {
         let self_is_lax = !self.equiv && !self.strict;
         let other_is_lax = !other.equiv && !other.strict;
         if self_is_lax && other_is_lax {
-            return self.from.subset_of(&other.from) && self.to == other.to;
+            return self.from.subset_of(&other.from) && self.to.equals(&other.to);
         }
         if self.from.subset_of(&other.from) && other.to.subset_of(&self.to) {
             return (self.strict || !other.strict) && (self.equiv || !other.equiv);
@@ -269,14 +269,14 @@ impl FdSet {
     pub fn reduce_cols(&self, cols: &ColSet) -> ColSet {
         let mut removed = ColSet::default();
         let mut result = cols.clone();
-        for value in cols.iter() {
+        cols.for_each(|value| {
             removed.insert(value);
             result.remove(value);
             if !self.in_closure(&result, &removed) {
                 removed.remove(value);
                 result.insert(value);
             }
-        }
+        });
         result
     }
 
@@ -334,7 +334,7 @@ impl FdSet {
             } else if !added {
                 if edge.implies(&new_edge) {
                     added = true;
-                } else if edge.strict && !edge.equiv && edge.from == from {
+                } else if edge.strict && !edge.equiv && edge.from.equals(&from) {
                     edge.to.union_with(&to);
                     added = true;
                 }
@@ -492,7 +492,7 @@ impl FdSet {
             } else if edge.equiv {
                 self.add_equivalence(edge.from, edge.to);
                 let widened = self.closure_of_equivalence(&not_null_set);
-                if widened != not_null_set {
+                if !widened.equals(&not_null_set) {
                     not_null_set = widened;
                     index = 0;
                 }
@@ -663,11 +663,11 @@ impl FdSet {
 
             // The NULL-supplying value still laxly determines the preserved
             // value one column at a time.
-            for right in right_equiv.iter() {
-                for left in left_equiv.iter() {
-                    self.add_lax(ColSet::of([right]), ColSet::of([left]));
-                }
-            }
+            right_equiv.for_each(|right| {
+                left_equiv.for_each(|left| {
+                    self.add_lax(ColSet::new([right]), ColSet::new([left]));
+                });
+            });
             self.add_conditional(left_equiv, right_equiv, inner_cols.clone(), true, true);
         }
 
@@ -777,15 +777,15 @@ mod tests {
     /// computations over a set the insertion rules would have normalized.
     fn strict_edge(from: &[i64], to: &[i64]) -> FdEdge {
         FdEdge {
-            from: ColSet::of(from.iter().copied()),
-            to: ColSet::of(to.iter().copied()),
+            from: ColSet::new(from),
+            to: ColSet::new(to),
             strict: true,
             equiv: false,
         }
     }
 
     fn sorted(set: &ColSet) -> Vec<i64> {
-        set.iter().collect()
+        set.sorted_array()
     }
 
     /// Go `TestAddStrictFunctionalDependency`: `AB --> CDEFG` implies both
@@ -801,7 +801,7 @@ mod tests {
             let mut fd = FdSet::new();
             for which in order {
                 let (from, to) = &inputs[which];
-                fd.add_strict(ColSet::of(from.clone()), ColSet::of(to.clone()));
+                fd.add_strict(ColSet::new(from.clone()), ColSet::new(to.clone()));
             }
             assert_eq!(fd.edges.len(), 1);
             assert_eq!(sorted(&fd.edges[0].from), vec![1, 2]);
@@ -820,11 +820,11 @@ mod tests {
             strict_edge(&[1], &[4, 5, 8]),
         ];
         assert_eq!(
-            sorted(&fd.closure_of_strict(&ColSet::of([1]))),
+            sorted(&fd.closure_of_strict(&ColSet::new([1]))),
             vec![1, 4, 5, 8]
         );
         assert_eq!(
-            sorted(&fd.closure_of_strict(&ColSet::of([1, 2]))),
+            sorted(&fd.closure_of_strict(&ColSet::new([1, 2]))),
             vec![1, 2, 3, 4, 5, 6, 7, 8]
         );
     }
@@ -839,7 +839,7 @@ mod tests {
             strict_edge(&[3], &[4, 5]),
             strict_edge(&[3, 5], &[2]),
         ];
-        assert_eq!(sorted(&fd.reduce_cols(&ColSet::of([1, 2]))), vec![1]);
+        assert_eq!(sorted(&fd.reduce_cols(&ColSet::new([1, 2]))), vec![1]);
     }
 
     /// Go `TestFDSet_InClosure`: a dependency side may be torn apart, a
@@ -852,16 +852,16 @@ mod tests {
             strict_edge(&[1, 2], &[5, 6]),
             strict_edge(&[2], &[6, 7]),
         ];
-        assert!(!fd.in_closure(&ColSet::of([1]), &ColSet::of([6])));
-        assert!(fd.in_closure(&ColSet::of([2]), &ColSet::of([7])));
-        assert!(fd.in_closure(&ColSet::of([1, 2]), &ColSet::of([5])));
-        assert!(fd.in_closure(&ColSet::of([1, 2]), &ColSet::of([6, 7])));
-        assert!(fd.in_closure(&ColSet::of([1, 2]), &ColSet::of([4, 6])));
-        assert!(fd.in_closure(&ColSet::of([1, 2]), &ColSet::of([5, 7])));
-        assert!(!fd.in_closure(&ColSet::of([1, 2]), &ColSet::of([5, 7, 8])));
+        assert!(!fd.in_closure(&ColSet::new([1]), &ColSet::new([6])));
+        assert!(fd.in_closure(&ColSet::new([2]), &ColSet::new([7])));
+        assert!(fd.in_closure(&ColSet::new([1, 2]), &ColSet::new([5])));
+        assert!(fd.in_closure(&ColSet::new([1, 2]), &ColSet::new([6, 7])));
+        assert!(fd.in_closure(&ColSet::new([1, 2]), &ColSet::new([4, 6])));
+        assert!(fd.in_closure(&ColSet::new([1, 2]), &ColSet::new([5, 7])));
+        assert!(!fd.in_closure(&ColSet::new([1, 2]), &ColSet::new([5, 7, 8])));
 
         fd.edges.push(strict_edge(&[2], &[3, 8]));
-        assert!(fd.in_closure(&ColSet::of([1, 2]), &ColSet::of([5, 7, 8])));
+        assert!(fd.in_closure(&ColSet::new([1, 2]), &ColSet::new([5, 7, 8])));
     }
 
     /// Go `TestFDSet_AddConstant`.
@@ -870,26 +870,26 @@ mod tests {
         let mut fd = FdSet::new();
         assert_eq!(fd.constant_cols().to_string(), "()");
 
-        fd.add_constants(ColSet::of([1, 2]));
+        fd.add_constants(ColSet::new([1, 2]));
         assert_eq!(fd.edges.len(), 1);
         assert!(fd.edges[0].strict && !fd.edges[0].equiv);
         assert_eq!(fd.edges[0].from.to_string(), "()");
         assert_eq!(fd.edges[0].to.to_string(), "(1,2)");
         assert_eq!(fd.constant_cols().to_string(), "(1,2)");
 
-        fd.add_constants(ColSet::of([3]));
+        fd.add_constants(ColSet::new([3]));
         assert_eq!(fd.edges.len(), 1);
         assert_eq!(fd.edges[0].to.to_string(), "(1-3)");
         assert_eq!(fd.constant_cols().to_string(), "(1-3)");
 
-        fd.add_strict(ColSet::of([3, 4]), ColSet::of([5, 6]));
+        fd.add_strict(ColSet::new([3, 4]), ColSet::new([5, 6]));
         assert_eq!(fd.edges.len(), 2);
         assert_eq!(fd.edges[0].to.to_string(), "(1-3)");
         // The constant `3` is dropped from the determinant.
         assert_eq!(fd.edges[1].from.to_string(), "(4)");
         assert_eq!(fd.edges[1].to.to_string(), "(5,6)");
 
-        fd.add_lax(ColSet::of([7]), ColSet::of([5, 6]));
+        fd.add_lax(ColSet::new([7]), ColSet::new([5, 6]));
         assert_eq!(fd.edges.len(), 3);
         assert!(!fd.edges[2].strict && !fd.edges[2].equiv);
         assert_eq!(fd.edges[2].from.to_string(), "(7)");
@@ -897,7 +897,7 @@ mod tests {
 
         // `{4}` constant makes `{4} --> {5,6}` constant too, and the lax edge
         // then determines nothing that is not already constant.
-        fd.add_constants(ColSet::of([4]));
+        fd.add_constants(ColSet::new([4]));
         assert_eq!(fd.edges.len(), 1);
         assert_eq!(fd.edges[0].from.to_string(), "()");
         assert_eq!(fd.edges[0].to.to_string(), "(1-6)");
@@ -909,23 +909,23 @@ mod tests {
     #[test]
     fn lax_implies_only_on_equal_dependency_side() {
         let mut fd = FdSet::new();
-        fd.add_lax(ColSet::of([1]), ColSet::of([2, 3]));
-        fd.add_lax(ColSet::of([1]), ColSet::of([2]));
+        fd.add_lax(ColSet::new([1]), ColSet::new([2, 3]));
+        fd.add_lax(ColSet::new([1]), ColSet::new([2]));
         assert_eq!(fd.to_string(), "(1)~~>(2,3), (1)~~>(2)");
 
         let mut fd = FdSet::new();
-        fd.add_lax(ColSet::of([1]), ColSet::of([2]));
-        fd.add_lax(ColSet::of([1]), ColSet::of([2, 3]));
+        fd.add_lax(ColSet::new([1]), ColSet::new([2]));
+        fd.add_lax(ColSet::new([1]), ColSet::new([2, 3]));
         assert_eq!(fd.to_string(), "(1)~~>(2), (1)~~>(2,3)");
 
         let mut fd = FdSet::new();
-        fd.add_lax(ColSet::of([1]), ColSet::of([3]));
-        fd.add_lax(ColSet::of([1, 2]), ColSet::of([3]));
+        fd.add_lax(ColSet::new([1]), ColSet::new([3]));
+        fd.add_lax(ColSet::new([1, 2]), ColSet::new([3]));
         assert_eq!(fd.to_string(), "(1)~~>(3)");
 
         let mut fd = FdSet::new();
-        fd.add_lax(ColSet::of([1]), ColSet::of([3, 4]));
-        fd.add_lax(ColSet::of([1, 2]), ColSet::of([3]));
+        fd.add_lax(ColSet::new([1]), ColSet::new([3, 4]));
+        fd.add_lax(ColSet::new([1, 2]), ColSet::new([3]));
         assert_eq!(fd.to_string(), "(1)~~>(3,4), (1,2)~~>(3)");
     }
 
@@ -936,19 +936,19 @@ mod tests {
         let mut fd = FdSet::new();
         assert_eq!(fd.equivalence_cols().len(), 0);
 
-        fd.add_equivalence(ColSet::of([1]), ColSet::of([2]));
+        fd.add_equivalence(ColSet::new([1]), ColSet::new([2]));
         assert_eq!(fd.edges.len(), 1);
         assert_eq!(fd.equivalence_cols().len(), 1);
         assert!(fd.edges[0].strict && fd.edges[0].equiv);
         assert_eq!(fd.edges[0].from.to_string(), "(1,2)");
         assert_eq!(fd.edges[0].to.to_string(), "(1,2)");
 
-        fd.add_equivalence(ColSet::of([3]), ColSet::of([4]));
+        fd.add_equivalence(ColSet::new([3]), ColSet::new([4]));
         assert_eq!(fd.edges.len(), 2);
         assert_eq!(fd.equivalence_cols().len(), 2);
         assert_eq!(fd.edges[1].from.to_string(), "(3,4)");
 
-        fd.add_constants(ColSet::of([4, 5]));
+        fd.add_constants(ColSet::new([4, 5]));
         assert_eq!(fd.edges.len(), 3);
         assert!(fd.edges[2].strict && !fd.edges[2].equiv);
         assert_eq!(fd.edges[2].from.to_string(), "()");
@@ -957,7 +957,7 @@ mod tests {
         assert_eq!(fd.edges[2].to.to_string(), "(3-5)");
         assert_eq!(fd.constant_cols().to_string(), "(3-5)");
 
-        fd.add_strict(ColSet::of([2, 3]), ColSet::of([5, 6]));
+        fd.add_strict(ColSet::new([2, 3]), ColSet::new([5, 6]));
         assert_eq!(fd.edges.len(), 4);
         assert!(fd.edges[3].strict && !fd.edges[3].equiv);
         assert_eq!(fd.edges[3].from.to_string(), "(2)");
@@ -965,7 +965,7 @@ mod tests {
 
         // `b == d` bridges the two classes; the merged class extends the
         // constant closure, which in turn swallows the strict edge.
-        fd.add_equivalence(ColSet::of([2]), ColSet::of([3]));
+        fd.add_equivalence(ColSet::new([2]), ColSet::new([3]));
         assert_eq!(fd.edges.len(), 2);
         assert_eq!(fd.equivalence_cols().len(), 1);
         assert_eq!(fd.equivalence_cols()[0].to_string(), "(1-4)");
@@ -981,16 +981,16 @@ mod tests {
         // the key is lax, and `b`'s declared NOT NULL alone does not promote
         // it -- the WHOLE determinant has to be non-null.
         let mut fd = FdSet::new();
-        fd.add_lax(ColSet::of([1, 2]), ColSet::of([1, 2, 3]));
-        fd.make_not_null(ColSet::of([2]));
-        assert!(!ColSet::of([3]).subset_of(&fd.closure_of_strict(&ColSet::of([1, 2]))));
+        fd.add_lax(ColSet::new([1, 2]), ColSet::new([1, 2, 3]));
+        fd.make_not_null(ColSet::new([2]));
+        assert!(!ColSet::new([3]).subset_of(&fd.closure_of_strict(&ColSet::new([1, 2]))));
         // The lax step alone already reaches it, which is why the checker must
         // use the STRICT closure and not this one.
-        assert!(ColSet::of([3]).subset_of(&fd.closure_of_lax(&ColSet::of([1, 2]))));
+        assert!(ColSet::new([3]).subset_of(&fd.closure_of_lax(&ColSet::new([1, 2]))));
 
         // `WHERE a IS NOT NULL` supplies the rest of the determinant.
-        fd.make_not_null(ColSet::of([1]));
-        assert!(ColSet::of([3]).subset_of(&fd.closure_of_strict(&ColSet::of([1, 2]))));
+        fd.make_not_null(ColSet::new([1]));
+        assert!(ColSet::new([3]).subset_of(&fd.closure_of_strict(&ColSet::new([1, 2]))));
     }
 
     /// Go `TestFindCommonEquivClasses`.
@@ -1002,7 +1002,7 @@ mod tests {
         fn with_equiv_classes(classes: &[&[i64]]) -> FdSet {
             let mut fd = FdSet::new();
             for class in classes {
-                let set = ColSet::of(class.iter().copied());
+                let set = ColSet::new(*class);
                 fd.edges.push(FdEdge {
                     from: set.copy(),
                     to: set,

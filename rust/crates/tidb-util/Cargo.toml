@@ -80,6 +80,10 @@ name = "fastrand"
 harness = false
 
 [[bench]]
+name = "intset"
+harness = false
+
+[[bench]]
 name = "set"
 harness = false
 
