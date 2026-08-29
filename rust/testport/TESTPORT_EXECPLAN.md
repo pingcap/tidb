@@ -36,6 +36,12 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-08-29: audited the complete pinned Go
+  `pkg/statistics/handle/metrics` package and found its runtime identity depends
+  on real gauge/counter vectors owned by the 60-artifact `pkg/metrics`
+  package. Removed Rust's unused metadata-only `healthy_metrics` module and
+  three supplemental tests rather than claiming constants as the package.
+  Full implementation is deferred to the atomic `pkg/metrics` dependency.
 - 2026-08-29: completed the pinned Go `pkg/statistics/handle/logutil`
   package in `tidb-stats-handle-logutil`. Its four exported constructors now
   compose the completed shared background/error-verbose and sampled logger
@@ -769,6 +775,11 @@ For each bounded behavior cluster:
   `pkg/util/logutil` owner. It must not introduce another sink, sampler, or
   logging policy; cloned sampled handles retain the one shared per-factory
   state required by Go. Date/Author: 2026-08-29, Codex.
+- Decision: `pkg/statistics/handle/metrics` cannot be represented by bucket
+  metadata alone. Its initialized gauges and historical-stat counters are the
+  package behavior and must bind the future complete `pkg/metrics` owner; the
+  disconnected Rust constants/tests are removed until that dependency lands.
+  Date/Author: 2026-08-29, Codex.
 
 ## Surprises & Discoveries
 

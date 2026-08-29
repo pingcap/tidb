@@ -65,7 +65,6 @@ pub mod global_stats_sql_index;
 pub mod global_topn;
 mod go_pdqsort;
 mod go_stable_sort;
-pub mod healthy_metrics;
 pub mod histogram;
 pub mod historical_stats;
 pub mod index;
@@ -212,13 +211,6 @@ pub use global_topn::{
     merge_global_stats_topn, merge_global_stats_topn_by_concurrency, merge_part_topn_2_global_topn,
     GlobalTopNMerge, GlobalTopNMergeError, StatsWrapper, TopNMergeOptions, TopnStatsMergeResponse,
     TopnStatsMergeWorker, MAX_PARTITION_MERGE_BATCH_SIZE,
-};
-pub use healthy_metrics::{
-    healthy_bucket_configs, HealthyBucketConfig, HEALTHY_BUCKET_CONFIGS,
-    STATS_HEALTHY_BUCKET_0_TO_50, STATS_HEALTHY_BUCKET_100_TO_100, STATS_HEALTHY_BUCKET_50_TO_55,
-    STATS_HEALTHY_BUCKET_55_TO_60, STATS_HEALTHY_BUCKET_60_TO_70, STATS_HEALTHY_BUCKET_70_TO_80,
-    STATS_HEALTHY_BUCKET_80_TO_100, STATS_HEALTHY_BUCKET_COUNT, STATS_HEALTHY_BUCKET_PSEUDO,
-    STATS_HEALTHY_BUCKET_TOTAL, STATS_HEALTHY_BUCKET_UNNEEDED_ANALYZE,
 };
 pub use histogram::{Bucket, Histogram};
 pub use historical_stats::historical_stats_version;
