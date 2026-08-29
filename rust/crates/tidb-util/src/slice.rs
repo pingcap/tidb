@@ -23,7 +23,6 @@ pub fn all_of<T>(slice: &[T], predicate: impl FnMut(&T) -> bool) -> bool {
 }
 
 /// Converts signed 64-bit integers to their base-ten Go string form.
-#[must_use]
 pub fn int64s_to_strings(ints: &[i64]) -> Vec<String> {
     ints.iter().map(i64::to_string).collect()
 }
@@ -33,7 +32,6 @@ pub fn int64s_to_strings(ints: &[i64]) -> Vec<String> {
 /// `None` represents a nil Go slice. `Some(&[])` represents a present empty
 /// slice and therefore returns `Some(Vec::new())`, keeping those source states
 /// distinct.
-#[must_use]
 pub fn deep_clone<T: Clone>(slice: Option<&[T]>) -> Option<Vec<T>> {
     slice.map(|items| {
         let mut cloned = Vec::with_capacity(items.len());

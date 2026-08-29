@@ -24,16 +24,24 @@ and retained the single table-driven `TestSlice` translation with all four
 source rows. The only production consumer, statistics bootstrap SQL, continues
 to use the package conversion function.
 
+The strict-surface re-audit also removed Rust-only `must_use` diagnostics from
+`Int64sToStrings` and `DeepClone`; Go exposes both as ordinary functions.
+
 ## Validation
 
 Profile: WIP; this is one completed package within the continuing repository
 audit, not a repository-wide readiness claim.
 
-- `cargo test -p tidb-util --locked slice::tests::` — passed.
-- `cargo check -p tidb-stats --lib --locked` — passed.
-- `cargo test -p tidb-util --locked` — passed.
-- `cargo fmt --all -- --check` and `git diff --check` — passed.
-- `go test ./pkg/util/slice` — passed.
+- `GOCACHE=/private/tmp/tidb-go-build-cache go test ./pkg/util/slice
+  -count=1` — passed.
+- `cargo test --offline --locked -p tidb-util --lib slice::tests::` — passed;
+  the sole source test identity ran.
+- `cargo check --offline --locked -p tidb-stats --lib` — passed for the only
+  production consumer.
+- `rustfmt --edition 2021 crates/tidb-util/src/slice.rs` — passed.
+- `git diff --exit-code e2788410d8d696605e8cb002585877a063ccc909
+  -- pkg/util/slice` — passed.
+- `git diff --check` — passed.
 
 No Go or Bazel file changed, so `make bazel_prepare` is not required.
 

@@ -36,6 +36,10 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-08-29: re-audited the complete pinned Go `pkg/util/slice` package.
+  Removed Rust-only `must_use` diagnostics from `Int64sToStrings` and
+  `DeepClone`; all production behavior and the sole source test identity were
+  already aligned.
 - 2026-08-29: re-audited the complete pinned Go `pkg/util/serialization`
   package. Removed Rust-only derives/diagnostics, the unused public
   `MY_DECIMAL_LEN` and `Cursor::remaining`, and public exposure of Go-private
