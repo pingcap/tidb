@@ -53,7 +53,6 @@ pub mod index_query;
 pub mod json_metadata;
 pub mod memory_usage;
 pub mod overlap_geometry;
-pub mod refresher_state;
 pub mod row_estimate;
 pub mod row_sample_collector;
 pub mod sample_bytes;
@@ -66,7 +65,6 @@ pub mod stats_version;
 pub mod status;
 pub mod table;
 pub mod weighted_reservoir;
-pub mod worker_capacity;
 
 pub use analysis_policy::{
     is_eligible_for_analysis, meets_auto_analyze_min_count, table_is_analyzed,
@@ -128,7 +126,6 @@ pub use index_query::query_index_bytes;
 pub use json_metadata::{JsonPredicateColumn, JsonTable, TIDB_GLOBAL_STATS};
 pub use memory_usage::{ColumnMemUsage, IndexMemUsage};
 pub use overlap_geometry::{left_overlap_percent, right_overlap_percent};
-pub use refresher_state::should_rebuild_queue;
 pub use row_estimate::{calculate_skew_ratio_counts, default_row_est, RowEstimate};
 pub use row_sample_collector::{
     adjusted_sample_rate, RowSampleCollector, RowSampleCollectorProto, RowSampleProto,
@@ -161,4 +158,3 @@ pub use table::{
 };
 pub use tidb_stats_handle_util::*;
 pub use weighted_reservoir::{WeightedReservoir, WeightedSample};
-pub use worker_capacity::{worker_capacity_available, worker_concurrency_changed};

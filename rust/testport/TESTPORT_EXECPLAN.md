@@ -888,6 +888,24 @@ For each bounded behavior cluster:
       with background maintenance, DDL integration, retries, and ANALYZE
       effects. Inventory is in
       `receipts/statistics_handle_autoanalyze_priorityqueue_audit.md`.
+- [x] Audit the complete pinned
+      `pkg/statistics/handle/autoanalyze/priorityqueue/calculatoranalysis`
+      package. Rust has no remaining generator, golden fixture, or test after
+      removal of the false parent runtime; leave the package unclaimed rather
+      than recreate its private calculator independently. Inventory is in
+      `receipts/statistics_handle_autoanalyze_calculatoranalysis_audit.md`.
+- [x] Audit the complete pinned
+      `pkg/statistics/handle/autoanalyze/priorityqueue/intervaltimezone`
+      package. Rust has no corresponding contaminated-timezone store/domain
+      integration test; leave it unclaimed with the parent handle/session
+      dependency. Inventory is in
+      `receipts/statistics_handle_autoanalyze_intervaltimezone_audit.md`.
+- [x] Audit the complete pinned `pkg/statistics/handle/autoanalyze/refresher`
+      package. Remove two unconsumed scalar condition leaves and their six
+      source-absent tests. Go owns the live priority-queue lifecycle, session
+      parameters, DDL registration, worker concurrency, ANALYZE execution,
+      panic recovery, and stats effects. Inventory is in
+      `receipts/statistics_handle_autoanalyze_refresher_audit.md`.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope
