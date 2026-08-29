@@ -868,6 +868,12 @@ For each bounded behavior cluster:
       memory-aware bootstrap lifecycle; its dependency graph remains
       incomplete. Inventory is in
       `receipts/statistics_handle_root_audit.md`.
+- [x] Audit the complete pinned `pkg/statistics/handle/storage` package. Remove
+      six public scalar/SQL carriers, their 19 tests, and 28 ignored empty test
+      functions. Go owns one transactional session/storage/cache read-writer
+      package with 11 artifacts and 28 integrated tests; its handle and type
+      dependencies remain incomplete. Inventory is in
+      `receipts/statistics_handle_storage_audit.md`.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope
@@ -1037,6 +1043,13 @@ For each bounded behavior cluster:
   notifier registration, pooled-session/cache subsystem lifecycle, and full
   transactional bootstrap. The extracted public leaves are removed until the
   complete ordinary handle and child packages can land together.
+  Date/Author: 2026-08-29, Codex.
+- Decision: `pkg/statistics/handle/storage` is one transaction-bound
+  `StatsReadWriter` owner, not independent batch-count, version-fallback,
+  SQL-string, or slow-save predicates. The extracted Rust leaves had no
+  production consumers and omitted storage execution, typed conversion,
+  cache publication, history, and worker lifecycle. They and the empty test
+  carriers are removed until the complete dependency-closed package can land.
   Date/Author: 2026-08-29, Codex.
 
 ## Surprises & Discoveries

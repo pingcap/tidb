@@ -51,14 +51,12 @@ pub mod estimate;
 pub mod existence_map;
 pub mod fmsketch;
 pub mod fmsketch_codec;
-pub mod gc_batch_count;
 mod go_pdqsort;
 mod go_stable_sort;
 pub mod histogram;
 pub mod index;
 pub mod index_query;
 pub mod json_metadata;
-pub mod json_stats_version;
 pub mod memory_usage;
 pub mod non_partitioned_analysis;
 pub mod overlap_geometry;
@@ -75,10 +73,6 @@ pub mod scalar_geometry;
 pub mod sorted_builder;
 pub mod static_partitioned_analysis;
 pub mod stats_lock_table;
-pub mod stats_meta;
-pub mod stats_meta_save_sql;
-pub mod stats_meta_update;
-pub mod stats_read_writer;
 pub mod stats_version;
 pub mod status;
 pub mod table;
@@ -156,7 +150,6 @@ pub use fmsketch_codec::{
     insert_encoded_value, insert_row_value, insert_row_value_with_error_policy, insert_value,
     insert_value_with_error_policy, FmSketchCodecError, FmSketchProto,
 };
-pub use gc_batch_count::gc_batch_count;
 pub use histogram::{Bucket, Histogram};
 pub use index::{
     copy_index, index_is_all_evicted, index_stats_validity, Index, IndexInfo, IndexValidity,
@@ -164,7 +157,6 @@ pub use index::{
 };
 pub use index_query::query_index_bytes;
 pub use json_metadata::{JsonPredicateColumn, JsonTable, TIDB_GLOBAL_STATS};
-pub use json_stats_version::{json_stats_version, JSON_STATS_VERSION_0, JSON_STATS_VERSION_1};
 pub use memory_usage::{ColumnMemUsage, IndexMemUsage};
 pub use non_partitioned_analysis::{
     analyze_type, gen_sql_for_analyze_index, gen_sql_for_analyze_table, has_newly_added_index,
@@ -206,16 +198,6 @@ pub use static_partitioned_analysis::{
     static_partition_table_id, ANALYZE_STATIC_PARTITION, ANALYZE_STATIC_PARTITION_INDEX,
 };
 pub use stats_lock_table::StatsLockTable;
-pub use stats_meta::{stats_meta_counts, stats_meta_query, StatsMetaCounts};
-pub use stats_meta_save_sql::{stats_meta_save_sql, StatsMetaSaveUpdate};
-pub use stats_meta_update::{
-    stats_meta_update_sql, DeltaUpdate, StatsMetaUpdateSql, StatsMetaVersionUpdate,
-    UPDATE_STATS_META_VERSION_QUERY,
-};
-pub use stats_read_writer::{
-    historical_stats_meta_record_required, slow_stats_saving_requires_meta_update, LEASE_OFFSET,
-    SLOW_STATS_SAVE_ERROR_MESSAGE,
-};
 pub use stats_version::{
     is_analyzed, is_column_analyzed_or_synthesized, VERSION_0, VERSION_1, VERSION_2,
 };
