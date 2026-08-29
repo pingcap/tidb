@@ -28,6 +28,7 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - [x] (2026-08-29) Completed pinned `pkg/statistics/util` and removed the executor's duplicate partial JSON statistics model; dump/load now shares the complete Go object shape, ordering, global marker, and memory accounting from `tidb-stats`.
 - [x] (2026-08-29) Completed pinned `pkg/statistics/handle/metrics` as its own Rust crate, preserving every health-bucket index, exclusive bound, compatibility label, shared gauge child, and historical-dump result counter.
 - [x] (2026-08-29) Audited and completed pinned `pkg/statistics/handle/logutil`; the existing crate already matched all four logger routes, category fields, shared sampler state, and 5/10-minute sampling policies.
+- [x] (2026-08-29) Completed pinned `pkg/statistics/handle/usage/collector` and `pkg/statistics/handle/usage/indexusage`, including close-aware synchronous delivery and the complete node/session/statement aggregation behavior.
 - [ ] Wire all pinned Go `SHOW STATS_*` surfaces to the shared cache and storage semantics.
 - [ ] Inventory every production file, platform/generated variant, original test/support artifact, fixture, and validation gate in pinned `pkg/statistics`; close or explicitly retain seed-only gaps until the whole package is complete.
 - [ ] Run the Ready validation profile, including `make lint`, only after the complete package inventory is closed.
@@ -90,6 +91,12 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 
 - Observation: pinned handle metrics do not define a second health calculation. They only fix bucket identities/configuration and bind child handles to the shared `tidb_statistics_stats_healthy` and `tidb_statistics_historical_stats` metric families.
   Evidence: pinned `pkg/statistics/handle/metrics/metrics.go` contains only constants, `HealthyBucketConfigs`, three metric variables, and `InitMetricsVars`; bucket population remains in `pkg/statistics/handle/cache`.
+
+- Observation: pinned `pkg/statistics/handle/types` is an interface-only closure package whose composite `StatsHandle` embeds concrete cache, usage, history, analyze, storage, global-stats, lock, and DDL owners. A standalone Rust umbrella crate before those owners are complete would duplicate the existing narrow integration seams without adding Go behavior.
+  Evidence: the complete pinned `interfaces.go` contains declarations only; `StatsHandle` embeds the owner interfaces at the end of the file.
+
+- Observation: Go's high-priority collector send observes `closeCh` and returns `false` after close. Rust previously enqueued after close, so index-usage `Flush` could report success to a worker that no longer existed or block on a full abandoned queue.
+  Evidence: pinned `sessionCollector.SendDeltaSync` selects between `highPriorityDataCh` and `closeCh`; the regression `synchronous_send_stops_after_close` failed before the close-state check and passes after it.
 
 ## Decision Log
 
@@ -195,3 +202,5 @@ Revision note (2026-08-29): completed the atomic inventory for pinned `pkg/stati
 Revision note (2026-08-29): completed the atomic inventory for pinned `pkg/statistics/handle/metrics` (`metrics.go`, `BUILD.bazel`; no package-local Go tests or fixtures). New crate `tidb-stats-handle-metrics` owns the exact ten bucket indices/configs and binds ordered gauge children plus the `dump/success` and `dump/fail` counters to the correctly named and labeled shared Prometheus families. Focused tests cover the complete config sequence, compatibility labels, child count/order, rebinding, gauge writes, and distinct historical-result counters. Health-bucket population remains assigned to the separate pinned cache package, matching Go ownership.
 
 Revision note (2026-08-29): completed the atomic inventory for pinned `pkg/statistics/handle/logutil` (`logutil.go`, `BUILD.bazel`; no package-local Go tests or fixtures). Existing crate `tidb-stats-handle-logutil` already mapped `StatsLogger`, `StatsErrVerboseLogger`, `StatsSampleLogger`, and `StatsErrVerboseSampleLogger` onto the pinned background/error-verbose bases, `category=stats`, `sampled=""`, one shared sampler per factory, five-minute ordinary sampling, and ten-minute verbose-error sampling. A focused composition test now proves all four routes and first-only suppression through the emitted log contract.
+
+Revision note (2026-08-29): inventoried all 537 lines of pinned `pkg/statistics/handle/types/interfaces.go` plus `BUILD.bazel`. This remains a closure receipt rather than a new Rust crate: its declarations compose concrete packages that must be completed first, and equivalent Rust behavior is intentionally integrated through narrow owner-specific seams. Completed the concrete dependency packages `pkg/statistics/handle/usage/collector` (`collector.go`, `collector_test.go`, `BUILD.bazel`) and `pkg/statistics/handle/usage/indexusage` (`collector.go`, `collector_test.go`, `BUILD.bazel`). The Rust crates preserve the two ten-entry channels, five-minute priority escalation, close/drain lifecycle, node/session/statement aggregation, exact percentage buckets, modulo counters, latest-use timestamp, metadata GC, duplicate-query suppression, and benchmark support. A new regression proves the previously missing close branch of synchronous delivery.

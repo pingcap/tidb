@@ -179,6 +179,9 @@ impl<T: Send + 'static> SessionCollector<T> {
             .lock()
             .expect("collector state lock poisoned");
         loop {
+            if state.closed {
+                return false;
+            }
             if state.high_priority.len() < DEFAULT_CHANNEL_SIZE {
                 state.high_priority.push_back(data);
                 *self

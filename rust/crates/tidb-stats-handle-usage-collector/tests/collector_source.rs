@@ -93,3 +93,13 @@ fn session_parallel_send_delta_sync() {
     collector.close();
     assert_eq!(merged.load(Ordering::Relaxed), 256 * 256);
 }
+
+#[test]
+fn synchronous_send_stops_after_close() {
+    let collector = GlobalCollector::new(|_: i32| {});
+    let session = collector.spawn_session();
+    collector.start_worker();
+    collector.close();
+
+    assert!(!session.send_delta_sync(1));
+}
