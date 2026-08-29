@@ -688,6 +688,21 @@ mod tests {
     }
 
     #[test]
+    fn system_schema_sources_do_not_collect_statistics_usage() {
+        let mut plan = source(1, 7, &[(11, 1)]);
+        let LogicalPlan::DataSource(source) = &mut plan else {
+            unreachable!()
+        };
+        source.db_name = "mysql".to_owned();
+        source.pushed_down_conds = vec![Expression::ScalarFunction(eq(1, 1))];
+
+        let usage = collect_column_stats_usage(&plan);
+        assert!(usage.predicate_columns.is_empty());
+        assert!(usage.visited_logical_table_ids.is_empty());
+        assert!(usage.table_partition_ids.is_empty());
+    }
+
+    #[test]
     fn logical_rule_requests_the_collected_usage_at_its_go_position() {
         struct Requester {
             calls: Cell<usize>,

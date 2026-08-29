@@ -29,6 +29,7 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - [x] (2026-08-29) Completed pinned `pkg/statistics/handle/metrics` as its own Rust crate, preserving every health-bucket index, exclusive bound, compatibility label, shared gauge child, and historical-dump result counter.
 - [x] (2026-08-29) Audited and completed pinned `pkg/statistics/handle/logutil`; the existing crate already matched all four logger routes, category fields, shared sampler state, and 5/10-minute sampling policies.
 - [x] (2026-08-29) Completed pinned `pkg/statistics/handle/usage/collector` and `pkg/statistics/handle/usage/indexusage`, including close-aware synchronous delivery and the complete node/session/statement aggregation behavior.
+- [x] (2026-08-29) Removed obsolete ignored predicate-collection gap carriers after wiring the real logical rule, retaining the pinned system-schema exclusion as an executable production-unit regression.
 - [ ] Wire all pinned Go `SHOW STATS_*` surfaces to the shared cache and storage semantics.
 - [ ] Inventory every production file, platform/generated variant, original test/support artifact, fixture, and validation gate in pinned `pkg/statistics`; close or explicitly retain seed-only gaps until the whole package is complete.
 - [ ] Run the Ready validation profile, including `make lint`, only after the complete package inventory is closed.
@@ -97,6 +98,9 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 
 - Observation: Go's high-priority collector send observes `closeCh` and returns `false` after close. Rust previously enqueued after close, so index-usage `Flush` could report success to a worker that no longer existed or block on a full abandoned queue.
   Evidence: pinned `sessionCollector.SendDeltaSync` selects between `highPriorityDataCh` and `closeCh`; the regression `synchronous_send_stops_after_close` failed before the close-state check and passes after it.
+
+- Observation: two ignored planner integration files still described `CollectColumnStatsUsage` and its logical-rule carrier as unported after both had been wired. Keeping those empty tests made the test inventory contradict production behavior.
+  Evidence: both files contained only ignored empty functions; `logical::rule_collect_plan_stats` now owns the collector, rule positions, partition expansion, and request/wait tests.
 
 ## Decision Log
 
@@ -204,3 +208,5 @@ Revision note (2026-08-29): completed the atomic inventory for pinned `pkg/stati
 Revision note (2026-08-29): completed the atomic inventory for pinned `pkg/statistics/handle/logutil` (`logutil.go`, `BUILD.bazel`; no package-local Go tests or fixtures). Existing crate `tidb-stats-handle-logutil` already mapped `StatsLogger`, `StatsErrVerboseLogger`, `StatsSampleLogger`, and `StatsErrVerboseSampleLogger` onto the pinned background/error-verbose bases, `category=stats`, `sampled=""`, one shared sampler per factory, five-minute ordinary sampling, and ten-minute verbose-error sampling. A focused composition test now proves all four routes and first-only suppression through the emitted log contract.
 
 Revision note (2026-08-29): inventoried all 537 lines of pinned `pkg/statistics/handle/types/interfaces.go` plus `BUILD.bazel`. This remains a closure receipt rather than a new Rust crate: its declarations compose concrete packages that must be completed first, and equivalent Rust behavior is intentionally integrated through narrow owner-specific seams. Completed the concrete dependency packages `pkg/statistics/handle/usage/collector` (`collector.go`, `collector_test.go`, `BUILD.bazel`) and `pkg/statistics/handle/usage/indexusage` (`collector.go`, `collector_test.go`, `BUILD.bazel`). The Rust crates preserve the two ten-entry channels, five-minute priority escalation, close/drain lifecycle, node/session/statement aggregation, exact percentage buckets, modulo counters, latest-use timestamp, metadata GC, duplicate-query suppression, and benchmark support. A new regression proves the previously missing close branch of synchronous delivery.
+
+Revision note (2026-08-29): removed the ignored empty `rule_collect_column_stats_usage_source` and `collect_column_stats_usage_skip_system_tables_source` legacy gap carriers. The real collector is already exercised in its production module; a new executable test pins Go's `mysql.*` exclusion directly on that implementation instead of retaining documentation that says the feature is unported.
