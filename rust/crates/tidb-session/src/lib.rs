@@ -531,7 +531,7 @@ pub struct Session {
     workload_repository: Option<std::sync::Arc<tidb_workloadrepo::Worker>>,
     /// Go Domain's node-global index-usage collector, read by
     /// `information_schema.TIDB_INDEX_USAGE`.
-    index_usage_collector: Arc<tidb_stats::index_usage::IndexUsageCollector>,
+    index_usage_collector: Arc<tidb_stats_handle_usage_indexusage::Collector>,
     /// The node's storage-backed current lock-wait reader.
     data_lock_waits: Option<std::sync::Arc<dyn DataLockWaitsProvider>>,
     /// Parsed-products cache over the raw system-variable text, keyed by
@@ -719,7 +719,7 @@ impl Default for Session {
             server_info_syncer: None,
             cluster_schema_version: None,
             workload_repository: None,
-            index_usage_collector: Arc::new(tidb_stats::index_usage::IndexUsageCollector::new()),
+            index_usage_collector: Arc::new(tidb_stats_handle_usage_indexusage::Collector::new()),
             data_lock_waits: None,
             mdl_related_tables: None,
             statement_var_cache: std::cell::RefCell::new(None),
@@ -937,7 +937,7 @@ impl Session {
     /// session on the node.
     pub fn set_index_usage_collector(
         &mut self,
-        collector: Arc<tidb_stats::index_usage::IndexUsageCollector>,
+        collector: Arc<tidb_stats_handle_usage_indexusage::Collector>,
     ) {
         self.index_usage_collector = collector;
     }

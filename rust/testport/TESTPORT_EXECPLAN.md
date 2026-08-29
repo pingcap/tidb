@@ -37,6 +37,16 @@ For each bounded behavior cluster:
 ## Progress
 
 - 2026-08-29: completed the pinned Go
+  `pkg/statistics/handle/usage/indexusage` package in
+  `tidb-stats-handle-usage-indexusage`. Restored the real `model.TableInfo`
+  GC boundary and Go's year-1 zero time, moved all four source tests and the
+  parallel benchmark into the owner, restored the exact 64 × 100,000
+  concurrent test workload, and removed flattened public constants, test
+  accessors, map snapshots, copied-map reporting, three duplicate tests, five
+  supplemental tests, and the parent package's direct-closure GC workaround.
+  Inventory and WIP gates are in
+  `receipts/statistics_handle_usage_indexusage.md`.
+- 2026-08-29: completed the pinned Go
   `pkg/statistics/handle/usage/collector` package in the distinct
   `tidb-stats-handle-usage-collector` owner. Moved its three source tests out
   of the aggregate statistics crate, removed a source-absent capacity test,
@@ -747,6 +757,12 @@ For each bounded behavior cluster:
       and all three source tests while removing the supplemental capacity
       assertion. The atomic inventory and WIP gates are in
       `receipts/statistics_handle_usage_collector.md`.
+- [x] Complete the pinned `pkg/statistics/handle/usage/indexusage` package in
+      `tidb-stats-handle-usage-indexusage`: own the real model-driven GC,
+      samples, global/session/statement collectors, four source tests, and
+      parallel benchmark; remove narrowed and duplicate aggregate surfaces.
+      The atomic inventory and WIP gates are in
+      `receipts/statistics_handle_usage_indexusage.md`.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope
@@ -815,6 +831,11 @@ For each bounded behavior cluster:
   lifecycle are consumed directly by `usage/indexusage`; package-private Go
   timeout/capacity constants are not exposed as a Rust public policy surface.
   Date/Author: 2026-08-29, Codex.
+- Decision: `usage/indexusage` consumes the real `tidb_model::TableInfo`
+  dependency and owns its own `GlobalIndexID`; a callback returning only index
+  ID vectors and an alias to the parent usage package's key type both erase Go
+  package behavior. Pending maps use shared ownership to reproduce Go map
+  header sends without cloning map contents. Date/Author: 2026-08-29, Codex.
 
 ## Surprises & Discoveries
 
@@ -840,6 +861,9 @@ For each bounded behavior cluster:
   global close channel when spawned. Consequently already-created senders can
   still enqueue into available channel capacity after close; Rust's previous
   early rejection was observably stricter than Go.
+- Go's zero `time.Time` is year 1, not Unix epoch. The previous epoch sentinel
+  happened to sort before current samples but leaked a different public value
+  and required a Rust-specific information-schema check.
 - The full planner test target currently encounters unrelated pre-existing
   compile errors in CTE/TopN and memory-trace test sources; scoped planner tests
   for the changed MPP property behavior pass.

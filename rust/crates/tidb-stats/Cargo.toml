@@ -20,7 +20,6 @@ tidb-datatype = { path = "../tidb-datatype" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-util = { path = "../tidb-util" }
 tidb-stats-handle-util = { path = "../tidb-stats-handle-util" }
-tidb-stats-handle-usage-collector = { path = "../tidb-stats-handle-usage-collector" }
 
 [dev-dependencies]
 sha2 = { workspace = true }

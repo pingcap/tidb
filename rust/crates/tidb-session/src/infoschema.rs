@@ -191,7 +191,7 @@ fn visible_tables(
 pub(crate) fn tidb_index_usage_rows(
     catalog: &Catalog,
     visibility: &SchemaVisibility,
-    collector: &tidb_stats::index_usage::IndexUsageCollector,
+    collector: &tidb_stats_handle_usage_indexusage::Collector,
 ) -> Vec<Vec<Datum>> {
     use chrono::{DateTime, Local};
     use tidb_datatype::{core_time_from_datetime, Time, TimeType};
@@ -200,12 +200,14 @@ pub(crate) fn tidb_index_usage_rows(
         schema: &str,
         table: &str,
         index: &str,
-        usage: tidb_stats::IndexUsageSample,
+        usage: tidb_stats_handle_usage_indexusage::Sample,
     ) -> Vec<Datum> {
-        let last_access = if usage.last_used_at == std::time::SystemTime::UNIX_EPOCH {
+        let last_access = if usage.last_used_at
+            == tidb_stats_handle_usage_indexusage::Sample::default().last_used_at
+        {
             Datum::Null
         } else {
-            let local: DateTime<Local> = usage.last_used_at.into();
+            let local: DateTime<Local> = usage.last_used_at.with_timezone(&Local);
             let core = core_time_from_datetime(local);
             Datum::new_time(
                 Time::new(core, TimeType::Timestamp, 0)

@@ -3675,6 +3675,7 @@ dependencies = [
  "tidb-protocol",
  "tidb-session",
  "tidb-stats",
+ "tidb-stats-handle-usage-indexusage",
  "tidb-tablecodec",
  "tidb-txnkv",
  "tidb-unistore",
@@ -3709,6 +3710,7 @@ dependencies = [
  "tidb-parser",
  "tidb-planner",
  "tidb-stats",
+ "tidb-stats-handle-usage-indexusage",
  "tidb-stmtsummary",
  "tidb-tablecodec",
  "tidb-tikvutil",
@@ -3752,7 +3754,6 @@ dependencies = [
  "sha2",
  "tidb-codec",
  "tidb-datatype",
- "tidb-stats-handle-usage-collector",
  "tidb-stats-handle-util",
  "tidb-txnkv",
  "tidb-util",
@@ -3776,6 +3777,15 @@ dependencies = [
 [[package]]
 name = "tidb-stats-handle-usage-collector"
 version = "0.0.0"
+
+[[package]]
+name = "tidb-stats-handle-usage-indexusage"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "tidb-model",
+ "tidb-stats-handle-usage-collector",
+]
 
 [[package]]
 name = "tidb-stats-handle-util"

@@ -509,13 +509,13 @@ fn tidb_index_usage_reads_the_shared_collector_for_every_catalog_index() {
         (table.table_id, table.indexes()[0].id)
     };
 
-    let collector = std::sync::Arc::new(tidb_stats::index_usage::IndexUsageCollector::new());
+    let collector = std::sync::Arc::new(tidb_stats_handle_usage_indexusage::Collector::new());
     collector.start_worker();
     let mut pending = collector.spawn_session_collector();
     pending.update(
         table_id,
         secondary_id,
-        &tidb_stats::new_index_usage_sample(7, 11, 13, 20),
+        tidb_stats_handle_usage_indexusage::new_sample(7, 11, 13, 20),
     );
     pending.flush();
     for _ in 0..100 {

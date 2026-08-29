@@ -69,7 +69,6 @@ pub mod histogram;
 pub mod historical_stats;
 pub mod index;
 pub mod index_query;
-pub mod index_usage;
 pub mod index_usage_key;
 pub mod init_stats_concurrency;
 pub mod init_stats_progress;
@@ -217,10 +216,6 @@ pub use index::{
     IndexValidityContext,
 };
 pub use index_query::query_index_bytes;
-pub use index_usage::{
-    index_usage_access_bucket, new_index_usage_sample, IndexUsageSample, INDEX_USAGE_BUCKET_BOUNDS,
-    INDEX_USAGE_BUCKET_COUNT,
-};
 pub use index_usage_key::IndexUsageKey;
 pub use init_stats_concurrency::init_stats_concurrency;
 pub use init_stats_progress::init_stats_progress;

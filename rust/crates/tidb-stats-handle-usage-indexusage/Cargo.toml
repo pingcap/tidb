@@ -1,0 +1,20 @@
+[package]
+name = "tidb-stats-handle-usage-indexusage"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB index usage collector."
+
+[lints]
+workspace = true
+
+[dependencies]
+chrono.workspace = true
+tidb-model = { path = "../tidb-model" }
+tidb-stats-handle-usage-collector = { path = "../tidb-stats-handle-usage-collector" }
+
+[[bench]]
+name = "collector"
+harness = false

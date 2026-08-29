@@ -44,6 +44,7 @@ members = [
     "crates/tidb-stats-handle-logutil",
     "crates/tidb-stats-handle-internal",
     "crates/tidb-stats-handle-usage-collector",
+    "crates/tidb-stats-handle-usage-indexusage",
     "crates/tidb-codec",
     "crates/tidb-txnkv",
     "crates/tidb-tablecodec",

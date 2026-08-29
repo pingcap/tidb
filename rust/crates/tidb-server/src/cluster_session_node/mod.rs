@@ -425,7 +425,7 @@ pub struct ClusterSessionFactory {
     /// Go Domain's single workload-repository worker.
     workload_repository: std::sync::OnceLock<Arc<tidb_workloadrepo::Worker>>,
     /// Go Domain/StatsHandle's one node-global index-usage collector.
-    index_usage_collector: Arc<tidb_stats::index_usage::IndexUsageCollector>,
+    index_usage_collector: Arc<tidb_stats_handle_usage_indexusage::Collector>,
 }
 
 impl ClusterSessionFactory {
@@ -452,7 +452,7 @@ impl ClusterSessionFactory {
             auto_ids.as_ref(),
         )
         .skipped;
-        let index_usage_collector = Arc::new(tidb_stats::index_usage::IndexUsageCollector::new());
+        let index_usage_collector = Arc::new(tidb_stats_handle_usage_indexusage::Collector::new());
         index_usage_collector.start_worker();
         let data_lock_waits = Arc::new(ClusterDataLockWaits {
             transactions: Arc::clone(&transactions),
