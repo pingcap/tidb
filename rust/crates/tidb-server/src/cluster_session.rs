@@ -956,6 +956,7 @@ const UNSIGNED_FLAG: u32 = 1 << 5;
 /// the estimator keys on the live schema.
 fn planner_statistics(stats: &ClusterTableStats, table: &TableInfo) -> TableStatistics {
     let mut columns = std::collections::BTreeMap::new();
+    let mut column_load_status = std::collections::BTreeMap::new();
     for column in table.cols().iter_deref() {
         let (id, unsigned) = {
             let column = column.read();
@@ -974,8 +975,10 @@ fn planner_statistics(stats: &ClusterTableStats, table: &TableInfo) -> TableStat
                 unsigned,
             },
         );
+        column_load_status.insert(id, item.load_status);
     }
     let mut indexes = std::collections::BTreeMap::new();
+    let mut index_load_status = std::collections::BTreeMap::new();
     for index in table.indices.iter_deref() {
         let (id, num_columns, unique) = {
             let index = index.read();
@@ -985,6 +988,7 @@ fn planner_statistics(stats: &ClusterTableStats, table: &TableInfo) -> TableStat
             continue;
         };
         indexes.insert(id, index_statistics(item, num_columns, unique));
+        index_load_status.insert(id, item.load_status);
     }
     // `TableStatistics::new` decides `pseudo` -- Go's `GetStatsTable` reaches
     // it both from an uninitialized histogram set and from a zero row count,
@@ -999,6 +1003,7 @@ fn planner_statistics(stats: &ClusterTableStats, table: &TableInfo) -> TableStat
         indexes,
     )
     .with_stat_versions(stats.version, stats.last_analyze_version)
+    .with_load_statuses(column_load_status, index_load_status)
 }
 
 /// Go `Column.StatsAvailable()` / `IsColumnAnalyzedOrSynthesized`: whether
@@ -1242,6 +1247,7 @@ mod tests {
                 is_index: false,
                 stats_ver: 2,
                 flag: 1,
+                load_status: tidb_stats::StatsLoadedStatus::full_load(),
                 histogram: Default::default(),
                 topn: None,
                 cms: None,

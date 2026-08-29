@@ -141,6 +141,7 @@ fn full_histogram(id: i64, is_index: bool) -> ClusterStatsItem {
         is_index,
         stats_ver: 2,
         flag: 0,
+        load_status: tidb_stats::StatsLoadedStatus::full_load(),
         histogram: Histogram {
             id,
             ndv: 8000,
@@ -171,7 +172,6 @@ fn a_real_table_s_six_histograms_fit_one_analyze_transaction() {
     };
     let plan = plan_stats_write(&mut store, &catalog, &stats, now())
         .expect("a full-sized analyze result plans");
-    let planned = plan.mutations.len();
     let planned = plan.mutations.len();
     // The shape that made this a defect rather than a hypothetical: six
     // histograms of the default size are already past the bounded path's
@@ -239,4 +239,43 @@ fn the_analyze_version_round_trips_through_the_stored_row() {
         )),
         "version, snapshot, modify_count, count, last_analyze_version"
     );
+}
+
+/// Go `TestShowHistogramsLoadStatus`: a leased cache initializes analyzed
+/// histograms from metadata only, so their payload is absent and their load
+/// state is `allEvicted` until sync-load requests that item.
+#[test]
+fn lite_load_keeps_metadata_and_evicts_the_histogram_payload() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let stats = ClusterTableStats {
+        table_id: 4242,
+        version: 440_000_000_000_000_000,
+        snapshot: 440_000_000_000_000_000,
+        last_analyze_version: 440_000_000_000_000_000,
+        modify_count: 0,
+        row_count: 10_240,
+        columns: vec![full_histogram(1, false)],
+        indexes: vec![full_histogram(2, true)],
+    };
+    let plan = plan_stats_write(&mut store, &catalog, &stats, now()).expect("analyze plans");
+    apply_mutations(&mut store, &plan.mutations);
+
+    let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
+    let column_types = BTreeMap::from([(1, tidb_datatype::FieldType::new(
+        tidb_datatype::FieldTypeCode::LongLong,
+    ))]);
+    let loaded = loader
+        .load_table_lite(&mut store, 4242, &column_types)
+        .expect("lite statistics load")
+        .expect("stats_meta exists");
+
+    for item in loaded.columns.iter().chain(&loaded.indexes) {
+        assert_eq!(item.histogram.ndv, 8000);
+        assert_eq!(item.histogram.last_update_version, stats.version);
+        assert!(item.histogram.buckets.is_empty());
+        assert!(item.topn.is_none());
+        assert!(item.cms.is_none());
+        assert_eq!(item.load_status.status_to_string(), "allEvicted");
+    }
 }

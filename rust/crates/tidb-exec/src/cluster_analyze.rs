@@ -295,6 +295,7 @@ fn stored_item(built: AnalyzedHistogram, is_index: bool) -> ClusterStatsItem {
         is_index,
         stats_ver: built.stats_ver,
         flag: 0,
+        load_status: tidb_stats::StatsLoadedStatus::full_load(),
         histogram: built.histogram,
         topn: built.topn,
         cms: None,

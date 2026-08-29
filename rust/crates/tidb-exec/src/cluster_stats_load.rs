@@ -63,6 +63,7 @@ use tidb_datatype::{
 use tidb_model::table_info::TableInfo;
 use tidb_stats::cmsketch::{decode_cmsketch_and_topn, CmsSketch, TopN};
 use tidb_stats::histogram::{Bucket, Histogram};
+use tidb_stats::StatsLoadedStatus;
 
 use crate::cluster_catalog::{ClusterCatalog, MetaSnapshot};
 use crate::mysql_system_tables::{
@@ -92,6 +93,9 @@ pub struct ClusterStatsItem {
     pub stats_ver: i64,
     /// `flag`, Go's `statistics.AnalyzeFlag` bitset.
     pub flag: i64,
+    /// Go `StatsLoadedStatus`: whether the item has its full payload or only
+    /// histogram metadata resident.
+    pub load_status: StatsLoadedStatus,
     /// The histogram, with its buckets in ascending bound order and its
     /// counts made cumulative the way Go's in-memory `Bucket.Count` is.
     pub histogram: Histogram,
@@ -277,13 +281,42 @@ impl ClusterStatsLoader {
         table_id: i64,
         column_types: &BTreeMap<i64, FieldType>,
     ) -> Result<Option<ClusterTableStats>, SystemTableError> {
+        self.load_table_with_payload(snapshot, table_id, column_types, true)
+    }
+
+    /// Go's leased `tableStatsFromStorage(..., loadAll=false)` initialization:
+    /// read histogram metadata but leave buckets, TopN, and CMSketch evicted.
+    pub fn load_table_lite<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        table_id: i64,
+        column_types: &BTreeMap<i64, FieldType>,
+    ) -> Result<Option<ClusterTableStats>, SystemTableError> {
+        self.load_table_with_payload(snapshot, table_id, column_types, false)
+    }
+
+    fn load_table_with_payload<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        table_id: i64,
+        column_types: &BTreeMap<i64, FieldType>,
+        full_load: bool,
+    ) -> Result<Option<ClusterTableStats>, SystemTableError> {
         let Some((version, snapshot_ts, modify_count, row_count, last_analyze_version)) =
             self.load_meta(snapshot, table_id)?
         else {
             return Ok(None);
         };
-        let buckets = self.load_buckets(snapshot, table_id, column_types)?;
-        let topn = self.load_topn(snapshot, table_id)?;
+        let buckets = if full_load {
+            self.load_buckets(snapshot, table_id, column_types)?
+        } else {
+            BTreeMap::new()
+        };
+        let topn = if full_load {
+            self.load_topn(snapshot, table_id)?
+        } else {
+            BTreeMap::new()
+        };
 
         let mut stats = ClusterTableStats {
             table_id,
@@ -318,19 +351,37 @@ impl ClusterStatsLoader {
                 histogram.tot_col_size = 0;
                 histogram.correlation = 0.0;
             }
-            let (cms, top) = decode_cmsketch_and_topn(
-                row.bytes("cm_sketch")?.as_deref(),
-                topn.get(&(is_index, id)).map_or(&[][..], Vec::as_slice),
-            )
-            .map_err(|error| SystemTableError::Decode {
-                name: self.histograms.name().to_owned(),
-                detail: error.to_string(),
-            })?;
+            let (cms, top) = if full_load {
+                decode_cmsketch_and_topn(
+                    row.bytes("cm_sketch")?.as_deref(),
+                    topn.get(&(is_index, id)).map_or(&[][..], Vec::as_slice),
+                )
+                .map_err(|error| SystemTableError::Decode {
+                    name: self.histograms.name().to_owned(),
+                    detail: error.to_string(),
+                })?
+            } else {
+                (None, None)
+            };
+            let stats_ver = row.i64("stats_ver")?.unwrap_or_default();
+            let initialized = if is_index {
+                stats_ver != 0
+            } else {
+                stats_ver != 0 || histogram.ndv > 0 || histogram.null_count > 0
+            };
+            let load_status = if !initialized {
+                StatsLoadedStatus::default()
+            } else if full_load {
+                StatsLoadedStatus::full_load()
+            } else {
+                StatsLoadedStatus::all_evicted()
+            };
             let item = ClusterStatsItem {
                 id,
                 is_index,
-                stats_ver: row.i64("stats_ver")?.unwrap_or_default(),
+                stats_ver,
                 flag: row.i64("flag")?.unwrap_or_default(),
+                load_status,
                 histogram,
                 topn: top,
                 cms,

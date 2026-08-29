@@ -468,6 +468,7 @@ mod tests {
                 is_index: false,
                 stats_ver: 2,
                 flag: 0,
+                load_status: tidb_stats::StatsLoadedStatus::full_load(),
                 histogram: Histogram {
                     id: 1,
                     ndv: 10,

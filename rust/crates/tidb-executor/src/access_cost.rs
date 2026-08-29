@@ -75,6 +75,12 @@ pub struct TableStatistics {
     pub columns: BTreeMap<i64, ColumnStats>,
     /// Index statistics by index ID.
     pub indexes: BTreeMap<i64, IndexStats>,
+    /// Go `Column.StatsLoadedStatus`, retained separately from the estimator's
+    /// reduced column shape.
+    pub column_load_status: BTreeMap<i64, tidb_stats::StatsLoadedStatus>,
+    /// Go `Index.StatsLoadedStatus`, retained separately from the estimator's
+    /// reduced index shape.
+    pub index_load_status: BTreeMap<i64, tidb_stats::StatsLoadedStatus>,
 }
 
 impl TableStatistics {
@@ -132,6 +138,14 @@ impl TableStatistics {
         columns: BTreeMap<i64, ColumnStats>,
         indexes: BTreeMap<i64, IndexStats>,
     ) -> Self {
+        let column_load_status = columns
+            .keys()
+            .map(|id| (*id, tidb_stats::StatsLoadedStatus::full_load()))
+            .collect();
+        let index_load_status = indexes
+            .keys()
+            .map(|id| (*id, tidb_stats::StatsLoadedStatus::full_load()))
+            .collect();
         Self {
             pseudo: row_count == 0 || (columns.is_empty() && indexes.is_empty()),
             row_count,
@@ -140,7 +154,22 @@ impl TableStatistics {
             last_analyze_version: 0,
             columns,
             indexes,
+            column_load_status,
+            index_load_status,
         }
+    }
+
+    /// Preserves the per-item load state carried by Go's `Column` and
+    /// `Index` objects when storage statistics are translated for planning.
+    #[must_use]
+    pub fn with_load_statuses(
+        mut self,
+        columns: BTreeMap<i64, tidb_stats::StatsLoadedStatus>,
+        indexes: BTreeMap<i64, tidb_stats::StatsLoadedStatus>,
+    ) -> Self {
+        self.column_load_status = columns;
+        self.index_load_status = indexes;
+        self
     }
 
     /// Stamps the two TSOs the loaded `mysql.stats_meta` row carries, which
