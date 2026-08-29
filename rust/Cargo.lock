@@ -3432,6 +3432,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "crc32fast",
+ "flate2",
  "serde",
  "serde_json",
  "sha2",

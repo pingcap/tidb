@@ -62,8 +62,12 @@
 //!   the query side.
 
 use std::collections::BTreeMap;
+use std::io::{Read, Write};
 
 use base64::Engine as _;
+use flate2::read::GzDecoder;
+use flate2::write::GzEncoder;
+use flate2::Compression;
 use tidb_datatype::{
     ConversionFlags, Datum, EvalType, FieldType, FieldTypeCode, SessionTimeZone,
     DEFAULT_STATEMENT_FLAGS,
@@ -90,6 +94,10 @@ pub enum LoadStatsError {
     /// A column bound would not convert back to the column's type -- Go's
     /// `hist.ConvertTo` error path in `TableStatsFromJSON`.
     Convert(String),
+    /// Gzip compression or decompression failed.
+    Gzip(String),
+    /// Go `BlocksToJSONTable` rejects an empty block sequence.
+    EmptyBlocks,
 }
 
 impl std::fmt::Display for LoadStatsError {
@@ -102,6 +110,8 @@ impl std::fmt::Display for LoadStatsError {
             Self::Convert(detail) => {
                 write!(formatter, "Load Stats: convert histogram bound: {detail}")
             }
+            Self::Gzip(detail) => write!(formatter, "Load Stats: gzip stats json: {detail}"),
+            Self::EmptyBlocks => formatter.write_str("Block empty error"),
         }
     }
 }
@@ -120,6 +130,42 @@ pub fn parse_stats_json(data: &str) -> Result<JsonTable, LoadStatsError> {
         return Ok(JsonTable::default());
     }
     serde_json::from_str(data).map_err(|error| LoadStatsError::Json(error.to_string()))
+}
+
+/// Go `storage.JSONTableToBlocks`.
+///
+/// # Panics
+///
+/// Panics for a zero block size, matching Go's integer division by zero.
+pub fn json_table_to_blocks(
+    table: &JsonTable,
+    block_size: usize,
+) -> Result<Vec<Vec<u8>>, LoadStatsError> {
+    assert_ne!(block_size, 0, "integer divide by zero");
+    let json =
+        serde_json::to_vec(table).map_err(|error| LoadStatsError::Json(error.to_string()))?;
+    let mut writer = GzEncoder::new(Vec::new(), Compression::default());
+    writer
+        .write_all(&json)
+        .map_err(|error| LoadStatsError::Gzip(error.to_string()))?;
+    let compressed = writer
+        .finish()
+        .map_err(|error| LoadStatsError::Gzip(error.to_string()))?;
+    Ok(compressed.chunks(block_size).map(<[u8]>::to_vec).collect())
+}
+
+/// Go `storage.BlocksToJSONTable`.
+pub fn blocks_to_json_table(blocks: &[Vec<u8>]) -> Result<JsonTable, LoadStatsError> {
+    if blocks.is_empty() {
+        return Err(LoadStatsError::EmptyBlocks);
+    }
+    let compressed: Vec<u8> = blocks.iter().flatten().copied().collect();
+    let mut reader = GzDecoder::new(compressed.as_slice());
+    let mut json = Vec::new();
+    reader
+        .read_to_end(&mut json)
+        .map_err(|error| LoadStatsError::Gzip(error.to_string()))?;
+    serde_json::from_slice(&json).map_err(|error| LoadStatsError::Json(error.to_string()))
 }
 
 fn decode_base64(field: Option<&String>) -> Result<Vec<u8>, LoadStatsError> {
@@ -271,15 +317,10 @@ fn column_stats_from_json(
     column: &crate::kv_table::KvColumn,
     json: &JsonColumn,
 ) -> Result<ColumnStats, LoadStatsError> {
-    let Some(proto) = &json.histogram else {
-        // Go dereferences `jsonCol.Histogram` unconditionally, so a dump
-        // without one has never existed in the wild; refuse it by name
-        // instead of panicking the way Go would.
-        return Err(LoadStatsError::Json(format!(
-            "column `{}` has no histogram in the stats file",
-            column.name
-        )));
-    };
+    let proto = json
+        .histogram
+        .as_ref()
+        .expect("column stats JSON has no histogram");
     let mut histogram = histogram_from_json(proto)?;
     if !keep_bounds_as_bytes(&column.field_type) {
         // Go: `hist.ConvertTo(UTCWithAllowInvalidDateCtx, &tmpFT)` -- each
@@ -324,12 +365,10 @@ fn index_stats_from_json(
     index: &crate::kv_table::KvIndex,
     json: &JsonColumn,
 ) -> Result<IndexStats, LoadStatsError> {
-    let Some(proto) = &json.histogram else {
-        return Err(LoadStatsError::Json(format!(
-            "index `{}` has no histogram in the stats file",
-            index.name
-        )));
-    };
+    let proto = json
+        .histogram
+        .as_ref()
+        .expect("index stats JSON has no histogram");
     let mut histogram = histogram_from_json(proto)?;
     histogram.id = index.id;
     histogram.null_count = json.null_count;
@@ -428,5 +467,30 @@ mod tests {
         let table = parse_stats_json("null").expect("null parses");
         assert_eq!(table.table_name, "");
         assert_eq!(table.version, 0);
+    }
+
+    /// Go `storage_test.TestJSONTableToBlocks`.
+    #[test]
+    fn json_table_blocks_round_trip() {
+        let source: JsonTable = serde_json::from_str(
+            r#"{
+                "database_name":"test",
+                "table_name":"t",
+                "columns":{"a":{"histogram":{"ndv":2,"buckets":[]},"stats_ver":2}},
+                "indices":{},
+                "count":6,
+                "modify_count":1,
+                "version":42,
+                "predicate_columns":[{"id":1,"last_used_at":"2026-08-29 00:00:00.000000"}]
+            }"#,
+        )
+        .expect("source JSON table");
+        let blocks = json_table_to_blocks(&source, 30).expect("compress table");
+        assert!(blocks.len() > 1);
+        let converted = blocks_to_json_table(&blocks).expect("decompress table");
+        assert_eq!(
+            serde_json::to_value(converted).expect("converted JSON"),
+            serde_json::to_value(source).expect("source JSON")
+        );
     }
 }
