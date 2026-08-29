@@ -42,7 +42,6 @@ pub mod average_count;
 pub mod batch_update;
 pub mod bootstrap_sql;
 pub mod builder;
-pub mod cache_metrics_labels;
 pub mod cmsketch;
 pub mod column;
 pub mod constants;
@@ -147,10 +146,6 @@ pub use builder::{
     try_build_column_histogram_in_place, try_build_hist_and_topn, try_build_hist_and_topn_in_place,
     try_build_hist_and_topn_tracked, BuildOptions, BuilderMemoryBuffer, ComparedBytesResult,
     HistogramAndTopN, HistogramBuildError, SampleCollector, SampleItem, SequentialRangeChecker,
-};
-pub use cache_metrics_labels::{
-    stats_cache_counter_labels, stats_cache_gauge_labels, STATS_CACHE_COUNTER_LABELS,
-    STATS_CACHE_GAUGE_LABELS,
 };
 pub use cmsketch::{
     check_empty_topns, cmsketch_and_topn_from_proto, decode_cmsketch,

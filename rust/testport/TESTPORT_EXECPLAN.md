@@ -794,6 +794,12 @@ For each bounded behavior cluster:
       status, native memory accounting, and both append helpers; remove the
       shape-only carrier and source-absent tests. The atomic inventory and WIP
       gates are in `receipts/statistics_handle_cache_internal_testutil.md`.
+- [x] Audit the complete pinned `pkg/statistics/handle/cache/metrics` package.
+      Remove the label-only Rust carrier and its two source-absent tests: the
+      Go package exposes eight initialized Prometheus handles, not label
+      metadata, and completing it requires the absent atomic `pkg/metrics`
+      owner. The inventory is in
+      `receipts/statistics_handle_cache_metrics_audit.md`.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope
@@ -891,6 +897,12 @@ For each bounded behavior cluster:
   Retaining only its five constructor arguments cannot exercise the memory,
   eviction, status, or append behavior for which the Go package exists.
   Date/Author: 2026-08-29, Codex.
+- Decision: `pkg/statistics/handle/cache/metrics` cannot privately construct
+  replacement metric families. Its eight handles are children of the shared,
+  registered `pkg/metrics` vectors, so detached label constants or private
+  collectors have different identity and lifecycle. The package remains
+  explicitly unclaimed until that dependency is complete. Date/Author:
+  2026-08-29, Codex.
 
 ## Surprises & Discoveries
 
