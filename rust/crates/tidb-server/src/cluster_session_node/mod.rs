@@ -356,6 +356,40 @@ struct ClusterStatisticsItemLoader {
     global_vars: GlobalSysvars,
 }
 
+struct ClusterColumnStatsUsageProvider {
+    transactions: Arc<dyn ClusterTransactions>,
+    catalog: Arc<SharedClusterCatalog>,
+}
+
+impl tidb_session::ColumnStatsUsageProvider for ClusterColumnStatsUsageProvider {
+    fn load_column_stats_usage(
+        &self,
+        location: &tidb_datatype::SessionTimeZone,
+        resource_group: &str,
+    ) -> Result<
+        std::collections::HashMap<
+            tidb_model::TableItemID,
+            (Option<tidb_datatype::Time>, Option<tidb_datatype::Time>),
+        >,
+        String,
+    > {
+        let snapshot = self.transactions.open_snapshot(resource_group)?;
+        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+        tidb_exec::cluster_predicate_column::load_column_stats_usage(
+            &mut snapshot,
+            &self.catalog.load(),
+            location,
+        )
+        .map(|usage| {
+            usage
+                .into_iter()
+                .map(|(item, times)| (item, (times.last_used_at, times.last_analyzed_at)))
+                .collect()
+        })
+        .map_err(|error| error.to_string())
+    }
+}
+
 impl tidb_executor::driver::StatisticsItemLoader for ClusterStatisticsItemLoader {
     fn load_items(
         &self,
@@ -727,6 +761,10 @@ impl QuerySessionFactory for ClusterSessionFactory {
         let mut session = Session::with_catalog(Arc::new(Mutex::new(built.catalog)));
         session.set_index_usage_collector(Arc::clone(&self.index_usage_collector));
         session.set_data_lock_waits_provider(self.data_lock_waits.clone());
+        session.set_column_stats_usage_provider(Arc::new(ClusterColumnStatsUsageProvider {
+            transactions: Arc::clone(&self.transactions),
+            catalog: Arc::clone(&self.catalog),
+        }));
         session.set_advisory_lock_service(Arc::new(transactions::ClusterAdvisoryLockService::new(
             Arc::clone(&self.transactions),
         )));

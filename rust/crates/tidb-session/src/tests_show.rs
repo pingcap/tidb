@@ -2193,6 +2193,105 @@ fn show_stats_healthy_reads_the_production_statistics_cache() {
     );
 }
 
+/// Pinned Go `fetchShowColumnStatsUsage` always visits the logical/global ID
+/// and every partition ID, even under static pruning, and keeps the two
+/// timestamps independently nullable.
+#[test]
+fn show_column_stats_usage_reads_global_and_partition_ids() {
+    struct Usage(
+        std::collections::HashMap<
+            tidb_model::TableItemID,
+            (Option<tidb_datatype::Time>, Option<tidb_datatype::Time>),
+        >,
+    );
+    impl ColumnStatsUsageProvider for Usage {
+        fn load_column_stats_usage(
+            &self,
+            _location: &tidb_datatype::SessionTimeZone,
+            _resource_group: &str,
+        ) -> Result<
+            std::collections::HashMap<
+                tidb_model::TableItemID,
+                (Option<tidb_datatype::Time>, Option<tidb_datatype::Time>),
+            >,
+            String,
+        > {
+            Ok(self.0.clone())
+        }
+    }
+
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE t (a INT, b INT) PARTITION BY RANGE (a) (\
+             PARTITION p0 VALUES LESS THAN (10), \
+             PARTITION p1 VALUES LESS THAN MAXVALUE)",
+        )
+        .unwrap();
+    let (table_id, p0_id, a_id, b_id) = session
+        .with_catalog_mut(|catalog| {
+            let Some(tidb_executor::TableEntry::Kv(table)) = catalog.table_in("test", "t") else {
+                panic!("table exists")
+            };
+            Ok((
+                table.table_id,
+                table.partition().unwrap().definitions[0].id,
+                table.columns()[0].id,
+                table.columns()[1].id,
+            ))
+        })
+        .unwrap();
+    let used = tidb_datatype::Time::from_date_checked(
+        2026,
+        8,
+        29,
+        1,
+        2,
+        3,
+        0,
+        tidb_datatype::TimeType::Timestamp,
+        0,
+    )
+    .unwrap();
+    let analyzed = tidb_datatype::Time::from_date_checked(
+        2026,
+        8,
+        30,
+        4,
+        5,
+        6,
+        0,
+        tidb_datatype::TimeType::Timestamp,
+        0,
+    )
+    .unwrap();
+    let item = |table_id, id| tidb_model::TableItemID {
+        table_id,
+        id,
+        is_index: false,
+        is_sync_load_failed: false,
+    };
+    session.set_column_stats_usage_provider(std::sync::Arc::new(Usage(
+        [
+            (item(table_id, a_id), (Some(used), None)),
+            (item(p0_id, b_id), (None, Some(analyzed))),
+        ]
+        .into_iter()
+        .collect(),
+    )));
+    session
+        .run("SET @@tidb_partition_prune_mode = 'static'")
+        .unwrap();
+
+    assert_eq!(
+        row_text(session.run("SHOW COLUMN_STATS_USAGE WHERE Table_name = 't'")),
+        vec![
+            vec!["test", "t", "global", "a", "2026-08-29 01:02:03", "NULL"],
+            vec!["test", "t", "p0", "b", "NULL", "2026-08-30 04:05:06"],
+        ]
+    );
+}
+
 /// Pinned `tests/integrationtest/r/statistics/integration.result`: TopN rows
 /// use the table/index names, decoded values, and counts produced by ANALYZE.
 #[test]

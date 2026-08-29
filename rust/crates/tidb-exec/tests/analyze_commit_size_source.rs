@@ -34,7 +34,11 @@ use tidb_exec::cluster_catalog::{
 use tidb_exec::cluster_stats_load::{ClusterStatsItem, ClusterStatsLoader, ClusterTableStats};
 use tidb_exec::cluster_stats_write::{
     plan_historical_stats_meta_write, plan_loaded_stats_item_write,
-    plan_loaded_stats_meta_write, plan_loaded_stats_usage_write, plan_stats_write,
+    plan_get_predicate_columns, plan_loaded_stats_meta_write, plan_loaded_stats_usage_write,
+    plan_stats_write,
+};
+use tidb_exec::cluster_predicate_column::{
+    load_column_stats_usage, load_column_stats_usage_for_table,
 };
 use tidb_exec::mysql_bootstrap::{plan_mysql_bootstrap, BootstrapEnvironment, BootstrapWrite};
 use tidb_exec::mysql_system_tables::{scan_system_table, SystemRow, SystemTableView};
@@ -732,6 +736,72 @@ fn loaded_stats_usage_replaces_timestamps_in_one_plan() {
         row.datum("last_analyzed_at").unwrap(),
         Some(&Datum::Time(expected))
     );
+}
+
+/// Pinned predicatecolumn reads project UTC instants into the requested
+/// location, while `GetPredicateColumns` deletes dropped-column rows and
+/// returns only non-NULL `last_used_at` IDs from that same transaction.
+#[test]
+fn predicate_column_load_and_cleanup_match_the_pinned_storage_contract() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let table_id = 4242;
+    let plan = plan_loaded_stats_usage_write(
+        &mut store,
+        &catalog,
+        table_id,
+        &[
+            Some(JsonPredicateColumn {
+                id: 7,
+                last_used_at: Some("2026-08-29 01:02:03".to_owned()),
+                last_analyzed_at: None,
+            }),
+            Some(JsonPredicateColumn {
+                id: 8,
+                last_used_at: Some("2026-08-29 02:03:04".to_owned()),
+                last_analyzed_at: None,
+            }),
+        ],
+        now(),
+    )
+    .expect("usage plans");
+    apply_mutations(&mut store, &plan.mutations);
+
+    let plus_eight = tidb_datatype::SessionTimeZone::Fixed {
+        name: "+08:00".to_owned(),
+        offset_secs: 8 * 60 * 60,
+    };
+    let usage = load_column_stats_usage(&mut store, &catalog, &plus_eight)
+        .expect("all usage loads");
+    let item = |id| tidb_model::TableItemID {
+        table_id,
+        id,
+        is_index: false,
+        is_sync_load_failed: false,
+    };
+    assert_eq!(
+        usage[&item(7)].last_used_at,
+        Some(
+            Time::from_date_checked(2026, 8, 29, 9, 2, 3, 0, TimeType::Timestamp, 0)
+                .expect("fixed timestamp")
+        )
+    );
+
+    let (columns, cleanup) =
+        plan_get_predicate_columns(&mut store, &catalog, table_id, &[7])
+            .expect("cleanup and predicate read plan");
+    assert_eq!(columns, vec![7]);
+    assert!(!cleanup.is_empty());
+    apply_mutations(&mut store, &cleanup.mutations);
+    let remaining = load_column_stats_usage_for_table(
+        &mut store,
+        &catalog,
+        &tidb_datatype::SessionTimeZone::utc(),
+        table_id,
+    )
+    .expect("table usage reloads");
+    assert!(remaining.contains_key(&item(7)));
+    assert!(!remaining.contains_key(&item(8)));
 }
 
 /// Pinned Go history recording selects the current meta row by both table ID

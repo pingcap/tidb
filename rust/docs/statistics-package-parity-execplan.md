@@ -44,6 +44,7 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - [x] (2026-08-29) Wired the row cache to the cluster statistics snapshot and removed the hard-coded-zero `information_schema.tables` divergence for analyzed tables.
 - [x] (2026-08-29) Removed the live cache's reduced `ClusterTableStats` authority: bootstrap, refresh, sync load, planner derivation, and row-cache reads now share canonical full `statistics.Table` objects like Go.
 - [x] (2026-08-29) Wired cluster `LOAD STATS` through Go's text-protocol client-local-file transfer, independent restricted TiKV transactions, optional history writes, final metadata publication, and the common shared-cache refresh path.
+- [x] (2026-08-29) Wired `SHOW COLUMN_STATS_USAGE` to a fresh shared-storage snapshot, including session-location timestamps and logical/global plus all-partition traversal in both prune modes.
 - [ ] Wire all pinned Go `SHOW STATS_*` surfaces to the shared cache and storage semantics.
 - [ ] Inventory every production file, platform/generated variant, original test/support artifact, fixture, and validation gate in pinned `pkg/statistics`; close or explicitly retain seed-only gaps until the whole package is complete.
 - [ ] Run the Ready validation profile, including `make lint`, only after the complete package inventory is closed.
@@ -152,6 +153,9 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - Observation: the Rust statistics worker pool exposed an `is_closed` observer solely for its own tests. Pinned `handle/util` returns the external `gp.Pool`, whose API has `Go` and `Close` but no closed-state accessor.
   Evidence: pinned `pool.go` and pinned external module `github.com/tiancaiamao/gp` at `4025bc8a4d4a`; tests now verify post-close submission behavior directly.
 
+- Observation: the existing Rust `SHOW COLUMN_STATS_USAGE` code was only two disconnected row helpers. Pinned Go reads the complete persisted usage map through the statistics handle on every SHOW, then visits the logical table ID and every partition ID regardless of prune mode.
+  Evidence: pinned `pkg/executor/show_stats.go::fetchShowColumnStatsUsage`; the production cluster session now installs a storage-backed provider and the SQL regression exercises the global and partition rows under static pruning.
+
 ## Decision Log
 
 - Decision: reconstruct and test each pinned Go branch before editing Rust; do not preserve Rust-only fallback paths.
@@ -236,6 +240,8 @@ Pushed evidence includes commits `e0d5b4c1f0` (individual item loading), `001795
 Revision note (2026-08-29): created the living plan after completing exact item loading and logical usage collection; recorded the three parity gaps found while reviewing the first request-seam implementation.
 
 Revision note (2026-08-29): completed the pinned first-phase interesting-column/access-path pruning behavior over Rust's newborn path representation and recorded why Go's later path-growth scoring fields are unreachable at this phase.
+
+Revision note (2026-08-29): added the complete predicate-column storage primitives (load all/table, replacement save, cleanup-and-get planning), reused them from LOAD STATS, and wired the SHOW consumer through a fresh cluster snapshot. The parent usage package's ANALYZE PREDICATE COLUMNS consumer remains an explicit integration gap, so no package-complete claim is made yet.
 
 Revision note (2026-08-29): moved synchronous waiting out of initial request dispatch and registered `SyncWaitStatsLoadPoint` at the pinned later logical-rule position.
 

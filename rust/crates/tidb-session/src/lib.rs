@@ -256,6 +256,22 @@ pub trait DataLockWaitsProvider: Send + Sync {
     fn lock_waits(&self) -> Result<Vec<DataLockWait>, String>;
 }
 
+/// Storage-backed reader used by pinned Go `SHOW COLUMN_STATS_USAGE`.
+pub trait ColumnStatsUsageProvider: Send + Sync {
+    /// Loads the complete shared usage table at a fresh statement snapshot.
+    fn load_column_stats_usage(
+        &self,
+        location: &tidb_datatype::SessionTimeZone,
+        resource_group: &str,
+    ) -> Result<
+        std::collections::HashMap<
+            tidb_model::TableItemID,
+            (Option<tidb_datatype::Time>, Option<tidb_datatype::Time>),
+        >,
+        String,
+    >;
+}
+
 /// The statement-owned policy a server needs to retain an eager result set.
 ///
 /// It is captured before `SET_VAR` overlays are restored, so a prepared
@@ -534,6 +550,8 @@ pub struct Session {
     index_usage_collector: Arc<tidb_stats_handle_usage_indexusage::Collector>,
     /// The node's storage-backed current lock-wait reader.
     data_lock_waits: Option<std::sync::Arc<dyn DataLockWaitsProvider>>,
+    /// The statistics handle's persisted predicate-column usage reader.
+    column_stats_usage: Option<std::sync::Arc<dyn ColumnStatsUsageProvider>>,
     /// Parsed-products cache over the raw system-variable text, keyed by
     /// [`vars::SessionVars::generation`]. Go holds these as typed fields on
     /// `SessionVars`, updated by each variable's `SetSession` hook, so a
@@ -721,6 +739,7 @@ impl Default for Session {
             workload_repository: None,
             index_usage_collector: Arc::new(tidb_stats_handle_usage_indexusage::Collector::new()),
             data_lock_waits: None,
+            column_stats_usage: None,
             mdl_related_tables: None,
             statement_var_cache: std::cell::RefCell::new(None),
             cost_env_cache: std::cell::RefCell::new(None),
@@ -950,6 +969,14 @@ impl Session {
         provider: std::sync::Arc<dyn DataLockWaitsProvider>,
     ) {
         self.data_lock_waits = Some(provider);
+    }
+
+    /// Installs the node-global persisted predicate-column usage reader.
+    pub fn set_column_stats_usage_provider(
+        &mut self,
+        provider: std::sync::Arc<dyn ColumnStatsUsageProvider>,
+    ) {
+        self.column_stats_usage = Some(provider);
     }
 
     /// Go `ShowDDLExec.Next` (`executor/show_ddl.go`): one row describing the

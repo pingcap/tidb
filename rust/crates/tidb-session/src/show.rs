@@ -1223,6 +1223,98 @@ fn filter_show_output(
 }
 
 impl Session {
+    /// Pinned Go `ShowExec.fetchShowColumnStatsUsage`: load the persisted map
+    /// once, then walk every schema, table, logical/global table ID, physical
+    /// partition ID, and column in infoschema order.
+    fn column_stats_usage_stmt(
+        &mut self,
+        filter: Option<&tidb_ast::ShowInspectionFilter>,
+    ) -> Result<StmtOutput, DriverError> {
+        let (like_pattern, where_clause) = match filter {
+            None => (None, None),
+            Some(tidb_ast::ShowInspectionFilter::Like(expr)) => {
+                let value = datum_text(&self.eval_value(expr)?);
+                (Some(ShowLikePattern::from_expr(expr, value, true)), None)
+            }
+            Some(tidb_ast::ShowInspectionFilter::Where(expr)) => (None, Some(expr)),
+        };
+        let usage = match self.column_stats_usage.clone() {
+            Some(provider) => provider
+                .load_column_stats_usage(&self.session_time_zone(), &self.active_resource_group)
+                .map_err(DriverError::unsupported)?,
+            None => std::collections::HashMap::new(),
+        };
+        let rows = self.with_catalog_mut(|catalog| {
+            let mut rows = Vec::new();
+            for database in catalog.database_names() {
+                let Some(names) = catalog.table_names(&database) else {
+                    continue;
+                };
+                for name in names {
+                    let Some(tidb_executor::TableEntry::Kv(table)) =
+                        catalog.table_in(&database, &name)
+                    else {
+                        continue;
+                    };
+                    let mut targets = vec![(
+                        table.table_id,
+                        tidb_executor::show_stats::column_stats_usage_label(
+                            table.partition().is_some(),
+                            None,
+                        ),
+                    )];
+                    if let Some(partition) = table.partition() {
+                        targets.extend(partition.definitions.iter().map(|definition| {
+                            (
+                                definition.id,
+                                tidb_executor::show_stats::column_stats_usage_label(
+                                    false,
+                                    Some(&definition.name),
+                                ),
+                            )
+                        }));
+                    }
+                    for (physical_id, partition) in targets {
+                        for column in table.columns() {
+                            let item = tidb_model::TableItemID {
+                                table_id: physical_id,
+                                id: column.id,
+                                is_index: false,
+                                is_sync_load_failed: false,
+                            };
+                            let Some((last_used_at, last_analyzed_at)) = usage.get(&item) else {
+                                continue;
+                            };
+                            rows.push(tidb_executor::show_stats::column_stats_usage_row(
+                                &database,
+                                &name,
+                                &partition,
+                                &column.name,
+                                *last_used_at,
+                                *last_analyzed_at,
+                            ));
+                        }
+                    }
+                }
+            }
+            Ok(rows)
+        })?;
+        let varchar = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
+        let datetime = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Datetime);
+        let output = StmtOutput::Rows {
+            columns: vec![
+                ("Db_name".to_owned(), varchar()),
+                ("Table_name".to_owned(), varchar()),
+                ("Partition_name".to_owned(), varchar()),
+                ("Column_name".to_owned(), varchar()),
+                ("Last_used_at".to_owned(), datetime()),
+                ("Last_analyzed_at".to_owned(), datetime()),
+            ],
+            rows,
+        };
+        filter_show_output(output, like_pattern, where_clause)
+    }
+
     /// Go `ShowExec.fetchShowStatsMeta` (`pkg/executor/show_stats.go:36`):
     /// one row per table or partition whose statistics this session has
     /// loaded, with the two TSOs of the stored `mysql.stats_meta` row
@@ -2683,6 +2775,9 @@ impl Session {
                 }
                 if show.kind == tidb_ast::ShowInspectionKind::StatsHealthy {
                     return self.stats_healthy_stmt(show.filter.as_ref()).map(Some);
+                }
+                if show.kind == tidb_ast::ShowInspectionKind::ColumnStatsUsage {
+                    return self.column_stats_usage_stmt(show.filter.as_ref()).map(Some);
                 }
                 if show.kind == tidb_ast::ShowInspectionKind::HistogramsInFlight {
                     let (like_pattern, where_clause) = match show.filter.as_ref() {

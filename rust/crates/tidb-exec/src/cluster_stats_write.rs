@@ -53,7 +53,7 @@
 //! not a statistic. `cm_sketch` is left NULL because analyze v2 stores no
 //! CMSketch (`save.go:266`).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use tidb_datatype::{
     parse_time, ConversionFlags, Datum, FieldType, FieldTypeCode, Time, TimeType, MAX_FSP,
@@ -61,12 +61,14 @@ use tidb_datatype::{
 };
 use tidb_meta::{key, value};
 use tidb_model::table_info::TableInfo;
+use tidb_model::TableItemID;
 use tidb_stats::encode_cmsketch_without_topn;
 use tidb_stats::histogram::Bucket;
 use tidb_stats::JsonPredicateColumn;
 use tidb_txnkv::transaction::OptimisticMutation;
 
 use crate::cluster_catalog::{ClusterCatalog, MetaSnapshot};
+use crate::cluster_predicate_column::ColumnStatsTimeInfo;
 use crate::cluster_stats_load::{ClusterStatsItem, ClusterTableStats};
 use crate::mysql_system_tables::{
     scan_system_table, scan_system_table_prefixed, HandleLayout, SystemRow, SystemTableError,
@@ -253,33 +255,116 @@ pub fn plan_loaded_stats_usage_write<S: MetaSnapshot>(
     predicate_columns: &[Option<JsonPredicateColumn>],
     now: Time,
 ) -> Result<StatsWritePlan, StatsWriteError> {
+    let mut usage = HashMap::with_capacity(predicate_columns.len());
+    for column in predicate_columns.iter().flatten() {
+        usage.insert(
+            TableItemID {
+                table_id,
+                id: column.id,
+                is_index: false,
+                is_sync_load_failed: false,
+            },
+            ColumnStatsTimeInfo {
+                last_used_at: parse_predicate_time(column.last_used_at.as_deref())?,
+                last_analyzed_at: parse_predicate_time(column.last_analyzed_at.as_deref())?,
+            },
+        );
+    }
+    plan_column_stats_usage_write(snapshot, catalog, &usage, now)
+}
+
+/// Plans pinned Go `SaveColumnStatsUsageForTable` for an arbitrary usage map.
+///
+/// Every entry is replaced, including explicit NULL timestamps. The map's
+/// iteration order is intentionally unspecified, as it is in Go.
+pub fn plan_column_stats_usage_write<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    usage: &HashMap<TableItemID, ColumnStatsTimeInfo>,
+    now: Time,
+) -> Result<StatsWritePlan, StatsWriteError> {
     let mut plan = StatsWritePlan::default();
     let table = locate(catalog, "column_stats_usage")?;
-    let mut rows = StatsRows::open(snapshot, table, &["table_id", "column_id"], table_id)?;
-    for column in predicate_columns.iter().flatten() {
+    let mut rows_by_table = BTreeMap::new();
+    for item in usage.keys() {
+        if item.is_index {
+            continue;
+        }
+        if !rows_by_table.contains_key(&item.table_id) {
+            rows_by_table.insert(
+                item.table_id,
+                StatsRows::open(snapshot, table, &["table_id", "column_id"], item.table_id)?,
+            );
+        }
+    }
+    for (item, times) in usage {
+        if item.is_index {
+            continue;
+        }
+        let rows = rows_by_table
+            .get_mut(&item.table_id)
+            .expect("the table's rows were opened above");
         let mut values = defaults_row(table, now)?;
-        set(table, &mut values, "table_id", Datum::Int(table_id));
-        set(table, &mut values, "column_id", Datum::Int(column.id));
+        set(table, &mut values, "table_id", Datum::Int(item.table_id));
+        set(table, &mut values, "column_id", Datum::Int(item.id));
         set(
             table,
             &mut values,
             "last_used_at",
-            predicate_time(table, "last_used_at", column.last_used_at.as_deref())?,
+            predicate_time_value(table, "last_used_at", times.last_used_at)?,
         );
         set(
             table,
             &mut values,
             "last_analyzed_at",
-            predicate_time(
-                table,
-                "last_analyzed_at",
-                column.last_analyzed_at.as_deref(),
-            )?,
+            predicate_time_value(table, "last_analyzed_at", times.last_analyzed_at)?,
         );
         rows.store(snapshot, catalog, &values, &mut plan)?;
     }
-    rows.publish_watermark(catalog, &mut plan)?;
+    for rows in rows_by_table.values() {
+        rows.publish_watermark(catalog, &mut plan)?;
+    }
     Ok(plan)
+}
+
+/// Plans pinned Go `GetPredicateColumns`, including its same-transaction
+/// cleanup of usage rows for columns no longer present in the latest schema.
+///
+/// Go executes DELETE before SELECT. This mutation planner cannot make staged
+/// mutations visible through `MetaSnapshot`, so it filters the selected IDs
+/// against the same current-column set while returning the exact deletes for
+/// the caller to commit with the read transaction.
+pub fn plan_get_predicate_columns<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    table_id: i64,
+    current_column_ids: &[i64],
+) -> Result<(Vec<i64>, StatsWritePlan), StatsWriteError> {
+    let current = current_column_ids
+        .iter()
+        .map(|column_id| format!("{:?}", Datum::Int(*column_id)))
+        .collect::<std::collections::HashSet<_>>();
+    let columns = crate::cluster_predicate_column::predicate_columns(snapshot, catalog, table_id)?
+        .into_iter()
+        .filter(|column_id| current_column_ids.contains(column_id))
+        .collect();
+    let table = locate(catalog, "column_stats_usage")?;
+    let mut rows = StatsRows::open(snapshot, table, &["table_id", "column_id"], table_id)?;
+    let dropped = rows
+        .existing
+        .keys()
+        .filter(|identity| {
+            identity
+                .get(1)
+                .is_some_and(|column| !current.contains(column))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut plan = StatsWritePlan::default();
+    for identity in dropped {
+        rows.retract_prefix(&identity, &mut plan)?;
+    }
+    Ok((columns, plan))
 }
 
 /// Plans pinned Go `RecordHistoricalStatsMeta` for one committed statistics
@@ -369,13 +454,9 @@ fn unsigned_value(value: Option<&Datum>) -> Option<u64> {
     }
 }
 
-fn predicate_time(
-    table: &TableInfo,
-    column: &str,
-    value: Option<&str>,
-) -> Result<Datum, StatsWriteError> {
+fn parse_predicate_time(value: Option<&str>) -> Result<Option<Time>, StatsWriteError> {
     let Some(value) = value else {
-        return Ok(Datum::Null);
+        return Ok(None);
     };
     let parsed = parse_time(
         value,
@@ -387,13 +468,24 @@ fn predicate_time(
         &chrono::Utc,
     )
     .map_err(|error| StatsWriteError::PredicateTime(format!("{value:?}: {error}")))?;
+    Ok(Some(parsed.time))
+}
+
+fn predicate_time_value(
+    table: &TableInfo,
+    column: &str,
+    value: Option<Time>,
+) -> Result<Datum, StatsWriteError> {
+    let Some(value) = value else {
+        return Ok(Datum::Null);
+    };
     let field_type = table
         .find_public_column_by_name(column)
         .ok_or_else(|| StatsWriteError::MissingTable(format!("mysql.column_stats_usage.{column}")))?
         .read()
         .field_type
         .clone();
-    Datum::Time(parsed.time)
+    Datum::Time(value)
         .convert_to(&field_type, ConversionFlags::from_bits(0))
         .map(|converted| converted.value)
         .map_err(|error| StatsWriteError::PredicateTime(format!("{value:?}: {error}")))
