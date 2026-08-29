@@ -1,0 +1,14 @@
+[package]
+name = "tidb-stats-handle-cache-metrics"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB statistics cache metric bindings."
+
+[lints]
+workspace = true
+
+[dependencies]
+prometheus = { version = "0.14", default-features = false }

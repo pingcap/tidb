@@ -47,6 +47,7 @@ members = [
     "crates/tidb-stats-handle-cache-internal",
     "crates/tidb-stats-handle-cache-internal-mapcache",
     "crates/tidb-stats-handle-cache-internal-testutil",
+    "crates/tidb-stats-handle-cache-metrics",
     "crates/tidb-stats-handle-initstats",
     "crates/tidb-stats-handle-usage-collector",
     "crates/tidb-stats-handle-usage-indexusage",

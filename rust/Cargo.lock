@@ -3788,6 +3788,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-stats-handle-cache-metrics"
+version = "0.0.0"
+dependencies = [
+ "prometheus 0.14.0",
+]
+
+[[package]]
 name = "tidb-stats-handle-initstats"
 version = "0.0.0"
 dependencies = [
