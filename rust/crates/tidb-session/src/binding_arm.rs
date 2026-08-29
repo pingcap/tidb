@@ -476,6 +476,9 @@ impl Session {
         };
         let mut bound = stmt.clone();
         binding::bind_hints(&mut bound, &hints);
+        for warning in crate::dispatch::filter_sem_restricted_hints(&mut bound) {
+            self.append_warning(crate::WarningLevel::Warning, 1105, warning);
+        }
         self.found_in_binding = true;
         Some((bound, bind_sql))
     }

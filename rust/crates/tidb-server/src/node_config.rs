@@ -255,6 +255,8 @@ pub struct NodeConfig {
     /// TiDB's `[security] enable-sem`: install the process-wide Security
     /// Enhanced Mode policy before any startup resource is admitted.
     pub sem_enabled: bool,
+    /// TiDB's `[security] sem-config`: a nonempty path selects SEM v2.
+    pub sem_config: String,
     /// TiDB's `[security] skip-grant-table`, accepted only when the process
     /// effective uid passes the source root-only validation.
     pub skip_grant_table: bool,
@@ -372,6 +374,7 @@ const SUPPORTED_CONFIG_LEAVES: &[&str] = &[
     "security.cluster-ssl-key",
     "security.disconnect-on-expired-password",
     "security.enable-sem",
+    "security.sem-config",
     "security.skip-grant-table",
     "security.spilled-file-encryption-method",
     "security.ssl-cert",
@@ -670,6 +673,7 @@ impl NodeConfig {
         let mut file_auto_tls = None;
         let mut file_disconnect_on_expired_password = None;
         let mut sem_enabled = false;
+        let mut sem_config = String::new();
         let mut memory_arbitrator = MemoryArbitratorConfig {
             server_memory_limit: "80%".to_owned(),
             mode: "disable".to_owned(),
@@ -738,6 +742,9 @@ impl NodeConfig {
             }
             if loaded.is_defined("security.enable-sem") {
                 sem_enabled = config.security.enable_sem;
+            }
+            if loaded.is_defined("security.sem-config") {
+                sem_config.clone_from(&config.security.sem_config);
             }
             if loaded.is_defined("pessimistic-txn.deadlock-history-capacity") {
                 deadlock_history_capacity = usize::try_from(
@@ -912,6 +919,7 @@ impl NodeConfig {
             config.security.auto_tls = auto_tls;
             config.security.disconnect_on_expired_password = disconnect_on_expired_password;
             config.security.enable_sem = sem_enabled;
+            config.security.sem_config.clone_from(&sem_config);
             config.security.skip_grant_table = file_skip_grant_table;
             config.security.cluster_ssl_ca = cluster_ssl_ca.clone().unwrap_or_default();
             config.security.cluster_ssl_cert = cluster_ssl_cert.clone().unwrap_or_default();
@@ -1011,6 +1019,7 @@ impl NodeConfig {
             auto_tls,
             disconnect_on_expired_password,
             sem_enabled,
+            sem_config,
             skip_grant_table: file_skip_grant_table,
             cluster_security,
             spill_storage,
@@ -1092,6 +1101,7 @@ impl NodeConfig {
                 "auto-tls": self.auto_tls,
                 "disconnect-on-expired-password": self.disconnect_on_expired_password,
                 "enable-sem": self.sem_enabled,
+                "sem-config": self.sem_config,
                 "skip-grant-table": self.skip_grant_table,
                 "ssl-cert": self.ssl_cert.as_ref().map(|path| path.to_string_lossy().into_owned()),
                 "ssl-key": self.ssl_key.as_ref().map(|path| path.to_string_lossy().into_owned()),

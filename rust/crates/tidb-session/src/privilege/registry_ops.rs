@@ -1134,7 +1134,9 @@ impl PrivilegeRegistry {
         if self.has_explicit_dynamic_priv(user, host, &name, with_grant) {
             return true;
         }
-        if tidb_util::sem::is_enabled() && tidb_util::sem::is_restricted_privilege(&name) {
+        if tidb_util::sem_compat::is_enabled()
+            && tidb_util::sem_compat::is_restricted_privilege(&name)
+        {
             return false;
         }
         if with_grant && !self.has_global_priv(user, host, GlobalPriv::GrantOption) {
@@ -1416,8 +1418,8 @@ impl PrivilegeRegistry {
         active_roles: &[Account],
         database: &str,
     ) -> bool {
-        if tidb_util::sem::is_enabled()
-            && tidb_util::sem::is_invisible_schema(database)
+        if tidb_util::sem_compat::is_enabled()
+            && tidb_util::sem_compat::is_invisible_schema(database)
             && !self.has_dynamic_priv_with_roles(
                 user,
                 host,

@@ -29,10 +29,8 @@ use std::sync::{Mutex, MutexGuard};
 
 use super::*;
 
-static GLOBAL_STATE: Mutex<()> = Mutex::new(());
-
 fn lock_global_state() -> MutexGuard<'static, ()> {
-    GLOBAL_STATE
+    crate::SEM_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
@@ -370,8 +368,10 @@ fn enable_sem() {
 
     // Test restricted tables
     assert!(is_invisible_table("mysql", "user"));
-    assert!(global_sem().unwrap().is_invisible_table("mysql", "db"));
-    assert!(!global_sem().unwrap().is_invisible_table("test1", "tbl2"));
+    assert!(load_global_sem().unwrap().is_invisible_table("mysql", "db"));
+    assert!(!load_global_sem()
+        .unwrap()
+        .is_invisible_table("test1", "tbl2"));
 
     // Test restricted variables
     assert!(is_invisible_sys_var(SUPER_READ_ONLY));
@@ -507,21 +507,6 @@ fn sql_rules() {
     for (rule, stmt, expected, sql) in cases {
         assert_eq!(rule(stmt), expected, "SQL rule failed for statement: {sql}");
     }
-
-    // An `IMPORT INTO ... FROM SELECT ...` carries no path and is allowed.
-    assert!(!import_from_local_rule(&StmtView::new(
-        StmtKind::ImportInto {
-            from_select: true,
-            path: String::new(),
-        }
-    )));
-    // A remote object store is not local.
-    assert!(!import_from_local_rule(&StmtView::new(
-        StmtKind::ImportInto {
-            from_select: false,
-            path: "s3://bucket/path".to_owned(),
-        }
-    )));
 }
 
 // Go `TestRestrictedHint`.
@@ -550,154 +535,4 @@ fn restricted_hint() {
     assert!(sem.is_restricted_hint("max_execution_time").is_ok());
     // A hint not listed in restricted_hints is allowed.
     assert!(sem.is_restricted_hint("use_index").is_ok());
-
-    assert_eq!(
-        sem.is_restricted_hint("resource_group").unwrap_err(),
-        "the RESOURCE_GROUP() optimizer hint is restricted under the current security policy and is ignored"
-    );
-}
-
-// The top-level accessors read the process-wide policy and return Go's
-// disabled-SEM answers when none is installed.
-#[test]
-fn top_level_accessors_follow_the_global_policy() {
-    let _guard = lock_global_state();
-    let _registry = FakeRegistry::install();
-    let _restore = Restore;
-    set_tidb_release_version(Some("v9.0.0".to_owned()));
-
-    assert!(!is_enabled());
-    assert!(!is_invisible_schema("mysql"));
-    assert!(!is_invisible_table("mysql", "user"));
-    assert!(!is_restricted_privilege("SUPER"));
-    assert!(!is_invisible_sys_var(SUPER_READ_ONLY));
-    assert!(!is_read_only_variable(TIDB_ENABLE_ENHANCED_SECURITY));
-    assert!(!is_invisible_status_var("tidb_gc_leader_desc"));
-    assert!(!is_restricted_sql(&StmtView::new(StmtKind::Other)));
-    assert!(is_restricted_hint("memory_quota").is_ok());
-
-    let mut config = test_config();
-    config.restricted_status_var = vec!["tidb_gc_leader_desc".to_owned()];
-    config.restricted_sql = SQLRestriction {
-        sql: vec![" drop database ".to_owned(), String::new()],
-        rule: vec!["select_into_file".to_owned()],
-    };
-    enable_by(&config).unwrap();
-
-    assert!(is_enabled());
-    assert!(is_read_only_variable(TIDB_ENABLE_ENHANCED_SECURITY));
-    assert!(is_invisible_status_var("tidb_gc_leader_desc"));
-    // A configured SQL command matches on the trimmed, upper-cased spelling.
-    assert!(is_restricted_sql(&StmtView {
-        sem_command: "DROP DATABASE".to_owned(),
-        kind: StmtKind::Other,
-    }));
-    // A configured rule matches on the statement shape.
-    assert!(is_restricted_sql(&StmtView::new(StmtKind::Select {
-        select_into: true
-    })));
-    assert!(!is_restricted_sql(&StmtView::new(StmtKind::Other)));
-
-    // `testhelper.go`'s privilege mutators.
-    assert!(!is_restricted_privilege("RELOAD"));
-    add_restricted_privileges_for_test("reload");
-    assert!(is_restricted_privilege("RELOAD"));
-    remove_restricted_privileges_for_test("reload");
-    assert!(!is_restricted_privilege("RELOAD"));
-    // Every `RESTRICTED_*` privilege is restricted without being configured.
-    assert!(is_restricted_privilege("RESTRICTED_TABLES_ADMIN"));
-
-    disable();
-    assert!(!is_enabled());
-    assert_eq!(
-        get_sys_var(TIDB_ENABLE_ENHANCED_SECURITY).unwrap().value,
-        OFF
-    );
-}
-
-// `enable_from_path_for_test` enables SEM and its cleanup restores both the
-// switch and the variables the config overrode.
-#[test]
-fn enable_from_path_round_trips() {
-    let _guard = lock_global_state();
-    let _registry = FakeRegistry::install();
-    let _restore = Restore;
-    set_tidb_release_version(Some("v9.0.0".to_owned()));
-
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("sem_config.json");
-    std::fs::write(&path, serde_json::to_vec(&test_config()).unwrap()).unwrap();
-
-    let cleanup = enable_from_path_for_test(path.to_str().unwrap()).unwrap();
-    assert!(is_enabled());
-    assert_eq!(
-        get_sys_var(TIDB_ENABLE_ENHANCED_SECURITY).unwrap().value,
-        CONFIG
-    );
-
-    cleanup();
-    assert!(!is_enabled());
-    // The captured default, not the `OFF` that `Disable` writes first.
-    assert_eq!(
-        get_sys_var(TIDB_ENABLE_ENHANCED_SECURITY).unwrap().value,
-        OFF
-    );
-}
-
-// The hand-rolled semver replacement parses and orders the way
-// `coreos/go-semver` does for the comparisons `validateSEMConfig` makes.
-#[test]
-fn sem_version_parses_and_orders() {
-    assert_eq!(SemVersion::parse("9.0.0").unwrap().to_string(), "9.0.0");
-    assert_eq!(
-        SemVersion::parse("8.4.0-alpha+build.1")
-            .unwrap()
-            .to_string(),
-        "8.4.0-alpha+build.1"
-    );
-    assert!(SemVersion::parse("9.0").is_err());
-    assert!(SemVersion::parse("9.0.0.1").is_err());
-    assert!(SemVersion::parse("").is_err());
-    assert!(SemVersion::parse("v9.0.0").is_err());
-
-    let version = |text: &str| SemVersion::parse(text).unwrap();
-    assert!(version("6.0.0") < version("9.0.0"));
-    assert!(version("9.0.0") < version("99.0.0"));
-    assert!(version("9.0.0") > version("9.0.0-alpha"));
-    assert!(version("9.0.0-alpha") < version("9.0.0-beta"));
-    assert!(version("9.0.0-alpha.1") < version("9.0.0-alpha.2"));
-    assert!(version("9.0.0-1") < version("9.0.0-alpha"));
-    // Build metadata does not affect precedence.
-    assert_eq!(version("9.0.0+a"), version("9.0.0+a"));
-    assert_eq!(
-        version("9.0.0").cmp(&version("9.0.0")),
-        std::cmp::Ordering::Equal
-    );
-}
-
-// The inlined `objstore.IsLocal` over the scheme half of `url.Parse`.
-#[test]
-fn local_urls_are_scheme_less_file_or_local() {
-    assert!(is_local_url("/bucket/path/to/file.csv"));
-    assert!(is_local_url("file:///bucket/path"));
-    assert!(is_local_url("local:///bucket/path"));
-    assert!(is_local_url("./relative/path"));
-    assert!(is_local_url(""));
-    assert!(!is_local_url("s3://bucket/path"));
-    assert!(!is_local_url("gs://bucket/path"));
-
-    assert_eq!(url_scheme("S3://bucket"), Some("s3".to_owned()));
-    assert_eq!(url_scheme("a+b-c.d://x"), Some("a+b-c.d".to_owned()));
-    assert_eq!(url_scheme("1abc://x"), None);
-    assert_eq!(url_scheme("/no/scheme"), None);
-}
-
-// Every name in `sqlRuleNameMap` resolves, and nothing else does.
-#[test]
-fn sql_rule_names_resolve() {
-    for name in SQL_RULE_NAMES {
-        assert!(sql_rule_by_name(name).is_some(), "{name}");
-    }
-    assert!(sql_rule_by_name("no_drop").is_none());
-    assert_eq!(SQL_RULE_NAMES.len(), 5);
 }

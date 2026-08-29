@@ -236,7 +236,7 @@ impl Session {
         table: &str,
         mask: u64,
     ) -> Option<bool> {
-        if !tidb_util::sem::is_enabled() {
+        if !tidb_util::sem_compat::is_enabled() {
             return None;
         }
         let has_restricted_tables_admin = registry.has_dynamic_priv_with_roles(
@@ -251,8 +251,8 @@ impl Session {
 
     pub(crate) fn sem_hides_sysvar(&self, name: &str) -> bool {
         let name = name.to_ascii_lowercase();
-        tidb_util::sem::is_enabled()
-            && tidb_util::sem::is_invisible_sys_var(&name)
+        tidb_util::sem_compat::is_enabled()
+            && tidb_util::sem_compat::is_invisible_sys_var(&name)
             && self
                 .privilege_context()
                 .is_some_and(|_| !self.has_dynamic_privilege("RESTRICTED_VARIABLES_ADMIN", false))
@@ -268,10 +268,26 @@ impl Session {
         }
     }
 
+    pub(crate) fn require_sem_writable_sysvar(&self, name: &str) -> Result<(), DriverError> {
+        self.require_sem_visible_sysvar(name)?;
+        if tidb_util::sem_v2::is_enabled()
+            && tidb_util::sem_v2::is_read_only_variable(&name.to_ascii_lowercase())
+            && self
+                .privilege_context()
+                .is_some_and(|_| !self.has_dynamic_privilege("RESTRICTED_VARIABLES_ADMIN", false))
+        {
+            Err(DriverError::SpecificAccessDenied(
+                "RESTRICTED_VARIABLES_ADMIN".to_owned(),
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
     pub(crate) fn sem_hides_status_var(&self, name: &str) -> bool {
         !self.privilege_checks_bypassed()
-            && tidb_util::sem::is_enabled()
-            && tidb_util::sem::is_invisible_status_var(name)
+            && tidb_util::sem_compat::is_enabled()
+            && tidb_util::sem_compat::is_invisible_status_var(name)
             && self
                 .privilege_context()
                 .is_none_or(|_| !self.has_dynamic_privilege("RESTRICTED_STATUS_ADMIN", false))

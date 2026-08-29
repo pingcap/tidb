@@ -84,6 +84,7 @@ pub mod redact;
 pub mod regexpr_router;
 pub mod selection;
 pub mod sem;
+pub mod sem_compat;
 pub mod sem_v2;
 pub mod serialization;
 pub mod servermemorylimit;
@@ -112,6 +113,9 @@ pub mod topsql_stmtstats;
 pub mod traceevent;
 pub mod tracing;
 pub mod versioninfo;
+
+#[cfg(test)]
+pub(crate) static SEM_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 pub mod vitess;
 pub mod watcher;
 pub mod zeropool;

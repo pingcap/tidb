@@ -16,7 +16,8 @@
 
 use serde::{Deserialize, Deserializer, Serialize};
 
-use super::{get_sys_var, sql_rule_by_name, tidb_release_version, SysVarScope};
+use super::sql_rule::sql_rule_by_name;
+use super::{get_sys_var, tidb_release_version, SysVarScope};
 
 /// Go `Config`: the configuration for SEM.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -60,7 +61,7 @@ pub struct Config {
 
     /// Go `restricted_hints`: optimizer hints stripped from queries and
     /// bindings with a warning. A hint that overrides a system variable (see
-    /// [`super::HINT_GUARD_VARS`]) is only stripped while that variable is
+    /// the package's hint guard table) is only stripped while that variable is
     /// hidden or read-only.
     #[serde(
         default,
@@ -149,7 +150,8 @@ pub fn parse_sem_config_from_file(file_path: &str) -> Result<Config, String> {
     // glob expansion, so the clean is a no-op for this reader.
     let content = std::fs::read(file_path)
         .map_err(|error| format!("failed to open file {file_path}: {error}"))?;
-    serde_json::from_slice(&content)
+    let mut decoder = serde_json::Deserializer::from_slice(&content);
+    Config::deserialize(&mut decoder)
         .map_err(|error| format!("failed to decode JSON from file {file_path}: {error}"))
 }
 
@@ -214,18 +216,13 @@ pub fn validate_sem_config(cfg: &Config) -> Result<(), String> {
 /// treats a pre-release as lower than the same release, then compares the
 /// dot-separated pre-release identifiers (numeric ones numerically). Build
 /// metadata is ignored in comparisons, exactly as `go-semver` does.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct SemVersion {
-    /// Major component.
-    pub major: u64,
-    /// Minor component.
-    pub minor: u64,
-    /// Patch component.
-    pub patch: u64,
-    /// Pre-release suffix (after `-`), empty when absent.
-    pub pre_release: String,
-    /// Build metadata (after `+`), empty when absent.
-    pub metadata: String,
+#[derive(Clone, Debug, Default)]
+struct SemVersion {
+    major: i64,
+    minor: i64,
+    patch: i64,
+    pre_release: String,
+    metadata: String,
 }
 
 impl SemVersion {
@@ -234,9 +231,7 @@ impl SemVersion {
     /// # Errors
     ///
     /// Returns `go-semver`'s message for a malformed version.
-    pub fn parse(text: &str) -> Result<Self, String> {
-        let bad = || format!("{text} is not in dotted-tri format");
-
+    fn parse(text: &str) -> Result<Self, String> {
         let (rest, metadata) = match text.split_once('+') {
             Some((rest, metadata)) => (rest, metadata.to_owned()),
             None => (text, String::new()),
@@ -246,25 +241,31 @@ impl SemVersion {
             None => (rest, String::new()),
         };
 
-        let mut parts = numbers.split('.');
-        let mut next = || -> Result<u64, String> {
-            parts
-                .next()
-                .ok_or_else(bad)?
-                .parse::<u64>()
-                .map_err(|_| bad())
-        };
-        let major = next()?;
-        let minor = next()?;
-        let patch = next()?;
-        if parts.next().is_some() {
-            return Err(bad());
+        let parts = numbers.splitn(3, '.').collect::<Vec<_>>();
+        if parts.len() != 3 {
+            return Err(format!("{numbers} is not in dotted-tri format"));
         }
+        validate_identifier(&pre_release)
+            .map_err(|error| format!("failed to validate pre-release: {error}"))?;
+        validate_identifier(&metadata)
+            .map_err(|error| format!("failed to validate metadata: {error}"))?;
+
+        let parse = |part: &str| {
+            part.parse::<i64>().map_err(|error| {
+                let reason = match error.kind() {
+                    std::num::IntErrorKind::PosOverflow | std::num::IntErrorKind::NegOverflow => {
+                        "value out of range"
+                    }
+                    _ => "invalid syntax",
+                };
+                format!("strconv.ParseInt: parsing \"{part}\": {reason}")
+            })
+        };
 
         Ok(Self {
-            major,
-            minor,
-            patch,
+            major: parse(parts[0])?,
+            minor: parse(parts[1])?,
+            patch: parse(parts[2])?,
             pre_release,
             metadata,
         })
@@ -308,6 +309,29 @@ impl PartialOrd for SemVersion {
     }
 }
 
+impl PartialEq for SemVersion {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == std::cmp::Ordering::Equal
+    }
+}
+
+impl Eq for SemVersion {}
+
+fn validate_identifier(identifier: &str) -> Result<(), String> {
+    if identifier.is_empty()
+        || identifier.split('.').all(|part| {
+            !part.is_empty()
+                && part
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        })
+    {
+        Ok(())
+    } else {
+        Err(format!("{identifier} is not a valid semver identifier"))
+    }
+}
+
 fn compare_pre_release(left: &str, right: &str) -> std::cmp::Ordering {
     use std::cmp::Ordering;
     let mut left = left.split('.');
@@ -319,7 +343,7 @@ fn compare_pre_release(left: &str, right: &str) -> std::cmp::Ordering {
             (None, Some(_)) => return Ordering::Less,
             (Some(_), None) => return Ordering::Greater,
             (Some(one), Some(two)) => {
-                let order = match (one.parse::<u64>(), two.parse::<u64>()) {
+                let order = match (one.parse::<i64>(), two.parse::<i64>()) {
                     (Ok(one), Ok(two)) => one.cmp(&two),
                     // Numeric identifiers always have lower precedence.
                     (Ok(_), Err(_)) => Ordering::Less,

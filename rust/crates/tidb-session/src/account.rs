@@ -423,6 +423,24 @@ impl Session {
         Ok(())
     }
 
+    fn require_sem_restricted_privilege_admin(
+        &self,
+        privileges: &[tidb_ast::GrantPrivilege],
+    ) -> Result<(), DriverError> {
+        if tidb_util::sem_v2::is_enabled()
+            && privileges.iter().any(|privilege| {
+                tidb_util::sem_v2::is_restricted_privilege(&privilege.name.to_ascii_uppercase())
+            })
+            && !self.has_dynamic_privilege("RESTRICTED_PRIV_ADMIN", false)
+        {
+            Err(DriverError::SpecificAccessDenied(
+                "RESTRICTED_PRIV_ADMIN".to_owned(),
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
     /// Whether `(user, host)` is the account this session authenticated as --
     /// Go's `alterCurrentUser`, which keys on the AUTHENTICATED identity so a
     /// statement naming that account explicitly is still self-service.
@@ -1120,6 +1138,7 @@ impl Session {
         &mut self,
         grant: &tidb_ast::GrantStmt,
     ) -> Result<StmtOutput, DriverError> {
+        self.require_sem_restricted_privilege_admin(&grant.privileges)?;
         if grant.object_type.is_some() {
             return Err(DriverError::unsupported(
                 "GRANT ... ON FUNCTION/PROCEDURE is not supported yet",
@@ -1264,6 +1283,7 @@ impl Session {
         &mut self,
         revoke: &tidb_ast::RevokeStmt,
     ) -> Result<StmtOutput, DriverError> {
+        self.require_sem_restricted_privilege_admin(&revoke.privileges)?;
         if revoke.object_type.is_some() {
             return Err(DriverError::unsupported(
                 "REVOKE ... ON FUNCTION/PROCEDURE is not supported yet",

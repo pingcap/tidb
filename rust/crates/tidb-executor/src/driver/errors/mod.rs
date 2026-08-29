@@ -138,6 +138,12 @@ impl DriverError {
             MysqlError::new(errno, *b"HY000", message)
         }
         DriverError::Unsupported(message) => MysqlError::unknown(message),
+        DriverError::NotSupportedWithSem(statement) => MysqlError::coded(
+            tidb_error::tidb::errcode::ErrNotSupportedWithSem,
+            format!(
+                "Feature '{statement}' is not supported when security enhanced mode is enabled"
+            ),
+        ),
         DriverError::TableOptionUnionUnsupported => MysqlError::new(
             tidb_error::tidb::errcode::ErrTableOptionUnionUnsupported,
             *b"HY000",

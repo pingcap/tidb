@@ -135,18 +135,9 @@ fn check_ttl_options(options: &[TableOptionType]) -> bool {
     })
 }
 
-/// Go `sqlRuleNameMap`'s keys, in source order.
-pub const SQL_RULE_NAMES: &[&str] = &[
-    "time_to_live",
-    "alter_table_attributes",
-    "import_with_external_id",
-    "select_into_file",
-    "import_from_local",
-];
-
 /// Go `sqlRuleNameMap` lookup.
 #[must_use]
-pub fn sql_rule_by_name(name: &str) -> Option<SQLRule> {
+pub(super) fn sql_rule_by_name(name: &str) -> Option<SQLRule> {
     match name {
         "time_to_live" => Some(time_to_live_sql_rule),
         "alter_table_attributes" => Some(alter_table_attributes_rule),
@@ -228,30 +219,110 @@ pub fn import_from_local_rule(stmt: &StmtView) -> bool {
 /// Go `objstore.IsLocal(u)` composed with `url.Parse`, inlined: a URL is local
 /// when its scheme is `local`, `file`, or absent.
 #[must_use]
-pub fn is_local_url(raw: &str) -> bool {
-    matches!(
-        url_scheme(raw).as_deref(),
-        None | Some("local") | Some("file")
-    )
+fn is_local_url(raw: &str) -> bool {
+    parsed_url_scheme(raw).is_some_and(|scheme| {
+        scheme.is_none_or(|scheme| {
+            scheme.eq_ignore_ascii_case("local") || scheme.eq_ignore_ascii_case("file")
+        })
+    })
 }
 
-/// The scheme half of Go `net/url.Parse`: a leading ASCII letter followed by
-/// letters, digits, `+`, `-`, or `.` and terminated by `:`. Anything else
-/// leaves the URL scheme-less, which is how Go treats a bare path.
-#[must_use]
-pub fn url_scheme(raw: &str) -> Option<String> {
-    let mut chars = raw.char_indices();
-    let (_, first) = chars.next()?;
-    if !first.is_ascii_alphabetic() {
-        return None;
-    }
-    for (index, ch) in chars {
-        match ch {
-            'a'..='z' | 'A'..='Z' | '0'..='9' | '+' | '-' | '.' => {}
-            // A scheme must be non-empty, which the leading letter guarantees.
-            ':' => return Some(raw[..index].to_lowercase()),
-            _ => return None,
+fn valid_url_escapes(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            if index + 2 >= bytes.len()
+                || !bytes[index + 1].is_ascii_hexdigit()
+                || !bytes[index + 2].is_ascii_hexdigit()
+            {
+                return false;
+            }
+            index += 3;
+        } else {
+            index += 1;
         }
     }
-    None
+    true
+}
+
+fn valid_authority(authority: &str) -> bool {
+    let host_port = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    if let Some(open) = host_port.find('[') {
+        let Some(close_offset) = host_port[open + 1..].find(']') else {
+            return false;
+        };
+        let close = open + 1 + close_offset;
+        if host_port[close + 1..].contains(['[', ']']) {
+            return false;
+        }
+        let suffix = &host_port[close + 1..];
+        return suffix.is_empty()
+            || suffix
+                .strip_prefix(':')
+                .is_some_and(|port| port.bytes().all(|byte| byte.is_ascii_digit()));
+    }
+    if host_port.contains(']') || host_port.contains('%') {
+        return false;
+    }
+    match host_port.rsplit_once(':') {
+        None => true,
+        Some((host, port)) => !host.contains(':') && port.bytes().all(|byte| byte.is_ascii_digit()),
+    }
+}
+
+/// The `Scheme` and parse-error portion of Go `net/url.Parse` used by
+/// `ImportFromLocalRule`. Go canonicalizes the parsed scheme before
+/// `objstore.IsLocal` compares it with `local` and `file`.
+fn parsed_url_scheme(raw: &str) -> Option<Option<&str>> {
+    if raw.bytes().any(|byte| byte.is_ascii_control()) {
+        return None;
+    }
+
+    let without_fragment = raw.split_once('#').map_or(raw, |(head, _)| head);
+    let path_and_authority = without_fragment
+        .split_once('?')
+        .map_or(without_fragment, |(head, _)| head);
+    if !valid_url_escapes(path_and_authority)
+        || raw
+            .split_once('#')
+            .is_some_and(|(_, fragment)| !valid_url_escapes(fragment))
+    {
+        return None;
+    }
+
+    let mut scheme = None;
+    for (index, byte) in raw.bytes().enumerate() {
+        match byte {
+            b'a'..=b'z' | b'A'..=b'Z' if index == 0 => {}
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'+' | b'-' | b'.' if index > 0 => {}
+            b':' if index > 0 => {
+                scheme = Some(&raw[..index]);
+                break;
+            }
+            _ => break,
+        }
+    }
+
+    if scheme.is_none() && !path_and_authority.starts_with("//") {
+        let first_segment = path_and_authority.split('/').next().unwrap_or_default();
+        if first_segment.contains(':') {
+            return None;
+        }
+    }
+
+    let after_scheme = scheme.map_or(raw, |scheme| &raw[scheme.len() + 1..]);
+    if let Some(authority_and_path) = after_scheme.strip_prefix("//") {
+        let authority = authority_and_path
+            .split(['/', '?', '#'])
+            .next()
+            .unwrap_or_default();
+        if !valid_authority(authority) {
+            return None;
+        }
+    }
+
+    Some(scheme)
 }

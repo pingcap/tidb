@@ -53,10 +53,10 @@
 //!   tests assign. [`tidb_mysql::TIDB_RELEASE_VERSION`] is a constant, so
 //!   [`set_tidb_release_version`] provides the same overridable value.
 //! - **`github.com/coreos/go-semver/semver`** is not a workspace dependency and
-//!   no `semver` crate is vendored, so [`config::SemVersion`] hand-rolls the
+//!   no `semver` crate is vendored, so a private package type hand-rolls the
 //!   parse and ordering `validateSEMConfig` needs.
 //! - **`pkg/objstore`** is used for `objstore.IsLocal(u)` at two call sites and
-//!   is inlined as [`sql_rule::is_local_url`], together with the scheme half of
+//!   is inlined together with the scheme half of
 //!   Go's `net/url.Parse` that feeds it.
 //! - Go's `Enable` and `EnableBy` assert (`intest.Assert`) that SEM is not
 //!   already enabled; that assertion is preserved through `crate::intest`.
@@ -67,14 +67,14 @@ mod sql_rule;
 mod testhelper;
 
 pub use config::{
-    validate_sem_config, ColumnRestriction, Config, SQLRestriction, SemVersion, TableRestriction,
+    validate_sem_config, ColumnRestriction, Config, SQLRestriction, TableRestriction,
     VariableRestriction,
 };
-pub use restricted_hint::{is_restricted_hint, HINT_GUARD_VARS};
+pub use restricted_hint::is_restricted_hint;
 pub use sql_rule::{
     alter_table_attributes_rule, import_from_local_rule, import_with_external_id_rule,
-    is_local_url, select_into_file_rule, sql_rule_by_name, time_to_live_sql_rule, url_scheme,
-    AlterTableSpec, AlterTableType, SQLRule, StmtKind, StmtView, TableOptionType, SQL_RULE_NAMES,
+    select_into_file_rule, time_to_live_sql_rule, AlterTableSpec, AlterTableType, SQLRule,
+    StmtKind, StmtView, TableOptionType,
 };
 pub use testhelper::{
     add_restricted_privileges_for_test, enable_from_path_for_test,
@@ -87,6 +87,7 @@ use std::sync::{Arc, RwLock};
 use tidb_log::Value;
 
 use crate::logutil;
+use sql_rule::sql_rule_by_name;
 
 // Go `vardef` constants, inlined (see the module boundaries).
 /// Go `vardef.TiDBEnableEnhancedSecurity`.
@@ -222,7 +223,7 @@ struct RestrictedTableAttr {
 type SqlValidator = Box<dyn Fn(&StmtView) -> bool + Send + Sync>;
 
 /// Go `semImpl`: the compiled SEM policy.
-pub struct SemImpl {
+struct SemImpl {
     restricted_databases: HashSet<String>,
     restricted_tables: HashMap<String, HashMap<String, RestrictedTableAttr>>,
     restricted_variables: HashMap<String, RestrictedVariableAttr>,
@@ -389,7 +390,7 @@ fn build_sem_sql_validate_function(sql_restriction: &SQLRestriction) -> SqlValid
 
 /// Go `buildSEMFromConfig`.
 #[must_use]
-pub fn build_sem_from_config(cfg: &Config) -> SemImpl {
+fn build_sem_from_config(cfg: &Config) -> SemImpl {
     let mut restricted_tables: HashMap<String, HashMap<String, RestrictedTableAttr>> =
         HashMap::new();
     for tbl in &cfg.restricted_tables {
@@ -524,12 +525,6 @@ pub fn is_enabled() -> bool {
 pub fn disable() {
     store_global_sem(None);
     set_sys_var(TIDB_ENABLE_ENHANCED_SECURITY, OFF);
-}
-
-/// The active policy, for the callers Go serves through `globalSem.Load()`.
-#[must_use]
-pub fn global_sem() -> Option<Arc<SemImpl>> {
-    load_global_sem()
 }
 
 #[cfg(test)]

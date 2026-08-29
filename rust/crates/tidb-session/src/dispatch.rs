@@ -30,6 +30,142 @@ use crate::{
 };
 use crate::{CHECK_CONSTRAINT_IS_OFF_CODE, CHECK_CONSTRAINT_IS_OFF_MESSAGE};
 
+fn sem_table_option(option: &tidb_ast::TableOption) -> tidb_util::sem_v2::TableOptionType {
+    match option {
+        tidb_ast::TableOption::Ttl { .. } => tidb_util::sem_v2::TableOptionType::Ttl,
+        tidb_ast::TableOption::TtlEnable(_) => tidb_util::sem_v2::TableOptionType::TtlEnable,
+        tidb_ast::TableOption::TtlJobInterval(_) => {
+            tidb_util::sem_v2::TableOptionType::TtlJobInterval
+        }
+        _ => tidb_util::sem_v2::TableOptionType::Other,
+    }
+}
+
+fn sem_stmt_kind(stmt: &Stmt) -> tidb_util::sem_v2::StmtKind {
+    use tidb_util::sem_v2::{AlterTableSpec, AlterTableType, StmtKind};
+
+    match stmt {
+        Stmt::Query(query) => match query.as_ref() {
+            tidb_ast::QueryStmt::Select(select) => StmtKind::Select {
+                select_into: select.into_outfile.is_some(),
+            },
+            tidb_ast::QueryStmt::SetOpr(_) => StmtKind::Other,
+        },
+        Stmt::Dml(dml) => {
+            let mut dml = dml.as_ref();
+            while let tidb_ast::DmlStmt::With { statement, .. } = dml {
+                dml = statement;
+            }
+            match dml {
+                tidb_ast::DmlStmt::ImportInto(import) => match &import.source {
+                    tidb_ast::ImportSource::File { path, .. } => StmtKind::ImportInto {
+                        from_select: false,
+                        path: path.clone(),
+                    },
+                    tidb_ast::ImportSource::Select { .. } => StmtKind::ImportInto {
+                        from_select: true,
+                        path: String::new(),
+                    },
+                },
+                tidb_ast::DmlStmt::LoadData(load) => StmtKind::LoadData {
+                    file_loc_client: load.local,
+                    path: load.path.clone(),
+                },
+                _ => StmtKind::Other,
+            }
+        }
+        Stmt::Ddl(ddl) => match ddl.as_ref() {
+            tidb_ast::DdlStmt::CreateTable(create) => StmtKind::CreateTable {
+                options: create.table_options.iter().map(sem_table_option).collect(),
+            },
+            tidb_ast::DdlStmt::AlterTable(alter) => StmtKind::AlterTable {
+                specs: alter
+                    .actions
+                    .iter()
+                    .map(|action| match action {
+                        tidb_ast::AlterTableAction::RemoveTtl(_) => AlterTableSpec {
+                            tp: AlterTableType::RemoveTtl,
+                            options: Vec::new(),
+                        },
+                        tidb_ast::AlterTableAction::SetTableOptions { options } => AlterTableSpec {
+                            tp: AlterTableType::Option,
+                            options: options.iter().map(sem_table_option).collect(),
+                        },
+                        tidb_ast::AlterTableAction::SetAttributes(_) => AlterTableSpec {
+                            tp: AlterTableType::Attributes,
+                            options: Vec::new(),
+                        },
+                        tidb_ast::AlterTableAction::Partition(
+                            tidb_ast::AlterPartitionAction::SetAttributes { .. },
+                        ) => AlterTableSpec {
+                            tp: AlterTableType::PartitionAttributes,
+                            options: Vec::new(),
+                        },
+                        _ => AlterTableSpec {
+                            tp: AlterTableType::Other,
+                            options: Vec::new(),
+                        },
+                    })
+                    .collect(),
+            },
+            _ => StmtKind::Other,
+        },
+        Stmt::Admin(_) | Stmt::Session(_) => StmtKind::Other,
+    }
+}
+
+fn sem_stmt_view(stmt: &Stmt) -> tidb_util::sem_v2::StmtView {
+    tidb_util::sem_v2::StmtView {
+        sem_command: stmt.sem_command().to_owned(),
+        kind: sem_stmt_kind(stmt),
+    }
+}
+
+pub(crate) fn filter_sem_restricted_hints(stmt: &mut Stmt) -> Vec<String> {
+    struct Filter {
+        warnings: Vec<String>,
+    }
+
+    impl Filter {
+        fn retain(&mut self, hints: &mut Vec<tidb_ast::Hint>) {
+            hints.retain(|hint| {
+                match tidb_util::sem_v2::is_restricted_hint(&hint.name.to_ascii_lowercase()) {
+                    Ok(()) => true,
+                    Err(warning) => {
+                        self.warnings.push(warning);
+                        false
+                    }
+                }
+            });
+        }
+    }
+
+    impl tidb_ast::Visitor for Filter {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            if let Some(select) = node.downcast_mut::<tidb_ast::SelectStmt>() {
+                self.retain(&mut select.hints);
+            } else if let Some(insert) = node.downcast_mut::<tidb_ast::InsertStmt>() {
+                self.retain(&mut insert.hints);
+            } else if let Some(update) = node.downcast_mut::<tidb_ast::UpdateStmt>() {
+                self.retain(&mut update.hints);
+            } else if let Some(delete) = node.downcast_mut::<tidb_ast::DeleteStmt>() {
+                self.retain(&mut delete.hints);
+            }
+            false
+        }
+
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+
+    let mut filter = Filter {
+        warnings: Vec::new(),
+    };
+    tidb_ast::Visitable::accept(stmt, &mut filter);
+    filter.warnings
+}
+
 /// A planner-owned SELECT tree offered to the ordinary statement executor.
 /// `used` records whether the schema still matched while the catalog was
 /// locked; a moved schema falls through to ordinary physical planning.
@@ -759,16 +895,29 @@ impl Session {
     fn execute_parsed_statement_with_optional_physical_plan(
         &mut self,
         sql: &str,
-        stmt: Stmt,
+        mut stmt: Stmt,
         prepared: bool,
         select_plan: Option<RetainedSelectPlan<'_>>,
         dml_plan: Option<&mut tidb_planner::physical::PhysicalPlan>,
     ) -> Result<StmtOutput, DriverError> {
+        if tidb_util::sem_v2::is_enabled()
+            && tidb_util::sem_v2::is_restricted_sql(&sem_stmt_view(&stmt))
+            && !self.has_dynamic_privilege("RESTRICTED_SQL_ADMIN", false)
+        {
+            let statement = if stmt.text().is_empty() {
+                sql.to_owned()
+            } else {
+                String::from_utf8_lossy(stmt.text()).into_owned()
+            };
+            return Err(DriverError::NotSupportedWithSem(statement));
+        }
+        for warning in filter_sem_restricted_hints(&mut stmt) {
+            self.append_warning(WarningLevel::Warning, 1105, warning);
+        }
         // Go's `Preprocess` walks the AST once per statement and answers
         // every table-shaped question from that pass (`preprocess.go`); the
         // three consumers below share this one walk instead of each cloning
         // and re-walking the statement.
-        let mut stmt = stmt;
         let scan = crate::binding::scan_statement_tables(&mut stmt);
         self.record_mdl_related_tables(&stmt, &scan.names);
         // A statement whose table references carry `AS OF TIMESTAMP` runs

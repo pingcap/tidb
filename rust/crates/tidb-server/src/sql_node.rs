@@ -2215,6 +2215,7 @@ mod tests {
             auto_tls: false,
             disconnect_on_expired_password: true,
             sem_enabled: false,
+            sem_config: String::new(),
             skip_grant_table: false,
             max_connections: 2,
             connection_timeout: Duration::from_secs(5),

@@ -1655,6 +1655,8 @@ mod tests_read_cast;
 mod tests_recursive_cte;
 #[cfg(test)]
 mod tests_savepoint;
+#[cfg(test)]
+mod tests_sem_v2;
 mod tests_sequence;
 #[cfg(test)]
 mod tests_session_bootstrap_common_source;

@@ -319,7 +319,7 @@ impl Session {
         if is_global {
             self.require_set_global_privilege()?;
         }
-        self.require_sem_visible_sysvar(&assignment.name)?;
+        self.require_sem_writable_sysvar(&assignment.name)?;
         // An explicit `SET INSTANCE` is Go's `v.IsInstance`; anything else
         // unqualified/SESSION reaches the tier only through the legacy
         // rewrite, which warns.

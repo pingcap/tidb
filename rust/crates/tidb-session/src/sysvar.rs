@@ -152,6 +152,8 @@ impl SysVarDef {
 }
 
 use std::borrow::Cow;
+use std::collections::HashMap;
+use std::sync::{Arc, OnceLock, RwLock};
 
 mod catalog;
 
@@ -182,6 +184,45 @@ pub(crate) fn lowered_if_needed(name: &str) -> std::borrow::Cow<'_, str> {
 #[must_use]
 pub fn get_sys_var(name: &str) -> Option<&'static SysVarDef> {
     sys_var_index_lookup(name).map(|index| &SYS_VARS[index])
+}
+
+fn sem_v2_defaults() -> &'static RwLock<HashMap<String, String>> {
+    static DEFAULTS: OnceLock<RwLock<HashMap<String, String>>> = OnceLock::new();
+    DEFAULTS.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+struct SemV2SysVarRegistry;
+
+impl tidb_util::sem_v2::SysVarRegistry for SemV2SysVarRegistry {
+    fn get_sys_var(&self, name: &str) -> Option<tidb_util::sem_v2::SysVar> {
+        let definition = get_sys_var(name)?;
+        let scope = match definition.scope {
+            SCOPE_NONE => tidb_util::sem_v2::SysVarScope::None,
+            SCOPE_GLOBAL => tidb_util::sem_v2::SysVarScope::Global,
+            SCOPE_SESSION => tidb_util::sem_v2::SysVarScope::Session,
+            SCOPE_INSTANCE => tidb_util::sem_v2::SysVarScope::Instance,
+            _ => tidb_util::sem_v2::SysVarScope::Other,
+        };
+        Some(tidb_util::sem_v2::SysVar {
+            scope,
+            value: effective_default(definition),
+        })
+    }
+
+    fn set_sys_var(&self, name: &str, value: &str) {
+        let Some(definition) = get_sys_var(name) else {
+            return;
+        };
+        sem_v2_defaults()
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(definition.name.to_owned(), value.to_owned());
+    }
+}
+
+/// Installs Go `variable.GetSysVar` / `SetSysVar` as SEM v2's registry.
+pub fn install_sem_v2_sysvar_registry() {
+    tidb_util::sem_v2::set_sys_var_registry(Some(Arc::new(SemV2SysVarRegistry)));
 }
 
 /// The registry position of the entry `name` addresses (case-insensitively),
@@ -225,6 +266,14 @@ pub fn effective_default(definition: &SysVarDef) -> String {
 /// that only inspect a value should not have to clone its backing bytes.
 #[must_use]
 pub fn effective_default_value(definition: &SysVarDef) -> Cow<'static, str> {
+    if let Some(value) = sem_v2_defaults()
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(definition.name)
+        .cloned()
+    {
+        return Cow::Owned(value);
+    }
     tidb_util::sem::effective_sysvar_default(definition.name)
         .map_or_else(|| Cow::Borrowed(definition.value), Cow::Owned)
 }

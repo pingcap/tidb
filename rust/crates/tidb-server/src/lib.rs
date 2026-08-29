@@ -308,9 +308,16 @@ fn open_spill_storage(
         config.deadlock_history_capacity,
         config.deadlock_history_collect_retryable,
     );
-    if config.sem_enabled {
+    tidb_session::sysvar::install_sem_v2_sysvar_registry();
+    if config.sem_enabled && !config.sem_config.is_empty() {
+        tidb_util::sem::disable();
+        tidb_util::sem_v2::enable(&config.sem_config)
+            .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
+    } else if config.sem_enabled {
+        tidb_util::sem_v2::disable();
         tidb_util::sem::enable();
     } else {
+        tidb_util::sem_v2::disable();
         tidb_util::sem::disable();
     }
     tidb_util::disk::SpillStorage::open(config.spill_storage.clone())

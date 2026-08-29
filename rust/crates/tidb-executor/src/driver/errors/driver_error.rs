@@ -53,6 +53,10 @@ pub enum DriverError {
     /// the bytes. Build one with [`DriverError::unsupported`], which takes
     /// either.
     Unsupported(Cow<'static, str>),
+    /// Go `plannererrors.ErrNotSupportedWithSem` (8132): the configured SEM
+    /// v2 policy rejects this statement for a caller without
+    /// `RESTRICTED_SQL_ADMIN`.
+    NotSupportedWithSem(String),
     /// Go `dbterror.ErrTableOptionUnionUnsupported` (8232).
     TableOptionUnionUnsupported,
     /// Go `dbterror.ErrTableOptionInsertMethodUnsupported` (8233).
