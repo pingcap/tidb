@@ -2387,7 +2387,7 @@ fn run_update_with_physical(
     catalog: &mut Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
-    mut physical_source: Option<&mut tidb_planner::physical::PhysicalPlan>,
+    physical_source: Option<&mut tidb_planner::physical::PhysicalPlan>,
     planned_update_expressions: Option<&[Option<Expression>]>,
     runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
 ) -> Result<u64, DriverError> {
@@ -2646,6 +2646,38 @@ fn run_update_with_physical(
     // inner query needs an immutable view of the complete statement snapshot,
     // including the target table itself, and no write is applied until every
     // replacement has been staged.
+    // Prepared DML plans intentionally retain the ordinary Go-shaped DML
+    // root.  The generic cache builder cannot use the small point child
+    // builder because a point plan has to retain the execute-time key.  A
+    // cached UPDATE whose predicate is a single primary-key equality would
+    // therefore otherwise fall back to a full TableScan on every EXECUTE.
+    // Rebuild that one-row child from the already-bound AST here.  This is
+    // the same fast path used by a non-prepared point UPDATE and keeps the
+    // restored physical root (and its cache key) intact while avoiding a
+    // 10-million-row scan.  Non-point writes continue through the retained
+    // physical child unchanged.
+    // Keep the temporary query alive while the fast plan is built; the
+    // helper borrows the SELECT AST while constructing the owned plan.
+    let fast_source_query = if physical_kv_source && update_allows_fast_plan(update) {
+        update_source_query(update)
+    } else {
+        None
+    };
+    let mut fast_point_source = fast_source_query.as_ref().and_then(|source| {
+        let tidb_ast::QueryStmt::Select(select) = source else {
+            return None;
+        };
+        super::access::try_fast_dml_point_physical_plan_with_allocator(
+            select,
+            catalog,
+            current_db,
+            ctx,
+            &tidb_planner::plan_base::PlanIdAllocator::new(),
+        )
+        .ok()
+        .flatten()
+    });
+    let mut physical_source = fast_point_source.as_mut().or(physical_source);
     let source_rows = if physical_kv_source {
         let partition_ids = match catalog.get_in(&database, &name) {
             Some(TableEntry::Kv(kv)) if table_ref.partitions.is_empty() => None,
