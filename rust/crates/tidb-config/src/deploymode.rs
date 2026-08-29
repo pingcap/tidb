@@ -19,6 +19,13 @@
 //! deployment shape; Starter supports a large number of small tenants. The
 //! mode is initialized during startup, stored process-wide, and only valid
 //! on the NextGen kernel.
+//!
+//! Premium Reserved runs user traffic and distributed tasks directly on TiDB
+//! nodes in the SYSTEM keyspace instead of assuming TiDB-worker,
+//! TiKV-worker, or coprocessor-worker resources can scale on demand. Like Go,
+//! the process-wide value comes from each TiDB instance's component config;
+//! cloud deployment orchestration is responsible for keeping instances in a
+//! group consistent.
 
 use std::fmt;
 use std::sync::atomic::{AtomicI32, Ordering::SeqCst};
@@ -34,17 +41,18 @@ const STARTER_NAME: &str = "starter";
 
 /// Deployment mode of the TiDB instance (Go `Mode`). Only allowed when the
 /// kernel type is NextGen.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub enum Mode {
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
+#[repr(transparent)]
+pub struct Mode(i32);
+
+#[allow(non_upper_case_globals)]
+impl Mode {
     /// The default deployment mode.
-    #[default]
-    Premium,
+    pub const Premium: Self = Self(0);
     /// Fixed-resource premium: workers are not scaled on demand.
-    PremiumReserved,
+    pub const PremiumReserved: Self = Self(1);
     /// Deployment supporting a large number of small tenants.
-    Starter,
-    /// An arbitrary source integer that Go can construct with `Mode(value)`.
-    Unknown(i32),
+    pub const Starter: Self = Self(2);
 }
 
 static CURRENT_MODE: AtomicI32 = AtomicI32::new(Mode::Premium.to_i32());
@@ -97,36 +105,26 @@ pub fn parse(s: &str) -> Result<Mode, String> {
 impl Mode {
     /// Converts a source integer to a mode value, preserving invalid values.
     pub const fn from_i32(value: i32) -> Self {
-        match value {
-            0 => Self::Premium,
-            1 => Self::PremiumReserved,
-            2 => Self::Starter,
-            other => Self::Unknown(other),
-        }
+        Self(value)
     }
 
     /// Returns the source integer value.
     pub const fn to_i32(&self) -> i32 {
-        match self {
-            Self::Premium => 0,
-            Self::PremiumReserved => 1,
-            Self::Starter => 2,
-            Self::Unknown(value) => *value,
-        }
+        self.0
     }
 
     /// Whether the mode is valid (Go `Valid`).
     pub fn valid(&self) -> bool {
-        matches!(self, Mode::Premium | Mode::PremiumReserved | Mode::Starter)
+        matches!(*self, Mode::Premium | Mode::PremiumReserved | Mode::Starter)
     }
 
     /// The valid string representation.
-    pub fn as_str(&self) -> Option<&'static str> {
-        match self {
+    fn as_str(&self) -> Option<&'static str> {
+        match *self {
             Mode::Premium => Some(PREMIUM_NAME),
             Mode::PremiumReserved => Some(PREMIUM_RESERVED_NAME),
             Mode::Starter => Some(STARTER_NAME),
-            Mode::Unknown(_) => None,
+            _ => None,
         }
     }
 }
@@ -142,8 +140,8 @@ impl fmt::Display for Mode {
 }
 
 /// All valid deployment modes (Go `ModeList`).
-pub fn mode_list() -> [Mode; 3] {
-    [Mode::Premium, Mode::PremiumReserved, Mode::Starter]
+pub fn mode_list() -> Vec<Mode> {
+    vec![Mode::Premium, Mode::PremiumReserved, Mode::Starter]
 }
 
 impl Serialize for Mode {
@@ -192,7 +190,7 @@ mod tests {
         let err = serde_json::from_str::<Mode>(r#""unknown""#).unwrap_err();
         assert!(err.to_string().contains(r#"invalid deploy mode "unknown""#));
         assert!(serde_json::from_str::<Mode>("1").is_err());
-        assert!(serde_json::to_string(&Mode::Unknown(100))
+        assert!(serde_json::to_string(&Mode::from_i32(100))
             .unwrap_err()
             .to_string()
             .contains("invalid deploy mode 100"));
@@ -241,17 +239,11 @@ mod tests {
         assert_eq!(get(), Mode::Starter);
         assert!(!is_premium_reserved());
         assert!(is_starter());
-        assert!(set(Mode::Unknown(100))
+        assert!(set(Mode::from_i32(100))
             .unwrap_err()
             .contains("invalid deploy mode 100"));
+        assert!(Mode::from_i32(-1) < Mode::Premium);
+        assert_eq!(Mode::from_i32(100).to_string(), "unknown(100)");
         store_for_test(original);
-    }
-
-    #[test]
-    fn invalid_raw_mode_keeps_source_string_shape() {
-        let invalid = Mode::from_i32(100);
-        assert!(!invalid.valid());
-        assert_eq!(invalid.to_i32(), 100);
-        assert_eq!(invalid.to_string(), "unknown(100)");
     }
 }

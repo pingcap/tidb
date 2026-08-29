@@ -684,7 +684,7 @@ mod tests {
         );
         conf.valid().unwrap();
 
-        conf.deploy_mode = Mode::Unknown(100);
+        conf.deploy_mode = Mode::from_i32(100);
         assert!(conf
             .valid()
             .unwrap_err()

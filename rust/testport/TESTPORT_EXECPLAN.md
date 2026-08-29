@@ -266,6 +266,10 @@ For each bounded behavior cluster:
       `baseBuiltinFunc`, and concrete `*Sig` object-model call shapes, plus the
       no-op SQL-digest retriever test whose complete production owner is not
       implemented.
+- [x] Complete the pinned `pkg/config/deploymode` package: replace the
+      Rust-only invalid enum variant with Go's integer-backed mode semantics,
+      preserve the package documentation contract, and remove the duplicate
+      external source-test carrier.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope
