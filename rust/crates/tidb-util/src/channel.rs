@@ -12,14 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! `pkg/util/channel`: channel cleanup without a second channel abstraction.
+//! `pkg/util/channel`: channel cleanup.
+
+use std::sync::mpsc::Receiver;
 
 /// Discards every value received from `channel` and returns after the channel
 /// disconnects.
 ///
-/// Native blocking receivers implement [`IntoIterator`], so iteration carries
-/// the source contract directly: buffered and later values are drained, and an
-/// open sender keeps this call blocked.
-pub fn clear<T>(channel: impl IntoIterator<Item = T>) {
+/// Buffered and later values are drained, and an open sender keeps this call
+/// blocked.
+pub fn clear<T>(channel: Receiver<T>) {
     for _ in channel {}
 }
