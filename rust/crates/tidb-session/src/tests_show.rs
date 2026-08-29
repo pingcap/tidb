@@ -2216,3 +2216,19 @@ fn show_stats_topn_matches_the_pinned_go_rows() {
         ]
     );
 }
+
+/// Pinned Go `show stats_buckets` row shape for a one-value column histogram.
+#[test]
+fn show_stats_buckets_matches_the_pinned_go_row() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t(a INT)").unwrap();
+    session.run("INSERT INTO t VALUES (1111)").unwrap();
+    session.run("ANALYZE TABLE t WITH 0 TOPN").unwrap();
+
+    assert_eq!(
+        row_text(session.run("SHOW STATS_BUCKETS WHERE table_name = 't' AND is_index = 0")),
+        vec![vec![
+            "test", "t", "", "a", "0", "0", "1", "1", "1111", "1111", "0"
+        ]]
+    );
+}

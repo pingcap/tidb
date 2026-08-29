@@ -19,6 +19,7 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - [x] (2026-08-29) Corrected wired `SHOW STATS_META` traversal to honor the session partition-prune mode and suppress pseudo cache entries like `GetNonPseudoPhysicalTableStats`.
 - [x] (2026-08-29) Wired `SHOW STATS_HEALTHY` to production catalog statistics and made analyzed-row selection ignore metadata-only cache items like Go's `GetAnalyzeRowCount`.
 - [x] (2026-08-29) Wired `SHOW STATS_TOPN` through production table/index metadata and the session-aware `ValueToString` equivalent, including hidden-column-capable index type lookup.
+- [x] (2026-08-29) Wired `SHOW STATS_BUCKETS` through the same production traversal and decoder, preserving cumulative count, repeat, bounds, and bucket NDV.
 - [ ] Wire all pinned Go `SHOW STATS_*` surfaces to the shared cache and storage semantics.
 - [ ] Inventory every production file, platform/generated variant, original test/support artifact, fixture, and validation gate in pinned `pkg/statistics`; close or explicitly retain seed-only gaps until the whole package is complete.
 - [ ] Run the Ready validation profile, including `make lint`, only after the complete package inventory is closed.
@@ -51,6 +52,9 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 
 - Observation: Rust's TopN row helper retained Go's untyped byte type-code seam even though the production decoder accepts `FieldTypeCode`; no execution path called the helper.
   Evidence: wiring `SHOW STATS_TOPN` required replacing that isolated byte slice with the decoder's native type slice and resolving index offsets against all table columns, including hidden expression-index columns.
+
+- Observation: a one-value Analyze v2 result has no bucket under the default TopN size because the value lives entirely in TopN; pinned bucket tests explicitly use `WITH 0 TOPN` when they require histogram rows.
+  Evidence: the initial end-to-end bucket assertion returned no rows; with the pinned setup it produced `count=1`, `repeat=1`, equal bounds, and `ndv=0`.
 
 ## Decision Log
 
@@ -130,3 +134,5 @@ Revision note (2026-08-29): fixed the existing `SHOW STATS_META` production path
 Revision note (2026-08-29): wired `SHOW STATS_HEALTHY` through the production cache, reused the session prune-mode traversal, and aligned analyzed-row selection with full-load status.
 
 Revision note (2026-08-29): wired `SHOW STATS_TOPN` and verified the pinned integration result for a repeated column and its secondary index; the unique column/index correctly contributes no TopN rows.
+
+Revision note (2026-08-29): wired `SHOW STATS_BUCKETS` and verified the pinned single-value row under `WITH 0 TOPN`.
