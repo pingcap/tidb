@@ -59,11 +59,13 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use tidb_codec::table_key::cut_row_key_prefix;
+use tidb_codec::table_key::encode_index_seek_key;
 use tidb_codec::{decode as decode_datums, encode_key, encode_row_key, gen_table_record_prefix};
 use tidb_datatype::{Datum, FieldType};
 use tidb_model::schema_state::SchemaState;
 use tidb_model::table_info::TableInfo;
-use tidb_tablecodec::decode_table_row_to_map;
+use tidb_tablecodec::{decode_index_handle, decode_table_row_to_map};
+use tidb_txnkv::Handle;
 
 use crate::cluster_catalog::{ClusterCatalog, ClusterCatalogError, MetaPairs, MetaSnapshot};
 
@@ -219,6 +221,8 @@ pub struct SystemTableView {
     types: BTreeMap<i64, FieldType>,
     /// Which projected columns the record key carries instead of the value.
     handle: HandleLayout,
+    /// Public secondary-index name -> `(index ID, indexed column count)`.
+    indexes: BTreeMap<String, (i64, usize)>,
 }
 
 impl SystemTableView {
@@ -272,12 +276,26 @@ impl SystemTableView {
                 types.insert(column.id, column.field_type.clone());
             }
         }
+        let indexes = table
+            .indices
+            .iter_deref()
+            .filter_map(|index| {
+                let index = index.read();
+                (index.state == SchemaState::PUBLIC && !index.primary).then(|| {
+                    (
+                        index.name.lowercase().to_owned(),
+                        (index.id, index.columns.len()),
+                    )
+                })
+            })
+            .collect();
         Self {
             name: name.to_owned(),
             table_id: table.id,
             ids,
             types,
             handle,
+            indexes,
         }
     }
 
@@ -355,6 +373,14 @@ impl SystemTableView {
     }
 }
 
+fn record_key_for_handle(table_id: i64, handle: &Handle) -> Vec<u8> {
+    match handle {
+        Handle::Int(handle) => encode_row_key(table_id, &handle.encoded()),
+        Handle::Common(handle) => encode_row_key(table_id, handle.encoded()),
+        Handle::Partition(handle) => record_key_for_handle(handle.partition_id(), handle.inner()),
+    }
+}
+
 /// Reads every row in one `mysql.*` table's record range, in key order.
 ///
 /// Both halves of each pair matter and neither may be dropped: the key carries
@@ -379,6 +405,62 @@ pub fn scan_system_table_prefixed<S: MetaSnapshot>(
 ) -> Result<MetaPairs, SystemTableError> {
     let key_prefix = view.record_prefix(prefix)?;
     Ok(snapshot.scan_prefix(&key_prefix)?)
+}
+
+/// Reads rows through one named secondary index whose leading indexed values
+/// equal `prefix`.
+///
+/// Go's restricted SQL uses this path for
+/// `mysql.stats_top_n INDEX(tbl) (table_id, is_index, hist_id)`. Returning
+/// record key/value pairs keeps [`SystemRow::parse`] independent of whether a
+/// caller reached the record directly or through an index lookup.
+pub fn scan_system_table_index_prefixed<S: MetaSnapshot>(
+    snapshot: &mut S,
+    view: &SystemTableView,
+    index_name: &str,
+    prefix: &[Datum],
+) -> Result<MetaPairs, SystemTableError> {
+    let Some((index_id, column_count)) = view.indexes.get(&index_name.to_ascii_lowercase()) else {
+        return Err(SystemTableError::Missing {
+            name: format!("{} index `{index_name}`", view.name()),
+        });
+    };
+    if prefix.len() > *column_count {
+        return Err(SystemTableError::Decode {
+            name: view.name().to_owned(),
+            detail: format!(
+                "index `{index_name}` has {column_count} columns but received a {}-column prefix",
+                prefix.len()
+            ),
+        });
+    }
+    let encoded = encode_key(prefix).map_err(|error| SystemTableError::Decode {
+        name: view.name().to_owned(),
+        detail: error.to_string(),
+    })?;
+    let index_prefix = encode_index_seek_key(view.table_id(), *index_id, &encoded);
+    let entries = snapshot.scan_prefix(&index_prefix)?;
+    let mut rows = Vec::with_capacity(entries.len());
+    for (index_key, index_value) in entries {
+        let handle = decode_index_handle(&index_key, &index_value, *column_count)
+            .map_err(|error| SystemTableError::Decode {
+                name: view.name().to_owned(),
+                detail: format!("index `{index_name}` entry has no valid row handle: {error}"),
+            })?
+            .ok_or_else(|| SystemTableError::Decode {
+                name: view.name().to_owned(),
+                detail: format!("index `{index_name}` entry has no row handle"),
+            })?;
+        let record_key = record_key_for_handle(view.table_id(), &handle);
+        let record_value = snapshot
+            .get(&record_key)?
+            .ok_or_else(|| SystemTableError::Decode {
+                name: view.name().to_owned(),
+                detail: format!("index `{index_name}` refers to a missing record"),
+            })?;
+        rows.push((record_key, record_value));
+    }
+    Ok(rows)
 }
 
 /// Decodes the clustered key columns one record key carries.

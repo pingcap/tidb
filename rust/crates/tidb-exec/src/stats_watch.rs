@@ -62,7 +62,7 @@ use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use crate::cluster_stats_load::ClusterTableStats;
+use crate::cluster_stats_load::{ClusterStatsItem, ClusterTableStats};
 
 /// One table's statistics state, as this node currently knows it.
 ///
@@ -169,6 +169,48 @@ impl SharedStats {
             Err(poisoned) => poisoned.into_inner(),
         };
         *guard = Arc::new(snapshot);
+    }
+
+    /// Go sync-load's `updateCachedItem`: copy the cached table, replace only
+    /// the requested column/index, and atomically publish a new cache image.
+    /// A fully loaded item is never downgraded, and a metadata-only request
+    /// does not replace an item already present.
+    pub fn update_item(&self, table_id: i64, item: ClusterStatsItem) -> bool {
+        let mut guard = match self.published.write() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let Some(TableStatsState::Loaded(current)) = guard.get(&table_id) else {
+            return false;
+        };
+        let items = if item.is_index {
+            &current.indexes
+        } else {
+            &current.columns
+        };
+        if let Some(existing) = items.iter().find(|existing| existing.id == item.id) {
+            if existing.load_status.is_full_load() || !item.load_status.is_full_load() {
+                return false;
+            }
+        }
+
+        let mut table = current.as_ref().clone();
+        let items = if item.is_index {
+            &mut table.indexes
+        } else {
+            &mut table.columns
+        };
+        match items.iter().position(|existing| existing.id == item.id) {
+            Some(position) => items[position] = item,
+            None => {
+                items.push(item);
+                items.sort_by_key(|item| item.id);
+            }
+        }
+        let mut snapshot = guard.as_ref().clone();
+        snapshot.insert(table_id, TableStatsState::Loaded(Arc::new(table)));
+        *guard = Arc::new(snapshot);
+        true
     }
 
     /// The receipt for the snapshot in force now.
@@ -419,6 +461,24 @@ mod tests {
         )
     }
 
+    fn item(id: i64, status: tidb_stats::StatsLoadedStatus) -> ClusterStatsItem {
+        ClusterStatsItem {
+            id,
+            is_index: false,
+            stats_ver: 2,
+            flag: 0,
+            load_status: status,
+            histogram: Histogram {
+                id,
+                ndv: 10,
+                last_update_version: 42,
+                ..Histogram::default()
+            },
+            topn: None,
+            cms: None,
+        }
+    }
+
     #[test]
     fn a_published_snapshot_replaces_the_previous_one_whole() {
         let shared = SharedStats::new(StatsSnapshot::from([loaded_at(1, 10)]));
@@ -428,6 +488,32 @@ mod tests {
         // the new one -- the whole consistency contract of the swap.
         assert_eq!(held[&1].version(), Some(10));
         assert_eq!(shared.load()[&1].version(), Some(20));
+    }
+
+    #[test]
+    fn sync_load_replaces_only_the_evicted_item_without_mutating_held_snapshots() {
+        let mut table = match loaded_at(1, 42).1 {
+            TableStatsState::Loaded(table) => table.as_ref().clone(),
+            TableStatsState::Pseudo => unreachable!(),
+        };
+        table.columns = vec![item(1, tidb_stats::StatsLoadedStatus::all_evicted())];
+        let shared = SharedStats::new(StatsSnapshot::from([(
+            1,
+            TableStatsState::Loaded(Arc::new(table)),
+        )]));
+        let held = shared.load();
+
+        assert!(shared.update_item(1, item(1, tidb_stats::StatsLoadedStatus::full_load())));
+        assert!(held[&1].loaded().unwrap().columns[0]
+            .load_status
+            .is_all_evicted());
+        assert!(shared.load()[&1].loaded().unwrap().columns[0]
+            .load_status
+            .is_full_load());
+        assert!(!shared.update_item(1, item(1, tidb_stats::StatsLoadedStatus::all_evicted())));
+        assert!(shared.load()[&1].loaded().unwrap().columns[0]
+            .load_status
+            .is_full_load());
     }
 
     #[test]

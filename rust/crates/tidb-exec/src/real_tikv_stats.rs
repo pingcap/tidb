@@ -30,7 +30,7 @@ use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
 use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
 
 use crate::cluster_catalog::load_cluster_catalog;
-use crate::cluster_stats_load::{ClusterStatsLoader, ClusterTableStats};
+use crate::cluster_stats_load::{ClusterStatsItem, ClusterStatsLoader, ClusterTableStats};
 use crate::mysql_system_tables::SystemTableError;
 use crate::real_tikv_catalog::TransactionMetaSnapshot;
 use crate::stats_watch::{StatsSnapshot, TableStatsState};
@@ -75,6 +75,42 @@ pub fn load_table_stats_from_cluster<
         let table_id = info.id;
         let loader = ClusterStatsLoader::locate(&catalog)?;
         loader.load_table(&mut snapshot, table_id, &column_types)
+    };
+    transaction
+        .finish_without_writes()
+        .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
+    loaded
+}
+
+/// Reads one column or index statistics item through one fresh read-only
+/// transaction, Go sync-load's storage boundary.
+pub fn load_stats_item_from_cluster<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+>(
+    opener: &RealOptimisticTransactionOpener<C, L, P>,
+    timeout: Duration,
+    loader: &ClusterStatsLoader,
+    table_id: i64,
+    is_index: bool,
+    id: i64,
+    column_type: Option<&FieldType>,
+    full_load: bool,
+) -> Result<Option<ClusterStatsItem>, SystemTableError> {
+    let mut transaction = opener
+        .begin_read_only()
+        .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
+    let loaded = {
+        let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
+        loader.load_item(
+            &mut snapshot,
+            table_id,
+            is_index,
+            id,
+            column_type,
+            full_load,
+        )
     };
     transaction
         .finish_without_writes()

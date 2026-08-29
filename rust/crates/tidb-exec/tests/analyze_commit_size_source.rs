@@ -43,6 +43,7 @@ use tidb_txnkv::transaction::{
 #[derive(Default)]
 struct MetaStore {
     pairs: BTreeMap<Vec<u8>, Vec<u8>>,
+    scans: Vec<Vec<u8>>,
 }
 
 impl MetaSnapshot for MetaStore {
@@ -51,6 +52,7 @@ impl MetaSnapshot for MetaStore {
     }
 
     fn scan_prefix(&mut self, prefix: &[u8]) -> Result<MetaPairs, ClusterCatalogError> {
+        self.scans.push(prefix.to_vec());
         Ok(self
             .pairs
             .iter()
@@ -278,4 +280,100 @@ fn lite_load_keeps_metadata_and_evicts_the_histogram_payload() {
         assert!(item.cms.is_none());
         assert_eq!(item.load_status.status_to_string(), "allEvicted");
     }
+}
+
+/// Go's `CMSketchAndTopNFromStorageWithHighPriority` reaches TopN through
+/// `INDEX tbl(table_id, is_index, hist_id)`. A table statistics load must not
+/// scan the cluster-wide `stats_top_n` record range.
+#[test]
+fn topn_load_uses_the_declared_secondary_index() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let stats = ClusterTableStats {
+        table_id: 4242,
+        version: 440_000_000_000_000_000,
+        snapshot: 440_000_000_000_000_000,
+        last_analyze_version: 440_000_000_000_000_000,
+        modify_count: 0,
+        row_count: 10_240,
+        columns: vec![full_histogram(1, false)],
+        indexes: Vec::new(),
+    };
+    let plan = plan_stats_write(&mut store, &catalog, &stats, now()).expect("analyze plans");
+    apply_mutations(&mut store, &plan.mutations);
+    store.scans.clear();
+
+    let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
+    let column_types = BTreeMap::from([(1, tidb_datatype::FieldType::new(
+        tidb_datatype::FieldTypeCode::LongLong,
+    ))]);
+    let loaded = loader
+        .load_table(&mut store, stats.table_id, &column_types)
+        .expect("full statistics load")
+        .expect("stats_meta exists");
+    assert_eq!(loaded.columns[0].topn.as_ref().map(TopN::num), Some(100));
+
+    let encoded_prefix = tidb_codec::encode_key(&[Datum::Int(stats.table_id)]).unwrap();
+    let index_prefix = tidb_codec::table_key::encode_index_seek_key(
+        tidb_metadef::system::STATS_TOP_NTABLE_ID,
+        1,
+        &encoded_prefix,
+    );
+    assert!(store.scans.contains(&index_prefix));
+    assert!(!store.scans.contains(&tidb_codec::gen_table_record_prefix(
+        tidb_metadef::system::STATS_TOP_NTABLE_ID,
+    )));
+}
+
+/// Go `readStatsForOneItem` reads only the requested histogram item: one
+/// clustered histogram prefix, one clustered bucket prefix, and one TopN
+/// secondary-index prefix.
+#[test]
+fn one_item_load_uses_only_that_items_key_ranges() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let stats = ClusterTableStats {
+        table_id: 4242,
+        version: 440_000_000_000_000_000,
+        snapshot: 440_000_000_000_000_000,
+        last_analyze_version: 440_000_000_000_000_000,
+        modify_count: 0,
+        row_count: 10_240,
+        columns: vec![full_histogram(1, false), full_histogram(2, false)],
+        indexes: Vec::new(),
+    };
+    let plan = plan_stats_write(&mut store, &catalog, &stats, now()).expect("analyze plans");
+    apply_mutations(&mut store, &plan.mutations);
+    store.scans.clear();
+
+    let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
+    let field_type = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
+    let loaded = loader
+        .load_item(&mut store, stats.table_id, false, 1, Some(&field_type), true)
+        .expect("one item loads")
+        .expect("the histogram exists");
+    assert_eq!(loaded.id, 1);
+    assert_eq!(loaded.histogram.buckets.len(), 256);
+    assert_eq!(loaded.topn.as_ref().map(TopN::num), Some(100));
+    assert_eq!(loaded.load_status.status_to_string(), "allLoaded");
+
+    let item = [Datum::Int(stats.table_id), Datum::Int(0), Datum::Int(1)];
+    let encoded_item = tidb_codec::encode_key(&item).unwrap();
+    let histogram_prefix = tidb_codec::encode_row_key(
+        tidb_metadef::system::STATS_HISTOGRAMS_TABLE_ID,
+        &encoded_item,
+    );
+    let bucket_prefix = tidb_codec::encode_row_key(
+        tidb_metadef::system::STATS_BUCKETS_TABLE_ID,
+        &encoded_item,
+    );
+    let topn_prefix = tidb_codec::table_key::encode_index_seek_key(
+        tidb_metadef::system::STATS_TOP_NTABLE_ID,
+        1,
+        &encoded_item,
+    );
+    assert_eq!(
+        store.scans,
+        vec![histogram_prefix, bucket_prefix, topn_prefix]
+    );
 }

@@ -67,7 +67,8 @@ use tidb_stats::StatsLoadedStatus;
 
 use crate::cluster_catalog::{ClusterCatalog, MetaSnapshot};
 use crate::mysql_system_tables::{
-    scan_system_table, scan_system_table_prefixed, SystemRow, SystemTableError, SystemTableView,
+    scan_system_table, scan_system_table_index_prefixed, scan_system_table_prefixed, SystemRow,
+    SystemTableError, SystemTableView,
 };
 
 /// Go `statistics.UTCWithAllowInvalidDateCtx`, as conversion flags.
@@ -351,9 +352,14 @@ impl ClusterStatsLoader {
                 histogram.tot_col_size = 0;
                 histogram.correlation = 0.0;
             }
+            let stats_ver = row.i64("stats_ver")?.unwrap_or_default();
             let (cms, top) = if full_load {
+                let cms_bytes = (stats_ver <= 1)
+                    .then(|| row.bytes("cm_sketch"))
+                    .transpose()?
+                    .flatten();
                 decode_cmsketch_and_topn(
-                    row.bytes("cm_sketch")?.as_deref(),
+                    cms_bytes.as_deref(),
                     topn.get(&(is_index, id)).map_or(&[][..], Vec::as_slice),
                 )
                 .map_err(|error| SystemTableError::Decode {
@@ -363,7 +369,6 @@ impl ClusterStatsLoader {
             } else {
                 (None, None)
             };
-            let stats_ver = row.i64("stats_ver")?.unwrap_or_default();
             let initialized = if is_index {
                 stats_ver != 0
             } else {
@@ -395,6 +400,98 @@ impl ClusterStatsLoader {
         stats.columns.sort_by_key(|item| item.id);
         stats.indexes.sort_by_key(|item| item.id);
         Ok(Some(stats))
+    }
+
+    /// Go `readStatsForOneItem`: load one column or index from its exact
+    /// histogram/bucket/TopN key ranges. `full_load=false` is the metadata-only
+    /// request used by asynchronous initialization.
+    pub fn load_item<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        table_id: i64,
+        is_index: bool,
+        id: i64,
+        column_type: Option<&FieldType>,
+        full_load: bool,
+    ) -> Result<Option<ClusterStatsItem>, SystemTableError> {
+        let prefix = [
+            Datum::Int(table_id),
+            Datum::Int(i64::from(is_index)),
+            Datum::Int(id),
+        ];
+        let Some((key, value)) = scan_system_table_prefixed(snapshot, &self.histograms, &prefix)?
+            .into_iter()
+            .next()
+        else {
+            return Ok(None);
+        };
+        let row = SystemRow::parse(&self.histograms, &key, &value)?;
+        if row.i64("table_id")?.unwrap_or_default() != table_id
+            || (row.i64("is_index")?.unwrap_or_default() != 0) != is_index
+            || row.i64("hist_id")?.unwrap_or_default() != id
+        {
+            return Ok(None);
+        }
+        let stats_ver = row.i64("stats_ver")?.unwrap_or_default();
+        let mut histogram = Histogram {
+            id,
+            ndv: row.i64("distinct_count")?.unwrap_or_default(),
+            null_count: row.i64("null_count")?.unwrap_or_default(),
+            last_update_version: row.u64("version")?.unwrap_or_default(),
+            tot_col_size: row.i64("tot_col_size")?.unwrap_or_default(),
+            correlation: row.f64("correlation")?.unwrap_or_default(),
+            buckets: Vec::new(),
+        };
+        if is_index {
+            histogram.tot_col_size = 0;
+            histogram.correlation = 0.0;
+        }
+        let (cms, topn) = if full_load {
+            let column_types = column_type
+                .map(|field_type| BTreeMap::from([(id, field_type.clone())]))
+                .unwrap_or_default();
+            histogram.buckets = self
+                .load_buckets_prefixed(snapshot, &prefix, &column_types)?
+                .remove(&(is_index, id))
+                .unwrap_or_default();
+            let topn = self.load_topn_prefixed(snapshot, &prefix)?;
+            let cms_bytes = (stats_ver <= 1)
+                .then(|| row.bytes("cm_sketch"))
+                .transpose()?
+                .flatten();
+            decode_cmsketch_and_topn(
+                cms_bytes.as_deref(),
+                topn.get(&(is_index, id)).map_or(&[][..], Vec::as_slice),
+            )
+            .map_err(|error| SystemTableError::Decode {
+                name: self.histograms.name().to_owned(),
+                detail: error.to_string(),
+            })?
+        } else {
+            (None, None)
+        };
+        let initialized = if is_index {
+            stats_ver != 0
+        } else {
+            stats_ver != 0 || histogram.ndv > 0 || histogram.null_count > 0
+        };
+        let load_status = if !initialized {
+            StatsLoadedStatus::default()
+        } else if full_load {
+            StatsLoadedStatus::full_load()
+        } else {
+            StatsLoadedStatus::all_evicted()
+        };
+        Ok(Some(ClusterStatsItem {
+            id,
+            is_index,
+            stats_ver,
+            flag: row.i64("flag")?.unwrap_or_default(),
+            load_status,
+            histogram,
+            topn,
+            cms,
+        }))
     }
 
     /// Go `StatsMetaCountAndModifyCount`.
@@ -436,13 +533,25 @@ impl ClusterStatsLoader {
         table_id: i64,
         column_types: &BTreeMap<i64, FieldType>,
     ) -> Result<BTreeMap<(bool, i64), Vec<Bucket>>, SystemTableError> {
+        self.load_buckets_prefixed(snapshot, &[Datum::Int(table_id)], column_types)
+    }
+
+    fn load_buckets_prefixed<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        prefix: &[Datum],
+        column_types: &BTreeMap<i64, FieldType>,
+    ) -> Result<BTreeMap<(bool, i64), Vec<Bucket>>, SystemTableError> {
         // `(bucket_id, lower, upper, repeats, ndv, per-bucket count)` keyed by
         // histogram; `bucket_id` leads so the sort restores Go's
         // `order by bucket_id`, which is what makes the running total below
         // reproduce Go's cumulative `Bucket.Count`.
         let mut collected: BTreeMap<(bool, i64), Vec<(i64, Bucket)>> = BTreeMap::new();
-        let key_prefix = [Datum::Int(table_id)];
-        for (key, value) in scan_system_table_prefixed(snapshot, &self.buckets, &key_prefix)? {
+        let table_id = match prefix.first() {
+            Some(Datum::Int(table_id)) => *table_id,
+            _ => 0,
+        };
+        for (key, value) in scan_system_table_prefixed(snapshot, &self.buckets, prefix)? {
             let row = SystemRow::parse(&self.buckets, &key, &value)?;
             if row.i64("table_id")?.unwrap_or_default() != table_id {
                 continue;
@@ -503,14 +612,20 @@ impl ClusterStatsLoader {
         snapshot: &mut S,
         table_id: i64,
     ) -> Result<TopNRowsByHistogram, SystemTableError> {
-        // `mysql.stats_top_n` has no clustered handle — only a secondary
-        // `INDEX tbl(table_id, is_index, hist_id)` — so its record range
-        // cannot be narrowed by key here and every row is read and filtered.
-        // That is a real cost on a cluster with many analyzed tables, and the
-        // honest fix is an index read, not a narrower prefix that does not
-        // exist.
+        self.load_topn_prefixed(snapshot, &[Datum::Int(table_id)])
+    }
+
+    fn load_topn_prefixed<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        prefix: &[Datum],
+    ) -> Result<TopNRowsByHistogram, SystemTableError> {
+        let table_id = match prefix.first() {
+            Some(Datum::Int(table_id)) => *table_id,
+            _ => 0,
+        };
         let mut collected = TopNRowsByHistogram::new();
-        for (key, value) in scan_system_table(snapshot, &self.topn)? {
+        for (key, value) in scan_system_table_index_prefixed(snapshot, &self.topn, "tbl", prefix)? {
             let row = SystemRow::parse(&self.topn, &key, &value)?;
             if row.i64("table_id")?.unwrap_or_default() != table_id {
                 continue;
