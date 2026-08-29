@@ -131,7 +131,9 @@ For each bounded behavior cluster:
   manifest batch claim while retaining the complete `TestPool` and four
   benchmark workloads. Reworked the internal item source so factory-backed
   `Pool::new` accepts non-`Default` values like Go `New[T any]`; only the
-  Rust representation of Go's zero-valued pool requires `Default`.
+  Rust representation of Go's zero-valued pool requires `Default`. A second
+  benchmark audit restored the source `sync.Pool` value case's per-`Put` type
+  erasure and boxing instead of measuring an unrelated concrete-vector pool.
 - 2026-08-28: audited every production, test, harness, and build file in pinned
   Go `pkg/util/schemacmp`. Reused the existing exact Go `%g` float and `%q`
   string formatters in place of local Rust approximations, and made the Rust

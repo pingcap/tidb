@@ -24,25 +24,34 @@ needed. `Default` represents Go's valid zero value, and the absence of
 because Go mutexes do not introduce poison failures.
 
 `rust/crates/tidb-util/benches/zeropool.rs` contains the four source benchmark
-translations. The audit removed four supplemental Rust tests with no Go
-equivalent; the remaining test is exactly `TestPool` and retains all four Go
-subtest behaviors.
+translations. The `BenchmarkSyncPoolValue` translation type-erases each value
+and allocates a fresh box on every `Put`, preserving the allocation behavior
+that benchmark exists to contrast; the old concrete `Vec` pool silently
+removed that source behavior. The audit removed four supplemental Rust tests
+with no Go equivalent; the remaining test is exactly `TestPool` and retains
+all four Go subtest behaviors.
 
 ## Validation
 
 Profile: WIP; this completes one package in the continuing package-by-package
 audit, not a repository-wide readiness claim.
 
+- `go test ./pkg/util/zeropool` — passed.
 - `cargo test -q -p tidb-util zeropool::tests::TestPool --lib --locked -- --exact --test-threads=1` — passed (the one source-owned test and all four subtests).
 - `cargo check -p tidb-util --all-targets --locked` — passed, including all
   four benchmark translations.
+- `cargo bench --offline --locked -p tidb-util --bench zeropool` — ran all four
+  translated workloads.
+- `cargo clippy --offline --locked -p tidb-util --bench zeropool --no-deps -- -A clippy::needless-borrows-for-generic-args -A clippy::chunks-exact-to-as-chunks -A clippy::new-without-default -D warnings` — passed.
 - `cargo fmt --all --check` and `git diff --check` — passed.
 
 No Go or Bazel file changed, so `make bazel_prepare` is not required.
 
 ## Risk
 
-- Correctness: production and source-owned test/benchmark behavior are
-  unchanged.
-- Compatibility: only internal supplemental tests were removed.
-- Performance: unchanged.
+- Correctness: production and source-owned test behavior are unchanged; the
+  comparative value-pool benchmark now measures the source workload.
+- Compatibility: no production API or source-owned test changed; the earlier
+  audit removed only internal supplemental tests.
+- Performance: production is unchanged. Only the intentionally allocating
+  comparison benchmark becomes slower and representative of Go.
