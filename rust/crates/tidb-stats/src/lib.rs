@@ -69,7 +69,6 @@ pub mod histogram;
 pub mod historical_stats;
 pub mod index;
 pub mod index_query;
-pub mod index_usage_key;
 pub mod init_stats_concurrency;
 pub mod init_stats_progress;
 pub mod json_metadata;
@@ -82,9 +81,6 @@ pub mod memory_usage;
 pub mod mock_statistics_shape;
 pub mod non_partitioned_analysis;
 pub mod overlap_geometry;
-pub mod pending_delta_ids;
-pub mod predicate_column_queries;
-pub mod predicate_column_query_mode;
 pub mod priority_calculator;
 pub mod priority_heap;
 pub mod pseudo_cache_policy;
@@ -216,7 +212,6 @@ pub use index::{
     IndexValidityContext,
 };
 pub use index_query::query_index_bytes;
-pub use index_usage_key::IndexUsageKey;
 pub use init_stats_concurrency::init_stats_concurrency;
 pub use init_stats_progress::init_stats_progress;
 pub use json_metadata::{JsonPredicateColumn, JsonTable, TIDB_GLOBAL_STATS};
@@ -237,13 +232,6 @@ pub use non_partitioned_analysis::{
     ANALYZE_INDEX, ANALYZE_TABLE,
 };
 pub use overlap_geometry::{left_overlap_percent, right_overlap_percent};
-pub use pending_delta_ids::collect_pending_delta_ids;
-pub use predicate_column_queries::{
-    cleanup_column_ids_argument, CLEANUP_DROPPED_COLUMN_STATS_USAGE_QUERY,
-    GET_PREDICATE_COLUMNS_QUERY, LOAD_COLUMN_STATS_USAGE_FOR_TABLE_QUERY,
-    LOAD_COLUMN_STATS_USAGE_QUERY,
-};
-pub use predicate_column_query_mode::PredicateColumnOperation;
 pub use priority_calculator::{
     calculate_priority_weight, special_event_weight, EVENT_NEW_INDEX, EVENT_NONE,
 };

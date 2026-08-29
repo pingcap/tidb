@@ -763,6 +763,13 @@ For each bounded behavior cluster:
       parallel benchmark; remove narrowed and duplicate aggregate surfaces.
       The atomic inventory and WIP gates are in
       `receipts/statistics_handle_usage_indexusage.md`.
+- [x] Audit the pinned parent `pkg/statistics/handle/usage` package as one
+      atomic unit and remove its disconnected key, pending-ID,
+      transaction-mode, SQL-string, empty-test, and function-batch carriers.
+      The package remains explicitly unclaimed until the ordinary stats
+      handle, session, schema, transaction, persistence, and integration paths
+      exist. The complete inventory is in
+      `receipts/statistics_handle_usage_audit.md`.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope
@@ -836,6 +843,12 @@ For each bounded behavior cluster:
   ID vectors and an alias to the parent usage package's key type both erase Go
   package behavior. Pending maps use shared ownership to reproduce Go map
   header sends without cloning map contents. Date/Author: 2026-08-29, Codex.
+- Decision: the parent `usage` package cannot be represented by an ID tuple,
+  a target-ID sorting helper, a transaction-mode enum, or copied SQL strings.
+  Those disconnected leaves bypass the package's session-list, stats-handle,
+  schema, transaction, persistence, and lifecycle behavior and are removed
+  until the complete ordinary execution path can own them. Date/Author:
+  2026-08-29, Codex.
 
 ## Surprises & Discoveries
 
