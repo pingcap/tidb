@@ -566,6 +566,10 @@ pub struct StmtContext {
     sync_stats_failed: Arc<AtomicBool>,
     /// Go `StmtCtx.SetSkipPlanCache`'s first reason.
     skip_plan_cache_reason: Arc<Mutex<Option<String>>>,
+    /// Go `StmtCtx.StatsLoad`: requests are started by
+    /// `CollectPredicateColumnsPoint` and consumed later by
+    /// `SyncWaitStatsLoadPoint`.
+    pending_statistics_load: Arc<Mutex<Option<PendingStatisticsLoad>>>,
     /// The validated statement snapshot of `@@block_encryption_mode`.
     block_encryption_mode: tidb_expr::BlockEncryptionMode,
     /// `@@max_allowed_packet`, which the result-sizing string builtins read.
@@ -775,6 +779,7 @@ impl StmtContext {
             max_execution_time_ms: 0,
             sync_stats_failed: Arc::default(),
             skip_plan_cache_reason: Arc::default(),
+            pending_statistics_load: Arc::default(),
             block_encryption_mode: tidb_expr::BlockEncryptionMode::default(),
             // Go `vardef.DefMaxAllowedPacket`, the value a default server runs
             // with and the one the `Columns` trait default already used.
@@ -1113,6 +1118,25 @@ impl StmtContext {
     pub fn sync_stats_failed(&self) -> bool {
         self.sync_stats_failed
             .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    pub(crate) fn install_pending_statistics_load(
+        &self,
+        receiver: std::sync::mpsc::Receiver<Result<(), String>>,
+        timeout: std::time::Duration,
+    ) {
+        *self
+            .pending_statistics_load
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            Some(PendingStatisticsLoad { receiver, timeout });
+    }
+
+    pub(crate) fn take_pending_statistics_load(&self) -> Option<PendingStatisticsLoad> {
+        self.pending_statistics_load
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
     }
 
     /// Go `StmtCtx.SetSkipPlanCache`.
@@ -2313,6 +2337,11 @@ impl StmtContext {
         }
         warnings.push((level, code, message.to_owned()));
     }
+}
+
+pub(crate) struct PendingStatisticsLoad {
+    pub(crate) receiver: std::sync::mpsc::Receiver<Result<(), String>>,
+    pub(crate) timeout: std::time::Duration,
 }
 
 /// The open [`StmtContext::enter_cop_eval`] scope. Closing it returns warning

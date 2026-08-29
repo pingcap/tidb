@@ -823,6 +823,10 @@ fn optimize_built_logical(
         ) -> Result<(), tidb_planner::plan_base::PlanError> {
             self.catalog.request_statistics_load(usage, self.context)
         }
+
+        fn wait(&self) -> Result<(), tidb_planner::plan_base::PlanError> {
+            self.catalog.wait_statistics_load(self.context)
+        }
     }
 
     let flags = tidb_planner::logical::rule::add_second_column_prune(flags);

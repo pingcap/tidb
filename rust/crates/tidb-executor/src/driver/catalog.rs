@@ -1459,9 +1459,9 @@ impl Catalog {
         result
     }
 
-    /// Go `RequestLoadStats` plus `SyncWaitStatsLoad` at the logical-rule
-    /// boundary. The worker always publishes when it finishes; a synchronous
-    /// caller additionally waits up to the session's configured deadline.
+    /// Go `RequestLoadStats`: start the workers at
+    /// `CollectPredicateColumnsPoint` and leave synchronous waiting to the
+    /// later `SyncWaitStatsLoadPoint`.
     pub fn request_statistics_load(
         &self,
         usage: &tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage,
@@ -1500,7 +1500,22 @@ impl Catalog {
         if wait.is_zero() {
             return Ok(());
         }
-        match receiver.recv_timeout(wait) {
+        context.install_pending_statistics_load(receiver, wait);
+        Ok(())
+    }
+
+    /// Go `SyncWaitStatsLoad`, at the later logical-rule position.
+    pub fn wait_statistics_load(
+        &self,
+        context: &crate::StmtContext,
+    ) -> Result<(), tidb_planner::plan_base::PlanError> {
+        if context.sync_stats_failed() {
+            return Ok(());
+        }
+        let Some(pending) = context.take_pending_statistics_load() else {
+            return Ok(());
+        };
+        match pending.receiver.recv_timeout(pending.timeout) {
             Ok(Ok(())) => Ok(()),
             Ok(Err(error)) => {
                 context.report_sync_stats_failed();
@@ -2138,12 +2153,13 @@ mod statistics_request_tests {
             ..Default::default()
         };
 
+        let context = crate::StmtContext::for_query().with_stats_load_policy(100, true, 0);
         catalog
-            .request_statistics_load(
-                &usage,
-                &crate::StmtContext::for_query().with_stats_load_policy(100, true, 0),
-            )
-            .expect("synchronous load");
+            .request_statistics_load(&usage, &context)
+            .expect("start synchronous load");
+        catalog
+            .wait_statistics_load(&context)
+            .expect("finish synchronous load");
         let requests = loader
             .requests
             .lock()
@@ -2183,6 +2199,10 @@ mod statistics_request_tests {
 
         catalog
             .request_statistics_load(&usage, &context)
+            .expect("request only starts the load");
+        assert!(!context.sync_stats_failed());
+        catalog
+            .wait_statistics_load(&context)
             .expect("pseudo fallback converts the timeout to a warning");
         assert!(context.sync_stats_failed());
         assert!(context.skip_plan_cache());

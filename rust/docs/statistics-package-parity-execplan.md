@@ -14,7 +14,7 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - [x] (2026-08-29) Added exact secondary-index reads and per-item histogram, bucket, TopN, and CMS loading.
 - [x] (2026-08-29) Added logical predicate-column demand collection, including lineage, physical-table visitation, and operator counting.
 - [x] (2026-08-29) Wired collection and sync/async requests at Go's logical-rule position, including partition expansion, statement timeout/cache state, interesting-column collection, first-phase access-path pruning, and retained-index filtering.
-- [ ] Add Go's later `SyncWaitStatsLoadPoint` for requests registered while later logical/statistics derivation runs.
+- [x] (2026-08-29) Split request dispatch from synchronous waiting and added Go's later `SyncWaitStatsLoadPoint` at its pinned logical-rule position.
 - [ ] Replace eager startup/reload statistics reads with Go's lite load and make later item requests authoritative.
 - [ ] Wire all pinned Go `SHOW STATS_*` surfaces to the shared cache and storage semantics.
 - [ ] Inventory every production file, platform/generated variant, original test/support artifact, fixture, and validation gate in pinned `pkg/statistics`; close or explicitly retain seed-only gaps until the whole package is complete.
@@ -34,6 +34,9 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - Observation: Rust's `PossiblePath` is the exact stage used by this pinned pruning rule: like Go before `fillIndexPath`, it has index metadata but no `FullIdxCols` or `IsSingleScan`. Consequently the pinned fallback scoring branch applies and consecutive-prefix/single-scan bonuses are unreachable at this point.
   Evidence: pinned `scoreIndexPath` branches on nil `FullIdxCols`; Rust `access_path::PossiblePath` is documented and populated as the newborn access path.
 
+- Observation: pinned Go dispatches statistics work at `CollectPredicateColumnsPoint` but waits only at the later `SyncWaitStatsLoadPoint`; Rust had combined those phases and therefore blocked intervening logical rules.
+  Evidence: pinned `SendLoadRequests` stores statement wait state and returns, while `SyncWaitStatsLoad` consumes that state in the later rule.
+
 ## Decision Log
 
 - Decision: reconstruct and test each pinned Go branch before editing Rust; do not preserve Rust-only fallback paths.
@@ -50,7 +53,7 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 
 ## Outcomes & Retrospective
 
-The exact storage item reader, logical demand collector, initial request/wait state, partition expansion, and newborn access-path pruning are integrated. The current milestone is not complete: Go's later `SyncWaitStatsLoadPoint`, lite refresh lifecycle, `SHOW STATS_*` surfaces, worker concurrency/retry behavior, and the whole-package inventory remain.
+The exact storage item reader, logical demand collector, split request/wait rule positions, partition expansion, and newborn access-path pruning are integrated. The current milestone is not complete: Go's lite refresh lifecycle, `SHOW STATS_*` surfaces, worker concurrency/retry behavior, and the whole-package inventory remain.
 
 ## Context and Orientation
 
@@ -91,7 +94,7 @@ Checks and focused tests are safe to rerun. Statistics workers publish immutable
 
 ## Artifacts and Notes
 
-Pushed evidence includes commits `e0d5b4c1f0` (individual item loading), `00179562d2` (logical demand collection), and `cb732f4908` (logical request integration). The current pruning slice compiles and has focused tests for threshold-zero pruning, the no-interesting-column safety fallback, retained-index propagation, and statistics-request filtering.
+Pushed evidence includes commits `e0d5b4c1f0` (individual item loading), `00179562d2` (logical demand collection), `cb732f4908` (logical request integration), and `9cd431bd02` (newborn access-path pruning). The current wait-point slice compiles and has focused tests proving request dispatch and waiting occur at their separate pinned-Go rule positions, including timeout fallback only at the wait point.
 
     cargo check --locked -p tidb-session -p tidb-server
 
@@ -102,3 +105,5 @@ Pushed evidence includes commits `e0d5b4c1f0` (individual item loading), `001795
 Revision note (2026-08-29): created the living plan after completing exact item loading and logical usage collection; recorded the three parity gaps found while reviewing the first request-seam implementation.
 
 Revision note (2026-08-29): completed the pinned first-phase interesting-column/access-path pruning behavior over Rust's newborn path representation and recorded why Go's later path-growth scoring fields are unreachable at this phase.
+
+Revision note (2026-08-29): moved synchronous waiting out of initial request dispatch and registered `SyncWaitStatsLoadPoint` at the pinned later logical-rule position.

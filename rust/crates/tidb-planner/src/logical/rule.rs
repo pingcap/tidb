@@ -412,6 +412,9 @@ impl RuleId {
             Self::CollectPredicateColumnsPoint => {
                 Some(&super::rule_collect_plan_stats::CollectPredicateColumnsPoint)
             }
+            Self::SyncWaitStatsLoadPoint => {
+                Some(&super::rule_collect_plan_stats::SyncWaitStatsLoadPoint)
+            }
             Self::GcSubstituter
             | Self::DecorrelateSolver
             | Self::SemiJoinRewriter
@@ -427,7 +430,6 @@ impl RuleId {
             | Self::FullTextIndexResolverTopN
             | Self::FullTextIndexResolverProjection
             | Self::OrderAwareJoinReorder
-            | Self::SyncWaitStatsLoadPoint
             | Self::JoinReOrderSolver
             | Self::OuterJoinToSemiJoin
             | Self::CorrelateSolver

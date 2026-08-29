@@ -57,6 +57,32 @@ pub trait StatisticsLoadRequester {
     /// Requests the collected items before later logical rules and physical
     /// enumeration read their statistics.
     fn request(&self, usage: &ColumnStatsUsage) -> Result<(), PlanError>;
+
+    /// Waits at Go `SyncWaitStatsLoadPoint`, after the intervening logical
+    /// rules have had a chance to run while the workers load in parallel.
+    fn wait(&self) -> Result<(), PlanError>;
+}
+
+/// Go `SyncWaitStatsLoadPoint`.
+pub struct SyncWaitStatsLoadPoint;
+
+impl LogicalOptRule for SyncWaitStatsLoadPoint {
+    fn optimize(
+        &self,
+        ctx: &RuleContext<'_>,
+        plan: LogicalPlan,
+    ) -> Result<(LogicalPlan, bool), (LogicalPlan, PlanError)> {
+        if let Some(requester) = ctx.statistics_load {
+            if let Err(error) = requester.wait() {
+                return Err((plan, error));
+            }
+        }
+        Ok((plan, false))
+    }
+
+    fn name(&self) -> &'static str {
+        "sync_wait_stats_load_point"
+    }
 }
 
 /// Go `CollectPredicateColumnsPoint`.
@@ -674,6 +700,10 @@ mod tests {
                 self.operators.set(usage.operator_count);
                 Ok(())
             }
+
+            fn wait(&self) -> Result<(), PlanError> {
+                Ok(())
+            }
         }
 
         let allocator = PlanIdAllocator::new();
@@ -704,6 +734,10 @@ mod tests {
         impl StatisticsLoadRequester for Requester {
             fn request(&self, usage: &ColumnStatsUsage) -> Result<(), PlanError> {
                 *self.kept.borrow_mut() = usage.kept_index_ids.clone();
+                Ok(())
+            }
+
+            fn wait(&self) -> Result<(), PlanError> {
                 Ok(())
             }
         }
@@ -773,5 +807,44 @@ mod tests {
         assert_eq!(returned.interesting_columns[0].unique_id, 1);
         assert_eq!(returned.enumerated_paths.len(), 2);
         assert_eq!(requester.kept.borrow().get(&7), Some(&HashSet::from([101])));
+    }
+
+    #[test]
+    fn sync_wait_rule_uses_the_later_go_rule_position() {
+        struct Requester {
+            requests: Cell<usize>,
+            waits: Cell<usize>,
+        }
+
+        impl StatisticsLoadRequester for Requester {
+            fn request(&self, _usage: &ColumnStatsUsage) -> Result<(), PlanError> {
+                self.requests.set(self.requests.get() + 1);
+                Ok(())
+            }
+
+            fn wait(&self) -> Result<(), PlanError> {
+                self.waits.set(self.waits.get() + 1);
+                Ok(())
+            }
+        }
+
+        let allocator = PlanIdAllocator::new();
+        let requester = Requester {
+            requests: Cell::new(0),
+            waits: Cell::new(0),
+        };
+        let mut context = test_context(&allocator);
+        context.statistics_load = Some(&requester);
+        let plan = source(1, 7, &[(11, 1)]);
+
+        let (plan, _) = CollectPredicateColumnsPoint
+            .optimize(&context, plan)
+            .expect("start statistics load");
+        assert_eq!(requester.requests.get(), 1);
+        assert_eq!(requester.waits.get(), 0);
+        SyncWaitStatsLoadPoint
+            .optimize(&context, plan)
+            .expect("wait for statistics load");
+        assert_eq!(requester.waits.get(), 1);
     }
 }
