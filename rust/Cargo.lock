@@ -3752,6 +3752,7 @@ dependencies = [
  "sha2",
  "tidb-codec",
  "tidb-datatype",
+ "tidb-stats-handle-usage-collector",
  "tidb-stats-handle-util",
  "tidb-txnkv",
  "tidb-util",
@@ -3771,6 +3772,10 @@ dependencies = [
  "tidb-log",
  "tidb-util",
 ]
+
+[[package]]
+name = "tidb-stats-handle-usage-collector"
+version = "0.0.0"
 
 [[package]]
 name = "tidb-stats-handle-util"

@@ -12,25 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Bounded statistics usage collection from
-//! `pkg/statistics/handle/usage/collector/collector.go`.
-//!
-//! The source keeps separate normal and high-priority channels, gives normal
-//! sends a non-blocking path, blocks synchronous sends until the high-priority
-//! queue accepts them, and drains pending values when the worker closes. This
-//! leaf preserves that queue/worker boundary while leaving statistics-specific
-//! merge maps, persistence, and session lifecycle to their callers.
+//! Go `pkg/statistics/handle/usage/collector`.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-/// Source default queue capacity for both normal and high-priority updates.
-pub const DEFAULT_CHANNEL_SIZE: usize = 10;
-
-/// Source timeout after which a normal send becomes synchronous.
-pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+const DEFAULT_CHANNEL_SIZE: usize = 10;
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 struct QueueState<T> {
     normal: VecDeque<T>,
@@ -43,15 +33,16 @@ struct Shared<T> {
     changed: Condvar,
 }
 
-/// Global worker-backed collector for caller-owned statistics deltas.
+/// Go `GlobalCollector` and `globalCollector`.
 pub struct GlobalCollector<T> {
     shared: Arc<Shared<T>>,
     merge: Arc<dyn Fn(T) + Send + Sync>,
-    worker: Mutex<Option<JoinHandle<()>>>,
+    workers: Mutex<Vec<JoinHandle<()>>>,
+    close_once: Mutex<bool>,
 }
 
 impl<T: Send + 'static> GlobalCollector<T> {
-    /// Creates a collector whose merge callback runs serially on its worker.
+    /// Go `NewGlobalCollector`.
     #[must_use]
     pub fn new<F>(merge: F) -> Self
     where
@@ -67,11 +58,12 @@ impl<T: Send + 'static> GlobalCollector<T> {
                 changed: Condvar::new(),
             }),
             merge: Arc::new(merge),
-            worker: Mutex::new(None),
+            workers: Mutex::new(Vec::new()),
+            close_once: Mutex::new(false),
         }
     }
 
-    /// Creates a session sender attached to this collector.
+    /// Go `GlobalCollector.SpawnSession`.
     #[must_use]
     pub fn spawn_session(&self) -> SessionCollector<T> {
         SessionCollector {
@@ -81,70 +73,50 @@ impl<T: Send + 'static> GlobalCollector<T> {
         }
     }
 
-    /// Starts the single serial merge worker. Repeated calls are no-ops.
+    /// Go `GlobalCollector.StartWorker`.
     pub fn start_worker(&self) {
-        let mut worker = self.worker.lock().expect("collector worker lock poisoned");
-        if worker.is_some() {
-            return;
-        }
         let shared = Arc::clone(&self.shared);
         let merge = Arc::clone(&self.merge);
-        *worker = Some(thread::spawn(move || loop {
-            let item = {
-                let mut state = shared.state.lock().expect("collector state lock poisoned");
-                loop {
-                    if let Some(item) = state.high_priority.pop_front() {
-                        shared.changed.notify_all();
-                        break Some(item);
-                    }
-                    if let Some(item) = state.normal.pop_front() {
-                        shared.changed.notify_all();
-                        break Some(item);
-                    }
-                    if state.closed {
-                        break None;
-                    }
-                    state = shared
-                        .changed
-                        .wait(state)
-                        .expect("collector state lock poisoned while waiting");
-                }
-            };
-
-            match item {
-                Some(item) => merge(item),
-                None => break,
-            }
-        }));
-    }
-
-    /// Closes the queues, drains values already accepted, and joins the worker.
-    pub fn close(&self) {
-        {
-            let mut state = self
-                .shared
-                .state
-                .lock()
-                .expect("collector state lock poisoned");
-            if state.closed {
-                return;
-            }
-            state.closed = true;
-            self.shared.changed.notify_all();
-        }
-        if let Some(worker) = self
-            .worker
+        self.workers
             .lock()
             .expect("collector worker lock poisoned")
-            .take()
-        {
-            worker.join().expect("collector worker panicked");
-        }
+            .push(thread::spawn(move || loop {
+                let item = {
+                    let mut state = shared.state.lock().expect("collector state lock poisoned");
+                    loop {
+                        if let Some(item) = state.high_priority.pop_front() {
+                            shared.changed.notify_all();
+                            break Some(item);
+                        }
+                        if let Some(item) = state.normal.pop_front() {
+                            shared.changed.notify_all();
+                            break Some(item);
+                        }
+                        if state.closed {
+                            break None;
+                        }
+                        state = shared
+                            .changed
+                            .wait(state)
+                            .expect("collector state lock poisoned while waiting");
+                    }
+                };
+                match item {
+                    Some(item) => merge(item),
+                    None => break,
+                }
+            }));
     }
-}
 
-impl<T> Drop for GlobalCollector<T> {
-    fn drop(&mut self) {
+    /// Go `GlobalCollector.Close`.
+    pub fn close(&self) {
+        let mut closed = self
+            .close_once
+            .lock()
+            .expect("collector close lock poisoned");
+        if *closed {
+            return;
+        }
         {
             let mut state = self
                 .shared
@@ -154,18 +126,16 @@ impl<T> Drop for GlobalCollector<T> {
             state.closed = true;
             self.shared.changed.notify_all();
         }
-        if let Some(worker) = self
-            .worker
-            .get_mut()
-            .expect("collector worker lock poisoned")
-            .take()
-        {
-            let _ = worker.join();
+        let workers =
+            std::mem::take(&mut *self.workers.lock().expect("collector worker lock poisoned"));
+        for worker in workers {
+            worker.join().expect("collector worker panicked");
         }
+        *closed = true;
     }
 }
 
-/// Session-local sender for a [`GlobalCollector`].
+/// Go `SessionCollector` and `sessionCollector`.
 pub struct SessionCollector<T> {
     shared: Arc<Shared<T>>,
     last_update: Mutex<Instant>,
@@ -173,7 +143,7 @@ pub struct SessionCollector<T> {
 }
 
 impl<T: Send + 'static> SessionCollector<T> {
-    /// Sends a normal-priority delta without blocking on a full queue.
+    /// Go `SessionCollector.SendDelta`.
     pub fn send_delta(&self, data: T) -> bool {
         let expired = self
             .last_update
@@ -184,13 +154,12 @@ impl<T: Send + 'static> SessionCollector<T> {
         if expired {
             return self.send_delta_sync(data);
         }
-
         let mut state = self
             .shared
             .state
             .lock()
             .expect("collector state lock poisoned");
-        if state.closed || state.normal.len() >= DEFAULT_CHANNEL_SIZE {
+        if state.normal.len() >= DEFAULT_CHANNEL_SIZE {
             return false;
         }
         state.normal.push_back(data);
@@ -202,7 +171,7 @@ impl<T: Send + 'static> SessionCollector<T> {
         true
     }
 
-    /// Sends a high-priority delta, waiting for queue capacity or closure.
+    /// Go `SessionCollector.SendDeltaSync`.
     pub fn send_delta_sync(&self, data: T) -> bool {
         let mut state = self
             .shared
@@ -210,9 +179,6 @@ impl<T: Send + 'static> SessionCollector<T> {
             .lock()
             .expect("collector state lock poisoned");
         loop {
-            if state.closed {
-                return false;
-            }
             if state.high_priority.len() < DEFAULT_CHANNEL_SIZE {
                 state.high_priority.push_back(data);
                 *self

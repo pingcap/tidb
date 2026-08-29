@@ -115,7 +115,6 @@ pub mod sync_load_concurrency;
 pub mod table;
 pub mod table_id_filter;
 pub mod topn_merge_task;
-pub mod usage_collector;
 pub mod weighted_reservoir;
 pub mod worker_capacity;
 
@@ -314,8 +313,5 @@ pub use table::{
 pub use table_id_filter::build_in_table_ids_string;
 pub use tidb_stats_handle_util::*;
 pub use topn_merge_task::TopnStatsMergeTask;
-pub use usage_collector::{
-    GlobalCollector, SessionCollector, DEFAULT_CHANNEL_SIZE, DEFAULT_TIMEOUT,
-};
 pub use weighted_reservoir::{WeightedReservoir, WeightedSample};
 pub use worker_capacity::{worker_capacity_available, worker_concurrency_changed};

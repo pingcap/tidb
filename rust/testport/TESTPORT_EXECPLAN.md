@@ -37,6 +37,13 @@ For each bounded behavior cluster:
 ## Progress
 
 - 2026-08-29: completed the pinned Go
+  `pkg/statistics/handle/usage/collector` package in the distinct
+  `tidb-stats-handle-usage-collector` owner. Moved its three source tests out
+  of the aggregate statistics crate, removed a source-absent capacity test,
+  preserved repeated worker starts and the source channel behavior after
+  close, and rewired index usage to consume the package directly. Inventory
+  and WIP gates are in `receipts/statistics_handle_usage_collector.md`.
+- 2026-08-29: completed the pinned Go
   `pkg/statistics/handle/internal` support package in
   `tidb-stats-handle-internal`. Removed Rust's opaque, caller-encoded table
   snapshot carrier and its three source-absent tests. The replacement compares
@@ -734,6 +741,12 @@ For each bounded behavior cluster:
       with `AssertTableEqual` over actual statistics tables, and remove its
       three non-Go tests. The atomic inventory and WIP gates are in
       `receipts/statistics_handle_internal.md`.
+- [x] Complete the pinned `pkg/statistics/handle/usage/collector` package in
+      `tidb-stats-handle-usage-collector`: preserve both bounded channels,
+      synchronous timeout escalation, worker priority/drain/close behavior,
+      and all three source tests while removing the supplemental capacity
+      assertion. The atomic inventory and WIP gates are in
+      `receipts/statistics_handle_usage_collector.md`.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope
@@ -797,6 +810,11 @@ For each bounded behavior cluster:
   `HistogramEqual`, `CMSketch.Equal`, `TopN.Equal`, and existence-map behavior
   and are therefore not a valid native representation of the Go helper.
   Date/Author: 2026-08-29, Codex.
+- Decision: the generic usage collector is an independent package owner, not
+  a statistics-core module. Its normal/high-priority channels and worker
+  lifecycle are consumed directly by `usage/indexusage`; package-private Go
+  timeout/capacity constants are not exposed as a Rust public policy surface.
+  Date/Author: 2026-08-29, Codex.
 
 ## Surprises & Discoveries
 
@@ -818,6 +836,10 @@ For each bounded behavior cluster:
 - Go's test-only histogram equality deliberately compares `ToString(0)` and
   therefore ignores metadata absent from that projection. Rust derived
   `PartialEq` is stricter and cannot substitute for this helper's behavior.
+- The pinned generic collector's session sender is not connected to the
+  global close channel when spawned. Consequently already-created senders can
+  still enqueue into available channel capacity after close; Rust's previous
+  early rejection was observably stricter than Go.
 - The full planner test target currently encounters unrelated pre-existing
   compile errors in CTE/TopN and memory-trace test sources; scoped planner tests
   for the changed MPP property behavior pass.

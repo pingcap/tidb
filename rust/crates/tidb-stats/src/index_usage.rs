@@ -22,11 +22,10 @@
 //!
 //! Concurrency mapping. The source's `sync.Pool` of delta maps is a Go
 //! allocation optimization with no observable behavior, so deltas are allocated
-//! directly here. The goroutine and channels behind `StartWorker` are already
-//! transcreated in [`crate::usage_collector`], which backs its
-//! `GlobalCollector`/`SessionCollector` with a `std::thread` worker over a
-//! mutex/condvar queue; `start_worker` and `close` on this collector delegate to
-//! it, so callers and tests drive the worker exactly as the Go tests do.
+//! directly here. The goroutine and channels behind `StartWorker` are owned by
+//! `tidb-stats-handle-usage-collector`; `start_worker` and `close` delegate to
+//! that package, so callers and tests drive the worker exactly as the Go tests
+//! do.
 //! `sync.RWMutex` becomes `std::sync::RwLock` and `sync.Mutex` becomes
 //! `std::sync::Mutex`; because Go shares one `*SessionIndexUsageCollector`
 //! between a session and its statement collector, the Rust statement collector
@@ -41,7 +40,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::SystemTime;
 
 use crate::index_usage_key::IndexUsageKey;
-use crate::usage_collector::{GlobalCollector, SessionCollector};
+use tidb_stats_handle_usage_collector::{GlobalCollector, SessionCollector};
 
 /// Source `GlobalIndexID`: the table ID/index ID pair keying one sample.
 ///
