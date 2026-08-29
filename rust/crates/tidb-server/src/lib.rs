@@ -207,6 +207,12 @@ pub use wire_status::{
 /// driver ([`cluster_session_node`]), so it is routed first.
 pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeError> {
     config.install_process_globals();
+    {
+        let global_config = tidb_config::config_tree::config::get_global_config();
+        tidb_domain::domainutil::REPAIR_INFO.set_repair_mode(global_config.repair_mode);
+        tidb_domain::domainutil::REPAIR_INFO
+            .set_repair_table_list(global_config.repair_table_list.clone());
+    }
     tidb_util::printer::print_tidb_info();
     if config.store_kind == node_config::StoreKind::Unistore {
         // Go: `session.RegisterStore("unistore", mockstore.EmbedUnistoreDriver{})`

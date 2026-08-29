@@ -37,6 +37,13 @@ For each bounded behavior cluster:
 ## Progress
 
 - 2026-08-29: audited every production and build artifact in pinned Go
+  `pkg/util/domainutil` plus its startup publication. Removed the second
+  independent Rust repair registry and all package-only Rust tests, retained
+  one `tidb-domain` owner, restored Go hash-map and simple-lowercase behavior,
+  and wired the effective startup repair config into that single global.
+  Complete inventory, integration boundaries, and WIP gates are recorded in
+  `receipts/util_domainutil.md`.
+- 2026-08-29: audited every production and build artifact in pinned Go
   `pkg/util/trxevents` and its ordinary Distsql callback path. Replaced owned
   deep-copy payloads with source-shaped shared pointers, removed value equality
   absent from Go, and deleted the five-test Rust-only suite for the testless Go
