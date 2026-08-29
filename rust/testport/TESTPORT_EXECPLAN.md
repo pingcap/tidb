@@ -36,6 +36,12 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-08-29: audited all five pinned Go `pkg/util/generic` artifacts. Restored
+  signed capacity, nullable signed comparators, constructor panic order, and
+  wrapping sort semantics; removed `is_empty`, four supplemental tests, their
+  semantic manifest, and a stale audit plan. The stats TopN consumer uses the
+  corrected owner. Complete inventory and WIP gates are recorded in
+  `receipts/util_generic.md`.
 - 2026-08-29: re-read all four pinned Go `pkg/util/checksum` artifacts and
   removed two supplemental signed-overflow tests plus their private fixture.
   Production keeps Go's wrapping arithmetic and zeropool-backed reader path;

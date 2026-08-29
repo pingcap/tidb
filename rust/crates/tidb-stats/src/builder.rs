@@ -36,7 +36,7 @@
 //! table, not of the histogram. [`crate::histogram::Bucket::count`] below is
 //! cumulative, exactly as Go's in-memory `Bucket.Count` is.
 
-use std::{cmp::Ordering, sync::Arc};
+use std::sync::Arc;
 
 use tidb_datatype::{Collation, Datum, DatumValueError};
 use tidb_util::generic::BoundedMinHeap;
@@ -318,10 +318,10 @@ struct TopNPolicy {
     sample_factor: f64,
 }
 
-type TopNHeap = BoundedMinHeap<TopNWithRange, fn(&TopNWithRange, &TopNWithRange) -> Ordering>;
+type TopNHeap = BoundedMinHeap<TopNWithRange, fn(&TopNWithRange, &TopNWithRange) -> isize>;
 
-fn compare_topn(left: &TopNWithRange, right: &TopNWithRange) -> Ordering {
-    left.count.cmp(&right.count)
+fn compare_topn(left: &TopNWithRange, right: &TopNWithRange) -> isize {
+    (left.count > right.count) as isize - (left.count < right.count) as isize
 }
 
 /// Go `processTopNValue`.
@@ -499,8 +499,7 @@ pub fn try_build_hist_and_topn_tracked<E>(
     };
 
     // Step 1: the TopN candidates, and the sorted-sample run each occupies.
-    assert!(num_topn >= 0, "maxSize cannot be negative");
-    let mut heap = BoundedMinHeap::new(num_topn as usize, compare_topn as _);
+    let mut heap = BoundedMinHeap::new(num_topn, Some(compare_topn as _));
     let first_encoding = compared_bytes(&samples[0], is_column);
     if is_column {
         outer_memory.account_temporary(

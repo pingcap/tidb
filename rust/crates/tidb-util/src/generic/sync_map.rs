@@ -38,7 +38,10 @@ impl<K: Eq + Hash, V> SyncMap<K, V> {
 
     /// Stores a value.
     pub fn store(&self, key: K, value: V) {
-        self.item.write().unwrap().insert(key, value);
+        self.item
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(key, value);
     }
 
     /// Loads the value for a key, returning `None` when absent.
@@ -51,12 +54,19 @@ impl<K: Eq + Hash, V> SyncMap<K, V> {
     where
         V: Clone,
     {
-        self.item.read().unwrap().get(key).cloned()
+        self.item
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(key)
+            .cloned()
     }
 
     /// Deletes the value for a key, returning the previous value if any.
     pub fn delete(&self, key: &K) -> Option<V> {
-        self.item.write().unwrap().remove(key)
+        self.item
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(key)
     }
 
     /// Returns all the keys in the map.
@@ -65,15 +75,18 @@ impl<K: Eq + Hash, V> SyncMap<K, V> {
     where
         K: Clone,
     {
-        self.item.read().unwrap().keys().cloned().collect()
+        self.item
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .keys()
+            .cloned()
+            .collect()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::SyncMap;
-    use std::sync::Arc;
-    use std::thread;
 
     // Go `TestSyncMap`.
     #[test]
@@ -104,34 +117,5 @@ mod tests {
         let mut keys = sm.keys();
         keys.sort_unstable();
         assert_eq!(keys, vec![1, 2, 3]);
-    }
-
-    #[test]
-    fn concurrent_stores_loads_and_deletes_are_serialized() {
-        const WORKERS: usize = 8;
-        const KEYS_PER_WORKER: usize = 500;
-
-        let map = Arc::new(SyncMap::new(WORKERS * KEYS_PER_WORKER));
-        let workers: Vec<_> = (0..WORKERS)
-            .map(|worker| {
-                let map = Arc::clone(&map);
-                thread::spawn(move || {
-                    let start = worker * KEYS_PER_WORKER;
-                    for key in start..start + KEYS_PER_WORKER {
-                        map.store(key, key * 2);
-                        assert_eq!(map.load(&key), Some(key * 2));
-                    }
-                })
-            })
-            .collect();
-        for worker in workers {
-            worker.join().expect("map worker must not panic");
-        }
-
-        assert_eq!(map.keys().len(), WORKERS * KEYS_PER_WORKER);
-        for key in (0..WORKERS * KEYS_PER_WORKER).step_by(2) {
-            assert_eq!(map.delete(&key), Some(key * 2));
-        }
-        assert_eq!(map.keys().len(), WORKERS * KEYS_PER_WORKER / 2);
     }
 }
