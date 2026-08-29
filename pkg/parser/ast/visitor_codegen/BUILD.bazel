@@ -1,0 +1,18 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_test(
+    name = "visitor_codegen_test",
+    timeout = "short",
+    srcs = ["generator_test.go"],
+    data = ["//pkg/parser/ast:visitor_codegen_sources"],
+    embed = [":visitor_codegen"],
+    flaky = True,
+    shard_count = 15,
+)
+
+go_library(
+    name = "visitor_codegen",
+    srcs = ["generator.go"],
+    importpath = "github.com/pingcap/tidb/pkg/parser/ast/visitor_codegen",
+    visibility = ["//visibility:public"],
+)

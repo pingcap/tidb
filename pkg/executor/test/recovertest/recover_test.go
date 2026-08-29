@@ -655,7 +655,7 @@ func TestFlashbackSchemaWithManyTables(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange", `return(true)`)
 
 	backup := kv.TxnEntrySizeLimit.Load()
-	kv.TxnEntrySizeLimit.Store(50000)
+	kv.TxnEntrySizeLimit.Store(50010)
 	t.Cleanup(func() {
 		kv.TxnEntrySizeLimit.Store(backup)
 	})

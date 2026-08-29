@@ -16,6 +16,7 @@ package execdetails
 
 import (
 	"bytes"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -70,6 +71,8 @@ const (
 	TpFKCascadeRuntimeStats
 	// TpRURuntimeStats is the tp for RURuntimeStats
 	TpRURuntimeStats
+	// TpExplainRURuntimeStats is the tp for ExplainRURuntimeStats
+	TpExplainRURuntimeStats
 )
 
 // RuntimeStats is used to express the executor runtime information.
@@ -460,10 +463,11 @@ func (e *BasicRuntimeStats) GetTime() int64 {
 
 // RuntimeStatsColl collects executors's execution info.
 type RuntimeStatsColl struct {
-	rootStats    map[int]*RootRuntimeStats
-	copStats     map[int]*CopRuntimeStats
-	stmtCopStats StmtCopRuntimeStats
-	mu           sync.Mutex
+	rootStats        map[int]*RootRuntimeStats
+	copStats         map[int]*CopRuntimeStats
+	analyzeScanBytes map[int]float64
+	stmtCopStats     StmtCopRuntimeStats
+	mu               sync.Mutex
 }
 
 // NewRuntimeStatsColl creates new executor collector.
@@ -480,12 +484,60 @@ func NewRuntimeStatsColl(reuse *RuntimeStatsColl) *RuntimeStatsColl {
 		for k := range reuse.copStats {
 			delete(reuse.copStats, k)
 		}
+		for k := range reuse.analyzeScanBytes {
+			delete(reuse.analyzeScanBytes, k)
+		}
 		return reuse
 	}
 	return &RuntimeStatsColl{
 		rootStats: make(map[int]*RootRuntimeStats),
 		copStats:  make(map[int]*CopRuntimeStats),
 	}
+}
+
+// EstimateScanBytes estimates physical scan bytes from one logical scan request.
+// It intentionally runs before scan details from independent requests are merged
+// because the ratio is not linear across requests.
+func EstimateScanBytes(totalKeys, processedKeys, processedBytes int64) (float64, bool) {
+	if totalKeys < 0 || processedKeys < 0 || processedBytes < 0 {
+		return 0, false
+	}
+	if processedKeys == 0 {
+		return 0, processedBytes == 0
+	}
+	if totalKeys == 0 || processedBytes == 0 {
+		return 0, false
+	}
+	scanBytes := float64(processedBytes) / float64(processedKeys) * float64(totalKeys)
+	if scanBytes < 0 || math.IsNaN(scanBytes) || math.IsInf(scanBytes, 0) {
+		return 0, false
+	}
+	return scanBytes, true
+}
+
+// RecordAnalyzeScanBytes adds one logical Analyze request's scan-byte estimate.
+func (e *RuntimeStatsColl) RecordAnalyzeScanBytes(planID int, scanBytes float64) {
+	if e == nil || planID <= 0 || scanBytes < 0 || math.IsNaN(scanBytes) || math.IsInf(scanBytes, 0) {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.analyzeScanBytes == nil {
+		e.analyzeScanBytes = make(map[int]float64)
+	}
+	e.analyzeScanBytes[planID] += scanBytes
+}
+
+// GetAnalyzeScanBytes returns the statement total accumulated from logical
+// Analyze requests before their scan-detail fields were flattened together.
+func (e *RuntimeStatsColl) GetAnalyzeScanBytes(planID int) (float64, bool) {
+	if e == nil {
+		return 0, false
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	scanBytes, ok := e.analyzeScanBytes[planID]
+	return scanBytes, ok
 }
 
 // RegisterStats register execStat for a executor.
@@ -1096,4 +1148,47 @@ func (e *RURuntimeStats) Merge(other RuntimeStats) {
 // Tp implements the RuntimeStats interface.
 func (*RURuntimeStats) Tp() int {
 	return TpRURuntimeStats
+}
+
+// ExplainRURuntimeStats stores per-operator RU values for EXPLAIN ANALYZE FORMAT='ru'.
+type ExplainRURuntimeStats struct {
+	SelfRU float64
+	CumRU  float64
+}
+
+// String implements the RuntimeStats interface.
+func (e *ExplainRURuntimeStats) String() string {
+	if e == nil || (e.SelfRU == 0 && e.CumRU == 0) {
+		return ""
+	}
+	buf := bytes.NewBuffer(make([]byte, 0, 24))
+	buf.WriteString("selfRU:")
+	buf.WriteString(strconv.FormatFloat(e.SelfRU, 'f', 2, 64))
+	buf.WriteString(", cumRU:")
+	buf.WriteString(strconv.FormatFloat(e.CumRU, 'f', 2, 64))
+	return buf.String()
+}
+
+// Clone implements the RuntimeStats interface.
+func (e *ExplainRURuntimeStats) Clone() RuntimeStats {
+	if e == nil {
+		return &ExplainRURuntimeStats{}
+	}
+	return &ExplainRURuntimeStats{
+		SelfRU: e.SelfRU,
+		CumRU:  e.CumRU,
+	}
+}
+
+// Merge implements the RuntimeStats interface.
+func (e *ExplainRURuntimeStats) Merge(other RuntimeStats) {
+	if tmp, ok := other.(*ExplainRURuntimeStats); ok {
+		e.SelfRU += tmp.SelfRU
+		e.CumRU += tmp.CumRU
+	}
+}
+
+// Tp implements the RuntimeStats interface.
+func (*ExplainRURuntimeStats) Tp() int {
+	return TpExplainRURuntimeStats
 }

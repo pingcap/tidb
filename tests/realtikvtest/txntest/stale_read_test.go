@@ -56,7 +56,10 @@ func TestTxnScopeAndValidateReadTs(t *testing.T) {
 	time.Sleep(time.Second)
 
 	// stale read
-	tk.MustQuery("select * from t1 AS OF TIMESTAMP NOW() where id = 1;").Check(testkit.Rows())
+	tk.MustExec("begin")
+	tk.MustExec("set @txn_scope_read_ts = @@tidb_current_ts")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t1 AS OF TIMESTAMP @txn_scope_read_ts where id = 1;").Check(testkit.Rows())
 
 	// replica read
 	if !kerneltype.IsNextGen() {
