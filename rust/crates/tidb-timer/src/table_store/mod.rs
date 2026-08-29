@@ -36,9 +36,9 @@
 //! - [`store::SqlExecutor`] for `pkg/util/sqlexec`'s `SQLExecutor` /
 //!   `RestrictedSQLExecutor` plus `DrainRecordSet`.
 //! - [`store::Row`] / [`store::Datum`] for `pkg/util/chunk.Row`.
-//! - [`store::SysSession`] / [`store::SessionPool`] for
-//!   `pkg/session/syssession`, which is ported in `tidb-exec` — a crate
-//!   `tidb-timer` cannot depend on without inverting the dependency direction.
+//! - [`store::SysSession`] / [`store::SessionPool`] are the package-owned
+//!   `tidb-syssession` types used directly, as Go imports
+//!   `pkg/session/syssession`.
 //! - [`store::SessionContext`] for `pkg/sessionctx.Context`'s session
 //!   variables, and [`store::VARDEF_TIME_ZONE`] for `sessionctx/vardef`.
 //! - [`store::SqlContext`] for the `client-go`

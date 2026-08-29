@@ -3765,6 +3765,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-syssession"
+version = "0.0.0"
+dependencies = [
+ "tidb-ast",
+ "tidb-datatype",
+ "tidb-parser",
+ "tidb-resolve",
+ "tidb-sqlexec",
+ "tidb-util",
+]
+
+[[package]]
 name = "tidb-tablecodec"
 version = "0.0.0"
 dependencies = [
@@ -3793,6 +3805,7 @@ dependencies = [
  "tidb-parser",
  "tidb-resolve",
  "tidb-sqlexec",
+ "tidb-syssession",
  "tidb-util",
 ]
 

@@ -1,0 +1,19 @@
+[package]
+name = "tidb-syssession"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB system-internal session ownership and pooling."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-ast = { path = "../tidb-ast" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-resolve = { path = "../tidb-resolve" }
+tidb-sqlexec = { path = "../tidb-sqlexec" }
+tidb-util = { path = "../tidb-util" }
+tidb-parser = { path = "../tidb-parser" }

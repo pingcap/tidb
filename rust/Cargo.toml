@@ -35,6 +35,7 @@ members = [
     "crates/tidb-planner",
     "crates/tidb-resolve",
     "crates/tidb-sqlexec",
+    "crates/tidb-syssession",
     "crates/tidb-datatype",
     "crates/tidb-stats",
     "crates/tidb-codec",

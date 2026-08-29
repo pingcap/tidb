@@ -667,6 +667,12 @@ For each bounded behavior cluster:
       pointer-preserving CE deduplication, add the four source benchmarks and
       empty `OptimizeTracer`, and remove supplementary Rust-only APIs/tests.
       The atomic inventory and WIP gates are in `receipts/util_tracing.md`.
+- [x] Complete the pinned `pkg/session/syssession` package in the
+      `tidb-syssession` owner: replace the executor-local policy fragments
+      with the full owner/operation/pool lifecycle, remove ignored empty
+      carriers, and migrate timer storage off its local session/pool
+      imitation. The atomic inventory and WIP gates are in
+      `receipts/session_syssession.md`.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope
@@ -697,6 +703,10 @@ For each bounded behavior cluster:
   executor/transaction seams. Estimated row sizes, affected-row proxies, and
   backend- or cache-specific reporting pipelines are not substitutes for Go's
   `CommitDetail` and `ScanDetail`. Date/Author: 2026-08-29, Codex.
+- Decision: `pkg/session/syssession` is one context-generic package owner.
+  Consumers retain their concrete `sessionctx.Context` capabilities through
+  that owner; they must not restate `Session`, reuse flags, or partial pool
+  interfaces locally. Date/Author: 2026-08-29, Codex.
 
 ## Surprises & Discoveries
 

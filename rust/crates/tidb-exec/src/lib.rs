@@ -180,8 +180,6 @@ pub mod sequence_state;
 pub mod session_commit_protocol;
 pub mod session_context_key;
 pub mod session_metrics;
-pub mod session_pool_capacity;
-pub mod session_reuse_state;
 pub mod session_status;
 pub mod session_token_timing;
 pub mod setvar_hint_restore;

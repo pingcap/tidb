@@ -71,5 +71,11 @@ impl fmt::Display for TimerError {
 
 impl std::error::Error for TimerError {}
 
+impl From<tidb_syssession::SysSessionError> for TimerError {
+    fn from(error: tidb_syssession::SysSessionError) -> Self {
+        Self::Message(error.to_string())
+    }
+}
+
 /// The package's `Result` alias.
 pub type Result<T> = std::result::Result<T, TimerError>;

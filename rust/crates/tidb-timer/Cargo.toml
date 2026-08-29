@@ -24,6 +24,7 @@ tidb-model = { path = "../tidb-model" }
 tidb-parser = { path = "../tidb-parser" }
 tidb-resolve = { path = "../tidb-resolve" }
 tidb-sqlexec = { path = "../tidb-sqlexec" }
+tidb-syssession = { path = "../tidb-syssession" }
 tidb-util = { path = "../tidb-util" }
 
 [[test]]

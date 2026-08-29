@@ -821,6 +821,40 @@ impl SqlExecutor for MockSession {
     }
 }
 
+impl tidb_syssession::SessionContext for MockSession {
+    fn close(&self) {}
+
+    fn rollback_txn(&self, _context: &dyn tidb_sqlexec::ExecutionContext) {}
+
+    fn has_prepared_txn_future(&self) -> bool {
+        false
+    }
+
+    fn txn_valid(&self) -> tidb_sqlexec::Result<bool> {
+        Ok(false)
+    }
+
+    fn sql_executor(&self) -> Arc<dyn SqlExecutor> {
+        unreachable!("the session-level tests never route through GetSQLExecutor")
+    }
+
+    fn restricted_sql_executor(&self) -> Arc<dyn tidb_sqlexec::RestrictedSqlExecutor> {
+        unreachable!("timer table store does not use restricted SQL")
+    }
+
+    fn register_internal_session(&self) {}
+
+    fn unregister_internal_session(&self) {}
+
+    fn contains_internal_session(&self) -> bool {
+        true
+    }
+
+    fn store_internal_session(&self) -> bool {
+        true
+    }
+}
+
 impl SessionContext for MockSession {
     fn get_enable_index_merge(&self) -> bool {
         *self.index_merge.lock().unwrap()
@@ -837,16 +871,46 @@ impl SessionContext for MockSession {
     fn get_global_system_var(&self, _name: &str) -> Result<String> {
         Ok("UTC".to_string())
     }
-
-    fn sql_executor(&self) -> Arc<dyn SqlExecutor> {
-        unreachable!("the session-level tests never route through GetSQLExecutor")
-    }
 }
 
 /// A `SessionContext` that hands out a separate executor, as Go's
 /// `mockSession.GetSQLExecutor` returns the session itself.
 struct RoutedSessionContext {
     exec: Arc<MockSession>,
+}
+
+impl tidb_syssession::SessionContext for RoutedSessionContext {
+    fn close(&self) {}
+
+    fn rollback_txn(&self, _context: &dyn tidb_sqlexec::ExecutionContext) {}
+
+    fn has_prepared_txn_future(&self) -> bool {
+        false
+    }
+
+    fn txn_valid(&self) -> tidb_sqlexec::Result<bool> {
+        Ok(false)
+    }
+
+    fn sql_executor(&self) -> Arc<dyn SqlExecutor> {
+        self.exec.clone()
+    }
+
+    fn restricted_sql_executor(&self) -> Arc<dyn tidb_sqlexec::RestrictedSqlExecutor> {
+        unreachable!("timer table store does not use restricted SQL")
+    }
+
+    fn register_internal_session(&self) {}
+
+    fn unregister_internal_session(&self) {}
+
+    fn contains_internal_session(&self) -> bool {
+        true
+    }
+
+    fn store_internal_session(&self) -> bool {
+        true
+    }
 }
 
 impl SessionContext for RoutedSessionContext {
@@ -865,26 +929,50 @@ impl SessionContext for RoutedSessionContext {
     fn get_global_system_var(&self, name: &str) -> Result<String> {
         self.exec.get_global_system_var(name)
     }
-
-    fn sql_executor(&self) -> Arc<dyn SqlExecutor> {
-        self.exec.clone()
-    }
 }
 
 /// Go's `mockSessionPool`.
 #[derive(Default)]
 struct MockSessionPool {
-    session: Mutex<Option<Arc<SysSession>>>,
+    session: Mutex<Option<SysSession>>,
     err: Mutex<Option<&'static str>>,
 }
 
-impl SessionPool for MockSessionPool {
-    fn with_session(&self, callback: &mut dyn FnMut(&SysSession) -> Result<()>) -> Result<()> {
+impl SessionPool<dyn SessionContext> for MockSessionPool {
+    fn get(&self) -> tidb_syssession::Result<SysSession> {
         if let Some(message) = *self.err.lock().unwrap() {
-            return Err(TimerError::message(message));
+            return Err(tidb_syssession::SysSessionError::new(message));
+        }
+        Ok(self.session.lock().unwrap().clone().expect("session set"))
+    }
+
+    fn put(&self, session: &SysSession) {
+        *self.session.lock().unwrap() = Some(session.clone());
+    }
+
+    fn with_session(
+        &self,
+        callback: &mut dyn FnMut(&SysSession) -> tidb_sqlexec::Result<()>,
+    ) -> tidb_sqlexec::Result<()> {
+        if let Some(message) = *self.err.lock().unwrap() {
+            return Err(std::io::Error::other(message).into());
         }
         let session = self.session.lock().unwrap().clone().expect("session set");
         callback(&session)
+    }
+
+    fn with_force_block_gc_session(
+        &self,
+        _cancelled: &dyn Fn() -> bool,
+        callback: &mut dyn FnMut(&SysSession) -> tidb_sqlexec::Result<()>,
+    ) -> tidb_sqlexec::Result<()> {
+        self.with_session(callback)
+    }
+
+    fn close(&self) {
+        if let Some(session) = self.session.lock().unwrap().take() {
+            session.close();
+        }
     }
 }
 
@@ -929,10 +1017,10 @@ fn test_with_session() {
     let core = TableTimerStoreCore::new(pool.clone(), "db1", "t1");
 
     let reset_se = || {
-        *pool.session.lock().unwrap() =
-            Some(Arc::new(SysSession::new(Arc::new(RoutedSessionContext {
-                exec: sctx.clone(),
-            }))));
+        let context: Arc<dyn SessionContext> = Arc::new(RoutedSessionContext {
+            exec: sctx.clone(),
+        });
+        *pool.session.lock().unwrap() = Some(SysSession::new_for_test(context).unwrap());
     };
     reset_se();
 

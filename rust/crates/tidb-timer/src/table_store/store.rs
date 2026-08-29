@@ -24,7 +24,6 @@
 //! [`SqlContext`] for the `client-go` internal-source tag that the upstream
 //! test's context matcher inspects.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use chrono::{Datelike, NaiveDateTime, Timelike};
@@ -266,7 +265,7 @@ fn result_datum(value: tidb_datatype::Datum) -> Result<Datum> {
 
 /// `boundary:` Go `pkg/sessionctx.Context`, restricted to the session
 /// variables `listWithSctx` touches.
-pub trait SessionContext: Send + Sync {
+pub trait SessionContext: tidb_syssession::SessionContext {
     /// Go `sessVars.GetEnableIndexMerge()`.
     fn get_enable_index_merge(&self) -> bool;
     /// Go `sessVars.SetEnableIndexMerge(v)`.
@@ -275,89 +274,18 @@ pub trait SessionContext: Send + Sync {
     fn location(&self) -> TimeZone;
     /// Go `sessVars.GetGlobalSystemVar(ctx, name)`.
     fn get_global_system_var(&self, name: &str) -> Result<String>;
-    /// Go `sctx.GetSQLExecutor()`.
-    fn sql_executor(&self) -> Arc<dyn tidb_sqlexec::SqlExecutor>;
 }
 
-/// `boundary:` Go `pkg/session/syssession.Session`, narrowed to the three
-/// capabilities `store.go` uses: it is a `SQLExecutor`, it can hand out its
-/// `sessionctx.Context`, and it can be marked unreusable.
-///
-/// `pkg/session/syssession` itself is ported in `tidb-exec`, which
-/// `tidb-timer` does not depend on; adding that edge would invert the
-/// dependency direction, so the surface is restated here instead.
-pub struct SysSession {
-    sctx: Arc<dyn SessionContext>,
-    avoid_reuse: AtomicBool,
-}
+/// Go `pkg/session/syssession.Session` retaining the concrete session-context
+/// capability used by this package.
+pub type SysSession = tidb_syssession::Session<dyn SessionContext>;
 
-impl SysSession {
-    /// Go `syssession.NewSessionForTest(sctx)` — the only constructor the
-    /// package (and its tests) need.
-    pub fn new(sctx: Arc<dyn SessionContext>) -> Self {
-        Self {
-            sctx,
-            avoid_reuse: AtomicBool::new(false),
-        }
-    }
-
-    /// Go `se.AvoidReuse()`.
-    pub fn avoid_reuse(&self) {
-        self.avoid_reuse.store(true, Ordering::SeqCst);
-    }
-
-    /// Go `se.IsAvoidReuse()`.
-    pub fn is_avoid_reuse(&self) -> bool {
-        self.avoid_reuse.load(Ordering::SeqCst)
-    }
-
-    /// Go `se.WithSessionContext(fn)`.
-    pub fn with_session_context(
-        &self,
-        callback: &mut dyn FnMut(&dyn SessionContext) -> Result<()>,
-    ) -> Result<()> {
-        callback(self.sctx.as_ref())
-    }
-}
-
-impl tidb_sqlexec::SqlExecutor for SysSession {
-    fn execute(
-        &self,
-        context: &dyn tidb_sqlexec::ExecutionContext,
-        sql: &str,
-    ) -> tidb_sqlexec::Result<Vec<Box<dyn tidb_sqlexec::RecordSet>>> {
-        self.sctx.sql_executor().execute(context, sql)
-    }
-
-    fn execute_internal(
-        &self,
-        context: &dyn tidb_sqlexec::ExecutionContext,
-        sql: &str,
-        arguments: &[tidb_util::sqlescape::SqlArg<'_>],
-    ) -> tidb_sqlexec::Result<Option<Box<dyn tidb_sqlexec::RecordSet>>> {
-        self.sctx
-            .sql_executor()
-            .execute_internal(context, sql, arguments)
-    }
-
-    fn execute_stmt(
-        &self,
-        context: &dyn tidb_sqlexec::ExecutionContext,
-        statement: &tidb_ast::Stmt,
-    ) -> tidb_sqlexec::Result<Option<Box<dyn tidb_sqlexec::RecordSet>>> {
-        self.sctx.sql_executor().execute_stmt(context, statement)
-    }
-}
-
-/// `boundary:` Go `pkg/session/syssession.Pool`, restricted to `WithSession`.
-pub trait SessionPool: Send + Sync {
-    /// Go `pool.WithSession(fn)`.
-    fn with_session(&self, callback: &mut dyn FnMut(&SysSession) -> Result<()>) -> Result<()>;
-}
+/// Go `pkg/session/syssession.Pool`.
+pub use tidb_syssession::Pool as SessionPool;
 
 /// Go `tableTimerStoreCore`.
 pub struct TableTimerStoreCore {
-    pool: Arc<dyn SessionPool>,
+    pool: Arc<dyn SessionPool<dyn SessionContext>>,
     db_name: String,
     tbl_name: String,
     notifier: Arc<dyn TimerWatchEventNotifier>,
@@ -365,7 +293,11 @@ pub struct TableTimerStoreCore {
 
 impl TableTimerStoreCore {
     /// The core behind [`new_table_timer_store`].
-    pub fn new(pool: Arc<dyn SessionPool>, db_name: &str, tbl_name: &str) -> Self {
+    pub fn new(
+        pool: Arc<dyn SessionPool<dyn SessionContext>>,
+        db_name: &str,
+        tbl_name: &str,
+    ) -> Self {
         Self::with_notifier(
             pool,
             db_name,
@@ -376,7 +308,7 @@ impl TableTimerStoreCore {
 
     /// The same core with a caller-supplied notifier.
     pub fn with_notifier(
-        pool: Arc<dyn SessionPool>,
+        pool: Arc<dyn SessionPool<dyn SessionContext>>,
         db_name: &str,
         tbl_name: &str,
         notifier: Arc<dyn TimerWatchEventNotifier>,
@@ -395,16 +327,16 @@ impl TableTimerStoreCore {
     /// `Drop` runs on the normal path, on the error path, and while a panic
     /// unwinds — the three cases the upstream test exercises.
     pub fn with_session(&self, callback: &mut dyn FnMut(&SysSession) -> Result<()>) -> Result<()> {
-        self.pool.with_session(&mut |se| {
+        let result = self.pool.with_session(&mut |se| {
             // rollback first to terminate unexpected transactions
             execute_sql(se, "ROLLBACK", &[])?;
             // we should force to set time zone to UTC to make sure time
             // operations are consistent.
             let rows = execute_sql(se, "SELECT @@time_zone", &[])?;
             if rows.is_empty() || rows[0].is_empty() {
-                return Err(TimerError::message(
+                return Err(Box::new(TimerError::message(
                     "failed to get original time zone of session",
-                ));
+                )) as tidb_sqlexec::SqlExecError);
             }
             let original_time_zone = rows[0].get_string(0);
 
@@ -414,8 +346,15 @@ impl TableTimerStoreCore {
                 session: se,
                 original_time_zone,
             };
-            callback(se)
-        })
+            callback(se).map_err(|error| Box::new(error) as tidb_sqlexec::SqlExecError)
+        });
+        match result {
+            Ok(()) => Ok(()),
+            Err(error) => match error.downcast::<TimerError>() {
+                Ok(error) => Err(*error),
+                Err(error) => Err(TimerError::message(error.to_string())),
+            },
+        }
     }
 
     /// Go `(*tableTimerStoreCore).withSctx`.
@@ -423,7 +362,7 @@ impl TableTimerStoreCore {
         &self,
         callback: &mut dyn FnMut(&dyn SessionContext) -> Result<()>,
     ) -> Result<()> {
-        self.with_session(&mut |se| se.with_session_context(callback))
+        self.with_session(&mut |se| se.with_session_context(|context| callback(context)))
     }
 
     /// Go `(*tableTimerStoreCore).createWithSession`.
@@ -779,7 +718,7 @@ impl TimerStoreCore for TableTimerStoreCore {
 /// drop with it. [`TableTimerStoreCore::with_notifier`] keeps the injection
 /// point open for the etcd notifier once it lands.
 pub fn new_table_timer_store(
-    pool: Arc<dyn SessionPool>,
+    pool: Arc<dyn SessionPool<dyn SessionContext>>,
     db_name: &str,
     tbl_name: &str,
 ) -> TimerStore {

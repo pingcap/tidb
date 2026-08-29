@@ -17,7 +17,7 @@
 //! The batch is the deterministic items 61--120 of the upstream
 //! `pkg/session` test enumeration. The cursor package is a complete Rust
 //! carrier and is exercised below. Bootstrap-version mutation, starter-file
-//! reconciliation, PD/keyspace integration, and `syssession` ownership are
+//! reconciliation and PD/keyspace integration are
 //! intentionally recorded as ignored gaps: this crate does not own those
 //! storage/domain/server seams.
 
@@ -290,83 +290,3 @@ fn test_starter_privilege_reset_workflow() {}
 #[test]
 #[ignore = "go-parity-gap: starter privilege-reset execution is not transcreated"]
 fn test_starter_privilege_reset() {}
-
-/// `pkg/session/syssession/main_test.go:24::TestMain` is the Go test harness.
-#[test]
-#[ignore = "go-parity-gap: Go syssession TestMain harness is not a Rust test surface"]
-fn test_syssession_main() {}
-
-/// `pkg/session/syssession/pool_test.go:38::TestNewSessionPool`.
-#[test]
-#[ignore = "go-parity-gap: syssession pool ownership and mock session context are not transcreated"]
-fn test_new_session_pool() {}
-
-/// `pkg/session/syssession/pool_test.go:77::TestSessionPoolGet`.
-#[test]
-#[ignore = "go-parity-gap: syssession pool ownership and mock session context are not transcreated"]
-fn test_session_pool_get() {}
-
-/// `pkg/session/syssession/pool_test.go:123::TestSessionPoolPut`.
-#[test]
-#[ignore = "go-parity-gap: syssession pool ownership and mock session context are not transcreated"]
-fn test_session_pool_put() {}
-
-/// `pkg/session/syssession/pool_test.go:318::TestSessionPoolWithSession`.
-#[test]
-#[ignore = "go-parity-gap: syssession pool ownership and mock session context are not transcreated"]
-fn test_session_pool_with_session() {}
-
-/// `pkg/session/syssession/pool_test.go:383::TestSessionPoolClose`.
-#[test]
-#[ignore = "go-parity-gap: syssession pool ownership and mock session context are not transcreated"]
-fn test_session_pool_close() {}
-
-/// `pkg/session/syssession/session_integration_test.go:31::TestDomainAdvancedSessionPoolInternalSessionRegistry`.
-#[test]
-#[ignore = "go-parity-gap: Domain advanced session pool and internal-session registry are not transcreated"]
-fn test_domain_advanced_session_pool_internal_session_registry() {}
-
-/// `pkg/session/syssession/session_integration_test.go:77::TestDomainAdvancedSessionPoolPutBackDirtySession`.
-#[test]
-#[ignore = "go-parity-gap: Domain advanced session pool and transaction cleanup are not transcreated"]
-fn test_domain_advanced_session_pool_put_back_dirty_session() {}
-
-/// `pkg/session/syssession/session_test.go:186::TestNewInternalSession`.
-#[test]
-#[ignore = "go-parity-gap: syssession ownership state machine is not transcreated"]
-fn test_new_internal_session() {}
-
-/// `pkg/session/syssession/session_test.go:229::TestResignOwnerAndCloseSctx`.
-#[test]
-#[ignore = "go-parity-gap: syssession ownership state machine is not transcreated"]
-fn test_resign_owner_and_close_sctx() {}
-
-/// `pkg/session/syssession/session_test.go:266::TestInternalSessionTransferOwner`.
-#[test]
-#[ignore = "go-parity-gap: syssession ownership state machine is not transcreated"]
-fn test_internal_session_transfer_owner() {}
-
-/// `pkg/session/syssession/session_test.go:400::TestInternalSessionClose`.
-#[test]
-#[ignore = "go-parity-gap: syssession ownership state machine is not transcreated"]
-fn test_internal_session_close() {}
-
-/// `pkg/session/syssession/session_test.go:526::TestInternalSessionEnterOperation`.
-#[test]
-#[ignore = "go-parity-gap: syssession ownership state machine is not transcreated"]
-fn test_internal_session_enter_operation() {}
-
-/// `pkg/session/syssession/session_test.go:636::TestInternalSessionOwnerWithSctx`.
-#[test]
-#[ignore = "go-parity-gap: syssession ownership state machine is not transcreated"]
-fn test_internal_session_owner_with_sctx() {}
-
-/// `pkg/session/syssession/session_test.go:691::TestInternalSessionAvoidReuse`.
-#[test]
-#[ignore = "go-parity-gap: syssession ownership state machine is not transcreated"]
-fn test_internal_session_avoid_reuse() {}
-
-/// `pkg/session/syssession/session_test.go:732::TestInternalSessionCheckNoPendingTxn`.
-#[test]
-#[ignore = "go-parity-gap: syssession ownership state machine is not transcreated"]
-fn test_internal_session_check_no_pending_txn() {}
