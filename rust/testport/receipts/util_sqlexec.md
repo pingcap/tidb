@@ -50,10 +50,10 @@ execution paths:
   return pre-drained rows.
 
 The concrete session implementation of these interfaces belongs to Go
-`pkg/session` and remains a later package-level integration unit. This receipt
-does not claim `pkg/session`, the generated mock subpackage, or repository-wide
-parity. The subsequently completed resolve package is recorded independently
-in `planner_core_resolve.md`.
+`pkg/session` and remains a separate package-level integration unit. This
+receipt does not claim `pkg/session` or repository-wide parity. The subsequently
+completed resolve and generated mock packages are recorded independently in
+`planner_core_resolve.md` and `util_sqlexec_mock.md`.
 
 ## Validation
 

@@ -3733,6 +3733,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-sqlexec-mock"
+version = "0.0.0"
+dependencies = [
+ "tidb-ast",
+ "tidb-datatype",
+ "tidb-resolve",
+ "tidb-sqlexec",
+ "tidb-util",
+]
+
+[[package]]
 name = "tidb-stats"
 version = "0.0.0"
 dependencies = [

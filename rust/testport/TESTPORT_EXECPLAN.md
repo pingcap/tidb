@@ -673,6 +673,11 @@ For each bounded behavior cluster:
       carriers, and migrate timer storage off its local session/pool
       imitation. The atomic inventory and WIP gates are in
       `receipts/session_syssession.md`.
+- [x] Complete the pinned `pkg/util/sqlexec/mock` support package in a
+      distinct `tidb-sqlexec-mock` owner: preserve the context-key identity
+      and the generated restricted-executor mock's full three-method
+      contract without introducing a second SQL interface. The atomic
+      inventory and WIP gates are in `receipts/util_sqlexec_mock.md`.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope
@@ -707,6 +712,10 @@ For each bounded behavior cluster:
   Consumers retain their concrete `sessionctx.Context` capabilities through
   that owner; they must not restate `Session`, reuse flags, or partial pool
   interfaces locally. Date/Author: 2026-08-29, Codex.
+- Decision: GoMock reflection and controller internals are language-specific
+  generation mechanics. `pkg/util/sqlexec/mock` owns a native strict recorder
+  over the already-complete Rust executor trait; it does not own or duplicate
+  SQL execution behavior. Date/Author: 2026-08-29, Codex.
 
 ## Surprises & Discoveries
 
