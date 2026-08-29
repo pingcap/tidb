@@ -16,6 +16,7 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - [x] (2026-08-29) Wired collection and sync/async requests at Go's logical-rule position, including partition expansion, statement timeout/cache state, interesting-column collection, first-phase access-path pruning, and retained-index filtering.
 - [x] (2026-08-29) Split request dispatch from synchronous waiting and added Go's later `SyncWaitStatsLoadPoint` at its pinned logical-rule position.
 - [x] (2026-08-29) Replaced eager startup and refresh reads with Go's lite load; preserved resident unchanged payload and fully reloaded only changed resident items.
+- [x] (2026-08-29) Corrected wired `SHOW STATS_META` traversal to honor the session partition-prune mode and suppress pseudo cache entries like `GetNonPseudoPhysicalTableStats`.
 - [ ] Wire all pinned Go `SHOW STATS_*` surfaces to the shared cache and storage semantics.
 - [ ] Inventory every production file, platform/generated variant, original test/support artifact, fixture, and validation gate in pinned `pkg/statistics`; close or explicitly retain seed-only gaps until the whole package is complete.
 - [ ] Run the Ready validation profile, including `make lint`, only after the complete package inventory is closed.
@@ -39,6 +40,9 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 
 - Observation: Go's periodic cache update is not equivalent to replacing the cache with a fresh lite image. A row-count-only `stats_meta.version` change preserves resident histogram payload, while a newer histogram is reloaded in full only when the old item was resident.
   Evidence: pinned `StatsCacheImpl.Update` reuses `MetaOnly` when `LastStatsHistVersion` has not moved, and `TableStatsFromStorage(..., loadAll=false)` branches on each old item's load state and histogram version.
+
+- Observation: the pre-existing Rust `SHOW STATS_META` path hard-coded dynamic pruning and exposed pseudo cache entries, although pinned Go branches on `IsDynamicPartitionPruneEnabled` and calls `GetNonPseudoPhysicalTableStats`.
+  Evidence: the regression first returned the empty analyzed table plus the partitioned table's global row under static mode; pinned behavior returns only the two physical partitions.
 
 ## Decision Log
 
@@ -112,3 +116,5 @@ Revision note (2026-08-29): completed the pinned first-phase interesting-column/
 Revision note (2026-08-29): moved synchronous waiting out of initial request dispatch and registered `SyncWaitStatsLoadPoint` at the pinned later logical-rule position.
 
 Revision note (2026-08-29): made production bootstrap and refresh consume the existing lite table loader, removed the unused snapshot wrapper, and added Go's resident-payload-preserving update behavior.
+
+Revision note (2026-08-29): fixed the existing `SHOW STATS_META` production path before expanding the SHOW family; the new regression was observed failing with pseudo/global rows before the fix and passing afterward.

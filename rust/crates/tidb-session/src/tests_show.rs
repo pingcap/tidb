@@ -2145,3 +2145,33 @@ fn match_against_rewrites_to_ilike_under_the_gate() {
         .run("SELECT MATCH(title) AGAINST('MySQL') FROM articles")
         .is_err());
 }
+
+/// Pinned Go `ShowExec.fetchShowStatsMeta` asks the session whether dynamic
+/// partition pruning is enabled and fetches only non-pseudo physical stats.
+#[test]
+fn show_stats_meta_honors_prune_mode_and_skips_pseudo_statistics() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE t (a INT) PARTITION BY RANGE (a) (\
+             PARTITION p0 VALUES LESS THAN (10), \
+             PARTITION p1 VALUES LESS THAN MAXVALUE)",
+        )
+        .unwrap();
+    session.run("INSERT INTO t VALUES (1),(11)").unwrap();
+    session.run("ANALYZE TABLE t").unwrap();
+
+    session.run("CREATE TABLE e (a INT)").unwrap();
+    session.run("ANALYZE TABLE e").unwrap();
+    session
+        .run("SET @@tidb_partition_prune_mode = 'static'")
+        .unwrap();
+
+    let rows = row_text(session.run("SHOW STATS_META"));
+    let targets = rows
+        .iter()
+        .filter(|row| row[1] == "t" || row[1] == "e")
+        .map(|row| (row[1].as_str(), row[2].as_str()))
+        .collect::<Vec<_>>();
+    assert_eq!(targets, vec![("t", "p0"), ("t", "p1")]);
+}

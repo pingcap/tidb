@@ -1251,6 +1251,10 @@ impl Session {
         // Go renders through `oracle.GetTimeFromTS`, which builds the
         // `time.Time` in the process's LOCAL zone -- not the session zone --
         // so both servers on one host render identical strings.
+        let dynamic_partition_prune = !self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
+            .is_ok_and(|mode| mode.eq_ignore_ascii_case("static"));
         let rows = self.with_catalog_mut(|catalog| {
             let mut rows = Vec::new();
             for database in catalog.database_names() {
@@ -1273,17 +1277,20 @@ impl Session {
                                 .collect()
                         })
                         .unwrap_or_default();
-                    // Go branches on `IsDynamicPartitionPruneEnabled()` here;
-                    // `tidb_partition_prune_mode` defaults to `dynamic`, and
-                    // every session of this node runs under that default.
                     for target in tidb_executor::show_stats::PartitionTargets::for_table(
                         table.table_id,
                         &partitions,
-                        true,
+                        dynamic_partition_prune,
                     ) {
                         let Some(statistics) = catalog.table_statistics(target.physical_id) else {
                             continue;
                         };
+                        // Go calls `GetNonPseudoPhysicalTableStats`: a pseudo
+                        // cache entry is an optimizer fallback, not stored
+                        // statistics to expose through SHOW.
+                        if statistics.pseudo {
+                            continue;
+                        }
                         let update_time = tidb_executor::show_stats::version_to_time(
                             statistics.version,
                             &chrono::Local,
