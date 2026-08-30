@@ -232,6 +232,10 @@ pub struct NodeConfig {
     /// re-reads the catalog every `schema_lease / 2`, so it is never more than
     /// one lease behind the cluster's schema version.
     pub schema_lease: Duration,
+    /// Effective positive Go `Performance.StatsLease` for the slow
+    /// statistics-save version fence. Zero means Go's non-positive lease is
+    /// disabled.
+    pub stats_lease: Duration,
     /// Server certificate for inbound TLS on the MySQL port (TiDB's
     /// `[security] ssl-cert`). `None` with [`Self::auto_tls`] set generates a
     /// self-signed pair instead.
@@ -471,6 +475,20 @@ fn parse_file_schema_lease(value: &str) -> Result<Duration, NodeConfigError> {
     }
     Ok(Duration::from_nanos(
         u64::try_from(nanos).expect("positive i64 fits u64"),
+    ))
+}
+
+fn parse_stats_lease(value: &str) -> Result<Duration, NodeConfigError> {
+    let nanos = serde_json::from_value::<tidb_config::configtypes::Duration>(
+        serde_json::Value::String(value.to_owned()),
+    )
+    .map(|duration| duration.0)
+    .map_err(|error| invalid("performance.stats-lease", &error.to_string()))?;
+    if nanos <= 0 {
+        return Ok(Duration::ZERO);
+    }
+    Ok(Duration::from_nanos(
+        u64::try_from(nanos).expect("nonnegative i64 fits u64"),
     ))
 }
 
@@ -966,6 +984,7 @@ impl NodeConfig {
         global_config.tidb_release_version = tidb_release_version.unwrap_or_default();
         global_config.server_version = server_version.unwrap_or_default();
         validate_version_config(&global_config)?;
+        let stats_lease = parse_stats_lease(&global_config.performance.stats_lease)?;
 
         Ok(Self {
             report_status: main_flags.report_status.unwrap_or(true),
@@ -1008,6 +1027,7 @@ impl NodeConfig {
             deadlock_history_capacity,
             deadlock_history_collect_retryable,
             schema_lease,
+            stats_lease,
             load_privileges,
             cluster_session,
             ssl_cert: ssl_cert.map(PathBuf::from),
@@ -1604,11 +1624,11 @@ fn invalid(option: &str, reason: &str) -> NodeConfigError {
 mod tests {
     use std::fs;
     use std::path::Path;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     use super::{
-        encoded_spill_path_for_identity, parse_column_descriptor, ConfiguredReadColumnKind,
-        NodeConfig, NodeConfigError, StoreKind,
+        encoded_spill_path_for_identity, parse_column_descriptor, parse_stats_lease,
+        ConfiguredReadColumnKind, NodeConfig, NodeConfigError, StoreKind,
     };
 
     #[test]
@@ -2003,6 +2023,17 @@ mod tests {
         assert_eq!(projected["store"], "tikv");
         // Go's config default: `Instance.MaxConnections` is 0 (unlimited).
         assert_eq!(projected["instance"]["max_connections"], 0);
+        assert_eq!(config.stats_lease, Duration::from_secs(3));
+    }
+
+    #[test]
+    fn stats_lease_uses_go_duration_parsing_and_allows_zero() {
+        assert_eq!(
+            parse_stats_lease("1500ms").unwrap(),
+            Duration::from_millis(1500)
+        );
+        assert_eq!(parse_stats_lease("0s").unwrap(), Duration::ZERO);
+        assert_eq!(parse_stats_lease("-1s").unwrap(), Duration::ZERO);
     }
 
     #[test]

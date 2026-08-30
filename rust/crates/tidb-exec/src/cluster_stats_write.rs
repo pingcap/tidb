@@ -435,6 +435,35 @@ pub fn plan_loaded_stats_meta_write<S: MetaSnapshot>(
     Ok(plan)
 }
 
+/// Plans Go `UpdateStatsMetaVerAndLastHistUpdateVer`.
+///
+/// The update deliberately does not create a missing metadata row and leaves
+/// its count, modify count, and snapshot untouched.
+pub fn plan_stats_meta_version_refresh<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    table_id: i64,
+    version: u64,
+) -> Result<StatsWritePlan, StatsWriteError> {
+    let mut plan = StatsWritePlan::default();
+    let table = locate(catalog, "stats_meta")?;
+    let mut rows = StatsRows::open(snapshot, table, &["table_id"], table_id)?;
+    let identity = vec![format!("{:?}", Datum::Int(table_id))];
+    let Some(mut values) = rows.existing_values(&identity).cloned() else {
+        return Ok(plan);
+    };
+    set(table, &mut values, "version", Datum::UInt(version));
+    set(
+        table,
+        &mut values,
+        "last_stats_histograms_version",
+        Datum::UInt(version),
+    );
+    rows.store(snapshot, catalog, &values, &mut plan)?;
+    rows.publish_watermark(catalog, &mut plan)?;
+    Ok(plan)
+}
+
 /// Plans Go `SaveColumnStatsUsageToStorage` for one physical table.
 ///
 /// The Go helper uses one restricted-session transaction for the complete

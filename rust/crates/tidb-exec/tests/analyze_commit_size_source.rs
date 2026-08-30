@@ -39,7 +39,7 @@ use tidb_exec::cluster_stats_write::{
     load_analyze_options, plan_analyze_options_write, plan_get_predicate_columns,
     plan_historical_stats_meta_write, plan_loaded_stats_item_write, plan_loaded_stats_meta_write,
     plan_loaded_stats_usage_write, plan_partial_stats_write, plan_partition_stats_write,
-    plan_stats_write,
+    plan_stats_meta_version_refresh, plan_stats_write,
 };
 use tidb_exec::mysql_bootstrap::{plan_mysql_bootstrap, BootstrapEnvironment, BootstrapWrite};
 use tidb_exec::mysql_system_tables::{scan_system_table, SystemRow, SystemTableView};
@@ -995,6 +995,43 @@ fn loaded_stats_final_meta_update_preserves_unnamed_columns() {
     assert_eq!(
         loader.load_meta(&mut store, table_id).expect("meta loads"),
         Some((version, initial.snapshot, 3, 55, version))
+    );
+}
+
+#[test]
+fn slow_save_version_refresh_changes_only_the_two_go_columns() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let table_id = 4242;
+    let initial = ClusterTableStats {
+        table_id,
+        version: 440_000_000_000_000_000,
+        snapshot: 439_000_000_000_000_000,
+        last_analyze_version: 440_000_000_000_000_000,
+        last_stats_hist_version: 440_000_000_000_000_000,
+        modify_count: 7,
+        row_count: 10_240,
+        columns: Vec::new(),
+        indexes: Vec::new(),
+    };
+    let plan = plan_stats_write(&mut store, &catalog, &initial, now()).expect("analyze plans");
+    apply_mutations(&mut store, &plan.mutations);
+
+    let refreshed = initial.version + 1;
+    let plan = plan_stats_meta_version_refresh(&mut store, &catalog, table_id, refreshed)
+        .expect("the slow-save metadata refresh plans");
+    apply_mutations(&mut store, &plan.mutations);
+
+    let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
+    assert_eq!(
+        loader.load_meta(&mut store, table_id).expect("meta loads"),
+        Some((
+            refreshed,
+            initial.snapshot,
+            initial.modify_count,
+            initial.row_count,
+            refreshed,
+        ))
     );
 }
 

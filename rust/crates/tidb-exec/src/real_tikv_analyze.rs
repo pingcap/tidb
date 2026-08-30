@@ -31,7 +31,7 @@ use std::collections::HashSet;
 use std::fmt;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::mpsc::sync_channel;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use chrono::TimeZone;
 use tidb_datatype::{FieldType, FieldTypeCode, SessionTimeZone};
@@ -60,7 +60,7 @@ use crate::cluster_stats_load::{
 use crate::cluster_stats_write::{
     load_analyze_options, plan_analyze_options_write, plan_get_predicate_columns,
     plan_historical_stats_meta_write, plan_partial_partition_stats_write, plan_partial_stats_write,
-    plan_partition_stats_write, plan_stats_write, StatsWritePlan,
+    plan_partition_stats_write, plan_stats_meta_version_refresh, plan_stats_write, StatsWritePlan,
 };
 use crate::mysql_bootstrap::utc_now_timestamp;
 use crate::mysql_system_tables::SystemTableError;
@@ -444,6 +444,7 @@ pub fn commit_cluster_analyze<C: StoreWriteClient, L: StoreWriteLoader, P: Store
     opener: &RealOptimisticTransactionOpener<C, L, P>,
     resolved: &ResolvedClusterAnalyze,
     timeout: Duration,
+    stats_lease: Duration,
     killer: &SqlKiller,
     record_global_history: &dyn Fn() -> bool,
 ) -> Result<ClusterAnalyzeReport, ClusterAnalyzeError> {
@@ -502,6 +503,7 @@ pub fn commit_cluster_analyze<C: StoreWriteClient, L: StoreWriteLoader, P: Store
             resolved,
             &mut report,
             timeout,
+            stats_lease,
             killer,
             record_global_history,
         ) {
@@ -525,6 +527,7 @@ fn commit_cluster_global_stats<C: StoreWriteClient, L: StoreWriteLoader, P: Stor
     resolved: &ResolvedClusterAnalyze,
     report: &mut ClusterAnalyzeReport,
     timeout: Duration,
+    stats_lease: Duration,
     killer: &SqlKiller,
     record_history: &dyn Fn() -> bool,
 ) -> Result<(), ClusterAnalyzeError> {
@@ -712,7 +715,15 @@ fn commit_cluster_global_stats<C: StoreWriteClient, L: StoreWriteLoader, P: Stor
     write_global_stats_items(
         items,
         |item| {
-            commit_global_stats_item(opener, logical_id, total_count, modify_count, item, timeout)
+            commit_global_stats_item(
+                opener,
+                logical_id,
+                total_count,
+                modify_count,
+                item,
+                timeout,
+                stats_lease,
+            )
         },
         |write| {
             if record_history() {
@@ -1259,11 +1270,13 @@ fn commit_global_stats_item<C: StoreWriteClient, L: StoreWriteLoader, P: StorePd
     modify_count: i64,
     item: ClusterStatsItem,
     timeout: Duration,
+    stats_lease: Duration,
 ) -> Result<(u64, usize, usize, usize), ClusterAnalyzeError> {
+    let started = Instant::now();
     let mut transaction = opener
         .begin(ANALYZE_MAX_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-    let version = transaction.start_ts();
+    let mut version = transaction.start_ts();
     let write = {
         let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
         let catalog = load_cluster_catalog(&mut snapshot)
@@ -1294,7 +1307,41 @@ fn commit_global_stats_item<C: StoreWriteClient, L: StoreWriteLoader, P: StorePd
         .commit(write.mutations, &UnaryCallContext::with_timeout(timeout))
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
     classify_commit_outcome(&outcome)?;
+    if slow_stats_save_needs_version_refresh(stats_lease, started.elapsed()) {
+        version = refresh_stats_meta_version(opener, table_id, timeout).map_err(|_| {
+            ClusterAnalyzeError::Other(
+                "failed to update stats meta version during analyze result save. The system may be too busy. Please retry the operation later".to_owned(),
+            )
+        })?;
+    }
     Ok((version, counts.0, counts.1, counts.2))
+}
+
+fn slow_stats_save_needs_version_refresh(stats_lease: Duration, elapsed: Duration) -> bool {
+    stats_lease > Duration::ZERO && elapsed >= stats_lease.saturating_mul(5)
+}
+
+fn refresh_stats_meta_version<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
+    opener: &RealOptimisticTransactionOpener<C, L, P>,
+    table_id: i64,
+    timeout: Duration,
+) -> Result<u64, ClusterAnalyzeError> {
+    let mut transaction = opener
+        .begin(ANALYZE_MAX_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)
+        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+    let version = transaction.start_ts();
+    let plan = {
+        let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
+        let catalog = load_cluster_catalog(&mut snapshot)
+            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+        plan_stats_meta_version_refresh(&mut snapshot, &catalog, table_id, version)
+            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?
+    };
+    let outcome = transaction
+        .commit(plan.mutations, &UnaryCallContext::with_timeout(timeout))
+        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+    classify_commit_outcome(&outcome)?;
+    Ok(version)
 }
 
 fn commit_cluster_analyze_target<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
@@ -1541,8 +1588,8 @@ fn classify_commit_outcome(outcome: &OptimisticCommitOutcome) -> Result<(), Clus
 mod tests {
     use super::{
         analyze_partition_ids, classify_commit_outcome, final_column_choice, merge_global_items,
-        realtime_count_of, record_global_history_enabled, write_global_stats_items,
-        ClusterAnalyzeError,
+        realtime_count_of, record_global_history_enabled, slow_stats_save_needs_version_refresh,
+        write_global_stats_items, ClusterAnalyzeError,
     };
     use std::collections::BTreeMap;
     use std::thread;
@@ -1904,6 +1951,23 @@ mod tests {
             commit_call.timeout() > Duration::ZERO,
             "the commit mints its own full budget at commit time"
         );
+    }
+
+    #[test]
+    fn slow_global_stats_save_uses_go_five_lease_boundary() {
+        let lease = Duration::from_secs(3);
+        assert!(!slow_stats_save_needs_version_refresh(
+            Duration::ZERO,
+            Duration::from_secs(60)
+        ));
+        assert!(!slow_stats_save_needs_version_refresh(
+            lease,
+            Duration::from_secs(14)
+        ));
+        assert!(slow_stats_save_needs_version_refresh(
+            lease,
+            Duration::from_secs(15)
+        ));
     }
 
     #[test]

@@ -237,6 +237,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
             // catalog plus every row of the table, so its requests take the
             // data-plane deadline.
             COPROCESSOR_QUERY_TIMEOUT,
+            config.stats_lease,
         )),
         Arc::new(RealClusterStatsLock::new(
             Arc::new(authority.transaction_opener()),

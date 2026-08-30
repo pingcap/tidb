@@ -115,6 +115,7 @@ where
     /// reads. Republished only after a commit.
     stats: Arc<SharedStats>,
     timeout: Duration,
+    stats_lease: Duration,
 }
 
 impl<C, L, P> RealClusterAnalyze<C, L, P>
@@ -130,11 +131,13 @@ where
         opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
         stats: Arc<SharedStats>,
         timeout: Duration,
+        stats_lease: Duration,
     ) -> Self {
         Self {
             opener,
             stats,
             timeout,
+            stats_lease,
         }
     }
 
@@ -222,6 +225,7 @@ where
             &self.opener,
             &statement,
             self.timeout,
+            self.stats_lease,
             killer,
             &record_global_history,
         )

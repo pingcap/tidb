@@ -526,6 +526,7 @@ pub(crate) fn unistore_cluster_session_stack(
             Arc::new(opener.clone()),
             Arc::clone(&stats),
             IN_PROCESS_TIMEOUT,
+            config.stats_lease,
         )),
         Arc::new(crate::cluster_stats_lock_seam::RealClusterStatsLock::new(
             Arc::new(opener.clone()),
