@@ -644,17 +644,20 @@ fn range_meets_partition(
     unsigned: bool,
 ) -> bool {
     // A range whose low end is at or above the partition's EXCLUSIVE upper
-    // bound admits no value this partition stores. An exclusive low end
-    // admits strictly more than its datum, so this test is conservative
-    // there by exactly one value -- it keeps a partition that `(9, ...]`
-    // against a bound of `10` cannot in fact reach. A superset is the side
-    // this module errs on deliberately.
+    // bound admits no value this partition stores. Go's `GT` branch searches
+    // with `data.C+1`, because these range bounds are discrete integer values;
+    // apply the same wrapping increment to an exclusive ranger endpoint.
     //
     // A low end that is not an integer -- NULL, `MinNotNull`, a string --
     // proves nothing and keeps the partition.
     // `high`/`low` are PARTITION bounds, so they carry the partitioning
     // column's signedness; the range endpoints carry their own.
-    if let (Some(high), Some((value, value_unsigned))) = (high, interval_low(range)) {
+    if let (Some(high), Some((value, exclusive, value_unsigned))) = (high, interval_low(range)) {
+        let value = if exclusive {
+            value.wrapping_add(1)
+        } else {
+            value
+        };
         if compare_int(value, value_unsigned, high, unsigned) != Ordering::Less {
             return false;
         }
@@ -678,8 +681,9 @@ fn range_meets_partition(
 /// `a < b`, read with the partition expression's own signedness.
 /// The interval's low endpoint as an integer, or `None` for an endpoint this
 /// tier cannot compare against a partition bound.
-fn interval_low(range: &IndexRange) -> Option<(i64, bool)> {
+fn interval_low(range: &IndexRange) -> Option<(i64, bool, bool)> {
     integer_endpoint(range.low.first())
+        .map(|(value, unsigned)| (value, range.low_exclusive, unsigned))
 }
 
 /// The interval's high endpoint and whether it is EXCLUSIVE, as
@@ -852,6 +856,15 @@ mod tests {
                 &[interval(Datum::Int(9), false, Datum::Int(20), false)]
             ),
             Some(vec![101, 102, 103])
+        );
+        // a > 9 AND a <= 10 admits only integer 10, so Go's GT `C+1`
+        // search excludes p0.
+        assert_eq!(
+            pruned_ids(
+                &spec,
+                &[interval(Datum::Int(9), true, Datum::Int(10), false)]
+            ),
+            Some(vec![102])
         );
         assert_eq!(
             pruned_ids(&spec, &[interval(Datum::Null, false, Datum::Null, false)]),
