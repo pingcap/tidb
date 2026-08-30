@@ -1252,32 +1252,31 @@ where
                     |message| *message,
                 )
                 .to_owned();
-            ClusterAnalyzeError::Other(format!("global-stat IO worker panicked: {detail}"))
+            ClusterAnalyzeError::Other(detail)
         })
         .and_then(|result| result);
         drop(fm_sender);
         drop(cms_sender);
         drop(histogram_sender);
 
-        let cpu_result = cpu_worker.join().map_err(|panic| {
-            let detail = panic
-                .downcast_ref::<&str>()
-                .map_or_else(
-                    || {
-                        panic
-                            .downcast_ref::<String>()
-                            .map_or("unknown panic", String::as_str)
-                    },
-                    |message| *message,
-                )
-                .to_owned();
-            ClusterAnalyzeError::Other(format!("global-stat CPU worker panicked: {detail}"))
-        })?;
-        match (io_result, cpu_result) {
-            (Ok(()), result) => result,
-            (Err(io), Ok(_)) => Err(io),
-            (Err(io), Err(cpu)) => Err(ClusterAnalyzeError::Other(format!("{io}\n{cpu}"))),
-        }
+        let cpu_result = cpu_worker
+            .join()
+            .map_err(|panic| {
+                let detail = panic
+                    .downcast_ref::<&str>()
+                    .map_or_else(
+                        || {
+                            panic
+                                .downcast_ref::<String>()
+                                .map_or("unknown panic", String::as_str)
+                        },
+                        |message| *message,
+                    )
+                    .to_owned();
+                ClusterAnalyzeError::Other(detail)
+            })
+            .and_then(|result| result);
+        join_async_global_worker_results(io_result, cpu_result)
     })?;
 
     Ok(items
@@ -1298,6 +1297,17 @@ where
             })
         })
         .collect())
+}
+
+fn join_async_global_worker_results<T>(
+    io_result: Result<(), ClusterAnalyzeError>,
+    cpu_result: Result<T, ClusterAnalyzeError>,
+) -> Result<T, ClusterAnalyzeError> {
+    match (io_result, cpu_result) {
+        (Ok(()), result) => result,
+        (Err(io), Ok(_)) => Err(io),
+        (Err(io), Err(cpu)) => Err(ClusterAnalyzeError::Other(format!("{io}\n{cpu}"))),
+    }
 }
 
 fn merge_global_items<TZ: TimeZone + Sync>(
@@ -2376,5 +2386,15 @@ mod tests {
             Err(ClusterAnalyzeError::Commit(error))
                 if error.code == tidb_error::tidb::errcode::ErrTiKVStaleCommand
         ));
+    }
+
+    #[test]
+    fn simultaneous_async_global_worker_failures_are_joined_in_go_order() {
+        let error = super::join_async_global_worker_results::<()>(
+            Err(ClusterAnalyzeError::Other("io failure".to_owned())),
+            Err(ClusterAnalyzeError::Other("cpu failure".to_owned())),
+        )
+        .expect_err("both worker errors are returned");
+        assert_eq!(error.to_string(), "io failure\ncpu failure");
     }
 }
