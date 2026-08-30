@@ -13,6 +13,7 @@
 use crate::analyze_arm::AnalyzePanicPhase;
 use crate::tests_support::*;
 use crate::*;
+use tidb_executor::TableEntry;
 
 /// The scan row's `estRows` and `operator info`, which is where the statistics
 /// show up.
@@ -224,6 +225,172 @@ fn static_partition_analyze_keeps_statistics_on_physical_partitions() {
             .all(|cell| !cell.contains("stats:pseudo")),
         "dynamic ANALYZE must publish usable global statistics: {analyzed_dynamic_plan:?}"
     );
+}
+
+#[test]
+fn analyze_persists_effective_column_list_and_reuses_raw_options() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (a INT PRIMARY KEY, b INT, c INT, KEY kb(b))")
+        .unwrap();
+    session.run("INSERT INTO t VALUES (1,2,3),(2,3,4)").unwrap();
+
+    session
+        .run("ANALYZE TABLE t COLUMNS c WITH 7 BUCKETS")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        vec![vec![
+            "Warning",
+            "1105",
+            "Columns a,b are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats",
+        ]]
+    );
+    let table_id = session
+        .with_catalog_mut(|catalog| {
+            let Some(TableEntry::Kv(table)) = catalog.table_in("test", "t") else {
+                panic!("t is not a table")
+            };
+            let saved = catalog
+                .analyze_options(table.table_id)
+                .expect("ANALYZE persists its options by default");
+            assert_eq!(saved.raw.num_buckets, Some(7));
+            assert_eq!(
+                saved.columns,
+                tidb_executor::analyze::AnalyzeColumnChoice::Explicit(vec![
+                    "a".to_owned(),
+                    "b".to_owned(),
+                    "c".to_owned(),
+                ]),
+                "Go persists the requested column plus mandatory PK/index columns in schema order"
+            );
+            Ok(table.table_id)
+        })
+        .unwrap();
+
+    session.run("ANALYZE TABLE t").unwrap();
+    session
+        .with_catalog_mut(|catalog| {
+            assert_eq!(
+                catalog
+                    .analyze_options(table_id)
+                    .expect("the saved row remains present")
+                    .raw
+                    .num_buckets,
+                Some(7),
+                "a statement without BUCKETS reuses the persisted raw value"
+            );
+            Ok(())
+        })
+        .unwrap();
+
+    session
+        .run("SET GLOBAL tidb_persist_analyze_options = OFF")
+        .unwrap();
+    session
+        .run("ANALYZE TABLE t ALL COLUMNS WITH 9 BUCKETS")
+        .unwrap();
+    session
+        .with_catalog_mut(|catalog| {
+            let saved = catalog
+                .analyze_options(table_id)
+                .expect("disabling persistence does not delete an existing row");
+            assert_eq!(saved.raw.num_buckets, Some(7));
+            assert!(matches!(
+                saved.columns,
+                tidb_executor::analyze::AnalyzeColumnChoice::Explicit(_)
+            ));
+            Ok(())
+        })
+        .unwrap();
+    session
+        .run("SET GLOBAL tidb_persist_analyze_options = ON")
+        .unwrap();
+}
+
+#[test]
+fn static_partition_analyze_inherits_and_updates_only_named_partition_options() {
+    let mut session = Session::new();
+    session
+        .run("SET @@tidb_partition_prune_mode = 'static'")
+        .unwrap();
+    session
+        .run(
+            "CREATE TABLE p (a INT, b INT, KEY kb(b)) \
+             PARTITION BY RANGE (a) (\
+               PARTITION p0 VALUES LESS THAN (10),\
+               PARTITION p1 VALUES LESS THAN MAXVALUE)",
+        )
+        .unwrap();
+    session.run("INSERT INTO p VALUES (1,1),(11,11)").unwrap();
+    session.run("ANALYZE TABLE p WITH 7 BUCKETS").unwrap();
+
+    let (table_id, p0_id, p1_id) = session
+        .with_catalog_mut(|catalog| {
+            let Some(TableEntry::Kv(table)) = catalog.table_in("test", "p") else {
+                panic!("p is not a table")
+            };
+            let definitions = &table.partition().expect("p is partitioned").definitions;
+            let p0 = definitions
+                .iter()
+                .find(|partition| partition.name.eq_ignore_ascii_case("p0"))
+                .expect("p0 exists")
+                .id;
+            let p1 = definitions
+                .iter()
+                .find(|partition| partition.name.eq_ignore_ascii_case("p1"))
+                .expect("p1 exists")
+                .id;
+            for physical_id in [table.table_id, p0, p1] {
+                assert_eq!(
+                    catalog
+                        .analyze_options(physical_id)
+                        .expect("whole-table ANALYZE saves every static physical row")
+                        .raw
+                        .num_buckets,
+                    Some(7)
+                );
+            }
+            Ok((table.table_id, p0, p1))
+        })
+        .unwrap();
+
+    session.run("INSERT INTO p VALUES (2,2),(12,12)").unwrap();
+    session
+        .run("ANALYZE TABLE p PARTITION p0 WITH 9 BUCKETS")
+        .unwrap();
+    session
+        .with_catalog_mut(|catalog| {
+            assert_eq!(
+                catalog
+                    .table_statistics(p0_id)
+                    .expect("p0 was refreshed")
+                    .row_count,
+                2
+            );
+            assert_eq!(
+                catalog
+                    .table_statistics(p1_id)
+                    .expect("p1 remains analyzed")
+                    .row_count,
+                1,
+                "a named static ANALYZE does not refresh an unrequested partition"
+            );
+            assert_eq!(
+                catalog.analyze_options(table_id).unwrap().raw.num_buckets,
+                Some(7)
+            );
+            assert_eq!(
+                catalog.analyze_options(p0_id).unwrap().raw.num_buckets,
+                Some(9)
+            );
+            assert_eq!(
+                catalog.analyze_options(p1_id).unwrap().raw.num_buckets,
+                Some(7)
+            );
+            Ok(())
+        })
+        .unwrap();
 }
 
 /// The row decoder used by `ANALYZE` evaluates generated columns instead of
@@ -496,7 +663,6 @@ fn an_unimplemented_analyze_clause_is_refused() {
 
     for refused in [
         "ANALYZE TABLE t INDEX ka",
-        "ANALYZE TABLE t COLUMNS a",
         "ANALYZE INCREMENTAL TABLE t INDEX ka",
     ] {
         assert!(

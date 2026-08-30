@@ -212,6 +212,9 @@ pub struct Catalog {
     /// `mysql.stats_*` on its own cadence (see `tidb-exec`'s `stats_watch`),
     /// so the two are published independently.
     statistics: Arc<StatisticsCache>,
+    /// In-process backing for pinned Go's shared `mysql.analyze_options`
+    /// rows. Cluster execution uses the real system table.
+    analyze_options: Arc<std::sync::RwLock<HashMap<i64, crate::analyze::SavedAnalyzeOptions>>>,
     /// The store's commit history, shared by every clone of this catalog
     /// (working copies, sessions on the same store): a monotonic TSO-shaped
     /// allocator plus a bounded ring of committed snapshots, which is what
@@ -378,6 +381,7 @@ impl Default for Catalog {
             metadata_version: 0,
             shadowed_by_local_temporary: Vec::new(),
             statistics: Arc::default(),
+            analyze_options: Arc::default(),
             commit_history: Arc::new(std::sync::Mutex::new(CommitHistory::default())),
             temporary_sweep: None,
         };
@@ -1275,6 +1279,28 @@ impl Catalog {
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(table_id, statistics);
+    }
+
+    /// Reads one persisted ANALYZE-options row by physical ID.
+    #[must_use]
+    pub fn analyze_options(&self, physical_id: i64) -> Option<crate::analyze::SavedAnalyzeOptions> {
+        self.analyze_options
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&physical_id)
+            .cloned()
+    }
+
+    /// Replaces one persisted ANALYZE-options row by physical ID.
+    pub fn set_analyze_options(
+        &mut self,
+        physical_id: i64,
+        options: crate::analyze::SavedAnalyzeOptions,
+    ) {
+        self.analyze_options
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(physical_id, options);
     }
 
     /// Installs the domain statistics worker used by logical optimization.
@@ -2312,10 +2338,12 @@ mod statistics_request_tests {
         assert!(context.take_warnings().is_empty());
         let mut failed = requested;
         failed.is_sync_load_failed = true;
-        assert!(tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
-            .all_items()
-            .iter()
-            .any(|item| item.table_item_id == failed));
+        assert!(
+            tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
+                .all_items()
+                .iter()
+                .any(|item| item.table_item_id == failed)
+        );
         tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.delete(failed);
     }
 
@@ -2378,10 +2406,12 @@ mod statistics_request_tests {
             .request_statistics_load(&usage, &context)
             .expect("start asynchronous load");
         assert!(catalog.load_needed_histograms("").is_err());
-        assert!(!tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
-            .all_items()
-            .iter()
-            .any(|item| item.table_item_id == requested));
+        assert!(
+            !tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
+                .all_items()
+                .iter()
+                .any(|item| item.table_item_id == requested)
+        );
         assert_eq!(
             loader
                 .requests
@@ -2412,15 +2442,19 @@ mod statistics_request_tests {
         catalog
             .load_needed_histograms("")
             .expect("stale metadata is a successful skip");
-        assert!(loader
-            .requests
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .is_empty());
-        assert!(!tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
-            .all_items()
-            .iter()
-            .any(|item| item.table_item_id == dropped));
+        assert!(
+            loader
+                .requests
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_empty()
+        );
+        assert!(
+            !tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
+                .all_items()
+                .iter()
+                .any(|item| item.table_item_id == dropped)
+        );
     }
 
     #[test]

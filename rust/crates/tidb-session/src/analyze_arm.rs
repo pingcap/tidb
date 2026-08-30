@@ -51,8 +51,8 @@ use std::sync::Arc;
 use tidb_executor::analyze::kv::analyze_kv_table_columns;
 use tidb_executor::analyze::panic_recovery::recover_analyze_panic;
 use tidb_executor::analyze::{
-    lower_analyze_admin, AnalyzeColumnChoice, AnalyzeOptions, AnalyzeStatement, SampleMemoryQuota,
-    MEM_QUOTA_ANALYZE_VARIABLE,
+    AnalyzeColumnChoice, AnalyzeStatement, MEM_QUOTA_ANALYZE_VARIABLE, PhysicalAnalyzeOptions,
+    SampleMemoryQuota, SavedAnalyzeOptions, lower_analyze_admin, resolve_analyze_options,
 };
 use tidb_executor::{DriverError, SchemaErrorKind, TableEntry};
 
@@ -104,6 +104,186 @@ fn merge_partial_statistics(
     merged
 }
 
+fn analyze_partition_ids(
+    table: &tidb_executor::kv_table::KvTable,
+    requested: &[String],
+) -> Result<Vec<i64>, DriverError> {
+    let Some(partition) = table.partition() else {
+        if requested.is_empty() {
+            return Ok(Vec::new());
+        }
+        return Err(DriverError::unsupported(
+            "Partition management on a not partitioned table is not possible".to_owned(),
+        ));
+    };
+    if requested.is_empty() {
+        return Ok(partition
+            .definitions
+            .iter()
+            .map(|definition| definition.id)
+            .collect());
+    }
+    let mut ids = Vec::with_capacity(requested.len());
+    for requested_name in requested {
+        let definition = partition
+            .definitions
+            .iter()
+            .find(|definition| definition.name.eq_ignore_ascii_case(requested_name))
+            .ok_or_else(|| {
+                DriverError::unsupported(format!(
+                    "can not found the specified partition name {requested_name} in the table definition"
+                ))
+            })?;
+        ids.push(definition.id);
+    }
+    Ok(ids)
+}
+
+fn effective_column_choice(
+    choice: &AnalyzeColumnChoice,
+    default: &AnalyzeColumnChoice,
+) -> AnalyzeColumnChoice {
+    if *choice == AnalyzeColumnChoice::Default {
+        default.clone()
+    } else {
+        choice.clone()
+    }
+}
+
+fn selected_column_ids(
+    table: &tidb_executor::kv_table::KvTable,
+    choice: &AnalyzeColumnChoice,
+    default_choice: &AnalyzeColumnChoice,
+    predicate_ids: &HashSet<(i64, i64)>,
+    table_id: i64,
+    schema: &str,
+    table_name: &str,
+    context: &tidb_executor::StmtContext,
+    predicate_warning_emitted: &mut bool,
+    explicit_warning_emitted: &mut bool,
+) -> Result<Option<HashSet<i64>>, DriverError> {
+    let choice = effective_column_choice(choice, default_choice);
+    let mut selected = match &choice {
+        AnalyzeColumnChoice::All | AnalyzeColumnChoice::Default => return Ok(None),
+        AnalyzeColumnChoice::Predicate => Some(
+            predicate_ids
+                .iter()
+                .filter_map(|(usage_table, column)| (*usage_table == table_id).then_some(*column))
+                .collect::<HashSet<_>>(),
+        ),
+        AnalyzeColumnChoice::Explicit(names) => {
+            let mut ids = HashSet::new();
+            for name in names {
+                let column = table
+                    .columns()
+                    .iter()
+                    .find(|column| column.name.eq_ignore_ascii_case(name))
+                    .ok_or_else(|| {
+                        DriverError::unsupported(format!(
+                            "column `{name}` does not exist in `{schema}`.`{table_name}`"
+                        ))
+                    })?;
+                ids.insert(column.id);
+            }
+            Some(ids)
+        }
+    };
+    let selected_ids = selected.as_mut().expect("the all-columns case returned");
+    let explicitly_selected = selected_ids.clone();
+    if choice == AnalyzeColumnChoice::Predicate
+        && selected_ids.is_empty()
+        && !*predicate_warning_emitted
+    {
+        context.append_warning_parts(
+            1105,
+            &format!(
+                "No predicate column has been collected yet for table {}.{}, so only indexes and the columns composing the indexes will be analyzed",
+                schema.to_lowercase(),
+                table_name.to_lowercase()
+            ),
+        );
+        *predicate_warning_emitted = true;
+    }
+    for index in table.indexes() {
+        for offset in &index.column_offsets {
+            if let Some(column) = table.columns().get(*offset) {
+                selected_ids.insert(column.id);
+            }
+        }
+    }
+    if let Some(offset) = table.pk_handle_offset() {
+        if let Some(column) = table.columns().get(offset) {
+            selected_ids.insert(column.id);
+        }
+    }
+    loop {
+        let before = selected_ids.len();
+        for column in table.columns() {
+            if !selected_ids.contains(&column.id) {
+                continue;
+            }
+            if let Some(generated) = &column.generated {
+                for dependency in &generated.dependencies {
+                    if let Some(base) = table
+                        .columns()
+                        .iter()
+                        .find(|base| base.name.eq_ignore_ascii_case(dependency))
+                    {
+                        selected_ids.insert(base.id);
+                    }
+                }
+            }
+        }
+        if selected_ids.len() == before {
+            break;
+        }
+    }
+    if matches!(choice, AnalyzeColumnChoice::Explicit(_))
+        && !*explicit_warning_emitted
+        && selected_ids != &explicitly_selected
+    {
+        let missing = table
+            .columns()
+            .iter()
+            .filter(|column| {
+                selected_ids.contains(&column.id) && !explicitly_selected.contains(&column.id)
+            })
+            .map(|column| column.name.as_str())
+            .collect::<Vec<_>>();
+        context.append_warning_parts(
+            1105,
+            &format!(
+                "Columns {} are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats",
+                missing.join(",")
+            ),
+        );
+        *explicit_warning_emitted = true;
+    }
+    Ok(selected)
+}
+
+fn saved_options(
+    table: &tidb_executor::kv_table::KvTable,
+    options: &PhysicalAnalyzeOptions,
+    selected: Option<&HashSet<i64>>,
+) -> SavedAnalyzeOptions {
+    let columns = match &options.columns {
+        AnalyzeColumnChoice::Explicit(_) => AnalyzeColumnChoice::Explicit(
+            table
+                .columns()
+                .iter()
+                .filter(|column| selected.is_some_and(|selected| selected.contains(&column.id)))
+                .map(|column| column.name.clone())
+                .collect(),
+        ),
+        choice => choice.clone(),
+    };
+    SavedAnalyzeOptions {
+        raw: options.raw,
+        columns,
+    }
+}
+
 #[cfg(test)]
 std::thread_local! {
     /// A one-shot, thread-local equivalent of the two Go failpoints in
@@ -149,67 +329,44 @@ impl Session {
             return Ok(None);
         };
         let memory_quota = self.analyze_memory_quota();
+        let persist_options = self
+            .vars()
+            .get_system(tidb_vardef::tidb_vars::TIDB_PERSIST_ANALYZE_OPTIONS)
+            .is_ok_and(|value| value.eq_ignore_ascii_case("ON") || value == "1");
+        let default_columns = if self
+            .vars()
+            .get_system(tidb_vardef::tidb_vars::TIDB_ANALYZE_COLUMN_OPTIONS)
+            .is_ok_and(|value| value.eq_ignore_ascii_case("PREDICATE"))
+        {
+            AnalyzeColumnChoice::Predicate
+        } else {
+            AnalyzeColumnChoice::All
+        };
         for statement in &tables {
-            let mut options = statement.options;
-            options.memory_quota = memory_quota;
-            self.analyze_one_table(statement, &options)?;
+            let mut statement = statement.clone();
+            statement.persist_options = persist_options;
+            statement.default_columns = default_columns.clone();
+            statement.options.memory_quota = memory_quota;
+            self.analyze_one_table(&statement)?;
         }
         // Go answers `ANALYZE TABLE` with an OK packet carrying no rows.
         Ok(Some(StmtOutput::Affected(0)))
     }
 
     /// Analyzes one named table and publishes its statistics.
-    fn analyze_one_table(
-        &mut self,
-        statement: &AnalyzeStatement,
-        options: &AnalyzeOptions,
-    ) -> Result<(), DriverError> {
+    fn analyze_one_table(&mut self, statement: &AnalyzeStatement) -> Result<(), DriverError> {
         let schema = statement.schema.clone();
         let name = statement.table.clone();
         let ctx = self.statement_context(false);
-        let choice = match &statement.columns {
-            AnalyzeColumnChoice::Default
-                if self
-                    .vars()
-                    .get_system(tidb_vardef::tidb_vars::TIDB_ANALYZE_COLUMN_OPTIONS)
-                    .is_ok_and(|value| value.eq_ignore_ascii_case("PREDICATE")) =>
-            {
-                AnalyzeColumnChoice::Predicate
-            }
-            AnalyzeColumnChoice::Default => AnalyzeColumnChoice::All,
-            choice => choice.clone(),
-        };
-        let predicate_ids = if choice == AnalyzeColumnChoice::Predicate {
-            let usage = match self.column_stats_usage.clone() {
-                Some(provider) => provider
-                    .load_column_stats_usage(&self.session_time_zone(), &self.active_resource_group)
-                    .map_err(DriverError::unsupported)?,
-                None => std::collections::HashMap::new(),
-            };
-            let ids = usage
-                .keys()
-                .filter(|item| item.table_id != 0 && !item.is_index)
-                .map(|item| (item.table_id, item.id))
-                .collect::<HashSet<_>>();
-            Some(ids)
-        } else {
-            None
-        };
+        let usage_provider = self.column_stats_usage.clone();
+        let session_time_zone = self.session_time_zone();
+        let resource_group = self.active_resource_group.clone();
         let result = self.with_catalog_mut(|catalog| {
             let (table_id, partition_ids, table) = match catalog.table_in(&schema, &name) {
-                Some(TableEntry::Kv(kv)) => (
-                    kv.table_id,
-                    kv.partition()
-                        .map(|partition| {
-                            partition
-                                .definitions
-                                .iter()
-                                .map(|definition| definition.id)
-                                .collect::<Vec<_>>()
-                        })
-                        .unwrap_or_default(),
-                    kv.clone(),
-                ),
+                Some(TableEntry::Kv(kv)) => {
+                    let partition_ids = analyze_partition_ids(kv, &statement.partitions)?;
+                    (kv.table_id, partition_ids, kv.clone())
+                }
                 // Go raises 1146 for a name that is not a table, and
                 // `ErrAnalyzeMissColumn`-adjacent refusals for a view or a
                 // sequence; both are "there is nothing here to analyze", and
@@ -217,14 +374,91 @@ impl Session {
                 Some(_) => {
                     return Err(DriverError::unsupported(format!(
                         "`{schema}`.`{name}` is not a table whose rows this node can analyze"
-                    )))
+                    )));
                 }
                 None => {
                     return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(
                         name.clone(),
-                    )))
+                    )));
                 }
             };
+            if matches!(statement.columns, AnalyzeColumnChoice::Explicit(_)) {
+                let mut suppress_predicate_warning = true;
+                let mut explicit_warning_emitted = false;
+                selected_column_ids(
+                    &table,
+                    &statement.columns,
+                    &AnalyzeColumnChoice::All,
+                    &HashSet::new(),
+                    table_id,
+                    &schema,
+                    &name,
+                    &ctx,
+                    &mut suppress_predicate_warning,
+                    &mut explicit_warning_emitted,
+                )?;
+            }
+            let mut persisted = std::collections::HashMap::new();
+            if statement.persist_options {
+                for physical_id in std::iter::once(table_id).chain(partition_ids.iter().copied()) {
+                    if let Some(options) = catalog.analyze_options(physical_id) {
+                        persisted.insert(physical_id, options);
+                    }
+                }
+            }
+            let resolution = resolve_analyze_options(
+                table_id,
+                &partition_ids,
+                statement.raw_options,
+                &statement.columns,
+                &persisted,
+                !statement.persist_options || statement.partitions.is_empty(),
+                !ctx.static_partition_prune(),
+            );
+            if resolution.ignored_partition_overrides {
+                ctx.append_warning_parts(
+                    1105,
+                    "Ignore columns and options when analyze partition in dynamic mode",
+                );
+            }
+            let needs_predicate = resolution.physical.iter().any(|options| {
+                effective_column_choice(&options.columns, &statement.default_columns)
+                    == AnalyzeColumnChoice::Predicate
+            });
+            let predicate_ids = if needs_predicate {
+                match &usage_provider {
+                    Some(provider) => provider
+                        .load_column_stats_usage(&session_time_zone, &resource_group)
+                        .map_err(DriverError::unsupported)?
+                        .keys()
+                        .filter(|item| item.table_id != 0 && !item.is_index)
+                        .map(|item| (item.table_id, item.id))
+                        .collect::<HashSet<_>>(),
+                    None => HashSet::new(),
+                }
+            } else {
+                HashSet::new()
+            };
+            let mut predicate_warning_emitted = false;
+            let mut explicit_warning_emitted = true;
+            let mut selections = std::collections::HashMap::new();
+            for options in &resolution.physical {
+                selections.insert(
+                    options.physical_id,
+                    selected_column_ids(
+                        &table,
+                        &options.columns,
+                        &statement.default_columns,
+                        &predicate_ids,
+                        table_id,
+                        &schema,
+                        &name,
+                        &ctx,
+                        &mut predicate_warning_emitted,
+                        &mut explicit_warning_emitted,
+                    )?,
+                );
+            }
             let realtime_count = |physical_id| {
                 // Go's `getAdjustedSampleRate` reads the CURRENT
                 // `mysql.stats_meta.count` of the physical table being
@@ -239,89 +473,21 @@ impl Session {
                 .map(|physical_id| (*physical_id, realtime_count(*physical_id)))
                 .collect::<Vec<_>>();
             let global_count = realtime_count(table_id);
-            let mut selected = match &choice {
-                AnalyzeColumnChoice::All | AnalyzeColumnChoice::Default => None,
-                AnalyzeColumnChoice::Predicate => Some(
-                    predicate_ids
-                        .as_ref()
-                        .into_iter()
-                        .flat_map(|items| items.iter())
-                        .filter_map(|(usage_table, column)| {
-                            (*usage_table == table_id).then_some(*column)
-                        })
-                        .collect::<HashSet<_>>(),
-                ),
-                AnalyzeColumnChoice::Explicit(names) => {
-                    let mut ids = HashSet::new();
-                    for name in names {
-                        let column = table
-                            .visible_columns()
-                            .iter()
-                            .find(|column| column.name.eq_ignore_ascii_case(name))
-                            .ok_or_else(|| {
-                                DriverError::unsupported(format!(
-                                    "column `{name}` does not exist in `{schema}`.`{}`",
-                                    statement.table
-                                ))
-                            })?;
-                        ids.insert(column.id);
-                    }
-                    Some(ids)
-                }
-            };
-            if let Some(selected) = selected.as_mut() {
-                if choice == AnalyzeColumnChoice::Predicate && selected.is_empty() {
-                    ctx.append_warning_parts(
-                        1105,
-                        &format!(
-                            "No predicate column has been collected yet for table {}.{}, so only indexes and the columns composing the indexes will be analyzed",
-                            schema.to_lowercase(),
-                            name.to_lowercase()
-                        ),
-                    );
-                }
-                for index in table.indexes() {
-                    for offset in &index.column_offsets {
-                        if let Some(column) = table.columns().get(*offset) {
-                            selected.insert(column.id);
-                        }
-                    }
-                }
-                if table.pk_handle_offset().is_some() {
-                    selected.insert(table.visible_columns()[table.pk_handle_offset().unwrap()].id);
-                }
-                loop {
-                    let before = selected.len();
-                    for column in table.columns() {
-                        if !selected.contains(&column.id) {
-                            continue;
-                        }
-                        if let Some(generated) = &column.generated {
-                            for dependency in &generated.dependencies {
-                                if let Some(base) = table
-                                    .columns()
-                                    .iter()
-                                    .find(|base| base.name.eq_ignore_ascii_case(dependency))
-                                {
-                                    selected.insert(base.id);
-                                }
-                            }
-                        }
-                    }
-                    if selected.len() == before {
-                        break;
-                    }
-                }
-            }
-            recover_analyze_panic(|| {
+            let execution: Result<(), DriverError> = recover_analyze_panic(|| {
                 #[cfg(test)]
                 inject_analyze_panic_for_test(AnalyzePanicPhase::Worker);
 
                 if partition_ids.is_empty() {
-                    let mut table = table;
+                    let mut scan_table = table.clone();
+                    let options = &resolution.physical[0];
+                    let mut effective = options.effective;
+                    effective.memory_quota = statement.options.memory_quota;
+                    let selected = selections
+                        .get(&table_id)
+                        .expect("the logical table selection exists");
                     let statistics = analyze_kv_table_columns(
-                        &mut table,
-                        options,
+                        &mut scan_table,
+                        &effective,
                         global_count,
                         &ctx,
                         selected.as_ref(),
@@ -340,11 +506,21 @@ impl Session {
 
                 let mut partition_statistics = Vec::with_capacity(partition_counts.len());
                 for (physical_id, realtime_count) in partition_counts {
+                    let options = resolution
+                        .physical
+                        .iter()
+                        .find(|options| options.physical_id == physical_id)
+                        .expect("every requested partition has options");
+                    let mut effective = options.effective;
+                    effective.memory_quota = statement.options.memory_quota;
+                    let selected = selections
+                        .get(&physical_id)
+                        .expect("every requested partition has a selection");
                     let mut partition = table.clone();
                     partition.restrict_read_to_partitions(&[physical_id]);
                     let statistics = analyze_kv_table_columns(
                         &mut partition,
-                        options,
+                        &effective,
                         realtime_count,
                         &ctx,
                         selected.as_ref(),
@@ -366,10 +542,16 @@ impl Session {
                 let global_statistics = if ctx.static_partition_prune() {
                     None
                 } else {
-                    let mut global = table;
+                    let mut global = table.clone();
+                    let options = &resolution.physical[0];
+                    let mut effective = options.effective;
+                    effective.memory_quota = statement.options.memory_quota;
+                    let selected = selections
+                        .get(&table_id)
+                        .expect("the logical table selection exists");
                     let statistics = analyze_kv_table_columns(
                         &mut global,
-                        options,
+                        &effective,
                         global_count,
                         &ctx,
                         selected.as_ref(),
@@ -391,7 +573,23 @@ impl Session {
                 }
                 Ok(())
             })
-            .map_err(|error| DriverError::unsupported(error.rendered_message().to_owned()))?
+            .map_err(|error| DriverError::unsupported(error.rendered_message().to_owned()))?;
+            execution?;
+            if statement.persist_options {
+                for options in &resolution.physical {
+                    if options.is_partition && !ctx.static_partition_prune() {
+                        continue;
+                    }
+                    let selected = selections
+                        .get(&options.physical_id)
+                        .and_then(Option::as_ref);
+                    catalog.set_analyze_options(
+                        options.physical_id,
+                        saved_options(&table, options, selected),
+                    );
+                }
+            }
+            Ok(())
         });
         self.drain_context_warnings(&ctx);
         result

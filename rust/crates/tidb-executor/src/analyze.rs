@@ -54,11 +54,11 @@ pub mod panic_recovery;
 
 use tidb_codec::{encode_key, encode_value};
 use tidb_datatype::{Collation, Datum, EvalType, FieldType, FieldTypeCode};
-use tidb_stats::builder::{build_hist_and_topn, BuildOptions, SampleCollector, SampleItem};
+use tidb_stats::builder::{BuildOptions, SampleCollector, SampleItem, build_hist_and_topn};
 use tidb_stats::cmsketch::TopN;
 use tidb_stats::histogram::Histogram;
 use tidb_stats::row_sample_collector::{
-    adjusted_sample_rate, RowSampleCollector, SamplePolicy, ScannedRow, SlotValue,
+    RowSampleCollector, SamplePolicy, ScannedRow, SlotValue, adjusted_sample_rate,
 };
 use tidb_stats::sample_bytes::MAX_SAMPLE_VALUE_LENGTH;
 
@@ -198,6 +198,8 @@ pub struct AnalyzeStatement {
     pub schema: String,
     /// The table's name.
     pub table: String,
+    /// Explicit partition names. Empty means every partition.
+    pub partitions: Vec<String>,
     /// Which columns the pinned planner selects before execution.
     pub columns: AnalyzeColumnChoice,
     /// Options explicitly named by this statement, before saved-option merge.
@@ -377,7 +379,7 @@ pub fn lower_analyze_admin(
                 "this node does not run ANALYZE INCREMENTAL TABLE: it extends the previous \
                  histogram from its last bound rather than rebuilding one"
                     .to_owned(),
-            ))
+            ));
         }
         _ => return Ok(None),
     };
@@ -390,22 +392,16 @@ pub fn lower_analyze_admin(
                  statistics, and storing only some of them would leave the rest describing an \
                  older row count"
                     .to_owned(),
-            ))
+            ));
         }
         tidb_ast::AnalyzeTarget::PredicateColumns => AnalyzeColumnChoice::Predicate,
         tidb_ast::AnalyzeTarget::Columns(names) => AnalyzeColumnChoice::Explicit(names.clone()),
         tidb_ast::AnalyzeTarget::Histogram { .. } => {
             return Err(AnalyzeError::Unsupported(
                 "this node does not run UPDATE/DROP HISTOGRAM ON".to_owned(),
-            ))
+            ));
         }
     };
-
-    if !analyze.partitions.is_empty() {
-        return Err(AnalyzeError::Unsupported(
-            "this node does not analyze named partitions".to_owned(),
-        ));
-    }
 
     let mut raw_options = AnalyzeOptionOverrides::default();
     for option in &analyze.options {
@@ -490,7 +486,7 @@ pub fn lower_analyze_admin(
             tidb_ast::AnalyzeOptionKind::NdvRate => {
                 return Err(AnalyzeError::Unsupported(
                     "NDVRATE is not a knob this node reads".to_owned(),
-                ))
+                ));
             }
         }
     }
@@ -511,7 +507,7 @@ pub fn lower_analyze_admin(
                 return Err(AnalyzeError::Unsupported(format!(
                     "`{}` does not name a table",
                     path.join(".")
-                )))
+                )));
             }
         };
         if schema.is_empty() {
@@ -520,6 +516,7 @@ pub fn lower_analyze_admin(
         tables.push(AnalyzeStatement {
             schema,
             table,
+            partitions: analyze.partitions.clone(),
             columns: columns.clone(),
             raw_options,
             persist_options: true,

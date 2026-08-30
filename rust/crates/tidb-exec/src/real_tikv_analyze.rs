@@ -33,23 +33,23 @@ use std::time::Duration;
 
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{
-    OptimisticCommitOutcome, RealOptimisticTransactionOpener, MAX_OPTIMISTIC_TRANSACTION_BYTES,
+    MAX_OPTIMISTIC_TRANSACTION_BYTES, OptimisticCommitOutcome, RealOptimisticTransactionOpener,
 };
 use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
 
 use crate::cluster_analyze::{
-    analyze_table, lower_analyze, resolve_analyze_options, AnalyzeColumnChoice, AnalyzeError,
-    AnalyzeStatement,
+    AnalyzeColumnChoice, AnalyzeError, AnalyzeStatement, analyze_table, lower_analyze,
+    resolve_analyze_options,
 };
 use crate::cluster_catalog::load_cluster_catalog;
 use crate::cluster_stats_load::ClusterStatsLoader;
 use crate::cluster_stats_write::{
-    load_analyze_options, plan_analyze_options_write, plan_get_predicate_columns,
-    plan_partial_stats_write, plan_stats_write, StatsWritePlan,
+    StatsWritePlan, load_analyze_options, plan_analyze_options_write, plan_get_predicate_columns,
+    plan_partial_stats_write, plan_stats_write,
 };
 use crate::mysql_bootstrap::utc_now_timestamp;
 use crate::mysql_system_tables::SystemTableError;
-use crate::pessimistic_lock_error::{commit_outcome_to_sql_error, LockSqlError};
+use crate::pessimistic_lock_error::{LockSqlError, commit_outcome_to_sql_error};
 use crate::real_tikv_catalog::TransactionMetaSnapshot;
 
 /// The mutation-count budget one `ANALYZE TABLE` declares.
@@ -425,6 +425,7 @@ fn selected_columns_for_choice<S: crate::cluster_catalog::MetaSnapshot>(
     let statement = AnalyzeStatement {
         schema: String::new(),
         table: String::new(),
+        partitions: Vec::new(),
         columns: choice.clone(),
         raw_options: Default::default(),
         persist_options: false,
@@ -494,7 +495,7 @@ fn classify_commit_outcome(outcome: &OptimisticCommitOutcome) -> Result<(), Clus
 
 #[cfg(test)]
 mod tests {
-    use super::{classify_commit_outcome, realtime_count_of, ClusterAnalyzeError};
+    use super::{ClusterAnalyzeError, classify_commit_outcome, realtime_count_of};
     use std::thread;
     use std::time::Duration;
     use tidb_stats::row_sample_collector::adjusted_sample_rate;
