@@ -2664,10 +2664,25 @@ mod statistics_request_tests {
 
     fn stats_usage_fixture() -> Catalog {
         let mut catalog = Catalog::default();
-        crate::run_create_table_on("CREATE TABLE t(a INT, b INT, c INT)", &mut catalog)
-            .expect("fixture t");
-        crate::run_create_table_on("CREATE TABLE t2(a INT, b INT, c INT)", &mut catalog)
-            .expect("fixture t2");
+        crate::run_create_table_on(
+            "CREATE TABLE t(a INT NOT NULL PRIMARY KEY, b INT NOT NULL, c INT NOT NULL)",
+            &mut catalog,
+        )
+        .expect("fixture t");
+        crate::run_create_table_on(
+            "CREATE TABLE t2(a INT UNSIGNED NOT NULL PRIMARY KEY, b INT NOT NULL, c INT UNSIGNED)",
+            &mut catalog,
+        )
+        .expect("fixture t2");
+        crate::run_create_table_on("CREATE TABLE t3(a INT, b INT, c INT)", &mut catalog)
+            .expect("fixture t3");
+        crate::run_create_table_on(
+            "CREATE TABLE pt1(a INT NOT NULL, b INT NOT NULL, c INT NOT NULL, ptn INT) \
+             PARTITION BY RANGE (ptn) (PARTITION p1 VALUES LESS THAN (16), \
+             PARTITION p2 VALUES LESS THAN (32))",
+            &mut catalog,
+        )
+        .expect("fixture pt1");
         catalog
     }
 
@@ -2843,5 +2858,114 @@ mod statistics_request_tests {
                 "after optimization: {sql}"
             );
         }
+    }
+
+    #[test]
+    fn original_collect_histogram_needed_columns_cases_match() {
+        let catalog = stats_usage_fixture();
+        let cases: &[(&str, &[(&str, &str, bool)])] = &[
+            ("SELECT * FROM t WHERE a > 2", &[("t", "a", true)]),
+            (
+                "SELECT * FROM t WHERE b IN (2, 5) OR c = 5",
+                &[("t", "b", true), ("t", "c", true)],
+            ),
+            (
+                "SELECT * FROM t WHERE a + b > 1",
+                &[("t", "a", true), ("t", "b", true)],
+            ),
+            ("SELECT * FROM t3 WHERE _tidb_rowid > 1", &[]),
+            (
+                "SELECT b, COUNT(a) FROM t WHERE b > 1 GROUP BY b HAVING COUNT(a) > 2",
+                &[("t", "a", false), ("t", "b", true)],
+            ),
+            (
+                "SELECT * FROM t AS x JOIN t2 AS y ON x.b + y.b > 2 AND x.c > 1 AND y.a < 1",
+                &[
+                    ("t", "b", false),
+                    ("t", "c", true),
+                    ("t2", "a", true),
+                    ("t2", "b", false),
+                ],
+            ),
+            (
+                "SELECT * FROM t2 WHERE t2.b > ALL(SELECT b FROM t WHERE t.c > 2)",
+                &[("t", "b", false), ("t", "c", true), ("t2", "b", false)],
+            ),
+            (
+                "SELECT * FROM t2 WHERE t2.b > ANY(SELECT b FROM t WHERE t.c > 2)",
+                &[("t", "b", false), ("t", "c", true), ("t2", "b", false)],
+            ),
+            (
+                "SELECT * FROM t2 WHERE t2.b IN (SELECT b FROM t WHERE t.c > 2)",
+                &[("t", "b", false), ("t", "c", true), ("t2", "b", false)],
+            ),
+        ];
+
+        for (sql, expected) in cases {
+            let tidb_ast::Stmt::Query(query) = tidb_parser::parse(sql).expect("original SQL")
+            else {
+                panic!("original case is not a query")
+            };
+            let context = crate::StmtContext::for_query();
+            let (_, usage) =
+                super::planner_bridge::statistics_usage_before_and_after_logical_optimization(
+                    &query, &catalog, "test", &context,
+                )
+                .unwrap_or_else(|error| panic!("{sql}: {error}"));
+            let expected = expected
+                .iter()
+                .map(|(table, column, full)| (column_item(&catalog, table, column), *full))
+                .collect::<std::collections::HashMap<_, _>>();
+            assert_eq!(usage.predicate_columns, expected, "{sql}");
+        }
+
+        let sql = "SELECT * FROM pt1 WHERE ptn < 20 AND b > 1";
+        let tidb_ast::Stmt::Query(query) = tidb_parser::parse(sql).expect("partition SQL") else {
+            panic!("partition case is not a query")
+        };
+        let expected = [("pt1", "b"), ("pt1", "ptn")]
+            .into_iter()
+            .map(|(table, column)| (column_item(&catalog, table, column), true))
+            .collect::<std::collections::HashMap<_, _>>();
+
+        let dynamic = crate::StmtContext::for_query();
+        let (_, dynamic_usage) =
+            super::planner_bridge::statistics_usage_before_and_after_logical_optimization(
+                &query, &catalog, "test", &dynamic,
+            )
+            .expect("dynamic partition planning");
+        assert_eq!(dynamic_usage.predicate_columns, expected);
+        assert!(dynamic_usage.table_partition_ids.is_empty());
+
+        let static_prune = crate::StmtContext::for_query().with_static_partition_prune(true);
+        let (_, static_usage) =
+            super::planner_bridge::statistics_usage_before_and_after_logical_optimization(
+                &query,
+                &catalog,
+                "test",
+                &static_prune,
+            )
+            .expect("static partition planning");
+        assert_eq!(static_usage.predicate_columns, expected);
+        let TableEntry::Kv(table) = catalog.get_in("test", "pt1").expect("fixture pt1") else {
+            panic!("fixture pt1 is not a KV table")
+        };
+        let partition_ids = table
+            .partition()
+            .expect("partition metadata")
+            .definitions
+            .iter()
+            .map(|definition| definition.id)
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(
+            static_usage
+                .table_partition_ids
+                .get(&table.table_id)
+                .expect("static expansion")
+                .iter()
+                .copied()
+                .collect::<std::collections::HashSet<_>>(),
+            partition_ids
+        );
     }
 }
