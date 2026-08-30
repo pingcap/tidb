@@ -1065,16 +1065,11 @@ pub fn plan_historical_stats_meta_replace<S: MetaSnapshot>(
     Ok(plan)
 }
 
-/// Pinned Go `history.RecordHistoricalStatsToStorage`: gzip one statistics
-/// JSON object, split it below the `LONG_BLOB` row limit, and upsert each
-/// `(table_id, version, seq_no)` block with one shared microsecond timestamp.
-pub fn plan_historical_stats_data_write<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &ClusterCatalog,
-    physical_id: i64,
+/// Pinned Go `history.RecordHistoricalStatsToStorage`'s preparation before its
+/// per-block `INSERT` statements.
+pub fn historical_stats_data_blocks(
     json: &JsonTable,
-    now: Time,
-) -> Result<(u64, StatsWritePlan), StatsWriteError> {
+) -> Result<(u64, Vec<Vec<u8>>), StatsWriteError> {
     const MAX_COLUMN_SIZE: usize = 5 << 20;
     let version = match json.partitions.as_ref() {
         Some(partitions) if !partitions.is_empty() => partitions
@@ -1091,6 +1086,20 @@ pub fn plan_historical_stats_data_write<S: MetaSnapshot>(
     };
     let blocks = tidb_executor::load_stats::json_table_to_blocks(json, MAX_COLUMN_SIZE)
         .map_err(|error| StatsWriteError::HistoricalData(error.to_string()))?;
+    Ok((version, blocks))
+}
+
+/// Plans one pinned Go `history.RecordHistoricalStatsToStorage` block
+/// `INSERT ... ON DUPLICATE KEY UPDATE` statement.
+pub fn plan_historical_stats_data_block<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    physical_id: i64,
+    version: u64,
+    sequence: usize,
+    block: &[u8],
+    now: Time,
+) -> Result<StatsWritePlan, StatsWriteError> {
     let history = locate(catalog, "stats_history")?;
     let mut rows = StatsRows::open(
         snapshot,
@@ -1099,17 +1108,20 @@ pub fn plan_historical_stats_data_write<S: MetaSnapshot>(
         physical_id,
     )?;
     let mut plan = StatsWritePlan::default();
-    for (sequence, block) in blocks.into_iter().enumerate() {
-        let mut values = defaults_row(history, now)?;
-        set(history, &mut values, "table_id", Datum::Int(physical_id));
-        set(history, &mut values, "stats_data", Datum::Bytes(block));
-        set(history, &mut values, "seq_no", Datum::Int(sequence as i64));
-        set(history, &mut values, "version", Datum::UInt(version));
-        set(history, &mut values, "create_time", Datum::Time(now));
-        rows.store(snapshot, catalog, &values, &mut plan)?;
-    }
+    let mut values = defaults_row(history, now)?;
+    set(history, &mut values, "table_id", Datum::Int(physical_id));
+    set(
+        history,
+        &mut values,
+        "stats_data",
+        Datum::Bytes(block.to_vec()),
+    );
+    set(history, &mut values, "seq_no", Datum::Int(sequence as i64));
+    set(history, &mut values, "version", Datum::UInt(version));
+    set(history, &mut values, "create_time", Datum::Time(now));
+    rows.store(snapshot, catalog, &values, &mut plan)?;
     rows.publish_watermark(catalog, &mut plan)?;
-    Ok((version, plan))
+    Ok(plan)
 }
 
 /// Plans one pinned Go `ClearOutdatedHistoryStats` delete statement.

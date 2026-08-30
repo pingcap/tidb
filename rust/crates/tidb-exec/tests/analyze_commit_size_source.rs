@@ -44,7 +44,8 @@ use tidb_exec::cluster_stats_write::{
     count_outdated_historical_stats, load_analyze_options, load_stats_gc_candidates,
     load_stats_gc_timestamp, plan_analyze_options_write, plan_column_stats_usage_dump,
     plan_column_stats_usage_write, plan_delete_table_stats, plan_get_predicate_columns,
-    plan_historical_stats_data_delete_for_table, plan_historical_stats_data_write,
+    historical_stats_data_blocks, plan_historical_stats_data_block,
+    plan_historical_stats_data_delete_for_table,
     plan_historical_stats_meta_delete_for_table, plan_historical_stats_meta_lock,
     plan_historical_stats_meta_replace, loaded_stats_item_statements,
     plan_independent_index_stats_write,
@@ -54,7 +55,7 @@ use tidb_exec::cluster_stats_write::{
     plan_change_global_stats_id, plan_partial_stats_write, plan_partition_stats_write,
     plan_stats_delta_updates, plan_stats_gc_timestamp_write, plan_stats_item_delete,
     plan_stats_meta_version_refresh, plan_stats_write, plan_update_stats_version,
-    LoadedStatsItemStatement, StatsWriteError, StatsWritePlan,
+    LoadedStatsItemStatement, StatsWriteError,
 };
 use tidb_exec::mysql_bootstrap::{plan_mysql_bootstrap, BootstrapEnvironment, BootstrapWrite};
 use tidb_exec::mysql_system_tables::{scan_system_table, SystemRow, SystemTableView};
@@ -114,16 +115,17 @@ fn apply_mutations(
     }
 }
 
-fn plan_historical_stats_meta_write(
+fn apply_historical_stats_meta_statements(
     store: &mut MetaStore,
     catalog: &tidb_exec::cluster_catalog::ClusterCatalog,
     table_id: i64,
     version: u64,
     source: &str,
     now: Time,
-) -> Result<StatsWritePlan, StatsWriteError> {
-    let ((modify_count, count), mut lock) =
+) -> Result<(), StatsWriteError> {
+    let ((modify_count, count), lock) =
         plan_historical_stats_meta_lock(store, catalog, table_id, version)?;
+    apply_mutations(store, &lock.mutations);
     let replace = plan_historical_stats_meta_replace(
         store,
         catalog,
@@ -134,8 +136,25 @@ fn plan_historical_stats_meta_write(
         source,
         now,
     )?;
-    lock.mutations.extend(replace.mutations);
-    Ok(lock)
+    apply_mutations(store, &replace.mutations);
+    Ok(())
+}
+
+fn apply_historical_stats_data_statements(
+    store: &mut MetaStore,
+    catalog: &tidb_exec::cluster_catalog::ClusterCatalog,
+    table_id: i64,
+    json: &JsonTable,
+    now: Time,
+) -> Result<u64, StatsWriteError> {
+    let (version, blocks) = historical_stats_data_blocks(json)?;
+    for (sequence, block) in blocks.iter().enumerate() {
+        let plan = plan_historical_stats_data_block(
+            store, catalog, table_id, version, sequence, block, now,
+        )?;
+        apply_mutations(store, &plan.mutations);
+    }
+    Ok(version)
 }
 
 fn apply_loaded_stats_item(
@@ -1929,29 +1948,29 @@ fn loaded_stats_history_requires_the_exact_current_meta_version() {
         .expect("LOAD STATS final meta plans");
     apply_mutations(&mut store, &meta.mutations);
 
-    assert!(plan_historical_stats_meta_write(
+    assert!(
+        plan_historical_stats_meta_lock(&mut store, &catalog, table_id, version - 1).is_err()
+    );
+    let ((modify_count, count), lock) =
+        plan_historical_stats_meta_lock(&mut store, &catalog, table_id, version)
+            .expect("the exact version plans the locking select");
+    assert_eq!(
+        lock.mutations.first().map(|mutation| mutation.kind()),
+        Some(OptimisticMutationKind::LockOnly)
+    );
+    apply_mutations(&mut store, &lock.mutations);
+    let replace = plan_historical_stats_meta_replace(
         &mut store,
         &catalog,
         table_id,
-        version - 1,
-        "load stats",
-        now(),
-    )
-    .is_err());
-    let history = plan_historical_stats_meta_write(
-        &mut store,
-        &catalog,
-        table_id,
+        modify_count,
+        count,
         version,
         "load stats",
         now(),
     )
-    .expect("the exact version plans history");
-    assert_eq!(
-        history.mutations.first().map(|mutation| mutation.kind()),
-        Some(OptimisticMutationKind::LockOnly)
-    );
-    apply_mutations(&mut store, &history.mutations);
+    .expect("the exact version plans the history replace");
+    apply_mutations(&mut store, &replace.mutations);
 
     let table = catalog
         .databases
@@ -2004,11 +2023,15 @@ fn historical_stats_data_round_trips_through_stats_history() {
         version: 440_000_000_000_000_000,
         ..JsonTable::default()
     };
-    let (version, plan) =
-        plan_historical_stats_data_write(&mut store, &catalog, table_id, &json, now())
-            .expect("historical statistics data plans");
+    let version = apply_historical_stats_data_statements(
+        &mut store,
+        &catalog,
+        table_id,
+        &json,
+        now(),
+    )
+    .expect("historical statistics data statements plan");
     assert_eq!(version, json.version);
-    apply_mutations(&mut store, &plan.mutations);
 
     let table = catalog
         .databases
@@ -2053,6 +2076,70 @@ fn historical_stats_data_round_trips_through_stats_history() {
     assert_eq!(restored, json);
 }
 
+/// Pinned `history.RecordHistoricalStatsToStorage` executes one restricted SQL
+/// statement per compressed block instead of flattening all block writes into
+/// one statement plan.
+#[test]
+fn historical_stats_data_plans_one_statement_per_block() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let table_id = 4243;
+    let json = JsonTable {
+        database_name: "test".to_owned(),
+        table_name: "many_blocks".to_owned(),
+        count: 55,
+        modify_count: 3,
+        version: 440_000_000_000_000_001,
+        ..JsonTable::default()
+    };
+    let blocks = tidb_executor::load_stats::json_table_to_blocks(&json, 30)
+        .expect("small blocks compress");
+    assert!(blocks.len() > 1);
+
+    let history = catalog
+        .databases
+        .iter()
+        .find(|database| database.info.name.lowercase() == "mysql")
+        .and_then(|database| {
+            database
+                .tables
+                .iter()
+                .find(|table| table.name.lowercase() == "stats_history")
+        })
+        .expect("stats_history exists");
+    let view = SystemTableView::project(
+        "mysql.stats_history",
+        history,
+        &["table_id", "seq_no", "version"],
+    );
+    let timezone = tidb_datatype::SessionTimeZone::utc();
+    for (sequence, block) in blocks.iter().enumerate() {
+        let plan = plan_historical_stats_data_block(
+            &mut store,
+            &catalog,
+            table_id,
+            json.version,
+            sequence,
+            block,
+            now(),
+        )
+        .expect("one block statement plans");
+        apply_mutations(&mut store, &plan.mutations);
+        let sequences = scan_system_table(&mut store, &view)
+            .expect("history rows scan")
+            .into_iter()
+            .map(|(key, value)| {
+                SystemRow::parse_in_timezone(&view, &key, &value, Some(&timezone))
+                    .expect("history row decodes")
+            })
+            .filter(|row| row.i64("table_id").unwrap() == Some(table_id))
+            .map(|row| row.i64("seq_no").unwrap().expect("sequence number"))
+            .collect::<Vec<_>>();
+        assert_eq!(sequences.len(), sequence + 1);
+        assert!(sequences.contains(&(sequence as i64)));
+    }
+}
+
 /// Pinned `TableHistoricalStatsToJSON` independently selects metadata and
 /// payload versions. A later delta-flush meta row overlays its counts on the
 /// newest older histogram dump and marks the reconstructed JSON historical.
@@ -2081,7 +2168,7 @@ fn historical_stats_reader_selects_meta_and_data_versions_independently() {
     )
     .expect("initial metadata plans");
     apply_mutations(&mut store, &meta.mutations);
-    let history_meta = plan_historical_stats_meta_write(
+    apply_historical_stats_meta_statements(
         &mut store,
         &catalog,
         table_id,
@@ -2089,12 +2176,9 @@ fn historical_stats_reader_selects_meta_and_data_versions_independently() {
         "analyze",
         now(),
     )
-    .expect("initial metadata history plans");
-    apply_mutations(&mut store, &history_meta.mutations);
-    let (_, history_data) =
-        plan_historical_stats_data_write(&mut store, &catalog, table_id, &data, now())
-            .expect("initial data history plans");
-    apply_mutations(&mut store, &history_data.mutations);
+    .expect("initial metadata history statements plan");
+    apply_historical_stats_data_statements(&mut store, &catalog, table_id, &data, now())
+        .expect("initial data history statements plan");
 
     let meta_version = data_version + 10;
     let meta = plan_loaded_stats_meta_write(
@@ -2108,7 +2192,7 @@ fn historical_stats_reader_selects_meta_and_data_versions_independently() {
     )
     .expect("newer metadata plans");
     apply_mutations(&mut store, &meta.mutations);
-    let history_meta = plan_historical_stats_meta_write(
+    apply_historical_stats_meta_statements(
         &mut store,
         &catalog,
         table_id,
@@ -2116,8 +2200,7 @@ fn historical_stats_reader_selects_meta_and_data_versions_independently() {
         "flush stats",
         now(),
     )
-    .expect("newer metadata history plans");
-    apply_mutations(&mut store, &history_meta.mutations);
+    .expect("newer metadata history statements plan");
 
     let restored = table_historical_stats_to_json(
         &mut store,
@@ -2166,7 +2249,7 @@ fn outdated_historical_stats_deletes_only_rows_at_or_before_the_cutoff() {
         )
         .expect("metadata plans");
         apply_mutations(&mut store, &meta.mutations);
-        let history_meta = plan_historical_stats_meta_write(
+        apply_historical_stats_meta_statements(
             &mut store,
             &catalog,
             table_id,
@@ -2174,8 +2257,7 @@ fn outdated_historical_stats_deletes_only_rows_at_or_before_the_cutoff() {
             "analyze",
             create_time,
         )
-        .expect("metadata history plans");
-        apply_mutations(&mut store, &history_meta.mutations);
+        .expect("metadata history statements plan");
         let json = JsonTable {
             database_name: "test".to_owned(),
             table_name: "t".to_owned(),
@@ -2183,10 +2265,14 @@ fn outdated_historical_stats_deletes_only_rows_at_or_before_the_cutoff() {
             count: version,
             ..JsonTable::default()
         };
-        let (_, history_data) =
-            plan_historical_stats_data_write(&mut store, &catalog, table_id, &json, create_time)
-                .expect("data history plans");
-        apply_mutations(&mut store, &history_data.mutations);
+        apply_historical_stats_data_statements(
+            &mut store,
+            &catalog,
+            table_id,
+            &json,
+            create_time,
+        )
+        .expect("data history statements plan");
     }
 
     assert_eq!(

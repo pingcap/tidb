@@ -1764,22 +1764,46 @@ impl HistoricalStatsHandle for ClusterHistoricalStatsHandle {
         else {
             return Ok(0);
         };
-        let snapshot = self.transactions.open_snapshot("default")?;
-        let read_ts = snapshot.start_ts();
-        let (version, plan) = {
-            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-            tidb_exec::cluster_stats_write::plan_historical_stats_data_write(
-                &mut snapshot,
-                &catalog,
-                physical_id,
-                &json,
-                tidb_exec::mysql_bootstrap::utc_now_timestamp(),
-            )
-            .map_err(|error| error.to_string())?
-        };
-        self.transactions
-            .commit_optimistic_mutations(plan.mutations, read_ts, "default")
-            .map_err(|error| error.message)?;
+        let transaction = self.transactions.begin(true, "default")?;
+        let staged = MutationBuffer::new();
+        let (version, blocks) = tidb_exec::cluster_stats_write::historical_stats_data_blocks(&json)
+            .map_err(|error| error.to_string())?;
+        let create_time = tidb_exec::mysql_bootstrap::utc_now_timestamp();
+        for (sequence, block) in blocks.iter().enumerate() {
+            let ((), mutations) =
+                tidb_exec::cluster_table_storage::lock_pessimistic_statement_with(
+                    transaction.start_ts(),
+                    |read_ts| match read_ts {
+                        Some(read_ts) => transaction.snapshot_at_for(read_ts, true),
+                        None => transaction.snapshot_for(true),
+                    },
+                    |keys, presume_not_exists, duplicate_hints| {
+                        transaction.lock_staged_keys_with_assertions(
+                            keys,
+                            presume_not_exists,
+                            duplicate_hints,
+                        )
+                    },
+                    |snapshot, _start_ts| {
+                        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                        let plan =
+                            tidb_exec::cluster_stats_write::plan_historical_stats_data_block(
+                                &mut snapshot,
+                                &catalog,
+                                physical_id,
+                                version,
+                                sequence,
+                                block,
+                                create_time,
+                            )
+                            .map_err(|error| error.to_string())?;
+                        Ok(((), plan.mutations))
+                    },
+                )
+                .map_err(|error| error.to_string())?;
+            tidb_exec::cluster_table_storage::stage_mutations(&staged, mutations);
+        }
+        transaction.commit(&staged).map_err(|error| error.message)?;
         Ok(version)
     }
 }
