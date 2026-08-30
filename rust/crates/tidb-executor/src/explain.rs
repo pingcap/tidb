@@ -439,6 +439,9 @@ fn physical_operator_info(plan: &PhysicalPlan, catalog: &Catalog) -> String {
                 .as_deref()
                 .map_or_else(String::new, |plan| plan.explain_id(false))
         ),
+        PhysicalPlan::LocalIndexLookUp(lookup) => {
+            format!("index handle offsets:{:?}", lookup.index_handle_offsets)
+        }
         PhysicalPlan::PointGet(point) => {
             let common_handle = catalog
                 .kv_table_by_id(point.table_id)

@@ -1912,9 +1912,8 @@ pub struct PhysicalIndexReader {
 /// Go `physicalop.PhysicalIndexLookUpReader`
 /// (`physical_indexlookup_reader.go:33`): the double read — the index side
 /// finds row ids, the table side reads the rows back — born by
-/// `BuildIndexLookUpTask` (`:284`). `ExtraHandleCol`, `CommonHandleCols`
-/// and `PlanPartInfo` stay with the unported common-handle/partition
-/// worlds, absent rather than stubbed.
+/// `BuildIndexLookUpTask` (`:284`). `ExtraHandleCol` and `PlanPartInfo` stay
+/// with their unported dependent types, absent rather than stubbed.
 #[derive(Clone, Debug, Default)]
 pub struct PhysicalIndexLookUpReader {
     /// The shared physical base.
@@ -1923,6 +1922,16 @@ pub struct PhysicalIndexLookUpReader {
     pub index_plan: Option<Box<PhysicalPlan>>,
     /// Go `TablePlan`.
     pub table_plan: Option<Box<PhysicalPlan>>,
+    /// Go `IndexPlans`, the post-order flattening of `IndexPlan` used to
+    /// construct the pushed-down executor tree.
+    pub index_plans: Vec<PhysicalPlan>,
+    /// Go `IndexPlansUnNatureOrders`: child index to parent index when the
+    /// parent is not immediately after that child in `IndexPlans`.
+    pub index_plans_un_natural_orders: std::collections::BTreeMap<usize, usize>,
+    /// Go `TablePlans`, the leaf-first flattening of `TablePlan`.
+    pub table_plans: Vec<PhysicalPlan>,
+    /// Go `CommonHandleCols`.
+    pub common_handle_cols: Vec<Column>,
     /// Go `IndexLookUpPushDown`, true after `tryPushDownLookUp` succeeds.
     pub index_lookup_push_down: bool,
     /// Go `KeepOrder`.
@@ -1936,6 +1945,66 @@ pub struct PhysicalIndexLookUpReader {
     /// Go `PushedLimit` (`physicalop.PushedDownLimit`), sunk by
     /// `sinkIntoIndexLookUp` after conversion.
     pub pushed_limit: Option<PushedDownLimit>,
+}
+
+/// Go `physicalop.PhysicalLocalIndexLookUp`: the TiKV-side junction between
+/// an index subtree and the cloned table scan used for the local lookup.
+#[derive(Clone, Debug, Default)]
+pub struct PhysicalLocalIndexLookUp {
+    /// The shared physical base. Its two children are the index subtree and
+    /// the cloned table scan, in that order.
+    pub base: BasePhysicalPlan,
+    /// Go `IndexHandleOffsets`, positions in the index subtree output schema.
+    pub index_handle_offsets: Vec<u32>,
+}
+
+/// Go `FlattenListPushDownPlan`: flatten a unary pushed-down plan leaf first.
+#[must_use]
+pub fn flatten_list_push_down_plan(plan: &PhysicalPlan) -> Vec<PhysicalPlan> {
+    let mut plans = Vec::new();
+    let mut stack = vec![plan];
+    while let Some(current) = stack.pop() {
+        plans.push(current.clone_shallow());
+        for child in current.children().iter().rev() {
+            stack.push(child);
+        }
+    }
+    plans.reverse();
+    plans
+}
+
+/// Go `FlattenTreePushDownPlan`: post-order DFS plus the child-to-parent map
+/// required when a multi-child parent's position is not the child's index + 1.
+#[must_use]
+pub fn flatten_tree_push_down_plan(
+    plan: &PhysicalPlan,
+) -> (Vec<PhysicalPlan>, std::collections::BTreeMap<usize, usize>) {
+    fn flatten(
+        plan: &PhysicalPlan,
+        plans: &mut Vec<PhysicalPlan>,
+        un_natural_orders: &mut std::collections::BTreeMap<usize, usize>,
+    ) {
+        let multiple_children = plan.children().len() > 1;
+        let mut child_indices = Vec::with_capacity(plan.children().len());
+        for child in plan.children() {
+            flatten(child, plans, un_natural_orders);
+            if multiple_children {
+                child_indices.push(plans.len() - 1);
+            }
+        }
+        plans.push(plan.clone_shallow());
+        let parent_index = plans.len() - 1;
+        for child_index in child_indices {
+            if parent_index != child_index + 1 {
+                un_natural_orders.insert(child_index, parent_index);
+            }
+        }
+    }
+
+    let mut plans = Vec::new();
+    let mut un_natural_orders = std::collections::BTreeMap::new();
+    flatten(plan, &mut plans, &mut un_natural_orders);
+    (plans, un_natural_orders)
 }
 
 /// Go `physicalop.PointGetPlan`: one table-handle or unique-index key read.
@@ -2502,6 +2571,8 @@ pub enum PhysicalPlan {
     IndexReader(PhysicalIndexReader),
     /// Go `PhysicalIndexLookUpReader`.
     IndexLookUpReader(PhysicalIndexLookUpReader),
+    /// Go `physicalop.PhysicalLocalIndexLookUp`.
+    LocalIndexLookUp(PhysicalLocalIndexLookUp),
     /// Go `physicalop.PointGetPlan`.
     PointGet(PhysicalPointGet),
     /// Go `physicalop.BatchPointGetPlan`.
@@ -2547,6 +2618,7 @@ impl PhysicalPlan {
             Self::IndexScan(op) => &op.base,
             Self::IndexReader(op) => &op.base,
             Self::IndexLookUpReader(op) => &op.base,
+            Self::LocalIndexLookUp(op) => &op.base,
             Self::PointGet(op) => &op.base,
             Self::BatchPointGet(op) => &op.base,
             Self::IndexMergeReader(op) => &op.base,
@@ -2584,6 +2656,7 @@ impl PhysicalPlan {
             Self::IndexScan(op) => &mut op.base,
             Self::IndexReader(op) => &mut op.base,
             Self::IndexLookUpReader(op) => &mut op.base,
+            Self::LocalIndexLookUp(op) => &mut op.base,
             Self::PointGet(op) => &mut op.base,
             Self::BatchPointGet(op) => &mut op.base,
             Self::IndexMergeReader(op) => &mut op.base,
@@ -3204,11 +3277,19 @@ impl PhysicalPlan {
                 base: base_of(&op.base),
                 index_plan: op.index_plan.clone(),
                 table_plan: op.table_plan.clone(),
+                index_plans: op.index_plans.clone(),
+                index_plans_un_natural_orders: op.index_plans_un_natural_orders.clone(),
+                table_plans: op.table_plans.clone(),
+                common_handle_cols: op.common_handle_cols.clone(),
                 index_lookup_push_down: op.index_lookup_push_down,
                 keep_order: op.keep_order,
                 expect_cnt: op.expect_cnt,
                 paging: op.paging,
                 pushed_limit: op.pushed_limit,
+            }),
+            Self::LocalIndexLookUp(op) => Self::LocalIndexLookUp(PhysicalLocalIndexLookUp {
+                base: base_of(&op.base),
+                index_handle_offsets: op.index_handle_offsets.clone(),
             }),
             Self::PointGet(op) => Self::PointGet(PhysicalPointGet {
                 base: base_of(&op.base),

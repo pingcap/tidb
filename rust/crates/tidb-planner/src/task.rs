@@ -51,12 +51,6 @@
 //!   `base.InvalidTask`. Building plans is `Attach2Task`-batch work;
 //!   [`Task::convert_to_root_task`] refuses for an MPP task rather than
 //!   fabricating a reader.
-//! * `CopTask`'s `ConvertToRootTask` lives in `core/task.go`
-//!   (`convertToRootTaskImpl`) and builds `PhysicalTableReader` /
-//!   `PhysicalIndexReader` / `PhysicalIndexLookUpReader`; refused the same
-//!   way.
-//! * `CopTask.handleRootTaskConds` (`task.go`): `cardinality.Selectivity`
-//!   plus a built `PhysicalSelection`; not ported, named here.
 //!
 //! # Narrowings
 //!
@@ -65,9 +59,9 @@
 //! * `statistics.HistColl` (`TblColHists`) is unported; the fields carrying
 //!   it are absent. Network/scan-width costing that reads them is cost-model
 //!   work, not representation work.
-//! * `PhysPlanPartInfo`, `util.IndexLookUpPushDownByType`,
-//!   `property.PhysicalPropMatchResult` and `PartialOrderMatchResult` are
-//!   unported; their `CopTask` fields are absent by the same rule.
+//! * `PhysPlanPartInfo`, `property.PhysicalPropMatchResult` and
+//!   `PartialOrderMatchResult` are unported; their `CopTask` fields are absent
+//!   by the same rule.
 //! * `StatsInfo.StatsVersion` does not exist on the ported profile, so
 //!   [`CopTask::finish_index_plan`] cannot preserve it; the stats MOVE is
 //!   ported, the version pin is named here.
@@ -295,6 +289,8 @@ pub struct CopTask {
     pub index_plan: Option<Box<PhysicalPlan>>,
     /// Go `TablePlan`.
     pub table_plan: Option<Box<PhysicalPlan>>,
+    /// Go `CommonHandleCols`.
+    pub common_handle_cols: Vec<tidb_expr::column::Column>,
     /// Go `IndexLookUpPushDownBy`: whether a double read should become one
     /// storage-side local index lookup, and which authority requested it.
     pub index_lookup_push_down_by: crate::access_path::IndexLookupPushDownBy,
@@ -322,7 +318,7 @@ pub struct CopTask {
     /// Go `CopTask.IndexJoinInfo`, produced only while this data source is an
     /// index-join inner child.
     pub index_join_info: Option<IndexJoinInfo>,
-    // boundary: `OriginSchema`, `ExtraHandleCol`, `CommonHandleCols`,
+    // boundary: `OriginSchema`, `ExtraHandleCol`,
     // `TblColHists`, `TblCols`,
     // `IdxMergeMatchWithAdvisorySortItems`, `IdxMergePartPlansMatchResults`,
     // `PhysPlanPartInfo`,
@@ -478,11 +474,11 @@ impl CopTask {
         mut self,
         allocator: &crate::plan_base::PlanIdAllocator,
     ) -> Result<Task, PlanError> {
-        let index_plan = self
+        let mut index_plan = self
             .index_plan
             .take()
             .ok_or_else(|| PlanError::internal("BuildIndexLookUpTask without an index half"))?;
-        let table_plan = self
+        let mut table_plan = self
             .table_plan
             .take()
             .ok_or_else(|| PlanError::internal("BuildIndexLookUpTask without a table half"))?;
@@ -503,7 +499,7 @@ impl CopTask {
         );
         base.base.set_stats(table_plan.stats_info().cloned());
         base.base.set_schema(table_plan.schema().cloned());
-        let index_lookup_push_down = if self.index_lookup_push_down_by
+        let mut index_lookup_push_down = if self.index_lookup_push_down_by
             == crate::access_path::IndexLookupPushDownBy::None
         {
             false
@@ -517,10 +513,121 @@ impl CopTask {
         } else {
             true
         };
+        if index_lookup_push_down {
+            fn reset_plan_ids(
+                plan: &mut PhysicalPlan,
+                allocator: &crate::plan_base::PlanIdAllocator,
+            ) {
+                plan.base_mut().base.set_id(allocator.alloc());
+                for child in plan.base_mut().children_mut() {
+                    reset_plan_ids(child, allocator);
+                }
+            }
+
+            fn attach_local_lookup(
+                mut table_subtree: PhysicalPlan,
+                index_subtree: PhysicalPlan,
+                index_handle_offsets: Vec<u32>,
+                allocator: &crate::plan_base::PlanIdAllocator,
+                query_block_offset: i32,
+            ) -> Result<PhysicalPlan, PlanError> {
+                if matches!(table_subtree, PhysicalPlan::TableScan(_)) {
+                    let stats = table_subtree.stats_info().cloned();
+                    let schema = table_subtree.schema().cloned();
+                    let mut base = crate::physical::BasePhysicalPlan::new(
+                        allocator,
+                        "LocalIndexLookUp",
+                        query_block_offset,
+                    );
+                    base.base.set_stats(stats);
+                    base.base.set_schema(schema);
+                    base.set_children(vec![index_subtree, table_subtree]);
+                    return Ok(PhysicalPlan::LocalIndexLookUp(
+                        crate::physical::PhysicalLocalIndexLookUp {
+                            base,
+                            index_handle_offsets,
+                        },
+                    ));
+                }
+                if table_subtree.children().len() != 1 {
+                    return Err(PlanError::internal(
+                        "buildPushDownIndexLookUpPlan requires a unary table plan ending in TableScan",
+                    ));
+                }
+                let child = table_subtree
+                    .base_mut()
+                    .take_children()
+                    .pop()
+                    .expect("the unary table subtree has one child");
+                let replacement = attach_local_lookup(
+                    child,
+                    index_subtree,
+                    index_handle_offsets,
+                    allocator,
+                    query_block_offset,
+                )?;
+                table_subtree.set_children(vec![replacement]);
+                Ok(table_subtree)
+            }
+
+            fn zero_stats(plan: &mut PhysicalPlan) {
+                let stats = plan.stats_info().map(|stats| stats.scale(0.0, 1.0));
+                plan.base_mut().base.set_stats(stats);
+                for child in plan.base_mut().children_mut() {
+                    zero_stats(child);
+                }
+            }
+
+            let rewrite = (|| {
+                let mut cloned_table_plan = table_plan.deep_clone();
+                reset_plan_ids(&mut cloned_table_plan, allocator);
+                let index_handle_offsets = if self.common_handle_cols.is_empty() {
+                    let schema = index_plan.schema().ok_or_else(|| {
+                        PlanError::internal("buildPushDownIndexLookUpPlan requires an index schema")
+                    })?;
+                    let offset = schema
+                        .columns
+                        .iter()
+                        .rposition(|column| {
+                            column.id >= 0
+                                || column.id == crate::logical::data_source::EXTRA_HANDLE_ID
+                        })
+                        .ok_or_else(|| {
+                            PlanError::internal("cannot find handle column in index schema")
+                        })?;
+                    vec![u32::try_from(offset).expect("a schema offset fits in u32")]
+                } else {
+                    Vec::new()
+                };
+                attach_local_lookup(
+                    cloned_table_plan,
+                    index_plan.deep_clone(),
+                    index_handle_offsets,
+                    allocator,
+                    table_plan.query_block_offset(),
+                )
+            })();
+            if let Ok(rewritten) = rewrite {
+                index_plan = Box::new(rewritten);
+                zero_stats(&mut table_plan);
+                base.base.set_stats(index_plan.stats_info().cloned());
+            } else {
+                // Go treats this as an internal assertion/log entry and keeps
+                // the ordinary two-phase lookup plan user-visible.
+                index_lookup_push_down = false;
+            }
+        }
+        let table_plans = crate::physical::flatten_list_push_down_plan(&table_plan);
+        let (index_plans, index_plans_un_natural_orders) =
+            crate::physical::flatten_tree_push_down_plan(&index_plan);
         let reader = PhysicalPlan::IndexLookUpReader(crate::physical::PhysicalIndexLookUpReader {
             base,
             index_plan: Some(index_plan),
             table_plan: Some(table_plan),
+            index_plans,
+            index_plans_un_natural_orders,
+            table_plans,
+            common_handle_cols: self.common_handle_cols,
             index_lookup_push_down,
             keep_order: self.keep_order,
             expect_cnt: self.expect_cnt,
@@ -853,6 +960,230 @@ mod tests {
             tikv_pushdown: None,
             resolved_descriptor: None,
         })
+    }
+
+    fn column_with_id(id: i64) -> tidb_expr::column::Column {
+        let mut column = tidb_expr::column::Column::new(
+            id,
+            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+        );
+        column.id = id;
+        column
+    }
+
+    fn scan_with_schema(
+        allocator: &PlanIdAllocator,
+        tp: &str,
+        schema: tidb_expr::schema::Schema,
+        rows: f64,
+    ) -> PhysicalPlan {
+        let mut base = crate::physical::BasePhysicalPlan::new(allocator, tp, 10);
+        base.base.set_schema(Some(schema));
+        base.base.set_stats(Some(StatsInfo::new(rows, [])));
+        match tp {
+            "TableScan" => PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
+                base,
+                table_id: 1,
+                store_type: crate::physical_table_reader::StoreType::TiKv,
+                ..crate::physical::PhysicalTableScan::default()
+            }),
+            "IndexScan" => PhysicalPlan::IndexScan(crate::physical::PhysicalIndexScan {
+                base,
+                table_id: 1,
+                index_id: 1,
+                ..crate::physical::PhysicalIndexScan::default()
+            }),
+            _ => unreachable!("only scan operators are built by this helper"),
+        }
+    }
+
+    #[test]
+    fn index_lookup_pushdown_builds_and_flattens_the_go_plan_shape() {
+        fn check(reader: &crate::physical::PhysicalIndexLookUpReader, complex: bool) {
+            assert!(reader.index_lookup_push_down);
+            assert!(reader.table_plans.iter().all(|plan| {
+                plan.stats_info()
+                    .is_some_and(|stats| stats.row_count() == 0.0)
+            }));
+
+            let mut ids = std::collections::BTreeSet::new();
+            for plan in reader.table_plans.iter().chain(&reader.index_plans) {
+                assert!(ids.insert(plan.id()), "duplicated plan id {}", plan.id());
+            }
+
+            if complex {
+                assert_eq!(
+                    reader
+                        .table_plans
+                        .iter()
+                        .map(PhysicalPlan::tp)
+                        .collect::<Vec<_>>(),
+                    ["TableScan", "Selection", "Projection"]
+                );
+                assert_eq!(
+                    reader
+                        .index_plans
+                        .iter()
+                        .map(PhysicalPlan::tp)
+                        .collect::<Vec<_>>(),
+                    [
+                        "IndexScan",
+                        "Limit",
+                        "TableScan",
+                        "LocalIndexLookUp",
+                        "Selection",
+                        "Projection"
+                    ]
+                );
+                assert_eq!(
+                    reader.index_plans_un_natural_orders,
+                    std::collections::BTreeMap::from([(1, 3)])
+                );
+            } else {
+                assert_eq!(reader.table_plans[0].tp(), "TableScan");
+                assert_eq!(
+                    reader
+                        .index_plans
+                        .iter()
+                        .map(PhysicalPlan::tp)
+                        .collect::<Vec<_>>(),
+                    ["IndexScan", "TableScan", "LocalIndexLookUp"]
+                );
+                assert_eq!(
+                    reader.index_plans_un_natural_orders,
+                    std::collections::BTreeMap::from([(0, 2)])
+                );
+            }
+
+            let local = reader
+                .index_plans
+                .iter()
+                .find_map(|plan| match plan {
+                    PhysicalPlan::LocalIndexLookUp(local) => Some(local),
+                    _ => None,
+                })
+                .expect("the flattened local lookup");
+            assert_eq!(local.index_handle_offsets, [1]);
+            assert_eq!(local.base.base.query_block_offset(), 10);
+            assert_eq!(local.base.base.schema().expect("lookup schema").len(), 3);
+        }
+
+        let allocator = PlanIdAllocator::new();
+        let table_schema = tidb_expr::schema::Schema::new(vec![
+            column_with_id(1),
+            column_with_id(2),
+            column_with_id(3),
+        ]);
+        let index_schema =
+            tidb_expr::schema::Schema::new(vec![column_with_id(2), column_with_id(1)]);
+
+        let simple = Task::Cop(CopTask {
+            index_plan: Some(Box::new(scan_with_schema(
+                &allocator,
+                "IndexScan",
+                index_schema.clone(),
+                1_000.0,
+            ))),
+            table_plan: Some(Box::new(scan_with_schema(
+                &allocator,
+                "TableScan",
+                table_schema.clone(),
+                1_000.0,
+            ))),
+            index_lookup_push_down_by: crate::access_path::IndexLookupPushDownBy::Hint,
+            ..CopTask::default()
+        })
+        .convert_to_root_task(&allocator)
+        .expect("the simple lookup converts");
+        let Some(PhysicalPlan::IndexLookUpReader(reader)) = simple.plan() else {
+            panic!("an index lookup reader");
+        };
+        check(reader, false);
+        let cloned = simple.plan().expect("reader").deep_clone();
+        let PhysicalPlan::IndexLookUpReader(cloned) = cloned else {
+            panic!("the clone remains a reader");
+        };
+        check(&cloned, false);
+
+        let common_handle = Task::Cop(CopTask {
+            index_plan: Some(Box::new(scan_with_schema(
+                &allocator,
+                "IndexScan",
+                index_schema.clone(),
+                1_000.0,
+            ))),
+            table_plan: Some(Box::new(scan_with_schema(
+                &allocator,
+                "TableScan",
+                table_schema.clone(),
+                1_000.0,
+            ))),
+            common_handle_cols: vec![column_with_id(1), column_with_id(2)],
+            index_lookup_push_down_by: crate::access_path::IndexLookupPushDownBy::Hint,
+            ..CopTask::default()
+        })
+        .convert_to_root_task(&allocator)
+        .expect("the common-handle lookup converts");
+        let Some(PhysicalPlan::IndexLookUpReader(common_handle)) = common_handle.plan() else {
+            panic!("an index lookup reader");
+        };
+        let PhysicalPlan::LocalIndexLookUp(local) = &common_handle.index_plans[2] else {
+            panic!("the local lookup");
+        };
+        assert!(local.index_handle_offsets.is_empty());
+
+        let mut table_scan = scan_with_schema(&allocator, "TableScan", table_schema, 500.0);
+        let mut selection_base =
+            crate::physical::BasePhysicalPlan::new(&allocator, "Selection", 10);
+        selection_base.base.set_schema(table_scan.schema().cloned());
+        selection_base
+            .base
+            .set_stats(Some(StatsInfo::new(200.0, [])));
+        selection_base.set_children(vec![table_scan]);
+        let selection = PhysicalPlan::Selection(crate::physical::PhysicalSelection {
+            base: selection_base,
+            conditions: Vec::new(),
+            from_data_source: true,
+        });
+        let mut projection_base =
+            crate::physical::BasePhysicalPlan::new(&allocator, "Projection", 10);
+        projection_base
+            .base
+            .set_schema(Some(tidb_expr::schema::Schema::new(vec![column_with_id(
+                2,
+            )])));
+        projection_base
+            .base
+            .set_stats(Some(StatsInfo::new(200.0, [])));
+        projection_base.set_children(vec![selection]);
+        table_scan = PhysicalPlan::Projection(crate::physical::PhysicalProjection {
+            base: projection_base,
+            exprs: Vec::new(),
+            calculate_no_delay: false,
+            avoid_column_evaluator: false,
+        });
+
+        let index_scan = scan_with_schema(&allocator, "IndexScan", index_schema, 1_000.0);
+        let mut limit_base = crate::physical::BasePhysicalPlan::new(&allocator, "Limit", 10);
+        limit_base.base.set_schema(index_scan.schema().cloned());
+        limit_base.base.set_stats(Some(StatsInfo::new(1_000.0, [])));
+        limit_base.set_children(vec![index_scan]);
+        let limit = PhysicalPlan::Limit(crate::physical::PhysicalLimit {
+            base: limit_base,
+            ..crate::physical::PhysicalLimit::default()
+        });
+        let complex = Task::Cop(CopTask {
+            index_plan: Some(Box::new(limit)),
+            table_plan: Some(Box::new(table_scan)),
+            index_lookup_push_down_by: crate::access_path::IndexLookupPushDownBy::Hint,
+            ..CopTask::default()
+        })
+        .convert_to_root_task(&allocator)
+        .expect("the complex lookup converts");
+        let Some(PhysicalPlan::IndexLookUpReader(reader)) = complex.plan() else {
+            panic!("an index lookup reader");
+        };
+        check(reader, true);
     }
 
     #[test]
@@ -2038,6 +2369,9 @@ pub fn attach2_task(
         )),
         PhysicalPlan::IndexMergeReader(_) => Err(PlanError::internal(
             "a PhysicalIndexMergeReader is born by index-merge task conversion, never attached",
+        )),
+        PhysicalPlan::LocalIndexLookUp(_) => Err(PlanError::internal(
+            "a PhysicalLocalIndexLookUp is born inside an IndexLookUpReader, never attached",
         )),
         PhysicalPlan::Dml(_) => Err(PlanError::internal(
             "a physical DML root owns its select plan and is never attached as a relational child",

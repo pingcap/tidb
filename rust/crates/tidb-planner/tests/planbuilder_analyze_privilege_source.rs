@@ -259,18 +259,3 @@ fn get_max_write_speed_from_expression_roundtrips_or_rejects() {}
 #[test]
 #[ignore = "go-parity-gap: checkNextGenS3PathWithSem URL rules unported"]
 fn process_next_gen_s3_path_enforces_sem_rules() {}
-
-/// GO PARITY GAP port of `pkg/planner/core/planbuilder_test.go:1227
-/// TestIndexLookUpReaderTryLookUpPushDown`.
-///
-/// go-parity-gap: `PhysicalIndexLookUpReader.IndexLookUpPushDown` +
-/// `FlattenListPushDownPlan`/`FlattenTreePushDownPlan` unported (the
-/// flatten walkers were already recorded as gaps by part13's receipt). Go
-/// pins that after TryLookUpPushDown the table side flattens into
-/// TablePlans with row-count-zeroed stats and unique plan ids, the index
-/// side flattens into three IndexPlans (IndexScan, TableScan, and parent),
-/// `IndexPlansUnNatureOrders == {0: 2}`, and the same holds for the
-/// selection-wrapped and limit-wrapped table-plan variants.
-#[test]
-#[ignore = "go-parity-gap: IndexLookUpPushDown flattening walkers unported"]
-fn index_lookup_reader_try_look_up_push_down_flattens_both_sides() {}

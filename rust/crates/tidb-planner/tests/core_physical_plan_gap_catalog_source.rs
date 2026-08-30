@@ -309,18 +309,6 @@ fn fill_local_cte_counts_reads_tasks_local_to_each_tiflash_address() {}
 fn batch_point_get_prunes_common_handle_duplicate_index_values() {}
 
 /// GO PARITY GAP port of
-/// `pkg/planner/core/operator/physicalop/physical_utils_test.go:40
-/// TestFlattenListPushDownPlan`.
-///
-/// go-parity-gap: `FlattenListPushDownPlan` flattens a linear list top-down —
-/// order pinned as REVERSED stack ([TableReader, Projection, Selection,
-/// Limit] out of Limit->Selection->Projection->TableReader) — but the MPP
-/// push-down-plan flattener lives in the unported physical-utils family.
-#[test]
-#[ignore]
-fn flatten_list_push_down_plan_reverses_a_linear_plan_chain() {}
-
-/// GO PARITY GAP port of
 /// `...physical_utils_test.go:55 TestTryToGetMppHashAggsForMaxMinCount`.
 ///
 /// go-parity-gap: `tryToGetMppHashAggs` generating PhysicalHashAgg variants
@@ -330,18 +318,6 @@ fn flatten_list_push_down_plan_reverses_a_linear_plan_chain() {}
 #[test]
 #[ignore]
 fn try_to_get_mpp_hash_aggs_modes_follow_max_min_count_grouping() {}
-
-/// GO PARITY GAP port of
-/// `...physical_utils_test.go:121 TestFlattenTreePushDownPlan`.
-///
-/// go-parity-gap: `FlattenTreePushDownPlan` DFS-flattens an ARBITRARY tree
-/// (two IndexLookUp branches under nested Limits) returning [IndexScan1,
-/// Projection, Limit2, IndexScan2, TableScan, IndexLookUp2, IndexLookUp1,
-/// Limit1] plus a child-index map {2:6, 3:5} — tree-flattening utility
-/// unported.
-#[test]
-#[ignore]
-fn flatten_tree_push_down_plan_dfs_orders_an_arbitrary_tree_with_index_map() {}
 
 /// GO PARITY GAP port of
 /// `pkg/planner/core/optimizer_test.go:65 TestMPPDecimalConvert`.

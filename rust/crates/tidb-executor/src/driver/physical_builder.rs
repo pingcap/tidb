@@ -903,7 +903,10 @@ fn build_index_reader(
             "a physical index lookup cannot apply its index-side Selection",
         ));
     }
-    if let Some(table_plan) = table_plan {
+    // Go serializes the cloned table subtree through `IndexPlans` after a
+    // successful local lookup rewrite. The retained `TablePlans` then exist
+    // only to show the TiDB-side zero-row branch, so do not lower them again.
+    if let Some(table_plan) = table_plan.filter(|_| !lookup_pushdown) {
         lower_index_lookup_selections(table_plan, &mut source, ctx)?;
     }
     if let Some(limit) = pushed_limit {

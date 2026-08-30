@@ -507,6 +507,7 @@ fn bind_plan_expressions(
         | PhysicalPlan::IndexScan(_)
         | PhysicalPlan::IndexReader(_)
         | PhysicalPlan::IndexLookUpReader(_)
+        | PhysicalPlan::LocalIndexLookUp(_)
         | PhysicalPlan::PointGet(_)
         | PhysicalPlan::BatchPointGet(_)
         | PhysicalPlan::IndexMergeReader(_) => {}
@@ -785,6 +786,9 @@ pub fn rebuild_ranges_for_cached_plan(
             }
         }
         PhysicalPlan::IndexLookUpReader(reader) => {
+            if let Some(index_plan) = reader.index_plans.first_mut() {
+                rebuild_ranges_for_cached_plan(index_plan, context)?;
+            }
             if let Some(index_plan) = reader.index_plan.as_deref_mut() {
                 rebuild_ranges_for_cached_plan(index_plan, context)?;
             }

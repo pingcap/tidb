@@ -631,6 +631,95 @@ fn clone_shallow_keeps_the_node_and_drops_the_children() {
 }
 
 #[test]
+fn flatten_list_push_down_plan_reverses_a_unary_chain() {
+    let reader_base = BasePhysicalPlan::with_id(4, "TableReader", 0);
+    let reader = PhysicalPlan::TableReader(PhysicalTableReader {
+        base: reader_base,
+        ..PhysicalTableReader::default()
+    });
+    let mut projection_base = BasePhysicalPlan::with_id(3, "Projection", 0);
+    projection_base.set_children(vec![reader]);
+    let projection = PhysicalPlan::Projection(PhysicalProjection {
+        base: projection_base,
+        ..PhysicalProjection::default()
+    });
+    let selection = selection(2, projection);
+    let mut limit_base = BasePhysicalPlan::with_id(1, "Limit", 0);
+    limit_base.set_children(vec![selection]);
+    let limit = PhysicalPlan::Limit(PhysicalLimit {
+        base: limit_base,
+        ..PhysicalLimit::default()
+    });
+
+    let flattened = flatten_list_push_down_plan(&limit);
+    assert_eq!(
+        flattened.iter().map(PhysicalPlan::tp).collect::<Vec<_>>(),
+        ["TableReader", "Projection", "Selection", "Limit"]
+    );
+}
+
+#[test]
+fn flatten_tree_push_down_plan_records_non_adjacent_parents() {
+    fn local(id: i32, left: PhysicalPlan, right: PhysicalPlan) -> PhysicalPlan {
+        let mut base = BasePhysicalPlan::with_id(id, "LocalIndexLookUp", 0);
+        base.set_children(vec![left, right]);
+        PhysicalPlan::LocalIndexLookUp(PhysicalLocalIndexLookUp {
+            base,
+            index_handle_offsets: Vec::new(),
+        })
+    }
+
+    let index_scan_1 = PhysicalPlan::IndexScan(PhysicalIndexScan {
+        base: BasePhysicalPlan::with_id(1, "IndexScan", 0),
+        ..PhysicalIndexScan::default()
+    });
+    let mut projection_base = BasePhysicalPlan::with_id(2, "Projection", 0);
+    projection_base.set_children(vec![index_scan_1]);
+    let projection = PhysicalPlan::Projection(PhysicalProjection {
+        base: projection_base,
+        ..PhysicalProjection::default()
+    });
+    let mut limit_2_base = BasePhysicalPlan::with_id(3, "Limit", 0);
+    limit_2_base.set_children(vec![projection]);
+    let limit_2 = PhysicalPlan::Limit(PhysicalLimit {
+        base: limit_2_base,
+        ..PhysicalLimit::default()
+    });
+    let index_scan_2 = PhysicalPlan::IndexScan(PhysicalIndexScan {
+        base: BasePhysicalPlan::with_id(4, "IndexScan", 0),
+        ..PhysicalIndexScan::default()
+    });
+    let table_scan = PhysicalPlan::TableScan(PhysicalTableScan {
+        base: BasePhysicalPlan::with_id(5, "TableScan", 0),
+        ..PhysicalTableScan::default()
+    });
+    let lookup_2 = local(6, index_scan_2, table_scan);
+    let lookup_1 = local(7, limit_2, lookup_2);
+    let mut limit_1_base = BasePhysicalPlan::with_id(8, "Limit", 0);
+    limit_1_base.set_children(vec![lookup_1]);
+    let limit_1 = PhysicalPlan::Limit(PhysicalLimit {
+        base: limit_1_base,
+        ..PhysicalLimit::default()
+    });
+
+    let (flattened, parents) = flatten_tree_push_down_plan(&limit_1);
+    assert_eq!(
+        flattened.iter().map(PhysicalPlan::tp).collect::<Vec<_>>(),
+        [
+            "IndexScan",
+            "Projection",
+            "Limit",
+            "IndexScan",
+            "TableScan",
+            "LocalIndexLookUp",
+            "LocalIndexLookUp",
+            "Limit"
+        ]
+    );
+    assert_eq!(parents, std::collections::BTreeMap::from([(2, 6), (3, 5)]));
+}
+
+#[test]
 fn max_one_row_enumeration_needs_an_orderless_root_property() {
     // `ExhaustPhysicalPlans4LogicalMaxOneRow`: a required order or a
     // TiFlash (MPP) property enumerates nothing; the admitted arm builds
