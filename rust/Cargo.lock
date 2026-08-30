@@ -3863,6 +3863,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-stats-handle-autoanalyze-exec"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "prometheus 0.14.0",
+ "tidb-ast",
+ "tidb-datatype",
+ "tidb-log",
+ "tidb-resolve",
+ "tidb-sqlexec",
+ "tidb-sqlexec-mock",
+ "tidb-stats-handle-logutil",
+ "tidb-stats-handle-util",
+ "tidb-syssession",
+ "tidb-util",
+ "tidb-vardef",
+]
+
+[[package]]
 name = "tidb-stats-handle-cache"
 version = "0.0.0"
 dependencies = [
