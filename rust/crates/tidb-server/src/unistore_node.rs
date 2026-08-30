@@ -465,7 +465,7 @@ pub(crate) fn unistore_cluster_session_stack(
     let (stats, stats_reloader) = crate::real_tikv_node::spawn_node_stats(
         Arc::clone(&catalog),
         opener.clone(),
-        config.schema_lease,
+        config.stats_lease,
         IN_PROCESS_TIMEOUT,
     )
     .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
@@ -526,7 +526,7 @@ pub(crate) fn unistore_cluster_session_stack(
             Arc::new(opener.clone()),
             Arc::clone(&stats),
             IN_PROCESS_TIMEOUT,
-            config.stats_lease,
+            config.stats_lease.slow_save_interval(),
         )),
         Arc::new(crate::cluster_stats_lock_seam::RealClusterStatsLock::new(
             Arc::new(opener.clone()),

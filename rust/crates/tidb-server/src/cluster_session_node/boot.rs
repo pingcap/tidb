@@ -120,7 +120,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
     let (stats, stats_reloader) = crate::real_tikv_node::spawn_node_stats(
         Arc::clone(&catalog),
         authority.transaction_opener(),
-        config.schema_lease,
+        config.stats_lease,
         COPROCESSOR_QUERY_TIMEOUT,
     )
     .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
@@ -237,7 +237,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
             // catalog plus every row of the table, so its requests take the
             // data-plane deadline.
             COPROCESSOR_QUERY_TIMEOUT,
-            config.stats_lease,
+            config.stats_lease.slow_save_interval(),
         )),
         Arc::new(RealClusterStatsLock::new(
             Arc::new(authority.transaction_opener()),

@@ -173,14 +173,14 @@ fn current_stats_targets(catalog: &SharedCatalog) -> Vec<tidb_exec::real_tikv_st
 /// path. Reloads use the same lite shape as Go `StatsCacheImpl.Update` with
 /// `loadAll=false`.
 ///
-/// Ticks at the same cadence [`spawn_catalog_reloader`] uses (`schema_lease`,
-/// not halved -- see the [`tidb_exec::stats_watch`] module doc for why there
-/// is no watch to keep prompt the way the catalog's `lease/2` tick is backed
-/// by an etcd watch: Go's own stats refresh has no such key either).
+/// Uses Go's independent `Performance.StatsLease`: negative disables both
+/// initialization and reload, zero falls back to three seconds, and a
+/// positive value is the exact tick. Stats have no schema-watch nudge; Go's
+/// own refresh is tick-only too.
 pub(crate) fn spawn_node_stats<C, L, P>(
     catalog: Arc<SharedCatalog>,
     opener: tidb_txnkv::transaction::RealOptimisticTransactionOpener<C, L, P>,
-    schema_lease: Duration,
+    stats_lease: crate::node_config::StatsLease,
     timeout: Duration,
 ) -> Result<(Arc<SharedStats>, StatsReloader), StatsReloadError>
 where
@@ -188,35 +188,52 @@ where
     L: tidb_txnkv::transaction::StoreWriteLoader,
     P: tidb_txnkv::transaction::StorePdCapability,
 {
-    let targets = current_stats_targets(&catalog);
-    let (snapshot, loader) = load_stats_snapshot_and_loader(&opener, timeout, &targets)
-        .map_err(|error| StatsReloadError::Spawn(std::io::Error::other(error.to_string())))?;
-    let receipt = tidb_exec::stats_watch::receipt_of(&snapshot);
-    eprintln!(
-        "{{\"event\":\"stats_loaded\",\"loaded\":{},\"pseudo\":{}}}",
-        receipt.loaded, receipt.pseudo
-    );
+    let Some(reload_interval) = stats_lease.reload_interval() else {
+        let shared = Arc::new(
+            SharedStats::new(Default::default())
+                .map_err(|error| StatsReloadError::Spawn(std::io::Error::other(error)))?,
+        );
+        return Ok((shared, StatsReloader::disabled()));
+    };
     let shared = Arc::new(
-        SharedStats::new(snapshot)
+        SharedStats::new(Default::default())
             .map_err(|error| StatsReloadError::Spawn(std::io::Error::other(error)))?,
     );
     // The read closure needs its own handle to compare against what is
     // published; the caller keeps the original for queries.
     let published = Arc::clone(&shared);
-    let reloader = StatsReloader::spawn(
+    let mut loader = None;
+    let reloader = StatsReloader::spawn_with_initial_pass(
         Arc::clone(&shared),
-        schema_lease,
+        reload_interval,
         Box::new(move || {
             let shared = &published;
+            let targets = current_stats_targets(&catalog);
+            if loader.is_none() {
+                let (snapshot, located) =
+                    load_stats_snapshot_and_loader(&opener, timeout, &targets)
+                        .map_err(|error| error.to_string())?;
+                loader = Some(located);
+                let receipt = tidb_exec::stats_watch::receipt_of(&snapshot);
+                eprintln!(
+                    "{{\"event\":\"stats_loaded\",\"loaded\":{},\"pseudo\":{}}}",
+                    receipt.loaded, receipt.pseudo
+                );
+                return Ok(Some(snapshot));
+            }
             // Go `Handle.Update`'s tick (`pkg/statistics/handle/update.go`):
             // ONE scan of `mysql.stats_meta` decides. Every version equal to
             // what is published -- and the tracked set unchanged -- means the
             // expensive per-table reads (histograms, buckets, top-n, the
             // catalog they are located through) stay untouched this pass; a
             // moved or new version falls back to the lite snapshot load.
-            let targets = current_stats_targets(&catalog);
             let ids: Vec<i64> = targets.iter().map(|target| target.table.id).collect();
-            match load_stats_meta_versions(&opener, timeout, &loader, &ids) {
+            match load_stats_meta_versions(
+                &opener,
+                timeout,
+                loader.as_ref().expect("initial pass located stats tables"),
+                &ids,
+            ) {
                 Ok(versions) => {
                     if stats_snapshot_unchanged_since(shared.load().as_ref(), &versions, &targets) {
                         Ok(None)

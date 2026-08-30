@@ -419,13 +419,44 @@ pub struct StatsReloader {
 }
 
 impl StatsReloader {
+    /// A lifecycle guard with no worker, used when Go's stats lease is
+    /// negative and `UpdateTableStatsLoop` deliberately skips
+    /// `loadStatsWorker`.
+    #[must_use]
+    pub fn disabled() -> Self {
+        Self {
+            signal: Arc::new((Mutex::new(StatsReloadSignal::default()), Condvar::new())),
+            stats: Arc::new(StatsReloadCounters::default()),
+            worker: None,
+        }
+    }
+
     /// Starts the reload thread ticking every `interval`, publishing into
     /// `shared` whenever a pass's read reports a snapshot that differs from
     /// the one currently published.
     pub fn spawn(
         shared: Arc<SharedStats>,
         interval: Duration,
+        read: StatsReloadRead,
+    ) -> Result<Self, StatsReloadError> {
+        Self::spawn_impl(shared, interval, read, false)
+    }
+
+    /// Starts the reload thread with one immediate pass before its first
+    /// tick, matching Go's `loadStatsWorker` call to `initStats`.
+    pub fn spawn_with_initial_pass(
+        shared: Arc<SharedStats>,
+        interval: Duration,
+        read: StatsReloadRead,
+    ) -> Result<Self, StatsReloadError> {
+        Self::spawn_impl(shared, interval, read, true)
+    }
+
+    fn spawn_impl(
+        shared: Arc<SharedStats>,
+        interval: Duration,
         mut read: StatsReloadRead,
+        initial_pass: bool,
     ) -> Result<Self, StatsReloadError> {
         if interval.is_zero() {
             return Err(StatsReloadError::ZeroInterval);
@@ -438,6 +469,9 @@ impl StatsReloader {
             .name("stats-reloader".to_owned())
             .spawn(move || {
                 let (lock, condvar) = &*worker_signal;
+                if initial_pass {
+                    run_one_stats_reload_pass(&shared, read.as_mut(), &worker_stats);
+                }
                 loop {
                     // Waiting on the condvar rather than sleeping is what
                     // makes shutdown prompt: a stop does not wait out the
@@ -759,6 +793,36 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(error, StatsReloadError::ZeroInterval));
+    }
+
+    #[test]
+    fn a_negative_go_lease_has_no_reload_worker() {
+        let mut reloader = StatsReloader::disabled();
+        assert_eq!(reloader.stats(), StatsReloadStats::default());
+        reloader.shutdown().unwrap();
+        assert_eq!(reloader.stats(), StatsReloadStats::default());
+    }
+
+    #[test]
+    fn go_load_worker_runs_initial_pass_before_first_tick() {
+        let previous_quota = tidb_vardef::STATS_CACHE_MEM_QUOTA
+            .swap(1024 * 1024, std::sync::atomic::Ordering::SeqCst);
+        let shared = Arc::new(shared_stats(StatsSnapshot::new()));
+        let (sender, receiver) = mpsc::channel();
+        let mut reloader = StatsReloader::spawn_with_initial_pass(
+            Arc::clone(&shared),
+            Duration::from_secs(60),
+            Box::new(move || {
+                sender.send(()).unwrap();
+                Ok(None)
+            }),
+        )
+        .unwrap();
+        receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+        reloader.shutdown().unwrap();
+        assert_eq!(reloader.stats().passes, 1);
+        tidb_vardef::STATS_CACHE_MEM_QUOTA
+            .store(previous_quota, std::sync::atomic::Ordering::SeqCst);
     }
 
     #[test]

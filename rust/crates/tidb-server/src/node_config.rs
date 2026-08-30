@@ -151,6 +151,39 @@ pub enum StoreKind {
     Unistore,
 }
 
+/// Go `Performance.StatsLease` after duration parsing.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StatsLease {
+    /// A negative lease: do not initialize or periodically load statistics.
+    Disabled,
+    /// A zero lease: run the loader with Go's three-second fallback.
+    Zero,
+    /// A positive lease: initialize and reload at this exact interval.
+    Positive(Duration),
+}
+
+impl StatsLease {
+    /// The interval used by Go's `loadStatsWorker`, or no worker for a
+    /// negative lease.
+    #[must_use]
+    pub const fn reload_interval(self) -> Option<Duration> {
+        match self {
+            Self::Disabled => None,
+            Self::Zero => Some(Duration::from_secs(3)),
+            Self::Positive(interval) => Some(interval),
+        }
+    }
+
+    /// The positive-only lease used by Go's slow-save version fence.
+    #[must_use]
+    pub const fn slow_save_interval(self) -> Duration {
+        match self {
+            Self::Positive(interval) => interval,
+            Self::Disabled | Self::Zero => Duration::ZERO,
+        }
+    }
+}
+
 /// Complete startup input consumed by the concurrent SQL node.
 #[derive(Clone, Debug, PartialEq)]
 pub struct NodeConfig {
@@ -232,10 +265,9 @@ pub struct NodeConfig {
     /// re-reads the catalog every `schema_lease / 2`, so it is never more than
     /// one lease behind the cluster's schema version.
     pub schema_lease: Duration,
-    /// Effective positive Go `Performance.StatsLease` for the slow
-    /// statistics-save version fence. Zero means Go's non-positive lease is
-    /// disabled.
-    pub stats_lease: Duration,
+    /// Go `Performance.StatsLease`, retaining the negative/zero distinction
+    /// that controls whether and how `loadStatsWorker` starts.
+    pub stats_lease: StatsLease,
     /// Server certificate for inbound TLS on the MySQL port (TiDB's
     /// `[security] ssl-cert`). `None` with [`Self::auto_tls`] set generates a
     /// self-signed pair instead.
@@ -478,18 +510,21 @@ fn parse_file_schema_lease(value: &str) -> Result<Duration, NodeConfigError> {
     ))
 }
 
-fn parse_stats_lease(value: &str) -> Result<Duration, NodeConfigError> {
+fn parse_stats_lease(value: &str) -> Result<StatsLease, NodeConfigError> {
     let nanos = serde_json::from_value::<tidb_config::configtypes::Duration>(
         serde_json::Value::String(value.to_owned()),
     )
     .map(|duration| duration.0)
     .map_err(|error| invalid("performance.stats-lease", &error.to_string()))?;
-    if nanos <= 0 {
-        return Ok(Duration::ZERO);
+    if nanos < 0 {
+        return Ok(StatsLease::Disabled);
     }
-    Ok(Duration::from_nanos(
+    if nanos == 0 {
+        return Ok(StatsLease::Zero);
+    }
+    Ok(StatsLease::Positive(Duration::from_nanos(
         u64::try_from(nanos).expect("nonnegative i64 fits u64"),
-    ))
+    )))
 }
 
 fn nonempty(value: String) -> Option<String> {
@@ -1628,7 +1663,7 @@ mod tests {
 
     use super::{
         encoded_spill_path_for_identity, parse_column_descriptor, parse_stats_lease,
-        ConfiguredReadColumnKind, NodeConfig, NodeConfigError, StoreKind,
+        ConfiguredReadColumnKind, NodeConfig, NodeConfigError, StatsLease, StoreKind,
     };
 
     #[test]
@@ -2023,17 +2058,25 @@ mod tests {
         assert_eq!(projected["store"], "tikv");
         // Go's config default: `Instance.MaxConnections` is 0 (unlimited).
         assert_eq!(projected["instance"]["max_connections"], 0);
-        assert_eq!(config.stats_lease, Duration::from_secs(3));
+        assert_eq!(
+            config.stats_lease,
+            StatsLease::Positive(Duration::from_secs(3))
+        );
     }
 
     #[test]
     fn stats_lease_uses_go_duration_parsing_and_allows_zero() {
         assert_eq!(
             parse_stats_lease("1500ms").unwrap(),
-            Duration::from_millis(1500)
+            StatsLease::Positive(Duration::from_millis(1500))
         );
-        assert_eq!(parse_stats_lease("0s").unwrap(), Duration::ZERO);
-        assert_eq!(parse_stats_lease("-1s").unwrap(), Duration::ZERO);
+        assert_eq!(parse_stats_lease("0s").unwrap(), StatsLease::Zero);
+        assert_eq!(parse_stats_lease("-1s").unwrap(), StatsLease::Disabled);
+        assert_eq!(
+            parse_stats_lease("0s").unwrap().reload_interval(),
+            Some(Duration::from_secs(3))
+        );
+        assert_eq!(parse_stats_lease("-1s").unwrap().reload_interval(), None);
     }
 
     #[test]

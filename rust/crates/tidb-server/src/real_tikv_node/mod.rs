@@ -325,7 +325,7 @@ impl RealTiKvSessionFactory {
                 let (stats, stats_reloader) = spawn_node_stats(
                     Arc::clone(&catalog),
                     authority.transaction_opener(),
-                    config.schema_lease,
+                    config.stats_lease,
                     PRODUCTION_CONTROL_PLANE_TIMEOUT,
                 )
                 .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
@@ -1864,7 +1864,7 @@ pub(crate) fn connect_loaded_catalog_authority(
                     let (stats, stats_reloader) = spawn_node_stats(
                         Arc::clone(&catalog),
                         authority.transaction_opener(),
-                        config.schema_lease,
+                        config.stats_lease,
                         PRODUCTION_CONTROL_PLANE_TIMEOUT,
                     )
                     .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
