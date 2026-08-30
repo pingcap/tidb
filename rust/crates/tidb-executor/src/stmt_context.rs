@@ -571,6 +571,8 @@ pub struct StmtContext {
     always_keep_join_key: bool,
     /// Go `SessionVars.EnableUnsafeSubstitute`.
     enable_unsafe_substitute: bool,
+    /// Go `SessionVars.EnableSemiJoinRewrite`.
+    enable_semi_join_rewrite: bool,
     /// Go `SessionVars.GetMaxExecutionTime()`, in milliseconds.
     max_execution_time_ms: u64,
     /// Go `StmtCtx.IsSyncStatsFailed`.
@@ -811,6 +813,7 @@ impl StmtContext {
             opt_index_prune_threshold: 20,
             always_keep_join_key: tidb_vardef::defaults::DEF_OPT_ALWAYS_KEEP_JOIN_KEY,
             enable_unsafe_substitute: false,
+            enable_semi_join_rewrite: tidb_vardef::defaults::DEF_OPT_ENABLE_SEMI_JOIN_REWRITE,
             max_execution_time_ms: 0,
             sync_stats_failed: Arc::default(),
             operator_num: Arc::default(),
@@ -1088,6 +1091,13 @@ impl StmtContext {
         self
     }
 
+    /// Sets `@@tidb_opt_enable_semi_join_rewrite` for this statement.
+    #[must_use]
+    pub const fn with_enable_semi_join_rewrite(mut self, enable: bool) -> Self {
+        self.enable_semi_join_rewrite = enable;
+        self
+    }
+
     /// Attaches the AES mode selected by this session for the statement.
     #[must_use]
     pub fn with_block_encryption_mode(mut self, mode: tidb_expr::BlockEncryptionMode) -> Self {
@@ -1157,6 +1167,11 @@ impl StmtContext {
     /// Returns `@@tidb_enable_unsafe_substitute`.
     pub const fn enable_unsafe_substitute(&self) -> bool {
         self.enable_unsafe_substitute
+    }
+
+    /// Returns `@@tidb_opt_enable_semi_join_rewrite`.
+    pub const fn enable_semi_join_rewrite(&self) -> bool {
+        self.enable_semi_join_rewrite
     }
 
     /// Go caps synchronous statistics loading by `max_execution_time` when

@@ -1315,6 +1315,7 @@ fn optimize_built_logical(
         opt_index_prune_threshold: ctx.opt_index_prune_threshold(),
         always_keep_join_key: ctx.always_keep_join_key(),
         enable_unsafe_substitute: ctx.enable_unsafe_substitute(),
+        enable_semi_join_rewrite: ctx.enable_semi_join_rewrite(),
         join_reorder_threshold: ctx.join_reorder_threshold(),
         advanced_join_reorder: ctx.advanced_join_reorder(),
         cartesian_join_order_threshold: ctx.cartesian_join_order_threshold(),

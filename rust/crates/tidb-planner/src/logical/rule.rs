@@ -433,8 +433,8 @@ impl RuleId {
                 Some(&super::rule_outer_join_to_semi_join::OuterJoinToSemiJoin)
             }
             Self::GcSubstituter => Some(&super::rule_generate_column_substitute::GcSubstituter),
+            Self::SemiJoinRewriter => Some(&super::rule_semi_join_rewrite::SemiJoinRewriter),
             Self::DecorrelateSolver
-            | Self::SemiJoinRewriter
             | Self::SkewDistinctAggRewriter
             | Self::FullTextIndexResolverWhere
             | Self::ConvertOuterToInnerJoin
@@ -614,6 +614,8 @@ pub struct RuleContext<'a> {
     pub always_keep_join_key: bool,
     /// Go `SessionVars.EnableUnsafeSubstitute`.
     pub enable_unsafe_substitute: bool,
+    /// Go `SessionVars.EnableSemiJoinRewrite`.
+    pub enable_semi_join_rewrite: bool,
     /// Go `SessionVars.TiDBOptJoinReorderThreshold`.
     pub join_reorder_threshold: i32,
     /// Go `SessionVars.TiDBOptEnableAdvancedJoinReorder`.
