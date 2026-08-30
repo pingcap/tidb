@@ -134,8 +134,8 @@ pub struct ClusterAnalyzeReport {
     pub predicate_columns_empty: bool,
     /// Nonfatal pinned-Go `saveAnalyzeOptions` failure, if any.
     pub option_save_warning: Option<String>,
-    /// Nonfatal pinned-Go global-statistics merge warning, if any.
-    pub global_stats_warning: Option<(u16, String)>,
+    /// Nonfatal pinned-Go global-statistics merge warnings.
+    pub global_stats_warnings: Vec<(u16, String)>,
     /// Whether Go ignores explicit partition options in dynamic mode.
     pub ignored_partition_overrides: bool,
     /// Whether stats v2 expanded an index-targeted statement to the normal
@@ -609,7 +609,7 @@ pub fn commit_cluster_analyze<C: StoreWriteClient, L: StoreWriteLoader, P: Store
         topn_count: 0,
         predicate_columns_empty: false,
         option_save_warning: None,
-        global_stats_warning: None,
+        global_stats_warnings: Vec::new(),
         ignored_partition_overrides: false,
         collected_all_for_index_target: false,
         analyzed_column_ids: Vec::new(),
@@ -630,24 +630,35 @@ pub fn commit_cluster_analyze<C: StoreWriteClient, L: StoreWriteLoader, P: Store
         && resolved.partitioned
         && resolved.statement.dynamic_partition_prune
     {
-        if let Err(error) = commit_cluster_global_stats(
-            opener,
-            resolved,
-            &mut report,
-            timeout,
-            stats_lease,
-            killer,
-            record_global_history,
-        ) {
-            match error {
-                ClusterAnalyzeError::MissingPartitionStats(_) => {
-                    report.global_stats_warning = Some((8243, error.to_string()));
-                }
-                ClusterAnalyzeError::MissingPartitionItemStats(_) => {
-                    report.global_stats_warning = Some((8244, error.to_string()));
-                }
-                _ => return Err(error),
-            }
+        let column_ids = report.analyzed_column_ids.clone();
+        let index_ids = report.analyzed_index_ids.clone();
+        if !column_ids.is_empty() {
+            let result = commit_cluster_global_stats(
+                opener,
+                resolved,
+                &mut report,
+                &column_ids,
+                &[],
+                timeout,
+                stats_lease,
+                killer,
+                record_global_history,
+            );
+            record_global_stats_result(&mut report.global_stats_warnings, result);
+        }
+        for index_id in index_ids {
+            let result = commit_cluster_global_stats(
+                opener,
+                resolved,
+                &mut report,
+                &[],
+                &[index_id],
+                timeout,
+                stats_lease,
+                killer,
+                record_global_history,
+            );
+            record_global_stats_result(&mut report.global_stats_warnings, result);
         }
     }
     let independent_options = &resolved
@@ -669,6 +680,26 @@ pub fn commit_cluster_analyze<C: StoreWriteClient, L: StoreWriteLoader, P: Store
     }
     report.ignored_partition_overrides = resolved.ignored_partition_overrides;
     Ok(report)
+}
+
+fn record_global_stats_result(
+    warnings: &mut Vec<(u16, String)>,
+    result: Result<(), ClusterAnalyzeError>,
+) {
+    let Err(error) = result else {
+        return;
+    };
+    match error {
+        ClusterAnalyzeError::MissingPartitionStats(_) => {
+            warnings.push((8243, error.to_string()));
+        }
+        ClusterAnalyzeError::MissingPartitionItemStats(_) => {
+            warnings.push((8244, error.to_string()));
+        }
+        // Pinned `AnalyzeExec.handleGlobalStats` records the failed merge job
+        // and continues; the ANALYZE statement itself still succeeds.
+        _ => {}
+    }
 }
 
 fn merge_analyze_report(report: &mut ClusterAnalyzeReport, next: ClusterAnalyzeReport) {
@@ -695,6 +726,8 @@ fn commit_cluster_global_stats<C: StoreWriteClient, L: StoreWriteLoader, P: Stor
     opener: &RealOptimisticTransactionOpener<C, L, P>,
     resolved: &ResolvedClusterAnalyze,
     report: &mut ClusterAnalyzeReport,
+    column_ids: &[i64],
+    index_ids: &[i64],
     timeout: Duration,
     stats_lease: Duration,
     killer: &SqlKiller,
@@ -746,8 +779,8 @@ fn commit_cluster_global_stats<C: StoreWriteClient, L: StoreWriteLoader, P: Stor
                 definitions
                     .iter()
                     .map(|definition| (definition.id, definition.name.original().to_owned())),
-                !report.analyzed_column_ids.is_empty(),
-                !report.analyzed_index_ids.is_empty(),
+                !column_ids.is_empty(),
+                !index_ids.is_empty(),
             )?;
             let total_count = partitions.iter().fold(0_i64, |total, partition| {
                 total.wrapping_add(partition.row_count)
@@ -761,8 +794,8 @@ fn commit_cluster_global_stats<C: StoreWriteClient, L: StoreWriteLoader, P: Stor
                     &loader,
                     Some(&chrono::Local),
                     &partitions,
-                    &report.analyzed_column_ids,
-                    &report.analyzed_index_ids,
+                    column_ids,
+                    index_ids,
                     &column_types,
                     &column_names,
                     &index_names,
@@ -775,8 +808,8 @@ fn commit_cluster_global_stats<C: StoreWriteClient, L: StoreWriteLoader, P: Stor
                     &loader,
                     Some(zone),
                     &partitions,
-                    &report.analyzed_column_ids,
-                    &report.analyzed_index_ids,
+                    column_ids,
+                    index_ids,
                     &column_types,
                     &column_names,
                     &index_names,
@@ -793,8 +826,8 @@ fn commit_cluster_global_stats<C: StoreWriteClient, L: StoreWriteLoader, P: Stor
                         &loader,
                         Some(&zone),
                         &partitions,
-                        &report.analyzed_column_ids,
-                        &report.analyzed_index_ids,
+                        column_ids,
+                        index_ids,
                         &column_types,
                         &column_names,
                         &index_names,
@@ -832,8 +865,8 @@ fn commit_cluster_global_stats<C: StoreWriteClient, L: StoreWriteLoader, P: Stor
                 SessionTimeZone::Local => merge_global_items(
                     Some(&chrono::Local),
                     &partitions,
-                    &report.analyzed_column_ids,
-                    &report.analyzed_index_ids,
+                    column_ids,
+                    index_ids,
                     &column_types,
                     &column_names,
                     &index_names,
@@ -845,8 +878,8 @@ fn commit_cluster_global_stats<C: StoreWriteClient, L: StoreWriteLoader, P: Stor
                 SessionTimeZone::Named(zone) => merge_global_items(
                     Some(zone),
                     &partitions,
-                    &report.analyzed_column_ids,
-                    &report.analyzed_index_ids,
+                    column_ids,
+                    index_ids,
                     &column_types,
                     &column_names,
                     &index_names,
@@ -862,8 +895,8 @@ fn commit_cluster_global_stats<C: StoreWriteClient, L: StoreWriteLoader, P: Stor
                     merge_global_items(
                         Some(&zone),
                         &partitions,
-                        &report.analyzed_column_ids,
-                        &report.analyzed_index_ids,
+                        column_ids,
+                        index_ids,
                         &column_types,
                         &column_names,
                         &index_names,
@@ -1616,7 +1649,7 @@ fn commit_cluster_analyze_target<C: StoreWriteClient, L: StoreWriteLoader, P: St
         topn_count: write.topn_count,
         predicate_columns_empty,
         option_save_warning: None,
-        global_stats_warning: None,
+        global_stats_warnings: Vec::new(),
         ignored_partition_overrides: false,
         collected_all_for_index_target: statement.index_names.is_some(),
         analyzed_column_ids: report.stats.columns.iter().map(|item| item.id).collect(),
@@ -1709,7 +1742,7 @@ fn commit_cluster_independent_index<
         topn_count: write.topn_count,
         predicate_columns_empty: false,
         option_save_warning: None,
-        global_stats_warning: None,
+        global_stats_warnings: Vec::new(),
         ignored_partition_overrides: false,
         collected_all_for_index_target: false,
         analyzed_column_ids: Vec::new(),
@@ -2407,5 +2440,30 @@ mod tests {
         )
         .expect_err("both worker errors are returned");
         assert_eq!(error.to_string(), "io failure\ncpu failure");
+    }
+
+    #[test]
+    fn global_merge_failures_do_not_fail_analyze_and_missing_stats_accumulate_warnings() {
+        let mut warnings = Vec::new();
+        super::record_global_stats_result(
+            &mut warnings,
+            Err(ClusterAnalyzeError::Other("storage failed".to_owned())),
+        );
+        assert!(warnings.is_empty(), "ordinary merge errors stay job-local");
+
+        super::record_global_stats_result(
+            &mut warnings,
+            Err(ClusterAnalyzeError::MissingPartitionStats("p0".to_owned())),
+        );
+        super::record_global_stats_result(
+            &mut warnings,
+            Err(ClusterAnalyzeError::MissingPartitionItemStats(
+                "p1 index i".to_owned(),
+            )),
+        );
+        assert_eq!(
+            warnings.iter().map(|warning| warning.0).collect::<Vec<_>>(),
+            vec![8243, 8244]
+        );
     }
 }

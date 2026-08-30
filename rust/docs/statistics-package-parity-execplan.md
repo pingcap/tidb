@@ -178,6 +178,9 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - Observation: pinned global-statistics storage is a sequence of independent item transactions. It logs a failed item, continues with later histograms, and returns the final attempted write's result; a later success therefore clears an earlier error. Rust first stopped at the first error and then incorrectly retained the last failure seen.
   Evidence: pinned `WriteGlobalStatsToStorage` assigns the named `err` in every loop iteration without returning early; the Rust regression proves every item is attempted, successful receipts remain visible, a final success returns success, and a final failure is returned.
 
+- Observation: Go schedules one global merge job for the complete column group and one separate job for each index, and `AnalyzeExec.handleGlobalStats` never returns those job errors to the ANALYZE statement. Missing-stat errors still append 8243/8244 warnings before returning, so multiple groups may add multiple warnings.
+  Evidence: pinned `handleGlobalStats` groups by `(tableID,indexID)`, calls `MergePartitionStats2GlobalStatsByTableID` once per map entry, finishes each job with its error, and returns nil. Rust previously combined columns and indexes into one merge, failed ANALYZE on ordinary merge/storage errors, and retained only one missing-stat warning.
+
 - Observation: `tidb_merge_partition_stats_concurrency` controls only TopN candidate probing, with a maximum batch of 256 partitions; the histogram merge remains a later single merge over the mutated partition histograms.
   Evidence: pinned `mergeGlobalStatsTopN` and `MergeGlobalStatsTopNByConcurrency`; Rust now snapshots the session value and produces the same TopN and histogram receipt at concurrency one and two.
 
@@ -313,6 +316,8 @@ Revision note (2026-08-29): moved the empty-TopN fast path from Rust's exported 
 Revision note (2026-08-29): corrected async global worker failure propagation so simultaneous IO and CPU failures are joined in pinned Go order, including CPU panics, and removed Rust-only panic-message prefixes.
 
 Revision note (2026-08-29): corrected global item persistence return semantics after re-reading the Go loop: every item is still attempted independently, but the result is the final attempted write rather than the last failure retained across later successes.
+
+Revision note (2026-08-29): split dynamic global merging into Go's complete-column group plus one group per index, made ordinary group failures job-local instead of statement-fatal, and accumulated every missing-stat warning for session delivery.
 
 Revision note (2026-08-29): fixed the existing `SHOW STATS_META` production path before expanding the SHOW family; the new regression was observed failing with pseudo/global rows before the fix and passing afterward.
 

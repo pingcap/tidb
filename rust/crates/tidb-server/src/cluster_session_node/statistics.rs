@@ -192,7 +192,7 @@ impl ClusterServerSession {
             if let Some(warning) = &report.option_save_warning {
                 self.session.append_routed_warning(1105, warning.clone());
             }
-            if let Some((code, warning)) = &report.global_stats_warning {
+            for (code, warning) in &report.global_stats_warnings {
                 self.session.append_routed_warning(*code, warning.clone());
             }
             eprintln!(
