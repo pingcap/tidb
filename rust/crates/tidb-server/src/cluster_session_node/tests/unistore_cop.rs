@@ -100,6 +100,22 @@ fn auto_analyze_priority_queue_uses_shared_stats_ddl_and_ordinary_analyze_path()
     let (stack, _users) =
         cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
     let factory = Arc::new(stack.factory);
+    factory
+        .campaign_stats_owner()
+        .expect("stats owner campaigns");
+    let owner_deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while !factory
+        .stats_owner
+        .as_ref()
+        .expect("stats owner")
+        .is_owner()
+    {
+        assert!(
+            std::time::Instant::now() < owner_deadline,
+            "statistics ownership was not acquired"
+        );
+        std::thread::yield_now();
+    }
     let mut session = factory
         .open_session(session_context(140))
         .expect("session opens");
@@ -107,7 +123,7 @@ fn auto_analyze_priority_queue_uses_shared_stats_ddl_and_ordinary_analyze_path()
     rows(&mut session, "CREATE TABLE queue_analyze (a INT)");
     rows(&mut session, "CREATE TABLE queue_drop (a INT)");
     let values = (0..1_000)
-        .map(|value| format!("({value})"))
+        .map(|_| "(1)".to_owned())
         .collect::<Vec<_>>()
         .join(",");
     rows(
@@ -142,6 +158,7 @@ fn auto_analyze_priority_queue_uses_shared_stats_ddl_and_ordinary_analyze_path()
         .id;
     drop(catalog);
 
+    let refresher = factory.auto_analyze_refresher(Duration::ZERO);
     let queue = factory.auto_analyze_priority_queue(Duration::ZERO);
     queue.initialize().expect("priority queue initializes");
     assert_eq!(queue.len().unwrap(), 2);
@@ -151,13 +168,19 @@ fn auto_analyze_priority_queue_uses_shared_stats_ddl_and_ordinary_analyze_path()
     assert_eq!(snapshot.current_jobs[0].table_id, analyze_id);
     assert_ne!(snapshot.current_jobs[0].table_id, dropped_id);
 
-    let mut job = queue.pop().unwrap();
-    assert_eq!(job.table_id(), analyze_id);
-    let validation = job.validate_and_prepare();
-    assert!(validation.valid, "job validation failed: {validation:?}");
-    assert!(job.analyze(1));
-    assert!(queue.running_jobs().is_empty());
-    queue.close();
+    factory.handle_auto_analyze_tick(true, Duration::ZERO);
+    let refresher = refresher
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    refresher.wait_auto_analyze_finished();
+    assert!(refresher.running_jobs().is_empty());
+    assert_eq!(refresher.len(), 0);
+    drop(refresher);
+
+    factory.handle_auto_analyze_tick(false, Duration::ZERO);
+    assert!(!queue.is_initialized());
+    factory.handle_auto_analyze_tick(true, Duration::ZERO);
+    assert!(queue.is_initialized());
 }
 
 /// Pinned DDL subscriber `ActionCreateTable`, `ActionTruncateTable`, and
@@ -1055,6 +1078,23 @@ fn analyze_job_cleanup_worker_uses_gos_positive_lease_gate_and_stops() {
         Duration::from_secs(60),
     ));
     assert!(factory.analyze_jobs_cleanup_worker.get().is_some());
+    drop(factory);
+}
+
+#[test]
+fn auto_analyze_worker_uses_gos_positive_lease_gate_and_stops() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let factory = Arc::new(stack.factory);
+    factory.start_auto_analyze_worker(crate::node_config::StatsLease::Zero, true);
+    assert!(factory.auto_analyze_worker.get().is_none());
+    factory.start_auto_analyze_worker(crate::node_config::StatsLease::Disabled, true);
+    assert!(factory.auto_analyze_worker.get().is_none());
+    factory.start_auto_analyze_worker(
+        crate::node_config::StatsLease::Positive(Duration::from_secs(60)),
+        true,
+    );
+    assert!(factory.auto_analyze_worker.get().is_some());
     drop(factory);
 }
 

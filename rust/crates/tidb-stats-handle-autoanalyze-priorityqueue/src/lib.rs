@@ -223,6 +223,10 @@ pub trait AnalysisJobContext {
         sql: &str,
         arguments: &[String],
     ) -> bool;
+
+    /// Live Go `vardef.AutoAnalyzePartitionBatchSize` read when a dynamic
+    /// partition job begins execution.
+    fn auto_analyze_partition_batch_size(&self) -> usize;
 }
 
 /// Go's statistics handle, session pool, and latest InfoSchema as one queue
@@ -407,15 +411,11 @@ impl AnalysisJob {
 
     /// Go `Analyze` for all three concrete job types.
     #[must_use]
-    pub fn analyze<C: AnalysisJobContext + ?Sized>(
-        &self,
-        context: &C,
-        partition_batch_size: usize,
-    ) -> bool {
+    pub fn analyze<C: AnalysisJobContext + ?Sized>(&self, context: &C) -> bool {
         match self {
             Self::NonPartitioned(job) => job.analyze(context),
             Self::StaticPartitioned(job) => job.analyze(context),
-            Self::DynamicPartitioned(job) => job.analyze(context, partition_batch_size),
+            Self::DynamicPartitioned(job) => job.analyze(context),
         }
     }
 }
@@ -911,13 +911,11 @@ impl RunningAnalysisJob {
 
     /// Go `Analyze`, including the registered success/failure hook.
     #[must_use]
-    pub fn analyze(self, partition_batch_size: usize) -> bool {
+    pub fn analyze(self) -> bool {
         let Some(queue) = self.queue.upgrade() else {
             return false;
         };
-        let success = self
-            .job
-            .analyze(queue.source.as_ref(), partition_batch_size);
+        let success = self.job.analyze(queue.source.as_ref());
         if success {
             queue.finish_success(self.job.table_id());
         } else {
@@ -2204,11 +2202,8 @@ impl DynamicPartitionedTableAnalysisJob {
         )
     }
 
-    fn analyze<C: AnalysisJobContext + ?Sized>(
-        &self,
-        context: &C,
-        partition_batch_size: usize,
-    ) -> bool {
+    fn analyze<C: AnalysisJobContext + ?Sized>(&self, context: &C) -> bool {
+        let partition_batch_size = context.auto_analyze_partition_batch_size();
         assert_ne!(partition_batch_size, 0, "auto analyze partition batch size");
         if self.partition_index_ids.is_empty() {
             for partitions in self.partition_names.chunks(partition_batch_size) {
@@ -2533,6 +2528,10 @@ mod tests {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
         }
+
+        fn auto_analyze_partition_batch_size(&self) -> usize {
+            2
+        }
     }
 
     #[test]
@@ -2678,7 +2677,7 @@ mod tests {
         assert!(queue.is_empty().unwrap());
         assert_eq!(queue.snapshot().unwrap().must_retry_tables, vec![1]);
 
-        assert!(running.analyze(1));
+        assert!(running.analyze());
         queue.requeue_must_retry_jobs().unwrap();
         assert_eq!(queue.len().unwrap(), 1);
         queue
@@ -2775,7 +2774,7 @@ mod tests {
             job.validate_and_prepare(&context),
             ValidationResult::valid()
         );
-        assert!(job.analyze(&context, 2));
+        assert!(job.analyze(&context));
         let calls = context
             .calls
             .lock()
@@ -2856,12 +2855,12 @@ mod tests {
         queue.initialize().unwrap();
         let failed = queue.pop().unwrap();
         let completed = queue.pop().unwrap();
-        assert!(!failed.analyze(1));
+        assert!(!failed.analyze());
         *source
             .succeed
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = true;
-        assert!(completed.analyze(1));
+        assert!(completed.analyze());
         assert!(queue.is_empty().unwrap());
         queue.requeue_must_retry_jobs().unwrap();
         assert_eq!(queue.len().unwrap(), 2);
@@ -2997,7 +2996,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(queue.snapshot().unwrap().must_retry_tables, [10]);
-        assert!(!running.analyze(1));
+        assert!(!running.analyze());
         queue.close();
     }
 
@@ -3133,7 +3132,7 @@ mod tests {
             table_stats_version: 2,
             ..NonPartitionedTableAnalysisJob::default()
         });
-        assert!(!ordinary.analyze(&context, 1));
+        assert!(!ordinary.analyze(&context));
         let calls = context
             .calls
             .lock()
@@ -3155,7 +3154,7 @@ mod tests {
             table_stats_version: 2,
             ..DynamicPartitionedTableAnalysisJob::default()
         });
-        assert!(!dynamic.analyze(&context, 2));
+        assert!(!dynamic.analyze(&context));
         assert_eq!(
             context
                 .calls

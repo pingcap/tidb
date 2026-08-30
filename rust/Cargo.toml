@@ -54,6 +54,7 @@ members = [
     "crates/tidb-stats-handle-initstats",
     "crates/tidb-stats-handle-autoanalyze-exec",
     "crates/tidb-stats-handle-autoanalyze-priorityqueue",
+    "crates/tidb-stats-handle-autoanalyze-refresher",
     "crates/tidb-stats-handle-usage-collector",
     "crates/tidb-stats-handle-usage-indexusage",
     "crates/tidb-stats-handle-usage",

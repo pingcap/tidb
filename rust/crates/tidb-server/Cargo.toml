@@ -53,6 +53,7 @@ tidb-stats = { path = "../tidb-stats" }
 tidb-stats-handle-cache = { path = "../tidb-stats-handle-cache" }
 tidb-stats-handle-autoanalyze-exec = { path = "../tidb-stats-handle-autoanalyze-exec" }
 tidb-stats-handle-autoanalyze-priorityqueue = { path = "../tidb-stats-handle-autoanalyze-priorityqueue" }
+tidb-stats-handle-autoanalyze-refresher = { path = "../tidb-stats-handle-autoanalyze-refresher" }
 tidb-stats-handle-initstats = { path = "../tidb-stats-handle-initstats" }
 tidb-stats-handle-usage = { path = "../tidb-stats-handle-usage" }
 tidb-stats-handle-usage-indexusage = { path = "../tidb-stats-handle-usage-indexusage" }

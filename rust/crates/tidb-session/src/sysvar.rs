@@ -497,6 +497,17 @@ impl SysVarDef {
                     .to_owned(),
             ));
         }
+        // Pinned Go deprecated the auto-analyze scheduler switch after making
+        // the priority queue unconditional. Its bool type validation still
+        // runs first, then the variable-specific closure refuses OFF.
+        if self.name == tidb_vardef::tidb_vars::TIDB_ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE
+            && validated.value == "OFF"
+        {
+            return Err(ValidationError::Refused(
+                "tidb_enable_auto_analyze_priority_queue has been deprecated and TiDB will always use priority queue to schedule auto analyze"
+                    .to_owned(),
+            ));
+        }
         if self.name == "tidb_workload_repository_dest" {
             return tidb_workloadrepo::validate_dest(&validated.value)
                 .map(|value| Validated {
@@ -1138,6 +1149,21 @@ mod tests {
         }
         assert_eq!(sv.validate("2"), Err(ValidationError::WrongValue));
         assert_eq!(sv.validate("yes"), Err(ValidationError::WrongValue));
+    }
+
+    /// Pinned Go `TestEnableAutoAnalyzePriorityQueue`: ON remains accepted,
+    /// while OFF reaches the deprecated-variable validation refusal.
+    #[test]
+    fn auto_analyze_priority_queue_is_always_enabled() {
+        let sv = get_sys_var("tidb_enable_auto_analyze_priority_queue").unwrap();
+        assert_eq!(sv.validate("ON").unwrap().value, "ON");
+        assert_eq!(
+            sv.validate("OFF"),
+            Err(ValidationError::Refused(
+                "tidb_enable_auto_analyze_priority_queue has been deprecated and TiDB will always use priority queue to schedule auto analyze"
+                    .to_owned(),
+            ))
+        );
     }
 
     /// A ScopeNone entry is read-only, which Go reports rather than storing.

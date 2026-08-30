@@ -293,6 +293,12 @@ pub(crate) fn run_cluster_session_node_with_spill(
         })?;
     }
     factory.start_stats_usage_workers(config.stats_lease);
+    factory.start_auto_analyze_worker(
+        config.stats_lease,
+        tidb_config::config_tree::config::get_global_config()
+            .performance
+            .run_auto_analyze,
+    );
     factory.start_analyze_jobs_cleanup_worker(config.stats_lease);
     factory.start_historical_stats_worker();
     let workload_etcd = crate::real_tikv_node::connect_schema_notifier(&config);

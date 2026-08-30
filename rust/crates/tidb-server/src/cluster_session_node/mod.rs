@@ -836,6 +836,8 @@ pub struct ClusterSessionFactory {
     stats_owner: Option<Arc<dyn tidb_owner::Manager>>,
     /// Go `analyzeJobsCleanupWorker`, installed after stable `Arc` ownership.
     analyze_jobs_cleanup_worker: std::sync::OnceLock<AnalyzeJobsCleanupWorker>,
+    /// Go `autoAnalyzeWorker`, installed after stable `Arc` ownership.
+    auto_analyze_worker: std::sync::OnceLock<AutoAnalyzeWorker>,
     /// Go Domain's capacity-16 historical-statistics mailbox.
     historical_stats_worker: Arc<HistoricalStatsWorker<ClusterHistoricalInfoSchema>>,
     /// Go `StartHistoricalStatsWorker`, installed after stable `Arc` ownership.
@@ -849,6 +851,9 @@ pub struct ClusterSessionFactory {
             Arc<tidb_stats_handle_autoanalyze_priorityqueue::AnalysisPriorityQueue>,
         >,
     >,
+    /// Go StatsHandle's one refresher over the priority queue.
+    auto_analyze_refresher:
+        std::sync::OnceLock<Arc<Mutex<tidb_stats_handle_autoanalyze_refresher::Refresher>>>,
 }
 
 impl ClusterSessionFactory {
@@ -915,10 +920,12 @@ impl ClusterSessionFactory {
             stats_usage_workers: std::sync::OnceLock::new(),
             stats_owner: None,
             analyze_jobs_cleanup_worker: std::sync::OnceLock::new(),
+            auto_analyze_worker: std::sync::OnceLock::new(),
             historical_stats_worker,
             historical_stats_runtime: std::sync::OnceLock::new(),
             approximate_table_counts,
             auto_analyze_priority_queue: Arc::new(std::sync::OnceLock::new()),
+            auto_analyze_refresher: std::sync::OnceLock::new(),
         }
     }
 
@@ -936,6 +943,51 @@ impl ClusterSessionFactory {
                 });
             tidb_stats_handle_autoanalyze_priorityqueue::AnalysisPriorityQueue::new(source)
         }))
+    }
+
+    /// Returns Go StatsHandle's single auto-analyze refresher.
+    pub(crate) fn auto_analyze_refresher(
+        self: &Arc<Self>,
+        stats_lease: Duration,
+    ) -> Arc<Mutex<tidb_stats_handle_autoanalyze_refresher::Refresher>> {
+        Arc::clone(self.auto_analyze_refresher.get_or_init(|| {
+            let concurrency = self
+                .global_vars
+                .get(tidb_vardef::tidb_vars::TIDB_AUTO_ANALYZE_CONCURRENCY)
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(tidb_vardef::defaults::DEF_TIDB_AUTO_ANALYZE_CONCURRENCY as usize);
+            Arc::new(Mutex::new(
+                tidb_stats_handle_autoanalyze_refresher::Refresher::new(
+                    self.auto_analyze_priority_queue(stats_lease),
+                    concurrency,
+                ),
+            ))
+        }))
+    }
+
+    fn auto_analyze_refresh_parameters(
+        &self,
+    ) -> Result<tidb_stats_handle_autoanalyze_refresher::RefreshParameters, String> {
+        let get = |name| {
+            self.global_vars
+                .get(name)
+                .map_err(|error| format!("{error:?}"))
+        };
+        let prune_mode = get(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)?;
+        Ok(tidb_stats_handle_autoanalyze_refresher::RefreshParameters {
+            auto_analyze_ratio: get(tidb_vardef::tidb_vars::TIDB_AUTO_ANALYZE_RATIO)?,
+            prune_mode: if prune_mode.eq_ignore_ascii_case("static") {
+                tidb_stats_handle_autoanalyze_priorityqueue::PartitionPruneMode::Static
+            } else {
+                tidb_stats_handle_autoanalyze_priorityqueue::PartitionPruneMode::Dynamic
+            },
+            start_time: get(tidb_vardef::tidb_vars::TIDB_AUTO_ANALYZE_START_TIME)?,
+            end_time: get(tidb_vardef::tidb_vars::TIDB_AUTO_ANALYZE_END_TIME)?,
+            max_concurrency: get(tidb_vardef::tidb_vars::TIDB_AUTO_ANALYZE_CONCURRENCY)?
+                .parse()
+                .map_err(|error| format!("invalid auto analyze concurrency: {error}"))?,
+        })
     }
 
     /// Starts Go `Domain.StartHistoricalStatsWorker`.
@@ -1124,6 +1176,48 @@ impl ClusterSessionFactory {
         let _ = self
             .analyze_jobs_cleanup_worker
             .set(AnalyzeJobsCleanupWorker::start(self, lease));
+    }
+
+    /// Starts pinned Go `autoAnalyzeWorker`. Like Go, only a positive stats
+    /// lease starts it; every tick checks the process switch and ownership.
+    pub(crate) fn start_auto_analyze_worker(
+        self: &Arc<Self>,
+        lease: crate::node_config::StatsLease,
+        run_auto_analyze: bool,
+    ) {
+        let crate::node_config::StatsLease::Positive(lease) = lease else {
+            return;
+        };
+        if self.auto_analyze_worker.get().is_some() {
+            return;
+        }
+        let _ =
+            self.auto_analyze_worker
+                .set(AutoAnalyzeWorker::start(self, lease, run_auto_analyze));
+    }
+
+    fn handle_auto_analyze_tick(self: &Arc<Self>, run_auto_analyze: bool, stats_lease: Duration) {
+        let is_owner = self
+            .stats_owner
+            .as_ref()
+            .is_some_and(|owner| owner.is_owner());
+        if !run_auto_analyze || !is_owner {
+            if let Some(refresher) = self.auto_analyze_refresher.get() {
+                refresher
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .close_priority_queue();
+            }
+            return;
+        }
+        let Ok(parameters) = self.auto_analyze_refresh_parameters() else {
+            return;
+        };
+        let refresher = self.auto_analyze_refresher(stats_lease);
+        let _ = refresher
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .analyze_highest_priority_tables(&parameters);
     }
 
     /// Go `statsUsageImpl.DumpColStatsUsageToKV`.
@@ -1532,6 +1626,56 @@ struct AnalyzeJobsCleanupWorker {
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
+struct AutoAnalyzeWorker {
+    stop: Arc<UsageWorkerStop>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl AutoAnalyzeWorker {
+    fn start(
+        factory: &Arc<ClusterSessionFactory>,
+        stats_lease: Duration,
+        run_auto_analyze: bool,
+    ) -> Self {
+        let stop = Arc::new(UsageWorkerStop {
+            stopped: Mutex::new(false),
+            wake: Condvar::new(),
+        });
+        let weak = Arc::downgrade(factory);
+        let running = Arc::clone(&stop);
+        let thread = std::thread::Builder::new()
+            .name("auto-analyze".to_owned())
+            .spawn(move || loop {
+                if running.wait(stats_lease) {
+                    return;
+                }
+                let Some(factory) = weak.upgrade() else {
+                    return;
+                };
+                factory.handle_auto_analyze_tick(run_auto_analyze, stats_lease);
+            })
+            .expect("auto-analyze worker spawns");
+        Self {
+            stop,
+            thread: Some(thread),
+        }
+    }
+}
+
+impl Drop for AutoAnalyzeWorker {
+    fn drop(&mut self) {
+        *self
+            .stop
+            .stopped
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = true;
+        self.stop.wake.notify_all();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
 impl AnalyzeJobsCleanupWorker {
     fn start(factory: &Arc<ClusterSessionFactory>, stats_lease: Duration) -> Self {
         let stop = Arc::new(UsageWorkerStop {
@@ -1732,7 +1876,12 @@ impl Drop for StatsUsageWorkers {
 
 impl Drop for ClusterSessionFactory {
     fn drop(&mut self) {
-        if let Some(queue) = self.auto_analyze_priority_queue.get() {
+        if let Some(refresher) = self.auto_analyze_refresher.get() {
+            refresher
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .close();
+        } else if let Some(queue) = self.auto_analyze_priority_queue.get() {
             queue.close();
         }
         let flush_stats = self
@@ -2955,6 +3104,19 @@ impl tidb_stats_handle_autoanalyze_priorityqueue::AnalysisJobContext
                     })
             })
             .is_ok()
+    }
+
+    fn auto_analyze_partition_batch_size(&self) -> usize {
+        self.factory()
+            .ok()
+            .and_then(|factory| {
+                factory
+                    .global_vars
+                    .get(tidb_vardef::tidb_vars::TIDB_AUTO_ANALYZE_PARTITION_BATCH_SIZE)
+                    .ok()
+            })
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(tidb_vardef::defaults::DEF_TIDB_AUTO_ANALYZE_PARTITION_BATCH_SIZE as usize)
     }
 }
 

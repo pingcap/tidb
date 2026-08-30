@@ -1,0 +1,17 @@
+[package]
+name = "tidb-stats-handle-autoanalyze-refresher"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB auto-analyze priority refresher package."
+
+[lints]
+workspace = true
+
+[dependencies]
+chrono.workspace = true
+tidb-stats-handle-autoanalyze-exec = { path = "../tidb-stats-handle-autoanalyze-exec" }
+tidb-stats-handle-autoanalyze-priorityqueue = { path = "../tidb-stats-handle-autoanalyze-priorityqueue" }
+

@@ -3769,6 +3769,7 @@ dependencies = [
  "tidb-stats",
  "tidb-stats-handle-autoanalyze-exec",
  "tidb-stats-handle-autoanalyze-priorityqueue",
+ "tidb-stats-handle-autoanalyze-refresher",
  "tidb-stats-handle-cache",
  "tidb-stats-handle-initstats",
  "tidb-stats-handle-metrics",
@@ -3894,6 +3895,15 @@ dependencies = [
  "tidb-model",
  "tidb-stats",
  "tidb-stats-handle-util",
+]
+
+[[package]]
+name = "tidb-stats-handle-autoanalyze-refresher"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "tidb-stats-handle-autoanalyze-exec",
+ "tidb-stats-handle-autoanalyze-priorityqueue",
 ]
 
 [[package]]
