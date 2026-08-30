@@ -48,6 +48,7 @@ pub mod global_stats;
 mod go_pdqsort;
 mod go_stable_sort;
 pub mod histogram;
+pub mod independent_index_analyze;
 pub mod index;
 pub mod index_query;
 pub mod json_metadata;
@@ -120,6 +121,10 @@ pub use global_stats::{
     GlobalStatsMergeMode, PartitionStatsItem,
 };
 pub use histogram::{Bucket, Histogram};
+pub use independent_index_analyze::{
+    IndependentIndexAnalyze, IndependentIndexStatistics, DEFAULT_INDEX_CMS_DEPTH,
+    DEFAULT_INDEX_CMS_WIDTH,
+};
 pub use index::{copy_index, index_is_all_evicted, Index, IndexInfo};
 pub use index_query::query_index_bytes;
 pub use json_metadata::{
