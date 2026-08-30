@@ -296,6 +296,39 @@ the 0.80 gate. A direct post-restart `oltp_update_index` check reached 3199.80
 Rust txn/s versus 4143.54 Go txn/s (0.7723), so the remaining gap is in the
 transaction/lock path rather than the worker leak alone.
 
+### Sysbench repeat after cluster-DML catalog fast path (2026-08-31)
+
+The cluster-DML path was narrowed so normal TiKV-backed `INSERT`, single-table
+`UPDATE`, and single-table `DELETE` statements avoid cloning an empty catalog
+overlay. Temporary-table and multi-table statements retain the staged catalog
+rollback path. The change was built on the TiUP Pod NVMe volume and pushed as
+`30a7f86` on `hparser-integration`; the deployed `tidb-server` binary SHA-256
+was `17485479f3a67dcb81ce020aaeebc0280dc4b3df0dc66b40bcadfcdf98e4ed7c`.
+
+All three Rust listeners passed the smoke query. A serial ten-subtype Sysbench
+sweep used one 10-thread sample per engine and completed in 190 seconds,
+without BR restore. Insert and bulk-insert used fresh engine-specific empty
+tables, leaving restored `test.sbtest*` data untouched. Receipt:
+`/tmp/tc8228803-new.MMk3QB/sysbench-r1-overlay0831`.
+
+| Subtype | Go QPS | Rust QPS | Rust/Go | Gate |
+|---|---:|---:|---:|---|
+| `oltp_read_write.lua` | 539.38 | 215.77 | 0.4000 | FAIL |
+| `oltp_read_only.lua` | 738.95 | 723.31 | 0.9788 | PASS |
+| `oltp_write_only.lua` | 2116.95 | 447.40 | 0.2113 | FAIL |
+| `oltp_point_select.lua` | 18822.27 | 22759.08 | 1.2092 | PASS |
+| `select_random_points.lua` | 7750.75 | 9163.34 | 1.1823 | PASS |
+| `select_random_ranges.lua` | 8271.27 | 8337.49 | 1.0080 | PASS |
+| `oltp_insert.lua` (isolated empty tables) | 8044.70 | 7707.88 | 0.9581 | PASS |
+| `oltp_update_index.lua` | 4227.63 | 2871.67 | 0.6793 | FAIL |
+| `oltp_update_non_index.lua` | 6384.77 | 3041.77 | 0.4764 | FAIL |
+| `bulk_insert.lua` (isolated empty tables) | 262614.74 | 165485.74 | 0.6301 | FAIL |
+
+The catalog-overlay change preserved correctness and the five-minute budget,
+but this single sample did not materially close the explicit write gap. Round
+1 remains unaccepted; the next work should target transaction/lock and bulk
+insert paths rather than removing rollback safeguards.
+
 ## Acceptance status
 
 - Round 1 (0.80): **not passed** because Sysbench and BenchmarkSQL still fail;
