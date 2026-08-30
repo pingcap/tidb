@@ -960,26 +960,95 @@ impl LogicalPlan {
     /// Go `ExtractColGroups(colGroups)` (`<11th>`). The base body returns
     /// `nil`, which is Go's answer, not a `todo`.
     ///
-    /// `LogicalAggregation` DISCARDS the parent's groups and asks only for its
-    /// own group-by columns; that override is dispatched here. The
-    /// `LogicalProjection` and `LogicalJoin` overrides need
-    /// `Schema.ExtractColGroups`, which `tidb-expr` lists as deferred, so they
-    /// fall through to the base answer rather than to a guess.
+    /// Operator overrides either translate groups into the child's schema or
+    /// introduce the join/grouping keys whose combined NDV they estimate.
     #[must_use]
-    pub fn extract_col_groups(&self, _col_groups: &[Vec<Column>]) -> Vec<Vec<Column>> {
+    pub fn extract_col_groups(&self, col_groups: &[Vec<Column>]) -> Vec<Vec<Column>> {
         match self {
             Self::Aggregation(op) => op.extract_col_groups(),
+            Self::Projection(op) => {
+                let Some(schema) = self.schema() else {
+                    return Vec::new();
+                };
+                let (groups, _) = schema.extract_col_groups(col_groups);
+                groups
+                    .into_iter()
+                    .filter_map(|indices| {
+                        let mut columns = indices
+                            .into_iter()
+                            .map(|index| match op.exprs.get(index) {
+                                Some(Expression::Column(column)) => Some(column.clone()),
+                                _ => None,
+                            })
+                            .collect::<Option<Vec<_>>>()?;
+                        columns.sort_by_key(|column| column.unique_id);
+                        Some(columns)
+                    })
+                    .collect()
+            }
+            Self::Join(op) => {
+                let (mut left_keys, mut right_keys, _, _) = op.get_join_keys();
+                let mut extracted = Vec::new();
+                if left_keys.len() > 1
+                    && matches!(
+                        op.join_type,
+                        crate::find_best_task::LogicalJoinType::Inner
+                            | crate::find_best_task::LogicalJoinType::LeftOuter
+                            | crate::find_best_task::LogicalJoinType::RightOuter
+                    )
+                {
+                    left_keys.sort_by_key(|column| column.unique_id);
+                    right_keys.sort_by_key(|column| column.unique_id);
+                    extracted.push(left_keys);
+                    extracted.push(right_keys);
+                }
+                let outer_schema = match op.join_type {
+                    crate::find_best_task::LogicalJoinType::LeftOuter
+                    | crate::find_best_task::LogicalJoinType::LeftOuterSemi
+                    | crate::find_best_task::LogicalJoinType::AntiLeftOuterSemi => {
+                        self.children().first().and_then(|child| child.schema())
+                    }
+                    crate::find_best_task::LogicalJoinType::RightOuter => {
+                        self.children().get(1).and_then(|child| child.schema())
+                    }
+                    _ => None,
+                };
+                if let Some(schema) = outer_schema {
+                    let (_, offsets) = schema.extract_col_groups(col_groups);
+                    extracted.extend(offsets.into_iter().map(|offset| col_groups[offset].clone()));
+                }
+                extracted
+            }
+            Self::Apply(op) => {
+                if !op.col_groups_outer_side() {
+                    return Vec::new();
+                }
+                let Some(schema) = self.children().first().and_then(|child| child.schema()) else {
+                    return Vec::new();
+                };
+                let (_, offsets) = schema.extract_col_groups(col_groups);
+                offsets
+                    .into_iter()
+                    .map(|offset| col_groups[offset].clone())
+                    .collect()
+            }
+            Self::Window(_) => {
+                let Some(schema) = self.children().first().and_then(|child| child.schema()) else {
+                    return Vec::new();
+                };
+                let (_, offsets) = schema.extract_col_groups(col_groups);
+                offsets
+                    .into_iter()
+                    .map(|offset| col_groups[offset].clone())
+                    .collect()
+            }
             Self::Selection(_)
-            | Self::Projection(_)
-            | Self::Join(_)
             | Self::DataSource(_)
             | Self::Sort(_)
             | Self::Limit(_)
-            | Self::Apply(_)
             | Self::TopN(_)
             | Self::UnionAll(_)
             | Self::PartitionUnionAll(_)
-            | Self::Window(_)
             | Self::CTE(_)
             | Self::CTETable(_)
             | Self::MaxOneRow(_)

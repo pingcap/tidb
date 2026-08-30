@@ -46,9 +46,9 @@
 //!   session and both histogram collections. The caller resolves them; see
 //!   [`LogicalApply::needs_lateral_row_count_estimate`], which reports when a
 //!   caller MUST supply one rather than letting the Cartesian fallback answer.
-//! * `ExtractColGroups` needs `Schema.ExtractColGroups`, which `tidb-expr`
-//!   lists as deferred; the join-type gate that decides whether ANY group can
-//!   be extracted is ported as [`LogicalApply::col_groups_outer_side`].
+//! * `ExtractColGroups` is dispatched through [`LogicalPlan`] because it needs
+//!   the outer child's schema; its join-type gate lives in
+//!   [`LogicalApply::col_groups_outer_side`].
 //! * `ExtractFD` needs `pkg/planner/funcdep`; see the
 //!   [`crate::logical::BaseLogicalPlan`] header.
 //! * `ReplaceExprColumns` needs `ruleutil.ResolveExprAndReplace`.

@@ -21,7 +21,7 @@
 //! preserved; only pointer aliasing is not.
 //!
 //! DEFERRED (need `EvalContext`/`ScalarFunction`, or are analysis helpers to be
-//! ported with their consumers): `ExtractColGroups`, `GetUsedList`,
+//! ported with their consumers): `GetUsedList`,
 //! `ExprFromSchema`/`ExprReferenceSchema`, and `MemoryUsage`.
 
 use std::fmt;
@@ -163,6 +163,22 @@ impl Schema {
             .iter()
             .map(|&offset| &self.columns[offset])
             .collect()
+    }
+
+    /// Go `ExtractColGroups`: retain the requested column groups wholly
+    /// contained in this schema and return both their column positions and
+    /// their positions in the input list.
+    #[must_use]
+    pub fn extract_col_groups(&self, col_groups: &[Vec<Column>]) -> (Vec<Vec<usize>>, Vec<usize>) {
+        let mut extracted = Vec::with_capacity(col_groups.len());
+        let mut offsets = Vec::with_capacity(col_groups.len());
+        for (offset, group) in col_groups.iter().enumerate() {
+            if let Some(indices) = self.columns_indices(group) {
+                extracted.push(indices);
+                offsets.push(offset);
+            }
+        }
+        (extracted, offsets)
     }
 
     /// Go `GetExtraHandleColumn`: the trailing `_tidb_rowid` handle column, if

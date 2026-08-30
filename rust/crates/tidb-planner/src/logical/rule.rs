@@ -40,11 +40,11 @@
 //!
 //! # Which rules actually run
 //!
-//! Go's list has 35 entries and SIXTEEN of them have a body here. Four live in
-//! this file, because their tree walks are [`super::rewrite`]'s:
+//! Go's list has 35 entries. Four rule bodies live in this file because their
+//! tree walks are [`super::rewrite`]'s:
 //! [`ColumnPruner`] (#1 and #29), [`BuildKeySolver`] (#3), [`PpdSolver`] (#13)
-//! and [`PushDownTopNOptimizer`] (#21). Twelve more live in their own
-//! `rule_*.rs` beside this one, each one fold and one file:
+//! and [`PushDownTopNOptimizer`] (#21). The remaining implemented bodies live
+//! in their owning `rule_*.rs` modules beside this one, including:
 //!
 //! * [`super::rule_result_reorder::ResultReorder`] (#2)
 //! * [`super::rule_aggregation_elimination::AggregationEliminator`] (#6)
@@ -52,6 +52,10 @@
 //! * [`super::rule_max_min_elimination::MaxMinEliminator`] (#12)
 //! * [`super::rule_join_key_type_cast::JoinKeyTypeCastRewriter`] (#14)
 //! * [`super::rule_partition_processor::PartitionProcessor`] (#16)
+//! * [`super::rule_collect_plan_stats::CollectPredicateColumnsPoint`] (#17)
+//! * [`super::rule_order_aware_join_reorder::OrderAwareJoinReorder`] (#22)
+//! * [`super::rule_collect_plan_stats::SyncWaitStatsLoadPoint`] (#24)
+//! * [`super::rule_join_reorder::JoinReOrderSolver`] (#26)
 //! * [`super::rule_outer_join_to_semi_join::OuterJoinToSemiJoin`] (#27)
 //! * [`super::rule_derive_topn_from_window::DeriveTopNFromWindow`] (#19)
 //! * [`super::rule_push_down_sequence::PushDownSequenceSolver`] (#30)
@@ -60,9 +64,9 @@
 //! * [`super::rule_eliminate_empty_selection::EmptySelectionEliminator`] (#32)
 //! * [`super::rule_resolve_expand::ResolveExpand`] (#34)
 //!
-//! The remaining 19 are present in [`OPT_RULE_LIST`] as their name and flag —
-//! the TABLE is ported, because the order is the semantics — but they have no
-//! body yet.
+//! Entries whose [`RuleId::body`] is `None` are present as their name and flag
+//! but have no body yet. The table is still ported because its order is
+//! semantic.
 //!
 //! [`logical_optimize`] does NOT silently skip those. It records each one it
 //! walked past in [`OptimizeOutcome::skipped`], so a caller can see exactly

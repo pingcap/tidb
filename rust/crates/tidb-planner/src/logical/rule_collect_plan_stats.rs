@@ -94,13 +94,7 @@ impl LogicalOptRule for CollectPredicateColumnsPoint {
         ctx: &RuleContext<'_>,
         plan: LogicalPlan,
     ) -> Result<(LogicalPlan, bool), (LogicalPlan, PlanError)> {
-        let mut pruning = InterestingColumnPruner {
-            threshold: ctx.opt_index_prune_threshold,
-            kept_index_ids: HashMap::new(),
-        };
-        let (plan, ()) = fold_owned(&mut pruning, plan, InterestingColumnsDown::default());
-        let mut usage = collect_column_stats_usage(&plan);
-        usage.kept_index_ids = pruning.kept_index_ids;
+        let (plan, usage) = collect_column_stats_usage(plan, ctx.opt_index_prune_threshold);
         if let Some(requester) = ctx.statistics_load {
             if let Err(error) = requester.request(&usage) {
                 return Err((plan, error));
@@ -118,6 +112,7 @@ impl LogicalOptRule for CollectPredicateColumnsPoint {
 struct InterestingColumnsDown {
     join_columns: Vec<Column>,
     ordering_columns: Vec<Column>,
+    asked_col_groups: Vec<Vec<Column>>,
 }
 
 struct InterestingColumnPruner {
@@ -126,6 +121,21 @@ struct InterestingColumnPruner {
 }
 
 impl InterestingColumnPruner {
+    fn record_asked_groups(source: &mut DataSource, groups: &[Vec<Column>]) {
+        if tidb_util::filter::is_system_schema(&source.db_name) {
+            return;
+        }
+        let Some(schema) = source.base.base.schema() else {
+            return;
+        };
+        source.asked_column_group.extend(
+            groups
+                .iter()
+                .filter(|group| group.iter().all(|column| schema.contains(column)))
+                .cloned(),
+        );
+    }
+
     fn add_node_columns(node: &LogicalPlan, down: &mut InterestingColumnsDown) {
         match node {
             LogicalPlan::Join(join) => {
@@ -241,37 +251,48 @@ impl OwnedRewrite for InterestingColumnPruner {
         node: &mut LogicalPlan,
         mut down: Self::Down,
     ) -> Descend<Self::Down, Self::Up> {
-        if self.threshold < 0 {
-            return Descend::Stop(());
+        let child_groups = node.extract_col_groups(&down.asked_col_groups);
+        if self.threshold >= 0 {
+            Self::add_node_columns(node, &mut down);
         }
-        Self::add_node_columns(node, &mut down);
         match node {
             LogicalPlan::DataSource(source) => {
-                self.prune_source(source, &down);
+                Self::record_asked_groups(source, &down.asked_col_groups);
+                if self.threshold >= 0 {
+                    self.prune_source(source, &down);
+                }
                 Descend::Stop(())
             }
             LogicalPlan::IndexScan(scan) => {
                 if let Some(source) = scan.source.as_deref_mut() {
+                    Self::record_asked_groups(source, &down.asked_col_groups);
                     // Go does not populate InterestingColumns for scan-source
                     // wrappers in `CollectColumnStatsUsage`.
-                    if let Some(kept) = prune_data_source(source, self.threshold) {
-                        self.kept_index_ids
-                            .entry(source.physical_table_id)
-                            .or_default()
-                            .extend(kept);
+                    if self.threshold >= 0 {
+                        if let Some(kept) = prune_data_source(source, self.threshold) {
+                            self.kept_index_ids
+                                .entry(source.physical_table_id)
+                                .or_default()
+                                .extend(kept);
+                        }
                     }
                 }
+                down.asked_col_groups = child_groups;
                 Descend::Children(vec![down; node.children().len()])
             }
             LogicalPlan::TableScan(scan) => {
                 if let Some(source) = scan.source.as_deref_mut() {
-                    if let Some(kept) = prune_data_source(source, self.threshold) {
-                        self.kept_index_ids
-                            .entry(source.physical_table_id)
-                            .or_default()
-                            .extend(kept);
+                    Self::record_asked_groups(source, &down.asked_col_groups);
+                    if self.threshold >= 0 {
+                        if let Some(kept) = prune_data_source(source, self.threshold) {
+                            self.kept_index_ids
+                                .entry(source.physical_table_id)
+                                .or_default()
+                                .extend(kept);
+                        }
                     }
                 }
+                down.asked_col_groups = child_groups;
                 Descend::Children(vec![down; node.children().len()])
             }
             LogicalPlan::CTE(cte) => {
@@ -287,9 +308,13 @@ impl OwnedRewrite for InterestingColumnPruner {
                         class.recursive_part_logical_plan = Some(Box::new(recursive));
                     }
                 }
+                down.asked_col_groups = child_groups;
                 Descend::Children(vec![down; node.children().len()])
             }
-            _ => Descend::Children(vec![down; node.children().len()]),
+            _ => {
+                down.asked_col_groups = child_groups;
+                Descend::Children(vec![down; node.children().len()])
+            }
         }
     }
 
@@ -357,15 +382,15 @@ impl Collector {
                 .push(source.physical_table_id);
         }
         if let Some(schema) = source.base.base.schema() {
-            for (metadata, column) in source.columns.iter().zip(&schema.columns) {
-                if metadata.id <= 0 {
+            for column in &schema.columns {
+                if column.id <= 0 {
                     continue;
                 }
                 self.column_map.insert(
                     column.unique_id,
                     HashSet::from([TableItemID {
                         table_id: source.table_id,
-                        id: metadata.id,
+                        id: column.id,
                         is_index: false,
                         is_sync_load_failed: false,
                     }]),
@@ -555,12 +580,29 @@ impl Collector {
     }
 }
 
-/// Go `CollectColumnStatsUsage`.
-#[must_use]
-pub fn collect_column_stats_usage(plan: &LogicalPlan) -> ColumnStatsUsage {
+fn collect_column_stats_usage_readonly(plan: &LogicalPlan) -> ColumnStatsUsage {
     let mut collector = Collector::default();
     collector.collect_tree(plan);
     collector.result
+}
+
+/// Go `CollectColumnStatsUsage`: populate DataSource column-group and
+/// interesting-column state while collecting base-column statistics usage.
+/// The returned plan is the ownership-safe equivalent of Go mutating the
+/// pointed-to logical tree.
+#[must_use]
+pub fn collect_column_stats_usage(
+    plan: LogicalPlan,
+    opt_index_prune_threshold: i32,
+) -> (LogicalPlan, ColumnStatsUsage) {
+    let mut preparation = InterestingColumnPruner {
+        threshold: opt_index_prune_threshold,
+        kept_index_ids: HashMap::new(),
+    };
+    let (plan, ()) = fold_owned(&mut preparation, plan, InterestingColumnsDown::default());
+    let mut usage = collect_column_stats_usage_readonly(&plan);
+    usage.kept_index_ids = preparation.kept_index_ids;
+    (plan, usage)
 }
 
 #[cfg(test)]
@@ -631,6 +673,12 @@ mod tests {
                 is_primary_key: false,
             })
             .collect();
+        if let Some(mut schema) = source.base.base.schema().cloned() {
+            for (column, (id, _)) in schema.columns.iter_mut().zip(columns) {
+                column.id = *id;
+            }
+            source.base.base.set_schema(Some(schema));
+        }
         LogicalPlan::DataSource(source)
     }
 
@@ -663,7 +711,7 @@ mod tests {
         ));
         selection.set_children(vec![projection]);
 
-        let usage = collect_column_stats_usage(&selection);
+        let (_, usage) = collect_column_stats_usage(selection, -1);
         assert_eq!(usage.predicate_columns.get(&item(7, 11)), Some(&true));
         assert_eq!(usage.predicate_columns.get(&item(7, 12)), Some(&false));
         assert_eq!(usage.visited_logical_table_ids, HashSet::from([7]));
@@ -681,10 +729,51 @@ mod tests {
         });
         join.set_children(vec![left, right]);
 
-        let usage = collect_column_stats_usage(&join);
+        let (_, usage) = collect_column_stats_usage(join, -1);
         assert_eq!(usage.predicate_columns.get(&item(7, 11)), Some(&false));
         assert_eq!(usage.predicate_columns.get(&item(8, 21)), Some(&false));
         assert_eq!(usage.operator_count, 3);
+    }
+
+    #[test]
+    fn join_column_groups_reach_each_data_source_when_index_pruning_is_disabled() {
+        let left = source(1, 7, &[(11, 1), (12, 2)]);
+        let right = source(2, 8, &[(21, 3), (22, 4)]);
+        let mut join = LogicalPlan::Join(LogicalJoin {
+            base: base(3, LogicalJoin::TYPE, &[1, 2, 3, 4]),
+            equal_conditions: vec![eq(1, 3), eq(2, 4)],
+            ..LogicalJoin::default()
+        });
+        join.set_children(vec![left, right]);
+
+        let allocator = PlanIdAllocator::new();
+        let mut context = test_context(&allocator);
+        context.builder = &TEST_BUILDER;
+        context.opt_index_prune_threshold = -1;
+        let (plan, changed) = CollectPredicateColumnsPoint
+            .optimize(&context, join)
+            .expect("statistics collection");
+        assert!(!changed);
+        let children = plan.children();
+        let LogicalPlan::DataSource(left) = &children[0] else {
+            panic!("left DataSource")
+        };
+        let LogicalPlan::DataSource(right) = &children[1] else {
+            panic!("right DataSource")
+        };
+        let ids = |groups: &[Vec<Column>]| {
+            groups
+                .iter()
+                .map(|group| {
+                    group
+                        .iter()
+                        .map(|column| column.unique_id)
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids(&left.asked_column_group), vec![vec![1, 2]]);
+        assert_eq!(ids(&right.asked_column_group), vec![vec![3, 4]]);
     }
 
     #[test]
@@ -696,10 +785,53 @@ mod tests {
         source.db_name = "mysql".to_owned();
         source.pushed_down_conds = vec![Expression::ScalarFunction(eq(1, 1))];
 
-        let usage = collect_column_stats_usage(&plan);
+        let (_, usage) = collect_column_stats_usage(plan, -1);
         assert!(usage.predicate_columns.is_empty());
         assert!(usage.visited_logical_table_ids.is_empty());
         assert!(usage.table_partition_ids.is_empty());
+    }
+
+    #[test]
+    fn system_schema_sources_do_not_record_asked_column_groups() {
+        let mut system = source(1, 7, &[(11, 1), (12, 2)]);
+        let LogicalPlan::DataSource(system_source) = &mut system else {
+            unreachable!()
+        };
+        system_source.db_name = "mysql".to_owned();
+        let ordinary = source(2, 8, &[(21, 3), (22, 4)]);
+        let mut join = LogicalPlan::Join(LogicalJoin {
+            base: base(3, LogicalJoin::TYPE, &[1, 2, 3, 4]),
+            equal_conditions: vec![eq(1, 3), eq(2, 4)],
+            ..LogicalJoin::default()
+        });
+        join.set_children(vec![system, ordinary]);
+
+        let (plan, _) = collect_column_stats_usage(join, -1);
+        let children = plan.children();
+        let LogicalPlan::DataSource(system) = &children[0] else {
+            panic!("system DataSource")
+        };
+        let LogicalPlan::DataSource(ordinary) = &children[1] else {
+            panic!("ordinary DataSource")
+        };
+        assert!(system.asked_column_group.is_empty());
+        assert_eq!(ordinary.asked_column_group.len(), 1);
+    }
+
+    #[test]
+    fn data_source_lineage_uses_schema_column_ids_after_reordering() {
+        let mut plan = source(1, 7, &[(11, 1), (12, 2)]);
+        let LogicalPlan::DataSource(source) = &mut plan else {
+            unreachable!()
+        };
+        let mut schema = source.base.base.schema().expect("schema").clone();
+        schema.columns.swap(0, 1);
+        source.base.base.set_schema(Some(schema));
+        source.pushed_down_conds = vec![Expression::ScalarFunction(eq(2, 2))];
+
+        let (_, usage) = collect_column_stats_usage(plan, -1);
+        assert_eq!(usage.predicate_columns.get(&item(7, 12)), Some(&true));
+        assert!(!usage.predicate_columns.contains_key(&item(7, 11)));
     }
 
     #[test]
