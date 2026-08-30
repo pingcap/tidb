@@ -56,6 +56,7 @@ use tidb_exec::cluster_stats_write::{
     insert_table_stats_statements, plan_insert_column_default_bucket,
     plan_insert_analyze_job, plan_insert_column_stats, plan_insert_table_stats_statement,
     plan_start_analyze_job, plan_finish_analyze_job, plan_delete_analyze_jobs,
+    plan_update_analyze_job_progress,
     plan_stats_delta_statement, plan_stats_gc_timestamp_write, plan_stats_item_delete,
     plan_stats_meta_version_refresh, plan_stats_write,
     stats_delta_statements, InsertTableStatsStatement, LoadedStatsItemStatement,
@@ -317,6 +318,10 @@ fn analyze_job_lifecycle_and_timestamp_cleanup_match_go() {
     let catalog = load_cluster_catalog(&mut store).unwrap();
     let start = plan_start_analyze_job(&mut store, &catalog, job_id, running_at).unwrap();
     apply_mutations(&mut store, &start.mutations);
+    let catalog = load_cluster_catalog(&mut store).unwrap();
+    let progress =
+        plan_update_analyze_job_progress(&mut store, &catalog, job_id, 8, running_at).unwrap();
+    apply_mutations(&mut store, &progress.mutations);
     let finished_at = Time::from_date_checked(
         2026,
         7,
@@ -341,7 +346,7 @@ fn analyze_job_lifecycle_and_timestamp_cleanup_match_go() {
         rows[0].datum("state").unwrap(),
         Some(Datum::Enum(value, _)) if value.name_bytes() == b"finished"
     ));
-    assert_eq!(rows[0].i64("processed_rows").unwrap(), Some(12));
+    assert_eq!(rows[0].i64("processed_rows").unwrap(), Some(20));
     assert_eq!(rows[0].datum("process_id").unwrap(), None);
     assert_eq!(rows[0].text("job_info").unwrap().unwrap().len(), 65_535);
 

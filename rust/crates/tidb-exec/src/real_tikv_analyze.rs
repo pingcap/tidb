@@ -27,11 +27,12 @@
 //! makes a Go TiDB's concurrent `ANALYZE` a plain write conflict at prewrite:
 //! both write the same keys, and exactly one of them commits.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::mpsc::sync_channel;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use chrono::TimeZone;
@@ -39,6 +40,7 @@ use tidb_datatype::{FieldType, FieldTypeCode, SessionTimeZone, UNSPECIFIED_LENGT
 use tidb_error::mysql::SqlError;
 use tidb_executor::cluster_storage::MutationBuffer;
 use tidb_stats::histogram::Histogram;
+use tidb_stats::row_sample_collector::adjusted_sample_rate;
 use tidb_stats::{
     fm_sketch_ndv, merge_fm_sketch, merge_partition_histogram_topn, merge_partition_stats_item,
     CmsSketch, FmSketch, GlobalStatsItem, GlobalStatsMergeError, GlobalStatsMergeMode,
@@ -52,8 +54,8 @@ use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoa
 use tidb_util::sqlkiller::SqlKiller;
 
 use crate::cluster_analyze::{
-    analyze_independent_index, analyze_physical_table, lower_analyze, resolve_analyze_options,
-    AnalyzeColumnChoice, AnalyzeError, AnalyzeStatement,
+    analyze_independent_index_with_progress, analyze_physical_table_with_progress, lower_analyze,
+    resolve_analyze_options, AnalyzeColumnChoice, AnalyzeError, AnalyzeStatement,
 };
 use crate::cluster_catalog::load_cluster_catalog;
 use crate::cluster_stats_load::{
@@ -74,6 +76,138 @@ use crate::mysql_bootstrap::utc_now_timestamp;
 use crate::mysql_system_tables::SystemTableError;
 use crate::pessimistic_lock_error::{commit_outcome_to_sql_error, LockSqlError};
 use crate::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
+
+const ANALYZE_JOB_MAX_DELTA: i64 = 10_000_000;
+const ANALYZE_JOB_DUMP_INTERVAL: Duration = Duration::from_secs(5);
+
+/// One row Go publishes in `mysql.analyze_jobs` before dispatching the
+/// corresponding physical analyze task.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AnalyzeJobSpec {
+    /// Database name stored in `table_schema`.
+    pub schema: String,
+    /// Logical table name stored in `table_name`.
+    pub table: String,
+    /// Physical partition name, or empty for a nonpartition/global job.
+    pub partition: String,
+    /// Go-compatible human-readable task description.
+    pub job_info: String,
+}
+
+/// Whether finishing a job also flushes its residual processed-row count.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AnalyzeJobKind {
+    /// A table, partition, or independent-index analysis.
+    Table,
+    /// A partition-to-global statistics merge.
+    GlobalStatsMerge,
+}
+
+/// Storage boundary used by the analyzer for Go's job lifecycle. Persistence
+/// errors are deliberately swallowed by implementations: Go logs them and
+/// never changes the result of `ANALYZE`.
+pub trait AnalyzeJobLifecycle: Send + Sync {
+    /// Inserts a pending job and returns its generated ID when bookkeeping succeeds.
+    fn insert(&self, spec: &AnalyzeJobSpec) -> Option<u64>;
+    /// Marks a pending job running.
+    fn start(&self, job_id: u64);
+    /// Persists an executor-throttled processed-row delta.
+    fn update_progress(&self, job_id: u64, processed_rows: i64);
+    /// Finishes or fails a job, flushing residual table-job progress.
+    fn finish(&self, job_id: u64, processed_rows: i64, failure: Option<&str>, kind: AnalyzeJobKind);
+}
+
+/// Go `statistics.AnalyzeProgress`: progress writes are throttled by both a
+/// row threshold and elapsed time, while finish consumes the residual count.
+struct AnalyzeJobProgress {
+    state: Mutex<AnalyzeJobProgressState>,
+}
+
+struct AnalyzeJobProgressState {
+    last_dump: Instant,
+    delta: i64,
+}
+
+impl AnalyzeJobProgress {
+    fn started() -> Self {
+        Self {
+            state: Mutex::new(AnalyzeJobProgressState {
+                last_dump: Instant::now(),
+                delta: 0,
+            }),
+        }
+    }
+
+    fn update(&self, row_count: i64) -> i64 {
+        let mut state = self.state.lock().expect("analyze job progress lock");
+        state.delta = state.delta.saturating_add(row_count);
+        let now = Instant::now();
+        if state.delta > ANALYZE_JOB_MAX_DELTA
+            && now.duration_since(state.last_dump) > ANALYZE_JOB_DUMP_INTERVAL
+        {
+            let delta = state.delta;
+            state.delta = 0;
+            state.last_dump = now;
+            delta
+        } else {
+            0
+        }
+    }
+
+    fn start(&self) {
+        self.state
+            .lock()
+            .expect("analyze job progress lock")
+            .last_dump = Instant::now();
+    }
+
+    fn residual(&self) -> i64 {
+        self.state.lock().expect("analyze job progress lock").delta
+    }
+}
+
+struct AnalyzeJobHandle {
+    id: Option<u64>,
+    progress: AnalyzeJobProgress,
+}
+
+impl AnalyzeJobHandle {
+    fn pending(jobs: &dyn AnalyzeJobLifecycle, spec: &AnalyzeJobSpec) -> Self {
+        Self {
+            id: jobs.insert(spec),
+            progress: AnalyzeJobProgress::started(),
+        }
+    }
+
+    fn start(&self, jobs: &dyn AnalyzeJobLifecycle) {
+        self.progress.start();
+        if let Some(id) = self.id {
+            jobs.start(id);
+        }
+    }
+
+    fn update(&self, jobs: &dyn AnalyzeJobLifecycle, row_count: i64) {
+        let delta = self.progress.update(row_count);
+        if delta == 0 {
+            return;
+        }
+        if let Some(id) = self.id {
+            jobs.update_progress(id, delta);
+        }
+    }
+
+    fn finish(&self, jobs: &dyn AnalyzeJobLifecycle, failure: Option<&str>, kind: AnalyzeJobKind) {
+        if let Some(id) = self.id {
+            jobs.finish(id, self.progress.residual(), failure, kind);
+        }
+    }
+}
+
+fn fail_analyze_jobs(jobs: &dyn AnalyzeJobLifecycle, pending: &[AnalyzeJobHandle], failure: &str) {
+    for job in pending {
+        job.finish(jobs, Some(failure), AnalyzeJobKind::Table);
+    }
+}
 
 /// The mutation-count budget one `ANALYZE TABLE` declares.
 ///
@@ -166,7 +300,11 @@ impl ClusterAnalyzeReport {
 #[derive(Clone, Debug)]
 pub struct ResolvedClusterAnalyze {
     statement: AnalyzeStatement,
+    table: tidb_model::table_info::TableInfo,
     physical_options: Vec<tidb_executor::analyze::PhysicalAnalyzeOptions>,
+    partition_names: HashMap<i64, String>,
+    selected_columns: HashMap<i64, Option<HashSet<i64>>>,
+    predicate_columns_empty: HashMap<i64, bool>,
     partitioned: bool,
     ignored_partition_overrides: bool,
     run_full_sampling: bool,
@@ -181,6 +319,146 @@ impl ResolvedClusterAnalyze {
             .first()
             .expect("the logical table option is always present")
             .physical_id
+    }
+
+    fn partition_name(&self, physical_id: i64) -> String {
+        self.partition_names
+            .get(&physical_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    fn table_job_spec(
+        &self,
+        options: &tidb_executor::analyze::PhysicalAnalyzeOptions,
+    ) -> AnalyzeJobSpec {
+        let indexes = self
+            .table
+            .indices
+            .iter_deref()
+            .filter_map(|index| {
+                let index = index.read();
+                (index.state == tidb_model::SchemaState::PUBLIC
+                    && !is_special_global_index(&self.table, &index))
+                .then(|| index.name.original().to_owned())
+            })
+            .collect::<Vec<_>>();
+        let mut job_info = "analyze table".to_owned();
+        if !indexes.is_empty() {
+            let public_count = self
+                .table
+                .indices
+                .iter_deref()
+                .filter(|index| index.read().state == tidb_model::SchemaState::PUBLIC)
+                .count();
+            if indexes.len() == public_count {
+                job_info.push_str(" all indexes");
+            } else {
+                job_info.push_str(if indexes.len() == 1 {
+                    " index "
+                } else {
+                    " indexes "
+                });
+                job_info.push_str(&indexes.join(", "));
+            }
+        }
+        let columns = self
+            .selected_columns
+            .get(&options.physical_id)
+            .and_then(|selected| selected.as_ref())
+            .map(|selected| {
+                self.table
+                    .cols()
+                    .iter_deref()
+                    .filter_map(|column| {
+                        let column = column.read();
+                        (selected.contains(&column.id)
+                            && !column.is_changing()
+                            && !column.is_removing())
+                        .then(|| column.name.original().to_owned())
+                    })
+                    .collect::<Vec<_>>()
+            });
+        if !indexes.is_empty() {
+            job_info.push(',');
+        }
+        match columns {
+            Some(columns) if columns.len() < self.table.get_non_temp_columns().len() => {
+                job_info.push_str(if columns.len() == 1 {
+                    " column "
+                } else {
+                    " columns "
+                });
+                job_info.push_str(&columns.join(", "));
+            }
+            _ => job_info.push_str(" all columns"),
+        }
+        job_info.push_str(&format!(
+            " with {} buckets, {} topn, ",
+            options.effective.num_buckets, options.effective.num_topn
+        ));
+        if options.effective.num_samples > 0 {
+            job_info.push_str(&format!("{} samples", options.effective.num_samples));
+        } else {
+            job_info.push_str(&format!(
+                "{} samplerate",
+                options.effective.sample_rate.unwrap_or(1.0)
+            ));
+        }
+        AnalyzeJobSpec {
+            schema: self.statement.schema.clone(),
+            table: self.statement.table.clone(),
+            partition: self.partition_name(options.physical_id),
+            job_info,
+        }
+    }
+
+    fn independent_index_job_spec(&self, index_id: i64) -> AnalyzeJobSpec {
+        let name = self
+            .table
+            .indices
+            .iter_deref()
+            .find_map(|index| {
+                let index = index.read();
+                (index.id == index_id).then(|| index.name.original().to_owned())
+            })
+            .unwrap_or_else(|| index_id.to_string());
+        AnalyzeJobSpec {
+            schema: self.statement.schema.clone(),
+            table: self.statement.table.clone(),
+            partition: String::new(),
+            job_info: format!("analyze index {name}"),
+        }
+    }
+
+    fn global_job_spec(&self, index_id: Option<i64>) -> AnalyzeJobSpec {
+        let job_info = match index_id {
+            None => format!(
+                "merge global stats for {}.{} columns",
+                self.statement.schema, self.statement.table
+            ),
+            Some(index_id) => {
+                let name = self
+                    .table
+                    .indices
+                    .iter_deref()
+                    .find_map(|index| {
+                        let index = index.read();
+                        (index.id == index_id).then(|| index.name.original().to_owned())
+                    })
+                    .unwrap_or_else(|| index_id.to_string());
+                format!(
+                    "merge global stats for {}.{}'s index {name}",
+                    self.statement.schema, self.statement.table
+                )
+            }
+        };
+        AnalyzeJobSpec {
+            schema: self.statement.schema.clone(),
+            table: self.statement.table.clone(),
+            partition: String::new(),
+            job_info,
+        }
     }
 }
 
@@ -197,12 +475,40 @@ pub fn resolve_cluster_analyze_statement<
     let mut transaction = opener
         .begin_read_only()
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-    let (table, partition_ids, saved) = {
+    let (table, partition_ids, partition_names, realtime_counts, saved) = {
         let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
         let catalog = load_cluster_catalog(&mut snapshot)
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         let table = find_statement_table(&catalog, statement)?;
         let partition_ids = analyze_partition_ids(table, &statement.partitions)?;
+        let partition_names = table
+            .partition
+            .as_ref()
+            .map(|partition| {
+                partition
+                    .read()
+                    .definitions
+                    .snapshot()
+                    .into_iter()
+                    .map(|definition| (definition.id, definition.name.original().to_owned()))
+                    .collect::<HashMap<_, _>>()
+            })
+            .unwrap_or_default();
+        let mut realtime_counts = HashMap::new();
+        if let Ok(loader) = ClusterStatsLoader::locate(&catalog) {
+            for physical_id in std::iter::once(table.id).chain(partition_ids.iter().copied()) {
+                let count = loader
+                    .load_table(
+                        &mut snapshot,
+                        physical_id,
+                        &crate::cluster_stats_load::column_types_of(table),
+                    )
+                    .ok()
+                    .flatten()
+                    .map(|stats| realtime_count_of(stats.row_count));
+                realtime_counts.insert(physical_id, count);
+            }
+        }
         let mut saved = std::collections::HashMap::new();
         if statement.persist_options {
             for physical_id in std::iter::once(table.id).chain(partition_ids.iter().copied()) {
@@ -214,7 +520,13 @@ pub fn resolve_cluster_analyze_statement<
                 }
             }
         }
-        (table.clone(), partition_ids, saved)
+        (
+            table.clone(),
+            partition_ids,
+            partition_names,
+            realtime_counts,
+            saved,
+        )
     };
     transaction
         .finish_without_writes()
@@ -233,7 +545,39 @@ pub fn resolve_cluster_analyze_statement<
     );
     for options in &mut resolution.physical {
         options.columns = final_column_choice(&table, &options.columns)?;
+        if options.effective.num_samples == 0 && options.effective.sample_rate.is_none() {
+            options.effective.sample_rate = Some(adjusted_sample_rate(
+                realtime_counts.get(&options.physical_id).copied().flatten(),
+                None,
+            ));
+        }
     }
+    let mut selection_transaction = opener
+        .begin_read_only()
+        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+    let (selected_columns, predicate_columns_empty) = {
+        let mut snapshot = TransactionMetaSnapshot::new(&mut selection_transaction, timeout);
+        let catalog = load_cluster_catalog(&mut snapshot)
+            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+        let mut selections = HashMap::new();
+        let mut predicate_columns_empty = HashMap::new();
+        for options in &resolution.physical {
+            let mut target_statement = statement.clone();
+            target_statement.columns = options.columns.clone();
+            let (mut selected, _, empty) =
+                selected_columns(&mut snapshot, &catalog, &table, &target_statement)
+                    .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+            if let Some(selected) = selected.as_mut() {
+                add_mandatory_columns(&table, selected);
+            }
+            selections.insert(options.physical_id, selected);
+            predicate_columns_empty.insert(options.physical_id, empty);
+        }
+        (selections, predicate_columns_empty)
+    };
+    selection_transaction
+        .finish_without_writes()
+        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
     let mut resolved = statement.clone();
     let logical = resolution
         .physical
@@ -243,10 +587,15 @@ pub fn resolve_cluster_analyze_statement<
     resolved.columns = logical.columns.clone();
     resolved.options = logical.effective;
     resolved.options.memory_quota = statement.options.memory_quota;
+    let partitioned = table.partition.is_some();
     Ok(ResolvedClusterAnalyze {
         statement: resolved,
+        table,
         physical_options: resolution.physical,
-        partitioned: table.partition.is_some(),
+        partition_names,
+        selected_columns,
+        predicate_columns_empty,
+        partitioned,
         ignored_partition_overrides: resolution.ignored_partition_overrides,
         run_full_sampling: index_tasks.run_full_sampling,
         independent_index_ids: index_tasks.independent_index_ids,
@@ -591,6 +940,7 @@ pub fn commit_cluster_analyze<C: StoreWriteClient, L: StoreWriteLoader, P: Store
     killer: &SqlKiller,
     record_history: &dyn Fn() -> bool,
     record_global_history: &dyn Fn() -> bool,
+    jobs: &dyn AnalyzeJobLifecycle,
 ) -> Result<ClusterAnalyzeReport, ClusterAnalyzeError> {
     let targets = if !resolved.run_full_sampling {
         Vec::new()
@@ -603,16 +953,57 @@ pub fn commit_cluster_analyze<C: StoreWriteClient, L: StoreWriteLoader, P: Store
     } else {
         resolved.physical_options.iter().take(1).collect::<Vec<_>>()
     };
+    let task_jobs = targets
+        .iter()
+        .map(|options| AnalyzeJobHandle::pending(jobs, &resolved.table_job_spec(options)))
+        .chain(resolved.independent_index_ids.iter().map(|index_id| {
+            AnalyzeJobHandle::pending(jobs, &resolved.independent_index_job_spec(*index_id))
+        }))
+        .collect::<Vec<_>>();
     let mut reports = Vec::with_capacity(targets.len());
-    for options in targets {
-        reports.push(commit_cluster_analyze_target(
-            opener,
-            &resolved.statement,
-            options,
-            timeout,
-            stats_lease,
-            record_history,
-        )?);
+    for (position, options) in targets.iter().enumerate() {
+        let job = &task_jobs[position];
+        job.start(jobs);
+        let selected_columns = resolved
+            .selected_columns
+            .get(&options.physical_id)
+            .and_then(|selected| selected.as_ref());
+        let predicate_columns_empty = resolved
+            .predicate_columns_empty
+            .get(&options.physical_id)
+            .copied()
+            .unwrap_or(false);
+        let task_result = catch_unwind(AssertUnwindSafe(|| {
+            commit_cluster_analyze_target(
+                opener,
+                &resolved.statement,
+                options,
+                timeout,
+                stats_lease,
+                record_history,
+                &|count| job.update(jobs, count),
+                selected_columns,
+                predicate_columns_empty,
+            )
+        }));
+        let task_result = match task_result {
+            Ok(result) => result,
+            Err(panic) => {
+                fail_analyze_jobs(jobs, &task_jobs[position..], "analyze worker panicked");
+                std::panic::resume_unwind(panic);
+            }
+        };
+        match task_result {
+            Ok(report) => {
+                job.finish(jobs, None, AnalyzeJobKind::Table);
+                reports.push(report);
+            }
+            Err(error) => {
+                let failure = error.to_string();
+                fail_analyze_jobs(jobs, &task_jobs[position..], &failure);
+                return Err(error);
+            }
+        }
     }
     let mut reports = reports.into_iter();
     let mut report = reports.next().unwrap_or_else(|| ClusterAnalyzeReport {
@@ -644,6 +1035,46 @@ pub fn commit_cluster_analyze<C: StoreWriteClient, L: StoreWriteLoader, P: Store
             .physical_id;
         report.table_id = table_id;
     }
+    let independent_options = &resolved
+        .physical_options
+        .first()
+        .expect("the logical table option is present")
+        .effective;
+    for (offset, index_id) in resolved.independent_index_ids.iter().enumerate() {
+        let position = targets.len() + offset;
+        let job = &task_jobs[position];
+        job.start(jobs);
+        let task_result = catch_unwind(AssertUnwindSafe(|| {
+            commit_cluster_independent_index(
+                opener,
+                &resolved.statement,
+                *index_id,
+                independent_options,
+                timeout,
+                stats_lease,
+                record_history,
+                &|count| job.update(jobs, count),
+            )
+        }));
+        let task_result = match task_result {
+            Ok(result) => result,
+            Err(panic) => {
+                fail_analyze_jobs(jobs, &task_jobs[position..], "analyze worker panicked");
+                std::panic::resume_unwind(panic);
+            }
+        };
+        match task_result {
+            Ok(next) => {
+                job.finish(jobs, None, AnalyzeJobKind::Table);
+                merge_analyze_report(&mut report, next);
+            }
+            Err(error) => {
+                let failure = error.to_string();
+                fail_analyze_jobs(jobs, &task_jobs[position..], &failure);
+                return Err(error);
+            }
+        }
+    }
     if resolved.run_full_sampling
         && resolved.partitioned
         && resolved.statement.dynamic_partition_prune
@@ -660,6 +1091,8 @@ pub fn commit_cluster_analyze<C: StoreWriteClient, L: StoreWriteLoader, P: Store
                 .push(resolved.logical_table_id());
         }
         if !column_ids.is_empty() {
+            let job = AnalyzeJobHandle::pending(jobs, &resolved.global_job_spec(None));
+            job.start(jobs);
             let result = commit_cluster_global_stats(
                 opener,
                 resolved,
@@ -671,9 +1104,16 @@ pub fn commit_cluster_analyze<C: StoreWriteClient, L: StoreWriteLoader, P: Store
                 killer,
                 record_global_history,
             );
+            job.finish(
+                jobs,
+                result.as_ref().err().map(ToString::to_string).as_deref(),
+                AnalyzeJobKind::GlobalStatsMerge,
+            );
             record_global_stats_result(&mut report.global_stats_warnings, result);
         }
         for index_id in index_ids {
+            let job = AnalyzeJobHandle::pending(jobs, &resolved.global_job_spec(Some(index_id)));
+            job.start(jobs);
             let result = commit_cluster_global_stats(
                 opener,
                 resolved,
@@ -685,25 +1125,13 @@ pub fn commit_cluster_analyze<C: StoreWriteClient, L: StoreWriteLoader, P: Store
                 killer,
                 record_global_history,
             );
+            job.finish(
+                jobs,
+                result.as_ref().err().map(ToString::to_string).as_deref(),
+                AnalyzeJobKind::GlobalStatsMerge,
+            );
             record_global_stats_result(&mut report.global_stats_warnings, result);
         }
-    }
-    let independent_options = &resolved
-        .physical_options
-        .first()
-        .expect("the logical table option is present")
-        .effective;
-    for index_id in &resolved.independent_index_ids {
-        let next = commit_cluster_independent_index(
-            opener,
-            &resolved.statement,
-            *index_id,
-            independent_options,
-            timeout,
-            stats_lease,
-            record_history,
-        )?;
-        merge_analyze_report(&mut report, next);
     }
     report.ignored_partition_overrides = resolved.ignored_partition_overrides;
     Ok(report)
@@ -1619,6 +2047,9 @@ fn commit_cluster_analyze_target<C: StoreWriteClient, L: StoreWriteLoader, P: St
     timeout: Duration,
     stats_lease: Duration,
     record_history: &dyn Fn() -> bool,
+    progress: &dyn Fn(i64),
+    selected_columns_for_task: Option<&HashSet<i64>>,
+    predicate_columns_empty_for_task: bool,
 ) -> Result<ClusterAnalyzeReport, ClusterAnalyzeError> {
     let started = Instant::now();
     let mut transaction = opener
@@ -1650,23 +2081,20 @@ fn commit_cluster_analyze_target<C: StoreWriteClient, L: StoreWriteLoader, P: St
         target_statement.raw_options = options.raw;
         target_statement.options = options.effective;
         target_statement.options.memory_quota = statement.options.memory_quota;
-        let (mut selected, cleanup, predicate_columns_empty) =
-            selected_columns(&mut snapshot, &catalog, &table, &target_statement)
-                .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-        if let Some(selected) = selected.as_mut() {
-            add_mandatory_columns(&table, selected);
-        }
-        let report = analyze_physical_table(
+        let (_, cleanup, _) = selected_columns(&mut snapshot, &catalog, &table, &target_statement)
+            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+        let report = analyze_physical_table_with_progress(
             &mut snapshot,
             &table,
             options.physical_id,
             &target_statement.options,
             realtime_count,
             start_ts,
-            selected.as_ref(),
+            selected_columns_for_task,
+            progress,
         )
         .map_err(|error: AnalyzeError| ClusterAnalyzeError::Other(error.to_string()))?;
-        let mut write = if options.is_partition && selected.is_some() {
+        let mut write = if options.is_partition && selected_columns_for_task.is_some() {
             plan_partial_partition_stats_write(
                 &mut snapshot,
                 &catalog,
@@ -1675,16 +2103,16 @@ fn commit_cluster_analyze_target<C: StoreWriteClient, L: StoreWriteLoader, P: St
             )
         } else if options.is_partition {
             plan_partition_stats_write(&mut snapshot, &catalog, &report.stats, utc_now_timestamp())
-        } else if selected.is_some() {
+        } else if selected_columns_for_task.is_some() {
             plan_partial_stats_write(&mut snapshot, &catalog, &report.stats, utc_now_timestamp())
         } else {
             plan_stats_write(&mut snapshot, &catalog, &report.stats, utc_now_timestamp())
         }
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         write.mutations.splice(0..0, cleanup.mutations);
-        (report, write, predicate_columns_empty)
+        (report, write)
     };
-    let (report, write, predicate_columns_empty) = planned;
+    let (report, write) = planned;
 
     if write.is_empty() {
         transaction
@@ -1703,7 +2131,7 @@ fn commit_cluster_analyze_target<C: StoreWriteClient, L: StoreWriteLoader, P: St
         histogram_count: write.histogram_count,
         bucket_count: write.bucket_count,
         topn_count: write.topn_count,
-        predicate_columns_empty,
+        predicate_columns_empty: predicate_columns_empty_for_task,
         option_save_warning: None,
         global_stats_warnings: Vec::new(),
         ignored_partition_overrides: false,
@@ -1752,6 +2180,7 @@ fn commit_cluster_independent_index<
     timeout: Duration,
     stats_lease: Duration,
     record_history: &dyn Fn() -> bool,
+    progress: &dyn Fn(i64),
 ) -> Result<ClusterAnalyzeReport, ClusterAnalyzeError> {
     let started = Instant::now();
     let mut transaction = opener
@@ -1777,8 +2206,15 @@ fn commit_cluster_independent_index<
                     table.name.original()
                 ))
             })?;
-        let report = analyze_independent_index(&mut snapshot, &table, &index, options, start_ts)
-            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+        let report = analyze_independent_index_with_progress(
+            &mut snapshot,
+            &table,
+            &index,
+            options,
+            start_ts,
+            progress,
+        )
+        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         let (write, inserted_meta) = plan_independent_index_stats_write(
             &mut snapshot,
             &catalog,
@@ -1976,9 +2412,11 @@ fn classify_commit_outcome(outcome: &OptimisticCommitOutcome) -> Result<(), Clus
 #[cfg(test)]
 mod tests {
     use super::{
-        analyze_partition_ids, classify_commit_outcome, final_column_choice, merge_global_items,
-        realtime_count_of, record_global_history_enabled, select_index_tasks,
-        slow_stats_save_needs_version_refresh, write_global_stats_items, ClusterAnalyzeError,
+        analyze_partition_ids, classify_commit_outcome, fail_analyze_jobs, final_column_choice,
+        merge_global_items, realtime_count_of, record_global_history_enabled, select_index_tasks,
+        slow_stats_save_needs_version_refresh, write_global_stats_items, AnalyzeJobHandle,
+        AnalyzeJobKind, AnalyzeJobLifecycle, AnalyzeJobProgress, AnalyzeJobSpec,
+        ClusterAnalyzeError, ANALYZE_JOB_MAX_DELTA,
     };
     use std::collections::BTreeMap;
     use std::thread;
@@ -1991,6 +2429,91 @@ mod tests {
     use tidb_model::index::{IndexColumn, IndexInfo};
     use tidb_model::partition::{PartitionDefinition, PartitionInfo};
     use tidb_model::table_info::TableInfo;
+
+    #[derive(Default)]
+    struct RecordingAnalyzeJobs {
+        next_id: std::sync::atomic::AtomicU64,
+        events: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl AnalyzeJobLifecycle for RecordingAnalyzeJobs {
+        fn insert(&self, spec: &AnalyzeJobSpec) -> Option<u64> {
+            let id = self
+                .next_id
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                + 1;
+            self.events
+                .lock()
+                .unwrap()
+                .push(format!("insert:{id}:{}", spec.partition));
+            Some(id)
+        }
+
+        fn start(&self, job_id: u64) {
+            self.events.lock().unwrap().push(format!("start:{job_id}"));
+        }
+
+        fn update_progress(&self, job_id: u64, processed_rows: i64) {
+            self.events
+                .lock()
+                .unwrap()
+                .push(format!("progress:{job_id}:{processed_rows}"));
+        }
+
+        fn finish(
+            &self,
+            job_id: u64,
+            processed_rows: i64,
+            failure: Option<&str>,
+            kind: AnalyzeJobKind,
+        ) {
+            self.events.lock().unwrap().push(format!(
+                "finish:{job_id}:{processed_rows}:{}:{kind:?}",
+                failure.unwrap_or_default()
+            ));
+        }
+    }
+
+    #[test]
+    fn analyze_job_progress_uses_go_row_and_time_gates() {
+        let progress = AnalyzeJobProgress::started();
+        progress.state.lock().unwrap().last_dump =
+            std::time::Instant::now() - Duration::from_secs(6);
+
+        assert_eq!(progress.update(ANALYZE_JOB_MAX_DELTA), 0);
+        assert_eq!(progress.update(1), ANALYZE_JOB_MAX_DELTA + 1);
+        assert_eq!(progress.residual(), 0);
+        assert_eq!(progress.update(7), 0);
+        assert_eq!(progress.residual(), 7);
+    }
+
+    #[test]
+    fn analyze_failure_finishes_running_and_undispatched_jobs() {
+        let jobs = RecordingAnalyzeJobs::default();
+        let spec = |partition: &str| AnalyzeJobSpec {
+            schema: "test".to_owned(),
+            table: "t".to_owned(),
+            partition: partition.to_owned(),
+            job_info: "analyze table all columns".to_owned(),
+        };
+        let handles = [
+            AnalyzeJobHandle::pending(&jobs, &spec("p0")),
+            AnalyzeJobHandle::pending(&jobs, &spec("p1")),
+        ];
+        handles[0].start(&jobs);
+        fail_analyze_jobs(&jobs, &handles, "sampling failed");
+
+        assert_eq!(
+            *jobs.events.lock().unwrap(),
+            [
+                "insert:1:p0",
+                "insert:2:p1",
+                "start:1",
+                "finish:1:0:sampling failed:Table",
+                "finish:2:0:sampling failed:Table",
+            ]
+        );
+    }
     use tidb_model::SchemaState;
     use tidb_stats::histogram::{Bucket, Histogram};
     use tidb_stats::row_sample_collector::adjusted_sample_rate;

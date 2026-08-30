@@ -225,6 +225,28 @@ pub fn analyze_physical_table<S: PagedMetaSnapshot>(
     version: u64,
     selected_column_ids: Option<&HashSet<i64>>,
 ) -> Result<AnalyzeReport, AnalyzeError> {
+    analyze_physical_table_with_progress(
+        snapshot,
+        table,
+        physical_id,
+        options,
+        realtime_count,
+        version,
+        selected_column_ids,
+        |_| {},
+    )
+}
+
+pub(crate) fn analyze_physical_table_with_progress<S: PagedMetaSnapshot>(
+    snapshot: &mut S,
+    table: &TableInfo,
+    physical_id: i64,
+    options: &AnalyzeOptions,
+    realtime_count: Option<i64>,
+    version: u64,
+    selected_column_ids: Option<&HashSet<i64>>,
+    mut progress: impl FnMut(i64),
+) -> Result<AnalyzeReport, AnalyzeError> {
     let plan = cluster_analyze_plan(table, selected_column_ids)?;
     let mut run = AnalyzeRun::start(&plan, options, realtime_count)?;
 
@@ -267,6 +289,7 @@ pub fn analyze_physical_table<S: PagedMetaSnapshot>(
             }
             run.push(&columns)?;
         }
+        progress(i64::try_from(page.len()).unwrap_or(i64::MAX));
         let last_key = page
             .last()
             .map(|(key, _)| key.clone())
@@ -325,6 +348,17 @@ pub fn analyze_independent_index<S: RegionPagedMetaSnapshot>(
     options: &AnalyzeOptions,
     version: u64,
 ) -> Result<AnalyzeReport, AnalyzeError> {
+    analyze_independent_index_with_progress(snapshot, table, index, options, version, |_| {})
+}
+
+pub(crate) fn analyze_independent_index_with_progress<S: RegionPagedMetaSnapshot>(
+    snapshot: &mut S,
+    table: &TableInfo,
+    index: &IndexInfo,
+    options: &AnalyzeOptions,
+    version: u64,
+    mut progress: impl FnMut(i64),
+) -> Result<AnalyzeReport, AnalyzeError> {
     let bucket_count = usize::try_from(options.num_buckets)
         .map_err(|_| AnalyzeError::unsupported("invalid ANALYZE bucket count".to_owned()))?;
     let topn_count = usize::try_from(options.num_topn)
@@ -343,6 +377,7 @@ pub fn analyze_independent_index<S: RegionPagedMetaSnapshot>(
             bucket_count,
             topn_count,
         );
+        let row_count = region.pairs.len();
         for (key, _) in region.pairs {
             let (encoded_columns, _) = tidb_tablecodec::cut_index_key(&key, column_count)
                 .map_err(|error| AnalyzeError::unsupported(error.to_string()))?;
@@ -350,6 +385,7 @@ pub fn analyze_independent_index<S: RegionPagedMetaSnapshot>(
                 .push(&encoded_columns)
                 .map_err(|error| AnalyzeError::unsupported(error.to_string()))?;
         }
+        progress(i64::try_from(row_count).unwrap_or(i64::MAX));
         fragments.push(processor.finish_fragment());
     }
     let built = tidb_stats::merge_independent_index_fragments(

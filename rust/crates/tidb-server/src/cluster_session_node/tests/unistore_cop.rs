@@ -643,6 +643,79 @@ fn analyze_job_lifecycle_is_persisted_like_go() {
     .is_empty());
 }
 
+/// Go creates one pending job for every physical partition task before
+/// dispatch, then creates independent global-merge jobs after all partition
+/// results have been saved. Global jobs never accumulate processed rows.
+#[test]
+fn partition_analyze_jobs_match_go_task_shapes() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(78))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "SET SESSION tidb_partition_prune_mode = 'dynamic'",
+    );
+    rows(
+        &mut session,
+        "CREATE TABLE stats_analyze_partitioned (a INT, KEY idx(a)) \
+         PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (10), \
+         PARTITION p1 VALUES LESS THAN MAXVALUE)",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO stats_analyze_partitioned VALUES (1),(11)",
+    );
+    rows(
+        &mut session,
+        "ANALYZE TABLE stats_analyze_partitioned WITH 0 TOPN, 1 BUCKETS",
+    );
+
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT partition_name, job_info, processed_rows, state, process_id IS NULL \
+             FROM mysql.analyze_jobs IGNORE INDEX \
+             (PRIMARY, update_time, idx_schema_table_state, idx_schema_table_partition_state) \
+             WHERE table_schema = 'test' AND table_name = 'stats_analyze_partitioned' \
+             ORDER BY id",
+        )),
+        [
+            [
+                "p0",
+                "analyze table all indexes, all columns with 1 buckets, 0 topn, 1 samplerate",
+                "1",
+                "finished",
+                "1",
+            ],
+            [
+                "p1",
+                "analyze table all indexes, all columns with 1 buckets, 0 topn, 1 samplerate",
+                "1",
+                "finished",
+                "1",
+            ],
+            [
+                "",
+                "merge global stats for test.stats_analyze_partitioned columns",
+                "0",
+                "finished",
+                "1",
+            ],
+            [
+                "",
+                "merge global stats for test.stats_analyze_partitioned's index idx",
+                "0",
+                "finished",
+                "1",
+            ],
+        ]
+    );
+}
+
 /// Pinned `TestSystemTableDDLHasNoEvent`: `asyncNotifyEvent` suppresses every
 /// stats subscriber event for `metadef.IsMemOrSysDB`, so system-table DDL
 /// changes schema metadata but never creates or refreshes stats rows.

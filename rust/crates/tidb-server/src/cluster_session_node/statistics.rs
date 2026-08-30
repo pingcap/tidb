@@ -10,18 +10,29 @@
 //! `variable.SetMemQuotaAnalyze` (`pkg/executor/select.go:141`, the quota
 //! below).
 
+use std::sync::Arc;
 use tidb_exec::cluster_analyze::{AnalyzeStatement, SampleMemoryQuota, MEM_QUOTA_ANALYZE_VARIABLE};
 use tidb_exec::cluster_stats_lock::ClusterStatsLockStatement;
-use tidb_exec::cluster_stats_write::{AnalyzeJobId, StatsWritePlan};
+use tidb_exec::cluster_stats_write::StatsWritePlan;
 use tidb_exec::mysql_bootstrap::utc_now_timestamp;
+use tidb_exec::real_tikv_analyze::{AnalyzeJobKind, AnalyzeJobLifecycle, AnalyzeJobSpec};
 use tidb_executor::analyze::panic_recovery::recover_analyze_panic;
 use tidb_session::privilege::GlobalPriv;
 
 use crate::sql_node::{QuerySession, SqlQueryError, WriteOutcome};
 
-use super::{ClusterServerSession, ER_TABLEACCESS_DENIED_ERROR};
+use super::{
+    ClusterServerSession, ClusterTransactions, SharedClusterCatalog, ER_TABLEACCESS_DENIED_ERROR,
+};
 
-impl ClusterServerSession {
+struct PersistedAnalyzeJobs {
+    transactions: Arc<dyn ClusterTransactions>,
+    catalog: Arc<SharedClusterCatalog>,
+    instance: String,
+    process_id: u64,
+}
+
+impl PersistedAnalyzeJobs {
     fn commit_analyze_job_plan(
         &self,
         build: impl FnOnce(
@@ -39,62 +50,34 @@ impl ClusterServerSession {
             .commit_optimistic_mutations(plan.mutations, read_ts, "default")
             .map_err(|error| error.message)
     }
+}
 
-    fn insert_analyze_job(&self, statement: &AnalyzeStatement) -> Option<AnalyzeJobId> {
+impl AnalyzeJobLifecycle for PersistedAnalyzeJobs {
+    fn insert(&self, spec: &AnalyzeJobSpec) -> Option<u64> {
         let result = (|| {
             let catalog = self.catalog.load();
-            let table = catalog
-                .find_table(&statement.schema, &statement.table)
-                .map(|(_, table)| table)
-                .ok_or_else(|| "analyze table disappeared before job insertion".to_owned())?;
-            // Go publishes one job per physical task. Until the analyzer
-            // exposes its partition/index tasks, emitting one statement job
-            // for those shapes would be observably wrong.
-            if table.partition.is_some()
-                || !table.indices.is_empty()
-                || statement.index_names.is_some()
-                || !matches!(
-                    statement.columns,
-                    tidb_exec::cluster_analyze::AnalyzeColumnChoice::Default
-                        | tidb_exec::cluster_analyze::AnalyzeColumnChoice::All
-                )
-            {
-                return Ok(None);
-            }
-            let sample = if statement.options.num_samples > 0 {
-                format!("{} samples", statement.options.num_samples)
-            } else {
-                format!(
-                    "{} samplerate",
-                    statement.options.sample_rate.unwrap_or(1.0)
-                )
-            };
-            let job_info = format!(
-                "analyze table all columns with {} buckets, {} topn, {sample}",
-                statement.options.num_buckets, statement.options.num_topn
-            );
             let snapshot = self.transactions.open_snapshot("default")?;
             let read_ts = snapshot.start_ts();
             let mut snapshot = super::SnapshotMetaSnapshot::new(snapshot);
             let (job_id, plan) = tidb_exec::cluster_stats_write::plan_insert_analyze_job(
                 &mut snapshot,
                 &catalog,
-                &statement.schema,
-                &statement.table,
-                "",
-                job_info.as_bytes(),
-                &self.session.analyze_job_instance(),
-                self.connection_id,
+                &spec.schema,
+                &spec.table,
+                &spec.partition,
+                spec.job_info.as_bytes(),
+                &self.instance,
+                self.process_id,
                 utc_now_timestamp(),
             )
             .map_err(|error| error.to_string())?;
             self.transactions
                 .commit_optimistic_mutations(plan.mutations, read_ts, "default")
                 .map_err(|error| error.message)?;
-            Ok::<_, String>(Some(job_id))
+            Ok::<_, String>(job_id)
         })();
         match result {
-            Ok(job_id) => job_id,
+            Ok(job_id) => Some(job_id),
             Err(error) => {
                 eprintln!("{{\"event\":\"insert_analyze_job_failed\",\"error\":{error:?}}}");
                 None
@@ -102,7 +85,7 @@ impl ClusterServerSession {
         }
     }
 
-    fn start_analyze_job(&self, job_id: AnalyzeJobId) {
+    fn start(&self, job_id: u64) {
         if let Err(error) = self.commit_analyze_job_plan(|snapshot, catalog| {
             tidb_exec::cluster_stats_write::plan_start_analyze_job(
                 snapshot,
@@ -116,7 +99,32 @@ impl ClusterServerSession {
         }
     }
 
-    fn finish_analyze_job(&self, job_id: AnalyzeJobId, processed_rows: i64, failure: Option<&str>) {
+    fn update_progress(&self, job_id: u64, processed_rows: i64) {
+        if let Err(error) = self.commit_analyze_job_plan(|snapshot, catalog| {
+            tidb_exec::cluster_stats_write::plan_update_analyze_job_progress(
+                snapshot,
+                catalog,
+                job_id,
+                processed_rows,
+                utc_now_timestamp(),
+            )
+            .map_err(|error| error.to_string())
+        }) {
+            eprintln!("{{\"event\":\"update_analyze_job_failed\",\"error\":{error:?}}}");
+        }
+    }
+
+    fn finish(
+        &self,
+        job_id: u64,
+        processed_rows: i64,
+        failure: Option<&str>,
+        kind: AnalyzeJobKind,
+    ) {
+        let processed_rows = match kind {
+            AnalyzeJobKind::Table => processed_rows,
+            AnalyzeJobKind::GlobalStatsMerge => 0,
+        };
         if let Err(error) = self.commit_analyze_job_plan(|snapshot, catalog| {
             tidb_exec::cluster_stats_write::plan_finish_analyze_job(
                 snapshot,
@@ -131,7 +139,9 @@ impl ClusterServerSession {
             eprintln!("{{\"event\":\"finish_analyze_job_failed\",\"error\":{error:?}}}");
         }
     }
+}
 
+impl ClusterServerSession {
     /// Applies client-transferred LOAD STATS bytes through the cluster handle.
     pub(super) fn run_load_stats(&mut self, data: &[u8]) -> Result<WriteOutcome, SqlQueryError> {
         if data.is_empty() {
@@ -316,25 +326,22 @@ impl ClusterServerSession {
                     .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS)
                     .is_ok_and(|value| tidb_exec::option_values::tidb_opt_on(&value))
             };
-            let job_id = self.insert_analyze_job(statement);
-            if let Some(job_id) = job_id {
-                self.start_analyze_job(job_id);
-            }
+            let jobs = PersistedAnalyzeJobs {
+                transactions: Arc::clone(&self.transactions),
+                catalog: Arc::clone(&self.catalog),
+                instance: self.session.analyze_job_instance(),
+                process_id: self.connection_id,
+            };
             let analyzed = recover_analyze_panic(|| {
                 self.analyze.execute(
                     statement,
                     statement_memory.sql_killer(),
                     &historical_stats_enabled,
+                    &jobs,
                 )
             })
             .map_err(|error| SqlQueryError::unknown(error.rendered_message()))
             .and_then(|result| result);
-            if let Some(job_id) = job_id {
-                match &analyzed {
-                    Ok(report) => self.finish_analyze_job(job_id, report.scanned_rows, None),
-                    Err(error) => self.finish_analyze_job(job_id, 0, Some(&error.message)),
-                }
-            }
             let report = analyzed?;
             if report.predicate_columns_empty {
                 self.session.append_routed_warning(

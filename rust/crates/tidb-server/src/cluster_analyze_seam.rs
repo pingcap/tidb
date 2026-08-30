@@ -61,7 +61,7 @@ use tidb_exec::cluster_analyze::AnalyzeStatement;
 use tidb_exec::cluster_catalog::load_cluster_catalog;
 use tidb_exec::real_tikv_analyze::{
     commit_cluster_analyze, record_global_history_enabled, resolve_cluster_analyze_statement,
-    save_cluster_analyze_options, ClusterAnalyzeReport,
+    save_cluster_analyze_options, AnalyzeJobLifecycle, ClusterAnalyzeReport,
 };
 use tidb_exec::real_tikv_catalog::TransactionMetaSnapshot;
 use tidb_exec::real_tikv_load_stats::{
@@ -86,6 +86,7 @@ pub trait ClusterAnalyze: Send + Sync {
         statement: &AnalyzeStatement,
         killer: &SqlKiller,
         historical_stats_enabled: &dyn Fn() -> bool,
+        jobs: &dyn AnalyzeJobLifecycle,
     ) -> Result<ClusterAnalyzeReport, SqlQueryError>;
 
     /// Loads one client-transferred JSON statistics dump into cluster storage.
@@ -204,6 +205,7 @@ where
         statement: &AnalyzeStatement,
         killer: &SqlKiller,
         historical_stats_enabled: &dyn Fn() -> bool,
+        jobs: &dyn AnalyzeJobLifecycle,
     ) -> Result<ClusterAnalyzeReport, SqlQueryError> {
         let statement = resolve_cluster_analyze_statement(&self.opener, statement, self.timeout)
             .map_err(cluster_analyze_error)?;
@@ -226,6 +228,7 @@ where
             killer,
             &record_history,
             &record_global_history,
+            jobs,
         )
         .map_err(cluster_analyze_error)?;
         if let Err(error) = save_cluster_analyze_options(&self.opener, &statement, self.timeout) {

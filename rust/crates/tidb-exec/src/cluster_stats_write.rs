@@ -290,6 +290,38 @@ pub fn plan_start_analyze_job<S: MetaSnapshot>(
     })
 }
 
+/// Plans pinned Go `UpdateAnalyzeJobProgress`: add one already-throttled
+/// progress delta to `mysql.analyze_jobs.processed_rows`.
+///
+/// The 10,000,000-row/five-second throttle belongs to the executor-side
+/// `AnalyzeProgress`; storage receives only the delta that passed it.
+pub fn plan_update_analyze_job_progress<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    job_id: AnalyzeJobId,
+    processed_rows: i64,
+    now: Time,
+) -> Result<StatsWritePlan, StatsWriteError> {
+    plan_update_analyze_job(snapshot, catalog, job_id, now, |table, values| {
+        let processed = column_id(table, "processed_rows")
+            .ok()
+            .and_then(|id| values.get(&id))
+            .and_then(|value| match value {
+                Datum::Int(value) => Some(*value),
+                Datum::UInt(value) => i64::try_from(*value).ok(),
+                _ => None,
+            })
+            .unwrap_or_default()
+            .saturating_add(processed_rows);
+        set(
+            table,
+            values,
+            "processed_rows",
+            Datum::UInt(u64::try_from(processed).unwrap_or_default()),
+        );
+    })
+}
+
 /// Plans pinned Go `FinishAnalyzeJob` for a table-analysis job.
 pub fn plan_finish_analyze_job<S: MetaSnapshot>(
     snapshot: &mut S,
