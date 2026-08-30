@@ -172,15 +172,24 @@ func (c *customGB18030Decoder) Transform(dst, src []byte, atEOF bool) (nDst, nSr
 		}
 
 		if src[nSrc] == 0x80 {
+			if len(dst[nDst:]) < utf8.RuneLen(utf8.RuneError) {
+				return nDst, nSrc, transform.ErrShortDst
+			}
 			nDst += utf8.EncodeRune(dst[nDst:], utf8.RuneError)
 			continue
 		}
 		u32 := convertBytesToUint32(src[nSrc : nSrc+next])
 		if r, ok := gb18030ToUnicode[u32]; ok {
+			if len(dst[nDst:]) < utf8.RuneLen(r) {
+				return nDst, nSrc, transform.ErrShortDst
+			}
 			nDst += utf8.EncodeRune(dst[nDst:], r)
 			continue
 		}
 		if u32 == runeErrorEncodedByGB18030 {
+			if len(dst[nDst:]) < utf8.RuneLen(utf8.RuneError) {
+				return nDst, nSrc, transform.ErrShortDst
+			}
 			nDst += utf8.EncodeRune(dst[nDst:], utf8.RuneError)
 			c.runeErrorIsLastInputFlag = true
 			continue

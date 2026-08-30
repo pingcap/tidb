@@ -242,3 +242,41 @@ func TestEncodingGB18030(t *testing.T) {
 		require.Equal(t, tc.result, string(result), cmt)
 	}
 }
+
+func TestGB18030DecoderShortDst(t *testing.T) {
+	testCases := []struct {
+		name   string
+		src    []byte
+		dstLen int
+	}{
+		{
+			name:   "replacement rune for 0x80",
+			src:    []byte{0x80},
+			dstLen: utf8.RuneLen(utf8.RuneError) - 1,
+		},
+		{
+			name:   "mapped rune requiring four bytes",
+			src:    []byte{0x94, 0x38, 0xE1, 0x31},
+			dstLen: utf8.UTFMax - 1,
+		},
+		{
+			name:   "encoded rune error",
+			src:    []byte{0x84, 0x31, 0xA4, 0x37},
+			dstLen: utf8.RuneLen(utf8.RuneError) - 1,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			dec := charset.NewCustomGB18030Decoder()
+			dst := make([]byte, tc.dstLen)
+
+			require.NotPanics(t, func() {
+				nDst, nSrc, err := dec.Transform(dst, tc.src, true)
+				require.ErrorIs(t, err, transform.ErrShortDst)
+				require.Zero(t, nDst)
+				require.Zero(t, nSrc)
+			})
+		})
+	}
+}
