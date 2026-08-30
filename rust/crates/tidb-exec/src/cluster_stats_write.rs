@@ -361,14 +361,14 @@ pub fn plan_independent_index_stats_write<S: MetaSnapshot>(
     catalog: &ClusterCatalog,
     stats: &ClusterTableStats,
     now: Time,
-) -> Result<StatsWritePlan, StatsWriteError> {
+) -> Result<(StatsWritePlan, bool), StatsWriteError> {
     let mut plan = StatsWritePlan::default();
-    plan_independent_index_meta(snapshot, catalog, stats, now, &mut plan)?;
+    let inserted_meta = plan_independent_index_meta(snapshot, catalog, stats, now, &mut plan)?;
     plan_histograms(snapshot, catalog, stats, now, false, &mut plan)?;
     plan_buckets(snapshot, catalog, stats, now, false, &mut plan)?;
     plan_topn(snapshot, catalog, stats, now, false, &mut plan)?;
     plan_fm_sketches(snapshot, catalog, stats, now, false, false, &mut plan)?;
-    Ok(plan)
+    Ok((plan, inserted_meta))
 }
 
 fn plan_stats_write_impl<S: MetaSnapshot>(
@@ -1017,10 +1017,11 @@ fn plan_independent_index_meta<S: MetaSnapshot>(
     stats: &ClusterTableStats,
     now: Time,
     plan: &mut StatsWritePlan,
-) -> Result<(), StatsWriteError> {
+) -> Result<bool, StatsWriteError> {
     let table = locate(catalog, "stats_meta")?;
     let mut rows = StatsRows::open(snapshot, table, &["table_id"], stats.table_id)?;
     let identity = vec![format!("{:?}", Datum::Int(stats.table_id))];
+    let inserted = rows.existing_values(&identity).is_none();
     let mut values = match rows.existing_values(&identity).cloned() {
         Some(values) => values,
         None => {
@@ -1039,7 +1040,8 @@ fn plan_independent_index_meta<S: MetaSnapshot>(
         Datum::UInt(stats.version),
     );
     rows.store(snapshot, catalog, &values, plan)?;
-    rows.publish_watermark(catalog, plan)
+    rows.publish_watermark(catalog, plan)?;
+    Ok(inserted)
 }
 
 fn plan_histograms<S: MetaSnapshot>(

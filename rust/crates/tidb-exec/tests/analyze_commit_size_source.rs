@@ -953,8 +953,10 @@ fn independent_index_write_preserves_existing_meta_values() {
         columns: Vec::new(),
         indexes: vec![index],
     };
-    let plan = plan_independent_index_stats_write(&mut store, &catalog, &independent, now())
-        .expect("independent index analyze plans");
+    let (plan, inserted_meta) =
+        plan_independent_index_stats_write(&mut store, &catalog, &independent, now())
+            .expect("independent index analyze plans");
+    assert!(!inserted_meta);
     apply_mutations(&mut store, &plan.mutations);
 
     let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
@@ -994,8 +996,10 @@ fn independent_index_write_creates_zero_count_zero_snapshot_meta() {
         columns: Vec::new(),
         indexes: vec![full_histogram(7, true)],
     };
-    let plan = plan_independent_index_stats_write(&mut store, &catalog, &stats, now())
-        .expect("independent index analyze plans");
+    let (plan, inserted_meta) =
+        plan_independent_index_stats_write(&mut store, &catalog, &stats, now())
+            .expect("independent index analyze plans");
+    assert!(inserted_meta);
     apply_mutations(&mut store, &plan.mutations);
 
     let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");

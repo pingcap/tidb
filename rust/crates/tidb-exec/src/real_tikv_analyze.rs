@@ -572,6 +572,7 @@ pub fn commit_cluster_analyze<C: StoreWriteClient, L: StoreWriteLoader, P: Store
     timeout: Duration,
     stats_lease: Duration,
     killer: &SqlKiller,
+    record_history: &dyn Fn() -> bool,
     record_global_history: &dyn Fn() -> bool,
 ) -> Result<ClusterAnalyzeReport, ClusterAnalyzeError> {
     let targets = if !resolved.run_full_sampling {
@@ -592,6 +593,8 @@ pub fn commit_cluster_analyze<C: StoreWriteClient, L: StoreWriteLoader, P: Store
             &resolved.statement,
             options,
             timeout,
+            stats_lease,
+            record_history,
         )?);
     }
     let mut reports = reports.into_iter();
@@ -659,6 +662,8 @@ pub fn commit_cluster_analyze<C: StoreWriteClient, L: StoreWriteLoader, P: Store
             *index_id,
             independent_options,
             timeout,
+            stats_lease,
+            record_history,
         )?;
         merge_analyze_report(&mut report, next);
     }
@@ -1513,7 +1518,10 @@ fn commit_cluster_analyze_target<C: StoreWriteClient, L: StoreWriteLoader, P: St
     statement: &AnalyzeStatement,
     options: &tidb_executor::analyze::PhysicalAnalyzeOptions,
     timeout: Duration,
+    stats_lease: Duration,
+    record_history: &dyn Fn() -> bool,
 ) -> Result<ClusterAnalyzeReport, ClusterAnalyzeError> {
+    let started = Instant::now();
     let mut transaction = opener
         .begin(ANALYZE_MAX_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
@@ -1587,7 +1595,7 @@ fn commit_cluster_analyze_target<C: StoreWriteClient, L: StoreWriteLoader, P: St
             "this ANALYZE produced no statistics to store".to_owned(),
         ));
     }
-    let receipt = ClusterAnalyzeReport {
+    let mut receipt = ClusterAnalyzeReport {
         table_id: report.stats.table_id,
         version: start_ts,
         scanned_rows: report.scanned_rows,
@@ -1620,6 +1628,15 @@ fn commit_cluster_analyze_target<C: StoreWriteClient, L: StoreWriteLoader, P: St
         .commit(write.mutations, &UnaryCallContext::with_timeout(timeout))
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
     classify_commit_outcome(&outcome)?;
+    receipt.version = finish_analyze_save(
+        opener,
+        receipt.table_id,
+        receipt.version,
+        started,
+        timeout,
+        stats_lease,
+        record_history,
+    )?;
     Ok(receipt)
 }
 
@@ -1633,12 +1650,15 @@ fn commit_cluster_independent_index<
     index_id: i64,
     options: &tidb_executor::analyze::AnalyzeOptions,
     timeout: Duration,
+    stats_lease: Duration,
+    record_history: &dyn Fn() -> bool,
 ) -> Result<ClusterAnalyzeReport, ClusterAnalyzeError> {
+    let started = Instant::now();
     let mut transaction = opener
         .begin(ANALYZE_MAX_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
     let start_ts = transaction.start_ts();
-    let (report, write) = {
+    let (report, write, inserted_meta) = {
         let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
         let catalog = load_cluster_catalog(&mut snapshot)
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
@@ -1659,16 +1679,16 @@ fn commit_cluster_independent_index<
             })?;
         let report = analyze_independent_index(&mut snapshot, &table, &index, options, start_ts)
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-        let write = plan_independent_index_stats_write(
+        let (write, inserted_meta) = plan_independent_index_stats_write(
             &mut snapshot,
             &catalog,
             &report.stats,
             utc_now_timestamp(),
         )
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-        (report, write)
+        (report, write, inserted_meta)
     };
-    let receipt = ClusterAnalyzeReport {
+    let mut receipt = ClusterAnalyzeReport {
         table_id: report.stats.table_id,
         version: start_ts,
         scanned_rows: report.scanned_rows,
@@ -1689,7 +1709,40 @@ fn commit_cluster_independent_index<
         .commit(write.mutations, &UnaryCallContext::with_timeout(timeout))
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
     classify_commit_outcome(&outcome)?;
+    if inserted_meta {
+        receipt.version = finish_analyze_save(
+            opener,
+            receipt.table_id,
+            receipt.version,
+            started,
+            timeout,
+            stats_lease,
+            record_history,
+        )?;
+    }
     Ok(receipt)
+}
+
+fn finish_analyze_save<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
+    opener: &RealOptimisticTransactionOpener<C, L, P>,
+    table_id: i64,
+    mut version: u64,
+    started: Instant,
+    timeout: Duration,
+    stats_lease: Duration,
+    record_history: &dyn Fn() -> bool,
+) -> Result<u64, ClusterAnalyzeError> {
+    if slow_stats_save_needs_version_refresh(stats_lease, started.elapsed()) {
+        version = refresh_stats_meta_version(opener, table_id, timeout).map_err(|_| {
+            ClusterAnalyzeError::Other(
+                "failed to update stats meta version during analyze result save. The system may be too busy. Please retry the operation later".to_owned(),
+            )
+        })?;
+    }
+    if record_history() {
+        record_analyze_history(opener, table_id, version, timeout);
+    }
+    Ok(version)
 }
 
 fn selected_columns<S: crate::cluster_catalog::MetaSnapshot>(

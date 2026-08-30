@@ -212,6 +212,7 @@ where
         let statement = resolve_cluster_analyze_statement(&self.opener, statement, self.timeout)
             .map_err(cluster_analyze_error)?;
         let logical_table_id = statement.logical_table_id();
+        let record_history = || historical_stats_enabled();
         let record_global_history = || {
             let initialized = self
                 .stats
@@ -219,7 +220,7 @@ where
                 .get(&logical_table_id)
                 .and_then(tidb_exec::stats_watch::TableStatsState::loaded)
                 .is_some_and(|table| table.is_initialized());
-            record_global_history_enabled(historical_stats_enabled(), initialized)
+            record_global_history_enabled(record_history(), initialized)
         };
         let mut report = commit_cluster_analyze(
             &self.opener,
@@ -227,6 +228,7 @@ where
             self.timeout,
             self.stats_lease,
             killer,
+            &record_history,
             &record_global_history,
         )
         .map_err(cluster_analyze_error)?;
