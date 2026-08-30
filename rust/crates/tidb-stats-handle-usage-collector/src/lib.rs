@@ -178,10 +178,10 @@ impl<T: Send + 'static> SessionCollector<T> {
             .state
             .lock()
             .expect("collector state lock poisoned");
+        // Pinned Go `SpawnSession` leaves `sessionCollector.closeCh` nil, so
+        // this synchronous path cannot observe `GlobalCollector.Close` and
+        // still enqueues while the high-priority channel has capacity.
         loop {
-            if state.closed {
-                return false;
-            }
             if state.high_priority.len() < DEFAULT_CHANNEL_SIZE {
                 state.high_priority.push_back(data);
                 *self

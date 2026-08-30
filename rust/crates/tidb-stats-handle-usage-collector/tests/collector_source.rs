@@ -95,11 +95,11 @@ fn session_parallel_send_delta_sync() {
 }
 
 #[test]
-fn synchronous_send_stops_after_close() {
+fn synchronous_send_after_close_matches_the_spawned_go_session() {
     let collector = GlobalCollector::new(|_: i32| {});
     let session = collector.spawn_session();
     collector.start_worker();
     collector.close();
 
-    assert!(!session.send_delta_sync(1));
+    assert!(session.send_delta_sync(1));
 }
