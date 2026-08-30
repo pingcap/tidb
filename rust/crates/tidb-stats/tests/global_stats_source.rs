@@ -19,8 +19,9 @@ use tidb_codec::encode_key;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_stats::histogram::{Bucket, Histogram};
 use tidb_stats::{
-    merge_partition_stats_item, merge_partition_topn, CmsSketch, FmSketch, GlobalStatsMergeError,
-    GlobalStatsMergeMode, PartitionStatsItem, TopN, MAX_SKETCH_SIZE,
+    merge_partition_stats_item, merge_partition_topn, merge_partition_topn_concurrently,
+    CmsSketch, FmSketch, GlobalStatsMergeError, GlobalStatsMergeMode, PartitionStatsItem, TopN,
+    MAX_SKETCH_SIZE,
 };
 use tidb_util::sqlkiller::{KillSignal, SqlKiller};
 
@@ -313,4 +314,64 @@ fn source_concurrent_topn_merge_joins_worker_kill_errors_like_go() {
     )
     .expect_err("the concurrent coordinator returns its joined worker errors");
     assert!(matches!(error, GlobalStatsMergeError::Concurrent(_)));
+}
+
+#[test]
+fn exported_topn_workers_poll_killer_before_skipping_an_empty_topn() {
+    let killer = SqlKiller::default();
+    killer.send_kill_signal(KillSignal::QueryInterrupted);
+    let empty = TopN::new(0);
+    let field_type = FieldType::new(FieldTypeCode::Tiny);
+    let histogram = partition_item([]).histogram;
+
+    assert!(matches!(
+        merge_partition_topn(
+            Some(&Utc),
+            2,
+            &[Some(&empty)],
+            1,
+            vec![histogram.clone()],
+            &field_type,
+            false,
+            &killer,
+        ),
+        Err(GlobalStatsMergeError::Killed(_))
+    ));
+    assert!(matches!(
+        merge_partition_topn_concurrently(
+            Some(&Utc),
+            2,
+            &[Some(&empty)],
+            1,
+            vec![histogram],
+            &field_type,
+            false,
+            1,
+            1,
+            &killer,
+        ),
+        Err(GlobalStatsMergeError::Concurrent(_))
+    ));
+}
+
+#[test]
+fn global_topn_selector_skips_empty_topns_before_polling_killer() {
+    let killer = SqlKiller::default();
+    killer.send_kill_signal(KillSignal::QueryInterrupted);
+    let merged = merge_partition_stats_item(
+        Some(&Utc),
+        2,
+        1,
+        256,
+        10,
+        &FieldType::new(FieldTypeCode::Tiny),
+        false,
+        GlobalStatsMergeMode::Blocking,
+        2,
+        vec![partition_item([1])],
+        &killer,
+    )
+    .expect("the Go selector returns before calling either exported TopN worker");
+    assert!(merged.topn.is_none());
+    assert!(merged.histogram.is_some());
 }

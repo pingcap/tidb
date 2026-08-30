@@ -205,6 +205,9 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - Observation: Go exposes its concurrent global-TopN worker boundary independently of the session-variable selector, and its benchmark calls that boundary with an already bounded batch size.
   Evidence: pinned `MergeGlobalStatsTopNByConcurrency` and `topn_bench_test.go`; Rust previously kept the function private and recomputed its batch size internally, so it could not represent the original package API or benchmark artifact.
 
+- Observation: Go's empty-TopN shortcut belongs to the private session-aware selector, not either exported TopN merge function. Direct callers therefore still observe SQL-killer polling for an empty TopN, while the ordinary global merge returns before entering a worker.
+  Evidence: pinned `mergeGlobalStatsTopN` calls `statistics.CheckEmptyTopNs` before dispatch; `MergePartTopN2GlobalTopN` and `MergeGlobalStatsTopNByConcurrency` do not. Rust moved the shortcut to the same boundary and has regressions for both direct workers and selector behavior.
+
 ## Decision Log
 
 - Decision: reconstruct and test each pinned Go branch before editing Rust; do not preserve Rust-only fallback paths.
@@ -301,6 +304,8 @@ Revision note (2026-08-29): moved synchronous waiting out of initial request dis
 Revision note (2026-08-29): made production bootstrap and refresh consume the existing lite table loader, removed the unused snapshot wrapper, and added Go's resident-payload-preserving update behavior.
 
 Revision note (2026-08-29): restored the pinned globalstats package's exported concurrent TopN boundary and both benchmark workload shapes without closing the package-level claim; the original SQL integration-test inventory is still being reconciled.
+
+Revision note (2026-08-29): moved the empty-TopN fast path from Rust's exported workers to the private global merge selector, preserving direct SQL-killer behavior and the ordinary no-worker shortcut from pinned Go.
 
 Revision note (2026-08-29): fixed the existing `SHOW STATS_META` production path before expanding the SHOW family; the new regression was observed failing with pseudo/global rows before the fix and passing afterward.
 

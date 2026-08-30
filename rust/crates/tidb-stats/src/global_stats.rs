@@ -146,10 +146,6 @@ pub fn merge_partition_topn<TZ: TimeZone>(
     is_index: bool,
     killer: &SqlKiller,
 ) -> Result<(Option<TopN>, Vec<TopNEntry>, Vec<Histogram>), GlobalStatsMergeError> {
-    if crate::cmsketch::check_empty_topns(topns) {
-        return Ok((None, Vec::new(), histograms));
-    }
-
     let mut counts = HashMap::<Vec<u8>, f64>::new();
     let mut datum_cache = DatumMapCache::new();
     for (partition_index, topn) in topns.iter().enumerate() {
@@ -231,10 +227,6 @@ pub fn merge_partition_topn_concurrently<TZ: TimeZone + Sync>(
     merge_batch_size: usize,
     killer: &SqlKiller,
 ) -> Result<(Option<TopN>, Vec<TopNEntry>, Vec<Histogram>), GlobalStatsMergeError> {
-    if crate::cmsketch::check_empty_topns(topns) {
-        return Ok((None, Vec::new(), histograms));
-    }
-
     let worker_count = merge_concurrency.min(topns.len());
     let batch_size = merge_batch_size;
     let next_partition = AtomicUsize::new(0);
@@ -493,7 +485,9 @@ pub fn merge_partition_histogram_topn<TZ: TimeZone + Sync>(
         });
     }
     let topns = topns.iter().map(Option::as_ref).collect::<Vec<_>>();
-    let (topn, remainder, histograms) = if merge_concurrency < 2 {
+    let (topn, remainder, histograms) = if crate::cmsketch::check_empty_topns(&topns) {
+        (None, Vec::new(), histograms)
+    } else if merge_concurrency < 2 {
         merge_partition_topn(
             timezone,
             analyze_version,
