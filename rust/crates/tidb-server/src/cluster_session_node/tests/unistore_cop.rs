@@ -1388,6 +1388,321 @@ fn merged_global_cmsketch_drives_equality_estimate() {
     );
 }
 
+/// Pinned `globalstats.TestGlobalStatsData3`: composite-index global TopN,
+/// buckets, and NDV preserve the source behavior for every covered key type.
+#[test]
+fn composite_index_global_stats_match_go_types() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(107))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET SESSION tidb_analyze_version = 2");
+    rows(
+        &mut session,
+        "SET SESSION tidb_partition_prune_mode = 'dynamic'",
+    );
+
+    let cases = [
+        (
+            "tintint",
+            "INT",
+            "(1,1),(1,2),(2,1),(2,2),(2,3),(2,3),(3,1),(3,1),(3,1),\
+             (11,1),(12,1),(12,2),(13,1),(13,1),(13,2),(13,2),(13,2)",
+            ["1", "2", "3"],
+        ),
+        (
+            "tintstr",
+            "VARCHAR(32)",
+            "(1,'1'),(1,'2'),(2,'1'),(2,'2'),(2,'3'),(2,'3'),(3,'1'),(3,'1'),(3,'1'),\
+             (11,'1'),(12,'1'),(12,'2'),(13,'1'),(13,'1'),(13,'2'),(13,'2'),(13,'2')",
+            ["1", "2", "3"],
+        ),
+        (
+            "tintdouble",
+            "DOUBLE",
+            "(1,1),(1,2),(2,1),(2,2),(2,3),(2,3),(3,1),(3,1),(3,1),\
+             (11,1),(12,1),(12,2),(13,1),(13,1),(13,2),(13,2),(13,2)",
+            ["1", "2", "3"],
+        ),
+        (
+            "tdoubledecimal",
+            "DECIMAL(30,2)",
+            "(1,1),(1,2),(2,1),(2,2),(2,3),(2,3),(3,1),(3,1),(3,1),\
+             (11,1),(12,1),(12,2),(13,1),(13,1),(13,2),(13,2),(13,2)",
+            ["1.00", "2.00", "3.00"],
+        ),
+        (
+            "tstrdt",
+            "DATETIME",
+            "(1,'2000-01-01'),(1,'2000-01-02'),(2,'2000-01-01'),\
+             (2,'2000-01-02'),(2,'2000-01-03'),(2,'2000-01-03'),\
+             (3,'2000-01-01'),(3,'2000-01-01'),(3,'2000-01-01'),\
+             (11,'2000-01-01'),(12,'2000-01-01'),(12,'2000-01-02'),\
+             (13,'2000-01-01'),(13,'2000-01-01'),(13,'2000-01-02'),\
+             (13,'2000-01-02'),(13,'2000-01-02')",
+            [
+                "2000-01-01 00:00:00",
+                "2000-01-02 00:00:00",
+                "2000-01-03 00:00:00",
+            ],
+        ),
+    ];
+
+    for (table, b_type, values, [one, two, three]) in cases {
+        rows(
+            &mut session,
+            &format!(
+                "CREATE TABLE {table} (a INT, b {b_type}, KEY(a,b)) \
+                 PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (10), \
+                 PARTITION p1 VALUES LESS THAN (20))"
+            ),
+        );
+        rows(
+            &mut session,
+            &format!("INSERT INTO {table} VALUES {values}"),
+        );
+        rows(
+            &mut session,
+            &format!("ANALYZE TABLE {table} WITH 2 TOPN, 2 BUCKETS"),
+        );
+
+        let meta = displayed(rows(
+            &mut session,
+            &format!("SHOW STATS_META WHERE table_name = '{table}'"),
+        ));
+        assert_eq!(
+            meta.iter().map(|row| row[5].as_str()).collect::<Vec<_>>(),
+            ["17", "9", "8"],
+            "{table} metadata"
+        );
+
+        let topn = displayed(rows(
+            &mut session,
+            &format!("SHOW STATS_TOPN WHERE table_name = '{table}' AND is_index = 1"),
+        ))
+        .into_iter()
+        .map(|row| row.join(" "))
+        .collect::<Vec<_>>();
+        assert_eq!(
+            topn,
+            [
+                format!("test {table} global a 1 (3, {one}) 3"),
+                format!("test {table} global a 1 (13, {two}) 3"),
+                format!("test {table} p0 a 1 (2, {three}) 2"),
+                format!("test {table} p0 a 1 (3, {one}) 3"),
+                format!("test {table} p1 a 1 (13, {one}) 2"),
+                format!("test {table} p1 a 1 (13, {two}) 3"),
+            ],
+            "{table} TopN"
+        );
+
+        let buckets = displayed(rows(
+            &mut session,
+            &format!("SHOW STATS_BUCKETS WHERE table_name = '{table}' AND is_index = 1"),
+        ))
+        .into_iter()
+        .map(|row| row.join(" "))
+        .collect::<Vec<_>>();
+        assert_eq!(
+            buckets,
+            [
+                format!("test {table} global a 1 0 6 2 (1, {one}) (2, {three}) 0"),
+                format!("test {table} global a 1 1 11 2 (11, {one}) (13, {one}) 0"),
+                format!("test {table} p0 a 1 0 3 1 (1, {one}) (2, {one}) 0"),
+                format!("test {table} p0 a 1 1 4 1 (2, {two}) (2, {two}) 0"),
+                format!("test {table} p1 a 1 0 2 1 (11, {one}) (12, {one}) 0"),
+                format!("test {table} p1 a 1 1 3 1 (12, {two}) (12, {two}) 0"),
+            ],
+            "{table} buckets"
+        );
+
+        let histograms = displayed(rows(
+            &mut session,
+            &format!("SHOW STATS_HISTOGRAMS WHERE table_name = '{table}' AND is_index = 1"),
+        ));
+        assert_eq!(
+            histograms
+                .iter()
+                .map(|row| row[6].as_str())
+                .collect::<Vec<_>>(),
+            ["11", "6", "5"],
+            "{table} NDV"
+        );
+    }
+}
+
+#[test]
+fn scalar_column_and_index_global_stats_match_go() {
+    assert_scalar_column_and_index_global_stats_match_go(None, 108);
+}
+
+#[test]
+fn concurrent_scalar_column_and_index_global_stats_match_go() {
+    assert_scalar_column_and_index_global_stats_match_go(Some(2), 109);
+}
+
+/// Pinned `globalstats.TestGlobalStatsData2` and its concurrency-two twin.
+fn assert_scalar_column_and_index_global_stats_match_go(
+    merge_concurrency: Option<u64>,
+    connection_id: u64,
+) {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(connection_id))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET SESSION tidb_analyze_version = 2");
+    rows(
+        &mut session,
+        "SET SESSION tidb_partition_prune_mode = 'dynamic'",
+    );
+    if let Some(merge_concurrency) = merge_concurrency {
+        rows(
+            &mut session,
+            &format!("SET GLOBAL tidb_merge_partition_stats_concurrency = {merge_concurrency}"),
+        );
+    }
+
+    let cases = [
+        (
+            "tint",
+            "CREATE TABLE tint (c INT, KEY(c)) PARTITION BY RANGE (c) (\
+             PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20))",
+            "(1),(2),(3),(4),(4),(5),(5),(5),(NULL),\
+             (11),(12),(13),(14),(15),(16),(16),(16),(16),(17),(17)",
+            ["1", "2", "3", "4", "5", "11", "13", "14", "15", "16", "17"],
+        ),
+        (
+            "tdouble",
+            "CREATE TABLE tdouble (a INT, c DOUBLE, KEY(c)) PARTITION BY RANGE (a) (\
+             PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20))",
+            "(1,1),(2,2),(3,3),(4,4),(4,4),(5,5),(5,5),(5,5),(NULL,NULL),\
+             (11,11),(12,12),(13,13),(14,14),(15,15),(16,16),(16,16),(16,16),(16,16),(17,17),(17,17)",
+            ["1", "2", "3", "4", "5", "11", "13", "14", "15", "16", "17"],
+        ),
+        (
+            "tdecimal",
+            "CREATE TABLE tdecimal (a INT, c DECIMAL(10,2), KEY(c)) PARTITION BY RANGE (a) (\
+             PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20))",
+            "(1,1),(2,2),(3,3),(4,4),(4,4),(5,5),(5,5),(5,5),(NULL,NULL),\
+             (11,11),(12,12),(13,13),(14,14),(15,15),(16,16),(16,16),(16,16),(16,16),(17,17),(17,17)",
+            ["1.00", "2.00", "3.00", "4.00", "5.00", "11.00", "13.00", "14.00", "15.00", "16.00", "17.00"],
+        ),
+        (
+            "tdatetime",
+            "CREATE TABLE tdatetime (a INT, c DATETIME, KEY(c)) PARTITION BY RANGE (a) (\
+             PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20))",
+            "(1,'2000-01-01'),(2,'2000-01-02'),(3,'2000-01-03'),\
+             (4,'2000-01-04'),(4,'2000-01-04'),(5,'2000-01-05'),\
+             (5,'2000-01-05'),(5,'2000-01-05'),(NULL,NULL),\
+             (11,'2000-01-11'),(12,'2000-01-12'),(13,'2000-01-13'),\
+             (14,'2000-01-14'),(15,'2000-01-15'),(16,'2000-01-16'),\
+             (16,'2000-01-16'),(16,'2000-01-16'),(16,'2000-01-16'),\
+             (17,'2000-01-17'),(17,'2000-01-17')",
+            [
+                "2000-01-01 00:00:00", "2000-01-02 00:00:00", "2000-01-03 00:00:00",
+                "2000-01-04 00:00:00", "2000-01-05 00:00:00", "2000-01-11 00:00:00",
+                "2000-01-13 00:00:00", "2000-01-14 00:00:00", "2000-01-15 00:00:00",
+                "2000-01-16 00:00:00", "2000-01-17 00:00:00",
+            ],
+        ),
+        (
+            "tstring",
+            "CREATE TABLE tstring (a INT, c VARCHAR(32), KEY(c)) PARTITION BY RANGE (a) (\
+             PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20))",
+            "(1,'a1'),(2,'a2'),(3,'a3'),(4,'a4'),(4,'a4'),(5,'a5'),(5,'a5'),(5,'a5'),(NULL,NULL),\
+             (11,'b11'),(12,'b12'),(13,'b13'),(14,'b14'),(15,'b15'),\
+             (16,'b16'),(16,'b16'),(16,'b16'),(16,'b16'),(17,'b17'),(17,'b17')",
+            ["a1", "a2", "a3", "a4", "a5", "b11", "b13", "b14", "b15", "b16", "b17"],
+        ),
+    ];
+
+    for (
+        table,
+        create,
+        values,
+        [one, two, three, four, five, eleven, thirteen, fourteen, fifteen, sixteen, seventeen],
+    ) in cases
+    {
+        rows(&mut session, create);
+        rows(
+            &mut session,
+            &format!("INSERT INTO {table} VALUES {values}"),
+        );
+        rows(
+            &mut session,
+            &format!("ANALYZE TABLE {table} WITH 2 TOPN, 2 BUCKETS"),
+        );
+
+        let meta = displayed(rows(
+            &mut session,
+            &format!("SHOW STATS_META WHERE table_name = '{table}'"),
+        ));
+        assert_eq!(
+            meta.iter().map(|row| row[5].as_str()).collect::<Vec<_>>(),
+            ["20", "9", "11"]
+        );
+
+        for is_index in [0, 1] {
+            let topn = displayed(rows(
+                &mut session,
+                &format!("SHOW STATS_TOPN WHERE table_name = '{table}' AND column_name = 'c' AND is_index = {is_index}"),
+            )).into_iter().map(|row| row.join(" ")).collect::<Vec<_>>();
+            assert_eq!(
+                topn,
+                [
+                    format!("test {table} global c {is_index} {five} 3"),
+                    format!("test {table} global c {is_index} {sixteen} 4"),
+                    format!("test {table} p0 c {is_index} {four} 2"),
+                    format!("test {table} p0 c {is_index} {five} 3"),
+                    format!("test {table} p1 c {is_index} {sixteen} 4"),
+                    format!("test {table} p1 c {is_index} {seventeen} 2"),
+                ]
+            );
+
+            let buckets = displayed(rows(
+                &mut session,
+                &format!("SHOW STATS_BUCKETS WHERE table_name = '{table}' AND column_name = 'c' AND is_index = {is_index}"),
+            )).into_iter().map(|row| row.join(" ")).collect::<Vec<_>>();
+            assert_eq!(
+                buckets,
+                [
+                    format!("test {table} global c {is_index} 0 5 2 {one} {four} 0"),
+                    format!("test {table} global c {is_index} 1 12 2 {eleven} {seventeen} 0"),
+                    format!("test {table} p0 c {is_index} 0 2 1 {one} {two} 0"),
+                    format!("test {table} p0 c {is_index} 1 3 1 {three} {three} 0"),
+                    format!("test {table} p1 c {is_index} 0 3 1 {eleven} {thirteen} 0"),
+                    format!("test {table} p1 c {is_index} 1 5 1 {fourteen} {fifteen} 0"),
+                ]
+            );
+
+            let histograms = displayed(rows(
+                &mut session,
+                &format!("SHOW STATS_HISTOGRAMS WHERE table_name = '{table}' AND column_name = 'c' AND is_index = {is_index}"),
+            ));
+            assert_eq!(
+                histograms
+                    .iter()
+                    .map(|row| row[6].as_str())
+                    .collect::<Vec<_>>(),
+                ["12", "5", "7"]
+            );
+            assert_eq!(
+                histograms
+                    .iter()
+                    .map(|row| row[7].as_str())
+                    .collect::<Vec<_>>(),
+                ["1", "1", "0"]
+            );
+        }
+    }
+}
+
 /// Pinned `globalstats.TestGlobalStatsData`: partition and global histograms
 /// retain Go's exact cumulative bucket counts, repeats, bounds, and zeroed
 /// merged bucket NDV for both the column and its index.

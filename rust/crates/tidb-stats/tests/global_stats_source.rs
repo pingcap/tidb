@@ -250,6 +250,36 @@ fn source_merge_item_without_fm_uses_go_s_nil_ndv() {
     assert_eq!(merged.histogram.expect("histogram is produced").ndv, 0);
 }
 
+/// Pinned `globalstats.TestEmptyHists`: deleting every histogram row leaves
+/// no partition items, and both the async and blocking merge paths return an
+/// empty global result without error.
+#[test]
+fn source_empty_histograms_are_noop_for_both_workers() {
+    let killer = SqlKiller::default();
+    for mode in [
+        GlobalStatsMergeMode::Async,
+        GlobalStatsMergeMode::Blocking,
+    ] {
+        let merged = merge_partition_stats_item(
+            Some(&Utc),
+            2,
+            0,
+            256,
+            0,
+            &FieldType::new(FieldTypeCode::LongLong),
+            false,
+            mode,
+            1,
+            Vec::new(),
+            &killer,
+        )
+        .expect("empty histogram merge is a no-op");
+        assert!(merged.histogram.is_none());
+        assert!(merged.cmsketch.is_none());
+        assert!(merged.topn.is_none());
+    }
+}
+
 #[test]
 fn source_async_and_blocking_cms_nil_order_matches_go_workers() {
     let killer = SqlKiller::default();
