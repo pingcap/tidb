@@ -153,6 +153,12 @@ pub struct SourceIndex {
     pub is_columnar: bool,
     /// Go `IndexInfo.MVIndex`.
     pub is_multi_valued: bool,
+    /// Go `IndexInfo.ConditionExprString`: non-empty for a partial index.
+    pub condition_expr_string: String,
+    /// Go `IndexInfo.AffectColumn`, represented by table-column offsets.
+    /// `rule_prune_indexes` uses these offsets for its conservative partial
+    /// index eligibility precheck.
+    pub affect_column_offsets: Vec<usize>,
 }
 
 /// What the ported builder bodies read off a `*model.TableInfo` plus the

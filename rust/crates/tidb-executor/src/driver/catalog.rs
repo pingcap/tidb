@@ -1024,6 +1024,8 @@ impl Catalog {
                                 is_visible: index.visible,
                                 is_columnar: false,
                                 is_multi_valued: table.mv_key_part_source(index.id).is_some(),
+                                condition_expr_string: String::new(),
+                                affect_column_offsets: Vec::new(),
                             })
                             .collect::<Vec<_>>();
                         let common_handle_lens = table

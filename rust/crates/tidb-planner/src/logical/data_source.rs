@@ -31,9 +31,8 @@
 //!   actually READ off them is kept as explicit fields: the table id, the
 //!   names, the partition definition, `pk_is_handle`, and the per-column
 //!   metadata in [`DataSourceColumn`].
-//! * `AstIndexHints` / `IndexHints` / `IndexMergeHints` are
-//!   `[]h.HintedIndex`; the hint catalogue is not transcreated, so only the
-//!   RESOLVED [`DataSource::prefer_store_type`] survives.
+//! * The pruning rule reads resolved FORCE facts and query-block-matched
+//!   `IndexMergeHints` from this leaf instead of re-reading syntax.
 //! * `HandleCols util.HandleCols` is an interface over an int handle or a
 //!   common handle. [`crate::handle_cols`] already models both identities;
 //!   this operator holds the handle COLUMNS, which is what the ported bodies
@@ -139,6 +138,13 @@ pub struct DataSource {
     pub asked_column_group: Vec<Vec<Column>>,
     /// Go `InterestingColumns`.
     pub interesting_columns: Vec<Column>,
+    /// Index IDs whose access paths have Go `AccessPath.Forced` set.
+    pub forced_index_ids: std::collections::BTreeSet<i64>,
+    /// Go `IndexMergeHints`, as their optional index-name lists. An empty
+    /// inner list is a general `USE_INDEX_MERGE(table)` hint.
+    pub index_merge_hints: Vec<Vec<String>>,
+    /// Go fix control 52869 after session-variable resolution.
+    pub prefer_index_merge_by_fix_control: bool,
     /// Go `TableStats`: the table-level profile before any filtering.
     pub table_stats: Option<StatsInfo>,
     /// Go table access path's already-derived `CountAfterAccess`.
@@ -521,6 +527,9 @@ impl DataSource {
             access_path_min_selectivity: self.access_path_min_selectivity,
             asked_column_group: self.asked_column_group.clone(),
             interesting_columns: self.interesting_columns.clone(),
+            forced_index_ids: self.forced_index_ids.clone(),
+            index_merge_hints: self.index_merge_hints.clone(),
+            prefer_index_merge_by_fix_control: self.prefer_index_merge_by_fix_control,
             table_stats: self.table_stats.clone(),
             table_path_count_after_access: self.table_path_count_after_access,
             index_path_count_after_access: self.index_path_count_after_access.clone(),

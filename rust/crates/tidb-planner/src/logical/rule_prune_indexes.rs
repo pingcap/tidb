@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `pkg/planner/core/rule/rule_prune_indexes.go` at the newborn access-path
-//! stage used by `CollectPredicateColumnsPoint`.
+//! Go `pkg/planner/core/rule/rule_prune_indexes.go` at the access-path stage
+//! used by `CollectPredicateColumnsPoint`.
 
 use std::cmp::Ordering;
 use std::collections::HashSet;
@@ -56,6 +56,20 @@ fn score_index_path(
         return None;
     };
     let metadata = source.indexes.get(*index)?;
+    if !metadata.condition_expr_string.is_empty()
+        && metadata
+            .affect_column_offsets
+            .iter()
+            .any(|offset| !interesting_ids.contains(&source.table_columns[*offset].id))
+    {
+        return Some(IndexWithScore {
+            path: path.clone(),
+            interesting_count: 0,
+            consecutive_column_ids: Vec::new(),
+            columns: 0,
+            index_id: metadata.id,
+        });
+    }
     let interesting_count = metadata
         .columns
         .iter()
@@ -94,8 +108,7 @@ fn compare_scored(left: &IndexWithScore, right: &IndexWithScore, total: usize) -
         .then_with(|| left.index_id.cmp(&right.index_id))
 }
 
-/// Go `PruneIndexesByWhereAndOrder` for the access-path fields represented by
-/// Rust at this rule position.
+/// Go `PruneIndexesByWhereAndOrder` at the static pruning position.
 #[must_use]
 pub fn prune_indexes_by_where_and_order(
     source: &DataSource,
@@ -115,7 +128,14 @@ pub fn prune_indexes_by_where_and_order(
         .collect::<HashSet<_>>();
     let mut table_paths = Vec::new();
     let mut multi_value_paths = Vec::new();
+    let mut index_merge_paths = Vec::new();
     let mut preferred = Vec::new();
+    let prefer_merge =
+        !source.index_merge_hints.is_empty() || source.prefer_index_merge_by_fix_control;
+    let has_specified_indexes = source
+        .index_merge_hints
+        .iter()
+        .any(|names| !names.is_empty());
 
     for path in paths {
         match path {
@@ -128,9 +148,26 @@ pub fn prune_indexes_by_where_and_order(
                     multi_value_paths.push(path.clone());
                     continue;
                 }
+                if source.forced_index_ids.contains(&metadata.id) {
+                    return paths.to_vec();
+                }
                 let Some(scored) = score_index_path(source, path, &interesting_ids) else {
                     continue;
                 };
+                if has_specified_indexes
+                    && source
+                        .index_merge_hints
+                        .iter()
+                        .flatten()
+                        .any(|name| metadata.name.eq_ignore_ascii_case(name))
+                {
+                    index_merge_paths.push(path.clone());
+                    continue;
+                }
+                if prefer_merge && !has_specified_indexes && scored.interesting_count > 0 {
+                    preferred.push(scored);
+                    continue;
+                }
                 // `IsSingleScan` is false here, so Go admits this candidate
                 // exactly when it covers an interesting column.
                 if scored.interesting_count > 0 {
@@ -142,9 +179,12 @@ pub fn prune_indexes_by_where_and_order(
 
     preferred.retain(|candidate| candidate.score(interesting_ids.len()) > 0);
     preferred.sort_by(|left, right| compare_scored(left, right, interesting_ids.len()));
+    let has_preferred = !preferred.is_empty();
 
     let mut result = table_paths;
     result.extend(multi_value_paths);
+    let non_regular_path_count = result.len();
+    result.extend(index_merge_paths);
     if only_prune_zero_score {
         result.extend(preferred.into_iter().map(|candidate| candidate.path));
     } else {
@@ -161,10 +201,7 @@ pub fn prune_indexes_by_where_and_order(
 
     // Go's two safety checks retain the original list when pruning would
     // leave nothing, or only table/MV paths because no regular index scored.
-    let has_regular_index = result
-        .iter()
-        .any(|path| matches!(path, PossiblePath::Index { index } if source.indexes.get(*index).is_some_and(|metadata| !metadata.is_multi_valued)));
-    if result.is_empty() || !has_regular_index {
+    if result.is_empty() || (result.len() == non_regular_path_count && !has_preferred) {
         return paths.to_vec();
     }
     result
@@ -222,6 +259,7 @@ mod tests {
             indexes: vec![
                 SourceIndex {
                     id: 11,
+                    name: "idx_a".to_owned(),
                     columns: vec![SourceIndexColumn {
                         offset: 0,
                         ..SourceIndexColumn::default()
@@ -230,6 +268,7 @@ mod tests {
                 },
                 SourceIndex {
                     id: 12,
+                    name: "idx_b".to_owned(),
                     columns: vec![SourceIndexColumn {
                         offset: 1,
                         ..SourceIndexColumn::default()
@@ -273,5 +312,81 @@ mod tests {
         source.interesting_columns.clear();
         assert_eq!(prune_data_source(&mut source, 0), None);
         assert_eq!(source.enumerated_paths.len(), 3);
+    }
+
+    #[test]
+    fn a_forced_path_disables_pruning_for_the_whole_source() {
+        let mut source = source();
+        source.forced_index_ids.insert(12);
+        assert_eq!(
+            prune_indexes_by_where_and_order(&source, &source.enumerated_paths, 1),
+            source.enumerated_paths
+        );
+    }
+
+    #[test]
+    fn a_named_index_merge_path_survives_without_a_score() {
+        let mut source = source();
+        source.index_merge_hints = vec![vec!["IDX_B".to_owned()]];
+        assert_eq!(
+            prune_indexes_by_where_and_order(&source, &source.enumerated_paths, 1),
+            vec![
+                PossiblePath::Table {
+                    is_int_handle: true,
+                    primary_index: None,
+                },
+                PossiblePath::Index { index: 1 },
+                PossiblePath::Index { index: 0 },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_partial_index_missing_an_affected_column_has_zero_score() {
+        let mut source = source();
+        source.indexes[0].condition_expr_string = "c > 0".to_owned();
+        source.indexes[0].affect_column_offsets = vec![2];
+        source.interesting_columns = vec![column(1), column(2)];
+        assert_eq!(
+            prune_indexes_by_where_and_order(&source, &source.enumerated_paths, 0),
+            vec![
+                PossiblePath::Table {
+                    is_int_handle: true,
+                    primary_index: None,
+                },
+                PossiblePath::Index { index: 1 },
+            ]
+        );
+    }
+
+    #[test]
+    fn positive_threshold_keeps_go_default_maximum() {
+        let mut source = source();
+        source.indexes = (0..12)
+            .map(|offset| SourceIndex {
+                id: 100 + offset,
+                name: format!("i{offset}"),
+                columns: vec![SourceIndexColumn {
+                    offset: 0,
+                    ..SourceIndexColumn::default()
+                }],
+                ..SourceIndex::default()
+            })
+            .collect();
+        source.enumerated_paths = std::iter::once(PossiblePath::Table {
+            is_int_handle: true,
+            primary_index: None,
+        })
+        .chain((0..12).map(|index| PossiblePath::Index { index }))
+        .collect();
+
+        let pruned = prune_indexes_by_where_and_order(&source, &source.enumerated_paths, 1);
+        assert_eq!(pruned.len(), 11);
+        assert_eq!(
+            pruned[1..],
+            (0..10)
+                .map(|index| PossiblePath::Index { index })
+                .collect::<Vec<_>>()
+        );
     }
 }

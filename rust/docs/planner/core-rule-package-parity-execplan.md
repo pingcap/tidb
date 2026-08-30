@@ -20,6 +20,7 @@ Rust currently exposes Go's logical-rule list but several entries are missing, n
 - [x] (2026-08-29) Replaced the narrowed predicate helper and planner-local join-equivalence solver with the registered pinned `PredicateSimplification` rule and expression-owned general propagation: PushDownNot, logical-constant short circuit, IN/NE merge, redundant OR removal, impossible OR-branch pruning, DataSource recursion, plan-cache skip reasons, and session-controlled join-key retention.
 - [x] (2026-08-29) Integrated pinned `PropConstForOuterJoin`: preserved-side constants, transitive equality classes, null-sensitive modes, inner `IS NOT NULL` derivation, recursive safe replacement, `allJoinLeaf`, and join-type-specific validity filters now use the ordinary join executor path.
 - [x] (2026-08-29) Replaced the absent/partial outer-join anti pattern with pinned `OuterJoinToSemiJoin`: recursive selection discovery, identity-projection traversal, right-join normalization, join-predicate and NOT NULL witnesses, typed NULL restoration, and Apply/NullEQ refusal.
+- [x] (2026-08-29) Replaced the static-only index-pruning shortcuts with the pinned `rule_prune_indexes.go` branches reachable before stats derivation: forced-path bypass, INDEX_MERGE preservation/preference, fix-control 52869, partial-index affected-column precheck, deterministic scoring, default-ten selection, and the exact safety fallback. Removed master-only clustered-prefix/internal-scoring gap stubs that are absent from the pinned tree.
 - [ ] Run the Ready validation profile and record the complete package receipt.
 
 ## Surprises & Discoveries
@@ -47,6 +48,9 @@ Rust currently exposes Go's logical-rule list but several entries are missing, n
 
 - Observation: the existing outer-join-to-anti regression documented and asserted a deliberately partial implementation.
   Evidence: before the registered rule body, the direct case failed and the test required inner-column output to remain a left outer join; the Go rule instead inserts a typed NULL projection, so that non-parity assertion was replaced.
+
+- Observation: the ignored pruning inventory mixed current-master behavior into a pinned-commit parity task.
+  Evidence: `TestIndexPruneWithSharedClusteredPrefix`, `effectiveIndexColumnIDs`, and the internal bad-offset test do not exist at `e2788410`; the pinned rule's fallback path deliberately has no consecutive-column IDs. Those stubs were removed rather than importing newer pruning policy.
 
 ## Decision Log
 

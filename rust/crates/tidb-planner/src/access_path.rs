@@ -788,6 +788,8 @@ mod enumeration_tests {
             is_visible: true,
             is_columnar: false,
             is_multi_valued: false,
+            condition_expr_string: String::new(),
+            affect_column_offsets: Vec::new(),
         }
     }
 

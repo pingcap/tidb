@@ -161,22 +161,6 @@ fn partial_index_preconditions_decide_plan_cache_admission() {}
 #[ignore = "go-parity-gap: rule.InjectCheckForIndexPrune hook and AccessPath pruning pass are not transcreated"]
 fn index_prune_threshold_zero_prunes_only_unreferenced_partials() {}
 
-/// GO PORT of `pkg/planner/core/casetest/index/index_test.go:456
-/// TestIndexPruneWithSharedClusteredPrefix`.
-///
-/// Multi-tenant tenant_obj schema — every secondary index leading with the
-/// clustered-key prefix tenant_ws — planned in RANKING mode
-/// (threshold=10): failpoint-captured kept-index lists are pinned exactly,
-/// covering obj_type_id/num coverage beyond the discounted prefix, identical-
-/// signature dedup of ix_tenant_label(_type), all-pruned outcomes for pure
-/// tenant-prefix payloads, `<=>` binding like `=`, no-discount retention when
-/// only num1 is filtered (no txt prefixes survive), force-index bypass, and
-/// on tenant_dup the column-count tiebreak preferring narrower ix_tenant_a_c
-/// over ix_tenant_a_c_b despite larger index IDs (:536-577 chains).
-#[test]
-#[ignore = "go-parity-gap: PruneIndexesByWhereAndOrder clustered-prefix discount + capture-failpoint live harness unported"]
-fn shared_clustered_prefix_index_prune_keeps_exact_ranked_lists() {}
-
 /// GO PORT of `pkg/planner/core/casetest/index/index_test.go:603
 /// TestForceIndexLimit`.
 ///

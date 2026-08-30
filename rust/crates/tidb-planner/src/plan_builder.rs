@@ -376,6 +376,46 @@ pub struct BlockExpand {
     pub distinct_group_by_exprs: Vec<Expression>,
 }
 
+/// One query-block-local Go `IndexMergeHint`, reduced to the fields used by
+/// `PruneIndexesByWhereAndOrder`.
+#[derive(Clone, Debug, Default)]
+struct IndexMergeHint {
+    /// Optional explicitly qualified database name.
+    db_name: Option<String>,
+    /// The table name or alias named by the hint.
+    table_name: String,
+    /// Optional index names; empty means general index-merge preference.
+    index_names: Vec<String>,
+}
+
+fn index_merge_hints_from_select(select: &SelectStmt) -> Vec<IndexMergeHint> {
+    select
+        .hints
+        .iter()
+        .filter_map(|hint| {
+            let tidb_ast::HintKind::Index {
+                qb_name,
+                table,
+                indexes,
+            } = &hint.kind
+            else {
+                return None;
+            };
+            if !hint.name.eq_ignore_ascii_case("USE_INDEX_MERGE")
+                || qb_name.is_some()
+                || table.qb_name.is_some()
+            {
+                return None;
+            }
+            Some(IndexMergeHint {
+                db_name: table.db_name.clone(),
+                table_name: table.name.clone(),
+                index_names: indexes.clone(),
+            })
+        })
+        .collect()
+}
+
 /// Go `schemaTableKey` (`planbuilder.go`), the recursion guard's key.
 pub type SchemaTableKey = (String, String);
 
@@ -468,6 +508,8 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     /// Go `b.TableHints()`'s JOIN half, which `buildJoin` reads through
     /// `SetPreferredJoinTypeAndOrder`; see [`from::JoinHints`].
     pub join_hints: from::JoinHints,
+    /// Go `PlanHints.IndexMergeHintList` for the current query block.
+    index_merge_hints: Vec<IndexMergeHint>,
 
     /// Go `b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy()`, which gates
     /// [`only_full_group_by`]'s whole rule and `buildSortWithCheck`.
@@ -479,6 +521,9 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     /// Go `SessionVars.OptimizerUseInvisibleIndexes` (default OFF): whether
     /// `getPossibleAccessPaths` may enumerate invisible indexes.
     pub optimizer_use_invisible_indexes: bool,
+    /// Go fix control 52869, consumed by index pruning through the built
+    /// `DataSource`.
+    pub prefer_index_merge_by_fix_control: bool,
     /// Go `b.ctx.GetSessionVars().EnableSkewDistinctAgg`
     /// (`buildAggregation`, `:271`).
     pub enable_skew_distinct_agg: bool,
@@ -729,10 +774,12 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             flags: RewriterSessionFlags::default(),
             hints: RewriterHints::default(),
             join_hints: from::JoinHints::default(),
+            index_merge_hints: Vec::new(),
             // Go's default `sql_mode` carries `ONLY_FULL_GROUP_BY`.
             only_full_group_by: true,
             // Go `DefTiDBOptimizerUseInvisibleIndexes = false`.
             optimizer_use_invisible_indexes: false,
+            prefer_index_merge_by_fix_control: false,
             enable_skew_distinct_agg: false,
             enable_force_inline_cte: false,
             enable_mpp_shared_cte_execution: false,
@@ -1043,6 +1090,19 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
 
         let as_name = table_ref.alias.clone();
         let visible_table = as_name.clone().unwrap_or_else(|| table.table_name.clone());
+        let index_merge_hints = self
+            .index_merge_hints
+            .iter()
+            .filter(|hint| {
+                let hint_db = hint
+                    .db_name
+                    .as_deref()
+                    .unwrap_or_else(|| self.source.current_database());
+                hint.table_name.eq_ignore_ascii_case(&visible_table)
+                    && hint_db.eq_ignore_ascii_case(&db_name)
+            })
+            .map(|hint| hint.index_names.clone())
+            .collect();
 
         let mut columns = Vec::with_capacity(table.columns.len() + 2);
         let mut schema_columns = Vec::with_capacity(table.columns.len() + 2);
@@ -1170,6 +1230,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             common_handle_lens: table.common_handle_lens.clone(),
             prefer_store_type: table.prefer_store_type,
             is_for_update_read: self.is_for_update_read,
+            prefer_index_merge_by_fix_control: self.prefer_index_merge_by_fix_control,
+            index_merge_hints,
             ..DataSource::default()
         };
         // Go `getPossibleAccessPaths` (`:5042`): the ENUMERATION runs here,
@@ -2017,9 +2079,14 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let parent_hints = std::mem::replace(&mut self.hints, current_hints);
         let parent_join_hints =
             std::mem::replace(&mut self.join_hints, from::JoinHints::from_select(select));
+        let parent_index_merge_hints = std::mem::replace(
+            &mut self.index_merge_hints,
+            index_merge_hints_from_select(select),
+        );
         let built = self.build_select_body(select);
         self.hints = parent_hints;
         self.join_hints = parent_join_hints;
+        self.index_merge_hints = parent_index_merge_hints;
         let result = built.map(|(plan, flag)| {
             // `:4652` the trailing `return b.tryToBuildSequence(currentLayerCTEs, p)`,
             // which Go evaluates BEFORE the deferred truncation runs.

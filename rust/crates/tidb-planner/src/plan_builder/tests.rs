@@ -697,3 +697,20 @@ fn a_built_data_source_enumerates_its_access_paths() {
     // The GROWN lists stay empty at build time; the costing seam fills them.
     assert!(data_source.possible_access_paths.is_empty());
 }
+
+#[test]
+fn use_index_merge_is_attached_to_the_matching_data_source() {
+    let harness = Harness::new();
+    let mut builder = harness.builder();
+    let select = parse_select("SELECT /*+ USE_INDEX_MERGE(x, idx_b) */ * FROM test.t AS x");
+    let (plan, _) = builder.build_select(&select).expect("the SELECT builds");
+
+    let mut matched = 0;
+    plan.walk_preorder(&mut |node| {
+        if let LogicalPlan::DataSource(source) = node {
+            matched += 1;
+            assert_eq!(source.index_merge_hints, vec![vec!["idx_b".to_owned()]]);
+        }
+    });
+    assert_eq!(matched, 1);
+}
