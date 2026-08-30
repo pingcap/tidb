@@ -9,11 +9,12 @@
   `tiup-peer:3391` (Go) and `tiup-peer:3392` (Rust).
 - Concurrency: 10 threads.
 - Private kubeconfig: `/tmp/tc8228803-new.MMk3QB/kubeconfig.yml` (mode 600).
-- Rust source: `hparser-integration`, pushed commit `ad677f0` (planner
-  subquery lowering plus bounded join-row append fixes on top of the shared
-  branch updates).
-- Rust binary: built on the TiUP Pod NVMe volume (`/tiup/rust-target`),
-  SHA-256 `c4f6077b9b4976bb177eed2c12cbf5d20c3afed26ae8ccf9e75fe560337bc1a0`.
+- Rust source: `hparser-integration`; the tested binary was built from
+  commit `0d79610` (planner subquery lowering plus bounded join-row append
+  fixes). The branch subsequently advanced to report commit `d2ef241`.
+- Rust binary: built on the TiUP Pod NVMe volume (`/tiup/rust-target-lto`),
+  with the repository's default thin-LTO profile, SHA-256
+  `320764be80a156cefccfea0608b9a349b59d7fad881c9c1514b1e5aad4c29dd2`.
 - Git was installed and SSH access was configured inside the TiUP Pod; no
   workstation Git state was used for the TiUP checkout.
 
