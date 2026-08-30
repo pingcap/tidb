@@ -77,18 +77,18 @@ use tidb_executor::analyze::AnalyzeError as ComputeError;
 use tidb_executor::analyze::{
     AnalyzePlan, AnalyzeRun, AnalyzedColumn, AnalyzedHistogram, AnalyzedIndex,
 };
-use tidb_model::table_info::TableInfo;
 use tidb_model::SchemaState;
+use tidb_model::table_info::TableInfo;
 
-use crate::cluster_catalog::{prefix_scan_end, PagedMetaSnapshot};
+use crate::cluster_catalog::{PagedMetaSnapshot, prefix_scan_end};
 use crate::cluster_stats_load::{ClusterStatsItem, ClusterTableStats};
 use crate::mysql_system_tables::{SystemRow, SystemTableError, SystemTableView};
 use crate::system_row_write::origin_default;
 
 pub use tidb_executor::analyze::{
-    resolve_analyze_options, AnalyzeColumnChoice, AnalyzeOptionOverrides, AnalyzeOptions,
-    AnalyzeStatement, SampleMemoryExceeded, SampleMemoryQuota, MEM_QUOTA_ANALYZE_VARIABLE,
-    STATS_VERSION_2,
+    AnalyzeColumnChoice, AnalyzeOptionOverrides, AnalyzeOptions, AnalyzeStatement,
+    MEM_QUOTA_ANALYZE_VARIABLE, STATS_VERSION_2, SampleMemoryExceeded, SampleMemoryQuota,
+    resolve_analyze_options,
 };
 
 /// Whether this statement is an `ANALYZE TABLE` this node runs, and against
@@ -197,6 +197,33 @@ pub fn analyze_table<S: PagedMetaSnapshot>(
     version: u64,
     selected_column_ids: Option<&HashSet<i64>>,
 ) -> Result<AnalyzeReport, AnalyzeError> {
+    if table.partition.is_some() {
+        return Err(AnalyzeError::unsupported(format!(
+            "analyzing the partitioned table `{}` requires an explicit physical partition target",
+            table.name.original()
+        )));
+    }
+    analyze_physical_table(
+        snapshot,
+        table,
+        table.id,
+        options,
+        realtime_count,
+        version,
+        selected_column_ids,
+    )
+}
+
+/// Runs one physical table or partition using the logical table's schema.
+pub fn analyze_physical_table<S: PagedMetaSnapshot>(
+    snapshot: &mut S,
+    table: &TableInfo,
+    physical_id: i64,
+    options: &AnalyzeOptions,
+    realtime_count: Option<i64>,
+    version: u64,
+    selected_column_ids: Option<&HashSet<i64>>,
+) -> Result<AnalyzeReport, AnalyzeError> {
     let plan = cluster_analyze_plan(table, selected_column_ids)?;
     let mut run = AnalyzeRun::start(&plan, options, realtime_count)?;
 
@@ -205,7 +232,9 @@ pub fn analyze_table<S: PagedMetaSnapshot>(
         .iter()
         .map(|column| column.name.as_str())
         .collect();
-    let view = SystemTableView::project(table.name.original(), table, &names);
+    let mut physical_table = table.clone();
+    physical_table.id = physical_id;
+    let view = SystemTableView::project(table.name.original(), &physical_table, &names);
     // The rows stream into the sampler one page at a time, exactly as Go's
     // region collectors feed it: nothing here may materialize the whole table
     // first, because a table this engine analyzes can be the largest thing the
@@ -246,7 +275,7 @@ pub fn analyze_table<S: PagedMetaSnapshot>(
     let analyzed = run.finish()?;
 
     let stats = ClusterTableStats {
-        table_id: table.id,
+        table_id: physical_id,
         version,
         snapshot: version,
         last_analyze_version: version,
@@ -314,13 +343,6 @@ fn cluster_analyze_plan(
     table: &TableInfo,
     selected_column_ids: Option<&HashSet<i64>>,
 ) -> Result<AnalyzePlan, AnalyzeError> {
-    if table.partition.is_some() {
-        return Err(AnalyzeError::unsupported(format!(
-            "this node does not analyze the partitioned table `{}`: its statistics are one set \
-             per partition plus a merged global set, which is a separate write path",
-            table.name.original()
-        )));
-    }
     let mut columns = Vec::new();
     let mut by_offset: BTreeMap<i64, usize> = BTreeMap::new();
     for column in table.cols().iter_deref() {

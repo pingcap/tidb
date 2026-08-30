@@ -208,6 +208,8 @@ pub struct AnalyzeStatement {
     pub persist_options: bool,
     /// Live process default used only while the persisted choice is DEFAULT.
     pub default_columns: AnalyzeColumnChoice,
+    /// Whether this statement uses Go's dynamic partition-pruning mode.
+    pub dynamic_partition_prune: bool,
     /// The effective knobs.
     pub options: AnalyzeOptions,
 }
@@ -521,6 +523,7 @@ pub fn lower_analyze_admin(
             raw_options,
             persist_options: true,
             default_columns: AnalyzeColumnChoice::All,
+            dynamic_partition_prune: true,
             options,
         });
     }

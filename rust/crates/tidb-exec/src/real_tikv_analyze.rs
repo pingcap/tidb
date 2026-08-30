@@ -38,7 +38,7 @@ use tidb_txnkv::transaction::{
 use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
 
 use crate::cluster_analyze::{
-    AnalyzeColumnChoice, AnalyzeError, AnalyzeStatement, analyze_table, lower_analyze,
+    AnalyzeColumnChoice, AnalyzeError, AnalyzeStatement, analyze_physical_table, lower_analyze,
     resolve_analyze_options,
 };
 use crate::cluster_catalog::load_cluster_catalog;
@@ -118,6 +118,17 @@ pub struct ClusterAnalyzeReport {
     pub predicate_columns_empty: bool,
     /// Nonfatal pinned-Go `saveAnalyzeOptions` failure, if any.
     pub option_save_warning: Option<String>,
+    /// Whether Go ignores explicit partition options in dynamic mode.
+    pub ignored_partition_overrides: bool,
+}
+
+/// The pinned planner's physical ANALYZE targets and merged options.
+#[derive(Clone, Debug)]
+pub struct ResolvedClusterAnalyze {
+    statement: AnalyzeStatement,
+    physical_options: Vec<tidb_executor::analyze::PhysicalAnalyzeOptions>,
+    partitioned: bool,
+    ignored_partition_overrides: bool,
 }
 
 /// Reads and merges the saved table-level ANALYZE options before execution.
@@ -129,51 +140,98 @@ pub fn resolve_cluster_analyze_statement<
     opener: &RealOptimisticTransactionOpener<C, L, P>,
     statement: &AnalyzeStatement,
     timeout: Duration,
-) -> Result<AnalyzeStatement, ClusterAnalyzeError> {
-    if !statement.persist_options {
-        return Ok(statement.clone());
-    }
+) -> Result<ResolvedClusterAnalyze, ClusterAnalyzeError> {
     let mut transaction = opener
         .begin_read_only()
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-    let (table, saved) = {
+    let (table, partition_ids, saved) = {
         let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
         let catalog = load_cluster_catalog(&mut snapshot)
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         let table = find_statement_table(&catalog, statement)?;
-        (
-            table.clone(),
-            load_analyze_options(&mut snapshot, &catalog, table, table.id)
-                .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?,
-        )
+        let partition_ids = analyze_partition_ids(table, &statement.partitions)?;
+        let mut saved = std::collections::HashMap::new();
+        if statement.persist_options {
+            for physical_id in std::iter::once(table.id).chain(partition_ids.iter().copied()) {
+                if let Some(options) =
+                    load_analyze_options(&mut snapshot, &catalog, table, physical_id)
+                        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?
+                {
+                    saved.insert(physical_id, options);
+                }
+            }
+        }
+        (table.clone(), partition_ids, saved)
     };
     transaction
         .finish_without_writes()
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
 
-    let saved = saved
-        .map(|saved| std::collections::HashMap::from([(table.id, saved)]))
-        .unwrap_or_default();
-    let options = resolve_analyze_options(
+    let mut resolution = resolve_analyze_options(
         table.id,
-        &[],
+        &partition_ids,
         statement.raw_options,
         &statement.columns,
         &saved,
-        true,
-        false,
-    )
-    .physical
-    .into_iter()
-    .next()
-    .expect("the logical table option is always present");
+        !statement.persist_options || statement.partitions.is_empty(),
+        statement.dynamic_partition_prune,
+    );
+    for options in &mut resolution.physical {
+        options.columns = final_column_choice(&table, &options.columns)?;
+    }
     let mut resolved = statement.clone();
-    resolved.raw_options = options.raw;
-    resolved.columns = final_column_choice(&table, &options.columns)?;
-    let memory_quota = statement.options.memory_quota;
-    resolved.options = options.effective;
-    resolved.options.memory_quota = memory_quota;
-    Ok(resolved)
+    let logical = resolution
+        .physical
+        .first()
+        .expect("the logical table option is always present");
+    resolved.raw_options = logical.raw;
+    resolved.columns = logical.columns.clone();
+    resolved.options = logical.effective;
+    resolved.options.memory_quota = statement.options.memory_quota;
+    Ok(ResolvedClusterAnalyze {
+        statement: resolved,
+        physical_options: resolution.physical,
+        partitioned: table.partition.is_some(),
+        ignored_partition_overrides: resolution.ignored_partition_overrides,
+    })
+}
+
+fn analyze_partition_ids(
+    table: &tidb_model::table_info::TableInfo,
+    requested: &[String],
+) -> Result<Vec<i64>, ClusterAnalyzeError> {
+    let Some(partition) = &table.partition else {
+        if requested.is_empty() {
+            return Ok(Vec::new());
+        }
+        return Err(ClusterAnalyzeError::Other(
+            "Partition management on a not partitioned table is not possible".to_owned(),
+        ));
+    };
+    let partition = partition.read();
+    let definitions = partition.definitions.snapshot();
+    if requested.is_empty() {
+        return Ok(definitions.iter().map(|definition| definition.id).collect());
+    }
+    requested
+        .iter()
+        .map(|requested_name| {
+            definitions
+                .iter()
+                .find(|definition| {
+                    definition
+                        .name
+                        .lowercase()
+                        .eq_ignore_ascii_case(requested_name)
+                })
+                .map(|definition| definition.id)
+                .ok_or_else(|| {
+                    ClusterAnalyzeError::Other(format!(
+                        "can not found the specified partition name {requested_name} in the table definition"
+                    ))
+                })
+        })
+        .collect()
 }
 
 fn final_column_choice(
@@ -220,30 +278,40 @@ pub fn save_cluster_analyze_options<
     P: StorePdCapability,
 >(
     opener: &RealOptimisticTransactionOpener<C, L, P>,
-    statement: &AnalyzeStatement,
+    resolved: &ResolvedClusterAnalyze,
     timeout: Duration,
 ) -> Result<(), ClusterAnalyzeError> {
-    if !statement.persist_options {
+    if !resolved.statement.persist_options {
         return Ok(());
     }
     let mut transaction = opener
-        .begin(32, MAX_OPTIMISTIC_TRANSACTION_BYTES)
+        // Go emits one REPLACE containing every logical/partition option row
+        // and applies no row-count bound to that restricted transaction.
+        .begin(ANALYZE_MAX_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
     let plan = {
         let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
         let catalog = load_cluster_catalog(&mut snapshot)
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-        let table = find_statement_table(&catalog, statement)?;
-        plan_analyze_options_write(
-            &mut snapshot,
-            &catalog,
-            table,
-            table.id,
-            statement.raw_options,
-            &statement.columns,
-            utc_now_timestamp(),
-        )
-        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?
+        let table = find_statement_table(&catalog, &resolved.statement)?;
+        let mut combined = StatsWritePlan::default();
+        for options in &resolved.physical_options {
+            if options.is_partition && resolved.statement.dynamic_partition_prune {
+                continue;
+            }
+            let write = plan_analyze_options_write(
+                &mut snapshot,
+                &catalog,
+                table,
+                options.physical_id,
+                options.raw,
+                &options.columns,
+                utc_now_timestamp(),
+            )
+            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+            combined.mutations.extend(write.mutations);
+        }
+        combined
     };
     let outcome = transaction
         .commit(plan.mutations, &UnaryCallContext::with_timeout(timeout))
@@ -316,7 +384,62 @@ fn realtime_count_of(row_count: u64) -> i64 {
 /// Runs and commits one `ANALYZE TABLE`.
 pub fn commit_cluster_analyze<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
     opener: &RealOptimisticTransactionOpener<C, L, P>,
+    resolved: &ResolvedClusterAnalyze,
+    timeout: Duration,
+) -> Result<ClusterAnalyzeReport, ClusterAnalyzeError> {
+    if resolved.partitioned && resolved.statement.dynamic_partition_prune {
+        return Err(ClusterAnalyzeError::Other(format!(
+            "this node does not analyze the partitioned table `{}` in dynamic mode until its partition statistics can be merged into Go-compatible global statistics",
+            resolved.statement.table
+        )));
+    }
+    let targets = if resolved.partitioned {
+        resolved
+            .physical_options
+            .iter()
+            .filter(|options| options.is_partition)
+            .collect::<Vec<_>>()
+    } else {
+        resolved.physical_options.iter().take(1).collect::<Vec<_>>()
+    };
+    let mut reports = Vec::with_capacity(targets.len());
+    for options in targets {
+        reports.push(commit_cluster_analyze_target(
+            opener,
+            &resolved.statement,
+            options,
+            timeout,
+        )?);
+    }
+    let mut reports = reports.into_iter();
+    let mut report = reports.next().ok_or_else(|| {
+        ClusterAnalyzeError::Other("this ANALYZE has no physical target".to_owned())
+    })?;
+    for next in reports {
+        report.version = report.version.max(next.version);
+        report.scanned_rows = report.scanned_rows.saturating_add(next.scanned_rows);
+        report.sampled_rows = report.sampled_rows.saturating_add(next.sampled_rows);
+        report.histogram_count += next.histogram_count;
+        report.bucket_count += next.bucket_count;
+        report.topn_count += next.topn_count;
+        report.predicate_columns_empty |= next.predicate_columns_empty;
+    }
+    if resolved.partitioned {
+        let table_id = resolved
+            .physical_options
+            .first()
+            .expect("the logical table option is present")
+            .physical_id;
+        report.table_id = table_id;
+    }
+    report.ignored_partition_overrides = resolved.ignored_partition_overrides;
+    Ok(report)
+}
+
+fn commit_cluster_analyze_target<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
+    opener: &RealOptimisticTransactionOpener<C, L, P>,
     statement: &AnalyzeStatement,
+    options: &tidb_executor::analyze::PhysicalAnalyzeOptions,
     timeout: Duration,
 ) -> Result<ClusterAnalyzeReport, ClusterAnalyzeError> {
     let mut transaction = opener
@@ -336,23 +459,29 @@ pub fn commit_cluster_analyze<C: StoreWriteClient, L: StoreWriteLoader, P: Store
                 loader
                     .load_table(
                         &mut snapshot,
-                        table.id,
+                        options.physical_id,
                         &crate::cluster_stats_load::column_types_of(&table),
                     )
                     .ok()
                     .flatten()
             })
             .map(|stats| realtime_count_of(stats.row_count));
+        let mut target_statement = statement.clone();
+        target_statement.columns = options.columns.clone();
+        target_statement.raw_options = options.raw;
+        target_statement.options = options.effective;
+        target_statement.options.memory_quota = statement.options.memory_quota;
         let (mut selected, cleanup, predicate_columns_empty) =
-            selected_columns(&mut snapshot, &catalog, &table, statement)
+            selected_columns(&mut snapshot, &catalog, &table, &target_statement)
                 .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         if let Some(selected) = selected.as_mut() {
             add_mandatory_columns(&table, selected);
         }
-        let report = analyze_table(
+        let report = analyze_physical_table(
             &mut snapshot,
             &table,
-            &statement.options,
+            options.physical_id,
+            &target_statement.options,
             realtime_count,
             start_ts,
             selected.as_ref(),
@@ -388,6 +517,7 @@ pub fn commit_cluster_analyze<C: StoreWriteClient, L: StoreWriteLoader, P: Store
         topn_count: write.topn_count,
         predicate_columns_empty,
         option_save_warning: None,
+        ignored_partition_overrides: false,
     };
     // The commit mints its own deadline here rather than inheriting one from
     // function entry: everything above it -- the catalog read, the previous
@@ -466,6 +596,7 @@ fn selected_columns_for_choice<S: crate::cluster_catalog::MetaSnapshot>(
         raw_options: Default::default(),
         persist_options: false,
         default_columns: AnalyzeColumnChoice::All,
+        dynamic_partition_prune: true,
         options: Default::default(),
     };
     selected_columns(snapshot, catalog, table, &statement)
@@ -532,7 +663,8 @@ fn classify_commit_outcome(outcome: &OptimisticCommitOutcome) -> Result<(), Clus
 #[cfg(test)]
 mod tests {
     use super::{
-        ClusterAnalyzeError, classify_commit_outcome, final_column_choice, realtime_count_of,
+        ClusterAnalyzeError, analyze_partition_ids, classify_commit_outcome, final_column_choice,
+        realtime_count_of,
     };
     use std::thread;
     use std::time::Duration;
@@ -541,7 +673,9 @@ mod tests {
     use tidb_executor::analyze::AnalyzeColumnChoice;
     use tidb_model::SchemaState;
     use tidb_model::column::ColumnInfo;
+    use tidb_model::go_runtime::GoShared;
     use tidb_model::index::{IndexColumn, IndexInfo};
+    use tidb_model::partition::{PartitionDefinition, PartitionInfo};
     use tidb_model::table_info::TableInfo;
     use tidb_stats::row_sample_collector::adjusted_sample_rate;
     use tidb_txnkv::region::RegionBackoffKind;
@@ -550,6 +684,54 @@ mod tests {
         OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction,
         TransactionCause,
     };
+
+    #[test]
+    fn partition_targets_follow_go_definition_and_requested_order() {
+        let table = TableInfo {
+            name: CiString::new("t"),
+            partition: Some(GoShared::new(PartitionInfo {
+                definitions: vec![
+                    PartitionDefinition {
+                        id: 11,
+                        name: CiString::new("p0"),
+                        ..PartitionDefinition::default()
+                    },
+                    PartitionDefinition {
+                        id: 12,
+                        name: CiString::new("p1"),
+                        ..PartitionDefinition::default()
+                    },
+                ]
+                .into(),
+                ..PartitionInfo::default()
+            })),
+            ..TableInfo::default()
+        };
+
+        assert_eq!(analyze_partition_ids(&table, &[]).unwrap(), vec![11, 12]);
+        assert_eq!(
+            analyze_partition_ids(&table, &["P1".to_owned(), "p0".to_owned()]).unwrap(),
+            vec![12, 11]
+        );
+        assert_eq!(
+            analyze_partition_ids(&table, &["missing".to_owned()])
+                .unwrap_err()
+                .to_string(),
+            "can not found the specified partition name missing in the table definition"
+        );
+
+        let plain = TableInfo {
+            name: CiString::new("plain"),
+            ..TableInfo::default()
+        };
+        assert!(analyze_partition_ids(&plain, &[]).unwrap().is_empty());
+        assert_eq!(
+            analyze_partition_ids(&plain, &["p0".to_owned()])
+                .unwrap_err()
+                .to_string(),
+            "Partition management on a not partitioned table is not possible"
+        );
+    }
 
     #[test]
     fn explicit_column_choice_is_saved_after_mandatory_columns_in_schema_order() {

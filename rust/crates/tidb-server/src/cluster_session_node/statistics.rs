@@ -10,7 +10,7 @@
 //! `variable.SetMemQuotaAnalyze` (`pkg/executor/select.go:141`, the quota
 //! below).
 
-use tidb_exec::cluster_analyze::{AnalyzeStatement, SampleMemoryQuota, MEM_QUOTA_ANALYZE_VARIABLE};
+use tidb_exec::cluster_analyze::{AnalyzeStatement, MEM_QUOTA_ANALYZE_VARIABLE, SampleMemoryQuota};
 use tidb_exec::cluster_stats_lock::ClusterStatsLockStatement;
 use tidb_executor::analyze::panic_recovery::recover_analyze_panic;
 use tidb_session::privilege::GlobalPriv;
@@ -126,6 +126,11 @@ impl ClusterServerSession {
             } else {
                 tidb_exec::cluster_analyze::AnalyzeColumnChoice::All
             };
+            statement.dynamic_partition_prune = !self
+                .session
+                .vars()
+                .get_system("tidb_partition_prune_mode")
+                .is_ok_and(|value| value.eq_ignore_ascii_case("static"));
             statement.options.memory_quota = memory_quota;
             let statement = &statement;
             let report = recover_analyze_panic(|| self.analyze.execute(statement))
@@ -138,6 +143,12 @@ impl ClusterServerSession {
                         statement.schema.to_lowercase(),
                         statement.table.to_lowercase()
                     ),
+                );
+            }
+            if report.ignored_partition_overrides {
+                self.session.append_routed_warning(
+                    1105,
+                    "Ignore columns and options when analyze partition in dynamic mode".to_owned(),
                 );
             }
             if let Some(warning) = &report.option_save_warning {

@@ -39,9 +39,9 @@ use std::collections::BTreeMap;
 
 use tidb_codec::encode_row_key;
 use tidb_datatype::Datum;
-use tidb_exec::cluster_analyze::{analyze_table, AnalyzeOptions};
+use tidb_exec::cluster_analyze::{AnalyzeOptions, analyze_physical_table, analyze_table};
 use tidb_exec::cluster_catalog::{ClusterCatalogError, MetaPairs, MetaSnapshot, PagedMetaSnapshot};
-use tidb_exec::table_info_build::{build_table_info, ClusteredIndexDefMode};
+use tidb_exec::table_info_build::{ClusteredIndexDefMode, build_table_info};
 use tidb_model::column::ColumnDefaultValue;
 use tidb_model::table_info::TableInfo;
 use tidb_tablecodec::encode_table_row;
@@ -112,6 +112,10 @@ fn table_after_add_column() -> TableInfo {
 
 /// One hundred rows written before `c` existed: each carries `a` only.
 fn rows_predating_the_added_column(table: &TableInfo) -> RowStore {
+    rows_predating_the_added_column_at(table, table.id)
+}
+
+fn rows_predating_the_added_column_at(table: &TableInfo, physical_id: i64) -> RowStore {
     let column_a = table
         .columns
         .iter_deref()
@@ -123,12 +127,33 @@ fn rows_predating_the_added_column(table: &TableInfo) -> RowStore {
         let value = encode_table_row(None, &[Datum::Int(handle)], &[column_a_id], true, None)
             .expect("a one-column row encodes");
         let key = encode_row_key(
-            table.id,
+            physical_id,
             &tidb_codec::encode_key(&[Datum::Int(handle)]).expect("a handle encodes"),
         );
         store.pairs.insert(key, value);
     }
     store
+}
+
+#[test]
+fn a_partition_scan_uses_its_physical_id_and_the_logical_schema() {
+    let table = table_after_add_column();
+    let partition_id = 5252;
+    let mut store = rows_predating_the_added_column_at(&table, partition_id);
+    let report = analyze_physical_table(
+        &mut store,
+        &table,
+        partition_id,
+        &AnalyzeOptions::default(),
+        None,
+        440_000_000_000_000_001,
+        None,
+    )
+    .expect("a physical partition analyzes through the logical table schema");
+
+    assert_eq!(report.stats.table_id, partition_id);
+    assert_eq!(report.scanned_rows, 100);
+    assert_eq!(report.stats.row_count, 100);
 }
 
 #[test]
