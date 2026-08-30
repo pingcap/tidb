@@ -186,6 +186,8 @@ pub struct SourceTable {
     pub physical_table_id: i64,
     /// Go `PartitionDefIdx`.
     pub partition_def_idx: Option<usize>,
+    /// Whether Go `TableInfo.GetPartitionInfo()` is non-nil.
+    pub is_partitioned: bool,
     /// Go `TableInfo.GetPartitionInfo().Definitions[i].Name.O`.
     pub partition_definition_names: Vec<String>,
     /// Go `TableInfo.GetPartitionInfo().Definitions[i].ID`.

@@ -1512,6 +1512,11 @@ impl DriverError {
             *b"HY000",
             format!("Unknown partition '{partition}' in table '{table}'"),
         ),
+        DriverError::PartitionClauseOnNonpartitioned => MysqlError::new(
+            1747,
+            *b"HY000",
+            "PARTITION () clause on non partitioned table".to_owned(),
+        ),
         DriverError::RowDoesNotMatchGivenPartitionSet => MysqlError::new(
             1748,
             *b"HY000",

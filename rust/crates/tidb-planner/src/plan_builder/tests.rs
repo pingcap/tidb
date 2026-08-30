@@ -493,6 +493,7 @@ fn test_generated_column_index_sets_the_gc_substitute_flag() {
 #[test]
 fn test_partitioned_table_sets_the_partition_processor_flag() {
     let mut harness = Harness::new();
+    harness.tables_mut()[0].is_partitioned = true;
     harness.tables_mut()[0].partition_definition_names = vec!["p0".to_owned(), "p1".to_owned()];
     harness.tables_mut()[0].partition_def_idx = Some(1);
     let mut builder = harness.builder();
@@ -500,6 +501,38 @@ fn test_partitioned_table_sets_the_partition_processor_flag() {
         .build_select(&parse_select("SELECT a FROM t"))
         .expect("the plan builds");
     assert_ne!(builder.opt_flag & flags::PARTITION_PROCESSOR, 0);
+}
+
+#[test]
+fn test_partition_clause_matches_partition_metadata() {
+    let mut harness = Harness::new();
+    let mut builder = harness.builder();
+    let error = builder
+        .build_select(&parse_select("SELECT a FROM t PARTITION (p0)"))
+        .expect_err("a partition clause on a nonpartitioned table is rejected");
+    assert_eq!(
+        error.kind(),
+        &crate::plan_base::PlanErrorKind::PartitionClauseOnNonpartitioned
+    );
+
+    harness.tables_mut()[0].is_partitioned = true;
+    harness.tables_mut()[0].partition_definition_names = vec!["p0".to_owned()];
+    let mut builder = harness.builder();
+    builder
+        .build_select(&parse_select("SELECT a FROM t PARTITION (P0)"))
+        .expect("partition names match case-insensitively");
+
+    let mut builder = harness.builder();
+    let error = builder
+        .build_select(&parse_select("SELECT a FROM t PARTITION (Missing)"))
+        .expect_err("an unknown partition is rejected");
+    assert_eq!(
+        error.kind(),
+        &crate::plan_base::PlanErrorKind::UnknownPartition {
+            partition: "missing".to_owned(),
+            table: "t".to_owned(),
+        }
+    );
 }
 
 #[test]

@@ -406,6 +406,15 @@ pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError)
         tidb_planner::plan_base::PlanErrorKind::UnknownTable(table) => {
             DriverError::Schema(SchemaErrorKind::UnknownTable(table.clone()))
         }
+        tidb_planner::plan_base::PlanErrorKind::UnknownPartition { partition, table } => {
+            DriverError::UnknownPartition {
+                partition: partition.clone(),
+                table: table.clone(),
+            }
+        }
+        tidb_planner::plan_base::PlanErrorKind::PartitionClauseOnNonpartitioned => {
+            DriverError::PartitionClauseOnNonpartitioned
+        }
         tidb_planner::plan_base::PlanErrorKind::Internal => {
             DriverError::unsupported(error.to_string())
         }

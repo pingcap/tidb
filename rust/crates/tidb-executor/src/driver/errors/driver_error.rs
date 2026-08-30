@@ -476,6 +476,8 @@ pub enum DriverError {
     PartitionSubpartition,
     /// Go `ErrPartitionMgmtOnNonpartitioned` (1505).
     PartitionManagementOnNonpartitioned,
+    /// Go `plannererrors.ErrPartitionClauseOnNonpartitioned` (1747).
+    PartitionClauseOnNonpartitioned,
     /// Go `dbterror.ErrDropPartitionNonExistent` (1507).
     PartitionDropNonexistent,
     /// Go `dbterror.ErrDropLastPartition` (1508).

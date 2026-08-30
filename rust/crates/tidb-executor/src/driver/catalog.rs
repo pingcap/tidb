@@ -1046,6 +1046,7 @@ impl Catalog {
                             table_name: table.name.clone(),
                             db_name: database.name.clone(),
                             physical_table_id: table.table_id,
+                            is_partitioned: table.partition().is_some(),
                             partition_definition_names: table
                                 .partition()
                                 .map(|partition| {

@@ -287,6 +287,15 @@ pub enum PlanErrorKind {
     UnknownDatabase(String),
     /// Go `infoschema.ErrTableNotExists`.
     UnknownTable(String),
+    /// Go `table.ErrUnknownPartition` (1735).
+    UnknownPartition {
+        /// The lower-cased partition name, matching `FindPartitionByName`.
+        partition: String,
+        /// The table name from `TableInfo.Name.O`.
+        table: String,
+    },
+    /// Go `plannererrors.ErrPartitionClauseOnNonpartitioned` (1747).
+    PartitionClauseOnNonpartitioned,
     /// Go `plannererrors.ErrWrongNumberOfColumnsInSelect` (1222).
     WrongNumberOfColumnsInSelect,
     /// Go `dbterror.ErrViewWrongList` (1353).
@@ -330,6 +339,26 @@ impl PlanError {
         Self {
             message: format!("Table '{table}' doesn't exist"),
             kind: PlanErrorKind::UnknownTable(table),
+        }
+    }
+
+    /// Go `table.ErrUnknownPartition.GenWithStackByArgs(partition, table)`.
+    #[must_use]
+    pub fn unknown_partition(partition: impl Into<String>, table: impl Into<String>) -> Self {
+        let partition = partition.into().to_ascii_lowercase();
+        let table = table.into();
+        Self {
+            message: format!("Unknown partition '{partition}' in table '{table}'"),
+            kind: PlanErrorKind::UnknownPartition { partition, table },
+        }
+    }
+
+    /// Go `plannererrors.ErrPartitionClauseOnNonpartitioned`.
+    #[must_use]
+    pub fn partition_clause_on_nonpartitioned() -> Self {
+        Self {
+            kind: PlanErrorKind::PartitionClauseOnNonpartitioned,
+            message: "PARTITION () clause on non partitioned table".to_owned(),
         }
     }
 

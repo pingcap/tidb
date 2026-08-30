@@ -1212,8 +1212,21 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // `b.optFlag |= rule.FlagPartitionProcessor` — Go sets it from the
         // partition pruning mode; a table that reports a partition definition
         // needs the processor.
-        if !table.partition_definition_names.is_empty() {
+        if table.is_partitioned {
             self.opt_flag |= flags::PARTITION_PROCESSOR;
+        }
+        if table.is_partitioned {
+            for partition in &table_ref.partitions {
+                if !table
+                    .partition_definition_names
+                    .iter()
+                    .any(|name| name.eq_ignore_ascii_case(partition))
+                {
+                    return Err(PlanError::unknown_partition(partition, &table.table_name));
+                }
+            }
+        } else if !table_ref.partitions.is_empty() {
+            return Err(PlanError::partition_clause_on_nonpartitioned());
         }
         // `:5102` "Try to substitute generate column only if there is an index
         // on generate column."
