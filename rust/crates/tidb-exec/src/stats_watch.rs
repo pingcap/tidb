@@ -664,6 +664,19 @@ mod tests {
                     ..tidb_model::column::ColumnInfo::default()
                 }),
             )]),
+            indices: vec![tidb_model::index::IndexInfo {
+                id: 2,
+                name: tidb_ast::CiString::new("idx_a"),
+                state: tidb_model::SchemaState::PUBLIC,
+                columns: vec![tidb_model::index::IndexColumn {
+                    name: tidb_ast::CiString::new("a"),
+                    offset: 0,
+                    ..tidb_model::index::IndexColumn::default()
+                }]
+                .into(),
+                ..tidb_model::index::IndexInfo::default()
+            }]
+            .into(),
             ..tidb_model::table_info::TableInfo::default()
         }
     }
@@ -832,6 +845,35 @@ mod tests {
         assert!(column.unwrap().read().unwrap().is_full_load());
         assert!(!load_needed);
         assert!(analyzed);
+    }
+
+    #[test]
+    fn sync_load_inserts_analyzed_index_without_a_resident_object() {
+        let table = match loaded_at(1, 42).1 {
+            TableStatsState::Loaded(table) => table.as_ref().clone(),
+            TableStatsState::Pseudo => unreachable!(),
+        };
+        table
+            .existence_map
+            .as_ref()
+            .unwrap()
+            .write()
+            .unwrap()
+            .insert_index(2, true);
+        let shared = shared_stats(StatsSnapshot::from([(
+            1,
+            TableStatsState::Loaded(Arc::new(table)),
+        )]));
+        let table_info = table_info();
+        let mut index = item(2, tidb_stats::StatsLoadedStatus::full_load());
+        index.is_index = true;
+
+        assert!(shared.update_item(1, index, &table_info));
+        let current = shared.load();
+        let current = current[&1].loaded().unwrap();
+        let (index, load_needed) = current.index_load_needed(2);
+        assert!(index.unwrap().read().unwrap().is_full_load());
+        assert!(!load_needed);
     }
 
     #[test]
