@@ -365,6 +365,30 @@ fn the_partition_switches_are_always_on() {
     );
 }
 
+/// Pinned Go's validation closure warns on every assignment to the async
+/// global-statistics merge switch, for both session and global scope.
+#[test]
+fn async_global_stats_switch_warns_on_every_assignment() {
+    let (mut session, _peer, _globals) = two_sessions_sharing_globals();
+    let expected = vec![vec![
+        "Warning".to_owned(),
+        "1105".to_owned(),
+        "The 'tidb_enable_async_merge_global_stats' variable will always be enabled in a future \
+         release; changing it is discouraged."
+            .to_owned(),
+    ]];
+
+    session
+        .run("SET SESSION tidb_enable_async_merge_global_stats = OFF")
+        .unwrap();
+    assert_eq!(row_text(session.run("SHOW WARNINGS")), expected);
+
+    session
+        .run("SET GLOBAL tidb_enable_async_merge_global_stats = ON")
+        .unwrap();
+    assert_eq!(row_text(session.run("SHOW WARNINGS")), expected);
+}
+
 /// `tidb_session_alias` is cut to 64 RUNES and then stripped of trailing
 /// spaces, because it labels log lines as an identifier. Captured through
 /// `gorun`: `set @@tidb_session_alias='abc  '` reads back as `abc`.

@@ -371,7 +371,7 @@ impl Session {
         self.check_noop_gated_variable(&assignment.name, &value, is_global)?;
         self.check_isolation_level(&assignment.name, &value)?;
         self.check_max_allowed_packet_scope(&assignment.name, &value, is_node_wide)?;
-        self.warn_removed_feature_var(&assignment.name, &value);
+        self.warn_sysvar_assignment(&assignment.name, &value);
         if is_node_wide {
             // Go's `require_secure_transport` Validation closure runs after
             // Bool normalization and the SET GLOBAL privilege check, but
@@ -650,9 +650,7 @@ impl Session {
             .is_ok_and(|value| value.eq_ignore_ascii_case("ON"))
     }
 
-    /// Go's `tidb_enable_fast_analyze` `Validation` closure (`sysvar.go`): the
-    /// feature is gone, so turning the switch ON is ACCEPTED and warned about
-    /// rather than refused, and turning it OFF says nothing.
+    /// Appends warnings produced by Go system-variable `Validation` closures.
     ///
     /// The switch is `ScopeGlobal|ScopeSession` and `Validation` runs for both,
     /// so `SET GLOBAL` warns the same way `SET SESSION` does. Captured through
@@ -678,7 +676,7 @@ impl Session {
     /// lives in [`sysvar::SysVarDef::validate_in_scope`], which has no session
     /// to append to; this is the half that does. Go runs `Validation` before
     /// storing and for BOTH scopes, so this runs on the same footing.
-    fn warn_removed_feature_var(&mut self, name: &str, value: &str) {
+    fn warn_sysvar_assignment(&mut self, name: &str, value: &str) {
         // Go tests the NORMALIZED value, so the typed text goes through the
         // registry first: `1`, `on` and `ON` are one case. A value the type
         // check would reject warns about nothing and falls through to the real
@@ -716,6 +714,14 @@ impl Session {
                 1681,
                 "tidb_enable_list_partition is deprecated and will be removed in a future \
                  release.",
+            ))
+        } else if name.eq_ignore_ascii_case("tidb_enable_async_merge_global_stats") {
+            // Pinned Go warns for EVERY assignment, in both session and
+            // global scope, independent of the normalized boolean value.
+            Some((
+                1105,
+                "The 'tidb_enable_async_merge_global_stats' variable will always be enabled in a \
+                 future release; changing it is discouraged.",
             ))
         } else {
             None

@@ -56,6 +56,7 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - [ ] Complete pinned `pkg/statistics/handle/globalstats`; dynamic ANALYZE now loads every partition, applies both missing-stat policies, merges FM/CMS/TopN/histograms, honors the async selector and TopN merge concurrency, persists each global item independently, continues after item-write errors, records historical metadata, and emits warnings 8243/8244. The full original test and benchmark inventory remains open.
 - [x] (2026-08-29) Restored the exported concurrent global-TopN merge boundary with caller-supplied batch sizing and both pinned globalstats benchmark shapes; integration-test inventory closure remains part of the open package claim above.
 - [x] (2026-08-29) Restored the exported `MaxPartitionMergeBatchSize` package constant and made the concurrent benchmark consume that boundary rather than duplicating its value.
+- [x] (2026-08-29) Restored the pinned session/global validation warning emitted on every assignment to `tidb_enable_async_merge_global_stats`, including exact code 1105 and message text.
 - [x] (2026-08-29) Removed Rust-only historical-worker observation APIs and their tests, retained only Go's send/get surface plus package-internal shutdown, restored the full-mailbox warning, and removed stale documentation claiming partitioned ANALYZE is rejected.
 - [ ] Wire all pinned Go `SHOW STATS_*` surfaces to the shared cache and storage semantics.
 - [ ] Inventory every production file, platform/generated variant, original test/support artifact, fixture, and validation gate in pinned `pkg/statistics`; close or explicitly retain seed-only gaps until the whole package is complete.
@@ -212,6 +213,9 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 
 - Observation: the same benchmark also consumes Go's exported `MaxPartitionMergeBatchSize`; keeping `256` private in Rust left a package API gap and forced the benchmark to duplicate policy.
   Evidence: pinned `global_stats.go` exports the constant and `topn_bench_test.go` clamps with it; Rust now exports and tests the same value and imports it from the benchmark.
+
+- Observation: the async global-statistics switch is not a silent boolean assignment. Pinned Go's validation closure appends the same warning for every session or global assignment, regardless of the assigned value.
+  Evidence: pinned `pkg/sessionctx/variable/sysvar.go` registers the closure, and the first two globalstats tests assert warning 1105; Rust now exercises both scopes through the ordinary session SET path.
 
 - Observation: Go's empty-TopN shortcut belongs to the private session-aware selector, not either exported TopN merge function. Direct callers therefore still observe SQL-killer polling for an empty TopN, while the ordinary global merge returns before entering a worker.
   Evidence: pinned `mergeGlobalStatsTopN` calls `statistics.CheckEmptyTopNs` before dispatch; `MergePartTopN2GlobalTopN` and `MergeGlobalStatsTopNByConcurrency` do not. Rust moved the shortcut to the same boundary and has regressions for both direct workers and selector behavior.
