@@ -168,7 +168,7 @@
 
 use std::borrow::Cow;
 use std::cell::Cell;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::resultset_source::ResultSetSource;
@@ -565,6 +565,8 @@ pub struct ClusterSessionFactory {
     workload_repository: std::sync::OnceLock<Arc<tidb_workloadrepo::Worker>>,
     /// Go Domain/StatsHandle's one node-global usage implementation.
     stats_usage: Arc<tidb_stats_handle_usage::StatsUsageHandle>,
+    /// Go Domain's index-GC and positive-lease usage-dump workers.
+    stats_usage_workers: std::sync::OnceLock<StatsUsageWorkers>,
 }
 
 impl ClusterSessionFactory {
@@ -621,7 +623,23 @@ impl ClusterSessionFactory {
             session_kv_cache: Arc::new(Mutex::new(KvTableTemplates::default())),
             workload_repository: std::sync::OnceLock::new(),
             stats_usage,
+            stats_usage_workers: std::sync::OnceLock::new(),
         }
+    }
+
+    /// Starts Go Domain's usage workers after the factory has stable `Arc`
+    /// ownership. Index GC runs for every lease; delta and column dumps run
+    /// only for a positive lease.
+    pub(crate) fn start_stats_usage_workers(
+        self: &Arc<Self>,
+        lease: crate::node_config::StatsLease,
+    ) {
+        if self.stats_usage_workers.get().is_some() {
+            return;
+        }
+        let _ = self
+            .stats_usage_workers
+            .set(StatsUsageWorkers::start(self, lease));
     }
 
     /// Go `statsUsageImpl.DumpColStatsUsageToKV`.
@@ -798,6 +816,20 @@ impl ClusterSessionFactory {
         Ok(())
     }
 
+    fn gc_index_usage(&self) -> Result<(), String> {
+        let catalog = self.catalog.load();
+        self.stats_usage.gc_index_usage(|table_id| {
+            catalog
+                .databases
+                .iter()
+                .flat_map(|database| &database.tables)
+                .find(|table| table.id == table_id)
+                .cloned()
+                .map(Arc::new)
+        });
+        Ok(())
+    }
+
     /// Installs Go Domain's single workload-repository worker after the
     /// factory is placed in an `Arc` (the worker's internal-session pool keeps
     /// only a weak reference back to it).
@@ -884,6 +916,131 @@ impl ClusterSessionFactory {
     pub fn processes(&self) -> ProcessRegistry {
         self.processes.clone()
     }
+}
+
+struct StatsUsageWorkers {
+    stop: Arc<UsageWorkerStop>,
+    threads: Vec<std::thread::JoinHandle<()>>,
+    flush_on_drop: bool,
+}
+
+struct UsageWorkerStop {
+    stopped: Mutex<bool>,
+    wake: Condvar,
+}
+
+impl UsageWorkerStop {
+    fn wait(&self, interval: Duration) -> bool {
+        let stopped = self
+            .stopped
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if *stopped {
+            return true;
+        }
+        *self
+            .wake
+            .wait_timeout(stopped, interval)
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .0
+    }
+}
+
+impl StatsUsageWorkers {
+    fn start(factory: &Arc<ClusterSessionFactory>, lease: crate::node_config::StatsLease) -> Self {
+        let stop = Arc::new(UsageWorkerStop {
+            stopped: Mutex::new(false),
+            wake: Condvar::new(),
+        });
+        let weak = Arc::downgrade(factory);
+        let mut threads = vec![spawn_usage_worker(
+            "index-usage-gc",
+            Weak::clone(&weak),
+            Arc::clone(&stop),
+            Duration::from_secs(30 * 60),
+            ClusterSessionFactory::gc_index_usage,
+        )];
+        let mut flush_on_drop = false;
+        if let crate::node_config::StatsLease::Positive(lease) = lease {
+            flush_on_drop = true;
+            let jitter = || {
+                Duration::from_nanos(tidb_util::fastrand::uint64_n(
+                    Duration::from_secs(60).as_nanos() as u64,
+                ))
+            };
+            threads.push(spawn_usage_worker(
+                "column-stats-usage-dump",
+                Weak::clone(&weak),
+                Arc::clone(&stop),
+                lease.saturating_mul(100).saturating_add(jitter()),
+                |factory| factory.dump_col_stats_usage_to_kv("default"),
+            ));
+            threads.push(spawn_usage_worker(
+                "stats-delta-dump",
+                Weak::clone(&weak),
+                Arc::clone(&stop),
+                lease.saturating_mul(20).saturating_add(jitter()),
+                |factory| factory.dump_stats_delta_to_kv(false, &[], "default"),
+            ));
+        }
+        Self {
+            stop,
+            threads,
+            flush_on_drop,
+        }
+    }
+}
+
+impl Drop for StatsUsageWorkers {
+    fn drop(&mut self) {
+        *self
+            .stop
+            .stopped
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = true;
+        self.stop.wake.notify_all();
+        for thread in self.threads.drain(..) {
+            let _ = thread.join();
+        }
+    }
+}
+
+impl Drop for ClusterSessionFactory {
+    fn drop(&mut self) {
+        if self
+            .stats_usage_workers
+            .get()
+            .is_some_and(|workers| workers.flush_on_drop)
+        {
+            if let Err(error) = self.dump_stats_delta_to_kv(true, &[], "default") {
+                eprintln!("{{\"event\":\"dump_stats_delta_failed\",\"error\":{error:?}}}");
+            }
+        }
+    }
+}
+
+fn spawn_usage_worker(
+    name: &str,
+    factory: Weak<ClusterSessionFactory>,
+    stop: Arc<UsageWorkerStop>,
+    interval: Duration,
+    action: fn(&ClusterSessionFactory) -> Result<(), String>,
+) -> std::thread::JoinHandle<()> {
+    let worker_name = name.to_owned();
+    let log_name = worker_name.clone();
+    std::thread::Builder::new()
+        .name(worker_name)
+        .spawn(move || {
+            while !stop.wait(interval) {
+                let Some(factory) = factory.upgrade() else {
+                    return;
+                };
+                if let Err(error) = action(&factory) {
+                    eprintln!("{{\"event\":{log_name:?},\"error\":{error:?}}}");
+                }
+            }
+        })
+        .expect("spawning statistics usage worker")
 }
 
 fn system_time_timestamp(value: SystemTime) -> Result<tidb_datatype::Time, String> {

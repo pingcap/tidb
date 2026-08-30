@@ -264,6 +264,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
         None => factory,
     };
     let factory = Arc::new(factory);
+    factory.start_stats_usage_workers(config.stats_lease);
     let workload_etcd = crate::real_tikv_node::connect_schema_notifier(&config);
     let workload_store = workload_etcd
         .as_ref()

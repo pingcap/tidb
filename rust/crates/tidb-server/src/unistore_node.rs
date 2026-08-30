@@ -331,6 +331,7 @@ pub(crate) fn run_unistore_cluster_session(
         None => factory,
     };
     let factory = Arc::new(factory);
+    factory.start_stats_usage_workers(config.stats_lease);
     let stats_receipt = stats.receipt();
 
     let node = ConcurrentSqlNode::bind(&config, Arc::clone(&factory), Arc::clone(&users))

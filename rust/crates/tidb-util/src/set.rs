@@ -950,11 +950,9 @@ mod tests {
             }
         }
         assert_eq!(set.len(), values.len());
-        assert!(
-            values
-                .iter()
-                .all(|value| set.contains(&GoString::from(*value)))
-        );
+        assert!(values
+            .iter()
+            .all(|value| set.contains(&GoString::from(*value))));
         assert!(!set.contains(&GoString::from("11")));
         let intersection =
             StringSet::new(["1", "2", "3"]).intersection(&StringSet::new(["4", "2", "3"]));
@@ -963,10 +961,8 @@ mod tests {
             intersection.intersection(&StringSet::new(["4", "5", "3"])),
             StringSet::new(["3"])
         );
-        assert!(
-            intersection
-                .intersection(&StringSet::new(["4", "5"]))
-                .is_empty()
-        );
+        assert!(intersection
+            .intersection(&StringSet::new(["4", "5"]))
+            .is_empty());
     }
 }

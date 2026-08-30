@@ -1682,11 +1682,7 @@ impl MyDecimal {
         let mut word_buf = [0; MAX_WORD_BUF_LEN];
         for (index, word) in word_buf.iter_mut().enumerate() {
             let start = 4 + index * 4;
-            *word = i32::from_ne_bytes(
-                bytes[start..start + 4]
-                    .try_into()
-                    .expect("4-byte word"),
-            );
+            *word = i32::from_ne_bytes(bytes[start..start + 4].try_into().expect("4-byte word"));
         }
         MyDecimal {
             digits_int: bytes[0] as i8,

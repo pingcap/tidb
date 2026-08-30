@@ -2394,12 +2394,10 @@ mod statistics_request_tests {
         assert!(context.take_warnings().is_empty());
         let mut failed = requested;
         failed.is_sync_load_failed = true;
-        assert!(
-            tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
-                .all_items()
-                .iter()
-                .any(|item| item.table_item_id == failed)
-        );
+        assert!(tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
+            .all_items()
+            .iter()
+            .any(|item| item.table_item_id == failed));
         tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.delete(failed);
     }
 
@@ -2462,12 +2460,10 @@ mod statistics_request_tests {
             .request_statistics_load(&usage, &context)
             .expect("start asynchronous load");
         assert!(catalog.load_needed_histograms("").is_err());
-        assert!(
-            !tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
-                .all_items()
-                .iter()
-                .any(|item| item.table_item_id == requested)
-        );
+        assert!(!tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
+            .all_items()
+            .iter()
+            .any(|item| item.table_item_id == requested));
         assert_eq!(
             loader
                 .requests
@@ -2498,19 +2494,15 @@ mod statistics_request_tests {
         catalog
             .load_needed_histograms("")
             .expect("stale metadata is a successful skip");
-        assert!(
-            loader
-                .requests
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .is_empty()
-        );
-        assert!(
-            !tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
-                .all_items()
-                .iter()
-                .any(|item| item.table_item_id == dropped)
-        );
+        assert!(loader
+            .requests
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_empty());
+        assert!(!tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
+            .all_items()
+            .iter()
+            .any(|item| item.table_item_id == dropped));
     }
 
     #[test]
