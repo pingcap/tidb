@@ -9,9 +9,11 @@
   `tiup-peer:3391` (Go) and `tiup-peer:3392` (Rust).
 - Concurrency: 10 threads.
 - Private kubeconfig: `/tmp/tc8228803-new.MMk3QB/kubeconfig.yml` (mode 600).
-- Rust source: `hparser-integration`, pushed commit `7a1f15d`.
+- Rust source: `hparser-integration`, pushed commit `ad677f0` (planner
+  subquery lowering plus bounded join-row append fixes on top of the shared
+  branch updates).
 - Rust binary: built on the TiUP Pod NVMe volume (`/tiup/rust-target`),
-  SHA-256 `29d413c7ece3821f632d592d1630514f991630f5ff609b31135f0e366866c889`.
+  SHA-256 `c4f6077b9b4976bb177eed2c12cbf5d20c3afed26ae8ccf9e75fe560337bc1a0`.
 - Git was installed and SSH access was configured inside the TiUP Pod; no
   workstation Git state was used for the TiUP checkout.
 
@@ -34,33 +36,41 @@ The pushed Rust change contains:
    prunes trailing primary-key columns.
 5. StreamAgg/HashAgg attachment keeps the bounded scan as a root task while
    the current partial-aggregate lowering can lose the range.
+6. Filter subqueries are recognized per top-level `AND` conjunct, allowing
+   BenchmarkSQL's `IN (SELECT ...)` STOCK_LEVEL shape to use semi-apply
+   lowering instead of the unsupported scalar rewriter.
+7. Join residual-condition and partial-row assembly now bound copies to the
+   visible destination schema, preventing hidden child columns from causing a
+   connection-thread panic.
 
 ## Results
 
 ### Sysbench round 1 (threshold 0.80)
 
 All 10 requested Lua subtypes ran serially, one sample per engine, in a
-203-second benchmark window (under the 300-second limit). The latest
-post-push receipt is:
+203-second benchmark window (under the 300-second limit). Insert and bulk
+insert used fresh engine-specific empty tables; restored `test.sbtest*` data
+was unchanged. The latest receipt after the join fix is:
 
-`/tmp/tc8228803-new.MMk3QB/sysbench-r1-postpush`
+`/tmp/tc8228803-new.MMk3QB/sysbench-r1-joinfix`
 
 | Subtype | Go QPS | Rust QPS | Rust/Go | Gate |
 |---|---:|---:|---:|---|
-| `oltp_read_write.lua` | 537.27 | 222.56 | 0.4142 | FAIL |
-| `oltp_read_only.lua` | 777.46 | 849.97 | 1.0933 | PASS |
-| `oltp_write_only.lua` | 2126.93 | 838.44 | 0.3942 | FAIL |
-| `oltp_point_select.lua` | 18643.50 | 23840.17 | 1.2787 | PASS |
-| `select_random_points.lua` | 8225.39 | 9206.97 | 1.1193 | PASS |
-| `select_random_ranges.lua` | 8181.50 | 5289.91 | 0.6466 | FAIL |
-| `oltp_insert.lua` (isolated empty tables) | 7936.39 | 7626.21 | 0.9609 | PASS |
-| `oltp_update_index.lua` | 3155.93 | 2241.17 | 0.7101 | FAIL |
-| `oltp_update_non_index.lua` | 6376.14 | 4582.27 | 0.7187 | FAIL |
-| `bulk_insert.lua` (isolated empty tables) | 354595.74 | 166040.13 | 0.4683 | FAIL |
+| `oltp_read_write.lua` | 525.37 | 247.39 | 0.4709 | FAIL |
+| `oltp_read_only.lua` | 781.34 | 838.48 | 1.0731 | PASS |
+| `oltp_write_only.lua` | 2167.02 | 699.59 | 0.3228 | FAIL |
+| `oltp_point_select.lua` | 18887.65 | 22028.54 | 1.1663 | PASS |
+| `select_random_points.lua` | 8201.92 | 9287.04 | 1.1323 | PASS |
+| `select_random_ranges.lua` | 8410.07 | 4858.95 | 0.5778 | FAIL |
+| `oltp_insert.lua` (isolated empty tables) | 8155.22 | 7729.37 | 0.9478 | PASS |
+| `oltp_update_index.lua` | 2372.98 | 2289.97 | 0.9650 | PASS |
+| `oltp_update_non_index.lua` | 6398.50 | 4393.08 | 0.6866 | FAIL |
+| `bulk_insert.lua` (isolated empty tables) | 302412.67 | 177959.36 | 0.5885 | FAIL |
 
-The first-round sysbench gate is not yet passed. The direct lookup change
-improved the read/point paths and an earlier focused YCSB-style range test;
-write-heavy and bulk paths still require optimization.
+The first-round sysbench gate is not yet passed. Point/read and insert paths
+clear the threshold, and update-index is now above 0.80 in this run. Read-write,
+write-only, non-index update, random-range, and bulk paths still require
+optimization.
 
 ### TPCC round 1 (threshold 0.80)
 
@@ -100,24 +110,24 @@ The focused post-push E rerun also passed at 1.1015 (`/tmp/tc8228803-new.MMk3QB/
 
 The 1k-warehouse database was restored once; restore took about 16 minutes
 and was outside the benchmark window. The client pair itself stayed within
-the 300-second budget. Receipt:
+the 300-second budget. Latest receipt after the planner and join fixes:
 
-`/tmp/tc8228803-new.MMk3QB/benchmarksql-r1-parsed`
+`/tmp/tc8228803-new.MMk3QB/benchmarksql-r1-joinfix`
 
 | Workload | Go tpmTOTAL | Rust tpmTOTAL | Rust/Go | Gate |
 |---|---:|---:|---:|---|
-| BenchmarkSQL | 28559.71 | 3480 | 0.1218 | FAIL |
+| BenchmarkSQL | 30414.62 | 12352.60 | 0.4061 | FAIL |
 
-Rust repeatedly reports `Unsupported("expression form is not yet supported by
-the rewriter")` for the standard STOCK_LEVEL `s_i_id IN (SELECT ol_i_id …)`
-subquery, followed by a communication failure in ORDER_STATUS. This is a
-correctness/support gap, not a valid passing performance result; the gate
-must remain failed until that query shape is implemented.
+The planner fix accepts the standard STOCK_LEVEL `s_i_id IN (SELECT ol_i_id
+...)` shape, and the latest pair has no new `connection_panic` or SQL
+unsupported-expression errors. Rust throughput remains below the gate, so the
+BenchmarkSQL performance gate is still failed and requires optimization.
 
 ## Acceptance status
 
 - Round 1 (0.80): **not passed** because Sysbench and BenchmarkSQL still fail;
-  TPCC and YCSB pass.
+  TPCC and YCSB pass. The previous BenchmarkSQL join panic is fixed, but the
+  0.4061 throughput ratio is not yet sufficient.
 - Rounds 2 (0.90) and 3 (1.00): not started after the current push because
   round 1 has not passed.
 - Every executed benchmark window stayed within the requested five-minute
@@ -129,4 +139,5 @@ must remain failed until that query shape is implemented.
    `update_non_index`, and the current update-index regression).
 2. Bulk insert throughput on isolated empty tables.
 3. Full Go-aligned physical-plan/cache support for random ranges.
-4. `IN` subquery/Apply support required by BenchmarkSQL STOCK_LEVEL.
+4. Reduce BenchmarkSQL transaction overhead after correctness parity is
+   established; the STOCK_LEVEL `IN` subquery is now supported.
