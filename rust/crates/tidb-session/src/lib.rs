@@ -921,6 +921,22 @@ impl Session {
         self.server_info_syncer = Some(syncer);
     }
 
+    /// The `host:port` Go persists as an analyze job's instance, or
+    /// `unknown` when server-info discovery is unavailable.
+    #[must_use]
+    pub fn analyze_job_instance(&self) -> String {
+        self.server_info_syncer.as_ref().map_or_else(
+            || "unknown".to_owned(),
+            |syncer| {
+                let info = syncer.local_server_info();
+                tidb_domain::serverinfo_syncer::join_host_port(
+                    &info.static_info.ip,
+                    info.static_info.port,
+                )
+            },
+        )
+    }
+
     /// The node's followed cluster schema version, or 0 for a tier with no
     /// cluster to follow -- the same source `ADMIN SHOW DDL` reports. This is
     /// Go's `domainSchemaVer` in `preprocess.go:2264` (the LATEST domain

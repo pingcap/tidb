@@ -12,6 +12,8 @@
 
 use tidb_exec::cluster_analyze::{AnalyzeStatement, SampleMemoryQuota, MEM_QUOTA_ANALYZE_VARIABLE};
 use tidb_exec::cluster_stats_lock::ClusterStatsLockStatement;
+use tidb_exec::cluster_stats_write::{AnalyzeJobId, StatsWritePlan};
+use tidb_exec::mysql_bootstrap::utc_now_timestamp;
 use tidb_executor::analyze::panic_recovery::recover_analyze_panic;
 use tidb_session::privilege::GlobalPriv;
 
@@ -20,6 +22,116 @@ use crate::sql_node::{QuerySession, SqlQueryError, WriteOutcome};
 use super::{ClusterServerSession, ER_TABLEACCESS_DENIED_ERROR};
 
 impl ClusterServerSession {
+    fn commit_analyze_job_plan(
+        &self,
+        build: impl FnOnce(
+            &mut super::SnapshotMetaSnapshot,
+            &tidb_exec::cluster_catalog::ClusterCatalog,
+        ) -> Result<StatsWritePlan, String>,
+    ) -> Result<(), String> {
+        let snapshot = self.transactions.open_snapshot("default")?;
+        let read_ts = snapshot.start_ts();
+        let plan = build(
+            &mut super::SnapshotMetaSnapshot::new(snapshot),
+            &self.catalog.load(),
+        )?;
+        self.transactions
+            .commit_optimistic_mutations(plan.mutations, read_ts, "default")
+            .map_err(|error| error.message)
+    }
+
+    fn insert_analyze_job(&self, statement: &AnalyzeStatement) -> Option<AnalyzeJobId> {
+        let result = (|| {
+            let catalog = self.catalog.load();
+            let table = catalog
+                .find_table(&statement.schema, &statement.table)
+                .map(|(_, table)| table)
+                .ok_or_else(|| "analyze table disappeared before job insertion".to_owned())?;
+            // Go publishes one job per physical task. Until the analyzer
+            // exposes its partition/index tasks, emitting one statement job
+            // for those shapes would be observably wrong.
+            if table.partition.is_some()
+                || !table.indices.is_empty()
+                || statement.index_names.is_some()
+                || !matches!(
+                    statement.columns,
+                    tidb_exec::cluster_analyze::AnalyzeColumnChoice::Default
+                        | tidb_exec::cluster_analyze::AnalyzeColumnChoice::All
+                )
+            {
+                return Ok(None);
+            }
+            let sample = if statement.options.num_samples > 0 {
+                format!("{} samples", statement.options.num_samples)
+            } else {
+                format!(
+                    "{} samplerate",
+                    statement.options.sample_rate.unwrap_or(1.0)
+                )
+            };
+            let job_info = format!(
+                "analyze table all columns with {} buckets, {} topn, {sample}",
+                statement.options.num_buckets, statement.options.num_topn
+            );
+            let snapshot = self.transactions.open_snapshot("default")?;
+            let read_ts = snapshot.start_ts();
+            let mut snapshot = super::SnapshotMetaSnapshot::new(snapshot);
+            let (job_id, plan) = tidb_exec::cluster_stats_write::plan_insert_analyze_job(
+                &mut snapshot,
+                &catalog,
+                &statement.schema,
+                &statement.table,
+                "",
+                job_info.as_bytes(),
+                &self.session.analyze_job_instance(),
+                self.connection_id,
+                utc_now_timestamp(),
+            )
+            .map_err(|error| error.to_string())?;
+            self.transactions
+                .commit_optimistic_mutations(plan.mutations, read_ts, "default")
+                .map_err(|error| error.message)?;
+            Ok::<_, String>(Some(job_id))
+        })();
+        match result {
+            Ok(job_id) => job_id,
+            Err(error) => {
+                eprintln!("{{\"event\":\"insert_analyze_job_failed\",\"error\":{error:?}}}");
+                None
+            }
+        }
+    }
+
+    fn start_analyze_job(&self, job_id: AnalyzeJobId) {
+        if let Err(error) = self.commit_analyze_job_plan(|snapshot, catalog| {
+            tidb_exec::cluster_stats_write::plan_start_analyze_job(
+                snapshot,
+                catalog,
+                job_id,
+                utc_now_timestamp(),
+            )
+            .map_err(|error| error.to_string())
+        }) {
+            eprintln!("{{\"event\":\"start_analyze_job_failed\",\"error\":{error:?}}}");
+        }
+    }
+
+    fn finish_analyze_job(&self, job_id: AnalyzeJobId, processed_rows: i64, failure: Option<&str>) {
+        if let Err(error) = self.commit_analyze_job_plan(|snapshot, catalog| {
+            tidb_exec::cluster_stats_write::plan_finish_analyze_job(
+                snapshot,
+                catalog,
+                job_id,
+                processed_rows,
+                failure,
+                utc_now_timestamp(),
+            )
+            .map_err(|error| error.to_string())
+        }) {
+            eprintln!("{{\"event\":\"finish_analyze_job_failed\",\"error\":{error:?}}}");
+        }
+    }
+
     /// Applies client-transferred LOAD STATS bytes through the cluster handle.
     pub(super) fn run_load_stats(&mut self, data: &[u8]) -> Result<WriteOutcome, SqlQueryError> {
         if data.is_empty() {
@@ -204,14 +316,26 @@ impl ClusterServerSession {
                     .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS)
                     .is_ok_and(|value| tidb_exec::option_values::tidb_opt_on(&value))
             };
-            let report = recover_analyze_panic(|| {
+            let job_id = self.insert_analyze_job(statement);
+            if let Some(job_id) = job_id {
+                self.start_analyze_job(job_id);
+            }
+            let analyzed = recover_analyze_panic(|| {
                 self.analyze.execute(
                     statement,
                     statement_memory.sql_killer(),
                     &historical_stats_enabled,
                 )
             })
-            .map_err(|error| SqlQueryError::unknown(error.rendered_message()))??;
+            .map_err(|error| SqlQueryError::unknown(error.rendered_message()))
+            .and_then(|result| result);
+            if let Some(job_id) = job_id {
+                match &analyzed {
+                    Ok(report) => self.finish_analyze_job(job_id, report.scanned_rows, None),
+                    Err(error) => self.finish_analyze_job(job_id, 0, Some(&error.message)),
+                }
+            }
+            let report = analyzed?;
             if report.predicate_columns_empty {
                 self.session.append_routed_warning(
                     1105,

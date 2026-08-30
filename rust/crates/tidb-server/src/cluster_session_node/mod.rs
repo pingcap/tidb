@@ -758,6 +758,24 @@ impl ClusterSessionFactory {
         .clear_outdated_history_stats()
     }
 
+    /// Pinned Go `StatsHandle.DeleteAnalyzeJobs` over one restricted
+    /// autocommit transaction.
+    pub fn delete_analyze_jobs_before(&self, cutoff: tidb_datatype::Time) -> Result<(), String> {
+        ClusterHistoricalStatsHandle {
+            transactions: Arc::clone(&self.transactions),
+            catalog: Arc::clone(&self.catalog),
+            global_vars: self.global_vars.clone(),
+        }
+        .commit_stats_plan(|snapshot, _| {
+            tidb_exec::cluster_stats_write::plan_delete_analyze_jobs(
+                snapshot,
+                &self.catalog.load(),
+                &cutoff,
+            )
+            .map_err(|error| error.to_string())
+        })
+    }
+
     /// Pinned Go `StatsGC.GCStats` over the current shared schema and
     /// independent restricted cluster transactions.
     pub fn gc_stats(&self, stats_lease: Duration, ddl_lease: Duration) -> Result<(), String> {

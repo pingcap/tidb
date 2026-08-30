@@ -23,7 +23,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use tidb_datatype::Datum;
+use tidb_datatype::{Datum, MySqlDuration};
 
 use super::super::{ClusterHistoricalStatsHandle, ClusterServerSession};
 use super::node_fixture::{rows, session_context, ABC_HASH};
@@ -595,6 +595,52 @@ fn add_column_ddl_initializes_statistics_like_go() {
         )),
         [["1", "0", "9", "0"]]
     );
+}
+
+/// Pinned storage `TestDeleteAnalyzeJobs` begins with the ordinary ANALYZE
+/// lifecycle: the job is inserted pending, run, and retained finished for
+/// `SHOW ANALYZE STATUS` until timestamp-based cleanup removes it.
+#[test]
+fn analyze_job_lifecycle_is_persisted_like_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(77))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "CREATE TABLE stats_analyze_job (a INT, b INT)",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO stats_analyze_job VALUES (1,2),(3,4)",
+    );
+    rows(&mut session, "ANALYZE TABLE stats_analyze_job");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT table_schema, table_name, partition_name, processed_rows, state, \
+                    process_id IS NULL \
+             FROM mysql.analyze_jobs IGNORE INDEX \
+             (PRIMARY, update_time, idx_schema_table_state, idx_schema_table_partition_state)",
+        )),
+        [["test", "stats_analyze_job", "", "2", "finished", "1"]]
+    );
+    let cutoff = tidb_exec::mysql_bootstrap::utc_now_timestamp()
+        .add_duration(MySqlDuration::from_nanoseconds(1_000_000_000, 0).unwrap())
+        .unwrap();
+    stack
+        .factory
+        .delete_analyze_jobs_before(cutoff)
+        .expect("analyze-job cleanup commits");
+    assert!(displayed(rows(
+        &mut session,
+        "SELECT id FROM mysql.analyze_jobs IGNORE INDEX \
+         (PRIMARY, update_time, idx_schema_table_state, idx_schema_table_partition_state)",
+    ))
+    .is_empty());
 }
 
 /// Pinned `TestSystemTableDDLHasNoEvent`: `asyncNotifyEvent` suppresses every

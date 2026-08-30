@@ -158,12 +158,212 @@ pub struct StatsWritePlan {
 /// One row read from pinned Go's `mysql.analyze_options`.
 pub type PersistedAnalyzeOptions = SavedAnalyzeOptions;
 
+/// One persisted `mysql.analyze_jobs` identifier.
+pub type AnalyzeJobId = u64;
+
 impl StatsWritePlan {
     /// Whether the plan writes nothing.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.mutations.is_empty()
     }
+}
+
+/// Plans pinned Go `InsertAnalyzeJob`: one pending row and the shared
+/// auto-increment watermark it consumed.
+pub fn plan_insert_analyze_job<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    schema: &str,
+    table_name: &str,
+    partition_name: &str,
+    job_info: &[u8],
+    instance: &str,
+    process_id: u64,
+    now: Time,
+) -> Result<(AnalyzeJobId, StatsWritePlan), StatsWriteError> {
+    let table = locate(catalog, "analyze_jobs")?;
+    let job_id = first_free_row_id(snapshot, catalog, table)?;
+    let job_id = u64::try_from(job_id).map_err(|_| {
+        StatsWriteError::Encode(RowEncodeError(
+            "mysql.analyze_jobs auto-increment id is negative".to_owned(),
+        ))
+    })?;
+    let mut values = defaults_row(table, now)?;
+    set(table, &mut values, "id", Datum::UInt(job_id));
+    set(table, &mut values, "update_time", Datum::Time(now));
+    set(
+        table,
+        &mut values,
+        "table_schema",
+        Datum::Bytes(schema.as_bytes().to_vec()),
+    );
+    set(
+        table,
+        &mut values,
+        "table_name",
+        Datum::Bytes(table_name.as_bytes().to_vec()),
+    );
+    set(
+        table,
+        &mut values,
+        "partition_name",
+        Datum::Bytes(partition_name.as_bytes().to_vec()),
+    );
+    set(
+        table,
+        &mut values,
+        "job_info",
+        Datum::Bytes(job_info[..job_info.len().min(65_535)].to_vec()),
+    );
+    set(
+        table,
+        &mut values,
+        "state",
+        Datum::Bytes(tidb_stats::ANALYZE_PENDING.as_bytes().to_vec()),
+    );
+    set(
+        table,
+        &mut values,
+        "instance",
+        Datum::Bytes(instance.as_bytes().to_vec()),
+    );
+    set(table, &mut values, "process_id", Datum::UInt(process_id));
+    let mut rows = StatsRows::open_all(snapshot, table, &["id"])?;
+    let mut plan = StatsWritePlan::default();
+    rows.store(snapshot, catalog, &values, &mut plan)?;
+    plan.mutations.push(
+        OptimisticMutation::meta_put(
+            key::auto_table_id_kv_key(system_db_id(catalog)?, table.id),
+            value::encode_int_value(job_id as i64),
+        )
+        .map_err(|error| StatsWriteError::Encode(RowEncodeError(error.to_string())))?,
+    );
+    Ok((job_id, plan))
+}
+
+fn plan_update_analyze_job<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    job_id: AnalyzeJobId,
+    now: Time,
+    update: impl FnOnce(&TableInfo, &mut RowValues),
+) -> Result<StatsWritePlan, StatsWriteError> {
+    let table = locate(catalog, "analyze_jobs")?;
+    let id_column = column_id(table, "id")?;
+    let existing = read_rows_with_keys(snapshot, table, None)?
+        .into_iter()
+        .find_map(|(_, values)| {
+            let matches = match values.get(&id_column) {
+                Some(Datum::UInt(value)) => *value == job_id,
+                Some(Datum::Int(value)) => u64::try_from(*value).ok() == Some(job_id),
+                _ => false,
+            };
+            matches.then_some(values)
+        });
+    let Some(mut values) = existing else {
+        return Ok(StatsWritePlan::default());
+    };
+    let mut rows = StatsRows::open_all(snapshot, table, &["id"])?;
+    set(table, &mut values, "update_time", Datum::Time(now));
+    update(table, &mut values);
+    let mut plan = StatsWritePlan::default();
+    rows.store(snapshot, catalog, &values, &mut plan)?;
+    Ok(plan)
+}
+
+/// Plans pinned Go `StartAnalyzeJob`.
+pub fn plan_start_analyze_job<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    job_id: AnalyzeJobId,
+    now: Time,
+) -> Result<StatsWritePlan, StatsWriteError> {
+    plan_update_analyze_job(snapshot, catalog, job_id, now, |table, values| {
+        set(table, values, "start_time", Datum::Time(now));
+        set(
+            table,
+            values,
+            "state",
+            Datum::Bytes(tidb_stats::ANALYZE_RUNNING.as_bytes().to_vec()),
+        );
+    })
+}
+
+/// Plans pinned Go `FinishAnalyzeJob` for a table-analysis job.
+pub fn plan_finish_analyze_job<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    job_id: AnalyzeJobId,
+    processed_rows: i64,
+    failure: Option<&str>,
+    now: Time,
+) -> Result<StatsWritePlan, StatsWriteError> {
+    plan_update_analyze_job(snapshot, catalog, job_id, now, |table, values| {
+        let processed = column_id(table, "processed_rows")
+            .ok()
+            .and_then(|id| values.get(&id))
+            .and_then(|value| match value {
+                Datum::Int(value) => Some(*value),
+                Datum::UInt(value) => i64::try_from(*value).ok(),
+                _ => None,
+            })
+            .unwrap_or_default()
+            .saturating_add(processed_rows);
+        set(
+            table,
+            values,
+            "processed_rows",
+            Datum::UInt(u64::try_from(processed).unwrap_or_default()),
+        );
+        set(table, values, "end_time", Datum::Time(now));
+        let state = if failure.is_some() {
+            tidb_stats::ANALYZE_FAILED
+        } else {
+            tidb_stats::ANALYZE_FINISHED
+        };
+        set(
+            table,
+            values,
+            "state",
+            Datum::Bytes(state.as_bytes().to_vec()),
+        );
+        set(
+            table,
+            values,
+            "fail_reason",
+            failure.map_or(Datum::Null, |failure| {
+                let bytes = failure.as_bytes();
+                Datum::Bytes(bytes[..bytes.len().min(65_535)].to_vec())
+            }),
+        );
+        set(table, values, "process_id", Datum::Null);
+    })
+}
+
+/// Plans pinned Go `DeleteAnalyzeJobs`' timestamp predicate.
+pub fn plan_delete_analyze_jobs<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    cutoff: &Time,
+) -> Result<StatsWritePlan, StatsWriteError> {
+    let table = locate(catalog, "analyze_jobs")?;
+    let update_time = column_id(table, "update_time")?;
+    let mut plan = StatsWritePlan::default();
+    for (key, values) in read_rows_with_keys(snapshot, table, None)? {
+        let Some(Datum::Time(update_time)) = values.get(&update_time) else {
+            continue;
+        };
+        if update_time.compare(*cutoff) != std::cmp::Ordering::Less {
+            continue;
+        }
+        if matches!(HandleLayout::of(table), HandleLayout::RowId) {
+            plan.mutations.extend(delete_row(table, &key, &values)?);
+        } else {
+            plan.mutations.extend(delete_clustered_row(table, &values)?);
+        }
+    }
+    Ok(plan)
 }
 
 /// Loads and schema-filters one persisted ANALYZE option row.

@@ -54,7 +54,8 @@ use tidb_exec::cluster_stats_write::{
     plan_outdated_historical_data_delete, plan_outdated_historical_meta_delete,
     plan_partial_stats_write, plan_partition_stats_write,
     insert_table_stats_statements, plan_insert_column_default_bucket,
-    plan_insert_column_stats, plan_insert_table_stats_statement,
+    plan_insert_analyze_job, plan_insert_column_stats, plan_insert_table_stats_statement,
+    plan_start_analyze_job, plan_finish_analyze_job, plan_delete_analyze_jobs,
     plan_stats_delta_statement, plan_stats_gc_timestamp_write, plan_stats_item_delete,
     plan_stats_meta_version_refresh, plan_stats_write,
     stats_delta_statements, InsertTableStatsStatement, LoadedStatsItemStatement,
@@ -239,6 +240,129 @@ fn bootstrapped() -> MetaStore {
     .expect("a fresh keyspace bootstraps");
     apply(&mut store, &write);
     store
+}
+
+fn analyze_job_rows(store: &mut MetaStore) -> Vec<SystemRow<'static>> {
+    let catalog = load_cluster_catalog(store).expect("the bootstrapped catalog loads");
+    let table = catalog
+        .databases
+        .iter()
+        .find(|database| database.info.name.lowercase() == "mysql")
+        .and_then(|database| {
+            database
+                .tables
+                .iter()
+                .find(|table| table.name.lowercase() == "analyze_jobs")
+        })
+        .expect("mysql.analyze_jobs exists")
+        .clone();
+    let view = Box::leak(Box::new(SystemTableView::project(
+        "mysql.analyze_jobs",
+        Box::leak(Box::new(table)),
+        &[
+            "id",
+            "table_schema",
+            "table_name",
+            "partition_name",
+            "job_info",
+            "processed_rows",
+            "state",
+            "process_id",
+            "update_time",
+        ],
+    )));
+    let timezone = Box::leak(Box::new(tidb_datatype::SessionTimeZone::utc()));
+    scan_system_table(store, view)
+        .expect("analyze jobs scan")
+        .into_iter()
+        .map(|(key, value)| {
+            SystemRow::parse_in_timezone(view, &key, &value, Some(timezone)).unwrap()
+        })
+        .collect()
+}
+
+/// Pinned `InsertAnalyzeJob`, `StartAnalyzeJob`, `FinishAnalyzeJob`, and
+/// `DeleteAnalyzeJobs` share one durable row and delete only timestamps
+/// strictly older than the supplied cutoff.
+#[test]
+fn analyze_job_lifecycle_and_timestamp_cleanup_match_go() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let (job_id, insert) = plan_insert_analyze_job(
+        &mut store,
+        &catalog,
+        "test",
+        "t",
+        "",
+        &vec![b'x'; 70_000],
+        "127.0.0.1:4000",
+        77,
+        now(),
+    )
+    .expect("pending job plans");
+    assert_eq!(job_id, 1);
+    apply_mutations(&mut store, &insert.mutations);
+    let running_at = Time::from_date_checked(
+        2026,
+        7,
+        29,
+        6,
+        13,
+        0,
+        0,
+        TimeType::Timestamp,
+        0,
+    )
+    .unwrap();
+    let catalog = load_cluster_catalog(&mut store).unwrap();
+    let start = plan_start_analyze_job(&mut store, &catalog, job_id, running_at).unwrap();
+    apply_mutations(&mut store, &start.mutations);
+    let finished_at = Time::from_date_checked(
+        2026,
+        7,
+        29,
+        6,
+        13,
+        5,
+        0,
+        TimeType::Timestamp,
+        0,
+    )
+    .unwrap();
+    let catalog = load_cluster_catalog(&mut store).unwrap();
+    let finish =
+        plan_finish_analyze_job(&mut store, &catalog, job_id, 12, None, finished_at).unwrap();
+    apply_mutations(&mut store, &finish.mutations);
+
+    let rows = analyze_job_rows(&mut store);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].u64("id").unwrap(), Some(1));
+    assert!(matches!(
+        rows[0].datum("state").unwrap(),
+        Some(Datum::Enum(value, _)) if value.name_bytes() == b"finished"
+    ));
+    assert_eq!(rows[0].i64("processed_rows").unwrap(), Some(12));
+    assert_eq!(rows[0].datum("process_id").unwrap(), None);
+    assert_eq!(rows[0].text("job_info").unwrap().unwrap().len(), 65_535);
+
+    let catalog = load_cluster_catalog(&mut store).unwrap();
+    let keep = plan_delete_analyze_jobs(&mut store, &catalog, &finished_at).unwrap();
+    assert!(keep.is_empty(), "equal update_time is retained");
+    let after = Time::from_date_checked(
+        2026,
+        7,
+        29,
+        6,
+        13,
+        6,
+        0,
+        TimeType::Timestamp,
+        0,
+    )
+    .unwrap();
+    let delete = plan_delete_analyze_jobs(&mut store, &catalog, &after).unwrap();
+    apply_mutations(&mut store, &delete.mutations);
+    assert!(analyze_job_rows(&mut store).is_empty());
 }
 
 /// One histogram at the default `ANALYZE` shape: 256 buckets and 100 TopN
