@@ -574,6 +574,85 @@ pub fn plan_stats_meta_version_refresh<S: MetaSnapshot>(
     Ok(plan)
 }
 
+fn rewrite_all_rows<S: MetaSnapshot>(
+    snapshot: &mut S,
+    table: &TableInfo,
+    column: &str,
+    value: &Datum,
+    plan: &mut StatsWritePlan,
+) -> Result<(), StatsWriteError> {
+    for (key, stored) in read_rows_with_keys(snapshot, table, None)? {
+        let mut values = stored.clone();
+        set(table, &mut values, column, value.clone());
+        if matches!(HandleLayout::of(table), HandleLayout::RowId) {
+            plan.mutations
+                .extend(rewrite_rowid_row(table, &key, &stored, &values)?);
+        } else {
+            plan.mutations
+                .extend(store_clustered_row(table, Some(&stored), &values)?);
+        }
+    }
+    Ok(())
+}
+
+/// Plans pinned Go `UpdateStatsVersion` in its caller-owned transaction.
+///
+/// Go updates every `stats_meta` row first and every `stats_histograms` row
+/// second, using the same transaction start TSO for both statements.
+pub fn plan_update_stats_version<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    version: u64,
+) -> Result<StatsWritePlan, StatsWriteError> {
+    let mut plan = StatsWritePlan::default();
+    for table_name in ["stats_meta", "stats_histograms"] {
+        rewrite_all_rows(
+            snapshot,
+            locate(catalog, table_name)?,
+            "version",
+            &Datum::UInt(version),
+            &mut plan,
+        )?;
+    }
+    Ok(plan)
+}
+
+/// Plans pinned Go `ChangeGlobalStatsID`'s six statements, in order.
+///
+/// Row-id-backed system tables retain their existing hidden handle, matching
+/// SQL `UPDATE`; clustered tables move from the old record key to the new one.
+pub fn plan_change_global_stats_id<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    from: i64,
+    to: i64,
+) -> Result<StatsWritePlan, StatsWriteError> {
+    let mut plan = StatsWritePlan::default();
+    for table_name in [
+        "stats_meta",
+        "stats_top_n",
+        "stats_fm_sketch",
+        "stats_buckets",
+        "stats_histograms",
+        "column_stats_usage",
+    ] {
+        let table = locate(catalog, table_name)?;
+        for (key, stored) in read_rows_with_keys(snapshot, table, Some(from))? {
+            let mut values = stored.clone();
+            set(table, &mut values, "table_id", Datum::Int(to));
+            if matches!(HandleLayout::of(table), HandleLayout::RowId) {
+                plan.mutations
+                    .extend(rewrite_rowid_row(table, &key, &stored, &values)?);
+            } else {
+                plan.mutations.extend(delete_clustered_row(table, &stored)?);
+                plan.mutations
+                    .extend(store_clustered_row(table, None, &values)?);
+            }
+        }
+    }
+    Ok(plan)
+}
+
 /// Plans Go `SaveColumnStatsUsageToStorage` for one physical table.
 ///
 /// The Go helper uses one restricted-session transaction for the complete

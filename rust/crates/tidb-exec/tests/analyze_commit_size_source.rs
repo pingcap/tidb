@@ -49,9 +49,9 @@ use tidb_exec::cluster_stats_write::{
     plan_independent_index_stats_write, plan_loaded_stats_item_write,
     plan_loaded_stats_meta_write, plan_loaded_stats_usage_write,
     plan_outdated_historical_data_delete, plan_outdated_historical_meta_delete,
-    plan_partial_stats_write, plan_partition_stats_write, plan_stats_delta_updates,
-    plan_stats_gc_timestamp_write, plan_stats_item_delete, plan_stats_meta_version_refresh,
-    plan_stats_write,
+    plan_change_global_stats_id, plan_partial_stats_write, plan_partition_stats_write,
+    plan_stats_delta_updates, plan_stats_gc_timestamp_write, plan_stats_item_delete,
+    plan_stats_meta_version_refresh, plan_stats_write, plan_update_stats_version,
 };
 use tidb_exec::mysql_bootstrap::{plan_mysql_bootstrap, BootstrapEnvironment, BootstrapWrite};
 use tidb_exec::mysql_system_tables::{scan_system_table, SystemRow, SystemTableView};
@@ -1423,6 +1423,123 @@ fn stats_delta_update_keeps_go_row_delta_when_modify_count_is_zero() {
         loader.load_meta(&mut store, table_id).expect("meta loads"),
         Some((101, 0, 2, 13, 100))
     );
+}
+
+#[test]
+fn update_stats_version_refreshes_meta_and_histograms_like_go() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    for table_id in [4245, 4246] {
+        let stats = ClusterTableStats {
+            table_id,
+            version: 100,
+            snapshot: 90,
+            last_analyze_version: 100,
+            last_stats_hist_version: 100,
+            modify_count: 2,
+            row_count: 10,
+            columns: vec![full_histogram(1, false)],
+            indexes: vec![],
+        };
+        let plan = plan_stats_write(&mut store, &catalog, &stats, now()).expect("stats plan");
+        apply_mutations(&mut store, &plan.mutations);
+    }
+
+    let plan = plan_update_stats_version(&mut store, &catalog, 200)
+        .expect("the two Go update statements plan");
+    apply_mutations(&mut store, &plan.mutations);
+
+    let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
+    let column_types = BTreeMap::from([(
+        1,
+        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+    )]);
+    for table_id in [4245, 4246] {
+        let loaded = loader
+            .load_table(&mut store, table_id, &column_types)
+            .expect("stats load")
+            .expect("stats exist");
+        assert_eq!(loaded.version, 200);
+        assert_eq!(loaded.columns[0].histogram.last_update_version, 200);
+        assert_eq!(loaded.snapshot, 90);
+    }
+}
+
+#[test]
+fn change_global_stats_id_moves_exactly_the_six_go_tables() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let from = 4247;
+    let to = 4248;
+    let mut column = full_histogram(1, false);
+    column.fm_sketch = Some(FmSketch::from_raw_parts(2, MAX_SKETCH_SIZE, [1, 2, 3]));
+    let stats = ClusterTableStats {
+        table_id: from,
+        version: 100,
+        snapshot: 90,
+        last_analyze_version: 100,
+        last_stats_hist_version: 100,
+        modify_count: 2,
+        row_count: 10,
+        columns: vec![column],
+        indexes: vec![],
+    };
+    let stats_plan = plan_partition_stats_write(&mut store, &catalog, &stats, now())
+        .expect("partition stats plan");
+    apply_mutations(&mut store, &stats_plan.mutations);
+    let usage_plan = plan_loaded_stats_usage_write(
+        &mut store,
+        &catalog,
+        from,
+        &[Some(JsonPredicateColumn {
+            id: 1,
+            last_used_at: Some("2026-08-29 01:02:03.000000".to_owned()),
+            last_analyzed_at: None,
+        })],
+        now(),
+    )
+    .expect("usage plan");
+    apply_mutations(&mut store, &usage_plan.mutations);
+
+    let plan = plan_change_global_stats_id(&mut store, &catalog, from, to)
+        .expect("six Go table updates plan");
+    apply_mutations(&mut store, &plan.mutations);
+
+    let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
+    let column_types = BTreeMap::from([(
+        1,
+        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+    )]);
+    assert!(loader
+        .load_table_with_fm(&mut store, from, &column_types)
+        .expect("old ID lookup")
+        .is_none());
+    let moved = loader
+        .load_table_with_fm(&mut store, to, &column_types)
+        .expect("new ID lookup")
+        .expect("all statistics moved");
+    assert_eq!(moved.columns[0].histogram.buckets.len(), 256);
+    assert_eq!(moved.columns[0].topn.as_ref().map(TopN::num), Some(100));
+    assert!(moved.columns[0].fm_sketch.is_some());
+    assert_eq!(
+        load_column_stats_usage_for_table(
+            &mut store,
+            &catalog,
+            &tidb_datatype::SessionTimeZone::utc(),
+            to,
+        )
+        .expect("moved usage loads")
+        .len(),
+        1
+    );
+    assert!(load_column_stats_usage_for_table(
+        &mut store,
+        &catalog,
+        &tidb_datatype::SessionTimeZone::utc(),
+        from,
+    )
+    .expect("old usage lookup")
+    .is_empty());
 }
 
 /// Pinned Go `SaveColumnStatsUsageForTable` runs one transaction for the
