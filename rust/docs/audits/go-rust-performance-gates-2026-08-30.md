@@ -10,8 +10,8 @@
 - Concurrency: 10 threads.
 - Private kubeconfig: `/tmp/tc8228803-new.MMk3QB/kubeconfig.yml` (mode 600).
 - Rust source: `hparser-integration`; the tested binary was built from
-  commit `0d79610` (planner subquery lowering plus bounded join-row append
-  fixes). The branch subsequently advanced to report commit `d2ef241`.
+  commit `50d9de2` plus the then-uncommitted index short-circuit change, now
+  pushed as `edd0441` (`executor: skip untouched secondary index rewrites`).
 - Rust binary: built on the TiUP Pod NVMe volume (`/tiup/rust-target-lto`),
   with the repository's default thin-LTO profile, SHA-256
   `320764be80a156cefccfea0608b9a349b59d7fad881c9c1514b1e5aad4c29dd2`.
@@ -152,6 +152,23 @@ short sweep. A focused retry after the listeners settled completed in 28
 seconds and produced Go 8310.41 / Rust 4483.90 (ratio 0.5396), still below the
 round-1 threshold. The LTO run is therefore diagnostic rather than an
 acceptance result; it did not close the remaining write/range gaps.
+
+### Untouched-index write follow-up
+
+For `UPDATE` statements that leave every indexed column unchanged, the write
+path now skips secondary-index key/value encoding and storage calls entirely;
+the condition is based on indexed column offsets and preserves generated,
+unique, partitioned, and handle-changing cases. The change is pushed as
+`edd0441` and was compiled on the TiUP Pod NVMe volume (binary SHA-256
+`29eef156b53137612967a5e5c3d8cc5e6684f6a54d9d10e66fcf1e14027bbeda`). A
+three-sample focused run completed in 53 seconds without restore:
+
+| Subtype | Go median QPS | Rust median QPS | Rust/Go | Gate |
+|---|---:|---:|---:|---|
+| `oltp_update_non_index.lua` | 6361.95 | 4250.53 | 0.6681 | FAIL |
+
+The measured ratio remains below 0.80, so the dominant cost is still the
+transaction/read/commit path rather than untouched-index maintenance.
 
 ## Acceptance status
 
