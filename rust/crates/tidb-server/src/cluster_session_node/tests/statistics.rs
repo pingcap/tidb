@@ -26,6 +26,7 @@ impl ClusterAnalyze for UndeterminedAnalyze {
     fn execute(
         &self,
         _: &tidb_exec::cluster_analyze::AnalyzeStatement,
+        _: &tidb_util::sqlkiller::SqlKiller,
     ) -> Result<tidb_exec::real_tikv_analyze::ClusterAnalyzeReport, crate::sql_node::SqlQueryError>
     {
         Err(crate::sql_node::cluster_analyze_error(
@@ -42,6 +43,7 @@ impl ClusterAnalyze for PanickingAnalyze {
     fn execute(
         &self,
         _: &tidb_exec::cluster_analyze::AnalyzeStatement,
+        _: &tidb_util::sqlkiller::SqlKiller,
     ) -> Result<tidb_exec::real_tikv_analyze::ClusterAnalyzeReport, crate::sql_node::SqlQueryError>
     {
         panic!("{}", self.0)
@@ -232,6 +234,20 @@ fn analyze_commit_keeps_a_backoff_driver_error_coded_on_the_wire() {
         tidb_error::tidb::errcode::ErrTiKVStaleCommand,
         "TiKV server reports stale command",
     );
+}
+
+#[test]
+fn analyze_merge_keeps_the_statement_kill_error_coded_on_the_wire() {
+    let killer = tidb_util::sqlkiller::SqlKiller::default();
+    killer.send_kill_signal(tidb_util::sqlkiller::KillSignal::QueryInterrupted);
+    let error = killer
+        .handle_signal()
+        .expect("the query-interrupted signal has an error")
+        .to_sql_error();
+    let query_error = crate::sql_node::cluster_analyze_error(
+        tidb_exec::real_tikv_analyze::ClusterAnalyzeError::Killed(error),
+    );
+    assert_eq!((query_error.code, query_error.state), (1317, *b"70100"));
 }
 
 /// `ANALYZE TABLE` reaches the statistics seam rather than the ordinary

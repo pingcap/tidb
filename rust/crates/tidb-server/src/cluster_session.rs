@@ -1259,6 +1259,7 @@ mod tests {
                 histogram: Default::default(),
                 topn: None,
                 cms: None,
+                fm_sketch: None,
             };
             item.histogram.id = id;
             item.histogram.ndv = ndv;

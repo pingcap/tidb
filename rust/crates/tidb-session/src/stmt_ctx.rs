@@ -448,6 +448,13 @@ impl Session {
         self.statement_context(false)
     }
 
+    /// Starts a statement executed by a server-owned route and returns the
+    /// same statement memory and SQL killer ordinary execution receives.
+    #[must_use]
+    pub fn routed_statement_memory(&self) -> tidb_executor::StatementMemory {
+        self.statement_context(false).statement_memory()
+    }
+
     /// Resolves a `CREATE [OR REPLACE] VIEW` against this session's catalog
     /// for the cluster DDL route: `Ok(None)` when `sql` is not a CREATE
     /// VIEW; otherwise the `(database, name, or_replace, view)` the cluster

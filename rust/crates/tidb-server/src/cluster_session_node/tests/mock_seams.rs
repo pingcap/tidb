@@ -614,6 +614,7 @@ impl ClusterAnalyze for MockAnalyze {
     fn execute(
         &self,
         statement: &AnalyzeStatement,
+        _: &tidb_util::sqlkiller::SqlKiller,
     ) -> Result<tidb_exec::real_tikv_analyze::ClusterAnalyzeReport, SqlQueryError> {
         Err(SqlQueryError::unknown(format!(
             "the mock node stores no statistics for `{}`.`{}`",

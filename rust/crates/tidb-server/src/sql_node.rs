@@ -409,6 +409,11 @@ pub(crate) fn cluster_analyze_error(error: ClusterAnalyzeError) -> SqlQueryError
     match error {
         ClusterAnalyzeError::Undetermined(_) => SqlQueryError::result_undetermined(),
         ClusterAnalyzeError::Commit(error) => lock_sql_error(&error),
+        ClusterAnalyzeError::Killed(error) => SqlQueryError::new(
+            error.code,
+            error.state.as_bytes().try_into().unwrap_or(*b"HY000"),
+            error.message,
+        ),
         ClusterAnalyzeError::MissingPartitionStats(detail) => {
             SqlQueryError::new(8243, *b"HY000", detail)
         }

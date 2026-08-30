@@ -594,6 +594,12 @@ impl StatementMemory {
         &self.session
     }
 
+    /// The statement's canonical SQL killer.
+    #[must_use]
+    pub fn sql_killer(&self) -> &Arc<SqlKiller> {
+        &self.killer
+    }
+
     /// The statement tracker an operator attaches its own tracker to (Go
     /// `StmtCtx.MemTracker`).
     #[must_use]

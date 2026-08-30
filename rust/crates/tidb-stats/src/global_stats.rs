@@ -17,10 +17,13 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc::channel;
 use std::sync::Mutex;
 
 use chrono::TimeZone;
 use tidb_datatype::{Collation, DatumValueError, FieldType};
+use tidb_error::mysql::SqlError;
+use tidb_util::sqlkiller::SqlKiller;
 
 use crate::cmsketch::{get_merged_topn_from_sorted_slice, CmsSketch, MergeError, TopN, TopNEntry};
 use crate::histogram::{
@@ -68,6 +71,10 @@ pub struct GlobalStatsItem {
 /// partition histogram.
 #[derive(Debug)]
 pub enum GlobalStatsMergeError {
+    /// The statement was killed while merging partition TopNs.
+    Killed(SqlError),
+    /// Concurrent TopN worker failures joined by pinned Go's coordinator.
+    Concurrent(String),
     /// The encoded TopN value could not be decoded with its column type.
     Decode(tidb_codec::CodecError),
     /// The decoded value could not be compared with histogram bounds.
@@ -81,12 +88,20 @@ pub enum GlobalStatsMergeError {
 impl fmt::Display for GlobalStatsMergeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Killed(error) => error.message.fmt(formatter),
+            Self::Concurrent(error) => error.fmt(formatter),
             Self::Decode(error) => error.fmt(formatter),
             Self::Datum(error) => error.fmt(formatter),
             Self::Cms(error) => error.fmt(formatter),
             Self::Histogram(error) => error.fmt(formatter),
         }
     }
+}
+
+fn handle_kill_signal(killer: &SqlKiller) -> Result<(), GlobalStatsMergeError> {
+    killer.handle_signal().map_or(Ok(()), |error| {
+        Err(GlobalStatsMergeError::Killed(error.to_sql_error()))
+    })
 }
 
 impl std::error::Error for GlobalStatsMergeError {}
@@ -129,6 +144,7 @@ pub fn merge_partition_topn<TZ: TimeZone>(
     mut histograms: Vec<Histogram>,
     field_type: &FieldType,
     is_index: bool,
+    killer: &SqlKiller,
 ) -> Result<(Option<TopN>, Vec<TopNEntry>, Vec<Histogram>), GlobalStatsMergeError> {
     if crate::cmsketch::check_empty_topns(topns) {
         return Ok((None, Vec::new(), histograms));
@@ -137,6 +153,7 @@ pub fn merge_partition_topn<TZ: TimeZone>(
     let mut counts = HashMap::<Vec<u8>, f64>::new();
     let mut datum_cache = DatumMapCache::new();
     for (partition_index, topn) in topns.iter().enumerate() {
+        handle_kill_signal(killer)?;
         let Some(topn) = topn else {
             continue;
         };
@@ -151,6 +168,7 @@ pub fn merge_partition_topn<TZ: TimeZone>(
             }
 
             for other_index in 0..topns.len() {
+                handle_kill_signal(killer)?;
                 if (other_index == partition_index && analyze_version >= 2)
                     || topns[other_index].is_some_and(|topn| topn.find(&entry.encoded).is_some())
                 {
@@ -206,6 +224,7 @@ fn merge_partition_topn_concurrently<TZ: TimeZone + Sync>(
     field_type: &FieldType,
     is_index: bool,
     merge_concurrency: usize,
+    killer: &SqlKiller,
 ) -> Result<(Option<TopN>, Vec<TopNEntry>, Vec<Histogram>), GlobalStatsMergeError> {
     if crate::cmsketch::check_empty_topns(topns) {
         return Ok((None, Vec::new(), histograms));
@@ -219,80 +238,99 @@ fn merge_partition_topn_concurrently<TZ: TimeZone + Sync>(
 
     std::thread::scope(|scope| -> Result<(), GlobalStatsMergeError> {
         let mut workers = Vec::with_capacity(worker_count);
+        let (response_sender, response_receiver) = channel();
         for _ in 0..worker_count {
-            workers.push(scope.spawn(|| -> Result<(), GlobalStatsMergeError> {
-                let mut datum_cache = DatumMapCache::new();
-                loop {
-                    let start = next_partition.fetch_add(batch_size, Ordering::Relaxed);
-                    if start >= topns.len() {
-                        return Ok(());
-                    }
-                    let end = (start + batch_size).min(topns.len());
-                    for partition_index in start..end {
-                        let Some(topn) = topns[partition_index] else {
-                            continue;
-                        };
-                        if topn.total_count() == 0 {
-                            continue;
+            let response_sender = response_sender.clone();
+            let next_partition = &next_partition;
+            let counts = &counts;
+            let histograms = &histograms;
+            workers.push(scope.spawn(move || {
+                let response = (|| -> Result<(), GlobalStatsMergeError> {
+                    let mut datum_cache = DatumMapCache::new();
+                    loop {
+                        let start = next_partition.fetch_add(batch_size, Ordering::Relaxed);
+                        if start >= topns.len() {
+                            return Ok(());
                         }
-                        for entry in topn.entries() {
-                            let existed = {
-                                let mut counts = counts
-                                    .lock()
-                                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                                let existed = counts.contains_key(&entry.encoded);
-                                *counts.entry(entry.encoded.clone()).or_default() +=
-                                    entry.count as f64;
-                                existed
+                        let end = (start + batch_size).min(topns.len());
+                        for partition_index in start..end {
+                            handle_kill_signal(killer)?;
+                            let Some(topn) = topns[partition_index] else {
+                                continue;
                             };
-                            if existed {
+                            if topn.total_count() == 0 {
                                 continue;
                             }
-
-                            for other_index in 0..topns.len() {
-                                if (other_index == partition_index && analyze_version >= 2)
-                                    || topns[other_index]
-                                        .is_some_and(|topn| topn.find(&entry.encoded).is_some())
-                                {
-                                    continue;
-                                }
-                                let datum = match datum_cache.get(&entry.encoded) {
-                                    Some(datum) => datum,
-                                    None => datum_cache.put_encoded(
-                                        &entry.encoded,
-                                        &entry.encoded,
-                                        field_type.code().mysql_type(),
-                                        is_index,
-                                        timezone,
-                                    )?,
-                                };
-                                let mut histogram = histograms[other_index]
-                                    .lock()
-                                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                                let (count, _) = histogram.equal_row_count(
-                                    &datum,
-                                    is_index,
-                                    field_type.collation(),
-                                );
-                                if count != 0.0 {
-                                    histogram.binary_search_remove_value(
-                                        &datum,
-                                        count as i64,
-                                        field_type.collation(),
-                                    )?;
+                            for entry in topn.entries() {
+                                let existed = {
                                     let mut counts = counts
                                         .lock()
                                         .unwrap_or_else(std::sync::PoisonError::into_inner);
-                                    *counts.entry(entry.encoded.clone()).or_default() += count;
+                                    let existed = counts.contains_key(&entry.encoded);
+                                    *counts.entry(entry.encoded.clone()).or_default() +=
+                                        entry.count as f64;
+                                    existed
+                                };
+                                if existed {
+                                    continue;
+                                }
+
+                                for other_index in 0..topns.len() {
+                                    handle_kill_signal(killer)?;
+                                    if (other_index == partition_index && analyze_version >= 2)
+                                        || topns[other_index]
+                                            .is_some_and(|topn| topn.find(&entry.encoded).is_some())
+                                    {
+                                        continue;
+                                    }
+                                    let datum = match datum_cache.get(&entry.encoded) {
+                                        Some(datum) => datum,
+                                        None => datum_cache.put_encoded(
+                                            &entry.encoded,
+                                            &entry.encoded,
+                                            field_type.code().mysql_type(),
+                                            is_index,
+                                            timezone,
+                                        )?,
+                                    };
+                                    let mut histogram = histograms[other_index]
+                                        .lock()
+                                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                                    let (count, _) = histogram.equal_row_count(
+                                        &datum,
+                                        is_index,
+                                        field_type.collation(),
+                                    );
+                                    if count != 0.0 {
+                                        histogram.binary_search_remove_value(
+                                            &datum,
+                                            count as i64,
+                                            field_type.collation(),
+                                        )?;
+                                        let mut counts = counts
+                                            .lock()
+                                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                                        *counts.entry(entry.encoded.clone()).or_default() += count;
+                                    }
                                 }
                             }
                         }
                     }
-                }
+                })();
+                let _ = response_sender.send(response);
             }));
         }
+        drop(response_sender);
+        let errors = response_receiver
+            .into_iter()
+            .filter_map(Result::err)
+            .map(|error| error.to_string())
+            .collect::<Vec<_>>();
         for worker in workers {
-            worker.join().expect("global TopN worker panicked")?;
+            worker.join().expect("global TopN worker panicked");
+        }
+        if !errors.is_empty() {
+            return Err(GlobalStatsMergeError::Concurrent(errors.join(",")));
         }
         Ok(())
     })?;
@@ -331,6 +369,7 @@ pub fn merge_partition_stats_item<TZ: TimeZone + Sync>(
     mode: GlobalStatsMergeMode,
     merge_concurrency: usize,
     partitions: Vec<PartitionStatsItem>,
+    killer: &SqlKiller,
 ) -> Result<GlobalStatsItem, GlobalStatsMergeError> {
     if partitions.is_empty() {
         return Ok(GlobalStatsItem {
@@ -372,6 +411,7 @@ pub fn merge_partition_stats_item<TZ: TimeZone + Sync>(
         cmsketch,
         histograms,
         topns,
+        killer,
     )
 }
 
@@ -438,6 +478,7 @@ pub fn merge_partition_histogram_topn<TZ: TimeZone + Sync>(
     cmsketch: Option<CmsSketch>,
     histograms: Vec<Histogram>,
     topns: Vec<Option<TopN>>,
+    killer: &SqlKiller,
 ) -> Result<GlobalStatsItem, GlobalStatsMergeError> {
     if histograms.is_empty() {
         return Ok(GlobalStatsItem {
@@ -456,6 +497,7 @@ pub fn merge_partition_histogram_topn<TZ: TimeZone + Sync>(
             histograms,
             field_type,
             is_index,
+            killer,
         )?
     } else {
         merge_partition_topn_concurrently(
@@ -467,6 +509,7 @@ pub fn merge_partition_histogram_topn<TZ: TimeZone + Sync>(
             field_type,
             is_index,
             merge_concurrency,
+            killer,
         )?
     };
     let mut datum_cache = DatumMapCache::new();

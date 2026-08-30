@@ -35,17 +35,19 @@ use std::time::Duration;
 
 use chrono::TimeZone;
 use tidb_datatype::{FieldType, FieldTypeCode, SessionTimeZone};
+use tidb_error::mysql::SqlError;
 use tidb_stats::histogram::Histogram;
 use tidb_stats::{
     fm_sketch_ndv, merge_fm_sketch, merge_partition_histogram_topn, merge_partition_stats_item,
-    CmsSketch, FmSketch, GlobalStatsItem, GlobalStatsMergeMode, PartitionStatsItem,
-    StatsLoadedStatus, TopN,
+    CmsSketch, FmSketch, GlobalStatsItem, GlobalStatsMergeError, GlobalStatsMergeMode,
+    PartitionStatsItem, StatsLoadedStatus, TopN,
 };
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{
     OptimisticCommitOutcome, RealOptimisticTransactionOpener, MAX_OPTIMISTIC_TRANSACTION_BYTES,
 };
 use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
+use tidb_util::sqlkiller::SqlKiller;
 
 use crate::cluster_analyze::{
     analyze_physical_table, lower_analyze, resolve_analyze_options, AnalyzeColumnChoice,
@@ -367,6 +369,8 @@ pub enum ClusterAnalyzeError {
     Undetermined(String),
     /// A determinate commit failure with its driver error code and SQLSTATE.
     Commit(LockSqlError),
+    /// A statement kill retaining its MySQL error identity.
+    Killed(SqlError),
     /// Pinned error 8243, demoted to a statement warning by ANALYZE.
     MissingPartitionStats(String),
     /// Pinned error 8244, demoted to a statement warning by ANALYZE.
@@ -382,6 +386,7 @@ impl fmt::Display for ClusterAnalyzeError {
                 write!(formatter, "execution result undetermined: {detail}")
             }
             Self::Commit(error) => formatter.write_str(&error.message),
+            Self::Killed(error) => formatter.write_str(&error.message),
             Self::MissingPartitionStats(detail) => write!(
                 formatter,
                 "Build global-level stats failed due to missing partition-level stats: {detail}"
@@ -396,6 +401,13 @@ impl fmt::Display for ClusterAnalyzeError {
 }
 
 impl std::error::Error for ClusterAnalyzeError {}
+
+fn global_stats_merge_error(error: GlobalStatsMergeError) -> ClusterAnalyzeError {
+    match error {
+        GlobalStatsMergeError::Killed(error) => ClusterAnalyzeError::Killed(error),
+        other => ClusterAnalyzeError::Other(other.to_string()),
+    }
+}
 
 /// `mysql.stats_meta.count` as the sample-rate rule reads it.
 ///
@@ -415,6 +427,7 @@ pub fn commit_cluster_analyze<C: StoreWriteClient, L: StoreWriteLoader, P: Store
     opener: &RealOptimisticTransactionOpener<C, L, P>,
     resolved: &ResolvedClusterAnalyze,
     timeout: Duration,
+    killer: &SqlKiller,
 ) -> Result<ClusterAnalyzeReport, ClusterAnalyzeError> {
     let targets = if resolved.partitioned {
         resolved
@@ -466,7 +479,9 @@ pub fn commit_cluster_analyze<C: StoreWriteClient, L: StoreWriteLoader, P: Store
         report.table_id = table_id;
     }
     if resolved.partitioned && resolved.statement.dynamic_partition_prune {
-        if let Err(error) = commit_cluster_global_stats(opener, resolved, &mut report, timeout) {
+        if let Err(error) =
+            commit_cluster_global_stats(opener, resolved, &mut report, timeout, killer)
+        {
             match error {
                 ClusterAnalyzeError::MissingPartitionStats(_) => {
                     report.global_stats_warning = Some((8243, error.to_string()));
@@ -487,6 +502,7 @@ fn commit_cluster_global_stats<C: StoreWriteClient, L: StoreWriteLoader, P: Stor
     resolved: &ResolvedClusterAnalyze,
     report: &mut ClusterAnalyzeReport,
     timeout: Duration,
+    killer: &SqlKiller,
 ) -> Result<(), ClusterAnalyzeError> {
     let mut transaction = opener
         .begin_read_only()
@@ -556,6 +572,7 @@ fn commit_cluster_global_stats<C: StoreWriteClient, L: StoreWriteLoader, P: Stor
                     &index_names,
                     &resolved.statement,
                     total_count,
+                    killer,
                 ),
                 SessionTimeZone::Named(zone) => merge_global_items_async(
                     &mut snapshot,
@@ -569,6 +586,7 @@ fn commit_cluster_global_stats<C: StoreWriteClient, L: StoreWriteLoader, P: Stor
                     &index_names,
                     &resolved.statement,
                     total_count,
+                    killer,
                 ),
                 SessionTimeZone::Fixed { offset_secs, .. } => {
                     let zone = chrono::FixedOffset::east_opt(*offset_secs).ok_or_else(|| {
@@ -586,6 +604,7 @@ fn commit_cluster_global_stats<C: StoreWriteClient, L: StoreWriteLoader, P: Stor
                         &index_names,
                         &resolved.statement,
                         total_count,
+                        killer,
                     )
                 }
             }?;
@@ -625,6 +644,7 @@ fn commit_cluster_global_stats<C: StoreWriteClient, L: StoreWriteLoader, P: Stor
                     &resolved.statement,
                     total_count,
                     mode,
+                    killer,
                 ),
                 SessionTimeZone::Named(zone) => merge_global_items(
                     Some(zone),
@@ -637,6 +657,7 @@ fn commit_cluster_global_stats<C: StoreWriteClient, L: StoreWriteLoader, P: Stor
                     &resolved.statement,
                     total_count,
                     mode,
+                    killer,
                 ),
                 SessionTimeZone::Fixed { offset_secs, .. } => {
                     let zone = chrono::FixedOffset::east_opt(*offset_secs).ok_or_else(|| {
@@ -653,6 +674,7 @@ fn commit_cluster_global_stats<C: StoreWriteClient, L: StoreWriteLoader, P: Stor
                         &resolved.statement,
                         total_count,
                         mode,
+                        killer,
                     )
                 }
             }?;
@@ -776,6 +798,7 @@ fn merge_global_items_async<S, TZ>(
     index_names: &std::collections::BTreeMap<i64, String>,
     statement: &AnalyzeStatement,
     total_count: i64,
+    killer: &SqlKiller,
 ) -> Result<Vec<ClusterStatsItem>, ClusterAnalyzeError>
 where
     S: crate::cluster_catalog::MetaSnapshot,
@@ -891,8 +914,9 @@ where
                             cmsketches[index].take(),
                             histograms,
                             topns,
+                            killer,
                         )
-                        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?,
+                        .map_err(global_stats_merge_error)?,
                     );
                 }
                 Ok(merged)
@@ -1048,6 +1072,7 @@ fn merge_global_items<TZ: TimeZone + Sync>(
     statement: &AnalyzeStatement,
     total_count: i64,
     mode: GlobalStatsMergeMode,
+    killer: &SqlKiller,
 ) -> Result<Vec<ClusterStatsItem>, ClusterAnalyzeError> {
     let mut result = Vec::with_capacity(column_ids.len() + index_ids.len());
     for (is_index, ids) in [(false, column_ids), (true, index_ids)] {
@@ -1147,8 +1172,9 @@ fn merge_global_items<TZ: TimeZone + Sync>(
                 mode,
                 statement.partition_merge_concurrency,
                 inputs,
+                killer,
             )
-            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+            .map_err(global_stats_merge_error)?;
             if let Some(histogram) = merged.histogram {
                 result.push(ClusterStatsItem {
                     id,
@@ -1479,6 +1505,7 @@ mod tests {
         OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction,
         TransactionCause,
     };
+    use tidb_util::sqlkiller::SqlKiller;
 
     fn global_partition_item(id: i64, count: i64) -> super::ClusterStatsItem {
         super::ClusterStatsItem {
@@ -1546,6 +1573,7 @@ mod tests {
 
     #[test]
     fn dynamic_global_merge_uses_all_partitions_and_skip_policy() {
+        let killer = SqlKiller::default();
         let column_types = BTreeMap::from([(1, FieldType::new(FieldTypeCode::LongLong))]);
         let column_names = BTreeMap::from([(1, "a".to_owned())]);
         let partitions = vec![
@@ -1566,6 +1594,7 @@ mod tests {
             &global_statement(false),
             5,
             GlobalStatsMergeMode::Blocking,
+            &killer,
         )
         .expect_err("missing partition stats are reported when skipping is disabled");
         assert_eq!(
@@ -1584,6 +1613,7 @@ mod tests {
             &global_statement(true),
             5,
             GlobalStatsMergeMode::Async,
+            &killer,
         )
         .expect("the configured missing partition is skipped");
         assert_eq!(merged.len(), 1);
@@ -1600,6 +1630,7 @@ mod tests {
             &global_statement(false),
             5,
             GlobalStatsMergeMode::Async,
+            &killer,
         )
         .expect("the async worker always skips a partition with no histogram rows");
         assert_eq!(merged.len(), 1);
@@ -1607,6 +1638,7 @@ mod tests {
 
     #[test]
     fn dynamic_global_merge_distinguishes_missing_item_payload() {
+        let killer = SqlKiller::default();
         let column_types = BTreeMap::from([(1, FieldType::new(FieldTypeCode::LongLong))]);
         let column_names = BTreeMap::from([(1, "a".to_owned())]);
         let mut empty = global_partition_item(1, 0);
@@ -1624,6 +1656,7 @@ mod tests {
             &global_statement(false),
             5,
             GlobalStatsMergeMode::Blocking,
+            &killer,
         )
         .expect_err("an empty item on a non-empty partition is reported");
         assert_eq!(
@@ -1642,6 +1675,7 @@ mod tests {
             &global_statement(false),
             5,
             GlobalStatsMergeMode::Async,
+            &killer,
         )
         .expect("the async worker only checks whether the histogram row exists");
         assert_eq!(merged.len(), 1);
@@ -1662,6 +1696,7 @@ mod tests {
             &global_statement(false),
             5,
             GlobalStatsMergeMode::Async,
+            &killer,
         )
         .expect_err("the async worker reports a missing item when sibling rows exist");
         assert_eq!(

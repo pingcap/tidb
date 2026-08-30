@@ -72,6 +72,7 @@ use tidb_exec::real_tikv_load_stats::{
 use tidb_exec::real_tikv_stats::{refresh_stats_snapshot_from_cluster, StatsTarget};
 use tidb_exec::stats_watch::SharedStats;
 use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
+use tidb_util::sqlkiller::SqlKiller;
 
 use crate::sql_node::{cluster_analyze_error, SqlQueryError};
 
@@ -82,7 +83,11 @@ use crate::sql_node::{cluster_analyze_error, SqlQueryError};
 /// cluster. The production implementation is [`RealClusterAnalyze`].
 pub trait ClusterAnalyze: Send + Sync {
     /// Analyzes one table and stores its statistics.
-    fn execute(&self, statement: &AnalyzeStatement) -> Result<ClusterAnalyzeReport, SqlQueryError>;
+    fn execute(
+        &self,
+        statement: &AnalyzeStatement,
+        killer: &SqlKiller,
+    ) -> Result<ClusterAnalyzeReport, SqlQueryError>;
 
     /// Loads one client-transferred JSON statistics dump into cluster storage.
     fn load_stats(
@@ -194,10 +199,14 @@ where
     L: StoreWriteLoader,
     P: StorePdCapability,
 {
-    fn execute(&self, statement: &AnalyzeStatement) -> Result<ClusterAnalyzeReport, SqlQueryError> {
+    fn execute(
+        &self,
+        statement: &AnalyzeStatement,
+        killer: &SqlKiller,
+    ) -> Result<ClusterAnalyzeReport, SqlQueryError> {
         let statement = resolve_cluster_analyze_statement(&self.opener, statement, self.timeout)
             .map_err(cluster_analyze_error)?;
-        let mut report = commit_cluster_analyze(&self.opener, &statement, self.timeout)
+        let mut report = commit_cluster_analyze(&self.opener, &statement, self.timeout, killer)
             .map_err(cluster_analyze_error)?;
         if let Err(error) = save_cluster_analyze_options(&self.opener, &statement, self.timeout) {
             report.option_save_warning = Some(error.to_string());

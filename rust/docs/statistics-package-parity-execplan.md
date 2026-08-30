@@ -48,6 +48,7 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - [x] (2026-08-29) Completed pinned persisted ANALYZE options across table and partition targets, including Go-ordered static targets, final mandatory-column LIST persistence, live persistence gating, and partition FM-sketch storage.
 - [x] (2026-08-29) Split dynamic global-stat preparation by Go worker mode: blocking retains its full partition-table load, while async applies kind/item skip classification and reads one histogram item and FM sketch across partitions at a time instead of retaining every payload for every partition.
 - [x] (2026-08-29) Reproduced the async global-stat I/O/CPU handoff: FM and CMS use capacity-five channels, histogram+TopN uses an unbuffered channel, payload phases close in Go order, FM memory is released before CMS, worker exits unblock the peer, panics become errors, and simultaneous failures are joined.
+- [x] (2026-08-29) Threaded the canonical per-statement SQL killer through routed cluster ANALYZE and matched both sequential and concurrent TopN polling, including Go's concurrent worker-error joining and client error identity.
 - [ ] Complete pinned `pkg/statistics/handle/globalstats`; dynamic ANALYZE now loads every partition, applies both missing-stat policies, merges FM/CMS/TopN/histograms, honors the async selector and TopN merge concurrency, persists each global item independently, continues after item-write errors, and emits warnings 8243/8244. Historical dump/job lifecycle and the full original test inventory remain open.
 - [ ] Wire all pinned Go `SHOW STATS_*` surfaces to the shared cache and storage semantics.
 - [ ] Inventory every production file, platform/generated variant, original test/support artifact, fixture, and validation gate in pinned `pkg/statistics`; close or explicitly retain seed-only gaps until the whole package is complete.
@@ -180,6 +181,9 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 
 - Observation: a missing FM sketch is not a merge error. Go deliberately calls the nil-safe `(*FMSketch).NDV`, which returns zero, and then continues to CMS, TopN, and histogram merging.
   Evidence: pinned `FMSketch.NDV`, blocking `globalStats.Fms[i].NDV()`, and async `dealFMSketch`; Rust removed its extra `MissingFmSketch` error and now performs the same FM, CMS, and histogram/TopN phase reductions over exact per-item storage reads.
+
+- Observation: global TopN cancellation is checked at partition and cross-partition loop boundaries, and the concurrent coordinator deliberately erases individual error identity by joining worker messages into a new error.
+  Evidence: pinned `MergePartTopN2GlobalTopN`, `topnStatsMergeWorker.Run`, and `MergeGlobalStatsTopNByConcurrency`; Rust now preserves error 1317 on the sequential path and returns the joined generic merge error on the concurrent path.
 
 ## Decision Log
 

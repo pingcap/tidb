@@ -92,6 +92,7 @@ impl ClusterServerSession {
         &mut self,
         tables: &[AnalyzeStatement],
     ) -> Result<WriteOutcome, SqlQueryError> {
+        let statement_memory = self.session.routed_statement_memory();
         if self.explicit.is_some() || self.session.in_transaction() {
             self.control_transaction("COMMIT")?;
         }
@@ -151,8 +152,11 @@ impl ClusterServerSession {
             statement.time_zone = self.session.session_time_zone();
             statement.options.memory_quota = memory_quota;
             let statement = &statement;
-            let report = recover_analyze_panic(|| self.analyze.execute(statement))
-                .map_err(|error| SqlQueryError::unknown(error.rendered_message()))??;
+            let report = recover_analyze_panic(|| {
+                self.analyze
+                    .execute(statement, statement_memory.sql_killer())
+            })
+            .map_err(|error| SqlQueryError::unknown(error.rendered_message()))??;
             if report.predicate_columns_empty {
                 self.session.append_routed_warning(
                     1105,

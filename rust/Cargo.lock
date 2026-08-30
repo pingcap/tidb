@@ -3834,6 +3834,7 @@ dependencies = [
  "sha2",
  "tidb-codec",
  "tidb-datatype",
+ "tidb-error",
  "tidb-model",
  "tidb-stats-handle-util",
  "tidb-txnkv",

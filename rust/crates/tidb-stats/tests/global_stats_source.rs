@@ -19,9 +19,10 @@ use tidb_codec::encode_key;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_stats::histogram::{Bucket, Histogram};
 use tidb_stats::{
-    merge_partition_stats_item, merge_partition_topn, CmsSketch, FmSketch, GlobalStatsMergeMode,
-    PartitionStatsItem, TopN, MAX_SKETCH_SIZE,
+    merge_partition_stats_item, merge_partition_topn, CmsSketch, FmSketch, GlobalStatsMergeError,
+    GlobalStatsMergeMode, PartitionStatsItem, TopN, MAX_SKETCH_SIZE,
 };
+use tidb_util::sqlkiller::{KillSignal, SqlKiller};
 
 fn encoded(value: i64) -> Vec<u8> {
     encode_key(&[Datum::Int(value)]).expect("integer key encodes")
@@ -29,6 +30,7 @@ fn encoded(value: i64) -> Vec<u8> {
 
 #[test]
 fn source_merge_partition_topn_without_histograms() {
+    let killer = SqlKiller::default();
     let topns = (0..10)
         .map(|_| {
             let mut topn = TopN::new(3);
@@ -47,6 +49,7 @@ fn source_merge_partition_topn_without_histograms() {
         Vec::new(),
         &FieldType::new(FieldTypeCode::Tiny),
         false,
+        &killer,
     )
     .expect("TopN merge succeeds");
     assert_eq!(global.expect("non-empty TopN").total_count(), 50);
@@ -55,6 +58,7 @@ fn source_merge_partition_topn_without_histograms() {
 
 #[test]
 fn source_merge_partition_topn_counts_and_removes_histogram_values() {
+    let killer = SqlKiller::default();
     let topns = (0..10)
         .map(|partition| {
             let mut topn = TopN::new(3);
@@ -92,6 +96,7 @@ fn source_merge_partition_topn_counts_and_removes_histogram_values() {
         histograms,
         &FieldType::new(FieldTypeCode::Tiny),
         false,
+        &killer,
     )
     .expect("TopN merge succeeds");
     assert_eq!(global.expect("non-empty TopN").total_count(), 55);
@@ -101,6 +106,7 @@ fn source_merge_partition_topn_counts_and_removes_histogram_values() {
 
 #[test]
 fn source_concurrent_topn_merge_matches_the_blocking_worker_result() {
+    let killer = SqlKiller::default();
     let partitions = (0..10)
         .map(|partition| {
             let mut item = partition_item([partition, partition + 100]);
@@ -128,6 +134,7 @@ fn source_concurrent_topn_merge_matches_the_blocking_worker_result() {
             GlobalStatsMergeMode::Blocking,
             concurrency,
             partitions.clone(),
+            &killer,
         )
         .expect("global item merge succeeds")
     };
@@ -180,6 +187,7 @@ fn partition_item(fm_hashes: impl IntoIterator<Item = u64>) -> PartitionStatsIte
 
 #[test]
 fn source_merge_item_uses_fm_ndv_and_clears_bucket_ndv() {
+    let killer = SqlKiller::default();
     let merged = merge_partition_stats_item(
         Some(&Utc),
         2,
@@ -191,6 +199,7 @@ fn source_merge_item_uses_fm_ndv_and_clears_bucket_ndv() {
         GlobalStatsMergeMode::Async,
         1,
         vec![partition_item([1, 2]), partition_item([2, 3])],
+        &killer,
     )
     .expect("global item merge succeeds");
     let histogram = merged.histogram.expect("histogram is produced");
@@ -200,6 +209,7 @@ fn source_merge_item_uses_fm_ndv_and_clears_bucket_ndv() {
 
 #[test]
 fn source_merge_item_without_fm_uses_go_s_nil_ndv() {
+    let killer = SqlKiller::default();
     let mut item = partition_item([]);
     item.fm_sketch = None;
     let merged = merge_partition_stats_item(
@@ -213,6 +223,7 @@ fn source_merge_item_without_fm_uses_go_s_nil_ndv() {
         GlobalStatsMergeMode::Async,
         1,
         vec![item],
+        &killer,
     )
     .expect("Go's nil FM sketch receiver reports NDV zero");
     assert_eq!(merged.histogram.expect("histogram is produced").ndv, 0);
@@ -220,6 +231,7 @@ fn source_merge_item_without_fm_uses_go_s_nil_ndv() {
 
 #[test]
 fn source_async_and_blocking_cms_nil_order_matches_go_workers() {
+    let killer = SqlKiller::default();
     let first = partition_item([1]);
     let mut second = partition_item([2]);
     let mut cms = CmsSketch::new(2, 8);
@@ -237,6 +249,7 @@ fn source_async_and_blocking_cms_nil_order_matches_go_workers() {
             mode,
             1,
             vec![first.clone(), second.clone()],
+            &killer,
         )
         .expect("global item merge succeeds")
     };
@@ -248,4 +261,56 @@ fn source_async_and_blocking_cms_nil_order_matches_go_workers() {
             .total_count(),
         5
     );
+}
+
+#[test]
+fn source_sequential_topn_merge_preserves_the_kill_error() {
+    let killer = SqlKiller::default();
+    killer.send_kill_signal(KillSignal::QueryInterrupted);
+    let mut topn = TopN::new(1);
+    topn.append(&encoded(1), 1);
+    let error = merge_partition_topn(
+        Some(&Utc),
+        2,
+        &[Some(&topn)],
+        1,
+        vec![partition_item([]).histogram],
+        &FieldType::new(FieldTypeCode::Tiny),
+        false,
+        &killer,
+    )
+    .expect_err("the sequential worker checks the statement killer");
+    assert!(matches!(
+        error,
+        GlobalStatsMergeError::Killed(ref error) if error.code == 1317
+    ));
+}
+
+#[test]
+fn source_concurrent_topn_merge_joins_worker_kill_errors_like_go() {
+    let killer = SqlKiller::default();
+    killer.send_kill_signal(KillSignal::QueryInterrupted);
+    let mut first = partition_item([1]);
+    let mut first_topn = TopN::new(1);
+    first_topn.append(&encoded(1), 1);
+    first.topn = Some(first_topn);
+    let mut second = partition_item([2]);
+    let mut second_topn = TopN::new(1);
+    second_topn.append(&encoded(2), 1);
+    second.topn = Some(second_topn);
+    let error = merge_partition_stats_item(
+        Some(&Utc),
+        2,
+        1,
+        256,
+        20,
+        &FieldType::new(FieldTypeCode::Tiny),
+        false,
+        GlobalStatsMergeMode::Blocking,
+        2,
+        vec![first, second],
+        &killer,
+    )
+    .expect_err("the concurrent coordinator returns its joined worker errors");
+    assert!(matches!(error, GlobalStatsMergeError::Concurrent(_)));
 }
