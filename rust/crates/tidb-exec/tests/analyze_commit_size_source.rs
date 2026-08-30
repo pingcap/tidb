@@ -53,15 +53,18 @@ use tidb_exec::cluster_stats_write::{
     plan_loaded_stats_usage_write,
     plan_outdated_historical_data_delete, plan_outdated_historical_meta_delete,
     plan_partial_stats_write, plan_partition_stats_write,
+    insert_table_stats_statements, plan_insert_table_stats_statement,
     plan_stats_delta_statement, plan_stats_gc_timestamp_write, plan_stats_item_delete,
     plan_stats_meta_version_refresh, plan_stats_write,
-    stats_delta_statements, LoadedStatsItemStatement, StatsDeltaStatement, StatsWriteError,
+    stats_delta_statements, InsertTableStatsStatement, LoadedStatsItemStatement,
+    StatsDeltaStatement, StatsWriteError,
 };
 use tidb_exec::mysql_bootstrap::{plan_mysql_bootstrap, BootstrapEnvironment, BootstrapWrite};
 use tidb_exec::mysql_system_tables::{scan_system_table, SystemRow, SystemTableView};
 use tidb_exec::real_tikv_analyze::ANALYZE_MAX_MUTATIONS;
 use tidb_executor::analyze::{AnalyzeColumnChoice, AnalyzeOptionOverrides};
 use tidb_model::column::ColumnInfo;
+use tidb_model::index::IndexInfo;
 use tidb_model::table_info::TableInfo;
 use tidb_model::SchemaState;
 use tidb_stats::cmsketch::{CmsSketch, TopN};
@@ -1460,6 +1463,98 @@ fn slow_save_version_refresh_changes_only_the_two_go_columns() {
             refreshed,
         ))
     );
+}
+
+#[test]
+fn insert_table_stats_uses_go_statement_order_and_histogram_placeholders() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let physical_id = 4243;
+    let table = TableInfo {
+        id: physical_id,
+        columns: vec![
+            ColumnInfo {
+                id: 11,
+                name: CiString::new("a"),
+                ..ColumnInfo::default()
+            },
+            ColumnInfo {
+                id: 12,
+                name: CiString::new("b"),
+                ..ColumnInfo::default()
+            },
+        ]
+        .into(),
+        indices: vec![IndexInfo {
+            id: 21,
+            name: CiString::new("idx_a"),
+            ..IndexInfo::default()
+        }]
+        .into(),
+        ..TableInfo::default()
+    };
+    let statements = insert_table_stats_statements(&table, physical_id);
+    assert_eq!(
+        statements,
+        vec![
+            InsertTableStatsStatement::Meta { physical_id },
+            InsertTableStatsStatement::Histogram {
+                physical_id,
+                is_index: false,
+                hist_id: 11,
+            },
+            InsertTableStatsStatement::Histogram {
+                physical_id,
+                is_index: false,
+                hist_id: 12,
+            },
+            InsertTableStatsStatement::Histogram {
+                physical_id,
+                is_index: true,
+                hist_id: 21,
+            },
+        ]
+    );
+
+    let version = 440_000_000_000_000_001;
+    for statement in &statements {
+        let plan = plan_insert_table_stats_statement(
+            &mut store,
+            &catalog,
+            statement,
+            version,
+            now(),
+        )
+        .expect("InsertTableStats2KV statement plans");
+        apply_mutations(&mut store, &plan.mutations);
+    }
+    let loader = ClusterStatsLoader::locate(&catalog).expect("stats tables locate");
+    let loaded = loader
+        .load_table(&mut store, physical_id, &BTreeMap::new())
+        .expect("placeholder statistics load")
+        .expect("stats_meta exists");
+    assert_eq!(loaded.version, version);
+    assert_eq!(loaded.last_stats_hist_version, version);
+    assert_eq!(
+        loaded.columns.iter().map(|item| item.id).collect::<Vec<_>>(),
+        vec![11, 12]
+    );
+    assert_eq!(
+        loaded.indexes.iter().map(|item| item.id).collect::<Vec<_>>(),
+        vec![21]
+    );
+
+    for statement in &statements {
+        let ignored = plan_insert_table_stats_statement(
+            &mut store,
+            &catalog,
+            statement,
+            version + 1,
+            now(),
+        )
+        .expect("existing InsertTableStats2KV rows are ignored");
+        assert!(ignored.mutations.is_empty());
+    }
 }
 
 #[test]

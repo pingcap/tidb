@@ -529,89 +529,114 @@ pub fn plan_loaded_stats_meta_write<S: MetaSnapshot>(
     Ok(plan)
 }
 
-/// Plans pinned Go's statistics DDL subscriber for
-/// `ActionTruncateTablePartition`.
-pub fn plan_truncate_partition_stats_write<S: MetaSnapshot>(
+/// One SQL statement from pinned Go `InsertTableStats2KV`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum InsertTableStatsStatement {
+    /// `INSERT IGNORE` of the physical table's metadata row.
+    Meta {
+        /// New table or partition physical ID.
+        physical_id: i64,
+    },
+    /// `INSERT IGNORE` of one column or index histogram placeholder.
+    Histogram {
+        /// New table or partition physical ID.
+        physical_id: i64,
+        /// Whether the placeholder belongs to an index rather than a column.
+        is_index: bool,
+        /// Column or index ID.
+        hist_id: i64,
+    },
+}
+
+/// Builds pinned Go `InsertTableStats2KV`'s statement sequence.
+#[must_use]
+pub fn insert_table_stats_statements(
+    table: &TableInfo,
+    physical_id: i64,
+) -> Vec<InsertTableStatsStatement> {
+    std::iter::once(InsertTableStatsStatement::Meta { physical_id })
+        .chain(
+            table
+                .columns
+                .iter_deref()
+                .map(|column| InsertTableStatsStatement::Histogram {
+                    physical_id,
+                    is_index: false,
+                    hist_id: column.read().id,
+                }),
+        )
+        .chain(
+            table
+                .indices
+                .iter_deref()
+                .map(|index| InsertTableStatsStatement::Histogram {
+                    physical_id,
+                    is_index: true,
+                    hist_id: index.read().id,
+                }),
+        )
+        .collect()
+}
+
+/// Plans one pinned Go `InsertTableStats2KV` statement.
+pub fn plan_insert_table_stats_statement<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
-    logical_table_id: i64,
-    replacements: &[(i64, i64)],
+    statement: &InsertTableStatsStatement,
     version: u64,
     now: Time,
 ) -> Result<StatsWritePlan, StatsWriteError> {
-    let table = locate(catalog, "stats_meta")?;
-    let mut rows = StatsRows::open_all(snapshot, table, &["table_id"])?;
     let mut plan = StatsWritePlan::default();
-    let mut truncated_count = 0i64;
-    let signed = |datum: Option<&Datum>, name: &str| -> Result<i64, StatsWriteError> {
-        match datum.unwrap_or(&Datum::Int(0)) {
-            Datum::Int(value) => Ok(*value),
-            Datum::UInt(value) => i64::try_from(*value).map_err(|_| {
-                StatsWriteError::HistoricalMeta(format!("stats_meta.{name} overflows int64"))
-            }),
-            other => Err(StatsWriteError::HistoricalMeta(format!(
-                "invalid stats_meta.{name} {other:?}"
-            ))),
+    let (table_name, identity, physical_id, histogram) = match statement {
+        InsertTableStatsStatement::Meta { physical_id } => {
+            ("stats_meta", &["table_id"][..], *physical_id, None)
         }
+        InsertTableStatsStatement::Histogram {
+            physical_id,
+            is_index,
+            hist_id,
+        } => (
+            "stats_histograms",
+            &["table_id", "is_index", "hist_id"][..],
+            *physical_id,
+            Some((*is_index, *hist_id)),
+        ),
     };
-    let count_id = column_id(table, "count")?;
-    let modify_id = column_id(table, "modify_count")?;
-
-    for &(old_id, new_id) in replacements {
-        let old_identity = vec![format!("{:?}", Datum::Int(old_id))];
-        if let Some(mut values) = rows.existing_values(&old_identity).cloned() {
-            truncated_count = truncated_count
-                .checked_add(signed(values.get(&count_id), "count")?)
-                .ok_or_else(|| {
-                    StatsWriteError::HistoricalMeta(
-                        "truncated partition count overflows int64".to_owned(),
-                    )
-                })?;
-            set(table, &mut values, "version", Datum::UInt(version));
-            rows.store(snapshot, catalog, &values, &mut plan)?;
-        }
-
-        let mut values = defaults_row(table, now)?;
-        set(table, &mut values, "table_id", Datum::Int(new_id));
+    let table = locate(catalog, table_name)?;
+    let mut rows = StatsRows::open(snapshot, table, identity, physical_id)?;
+    let mut values = defaults_row(table, now)?;
+    set(table, &mut values, "table_id", Datum::Int(physical_id));
+    if let Some((is_index, hist_id)) = histogram {
+        set(
+            table,
+            &mut values,
+            "is_index",
+            Datum::Int(i64::from(is_index)),
+        );
+        set(table, &mut values, "hist_id", Datum::Int(hist_id));
+        set(table, &mut values, "distinct_count", Datum::Int(0));
         set(table, &mut values, "version", Datum::UInt(version));
+        set(table, &mut values, "null_count", Datum::Int(0));
+        set(table, &mut values, "tot_col_size", Datum::Int(0));
         set(table, &mut values, "modify_count", Datum::Int(0));
-        set(table, &mut values, "count", Datum::Int(0));
-        rows.store(snapshot, catalog, &values, &mut plan)?;
-    }
-
-    let global_identity = vec![format!("{:?}", Datum::Int(logical_table_id))];
-    if let Some(mut values) = rows.existing_values(&global_identity).cloned() {
-        let count = signed(values.get(&count_id), "count")?;
-        let modify_count = signed(values.get(&modify_id), "modify_count")?;
+        set(table, &mut values, "cm_sketch", Datum::Null);
+        set(table, &mut values, "stats_ver", Datum::Int(0));
+        set(table, &mut values, "flag", Datum::Int(0));
+        set(table, &mut values, "correlation", Datum::Real(0.0));
+    } else {
         set(table, &mut values, "version", Datum::UInt(version));
         set(
             table,
             &mut values,
-            "count",
-            Datum::Int(if count > truncated_count {
-                count - truncated_count
-            } else {
-                0
-            }),
+            "last_stats_histograms_version",
+            Datum::UInt(version),
         );
-        set(
-            table,
-            &mut values,
-            "modify_count",
-            Datum::Int(
-                modify_count
-                    .checked_add(truncated_count)
-                    .ok_or_else(|| {
-                        StatsWriteError::HistoricalMeta(
-                            "stats_meta.modify_count overflows int64".to_owned(),
-                        )
-                    })?
-                    .max(0),
-            ),
-        );
-        rows.store(snapshot, catalog, &values, &mut plan)?;
     }
-    rows.publish_watermark(catalog, &mut plan)?;
+    let row_identity = identity_of(table, identity, &values)?;
+    if rows.existing_values(&row_identity).is_none() {
+        rows.store(snapshot, catalog, &values, &mut plan)?;
+        rows.publish_watermark(catalog, &mut plan)?;
+    }
     Ok(plan)
 }
 

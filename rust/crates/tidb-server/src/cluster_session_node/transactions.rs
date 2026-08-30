@@ -59,7 +59,8 @@ use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoa
 use tidb_txnkv::PdRegionLoader;
 
 use tidb_exec::cluster_table_storage::{
-    commit_staged_buffer, mutation_buffer_from_mutations, LockKeysOutcome, MaxTsSnapshot,
+    commit_staged_buffer, lock_pessimistic_statement_with, mutation_buffer_from_mutations,
+    overlay_staged_mutations, stage_mutations, LockKeysOutcome, MaxTsSnapshot,
     PreparedStatementSnapshot, SessionTransaction, StatementSnapshot,
 };
 use tidb_exec::pessimistic_lock_error::LockSqlError;
@@ -314,6 +315,35 @@ pub trait OpenClusterTransaction: Send {
     fn release_statement_locks(&self, _keys: Vec<Vec<u8>>) -> Result<(), String> {
         Ok(())
     }
+}
+
+/// Rebuilds and stages one Go SQL statement inside a caller-owned pessimistic
+/// transaction, leaving transaction commit or rollback to that caller.
+pub(crate) fn stage_pessimistic_statement<T>(
+    transaction: &dyn OpenClusterTransaction,
+    staged: &MutationBuffer,
+    build: impl FnMut(
+        Box<dyn ClusterSnapshot>,
+        u64,
+    ) -> Result<(T, Vec<tidb_txnkv::transaction::OptimisticMutation>), String>,
+) -> Result<T, String> {
+    let (value, mutations) = lock_pessimistic_statement_with(
+        transaction.start_ts(),
+        |retry_ts| {
+            let snapshot = match retry_ts {
+                Some(retry_ts) => transaction.snapshot_at_for(retry_ts, true),
+                None => transaction.snapshot_for(true),
+            }?;
+            Ok(overlay_staged_mutations(snapshot, staged))
+        },
+        |keys, presume_not_exists, duplicate_hints| {
+            transaction.lock_staged_keys_with_assertions(keys, presume_not_exists, duplicate_hints)
+        },
+        build,
+    )
+    .map_err(|error| error.to_string())?;
+    stage_mutations(staged, mutations);
+    Ok(value)
 }
 
 /// The timestamp one autocommit statement is at: written when the first read

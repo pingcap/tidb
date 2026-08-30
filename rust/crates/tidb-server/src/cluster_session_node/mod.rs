@@ -3665,14 +3665,18 @@ impl ClusterServerSession {
         let catalog = self.catalog.load();
         let (_, new_ids) = partition_id_map(&catalog, schema, table_name)
             .ok_or_else(|| SqlQueryError::unknown("truncated table disappeared from catalog"))?;
-        let replacements = old_ids
-            .iter()
-            .filter_map(|(name, old_id)| {
-                new_ids
-                    .get(name)
-                    .copied()
-                    .filter(|new_id| new_id != old_id)
-                    .map(|new_id| (*old_id, new_id))
+        let (_, table) = catalog
+            .find_table(schema, table_name)
+            .ok_or_else(|| SqlQueryError::unknown("truncated table disappeared from catalog"))?;
+        let replacements = table
+            .partition
+            .as_ref()
+            .map(|partition| partition.read().definitions.snapshot())
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|definition| {
+                let old_id = old_ids.get(definition.name.lowercase())?;
+                (definition.id != *old_id).then_some((*old_id, definition.id))
             })
             .collect::<Vec<_>>();
         if replacements.is_empty() {
@@ -3680,30 +3684,182 @@ impl ClusterServerSession {
         }
 
         let resource_group = self.session.current_resource_group().to_owned();
-        let snapshot = self
+        let transaction = self
             .transactions
-            .open_snapshot(&resource_group)
+            .begin(true, &resource_group)
             .map_err(SqlQueryError::unknown)?;
-        let version = snapshot.start_ts();
-        let plan = {
-            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-            tidb_exec::cluster_stats_write::plan_truncate_partition_stats_write(
-                &mut snapshot,
-                &catalog,
-                logical_table_id,
-                &replacements,
-                version,
-                system_time_timestamp(SystemTime::now()).map_err(SqlQueryError::unknown)?,
-            )
-            .map_err(|error| SqlQueryError::unknown(error.to_string()))?
-        };
-        self.transactions
-            .commit_optimistic_mutations(plan.mutations, version, &resource_group)
-            .map_err(|error| SqlQueryError::unknown(error.message))?;
+        let version = transaction.start_ts();
+        let staged = MutationBuffer::new();
+        let prepared = (|| -> Result<(), String> {
+            let loader = ClusterStatsLoader::locate(&catalog).map_err(|error| error.to_string())?;
+            let record_historical_meta = |physical_id| -> Result<(), String> {
+                let enabled = self
+                    .global_vars
+                    .get(tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS)
+                    .is_ok_and(|value| tidb_exec::option_values::tidb_opt_on(&value));
+                if !enabled
+                    || !self
+                        .stats
+                        .load()
+                        .get(&physical_id)
+                        .and_then(tidb_exec::stats_watch::TableStatsState::loaded)
+                        .is_some_and(|stats| stats.is_initialized())
+                {
+                    return Ok(());
+                }
+                let (modify_count, count) = transactions::stage_pessimistic_statement(
+                    transaction.as_ref(),
+                    &staged,
+                    |snapshot, _| {
+                        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                        let (counts, plan) =
+                            tidb_exec::cluster_stats_write::plan_historical_stats_meta_lock(
+                                &mut snapshot,
+                                &catalog,
+                                physical_id,
+                                version,
+                            )
+                            .map_err(|error| error.to_string())?;
+                        Ok((counts, plan.mutations))
+                    },
+                )?;
+                let now = system_time_timestamp(SystemTime::now())?;
+                transactions::stage_pessimistic_statement(
+                    transaction.as_ref(),
+                    &staged,
+                    |snapshot, _| {
+                        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                        let plan =
+                            tidb_exec::cluster_stats_write::plan_historical_stats_meta_replace(
+                                &mut snapshot,
+                                &catalog,
+                                physical_id,
+                                modify_count,
+                                count,
+                                version,
+                                "schema change",
+                                now,
+                            )
+                            .map_err(|error| error.to_string())?;
+                        Ok(((), plan.mutations))
+                    },
+                )
+            };
 
-        let (_, table) = catalog
-            .find_table(schema, table_name)
-            .ok_or_else(|| SqlQueryError::unknown("truncated table disappeared from catalog"))?;
+            // Pinned Go `ActionTruncateTablePartition` first calls
+            // `InsertTableStats2KV` for every new physical partition. That
+            // helper is one INSERT IGNORE for stats_meta followed by one for
+            // every column and index histogram placeholder.
+            for &(_, new_id) in &replacements {
+                for statement in
+                    tidb_exec::cluster_stats_write::insert_table_stats_statements(table, new_id)
+                {
+                    let now = system_time_timestamp(SystemTime::now())?;
+                    transactions::stage_pessimistic_statement(
+                        transaction.as_ref(),
+                        &staged,
+                        |snapshot, _| {
+                            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                            let plan =
+                                tidb_exec::cluster_stats_write::plan_insert_table_stats_statement(
+                                    &mut snapshot,
+                                    &catalog,
+                                    &statement,
+                                    version,
+                                    now,
+                                )
+                                .map_err(|error| error.to_string())?;
+                            Ok(((), plan.mutations))
+                        },
+                    )?;
+                }
+                record_historical_meta(new_id)?;
+            }
+
+            // Go next reads each dropped partition with one
+            // `StatsMetaCountAndModifyCount` statement, then emits the usual
+            // `UpdateStatsMeta` statement sequence for the global table.
+            let mut count = 0i64;
+            for &(old_id, _) in &replacements {
+                let snapshot = transaction.snapshot_for(false)?;
+                let snapshot =
+                    tidb_exec::cluster_table_storage::overlay_staged_mutations(snapshot, &staged);
+                let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                let partition_count = loader
+                    .load_meta(&mut snapshot, old_id)
+                    .map_err(|error| error.to_string())?
+                    .map_or(0, |(_, _, _, count, _)| count as i64);
+                count = count.wrapping_add(partition_count);
+            }
+            if count != 0 {
+                let snapshot = transaction.snapshot_for(false)?;
+                let snapshot =
+                    tidb_exec::cluster_table_storage::overlay_staged_mutations(snapshot, &staged);
+                let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                let locked = tidb_exec::cluster_stats_write::load_stats_locked_table_ids(
+                    &mut snapshot,
+                    &catalog,
+                )
+                .map_err(|error| error.to_string())?;
+                let update = tidb_stats_handle_usage::DeltaUpdate {
+                    table_id: logical_table_id,
+                    delta: tidb_stats_handle_usage::TableDelta {
+                        delta: count.wrapping_neg(),
+                        count,
+                        init_time: None,
+                    },
+                    is_locked: locked.contains(&logical_table_id),
+                };
+                for statement in tidb_exec::cluster_stats_write::stats_delta_statements(&[update]) {
+                    let now = system_time_timestamp(SystemTime::now())?;
+                    transactions::stage_pessimistic_statement(
+                        transaction.as_ref(),
+                        &staged,
+                        |snapshot, _| {
+                            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                            let plan = tidb_exec::cluster_stats_write::plan_stats_delta_statement(
+                                &mut snapshot,
+                                &catalog,
+                                &statement,
+                                version,
+                                now,
+                            )
+                            .map_err(|error| error.to_string())?;
+                            Ok(((), plan.mutations))
+                        },
+                    )?;
+                }
+            }
+
+            // Last, Go refreshes every dropped partition's stats_meta version
+            // and records schema-change history when that physical table has
+            // initialized cached statistics.
+            for &(old_id, _) in &replacements {
+                transactions::stage_pessimistic_statement(
+                    transaction.as_ref(),
+                    &staged,
+                    |snapshot, _| {
+                        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                        let plan = tidb_exec::cluster_stats_write::plan_stats_meta_version_refresh(
+                            &mut snapshot,
+                            &catalog,
+                            old_id,
+                            version,
+                        )
+                        .map_err(|error| error.to_string())?;
+                        Ok(((), plan.mutations))
+                    },
+                )?;
+                record_historical_meta(old_id)?;
+            }
+            Ok(())
+        })();
+        if let Err(error) = prepared {
+            let _ = transaction.rollback();
+            return Err(SqlQueryError::unknown(error));
+        }
+        transaction.commit(&staged)?;
+
         let column_types = tidb_exec::cluster_stats_load::column_types_of(table);
         let snapshot = self
             .transactions
