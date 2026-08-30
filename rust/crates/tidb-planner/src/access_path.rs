@@ -960,6 +960,81 @@ pub fn apply_table_index_hints(
     Ok(result)
 }
 
+/// Pinned Go `indexIsAvailableByHints`, the deliberately smaller hint check
+/// used only while trying a point/batch-point fast plan.
+///
+/// Unlike ordinary `getPossibleAccessPaths`, the fast check recognizes only
+/// `USE_INDEX`, `FORCE_INDEX`, and `IGNORE_INDEX`, matches index names exactly
+/// (not by unique prefix), and performs no warning or name validation. A
+/// rejected fast candidate falls back to ordinary planning, which owns those
+/// full behaviors.
+pub fn fast_index_is_available_by_hints(
+    current_db: &str,
+    db_name: &str,
+    table_alias: &str,
+    index_name: Option<&str>,
+    comment_hints: &[tidb_ast::Hint],
+    table_hints: &[tidb_ast::IndexHint],
+) -> bool {
+    use tidb_ast::{HintKind, IndexHintKind, IndexHintScope};
+
+    let matches_target = |name: &str| match index_name {
+        Some(index) => index.eq_ignore_ascii_case(name),
+        None => name.eq_ignore_ascii_case("primary"),
+    };
+    let mut is_ignore = false;
+    let mut saw_hint = !table_hints.is_empty();
+    let mut apply = |kind: IndexHintKind, scope: IndexHintScope, indexes: &[String]| {
+        if scope != IndexHintScope::All {
+            return None;
+        }
+        if kind == IndexHintKind::Ignore && !indexes.is_empty() {
+            is_ignore = true;
+            if indexes.iter().any(|name| matches_target(name)) {
+                return Some(false);
+            }
+        }
+        if matches!(kind, IndexHintKind::Use | IndexHintKind::Force)
+            && !indexes.is_empty()
+            && indexes.iter().any(|name| matches_target(name))
+        {
+            return Some(true);
+        }
+        None
+    };
+
+    for hint in table_hints {
+        if let Some(available) = apply(hint.kind, hint.scope, &hint.indexes) {
+            return available;
+        }
+    }
+    for hint in comment_hints {
+        let HintKind::Index { table, indexes, .. } = &hint.kind else {
+            continue;
+        };
+        let kind = match hint.name.as_str() {
+            "USE_INDEX" => IndexHintKind::Use,
+            "IGNORE_INDEX" => IndexHintKind::Ignore,
+            "FORCE_INDEX" => IndexHintKind::Force,
+            _ => continue,
+        };
+        let hint_db = table.db_name.as_deref().unwrap_or(current_db);
+        if !table.name.eq_ignore_ascii_case(table_alias)
+            || !(hint_db.eq_ignore_ascii_case(db_name) || hint_db == "*")
+        {
+            continue;
+        }
+        saw_hint = true;
+        if let Some(available) = apply(kind, IndexHintScope::All, indexes) {
+            return available;
+        }
+    }
+    if !saw_hint {
+        return true;
+    }
+    is_ignore
+}
+
 #[cfg(test)]
 mod enumeration_tests {
     use super::{get_possible_access_paths, PossiblePath};

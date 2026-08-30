@@ -686,6 +686,65 @@ fn test_comment_index_hint_warnings_match_go() {
 }
 
 #[test]
+fn test_fast_index_hint_check_keeps_go_smaller_boundary() {
+    let select = parse_select("SELECT /*+ USE_INDEX(t, idx) */ a FROM t");
+    let table_hints = match &select.from.as_ref().expect("FROM").left {
+        tidb_ast::JoinNode::Table(table) => &table.hints,
+        other => panic!("expected table, got {other:?}"),
+    };
+    assert!(
+        !crate::access_path::fast_index_is_available_by_hints(
+            "test",
+            "test",
+            "t",
+            Some("idx_b"),
+            &select.hints,
+            table_hints,
+        ),
+        "Go's fast path matches names exactly; ordinary planning alone accepts a unique prefix"
+    );
+
+    let select = parse_select("SELECT /*+ ORDER_INDEX(t, idx_b) */ a FROM t");
+    let table_hints = match &select.from.as_ref().expect("FROM").left {
+        tidb_ast::JoinNode::Table(table) => &table.hints,
+        other => panic!("expected table, got {other:?}"),
+    };
+    assert!(
+        crate::access_path::fast_index_is_available_by_hints(
+            "test",
+            "test",
+            "t",
+            None,
+            &select.hints,
+            table_hints,
+        ),
+        "pinned indexIsAvailableByHints ignores ORDER_INDEX in the fast path"
+    );
+
+    let select = parse_select("SELECT a FROM t IGNORE INDEX (idx_b)");
+    let table_hints = match &select.from.as_ref().expect("FROM").left {
+        tidb_ast::JoinNode::Table(table) => &table.hints,
+        other => panic!("expected table, got {other:?}"),
+    };
+    assert!(crate::access_path::fast_index_is_available_by_hints(
+        "test",
+        "test",
+        "t",
+        None,
+        &select.hints,
+        table_hints,
+    ));
+    assert!(!crate::access_path::fast_index_is_available_by_hints(
+        "test",
+        "test",
+        "t",
+        Some("idx_b"),
+        &select.hints,
+        table_hints,
+    ));
+}
+
+#[test]
 fn test_unknown_database_and_table_are_distinguished() {
     let harness = Harness::new();
     let mut builder = harness.builder();

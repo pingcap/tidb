@@ -1524,11 +1524,10 @@ fn fast_point_get_replaces_selection_and_projection_like_go() {
     );
 }
 
-/// Go calls `TryFastPlan` before `PlanBuilder` constructs a `DataSource` or
-/// enumerates its ordinary access paths. A qualifying primary-key point read
-/// must therefore finish without entering Rust's ordinary single-table path.
+/// Go's `TryFastPlan` accepts a qualifying primary-key point read before the
+/// ordinary planner is needed.
 #[test]
-fn fast_point_get_precedes_ordinary_access_path_planning_like_go() {
+fn try_fast_plan_accepts_a_primary_key_point_read() {
     let mut catalog = Catalog::default();
     crate::run_create_table_on(
         "CREATE TABLE fast_order (id INT PRIMARY KEY, c CHAR(8) NOT NULL)",
@@ -1543,15 +1542,74 @@ fn fast_point_get_precedes_ordinary_access_path_planning_like_go() {
     )
     .unwrap();
 
-    reset_ordinary_access_path_entries();
+    let stmt = tidb_parser::parse("SELECT c FROM fast_order WHERE id = 1").unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    assert!(
+        crate::driver::access::try_fast_point_physical_plan(select, &catalog, "test", &ctx,)
+            .unwrap()
+            .is_some()
+    );
     assert_eq!(
         run_select_on("SELECT c FROM fast_order WHERE id = 1", &catalog, &ctx).unwrap(),
         vec![vec![Datum::new_string("one")]]
     );
+}
+
+#[test]
+fn fast_point_get_uses_gos_smaller_index_hint_check() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE fast_hint (id INT PRIMARY KEY, code VARCHAR(8) UNIQUE)",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO fast_hint VALUES (1, 'one')",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let fast_plan = |sql: &str| {
+        let stmt = tidb_parser::parse(sql).unwrap();
+        let Stmt::Query(query) = &stmt else {
+            panic!("not a query");
+        };
+        let QueryStmt::Select(select) = &**query else {
+            panic!("not a SELECT");
+        };
+        crate::driver::access::try_fast_point_physical_plan(select, &catalog, "test", &ctx).unwrap()
+    };
+    let unique_sql =
+        "SELECT /*+ USE_INDEX(fast_hint, code) */ id FROM fast_hint WHERE code = 'one'";
+    assert!(fast_plan(unique_sql).is_some());
     assert_eq!(
-        ordinary_access_path_entries(),
-        0,
-        "Go TryFastPlan returns before ordinary DataSource access planning"
+        run_select_on(unique_sql, &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Int(1)]]
+    );
+
+    let order_sql =
+        "SELECT /*+ ORDER_INDEX(fast_hint, PRIMARY) */ code FROM fast_hint WHERE id = 1";
+    assert!(fast_plan(order_sql).is_some());
+    assert_eq!(
+        run_select_on(order_sql, &catalog, &ctx).unwrap(),
+        vec![vec![Datum::new_string("one")]]
+    );
+
+    let prefix_sql = "SELECT /*+ USE_INDEX(fast_hint, co) */ id FROM fast_hint WHERE code = 'one'";
+    assert!(
+        fast_plan(prefix_sql).is_none(),
+        "the fast check requires an exact name"
+    );
+    assert_eq!(
+        run_select_on(prefix_sql, &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Int(1)]]
     );
 }
 

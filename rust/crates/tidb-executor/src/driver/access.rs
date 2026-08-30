@@ -1717,14 +1717,27 @@ fn try_fast_point_physical_plan_with_allocator_mode(
 
     let mut batch = try_batch_point_get(select, table, &columns, &scope.zone)?;
     if batch.as_ref().is_some_and(|batch| !batch.ignores_hints()) {
-        let hints = crate::index_hints::single_table_scan_hints(
-            select,
-            Some(table_ref),
-            table,
-            current_db,
-            ctx,
-        )?;
-        batch = batch.filter(|batch| batch.allowed_by(&hints));
+        batch = batch.filter(|batch| {
+            let index_name = match batch.index.as_ref() {
+                Some((index_id, _)) => match table
+                    .plan_indexes()
+                    .find(|index| index.id == *index_id)
+                    .map(|index| index.name.as_str())
+                {
+                    Some(name) => Some(name),
+                    None => return false,
+                },
+                None => None,
+            };
+            tidb_planner::access_path::fast_index_is_available_by_hints(
+                current_db,
+                database,
+                visible,
+                index_name,
+                &select.hints,
+                &table_ref.hints,
+            )
+        });
     }
     if let Some(batch) = batch {
         let mut base =
@@ -1736,7 +1749,6 @@ fn try_fast_point_physical_plan_with_allocator_mode(
             )));
         base.base.set_schema(Some(schema));
         let ranges = closed_point_ranges(&batch.key_values);
-        crate::index_hints::report_comment_index_hints(select, catalog, current_db, ctx);
         return Ok(Some(tidb_planner::physical::PhysicalPlan::BatchPointGet(
             tidb_planner::physical::PhysicalBatchPointGet {
                 base,
@@ -1750,16 +1762,6 @@ fn try_fast_point_physical_plan_with_allocator_mode(
         )));
     }
 
-    let hints = crate::index_hints::single_table_scan_hints(
-        select,
-        Some(table_ref),
-        table,
-        current_db,
-        ctx,
-    )?;
-    if !hints.allows_table() {
-        return Ok(None);
-    }
     let Some(point) = try_point_get(
         &PointPlanStmt::of_select(select),
         table,
@@ -1772,11 +1774,29 @@ fn try_fast_point_physical_plan_with_allocator_mode(
     if !point_get_consumes_where(select, table, &columns, &scope.zone) {
         return Ok(None);
     }
+    let index_name = point.index_id.and_then(|index_id| {
+        table
+            .plan_indexes()
+            .find(|index| index.id == index_id)
+            .map(|index| index.name.as_str())
+    });
+    if point.index_id.is_some() && index_name.is_none() {
+        return Ok(None);
+    }
+    if !tidb_planner::access_path::fast_index_is_available_by_hints(
+        current_db,
+        database,
+        visible,
+        index_name,
+        &select.hints,
+        &table_ref.hints,
+    ) {
+        return Ok(None);
+    }
     let mut base = tidb_planner::physical::BasePhysicalPlan::new(plan_ids, "Point_Get", 0);
     base.base
         .set_stats(Some(tidb_planner::stats_info::StatsInfo::new(1.0, [])));
     base.base.set_schema(Some(schema));
-    crate::index_hints::report_comment_index_hints(select, catalog, current_db, ctx);
     Ok(Some(tidb_planner::physical::PhysicalPlan::PointGet(
         tidb_planner::physical::PhysicalPointGet {
             base,
@@ -1804,21 +1824,6 @@ fn fast_dml_point_output(table: &KvTable) -> FastPointOutput {
         ));
     }
     FastPointOutput { offsets, columns }
-}
-
-#[cfg(test)]
-thread_local! {
-    static ORDINARY_ACCESS_PATH_ENTRIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-#[cfg(test)]
-pub(crate) fn reset_ordinary_access_path_entries() {
-    ORDINARY_ACCESS_PATH_ENTRIES.with(|entries| entries.set(0));
-}
-
-#[cfg(test)]
-pub(crate) fn ordinary_access_path_entries() -> usize {
-    ORDINARY_ACCESS_PATH_ENTRIES.with(std::cell::Cell::get)
 }
 
 fn fast_point_output(select: &tidb_ast::SelectStmt, scope: &FromScope) -> Option<FastPointOutput> {
@@ -2050,14 +2055,6 @@ impl BatchPointLookup {
 
     fn ignores_hints(&self) -> bool {
         self.index.is_none() && !self.common_handle
-    }
-
-    fn allowed_by(&self, hints: &crate::index_hints::AvailablePaths) -> bool {
-        match &self.index {
-            Some((index_id, _)) => hints.allows_index(*index_id),
-            None if self.common_handle => hints.allows_common_primary(),
-            None => true,
-        }
     }
 }
 

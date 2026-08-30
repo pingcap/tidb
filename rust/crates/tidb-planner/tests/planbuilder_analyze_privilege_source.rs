@@ -23,10 +23,9 @@
 //! column-assignment checker visitor, `buildRefreshStats`, and the
 //! reflection-based `checkDeepClonedCore` pointer-identity walker — through
 //! `coretestsdk.MockContext()` sessions. None of these builders exist in
-//! this crate (the SQL→plan builder tier is not transcreated; the nearest
-//! name-resolution leaf, `tidb-executor/src/index_hints.rs`, resolves index
-//! names against a `KvTable`, a different contract than Go's
-//! `[]*util.AccessPath` lookup). Each item below records its re-derived Go
+//! this crate. The ordinary SQL→plan builder now resolves index names in
+//! `tidb-planner/src/access_path.rs`, but it does not expose Go's unexported
+//! `[]*util.AccessPath` helper contract directly. Each item below records its re-derived Go
 //! contract as an `#[ignore]` gap port; nothing is approximated.
 
 /// GO PARITY GAP port of `pkg/planner/core/planbuilder_test.go:63
@@ -43,8 +42,7 @@ fn show_stmt_result_schema_columns_have_positive_flen() {}
 /// TestGetPathByIndexName`.
 ///
 /// go-parity-gap: `getPathByIndexName`/`removeIgnoredPaths` over
-/// `[]*util.AccessPath` unported (tidb-executor's index-hints leaf resolves
-/// names against a KvTable instead). Go pins: name `idx` resolves to that
+/// `[]*util.AccessPath` unported as a directly callable helper. Go pins: name `idx` resolves to that
 /// index path; prefix `id` ALSO resolves to `idx` (prefix match);
 /// `primary` resolves to the int-handle path only when `PKIsHandle`; a
 /// missing name yields nil; and with `PKIsHandle=false` `primary` yields

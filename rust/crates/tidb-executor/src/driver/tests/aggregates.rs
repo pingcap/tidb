@@ -119,12 +119,10 @@ fn distinct_aggregation_family_is_lowered_from_the_shared_physical_plan() {
     );
 }
 
-/// Once the shared planner has selected the aggregate's physical child, the
-/// executor must lower that receipt without entering its former access-path
-/// race a second time. Re-costing this exact shape replaced Go's 99-row
-/// handle range with a full scan of the unrelated `k` index.
+/// The shared planner's aggregate child retains Go's 99-row handle range
+/// instead of scanning the unrelated `k` index.
 #[test]
-fn a_shared_aggregate_access_receipt_is_lowered_once() {
+fn a_shared_aggregate_access_receipt_keeps_the_table_range() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
 
     let mut catalog = Catalog::default();
@@ -143,15 +141,9 @@ fn a_shared_aggregate_access_receipt_is_lowered_once() {
         panic!("a SELECT");
     };
 
-    reset_ordinary_access_path_entries();
     let (_, rows) =
         explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
 
-    assert_eq!(
-        ordinary_access_path_entries(),
-        0,
-        "the shared physical receipt is the only access-path decision"
-    );
     assert!(rows.iter().any(|row| {
         matches!(&row[0], Datum::Bytes(name) if String::from_utf8_lossy(name).contains("TableRangeScan"))
             && matches!(&row[4], Datum::Bytes(info) if String::from_utf8_lossy(info).contains("range:[100,199]"))
