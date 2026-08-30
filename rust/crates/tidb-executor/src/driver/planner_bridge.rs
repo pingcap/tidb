@@ -1191,20 +1191,12 @@ fn optimize_built_logical(
             else {
                 return Ok(surviving);
             };
-            let ranges = detached
-                .ranges
-                .iter()
-                .map(|range| crate::IndexRange {
-                    low: range.low_val.clone(),
-                    high: range.high_val.clone(),
-                    low_exclusive: range.low_exclude,
-                    high_exclusive: range.high_exclude,
-                })
-                .collect::<Vec<_>>();
-            let pruned = crate::partition_pruning::pruned_ids(partition, &ranges, self.context)
-                .map_err(|error| {
-                    tidb_planner::plan_base::PlanError::internal(format!("{error:?}"))
-                })?;
+            let pruned = crate::partition_pruning::pruned_ids_from_ranger(
+                partition,
+                &detached.ranges,
+                self.context,
+            )
+            .map_err(|error| tidb_planner::plan_base::PlanError::internal(format!("{error:?}")))?;
             if let Some(ids) = pruned {
                 surviving.retain(|index| ids.contains(&partition.definitions[*index].id));
             }
