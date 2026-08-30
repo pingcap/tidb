@@ -360,6 +360,7 @@ pub mod rule_prune_indexes;
 pub mod rule_push_down_sequence;
 pub mod rule_resolve_expand;
 pub mod rule_result_reorder;
+pub mod rule_util;
 pub mod schema_producer;
 pub mod selection;
 pub mod sequence;

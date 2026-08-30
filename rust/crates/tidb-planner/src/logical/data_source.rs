@@ -167,33 +167,11 @@ impl DataSource {
             if !index.unique || !index.is_public {
                 continue;
             }
-            let mut key = Vec::with_capacity(index.columns.len());
-            let mut all_not_null = true;
-            let mut complete = true;
-            for index_column in &index.columns {
-                let Some(position) = self
-                    .columns
-                    .iter()
-                    .position(|column| column.name.eq_ignore_ascii_case(&index_column.name))
-                else {
-                    complete = false;
-                    break;
-                };
-                let Some(column) = self_schema.columns.get(position).cloned() else {
-                    complete = false;
-                    break;
-                };
-                all_not_null &= column.ret_type.as_ref().is_some_and(|field_type| {
-                    field_type.has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL)
-                });
-                key.push(column);
-            }
-            if !complete {
-                continue;
-            }
-            if all_not_null {
+            let (nullable_key, strong_key) =
+                super::rule_util::check_index_can_be_key(index, &self.columns, self_schema);
+            if let Some(key) = strong_key {
                 strong.push(key);
-            } else {
+            } else if let Some(key) = nullable_key {
                 nullable.push(key);
             }
         }

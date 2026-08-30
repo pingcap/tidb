@@ -236,44 +236,6 @@ fn apply_schema(plan: &LogicalPlan, join_type: LogicalJoinType) -> Option<Schema
     }
 }
 
-fn replace_projection_column(
-    expression: &Expression,
-    child_exprs: &[Expression],
-    child_schema: &Schema,
-) -> (Expression, bool) {
-    match expression {
-        Expression::Column(column) => {
-            let index = child_schema.column_index(&column);
-            match usize::try_from(index)
-                .ok()
-                .and_then(|index| child_exprs.get(index))
-            {
-                Some(replacement) => (replacement.clone(), true),
-                None => (Expression::Column(column.clone()), false),
-            }
-        }
-        Expression::ScalarFunction(function) => {
-            let mut function = function.clone();
-            let mut changed = false;
-            function.args = function
-                .args
-                .into_iter()
-                .map(|argument| {
-                    let (argument, argument_changed) =
-                        replace_projection_column(&argument, child_exprs, child_schema);
-                    changed |= argument_changed;
-                    argument
-                })
-                .collect();
-            if changed {
-                function.invalidate_cached_arguments();
-            }
-            (Expression::ScalarFunction(function), changed)
-        }
-        other => (other.clone(), false),
-    }
-}
-
 fn expression_type_mut(expression: &mut Expression) -> Option<&mut tidb_datatype::FieldType> {
     match expression {
         Expression::Column(column) => column.ret_type.as_mut(),
@@ -319,7 +281,8 @@ fn merge_adjacent_projections(
     let child_schema = child.base.base.schema().cloned().unwrap_or_default();
     let options = SubstituteOptions::new(builder);
     for expression in &mut projection.exprs {
-        let replaced = replace_projection_column(expression, &child.exprs, &child_schema).0;
+        let replaced =
+            super::rule_util::replace_column_of_expr(expression, &child.exprs, &child_schema).0;
         let mut folded =
             tidb_expr::expr_util::fold::fold_constant(&replaced, &tidb_expr::NoColumns, &options);
         preserve_not_null_flag(&replaced, &mut folded);

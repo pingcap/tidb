@@ -59,43 +59,6 @@ use super::{
     LogicalSort, LogicalTableDual, LogicalTopN, LogicalUnionAll, LogicalUnionScan,
 };
 
-/// Go `ruleutil.ResolveExprAndReplace`: replace CTE-reference columns with
-/// their seed-plan columns without mutating a shared expression tree.
-fn resolve_cte_expr_and_replace(
-    expression: Expression,
-    replace: &std::collections::BTreeMap<Vec<u8>, Column>,
-) -> Expression {
-    fn replacement(
-        mut origin: Column,
-        replace: &std::collections::BTreeMap<Vec<u8>, Column>,
-    ) -> Column {
-        let Some(seed) = replace.get(origin.hash_code()) else {
-            return origin;
-        };
-        let mut seed = seed.clone();
-        seed.ret_type = origin.ret_type;
-        seed.in_operand = origin.in_operand;
-        seed
-    }
-
-    match expression {
-        Expression::Column(column) => Expression::Column(replacement(column, replace)),
-        Expression::CorrelatedColumn(mut column) => {
-            column.column = replacement(column.column, replace);
-            Expression::CorrelatedColumn(column)
-        }
-        Expression::ScalarFunction(mut function) => {
-            function.args = function
-                .args
-                .into_iter()
-                .map(|arg| resolve_cte_expr_and_replace(arg, replace))
-                .collect();
-            Expression::ScalarFunction(function)
-        }
-        other => other,
-    }
-}
-
 /// The schema an operator effectively exposes, materialized.
 ///
 /// Go's `LogicalSchemaProducer.Schema()` MEMOISES the child's schema into the
@@ -804,7 +767,10 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
                             predicates
                                 .into_iter()
                                 .map(|predicate| {
-                                    resolve_cte_expr_and_replace(predicate, &class.column_map)
+                                    super::rule_util::resolve_expr_and_replace(
+                                        predicate,
+                                        &class.column_map,
+                                    )
                                 })
                                 .collect(),
                         ),
