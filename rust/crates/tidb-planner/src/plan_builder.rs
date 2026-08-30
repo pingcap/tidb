@@ -1699,16 +1699,62 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             self.cur_clause = ClauseCode::Where;
         }
         let mut conditions = Vec::new();
+        // Go's `splitWhere` decomposes the top-level AND chain before
+        // expression rewriting. A filter subquery is itself lowered into a
+        // semi-apply, so it must be recognized as an individual conjunct;
+        // looking only at the complete AND expression sends
+        // `a IN (SELECT ...) AND b = 1` through the scalar rewriter, which
+        // deliberately refuses `Expr::InSubquery`.
+        let conjuncts = {
+            let mut out = Vec::new();
+            let mut stack = vec![where_clause];
+            while let Some(expr) = stack.pop() {
+                match expr {
+                    Expr::Paren(inner) => stack.push(inner),
+                    Expr::Binary(tidb_ast::BinaryOp::LogicAnd, left, right) => {
+                        stack.push(right);
+                        stack.push(left);
+                    }
+                    other => out.push(other),
+                }
+            }
+            out
+        };
+        let mut plan = plan;
+        let mut remaining = Vec::new();
+        let mut lowered_filter_subquery = false;
+        for conjunct in conjuncts {
+            let (next, lowered) = self.lower_filter_subquery(plan, conjunct, markers)?;
+            plan = next;
+            if lowered {
+                lowered_filter_subquery = true;
+            } else {
+                remaining.push(conjunct.clone());
+            }
+        }
+        if lowered_filter_subquery {
+            // Keep ordinary predicates in the same selection above the
+            // lowered apply. Re-entering this builder is finite because
+            // `remaining` contains no filter-subquery conjuncts.
+            if remaining.is_empty() {
+                return Ok(plan);
+            }
+            let mut iter = remaining.into_iter();
+            let mut rebuilt = iter.next().expect("non-empty remaining conjuncts");
+            for conjunct in iter {
+                rebuilt = Expr::Binary(
+                    tidb_ast::BinaryOp::LogicAnd,
+                    Box::new(rebuilt),
+                    Box::new(conjunct),
+                );
+            }
+            return self.build_selection(plan, &rebuilt, markers);
+        }
         // Go `splitWhere(where)` splits the AST's top-level `AND` first, then
         // `SplitCNFItems` splits the built expression; the second subsumes the
         // first once every conjunct is built, so one clause is rewritten here
         // and split afterwards.
         let mut scratch = Self::clause_scratch(where_clause);
-        let (plan, lowered_filter_subquery) =
-            self.lower_filter_subquery(plan, &scratch, markers)?;
-        if lowered_filter_subquery {
-            return Ok(plan);
-        }
         let (plan, lowered_subquery) = self.lower_scalar_subqueries(plan, &mut scratch)?;
         // Rule 3: both snapshots are taken before `plan` moves anywhere.
         let (schema, names) = snapshot_schema_and_names(&plan);
