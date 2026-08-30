@@ -945,17 +945,17 @@ fn write_global_stats_items<T, E>(
     mut write: impl FnMut(T) -> Result<(u64, usize, usize, usize), E>,
     mut record: impl FnMut((u64, usize, usize, usize)),
 ) -> Result<(), E> {
-    let mut last_error = None;
+    let mut result = Ok(());
     for item in items {
-        match write(item) {
-            Ok(receipt) => record(receipt),
-            Err(error) => last_error = Some(error),
-        }
+        result = match write(item) {
+            Ok(receipt) => {
+                record(receipt);
+                Ok(())
+            }
+            Err(error) => Err(error),
+        };
     }
-    match last_error {
-        Some(error) => Err(error),
-        None => Ok(()),
-    }
+    result
 }
 
 #[derive(Clone, Debug)]
@@ -2198,10 +2198,10 @@ mod tests {
     }
 
     #[test]
-    fn global_stats_storage_attempts_every_item_and_returns_the_last_error() {
+    fn global_stats_storage_attempts_every_item_and_returns_the_final_attempt_result() {
         let mut attempted = Vec::new();
         let mut recorded = Vec::new();
-        let error = write_global_stats_items(
+        write_global_stats_items(
             [1_u64, 2, 3, 4],
             |item| {
                 attempted.push(item);
@@ -2213,10 +2213,21 @@ mod tests {
             },
             |receipt| recorded.push(receipt),
         )
-        .expect_err("Go returns the last storage error after attempting every item");
+        .expect("the final successful item clears an earlier storage error in Go");
 
         assert_eq!(attempted, vec![1, 2, 3, 4]);
         assert_eq!(recorded, vec![(2, 1, 2, 3), (4, 1, 2, 3)]);
+
+        let error = write_global_stats_items(
+            [1_u64, 2, 3],
+            |item| match item {
+                1 => Err("first"),
+                3 => Err("last"),
+                _ => Ok((item, 1, 2, 3)),
+            },
+            |_| {},
+        )
+        .expect_err("Go returns an error when the final attempted storage write fails");
         assert_eq!(error, "last");
     }
 

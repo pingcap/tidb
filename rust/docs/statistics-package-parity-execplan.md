@@ -175,8 +175,8 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - Observation: pinned Go persists the final schema-ordered LIST after mandatory primary-key/index columns are added, not the user's literal `COLUMNS` list. A later statement with persistence disabled neither reads nor replaces that saved row.
   Evidence: pinned `getFullAnalyzeColumnsInfo` returns `colList` after `combineColumnSets`, `saveAnalyzeOptions` stores those IDs, and `genV2AnalyzeOptions` returns empty saved-option maps immediately when persistence is off; the in-process regressions cover all three effects.
 
-- Observation: pinned global-statistics storage is a sequence of independent item transactions. It logs a failed item, continues with later histograms, and returns the last failure; Rust previously stopped at the first failed global item.
-  Evidence: pinned `WriteGlobalStatsToStorage` assigns `err` in every loop iteration without returning early; the Rust regression proves every item is attempted, successful receipts remain visible, and the last error wins.
+- Observation: pinned global-statistics storage is a sequence of independent item transactions. It logs a failed item, continues with later histograms, and returns the final attempted write's result; a later success therefore clears an earlier error. Rust first stopped at the first error and then incorrectly retained the last failure seen.
+  Evidence: pinned `WriteGlobalStatsToStorage` assigns the named `err` in every loop iteration without returning early; the Rust regression proves every item is attempted, successful receipts remain visible, a final success returns success, and a final failure is returned.
 
 - Observation: `tidb_merge_partition_stats_concurrency` controls only TopN candidate probing, with a maximum batch of 256 partitions; the histogram merge remains a later single merge over the mutated partition histograms.
   Evidence: pinned `mergeGlobalStatsTopN` and `MergeGlobalStatsTopNByConcurrency`; Rust now snapshots the session value and produces the same TopN and histogram receipt at concurrency one and two.
@@ -311,6 +311,8 @@ Revision note (2026-08-29): restored the pinned globalstats package's exported c
 Revision note (2026-08-29): moved the empty-TopN fast path from Rust's exported workers to the private global merge selector, preserving direct SQL-killer behavior and the ordinary no-worker shortcut from pinned Go.
 
 Revision note (2026-08-29): corrected async global worker failure propagation so simultaneous IO and CPU failures are joined in pinned Go order, including CPU panics, and removed Rust-only panic-message prefixes.
+
+Revision note (2026-08-29): corrected global item persistence return semantics after re-reading the Go loop: every item is still attempted independently, but the result is the final attempted write rather than the last failure retained across later successes.
 
 Revision note (2026-08-29): fixed the existing `SHOW STATS_META` production path before expanding the SHOW family; the new regression was observed failing with pseudo/global rows before the fix and passing afterward.
 
