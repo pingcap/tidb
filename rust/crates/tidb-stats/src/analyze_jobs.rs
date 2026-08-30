@@ -14,15 +14,16 @@
 
 //! Analyze-job status and progress metadata from `pkg/statistics/analyze_jobs.go`.
 //!
-//! This leaf owns the source's job labels, job-kind values, and concurrent
-//! processed-row counter.  SQL persistence, scheduler state, failpoint
-//! handling, and statistics-handle lifecycle remain future owners.
+//! This leaf owns the source's shared job values and concurrent processed-row
+//! counter. Persistence and lifecycle stay in their Go-shaped executor and
+//! statistics-handle owners rather than being duplicated here.
 
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
 use chrono::{DateTime, TimeDelta, TimeZone, Utc};
+use tidb_datatype::Time;
 
 /// Analyze job has been queued but has not started.
 pub const ANALYZE_PENDING: &str = "pending";
@@ -58,6 +59,33 @@ pub enum JobType {
     TableAnalysis = 1,
     /// Merge statistics at global scope.
     GlobalStatsMerge = 2,
+}
+
+/// One persisted row selected for Go's `SHOW ANALYZE STATUS` helper.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AnalyzeStatusJob {
+    /// `table_schema`.
+    pub table_schema: String,
+    /// `table_name`.
+    pub table_name: String,
+    /// `partition_name`.
+    pub partition_name: String,
+    /// `job_info`.
+    pub job_info: String,
+    /// `processed_rows`.
+    pub processed_rows: i64,
+    /// UTC `start_time`, if the job has started.
+    pub start_time: Option<Time>,
+    /// UTC `end_time`, if the job has finished.
+    pub end_time: Option<Time>,
+    /// The analyze-job state label.
+    pub state: String,
+    /// A terminal failure diagnostic.
+    pub fail_reason: Option<String>,
+    /// TiDB instance address.
+    pub instance: String,
+    /// The owning connection while the job is active.
+    pub process_id: Option<u64>,
 }
 
 /// Thread-safe processed-row progress for one analyze job.

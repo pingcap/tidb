@@ -272,6 +272,26 @@ pub trait ColumnStatsUsageProvider: Send + Sync {
     >;
 }
 
+/// Storage-backed reader used by pinned Go `SHOW ANALYZE STATUS`.
+pub trait AnalyzeStatusProvider: Send + Sync {
+    /// Runs Go's fresh restricted read of the thirty newest persisted jobs.
+    fn load_analyze_status(
+        &self,
+        resource_group: &str,
+    ) -> Result<Vec<tidb_stats::AnalyzeStatusJob>, String>;
+
+    /// Go `GlobalPDHelper.GetApproximateTableCountFromStorage`. Errors and a
+    /// backend without PD both produce zero, as its caller ignores `hasPD`.
+    fn approximate_table_count(
+        &self,
+        resource_group: &str,
+        physical_id: i64,
+        database: &str,
+        table: &str,
+        partition: &str,
+    ) -> i64;
+}
+
 /// The statement-owned policy a server needs to retain an eager result set.
 ///
 /// It is captured before `SET_VAR` overlays are restored, so a prepared
@@ -556,6 +576,8 @@ pub struct Session {
     data_lock_waits: Option<std::sync::Arc<dyn DataLockWaitsProvider>>,
     /// The statistics handle's persisted predicate-column usage reader.
     column_stats_usage: Option<std::sync::Arc<dyn ColumnStatsUsageProvider>>,
+    /// The persisted analyze-job reader shared by SHOW and ANALYZE_STATUS.
+    analyze_status: Option<std::sync::Arc<dyn AnalyzeStatusProvider>>,
     /// Go's session-local `SessionStatsItem`, swept into the statistics
     /// handle independently of statement execution.
     stats_collector: Option<std::sync::Arc<tidb_stats_handle_usage::SessionStatsItem>>,
@@ -745,6 +767,7 @@ impl Session {
             session_index_usage_collector: None,
             data_lock_waits: None,
             column_stats_usage: None,
+            analyze_status: None,
             stats_collector: None,
             transaction_table_delta: std::sync::Arc::new(
                 tidb_stats_handle_usage::TableDeltaMap::new(),
@@ -1072,6 +1095,14 @@ impl Session {
         provider: std::sync::Arc<dyn ColumnStatsUsageProvider>,
     ) {
         self.column_stats_usage = Some(provider);
+    }
+
+    /// Installs the node-global persisted analyze-job reader.
+    pub fn set_analyze_status_provider(
+        &mut self,
+        provider: std::sync::Arc<dyn AnalyzeStatusProvider>,
+    ) {
+        self.analyze_status = Some(provider);
     }
 
     /// Go `ShowDDLExec.Next` (`executor/show_ddl.go`): one row describing the

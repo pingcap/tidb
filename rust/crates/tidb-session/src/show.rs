@@ -1315,6 +1315,177 @@ impl Session {
         filter_show_output(output, like_pattern, where_clause)
     }
 
+    /// Pinned Go `fetchShowAnalyzeStatus` and
+    /// `dataForAnalyzeStatusHelper`: read the thirty newest persisted jobs,
+    /// apply table visibility, project UTC timestamps into the session zone,
+    /// and calculate progress only for running non-global-merge jobs.
+    fn analyze_status_stmt(
+        &mut self,
+        filter: Option<&tidb_ast::ShowInspectionFilter>,
+    ) -> Result<StmtOutput, DriverError> {
+        let (like_pattern, where_clause) = match filter {
+            None => (None, None),
+            Some(tidb_ast::ShowInspectionFilter::Like(expr)) => {
+                let value = datum_text(&self.eval_value(expr)?);
+                (Some(ShowLikePattern::from_expr(expr, value, true)), None)
+            }
+            Some(tidb_ast::ShowInspectionFilter::Where(expr)) => (None, Some(expr)),
+        };
+        let jobs = match self.analyze_status.clone() {
+            Some(provider) => provider
+                .load_analyze_status(&self.active_resource_group)
+                .map_err(DriverError::unsupported)?,
+            None => Vec::new(),
+        };
+        let session_zone = self.session_time_zone();
+        let display_time = |mut value: tidb_datatype::Time| -> Result<Datum, DriverError> {
+            value
+                .convert_time_zone(&chrono::Utc, &session_zone)
+                .map_err(|error| DriverError::unsupported(error.to_string()))?;
+            tidb_datatype::Time::new(value.core_time(), tidb_datatype::TimeType::DateTime, 0)
+                .map(Datum::Time)
+                .map_err(|error| DriverError::unsupported(error.to_string()))
+        };
+        let mut result_rows = Vec::new();
+        for job in jobs {
+            // Go asks for `mysql.AllPrivMask`: any effective static table
+            // privilege makes the row visible.
+            if !self.has_any_scoped_privilege(
+                &job.table_schema,
+                &job.table_name,
+                privilege::all_privs_mask(),
+            ) {
+                continue;
+            }
+            let start_time = job
+                .start_time
+                .map(display_time)
+                .transpose()?
+                .unwrap_or(Datum::Null);
+            let end_time = job
+                .end_time
+                .map(display_time)
+                .transpose()?
+                .unwrap_or(Datum::Null);
+            let mut remaining = Datum::Null;
+            let mut progress = Datum::Null;
+            let mut estimated = Datum::Null;
+            if job.state == tidb_stats::ANALYZE_RUNNING
+                && !job.job_info.starts_with("merge global stats")
+            {
+                let Some(start) = job.start_time else {
+                    return Err(DriverError::unsupported("invalid start time"));
+                };
+                let table_count = self.with_catalog_mut(|catalog| {
+                    let Some(tidb_executor::TableEntry::Kv(table)) =
+                        catalog.table_in(&job.table_schema, &job.table_name)
+                    else {
+                        return Ok(None);
+                    };
+                    let physical_id = if job.partition_name.is_empty() {
+                        table.table_id
+                    } else {
+                        table
+                            .partition()
+                            .and_then(|partition| {
+                                partition.definitions.iter().find(|definition| {
+                                    definition.name.eq_ignore_ascii_case(&job.partition_name)
+                                })
+                            })
+                            .map_or(0, |definition| definition.id)
+                    };
+                    Ok(Some((
+                        physical_id,
+                        catalog
+                            .table_statistics(physical_id)
+                            .map_or(0, |statistics| statistics.row_count),
+                    )))
+                })?;
+                if let Some((physical_id, mut total_rows)) = table_count {
+                    if (physical_id > 0 && total_rows == 0) || job.processed_rows > total_rows {
+                        total_rows = self.analyze_status.as_ref().map_or(0, |provider| {
+                            provider.approximate_table_count(
+                                &self.active_resource_group,
+                                physical_id,
+                                &job.table_schema,
+                                &job.table_name,
+                                &job.partition_name,
+                            )
+                        });
+                    }
+                    let start = start
+                        .core_time()
+                        .to_datetime(&chrono::Utc)
+                        .map_err(|error| DriverError::unsupported(error.to_string()))?;
+                    let elapsed_seconds = chrono::Utc::now()
+                        .signed_duration_since(start)
+                        .num_nanoseconds()
+                        .map_or(0.0, |nanoseconds| nanoseconds as f64 / 1_000_000_000.0);
+                    let (remaining_seconds, progress_ratio) =
+                        tidb_executor::show_stats::analyze_progress(
+                            total_rows,
+                            job.processed_rows,
+                            elapsed_seconds,
+                        );
+                    remaining = Datum::new_string(
+                        tidb_executor::show_stats::format_analyze_remaining_seconds(
+                            remaining_seconds,
+                        )
+                        .into_bytes(),
+                    );
+                    progress = Datum::Real(progress_ratio);
+                    estimated = Datum::Int(total_rows);
+                } else {
+                    // Go logs the table-lookup failure but still projects the
+                    // helper's named zero return values for these two fields.
+                    progress = Datum::Real(0.0);
+                    estimated = Datum::Int(0);
+                }
+            }
+            result_rows.push(vec![
+                Datum::new_string(job.table_schema.into_bytes()),
+                Datum::new_string(job.table_name.into_bytes()),
+                Datum::new_string(job.partition_name.into_bytes()),
+                Datum::new_string(job.job_info.into_bytes()),
+                Datum::Int(job.processed_rows),
+                start_time,
+                end_time,
+                Datum::new_string(job.state.into_bytes()),
+                job.fail_reason
+                    .map_or(Datum::Null, |value| Datum::new_string(value.into_bytes())),
+                Datum::new_string(job.instance.into_bytes()),
+                job.process_id.map_or(Datum::Null, Datum::UInt),
+                remaining,
+                progress,
+                estimated,
+            ]);
+        }
+        let varchar = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
+        let datetime = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Datetime);
+        let longlong = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
+        let double = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Double);
+        let output = StmtOutput::Rows {
+            columns: vec![
+                ("Table_schema".to_owned(), varchar()),
+                ("Table_name".to_owned(), varchar()),
+                ("Partition_name".to_owned(), varchar()),
+                ("Job_info".to_owned(), varchar()),
+                ("Processed_rows".to_owned(), longlong()),
+                ("Start_time".to_owned(), datetime()),
+                ("End_time".to_owned(), datetime()),
+                ("State".to_owned(), varchar()),
+                ("Fail_reason".to_owned(), varchar()),
+                ("Instance".to_owned(), varchar()),
+                ("Process_ID".to_owned(), longlong()),
+                ("Remaining_seconds".to_owned(), varchar()),
+                ("Progress".to_owned(), double()),
+                ("Estimated_total_rows".to_owned(), longlong()),
+            ],
+            rows: result_rows,
+        };
+        filter_show_output(output, like_pattern, where_clause)
+    }
+
     /// Go `ShowExec.fetchShowStatsMeta` (`pkg/executor/show_stats.go:36`):
     /// one row per table or partition whose statistics this session has
     /// loaded, with the two TSOs of the stored `mysql.stats_meta` row
@@ -2798,6 +2969,9 @@ impl Session {
                         rows: vec![tidb_executor::show_stats::histograms_in_flight_row(count)],
                     };
                     return filter_show_output(output, like_pattern, where_clause).map(Some);
+                }
+                if show.kind == tidb_ast::ShowInspectionKind::AnalyzeStatus {
+                    return self.analyze_status_stmt(show.filter.as_ref()).map(Some);
                 }
                 if show.kind != tidb_ast::ShowInspectionKind::ProcessList {
                     return Ok(None);

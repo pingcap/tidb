@@ -71,9 +71,9 @@
 //!   cache-mutating counter read. Only its row shape is ported
 //!   ([`histograms_in_flight_row`]); the counter itself is a handle call.
 //! * `fetchShowAnalyzeStatus` (:540) delegates wholesale to
-//!   `dataForAnalyzeStatusHelper`, which reads `mysql.analyze_jobs` through a
-//!   restricted SQL executor. Not ported; it is a different file's function
-//!   appended verbatim.
+//!   `dataForAnalyzeStatusHelper`. The session owns that persisted-row and
+//!   privilege traversal; [`analyze_progress`] below owns the helper's pure
+//!   remaining-duration calculation.
 //! * The `SHOW STATS_META` extractor filters (:41-58) -- `Field()`,
 //!   `FieldPatternLike()` and the `StatsMetaDBFilters`/`StatsMetaTableFilters`
 //!   duck-typed pair -- are ported as [`MetaFilters`], but the LIKE pattern
@@ -531,6 +531,54 @@ pub fn histograms_in_flight_row(in_flight: i64) -> Vec<Datum> {
     vec![Datum::Int(in_flight)]
 }
 
+/// Go `calRemainInfoForAnalyzeStatus`: remaining whole seconds and progress
+/// ratio for one running analyze job.
+#[must_use]
+pub fn analyze_progress(total_rows: i64, processed_rows: i64, elapsed_seconds: f64) -> (i64, f64) {
+    if total_rows == 0 {
+        return (0, 100.0);
+    }
+    let remaining_rows = total_rows - processed_rows;
+    let divisor = if processed_rows == 0 {
+        1
+    } else {
+        processed_rows
+    };
+    let elapsed_seconds = if elapsed_seconds == 0.0 {
+        1.0
+    } else {
+        elapsed_seconds
+    };
+    let remaining_seconds = (remaining_rows as f64 * elapsed_seconds / divisor as f64) as i64;
+    (remaining_seconds, processed_rows as f64 / total_rows as f64)
+}
+
+/// Go `time.Duration.String` for the whole-second durations produced by
+/// `calRemainInfoForAnalyzeStatus`.
+#[must_use]
+pub fn format_analyze_remaining_seconds(seconds: i64) -> String {
+    if seconds == 0 {
+        return "0s".to_owned();
+    }
+    let negative = seconds.is_negative();
+    let absolute = seconds.unsigned_abs();
+    let hours = absolute / 3_600;
+    let minutes = (absolute % 3_600) / 60;
+    let seconds = absolute % 60;
+    let body = if hours > 0 {
+        format!("{hours}h{minutes}m{seconds}s")
+    } else if minutes > 0 {
+        format!("{minutes}m{seconds}s")
+    } else {
+        format!("{seconds}s")
+    };
+    if negative {
+        format!("-{body}")
+    } else {
+        body
+    }
+}
+
 /// Go `fetchShowColumnStatsUsage` :571-587: one `SHOW COLUMN_STATS_USAGE` row.
 ///
 /// Both timestamps are nullable and independently so: a column can have been
@@ -678,6 +726,17 @@ mod tests {
         assert_eq!(time.to_string(), "2023-11-14 22:13:20");
         // A logical-only TSO has no physical part at all.
         assert!(version_to_time(0, &chrono::Utc).is_some());
+    }
+
+    #[test]
+    fn analyze_status_progress_matches_go_calculation() {
+        assert_eq!(analyze_progress(100, 10, 60.0), (540, 0.1));
+        assert_eq!(analyze_progress(0, 10, 60.0), (0, 100.0));
+        assert_eq!(analyze_progress(100, 0, 0.0), (100, 0.0));
+        assert_eq!(format_analyze_remaining_seconds(0), "0s");
+        assert_eq!(format_analyze_remaining_seconds(65), "1m5s");
+        assert_eq!(format_analyze_remaining_seconds(3_661), "1h1m1s");
+        assert_eq!(format_analyze_remaining_seconds(-2), "-2s");
     }
 
     // WRITTEN test for :108-133: the pseudo skip and the IsAnalyzed branch.

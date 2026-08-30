@@ -95,6 +95,15 @@ pub(crate) fn sql_error(error: LockSqlError) -> SqlQueryError {
 /// implementation is [`RealClusterTransactions`]; the tests drive the same
 /// lifecycle against an in-memory committed store.
 pub trait ClusterTransactions: Send + Sync {
+    /// PD region count and approximate storage-key count for one physical
+    /// table's record range. Embedded stores have no PD HTTP authority.
+    fn record_region_stats(
+        &self,
+        _table_id: i64,
+    ) -> Result<Option<tidb_exec::pd_approximate_count::RegionCountStats>, String> {
+        Ok(None)
+    }
+
     /// Reads current pessimistic lock waits from every store. A store-local
     /// RPC failure is skipped, matching Go `tikvStore.GetLockWaits`.
     fn lock_waits(&self) -> Result<Vec<tidb_proto::KvrpcWaitForEntry>, String> {
@@ -899,6 +908,19 @@ where
     L: StoreWriteLoader,
     P: StorePdCapability,
 {
+    fn record_region_stats(
+        &self,
+        table_id: i64,
+    ) -> Result<Option<tidb_exec::pd_approximate_count::RegionCountStats>, String> {
+        let Some(endpoint) =
+            tidb_txnkv::pd_capability::PdCapability::http_endpoint(self.opener.pd())
+        else {
+            return Ok(None);
+        };
+        tidb_exec::pd_approximate_count::load_record_region_stats(&endpoint, table_id, self.timeout)
+            .map(Some)
+    }
+
     fn lock_waits(&self) -> Result<Vec<tidb_proto::KvrpcWaitForEntry>, String> {
         let addresses = self.opener.pd().store_addresses()?;
         let runtime = self

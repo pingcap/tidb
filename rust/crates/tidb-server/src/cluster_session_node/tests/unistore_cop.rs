@@ -643,6 +643,112 @@ fn analyze_job_lifecycle_is_persisted_like_go() {
     .is_empty());
 }
 
+/// Pinned executor `TestShowAnalyzeStatus`: the SHOW path reads the same
+/// persisted job row as `mysql.analyze_jobs` and exposes Go's fourteen-column
+/// shape rather than falling through as an unsupported inspection statement.
+#[test]
+fn show_analyze_status_reads_persisted_jobs_like_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(78))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "CREATE TABLE stats_show_analyze_job (a INT, b INT)",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO stats_show_analyze_job VALUES (1,2),(3,4)",
+    );
+    rows(&mut session, "ANALYZE TABLE stats_show_analyze_job");
+
+    let shown = displayed(rows(
+        &mut session,
+        "SHOW ANALYZE STATUS WHERE table_name = 'stats_show_analyze_job'",
+    ));
+    assert_eq!(shown.len(), 1);
+    assert_eq!(shown[0].len(), 14);
+    assert_eq!(shown[0][0], "test");
+    assert_eq!(shown[0][1], "stats_show_analyze_job");
+    assert_eq!(shown[0][2], "");
+    assert_eq!(shown[0][4], "2");
+    assert_ne!(shown[0][5], "NULL");
+    assert_ne!(shown[0][6], "NULL");
+    assert_eq!(shown[0][7], "finished");
+    assert_eq!(shown[0][8], "NULL");
+    assert_eq!(shown[0][10], "NULL");
+    assert_eq!(shown[0][11], "NULL");
+    assert_eq!(shown[0][12], "NULL");
+    assert_eq!(shown[0][13], "NULL");
+
+    rows(&mut session, "DELETE FROM mysql.analyze_jobs");
+    let started_at = tidb_exec::mysql_bootstrap::utc_now_timestamp()
+        .add_duration(MySqlDuration::from_nanoseconds(-60_000_000_000, 0).unwrap())
+        .unwrap();
+    let handle = ClusterHistoricalStatsHandle {
+        transactions: Arc::clone(&stack.factory.transactions),
+        catalog: Arc::clone(&stack.factory.catalog),
+        global_vars: stack.factory.global_vars.clone(),
+    };
+    let mut job_id = 0;
+    handle
+        .commit_stats_plan(|snapshot, _| {
+            let (created_job_id, plan) = tidb_exec::cluster_stats_write::plan_insert_analyze_job(
+                snapshot,
+                &stack.factory.catalog.load(),
+                "test",
+                "stats_show_analyze_job",
+                "",
+                b"analyze table all columns with 256 buckets, 100 topn, 1 samplerate",
+                "127.0.0.1:4000",
+                78,
+                started_at,
+            )
+            .map_err(|error| error.to_string())?;
+            job_id = created_job_id;
+            Ok(plan)
+        })
+        .expect("pending job commits");
+    handle
+        .commit_stats_plan(|snapshot, _| {
+            tidb_exec::cluster_stats_write::plan_start_analyze_job(
+                snapshot,
+                &stack.factory.catalog.load(),
+                job_id,
+                started_at,
+            )
+            .map_err(|error| error.to_string())
+        })
+        .expect("running job commits");
+    handle
+        .commit_stats_plan(|snapshot, _| {
+            tidb_exec::cluster_stats_write::plan_update_analyze_job_progress(
+                snapshot,
+                &stack.factory.catalog.load(),
+                job_id,
+                3,
+                started_at,
+            )
+            .map_err(|error| error.to_string())
+        })
+        .expect("running progress commits");
+    let running = displayed(rows(
+        &mut session,
+        "SHOW ANALYZE STATUS WHERE table_name = 'stats_show_analyze_job' AND state = 'running'",
+    ));
+    assert_eq!(running.len(), 1);
+    assert_eq!(running[0][4], "3");
+    assert_eq!(running[0][7], "running");
+    // The embedded store has no PD HTTP authority. Go caches and uses the
+    // helper's zero return after processed rows exceed loaded RealtimeCount.
+    assert_eq!(running[0][11], "0s");
+    assert_eq!(running[0][12], "100");
+    assert_eq!(running[0][13], "0");
+}
+
 /// Pinned `TestCleanupCorruptedAnalyzeJobsOnCurrentInstance` and
 /// `TestCleanupCorruptedAnalyzeJobsOnDeadInstances`: the two restricted
 /// transactions select different corruptions and preserve the timestamps Go

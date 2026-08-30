@@ -165,6 +165,76 @@ pub type AnalyzeJobId = u64;
 pub const CORRUPTED_ANALYZE_JOB_FAILURE: &str =
     "The TiDB Server has either shut down or the analyze query was terminated during the analyze job execution";
 
+/// Pinned Go `dataForAnalyzeStatusHelper`'s restricted query: order all jobs
+/// by `update_time DESC` and retain at most thirty rows. Privilege filtering
+/// deliberately happens later in the session, so invisible rows still occupy
+/// the SQL limit just as they do in Go.
+pub fn load_analyze_status_jobs<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+) -> Result<Vec<tidb_stats::AnalyzeStatusJob>, StatsWriteError> {
+    const MAX_ANALYZE_JOBS: usize = 30;
+    const COLUMNS: &[&str] = &[
+        "table_schema",
+        "table_name",
+        "partition_name",
+        "job_info",
+        "processed_rows",
+        "start_time",
+        "end_time",
+        "state",
+        "fail_reason",
+        "instance",
+        "process_id",
+        "update_time",
+    ];
+
+    let view = SystemTableView::locate(catalog, "analyze_jobs", COLUMNS)?;
+    let timezone = tidb_datatype::SessionTimeZone::utc();
+    let mut rows = Vec::new();
+    for (key, value) in scan_system_table(snapshot, &view)? {
+        let row = SystemRow::parse_in_timezone(&view, &key, &value, Some(&timezone))?;
+        let time = |column: &str| -> Result<Option<Time>, StatsWriteError> {
+            match row.datum(column)? {
+                None => Ok(None),
+                Some(Datum::Time(value)) => Ok(Some(*value)),
+                Some(value) => Err(StatsWriteError::Read(
+                    SystemTableError::UnexpectedColumnValue {
+                        name: view.name().to_owned(),
+                        column: column.to_owned(),
+                        wanted: "a time",
+                        stored: format!("{value:?}"),
+                    },
+                )),
+            }
+        };
+        rows.push((
+            time("update_time")?,
+            tidb_stats::AnalyzeStatusJob {
+                table_schema: row.text("table_schema")?.unwrap_or_default(),
+                table_name: row.text("table_name")?.unwrap_or_default(),
+                partition_name: row.text("partition_name")?.unwrap_or_default(),
+                job_info: row.text("job_info")?.unwrap_or_default(),
+                processed_rows: row.i64("processed_rows")?.unwrap_or_default(),
+                start_time: time("start_time")?,
+                end_time: time("end_time")?,
+                state: row.enum_label("state")?.unwrap_or_default(),
+                fail_reason: row.text("fail_reason")?,
+                instance: row.text("instance")?.unwrap_or_default(),
+                process_id: row.u64("process_id")?,
+            },
+        ));
+    }
+    rows.sort_by(|left, right| match (left.0, right.0) {
+        (Some(left), Some(right)) => right.compare(left),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    });
+    rows.truncate(MAX_ANALYZE_JOBS);
+    Ok(rows.into_iter().map(|(_, job)| job).collect())
+}
+
 impl StatsWritePlan {
     /// Whether the plan writes nothing.
     #[must_use]

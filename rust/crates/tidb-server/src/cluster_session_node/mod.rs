@@ -411,6 +411,94 @@ struct ClusterColumnStatsUsageProvider {
     catalog: Arc<SharedClusterCatalog>,
 }
 
+struct ClusterAnalyzeStatusProvider {
+    transactions: Arc<dyn ClusterTransactions>,
+    catalog: Arc<SharedClusterCatalog>,
+    approximate_counts: Arc<Mutex<tidb_exec::pd_approximate_count::ApproximateTableCountCache>>,
+}
+
+impl tidb_session::AnalyzeStatusProvider for ClusterAnalyzeStatusProvider {
+    fn load_analyze_status(
+        &self,
+        resource_group: &str,
+    ) -> Result<Vec<tidb_stats::AnalyzeStatusJob>, String> {
+        let snapshot = self.transactions.open_snapshot(resource_group)?;
+        tidb_exec::cluster_stats_write::load_analyze_status_jobs(
+            &mut SnapshotMetaSnapshot::new(snapshot),
+            &self.catalog.load(),
+        )
+        .map_err(|error| error.to_string())
+    }
+
+    fn approximate_table_count(
+        &self,
+        resource_group: &str,
+        physical_id: i64,
+        database: &str,
+        table: &str,
+        partition: &str,
+    ) -> i64 {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        let key = tidb_exec::pd_approximate_count::approximate_table_count_key(
+            physical_id,
+            database,
+            table,
+            partition,
+        );
+        if let Some(count) = self
+            .approximate_counts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&key, now)
+        {
+            return count as i64;
+        }
+        // The concurrent Go cache does not hold its own lock while a miss
+        // invokes PD or restricted SQL; concurrent misses may load twice.
+        let count = match self.transactions.record_region_stats(physical_id) {
+            Ok(Some(stats)) if stats.count > 2 => stats.storage_keys as f64,
+            Ok(Some(_)) => {
+                exact_physical_row_count(self.transactions.as_ref(), resource_group, physical_id)
+                    .map_or(0.0, |count| count as f64)
+            }
+            Ok(None) | Err(_) => 0.0,
+        };
+        self.approximate_counts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(key, now, count);
+        count as i64
+    }
+}
+
+fn exact_physical_row_count(
+    transactions: &dyn ClusterTransactions,
+    resource_group: &str,
+    physical_id: i64,
+) -> Result<i64, String> {
+    const PAGE_SIZE: usize = 1_024;
+    let prefix = tidb_txnkv::Key::from_bytes(tidb_tablecodec::table_key::gen_table_record_prefix(
+        physical_id,
+    ));
+    let end = prefix.prefix_next();
+    let mut cursor = prefix;
+    let mut snapshot = transactions.open_snapshot(resource_group)?;
+    let mut count = 0_i64;
+    loop {
+        let page = snapshot
+            .scan(&cursor, &end, Some(PAGE_SIZE))
+            .map_err(|error| error.to_string())?;
+        count = count.saturating_add(i64::try_from(page.len()).unwrap_or(i64::MAX));
+        if page.len() < PAGE_SIZE {
+            return Ok(count);
+        }
+        cursor = tidb_txnkv::Key::from_bytes(page.last().expect("full page is nonempty").0.clone())
+            .next();
+    }
+}
+
 impl tidb_session::ColumnStatsUsageProvider for ClusterColumnStatsUsageProvider {
     fn load_column_stats_usage(
         &self,
@@ -662,6 +750,9 @@ pub struct ClusterSessionFactory {
     historical_stats_worker: Arc<HistoricalStatsWorker<ClusterHistoricalInfoSchema>>,
     /// Go `StartHistoricalStatsWorker`, installed after stable `Arc` ownership.
     historical_stats_runtime: std::sync::OnceLock<HistoricalStatsRuntime>,
+    /// Go's process-global approximate table-count cache.
+    approximate_table_counts:
+        Arc<Mutex<tidb_exec::pd_approximate_count::ApproximateTableCountCache>>,
 }
 
 impl ClusterSessionFactory {
@@ -727,6 +818,12 @@ impl ClusterSessionFactory {
             analyze_jobs_cleanup_worker: std::sync::OnceLock::new(),
             historical_stats_worker,
             historical_stats_runtime: std::sync::OnceLock::new(),
+            approximate_table_counts: Arc::new(Mutex::new(
+                tidb_exec::pd_approximate_count::ApproximateTableCountCache::new(
+                    1_048_576,
+                    Duration::from_secs(30),
+                ),
+            )),
         }
     }
 
@@ -2367,6 +2464,11 @@ impl QuerySessionFactory for ClusterSessionFactory {
         session.set_column_stats_usage_provider(Arc::new(ClusterColumnStatsUsageProvider {
             transactions: Arc::clone(&self.transactions),
             catalog: Arc::clone(&self.catalog),
+        }));
+        session.set_analyze_status_provider(Arc::new(ClusterAnalyzeStatusProvider {
+            transactions: Arc::clone(&self.transactions),
+            catalog: Arc::clone(&self.catalog),
+            approximate_counts: Arc::clone(&self.approximate_table_counts),
         }));
         session.set_advisory_lock_service(Arc::new(transactions::ClusterAdvisoryLockService::new(
             Arc::clone(&self.transactions),
