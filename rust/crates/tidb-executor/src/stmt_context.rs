@@ -467,6 +467,9 @@ pub struct StmtContext {
     /// The statement snapshot consumed by Go's
     /// `checkIndexLookUpPushDownSupported` and system-variable policy.
     index_lookup_push_down_session: tidb_planner::access_path::IndexLookupPushDownSession,
+    /// Go `domain.GetDomain(ctx).InfoSchema()` narrowed to the metadata read
+    /// by `planner/util/domainmisc.GetLatestIndexInfo`.
+    latest_index_schema: Option<Arc<tidb_planner::domain_misc::LatestIndexSchema>>,
     /// The statement snapshot of every session value read by cost model v2.
     optimizer_cost_env: tidb_planner::find_best_task::coster::CostEnv,
     /// Go `SessionVars.ExecutorConcurrency`, shared by executor families that
@@ -789,6 +792,7 @@ impl StmtContext {
             optimizer_fix_control: tidb_planner::fix_control::OptimizerFixControl::default(),
             index_lookup_push_down_session:
                 tidb_planner::access_path::IndexLookupPushDownSession::default(),
+            latest_index_schema: None,
             optimizer_cost_env: tidb_planner::find_best_task::coster::CostEnv::default(),
             executor_concurrency: tidb_vardef::defaults::DEF_EXECUTOR_CONCURRENCY as usize,
             hashagg_partial_concurrency: tidb_vardef::defaults::DEF_EXECUTOR_CONCURRENCY as usize,
@@ -1595,6 +1599,22 @@ impl StmtContext {
         &self,
     ) -> tidb_planner::access_path::IndexLookupPushDownSession {
         self.index_lookup_push_down_session
+    }
+
+    /// Attaches the statement's latest-domain index metadata.
+    #[must_use]
+    pub fn with_latest_index_schema(
+        mut self,
+        schema: Arc<tidb_planner::domain_misc::LatestIndexSchema>,
+    ) -> Self {
+        self.latest_index_schema = Some(schema);
+        self
+    }
+
+    /// Returns the latest-domain index metadata captured for this statement.
+    #[must_use]
+    pub fn latest_index_schema(&self) -> Option<Arc<tidb_planner::domain_misc::LatestIndexSchema>> {
+        self.latest_index_schema.clone()
     }
 
     /// Attaches the resolved statement snapshot used by cost model v2.

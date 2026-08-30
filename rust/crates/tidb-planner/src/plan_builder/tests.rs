@@ -837,7 +837,7 @@ fn test_lookup_pushdown_support_gates_and_auto_policy_match_go() {
         restored: "INDEX_LOOKUP_PUSHDOWN(t, idx_b)".to_owned(),
     };
     let resolve = |table: &SourceTable, session| {
-        let paths = get_possible_access_paths(table, false);
+        let paths = get_possible_access_paths(table, false, None, None, true, false).unwrap();
         apply_table_index_hints(
             table,
             &paths,
@@ -923,7 +923,7 @@ fn test_lookup_pushdown_support_gates_and_auto_policy_match_go() {
         "an explicit hint overrides the system-policy origin"
     );
 
-    let paths = get_possible_access_paths(&table, false);
+    let paths = get_possible_access_paths(&table, false, None, None, true, false).unwrap();
     let auto = apply_table_index_hints(
         &table,
         &paths,

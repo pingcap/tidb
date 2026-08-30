@@ -1745,7 +1745,7 @@ impl Session {
                     // turns into the statement-kind bit of any coprocessor
                     // request this statement's read half issues.
                     let ctx = self
-                        .statement_context_ignoring(true, update.ignore)
+                        .statement_context_for_update_read(update.ignore)
                         .with_statement_class(tidb_executor::StatementClass::UpdateOrDelete);
                     let output = self.with_staged_catalog(|catalog| {
                         // Bound AST, not SQL text: the text still carries the
@@ -1773,7 +1773,7 @@ impl Session {
                     // turns into the statement-kind bit of any coprocessor
                     // request this statement's read half issues.
                     let ctx = self
-                        .statement_context_ignoring(true, delete.ignore)
+                        .statement_context_for_update_read(delete.ignore)
                         .with_statement_class(tidb_executor::StatementClass::UpdateOrDelete);
                     let output = self.with_staged_catalog(|catalog| {
                         // Bound AST, not SQL text -- see the UPDATE arm.

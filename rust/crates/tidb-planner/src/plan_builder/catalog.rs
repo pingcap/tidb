@@ -338,6 +338,12 @@ pub trait TableSource {
     /// `ErrBadDB` rather than `ErrNoSuchTable`.
     fn database_exists(&self, db_name: &str) -> bool;
 
+    /// Go `domain.GetDomain(ctx).InfoSchema()`, snapshotted at the statement
+    /// boundary. Test/internal sources without a session have no domain.
+    fn latest_index_schema(&self) -> Option<&crate::domain_misc::LatestIndexSchema> {
+        None
+    }
+
     /// Go `tableInfo.IsView()` plus `tableInfo.View`
     /// (`logical_plan_builder.go:5047`): the stored definition
     /// `BuildDataSourceFromView` expands.

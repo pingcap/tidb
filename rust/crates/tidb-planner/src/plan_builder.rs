@@ -1598,7 +1598,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let public_paths = crate::access_path::get_possible_access_paths(
             table,
             self.optimizer_use_invisible_indexes,
-        );
+            self.source.latest_index_schema(),
+            self.ctx.connection_id(),
+            self.index_lookup_push_down_session.repeatable_read,
+            self.is_for_update_read,
+        )?;
         let resolution = crate::access_path::apply_table_index_hints(
             table,
             &public_paths,

@@ -781,8 +781,6 @@ impl Default for IndexLookupPushDownSession {
 ///   would enumerate here where Go skips it; the catalog does not model one
 ///   today;
 /// * hypo indexes (`:1419-1441`) — explain-only session state;
-/// * the read-committed `GetLatestIndexInfo` re-check (`:1385-1395`) —
-///   schema-validator machinery;
 /// Hint filtering (`:1443` onward) is the separate
 /// [`apply_table_index_hints`] stage, matching Go's enumeration-then-filter
 /// structure. Comment-style hints must join that same stage through the
@@ -791,7 +789,11 @@ impl Default for IndexLookupPushDownSession {
 pub fn get_possible_access_paths(
     table: &crate::plan_builder::catalog::SourceTable,
     optimizer_use_invisible_indexes: bool,
-) -> Vec<PossiblePath> {
+    latest_index_schema: Option<&crate::domain_misc::LatestIndexSchema>,
+    connection_id: Option<u64>,
+    repeatable_read: bool,
+    is_for_update_read: bool,
+) -> Result<Vec<PossiblePath>, crate::plan_base::PlanError> {
     // Go splits ONLY on `tblInfo.IsCommonHandle` (`planbuilder.go:1521`):
     // a table with no explicit handle column is still an int-handle path,
     // through the implicit `_tidb_rowid`. `handle_is_int()` would misread
@@ -806,8 +808,26 @@ pub fn get_possible_access_paths(
             None
         },
     });
+    let mut check_latest_schema =
+        (is_for_update_read || !repeatable_read) && connection_id.is_some_and(|id| id > 0);
+    let mut latest_indexes = None;
     for (offset, index) in table.indexes.iter().enumerate() {
         if !index.is_public {
+            continue;
+        }
+        if check_latest_schema && latest_indexes.is_none() {
+            let (indexes, changed) =
+                crate::domain_misc::get_latest_index_info(latest_index_schema, table.table_id, 0)?;
+            latest_indexes = indexes;
+            check_latest_schema = changed;
+        }
+        if check_latest_schema
+            && latest_indexes.as_ref().is_none_or(|indexes| {
+                indexes
+                    .get(&index.id)
+                    .is_none_or(|latest| !latest.is_public)
+            })
+        {
             continue;
         }
         if !optimizer_use_invisible_indexes && !index.is_visible {
@@ -821,7 +841,7 @@ pub fn get_possible_access_paths(
         }
         paths.push(PossiblePath::Index { index: offset });
     }
-    paths
+    Ok(paths)
 }
 
 /// Go `getPossibleAccessPaths`' hint-filtering result.
@@ -1171,7 +1191,10 @@ pub fn fast_index_is_available_by_hints(
 
 #[cfg(test)]
 mod enumeration_tests {
-    use super::{get_possible_access_paths, PossiblePath};
+    use std::collections::BTreeMap;
+
+    use super::{get_possible_access_paths as enumerate_possible_access_paths, PossiblePath};
+    use crate::domain_misc::LatestIndexSchema;
     use crate::plan_builder::catalog::{SourceIndex, SourceTable};
 
     // All WRITTEN: Go's coverage of getPossibleAccessPaths is
@@ -1200,6 +1223,21 @@ mod enumeration_tests {
             indexes,
             ..SourceTable::default()
         }
+    }
+
+    fn get_possible_access_paths(
+        table: &SourceTable,
+        optimizer_use_invisible_indexes: bool,
+    ) -> Vec<PossiblePath> {
+        enumerate_possible_access_paths(
+            table,
+            optimizer_use_invisible_indexes,
+            None,
+            None,
+            true,
+            false,
+        )
+        .unwrap()
     }
 
     #[test]
@@ -1250,5 +1288,67 @@ mod enumeration_tests {
             get_possible_access_paths(&table(vec![columnar]), false).len(),
             1
         );
+    }
+
+    #[test]
+    fn read_committed_connected_session_uses_only_latest_public_indexes() {
+        let mut source = table(vec![
+            index("removed"),
+            SourceIndex {
+                id: 2,
+                name: "public".to_owned(),
+                ..index("public")
+            },
+        ]);
+        source.table_id = 42;
+        let latest = LatestIndexSchema {
+            schema_meta_version: 8,
+            table_indexes: BTreeMap::from([(
+                42,
+                vec![SourceIndex {
+                    id: 2,
+                    is_public: true,
+                    ..SourceIndex::default()
+                }],
+            )]),
+        };
+
+        let paths =
+            enumerate_possible_access_paths(&source, false, Some(&latest), Some(7), false, false)
+                .unwrap();
+
+        assert_eq!(
+            paths,
+            vec![
+                PossiblePath::Table {
+                    is_int_handle: true,
+                    primary_index: None,
+                },
+                PossiblePath::Index { index: 1 },
+            ]
+        );
+    }
+
+    #[test]
+    fn internal_session_does_not_consult_the_latest_domain_schema() {
+        let source = table(vec![index("i1")]);
+        let paths =
+            enumerate_possible_access_paths(&source, false, None, None, false, false).unwrap();
+        assert_eq!(paths.len(), 2);
+    }
+
+    #[test]
+    fn repeatable_read_for_update_uses_the_latest_schema() {
+        let mut source = table(vec![index("removed")]);
+        source.table_id = 42;
+        let latest = LatestIndexSchema {
+            schema_meta_version: 8,
+            table_indexes: BTreeMap::from([(42, Vec::new())]),
+        };
+
+        let paths =
+            enumerate_possible_access_paths(&source, false, Some(&latest), Some(7), true, true)
+                .unwrap();
+        assert_eq!(paths.len(), 1);
     }
 }

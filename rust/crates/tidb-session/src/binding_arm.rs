@@ -628,7 +628,7 @@ impl Session {
     /// quotes freely) can never break out of its literal.
     fn bind_info_exec(&mut self, sql: &str, params: &[Datum]) -> Result<u64, DriverError> {
         let text = tidb_executor::bind_parameters(sql, params, self.scanner_sql_mode())?;
-        let ctx = self.statement_context(true);
+        let ctx = self.statement_context_for_update_read(false);
         self.with_catalog_mut(|catalog| match text.trim_start().get(..6) {
             Some(word) if word.eq_ignore_ascii_case("INSERT") => {
                 tidb_executor::run_insert_in(&text, catalog, "mysql", &ctx)

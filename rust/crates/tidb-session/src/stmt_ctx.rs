@@ -494,6 +494,40 @@ impl Session {
         self.statement_context_ignoring(is_dml, false)
     }
 
+    fn latest_index_schema_snapshot(
+        &self,
+    ) -> Option<Arc<tidb_planner::domain_misc::LatestIndexSchema>> {
+        let mut schema = self.catalog.lock().ok()?.latest_index_schema();
+        for (_, _, table) in &self.local_temporary_tables {
+            schema.table_indexes.insert(
+                table.table_id,
+                table
+                    .indexes()
+                    .iter()
+                    .map(|index| tidb_planner::plan_builder::catalog::SourceIndex {
+                        id: index.id,
+                        is_public: true,
+                        ..Default::default()
+                    })
+                    .collect(),
+            );
+        }
+        Some(Arc::new(schema))
+    }
+
+    pub(crate) fn statement_context_for_update_read(
+        &self,
+        ignore_err: bool,
+    ) -> tidb_executor::StmtContext {
+        let mut ctx = self.statement_context_ignoring(true, ignore_err);
+        if self.connection_id.is_some_and(|id| id > 0) && ctx.latest_index_schema().is_none() {
+            if let Some(latest_index_schema) = self.latest_index_schema_snapshot() {
+                ctx = ctx.with_latest_index_schema(latest_index_schema);
+            }
+        }
+        ctx
+    }
+
     /// [`Self::statement_context`] for a DML statement that carries the
     /// `IGNORE` modifier, which Go's `ResetContextOfStmt` reads off the AST
     /// and folds into every value-level error level.
@@ -829,6 +863,10 @@ impl Session {
             .txn
             .as_ref()
             .is_some_and(|transaction| transaction.is_stale_read());
+        let latest_index_schema = (!index_lookup_push_down_session.repeatable_read
+            && self.connection_id.is_some_and(|id| id > 0))
+        .then(|| self.latest_index_schema_snapshot())
+        .flatten();
         let join_reorder_through_proj = snapshot.join_reorder_through_proj;
         let join_reorder_through_sel = snapshot.join_reorder_through_sel;
         let outer_join_reorder = snapshot.outer_join_reorder;
@@ -868,7 +906,7 @@ impl Session {
             allow_invalid_dates: sql_mode.has_allow_invalid_dates_mode(),
         };
         if !is_dml {
-            let ctx = tidb_executor::StmtContext::for_query()
+            let mut ctx = tidb_executor::StmtContext::for_query()
                 // A read's error levels do not depend on the mode, but DDL
                 // takes this same context and Go's DDL checks DO read
                 // `SQLMode.HasStrictMode()`. See `StmtContext::with_strict`.
@@ -949,10 +987,13 @@ impl Session {
                 .with_sysdate_is_now(sysdate_is_now)
                 .with_resource_group_name(self.active_resource_group.clone())
                 .with_lazy_clock(snapshot.timestamp, zone);
+            if let Some(latest_index_schema) = latest_index_schema {
+                ctx = ctx.with_latest_index_schema(latest_index_schema);
+            }
             return ctx;
         }
         let (increment, offset) = self.auto_increment_step();
-        let ctx = tidb_executor::StmtContext::for_dml(
+        let mut ctx = tidb_executor::StmtContext::for_dml(
             sql_mode.has_error_for_division_by_zero_mode(),
             sql_mode.has_strict_mode(),
             ignore_err,
@@ -1044,6 +1085,9 @@ impl Session {
         .with_outer_join_reorder(outer_join_reorder)
         .with_index_merge(index_merge)
         .with_static_partition_prune(static_partition_prune);
+        if let Some(latest_index_schema) = latest_index_schema {
+            ctx = ctx.with_latest_index_schema(latest_index_schema);
+        }
         ctx
     }
 
@@ -1336,6 +1380,36 @@ mod tests {
         assert_eq!(snapshot.max_keys_read, 7);
         assert!(!snapshot.staleness);
         assert!(!snapshot.historical_read);
+    }
+
+    #[test]
+    fn read_committed_connected_session_captures_latest_index_schema() {
+        let mut session = Session::new();
+        assert!(session
+            .statement_context(false)
+            .latest_index_schema()
+            .is_none());
+
+        session.set_connection_id(7);
+        session
+            .run("SET transaction_isolation = 'READ-COMMITTED'")
+            .unwrap();
+
+        let latest = session
+            .statement_context(false)
+            .latest_index_schema()
+            .expect("connected READ-COMMITTED statement has a domain snapshot");
+        assert_eq!(
+            latest.schema_meta_version,
+            session.lock_catalog().unwrap().metadata_version()
+        );
+
+        let mut repeatable_read = Session::new();
+        repeatable_read.set_connection_id(8);
+        assert!(repeatable_read
+            .statement_context_for_update_read(false)
+            .latest_index_schema()
+            .is_some());
     }
 
     #[test]

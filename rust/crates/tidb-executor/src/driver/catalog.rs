@@ -242,6 +242,7 @@ pub(crate) struct PlannerCatalog {
     databases: std::collections::BTreeSet<String>,
     tables: Vec<tidb_planner::plan_builder::catalog::SourceTable>,
     views: Vec<tidb_planner::plan_builder::catalog::SourceView>,
+    latest_index_schema: Option<Arc<tidb_planner::domain_misc::LatestIndexSchema>>,
 }
 
 impl tidb_planner::plan_builder::catalog::TableSource for PlannerCatalog {
@@ -262,6 +263,10 @@ impl tidb_planner::plan_builder::catalog::TableSource for PlannerCatalog {
 
     fn database_exists(&self, db_name: &str) -> bool {
         self.databases.contains(&db_name.to_ascii_lowercase())
+    }
+
+    fn latest_index_schema(&self) -> Option<&tidb_planner::domain_misc::LatestIndexSchema> {
+        self.latest_index_schema.as_deref()
     }
 
     fn find_view(
@@ -958,7 +963,11 @@ impl Catalog {
     /// Materializes the narrow `infoschema` view consumed by the ported Go
     /// logical planner. Storage handles, rows, statistics and allocators stay
     /// in this catalog; only immutable schema metadata crosses the seam.
-    pub(crate) fn planner_catalog(&self, current_database: &str) -> PlannerCatalog {
+    pub(crate) fn planner_catalog(
+        &self,
+        current_database: &str,
+        latest_index_schema: Option<Arc<tidb_planner::domain_misc::LatestIndexSchema>>,
+    ) -> PlannerCatalog {
         use tidb_planner::plan_builder::catalog::{
             SourceColumn, SourceIndex, SourceIndexColumn, SourceTable, SourceView,
         };
@@ -1150,6 +1159,39 @@ impl Catalog {
             databases,
             tables,
             views,
+            latest_index_schema,
+        }
+    }
+
+    /// Snapshots the latest-domain metadata read by Go
+    /// `planner/util/domainmisc.GetLatestIndexInfo`.
+    #[must_use]
+    pub fn latest_index_schema(&self) -> tidb_planner::domain_misc::LatestIndexSchema {
+        use tidb_planner::plan_builder::catalog::SourceIndex;
+
+        let mut table_indexes = std::collections::BTreeMap::new();
+        for database in self.databases.values() {
+            for entry in database.tables.values() {
+                let TableEntry::Kv(table) = &**entry else {
+                    continue;
+                };
+                table_indexes.insert(
+                    table.table_id,
+                    table
+                        .indexes()
+                        .iter()
+                        .map(|index| SourceIndex {
+                            id: index.id,
+                            is_public: true,
+                            ..SourceIndex::default()
+                        })
+                        .collect(),
+                );
+            }
+        }
+        tidb_planner::domain_misc::LatestIndexSchema {
+            schema_meta_version: self.metadata_version,
+            table_indexes,
         }
     }
 

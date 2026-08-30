@@ -105,6 +105,7 @@ pub mod core_usage;
 pub mod cost_factors;
 pub mod cost_usage;
 pub mod derive_topn_from_window;
+pub mod domain_misc;
 pub mod eliminate_empty_selection;
 pub mod eliminate_unionall_dual_item;
 pub mod enforce;

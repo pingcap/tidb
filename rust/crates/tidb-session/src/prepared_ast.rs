@@ -380,7 +380,17 @@ impl Session {
         // this same catalog. Build it after releasing the cache-probe guard,
         // exactly as the PREPARE path does, then reacquire the catalog for
         // physical enumeration.
-        let planner_context = self.statement_context(true);
+        let planner_context = match statement {
+            Stmt::Dml(dml)
+                if matches!(
+                    dml.as_ref(),
+                    tidb_ast::DmlStmt::Update(_) | tidb_ast::DmlStmt::Delete(_)
+                ) =>
+            {
+                self.statement_context_for_update_read(false)
+            }
+            _ => self.statement_context(true),
+        };
         let catalog = self.lock_catalog().ok()?;
         plan.bind_for_statement(
             values,

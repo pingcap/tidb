@@ -538,7 +538,7 @@ pub(crate) fn logical_from_scope(
     current_database: &str,
     ctx: &crate::StmtContext,
 ) -> Result<FromScope, tidb_planner::plan_base::PlanError> {
-    let source = catalog.planner_catalog(current_database);
+    let source = catalog.planner_catalog(current_database, ctx.latest_index_schema());
     let plan_ids = PlanIdAllocator::new();
     let column_ids = ColumnIdAllocator::new();
     let mut builder = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, ctx.session_zone());
@@ -1216,7 +1216,7 @@ fn planner_optimized_query_with_allocators(
     plan_ids: &PlanIdAllocator,
     column_ids: &ColumnIdAllocator,
 ) -> Result<LogicalPlan, tidb_planner::plan_base::PlanError> {
-    let source = catalog.planner_catalog(current_database);
+    let source = catalog.planner_catalog(current_database, ctx.latest_index_schema());
     let session_zone = ctx.session_zone();
     let mut builder = PlanBuilder::new(&source, ctx, plan_ids, column_ids, session_zone.clone());
     builder.flags.enable_no_decorrelate_in_select = ctx.enable_no_decorrelate_in_select();
@@ -1254,7 +1254,7 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     plan_ids: &PlanIdAllocator,
     column_ids: &ColumnIdAllocator,
 ) -> Result<(PhysicalPlan, Vec<Option<Expression>>), tidb_planner::plan_base::PlanError> {
-    let source = catalog.planner_catalog(current_database);
+    let source = catalog.planner_catalog(current_database, ctx.latest_index_schema());
     let session_zone = ctx.session_zone();
     let mut builder = PlanBuilder::new(&source, ctx, plan_ids, column_ids, session_zone.clone());
     builder.flags.enable_no_decorrelate_in_select = ctx.enable_no_decorrelate_in_select();
@@ -1531,7 +1531,7 @@ pub(crate) fn statistics_usage_before_and_after_logical_optimization(
 > {
     let plan_ids = PlanIdAllocator::new();
     let column_ids = ColumnIdAllocator::new();
-    let source = catalog.planner_catalog(current_database);
+    let source = catalog.planner_catalog(current_database, ctx.latest_index_schema());
     let session_zone = ctx.session_zone();
     let mut builder = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, session_zone.clone());
     builder.flags.enable_no_decorrelate_in_select = ctx.enable_no_decorrelate_in_select();
