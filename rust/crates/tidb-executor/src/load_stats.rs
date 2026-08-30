@@ -696,7 +696,7 @@ pub fn table_statistics_from_table_schema(
         );
         index_load_status.insert(id, index.stats_loaded_status);
     }
-    TableStatistics::new(
+    let mut statistics = TableStatistics::new(
         stats.hist_coll.realtime_count,
         stats.hist_coll.modify_count,
         columns,
@@ -704,7 +704,9 @@ pub fn table_statistics_from_table_schema(
     )
     .with_stat_versions(stats.version, stats.last_analyze_version)
     .with_load_statuses(column_load_status, index_load_status)
-    .with_stats_existence(column_stats_existence, index_stats_existence)
+    .with_stats_existence(column_stats_existence, index_stats_existence);
+    statistics.cache_pseudo = stats.hist_coll.pseudo;
+    statistics
 }
 
 #[cfg(test)]

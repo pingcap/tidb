@@ -1380,7 +1380,7 @@ impl Session {
                         // Go calls `GetNonPseudoPhysicalTableStats`: a pseudo
                         // cache entry is an optimizer fallback, not stored
                         // statistics to expose through SHOW.
-                        if statistics.pseudo {
+                        if statistics.is_synthetic_pseudo() {
                             continue;
                         }
                         let update_time = tidb_executor::show_stats::version_to_time(
@@ -1639,7 +1639,7 @@ impl Session {
                         let Some(statistics) = catalog.table_statistics(target.physical_id) else {
                             continue;
                         };
-                        if statistics.pseudo {
+                        if statistics.is_synthetic_pseudo() {
                             continue;
                         }
                         for (offset, column) in table.columns().iter().enumerate() {
@@ -1786,7 +1786,7 @@ impl Session {
                         let Some(statistics) = catalog.table_statistics(target.physical_id) else {
                             continue;
                         };
-                        if statistics.pseudo {
+                        if statistics.is_synthetic_pseudo() {
                             continue;
                         }
                         for (id, column_stats) in &statistics.columns {
@@ -1933,7 +1933,7 @@ impl Session {
                         let Some(statistics) = catalog.table_statistics(target.physical_id) else {
                             continue;
                         };
-                        if statistics.pseudo {
+                        if statistics.is_synthetic_pseudo() {
                             continue;
                         }
                         for (id, column_stats) in &statistics.columns {

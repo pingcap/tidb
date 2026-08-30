@@ -1022,6 +1022,68 @@ fn partition_global_stats_bucket_data_matches_go() {
     );
 }
 
+/// Pinned `globalstats.TestGlobalStatsNDV`: the global index NDV is the FM
+/// sketch union across every physical partition, including empty partitions,
+/// and repeated values do not increase it.
+#[test]
+fn partition_global_stats_ndv_matches_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(60))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET SESSION tidb_analyze_version = 2");
+    rows(
+        &mut session,
+        "SET SESSION tidb_partition_prune_mode = 'dynamic'",
+    );
+    rows(
+        &mut session,
+        "CREATE TABLE global_ndv (a int, KEY(a)) PARTITION BY RANGE (a) (\
+         PARTITION p0 VALUES LESS THAN (10),\
+         PARTITION p1 VALUES LESS THAN (20),\
+         PARTITION p2 VALUES LESS THAN (30),\
+         PARTITION p3 VALUES LESS THAN (40))",
+    );
+
+    let check_ndv = |session: &mut _, expected: &[&str]| {
+        rows(session, "ANALYZE TABLE global_ndv");
+        let actual = displayed(rows(
+            session,
+            "SHOW STATS_HISTOGRAMS WHERE table_name = 'global_ndv'",
+        ))
+        .into_iter()
+        .filter(|row| row[4] == "1")
+        .collect::<Vec<_>>();
+        assert_eq!(actual.len(), expected.len());
+        assert_eq!(
+            actual.iter().map(|row| row[6].as_str()).collect::<Vec<_>>(),
+            expected
+        );
+    };
+
+    check_ndv(&mut session, &["0", "0", "0", "0", "0"]);
+    rows(&mut session, "INSERT INTO global_ndv VALUES (1),(2),(3)");
+    check_ndv(&mut session, &["3", "3", "0", "0", "0"]);
+    rows(
+        &mut session,
+        "INSERT INTO global_ndv VALUES (11),(12),(13),(21),(22),(23)",
+    );
+    check_ndv(&mut session, &["9", "3", "3", "3", "0"]);
+    rows(
+        &mut session,
+        "INSERT INTO global_ndv VALUES (31),(32),(33),(34)",
+    );
+    check_ndv(&mut session, &["13", "3", "3", "3", "4"]);
+    rows(
+        &mut session,
+        "INSERT INTO global_ndv VALUES (31),(33),(34),(1),(2),(3)",
+    );
+    check_ndv(&mut session, &["13", "3", "3", "3", "4"]);
+}
+
 /// A write takes the same access paths a `SELECT` does, which is
 /// `crate::explain`'s divergence 8 as it now stands.
 ///

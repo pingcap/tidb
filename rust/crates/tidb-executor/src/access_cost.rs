@@ -58,6 +58,10 @@ pub struct TableStatistics {
     /// from the pseudo rates. Collapsing the two would either invent a
     /// distribution or throw away a row count the cluster really knows.
     pub pseudo: bool,
+    /// Go's `statistics.Table.HistColl.Pseudo` on the shared cache object.
+    /// Unlike [`Self::pseudo`], this does not change when the planner makes a
+    /// pseudo copy for an empty or outdated table.
+    pub cache_pseudo: bool,
     /// Go `HistColl.RealtimeCount`, from `mysql.stats_meta.count`.
     pub row_count: i64,
     /// Go `HistColl.ModifyCount`, from `mysql.stats_meta.modify_count`.
@@ -90,6 +94,19 @@ pub struct TableStatistics {
 }
 
 impl TableStatistics {
+    /// Whether this is Go's synthetic cached `PseudoTable`, as opposed to a
+    /// real cached table that the planner copied and marked pseudo because it
+    /// is empty or outdated.
+    ///
+    /// Go's SHOW paths read the cache object and suppress only the former.
+    /// An analyzed empty table still has initialized item statuses, so its
+    /// zero-NDV histogram rows remain visible even though `GetStatsTable`
+    /// returns a separate pseudo table for optimization.
+    #[must_use]
+    pub fn is_synthetic_pseudo(&self) -> bool {
+        self.cache_pseudo
+    }
+
     /// Go `HistColl.GetAnalyzeRowCount`: the row count observed by the first
     /// fully loaded analyzed histogram, or `-1` when the table has none.
     #[must_use]
@@ -191,8 +208,10 @@ impl TableStatistics {
             .collect();
         let column_stats_existence = columns.keys().map(|id| (*id, true)).collect();
         let index_stats_existence = indexes.keys().map(|id| (*id, true)).collect();
+        let pseudo = row_count == 0 || (columns.is_empty() && indexes.is_empty());
         Self {
-            pseudo: row_count == 0 || (columns.is_empty() && indexes.is_empty()),
+            pseudo,
+            cache_pseudo: pseudo,
             row_count,
             modify_count,
             version: 0,
@@ -1588,6 +1607,20 @@ mod tests {
             }],
             ..tidb_stats::Histogram::default()
         }
+    }
+
+    #[test]
+    fn initialized_empty_stats_are_not_a_synthetic_cache_pseudo() {
+        let synthetic = TableStatistics::new(0, 0, BTreeMap::new(), BTreeMap::new());
+        assert!(synthetic.is_synthetic_pseudo());
+
+        let mut analyzed_empty = synthetic;
+        analyzed_empty.cache_pseudo = false;
+        analyzed_empty
+            .index_load_status
+            .insert(1, tidb_stats::StatsLoadedStatus::full_load());
+        assert!(analyzed_empty.pseudo);
+        assert!(!analyzed_empty.is_synthetic_pseudo());
     }
 
     #[test]
