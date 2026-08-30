@@ -49,6 +49,251 @@ use super::catalog::{Catalog, TableEntry};
 use super::from::FromScope;
 use super::FromTable;
 
+enum ListColumnsLocated {
+    Full,
+    Location(crate::partition_pruning::ListPartitionLocation),
+}
+
+fn locate_list_columns_condition(
+    partition: &crate::partition_routing::PartitionSpec,
+    condition: &Expression,
+    columns: &[tidb_expr::column::Column],
+) -> Result<ListColumnsLocated, tidb_planner::plan_base::PlanError> {
+    let crate::partition_routing::PartitionKind::ListColumns {
+        values,
+        default_partition,
+        field_types,
+        ..
+    } = &partition.kind
+    else {
+        return Ok(ListColumnsLocated::Full);
+    };
+
+    match condition {
+        Expression::Constant(constant) => match tidb_expr::truthy_of(&constant.value) {
+            Ok(Some(false) | None) => Ok(ListColumnsLocated::Location(Default::default())),
+            Ok(Some(true)) | Err(_) => Ok(ListColumnsLocated::Full),
+        },
+        Expression::ScalarFunction(function) => match function.func_name.lowercase() {
+            "and" => locate_list_columns_cnf(partition, function.get_args(), columns),
+            "or" => locate_list_columns_dnf(partition, function.get_args(), columns),
+            _ => {
+                let referenced = tidb_expr::simple_expr::extract_columns(condition);
+                if referenced.len() != 1 {
+                    return Ok(ListColumnsLocated::Full);
+                }
+                let Some(column_index) = columns
+                    .iter()
+                    .position(|column| column.id == referenced[0].id)
+                else {
+                    return Ok(ListColumnsLocated::Full);
+                };
+                let detached =
+                    tidb_planner::ranger::detacher::detach_cond_and_build_range_for_partition(
+                        std::slice::from_ref(condition),
+                        std::slice::from_ref(&columns[column_index]),
+                        &[tidb_datatype::UNSPECIFIED_LENGTH],
+                        0,
+                    )
+                    .map_err(|error| {
+                        tidb_planner::plan_base::PlanError::internal(format!(
+                            "LIST COLUMNS range detachment failed: {error:?}"
+                        ))
+                    })?;
+                let ranges = detached
+                    .ranges
+                    .iter()
+                    .map(|range| crate::IndexRange {
+                        low: range.low_val.clone(),
+                        high: range.high_val.clone(),
+                        low_exclusive: range.low_exclude,
+                        high_exclusive: range.high_exclude,
+                    })
+                    .collect::<Vec<_>>();
+                let location = crate::partition_pruning::list_column_location_for_ranges(
+                    &ranges,
+                    values,
+                    *default_partition,
+                    field_types,
+                    column_index,
+                )
+                .map_err(|error| {
+                    tidb_planner::plan_base::PlanError::internal(format!(
+                        "LIST COLUMNS location failed: {error:?}"
+                    ))
+                })?;
+                Ok(location.map_or(ListColumnsLocated::Full, ListColumnsLocated::Location))
+            }
+        },
+        Expression::Column(_) | Expression::CorrelatedColumn(_) => Ok(ListColumnsLocated::Full),
+    }
+}
+
+fn locate_list_columns_cnf(
+    partition: &crate::partition_routing::PartitionSpec,
+    conditions: &[Expression],
+    columns: &[tidb_expr::column::Column],
+) -> Result<ListColumnsLocated, tidb_planner::plan_base::PlanError> {
+    let mut location = None;
+    for condition in conditions {
+        match locate_list_columns_condition(partition, condition, columns)? {
+            ListColumnsLocated::Full => {}
+            ListColumnsLocated::Location(found) => {
+                if let Some(current) = &mut location {
+                    crate::partition_pruning::intersect_list_partition_location(current, &found);
+                } else {
+                    location = Some(found);
+                }
+            }
+        }
+    }
+    Ok(location.map_or(ListColumnsLocated::Full, ListColumnsLocated::Location))
+}
+
+fn locate_list_columns_dnf(
+    partition: &crate::partition_routing::PartitionSpec,
+    conditions: &[Expression],
+    columns: &[tidb_expr::column::Column],
+) -> Result<ListColumnsLocated, tidb_planner::plan_base::PlanError> {
+    if conditions.is_empty() {
+        return Ok(ListColumnsLocated::Full);
+    }
+    let mut location = crate::partition_pruning::ListPartitionLocation::new();
+    for condition in conditions {
+        match locate_list_columns_condition(partition, condition, columns)? {
+            ListColumnsLocated::Full => return Ok(ListColumnsLocated::Full),
+            ListColumnsLocated::Location(found) => {
+                crate::partition_pruning::union_list_partition_location(&mut location, found);
+            }
+        }
+    }
+    Ok(ListColumnsLocated::Location(location))
+}
+
+fn list_columns_pruned_ids(
+    partition: &crate::partition_routing::PartitionSpec,
+    conditions: &[Expression],
+    columns: &[tidb_expr::column::Column],
+) -> Result<Option<Vec<i64>>, tidb_planner::plan_base::PlanError> {
+    Ok(
+        match locate_list_columns_cnf(partition, conditions, columns)? {
+            ListColumnsLocated::Full => None,
+            ListColumnsLocated::Location(location) => Some(
+                partition
+                    .definitions
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, definition)| {
+                        location.contains_key(&index).then_some(definition.id)
+                    })
+                    .collect(),
+            ),
+        },
+    )
+}
+
+#[cfg(test)]
+mod list_columns_pruning_tests {
+    use super::*;
+    use crate::partition_routing::{PartitionDef, PartitionKind, PartitionSpec};
+    use tidb_ast::CiString;
+    use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+    use tidb_expr::{column::Column, constant::Constant, scalar_function::ScalarFunction};
+
+    fn integer_type() -> FieldType {
+        FieldType::new(FieldTypeCode::LongLong)
+    }
+
+    fn column(id: i64, unique_id: i64, index: i64) -> Column {
+        let mut column = Column::new(unique_id, integer_type());
+        column.id = id;
+        column.index = index;
+        column
+    }
+
+    fn equals(column: &Column, value: i64) -> Expression {
+        Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("eq"),
+            FieldType::new(FieldTypeCode::Tiny),
+            vec![
+                Expression::Column(column.clone()),
+                Expression::Constant(Constant::new(Datum::Int(value), integer_type())),
+            ],
+        ))
+    }
+
+    fn or(arguments: Vec<Expression>) -> Expression {
+        Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("or"),
+            FieldType::new(FieldTypeCode::Tiny),
+            arguments,
+        ))
+    }
+
+    fn list_columns_spec() -> PartitionSpec {
+        let field_type = integer_type();
+        PartitionSpec {
+            is_empty_columns: false,
+            kind: PartitionKind::ListColumns {
+                values: vec![
+                    (vec![Datum::Int(1), Datum::Int(5)], 0),
+                    (vec![Datum::Int(1), Datum::Int(6)], 0),
+                    (vec![Datum::Int(1), Datum::Int(7)], 1),
+                    (vec![Datum::Int(9), Datum::Int(9)], 1),
+                ],
+                keys: Default::default(),
+                default_partition: Some(2),
+                field_types: vec![field_type.clone(), field_type.clone()],
+            },
+            expr_text: "`a`,`b`".to_owned(),
+            expr: Expression::Constant(Constant::new(Datum::Null, field_type)),
+            dependencies: vec!["a".to_owned(), "b".to_owned()],
+            definitions: (0..3)
+                .map(|ordinal| PartitionDef {
+                    id: 501 + ordinal,
+                    name: format!("p{ordinal}"),
+                    less_than: Vec::new(),
+                    in_values: Vec::new(),
+                    comment: String::new(),
+                    placement_policy: None,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn list_columns_prunes_each_referenced_column_and_intersects_tuple_groups() {
+        let spec = list_columns_spec();
+        let columns = vec![column(1, 11, 0), column(2, 12, 1)];
+
+        assert_eq!(
+            list_columns_pruned_ids(&spec, &[equals(&columns[1], 7)], &columns).unwrap(),
+            Some(vec![502, 503]),
+            "a predicate on the second partition column is prunable; Go also retains DEFAULT"
+        );
+        assert_eq!(
+            list_columns_pruned_ids(
+                &spec,
+                &[equals(&columns[0], 1), equals(&columns[1], 9)],
+                &columns,
+            )
+            .unwrap(),
+            Some(vec![503]),
+            "CNF intersection must use tuple-group identity, not just partition identity"
+        );
+        assert_eq!(
+            list_columns_pruned_ids(
+                &spec,
+                &[or(vec![equals(&columns[1], 6), equals(&columns[0], 9)])],
+                &columns,
+            )
+            .unwrap(),
+            Some(vec![501, 502, 503]),
+            "DNF union keeps every located tuple group and Go's DEFAULT group"
+        );
+    }
+}
+
 impl tidb_planner::logical::rule::PlanCacheMarker for crate::StmtContext {
     fn set_skip_plan_cache(&self, reason: &str) {
         crate::StmtContext::set_skip_plan_cache(self, reason);
@@ -926,6 +1171,15 @@ fn optimize_built_logical(
                     tidb_expr::expr_util::push_not::push_down_not(condition, self.builder)
                 })
                 .collect::<Vec<_>>();
+            if matches!(
+                partition.kind,
+                crate::partition_routing::PartitionKind::ListColumns { .. }
+            ) {
+                if let Some(ids) = list_columns_pruned_ids(partition, &conditions, &columns)? {
+                    surviving.retain(|index| ids.contains(&partition.definitions[*index].id));
+                }
+                return Ok(surviving);
+            }
             let lengths = vec![tidb_datatype::UNSPECIFIED_LENGTH; columns.len()];
             let Ok(detached) =
                 tidb_planner::ranger::detacher::detach_cond_and_build_range_for_partition(
