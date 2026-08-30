@@ -33,6 +33,7 @@ members = [
     "crates/tidb-protocol",
     "crates/tidb-distsql",
     "crates/tidb-planner",
+    "crates/tidb-planner-coretestsdk",
     "crates/tidb-resolve",
     "crates/tidb-sqlexec",
     "crates/tidb-sqlexec-mock",
