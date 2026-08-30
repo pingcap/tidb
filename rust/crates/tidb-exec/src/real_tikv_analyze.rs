@@ -29,13 +29,17 @@
 
 use std::collections::HashSet;
 use std::fmt;
+use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::mpsc::sync_channel;
 use std::time::Duration;
 
 use chrono::TimeZone;
 use tidb_datatype::{FieldType, FieldTypeCode, SessionTimeZone};
+use tidb_stats::histogram::Histogram;
 use tidb_stats::{
-    merge_partition_cmsketches, merge_partition_fm_sketches, merge_partition_histogram_topn,
-    merge_partition_stats_item, GlobalStatsMergeMode, PartitionStatsItem, StatsLoadedStatus,
+    fm_sketch_ndv, merge_fm_sketch, merge_partition_histogram_topn, merge_partition_stats_item,
+    CmsSketch, FmSketch, GlobalStatsItem, GlobalStatsMergeMode, PartitionStatsItem,
+    StatsLoadedStatus, TopN,
 };
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{
@@ -703,6 +707,13 @@ struct AsyncGlobalPartition {
     has_indexes: bool,
 }
 
+struct AsyncGlobalItem<'a> {
+    id: i64,
+    is_index: bool,
+    field_type: FieldType,
+    partitions: Vec<&'a AsyncGlobalPartition>,
+}
+
 fn prepare_async_global_partitions<S: crate::cluster_catalog::MetaSnapshot>(
     snapshot: &mut S,
     loader: &ClusterStatsLoader,
@@ -770,7 +781,7 @@ where
     S: crate::cluster_catalog::MetaSnapshot,
     TZ: TimeZone + Sync,
 {
-    let mut result = Vec::with_capacity(column_ids.len() + index_ids.len());
+    let mut items = Vec::with_capacity(column_ids.len() + index_ids.len());
     for (is_index, ids) in [(false, column_ids), (true, index_ids)] {
         for &id in ids {
             let field_type = if is_index {
@@ -813,89 +824,217 @@ where
                 }
                 active.push(partition);
             }
-
-            let mut fm_sketches = Vec::with_capacity(active.len());
-            for partition in &active {
-                fm_sketches.push(
-                    loader
-                        .load_fm_sketch(snapshot, partition.id, is_index, id)
-                        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?,
-                );
-            }
-            let global_ndv =
-                merge_partition_fm_sketches(total_count, fm_sketches.iter().map(Option::as_ref));
-            drop(fm_sketches);
-
-            let mut cmsketches = Vec::with_capacity(active.len());
-            for partition in &active {
-                cmsketches.push(
-                    loader
-                        .load_item_cmsketch(snapshot, partition.id, is_index, id)
-                        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?,
-                );
-            }
-            let cmsketch = merge_partition_cmsketches(
-                GlobalStatsMergeMode::Async,
-                cmsketches.iter().map(Option::as_ref),
-            )
-            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-            drop(cmsketches);
-
-            let mut histograms = Vec::with_capacity(active.len());
-            let mut topns = Vec::with_capacity(active.len());
-            for partition in active {
-                let histogram = loader
-                    .load_item_histogram(
-                        snapshot,
-                        partition.id,
-                        is_index,
-                        id,
-                        (!is_index).then_some(&field_type),
-                    )
-                    .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?
-                    .ok_or_else(|| {
-                        ClusterAnalyzeError::Other(format!(
-                            "histogram {id} disappeared from partition {} in one snapshot",
-                            partition.id
-                        ))
-                    })?;
-                histograms.push(histogram);
-                topns.push(
-                    loader
-                        .load_item_topn(snapshot, partition.id, is_index, id)
-                        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?,
-                );
-            }
-            let merged = merge_partition_histogram_topn(
-                timezone,
-                2,
-                statement.options.num_topn as u32,
-                statement.options.num_buckets as usize,
-                &field_type,
+            items.push(AsyncGlobalItem {
+                id,
                 is_index,
-                statement.partition_merge_concurrency,
-                global_ndv,
-                cmsketch,
-                histograms,
-                topns,
-            )
-            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-            if let Some(histogram) = merged.histogram {
-                result.push(ClusterStatsItem {
-                    id,
-                    is_index,
-                    stats_ver: 2,
-                    flag: 0,
-                    load_status: StatsLoadedStatus::full_load(),
-                    histogram,
-                    topn: merged.topn,
-                    cms: merged.cmsketch,
-                    fm_sketch: None,
-                });
-            }
+                field_type,
+                partitions: active,
+            });
         }
     }
-    Ok(result)
+
+    type SketchMessage<T> = (usize, Option<T>);
+    type HistogramMessage = (usize, Vec<Histogram>, Vec<Option<TopN>>);
+    let merged = std::thread::scope(|scope| {
+        // These capacities are part of pinned Go's worker contract.
+        let (fm_sender, fm_receiver) = sync_channel::<SketchMessage<FmSketch>>(5);
+        let (cms_sender, cms_receiver) = sync_channel::<SketchMessage<CmsSketch>>(5);
+        let (histogram_sender, histogram_receiver) = sync_channel::<HistogramMessage>(0);
+        let worker_items = &items;
+        let requested_topn = statement.options.num_topn as u32;
+        let expected_buckets = statement.options.num_buckets as usize;
+        let merge_concurrency = statement.partition_merge_concurrency;
+        let cpu_worker = scope.spawn(
+            move || -> Result<Vec<Option<GlobalStatsItem>>, ClusterAnalyzeError> {
+                let mut fm_sketches: Vec<Option<FmSketch>> = vec![None; worker_items.len()];
+                while let Ok((index, source)) = fm_receiver.recv() {
+                    if let Some(source) = source {
+                        if let Some(destination) = &mut fm_sketches[index] {
+                            merge_fm_sketch(Some(destination), Some(&source));
+                        } else {
+                            fm_sketches[index] = Some(source);
+                        }
+                    }
+                }
+                let global_ndvs = fm_sketches
+                    .iter()
+                    .map(|sketch| fm_sketch_ndv(sketch.as_ref()).min(total_count))
+                    .collect::<Vec<_>>();
+                drop(fm_sketches);
+
+                let mut cmsketches: Vec<Option<CmsSketch>> = vec![None; worker_items.len()];
+                while let Ok((index, source)) = cms_receiver.recv() {
+                    if let Some(source) = source {
+                        if let Some(destination) = &mut cmsketches[index] {
+                            destination
+                                .merge(&source)
+                                .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+                        } else {
+                            cmsketches[index] = Some(source);
+                        }
+                    }
+                }
+
+                let mut merged = vec![None; worker_items.len()];
+                while let Ok((index, histograms, topns)) = histogram_receiver.recv() {
+                    let item = &worker_items[index];
+                    merged[index] = Some(
+                        merge_partition_histogram_topn(
+                            timezone,
+                            2,
+                            requested_topn,
+                            expected_buckets,
+                            &item.field_type,
+                            item.is_index,
+                            merge_concurrency,
+                            global_ndvs[index],
+                            cmsketches[index].take(),
+                            histograms,
+                            topns,
+                        )
+                        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?,
+                    );
+                }
+                Ok(merged)
+            },
+        );
+
+        let mut fm_sender = Some(fm_sender);
+        let mut cms_sender = Some(cms_sender);
+        let mut histogram_sender = Some(histogram_sender);
+        let io_result = catch_unwind(AssertUnwindSafe(|| -> Result<(), ClusterAnalyzeError> {
+            for (index, item) in items.iter().enumerate() {
+                for partition in &item.partitions {
+                    let sketch = loader
+                        .load_fm_sketch(snapshot, partition.id, item.is_index, item.id)
+                        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+                    if fm_sender
+                        .as_ref()
+                        .expect("FM sender remains open during the FM phase")
+                        .send((index, sketch))
+                        .is_err()
+                    {
+                        return Ok(());
+                    }
+                }
+            }
+            drop(fm_sender.take());
+
+            for (index, item) in items.iter().enumerate() {
+                for partition in &item.partitions {
+                    let sketch = loader
+                        .load_item_cmsketch(snapshot, partition.id, item.is_index, item.id)
+                        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+                    if cms_sender
+                        .as_ref()
+                        .expect("CMS sender remains open during the CMS phase")
+                        .send((index, sketch))
+                        .is_err()
+                    {
+                        return Ok(());
+                    }
+                }
+            }
+            drop(cms_sender.take());
+
+            for (index, item) in items.iter().enumerate() {
+                let mut histograms = Vec::with_capacity(item.partitions.len());
+                let mut topns = Vec::with_capacity(item.partitions.len());
+                for partition in &item.partitions {
+                    let histogram = loader
+                        .load_item_histogram(
+                            snapshot,
+                            partition.id,
+                            item.is_index,
+                            item.id,
+                            (!item.is_index).then_some(&item.field_type),
+                        )
+                        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?
+                        .ok_or_else(|| {
+                            ClusterAnalyzeError::Other(format!(
+                                "histogram {} disappeared from partition {} in one snapshot",
+                                item.id, partition.id
+                            ))
+                        })?;
+                    histograms.push(histogram);
+                    topns.push(
+                        loader
+                            .load_item_topn(snapshot, partition.id, item.is_index, item.id)
+                            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?,
+                    );
+                }
+                if !histograms.is_empty() || !topns.is_empty() {
+                    if histogram_sender
+                        .as_ref()
+                        .expect("histogram sender remains open during its phase")
+                        .send((index, histograms, topns))
+                        .is_err()
+                    {
+                        return Ok(());
+                    }
+                }
+            }
+            drop(histogram_sender.take());
+            Ok(())
+        }))
+        .map_err(|panic| {
+            let detail = panic
+                .downcast_ref::<&str>()
+                .map_or_else(
+                    || {
+                        panic
+                            .downcast_ref::<String>()
+                            .map_or("unknown panic", String::as_str)
+                    },
+                    |message| *message,
+                )
+                .to_owned();
+            ClusterAnalyzeError::Other(format!("global-stat IO worker panicked: {detail}"))
+        })
+        .and_then(|result| result);
+        drop(fm_sender);
+        drop(cms_sender);
+        drop(histogram_sender);
+
+        let cpu_result = cpu_worker.join().map_err(|panic| {
+            let detail = panic
+                .downcast_ref::<&str>()
+                .map_or_else(
+                    || {
+                        panic
+                            .downcast_ref::<String>()
+                            .map_or("unknown panic", String::as_str)
+                    },
+                    |message| *message,
+                )
+                .to_owned();
+            ClusterAnalyzeError::Other(format!("global-stat CPU worker panicked: {detail}"))
+        })?;
+        match (io_result, cpu_result) {
+            (Ok(()), result) => result,
+            (Err(io), Ok(_)) => Err(io),
+            (Err(io), Err(cpu)) => Err(ClusterAnalyzeError::Other(format!("{io}\n{cpu}"))),
+        }
+    })?;
+
+    Ok(items
+        .iter()
+        .zip(merged)
+        .filter_map(|(item, merged)| {
+            let merged = merged?;
+            Some(ClusterStatsItem {
+                id: item.id,
+                is_index: item.is_index,
+                stats_ver: 2,
+                flag: 0,
+                load_status: StatsLoadedStatus::full_load(),
+                histogram: merged.histogram?,
+                topn: merged.topn,
+                cms: merged.cmsketch,
+                fm_sketch: None,
+            })
+        })
+        .collect())
 }
 
 fn merge_global_items<TZ: TimeZone + Sync>(
