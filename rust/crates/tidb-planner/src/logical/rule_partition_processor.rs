@@ -20,7 +20,8 @@ use crate::logical::{
 };
 use crate::plan_base::PlanError;
 
-use super::rule::{LogicalOptRule, RuleContext};
+use super::rule::{conds_to_table_dual, LogicalOptRule, RuleContext};
+use super::rule_predicate_simplification::apply_predicate_simplification;
 
 /// The ranger-backed half of Go's partition processor. The planner owns the
 /// tree rewrite; the catalog implementation owns partition expressions and
@@ -71,9 +72,22 @@ fn make_children(ctx: &RuleContext<'_>, source: DataSource, indices: Vec<usize>)
     }
 }
 
-fn prune_data_source(ctx: &RuleContext<'_>, source: DataSource) -> Result<LogicalPlan, PlanError> {
+fn prune_data_source(
+    ctx: &RuleContext<'_>,
+    mut source: DataSource,
+) -> Result<LogicalPlan, PlanError> {
     if source.partition_definition_ids.is_empty() {
         return Ok(LogicalPlan::DataSource(source));
+    }
+    source.pushed_down_conds = apply_predicate_simplification(ctx, source.pushed_down_conds, false);
+    source.all_conds = apply_predicate_simplification(ctx, source.all_conds, false);
+    if let Some(dual) = conds_to_table_dual(
+        ctx,
+        &source.all_conds,
+        source.base.base.schema(),
+        source.base.base.query_block_offset(),
+    ) {
+        return Ok(dual);
     }
     let indices = ctx.partition_pruning.map_or_else(
         || Ok((0..source.partition_definition_ids.len()).collect()),

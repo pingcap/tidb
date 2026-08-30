@@ -117,6 +117,22 @@ fn eq_const(id: i64, value: i64) -> Expression {
     ))
 }
 
+fn not_ne_const(id: i64, value: i64) -> Expression {
+    let not_equal = Expression::ScalarFunction(ScalarFunction::new(
+        CiString::new("ne"),
+        int_type(),
+        vec![
+            col_expr(id),
+            Expression::Constant(Constant::new(Datum::Int(value), int_type())),
+        ],
+    ));
+    Expression::ScalarFunction(ScalarFunction::new(
+        CiString::new("not"),
+        int_type(),
+        vec![not_equal],
+    ))
+}
+
 /// `col(left) = col(right)`, the shape that becomes an `EqualCondition`.
 fn eq_cols(left: i64, right: i64) -> Expression {
     Expression::ScalarFunction(ScalarFunction::new(
@@ -1013,6 +1029,17 @@ impl PartitionPruning for FixedPartitionPruning {
     }
 }
 
+struct UnexpectedPartitionPruning;
+
+impl PartitionPruning for UnexpectedPartitionPruning {
+    fn partition_indices(
+        &self,
+        _source: &DataSource,
+    ) -> Result<Vec<usize>, crate::plan_base::PlanError> {
+        panic!("constant-false conditions must become TableDual before partition pruning")
+    }
+}
+
 #[derive(Default)]
 struct RecordingPlanCacheMarker(RefCell<Option<String>>);
 
@@ -1085,6 +1112,53 @@ fn partition_processor_puts_union_scan_inside_each_partition_branch() {
         marker.0.borrow().as_deref(),
         Some("Static partition pruning mode")
     );
+    plan.dismantle();
+}
+
+#[test]
+fn partition_processor_normalizes_both_condition_lists_and_folds_false() {
+    let allocator = PlanIdAllocator::new();
+    let pruning = FixedPartitionPruning(vec![1]);
+    let mut ctx = test_context(&allocator);
+    ctx.partition_pruning = Some(&pruning);
+
+    let mut source = data_source(&allocator, &[1, 2]);
+    let LogicalPlan::DataSource(source_ref) = &mut source else {
+        unreachable!("the helper builds a DataSource");
+    };
+    source_ref.partition_definition_ids = vec![101, 102];
+    source_ref.all_conds = vec![not_ne_const(2, 7)];
+    source_ref.pushed_down_conds = vec![not_ne_const(2, 7)];
+
+    let (plan, _) = PartitionProcessor
+        .optimize(&ctx, source)
+        .expect("static partition rewrite");
+    let LogicalPlan::DataSource(source) = &plan else {
+        panic!("one surviving partition must remain a DataSource");
+    };
+    for conditions in [&source.all_conds, &source.pushed_down_conds] {
+        assert!(matches!(
+            conditions.as_slice(),
+            [Expression::ScalarFunction(condition)] if condition.func_name.lowercase() == "eq"
+        ));
+    }
+    assert_eq!(source.physical_table_id, 102);
+    plan.dismantle();
+
+    let unexpected = UnexpectedPartitionPruning;
+    let mut ctx = test_context(&allocator);
+    ctx.partition_pruning = Some(&unexpected);
+    let mut source = data_source(&allocator, &[1]);
+    let LogicalPlan::DataSource(source_ref) = &mut source else {
+        unreachable!("the helper builds a DataSource");
+    };
+    source_ref.partition_definition_ids = vec![101, 102];
+    source_ref.all_conds = vec![const_false()];
+    source_ref.pushed_down_conds = vec![const_false()];
+    let (plan, _) = PartitionProcessor
+        .optimize(&ctx, source)
+        .expect("constant false fold");
+    assert!(matches!(plan, LogicalPlan::TableDual(_)));
     plan.dismantle();
 }
 
