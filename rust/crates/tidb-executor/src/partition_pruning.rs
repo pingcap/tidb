@@ -143,12 +143,14 @@ pub fn pruned_ids(
         PartitionKind::ListColumns {
             values,
             default_partition,
+            field_types,
             ..
         } => Some(prune_list_columns_ids(
             spec,
             ranges,
             values,
             *default_partition,
+            field_types,
         )),
     })
 }
@@ -455,19 +457,54 @@ fn prune_list_columns_ids(
     ranges: &[IndexRange],
     values: &[(Vec<Datum>, usize)],
     default_partition: Option<usize>,
+    field_types: &[tidb_datatype::FieldType],
 ) -> Vec<i64> {
     let mut used = vec![false; spec.definitions.len()];
     for range in ranges {
+        if range.is_point(true) && range.high.len() == field_types.len() {
+            let mut owner = None;
+            for (tuple, ordinal) in values {
+                match tuple_equal_with_types(tuple, &range.high, field_types) {
+                    Ok(true) => {
+                        owner = Some(*ordinal);
+                        break;
+                    }
+                    Ok(false) => {}
+                    Err(()) => {
+                        return spec
+                            .definitions
+                            .iter()
+                            .map(|definition| definition.id)
+                            .collect();
+                    }
+                }
+            }
+            if let Some(ordinal) = owner
+                .or(default_partition)
+                .filter(|ordinal| *ordinal < used.len())
+            {
+                used[ordinal] = true;
+            }
+            continue;
+        }
         for (tuple, ordinal) in values {
-            if *ordinal < used.len() && tuple_in_range(tuple, range) {
-                used[*ordinal] = true;
+            match tuple_in_range(tuple, range, field_types) {
+                Ok(true) if *ordinal < used.len() => used[*ordinal] = true,
+                Ok(_) => {}
+                Err(()) => {
+                    return spec
+                        .definitions
+                        .iter()
+                        .map(|definition| definition.id)
+                        .collect();
+                }
             }
         }
-    }
-    // Go adds DEFAULT to every `LocateRanges` result: gaps in any predicate
-    // range may contain a tuple it owns.
-    if let Some(ordinal) = default_partition.filter(|ordinal| *ordinal < used.len()) {
-        used[ordinal] = true;
+        // Go adds DEFAULT to partial points and every `LocateRanges` result:
+        // gaps in the constrained column may contain a tuple it owns.
+        if let Some(ordinal) = default_partition.filter(|ordinal| *ordinal < used.len()) {
+            used[ordinal] = true;
+        }
     }
     spec.definitions
         .iter()
@@ -476,34 +513,74 @@ fn prune_list_columns_ids(
         .collect()
 }
 
-fn tuple_in_range(tuple: &[Datum], range: &IndexRange) -> bool {
+fn tuple_equal_with_types(
+    left: &[Datum],
+    right: &[Datum],
+    field_types: &[tidb_datatype::FieldType],
+) -> Result<bool, ()> {
+    if left.len() != right.len() || left.len() != field_types.len() {
+        return Ok(false);
+    }
+    for ((left, right), field_type) in left.iter().zip(right).zip(field_types) {
+        let order = tidb_expr::compare_datums_with_collation(left, right, field_type.collation())
+            .map_err(|_| ())?;
+        if order != Ordering::Equal {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn tuple_in_range(
+    tuple: &[Datum],
+    range: &IndexRange,
+    field_types: &[tidb_datatype::FieldType],
+) -> Result<bool, ()> {
     let width = range.low.len().min(range.high.len()).min(tuple.len());
     if width == 0 {
-        return true;
+        return Ok(true);
     }
-    let value = match tidb_codec::encode_key(&tuple[..width]) {
-        Ok(value) => value,
-        Err(_) => return true,
-    };
-    let low = match tidb_codec::encode_key(&range.low[..width]) {
-        Ok(value) => value,
-        Err(_) => return true,
-    };
-    let high = match tidb_codec::encode_key(&range.high[..width]) {
-        Ok(value) => value,
-        Err(_) => return true,
-    };
+    if width > field_types.len() {
+        return Err(());
+    }
+    let low = tuple_endpoint_order(&tuple[..width], &range.low[..width], &field_types[..width])?;
+    let high = tuple_endpoint_order(&tuple[..width], &range.high[..width], &field_types[..width])?;
     let lower_ok = if range.low_exclusive {
-        value > low
+        low == Ordering::Greater
     } else {
-        value >= low
+        low != Ordering::Less
     };
     let upper_ok = if range.high_exclusive {
-        value < high
+        high == Ordering::Less
     } else {
-        value <= high
+        high != Ordering::Greater
     };
-    lower_ok && upper_ok
+    Ok(lower_ok && upper_ok)
+}
+
+fn tuple_endpoint_order(
+    tuple: &[Datum],
+    endpoint: &[Datum],
+    field_types: &[tidb_datatype::FieldType],
+) -> Result<Ordering, ()> {
+    for ((value, endpoint), field_type) in tuple.iter().zip(endpoint).zip(field_types) {
+        let order = match endpoint {
+            Datum::MinNotNull => {
+                if matches!(value, Datum::Null) {
+                    Ordering::Less
+                } else {
+                    Ordering::Greater
+                }
+            }
+            Datum::MaxValue => Ordering::Less,
+            _ => tidb_expr::compare_datums_with_collation(value, endpoint, field_type.collation())
+                .map_err(|_| ())?,
+        };
+        if order != Ordering::Equal {
+            return Ok(order);
+        }
+    }
+    Ok(Ordering::Equal)
 }
 
 /// Go `ForListPruning.LocatePartitionByRange`: retain the definitions owning
@@ -1212,6 +1289,38 @@ mod tests {
         }
     }
 
+    fn list_columns_table() -> PartitionSpec {
+        let field_type = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar)
+            .with_collation(tidb_datatype::Collation::Utf8Mb4GeneralCi);
+        PartitionSpec {
+            is_empty_columns: false,
+            kind: PartitionKind::ListColumns {
+                values: vec![
+                    (vec![Datum::new_string("a")], 0),
+                    (vec![Datum::new_string("b")], 1),
+                ],
+                keys: Default::default(),
+                default_partition: Some(2),
+                field_types: vec![field_type.clone()],
+            },
+            expr_text: "`a`".to_owned(),
+            expr: tidb_expr::expression::Expression::Constant(
+                tidb_expr::expression::Constant::new(Datum::Null, field_type),
+            ),
+            dependencies: vec!["a".to_owned()],
+            definitions: (0..3)
+                .map(|ordinal| PartitionDef {
+                    id: 401 + ordinal,
+                    name: format!("p{ordinal}"),
+                    less_than: Vec::new(),
+                    in_values: Vec::new(),
+                    comment: String::new(),
+                    placement_policy: None,
+                })
+                .collect(),
+        }
+    }
+
     fn range_columns_table() -> PartitionSpec {
         use crate::partition_routing::RangeColumnBound::{MaxValue, Value};
 
@@ -1591,6 +1700,50 @@ mod tests {
             pruned_ids(&without_default, &[IndexRange::full()]),
             Some(vec![201, 202, 203]),
             "a full ranger interval must retain every definition"
+        );
+    }
+
+    #[test]
+    fn list_columns_points_and_ranges_match_go_default_ownership() {
+        let spec = list_columns_table();
+        assert_eq!(
+            pruned_ids(
+                &spec,
+                &[interval(
+                    Datum::new_string("A"),
+                    false,
+                    Datum::new_string("A"),
+                    false,
+                )]
+            ),
+            Some(vec![401]),
+            "a complete point uses the explicit owner and the column collation"
+        );
+        assert_eq!(
+            pruned_ids(
+                &spec,
+                &[interval(
+                    Datum::new_string("z"),
+                    false,
+                    Datum::new_string("z"),
+                    false,
+                )]
+            ),
+            Some(vec![403]),
+            "DEFAULT alone owns a complete point gap"
+        );
+        assert_eq!(
+            pruned_ids(
+                &spec,
+                &[interval(
+                    Datum::new_string("a"),
+                    false,
+                    Datum::new_string("b"),
+                    false,
+                )]
+            ),
+            Some(vec![401, 402, 403]),
+            "a LIST COLUMNS interval retains DEFAULT for possible gaps"
         );
     }
 
