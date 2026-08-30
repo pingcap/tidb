@@ -173,6 +173,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::resultset_source::ResultSetSource;
 use chrono::{Datelike, Timelike};
+use tidb_domain::historical_stats::{
+    HistoricalStatsMetrics, HistoricalStatsWorker, InfoSchemaView, SessionInfoSchema,
+    StatsHandle as HistoricalStatsHandle, TableMeta,
+};
 use tidb_exec::catalog_watch::SharedCatalog as SharedClusterCatalog;
 use tidb_exec::cluster_analyze::AnalyzeStatement;
 use tidb_exec::cluster_catalog::ClusterCatalog;
@@ -574,6 +578,10 @@ pub struct ClusterSessionFactory {
     stats_usage: Arc<tidb_stats_handle_usage::StatsUsageHandle>,
     /// Go Domain's index-GC and positive-lease usage-dump workers.
     stats_usage_workers: std::sync::OnceLock<StatsUsageWorkers>,
+    /// Go Domain's capacity-16 historical-statistics mailbox.
+    historical_stats_worker: Arc<HistoricalStatsWorker<ClusterHistoricalInfoSchema>>,
+    /// Go `StartHistoricalStatsWorker`, installed after stable `Arc` ownership.
+    historical_stats_runtime: std::sync::OnceLock<HistoricalStatsRuntime>,
 }
 
 impl ClusterSessionFactory {
@@ -606,6 +614,10 @@ impl ClusterSessionFactory {
         let data_lock_waits = Arc::new(ClusterDataLockWaits {
             transactions: Arc::clone(&transactions),
         });
+        let historical_stats_worker =
+            Arc::new(HistoricalStatsWorker::new(ClusterHistoricalInfoSchema {
+                catalog: Arc::clone(&catalog),
+            }));
         Self {
             transactions,
             data_lock_waits,
@@ -631,7 +643,29 @@ impl ClusterSessionFactory {
             workload_repository: std::sync::OnceLock::new(),
             stats_usage,
             stats_usage_workers: std::sync::OnceLock::new(),
+            historical_stats_worker,
+            historical_stats_runtime: std::sync::OnceLock::new(),
         }
+    }
+
+    /// Starts Go `Domain.StartHistoricalStatsWorker`.
+    pub(crate) fn start_historical_stats_worker(self: &Arc<Self>) {
+        if !tidb_domain::historical_stats::enable_dump_historical_stats()
+            || self.historical_stats_runtime.get().is_some()
+        {
+            return;
+        }
+        let handle = Arc::new(ClusterHistoricalStatsHandle {
+            transactions: Arc::clone(&self.transactions),
+            catalog: Arc::clone(&self.catalog),
+            global_vars: self.global_vars.clone(),
+        });
+        let _ = self
+            .historical_stats_runtime
+            .set(HistoricalStatsRuntime::start(
+                Arc::clone(&self.historical_stats_worker),
+                handle,
+            ));
     }
 
     /// Starts Go Domain's usage workers after the factory has stable `Arc`
@@ -1044,6 +1078,248 @@ impl Drop for ClusterSessionFactory {
     }
 }
 
+#[derive(Clone)]
+struct ClusterHistoricalInfoSchema {
+    catalog: Arc<SharedClusterCatalog>,
+}
+
+struct ClusterHistoricalSchemaView {
+    catalog: ClusterCatalog,
+}
+
+impl InfoSchemaView for ClusterHistoricalSchemaView {
+    fn table_by_id(&self, table_id: i64) -> Option<TableMeta> {
+        self.catalog
+            .databases
+            .iter()
+            .flat_map(|database| &database.tables)
+            .find(|table| table.id == table_id)
+            .map(|table| TableMeta {
+                id: table.id,
+                name: table.name.original().to_owned(),
+            })
+    }
+
+    fn find_table_by_partition_id(&self, partition_id: i64) -> Option<TableMeta> {
+        self.catalog
+            .databases
+            .iter()
+            .flat_map(|database| &database.tables)
+            .find(|table| {
+                table.get_partition_info().is_some_and(|partition| {
+                    partition
+                        .read()
+                        .definitions
+                        .snapshot()
+                        .iter()
+                        .any(|definition| definition.id == partition_id)
+                })
+            })
+            .map(|table| TableMeta {
+                id: table.id,
+                name: table.name.original().to_owned(),
+            })
+    }
+
+    fn schema_by_table(&self, table: &TableMeta) -> Option<String> {
+        self.catalog.databases.iter().find_map(|database| {
+            database
+                .tables
+                .iter()
+                .any(|candidate| candidate.id == table.id)
+                .then(|| database.info.name.original().to_owned())
+        })
+    }
+}
+
+impl SessionInfoSchema for ClusterHistoricalInfoSchema {
+    type View = ClusterHistoricalSchemaView;
+
+    fn info_schema(&self) -> Self::View {
+        ClusterHistoricalSchemaView {
+            catalog: (*self.catalog.load()).clone(),
+        }
+    }
+}
+
+struct ClusterHistoricalStatsHandle {
+    transactions: Arc<dyn ClusterTransactions>,
+    catalog: Arc<SharedClusterCatalog>,
+    global_vars: GlobalSysvars,
+}
+
+impl ClusterHistoricalStatsHandle {
+    fn table_json(
+        &self,
+        catalog: &ClusterCatalog,
+        database_name: &str,
+        table: &tidb_model::table_info::TableInfo,
+        physical_id: i64,
+    ) -> Result<Option<tidb_stats::JsonTable>, String> {
+        let table_stats = {
+            let snapshot = self.transactions.open_snapshot("default")?;
+            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+            tidb_exec::cluster_stats_dump::load_table_stats_payload(
+                &mut snapshot,
+                catalog,
+                table,
+                physical_id,
+            )
+            .map_err(|error| error.to_string())?
+        };
+        let Some(table_stats) = table_stats else {
+            return Ok(None);
+        };
+        let snapshot = self.transactions.open_snapshot("default")?;
+        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+        tidb_exec::cluster_stats_dump::table_stats_to_json_from_loaded(
+            &mut snapshot,
+            catalog,
+            database_name,
+            table,
+            physical_id,
+            table_stats,
+        )
+        .map_err(|error| error.to_string())
+    }
+
+    fn historical_json(
+        &self,
+        catalog: &ClusterCatalog,
+        database_name: &str,
+        table: &tidb_model::table_info::TableInfo,
+        physical_id: i64,
+        is_partition: bool,
+    ) -> Result<Option<tidb_stats::JsonTable>, String> {
+        if is_partition || table.get_partition_info().is_none() {
+            return self.table_json(catalog, database_name, table, physical_id);
+        }
+        let partition = table.get_partition_info().expect("partition checked above");
+        let mut partitions = std::collections::BTreeMap::new();
+        for definition in partition.read().definitions.snapshot() {
+            if let Some(json) = self.table_json(catalog, database_name, table, definition.id)? {
+                partitions.insert(definition.name.lowercase().to_owned(), Some(json));
+            }
+        }
+        if let Some(global) = self.table_json(catalog, database_name, table, table.id)? {
+            partitions.insert(tidb_stats::TIDB_GLOBAL_STATS.to_owned(), Some(global));
+        }
+        Ok(Some(tidb_stats::JsonTable {
+            database_name: database_name.to_owned(),
+            table_name: table.name.lowercase().to_owned(),
+            partitions: Some(partitions),
+            ..tidb_stats::JsonTable::default()
+        }))
+    }
+}
+
+impl HistoricalStatsHandle for ClusterHistoricalStatsHandle {
+    fn check_historical_stats_enable(&self) -> Result<bool, String> {
+        self.global_vars
+            .get(tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS)
+            .map(|value| tidb_exec::option_values::tidb_opt_on(&value))
+            .map_err(|error| format!("{error:?}"))
+    }
+
+    fn record_historical_stats_to_storage(
+        &self,
+        database_name: &str,
+        table: &TableMeta,
+        physical_id: i64,
+        is_partition: bool,
+    ) -> Result<u64, String> {
+        let catalog = self.catalog.load();
+        let table_info = catalog
+            .databases
+            .iter()
+            .flat_map(|database| &database.tables)
+            .find(|candidate| candidate.id == table.id)
+            .ok_or_else(|| format!("cannot get table by id {}", table.id))?;
+        let Some(json) = self.historical_json(
+            &catalog,
+            database_name,
+            table_info,
+            physical_id,
+            is_partition,
+        )?
+        else {
+            return Ok(0);
+        };
+        let snapshot = self.transactions.open_snapshot("default")?;
+        let read_ts = snapshot.start_ts();
+        let (version, plan) = {
+            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+            tidb_exec::cluster_stats_write::plan_historical_stats_data_write(
+                &mut snapshot,
+                &catalog,
+                physical_id,
+                &json,
+                tidb_exec::mysql_bootstrap::utc_now_timestamp(),
+            )
+            .map_err(|error| error.to_string())?
+        };
+        self.transactions
+            .commit_optimistic_mutations(plan.mutations, read_ts, "default")
+            .map_err(|error| error.message)?;
+        Ok(version)
+    }
+}
+
+struct HistoricalStatsRuntime {
+    worker: Arc<HistoricalStatsWorker<ClusterHistoricalInfoSchema>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+struct ClusterHistoricalStatsMetrics;
+
+impl HistoricalStatsMetrics for ClusterHistoricalStatsMetrics {
+    fn inc_generate_failed(&self) {
+        tidb_stats_handle_metrics::generate_historical_stats_failed_counter().inc();
+    }
+
+    fn inc_generate_success(&self) {
+        tidb_stats_handle_metrics::generate_historical_stats_success_counter().inc();
+    }
+}
+
+impl HistoricalStatsRuntime {
+    fn start(
+        worker: Arc<HistoricalStatsWorker<ClusterHistoricalInfoSchema>>,
+        handle: Arc<ClusterHistoricalStatsHandle>,
+    ) -> Self {
+        let running = Arc::clone(&worker);
+        let thread = std::thread::Builder::new()
+            .name("historical-stats-worker".to_owned())
+            .spawn(move || {
+                while let Some(table_id) = running.recv_historical_stats_table() {
+                    if let Err(error) = running.dump_historical_stats(
+                        table_id,
+                        handle.as_ref(),
+                        &ClusterHistoricalStatsMetrics,
+                    ) {
+                        eprintln!(
+                            "{{\"event\":\"dump_historical_stats_failed\",\"table_id\":{table_id},\"error\":{error:?}}}"
+                        );
+                    }
+                }
+            })
+            .expect("spawning historical statistics worker");
+        Self {
+            worker,
+            thread: Some(thread),
+        }
+    }
+}
+
+impl Drop for HistoricalStatsRuntime {
+    fn drop(&mut self) {
+        self.worker.close_table_channel();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
 fn spawn_usage_worker(
     name: &str,
     factory: Weak<ClusterSessionFactory>,
@@ -1288,6 +1564,7 @@ impl QuerySessionFactory for ClusterSessionFactory {
             schema_pins: Arc::clone(&self.schema_pins),
             connection_id: context.connection_id,
             transaction_pin: None,
+            historical_stats_worker: Arc::clone(&self.historical_stats_worker),
         })
     }
 
@@ -1566,6 +1843,8 @@ pub struct ClusterServerSession {
     /// nothing newer than this transaction's catalog to a Go DDL owner --
     /// Go's metadata lock, at transaction scope.
     transaction_pin: Option<schema_sync::SchemaPinGuard>,
+    /// The domain-global mailbox successful ANALYZE results enqueue into.
+    historical_stats_worker: Arc<HistoricalStatsWorker<ClusterHistoricalInfoSchema>>,
 }
 
 /// The session layer's next move after a pessimistic statement's lock step.

@@ -43,6 +43,7 @@ tidb-owner = { path = "../tidb-owner" }
 tidb-workloadrepo = { path = "../tidb-workloadrepo" }
 # `pkg/domain/serverinfo`'s syncer: this node's /tidb/server/info entry.
 tidb-domain = { path = "../tidb-domain" }
+tidb-stats-handle-metrics = { path = "../tidb-stats-handle-metrics" }
 tidb-parser = { path = "../tidb-parser" }
 tidb-protocol = { path = "../tidb-protocol" }
 tidb-proto = { path = "../tidb-proto" }

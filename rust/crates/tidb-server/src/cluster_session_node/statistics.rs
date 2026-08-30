@@ -155,6 +155,7 @@ impl ClusterServerSession {
         // is no bound.
         let memory_quota = self.analyze_memory_quota();
         self.session.begin_routed_statement_warnings();
+        let mut successful_table_ids = std::collections::BTreeSet::new();
         for statement in tables {
             let mut statement = statement.clone();
             statement.persist_options = self
@@ -240,6 +241,7 @@ impl ClusterServerSession {
             for (code, warning) in &report.global_stats_warnings {
                 self.session.append_routed_warning(*code, warning.clone());
             }
+            successful_table_ids.insert(report.table_id);
             eprintln!(
                 "{{\"event\":\"cluster_table_analyzed\",\"schema\":{},\"table\":{},\
                  \"table_id\":{},\"version\":{},\"scanned_rows\":{},\"sampled_rows\":{},\
@@ -255,6 +257,19 @@ impl ClusterServerSession {
                 report.bucket_count,
                 report.topn_count,
             );
+        }
+        // Go collects `results.TableID.GetStatisticsID()` only from successful
+        // results and enqueues that set after every save worker has finished.
+        if self
+            .session
+            .vars()
+            .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS)
+            .is_ok_and(|value| tidb_exec::option_values::tidb_opt_on(&value))
+        {
+            for table_id in successful_table_ids {
+                self.historical_stats_worker
+                    .send_tbl_to_dump_historical_stats(table_id);
+            }
         }
         // Go answers `ANALYZE TABLE` with an OK packet carrying no rows.
         Ok(WriteOutcome {

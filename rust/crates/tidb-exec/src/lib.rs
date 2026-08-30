@@ -74,6 +74,7 @@ pub mod cluster_load_stats;
 pub mod cluster_predicate_column;
 pub mod cluster_privilege_load;
 pub mod cluster_sequence;
+pub mod cluster_stats_dump;
 pub mod cluster_stats_load;
 pub mod cluster_stats_lock;
 pub mod cluster_stats_write;

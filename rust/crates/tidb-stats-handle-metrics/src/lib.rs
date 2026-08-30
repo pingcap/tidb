@@ -112,6 +112,8 @@ struct MetricsVars {
     stats_healthy_gauges: Vec<Gauge>,
     dump_historical_stats_success_counter: Counter,
     dump_historical_stats_failed_counter: Counter,
+    generate_historical_stats_success_counter: Counter,
+    generate_historical_stats_failed_counter: Counter,
 }
 
 static STATS_HEALTHY_GAUGE: LazyLock<GaugeVec> = LazyLock::new(|| {
@@ -160,6 +162,10 @@ fn bind_metrics_vars() -> MetricsVars {
             .with_label_values(&["dump", "success"]),
         dump_historical_stats_failed_counter: HISTORICAL_STATS_COUNTER
             .with_label_values(&["dump", "fail"]),
+        generate_historical_stats_success_counter: HISTORICAL_STATS_COUNTER
+            .with_label_values(&["generate", "success"]),
+        generate_historical_stats_failed_counter: HISTORICAL_STATS_COUNTER
+            .with_label_values(&["generate", "fail"]),
     }
 }
 
@@ -203,6 +209,26 @@ pub fn dump_historical_stats_failed_counter() -> Counter {
         .clone()
 }
 
+/// Go `domain_metrics.GenerateHistoricalStatsSuccessCounter`.
+#[must_use]
+pub fn generate_historical_stats_success_counter() -> Counter {
+    METRICS_VARS
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .generate_historical_stats_success_counter
+        .clone()
+}
+
+/// Go `domain_metrics.GenerateHistoricalStatsFailedCounter`.
+#[must_use]
+pub fn generate_historical_stats_failed_counter() -> Counter {
+    METRICS_VARS
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .generate_historical_stats_failed_counter
+        .clone()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -231,7 +257,7 @@ mod tests {
     }
 
     #[test]
-    fn source_init_binds_all_gauges_and_dump_counters() {
+    fn source_init_binds_all_gauges_and_historical_counters() {
         init_metrics_vars();
         let gauges = stats_healthy_gauges();
         assert_eq!(gauges.len(), STATS_HEALTHY_BUCKET_COUNT);
@@ -246,6 +272,17 @@ mod tests {
         let failed_before = failed.get();
         success.inc();
         failed.inc();
+        assert_eq!(success.get(), success_before + 1.0);
+        assert_eq!(failed.get(), failed_before + 1.0);
+
+        let generated = generate_historical_stats_success_counter();
+        let generate_failed = generate_historical_stats_failed_counter();
+        let generated_before = generated.get();
+        let generate_failed_before = generate_failed.get();
+        generated.inc();
+        generate_failed.inc();
+        assert_eq!(generated.get(), generated_before + 1.0);
+        assert_eq!(generate_failed.get(), generate_failed_before + 1.0);
         assert_eq!(success.get(), success_before + 1.0);
         assert_eq!(failed.get(), failed_before + 1.0);
     }

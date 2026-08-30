@@ -36,6 +36,9 @@ use tidb_exec::cluster_predicate_column::{
     load_column_stats_usage, load_column_stats_usage_for_table,
 };
 use tidb_exec::cluster_stats_load::{ClusterStatsItem, ClusterStatsLoader, ClusterTableStats};
+use tidb_exec::cluster_stats_dump::{
+    load_table_stats_payload, table_stats_to_json_from_loaded,
+};
 use tidb_exec::cluster_stats_write::{
     load_analyze_options, plan_analyze_options_write, plan_column_stats_usage_dump,
     plan_column_stats_usage_write, plan_get_predicate_columns,
@@ -1597,4 +1600,88 @@ fn historical_stats_data_round_trips_through_stats_history() {
     )
     .expect("historical statistics JSON restores");
     assert_eq!(restored, json);
+}
+
+/// Go `TableStatsToJSON(..., snapshot=0)` loads histogram payload first, then
+/// refreshes stats meta and predicate usage in a second restricted
+/// transaction. A metadata change between those reads must therefore appear
+/// in the dump without replacing the already-loaded histogram payload.
+#[test]
+fn live_stats_dump_refreshes_meta_after_loading_payload() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let table_id = 4242;
+    let initial = ClusterTableStats {
+        table_id,
+        version: 440_000_000_000_000_000,
+        snapshot: 439_000_000_000_000_000,
+        last_analyze_version: 440_000_000_000_000_000,
+        last_stats_hist_version: 440_000_000_000_000_000,
+        modify_count: 0,
+        row_count: 10_240,
+        columns: vec![full_histogram(1, false)],
+        indexes: Vec::new(),
+    };
+    let plan = plan_stats_write(&mut store, &catalog, &initial, now()).expect("analyze plans");
+    apply_mutations(&mut store, &plan.mutations);
+    let table_info = TableInfo {
+        id: table_id,
+        name: CiString::new("t"),
+        columns: vec![ColumnInfo {
+            id: 1,
+            name: CiString::new("a"),
+            field_type: tidb_datatype::FieldType::new(
+                tidb_datatype::FieldTypeCode::LongLong,
+            ),
+            state: SchemaState::PUBLIC,
+            ..ColumnInfo::default()
+        }]
+        .into(),
+        ..TableInfo::default()
+    };
+    let payload = load_table_stats_payload(&mut store, &catalog, &table_info, table_id)
+        .expect("payload loads")
+        .expect("stats exist");
+
+    let refreshed_version = initial.version + 1;
+    let plan = plan_loaded_stats_meta_write(
+        &mut store,
+        &catalog,
+        table_id,
+        55,
+        3,
+        refreshed_version,
+        now(),
+    )
+    .expect("newer metadata plans");
+    apply_mutations(&mut store, &plan.mutations);
+
+    let json = table_stats_to_json_from_loaded(
+        &mut store,
+        &catalog,
+        "test",
+        &table_info,
+        table_id,
+        payload,
+    )
+    .expect("dump renders")
+    .expect("stats exist");
+    assert_eq!(json.version, refreshed_version);
+    assert_eq!(json.count, 55);
+    assert_eq!(json.modify_count, 3);
+    let columns = json.columns.expect("column map");
+    assert_eq!(columns.len(), 1, "the first read's payload remains");
+    assert_eq!(
+        columns["a"]
+            .as_ref()
+            .expect("column dump")
+            .histogram
+            .as_ref()
+            .expect("histogram dump")
+            .buckets
+            .as_ref()
+            .expect("bucket dump")
+            .len(),
+        256
+    );
 }

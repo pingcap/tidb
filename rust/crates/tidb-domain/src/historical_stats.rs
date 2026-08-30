@@ -126,7 +126,7 @@
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Condvar, Mutex};
 
 /// Capacity of the worker's mailbox.
 ///
@@ -312,14 +312,15 @@ impl std::error::Error for DumpHistoricalStatsError {}
 
 /// Go `HistoricalStatsWorker.tblCH`, a buffered `chan int64`.
 ///
-/// Both ends of this channel are used non-blockingly in Go — every access
-/// in the package is a `select` with a `default` — so no parking is
-/// modelled. What *is* modelled is the close: `domain.go:1899` closes the
-/// channel at domain exit, after which Go's receive yields the zero value
-/// and Go's send panics.
+/// Go producers use a nonblocking `select` with `default`, while
+/// `StartHistoricalStatsWorker` blocks until a task or domain shutdown.
+/// The close is modelled too: `domain.go:1899` closes the channel at domain
+/// exit, after which Go's test-only receive yields the zero value and a send
+/// panics.
 #[derive(Debug)]
 struct TableChannel {
     state: Mutex<TableChannelState>,
+    wake: Condvar,
     capacity: usize,
 }
 
@@ -336,6 +337,7 @@ impl TableChannel {
                 queue: VecDeque::new(),
                 closed: false,
             }),
+            wake: Condvar::new(),
             capacity,
         }
     }
@@ -352,7 +354,27 @@ impl TableChannel {
             return false;
         }
         state.queue.push_back(value);
+        self.wake.notify_one();
         true
+    }
+
+    /// Go `tblID, ok := <-do.historicalStatsWorker.tblCH` in
+    /// `StartHistoricalStatsWorker`: block for a value and report channel
+    /// closure separately from the zero value.
+    fn recv(&self) -> Option<i64> {
+        let mut state = self.lock();
+        loop {
+            if state.closed {
+                return None;
+            }
+            if let Some(value) = state.queue.pop_front() {
+                return Some(value);
+            }
+            state = self
+                .wake
+                .wait(state)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
     }
 
     /// Go `select { case v, ok := <-ch: ...; default: ... }`.
@@ -379,6 +401,7 @@ impl TableChannel {
         let mut state = self.lock();
         assert!(!state.closed, "close of closed channel");
         state.closed = true;
+        self.wake.notify_all();
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, TableChannelState> {
@@ -449,6 +472,14 @@ impl<S> HistoricalStatsWorker<S> {
         self.tbl_ch.try_recv().unwrap_or(NO_HISTORICAL_STATS_TABLE)
     }
 
+    /// The blocking receive used by Go `StartHistoricalStatsWorker`.
+    /// `None` is the `ok == false` result after domain shutdown closes the
+    /// channel; ordinary callers enqueue through the nonblocking send above.
+    #[must_use]
+    pub fn recv_historical_stats_table(&self) -> Option<i64> {
+        self.tbl_ch.recv()
+    }
+
     /// Go `close(do.historicalStatsWorker.tblCH)` (`domain.go:1899`).
     ///
     /// Lives here rather than in the (unported) `StartHistoricalStatsWorker`
@@ -458,7 +489,7 @@ impl<S> HistoricalStatsWorker<S> {
     /// # Panics
     ///
     /// Panics on a double close, reproducing Go.
-    pub(crate) fn close_table_channel(&self) {
+    pub fn close_table_channel(&self) {
         self.tbl_ch.close();
     }
 }
@@ -527,6 +558,7 @@ impl<S: SessionInfoSchema> HistoricalStatsWorker<S> {
 mod tests {
     use std::cell::RefCell;
     use std::sync::atomic::AtomicUsize;
+    use std::sync::Arc;
 
     use super::*;
 
@@ -733,6 +765,39 @@ mod tests {
             // Go: a receive on a closed, drained channel succeeds with the
             // zero value, so the -1 sentinel is never reached again.
             assert_eq!(worker.get_one_historical_stats_table(), 0);
+        });
+    }
+
+    #[test]
+    fn worker_receive_blocks_until_a_task_arrives() {
+        with_dump_switch(true, || {
+            let worker = Arc::new(HistoricalStatsWorker::new(()));
+            let receiver = Arc::clone(&worker);
+            let received = std::thread::spawn(move || receiver.recv_historical_stats_table());
+            worker.send_tbl_to_dump_historical_stats(23);
+            assert_eq!(received.join().expect("receiver thread"), Some(23));
+        });
+    }
+
+    #[test]
+    fn worker_receive_reports_channel_close() {
+        let worker = Arc::new(HistoricalStatsWorker::new(()));
+        let receiver = Arc::clone(&worker);
+        let received = std::thread::spawn(move || receiver.recv_historical_stats_table());
+        worker.close_table_channel();
+        assert_eq!(received.join().expect("receiver thread"), None);
+    }
+
+    #[test]
+    fn worker_shutdown_does_not_drain_buffered_tasks() {
+        with_dump_switch(true, || {
+            let worker = HistoricalStatsWorker::new(());
+            worker.send_tbl_to_dump_historical_stats(23);
+            worker.close_table_channel();
+            assert_eq!(worker.recv_historical_stats_table(), None);
+            // The test-only nonblocking receive still has Go channel receive
+            // semantics and can observe the buffered value after close.
+            assert_eq!(worker.get_one_historical_stats_table(), 23);
         });
     }
 
