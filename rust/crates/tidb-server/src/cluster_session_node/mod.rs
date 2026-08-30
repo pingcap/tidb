@@ -180,7 +180,7 @@ use tidb_domain::historical_stats::{
 use tidb_exec::catalog_watch::SharedCatalog as SharedClusterCatalog;
 use tidb_exec::cluster_analyze::AnalyzeStatement;
 use tidb_exec::cluster_catalog::ClusterCatalog;
-use tidb_exec::cluster_ddl::DdlStatement;
+use tidb_exec::cluster_ddl::{AlterColumnAction, DdlStatement};
 use tidb_exec::cluster_load_stats::prepare_cluster_load_stats;
 use tidb_exec::cluster_stats_load::ClusterStatsLoader;
 use tidb_exec::cluster_stats_lock::prepare_cluster_stats_lock;
@@ -4291,6 +4291,7 @@ impl ClusterServerSession {
             | DdlStatement::ModifyColumn { schema, .. }
             | DdlStatement::RenameColumn { schema, .. }
             | DdlStatement::AlterAutoRandomBits { schema, .. }
+            | DdlStatement::MultiSchemaChange { schema, .. }
             | DdlStatement::AddPartitions { schema, .. }
             | DdlStatement::DropPartitions { schema, .. }
             | DdlStatement::TruncatePartitions { schema, .. } => {
@@ -4347,29 +4348,65 @@ impl ClusterServerSession {
                 }),
             _ => None,
         };
-        let column_stats_change = match statement {
+        let column_stats_changes = match statement {
             DdlStatement::AddColumn {
                 schema,
                 table,
                 column,
                 ..
-            } => Some((schema.clone(), table.clone(), column.name.clone())),
+            } => vec![(schema.clone(), table.clone(), column.name.clone())],
             DdlStatement::ModifyColumn {
                 schema,
                 table,
                 column,
                 ..
-            } => Some((schema.clone(), table.clone(), column.name.clone())),
+            } => vec![(schema.clone(), table.clone(), column.name.clone())],
             DdlStatement::RenameColumn {
                 schema, table, to, ..
-            } => Some((schema.clone(), table.clone(), to.clone())),
+            } => vec![(schema.clone(), table.clone(), to.clone())],
             DdlStatement::AlterAutoRandomBits {
                 schema,
                 table,
                 column,
                 ..
-            } => Some((schema.clone(), table.clone(), column.clone())),
-            _ => None,
+            } => vec![(schema.clone(), table.clone(), column.clone())],
+            DdlStatement::MultiSchemaChange {
+                schema,
+                table,
+                actions,
+            } => {
+                // Pinned Go runs each sub-job through the ordinary DDL
+                // worker. Every applied ADD COLUMN therefore publishes its
+                // own ActionAddColumn event with MultiSchemaInfo.Seq, while
+                // an IF NOT EXISTS no-op publishes none. The multi-schema
+                // admission rule rejects operating on the same column twice,
+                // so membership in the pre-DDL table identifies exactly the
+                // applied ADD sub-jobs and preserves their SQL order here.
+                let existing = self
+                    .catalog
+                    .load()
+                    .find_table(schema, table)
+                    .map(|(_, table)| {
+                        table
+                            .columns
+                            .iter_deref()
+                            .map(|column| column.read().name.lowercase().to_owned())
+                            .collect::<std::collections::HashSet<_>>()
+                    })
+                    .unwrap_or_default();
+                actions
+                    .iter()
+                    .filter_map(|action| match action {
+                        AlterColumnAction::Add { column, .. }
+                            if !existing.contains(&column.name.to_lowercase()) =>
+                        {
+                            Some((schema.clone(), table.clone(), column.name.clone()))
+                        }
+                        _ => None,
+                    })
+                    .collect()
+            }
+            _ => Vec::new(),
         };
         let partition_before = match statement {
             DdlStatement::AddPartitions { schema, table, .. } => {
@@ -4407,17 +4444,17 @@ impl ClusterServerSession {
             }
             _ => None,
         };
-        let (table_stats_change, column_stats_change, partition_before) = if suppress_stats_event {
-            (None, None, None)
+        let (table_stats_change, column_stats_changes, partition_before) = if suppress_stats_event {
+            (None, Vec::new(), None)
         } else {
-            (table_stats_change, column_stats_change, partition_before)
+            (table_stats_change, column_stats_changes, partition_before)
         };
         let report = self.ddl.execute(statement)?;
         if matches!(report, ClusterDdlReport::Applied { .. }) {
             if let Some(change) = table_stats_change {
                 self.update_table_ddl_stats(change)?;
             }
-            if let Some((schema, table, column)) = column_stats_change {
+            for (schema, table, column) in column_stats_changes {
                 self.update_column_ddl_stats(&schema, &table, column.as_str())?;
             }
             if let Some((schema, table, logical_id, old_ids, kind)) = partition_before {

@@ -488,6 +488,113 @@ fn add_column_ddl_initializes_statistics_like_go() {
         )),
         [["0"]]
     );
+
+    // Pinned `TestDDLHistogram` performs both additions in one
+    // ActionMultiSchemaChange. Go publishes one ActionAddColumn event for
+    // each applied sub-job, in SQL order, and the statistics subscriber
+    // initializes both histograms.
+    rows(
+        &mut session,
+        "ALTER TABLE stats_add_column \
+         ADD COLUMN f VARCHAR(15) DEFAULT '123', \
+         ADD COLUMN g VARCHAR(15) DEFAULT '123'",
+    );
+    let (f_id, g_id) = {
+        let catalog = stack.factory.catalog.load();
+        let table = catalog
+            .find_table("test", "stats_add_column")
+            .expect("altered table is published")
+            .1;
+        let column_id = |name: &str| {
+            table
+                .columns
+                .iter_deref()
+                .find(|column| column.read().name.lowercase() == name)
+                .expect("added column is published")
+                .read()
+                .id
+        };
+        (column_id("f"), column_id("g"))
+    };
+    for column_id in [f_id, g_id] {
+        assert_eq!(
+            displayed(rows(
+                &mut session,
+                &format!(
+                    "SELECT distinct_count, null_count, tot_col_size, stats_ver \
+                     FROM mysql.stats_histograms WHERE table_id = {table_id} \
+                     AND is_index = 0 AND hist_id = {column_id}"
+                ),
+            )),
+            [["1", "0", "9", "0"]]
+        );
+        assert_eq!(
+            displayed(rows(
+                &mut session,
+                &format!(
+                    "SELECT repeats, count, lower_bound, upper_bound \
+                     FROM mysql.stats_buckets WHERE table_id = {table_id} \
+                     AND is_index = 0 AND hist_id = {column_id}"
+                ),
+            )),
+            [["3", "3", "123", "123"]]
+        );
+    }
+
+    rows(
+        &mut session,
+        &format!(
+            "DELETE FROM mysql.stats_buckets WHERE table_id = {table_id} \
+             AND is_index = 0 AND hist_id = {f_id}"
+        ),
+    );
+    rows(
+        &mut session,
+        &format!(
+            "DELETE FROM mysql.stats_histograms WHERE table_id = {table_id} \
+             AND is_index = 0 AND hist_id = {f_id}"
+        ),
+    );
+    rows(
+        &mut session,
+        "ALTER TABLE stats_add_column \
+         ADD COLUMN IF NOT EXISTS f VARCHAR(15) DEFAULT '123', \
+         ADD COLUMN h VARCHAR(15) DEFAULT '123'",
+    );
+    let h_id = stack
+        .factory
+        .catalog
+        .load()
+        .find_table("test", "stats_add_column")
+        .expect("altered table is published")
+        .1
+        .columns
+        .iter_deref()
+        .find(|column| column.read().name.lowercase() == "h")
+        .expect("applied sub-job column is published")
+        .read()
+        .id;
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT count(*) FROM mysql.stats_histograms WHERE table_id = {table_id} \
+                 AND is_index = 0 AND hist_id = {f_id}"
+            ),
+        )),
+        [["0"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT distinct_count, null_count, tot_col_size, stats_ver \
+                 FROM mysql.stats_histograms WHERE table_id = {table_id} \
+                 AND is_index = 0 AND hist_id = {h_id}"
+            ),
+        )),
+        [["1", "0", "9", "0"]]
+    );
 }
 
 /// Pinned `TestSystemTableDDLHasNoEvent`: `asyncNotifyEvent` suppresses every
@@ -525,6 +632,10 @@ fn system_table_ddl_does_not_publish_statistics_events_like_go() {
     rows(
         &mut session,
         "ALTER TABLE mysql.stats_no_event ADD COLUMN b INT",
+    );
+    rows(
+        &mut session,
+        "ALTER TABLE mysql.stats_no_event ADD COLUMN c INT, ADD COLUMN d INT",
     );
     rows(
         &mut session,
