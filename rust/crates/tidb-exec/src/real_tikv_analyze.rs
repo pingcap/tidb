@@ -31,11 +31,13 @@ use std::collections::HashSet;
 use std::fmt;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::mpsc::sync_channel;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use chrono::TimeZone;
 use tidb_datatype::{FieldType, FieldTypeCode, SessionTimeZone, UNSPECIFIED_LENGTH};
 use tidb_error::mysql::SqlError;
+use tidb_executor::cluster_storage::MutationBuffer;
 use tidb_stats::histogram::Histogram;
 use tidb_stats::{
     fm_sketch_ndv, merge_fm_sketch, merge_partition_histogram_topn, merge_partition_stats_item,
@@ -59,12 +61,14 @@ use crate::cluster_stats_load::{
 };
 use crate::cluster_stats_write::{
     load_analyze_options, plan_analyze_options_write, plan_get_predicate_columns,
-    plan_historical_stats_meta_write, plan_independent_index_stats_write,
-    plan_partial_partition_stats_write, plan_partial_stats_write, plan_partition_stats_write,
-    plan_stats_meta_version_refresh, plan_stats_write, StatsWritePlan,
+    plan_historical_stats_meta_lock, plan_historical_stats_meta_replace,
+    plan_independent_index_stats_write, plan_partial_partition_stats_write,
+    plan_partial_stats_write, plan_partition_stats_write, plan_stats_meta_version_refresh,
+    plan_stats_write, StatsWritePlan,
 };
 use crate::cluster_table_storage::{
-    commit_pessimistic_statement, PessimisticStatementTransactionError,
+    commit_pessimistic_statement, lock_pessimistic_statement, PessimisticStatementTransactionError,
+    SessionTransaction,
 };
 use crate::mysql_bootstrap::utc_now_timestamp;
 use crate::mysql_system_tables::SystemTableError;
@@ -976,27 +980,47 @@ fn record_analyze_history<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCa
     timeout: Duration,
 ) {
     let result = (|| -> Result<(), ClusterAnalyzeError> {
-        let mut transaction = opener
-            .begin(ANALYZE_MAX_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)
+        let transaction = SessionTransaction::begin_pessimistic_with_budget(
+            Arc::new(opener.clone()),
+            timeout,
+            opener.commit_protocol(),
+            ANALYZE_MAX_MUTATIONS,
+            MAX_OPTIMISTIC_TRANSACTION_BYTES,
+        )
+        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+        let staged = MutationBuffer::new();
+        let (modify_count, count) =
+            lock_pessimistic_statement(&transaction, &staged, |snapshot, _start_ts| {
+                let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                let catalog =
+                    load_cluster_catalog(&mut snapshot).map_err(|error| error.to_string())?;
+                let (counts, plan) =
+                    plan_historical_stats_meta_lock(&mut snapshot, &catalog, table_id, version)
+                        .map_err(|error| error.to_string())?;
+                Ok((counts, plan.mutations))
+            })
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-        let plan = {
-            let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
-            let catalog = load_cluster_catalog(&mut snapshot)
-                .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-            plan_historical_stats_meta_write(
+        lock_pessimistic_statement(&transaction, &staged, |snapshot, _start_ts| {
+            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+            let catalog = load_cluster_catalog(&mut snapshot).map_err(|error| error.to_string())?;
+            let plan = plan_historical_stats_meta_replace(
                 &mut snapshot,
                 &catalog,
                 table_id,
+                modify_count,
+                count,
                 version,
                 "analyze",
                 utc_now_timestamp(),
             )
-            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?
-        };
-        let outcome = transaction
-            .commit(plan.mutations, &UnaryCallContext::with_timeout(timeout))
-            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-        classify_commit_outcome(&outcome)
+            .map_err(|error| error.to_string())?;
+            Ok(((), plan.mutations))
+        })
+        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+        transaction
+            .commit(&staged)
+            .map(|_| ())
+            .map_err(ClusterAnalyzeError::Commit)
     })();
     let _: Result<(), ClusterAnalyzeError> = result;
 }

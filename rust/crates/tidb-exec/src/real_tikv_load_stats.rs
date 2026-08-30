@@ -24,27 +24,25 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tidb_executor::load_stats::JsonTable;
-use tidb_txnkv::pd_capability::CapabilityTimestampSource;
-use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{
-    OptimisticCommitOutcome, RealOptimisticTransactionOpener, StorePdCapability, StoreWriteClient,
-    StoreWriteLoader, MAX_OPTIMISTIC_TRANSACTION_BYTES,
+    RealOptimisticTransactionOpener, StorePdCapability, StoreWriteClient, StoreWriteLoader,
+    MAX_OPTIMISTIC_TRANSACTION_BYTES,
 };
 
 use crate::cluster_catalog::load_cluster_catalog;
 use crate::cluster_load_stats::{lower_cluster_load_stats, LoadedStatsTable};
 use crate::cluster_stats_load::ClusterStatsItem;
 use crate::cluster_stats_write::{
-    loaded_stats_item_statements, plan_historical_stats_meta_write,
-    plan_loaded_stats_item_statement, plan_loaded_stats_meta_write, plan_loaded_stats_usage_write,
-    StatsWritePlan,
+    loaded_stats_item_statements, plan_historical_stats_meta_lock,
+    plan_historical_stats_meta_replace, plan_loaded_stats_item_statement,
+    plan_loaded_stats_meta_write, plan_loaded_stats_usage_write,
 };
 use crate::cluster_table_storage::{
     commit_pessimistic_statement, lock_pessimistic_statement, PessimisticStatementTransactionError,
     SessionTransaction,
 };
 use crate::mysql_bootstrap::utc_now_timestamp;
-use crate::pessimistic_lock_error::{commit_outcome_to_sql_error, LockSqlError};
+use crate::pessimistic_lock_error::LockSqlError;
 use crate::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
 use tidb_executor::cluster_storage::MutationBuffer;
 
@@ -246,69 +244,49 @@ fn record_history<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability
     timeout: Duration,
 ) {
     let result = (|| {
-        let mut transaction = begin(opener)?;
-        let plan = {
-            let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
-            let catalog = load_cluster_catalog(&mut snapshot).map_err(other)?;
-            plan_historical_stats_meta_write(
+        let transaction = SessionTransaction::begin_pessimistic_with_budget(
+            Arc::new(opener.clone()),
+            timeout,
+            opener.commit_protocol(),
+            usize::MAX,
+            MAX_OPTIMISTIC_TRANSACTION_BYTES,
+        )
+        .map_err(other)?;
+        let staged = MutationBuffer::new();
+        let (modify_count, count) =
+            lock_pessimistic_statement(&transaction, &staged, |snapshot, _start_ts| {
+                let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                let catalog =
+                    load_cluster_catalog(&mut snapshot).map_err(|error| error.to_string())?;
+                let (counts, plan) =
+                    plan_historical_stats_meta_lock(&mut snapshot, &catalog, table_id, version)
+                        .map_err(|error| error.to_string())?;
+                Ok((counts, plan.mutations))
+            })
+            .map_err(pessimistic_error)?;
+        lock_pessimistic_statement(&transaction, &staged, |snapshot, _start_ts| {
+            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+            let catalog = load_cluster_catalog(&mut snapshot).map_err(|error| error.to_string())?;
+            let plan = plan_historical_stats_meta_replace(
                 &mut snapshot,
                 &catalog,
                 table_id,
+                modify_count,
+                count,
                 version,
                 LOAD_STATS_HISTORY_SOURCE,
                 utc_now_timestamp(),
             )
-            .map_err(other)?
-        };
-        commit_plan(transaction, plan, timeout, "LOAD STATS history")
+            .map_err(|error| error.to_string())?;
+            Ok(((), plan.mutations))
+        })
+        .map_err(pessimistic_error)?;
+        transaction
+            .commit(&staged)
+            .map(|_| ())
+            .map_err(commit_error)
     })();
     let _: Result<(), ClusterLoadStatsCommitError> = result;
-}
-
-fn begin<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<C, L, P>,
-) -> Result<
-    tidb_txnkv::transaction::RealOptimisticTransaction<C, L, CapabilityTimestampSource<P>>,
-    ClusterLoadStatsCommitError,
-> {
-    opener
-        .begin(usize::MAX, MAX_OPTIMISTIC_TRANSACTION_BYTES)
-        .map_err(other)
-}
-
-fn commit_plan<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
-    transaction: tidb_txnkv::transaction::RealOptimisticTransaction<
-        C,
-        L,
-        CapabilityTimestampSource<P>,
-    >,
-    plan: StatsWritePlan,
-    timeout: Duration,
-    operation: &str,
-) -> Result<(), ClusterLoadStatsCommitError> {
-    if plan.is_empty() {
-        transaction.finish_without_writes().map_err(other)?;
-        return Ok(());
-    }
-    let outcome = transaction
-        .commit(plan.mutations, &UnaryCallContext::with_timeout(timeout))
-        .map_err(other)?;
-    classify_commit_outcome(&outcome, operation)
-}
-
-fn classify_commit_outcome(
-    outcome: &OptimisticCommitOutcome,
-    operation: &str,
-) -> Result<(), ClusterLoadStatsCommitError> {
-    match commit_outcome_to_sql_error(outcome) {
-        Ok(()) => Ok(()),
-        Err(error) if error.is_result_undetermined() => {
-            Err(ClusterLoadStatsCommitError::Undetermined(format!(
-                "the {operation} transaction returned no commit verdict"
-            )))
-        }
-        Err(error) => Err(ClusterLoadStatsCommitError::Commit(error)),
-    }
 }
 
 fn pessimistic_error(error: PessimisticStatementTransactionError) -> ClusterLoadStatsCommitError {

@@ -1334,7 +1334,16 @@ pub fn lock_pessimistic_statement_with<T>(
         let (value, mutations) =
             build(snapshot, start_ts).map_err(PessimisticStatementTransactionError::Build)?;
         let buffer = mutation_buffer_from_mutations(mutations.clone());
-        let keys = pessimistic_lock_delta(&[], &buffer.snapshot());
+        let mut keys = mutations
+            .iter()
+            .filter(|mutation| {
+                mutation.kind() == tidb_txnkv::transaction::OptimisticMutationKind::LockOnly
+            })
+            .map(|mutation| mutation.key().to_vec())
+            .chain(pessimistic_lock_delta(&[], &buffer.snapshot()))
+            .collect::<Vec<_>>();
+        keys.sort();
+        keys.dedup();
         if keys.is_empty() {
             return Ok((value, mutations));
         }

@@ -45,15 +45,16 @@ use tidb_exec::cluster_stats_write::{
     load_stats_gc_timestamp, plan_analyze_options_write, plan_column_stats_usage_dump,
     plan_column_stats_usage_write, plan_delete_table_stats, plan_get_predicate_columns,
     plan_historical_stats_data_delete_for_table, plan_historical_stats_data_write,
-    plan_historical_stats_meta_delete_for_table, plan_historical_stats_meta_write,
-    loaded_stats_item_statements, plan_independent_index_stats_write,
+    plan_historical_stats_meta_delete_for_table, plan_historical_stats_meta_lock,
+    plan_historical_stats_meta_replace, loaded_stats_item_statements,
+    plan_independent_index_stats_write,
     plan_loaded_stats_item_statement, plan_loaded_stats_meta_write,
     plan_loaded_stats_usage_write,
     plan_outdated_historical_data_delete, plan_outdated_historical_meta_delete,
     plan_change_global_stats_id, plan_partial_stats_write, plan_partition_stats_write,
     plan_stats_delta_updates, plan_stats_gc_timestamp_write, plan_stats_item_delete,
     plan_stats_meta_version_refresh, plan_stats_write, plan_update_stats_version,
-    LoadedStatsItemStatement,
+    LoadedStatsItemStatement, StatsWriteError, StatsWritePlan,
 };
 use tidb_exec::mysql_bootstrap::{plan_mysql_bootstrap, BootstrapEnvironment, BootstrapWrite};
 use tidb_exec::mysql_system_tables::{scan_system_table, SystemRow, SystemTableView};
@@ -98,6 +99,7 @@ fn apply_mutations(
 ) {
     for mutation in mutations {
         match mutation.kind() {
+            OptimisticMutationKind::LockOnly => {}
             OptimisticMutationKind::MetaDelete
             | OptimisticMutationKind::Delete
             | OptimisticMutationKind::IndexDelete => {
@@ -110,6 +112,30 @@ fn apply_mutations(
             }
         }
     }
+}
+
+fn plan_historical_stats_meta_write(
+    store: &mut MetaStore,
+    catalog: &tidb_exec::cluster_catalog::ClusterCatalog,
+    table_id: i64,
+    version: u64,
+    source: &str,
+    now: Time,
+) -> Result<StatsWritePlan, StatsWriteError> {
+    let ((modify_count, count), mut lock) =
+        plan_historical_stats_meta_lock(store, catalog, table_id, version)?;
+    let replace = plan_historical_stats_meta_replace(
+        store,
+        catalog,
+        table_id,
+        modify_count,
+        count,
+        version,
+        source,
+        now,
+    )?;
+    lock.mutations.extend(replace.mutations);
+    Ok(lock)
 }
 
 fn apply_loaded_stats_item(
@@ -1921,6 +1947,10 @@ fn loaded_stats_history_requires_the_exact_current_meta_version() {
         now(),
     )
     .expect("the exact version plans history");
+    assert_eq!(
+        history.mutations.first().map(|mutation| mutation.kind()),
+        Some(OptimisticMutationKind::LockOnly)
+    );
     apply_mutations(&mut store, &history.mutations);
 
     let table = catalog

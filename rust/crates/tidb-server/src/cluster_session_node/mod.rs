@@ -916,27 +916,72 @@ impl ClusterSessionFactory {
                         continue;
                     }
                     let result = (|| {
-                        let snapshot = transactions.open_snapshot(resource_group)?;
-                        let history_read_ts = snapshot.start_ts();
-                        let plan = {
-                            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-                            tidb_exec::cluster_stats_write::plan_historical_stats_meta_write(
+                        let transaction = transactions.begin(true, resource_group)?;
+                        let staged = MutationBuffer::new();
+                        let ((modify_count, count), lock_mutations) =
+                            tidb_exec::cluster_table_storage::lock_pessimistic_statement_with(
+                                transaction.start_ts(),
+                                |read_ts| match read_ts {
+                                    Some(read_ts) => transaction.snapshot_at_for(read_ts, true),
+                                    None => transaction.snapshot_for(true),
+                                },
+                                |keys, presume_not_exists, duplicate_hints| {
+                                    transaction.lock_staged_keys_with_assertions(
+                                        keys,
+                                        presume_not_exists,
+                                        duplicate_hints,
+                                    )
+                                },
+                                |snapshot, _start_ts| {
+                                    let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                                    let (counts, plan) = tidb_exec::cluster_stats_write::plan_historical_stats_meta_lock(
+                                        &mut snapshot,
+                                        &catalog,
+                                        update.table_id,
+                                        read_ts,
+                                    )
+                                    .map_err(|error| error.to_string())?;
+                                    Ok((counts, plan.mutations))
+                                },
+                            )
+                            .map_err(|error| error.to_string())?;
+                        tidb_exec::cluster_table_storage::stage_mutations(&staged, lock_mutations);
+                        let ((), replace_mutations) =
+                            tidb_exec::cluster_table_storage::lock_pessimistic_statement_with(
+                                transaction.start_ts(),
+                                |retry_ts| match retry_ts {
+                                    Some(retry_ts) => transaction.snapshot_at_for(retry_ts, true),
+                                    None => transaction.snapshot_for(true),
+                                },
+                                |keys, presume_not_exists, duplicate_hints| {
+                                    transaction.lock_staged_keys_with_assertions(
+                                        keys,
+                                        presume_not_exists,
+                                        duplicate_hints,
+                                    )
+                                },
+                                |snapshot, _start_ts| {
+                                    let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                                    let plan = tidb_exec::cluster_stats_write::plan_historical_stats_meta_replace(
                                 &mut snapshot,
                                 &catalog,
                                 update.table_id,
+                                modify_count,
+                                count,
                                 read_ts,
                                 "flush stats",
                                 tidb_exec::mysql_bootstrap::utc_now_timestamp(),
                             )
-                            .map_err(|error| error.to_string())?
-                        };
-                        transactions
-                            .commit_optimistic_mutations(
-                                plan.mutations,
-                                history_read_ts,
-                                resource_group,
+                                    .map_err(|error| error.to_string())?;
+                                    Ok(((), plan.mutations))
+                                },
                             )
-                            .map_err(|error| error.message)
+                            .map_err(|error| error.to_string())?;
+                        tidb_exec::cluster_table_storage::stage_mutations(
+                            &staged,
+                            replace_mutations,
+                        );
+                        transaction.commit(&staged).map_err(|error| error.message)
                     })();
                     if let Err(error) = result {
                         eprintln!(
