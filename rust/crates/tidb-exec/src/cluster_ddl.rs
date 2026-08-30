@@ -1995,12 +1995,6 @@ fn lower_create_index(
              a partial index's name",
         ));
     }
-    if create.options.global {
-        return Err(DdlAdmissionError::unsupported(
-            "a GLOBAL index is not supported by this node, which does not serve \
-             partitioned tables",
-        ));
-    }
     let mut columns = Vec::with_capacity(create.parts.len());
     for part in &create.parts {
         let tidb_ast::IndexPart::Column {
@@ -2048,9 +2042,37 @@ fn lower_create_index(
             unique,
             primary: false,
             invisible: create.options.visibility == Some(tidb_ast::IndexVisibility::Invisible),
+            global: create.options.global,
             ..IndexInfo::default()
         }),
     })
+}
+
+/// Go `setGlobalIndexVersion`: chooses the persisted key format for a newly
+/// created global index from the cluster capability and table/index shape.
+pub(crate) fn set_global_index_version(table: &TableInfo, index: &mut IndexInfo) {
+    index.global_index_version = tidb_model::index::GLOBAL_INDEX_VERSION_LEGACY;
+    if !tidb_model::index::get_global_index_v1_supported()
+        || !index.global
+        || table.has_clustered_index()
+    {
+        return;
+    }
+    let needs_partition_in_key = !index.unique
+        || index.columns.iter_deref().any(|part| {
+            usize::try_from(part.read().offset)
+                .ok()
+                .and_then(|offset| table.cols().get(offset))
+                .is_some_and(|column| {
+                    !column
+                        .read()
+                        .field_type
+                        .has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL)
+                })
+        });
+    if needs_partition_in_key {
+        index.global_index_version = tidb_model::index::GLOBAL_INDEX_VERSION_V1;
+    }
 }
 
 fn lower_drop_index(
@@ -4057,6 +4079,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             info.max_index_id += 1;
             added.id = info.max_index_id;
             added.table = info.name.clone();
+            set_global_index_version(&info, &mut added);
             let added = GoShared::new(added);
             info.indices.push_handle_go(Some(added.clone()));
             info.update_ts = start_ts;

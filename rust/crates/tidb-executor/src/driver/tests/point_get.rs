@@ -1846,6 +1846,7 @@ fn residual_selection_uses_logical_rows_over_access_rows() {
             column_offsets: vec![2, 1, 0],
             visible: true,
             global: false,
+            global_index_version: 0,
             clustered_primary: false,
         },
         false,

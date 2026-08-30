@@ -97,27 +97,6 @@ fn detect_and_update_job_version_negotiates_cluster_versions() {
     // GlobalIndexV1Supported only when all peers support global index v1.
 }
 
-// --- TestSetGlobalIndexVersionFlag (pkg/ddl/ddl_test.go:586) ---
-//
-// With `model.SetGlobalIndexV1Supported(false)`, Go's
-// `setGlobalIndexVersion` (pkg/ddl/index.go:358) leaves a new global index's
-// `GlobalIndexVersion` at 0 even for `Global: true`; with the flag on, the
-// same index gets `model.GlobalIndexVersionV1`. The test's table is the zero
-// value (non-clustered), the index global and non-unique.
-//
-// go-parity-gap: the decision function is not transcreated — index creation
-// in this tier never sets `global_index_version` — so the observable flag
-// change cannot be pinned. The flag accessors themselves
-// (`set_global_index_v1_supported`/`get_global_index_v1_supported`) are
-// transcreated in tidb-model::index and covered there.
-#[test]
-#[ignore = "go-parity-gap: setGlobalIndexVersion (pkg/ddl/index.go:358) is not transcreated; index creation never stamps global_index_version"]
-fn set_global_index_version_flag_follows_the_supported_switch() {
-    // Contract (pkg/ddl/index.go:358-382): supported=false -> version 0;
-    // supported=true + global index on a non-clustered table ->
-    // GlobalIndexVersionV1.
-}
-
 // --- TestDDLWorkerPool (pkg/ddl/ddl_workerpool_test.go:25) ---
 //
 // Go wraps a `pools.ResourcePool` (capacity 1, idle 2) in the DDL worker

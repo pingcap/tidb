@@ -2305,8 +2305,8 @@ impl Session {
             // absent value rather than invented: Cardinality is 0 (no
             // statistics tier), Sub_part and Packed are NULL (no prefix
             // or packed indexes here), Comment/Index_comment are empty,
-            // Expression is NULL (no expression indexes), and Global is
-            // NO (no partitioned global indexes).
+            // Expression is NULL when no expression key part exists; Global
+            // is the stored `IndexInfo.Global` flag.
             tidb_ast::AdminStmt::ShowIndex(show) => {
                 let (like_pattern, where_clause) = match &show.filter {
                     None => (None, None),

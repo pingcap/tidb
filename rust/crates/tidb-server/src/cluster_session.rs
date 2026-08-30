@@ -1021,6 +1021,7 @@ pub(crate) fn kv_index(
         prefix_lengths,
         visible: !index.invisible,
         global: index.global,
+        global_index_version: index.global_index_version,
         clustered_primary: false,
     })
 }

@@ -2839,35 +2839,41 @@ fn interval_partitioning_is_refused_on_every_spelling() {
     }
 }
 
-/// A GLOBAL unique index spans every partition, so its uniqueness is
-/// cluster-wide. A LOCAL unique index on a partitioned table enforces
-/// uniqueness only WITHIN each partition, so building a GLOBAL one as local
-/// would admit duplicates that live in different partitions -- no error, and
-/// a unique constraint that is not a constraint.
-///
-/// This tier maintains only per-partition index entries
-/// (`kv_table/index_entries.rs` fixes `global: false`), so it must REFUSE
-/// the clause. The assertion is on the refusal naming GLOBAL, not merely on
-/// a refusal happening: an incidental error from somewhere else would leave
-/// the door open for a later change to turn it into a silent acceptance.
+/// Go `globalstats.TestGlobalIndexStatistics`: a GLOBAL unique index is one
+/// logical-table keyspace, reads rows across every partition in index order,
+/// and rejects the same key even when the conflicting rows route to different
+/// physical partitions.
 #[test]
-fn a_global_unique_index_is_refused_rather_than_built_local() {
+fn a_global_unique_index_spans_partitions_like_go() {
     let mut session = Session::new();
-    // `b` is not a partitioning column, so uniqueness on it cannot be
-    // enforced per-partition: this index has to be GLOBAL to mean anything.
-    let rendered = session
+    session
         .run(
-            "CREATE TABLE g1 (a INT, b INT, UNIQUE KEY ub(b) GLOBAL) \
-             PARTITION BY HASH(a) PARTITIONS 2",
+            "CREATE TABLE g1 (a INT, b INT, c INT DEFAULT 0, KEY(a)) \
+             PARTITION BY RANGE(a) (PARTITION p0 VALUES LESS THAN (10), \
+             PARTITION p1 VALUES LESS THAN (20), PARTITION p2 VALUES LESS THAN (30), \
+             PARTITION p3 VALUES LESS THAN (40))",
         )
-        .expect_err("a GLOBAL index cannot be served by per-partition entries")
-        .to_mysql_error();
-    assert!(
-        rendered.message.contains("GLOBAL"),
-        "the refusal must name GLOBAL so it cannot decay into a silent \
-         downgrade, got: {}",
-        rendered.message
+        .unwrap();
+    session
+        .run("INSERT INTO g1(a,b) VALUES (1,1),(2,2),(3,3),(15,15),(25,25),(35,35)")
+        .unwrap();
+    session
+        .run("ALTER TABLE g1 ADD UNIQUE INDEX idx(b) GLOBAL")
+        .unwrap();
+    assert_eq!(
+        tests_support::row_text(
+            session.run("SELECT b FROM g1 USE INDEX(idx) WHERE b < 16 ORDER BY b")
+        ),
+        [vec!["1"], vec!["2"], vec!["3"], vec!["15"]]
     );
+    let shown = tests_support::row_text(session.run("SHOW INDEX FROM g1 WHERE Key_name = 'idx'"));
+    assert_eq!(shown.len(), 1);
+    assert_eq!(shown[0][16], "YES");
+    let duplicate = session
+        .run("INSERT INTO g1(a,b) VALUES (5,25)")
+        .expect_err("GLOBAL uniqueness must cross partition boundaries")
+        .to_mysql_error();
+    assert_eq!(duplicate.code, 1062);
 }
 
 /// Go runs partition checks in TWO phases, and which error a doubly-wrong

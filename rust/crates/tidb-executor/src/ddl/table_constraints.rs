@@ -295,6 +295,7 @@ pub(crate) fn table_indexes(
             prefix_lengths,
             visible: is_visible(&index.options),
             global: index.options.global,
+            global_index_version: 0,
             clustered_primary: common_handle
                 && index.kind == tidb_ast::IndexConstraintKind::PrimaryKey,
         });
@@ -321,6 +322,7 @@ pub(crate) fn table_indexes(
                             prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
                             visible: true,
                             global: false,
+                            global_index_version: 0,
                             clustered_primary: false,
                         });
                     }
@@ -343,6 +345,7 @@ pub(crate) fn table_indexes(
                                 prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
                                 visible: true,
                                 global: false,
+                                global_index_version: 0,
                                 clustered_primary: common_handle,
                             });
                         }

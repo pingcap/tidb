@@ -129,6 +129,7 @@ fn ordered_limit_adjusts_the_common_handle_scan_estimate() {
             column_offsets: vec![2, 1, 0],
             visible: true,
             global: false,
+            global_index_version: 0,
             clustered_primary: false,
         },
         false,

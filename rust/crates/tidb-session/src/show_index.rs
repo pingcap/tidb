@@ -48,7 +48,8 @@ pub(crate) fn show_index_rows(table_name: &str, table: &tidb_executor::KvTable) 
                     expression: Option<&str>,
                     nullable: bool,
                     comment: &str,
-                    visible: bool| {
+                    visible: bool,
+                    global: bool| {
         rows.push(vec![
             text(table_name),
             Datum::Int(i64::from(!unique)),
@@ -66,7 +67,7 @@ pub(crate) fn show_index_rows(table_name: &str, table: &tidb_executor::KvTable) 
             text(if visible { "YES" } else { "NO" }),
             expression.map_or(Datum::Null, text),
             text(if clustered { "YES" } else { "NO" }),
-            text("NO"),
+            text(if global { "YES" } else { "NO" }),
         ]);
     };
     if let Some(offset) = table.pk_handle_offset() {
@@ -80,6 +81,7 @@ pub(crate) fn show_index_rows(table_name: &str, table: &tidb_executor::KvTable) 
             false,
             "",
             true,
+            false,
         );
     }
     for index in table.indexes() {
@@ -103,6 +105,7 @@ pub(crate) fn show_index_rows(table_name: &str, table: &tidb_executor::KvTable) 
                 nullable,
                 &index.comment,
                 index.visible,
+                index.global,
             );
         }
     }

@@ -2102,6 +2102,13 @@ impl KvTable {
         else {
             return Err(KvTableError::Decode("no such index".to_owned()));
         };
+        // Go `index.GenIndexKey` files a GLOBAL index under TableInfo.ID,
+        // while local indexes remain under each physical partition id.
+        let scan_physical_ids = if index.global {
+            vec![self.table_id]
+        } else {
+            physical_ids.to_vec()
+        };
         let encoder = Encoder::new(self.use_new_collation);
         let encode = |values: &[Datum]| -> Result<Vec<u8>, KvTableError> {
             encoder
@@ -2116,7 +2123,7 @@ impl KvTable {
         // `prunedPartitions[curResultIdx]`), so the consumer must see WHERE
         // one partition ends and the next begins.
         let mut partition_of_iterator = Vec::new();
-        for (ordinal, physical_id) in physical_ids.iter().copied().enumerate() {
+        for (ordinal, physical_id) in scan_physical_ids.iter().copied().enumerate() {
             for range in ranges {
                 partition_of_iterator.push(ordinal);
                 let mut low = Key::from_bytes(encode_index_seek_key(
@@ -2162,7 +2169,7 @@ impl KvTable {
         // records a..e. Unordered, Go drains one partition's result to
         // exhaustion before the next (its `for i := 0; i < len(results);`
         // loop), which is what concatenating these iterators does.
-        let merge_by_index_key = ordered && physical_ids.len() > 1;
+        let merge_by_index_key = ordered && scan_physical_ids.len() > 1;
         let mut merge_heap = IndexMergeHeap::new(descending);
         if merge_by_index_key {
             for (position, iterator) in iterators.iter().enumerate() {
@@ -2174,6 +2181,7 @@ impl KvTable {
                 }
             }
         }
+        let global_partition_ids = index.global.then(|| physical_ids.to_vec());
         Ok(IndexRangeCursor {
             iterators,
             partition_of_iterator,
@@ -2182,6 +2190,7 @@ impl KvTable {
             merge_heap,
             index,
             common_handle: !self.common_handle_offsets.is_empty(),
+            global_partition_ids,
         })
     }
 }
@@ -3154,9 +3163,31 @@ pub struct IndexRangeCursor {
     merge_heap: IndexMergeHeap,
     index: KvIndex,
     common_handle: bool,
+    /// Selected physical partition ids for a GLOBAL index. Its one logical
+    /// keyspace carries the actual id in every value rather than in the key.
+    global_partition_ids: Option<Vec<i64>>,
 }
 
 impl IndexRangeCursor {
+    fn global_partition_ordinal(
+        selected: Option<&[i64]>,
+        value: &[u8],
+    ) -> Result<Option<usize>, KvTableError> {
+        let Some(selected) = selected else {
+            return Ok(None);
+        };
+        let segments = tidb_tablecodec::split_index_value(value)
+            .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
+        let encoded = segments.partition_id.ok_or_else(|| {
+            KvTableError::Decode("a global index value contains no partition id".to_owned())
+        })?;
+        let (_, partition_id) = tidb_codec::decode_int(&encoded)
+            .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
+        Ok(selected
+            .iter()
+            .position(|candidate| *candidate == partition_id))
+    }
+
     /// The next row handle in index order, or `None` at the end of the range.
     pub fn next_handle(&mut self) -> Result<Option<TableHandle>, KvTableError> {
         Ok(self
@@ -3180,31 +3211,43 @@ impl IndexRangeCursor {
         &mut self,
     ) -> Result<Option<(TableHandle, usize)>, KvTableError> {
         if self.merge_by_index_key {
-            let Some(position) = self.merge_heap.pop() else {
-                return Ok(None);
-            };
-            let iterator = &mut self.iterators[position];
-            let handle = index_entry_handle(
-                &self.index,
-                iterator.key().as_bytes(),
-                iterator.value(),
-                self.common_handle,
-            )?;
-            iterator
-                .next()
-                .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
-            if iterator.valid() {
-                self.merge_heap.push(
-                    cut_index_prefix(iterator.key().as_bytes()).to_vec(),
-                    position,
-                );
+            loop {
+                let Some(position) = self.merge_heap.pop() else {
+                    return Ok(None);
+                };
+                let iterator = &mut self.iterators[position];
+                let handle = index_entry_handle(
+                    &self.index,
+                    iterator.key().as_bytes(),
+                    iterator.value(),
+                    self.common_handle,
+                )?;
+                let global_partition = Self::global_partition_ordinal(
+                    self.global_partition_ids.as_deref(),
+                    iterator.value(),
+                )?;
+                iterator
+                    .next()
+                    .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+                if iterator.valid() {
+                    self.merge_heap.push(
+                        cut_index_prefix(iterator.key().as_bytes()).to_vec(),
+                        position,
+                    );
+                }
+                let partition = if self.global_partition_ids.is_some() {
+                    let Some(partition) = global_partition else {
+                        continue;
+                    };
+                    partition
+                } else {
+                    self.partition_of_iterator
+                        .get(position)
+                        .copied()
+                        .unwrap_or(0)
+                };
+                return Ok(Some((handle, partition)));
             }
-            let partition = self
-                .partition_of_iterator
-                .get(position)
-                .copied()
-                .unwrap_or(0);
-            return Ok(Some((handle, partition)));
         }
         while self.next_iterator < self.iterators.len() {
             let iterator = &mut self.iterators[self.next_iterator];
@@ -3219,14 +3262,24 @@ impl IndexRangeCursor {
                 iterator.value(),
                 self.common_handle,
             )?;
+            let global_partition = Self::global_partition_ordinal(
+                self.global_partition_ids.as_deref(),
+                iterator.value(),
+            )?;
             iterator
                 .next()
                 .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
-            let partition = self
-                .partition_of_iterator
-                .get(self.next_iterator)
-                .copied()
-                .unwrap_or(0);
+            let partition = if self.global_partition_ids.is_some() {
+                let Some(partition) = global_partition else {
+                    continue;
+                };
+                partition
+            } else {
+                self.partition_of_iterator
+                    .get(self.next_iterator)
+                    .copied()
+                    .unwrap_or(0)
+            };
             return Ok(Some((handle, partition)));
         }
         Ok(None)
@@ -4768,6 +4821,7 @@ mod remote_cursor_tests {
                 column_offsets: vec![2],
                 visible: true,
                 global: false,
+                global_index_version: 0,
                 clustered_primary: false,
             },
             false,

@@ -68,6 +68,7 @@ fn edge_table() -> KvTable {
         prefix_lengths: vec![-1, -1, -1],
         visible: true,
         global: false,
+        global_index_version: 0,
         clustered_primary: false,
     }, false);
     table
@@ -230,6 +231,7 @@ fn edges_table_on_capturing_store(
             prefix_lengths: vec![-1, -1, -1],
             visible: true,
             global: false,
+            global_index_version: 0,
             clustered_primary: false,
         },
         false,

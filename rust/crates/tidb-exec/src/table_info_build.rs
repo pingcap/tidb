@@ -479,6 +479,11 @@ pub fn build_table_info_with_context(
     table.auto_inc_id = auto_inc_id;
     table.auto_id_cache = auto_id_cache;
     table.auto_rand_id = auto_rand_id;
+    // Go `BuildIndexInfo` calls `setGlobalIndexVersion` after every index has
+    // been resolved against the completed table metadata.
+    for index in table.indices.iter_deref() {
+        super::cluster_ddl::set_global_index_version(&table, &mut index.write());
+    }
     // Go `buildTablePartitionInfo`, called LAST because its unique-key rule
     // (8264/1503) reads the table's finished index list.
     //
@@ -519,6 +524,7 @@ pub fn build_table_info_with_context(
                     prefix_lengths,
                     visible: !index.invisible,
                     global: index.global,
+                    global_index_version: index.global_index_version,
                     clustered_primary: false,
                 }
             })

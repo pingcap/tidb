@@ -1565,6 +1565,7 @@ pub fn run_create_table_in(
                     // Local to the table it constrains: an `FKInfo` carries no
                     // `GLOBAL` to record.
                     global: false,
+                    global_index_version: 0,
                     clustered_primary: false,
                     visible: true,
                 },

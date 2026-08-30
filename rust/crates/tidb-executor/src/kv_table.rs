@@ -1769,7 +1769,8 @@ impl KvTable {
             // The same entry value an INSERT writes, restored data and all --
             // a backfill that stored a simpler one would leave the index
             // holding two different formats for the same table.
-            let value = self.index_entry_value(&index, row, handle, distinct, &zone)?;
+            let value =
+                self.index_entry_value(&index, row, handle, distinct, physical_id, &zone)?;
             self.store
                 .set(key.clone(), value)
                 .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
@@ -2181,17 +2182,7 @@ impl KvTable {
                 .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
             let handle = handle
                 .ok_or_else(|| KvTableError::Decode("index value contains no handle".to_owned()))?;
-            let handle = match handle {
-                tidb_txnkv::Handle::Int(value) => TableHandle::Int(value.value()),
-                tidb_txnkv::Handle::Common(common) => {
-                    TableHandle::Common(common.encoded().to_vec())
-                }
-                tidb_txnkv::Handle::Partition(_) => {
-                    return Err(KvTableError::Decode(
-                        "a partitioned handle has no place in this tier".to_owned(),
-                    ))
-                }
-            };
+            let handle = index_entries::convert_handle(&handle);
             if !found.contains(&handle) {
                 found.push(handle);
             }
@@ -3411,6 +3402,7 @@ mod tests {
                 prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
                 visible: true,
                 global: false,
+                global_index_version: 0,
                 clustered_primary: false,
             },
             false,
@@ -3478,6 +3470,7 @@ mod tests {
                 prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
                 visible: true,
                 global: false,
+                global_index_version: 0,
                 clustered_primary: false,
             },
             false,
@@ -3778,6 +3771,7 @@ mod tests {
                 prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
                 visible: true,
                 global: false,
+                global_index_version: 0,
                 clustered_primary: false,
             },
             false,

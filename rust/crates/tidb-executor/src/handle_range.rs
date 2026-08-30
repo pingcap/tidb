@@ -225,6 +225,7 @@ pub(crate) fn clustered_primary_metadata(table: &KvTable) -> Option<std::borrow:
         ],
         visible: true,
         global: false,
+        global_index_version: 0,
         clustered_primary: false,
     }))
 }

@@ -1678,23 +1678,10 @@ fn check_unique_keys_include_partition_columns(
                 "CLUSTERED INDEX".to_owned(),
             ));
         }
-        // Go `ddl/partition.go:703` guards the 8264 refusal with
-        // `if !index.Global`: a GLOBAL index is EXEMPT from the covering
-        // rule, because its entries span every partition and so can enforce
-        // a constraint across them.
-        //
-        // This node writes only per-partition LOCAL entries. Accepting the
-        // exemption would enforce the unique constraint within each
-        // partition and let the same value repeat across them, so the index
-        // is refused -- but for the reason it is actually refused. Raising
-        // 8264 here told the user GLOBAL was not given when it was.
+        // Go `ddl/partition.go:703`: a GLOBAL index is exempt because its
+        // entries share the logical table's index keyspace.
         if index.global {
-            let name = &index.name;
-            return Err(DriverError::unsupported(format!(
-                "a GLOBAL index ({name}) is not supported by this node: it maintains only \
-                 per-partition index entries, so a unique constraint spanning the \
-                 partitions would not be enforced"
-            )));
+            continue;
         }
         return Err(DriverError::PartitionGlobalIndexNeeded(index.name.clone()));
     }
@@ -2517,18 +2504,10 @@ mod round_trip_tests {
         );
     }
 
-    /// Go EXEMPTS a GLOBAL unique index from the covering rule: at
-    /// `ddl/partition.go:703` the 8264 refusal is guarded by `if
-    /// !index.Global`, because a global index spans every partition and so
-    /// can enforce uniqueness across them.
-    ///
-    /// This node maintains only per-partition local index entries, so it must
-    /// not accept one -- accepting it would enforce the unique constraint
-    /// WITHIN each partition and let the same value repeat across them. But
-    /// the refusal has to name that, rather than telling the user GLOBAL was
-    /// not given when it was.
+    /// Go exempts a GLOBAL unique index from the covering rule because its
+    /// logical-table keyspace enforces the constraint across partitions.
     #[test]
-    fn a_global_unique_index_is_refused_for_the_reason_it_is_refused() {
+    fn a_global_unique_index_is_exempt_from_the_partition_covering_rule() {
         let sql = "CREATE TABLE t (id BIGINT, v BIGINT, UNIQUE KEY uv (v) GLOBAL) \
                    PARTITION BY HASH (id) PARTITIONS 2";
         let statement = tidb_parser::parse(sql).unwrap_or_else(|error| panic!("{sql}: {error:?}"));
@@ -2554,9 +2533,10 @@ mod round_trip_tests {
             prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
             visible: true,
             global: true,
+            global_index_version: 0,
             clustered_primary: false,
         }];
-        let error = build_table_partitioning(
+        build_table_partitioning(
             create,
             &names,
             &types,
@@ -2565,16 +2545,7 @@ mod round_trip_tests {
             &mut || 1,
             &crate::StmtContext::for_query(),
         )
-        .expect_err("this node cannot serve a GLOBAL index");
-        let message = error.to_mysql_error().message;
-        assert!(
-            !message.contains("GLOBAL is not given"),
-            "GLOBAL WAS given; the refusal must not claim otherwise: {message}"
-        );
-        assert!(
-            message.contains("GLOBAL"),
-            "the refusal must name the global index as the reason: {message}"
-        );
+        .expect("Go accepts a GLOBAL key that does not cover the partition column");
     }
 
     /// Go's own golden matrix for `PARTITION BY KEY ()`
@@ -2603,6 +2574,7 @@ mod round_trip_tests {
             column_offsets: offsets,
             visible: true,
             global: false,
+            global_index_version: 0,
             clustered_primary: false,
         };
 

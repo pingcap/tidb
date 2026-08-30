@@ -311,9 +311,10 @@ pub(crate) fn add_index_to_table(
                      which the table does not define"
                 ))
             })?;
-            if !partition_offsets
-                .iter()
-                .all(|offset| offsets.contains(offset))
+            if !global
+                && !partition_offsets
+                    .iter()
+                    .all(|offset| offsets.contains(offset))
             {
                 return Err(DriverError::PartitionGlobalIndexNeeded(
                     index_name.to_owned(),
@@ -347,6 +348,7 @@ pub(crate) fn add_index_to_table(
                 prefix_lengths,
                 visible,
                 global,
+                global_index_version: 0,
                 clustered_primary: false,
             },
             ctx,
