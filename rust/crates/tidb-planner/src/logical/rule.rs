@@ -40,14 +40,15 @@
 //!
 //! # Which rules actually run
 //!
-//! Go's list has 35 entries and THIRTEEN of them have a body here. Four live in
+//! Go's list has 35 entries and FOURTEEN of them have a body here. Four live in
 //! this file, because their tree walks are [`super::rewrite`]'s:
 //! [`ColumnPruner`] (#1 and #29), [`BuildKeySolver`] (#3), [`PpdSolver`] (#13)
-//! and [`PushDownTopNOptimizer`] (#21). Nine more live in their own
+//! and [`PushDownTopNOptimizer`] (#21). Ten more live in their own
 //! `rule_*.rs` beside this one, each one fold and one file:
 //!
 //! * [`super::rule_result_reorder::ResultReorder`] (#2)
 //! * [`super::rule_aggregation_elimination::AggregationEliminator`] (#6)
+//! * [`super::rule_constant_propagation::ConstantPropagationSolver`] (#10)
 //! * [`super::rule_join_key_type_cast::JoinKeyTypeCastRewriter`] (#14)
 //! * [`super::rule_partition_processor::PartitionProcessor`] (#16)
 //! * [`super::rule_derive_topn_from_window::DeriveTopNFromWindow`] (#19)
@@ -57,7 +58,7 @@
 //! * [`super::rule_eliminate_empty_selection::EmptySelectionEliminator`] (#32)
 //! * [`super::rule_resolve_expand::ResolveExpand`] (#34)
 //!
-//! The remaining 22 are present in [`OPT_RULE_LIST`] as their name and flag —
+//! The remaining 21 are present in [`OPT_RULE_LIST`] as their name and flag —
 //! the TABLE is ported, because the order is the semantics — but they have no
 //! body yet.
 //!
@@ -417,12 +418,14 @@ impl RuleId {
                 Some(&super::rule_collect_plan_stats::SyncWaitStatsLoadPoint)
             }
             Self::PartitionProcessor => Some(&super::rule_partition_processor::PartitionProcessor),
+            Self::ConstantPropagationSolver => {
+                Some(&super::rule_constant_propagation::ConstantPropagationSolver)
+            }
             Self::GcSubstituter
             | Self::DecorrelateSolver
             | Self::SemiJoinRewriter
             | Self::SkewDistinctAggRewriter
             | Self::MaxMinEliminator
-            | Self::ConstantPropagationSolver
             | Self::FullTextIndexResolverWhere
             | Self::ConvertOuterToInnerJoin
             | Self::OuterJoinEliminator

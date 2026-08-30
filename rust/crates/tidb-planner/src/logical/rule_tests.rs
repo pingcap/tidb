@@ -342,6 +342,7 @@ fn logical_optimize_runs_the_ported_rules_in_order_and_reports_the_rest() {
 
     let flag = flags::PRUNE_COLUMNS
         | flags::BUILD_KEY_INFO
+        | flags::CONSTANT_PROPAGATION
         | flags::PREDICATE_PUSH_DOWN
         | flags::PUSH_DOWN_TOPN
         | flags::ELIMINATE_AGG;
@@ -352,6 +353,7 @@ fn logical_optimize_runs_the_ported_rules_in_order_and_reports_the_rest() {
             RuleId::ColumnPruner,
             RuleId::BuildKeySolver,
             RuleId::AggregationEliminator,
+            RuleId::ConstantPropagationSolver,
             RuleId::PpdSolver,
             RuleId::PushDownTopNOptimizer,
         ],
@@ -440,6 +442,10 @@ fn aggregation_elimination_requires_the_complete_strong_unique_key() {
 fn every_ported_rule_names_itself_as_go_does() {
     assert_eq!(ColumnPruner.name(), RuleId::ColumnPruner.name());
     assert_eq!(BuildKeySolver.name(), RuleId::BuildKeySolver.name());
+    assert_eq!(
+        super::rule_constant_propagation::ConstantPropagationSolver.name(),
+        RuleId::ConstantPropagationSolver.name()
+    );
     assert_eq!(PpdSolver.name(), RuleId::PpdSolver.name());
     assert_eq!(
         PushDownTopNOptimizer.name(),
@@ -699,6 +705,67 @@ fn predicate_push_down_propagates_a_constant_across_an_inner_join_key() {
             "Go PropagateConstantForJoin derives the equality filter on the {side} side"
         );
     }
+    out.dismantle();
+}
+
+#[test]
+fn constant_propagation_pulls_a_projected_child_predicate_above_an_inner_join() {
+    let allocator = PlanIdAllocator::new();
+    let ctx = test_context(&allocator);
+    let source = data_source(&allocator, &[1]);
+    let selection = selection_over(&allocator, vec![eq_const(1, 7)], source);
+    let mut projection = LogicalPlan::Projection(LogicalProjection::new(
+        base(&allocator, "Projection", Some(schema_of(&[10]))),
+        vec![col_expr(1)],
+    ));
+    projection.set_children(vec![selection]);
+    let right = data_source(&allocator, &[20]);
+    let mut join = LogicalPlan::Join(LogicalJoin::new(
+        base(&allocator, "Join", Some(schema_of(&[10, 20]))),
+        LogicalJoinType::Inner,
+    ));
+    join.set_children(vec![projection, right]);
+
+    let out = super::rule_constant_propagation::constant_propagation(&ctx, join);
+    let LogicalPlan::Selection(pulled) = &out else {
+        panic!("the join must gain a parent Selection, got {out:?}")
+    };
+    assert!(matches!(
+        pulled.conditions.as_slice(),
+        [Expression::ScalarFunction(function)]
+            if matches!(function.get_args(), [Expression::Column(column), Expression::Constant(_)] if column.unique_id == 10)
+    ));
+    assert!(matches!(out.children(), [LogicalPlan::Join(_)]));
+    out.dismantle();
+}
+
+#[test]
+fn constant_propagation_keeps_go_preorder_for_nested_joins() {
+    let allocator = PlanIdAllocator::new();
+    let ctx = test_context(&allocator);
+    let selected = selection_over(
+        &allocator,
+        vec![eq_const(1, 7)],
+        data_source(&allocator, &[1]),
+    );
+    let mut inner = LogicalPlan::Join(LogicalJoin::new(
+        base(&allocator, "Join", Some(schema_of(&[1, 2]))),
+        LogicalJoinType::Inner,
+    ));
+    inner.set_children(vec![selected, data_source(&allocator, &[2])]);
+    let mut outer = LogicalPlan::Join(LogicalJoin::new(
+        base(&allocator, "Join", Some(schema_of(&[1, 2, 3]))),
+        LogicalJoinType::Inner,
+    ));
+    outer.set_children(vec![inner, data_source(&allocator, &[3])]);
+
+    let out = super::rule_constant_propagation::constant_propagation(&ctx, outer);
+    assert!(matches!(out, LogicalPlan::Join(_)));
+    assert!(matches!(out.children()[0], LogicalPlan::Selection(_)));
+    assert!(matches!(
+        out.children()[0].children(),
+        [LogicalPlan::Join(_)]
+    ));
     out.dismantle();
 }
 

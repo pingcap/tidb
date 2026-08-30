@@ -15,6 +15,7 @@ Rust currently exposes Go's logical-rule list but several entries are missing, n
 - [ ] Complete `pkg/planner/core/rule/util` as the first atomic package (completed: centralized expression replacement, column-set tests, nullable-key max-one-row behavior, unique-index key derivation, flag hook, and iterative key-info portal; removed duplicate CTE/projection/index-key bodies; remaining: the two simplification hooks depend on incomplete parent-package predicate simplification).
 - [ ] Audit every direct artifact in `pkg/planner/core/rule`, mapping production symbols and original tests to Rust owners.
 - [ ] Implement dependency-closed missing rule bodies; when a body depends on an incomplete Go package, complete that dependency package before claiming this package.
+- [x] (2026-08-29) Implemented pinned `ConstantPropagationSolver` with Go's preorder traversal, join-type sides, projection column rewrite, parent selection shape, and hard-coded unchanged flag.
 - [ ] Run the Ready validation profile and record the complete package receipt.
 
 ## Surprises & Discoveries
@@ -30,6 +31,9 @@ Rust currently exposes Go's logical-rule list but several entries are missing, n
 
 - Observation: Rust's selection max-one-row check used only `PKOrUK`, while pinned `CheckMaxOneRowCond` checks `PKOrUK` and `NullableUK`.
   Evidence: the centralized helper and focused regression now accept a fully equality-bound nullable unique key and reject partial/empty key bindings.
+
+- Observation: postorder constant propagation is not equivalent to Go's preorder rule for nested joins.
+  Evidence: a postorder walk would expose a newly created child-join Selection to its parent join in the same pass; the explicit-stack implementation snapshots candidates on entry and a regression proves the parent remains unchanged.
 
 ## Decision Log
 

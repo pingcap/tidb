@@ -350,6 +350,7 @@ pub mod rewrite;
 pub mod rule;
 pub mod rule_aggregation_elimination;
 pub mod rule_collect_plan_stats;
+pub mod rule_constant_propagation;
 pub mod rule_derive_topn_from_window;
 pub mod rule_eliminate_empty_selection;
 pub mod rule_eliminate_unionall_dual_item;
@@ -829,8 +830,36 @@ impl LogicalPlan {
     pub fn pull_up_constant_predicates(&self) -> Vec<Expression> {
         match self {
             Self::Selection(op) => op.pull_up_constant_predicates(),
-            Self::Projection(_)
-            | Self::Join(_)
+            Self::Projection(projection) => {
+                if !projection.can_be_eliminated_loose() {
+                    return Vec::new();
+                }
+                let Some(child) = projection.base.children().first() else {
+                    return Vec::new();
+                };
+                let Some(schema) = projection.base.base.schema() else {
+                    return Vec::new();
+                };
+                let replace = projection
+                    .exprs
+                    .iter()
+                    .zip(&schema.columns)
+                    .map(|(expression, column)| {
+                        let mut expression = expression.clone();
+                        (expression.hash_code().to_vec(), column.clone())
+                    })
+                    .collect::<std::collections::BTreeMap<_, _>>();
+                child
+                    .pull_up_constant_predicates()
+                    .into_iter()
+                    .filter(|predicate| {
+                        let mut columns = tidb_expr::simple_expr::extract_columns(predicate);
+                        columns.len() == 1 && replace.contains_key(columns[0].hash_code())
+                    })
+                    .map(|predicate| rule_util::resolve_expr_and_replace(predicate, &replace))
+                    .collect()
+            }
+            Self::Join(_)
             | Self::Aggregation(_)
             | Self::DataSource(_)
             | Self::Sort(_)
