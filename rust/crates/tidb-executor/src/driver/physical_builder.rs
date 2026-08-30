@@ -29,7 +29,7 @@ use crate::access_path::{
     UniqueIndexPointSourceExec,
 };
 use crate::apply::NestedLoopApplyExec;
-use crate::driver::index_usage_reporter::{PointCommand, PointIndexUsageExec};
+use crate::driver::index_usage_reporter::{CopIndexUsageExec, PointCommand, PointIndexUsageExec};
 use crate::executor::{Executor, ExecutorMeta};
 use crate::hash_agg::{AggFunc, AggKind, GroupedStreamAggExec, HashAggExec, StreamAggExec};
 use crate::index_merge_reader::{
@@ -407,7 +407,7 @@ fn build_table_scan(
         meta(plan, schema.clone()),
         table.clone(),
         RowDecodeContext::for_query(ctx),
-        PushdownStatementContext::from_stmt(ctx),
+        PushdownStatementContext::from_stmt(ctx).with_plan_id(i64::from(scan.base.base.id())),
     );
     if keep.len() != table.logical_data_source_column_count()
         || keep
@@ -444,7 +444,14 @@ fn build_table_scan(
     if let Some(rows) = scan.base.base.stats_info().map(|stats| stats.row_count()) {
         source.accept_scan_estimate(rows);
     }
-    Ok(Box::new(source))
+    let stats = catalog.table_statistics(table.stats_physical_id());
+    Ok(Box::new(CopIndexUsageExec::new(
+        Box::new(source),
+        table,
+        stats,
+        ctx.index_usage_collector().cloned(),
+        None,
+    )))
 }
 
 fn build_mem_table(
@@ -875,7 +882,7 @@ fn build_index_reader(
         scan.index_id,
         ranges,
         RowDecodeContext::for_query(ctx),
-        PushdownStatementContext::from_stmt(ctx),
+        PushdownStatementContext::from_stmt(ctx).with_plan_id(i64::from(scan.base.base.id())),
     );
     if let Some(slot) = extra_handle {
         source.read_extra_handle(slot);
@@ -924,7 +931,14 @@ fn build_index_reader(
             ));
         }
     }
-    Ok(Box::new(source))
+    let stats = catalog.table_statistics(table.stats_physical_id());
+    Ok(Box::new(CopIndexUsageExec::new(
+        Box::new(source),
+        table,
+        stats,
+        ctx.index_usage_collector().cloned(),
+        Some(scan.index_id),
+    )))
 }
 
 fn join_kind(join_type: LogicalJoinType) -> Result<JoinKind, DriverError> {

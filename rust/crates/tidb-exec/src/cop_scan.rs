@@ -532,6 +532,10 @@ where
         if aggregate.is_some() {
             shapes.push(ExecutorShape::new(ExecutorKind::Other));
         }
+        let mut cop_plan_ids = vec![0; dag.executors.len()];
+        if let Some(scan_id) = cop_plan_ids.first_mut() {
+            *scan_id = request.statement.plan_id;
+        }
         let plan = RemoteScanPlan {
             dag,
             envelope: RequestEnvelope::new(shapes),
@@ -546,6 +550,8 @@ where
             time_zone: request.statement.time_zone.clone(),
             resource_group_name: request.statement.resource_group_name.clone(),
             warnings: request.statement.warnings.clone(),
+            cop_plan_ids,
+            root_plan_id: request.statement.plan_id,
         };
         let iter = open_scan(&self.factory, plan)
             .map_err(|error| PushdownScannerError::Backend(StorageError::Backend(error)))?;
@@ -556,6 +562,8 @@ where
             field_types,
             returned: 0,
             predicates_applied,
+            plan_id: request.statement.plan_id,
+            exhausted: false,
         }))
     }
 }
@@ -597,6 +605,9 @@ struct RemoteScanPlan {
     /// appended while the query worker decodes land in the buffer
     /// `SHOW WARNINGS` reads.
     warnings: WarningCollector,
+    /// Physical IDs aligned with TiPB executors for runtime summaries.
+    cop_plan_ids: Vec<isize>,
+    root_plan_id: isize,
 }
 
 /// Opens the lazy response on the query worker. Pulling remains demand-driven:
@@ -659,8 +670,8 @@ where
             // given, and a fresh collector is dropped with them inside.
             QueryResultContext::new(plan.field_types.clone(), plan.warnings)
                 .with_time_zone(plan.time_zone),
-            vec![0],
-            0,
+            plan.cop_plan_ids,
+            plan.root_plan_id,
             true,
         )
         .map_err(|error| error.to_string())?;
@@ -676,10 +687,15 @@ struct CopRowStream {
     field_types: Vec<FieldType>,
     returned: u64,
     predicates_applied: bool,
+    plan_id: isize,
+    exhausted: bool,
 }
 
 impl CopRowStream {
     fn pull_chunk(&mut self, required_rows: usize) -> Result<Option<Chunk>, StorageError> {
+        if self.exhausted {
+            return Ok(None);
+        }
         loop {
             let Some(iter) = self.iter.as_mut() else {
                 return Ok(None);
@@ -688,7 +704,7 @@ impl CopRowStream {
                 .next_chunk_with_required_rows(required_rows.max(1))
                 .map_err(|error| StorageError::Backend(error.to_string()))?;
             let Some(batch) = batch else {
-                self.iter = None;
+                self.exhausted = true;
                 return Ok(None);
             };
             if batch.row.num_rows() == 0 {
@@ -700,6 +716,11 @@ impl CopRowStream {
 }
 
 impl PushdownRowStream for CopRowStream {
+    fn cop_count_and_rows(&self) -> (u64, u64) {
+        self.iter.as_ref().map_or((0, 0), |iter| {
+            iter.runtime_stats().cop_count_and_rows(self.plan_id)
+        })
+    }
     fn next_row(&mut self) -> Result<Option<Vec<Datum>>, StorageError> {
         loop {
             if let Some(batch) = &self.pending {
@@ -771,6 +792,7 @@ impl PushdownRowStream for CopRowStream {
             iter.close();
         }
         self.iter = None;
+        self.exhausted = true;
         self.pending = None;
         self.pending_row = 0;
     }

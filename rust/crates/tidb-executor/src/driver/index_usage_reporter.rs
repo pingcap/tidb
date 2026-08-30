@@ -257,6 +257,105 @@ impl Executor for PointIndexUsageExec {
     }
 }
 
+/// Go coprocessor readers report the scan plan's task/row totals at close.
+pub(super) struct CopIndexUsageExec {
+    child: Box<dyn Executor>,
+    table: KvTable,
+    stats: Option<Arc<TableStatistics>>,
+    collector: Option<Arc<StmtIndexUsageCollector>>,
+    index_id: Option<i64>,
+    reported: bool,
+}
+
+impl CopIndexUsageExec {
+    pub(super) fn new(
+        child: Box<dyn Executor>,
+        table: KvTable,
+        stats: Option<Arc<TableStatistics>>,
+        collector: Option<Arc<StmtIndexUsageCollector>>,
+        index_id: Option<i64>,
+    ) -> Self {
+        Self {
+            child,
+            table,
+            stats,
+            collector,
+            index_id,
+            reported: false,
+        }
+    }
+
+    fn report(&mut self) {
+        if self.reported {
+            return;
+        }
+        self.reported = true;
+        let Some((kv_requests, accessed_rows)) = self
+            .child
+            .table_access()
+            .and_then(|access| access.cop_count_and_rows())
+        else {
+            return;
+        };
+        let reporter = IndexUsageReporter::new(self.collector.as_ref());
+        match self.index_id {
+            Some(index_id) => reporter.report_cop_for_table(
+                &self.table,
+                self.stats.as_deref(),
+                index_id,
+                kv_requests,
+                accessed_rows,
+            ),
+            None => reporter.report_cop_for_handle(
+                &self.table,
+                self.stats.as_deref(),
+                kv_requests,
+                accessed_rows,
+            ),
+        }
+    }
+}
+
+impl Executor for CopIndexUsageExec {
+    fn open(&mut self) -> Result<(), ExecError> {
+        self.reported = false;
+        self.child.open()
+    }
+
+    fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+        self.child.next(req)
+    }
+
+    fn close(&mut self) -> Result<(), ExecError> {
+        self.report();
+        self.child.close()
+    }
+
+    fn schema(&self) -> &Schema {
+        self.child.schema()
+    }
+
+    fn ret_field_types(&self) -> &[FieldType] {
+        self.child.ret_field_types()
+    }
+
+    fn init_cap(&self) -> usize {
+        self.child.init_cap()
+    }
+
+    fn max_chunk_size(&self) -> usize {
+        self.child.max_chunk_size()
+    }
+
+    fn new_chunk(&self) -> Chunk {
+        self.child.new_chunk()
+    }
+
+    fn table_access(&mut self) -> Option<&mut dyn crate::table_access::TableAccess> {
+        self.child.table_access()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Mutex};

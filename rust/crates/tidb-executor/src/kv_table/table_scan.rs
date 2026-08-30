@@ -2600,6 +2600,12 @@ pub struct RemoteRowCursor {
 }
 
 impl RemoteRowCursor {
+    /// Go `RuntimeStatsColl.GetCopCountAndRows` for this remote scan.
+    #[must_use]
+    pub fn cop_count_and_rows(&self) -> (u64, u64) {
+        self.stream.cop_count_and_rows()
+    }
+
     /// How many rows have crossed the network so far: the wire receipt.
     #[must_use]
     pub fn rows_returned(&self) -> u64 {
@@ -2905,6 +2911,12 @@ pub struct RemoteIndexHandleCursor {
 }
 
 impl RemoteIndexHandleCursor {
+    /// Go `RuntimeStatsColl.GetCopCountAndRows` for the index scan.
+    #[must_use]
+    pub fn cop_count_and_rows(&self) -> (u64, u64) {
+        self.inner.cop_count_and_rows()
+    }
+
     fn note_rows(&mut self) {
         let returned = self.inner.rows_returned();
         let fresh = returned.saturating_sub(self.noted_rows);
@@ -4245,6 +4257,12 @@ fn append_partial_remote_chunk(
 }
 
 impl crate::table_access::TableAccess for TableScanExec {
+    fn cop_count_and_rows(&self) -> Option<(u64, u64)> {
+        self.remote
+            .as_ref()
+            .map(RemoteRowCursor::cop_count_and_rows)
+    }
+
     /// Go `checkColCanUseIndex`: a record-key walk ranks by the clustered
     /// handle, or by the single integer handle column, and by nothing else --
     /// so the MaxMinEliminate bounded reverse read is only offered for those

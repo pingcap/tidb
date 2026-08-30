@@ -1423,6 +1423,8 @@ pub struct IndexRangeSourceExec {
     partial_context: Option<crate::StmtContext>,
     partial_remote: Option<Box<dyn PushdownRowStream>>,
     partial_rows: Option<std::vec::IntoIter<Vec<Datum>>>,
+    /// Completed remote streams' Go cop task/row totals.
+    cop_stats: (u64, u64),
     partial_done: bool,
     /// Go `indexLookUpExecutorContext.indexLookupConcurrency`, resolved from
     /// the session before execution starts.
@@ -1522,6 +1524,22 @@ fn calculate_lookup_batch_size(
 }
 
 impl IndexRangeSourceExec {
+    fn retain_remote_index_stats(&mut self) {
+        if let Some(remote) = self.remote_index.as_ref() {
+            let stats = remote.cop_count_and_rows();
+            self.cop_stats.0 = self.cop_stats.0.wrapping_add(stats.0);
+            self.cop_stats.1 = self.cop_stats.1.wrapping_add(stats.1);
+        }
+    }
+
+    fn retain_partial_remote_stats(&mut self) {
+        if let Some(remote) = self.partial_remote.as_ref() {
+            let stats = remote.cop_count_and_rows();
+            self.cop_stats.0 = self.cop_stats.0.wrapping_add(stats.0);
+            self.cop_stats.1 = self.cop_stats.1.wrapping_add(stats.1);
+        }
+    }
+
     /// Builds a source over `ranges` with an explicit row-decode context.
     #[must_use]
     pub fn new_with_context(
@@ -1637,6 +1655,7 @@ impl IndexRangeSourceExec {
             partial_context: None,
             partial_remote: None,
             partial_rows: None,
+            cop_stats: (0, 0),
             partial_done: false,
             lookup_concurrency: DEFAULT_LOOKUP_FETCH_CONCURRENCY,
             lookup_pipeline: None,
@@ -2887,6 +2906,7 @@ impl Executor for IndexRangeSourceExec {
         self.partial_rows = None;
         self.partial_done = false;
         self.remote_index = None;
+        self.cop_stats = (0, 0);
         self.remote_covering_selected = false;
         // A DESCENDING lookup must not ride the local cursor on cluster
         // storage: [`TableStorage::iter_reverse`]'s fallback materializes the
@@ -3046,6 +3066,7 @@ impl Executor for IndexRangeSourceExec {
                     ExecError::unsupported(format!("index aggregate response failed: {error:?}"))
                 })?
                 else {
+                    self.retain_partial_remote_stats();
                     self.partial_remote = None;
                     self.partial_done = true;
                     break;
@@ -3097,6 +3118,7 @@ impl Executor for IndexRangeSourceExec {
                 .is_some_and(crate::kv_table::RemoteIndexHandleCursor::predicates_applied);
             while req.num_rows() < cap {
                 if self.limit.is_some_and(|limit| self.produced.get() >= limit) {
+                    self.retain_remote_index_stats();
                     self.remote_index = None;
                     return Ok(());
                 }
@@ -3111,6 +3133,7 @@ impl Executor for IndexRangeSourceExec {
                         ))
                     })?;
                 let Some(row) = row else {
+                    self.retain_remote_index_stats();
                     self.remote_index = None;
                     return Ok(());
                 };
@@ -3178,9 +3201,11 @@ impl Executor for IndexRangeSourceExec {
 
     fn close(&mut self) -> Result<(), ExecError> {
         self.cursor = None;
+        self.retain_partial_remote_stats();
         self.partial_remote = None;
         self.partial_rows = None;
         self.partial_done = false;
+        self.retain_remote_index_stats();
         self.remote_index = None;
         self.remote_covering_selected = false;
         self.lookup_chunk = None;
@@ -3223,6 +3248,21 @@ impl Drop for IndexRangeSourceExec {
 }
 
 impl crate::table_access::TableAccess for IndexRangeSourceExec {
+    fn cop_count_and_rows(&self) -> Option<(u64, u64)> {
+        let mut stats = self.cop_stats;
+        if let Some(remote) = self.remote_index.as_ref() {
+            let live = remote.cop_count_and_rows();
+            stats.0 = stats.0.wrapping_add(live.0);
+            stats.1 = stats.1.wrapping_add(live.1);
+        }
+        if let Some(remote) = self.partial_remote.as_ref() {
+            let live = remote.cop_count_and_rows();
+            stats.0 = stats.0.wrapping_add(live.0);
+            stats.1 = stats.1.wrapping_add(live.1);
+        }
+        Some(stats)
+    }
+
     fn accept_scan_estimate(&mut self, rows: f64) {
         self.estimated_rows = Some(rows);
     }

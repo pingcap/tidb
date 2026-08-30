@@ -185,6 +185,56 @@ impl SelectResultRuntimeStats {
     pub fn plan_summaries(&self, plan_id: isize) -> &[ExecutorExecutionSummary] {
         self.plan_summaries.get(&plan_id).map_or(&[], Vec::as_slice)
     }
+
+    /// Go `RuntimeStatsColl.GetCopCountAndRows`.
+    #[must_use]
+    pub fn cop_count_and_rows(&self, plan_id: isize) -> (u64, u64) {
+        let summaries = self.plan_summaries(plan_id);
+        (
+            summaries.len() as u64,
+            summaries.iter().fold(0_u64, |rows, summary| {
+                rows.wrapping_add(summary.num_produced_rows.unwrap_or_default())
+            }),
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cop_count_and_rows_matches_runtime_stats_collection() {
+        let mut stats = SelectResultRuntimeStats::default();
+        let metadata = SelectResultMetadata {
+            label: "dag",
+            sql_type: None,
+            store_type: StoreType::TiKv,
+            row_len: 1,
+            mem_tracker_bound: false,
+            paging: false,
+            dist_sql_concurrency: 1,
+            cop_plan_ids: vec![7],
+            root_plan_id: Some(9),
+        };
+        for rows in [3, 5] {
+            stats.update(
+                &metadata,
+                true,
+                "store",
+                false,
+                [],
+                &[ExecutorExecutionSummary {
+                    time_processed_ns: Some(1),
+                    num_produced_rows: Some(rows),
+                    num_iterations: Some(1),
+                    ..ExecutorExecutionSummary::default()
+                }],
+            );
+        }
+        assert_eq!(stats.cop_count_and_rows(7), (2, 8));
+        assert_eq!(stats.cop_count_and_rows(8), (0, 0));
+    }
 }
 
 /// Builds the DAG result metadata created by `Select`.

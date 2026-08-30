@@ -90,6 +90,11 @@ use crate::StmtContext;
 /// particular the staged-row rule that applies to all of them -- are the
 /// module doc above.
 pub trait TableAccess {
+    /// Go `RuntimeStatsColl.GetCopCountAndRows` for a live remote reader.
+    fn cop_count_and_rows(&self) -> Option<(u64, u64)> {
+        None
+    }
+
     /// Records the physical scan estimate selected by the access-path coster.
     /// It changes no rows and exists so later operator negotiation can make
     /// the same partial/final aggregation choice as the optimizer.

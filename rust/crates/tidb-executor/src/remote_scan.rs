@@ -418,6 +418,8 @@ pub struct PushdownScanRequest {
 /// one and forget the other.
 #[derive(Clone, Debug)]
 pub struct PushdownStatementContext {
+    /// Physical scan plan ID used by Go `RuntimeStatsColl`.
+    pub plan_id: isize,
     /// Go `StatementContext.PushDownFlags()`; see
     /// [`crate::StmtContext::push_down_flags`].
     ///
@@ -447,6 +449,7 @@ pub struct PushdownStatementContext {
 impl Default for PushdownStatementContext {
     fn default() -> Self {
         Self {
+            plan_id: 0,
             push_down_flags: 0,
             warnings: WarningCollector::default(),
             time_zone: SessionTimeZone::default(),
@@ -460,16 +463,28 @@ impl PushdownStatementContext {
     #[must_use]
     pub fn from_stmt(ctx: &crate::StmtContext) -> Self {
         Self {
+            plan_id: 0,
             push_down_flags: ctx.push_down_flags(),
             warnings: ctx.cop_warning_sink(),
             time_zone: ctx.session_zone(),
             resource_group_name: ctx.resource_group_name().to_owned(),
         }
     }
+
+    /// Binds the physical scan whose TiKV execution summary owns this read.
+    #[must_use]
+    pub fn with_plan_id(mut self, plan_id: i64) -> Self {
+        self.plan_id = plan_id as isize;
+        self
+    }
 }
 
 /// A lazily pulled stream of snapshot rows a backend served remotely.
 pub trait PushdownRowStream {
+    /// Go `RuntimeStatsColl.GetCopCountAndRows` for the scan executor.
+    fn cop_count_and_rows(&self) -> (u64, u64) {
+        (0, 0)
+    }
     /// The next row in record-key order, as the requested columns, or `None`
     /// at the end of the answer.
     fn next_row(&mut self) -> Result<Option<Vec<Datum>>, StorageError>;
@@ -540,6 +555,12 @@ impl ChainedPushdownStream {
 }
 
 impl PushdownRowStream for ChainedPushdownStream {
+    fn cop_count_and_rows(&self) -> (u64, u64) {
+        self.parts.iter().fold((0, 0), |total, part| {
+            let part = part.cop_count_and_rows();
+            (total.0.wrapping_add(part.0), total.1.wrapping_add(part.1))
+        })
+    }
     fn next_row(&mut self) -> Result<Option<Vec<Datum>>, StorageError> {
         if self.finished {
             return Ok(None);
