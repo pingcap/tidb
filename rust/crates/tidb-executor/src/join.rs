@@ -1131,14 +1131,16 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         scratch: &mut Chunk,
         left: Row<'_>,
         right: Row<'_>,
+        left_width: usize,
+        right_width: usize,
     ) -> Result<bool, ExecError> {
         if conditions.is_empty() {
             return Ok(true);
         }
         condition_evals.set(condition_evals.get() + 1);
         scratch.reset();
-        scratch.append_partial_row(0, left);
-        scratch.append_partial_row(left.len(), right);
+        scratch.append_partial_row_limited(0, left, left_width);
+        scratch.append_partial_row_limited(left_width, right, right_width);
         let row = scratch.get_row(0);
         for condition in conditions {
             if !truthy(&condition.eval(ctx, row)?)? {
@@ -3100,10 +3102,10 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                             let current_probe_index = probe_index;
                             probe_index += 1;
                             let probe_row = input.get_row(current_probe_index);
-                            let (left, right) = if probe_is_left {
-                                (probe_row, build_row)
+                            let (left, right, left_width, right_width) = if probe_is_left {
+                                (probe_row, build_row, probe_types.len(), build_types.len())
                             } else {
-                                (build_row, probe_row)
+                                (build_row, probe_row, build_types.len(), probe_types.len())
                             };
                             if Self::matches_chunk_rows(
                                 ctx,
@@ -3112,6 +3114,8 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                                 &mut condition_chunk,
                                 left,
                                 right,
+                                left_width,
+                                right_width,
                             )? {
                                 Self::append_joined_chunk_rows(
                                     &mut output,
@@ -3248,10 +3252,10 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 let emitted = table
                     .with_row(ptr, &mut build_buf, |build_row| {
                         if !residual_conditions.is_empty() {
-                            let (left, right) = if probe_is_left {
-                                (probe_row, build_row)
+                            let (left, right, left_width, right_width) = if probe_is_left {
+                                (probe_row, build_row, probe_types.len(), build_types.len())
                             } else {
-                                (build_row, probe_row)
+                                (build_row, probe_row, build_types.len(), probe_types.len())
                             };
                             if !Self::matches_chunk_rows(
                                 ctx,
@@ -3260,6 +3264,8 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                                 &mut condition_chunk,
                                 left,
                                 right,
+                                left_width,
+                                right_width,
                             )? {
                                 return Ok::<bool, ExecError>(false);
                             }
@@ -3899,6 +3905,8 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                             condition_chunk,
                             left,
                             right,
+                            left_types.len(),
+                            right_types.len(),
                         )?
                     {
                         return Ok::<(), ExecError>(());

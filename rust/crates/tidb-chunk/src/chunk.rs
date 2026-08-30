@@ -781,9 +781,25 @@ impl Chunk {
     /// Go `AppendPartialRow`: append `row`'s cells into this chunk's columns
     /// starting at `col_off`.
     pub fn append_partial_row(&mut self, col_off: usize, row: Row<'_>) {
+        self.append_partial_row_limited(col_off, row, usize::MAX);
+    }
+
+    /// Appends at most `max_cols` source cells, bounded by the destination.
+    ///
+    /// Join residual-condition chunks are typed from the visible child
+    /// schemas, while a child row can retain hidden key columns. Go's row
+    /// append path only copies the requested schema width; keep that contract
+    /// here so an internal hidden column cannot index past the condition chunk.
+    pub fn append_partial_row_limited(&mut self, col_off: usize, row: Row<'_>, max_cols: usize) {
+        if col_off >= self.columns.len() || max_cols == 0 {
+            return;
+        }
         self.append_sel(col_off);
         let source = row.chunk().expect("cannot append the empty Row sentinel");
-        for (i, src_col) in source.columns.iter().enumerate() {
+        let count = max_cols
+            .min(source.columns.len())
+            .min(self.columns.len() - col_off);
+        for (i, src_col) in source.columns.iter().take(count).enumerate() {
             Self::append_cell_between(&mut self.columns[col_off + i], src_col, row.idx());
         }
     }
@@ -1720,6 +1736,24 @@ mod tests {
         let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field), 1);
         chunk.append_datum(0, &Datum::Raw(vec![0, 255]));
         assert_eq!(chunk.get_row(0).get_bytes(0), &[0, 255]);
+    }
+
+    #[test]
+    fn partial_row_limited_ignores_hidden_source_columns() {
+        let source_fields = vec![FieldType::new(FieldTypeCode::LongLong); 4];
+        let target_fields = vec![FieldType::new(FieldTypeCode::LongLong); 3];
+        let mut source = Chunk::new_with_capacity(&source_fields, 1);
+        for (column, value) in [10, 20, 30, 40].into_iter().enumerate() {
+            source.append_int64(column, value);
+        }
+        let mut target = Chunk::new_with_capacity(&target_fields, 1);
+        target.append_partial_row_limited(0, source.get_row(0), target_fields.len());
+
+        let row = target.get_row(0);
+        assert_eq!(row.len(), 3);
+        assert_eq!(row.get_int64(0), 10);
+        assert_eq!(row.get_int64(1), 20);
+        assert_eq!(row.get_int64(2), 30);
     }
 
     #[test]
