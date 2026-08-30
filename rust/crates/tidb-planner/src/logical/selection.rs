@@ -29,9 +29,7 @@ use tidb_expr::simple_expr::{extract_columns_from_expressions, extract_cor_colum
 use crate::logical::BaseLogicalPlan;
 use crate::stats_info::StatsInfo;
 
-/// Go `cost.SelectionFactor` (`pkg/planner/core/cost/cost.go`): the fraction
-/// of rows a filter with no better estimate is assumed to keep.
-pub const SELECTION_FACTOR: f64 = 0.8;
+pub use crate::cost_factors::SELECTION_FACTOR;
 
 /// Go `logicalop.LogicalSelection` (`logical_selection.go:38`).
 #[derive(Clone, Debug, Default)]

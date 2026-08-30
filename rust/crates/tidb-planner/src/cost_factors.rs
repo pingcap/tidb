@@ -20,6 +20,8 @@
 //! map's case-sensitive lookup without introducing a second AST aggregate
 //! catalog or a cost-model/session owner.
 
+use tidb_expr::aggregation::names;
+
 /// Default selectivity used when no more specific estimate is available.
 pub const SELECTION_FACTOR: f64 = 0.8;
 
@@ -48,11 +50,16 @@ pub const DEFAULT_AGGREGATION_FACTOR: f64 = 1.5;
 #[must_use]
 pub fn aggregation_factor(name: &str) -> Option<f64> {
     Some(match name {
-        "count" | "sum" | "sum_int" | "max" | "min" | "group_concat" => 1.0,
-        "avg" => 2.0,
-        "firstrow" => 0.1,
-        "bit_or" | "bit_xor" | "bit_and" => 0.9,
-        "var_pop" | "var_samp" | "stddev_pop" | "stddev_samp" => 3.0,
+        names::COUNT
+        | names::SUM
+        | names::SUM_INT
+        | names::MAX
+        | names::MIN
+        | names::GROUP_CONCAT => 1.0,
+        names::AVG => 2.0,
+        names::FIRST_ROW => 0.1,
+        names::BIT_OR | names::BIT_XOR | names::BIT_AND => 0.9,
+        names::VAR_POP | names::VAR_SAMP | names::STDDEV_POP | names::STDDEV_SAMP => 3.0,
         "default" => DEFAULT_AGGREGATION_FACTOR,
         _ => return None,
     })
