@@ -40,10 +40,10 @@
 //!
 //! # Which rules actually run
 //!
-//! Go's list has 35 entries and FIFTEEN of them have a body here. Four live in
+//! Go's list has 35 entries and SIXTEEN of them have a body here. Four live in
 //! this file, because their tree walks are [`super::rewrite`]'s:
 //! [`ColumnPruner`] (#1 and #29), [`BuildKeySolver`] (#3), [`PpdSolver`] (#13)
-//! and [`PushDownTopNOptimizer`] (#21). Eleven more live in their own
+//! and [`PushDownTopNOptimizer`] (#21). Twelve more live in their own
 //! `rule_*.rs` beside this one, each one fold and one file:
 //!
 //! * [`super::rule_result_reorder::ResultReorder`] (#2)
@@ -52,6 +52,7 @@
 //! * [`super::rule_max_min_elimination::MaxMinEliminator`] (#12)
 //! * [`super::rule_join_key_type_cast::JoinKeyTypeCastRewriter`] (#14)
 //! * [`super::rule_partition_processor::PartitionProcessor`] (#16)
+//! * [`super::rule_outer_join_to_semi_join::OuterJoinToSemiJoin`] (#27)
 //! * [`super::rule_derive_topn_from_window::DeriveTopNFromWindow`] (#19)
 //! * [`super::rule_push_down_sequence::PushDownSequenceSolver`] (#30)
 //! * [`super::rule_eliminate_unionall_dual_item::EliminateUnionAllDualItem`]
@@ -59,7 +60,7 @@
 //! * [`super::rule_eliminate_empty_selection::EmptySelectionEliminator`] (#32)
 //! * [`super::rule_resolve_expand::ResolveExpand`] (#34)
 //!
-//! The remaining 20 are present in [`OPT_RULE_LIST`] as their name and flag —
+//! The remaining 19 are present in [`OPT_RULE_LIST`] as their name and flag —
 //! the TABLE is ported, because the order is the semantics — but they have no
 //! body yet.
 //!
@@ -420,6 +421,9 @@ impl RuleId {
             Self::PredicateSimplification => {
                 Some(&super::rule_predicate_simplification::PredicateSimplification)
             }
+            Self::OuterJoinToSemiJoin => {
+                Some(&super::rule_outer_join_to_semi_join::OuterJoinToSemiJoin)
+            }
             Self::GcSubstituter
             | Self::DecorrelateSolver
             | Self::SemiJoinRewriter
@@ -432,7 +436,6 @@ impl RuleId {
             | Self::FullTextIndexResolverProjection
             | Self::OrderAwareJoinReorder
             | Self::JoinReOrderSolver
-            | Self::OuterJoinToSemiJoin
             | Self::CorrelateSolver
             | Self::FullTextIndexResolverRejectRemaining => None,
         }

@@ -245,7 +245,11 @@ fn outer_join_inner_key_is_null_becomes_anti_semi_join() {
 
     let mut catalog = Catalog::default();
     crate::run_create_table_on("CREATE TABLE anti_l (id BIGINT, v BIGINT)", &mut catalog).unwrap();
-    crate::run_create_table_on("CREATE TABLE anti_r (id BIGINT, w BIGINT)", &mut catalog).unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE anti_r (id BIGINT, w BIGINT NOT NULL)",
+        &mut catalog,
+    )
+    .unwrap();
     crate::run_create_table_on("CREATE TABLE anti_d (id BIGINT)", &mut catalog).unwrap();
     let ctx = crate::StmtContext::for_query();
     run_insert_on(
@@ -326,25 +330,68 @@ fn outer_join_inner_key_is_null_becomes_anti_semi_join() {
         "the nested anti filter must leave no unnegated Selection: {nested_plan:#?}",
     );
 
-    // This first port deliberately implements only Go's no-projection branch.
-    // Reading an inner column needs generateProjectForConvertAntiJoin to add a
-    // typed NULL, so it remains a left outer join until that branch is ported.
+    // Go also accepts a non-join inner column whose originating schema proves
+    // it NOT NULL.
+    let non_join_not_null = "SELECT anti_l.id FROM anti_l LEFT JOIN anti_r \
+        ON anti_l.id=anti_r.id WHERE anti_r.w IS NULL";
+    assert_eq!(
+        run_select_on(non_join_not_null, &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Int(2)]],
+    );
+    let non_join_plan = explain(non_join_not_null, &catalog);
+    assert!(
+        non_join_plan
+            .iter()
+            .any(|line| line.contains("anti semi join")),
+        "a NOT NULL inner column is an anti-join witness: {non_join_plan:#?}",
+    );
+
+    // A right outer join is normalized by swapping children and equality
+    // arguments before changing the join kind.
+    let right_outer = "SELECT anti_l.id FROM anti_r RIGHT JOIN anti_l \
+        ON anti_r.id=anti_l.id WHERE anti_r.id IS NULL";
+    assert_eq!(
+        run_select_on(right_outer, &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Int(2)]],
+    );
+    let right_plan = explain(right_outer, &catalog);
+    assert!(
+        right_plan
+            .iter()
+            .any(|line| line.contains("anti semi join")),
+        "right outer conversion must produce an anti join: {right_plan:#?}",
+    );
+
+    // Null-safe equality is deliberately excluded by Go because it does not
+    // null-reject the inner key.
+    let null_safe = "SELECT anti_l.id FROM anti_l LEFT JOIN anti_r \
+        ON anti_l.id <=> anti_r.id WHERE anti_r.id IS NULL";
+    let null_safe_plan = explain(null_safe, &catalog);
+    assert!(
+        null_safe_plan
+            .iter()
+            .any(|line| line.contains("left outer join")),
+        "NullEQ must not be rewritten as an anti join: {null_safe_plan:#?}",
+    );
+
+    // Reading an inner column takes Go's `generateProjectForConvertAntiJoin`
+    // branch: a typed NULL projection preserves the outer-join result schema.
     let inner_output = "SELECT anti_l.id, anti_r.w FROM anti_l LEFT JOIN anti_r \
         ON anti_l.id=anti_r.id WHERE anti_r.id IS NULL";
     assert_eq!(
         run_select_on(inner_output, &catalog, &ctx).unwrap(),
         vec![vec![Datum::Int(2), Datum::Null]],
     );
-    let refused = explain(inner_output, &catalog);
+    let converted = explain(inner_output, &catalog);
     assert!(
-        refused.iter().any(|line| line.contains("left outer join")),
-        "an inner output requires Go's NULL-restoring projection: {refused:#?}",
+        converted.iter().any(|line| line.contains("anti semi join")),
+        "the NULL-restoring projection must retain the anti join: {converted:#?}",
     );
     assert!(
-        refused
-            .iter()
-            .any(|line| line.contains("isnull(test.anti_r.id)")),
-        "the unconverted join must retain its Selection: {refused:#?}",
+        !converted.iter().any(|line| {
+            line.contains("isnull(test.anti_r.id)") && !line.contains("not(isnull(")
+        }),
+        "the anti join must consume the unnegated Selection: {converted:#?}",
     );
 }
 

@@ -356,6 +356,7 @@ pub mod rule_eliminate_empty_selection;
 pub mod rule_eliminate_unionall_dual_item;
 pub mod rule_join_key_type_cast;
 pub mod rule_max_min_elimination;
+pub mod rule_outer_join_to_semi_join;
 pub mod rule_partition_processor;
 pub mod rule_predicate_simplification;
 pub mod rule_projection_elimination;

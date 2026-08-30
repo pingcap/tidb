@@ -19,6 +19,7 @@ Rust currently exposes Go's logical-rule list but several entries are missing, n
 - [x] (2026-08-29) Replaced the disconnected max/min classifier with pinned `MaxMinEliminator`: recursive CTE boundary, eligibility gates, nullable filtering, sort/limit construction, indexed multi-aggregate splitting, cloned subplans, and cartesian joins.
 - [x] (2026-08-29) Replaced the narrowed predicate helper and planner-local join-equivalence solver with the registered pinned `PredicateSimplification` rule and expression-owned general propagation: PushDownNot, logical-constant short circuit, IN/NE merge, redundant OR removal, impossible OR-branch pruning, DataSource recursion, plan-cache skip reasons, and session-controlled join-key retention.
 - [x] (2026-08-29) Integrated pinned `PropConstForOuterJoin`: preserved-side constants, transitive equality classes, null-sensitive modes, inner `IS NOT NULL` derivation, recursive safe replacement, `allJoinLeaf`, and join-type-specific validity filters now use the ordinary join executor path.
+- [x] (2026-08-29) Replaced the absent/partial outer-join anti pattern with pinned `OuterJoinToSemiJoin`: recursive selection discovery, identity-projection traversal, right-join normalization, join-predicate and NOT NULL witnesses, typed NULL restoration, and Apply/NullEQ refusal.
 - [ ] Run the Ready validation profile and record the complete package receipt.
 
 ## Surprises & Discoveries
@@ -43,6 +44,9 @@ Rust currently exposes Go's logical-rule list but several entries are missing, n
 
 - Observation: outer-join propagation is over the transitive equality class, not only direct outer/inner keys.
   Evidence: pinned `propOuterJoinConstSolver.propagateColumnEQ` builds a disjoint set; the Rust regression now derives an inner predicate across a three-edge alternating equality chain.
+
+- Observation: the existing outer-join-to-anti regression documented and asserted a deliberately partial implementation.
+  Evidence: before the registered rule body, the direct case failed and the test required inner-column output to remain a left outer join; the Go rule instead inserts a typed NULL projection, so that non-parity assertion was replaced.
 
 ## Decision Log
 
