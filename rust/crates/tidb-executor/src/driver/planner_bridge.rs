@@ -993,14 +993,15 @@ fn optimize_built_logical(
         advanced_join_hint: ctx.advanced_join_hint(),
         hint_warning_sink: Some(ctx),
     };
-    let optimized = logical_optimize(&rule_context, flags, plan)
-        .map_err(|(_, error)| error)?
-        .plan;
     let mut source_count = 0;
-    optimized.walk_preorder(&mut |plan| {
+    plan.walk_preorder(&mut |plan| {
         source_count += usize::from(matches!(plan, LogicalPlan::DataSource(_)));
     });
-    let (mut optimized, ()) = fold_owned(
+    // Go DataSource.InitStats is available to logical rules themselves;
+    // join reorder derives candidate statistics while logical optimization
+    // is still running. Attach real-or-pseudo base statistics before entering
+    // that rule list, rather than delaying them until physical optimization.
+    let (plan, ()) = fold_owned(
         &mut InitStats {
             catalog,
             select: (source_count == 1).then_some(select_hint).flatten(),
@@ -1008,9 +1009,12 @@ fn optimize_built_logical(
             enable_pseudo_for_outdated_stats: ctx.enable_pseudo_for_outdated_stats(),
             zone: session_zone,
         },
-        optimized,
+        plan,
         (),
     );
+    let mut optimized = logical_optimize(&rule_context, flags, plan)
+        .map_err(|(_, error)| error)?
+        .plan;
     optimize_cte_classes(
         &optimized,
         catalog,
@@ -1093,4 +1097,51 @@ pub(crate) fn cached_physical_query_plan(
     }
     tidb_planner::physical_plan_cache::plan_cacheable(&physical, cacheability).ok()?;
     Some(physical)
+}
+
+#[cfg(test)]
+pub(crate) fn statistics_usage_before_and_after_logical_optimization(
+    query: &tidb_ast::QueryStmt,
+    catalog: &Catalog,
+    current_database: &str,
+    ctx: &crate::StmtContext,
+) -> Result<
+    (
+        tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage,
+        tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage,
+    ),
+    tidb_planner::plan_base::PlanError,
+> {
+    let plan_ids = PlanIdAllocator::new();
+    let column_ids = ColumnIdAllocator::new();
+    let source = catalog.planner_catalog(current_database);
+    let session_zone = ctx.session_zone();
+    let mut builder = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, session_zone.clone());
+    let node = tidb_resolve::NodeW::new(query.clone());
+    let plan = builder.build_query_node(&node, false)?;
+    let flags = builder.get_opt_flag();
+    let (plan, before) = tidb_planner::logical::rule_collect_plan_stats::collect_column_stats_usage(
+        plan,
+        ctx.opt_index_prune_threshold(),
+    );
+    let select_hint = match query {
+        tidb_ast::QueryStmt::Select(select) => Some(select.as_ref()),
+        tidb_ast::QueryStmt::SetOpr(_) => None,
+    };
+    let optimized = optimize_built_logical(
+        plan,
+        flags,
+        select_hint,
+        catalog,
+        ctx,
+        false,
+        &plan_ids,
+        &column_ids,
+        &session_zone,
+    )?;
+    let (_, after) = tidb_planner::logical::rule_collect_plan_stats::collect_column_stats_usage(
+        optimized,
+        ctx.opt_index_prune_threshold(),
+    );
+    Ok((before, after))
 }

@@ -263,6 +263,7 @@ pub struct ConflictDetector {
     inner_edges: Vec<Edge>,
     non_inner_edges: Vec<Edge>,
     all_inner_join: bool,
+    derive_stats_threshold: i32,
 }
 
 /// Go `joinorder.CheckConnectionResult`.
@@ -332,13 +333,23 @@ impl ConflictDetector {
 
         let mut vertex_map = BTreeMap::new();
         for (index, vertex) in group.vertexes.iter().enumerate() {
-            let cumulative_cost = cumulative_cost_by_children(vertex)?;
+            // Go `ConflictDetector.Build` derives every leaf vertex before
+            // reading its cumulative cost. The logical-rule phase runs
+            // before the later whole-plan physical-optimization derivation.
+            let (vertex, result) = crate::logical::rewrite::recursive_derive_stats(
+                vertex.as_ref().clone(),
+                Vec::new(),
+                self.derive_stats_threshold,
+            );
+            result?;
+            let vertex = Rc::new(vertex);
+            let cumulative_cost = cumulative_cost_by_children(&vertex)?;
             validate_cumulative_cost(cumulative_cost)?;
             vertex_map.insert(
                 vertex.id(),
                 Node {
                     bit_set: FastIntSet::new([index as i64]),
-                    plan: Some(Rc::clone(vertex)),
+                    plan: Some(vertex),
                     cumulative_cost,
                     used_edges: BTreeSet::new(),
                 },
@@ -1822,7 +1833,10 @@ fn optimize_join_group(
         .cloned()
         .ok_or_else(|| PlanError::internal("join group root has no schema"))?;
     let original_names = group.root.output_names().to_vec();
-    let mut detector = ConflictDetector::default();
+    let mut detector = ConflictDetector {
+        derive_stats_threshold: context.join_reorder_threshold,
+        ..ConflictDetector::default()
+    };
     let nodes = detector.build(group)?;
     let reordered_node = if i32::try_from(group.vertexes.len()).unwrap_or(i32::MAX)
         > context.join_reorder_threshold

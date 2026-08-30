@@ -366,7 +366,10 @@ fn exists_keeps_a_grouped_aggregations_child_only() {
 #[test]
 fn in_subquery_builds_a_semi_apply_when_the_join_rewrite_is_off() {
     let f = Fixture::new();
-    let mut er = f.rewriter(RewriterSessionFlags::default());
+    let mut er = f.rewriter(RewriterSessionFlags {
+        allow_in_subq_to_join_and_agg: false,
+        ..RewriterSessionFlags::default()
+    });
     let lexpr = Expression::Column(col(1));
     let plan = er
         .handle_in_subquery(f.outer(), &lexpr, f.inner(), false, false, 0, true, true)

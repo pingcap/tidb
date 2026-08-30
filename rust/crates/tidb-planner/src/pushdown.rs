@@ -54,7 +54,9 @@ fn can_expr_push_down_tikv(expr: &Expression) -> bool {
     if signature == ScalarFuncSig::Unspecified
         && matches!(
             name.as_ref(),
-            "unix_timestamp"
+            "if" | "ifnull"
+                | "case"
+                | "unix_timestamp"
                 | "conv"
                 | "round"
                 | "rand"
@@ -106,6 +108,9 @@ mod tests {
             "round",
             vec![col.clone(), one]
         )]));
+        // Go rejects a scalar name unless it resolves to a concrete TiKV
+        // protobuf signature; conditional functions are no exception.
+        assert!(!can_exprs_push_down_tikv(&[func("if", vec![col.clone()])]));
         assert!(!can_exprs_push_down_tikv(&[func("tan", vec![col])]));
     }
 }

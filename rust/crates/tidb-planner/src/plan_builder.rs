@@ -203,8 +203,9 @@ use tidb_expr::schema::Schema;
 use tidb_expr::{Columns, EvalError};
 
 use crate::expression_rewriter::{
-    ClauseCode, ColumnIdAllocator, ExprRewriterPlanCtx, ExpressionRewriter, RewriteError,
-    RewriterEnv, RewriterHints, RewriterSessionFlags, ScalarSubqueryOutcome, SubQueryCtx,
+    ClauseCode, ColumnIdAllocator, CompareOp, ExprRewriterPlanCtx, ExpressionRewriter,
+    RewriteError, RewriterEnv, RewriterHints, RewriterSessionFlags, ScalarSubqueryOutcome,
+    SubQueryCtx,
 };
 use crate::logical::data_source::{DataSource, DataSourceColumn, EXTRA_HANDLE_ID};
 use crate::logical::limit::LogicalLimit;
@@ -858,12 +859,9 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         expr.clone()
     }
 
-    /// Go `b.rewrite(ctx, expr, p, mapper, asScalar)`, for the SUBQUERY-FREE
-    /// case this batch's spine covers.
-    ///
-    /// The plan-carrying case — where the rewrite REPLACES `p` with an apply —
-    /// is [`Self::expression_rewriter`]'s; that is the seam batch 6b-6e widen,
-    /// and it needs no change here.
+    /// Go `b.rewrite(ctx, expr, p, mapper, asScalar)` for scalar expressions.
+    /// Plan-carrying subqueries are dispatched separately by
+    /// [`Self::lower_filter_subquery`] and [`Self::lower_scalar_subqueries`].
     ///
     /// # Errors
     ///
@@ -1003,6 +1001,111 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
                 .expect("scalar-subquery lowering retains an outer plan"),
             lowerer.changed,
         ))
+    }
+
+    fn build_expression_subquery(
+        &mut self,
+        outer: &LogicalPlan,
+        query: &tidb_ast::QueryStmt,
+    ) -> Result<LogicalPlan, PlanError> {
+        let (outer_schema, outer_names) = snapshot_schema_and_names(outer);
+        self.outer_schemas.push(outer_schema);
+        self.outer_names.push(outer_names);
+        let parent_clause = self.cur_clause;
+        let modified_ctes = self.prepare_cte_check_for_subquery();
+        let inner = self.build_query_stmt(query, false);
+        self.reset_cte_check_for_subquery(&modified_ctes);
+        self.outer_schemas.pop();
+        self.outer_names.pop();
+        self.cur_clause = parent_clause;
+        inner
+    }
+
+    /// Go's filter-context arms of `expressionRewriter.Enter`: a direct
+    /// quantified, IN, or EXISTS predicate replaces the outer plan with the
+    /// semi-apply/join produced by the corresponding handler.
+    fn lower_filter_subquery(
+        &mut self,
+        outer: LogicalPlan,
+        expression: &Expr,
+        markers: &BTreeMap<MarkerKind, Vec<Column>>,
+    ) -> Result<(LogicalPlan, bool), PlanError> {
+        let (schema, names) = snapshot_schema_and_names(&outer);
+        match expression {
+            Expr::CompareSubquery {
+                op,
+                left,
+                all,
+                subquery,
+            } => {
+                let left = self.rewrite_scalar(left, &schema, &names, markers)?;
+                let inner = self.build_expression_subquery(&outer, subquery)?;
+                let op = match op {
+                    tidb_ast::BinaryOp::Eq => CompareOp::Eq,
+                    tidb_ast::BinaryOp::NullEq => CompareOp::NullEq,
+                    tidb_ast::BinaryOp::Ge => CompareOp::Ge,
+                    tidb_ast::BinaryOp::Gt => CompareOp::Gt,
+                    tidb_ast::BinaryOp::Le => CompareOp::Le,
+                    tidb_ast::BinaryOp::Lt => CompareOp::Lt,
+                    tidb_ast::BinaryOp::Ne => CompareOp::Ne,
+                    _ => {
+                        return Err(PlanError::internal(
+                            "invalid quantified comparison operator",
+                        ))
+                    }
+                };
+                let mut rewriter = self.expression_rewriter();
+                rewriter.as_scalar = false;
+                rewriter.ctx_stack_append(left.clone(), FieldName::default());
+                let plan = rewriter.handle_compare_subquery(
+                    outer,
+                    &left,
+                    inner,
+                    op,
+                    *all,
+                    self.sub_query_hint_flags,
+                )?;
+                Ok((plan, true))
+            }
+            Expr::InSubquery {
+                expr,
+                subquery,
+                not,
+            } => {
+                let left = self.rewrite_scalar(expr, &schema, &names, markers)?;
+                let inner = self.build_expression_subquery(&outer, subquery)?;
+                let mut rewriter = self.expression_rewriter();
+                rewriter.ctx_stack_append(left.clone(), FieldName::default());
+                let plan = rewriter.handle_in_subquery(
+                    outer,
+                    &left,
+                    inner,
+                    *not,
+                    false,
+                    self.sub_query_hint_flags,
+                    true,
+                    true,
+                )?;
+                Ok((plan, true))
+            }
+            Expr::Exists { subquery, not } => {
+                let inner = self.build_expression_subquery(&outer, subquery)?;
+                let mut rewriter = self.expression_rewriter();
+                rewriter.as_scalar = false;
+                match rewriter.handle_exist_subquery(
+                    outer,
+                    inner,
+                    *not,
+                    self.sub_query_hint_flags,
+                )? {
+                    ScalarSubqueryOutcome::Applied(plan) => Ok((plan, true)),
+                    ScalarSubqueryOutcome::EvaluateSeparately { .. } => Err(PlanError::internal(
+                        "uncorrelated EXISTS evaluation is not available to the planner",
+                    )),
+                }
+            }
+            _ => Ok((outer, false)),
+        }
     }
 }
 
@@ -1356,6 +1459,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // first once every conjunct is built, so one clause is rewritten here
         // and split afterwards.
         let mut scratch = Self::clause_scratch(where_clause);
+        let (plan, lowered_filter_subquery) =
+            self.lower_filter_subquery(plan, &scratch, markers)?;
+        if lowered_filter_subquery {
+            return Ok(plan);
+        }
         let (plan, lowered_subquery) = self.lower_scalar_subqueries(plan, &mut scratch)?;
         // Rule 3: both snapshots are taken before `plan` moves anywhere.
         let (schema, names) = snapshot_schema_and_names(&plan);

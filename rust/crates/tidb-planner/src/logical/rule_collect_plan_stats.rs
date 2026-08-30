@@ -357,7 +357,10 @@ impl Collector {
                 items.extend(mapped.iter().copied());
             }
         }
-        self.column_map.insert(output.unique_id, items);
+        self.column_map
+            .entry(output.unique_id)
+            .or_default()
+            .extend(items);
     }
 
     fn update_column_from_expressions(&mut self, output: &Column, expressions: &[Expression]) {

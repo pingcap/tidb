@@ -263,7 +263,7 @@ impl ColumnIdAllocator {
 
 /// The session switches the ported bodies branch on, each named for its Go
 /// `SessionVars` field.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug)]
 pub struct RewriterSessionFlags {
     /// Go `GetAllowInSubqToJoinAndAgg()`.
     pub allow_in_subq_to_join_and_agg: bool,
@@ -277,6 +277,20 @@ pub struct RewriterSessionFlags {
     pub enable_semi_join_rewrite: bool,
     /// Go `PlanBuilder.disableSubQueryPreprocessing`.
     pub disable_subquery_preprocessing: bool,
+}
+
+impl Default for RewriterSessionFlags {
+    fn default() -> Self {
+        Self {
+            // Go `vardef.DefOptInSubqToJoinAndAgg` is true.
+            allow_in_subq_to_join_and_agg: true,
+            enable_correlate_subquery: false,
+            enable_alternative_logical_plans: false,
+            enable_no_decorrelate_in_select: false,
+            enable_semi_join_rewrite: false,
+            disable_subquery_preprocessing: false,
+        }
+    }
 }
 
 /// The slice of `hint.TableHintInfo` the ported bodies read; see the module

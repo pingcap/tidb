@@ -1516,15 +1516,17 @@ impl OwnedRewrite for PushDownTopN<'_> {
                 }
                 // Drop meaningless constant sort items.
                 let mut pushed = *incoming;
-                let kept: Vec<bool> = substituted_items
-                    .iter()
-                    .map(|expr| !matches!(expr, Expression::Constant(_)))
-                    .collect();
                 pushed.by_items = pushed
                     .by_items
                     .into_iter()
-                    .zip(kept)
-                    .filter_map(|(item, keep)| keep.then_some(item))
+                    .zip(substituted_items)
+                    .filter_map(|(mut item, substituted)| {
+                        if matches!(substituted, Expression::Constant(_)) {
+                            return None;
+                        }
+                        item.expr = substituted;
+                        Some(item)
+                    })
                     .collect();
                 self.stash.push(PendingTopN::Nothing);
                 Descend::Children(vec![Some(Box::new(pushed)); child_count])

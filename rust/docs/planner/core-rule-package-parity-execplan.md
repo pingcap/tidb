@@ -88,6 +88,18 @@ Rust currently exposes Go's logical-rule list but several entries are missing, n
 - Observation: Go's column collector also snapshots each visited logical table's statistics for plan-replayer capture; this is not part of the later executor dump path.
   Evidence: pinned `CollectColumnStatsUsage` gates `recordTableRuntimeStats` on `EnablePlanReplayerCapture || EnablePlanReplayedContinuesCapture`. Rust now carries the same session-variable OR into the statement context and records both present and absent statistics entries during the ordinary collection rule.
 
+- Observation: `LogicalProjection.PushDownTopN` computed Go's substituted by-items but discarded them before descending.
+  Evidence: the pinned body assigns every `ColumnSubstitute` result back to `topN.ByItems`; Rust retained the original hidden projection column, producing an orphan TopN reference for `ORDER BY a + b LIMIT 10`. The pushed TopN now owns the substituted expression and the original collector case passes before and after optimization.
+
+- Observation: column lineage for a set-operation output must merge every branch rather than replace the prior branch.
+  Evidence: pinned `updateColMap` inserts into an existing per-output set. Rust's prior `update_column` overwrote it, so `UNION DISTINCT` attributed the output only to its last child; it now extends the existing lineage set.
+
+- Observation: the advanced joinorder package derives each vertex's statistics while building the conflict detector.
+  Evidence: pinned `ConflictDetector.Build` invokes `RecursiveDeriveStats(nil)` before `cumulativeCostByChildren`. Rust now initializes DataSource statistics before logical rules and derives each vertex with the session join-reorder threshold before reading its cost.
+
+- Observation: the plan-aware quantified/IN/EXISTS handlers existed but ordinary WHERE construction never dispatched AST nodes to them.
+  Evidence: the pinned original predicate-column matrix failed at `> ALL` in Rust's scalar-only rewriter. Direct filter subqueries now build the inner query in the outer scope and invoke the existing Go-shaped handlers; the upstream Apply, IN, EXISTS, scalar-subquery, CTE, join, window, set-operation, sort, and TopN predicate-column cases all pass before and after logical optimization.
+
 ## Decision Log
 
 - Decision: Close `pkg/planner/core/rule/util` before continuing the parent `rule` package.

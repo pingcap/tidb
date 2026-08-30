@@ -1249,6 +1249,41 @@ fn topn_keeps_travelling_after_it_absorbs_a_sort() {
 }
 
 #[test]
+fn topn_push_down_substitutes_projection_columns() {
+    // Go `LogicalProjection.PushDownTopN` writes the expressions produced by
+    // `ColumnSubstitute` back to `topN.ByItems` before descending.
+    let allocator = PlanIdAllocator::new();
+    let source = data_source(&allocator, &[1]);
+    let mut projection = LogicalPlan::Projection(LogicalProjection::new(
+        base(&allocator, "Projection", Some(schema_of(&[2]))),
+        vec![Expression::Column(column(1))],
+    ));
+    projection.set_children(vec![source]);
+    let topn = LogicalTopN::new(
+        base(&allocator, "TopN", Some(schema_of(&[2]))),
+        vec![ByItems::new(Expression::Column(column(2)), false)],
+        0,
+        5,
+    );
+
+    let out = super::rewrite::push_down_topn(projection, Some(topn));
+    let LogicalPlan::Projection(projection) = &out else {
+        panic!("Projection should remain above the pushed TopN: {out:#?}");
+    };
+    let Some(LogicalPlan::TopN(topn)) = projection.base.children().first() else {
+        panic!("TopN should be pushed beneath the Projection: {out:#?}");
+    };
+    assert!(matches!(
+        topn.by_items.as_slice(),
+        [ByItems {
+            expr: Expression::Column(column),
+            ..
+        }] if column.unique_id == 1
+    ));
+    out.dismantle();
+}
+
+#[test]
 fn topn_push_down_leaves_a_join_alone() {
     // Go `LogicalJoin.PushDownTopN` (`logical_join.go:428`): without a unique
     // inner side the offset cannot travel, so the limit re-attaches above the

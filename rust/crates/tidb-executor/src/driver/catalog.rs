@@ -2661,4 +2661,187 @@ mod statistics_request_tests {
                     && item.full_load
             }));
     }
+
+    fn stats_usage_fixture() -> Catalog {
+        let mut catalog = Catalog::default();
+        crate::run_create_table_on("CREATE TABLE t(a INT, b INT, c INT)", &mut catalog)
+            .expect("fixture t");
+        crate::run_create_table_on("CREATE TABLE t2(a INT, b INT, c INT)", &mut catalog)
+            .expect("fixture t2");
+        catalog
+    }
+
+    fn column_item(
+        catalog: &Catalog,
+        table_name: &str,
+        column_name: &str,
+    ) -> tidb_model::TableItemID {
+        let TableEntry::Kv(table) = catalog.get_in("test", table_name).expect("fixture table")
+        else {
+            panic!("fixture is not a KV table")
+        };
+        let column = table
+            .columns
+            .iter()
+            .find(|column| column.name == column_name)
+            .expect("fixture column");
+        tidb_model::TableItemID {
+            table_id: table.table_id,
+            id: column.id,
+            is_index: false,
+            is_sync_load_failed: false,
+        }
+    }
+
+    #[test]
+    fn original_collect_predicate_columns_cases_match_before_and_after_optimization() {
+        let catalog = stats_usage_fixture();
+        let cases: &[(&str, &[(&str, &str)])] = &[
+            ("SELECT * FROM t WHERE a > 2", &[("t", "a")]),
+            (
+                "SELECT * FROM t WHERE b IN (2, 5) OR c = 5",
+                &[("t", "b"), ("t", "c")],
+            ),
+            (
+                "SELECT * FROM (SELECT a + b AS ab, c FROM t) AS tmp WHERE ab > 4",
+                &[("t", "a"), ("t", "b")],
+            ),
+            (
+                "SELECT b, COUNT(*) FROM t GROUP BY b",
+                &[("t", "b")],
+            ),
+            (
+                "SELECT b, SUM(a) FROM t GROUP BY b HAVING SUM(a) > 3",
+                &[("t", "a"), ("t", "b")],
+            ),
+            ("SELECT COUNT(*), SUM(a), SUM(c) FROM t", &[]),
+            (
+                "(SELECT a, c FROM t) UNION (SELECT a, b FROM t2)",
+                &[("t", "a"), ("t", "c"), ("t2", "a"), ("t2", "b")],
+            ),
+            (
+                "SELECT AVG(b) OVER(PARTITION BY a) FROM t",
+                &[("t", "a")],
+            ),
+            (
+                "SELECT * FROM (SELECT AVG(b) OVER(PARTITION BY a) AS w FROM t) AS tmp WHERE w > 4",
+                &[("t", "a"), ("t", "b")],
+            ),
+            (
+                "SELECT ROW_NUMBER() OVER(PARTITION BY a ORDER BY c) FROM t",
+                &[("t", "a")],
+            ),
+            (
+                "SELECT * FROM t, t2 WHERE t.a = t2.a",
+                &[("t", "a"), ("t2", "a")],
+            ),
+            (
+                "SELECT * FROM t AS x JOIN t2 AS y ON x.c + y.b > 2",
+                &[("t", "c"), ("t2", "b")],
+            ),
+            (
+                "SELECT * FROM t AS x JOIN t2 AS y ON x.a = y.a AND x.c < 3 AND y.b > 2",
+                &[("t", "a"), ("t", "c"), ("t2", "a"), ("t2", "b")],
+            ),
+            (
+                "SELECT x.c, y.b, SUM(x.b), SUM(y.a) FROM t AS x JOIN t2 AS y ON x.a < y.a GROUP BY x.c, y.b ORDER BY x.c",
+                &[("t", "a"), ("t", "c"), ("t2", "a"), ("t2", "b")],
+            ),
+            (
+                "SELECT * FROM t2 WHERE t2.b > ALL(SELECT b FROM t WHERE t.c > 2)",
+                &[("t", "b"), ("t", "c"), ("t2", "b")],
+            ),
+            (
+                "SELECT * FROM t2 WHERE t2.b > ANY(SELECT b FROM t WHERE t.c > 2)",
+                &[("t", "b"), ("t", "c"), ("t2", "b")],
+            ),
+            (
+                "SELECT * FROM t2 WHERE t2.b > (SELECT SUM(b) FROM t WHERE t.c > t2.a)",
+                &[("t", "b"), ("t", "c"), ("t2", "a"), ("t2", "b")],
+            ),
+            (
+                "SELECT * FROM t2 WHERE t2.b > (SELECT COUNT(*) FROM t WHERE t.a > t2.a)",
+                &[("t", "a"), ("t2", "a"), ("t2", "b")],
+            ),
+            (
+                "SELECT * FROM t2 WHERE EXISTS (SELECT * FROM t WHERE t.a > t2.b)",
+                &[("t", "a"), ("t2", "b")],
+            ),
+            (
+                "SELECT * FROM t2 WHERE NOT EXISTS (SELECT * FROM t WHERE t.a > t2.b)",
+                &[("t", "a"), ("t2", "b")],
+            ),
+            (
+                "SELECT * FROM t2 WHERE t2.a IN (SELECT b FROM t)",
+                &[("t", "b"), ("t2", "a")],
+            ),
+            (
+                "SELECT * FROM t2 WHERE t2.a NOT IN (SELECT b FROM t)",
+                &[("t", "b"), ("t2", "a")],
+            ),
+            (
+                "SELECT * FROM t ORDER BY c",
+                &[("t", "c")],
+            ),
+            (
+                "SELECT * FROM t ORDER BY a + b LIMIT 10",
+                &[("t", "a"), ("t", "b")],
+            ),
+            (
+                "SELECT * FROM ((SELECT a, c FROM t) UNION ALL (SELECT a, b FROM t2)) AS tmp WHERE tmp.c > 2",
+                &[("t", "c"), ("t2", "b")],
+            ),
+            (
+                "WITH cte(x, y) AS (SELECT a + 1, b FROM t WHERE b > 1) SELECT * FROM cte WHERE x > 3",
+                &[("t", "a"), ("t", "b")],
+            ),
+            (
+                "WITH RECURSIVE cte(x, y) AS (SELECT c, 1 FROM t UNION ALL SELECT x + 1, y FROM cte WHERE x < 5) SELECT * FROM cte",
+                &[("t", "c")],
+            ),
+            (
+                "WITH RECURSIVE cte(x, y) AS (SELECT 1, c FROM t UNION ALL SELECT x + 1, y FROM cte WHERE x < 5) SELECT * FROM cte WHERE y > 1",
+                &[("t", "c")],
+            ),
+            (
+                "WITH RECURSIVE cte(x, y) AS (SELECT a, b FROM t UNION SELECT x + 1, y FROM cte WHERE x < 5) SELECT * FROM cte",
+                &[("t", "a"), ("t", "b")],
+            ),
+        ];
+
+        for (sql, expected) in cases {
+            let tidb_ast::Stmt::Query(query) = tidb_parser::parse(sql).expect("original SQL")
+            else {
+                panic!("original case is not a query")
+            };
+            let context = crate::StmtContext::for_query();
+            let (before, after) =
+                super::planner_bridge::statistics_usage_before_and_after_logical_optimization(
+                    &query, &catalog, "test", &context,
+                )
+                .unwrap_or_else(|error| panic!("{sql}: {error}"));
+            let expected = expected
+                .iter()
+                .map(|(table, column)| column_item(&catalog, table, column))
+                .collect::<std::collections::HashSet<_>>();
+            assert_eq!(
+                before
+                    .predicate_columns
+                    .keys()
+                    .copied()
+                    .collect::<std::collections::HashSet<_>>(),
+                expected,
+                "before optimization: {sql}"
+            );
+            assert_eq!(
+                after
+                    .predicate_columns
+                    .keys()
+                    .copied()
+                    .collect::<std::collections::HashSet<_>>(),
+                expected,
+                "after optimization: {sql}"
+            );
+        }
+    }
 }
