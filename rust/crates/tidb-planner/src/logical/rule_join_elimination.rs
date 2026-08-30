@@ -27,7 +27,7 @@ use tidb_expr::simple_expr::extract_columns;
 
 use crate::access_path::DataSourceAccessPath;
 use crate::expression_rewriter::{
-    extract_cor_columns_by_schema_4_logical_plan, extract_correlated_cols_4_logical_plan,
+    extract_correlated_cols_4_logical_plan, matching_cor_columns_by_schema,
 };
 use crate::find_best_task::LogicalJoinType;
 
@@ -336,9 +336,12 @@ fn required_columns(
                 if let Some(right) = apply.join.base.children().get(1) {
                     append_unique(
                         &mut columns,
-                        extract_cor_columns_by_schema_4_logical_plan(right, left_schema)
-                            .into_iter()
-                            .map(|column| column.column),
+                        matching_cor_columns_by_schema(
+                            &extract_correlated_cols_4_logical_plan(right),
+                            left_schema,
+                        )
+                        .into_iter()
+                        .map(|column| column.column),
                     );
                 }
                 columns

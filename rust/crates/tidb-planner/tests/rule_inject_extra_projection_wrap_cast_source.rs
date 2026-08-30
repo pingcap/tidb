@@ -26,9 +26,7 @@
 //! Mode != Partial2Mode`. No session, catalog, or SQL pipeline is involved,
 //! so both halves of the exercised surface exist on the Rust side: the
 //! descriptors come from `tidb_expr::aggregation`, and the mode gate is
-//! reproduced verbatim by [`wrap_cast_for_agg_funcs`] below (it has no home
-//! crate yet; when `pkg/planner/util/coreusage` is transcreated it should move
-//! there).
+//! implemented by [`tidb_planner::core_usage::wrap_cast_for_agg_funcs`].
 //!
 //! Per-case expectations re-derived from Go source:
 //! - The argument retTypes cover the int family (`TypeLong`, `TypeLonglong`,
@@ -47,26 +45,9 @@
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_expr::aggregation::{names, AggFuncDesc, AggFunctionMode};
 use tidb_expr::constant::Constant;
-use tidb_expr::NoColumns;
 use tidb_expr::expression::Expression;
-
-/// Reproduces `coreusage.WrapCastForAggFuncs`
-/// (`pkg/planner/util/coreusage/cast_misc.go:25-31`): forward every
-/// descriptor to `WrapCastForAggArgs` except Final/Partial2, whose inputs are
-/// already the expected partial-result types.
-fn wrap_cast_for_agg_funcs(agg_funcs: &mut [AggFuncDesc]) {
-    for agg_func in agg_funcs.iter_mut() {
-        if !matches!(
-            agg_func.mode,
-            AggFunctionMode::Final | AggFunctionMode::Partial2
-        ) {
-            agg_func
-                .base
-                .wrap_cast_for_agg_args(&NoColumns)
-                .expect("wrap cast for agg args");
-        }
-    }
-}
+use tidb_expr::NoColumns;
+use tidb_planner::core_usage::wrap_cast_for_agg_funcs;
 
 /// Go `aggNames := []string{ast.AggFuncSum}`
 /// (`rule_inject_extra_projection_test.go:35`).
@@ -148,7 +129,7 @@ fn wrap_cast_for_agg_funcs_gates_final_and_partial2_modes() {
     assert_eq!(agg_funcs.len(), 40);
 
     let originals = agg_funcs.clone();
-    wrap_cast_for_agg_funcs(&mut agg_funcs);
+    wrap_cast_for_agg_funcs(&NoColumns, &mut agg_funcs).expect("wrap cast for agg args");
 
     for (index, desc) in agg_funcs.iter().enumerate() {
         let original = &originals[index];

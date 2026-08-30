@@ -918,7 +918,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             self.outer_names.pop();
             self.lateral_outer_count -= 1;
         }
-        let right_plan = right_built?;
+        let mut right_plan = right_built?;
 
         // `:806` The apply decision, which is deliberately TIGHTER than the
         // push decision: only an immediately-LATERAL right operand, or a right
@@ -928,7 +928,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 Some((schema, _)) => schema.clone(),
                 None => left_plan.schema().cloned().unwrap_or_default(),
             };
-            let cor_cols = extract_cor_columns_by_schema_4_logical_plan(&right_plan, &outer_schema);
+            let cor_cols =
+                extract_cor_columns_by_schema_4_logical_plan(&mut right_plan, &outer_schema);
             if is_immediate_lateral_table_source(right_node) || !cor_cols.is_empty() {
                 return self.build_lateral_join(left_plan, right_plan, join_node);
             }
@@ -1076,7 +1077,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     pub fn build_lateral_join(
         &mut self,
         left_plan: LogicalPlan,
-        right_plan: LogicalPlan,
+        mut right_plan: LogicalPlan,
         join_node: &Join,
     ) -> Result<LogicalPlan, PlanError> {
         // `:961` "NATURAL JOIN and USING clauses are not supported with
@@ -1110,7 +1111,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             Some((schema, _)) => schema.clone(),
             None => left_plan.schema().cloned().unwrap_or_default(),
         };
-        let cor_cols = extract_cor_columns_by_schema_4_logical_plan(&right_plan, &outer_schema);
+        let cor_cols = extract_cor_columns_by_schema_4_logical_plan(&mut right_plan, &outer_schema);
 
         self.opt_flag |= flags::PREDICATE_PUSH_DOWN
             | flags::BUILD_KEY_INFO

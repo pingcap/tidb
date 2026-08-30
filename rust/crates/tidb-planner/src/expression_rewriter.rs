@@ -104,13 +104,6 @@
 //!
 //! # Narrowings, by name
 //!
-//! * `ExtractCorColumnsBySchema`'s `corCol.Data = resultCorCols[idx].Data`
-//!   ALIASES one `*types.Datum` between the outer apply and every inner
-//!   reference, which is how the apply loop publishes the current outer row.
-//!   Rust has no such alias on an owned tree;
-//!   [`extract_cor_columns_by_schema`] returns the resolved columns and the
-//!   binding is the apply executor's job (`tidb-executor`'s driver already
-//!   binds by column identity — see this module's harvest note).
 //! * `ScalarSubQueryExpr` and `ScalarSubqueryEvalCtx` (`common_plans.go`)
 //!   belong to the separately-evaluated path above and are not modelled.
 //! * `er.disableFoldCounter`, `er.preprocess`, `er.astNodeStack`,
@@ -449,34 +442,127 @@ pub fn extract_correlated_cols_4_logical_plan(plan: &LogicalPlan) -> Vec<Correla
     result
 }
 
-/// Go `coreusage.ExtractCorColumnsBySchema(corCols, schema, true)`
-/// (`correlated_misc.go:64`): the correlated columns `schema` RESOLVES,
-/// deduplicated by schema position and index-resolved.
-///
-/// Go also aliases the `*types.Datum` binding cell; see the module header.
-#[must_use]
-pub fn extract_cor_columns_by_schema(
+pub(crate) fn matching_cor_columns_by_schema(
     cor_cols: &[CorrelatedColumn],
     schema: &Schema,
 ) -> Vec<CorrelatedColumn> {
     let mut slots: Vec<Option<CorrelatedColumn>> = vec![None; schema.len()];
-    for cor_col in cor_cols {
-        let idx = schema.column_index(&cor_col.column);
-        if idx < 0 {
+    for correlated in cor_cols {
+        let index = schema.column_index(&correlated.column);
+        if index < 0 {
             continue;
         }
-        let idx = usize::try_from(idx).expect("column_index is non-negative here");
-        if slots[idx].is_none() {
-            let mut column = schema.columns[idx].clone();
-            // Go's `resolveIndex` pass: `corCol.Index = schema.ColumnIndex(...)`.
-            column.index = i64::try_from(idx).expect("schema length fits in i64");
-            slots[idx] = Some(CorrelatedColumn {
-                column,
-                data: cor_col.data.clone(),
+        let index = usize::try_from(index).expect("column_index is non-negative here");
+        if slots[index].is_none() {
+            slots[index] = Some(CorrelatedColumn {
+                column: schema.columns[index].clone(),
+                data: correlated.data.clone(),
             });
         }
     }
     slots.into_iter().flatten().collect()
+}
+
+fn visit_expression_correlated_columns_mut(
+    expression: &mut Expression,
+    visitor: &mut impl FnMut(&mut CorrelatedColumn),
+) {
+    match expression {
+        Expression::CorrelatedColumn(column) => visitor(column),
+        Expression::ScalarFunction(function) => {
+            for argument in &mut function.args {
+                visit_expression_correlated_columns_mut(argument, visitor);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn visit_logical_correlated_columns_mut(
+    plan: &mut LogicalPlan,
+    visitor: &mut impl FnMut(&mut CorrelatedColumn),
+) {
+    fn expressions(values: &mut [Expression], visitor: &mut impl FnMut(&mut CorrelatedColumn)) {
+        for expression in values {
+            visit_expression_correlated_columns_mut(expression, visitor);
+        }
+    }
+
+    fn join(
+        join: &mut crate::logical::join::LogicalJoin,
+        visitor: &mut impl FnMut(&mut CorrelatedColumn),
+    ) {
+        for function in &mut join.equal_conditions {
+            for argument in &mut function.args {
+                visit_expression_correlated_columns_mut(argument, visitor);
+            }
+        }
+        expressions(&mut join.left_conditions, visitor);
+        expressions(&mut join.right_conditions, visitor);
+        expressions(&mut join.other_conditions, visitor);
+    }
+
+    match plan {
+        LogicalPlan::Selection(op) => expressions(&mut op.conditions, visitor),
+        LogicalPlan::Projection(op) => expressions(&mut op.exprs, visitor),
+        LogicalPlan::Join(op) => join(op, visitor),
+        LogicalPlan::Apply(op) => join(&mut op.join, visitor),
+        LogicalPlan::Aggregation(op) => {
+            expressions(&mut op.group_by_items, visitor);
+            for function in &mut op.agg_funcs {
+                expressions(&mut function.base.args, visitor);
+                for item in &mut function.order_by_items {
+                    visit_expression_correlated_columns_mut(&mut item.expr, visitor);
+                }
+            }
+        }
+        LogicalPlan::DataSource(op) => expressions(&mut op.pushed_down_conds, visitor),
+        LogicalPlan::Sort(op) => {
+            for item in &mut op.by_items {
+                visit_expression_correlated_columns_mut(&mut item.expr, visitor);
+            }
+        }
+        LogicalPlan::TopN(op) => {
+            for item in &mut op.by_items {
+                visit_expression_correlated_columns_mut(&mut item.expr, visitor);
+            }
+        }
+        LogicalPlan::Window(op) => {
+            for function in &mut op.window_func_descs {
+                expressions(&mut function.base.args, visitor);
+            }
+            if let Some(frame) = &mut op.frame {
+                for bound in [frame.start.as_mut(), frame.end.as_mut()]
+                    .into_iter()
+                    .flatten()
+                {
+                    expressions(&mut bound.calc_funcs, visitor);
+                }
+            }
+        }
+        LogicalPlan::CTE(op) => {
+            if let Some(cte) = &op.cte {
+                let mut cte = cte.borrow_mut();
+                if let Some(seed) = &mut cte.seed_part_logical_plan {
+                    visit_logical_correlated_columns_mut(seed, visitor);
+                }
+                if let Some(recursive) = &mut cte.recursive_part_logical_plan {
+                    visit_logical_correlated_columns_mut(recursive, visitor);
+                }
+            }
+        }
+        LogicalPlan::Expand(op) => {
+            if let Some(levels) = &mut op.level_exprs {
+                for level in levels {
+                    expressions(level, visitor);
+                }
+            }
+        }
+        _ => {}
+    }
+    for child in plan.base_mut().children_mut() {
+        visit_logical_correlated_columns_mut(child, visitor);
+    }
 }
 
 /// Go `ExtractCorColumnsBySchema4LogicalPlan(np, outerSchema)`
@@ -485,10 +571,25 @@ pub fn extract_cor_columns_by_schema(
 /// correlated at this level.
 #[must_use]
 pub fn extract_cor_columns_by_schema_4_logical_plan(
-    plan: &LogicalPlan,
+    plan: &mut LogicalPlan,
     outer_schema: &Schema,
 ) -> Vec<CorrelatedColumn> {
-    extract_cor_columns_by_schema(&extract_correlated_cols_4_logical_plan(plan), outer_schema)
+    let mut slots: Vec<Option<CorrelatedColumn>> = vec![None; outer_schema.len()];
+    visit_logical_correlated_columns_mut(plan, &mut |correlated| {
+        let index = outer_schema.column_index(&correlated.column);
+        if index < 0 {
+            return;
+        }
+        let index = usize::try_from(index).expect("column_index is non-negative here");
+        if slots[index].is_none() {
+            slots[index] = Some(CorrelatedColumn {
+                column: outer_schema.columns[index].clone(),
+                data: Some(CorrelatedColumn::binding()),
+            });
+        }
+        correlated.data = slots[index].as_ref().and_then(|column| column.data.clone());
+    });
+    slots.into_iter().flatten().collect()
 }
 
 // ***** small plan predicates *****
@@ -874,14 +975,14 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
     pub fn build_apply_with_join_type(
         &self,
         outer: LogicalPlan,
-        inner: LogicalPlan,
+        mut inner: LogicalPlan,
         tp: LogicalJoinType,
         mark_no_decorrelate: bool,
     ) -> Result<LogicalPlan, RewriteError> {
-        let outer_schema = outer.schema().ok_or(RewriteError::MissingSchema)?;
+        let outer_schema = outer.schema().ok_or(RewriteError::MissingSchema)?.clone();
         let inner_schema = inner.schema().ok_or(RewriteError::MissingSchema)?;
         let outer_len = outer_schema.len();
-        let mut schema = merge_schema(Some(outer_schema), Some(inner_schema))
+        let mut schema = merge_schema(Some(&outer_schema), Some(inner_schema))
             .ok_or(RewriteError::MissingSchema)?;
         if tp == LogicalJoinType::LeftOuter {
             // Go `util.ResetNotNullFlag(ap.Schema(), outerLen, ap.Schema().Len())`.
@@ -897,7 +998,7 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
         names.resize(schema.len(), FieldName::default());
         let base = self.env.base(LogicalApply::TYPE);
         let mut apply = LogicalApply::new(base, tp);
-        apply.cor_cols = extract_cor_columns_by_schema_4_logical_plan(&inner, outer_schema);
+        apply.cor_cols = extract_cor_columns_by_schema_4_logical_plan(&mut inner, &outer_schema);
         apply.no_decorrelate = mark_no_decorrelate;
         let mut plan = LogicalPlan::Apply(apply);
         plan.set_children(vec![outer, inner]);
@@ -998,11 +1099,16 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
         let LogicalPlan::Join(mut join) = join else {
             unreachable!("build_semi_join returns a join");
         };
-        let cor_cols = match join.base.children() {
-            [outer, inner] => outer.schema().map_or_else(Vec::new, |outer_schema| {
-                extract_cor_columns_by_schema_4_logical_plan(inner, outer_schema)
-            }),
-            _ => Vec::new(),
+        let cor_cols = {
+            let children = join.base.children_mut();
+            if children.len() == 2 {
+                let (outer, inner) = children.split_at_mut(1);
+                outer[0].schema().cloned().map_or_else(Vec::new, |schema| {
+                    extract_cor_columns_by_schema_4_logical_plan(&mut inner[0], &schema)
+                })
+            } else {
+                Vec::new()
+            }
         };
         join.base.base.set_tp(LogicalApply::TYPE);
         Ok(LogicalPlan::Apply(LogicalApply {
@@ -1114,14 +1220,14 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
         &mut self,
         outer: LogicalPlan,
         lexpr: &Expression,
-        np: LogicalPlan,
+        mut np: LogicalPlan,
         op: CompareOp,
         all: bool,
         hint_flags: u64,
     ) -> Result<LogicalPlan, RewriteError> {
         let outer_schema = outer.schema().ok_or(RewriteError::MissingSchema)?.clone();
         let np_schema = np.schema().ok_or(RewriteError::MissingSchema)?.clone();
-        let cor_cols = extract_cor_columns_by_schema_4_logical_plan(&np, &outer_schema);
+        let cor_cols = extract_cor_columns_by_schema_4_logical_plan(&mut np, &outer_schema);
         let no_decorrelate = is_no_decorrelate(
             self.plan_ctx.cur_clause,
             self.env.flags,
@@ -1489,12 +1595,12 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
     pub fn handle_exist_subquery(
         &mut self,
         outer: LogicalPlan,
-        np: LogicalPlan,
+        mut np: LogicalPlan,
         not: bool,
         hint_flags: u64,
     ) -> Result<ScalarSubqueryOutcome, RewriteError> {
         let outer_schema = outer.schema().ok_or(RewriteError::MissingSchema)?.clone();
-        let cor_cols = extract_cor_columns_by_schema_4_logical_plan(&np, &outer_schema);
+        let cor_cols = extract_cor_columns_by_schema_4_logical_plan(&mut np, &outer_schema);
         let mut no_decorrelate = is_no_decorrelate(
             self.plan_ctx.cur_clause,
             self.env.flags,
@@ -1588,7 +1694,7 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
         &mut self,
         outer: LogicalPlan,
         lexpr: &Expression,
-        np: LogicalPlan,
+        mut np: LogicalPlan,
         not: bool,
         as_scalar: bool,
         hint_flags: u64,
@@ -1640,7 +1746,7 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
         };
         let check_condition = self.construct_binary_op_function(&lexpr, &rexpr, "eq")?;
 
-        let cor_cols = extract_cor_columns_by_schema_4_logical_plan(&np, &outer_schema);
+        let cor_cols = extract_cor_columns_by_schema_4_logical_plan(&mut np, &outer_schema);
         let mut no_decorrelate = is_no_decorrelate(
             self.plan_ctx.cur_clause,
             self.env.flags,
@@ -1797,8 +1903,8 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
         hint_flags: u64,
     ) -> Result<ScalarSubqueryOutcome, RewriteError> {
         let outer_schema = outer.schema().ok_or(RewriteError::MissingSchema)?.clone();
-        let np = self.build_max_one_row(np);
-        let cor_cols = extract_cor_columns_by_schema_4_logical_plan(&np, &outer_schema);
+        let mut np = self.build_max_one_row(np);
+        let cor_cols = extract_cor_columns_by_schema_4_logical_plan(&mut np, &outer_schema);
         let no_decorrelate = is_no_decorrelate(
             self.plan_ctx.cur_clause,
             self.env.flags,
