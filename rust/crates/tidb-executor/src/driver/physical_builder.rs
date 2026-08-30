@@ -987,14 +987,6 @@ fn filtered_join_child(
     )))
 }
 
-fn join_equality(
-    left: &Column,
-    right: &Column,
-    schema: &Schema,
-) -> Result<Expression, DriverError> {
-    join_equality_with_null(left, right, schema, false)
-}
-
 fn join_equality_with_null(
     left: &Column,
     right: &Column,
@@ -1504,6 +1496,7 @@ fn build_index_inner_subtree(
                 hash_join.join_type,
                 &hash_join.left_join_keys,
                 &hash_join.right_join_keys,
+                &hash_join.is_null_eq,
                 &hash_join.left_conditions,
                 &hash_join.right_conditions,
                 &hash_join.other_conditions,
@@ -1697,6 +1690,7 @@ fn build_join(
     join_type: LogicalJoinType,
     left_join_keys: &[Column],
     right_join_keys: &[Column],
+    is_null_eq: &[bool],
     left_conditions: &[Expression],
     right_conditions: &[Expression],
     other_conditions: &[Expression],
@@ -1714,6 +1708,7 @@ fn build_join(
         join_type,
         left_join_keys,
         right_join_keys,
+        is_null_eq,
         left_conditions,
         right_conditions,
         other_conditions,
@@ -1729,6 +1724,7 @@ fn build_join_over_children(
     join_type: LogicalJoinType,
     left_join_keys: &[Column],
     right_join_keys: &[Column],
+    is_null_eq: &[bool],
     left_conditions: &[Expression],
     right_conditions: &[Expression],
     other_conditions: &[Expression],
@@ -1746,7 +1742,15 @@ fn build_join_over_children(
     let mut conditions = left_join_keys
         .iter()
         .zip(right_join_keys)
-        .map(|(left, right)| join_equality(left, right, &condition_schema))
+        .enumerate()
+        .map(|(index, (left, right))| {
+            join_equality_with_null(
+                left,
+                right,
+                &condition_schema,
+                is_null_eq.get(index).copied().unwrap_or(false),
+            )
+        })
         .collect::<Result<Vec<_>, _>>()?;
     conditions.extend(resolve_expressions(other_conditions, &condition_schema)?);
     let mut executor = JoinExec::new(
@@ -2735,6 +2739,7 @@ fn build_with_state(
                 join.join_type,
                 &join.left_join_keys,
                 &join.right_join_keys,
+                &join.is_null_eq,
                 &join.left_conditions,
                 &join.right_conditions,
                 &join.other_conditions,
@@ -2771,6 +2776,7 @@ fn build_with_state(
                 join.join_type,
                 &join.left_join_keys,
                 &join.right_join_keys,
+                &join.is_null_eq,
                 &join.left_conditions,
                 &join.right_conditions,
                 &join.other_conditions,

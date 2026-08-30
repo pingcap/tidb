@@ -456,6 +456,7 @@ fn exhaust_physical_plans(
                             use_outer_to_build: shape.use_outer_to_build,
                             left_join_keys: left_columns.clone(),
                             right_join_keys: right_columns.clone(),
+                            is_null_eq: is_null_eq.clone(),
                             equal_conditions: op.equal_conditions.clone(),
                             na_equal_conditions: op.na_eq_conditions.clone(),
                             left_conditions: op.left_conditions.clone(),
@@ -488,6 +489,7 @@ fn exhaust_physical_plans(
                             join_type: op.join_type,
                             left_join_keys,
                             right_join_keys,
+                            is_null_eq: Vec::new(),
                             left_conditions: op.left_conditions.clone(),
                             right_conditions: op.right_conditions.clone(),
                             other_conditions: op.other_conditions.clone(),
@@ -616,7 +618,7 @@ fn exhaust_physical_plans(
                 );
                 1.0 - ndv / stats.row_count() > 0.1
             });
-            let (left_join_keys, right_join_keys, _, _) = op.join.get_join_keys();
+            let (left_join_keys, right_join_keys, is_null_eq, _) = op.join.get_join_keys();
             let mut base = physical::BasePhysicalPlan::new(
                 ctx.allocator,
                 crate::logical::LogicalApply::TYPE,
@@ -636,6 +638,7 @@ fn exhaust_physical_plans(
                     use_outer_to_build: false,
                     left_join_keys,
                     right_join_keys,
+                    is_null_eq,
                     equal_conditions: op.join.equal_conditions.clone(),
                     na_equal_conditions: op.join.na_eq_conditions.clone(),
                     left_conditions: op.join.left_conditions.clone(),

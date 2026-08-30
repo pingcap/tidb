@@ -65,6 +65,7 @@ pub(crate) struct StatementVarSnapshot {
     always_keep_join_key: bool,
     enable_unsafe_substitute: bool,
     enable_semi_join_rewrite: bool,
+    enable_no_decorrelate_in_select: bool,
     enable_skew_distinct_agg: bool,
     max_execution_time_ms: u64,
     advanced_join_reorder: bool,
@@ -664,6 +665,9 @@ impl Session {
             always_keep_join_key: on(tidb_vardef::tidb_vars::TIDB_OPT_ALWAYS_KEEP_JOIN_KEY),
             enable_unsafe_substitute: on(tidb_vardef::tidb_vars::TIDB_ENABLE_UNSAFE_SUBSTITUTE),
             enable_semi_join_rewrite: on(tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_SEMI_JOIN_REWRITE),
+            enable_no_decorrelate_in_select: on(
+                tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_NO_DECORRELATE_IN_SELECT,
+            ),
             enable_skew_distinct_agg: on(tidb_vardef::tidb_vars::TIDB_OPT_SKEW_DISTINCT_AGG),
             max_execution_time_ms: self
                 .vars
@@ -804,6 +808,7 @@ impl Session {
         let always_keep_join_key = snapshot.always_keep_join_key;
         let enable_unsafe_substitute = snapshot.enable_unsafe_substitute;
         let enable_semi_join_rewrite = snapshot.enable_semi_join_rewrite;
+        let enable_no_decorrelate_in_select = snapshot.enable_no_decorrelate_in_select;
         let enable_skew_distinct_agg = snapshot.enable_skew_distinct_agg;
         let max_execution_time_ms = snapshot.max_execution_time_ms;
         let advanced_join_reorder = snapshot.advanced_join_reorder;
@@ -933,6 +938,7 @@ impl Session {
                 .with_always_keep_join_key(always_keep_join_key)
                 .with_enable_unsafe_substitute(enable_unsafe_substitute)
                 .with_enable_semi_join_rewrite(enable_semi_join_rewrite)
+                .with_enable_no_decorrelate_in_select(enable_no_decorrelate_in_select)
                 .with_enable_skew_distinct_agg(enable_skew_distinct_agg)
                 .with_sysdate_is_now(sysdate_is_now)
                 .with_resource_group_name(self.active_resource_group.clone())
@@ -999,6 +1005,7 @@ impl Session {
         .with_always_keep_join_key(always_keep_join_key)
         .with_enable_unsafe_substitute(enable_unsafe_substitute)
         .with_enable_semi_join_rewrite(enable_semi_join_rewrite)
+        .with_enable_no_decorrelate_in_select(enable_no_decorrelate_in_select)
         .with_enable_skew_distinct_agg(enable_skew_distinct_agg)
         .with_auto_increment_step(increment, offset)
         .with_auto_increment_zero_explicit(sql_mode.has_no_auto_value_on_zero_mode())
@@ -1167,6 +1174,20 @@ pub(crate) const fn scanner_sql_mode_of(mode: tidb_mysql::SqlMode) -> tidb_parse
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn no_decorrelate_in_select_reaches_the_statement_context() {
+        let mut session = Session::new();
+        assert!(!session
+            .statement_context(false)
+            .enable_no_decorrelate_in_select());
+        session
+            .run("set tidb_opt_enable_no_decorrelate_in_select = on")
+            .unwrap();
+        assert!(session
+            .statement_context(false)
+            .enable_no_decorrelate_in_select());
+    }
 
     #[test]
     fn sql_mode_consumers_use_go_typed_session_state() {

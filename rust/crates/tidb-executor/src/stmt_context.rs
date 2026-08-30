@@ -573,6 +573,8 @@ pub struct StmtContext {
     enable_unsafe_substitute: bool,
     /// Go `SessionVars.EnableSemiJoinRewrite`.
     enable_semi_join_rewrite: bool,
+    /// Go `SessionVars.EnableNoDecorrelateInSelect`.
+    enable_no_decorrelate_in_select: bool,
     /// Go `SessionVars.EnableSkewDistinctAgg`.
     enable_skew_distinct_agg: bool,
     /// Go `SessionVars.GetMaxExecutionTime()`, in milliseconds.
@@ -816,6 +818,8 @@ impl StmtContext {
             always_keep_join_key: tidb_vardef::defaults::DEF_OPT_ALWAYS_KEEP_JOIN_KEY,
             enable_unsafe_substitute: false,
             enable_semi_join_rewrite: tidb_vardef::defaults::DEF_OPT_ENABLE_SEMI_JOIN_REWRITE,
+            enable_no_decorrelate_in_select:
+                tidb_vardef::defaults::DEF_OPT_ENABLE_NO_DECORRELATE_IN_SELECT,
             enable_skew_distinct_agg: tidb_vardef::defaults::DEF_TIDB_SKEW_DISTINCT_AGG,
             max_execution_time_ms: 0,
             sync_stats_failed: Arc::default(),
@@ -1101,6 +1105,13 @@ impl StmtContext {
         self
     }
 
+    /// Sets `@@tidb_opt_enable_no_decorrelate_in_select` for this statement.
+    #[must_use]
+    pub const fn with_enable_no_decorrelate_in_select(mut self, enable: bool) -> Self {
+        self.enable_no_decorrelate_in_select = enable;
+        self
+    }
+
     /// Sets `@@tidb_opt_skew_distinct_agg` for this statement.
     #[must_use]
     pub const fn with_enable_skew_distinct_agg(mut self, enable: bool) -> Self {
@@ -1182,6 +1193,11 @@ impl StmtContext {
     /// Returns `@@tidb_opt_enable_semi_join_rewrite`.
     pub const fn enable_semi_join_rewrite(&self) -> bool {
         self.enable_semi_join_rewrite
+    }
+
+    /// Returns `@@tidb_opt_enable_no_decorrelate_in_select`.
+    pub const fn enable_no_decorrelate_in_select(&self) -> bool {
+        self.enable_no_decorrelate_in_select
     }
 
     /// Returns `@@tidb_opt_skew_distinct_agg`.

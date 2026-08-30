@@ -339,6 +339,8 @@ pub struct PhysicalHashJoin {
     pub left_join_keys: Vec<tidb_expr::column::Column>,
     /// Go `BasePhysicalJoin.RightJoinKeys`.
     pub right_join_keys: Vec<tidb_expr::column::Column>,
+    /// Go `BasePhysicalJoin.IsNullEQ`, aligned with the join keys.
+    pub is_null_eq: Vec<bool>,
     /// Go `PhysicalHashJoin.EqualConditions`, retained as expressions in
     /// addition to the derived hash keys because Apply evaluates them against
     /// the merged child schema.
@@ -367,6 +369,8 @@ pub struct PhysicalMergeJoin {
     pub left_join_keys: Vec<tidb_expr::column::Column>,
     /// Go `BasePhysicalJoin.RightJoinKeys`, in merge order.
     pub right_join_keys: Vec<tidb_expr::column::Column>,
+    /// Go `BasePhysicalJoin.IsNullEQ`, aligned with the merge keys.
+    pub is_null_eq: Vec<bool>,
     /// Go `BasePhysicalJoin.LeftConditions`.
     pub left_conditions: Vec<tidb_expr::expression::Expression>,
     /// Go `BasePhysicalJoin.RightConditions`.
@@ -387,6 +391,7 @@ impl Default for PhysicalMergeJoin {
             join_type: LogicalJoinType::Inner,
             left_join_keys: Vec::new(),
             right_join_keys: Vec::new(),
+            is_null_eq: Vec::new(),
             left_conditions: Vec::new(),
             right_conditions: Vec::new(),
             other_conditions: Vec::new(),
@@ -535,6 +540,7 @@ impl Default for PhysicalHashJoin {
             use_outer_to_build: false,
             left_join_keys: Vec::new(),
             right_join_keys: Vec::new(),
+            is_null_eq: Vec::new(),
             equal_conditions: Vec::new(),
             na_equal_conditions: Vec::new(),
             left_conditions: Vec::new(),
@@ -3093,6 +3099,7 @@ impl PhysicalPlan {
                 use_outer_to_build: op.use_outer_to_build,
                 left_join_keys: op.left_join_keys.clone(),
                 right_join_keys: op.right_join_keys.clone(),
+                is_null_eq: op.is_null_eq.clone(),
                 equal_conditions: op.equal_conditions.clone(),
                 na_equal_conditions: op.na_equal_conditions.clone(),
                 left_conditions: op.left_conditions.clone(),
@@ -3105,6 +3112,7 @@ impl PhysicalPlan {
                 join_type: op.join_type,
                 left_join_keys: op.left_join_keys.clone(),
                 right_join_keys: op.right_join_keys.clone(),
+                is_null_eq: op.is_null_eq.clone(),
                 left_conditions: op.left_conditions.clone(),
                 right_conditions: op.right_conditions.clone(),
                 other_conditions: op.other_conditions.clone(),
@@ -3235,6 +3243,7 @@ impl PhysicalPlan {
                     use_outer_to_build: op.hash_join.use_outer_to_build,
                     left_join_keys: op.hash_join.left_join_keys.clone(),
                     right_join_keys: op.hash_join.right_join_keys.clone(),
+                    is_null_eq: op.hash_join.is_null_eq.clone(),
                     equal_conditions: op.hash_join.equal_conditions.clone(),
                     na_equal_conditions: op.hash_join.na_equal_conditions.clone(),
                     left_conditions: op.hash_join.left_conditions.clone(),

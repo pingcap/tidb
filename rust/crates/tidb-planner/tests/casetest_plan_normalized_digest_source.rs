@@ -141,26 +141,6 @@ fn json_plan_in_explain_nextgen_kernel_only_variant() {}
 #[ignore = "go-parity-gap: EQ-ALL subquery evaluation with index-hint forcing needs executor + hints"]
 fn handle_eq_all_null_semantics_and_no_table_dual_pins() {}
 
-/// GO PORT of `plan_test.go:442 TestOuterJoinElimination`.
-///
-/// Re-derived contract: six base tables probing which outer joins survive:
-/// plain t2, indexed t2_k, UNIQUE t2_uk, NOT-NULL+unique t2_nnuk, pk t2_pk,
-/// window variants (:445-452). ON FALSE kills the Join operator entirely
-/// (:455-457); elimination ONLY fires when the inner key is unique-or-pk
-/// (nullable unique index NOT sufficient) across count(*), count(*) with
-/// group-by, distinct-projection, constant-distinct, bare-constant and
-/// null-equal `<=>` shapes (:459-489); derived-table probes keep the Join iff
-/// the outer column stays genuinely referenced (:492-495); exists-subquery in
-/// the select list keeps the Join unless
-/// `tidb_opt_enable_no_decorrelate_in_select=ON` removes it (:498-506),
-/// while correlating on the join's INNER side always keeps it (:508-511);
-/// finally a windowed derived join filtered by rn=1 collapses to a plain
-/// IndexRangeScan [1,1] whose explain AND result row ("1") are pinned exactly
-/// (:513-520).
-#[test]
-#[ignore = "go-parity-gap: outer-join elimination matrix needs unique-key info through the full optimizer"]
-fn outer_join_elimination_unique_key_matrix_decorrelate_and_window_collapse() {}
-
 /// GO PORT of `plan_test.go:521 TestCTEErrNotSupportedYet`.
 ///
 /// Re-derived contract: builds pub_branch table plus UNION-ALL view

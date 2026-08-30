@@ -368,15 +368,6 @@ fn topn_push_down_golden_plans() {}
 #[ignore = "go-parity-gap: name resolution (column/pattern binding with context-specific clause names) is unported"]
 fn name_resolver_error_strings_match_exactly() {}
 
-/// GO PORT of
-/// `pkg/planner/core/logical_plans_test.go:1728 TestOuterJoinEliminator`.
-///
-/// Left/right/full outer joins removable by null-reject analysis optimize to
-/// recorded simplified trees under builder optFlags.
-#[test]
-#[ignore = "go-parity-gap: outer-join elimination needs built joins + its rule, both unported"]
-fn outer_join_eliminator_golden_plans() {}
-
 /// GO PORT of `pkg/planner/core/logical_plans_test.go:1765 TestSelectView`.
 ///
 /// Views resolve transparently: `select * from v` and explicit column lists

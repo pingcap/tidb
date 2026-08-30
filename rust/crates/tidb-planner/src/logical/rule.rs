@@ -440,9 +440,9 @@ impl RuleId {
             Self::ConvertOuterToInnerJoin => {
                 Some(&super::rule_outer_to_inner_join::ConvertOuterToInnerJoin)
             }
+            Self::OuterJoinEliminator => Some(&super::rule_join_elimination::OuterJoinEliminator),
             Self::DecorrelateSolver
             | Self::FullTextIndexResolverWhere
-            | Self::OuterJoinEliminator
             | Self::AggregationPushDownSolver
             | Self::FullTextIndexResolverTopN
             | Self::FullTextIndexResolverProjection
@@ -620,6 +620,8 @@ pub struct RuleContext<'a> {
     pub enable_unsafe_substitute: bool,
     /// Go `SessionVars.EnableSemiJoinRewrite`.
     pub enable_semi_join_rewrite: bool,
+    /// Go `SessionVars.EnableNoDecorrelateInSelect`.
+    pub enable_no_decorrelate_in_select: bool,
     /// Go `SessionVars.TiDBOptJoinReorderThreshold`.
     pub join_reorder_threshold: i32,
     /// Go `SessionVars.TiDBOptEnableAdvancedJoinReorder`.

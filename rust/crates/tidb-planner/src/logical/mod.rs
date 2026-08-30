@@ -356,6 +356,7 @@ pub mod rule_derive_topn_from_window;
 pub mod rule_eliminate_empty_selection;
 pub mod rule_eliminate_unionall_dual_item;
 pub mod rule_generate_column_substitute;
+pub mod rule_join_elimination;
 pub mod rule_join_key_type_cast;
 pub mod rule_join_reorder;
 pub mod rule_max_min_elimination;

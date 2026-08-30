@@ -394,6 +394,7 @@ pub(crate) fn logical_from_scope(
     let plan_ids = PlanIdAllocator::new();
     let column_ids = ColumnIdAllocator::new();
     let mut builder = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, ctx.session_zone());
+    builder.flags.enable_no_decorrelate_in_select = ctx.enable_no_decorrelate_in_select();
     builder.enable_skew_distinct_agg = ctx.enable_skew_distinct_agg();
     builder.index_lookup_push_down_session = ctx.index_lookup_push_down_session();
     let plan = builder.build_join(join)?;
@@ -1069,6 +1070,7 @@ fn planner_optimized_query_with_allocators(
     let source = catalog.planner_catalog(current_database);
     let session_zone = ctx.session_zone();
     let mut builder = PlanBuilder::new(&source, ctx, plan_ids, column_ids, session_zone.clone());
+    builder.flags.enable_no_decorrelate_in_select = ctx.enable_no_decorrelate_in_select();
     builder.enable_skew_distinct_agg = ctx.enable_skew_distinct_agg();
     builder.index_lookup_push_down_session = ctx.index_lookup_push_down_session();
     builder.prefer_index_merge_by_fix_control = ctx
@@ -1106,6 +1108,7 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     let source = catalog.planner_catalog(current_database);
     let session_zone = ctx.session_zone();
     let mut builder = PlanBuilder::new(&source, ctx, plan_ids, column_ids, session_zone.clone());
+    builder.flags.enable_no_decorrelate_in_select = ctx.enable_no_decorrelate_in_select();
     builder.enable_skew_distinct_agg = ctx.enable_skew_distinct_agg();
     builder.index_lookup_push_down_session = ctx.index_lookup_push_down_session();
     builder.prefer_index_merge_by_fix_control = ctx
@@ -1319,6 +1322,7 @@ fn optimize_built_logical(
         always_keep_join_key: ctx.always_keep_join_key(),
         enable_unsafe_substitute: ctx.enable_unsafe_substitute(),
         enable_semi_join_rewrite: ctx.enable_semi_join_rewrite(),
+        enable_no_decorrelate_in_select: ctx.enable_no_decorrelate_in_select(),
         join_reorder_threshold: ctx.join_reorder_threshold(),
         advanced_join_reorder: ctx.advanced_join_reorder(),
         cartesian_join_order_threshold: ctx.cartesian_join_order_threshold(),
@@ -1452,6 +1456,7 @@ pub(crate) fn statistics_usage_before_and_after_logical_optimization(
     let source = catalog.planner_catalog(current_database);
     let session_zone = ctx.session_zone();
     let mut builder = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, session_zone.clone());
+    builder.flags.enable_no_decorrelate_in_select = ctx.enable_no_decorrelate_in_select();
     builder.enable_skew_distinct_agg = ctx.enable_skew_distinct_agg();
     builder.index_lookup_push_down_session = ctx.index_lookup_push_down_session();
     let node = tidb_resolve::NodeW::new(query.clone());

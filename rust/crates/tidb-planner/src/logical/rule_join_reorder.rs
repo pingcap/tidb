@@ -200,6 +200,7 @@ fn without_projection_inline<'a>(context: &RuleContext<'a>) -> RuleContext<'a> {
         always_keep_join_key: context.always_keep_join_key,
         enable_unsafe_substitute: context.enable_unsafe_substitute,
         enable_semi_join_rewrite: context.enable_semi_join_rewrite,
+        enable_no_decorrelate_in_select: context.enable_no_decorrelate_in_select,
         join_reorder_threshold: context.join_reorder_threshold,
         advanced_join_reorder: context.advanced_join_reorder,
         cartesian_join_order_threshold: context.cartesian_join_order_threshold,
