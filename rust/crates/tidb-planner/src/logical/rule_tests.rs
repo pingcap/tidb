@@ -574,8 +574,39 @@ fn predicate_simplification_keeps_a_nonconstant_condition() {
     let allocator = PlanIdAllocator::new();
     let ctx = test_context(&allocator);
     let kept =
-        rule::apply_predicate_simplification(&ctx, vec![eq_const(1, 7), const_true()], false);
+        rule::apply_predicate_simplification(&ctx, vec![eq_const(1, 7), const_true()], false, None);
     assert_eq!(kept.len(), 1, "only the constant TRUE is deleted");
+}
+
+#[test]
+fn ordinary_predicate_simplification_forwards_the_validity_filter() {
+    fn is_gt_on_column(condition: &Expression, id: i64) -> bool {
+        let Expression::ScalarFunction(function) = condition else {
+            return false;
+        };
+        matches!(
+            function.get_args(),
+            [Expression::Column(column), Expression::Constant(_)]
+                if function.func_name.lowercase() == "gt" && column.unique_id == id
+        )
+    }
+
+    let allocator = PlanIdAllocator::new();
+    let ctx = test_context(&allocator);
+    let conditions = rule::apply_predicate_simplification(
+        &ctx,
+        vec![eq_cols(1, 2), gt_const(1, 7)],
+        true,
+        Some(&|_| false),
+    );
+
+    assert!(conditions
+        .iter()
+        .any(|condition| is_gt_on_column(condition, 1)));
+    assert!(
+        !conditions.iter().any(|condition| is_gt_on_column(condition, 2)),
+        "Go forwards the validity filter to constant propagation, so it rejects the derived predicate"
+    );
 }
 
 // ***** predicate pushdown, per operator *****
@@ -1673,11 +1704,13 @@ fn build_key_info_portal_runs_bottom_up_over_the_whole_tree() {
             id: 1,
             name: "a".to_owned(),
             is_primary_key: true,
+            is_not_null: true,
         },
         super::data_source::DataSourceColumn {
             id: 2,
             name: "b".to_owned(),
             is_primary_key: false,
+            is_not_null: false,
         },
     ];
     let source = LogicalPlan::DataSource(source);

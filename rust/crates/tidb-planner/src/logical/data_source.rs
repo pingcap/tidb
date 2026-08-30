@@ -61,6 +61,11 @@ pub struct DataSourceColumn {
     pub name: String,
     /// Go `mysql.HasPriKeyFlag(col.GetFlag())`.
     pub is_primary_key: bool,
+    /// Go `mysql.HasNotNullFlag(col.GetFlag())`.
+    ///
+    /// `rule/util.CheckIndexCanBeKey` deliberately reads the table-column
+    /// metadata rather than the corresponding expression column's type.
+    pub is_not_null: bool,
 }
 
 /// Go `h.HintedIndex` fields consumed by partition processing and index-merge
@@ -447,6 +452,9 @@ impl DataSource {
                     id: forced.id,
                     name,
                     is_primary_key,
+                    is_not_null: forced.ret_type.as_ref().is_some_and(|field_type| {
+                        field_type.has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL)
+                    }),
                 });
                 schema.columns.push(forced);
             }

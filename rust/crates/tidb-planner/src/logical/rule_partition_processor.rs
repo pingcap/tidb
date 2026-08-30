@@ -193,8 +193,9 @@ fn prune_data_source(
     if source.partition_definition_ids.is_empty() {
         return Ok(LogicalPlan::DataSource(source));
     }
-    source.pushed_down_conds = apply_predicate_simplification(ctx, source.pushed_down_conds, false);
-    source.all_conds = apply_predicate_simplification(ctx, source.all_conds, false);
+    source.pushed_down_conds =
+        apply_predicate_simplification(ctx, source.pushed_down_conds, false, None);
+    source.all_conds = apply_predicate_simplification(ctx, source.all_conds, false, None);
     if let Some(dual) = conds_to_table_dual(
         ctx,
         &source.all_conds,

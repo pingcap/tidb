@@ -674,6 +674,7 @@ mod tests {
                 id: *id,
                 name: format!("c{id}"),
                 is_primary_key: false,
+                is_not_null: false,
             })
             .collect();
         if let Some(mut schema) = source.base.base.schema().cloned() {

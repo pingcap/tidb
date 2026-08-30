@@ -536,6 +536,7 @@ pub fn apply_predicate_simplification(
     ctx: &RuleContext<'_>,
     predicates: Vec<Expression>,
     propagate_constant: bool,
+    valid: Option<&dyn Fn(&Expression) -> bool>,
 ) -> Vec<Expression> {
     if predicates.is_empty() {
         return predicates;
@@ -549,7 +550,7 @@ pub fn apply_predicate_simplification(
             ctx.builder,
             ctx.use_plan_cache,
             predicates,
-            None,
+            valid,
         );
         if let (Some(marker), Some(reason)) =
             (ctx.plan_cache_marker, outcome.skip_plan_cache_reason)
@@ -562,7 +563,7 @@ pub fn apply_predicate_simplification(
             ctx.builder,
             ctx.use_plan_cache,
             predicates.clone(),
-            None,
+            valid,
         );
         if outcome.conditions.len() == 1 {
             predicates = outcome.conditions;
@@ -700,9 +701,10 @@ pub fn predicate_simplification(ctx: &RuleContext<'_>, mut plan: LogicalPlan) ->
             ctx,
             std::mem::take(&mut source.pushed_down_conds),
             true,
+            None,
         );
         source.all_conds =
-            apply_predicate_simplification(ctx, std::mem::take(&mut source.all_conds), true);
+            apply_predicate_simplification(ctx, std::mem::take(&mut source.all_conds), true, None);
     }
     plan
 }
@@ -750,6 +752,7 @@ mod tests {
                 vec![comparison, Expression::Constant(Constant::new_zero())],
             )],
             false,
+            None,
         );
         assert_eq!(conditions.len(), 1);
         assert!(is_unsatisfiable_expression(&ctx, &conditions[0]));
@@ -761,6 +764,7 @@ mod tests {
                 function("ne", vec![column(1), integer(2)]),
             ],
             false,
+            None,
         );
         assert_eq!(conditions.len(), 1);
         let Expression::ScalarFunction(in_function) = &conditions[0] else {

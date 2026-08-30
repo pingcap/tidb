@@ -621,7 +621,7 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
             // Go `LogicalSelection.PredicatePushDown` (`logical_selection.go:96`).
             LogicalPlan::Selection(op) => {
                 let conditions = std::mem::take(&mut op.conditions);
-                op.conditions = apply_predicate_simplification(self.ctx, conditions, false);
+                op.conditions = apply_predicate_simplification(self.ctx, conditions, false, None);
                 let (can_push, cannot_push) =
                     super::LogicalSelection::split_set_get_var_func(&op.conditions);
                 self.stash.push(PendingPredicates::Selection(cannot_push));
@@ -942,7 +942,7 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
                     node.dismantle();
                     return (child, Vec::new());
                 }
-                let simplified = apply_predicate_simplification(self.ctx, ret, true);
+                let simplified = apply_predicate_simplification(self.ctx, ret, true, None);
                 if let Some(dual) = conds_to_table_dual(
                     self.ctx,
                     &simplified,

@@ -150,9 +150,7 @@ pub fn check_index_can_be_key(
         };
         unique_key.push(column.clone());
         if strong {
-            if column.ret_type.as_ref().is_some_and(|field_type| {
-                field_type.has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL)
-            }) {
+            if columns[position].is_not_null {
                 strong_key.push(column);
             } else {
                 strong = false;
@@ -178,8 +176,9 @@ pub fn apply_predicate_simplification(
     context: &super::rule::RuleContext<'_>,
     predicates: Vec<Expression>,
     propagate_constant: bool,
+    valid: Option<&dyn Fn(&Expression) -> bool>,
 ) -> Vec<Expression> {
-    super::rule::apply_predicate_simplification(context, predicates, propagate_constant)
+    super::rule::apply_predicate_simplification(context, predicates, propagate_constant, valid)
 }
 
 /// Rust's direct-function form of Go's join simplification hook.
@@ -307,28 +306,45 @@ mod tests {
             ],
             ..SourceIndex::default()
         };
-        let columns = vec![
+        let strong_columns = vec![
             DataSourceColumn {
                 name: "a".to_owned(),
+                is_not_null: true,
                 ..DataSourceColumn::default()
             },
             DataSourceColumn {
                 name: "b".to_owned(),
+                is_not_null: true,
                 ..DataSourceColumn::default()
             },
         ];
         let strong_schema = Schema::new(vec![column(1, true), column(2, true)]);
-        let (nullable, strong) = check_index_can_be_key(&index, &columns, &strong_schema);
+        let (nullable, strong) = check_index_can_be_key(&index, &strong_columns, &strong_schema);
         assert!(nullable.is_none());
         assert_eq!(strong.expect("a strong key").len(), 2);
 
-        let nullable_schema = Schema::new(vec![column(1, true), column(2, false)]);
-        let (nullable, strong) = check_index_can_be_key(&index, &columns, &nullable_schema);
+        let nullable_columns = vec![
+            DataSourceColumn {
+                name: "a".to_owned(),
+                is_not_null: true,
+                ..DataSourceColumn::default()
+            },
+            DataSourceColumn {
+                name: "b".to_owned(),
+                is_not_null: false,
+                ..DataSourceColumn::default()
+            },
+        ];
+        // Deliberately disagree with the metadata: Go reads ColumnInfo flags,
+        // not the expression schema's return types.
+        let nullable_schema = Schema::new(vec![column(1, true), column(2, true)]);
+        let (nullable, strong) =
+            check_index_can_be_key(&index, &nullable_columns, &nullable_schema);
         assert!(strong.is_none());
         assert_eq!(nullable.expect("a nullable key").len(), 2);
 
         let incomplete = Schema::new(vec![column(1, true)]);
-        let (nullable, strong) = check_index_can_be_key(&index, &columns, &incomplete);
+        let (nullable, strong) = check_index_can_be_key(&index, &strong_columns, &incomplete);
         assert!(nullable.is_none());
         assert!(strong.is_none());
     }

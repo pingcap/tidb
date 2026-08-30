@@ -2689,11 +2689,13 @@ mod tests {
                         id: 1,
                         name: "pk".to_owned(),
                         is_primary_key: true,
+                        is_not_null: true,
                     },
                     DataSourceColumn {
                         id: 2,
                         name: "b".to_owned(),
                         is_primary_key: false,
+                        is_not_null: false,
                     },
                 ],
                 pushed_down_conds: conds,
@@ -2809,11 +2811,13 @@ mod tests {
                         id: 1,
                         name: "a".to_owned(),
                         is_primary_key: false,
+                        is_not_null: false,
                     },
                     DataSourceColumn {
                         id: 2,
                         name: "b".to_owned(),
                         is_primary_key: false,
+                        is_not_null: false,
                     },
                 ],
                 enumerated_paths: vec![
@@ -2923,11 +2927,13 @@ mod tests {
                     id: 1,
                     name: "a".to_owned(),
                     is_primary_key: false,
+                    is_not_null: false,
                 },
                 DataSourceColumn {
                     id: 2,
                     name: "b".to_owned(),
                     is_primary_key: false,
+                    is_not_null: false,
                 },
             ],
             pushed_down_conds: vec![Expression::ScalarFunction(ScalarFunction::new(

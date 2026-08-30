@@ -1438,6 +1438,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 id: source_column.id,
                 name: source_column.name.clone(),
                 is_primary_key: source_column.is_primary_key,
+                is_not_null: source_column.ret_type.has_flag(FieldTypeFlags::NOT_NULL),
             });
             schema_columns.push(column);
             names.push(name);
@@ -1466,6 +1467,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 id: EXTRA_HANDLE_ID,
                 name: EXTRA_HANDLE_NAME.to_owned(),
                 is_primary_key: false,
+                is_not_null: true,
             });
             schema_columns.push(extra);
             names.push(name);
@@ -1498,6 +1500,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             id: EXTRA_COMMIT_TS_ID,
             name: EXTRA_COMMIT_TS_NAME.to_owned(),
             is_primary_key: false,
+            is_not_null: false,
         });
         schema_columns.push(commit_ts);
         names.push(commit_ts_name);

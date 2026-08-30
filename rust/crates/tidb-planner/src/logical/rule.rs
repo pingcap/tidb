@@ -771,11 +771,13 @@ pub fn apply_predicate_simplification(
     ctx: &RuleContext<'_>,
     predicates: Vec<Expression>,
     propagate_constant: bool,
+    valid: Option<&dyn Fn(&Expression) -> bool>,
 ) -> Vec<Expression> {
     super::rule_predicate_simplification::apply_predicate_simplification(
         ctx,
         predicates,
         propagate_constant,
+        valid,
     )
 }
 
@@ -893,7 +895,7 @@ pub fn add_selection(
     if conditions.is_empty() {
         return child;
     }
-    let conditions = apply_predicate_simplification(ctx, conditions, true);
+    let conditions = apply_predicate_simplification(ctx, conditions, true, None);
     if conditions.is_empty() {
         return child;
     }

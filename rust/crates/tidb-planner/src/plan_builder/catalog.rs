@@ -75,7 +75,7 @@ use tidb_model::{
 /// [`FieldType`] has no `Default` — Go's zero `types.FieldType` is a
 /// `TypeUnspecified`, which [`FieldTypeCode::Unspecified`] spells explicitly.
 ///
-/// The first three fields are exactly
+/// The first four fields are exactly
 /// [`DataSourceColumn`](crate::logical::data_source::DataSourceColumn); the
 /// rest are the builder-only inputs named in this module's header.
 #[derive(Clone, Debug)]

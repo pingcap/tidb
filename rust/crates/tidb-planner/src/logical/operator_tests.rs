@@ -1066,6 +1066,7 @@ fn data_source_prune_columns_separates_conds_from_output() {
             id,
             name: format!("c{id}"),
             is_primary_key: false,
+            is_not_null: false,
         })
         .collect();
     source.all_conds = vec![eq(col_expr(2), one())];
@@ -1115,11 +1116,13 @@ fn data_source_build_key_info_adds_the_int_primary_key() {
             id: 1,
             name: "a".to_owned(),
             is_primary_key: false,
+            is_not_null: false,
         },
         DataSourceColumn {
             id: 2,
             name: "id".to_owned(),
             is_primary_key: true,
+            is_not_null: true,
         },
     ];
     let mut output = schema(&[1, 2]);
@@ -1144,11 +1147,13 @@ fn data_source_unique_index_keys_keep_nullability_and_pruning_semantics() {
             id: 1,
             name: "a".to_owned(),
             is_primary_key: false,
+            is_not_null: true,
         },
         DataSourceColumn {
             id: 2,
             name: "b".to_owned(),
             is_primary_key: false,
+            is_not_null: true,
         },
     ];
     source.indexes = vec![crate::plan_builder::catalog::SourceIndex {
@@ -1184,11 +1189,7 @@ fn data_source_unique_index_keys_keep_nullability_and_pruning_semantics() {
     );
     assert!(nullable.is_empty());
 
-    output.columns[1]
-        .ret_type
-        .as_mut()
-        .unwrap()
-        .del_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+    source.columns[1].is_not_null = false;
     let (strong, nullable) = source.index_keys(&output);
     assert!(strong.is_empty());
     assert_eq!(nullable.len(), 1);

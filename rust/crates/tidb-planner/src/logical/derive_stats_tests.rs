@@ -312,6 +312,7 @@ fn a_pushed_equality_charges_gos_pseudo_rate() {
         id: 1,
         name: "a".to_owned(),
         is_primary_key: false,
+        is_not_null: false,
     }];
     op.pushed_down_conds = vec![Expression::ScalarFunction(eq_condition_to_constant(1, 7))];
 
@@ -338,6 +339,7 @@ fn two_pseudo_bounds_form_one_column_range() {
         id: 1,
         name: "a".to_owned(),
         is_primary_key: false,
+        is_not_null: false,
     }];
     op.pushed_down_conds = vec![
         Expression::ScalarFunction(comparison_condition_to_constant("ge", 1, 1)),
