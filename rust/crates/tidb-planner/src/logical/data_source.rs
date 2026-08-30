@@ -39,9 +39,13 @@
 //!   need, plus [`DataSource::handle_is_int`].
 
 use tidb_expr::column::Column;
+use tidb_expr::expr_util::normal_form::split_cnf_items;
 use tidb_expr::expression::{CorrelatedColumn, Expression};
+use tidb_expr::rewriter::ColumnResolver;
 use tidb_expr::schema::Schema;
-use tidb_expr::simple_expr::{extract_columns_from_expressions, extract_cor_columns};
+use tidb_expr::simple_expr::{
+    extract_columns_from_expressions, extract_cor_columns, parse_simple_expr, BuildOptions,
+};
 
 use crate::access_path::DataSourceAccessPath;
 use crate::logical::schema_producer;
@@ -207,6 +211,9 @@ pub struct DataSource {
     /// Go `AccessPath.IndexLookUpPushDownBy`, keyed by index ID.
     pub index_lookup_push_down_by:
         std::collections::BTreeMap<i64, crate::access_path::IndexLookupPushDownBy>,
+    /// Index IDs carrying Go `AccessPath.NoncacheableReason` after
+    /// `CheckPartialIndexes` rejects the general cached-plan proof.
+    pub partial_index_noncacheable_ids: std::collections::BTreeSet<i64>,
     /// Go `forceNoIndexLookUpPushDown`, set by a matching
     /// `NO_INDEX_LOOKUP_PUSHDOWN` hint before paths are enumerated.
     pub force_no_index_lookup_push_down: bool,
@@ -366,6 +373,96 @@ impl DataSource {
             .collect();
         self.pushed_down_conds = pushable;
         not_pushable
+    }
+
+    /// Go `DataSource.CheckPartialIndexes`, at the same post-predicate-pushdown
+    /// and pre-statistics phase as `deriveStats4DataSource`.
+    pub fn check_partial_indexes(
+        &mut self,
+        resolver: &dyn ColumnResolver,
+        use_plan_cache: bool,
+        opt_prefix_index_single_scan: bool,
+    ) {
+        let Some(schema) = self.base.base.schema().cloned() else {
+            return;
+        };
+        let names = self
+            .columns
+            .iter()
+            .map(|column| {
+                tidb_datatype::FieldName::new(tidb_datatype::FieldNameMetadata {
+                    table: tidb_datatype::IdentifierMetadata::new(&self.table_name),
+                    column: tidb_datatype::IdentifierMetadata::new(&column.name),
+                    ..tidb_datatype::FieldNameMetadata::default()
+                })
+            })
+            .collect::<Vec<_>>();
+        let options = BuildOptions::new().with_input_schema_and_names(schema, names);
+        let mut removed_ids = std::collections::BTreeSet::new();
+        let mut partial_index_used_hint = false;
+        let mut has_partial_index = false;
+
+        for path in &self.enumerated_paths {
+            let crate::access_path::PossiblePath::Index { index } = path else {
+                continue;
+            };
+            let Some(metadata) = self.indexes.get(*index) else {
+                continue;
+            };
+            if metadata.condition_expr_string.is_empty() {
+                continue;
+            }
+            has_partial_index = true;
+            let predicates = parse_simple_expr(resolver, &metadata.condition_expr_string, &options)
+                .map(|expression| split_cnf_items(&expression));
+            let Ok(predicates) = predicates else {
+                removed_ids.insert(metadata.id);
+                continue;
+            };
+            if !crate::partidx::check_constraints(
+                opt_prefix_index_single_scan,
+                &predicates,
+                &self.pushed_down_conds,
+            ) {
+                removed_ids.insert(metadata.id);
+                continue;
+            }
+            if self.forced_index_ids.contains(&metadata.id) {
+                partial_index_used_hint = true;
+            }
+            if use_plan_cache
+                && !crate::partidx::always_meet_constraints(&predicates, &self.pushed_down_conds)
+            {
+                self.partial_index_noncacheable_ids.insert(metadata.id);
+            }
+        }
+        if !has_partial_index || (removed_ids.is_empty() && !partial_index_used_hint) {
+            return;
+        }
+
+        let keep_index_id = |index_id: i64| {
+            !removed_ids.contains(&index_id)
+                && (!partial_index_used_hint || self.forced_index_ids.contains(&index_id))
+        };
+        self.enumerated_paths.retain(|path| match path {
+            crate::access_path::PossiblePath::Index { index } => self
+                .indexes
+                .get(*index)
+                .is_some_and(|metadata| keep_index_id(metadata.id)),
+            crate::access_path::PossiblePath::Table { .. } => !partial_index_used_hint,
+        });
+        self.all_possible_access_paths.retain(|path| match path {
+            DataSourceAccessPath::Index(index) => keep_index_id(index.candidate().index_id),
+            DataSourceAccessPath::Table(_) | DataSourceAccessPath::IndexMerge => {
+                !partial_index_used_hint
+            }
+        });
+        self.possible_access_paths.retain(|path| match path {
+            DataSourceAccessPath::Index(index) => keep_index_id(index.candidate().index_id),
+            DataSourceAccessPath::Table(_) | DataSourceAccessPath::IndexMerge => {
+                !partial_index_used_hint
+            }
+        });
     }
 
     /// Go `DataSource.PruneColumns(parentUsedCols)`'s LOCAL half
@@ -615,6 +712,7 @@ impl DataSource {
             force_keep_order_table_path: self.force_keep_order_table_path,
             force_no_keep_order_table_path: self.force_no_keep_order_table_path,
             index_lookup_push_down_by: self.index_lookup_push_down_by.clone(),
+            partial_index_noncacheable_ids: self.partial_index_noncacheable_ids.clone(),
             force_no_index_lookup_push_down: self.force_no_index_lookup_push_down,
             index_merge_hints: self.index_merge_hints.clone(),
             prefer_index_merge_by_fix_control: self.prefer_index_merge_by_fix_control,

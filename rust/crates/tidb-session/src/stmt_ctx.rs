@@ -62,6 +62,7 @@ pub(crate) struct StatementVarSnapshot {
     stats_load_pseudo_timeout: bool,
     plan_replayer_capture_enabled: bool,
     opt_index_prune_threshold: i32,
+    opt_prefix_index_single_scan: bool,
     always_keep_join_key: bool,
     enable_unsafe_substitute: bool,
     enable_semi_join_rewrite: bool,
@@ -662,6 +663,9 @@ impl Session {
                 .ok()
                 .and_then(|value| value.parse::<i32>().ok())
                 .unwrap_or(20),
+            opt_prefix_index_single_scan: on(
+                tidb_vardef::tidb_vars::TIDB_OPT_PREFIX_INDEX_SINGLE_SCAN,
+            ),
             always_keep_join_key: on(tidb_vardef::tidb_vars::TIDB_OPT_ALWAYS_KEEP_JOIN_KEY),
             enable_unsafe_substitute: on(tidb_vardef::tidb_vars::TIDB_ENABLE_UNSAFE_SUBSTITUTE),
             enable_semi_join_rewrite: on(tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_SEMI_JOIN_REWRITE),
@@ -805,6 +809,7 @@ impl Session {
         let stats_load_pseudo_timeout = snapshot.stats_load_pseudo_timeout;
         let plan_replayer_capture_enabled = snapshot.plan_replayer_capture_enabled;
         let opt_index_prune_threshold = snapshot.opt_index_prune_threshold;
+        let opt_prefix_index_single_scan = snapshot.opt_prefix_index_single_scan;
         let always_keep_join_key = snapshot.always_keep_join_key;
         let enable_unsafe_substitute = snapshot.enable_unsafe_substitute;
         let enable_semi_join_rewrite = snapshot.enable_semi_join_rewrite;
@@ -935,6 +940,7 @@ impl Session {
                 .with_index_usage_collector(index_usage_collector)
                 .with_table_delta(std::sync::Arc::clone(&self.transaction_table_delta))
                 .with_opt_index_prune_threshold(opt_index_prune_threshold)
+                .with_opt_prefix_index_single_scan(opt_prefix_index_single_scan)
                 .with_always_keep_join_key(always_keep_join_key)
                 .with_enable_unsafe_substitute(enable_unsafe_substitute)
                 .with_enable_semi_join_rewrite(enable_semi_join_rewrite)
@@ -1002,6 +1008,7 @@ impl Session {
         .with_index_usage_collector(index_usage_collector)
         .with_table_delta(std::sync::Arc::clone(&self.transaction_table_delta))
         .with_opt_index_prune_threshold(opt_index_prune_threshold)
+        .with_opt_prefix_index_single_scan(opt_prefix_index_single_scan)
         .with_always_keep_join_key(always_keep_join_key)
         .with_enable_unsafe_substitute(enable_unsafe_substitute)
         .with_enable_semi_join_rewrite(enable_semi_join_rewrite)

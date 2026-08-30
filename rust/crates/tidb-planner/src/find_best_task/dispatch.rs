@@ -1725,6 +1725,10 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     "IndexScan",
                     ds.base.base.query_block_offset(),
                 );
+                if ds.partial_index_noncacheable_ids.contains(&source_index.id) {
+                    base.base
+                        .set_noncacheable_reason("IndexScan of partial index is uncacheable");
+                }
                 base.base.set_schema(ds.base.base.schema().cloned());
                 // Go `detachCondAndBuildRangeForPath`: the index columns
                 // (schema columns at the index's offsets) detach the pushed
@@ -1831,6 +1835,11 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         },
                         ds.base.base.query_block_offset(),
                     );
+                    if ds.partial_index_noncacheable_ids.contains(&source_index.id) {
+                        point_base
+                            .base
+                            .set_noncacheable_reason("IndexScan of partial index is uncacheable");
+                    }
                     point_base.base.set_schema(ds.base.base.schema().cloned());
                     point_base
                         .base

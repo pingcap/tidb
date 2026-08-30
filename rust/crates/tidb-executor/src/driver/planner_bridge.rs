@@ -28,6 +28,7 @@ use std::rc::Rc;
 use tidb_expr::expr_util::normal_form::extract_filters_from_dnfs;
 use tidb_expr::expr_util::RealFunctionBuilder;
 use tidb_expr::expression::Expression;
+use tidb_expr::rewriter::ZonedNoResolver;
 use tidb_expr::simple_expr::compose_dnf_condition;
 use tidb_planner::cardinality::row_size::{RowSizeColumnStats, RowSizeType};
 use tidb_planner::expression_rewriter::ColumnIdAllocator;
@@ -52,6 +53,51 @@ use super::FromTable;
 enum ListColumnsLocated {
     Full,
     Location(crate::partition_pruning::ListPartitionLocation),
+}
+
+struct PartialIndexChecker<'a> {
+    resolver: &'a ZonedNoResolver,
+    use_plan_cache: bool,
+    opt_prefix_index_single_scan: bool,
+}
+
+impl OwnedRewrite for PartialIndexChecker<'_> {
+    type Down = ();
+    type Up = ();
+
+    fn descend(&mut self, node: &mut LogicalPlan, (): ()) -> Descend<(), ()> {
+        if let LogicalPlan::DataSource(source) = node {
+            source.check_partial_indexes(
+                self.resolver,
+                self.use_plan_cache,
+                self.opt_prefix_index_single_scan,
+            );
+        }
+        Descend::Children(vec![(); node.children().len()])
+    }
+
+    fn ascend(&mut self, node: LogicalPlan, _child_ups: Vec<()>) -> (LogicalPlan, ()) {
+        (node, ())
+    }
+}
+
+fn check_partial_index_paths(
+    plan: LogicalPlan,
+    ctx: &crate::StmtContext,
+    use_plan_cache: bool,
+) -> LogicalPlan {
+    let resolver =
+        ZonedNoResolver::with_like_default_escape(ctx.session_zone(), ctx.like_default_escape());
+    fold_owned(
+        &mut PartialIndexChecker {
+            resolver: &resolver,
+            use_plan_cache,
+            opt_prefix_index_single_scan: ctx.opt_prefix_index_single_scan(),
+        },
+        plan,
+        (),
+    )
+    .0
 }
 
 fn remap_list_columns_location(
@@ -826,6 +872,7 @@ fn optimize_cte_tree(
     let optimized = logical_optimize(rule_context, opt_flag, plan)
         .map_err(|(_, error)| error)?
         .plan;
+    let optimized = check_partial_index_paths(optimized, ctx, rule_context.use_plan_cache);
     let (mut optimized, ()) = fold_owned(
         &mut InitStats {
             catalog,
@@ -1354,6 +1401,7 @@ fn optimize_built_logical(
     let mut optimized = logical_optimize(&rule_context, flags, plan)
         .map_err(|(_, error)| error)?
         .plan;
+    optimized = check_partial_index_paths(optimized, ctx, use_plan_cache);
     optimize_cte_classes(
         &optimized,
         catalog,

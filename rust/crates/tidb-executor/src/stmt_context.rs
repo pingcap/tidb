@@ -567,6 +567,8 @@ pub struct StmtContext {
     stats_load_pseudo_timeout: bool,
     /// Go `SessionVars.OptIndexPruneThreshold`.
     opt_index_prune_threshold: i32,
+    /// Go `RangerContext.OptPrefixIndexSingleScan`.
+    opt_prefix_index_single_scan: bool,
     /// Go `SessionVars.AlwaysKeepJoinKey`.
     always_keep_join_key: bool,
     /// Go `SessionVars.EnableUnsafeSubstitute`.
@@ -815,6 +817,7 @@ impl StmtContext {
             stats_load_sync_wait_ms: tidb_vardef::defaults::DEF_TIDB_STATS_LOAD_SYNC_WAIT as u64,
             stats_load_pseudo_timeout: tidb_vardef::defaults::DEF_TIDB_STATS_LOAD_PSEUDO_TIMEOUT,
             opt_index_prune_threshold: 20,
+            opt_prefix_index_single_scan: true,
             always_keep_join_key: tidb_vardef::defaults::DEF_OPT_ALWAYS_KEEP_JOIN_KEY,
             enable_unsafe_substitute: false,
             enable_semi_join_rewrite: tidb_vardef::defaults::DEF_OPT_ENABLE_SEMI_JOIN_REWRITE,
@@ -1084,6 +1087,13 @@ impl StmtContext {
         self
     }
 
+    /// Sets `@@tidb_opt_prefix_index_single_scan` for this statement.
+    #[must_use]
+    pub const fn with_opt_prefix_index_single_scan(mut self, enabled: bool) -> Self {
+        self.opt_prefix_index_single_scan = enabled;
+        self
+    }
+
     /// Sets `@@tidb_opt_always_keep_join_key` for this statement.
     #[must_use]
     pub const fn with_always_keep_join_key(mut self, always_keep: bool) -> Self {
@@ -1178,6 +1188,12 @@ impl StmtContext {
     #[must_use]
     pub const fn opt_index_prune_threshold(&self) -> i32 {
         self.opt_index_prune_threshold
+    }
+
+    /// Returns `@@tidb_opt_prefix_index_single_scan`.
+    #[must_use]
+    pub const fn opt_prefix_index_single_scan(&self) -> bool {
+        self.opt_prefix_index_single_scan
     }
 
     /// Returns `@@tidb_opt_always_keep_join_key`.
