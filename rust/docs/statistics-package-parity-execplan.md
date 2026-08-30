@@ -160,6 +160,9 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - Observation: pinned persisted ANALYZE options are raw planner input, not effective executor knobs. Statement values merge over stored values before the current global defaults are filled; `TOPN = 0` is present while stored `topn = -1` is absent, and LIST IDs are resolved through current table metadata so dropped columns disappear.
   Evidence: pinned `genV2AnalyzeOptions`/`getSavedAnalyzeOpts` in `pkg/planner/core/planbuilder.go` and `saveAnalyzeOptions` in `pkg/executor/analyze.go`; the Rust storage regression replaces a row and proves raw sentinel and stale-column behavior.
 
+- Observation: legacy CMS width/depth remain validator-visible in Analyze v2, and their upper bound is the process-initial transaction entry-size limit divided by Go's maximum 32-bit varint length; accepting larger values even though the builder ignores them is not compatible behavior.
+  Evidence: pinned `CMSketchSizeLimit` and `analyzeOptionLimit` in `pkg/planner/core/planbuilder.go`; Rust boundary tests now accept the limit and reject limit-plus-one for both spellings.
+
 ## Decision Log
 
 - Decision: reconstruct and test each pinned Go branch before editing Rust; do not preserve Rust-only fallback paths.
@@ -268,6 +271,8 @@ Revision note (2026-08-29): wired `SHOW STATS_HISTOGRAMS`, removed caller-inject
 Revision note (2026-08-29): added the shared needed-item lifecycle and wired `SHOW HISTOGRAMS_IN_FLIGHT`; delayed-load coverage observes one live item and then zero after worker cleanup.
 
 Revision note (2026-08-29): began the complete persisted ANALYZE-options behavior by separating raw and effective options, loading and replacing table-level `mysql.analyze_options` rows, resolving live defaults after merge, and saving through Go's later warning-only transaction. Static/dynamic partition option inheritance and persistence remain open, so this is not a completion claim.
+
+Revision note (2026-08-29): centralized the pinned `genV2AnalyzeOptions` merge order and added direct regressions for static partition-over-table-over-statement inheritance and dynamic named-partition override suppression. The table-level cluster path now consumes that common policy. Partition execution/storage wiring remains open.
 
 Revision note (2026-08-29): completed the atomic inventory for pinned `pkg/statistics/handle/lockstats` (`lock_stats.go`, `query_lock.go`, `unlock_stats.go`; all four original test/support files; `BUILD.bazel`) and `pkg/executor/lockstats` (both executors, executor tests, `BUILD.bazel`). The Rust mapping is `tidb-stats::lock_stats` for policy/query/delta behavior, `tidb-executor::stats_lock` plus `tidb-session::stats_lock_arm` for the in-process restricted-session equivalent, and `tidb-exec::{cluster_stats_lock,real_tikv_stats_lock}` plus the server seam for one independent TiKV transaction. Focused tests cover stable skip messages, table/partition gates, delta propagation and clamping, real persisted system-row mutations, duplicate no-write warnings, INSERT-before-SELECT privilege admission, statement warning publication, and preservation of the caller's transaction.
 

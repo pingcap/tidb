@@ -73,6 +73,10 @@ pub const STATS_VERSION_2: i64 = 2;
 /// depend on the variable registry to spell it.
 pub const MEM_QUOTA_ANALYZE_VARIABLE: &str = "tidb_mem_quota_analyze";
 
+/// Pinned Go `CMSketchSizeLimit`: legacy CMS width/depth are still parsed and
+/// validated even though Analyze v2 does not build a CMSketch.
+const CMSKETCH_SIZE_LIMIT: u64 = tidb_txnkv::DEFAULT_TXN_ENTRY_SIZE_LIMIT / 5;
+
 /// Why one `ANALYZE TABLE` could not be computed.
 ///
 /// A caller's own read failure is NOT here -- it drives the scan and keeps
@@ -207,9 +211,10 @@ pub struct AnalyzeStatement {
 }
 
 /// Pinned Go analyze column choice before persisted/default resolution.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub enum AnalyzeColumnChoice {
     /// Resolve through `tidb_analyze_column_options` at execution.
+    #[default]
     Default,
     /// Analyze every analyzable column.
     All,
@@ -217,6 +222,125 @@ pub enum AnalyzeColumnChoice {
     Predicate,
     /// Analyze these source names plus mandatory index/PK columns.
     Explicit(Vec<String>),
+}
+
+/// One raw option/column-choice row from pinned Go's
+/// `mysql.analyze_options`, after LIST IDs have been resolved through the
+/// current table schema.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SavedAnalyzeOptions {
+    /// Raw numeric options; absent values remain absent until all merging is
+    /// complete.
+    pub raw: AnalyzeOptionOverrides,
+    /// Persisted column-choice policy.
+    pub columns: AnalyzeColumnChoice,
+}
+
+/// Pinned Go `V2AnalyzeOptions` reduced to the fields both Rust execution
+/// tiers consume.
+#[derive(Clone, Debug)]
+pub struct PhysicalAnalyzeOptions {
+    /// Logical table ID or physical partition ID receiving the statistics.
+    pub physical_id: i64,
+    /// Raw merged values saved after successful ANALYZE.
+    pub raw: AnalyzeOptionOverrides,
+    /// Effective values used by the sampler and builders.
+    pub effective: AnalyzeOptions,
+    /// Final persisted/default column choice.
+    pub columns: AnalyzeColumnChoice,
+    /// Whether this entry describes a physical partition.
+    pub is_partition: bool,
+}
+
+/// Result of pinned Go `genV2AnalyzeOptions`'s option/choice merge.
+#[derive(Clone, Debug)]
+pub struct AnalyzeOptionResolution {
+    /// The table entry followed by requested physical partitions.
+    pub physical: Vec<PhysicalAnalyzeOptions>,
+    /// Whether dynamic mode ignored explicit options/columns on
+    /// `ANALYZE ... PARTITION` and therefore requires Go's statement warning.
+    pub ignored_partition_overrides: bool,
+}
+
+/// Merges statement, logical-table, and partition ANALYZE options exactly in
+/// pinned Go `genV2AnalyzeOptions` order.
+#[must_use]
+pub fn resolve_analyze_options(
+    table_id: i64,
+    partition_ids: &[i64],
+    statement_raw: AnalyzeOptionOverrides,
+    statement_columns: &AnalyzeColumnChoice,
+    saved: &std::collections::HashMap<i64, SavedAnalyzeOptions>,
+    whole_table: bool,
+    dynamic_partition_prune: bool,
+) -> AnalyzeOptionResolution {
+    let ignored_partition_overrides = !whole_table
+        && dynamic_partition_prune
+        && (statement_raw != AnalyzeOptionOverrides::default()
+            || *statement_columns != AnalyzeColumnChoice::Default);
+    let (statement_raw, statement_columns) = if ignored_partition_overrides {
+        (
+            AnalyzeOptionOverrides::default(),
+            AnalyzeColumnChoice::Default,
+        )
+    } else {
+        (statement_raw, statement_columns.clone())
+    };
+    let table_saved = saved.get(&table_id).cloned().unwrap_or_default();
+    let table_raw = if whole_table {
+        statement_raw.merge_over(table_saved.raw)
+    } else {
+        table_saved.raw
+    };
+    let table_columns =
+        choose_analyze_columns(&statement_columns, &table_saved.columns, whole_table);
+    let mut physical = vec![PhysicalAnalyzeOptions {
+        physical_id: table_id,
+        raw: table_raw,
+        effective: table_raw.effective(),
+        columns: table_columns.clone(),
+        is_partition: false,
+    }];
+    for partition_id in partition_ids.iter().copied() {
+        if partition_id == table_id {
+            continue;
+        }
+        let (raw, columns) = if dynamic_partition_prune {
+            (table_raw, table_columns.clone())
+        } else {
+            let partition_saved = saved.get(&partition_id).cloned().unwrap_or_default();
+            let inherited_raw = partition_saved.raw.merge_over(table_saved.raw);
+            let inherited_columns =
+                choose_analyze_columns(&partition_saved.columns, &table_saved.columns, true);
+            (
+                statement_raw.merge_over(inherited_raw),
+                choose_analyze_columns(&statement_columns, &inherited_columns, true),
+            )
+        };
+        physical.push(PhysicalAnalyzeOptions {
+            physical_id: partition_id,
+            raw,
+            effective: raw.effective(),
+            columns,
+            is_partition: true,
+        });
+    }
+    AnalyzeOptionResolution {
+        physical,
+        ignored_partition_overrides,
+    }
+}
+
+fn choose_analyze_columns(
+    preferred: &AnalyzeColumnChoice,
+    fallback: &AnalyzeColumnChoice,
+    allow_preferred: bool,
+) -> AnalyzeColumnChoice {
+    if allow_preferred && *preferred != AnalyzeColumnChoice::Default {
+        preferred.clone()
+    } else {
+        fallback.clone()
+    }
 }
 
 /// Whether this statement is an `ANALYZE TABLE` this engine runs, and against
@@ -257,11 +381,6 @@ pub fn lower_analyze_admin(
         }
         _ => return Ok(None),
     };
-    if !analyze.partitions.is_empty() {
-        return Err(AnalyzeError::Unsupported(
-            "this node does not analyze named partitions".to_owned(),
-        ));
-    }
     let columns = match &analyze.target {
         tidb_ast::AnalyzeTarget::Default => AnalyzeColumnChoice::Default,
         tidb_ast::AnalyzeTarget::AllColumns => AnalyzeColumnChoice::All,
@@ -281,6 +400,12 @@ pub fn lower_analyze_admin(
             ))
         }
     };
+
+    if !analyze.partitions.is_empty() {
+        return Err(AnalyzeError::Unsupported(
+            "this node does not analyze named partitions".to_owned(),
+        ));
+    }
 
     let mut raw_options = AnalyzeOptionOverrides::default();
     for option in &analyze.options {
@@ -351,14 +476,14 @@ pub fn lower_analyze_admin(
             tidb_ast::AnalyzeOptionKind::CmSketchDepth
             | tidb_ast::AnalyzeOptionKind::CmSketchWidth => {
                 let value = number(&option.value)?;
-                if value == 0 {
+                if value == 0 || value > CMSKETCH_SIZE_LIMIT {
                     let name = match option.kind {
                         tidb_ast::AnalyzeOptionKind::CmSketchDepth => "CMSKETCH DEPTH",
                         tidb_ast::AnalyzeOptionKind::CmSketchWidth => "CMSKETCH WIDTH",
                         _ => unreachable!(),
                     };
                     return Err(AnalyzeError::Unsupported(format!(
-                        "Value of analyze option {name} should be positive"
+                        "Value of analyze option {name} should be positive and not larger than {CMSKETCH_SIZE_LIMIT}"
                     )));
                 }
             }
@@ -959,6 +1084,124 @@ mod tests {
         let built = options.build_options();
         assert_eq!(built.num_buckets, -1);
         assert_eq!(built.num_topn, -2);
+    }
+
+    #[test]
+    fn raw_options_merge_before_live_defaults() {
+        let saved = AnalyzeOptionOverrides {
+            num_buckets: Some(7),
+            num_topn: Some(0),
+            num_samples: None,
+            sample_rate: Some(0.25),
+        };
+        let statement = AnalyzeOptionOverrides {
+            num_buckets: Some(11),
+            num_samples: Some(9),
+            ..AnalyzeOptionOverrides::default()
+        };
+        let merged = statement.merge_over(saved);
+        assert_eq!(merged.num_buckets, Some(11));
+        assert_eq!(merged.num_topn, Some(0));
+        assert_eq!(merged.num_samples, Some(9));
+        assert_eq!(merged.sample_rate, Some(0.25));
+    }
+
+    #[test]
+    fn legacy_cms_options_keep_pinned_go_size_limit() {
+        let limit = tidb_txnkv::DEFAULT_TXN_ENTRY_SIZE_LIMIT / 5;
+        for spelling in ["CMSKETCH WIDTH", "CMSKETCH DEPTH"] {
+            let accepted = tidb_parser::parse(&format!("ANALYZE TABLE t WITH {limit} {spelling}"))
+                .expect("the boundary statement parses");
+            lower_analyze(&accepted, "test").expect("the pinned boundary is accepted");
+
+            let rejected =
+                tidb_parser::parse(&format!("ANALYZE TABLE t WITH {} {spelling}", limit + 1))
+                    .expect("the over-limit statement parses");
+            let error = lower_analyze(&rejected, "test")
+                .expect_err("one value above the pinned boundary is rejected");
+            assert!(error.to_string().contains(&limit.to_string()));
+        }
+    }
+
+    #[test]
+    fn static_partitions_merge_partition_then_table_then_statement() {
+        let saved = std::collections::HashMap::from([
+            (
+                10,
+                SavedAnalyzeOptions {
+                    raw: AnalyzeOptionOverrides {
+                        num_buckets: Some(7),
+                        num_topn: Some(3),
+                        ..AnalyzeOptionOverrides::default()
+                    },
+                    columns: AnalyzeColumnChoice::All,
+                },
+            ),
+            (
+                11,
+                SavedAnalyzeOptions {
+                    raw: AnalyzeOptionOverrides {
+                        num_buckets: Some(9),
+                        sample_rate: Some(0.5),
+                        ..AnalyzeOptionOverrides::default()
+                    },
+                    columns: AnalyzeColumnChoice::Explicit(vec!["a".to_owned()]),
+                },
+            ),
+        ]);
+        let resolved = resolve_analyze_options(
+            10,
+            &[11, 12],
+            AnalyzeOptionOverrides {
+                num_topn: Some(0),
+                ..AnalyzeOptionOverrides::default()
+            },
+            &AnalyzeColumnChoice::Default,
+            &saved,
+            true,
+            false,
+        );
+        assert!(!resolved.ignored_partition_overrides);
+        assert_eq!(resolved.physical.len(), 3);
+        assert_eq!(resolved.physical[0].raw.num_buckets, Some(7));
+        assert_eq!(resolved.physical[0].raw.num_topn, Some(0));
+        assert_eq!(resolved.physical[1].raw.num_buckets, Some(9));
+        assert_eq!(resolved.physical[1].raw.num_topn, Some(0));
+        assert_eq!(resolved.physical[1].raw.sample_rate, Some(0.5));
+        assert_eq!(
+            resolved.physical[1].columns,
+            AnalyzeColumnChoice::Explicit(vec!["a".to_owned()])
+        );
+        assert_eq!(resolved.physical[2].raw.num_buckets, Some(7));
+        assert_eq!(resolved.physical[2].columns, AnalyzeColumnChoice::All);
+    }
+
+    #[test]
+    fn dynamic_named_partition_ignores_statement_overrides() {
+        let table_saved = SavedAnalyzeOptions {
+            raw: AnalyzeOptionOverrides {
+                num_buckets: Some(7),
+                ..AnalyzeOptionOverrides::default()
+            },
+            columns: AnalyzeColumnChoice::Predicate,
+        };
+        let resolved = resolve_analyze_options(
+            10,
+            &[11],
+            AnalyzeOptionOverrides {
+                num_buckets: Some(99),
+                ..AnalyzeOptionOverrides::default()
+            },
+            &AnalyzeColumnChoice::All,
+            &std::collections::HashMap::from([(10, table_saved)]),
+            false,
+            true,
+        );
+        assert!(resolved.ignored_partition_overrides);
+        for options in resolved.physical {
+            assert_eq!(options.raw.num_buckets, Some(7));
+            assert_eq!(options.columns, AnalyzeColumnChoice::Predicate);
+        }
     }
 
     #[test]

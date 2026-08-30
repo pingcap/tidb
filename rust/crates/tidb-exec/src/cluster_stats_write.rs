@@ -59,7 +59,7 @@ use tidb_datatype::{
     parse_time, ConversionFlags, Datum, FieldType, FieldTypeCode, Time, TimeType, MAX_FSP,
     UNSPECIFIED_LENGTH,
 };
-use tidb_executor::analyze::{AnalyzeColumnChoice, AnalyzeOptionOverrides};
+use tidb_executor::analyze::{AnalyzeColumnChoice, AnalyzeOptionOverrides, SavedAnalyzeOptions};
 use tidb_meta::{key, value};
 use tidb_model::table_info::TableInfo;
 use tidb_model::TableItemID;
@@ -149,13 +149,7 @@ pub struct StatsWritePlan {
 }
 
 /// One row read from pinned Go's `mysql.analyze_options`.
-#[derive(Clone, Debug, PartialEq)]
-pub struct PersistedAnalyzeOptions {
-    /// Raw options, before live defaults are filled.
-    pub raw: AnalyzeOptionOverrides,
-    /// Persisted `DEFAULT`/`ALL`/`PREDICATE`/`LIST` choice.
-    pub columns: AnalyzeColumnChoice,
-}
+pub type PersistedAnalyzeOptions = SavedAnalyzeOptions;
 
 impl StatsWritePlan {
     /// Whether the plan writes nothing.

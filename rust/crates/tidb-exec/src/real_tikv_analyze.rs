@@ -38,7 +38,8 @@ use tidb_txnkv::transaction::{
 use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
 
 use crate::cluster_analyze::{
-    analyze_table, lower_analyze, AnalyzeColumnChoice, AnalyzeError, AnalyzeStatement,
+    analyze_table, lower_analyze, resolve_analyze_options, AnalyzeColumnChoice, AnalyzeError,
+    AnalyzeStatement,
 };
 use crate::cluster_catalog::load_cluster_catalog;
 use crate::cluster_stats_load::ClusterStatsLoader;
@@ -135,27 +136,42 @@ pub fn resolve_cluster_analyze_statement<
     let mut transaction = opener
         .begin_read_only()
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-    let saved = {
+    let (table_id, saved) = {
         let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
         let catalog = load_cluster_catalog(&mut snapshot)
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         let table = find_statement_table(&catalog, statement)?;
-        load_analyze_options(&mut snapshot, &catalog, table, table.id)
-            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?
+        (
+            table.id,
+            load_analyze_options(&mut snapshot, &catalog, table, table.id)
+                .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?,
+        )
     };
     transaction
         .finish_without_writes()
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
 
+    let saved = saved
+        .map(|saved| std::collections::HashMap::from([(table_id, saved)]))
+        .unwrap_or_default();
+    let options = resolve_analyze_options(
+        table_id,
+        &[],
+        statement.raw_options,
+        &statement.columns,
+        &saved,
+        true,
+        false,
+    )
+    .physical
+    .into_iter()
+    .next()
+    .expect("the logical table option is always present");
     let mut resolved = statement.clone();
-    if let Some(saved) = saved {
-        resolved.raw_options = statement.raw_options.merge_over(saved.raw);
-        if resolved.columns == AnalyzeColumnChoice::Default {
-            resolved.columns = saved.columns;
-        }
-    }
-    let memory_quota = resolved.options.memory_quota;
-    resolved.options = resolved.raw_options.effective();
+    resolved.raw_options = options.raw;
+    resolved.columns = options.columns;
+    let memory_quota = statement.options.memory_quota;
+    resolved.options = options.effective;
     resolved.options.memory_quota = memory_quota;
     Ok(resolved)
 }
