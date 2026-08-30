@@ -92,7 +92,6 @@ pub mod by_item;
 pub mod cardinality;
 pub mod cascades_base;
 pub mod column_length;
-pub mod column_pruning;
 pub mod columnar_index_extra;
 pub mod condition_binding;
 pub mod condition_to_dual;

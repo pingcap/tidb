@@ -20,6 +20,7 @@ Rust currently exposes Go's logical-rule list but several entries are missing, n
 - [x] (2026-08-29) Replaced the narrowed predicate helper and planner-local join-equivalence solver with the registered pinned `PredicateSimplification` rule and expression-owned general propagation: PushDownNot, logical-constant short circuit, IN/NE merge, redundant OR removal, impossible OR-branch pruning, DataSource recursion, plan-cache skip reasons, and session-controlled join-key retention.
 - [x] (2026-08-29) Integrated pinned `PropConstForOuterJoin`: preserved-side constants, transitive equality classes, null-sensitive modes, inner `IS NOT NULL` derivation, recursive safe replacement, `allJoinLeaf`, and join-type-specific validity filters now use the ordinary join executor path.
 - [x] (2026-08-29) Replaced the absent/partial outer-join anti pattern with pinned `OuterJoinToSemiJoin`: recursive selection discovery, identity-projection traversal, right-join normalization, join-predicate and NOT NULL witnesses, typed NULL restoration, and Apply/NullEQ refusal.
+- [x] (2026-08-30) Replaced the detached `SchemaNode` model of `rule_column_pruning.go` with Go's post-pruning invariant over the real logical-plan tree, wired it into `ColumnPruner`, and removed the standalone model and its synthetic difftests.
 - [x] (2026-08-29) Replaced the static-only index-pruning shortcuts with the pinned `rule_prune_indexes.go` branches reachable before stats derivation: forced-path bypass, INDEX_MERGE preservation/preference, fix-control 52869, partial-index affected-column precheck, deterministic scoring, default-ten selection, and the exact safety fallback. Removed master-only clustered-prefix/internal-scoring gap stubs that are absent from the pinned tree.
 - [x] (2026-08-29) Inventoried the complete pinned `pkg/planner/core/joinorder` dependency: four production files, two original test/benchmark files, and `BUILD.bazel`. Removed Rust's disconnected `ProjectionInlineShape` adapter, derived benchmark assertions, and partial/ignored test catalogs; none was a Go planner type or executable original test path.
 - [x] (2026-08-29) Completed and registered `pkg/planner/core/joinorder`: real-expression substitution and equality alignment, CD-C graph/conflict rules, statistics and cumulative cost, DP and multi-start greedy enumeration, Cartesian/bushy recovery, ordered-leading index proof, nested LEADING construction, derived-table preservation, method-hint restoration, warning plumbing, and the complete pinned artifact inventory.
@@ -102,6 +103,8 @@ Rust currently exposes Go's logical-rule list but several entries are missing, n
 
 - Observation: the pinned statistics tests do not use three nullable `INT` columns for both `t` and `t2`.
   Evidence: `coretestsdk.MockSignedTable` marks `t.a`, `t.b`, and `t.c` NOT NULL, while `MockUnsignedTable` marks `t2.a` and `t2.b` NOT NULL and makes `t2.a`/`t2.c` unsigned. A reduced nullable fixture caused predicate pushdown to synthesize legitimate `IS NOT NULL` filters and falsely appeared to make IN-subquery join keys require full histograms. Mirroring the pinned types removes that false discrepancy, and all nine original non-partition histogram cases match exactly.
+- Observation: Rust's real logical tree already preserves the distinction used by Go's `p.Schema() == p.Children()[0].Schema()` assertion.
+  Evidence: `LogicalPlan::schema` returns an operator-owned schema when present and otherwise returns the first child's schema by reference. Therefore `base.schema().is_none()` plus a first child is the direct ownership-equivalent check; the separate public `SchemaNode` representation was both unnecessary and disconnected from optimizer execution.
 
 ## Decision Log
 
@@ -120,6 +123,10 @@ Rust currently exposes Go's logical-rule list but several entries are missing, n
 - Decision: Preserve the pinned legacy and advanced join-reorder implementations as separate branches selected by `TiDBOptEnableAdvancedJoinReorder`.
   Rationale: the two Go algorithms have different extraction, projection-inline, DP, greedy, Cartesian, and hint behavior. Routing both settings to one Rust solver would not be behavioral parity.
   Date/Author: 2026-08-29 / Codex
+
+- Decision: Keep `noUnexpectedZeroColumnSchema` private to the logical rule implementation, as it is in Go, and express `intest.AssertFunc` as a debug assertion after successful pruning.
+  Rationale: this checks the production plan representation during test/debug builds while avoiding a public normalized API that Go does not have.
+  Date/Author: 2026-08-30 / Codex
 
 ## Outcomes & Retrospective
 

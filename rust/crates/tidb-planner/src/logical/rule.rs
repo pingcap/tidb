@@ -917,12 +917,32 @@ pub fn add_selection(
 /// Go `rule.ColumnPruner` (`rule/rule_column_pruning.go:31`), Go rules #1 and
 /// #29.
 ///
-/// Go's body is four lines: `lp.PruneColumns(slices.Clone(lp.Schema().Columns))`
-/// plus an `intest` assertion. The assertion —
-/// `noUnexpectedZeroColumnSchema` — is [`crate::column_pruning`], which is
-/// KEPT as its own module because `difftests/planner-tests` consumes it.
+/// Go's body is `lp.PruneColumns(slices.Clone(lp.Schema().Columns))` followed
+/// by the `noUnexpectedZeroColumnSchema` `intest` assertion.
 #[derive(Debug)]
 pub struct ColumnPruner;
+
+/// Go `noUnexpectedZeroColumnSchema` (`rule_column_pruning.go:52`).
+///
+/// `LogicalPlan::schema` returns the first child's schema by reference when
+/// this node does not own one, preserving Go's schema-pointer identity check
+/// without a second, normalized plan representation.
+pub(super) fn no_unexpected_zero_column_schema(plan: &LogicalPlan) -> bool {
+    for child in plan.children() {
+        if !no_unexpected_zero_column_schema(child) {
+            return false;
+        }
+    }
+    if plan.schema().is_none_or(Schema::is_empty) {
+        if !plan.children().is_empty() && plan.base().base.schema().is_none() {
+            return true;
+        }
+        if !matches!(plan, LogicalPlan::TableDual(_)) {
+            return false;
+        }
+    }
+    true
+}
 
 impl LogicalOptRule for ColumnPruner {
     #[allow(clippy::result_large_err)]
@@ -938,7 +958,13 @@ impl LogicalOptRule for ColumnPruner {
         let (plan, failure) = super::rewrite::prune_columns(ctx, plan, root_cols);
         match failure {
             // Go's `planChanged` is hard-coded `false` in this rule.
-            None => Ok((plan, false)),
+            None => {
+                debug_assert!(
+                    no_unexpected_zero_column_schema(&plan),
+                    "After column pruning, some operator got an unexpected zero-column output schema. Please fix it."
+                );
+                Ok((plan, false))
+            }
             Some(error) => Err((plan, error)),
         }
     }

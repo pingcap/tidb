@@ -42,9 +42,9 @@ use super::join::LogicalJoin;
 use super::limit::LogicalLimit;
 use super::projection::LogicalProjection;
 use super::rule::{
-    self, add_selection, flags, logical_optimize, BuildKeySolver, ColumnPruner,
-    DisabledLogicalRules, LogicalOptRule, PpdSolver, PushDownTopNOptimizer, RuleContext, RuleId,
-    OPT_RULE_FLAGS, OPT_RULE_LIST,
+    self, add_selection, flags, logical_optimize, no_unexpected_zero_column_schema, BuildKeySolver,
+    ColumnPruner, DisabledLogicalRules, LogicalOptRule, PpdSolver, PushDownTopNOptimizer,
+    RuleContext, RuleId, OPT_RULE_FLAGS, OPT_RULE_LIST,
 };
 use super::selection::LogicalSelection;
 use super::sort::LogicalSort;
@@ -1000,6 +1000,38 @@ fn predicate_push_down_moves_supported_conditions_into_a_data_source() {
 }
 
 // ***** column pruning, per operator *****
+
+#[test]
+fn column_pruning_zero_column_schema_exemptions_match_go() {
+    let allocator = PlanIdAllocator::new();
+
+    let empty_child = LogicalPlan::TableDual(super::table_dual::LogicalTableDual::new(
+        base(&allocator, "TableDual", Some(Schema::default())),
+        1,
+    ));
+    let inherited = selection_over(&allocator, Vec::new(), empty_child);
+    assert!(no_unexpected_zero_column_schema(&inherited));
+
+    let dual = LogicalPlan::TableDual(super::table_dual::LogicalTableDual::new(
+        base(&allocator, "TableDual", Some(Schema::default())),
+        1,
+    ));
+    assert!(no_unexpected_zero_column_schema(&dual));
+
+    let own_empty_schema = data_source(&allocator, &[]);
+    assert!(!no_unexpected_zero_column_schema(&own_empty_schema));
+}
+
+#[test]
+#[should_panic(
+    expected = "After column pruning, some operator got an unexpected zero-column output schema. Please fix it."
+)]
+fn column_pruner_checks_the_real_pruned_plan() {
+    let allocator = PlanIdAllocator::new();
+    let ctx = test_context(&allocator);
+    let source = data_source(&allocator, &[]);
+    let _ = ColumnPruner.optimize(&ctx, source);
+}
 
 #[test]
 fn column_pruning_drops_an_unused_data_source_column() {
