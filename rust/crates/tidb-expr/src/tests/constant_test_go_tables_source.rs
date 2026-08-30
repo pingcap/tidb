@@ -577,6 +577,100 @@ fn test_constant_propagation() {
     );
 }
 
+#[test]
+fn test_constant_propagation_for_outer_join() {
+    let builder = RealFunctionBuilder::new(&NoColumns);
+    let outer = crate::schema::Schema::new(vec![Column::new(0, longlong_type())]);
+    let inner = crate::schema::Schema::new(vec![Column::new(1, longlong_type())]);
+    let eq = build("eq", vec![column(0), column(1)]);
+    let outer_filter = build("gt", vec![column(0), int_const(1)]);
+    let result = crate::constant_propagation::propagate_constant_for_outer_join(
+        &builder,
+        false,
+        vec![eq.clone()],
+        vec![outer_filter.clone()],
+        &outer,
+        &inner,
+        true,
+        false,
+        None,
+    );
+    assert!(result
+        .filter_conditions
+        .iter()
+        .any(|item| item.equal(&outer_filter)));
+    assert!(result.join_conditions.iter().any(|item| item.equal(&eq)));
+    assert!(result.join_conditions.iter().any(|condition| {
+        let Expression::ScalarFunction(function) = condition else {
+            return false;
+        };
+        matches!(
+            function.get_args(),
+            [Expression::Column(column), Expression::Constant(constant)]
+                if function.func_name.lowercase() == "gt"
+                    && column.unique_id == 1
+                    && matches!(constant.value, Datum::Int(1))
+        )
+    }));
+    assert!(result.join_conditions.iter().any(|condition| {
+        let Expression::ScalarFunction(function) = condition else {
+            return false;
+        };
+        function.func_name.lowercase() == "not"
+    }));
+
+    let sensitive = crate::constant_propagation::propagate_constant_for_outer_join(
+        &builder,
+        false,
+        vec![eq],
+        vec![outer_filter],
+        &outer,
+        &inner,
+        true,
+        true,
+        None,
+    );
+    assert_eq!(sensitive.join_conditions.len(), 1);
+
+    // Go's disjoint set derives through the complete equality class, not only
+    // through an equality that directly names the source column.
+    let outer = crate::schema::Schema::new(vec![
+        Column::new(0, longlong_type()),
+        Column::new(2, longlong_type()),
+    ]);
+    let inner = crate::schema::Schema::new(vec![
+        Column::new(1, longlong_type()),
+        Column::new(3, longlong_type()),
+    ]);
+    let transitive = crate::constant_propagation::propagate_constant_for_outer_join(
+        &builder,
+        false,
+        vec![
+            build("eq", vec![column(0), column(1)]),
+            build("eq", vec![column(2), column(1)]),
+            build("eq", vec![column(2), column(3)]),
+        ],
+        vec![build("gt", vec![column(0), int_const(5)])],
+        &outer,
+        &inner,
+        true,
+        false,
+        None,
+    );
+    assert!(transitive.join_conditions.iter().any(|condition| {
+        let Expression::ScalarFunction(function) = condition else {
+            return false;
+        };
+        matches!(
+            function.get_args(),
+            [Expression::Column(column), Expression::Constant(constant)]
+                if function.func_name.lowercase() == "gt"
+                    && column.unique_id == 3
+                    && matches!(constant.value, Datum::Int(5))
+        )
+    }));
+}
+
 /// `pkg/expression/constant_test.go:336 TestDeferredParamNotNull` reads
 /// `PlanCacheParams.GetParamValue(order)` through each typed evaluator.
 /// Rust's cache owner refreshes `Constant.value` before construction and

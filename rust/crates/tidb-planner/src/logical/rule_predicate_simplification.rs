@@ -589,6 +589,7 @@ pub fn apply_predicate_simplification_for_join(
     left_schema: &Schema,
     right_schema: &Schema,
     propagate_constant: bool,
+    valid: Option<&dyn Fn(&Expression) -> bool>,
 ) -> Vec<Expression> {
     if predicates.is_empty() {
         return predicates;
@@ -605,7 +606,7 @@ pub fn apply_predicate_simplification_for_join(
             left_schema,
             right_schema,
             predicates,
-            None,
+            valid,
         );
         if let (Some(marker), Some(reason)) =
             (ctx.plan_cache_marker, outcome.skip_plan_cache_reason)
@@ -635,6 +636,34 @@ pub fn apply_predicate_simplification_for_join(
         .into_iter()
         .filter(|predicate| predicate_type(ctx, predicate).1 != PredicateType::True)
         .collect()
+}
+
+/// Go `expression.PropConstForOuterJoin`, with its statement side effect.
+#[must_use]
+pub fn propagate_constant_for_outer_join(
+    ctx: &RuleContext<'_>,
+    join_conditions: Vec<Expression>,
+    filter_conditions: Vec<Expression>,
+    outer_schema: &Schema,
+    inner_schema: &Schema,
+    null_sensitive: bool,
+    valid: Option<&dyn Fn(&Expression) -> bool>,
+) -> (Vec<Expression>, Vec<Expression>) {
+    let outcome = tidb_expr::constant_propagation::propagate_constant_for_outer_join(
+        ctx.builder,
+        ctx.use_plan_cache,
+        join_conditions,
+        filter_conditions,
+        outer_schema,
+        inner_schema,
+        ctx.always_keep_join_key,
+        null_sensitive,
+        valid,
+    );
+    if let (Some(marker), Some(reason)) = (ctx.plan_cache_marker, outcome.skip_plan_cache_reason) {
+        marker.set_skip_plan_cache(reason);
+    }
+    (outcome.join_conditions, outcome.filter_conditions)
 }
 
 /// Go `PredicateSimplification` rule. Only DataSource overrides the recursive

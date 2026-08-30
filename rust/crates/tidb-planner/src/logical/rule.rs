@@ -772,6 +772,7 @@ pub fn apply_predicate_simplification_for_join(
     left_schema: &Schema,
     right_schema: &Schema,
     propagate_constant: bool,
+    valid: Option<&dyn Fn(&Expression) -> bool>,
 ) -> Vec<Expression> {
     super::rule_predicate_simplification::apply_predicate_simplification_for_join(
         ctx,
@@ -779,6 +780,7 @@ pub fn apply_predicate_simplification_for_join(
         left_schema,
         right_schema,
         propagate_constant,
+        valid,
     )
 }
 

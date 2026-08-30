@@ -197,6 +197,7 @@ pub fn apply_predicate_simplification_for_join(
         left_schema,
         right_schema,
         propagate_constant,
+        None,
     )
 }
 

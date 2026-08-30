@@ -115,6 +115,17 @@ fn eq_cols(left: i64, right: i64) -> Expression {
     ))
 }
 
+fn gt_const(id: i64, value: i64) -> Expression {
+    Expression::ScalarFunction(ScalarFunction::new(
+        CiString::new("gt"),
+        int_type(),
+        vec![
+            col_expr(id),
+            Expression::Constant(Constant::new(Datum::Int(value), int_type())),
+        ],
+    ))
+}
+
 fn const_true() -> Expression {
     Expression::Constant(Constant::new_one())
 }
@@ -718,6 +729,44 @@ fn predicate_push_down_propagates_a_constant_across_an_inner_join_key() {
 }
 
 #[test]
+fn predicate_push_down_derives_an_inner_filter_for_a_left_outer_join() {
+    let allocator = PlanIdAllocator::new();
+    let ctx = test_context(&allocator);
+    let left = data_source(&allocator, &[1]);
+    let right = data_source(&allocator, &[2]);
+    let mut join = LogicalJoin::new(
+        base(&allocator, "Join", Some(schema_of(&[1, 2]))),
+        LogicalJoinType::LeftOuter,
+    );
+    join.other_conditions = vec![eq_cols(1, 2)];
+    let mut join = LogicalPlan::Join(join);
+    join.set_children(vec![left, right]);
+    let root = selection_over(&allocator, vec![gt_const(1, 7)], join);
+
+    let out = push(&ctx, root);
+    let LogicalPlan::Join(join) = &out else {
+        panic!("the Selection should have collapsed into the Join, got {out:?}");
+    };
+    assert_eq!(join.equal_conditions.len(), 1);
+    let LogicalPlan::DataSource(inner) = &out.children()[1] else {
+        panic!("the inner filter should reach the right DataSource");
+    };
+    assert!(inner.pushed_down_conds.iter().any(|condition| {
+        let Expression::ScalarFunction(function) = condition else {
+            return false;
+        };
+        matches!(
+            function.get_args(),
+            [Expression::Column(column), Expression::Constant(constant)]
+                if function.func_name.lowercase() == "gt"
+                    && column.unique_id == 2
+                    && matches!(constant.value, Datum::Int(7))
+        )
+    }));
+    out.dismantle();
+}
+
+#[test]
 fn constant_propagation_pulls_a_projected_child_predicate_above_an_inner_join() {
     let allocator = PlanIdAllocator::new();
     let ctx = test_context(&allocator);
@@ -828,6 +877,7 @@ fn join_simplification_does_not_substitute_column_equalities() {
         &schema_of(&[1]),
         &schema_of(&[2, 3]),
         true,
+        None,
     );
 
     assert!(
@@ -873,6 +923,7 @@ fn join_key_retention_follows_the_session_variable() {
         &left,
         &right,
         true,
+        None,
     );
     assert!(kept.iter().any(is_join_key));
 
@@ -884,6 +935,7 @@ fn join_key_retention_follows_the_session_variable() {
         &left,
         &right,
         true,
+        None,
     );
     assert!(!dropped.iter().any(is_join_key), "{dropped:#?}");
 }

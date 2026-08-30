@@ -73,6 +73,21 @@ fn child_schemas(node: &LogicalPlan) -> Vec<Schema> {
     node.children().iter().map(effective_schema).collect()
 }
 
+/// Go `getAllJoinLeaf`: DataSource, Aggregation, and Projection each start a
+/// new leaf schema; every other operator contributes the leaves of its children.
+fn all_join_leaf_schemas(node: &LogicalPlan) -> Vec<Schema> {
+    match node {
+        LogicalPlan::DataSource(_) | LogicalPlan::Aggregation(_) | LogicalPlan::Projection(_) => {
+            vec![effective_schema(node)]
+        }
+        _ => node
+            .children()
+            .iter()
+            .flat_map(all_join_leaf_schemas)
+            .collect(),
+    }
+}
+
 /// Histogram-backed `Selectivity` for the equality shapes whose complete
 /// inputs already live in [`StatsInfo`]. Go estimates a column/constant
 /// equality as one value out of the column NDV (and an IN list as its number
@@ -580,6 +595,7 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
     ) -> Descend<Self::Down, Self::Up> {
         let child_count = node.children().len();
         let schemas = child_schemas(node);
+        let all_join_leaf = all_join_leaf_schemas(node);
         let own_schema = effective_schema(node);
         let names = node.base().base.output_names().to_vec();
         let query_block_offset = node.base().base.query_block_offset();
@@ -612,14 +628,32 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
                     predicates,
                     left_schema,
                     right_schema,
+                    &all_join_leaf,
                     &opts,
-                    |conds, propagate_constant| {
+                    |conds, propagate_constant, valid| {
                         super::rule::apply_predicate_simplification_for_join(
                             self.ctx,
                             conds,
                             left_schema,
                             right_schema,
                             propagate_constant,
+                            valid,
+                        )
+                    },
+                    |join_conditions,
+                     filter_conditions,
+                     outer_schema,
+                     inner_schema,
+                     null_sensitive,
+                     valid| {
+                        super::rule_predicate_simplification::propagate_constant_for_outer_join(
+                            self.ctx,
+                            join_conditions,
+                            filter_conditions,
+                            outer_schema,
+                            inner_schema,
+                            null_sensitive,
+                            valid,
                         )
                     },
                 );
@@ -646,14 +680,32 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
                     predicates,
                     left_schema,
                     right_schema,
+                    &all_join_leaf,
                     &opts,
-                    |conds, propagate_constant| {
+                    |conds, propagate_constant, valid| {
                         super::rule::apply_predicate_simplification_for_join(
                             self.ctx,
                             conds,
                             left_schema,
                             right_schema,
                             propagate_constant,
+                            valid,
+                        )
+                    },
+                    |join_conditions,
+                     filter_conditions,
+                     outer_schema,
+                     inner_schema,
+                     null_sensitive,
+                     valid| {
+                        super::rule_predicate_simplification::propagate_constant_for_outer_join(
+                            self.ctx,
+                            join_conditions,
+                            filter_conditions,
+                            outer_schema,
+                            inner_schema,
+                            null_sensitive,
+                            valid,
                         )
                     },
                 );

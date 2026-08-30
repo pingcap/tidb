@@ -18,6 +18,7 @@ Rust currently exposes Go's logical-rule list but several entries are missing, n
 - [x] (2026-08-29) Implemented pinned `ConstantPropagationSolver` with Go's preorder traversal, join-type sides, projection column rewrite, parent selection shape, and hard-coded unchanged flag.
 - [x] (2026-08-29) Replaced the disconnected max/min classifier with pinned `MaxMinEliminator`: recursive CTE boundary, eligibility gates, nullable filtering, sort/limit construction, indexed multi-aggregate splitting, cloned subplans, and cartesian joins.
 - [x] (2026-08-29) Replaced the narrowed predicate helper and planner-local join-equivalence solver with the registered pinned `PredicateSimplification` rule and expression-owned general propagation: PushDownNot, logical-constant short circuit, IN/NE merge, redundant OR removal, impossible OR-branch pruning, DataSource recursion, plan-cache skip reasons, and session-controlled join-key retention.
+- [x] (2026-08-29) Integrated pinned `PropConstForOuterJoin`: preserved-side constants, transitive equality classes, null-sensitive modes, inner `IS NOT NULL` derivation, recursive safe replacement, `allJoinLeaf`, and join-type-specific validity filters now use the ordinary join executor path.
 - [ ] Run the Ready validation profile and record the complete package receipt.
 
 ## Surprises & Discoveries
@@ -40,6 +41,9 @@ Rust currently exposes Go's logical-rule list but several entries are missing, n
 - Observation: `ApplyPredicateSimplificationForJoin` does not always request propagation, and join-key retention is not a fixed policy.
   Evidence: pinned `LogicalJoin.PredicatePushDown` passes `propagateConstant=false` for the left-outer family and `SessionVars.AlwaysKeepJoinKey` into `PropagateConstantForJoin`; Rust previously used one cache-specific closure and hard-coded key retention on.
 
+- Observation: outer-join propagation is over the transitive equality class, not only direct outer/inner keys.
+  Evidence: pinned `propOuterJoinConstSolver.propagateColumnEQ` builds a disjoint set; the Rust regression now derives an inner predicate across a three-edge alternating equality chain.
+
 ## Decision Log
 
 - Decision: Close `pkg/planner/core/rule/util` before continuing the parent `rule` package.
@@ -54,7 +58,7 @@ Rust currently exposes Go's logical-rule list but several entries are missing, n
 
 Work is in progress. Static partition planning is integrated and pushed, but neither the parent `rule` package nor the nested `rule/util` package is yet claimed complete.
 
-The registered predicate-simplification body and ordinary/inner-join propagation are now integrated as dependency work. The remaining constant-propagation dependency is Go's outer-join solver and its join-leaf validity filters; no package-completion claim is made for this slice.
+The registered predicate-simplification body and ordinary/inner/outer-join propagation are now integrated as dependency work. Package completion is still withheld pending the remaining parent-rule inventory and Ready gates.
 
 ## Context and Orientation
 
