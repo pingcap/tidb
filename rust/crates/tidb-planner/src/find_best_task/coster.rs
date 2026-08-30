@@ -180,7 +180,7 @@ impl Ver2Coster {
         task_type: TaskType,
         is_child_of_inl: Option<bool>,
     ) -> CostVer2 {
-        let mut total = crate::cost_usage::zero_cost_ver2();
+        let mut total = crate::cost_usage::ZERO_COST_VER2;
         for child in plan.children() {
             total = crate::cost_usage::sum_cost_ver2(&[
                 total,
@@ -273,12 +273,10 @@ impl Ver2Coster {
                     .table_plan
                     .as_deref()
                     .map_or(rows, |plan| Self::rows(plan));
-                let inner = reader
-                    .table_plan
-                    .as_deref()
-                    .map_or_else(crate::cost_usage::zero_cost_ver2, |plan| {
-                        self.price(plan, TaskType::CopSingleRead)
-                    });
+                let inner = reader.table_plan.as_deref().map_or_else(
+                    || crate::cost_usage::ZERO_COST_VER2,
+                    |plan| self.price(plan, TaskType::CopSingleRead),
+                );
                 crate::cost_usage::div_cost_ver2(
                     &crate::cost_usage::sum_cost_ver2(&[
                         inner,
@@ -315,10 +313,10 @@ impl Ver2Coster {
                 let double_read_concurrency = self.session.index_lookup_concurrency;
 
                 let index_plan = reader.index_plan.as_deref();
-                let index_child = index_plan
-                    .map_or_else(crate::cost_usage::zero_cost_ver2, |plan| {
-                        self.price_with_scan_context(plan, TaskType::CopMultiRead, Some(false))
-                    });
+                let index_child = index_plan.map_or_else(
+                    || crate::cost_usage::ZERO_COST_VER2,
+                    |plan| self.price_with_scan_context(plan, TaskType::CopMultiRead, Some(false)),
+                );
                 let index_side = crate::cost_usage::div_cost_ver2(
                     &crate::cost_usage::sum_cost_ver2(&[
                         net_cost(
@@ -333,10 +331,10 @@ impl Ver2Coster {
                 );
 
                 let table_plan = reader.table_plan.as_deref();
-                let table_child = table_plan
-                    .map_or_else(crate::cost_usage::zero_cost_ver2, |plan| {
-                        self.price_with_scan_context(plan, TaskType::CopMultiRead, Some(true))
-                    });
+                let table_child = table_plan.map_or_else(
+                    || crate::cost_usage::ZERO_COST_VER2,
+                    |plan| self.price_with_scan_context(plan, TaskType::CopMultiRead, Some(true)),
+                );
                 let table_side = crate::cost_usage::div_cost_ver2(
                     &crate::cost_usage::sum_cost_ver2(&[
                         net_cost(
@@ -391,12 +389,10 @@ impl Ver2Coster {
                     .index_plan
                     .as_deref()
                     .map_or(rows, |plan| Self::rows(plan));
-                let inner = reader
-                    .index_plan
-                    .as_deref()
-                    .map_or_else(crate::cost_usage::zero_cost_ver2, |plan| {
-                        self.price(plan, TaskType::CopSingleRead)
-                    });
+                let inner = reader.index_plan.as_deref().map_or_else(
+                    || crate::cost_usage::ZERO_COST_VER2,
+                    |plan| self.price(plan, TaskType::CopSingleRead),
+                );
                 crate::cost_usage::div_cost_ver2(
                     &crate::cost_usage::sum_cost_ver2(&[
                         inner,
@@ -729,7 +725,7 @@ impl Ver2Coster {
             PhysicalPlan::TableDual(_)
             | PhysicalPlan::CTETable(_)
             | PhysicalPlan::Show(_)
-            | PhysicalPlan::ShowDDLJobs(_) => crate::cost_usage::zero_cost_ver2(),
+            | PhysicalPlan::ShowDDLJobs(_) => crate::cost_usage::ZERO_COST_VER2,
             // Everything else prices as its children, conservative.
             _ => self.children_cost(plan, task_type, is_child_of_inl),
         }

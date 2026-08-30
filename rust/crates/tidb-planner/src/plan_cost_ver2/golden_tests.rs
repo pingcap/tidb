@@ -919,7 +919,8 @@ fn test_golden_index_join_and_its_double_read_penalty() {
 fn test_golden_true_card_cost_trace() {
     let factors = Ver2Factors::default();
     let vars = CostFactorVars::default();
-    let option = PlanCostOption::new().with_cost_flag(COST_FLAG_TRACE);
+    let mut option = PlanCostOption::new();
+    option.with_cost_flag(COST_FLAG_TRACE);
     // `t (a int)` with pseudo statistics, and the true cardinality of a
     // never-executed scan: zero rows, floored to one, plus the 1000-row
     // penalty a pseudo-stats full scan always pays.
