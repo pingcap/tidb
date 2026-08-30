@@ -576,10 +576,7 @@ pub fn apply_predicate_simplification(
         .map(|predicate| remove_redundant_or(ctx, predicate))
         .collect();
     predicates = prune_empty_or_branches(ctx, predicates);
-    predicates
-        .into_iter()
-        .filter(|predicate| predicate_type(ctx, predicate).1 != PredicateType::True)
-        .collect()
+    crate::constraint::delete_true_exprs(ctx.use_plan_cache, predicates)
 }
 
 /// Go `applyPredicateSimplificationForJoin`.

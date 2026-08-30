@@ -931,6 +931,51 @@ fn predicate_push_down_splits_an_inner_join_condition_by_side() {
 }
 
 #[test]
+fn predicate_push_down_drops_not_is_null_for_a_not_null_child_column() {
+    let allocator = PlanIdAllocator::new();
+    let ctx = test_context(&allocator);
+    let mut left_schema = schema_of(&[1]);
+    left_schema.columns[0]
+        .ret_type
+        .as_mut()
+        .unwrap()
+        .add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+    let left_column = left_schema.columns[0].clone();
+    let left = LogicalPlan::DataSource(DataSource::new(
+        base(&allocator, "DataSource", Some(left_schema)),
+        1,
+        "t",
+    ));
+    let right = data_source(&allocator, &[2]);
+    let mut join = LogicalPlan::Join(LogicalJoin::new(
+        base(&allocator, "Join", Some(schema_of(&[1, 2]))),
+        LogicalJoinType::Inner,
+    ));
+    join.set_children(vec![left, right]);
+    let is_null = Expression::ScalarFunction(ScalarFunction::new(
+        CiString::new("isnull"),
+        int_type(),
+        vec![Expression::Column(left_column)],
+    ));
+    let not_is_null = Expression::ScalarFunction(ScalarFunction::new(
+        CiString::new("not"),
+        int_type(),
+        vec![is_null],
+    ));
+    let root = selection_over(&allocator, vec![not_is_null], join);
+
+    let out = push(&ctx, root);
+    let LogicalPlan::DataSource(left) = &out.children()[0] else {
+        panic!("the left child should remain a DataSource")
+    };
+    assert!(
+        left.pushed_down_conds.is_empty(),
+        "Go deletes NOT(ISNULL(col)) after resolving a NOT NULL child column"
+    );
+    out.dismantle();
+}
+
+#[test]
 fn predicate_push_down_propagates_a_constant_across_an_inner_join_key() {
     let allocator = PlanIdAllocator::new();
     let ctx = test_context(&allocator);

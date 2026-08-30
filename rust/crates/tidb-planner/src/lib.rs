@@ -99,6 +99,7 @@ pub mod configured_join_plan;
 pub mod configured_order_limit;
 pub mod configured_order_limit_contract;
 pub mod configured_relation_tree;
+pub mod constraint;
 pub mod cost_factors;
 pub mod cost_usage;
 pub mod derive_topn_from_window;
