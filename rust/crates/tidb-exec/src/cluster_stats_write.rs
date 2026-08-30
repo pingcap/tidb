@@ -51,6 +51,7 @@
 //! `cm_sketch` is left NULL because analyze v2 stores no CMSketch.
 
 use std::collections::{BTreeMap, HashMap};
+use std::ops::Range;
 
 use tidb_datatype::{
     parse_time, ConversionFlags, Datum, FieldType, FieldTypeCode, Time, TimeType, MAX_FSP,
@@ -64,6 +65,7 @@ use tidb_stats::histogram::Bucket;
 use tidb_stats::{encode_cmsketch_without_topn, encode_fm_sketch};
 use tidb_stats::{JsonPredicateColumn, JsonTable};
 use tidb_txnkv::transaction::OptimisticMutation;
+use tidb_util::sqlescape::{must_escape_sql, SqlArg};
 
 use crate::cluster_catalog::{ClusterCatalog, MetaSnapshot};
 use crate::cluster_predicate_column::ColumnStatsTimeInfo;
@@ -79,6 +81,12 @@ use crate::system_row_write::{
 
 /// Go's `mysql` schema name.
 const SYSTEM_DB: &str = "mysql";
+
+/// Go `batchInsertSize` in `pkg/statistics/handle/storage/save.go`.
+const LOADED_STATS_BATCH_INSERT_SIZE: usize = 10;
+
+/// Go `maxInsertLength` in `pkg/statistics/handle/storage/save.go`.
+const LOADED_STATS_MAX_INSERT_LENGTH: usize = 1024 * 1024;
 
 /// Why one table's statistics could not be stored.
 #[derive(Debug)]
@@ -399,13 +407,57 @@ fn plan_stats_write_impl<S: MetaSnapshot>(
     Ok(plan)
 }
 
-/// Plans Go `SaveColOrIdxStatsToStorage` for one object loaded from JSON.
+/// One SQL statement in pinned Go `SaveColOrIdxStatsToStorage`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum LoadedStatsItemStatement {
+    /// `REPLACE` or `UPDATE mysql.stats_meta`.
+    Meta,
+    /// Delete the named histogram's old TopN rows.
+    TopNDelete,
+    /// One `INSERT mysql.stats_top_n` batch.
+    TopNInsert(Range<usize>),
+    /// Delete the named histogram's FM sketch.
+    FmDelete,
+    /// Replace the named histogram row.
+    HistogramReplace,
+    /// Delete the named histogram's old bucket rows.
+    BucketsDelete,
+    /// One `INSERT mysql.stats_buckets` batch.
+    BucketsInsert(Range<usize>),
+}
+
+/// Returns pinned Go's exact SQL statement sequence for one loaded item.
 ///
-/// Unlike ANALYZE, LOAD STATS replaces only the named histogram and its
-/// bucket/TopN/FM rows. Statistics for schema objects absent from the dump
-/// remain untouched. Go runs this once in an independent restricted-session
-/// transaction for every loaded column and index.
-pub fn plan_loaded_stats_item_write<S: MetaSnapshot>(
+/// The two insert loops use Go's ten-row cap and escaped-SQL 1 MiB boundary.
+/// A first row is always accepted even when it alone exceeds that boundary.
+pub fn loaded_stats_item_statements(
+    table_id: i64,
+    item: &ClusterStatsItem,
+) -> Result<Vec<LoadedStatsItemStatement>, StatsWriteError> {
+    let mut statements = vec![
+        LoadedStatsItemStatement::Meta,
+        LoadedStatsItemStatement::TopNDelete,
+    ];
+    statements.extend(
+        loaded_topn_batches(table_id, item)
+            .into_iter()
+            .map(LoadedStatsItemStatement::TopNInsert),
+    );
+    statements.extend([
+        LoadedStatsItemStatement::FmDelete,
+        LoadedStatsItemStatement::HistogramReplace,
+        LoadedStatsItemStatement::BucketsDelete,
+    ]);
+    statements.extend(
+        loaded_bucket_batches(table_id, item)?
+            .into_iter()
+            .map(LoadedStatsItemStatement::BucketsInsert),
+    );
+    Ok(statements)
+}
+
+/// Plans exactly one pinned Go SQL statement for a loaded statistics item.
+pub fn plan_loaded_stats_item_statement<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
     table_id: i64,
@@ -413,13 +465,32 @@ pub fn plan_loaded_stats_item_write<S: MetaSnapshot>(
     item: &ClusterStatsItem,
     version: u64,
     now: Time,
+    statement: &LoadedStatsItemStatement,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let mut plan = StatsWritePlan::default();
-    plan_loaded_meta(snapshot, catalog, table_id, count, version, now, &mut plan)?;
-    plan_loaded_topn(snapshot, catalog, table_id, item, now, &mut plan)?;
-    plan_loaded_fm_delete(snapshot, catalog, table_id, item, &mut plan)?;
-    plan_loaded_histogram(snapshot, catalog, table_id, item, version, now, &mut plan)?;
-    plan_loaded_buckets(snapshot, catalog, table_id, item, now, &mut plan)?;
+    match statement {
+        LoadedStatsItemStatement::Meta => {
+            plan_loaded_meta(snapshot, catalog, table_id, count, version, now, &mut plan)?;
+        }
+        LoadedStatsItemStatement::TopNDelete => {
+            plan_loaded_topn_delete(snapshot, catalog, table_id, item, &mut plan)?;
+        }
+        LoadedStatsItemStatement::TopNInsert(range) => {
+            plan_loaded_topn_insert(snapshot, catalog, table_id, item, range, now, &mut plan)?;
+        }
+        LoadedStatsItemStatement::FmDelete => {
+            plan_loaded_fm_delete(snapshot, catalog, table_id, item, &mut plan)?;
+        }
+        LoadedStatsItemStatement::HistogramReplace => {
+            plan_loaded_histogram(snapshot, catalog, table_id, item, version, now, &mut plan)?;
+        }
+        LoadedStatsItemStatement::BucketsDelete => {
+            plan_loaded_buckets_delete(snapshot, catalog, table_id, item, &mut plan)?;
+        }
+        LoadedStatsItemStatement::BucketsInsert(range) => {
+            plan_loaded_buckets_insert(snapshot, catalog, table_id, item, range, now, &mut plan)?;
+        }
+    }
     Ok(plan)
 }
 
@@ -1631,11 +1702,120 @@ fn loaded_item_prefix(table_id: i64, item: &ClusterStatsItem) -> Vec<String> {
     .collect()
 }
 
-fn plan_loaded_buckets<S: MetaSnapshot>(
+fn loaded_topn_batches(table_id: i64, item: &ClusterStatsItem) -> Vec<Range<usize>> {
+    const PREFIX: &str =
+        "insert into mysql.stats_top_n (table_id, is_index, hist_id, value, count) values ";
+    let Some(topn) = &item.topn else {
+        return Vec::new();
+    };
+    let entries = topn.entries();
+    let mut batches = Vec::new();
+    let mut start = 0;
+    while start < entries.len() {
+        let mut end = (start + LOADED_STATS_BATCH_INSERT_SIZE).min(entries.len());
+        let mut sql_len = PREFIX.len();
+        for (index, entry) in entries.iter().enumerate().take(end).skip(start) {
+            let row = must_escape_sql(
+                "(%?, %?, %?, %?, %?)",
+                &[
+                    SqlArg::Signed(table_id),
+                    SqlArg::Signed(i64::from(item.is_index)),
+                    SqlArg::Signed(item.id),
+                    SqlArg::Bytes(Some(&entry.encoded)),
+                    SqlArg::Unsigned(entry.count),
+                ],
+            );
+            let row_len = row.len() + usize::from(index > start);
+            if index > start && sql_len + row_len > LOADED_STATS_MAX_INSERT_LENGTH {
+                end = index;
+                break;
+            }
+            sql_len += row_len;
+        }
+        batches.push(start..end);
+        start = end;
+    }
+    batches
+}
+
+fn loaded_bucket_batches(
+    table_id: i64,
+    item: &ClusterStatsItem,
+) -> Result<Vec<Range<usize>>, StatsWriteError> {
+    const PREFIX: &str = "insert into mysql.stats_buckets (table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound, ndv) values ";
+    let buckets = &item.histogram.buckets;
+    let mut batches = Vec::new();
+    let mut start = 0;
+    while start < buckets.len() {
+        let mut end = (start + LOADED_STATS_BATCH_INSERT_SIZE).min(buckets.len());
+        let mut sql_len = PREFIX.len();
+        for (index, bucket) in buckets.iter().enumerate().take(end).skip(start) {
+            let lower = bound_blob(&bucket.lower_bound)?;
+            let upper = bound_blob(&bucket.upper_bound)?;
+            let lower = match &lower {
+                Datum::Null => None,
+                Datum::Bytes(value) => Some(value.as_slice()),
+                other => unreachable!("blob conversion returned {other:?}"),
+            };
+            let upper = match &upper {
+                Datum::Null => None,
+                Datum::Bytes(value) => Some(value.as_slice()),
+                other => unreachable!("blob conversion returned {other:?}"),
+            };
+            let previous_count = index
+                .checked_sub(1)
+                .map_or(0, |previous| buckets[previous].count);
+            let row = must_escape_sql(
+                "(%?, %?, %?, %?, %?, %?, %?, %?, %?)",
+                &[
+                    SqlArg::Signed(table_id),
+                    SqlArg::Signed(i64::from(item.is_index)),
+                    SqlArg::Signed(item.id),
+                    SqlArg::Signed(index as i64),
+                    SqlArg::Signed(bucket.count - previous_count),
+                    SqlArg::Signed(bucket.repeat),
+                    SqlArg::Bytes(lower),
+                    SqlArg::Bytes(upper),
+                    SqlArg::Signed(bucket.ndv),
+                ],
+            );
+            let row_len = row.len() + usize::from(index > start);
+            if index > start && sql_len + row_len > LOADED_STATS_MAX_INSERT_LENGTH {
+                end = index;
+                break;
+            }
+            sql_len += row_len;
+        }
+        batches.push(start..end);
+        start = end;
+    }
+    Ok(batches)
+}
+
+fn plan_loaded_buckets_delete<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
     table_id: i64,
     item: &ClusterStatsItem,
+    plan: &mut StatsWritePlan,
+) -> Result<(), StatsWriteError> {
+    let table = locate(catalog, "stats_buckets")?;
+    let mut rows = StatsRows::open(
+        snapshot,
+        table,
+        &["table_id", "is_index", "hist_id", "bucket_id"],
+        table_id,
+    )?;
+    rows.retract_prefix(&loaded_item_prefix(table_id, item), plan)?;
+    rows.publish_watermark(catalog, plan)
+}
+
+fn plan_loaded_buckets_insert<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    table_id: i64,
+    item: &ClusterStatsItem,
+    range: &Range<usize>,
     now: Time,
     plan: &mut StatsWritePlan,
 ) -> Result<(), StatsWriteError> {
@@ -1646,8 +1826,8 @@ fn plan_loaded_buckets<S: MetaSnapshot>(
         &["table_id", "is_index", "hist_id", "bucket_id"],
         table_id,
     )?;
-    let mut previous_count = 0_i64;
-    for (bucket_id, bucket) in item.histogram.buckets.iter().enumerate() {
+    for bucket_id in range.clone() {
+        let bucket = &item.histogram.buckets[bucket_id];
         let mut values = defaults_row(table, now)?;
         set(table, &mut values, "table_id", Datum::Int(table_id));
         set(
@@ -1663,13 +1843,15 @@ fn plan_loaded_buckets<S: MetaSnapshot>(
             "bucket_id",
             Datum::Int(bucket_id as i64),
         );
+        let previous_count = bucket_id
+            .checked_sub(1)
+            .map_or(0, |previous| item.histogram.buckets[previous].count);
         set(
             table,
             &mut values,
             "count",
             Datum::Int(bucket.count - previous_count),
         );
-        previous_count = bucket.count;
         set(table, &mut values, "repeats", Datum::Int(bucket.repeat));
         set(table, &mut values, "ndv", Datum::Int(bucket.ndv));
         set(
@@ -1687,15 +1869,33 @@ fn plan_loaded_buckets<S: MetaSnapshot>(
         rows.store(snapshot, catalog, &values, plan)?;
         plan.bucket_count += 1;
     }
-    rows.retract_prefix(&loaded_item_prefix(table_id, item), plan)?;
     rows.publish_watermark(catalog, plan)
 }
 
-fn plan_loaded_topn<S: MetaSnapshot>(
+fn plan_loaded_topn_delete<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
     table_id: i64,
     item: &ClusterStatsItem,
+    plan: &mut StatsWritePlan,
+) -> Result<(), StatsWriteError> {
+    let table = locate(catalog, "stats_top_n")?;
+    let mut rows = StatsRows::open(
+        snapshot,
+        table,
+        &["table_id", "is_index", "hist_id", "value"],
+        table_id,
+    )?;
+    rows.retract_prefix(&loaded_item_prefix(table_id, item), plan)?;
+    rows.publish_watermark(catalog, plan)
+}
+
+fn plan_loaded_topn_insert<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    table_id: i64,
+    item: &ClusterStatsItem,
+    range: &Range<usize>,
     now: Time,
     plan: &mut StatsWritePlan,
 ) -> Result<(), StatsWriteError> {
@@ -1706,29 +1906,31 @@ fn plan_loaded_topn<S: MetaSnapshot>(
         &["table_id", "is_index", "hist_id", "value"],
         table_id,
     )?;
-    if let Some(topn) = &item.topn {
-        for entry in topn.entries() {
-            let mut values = defaults_row(table, now)?;
-            set(table, &mut values, "table_id", Datum::Int(table_id));
-            set(
-                table,
-                &mut values,
-                "is_index",
-                Datum::Int(i64::from(item.is_index)),
-            );
-            set(table, &mut values, "hist_id", Datum::Int(item.id));
-            set(
-                table,
-                &mut values,
-                "value",
-                Datum::Bytes(entry.encoded.clone()),
-            );
-            set(table, &mut values, "count", Datum::UInt(entry.count));
-            rows.store(snapshot, catalog, &values, plan)?;
-            plan.topn_count += 1;
-        }
+    let entries = item
+        .topn
+        .as_ref()
+        .expect("a TopN insert statement has a TopN")
+        .entries();
+    for entry in &entries[range.clone()] {
+        let mut values = defaults_row(table, now)?;
+        set(table, &mut values, "table_id", Datum::Int(table_id));
+        set(
+            table,
+            &mut values,
+            "is_index",
+            Datum::Int(i64::from(item.is_index)),
+        );
+        set(table, &mut values, "hist_id", Datum::Int(item.id));
+        set(
+            table,
+            &mut values,
+            "value",
+            Datum::Bytes(entry.encoded.clone()),
+        );
+        set(table, &mut values, "count", Datum::UInt(entry.count));
+        rows.store(snapshot, catalog, &values, plan)?;
+        plan.topn_count += 1;
     }
-    rows.retract_prefix(&loaded_item_prefix(table_id, item), plan)?;
     rows.publish_watermark(catalog, plan)
 }
 

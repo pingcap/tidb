@@ -35,8 +35,9 @@ use crate::cluster_catalog::load_cluster_catalog;
 use crate::cluster_load_stats::{lower_cluster_load_stats, LoadedStatsTable};
 use crate::cluster_stats_load::ClusterStatsItem;
 use crate::cluster_stats_write::{
-    plan_historical_stats_meta_write, plan_loaded_stats_item_write, plan_loaded_stats_meta_write,
-    plan_loaded_stats_usage_write, StatsWritePlan,
+    loaded_stats_item_statements, plan_historical_stats_meta_write,
+    plan_loaded_stats_item_statement, plan_loaded_stats_meta_write, plan_loaded_stats_usage_write,
+    StatsWritePlan,
 };
 use crate::cluster_table_storage::{
     commit_pessimistic_statement, lock_pessimistic_statement, PessimisticStatementTransactionError,
@@ -140,23 +141,39 @@ fn commit_item<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
     item: &ClusterStatsItem,
     timeout: Duration,
 ) -> Result<u64, ClusterLoadStatsCommitError> {
-    let mut transaction = begin(opener)?;
+    let transaction = SessionTransaction::begin_pessimistic_with_budget(
+        Arc::new(opener.clone()),
+        timeout,
+        opener.commit_protocol(),
+        usize::MAX,
+        MAX_OPTIMISTIC_TRANSACTION_BYTES,
+    )
+    .map_err(other)?;
     let version = transaction.start_ts();
-    let plan = {
-        let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
-        let catalog = load_cluster_catalog(&mut snapshot).map_err(other)?;
-        plan_loaded_stats_item_write(
-            &mut snapshot,
-            &catalog,
-            table.physical_id,
-            table.count,
-            item,
-            version,
-            utc_now_timestamp(),
-        )
-        .map_err(other)?
-    };
-    commit_plan(transaction, plan, timeout, "LOAD STATS item")?;
+    let staged = MutationBuffer::new();
+    for statement in loaded_stats_item_statements(table.physical_id, item).map_err(other)? {
+        lock_pessimistic_statement(&transaction, &staged, |snapshot, start_ts| {
+            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+            let catalog = load_cluster_catalog(&mut snapshot).map_err(|error| error.to_string())?;
+            let plan = plan_loaded_stats_item_statement(
+                &mut snapshot,
+                &catalog,
+                table.physical_id,
+                table.count,
+                item,
+                start_ts,
+                utc_now_timestamp(),
+                &statement,
+            )
+            .map_err(|error| error.to_string())?;
+            Ok(((), plan.mutations))
+        })
+        .map_err(pessimistic_error)?;
+    }
+    transaction
+        .commit(&staged)
+        .map(|_| ())
+        .map_err(commit_error)?;
     Ok(version)
 }
 

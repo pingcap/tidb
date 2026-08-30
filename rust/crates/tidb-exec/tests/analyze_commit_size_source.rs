@@ -46,12 +46,14 @@ use tidb_exec::cluster_stats_write::{
     plan_column_stats_usage_write, plan_delete_table_stats, plan_get_predicate_columns,
     plan_historical_stats_data_delete_for_table, plan_historical_stats_data_write,
     plan_historical_stats_meta_delete_for_table, plan_historical_stats_meta_write,
-    plan_independent_index_stats_write, plan_loaded_stats_item_write,
-    plan_loaded_stats_meta_write, plan_loaded_stats_usage_write,
+    loaded_stats_item_statements, plan_independent_index_stats_write,
+    plan_loaded_stats_item_statement, plan_loaded_stats_meta_write,
+    plan_loaded_stats_usage_write,
     plan_outdated_historical_data_delete, plan_outdated_historical_meta_delete,
     plan_change_global_stats_id, plan_partial_stats_write, plan_partition_stats_write,
     plan_stats_delta_updates, plan_stats_gc_timestamp_write, plan_stats_item_delete,
     plan_stats_meta_version_refresh, plan_stats_write, plan_update_stats_version,
+    LoadedStatsItemStatement,
 };
 use tidb_exec::mysql_bootstrap::{plan_mysql_bootstrap, BootstrapEnvironment, BootstrapWrite};
 use tidb_exec::mysql_system_tables::{scan_system_table, SystemRow, SystemTableView};
@@ -107,6 +109,32 @@ fn apply_mutations(
                     .insert(mutation.key().to_vec(), mutation.value().to_vec());
             }
         }
+    }
+}
+
+fn apply_loaded_stats_item(
+    store: &mut MetaStore,
+    catalog: &tidb_exec::cluster_catalog::ClusterCatalog,
+    table_id: i64,
+    count: i64,
+    item: &ClusterStatsItem,
+    version: u64,
+) {
+    for statement in
+        loaded_stats_item_statements(table_id, item).expect("LOAD STATS statements build")
+    {
+        let plan = plan_loaded_stats_item_statement(
+            store,
+            catalog,
+            table_id,
+            count,
+            item,
+            version,
+            now(),
+            &statement,
+        )
+        .expect("LOAD STATS statement plans");
+        apply_mutations(store, &plan.mutations);
     }
 }
 
@@ -185,6 +213,80 @@ fn full_histogram(id: i64, is_index: bool) -> ClusterStatsItem {
         cms: None,
         fm_sketch: None,
     }
+}
+
+#[test]
+fn loaded_stats_item_uses_go_statement_batches() {
+    let item = full_histogram(1, false);
+    let statements = loaded_stats_item_statements(4242, &item).expect("statements build");
+    let topn = statements
+        .iter()
+        .filter_map(|statement| match statement {
+            LoadedStatsItemStatement::TopNInsert(range) => Some(range.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let buckets = statements
+        .iter()
+        .filter_map(|statement| match statement {
+            LoadedStatsItemStatement::BucketsInsert(range) => Some(range.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        topn,
+        (0..100)
+            .step_by(10)
+            .map(|start| start..start + 10)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(buckets.first(), Some(&(0..10)));
+    assert_eq!(buckets.last(), Some(&(250..256)));
+    assert_eq!(buckets.len(), 26);
+
+    let mut oversized = full_histogram(1, false);
+    let mut oversized_topn = TopN::new(2);
+    oversized_topn.append(&vec![0; 600_000], 1);
+    oversized_topn.append(&vec![0; 600_000], 2);
+    oversized.topn = Some(oversized_topn);
+    oversized.histogram.buckets = vec![
+        Bucket {
+            count: 1,
+            repeat: 1,
+            ndv: 1,
+            lower_bound: Datum::Bytes(vec![0; 300_000]),
+            upper_bound: Datum::Bytes(vec![0; 300_000]),
+        },
+        Bucket {
+            count: 2,
+            repeat: 1,
+            ndv: 1,
+            lower_bound: Datum::Bytes(vec![0; 300_000]),
+            upper_bound: Datum::Bytes(vec![0; 300_000]),
+        },
+    ];
+    let statements =
+        loaded_stats_item_statements(4242, &oversized).expect("oversized statements build");
+    assert_eq!(
+        statements
+            .iter()
+            .filter_map(|statement| match statement {
+                LoadedStatsItemStatement::TopNInsert(range) => Some(range.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>(),
+        vec![0..1, 1..2]
+    );
+    assert_eq!(
+        statements
+            .iter()
+            .filter_map(|statement| match statement {
+                LoadedStatsItemStatement::BucketsInsert(range) => Some(range.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>(),
+        vec![0..1, 1..2]
+    );
 }
 
 #[test]
@@ -356,17 +458,14 @@ fn async_global_stats_loads_each_payload_by_item() {
     let mut cms_item = full_histogram(2, false);
     cms_item.stats_ver = 1;
     cms_item.cms = Some(expected_cms);
-    let plan = plan_loaded_stats_item_write(
+    apply_loaded_stats_item(
         &mut store,
         &catalog,
         stats.table_id,
         stats.row_count as i64,
         &cms_item,
         stats.version,
-        now(),
-    )
-    .expect("a version-1 CMSketch load plans");
-    apply_mutations(&mut store, &plan.mutations);
+    );
 
     let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
     store.scans.clear();
@@ -728,10 +827,14 @@ fn loaded_stats_item_write_replaces_only_the_named_histogram() {
     let mut cms = CmsSketch::new(2, 16);
     cms.insert_bytes_by_count(b"replacement", 9);
     loaded.cms = Some(cms);
-    let plan =
-        plan_loaded_stats_item_write(&mut store, &catalog, table_id, 55, &loaded, version, now())
-            .expect("LOAD STATS item plans");
-    apply_mutations(&mut store, &plan.mutations);
+    apply_loaded_stats_item(
+        &mut store,
+        &catalog,
+        table_id,
+        55,
+        &loaded,
+        version,
+    );
 
     let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
     let column_types = BTreeMap::from([
@@ -1207,10 +1310,14 @@ fn loaded_stats_negative_count_preserves_existing_meta_values() {
 
     let version = initial.version + 1;
     let item = full_histogram(1, false);
-    let plan =
-        plan_loaded_stats_item_write(&mut store, &catalog, table_id, -1, &item, version, now())
-            .expect("negative-count item plans");
-    apply_mutations(&mut store, &plan.mutations);
+    apply_loaded_stats_item(
+        &mut store,
+        &catalog,
+        table_id,
+        -1,
+        &item,
+        version,
+    );
 
     let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
     assert_eq!(
