@@ -54,6 +54,43 @@ enum ListColumnsLocated {
     Location(crate::partition_pruning::ListPartitionLocation),
 }
 
+fn remap_list_columns_location(
+    partition: &crate::partition_routing::PartitionSpec,
+    location: crate::partition_pruning::ListPartitionLocation,
+) -> crate::partition_pruning::ListPartitionLocation {
+    let mut remapped = crate::partition_pruning::ListPartitionLocation::new();
+    for (index, mut groups) in location {
+        let Some(replacement) = partition.overlapping_dropping_partition_index(index) else {
+            continue;
+        };
+        if replacement != index {
+            groups.clear();
+            groups.insert(-1);
+        }
+        remapped.entry(replacement).or_default().extend(groups);
+    }
+    remapped
+}
+
+fn remap_partition_indices(
+    partition: &crate::partition_routing::PartitionSpec,
+    partition_names: &[String],
+    indices: impl IntoIterator<Item = usize>,
+) -> Vec<usize> {
+    let mut used_ids = std::collections::BTreeSet::new();
+    indices
+        .into_iter()
+        .filter_map(|index| partition.overlapping_dropping_partition_index(index))
+        .filter(|index| {
+            partition_names.is_empty()
+                || partition_names
+                    .iter()
+                    .any(|name| name.eq_ignore_ascii_case(&partition.definitions[*index].name))
+        })
+        .filter(|index| used_ids.insert(partition.definitions[*index].id))
+        .collect()
+}
+
 fn locate_list_columns_condition(
     partition: &crate::partition_routing::PartitionSpec,
     condition: &Expression,
@@ -122,7 +159,9 @@ fn locate_list_columns_condition(
                         "LIST COLUMNS location failed: {error:?}"
                     ))
                 })?;
-                Ok(location.map_or(ListColumnsLocated::Full, ListColumnsLocated::Location))
+                Ok(location.map_or(ListColumnsLocated::Full, |location| {
+                    ListColumnsLocated::Location(remap_list_columns_location(partition, location))
+                }))
             }
         },
         Expression::Column(_) | Expression::CorrelatedColumn(_) => Ok(ListColumnsLocated::Full),
@@ -233,6 +272,7 @@ mod list_columns_pruning_tests {
     fn list_columns_spec() -> PartitionSpec {
         let field_type = integer_type();
         PartitionSpec {
+            overlapping_dropping_partition_indices: Vec::new(),
             is_empty_columns: false,
             kind: PartitionKind::ListColumns {
                 values: vec![
@@ -290,6 +330,41 @@ mod list_columns_pruning_tests {
             .unwrap(),
             Some(vec![501, 502, 503]),
             "DNF union keeps every located tuple group and Go's DEFAULT group"
+        );
+    }
+
+    #[test]
+    fn dropping_partition_ordinals_are_remapped_before_static_children() {
+        let mut spec = list_columns_spec();
+        spec.overlapping_dropping_partition_indices = vec![Some(2), Some(2), Some(2)];
+
+        assert_eq!(
+            remap_partition_indices(&spec, &[], [0, 1, 2]),
+            vec![2],
+            "Go deduplicates every dropping definition that overlaps the same readable partition"
+        );
+        assert!(
+            remap_partition_indices(&spec, &["p0".to_owned()], [0]).is_empty(),
+            "the explicit partition name is checked against Go's remapped definition"
+        );
+
+        let location = crate::partition_pruning::ListPartitionLocation::from([
+            (0, std::collections::BTreeSet::from([0, 1])),
+            (1, std::collections::BTreeSet::from([2])),
+        ]);
+        assert_eq!(
+            remap_list_columns_location(&spec, location),
+            crate::partition_pruning::ListPartitionLocation::from([(
+                2,
+                std::collections::BTreeSet::from([-1])
+            ),]),
+            "a remapped LIST COLUMNS location uses Go's special group and merges duplicates"
+        );
+
+        spec.overlapping_dropping_partition_indices = vec![None, Some(1), Some(2)];
+        assert!(
+            remap_partition_indices(&spec, &[], [0]).is_empty(),
+            "Go skips a dropping definition with no readable overlap"
         );
     }
 }
@@ -1128,21 +1203,13 @@ fn optimize_built_logical(
                     "partition processor received an unpartitioned table",
                 )
             })?;
-            let mut surviving = partition
-                .definitions
-                .iter()
-                .enumerate()
-                .filter(|(_, definition)| {
-                    source.partition_names.is_empty()
-                        || source
-                            .partition_names
-                            .iter()
-                            .any(|name| name.eq_ignore_ascii_case(&definition.name))
-                })
-                .map(|(index, _)| index)
-                .collect::<Vec<_>>();
+            let mut surviving = (0..partition.definitions.len()).collect::<Vec<_>>();
             if source.all_conds.is_empty() || partition.dependencies.is_empty() {
-                return Ok(surviving);
+                return Ok(remap_partition_indices(
+                    partition,
+                    &source.partition_names,
+                    surviving,
+                ));
             }
             let columns = partition
                 .dependencies
@@ -1178,7 +1245,11 @@ fn optimize_built_logical(
                 if let Some(ids) = list_columns_pruned_ids(partition, &conditions, &columns)? {
                     surviving.retain(|index| ids.contains(&partition.definitions[*index].id));
                 }
-                return Ok(surviving);
+                return Ok(remap_partition_indices(
+                    partition,
+                    &source.partition_names,
+                    surviving,
+                ));
             }
             let lengths = vec![tidb_datatype::UNSPECIFIED_LENGTH; columns.len()];
             let Ok(detached) =
@@ -1200,7 +1271,11 @@ fn optimize_built_logical(
             if let Some(ids) = pruned {
                 surviving.retain(|index| ids.contains(&partition.definitions[*index].id));
             }
-            Ok(surviving)
+            Ok(remap_partition_indices(
+                partition,
+                &source.partition_names,
+                surviving,
+            ))
         }
     }
 

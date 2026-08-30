@@ -256,6 +256,7 @@ fn partition_fixture() -> crate::PartitionSpec {
 
     let field_type = FieldType::new(FieldTypeCode::LongLong);
     PartitionSpec {
+        overlapping_dropping_partition_indices: Vec::new(),
         kind: PartitionKind::Range {
             less_than: vec![
                 RangeBound::Value(10),

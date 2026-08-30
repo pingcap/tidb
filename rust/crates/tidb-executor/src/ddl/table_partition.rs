@@ -235,6 +235,7 @@ fn build_table_partitioning_inner(
             .collect::<Vec<_>>();
         check_unique_keys_include_partition_columns(indexes, handle_offsets, &dependency_offsets)?;
         return Ok(Some(PartitionSpec {
+            overlapping_dropping_partition_indices: Vec::new(),
             is_empty_columns: method.columns.is_empty(),
             kind: PartitionKind::Key,
             expr_text: dependencies
@@ -280,6 +281,7 @@ fn build_table_partitioning_inner(
             .collect::<Vec<_>>();
         check_unique_keys_include_partition_columns(indexes, handle_offsets, &dependency_offsets)?;
         return Ok(Some(PartitionSpec {
+            overlapping_dropping_partition_indices: Vec::new(),
             is_empty_columns: false,
             kind,
             expr_text: method
@@ -334,6 +336,7 @@ fn build_table_partitioning_inner(
             .collect::<Vec<_>>();
         check_unique_keys_include_partition_columns(indexes, handle_offsets, &dependency_offsets)?;
         return Ok(Some(PartitionSpec {
+            overlapping_dropping_partition_indices: Vec::new(),
             is_empty_columns: false,
             kind: PartitionKind::RangeColumns {
                 less_than,
@@ -441,6 +444,7 @@ fn build_table_partitioning_inner(
     check_unique_keys_include_partition_columns(indexes, handle_offsets, &dependency_offsets)?;
 
     Ok(Some(PartitionSpec {
+        overlapping_dropping_partition_indices: Vec::new(),
         is_empty_columns: false,
         kind,
         expr_text,
@@ -1831,6 +1835,10 @@ fn stored_definitions_as_ast(
 /// KEY and the `COLUMNS` variants carry instead of an expression; Go
 /// dispatches on it the same way (`len(partCols) < 1` chooses RANGE over
 /// RANGE COLUMNS in `generateRangePartitionExpr`).
+/// `overlapping_dropping_partition_indices` is the caller's direct snapshot
+/// of `PartitionInfo.GetOverlappingDroppingPartitionIdx` while the complete
+/// model metadata is available; the rebuilt spec retains it for static
+/// partition pruning during online DROP PARTITION.
 ///
 /// # Errors
 ///
@@ -1843,6 +1851,7 @@ pub fn partition_spec_from_metadata(
     columns: &[String],
     is_empty_columns: bool,
     definitions: &[StoredPartitionDefinition],
+    overlapping_dropping_partition_indices: &[Option<usize>],
     names: &[String],
     types: &[FieldType],
 ) -> Result<PartitionSpec, DriverError> {
@@ -1911,6 +1920,8 @@ pub fn partition_spec_from_metadata(
                 expr: placeholder(),
                 dependencies: columns.to_vec(),
                 definitions: physical,
+                overlapping_dropping_partition_indices: overlapping_dropping_partition_indices
+                    .to_vec(),
             })
         }
         // Go `generateRangePartitionExpr` / `generateListPartitionExpr` with
@@ -1940,6 +1951,8 @@ pub fn partition_spec_from_metadata(
                 expr: placeholder(),
                 dependencies,
                 definitions: physical,
+                overlapping_dropping_partition_indices: overlapping_dropping_partition_indices
+                    .to_vec(),
             })
         }
         PartitionType::LIST if !columns.is_empty() => {
@@ -1962,6 +1975,8 @@ pub fn partition_spec_from_metadata(
                 expr: placeholder(),
                 dependencies,
                 definitions: physical,
+                overlapping_dropping_partition_indices: overlapping_dropping_partition_indices
+                    .to_vec(),
             })
         }
         // The expression forms: Go parses the stored `PartitionInfo.Expr` and
@@ -2043,6 +2058,8 @@ pub fn partition_spec_from_metadata(
                 expr: built,
                 dependencies,
                 definitions: physical,
+                overlapping_dropping_partition_indices: overlapping_dropping_partition_indices
+                    .to_vec(),
             })
         }
         // Go `newPartitionExpr` returns `nil, nil` for NONE
@@ -2058,6 +2075,7 @@ pub fn partition_spec_from_metadata(
             expr: placeholder(),
             dependencies: Vec::new(),
             definitions: physical,
+            overlapping_dropping_partition_indices: overlapping_dropping_partition_indices.to_vec(),
         }),
         other => {
             let name = other.sql();
@@ -2475,6 +2493,7 @@ mod round_trip_tests {
             &stored.columns,
             stored.is_empty_columns,
             &definitions,
+            &[],
             &names,
             &types,
         )
@@ -2851,6 +2870,7 @@ mod load_permissiveness_tests {
                 definition(1, "p0", &[], &[&["1"], &["2"]]),
                 definition(2, "p1", &[], &[&["2"], &["3"]]),
             ],
+            &[],
             &names,
             &types,
         )
@@ -2879,6 +2899,7 @@ mod load_permissiveness_tests {
                 definition(1, "p0", &["10"], &[]),
                 definition(2, "p1", &["5"], &[]),
             ],
+            &[],
             &names,
             &types,
         )
@@ -2899,10 +2920,33 @@ mod load_permissiveness_tests {
             &[],
             false,
             &[definition(1, "p0", &[], &[])],
+            &[],
             &names,
             &types,
         )
         .expect("a table mid-repartition opens");
         assert!(matches!(spec.kind, PartitionKind::None));
+    }
+
+    #[test]
+    fn online_drop_overlap_mapping_survives_metadata_rebuild() {
+        let (names, types) = int_column();
+        let spec = partition_spec_from_metadata(
+            PartitionType::RANGE,
+            "`a`",
+            &[],
+            false,
+            &[
+                definition(1, "p0", &["10"], &[]),
+                definition(2, "p1", &["MAXVALUE"], &[]),
+            ],
+            &[Some(1), Some(1)],
+            &names,
+            &types,
+        )
+        .expect("online DROP PARTITION metadata rebuilds");
+
+        assert_eq!(spec.overlapping_dropping_partition_index(0), Some(1));
+        assert_eq!(spec.overlapping_dropping_partition_index(1), Some(1));
     }
 }

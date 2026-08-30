@@ -4727,6 +4727,7 @@ mod remote_cursor_tests {
         );
         table.set_pk_handle_offset(0);
         table.set_partition(crate::partition_routing::PartitionSpec {
+            overlapping_dropping_partition_indices: Vec::new(),
             kind: crate::partition_routing::PartitionKind::Hash,
             expr_text: "id".to_owned(),
             expr: tidb_expr::expression::Expression::Constant(

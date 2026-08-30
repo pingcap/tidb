@@ -1280,6 +1280,7 @@ mod tests {
 
     fn range_table() -> PartitionSpec {
         PartitionSpec {
+            overlapping_dropping_partition_indices: Vec::new(),
             is_empty_columns: false,
             kind: PartitionKind::Range {
                 less_than: vec![
@@ -1330,6 +1331,7 @@ mod tests {
 
     fn list_table() -> PartitionSpec {
         PartitionSpec {
+            overlapping_dropping_partition_indices: Vec::new(),
             is_empty_columns: false,
             kind: PartitionKind::List {
                 values: vec![(1, 0), (3, 0), (5, 1)],
@@ -1382,6 +1384,7 @@ mod tests {
             tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
         ];
         PartitionSpec {
+            overlapping_dropping_partition_indices: Vec::new(),
             is_empty_columns: false,
             kind: PartitionKind::RangeColumns {
                 less_than: vec![

@@ -2486,12 +2486,18 @@ fn apply_partition_change(
         .into_iter()
         .map(|column| column.original().to_owned())
         .collect::<Vec<_>>();
+    let overlapping_dropping_partition_indices = (0..definitions.len())
+        .map(|index| {
+            usize::try_from(partition.get_overlapping_dropping_partition_idx(index as isize)).ok()
+        })
+        .collect::<Vec<_>>();
     let spec = tidb_executor::ddl::partition_spec_from_metadata(
         partition.partition_type,
         &partition.expr,
         &columns,
         partition.is_empty_columns,
         &definitions,
+        &overlapping_dropping_partition_indices,
         &names,
         &types,
     )
