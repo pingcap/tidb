@@ -61,6 +61,48 @@ pub struct SnapshotGetResult {
 /// Key/value pairs one snapshot scan returned, in key order.
 pub type SnapshotScanPairs = Vec<(Vec<u8>, Vec<u8>)>;
 
+/// One serving region's complete contribution to a snapshot range scan.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SnapshotScanRegion {
+    /// Exact region epoch that served every pair in this fragment.
+    pub region: crate::region::RegionVerId,
+    /// Exclusive end of this fragment, clipped to the requested range end.
+    pub end_key: Vec<u8>,
+    /// Key/value pairs in key order.
+    pub pairs: SnapshotScanPairs,
+}
+
+#[derive(Default)]
+struct SnapshotScanResult {
+    regions: Vec<SnapshotScanRegion>,
+}
+
+impl SnapshotScanResult {
+    fn into_pairs(self) -> SnapshotScanPairs {
+        self.regions
+            .into_iter()
+            .flat_map(|region| region.pairs)
+            .collect()
+    }
+}
+
+struct PendingScanRegion {
+    region: crate::region::RegionVerId,
+    start_key: Vec<u8>,
+    end_key: Vec<u8>,
+    pairs: SnapshotScanPairs,
+}
+
+impl PendingScanRegion {
+    fn finish(self) -> SnapshotScanRegion {
+        SnapshotScanRegion {
+            region: self.region,
+            end_key: self.end_key,
+            pairs: self.pairs,
+        }
+    }
+}
+
 /// Runs one MaxTS point snapshot without constructing transaction state.
 ///
 /// The caller supplies the thread-local runtime and lock timestamp authority;
@@ -271,6 +313,7 @@ where
         u64::MAX,
         call,
     )
+    .map(SnapshotScanResult::into_pairs)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -286,14 +329,14 @@ fn snapshot_scan_with<C, L, T>(
     limit: Option<usize>,
     read_ts: u64,
     call: &UnaryCallContext,
-) -> Result<SnapshotScanPairs, OptimisticCoordinatorError>
+) -> Result<SnapshotScanResult, OptimisticCoordinatorError>
 where
     C: TransactionCommandClient + LockRecoveryClient,
     L: RegionRecoveryLoader,
     T: TimestampSource,
 {
     if limit == Some(0) {
-        return Ok(Vec::new());
+        return Ok(SnapshotScanResult::default());
     }
     if start_key.is_empty() {
         return Err(OptimisticCoordinatorError::SnapshotGet(
@@ -306,7 +349,9 @@ where
         ));
     }
     resolved_locks.rescope(read_ts);
-    let mut pairs = Vec::new();
+    let mut result = SnapshotScanResult::default();
+    let mut pending: Option<PendingScanRegion> = None;
+    let mut pair_count = 0_usize;
     let mut cursor = start_key.to_vec();
     let mut lock_backoff = RegionBackoffBudget::campaign_default();
     while cursor.as_slice() < end_key {
@@ -320,8 +365,32 @@ where
         } else {
             region_end.clone()
         };
+        if let Some(current) = pending.as_ref() {
+            if current.region != route.region() {
+                if cursor.as_slice() >= current.end_key.as_slice() {
+                    result
+                        .regions
+                        .push(pending.take().expect("pending region exists").finish());
+                } else {
+                    // The serving epoch changed before this fragment drained.
+                    // A coprocessor Analyze response would be discarded and
+                    // retried on the replacement regions, so do the same.
+                    cursor.clone_from(&current.start_key);
+                    pending = None;
+                    continue;
+                }
+            }
+        }
+        if pending.is_none() {
+            pending = Some(PendingScanRegion {
+                region: route.region(),
+                start_key: cursor.clone(),
+                end_key: page_end.clone(),
+                pairs: Vec::new(),
+            });
+        }
         let page_limit = limit.map_or(SCAN_PAGE_LIMIT, |limit| {
-            u32::try_from(limit - pairs.len())
+            u32::try_from(limit - pair_count)
                 .unwrap_or(SCAN_PAGE_LIMIT)
                 .min(SCAN_PAGE_LIMIT)
         });
@@ -401,23 +470,31 @@ where
             .last()
             .map(|pair| pair.key.clone())
             .unwrap_or_default();
+        let pending_region = pending.as_mut().expect("the serving region is pending");
         for pair in response.response.pairs {
-            pairs.push((pair.key, pair.value));
+            pending_region.pairs.push((pair.key, pair.value));
+            pair_count += 1;
         }
-        if limit.is_some_and(|limit| pairs.len() >= limit) {
+        if limit.is_some_and(|limit| pair_count >= limit) {
             break;
         }
         if page_len == page_limit as usize {
             cursor = last_key;
             cursor.push(0);
         } else {
+            result
+                .regions
+                .push(pending.take().expect("pending region exists").finish());
             if page_end.as_slice() >= end_key {
                 break;
             }
             cursor = page_end;
         }
     }
-    Ok(pairs)
+    if let Some(pending) = pending {
+        result.regions.push(pending.finish());
+    }
+    Ok(result)
 }
 
 fn context_with_resource_group(
@@ -814,6 +891,36 @@ where
             read_ts,
             call,
         )
+        .map(SnapshotScanResult::into_pairs)
+    }
+
+    /// Reads `[start_key, end_key)` grouped by the exact serving regions.
+    ///
+    /// Unlike the bounded flat scan, this always drains every region so each
+    /// element has the same boundary as one successful coprocessor response.
+    pub fn snapshot_scan_regions(
+        &mut self,
+        start_key: &[u8],
+        end_key: &[u8],
+        call: &UnaryCallContext,
+    ) -> Result<Vec<SnapshotScanRegion>, OptimisticCoordinatorError> {
+        self.state
+            .transition(CoordinatorState::Reading)
+            .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+        snapshot_scan_with(
+            &self.runtime,
+            &self.timestamps,
+            &self.gc_state,
+            &mut self.forward_backoff,
+            &mut self.resolved_locks,
+            self.resource_group_name.as_deref(),
+            start_key,
+            end_key,
+            None,
+            self.start_ts,
+            call,
+        )
+        .map(|result| result.regions)
     }
 }
 

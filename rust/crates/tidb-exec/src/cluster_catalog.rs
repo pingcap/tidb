@@ -95,6 +95,17 @@ pub trait PagedMetaSnapshot: MetaSnapshot {
     ) -> Result<MetaPairs, ClusterCatalogError>;
 }
 
+/// A snapshot that preserves the serving-region boundary of a full range.
+pub trait RegionPagedMetaSnapshot: PagedMetaSnapshot {
+    /// Reads every pair in `[start, end)`, grouped like successful TiKV
+    /// coprocessor responses.
+    fn scan_regions(
+        &mut self,
+        start: &[u8],
+        end: &[u8],
+    ) -> Result<Vec<tidb_txnkv::transaction::SnapshotScanRegion>, ClusterCatalogError>;
+}
+
 /// The stored JSON of one `DBInfo`, as the catalog itself writes it.
 ///
 /// Re-exported here so a reader outside this crate -- the status server's

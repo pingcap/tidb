@@ -77,10 +77,11 @@ use tidb_executor::analyze::AnalyzeError as ComputeError;
 use tidb_executor::analyze::{
     AnalyzePlan, AnalyzeRun, AnalyzedColumn, AnalyzedHistogram, AnalyzedIndex,
 };
+use tidb_model::index::IndexInfo;
 use tidb_model::table_info::TableInfo;
 use tidb_model::SchemaState;
 
-use crate::cluster_catalog::{prefix_scan_end, PagedMetaSnapshot};
+use crate::cluster_catalog::{prefix_scan_end, PagedMetaSnapshot, RegionPagedMetaSnapshot};
 use crate::cluster_stats_load::{ClusterStatsItem, ClusterTableStats};
 use crate::mysql_system_tables::{SystemRow, SystemTableError, SystemTableView};
 use crate::system_row_write::origin_default;
@@ -316,6 +317,77 @@ pub fn analyze_physical_table<S: PagedMetaSnapshot>(
     })
 }
 
+/// Runs one pinned-Go independent global-index task.
+pub fn analyze_independent_index<S: RegionPagedMetaSnapshot>(
+    snapshot: &mut S,
+    table: &TableInfo,
+    index: &IndexInfo,
+    options: &AnalyzeOptions,
+    version: u64,
+) -> Result<AnalyzeReport, AnalyzeError> {
+    let bucket_count = usize::try_from(options.num_buckets)
+        .map_err(|_| AnalyzeError::unsupported("invalid ANALYZE bucket count".to_owned()))?;
+    let topn_count = usize::try_from(options.num_topn)
+        .map_err(|_| AnalyzeError::unsupported("invalid ANALYZE TopN count".to_owned()))?;
+    let column_count = index.columns.len();
+    let prefix = tidb_codec::table_key::encode_index_seek_key(table.id, index.id, &[]);
+    let range_end = finite_successor(&prefix)?;
+    let regions = snapshot
+        .scan_regions(&prefix, &range_end)
+        .map_err(|error| AnalyzeError::Read(error.into()))?;
+    let mut fragments = Vec::with_capacity(regions.len());
+    for region in regions {
+        let mut processor = tidb_stats::IndependentIndexAnalyze::new(
+            index.id,
+            column_count,
+            bucket_count,
+            topn_count,
+        );
+        for (key, _) in region.pairs {
+            let (encoded_columns, _) = tidb_tablecodec::cut_index_key(&key, column_count)
+                .map_err(|error| AnalyzeError::unsupported(error.to_string()))?;
+            processor
+                .push(&encoded_columns)
+                .map_err(|error| AnalyzeError::unsupported(error.to_string()))?;
+        }
+        fragments.push(processor.finish_fragment());
+    }
+    let built = tidb_stats::merge_independent_index_fragments(
+        index.id,
+        bucket_count,
+        topn_count,
+        fragments,
+    )
+    .map_err(|error| AnalyzeError::unsupported(error.to_string()))?;
+    let count = built.count;
+    Ok(AnalyzeReport {
+        stats: ClusterTableStats {
+            table_id: table.id,
+            version,
+            snapshot: version,
+            last_analyze_version: version,
+            last_stats_hist_version: version,
+            modify_count: 0,
+            row_count: u64::try_from(count).unwrap_or_default(),
+            columns: Vec::new(),
+            indexes: vec![ClusterStatsItem {
+                id: index.id,
+                is_index: true,
+                stats_ver: 2,
+                flag: 0,
+                load_status: tidb_stats::StatsLoadedStatus::full_load(),
+                histogram: built.histogram,
+                topn: Some(built.topn),
+                cms: None,
+                fm_sketch: Some(built.fm_sketch),
+            }],
+        },
+        scanned_rows: count,
+        sampled_rows: count,
+        sample_rate: 1.0,
+    })
+}
+
 /// One built histogram as `mysql.stats_histograms` holds it.
 ///
 /// Analyze v2 stores no CMSketch, and `flag` is Go's `AnalyzeFlag`, which a
@@ -458,10 +530,15 @@ fn cluster_analyze_plan(
 
 #[cfg(test)]
 mod tests {
-    use super::cluster_analyze_plan;
+    use super::{analyze_independent_index, cluster_analyze_plan, AnalyzeOptions};
+    use crate::cluster_catalog::{
+        ClusterCatalogError, MetaPairs, MetaSnapshot, PagedMetaSnapshot, RegionPagedMetaSnapshot,
+    };
     use tidb_ast::CiString;
+    use tidb_codec::table_key::encode_index_seek_key;
+    use tidb_codec::Encoder;
     use tidb_datatype::UNSPECIFIED_LENGTH;
-    use tidb_datatype::{FieldType, FieldTypeCode};
+    use tidb_datatype::{Datum, FieldType, FieldTypeCode};
     use tidb_model::column::ColumnInfo;
     use tidb_model::index::{IndexColumn, IndexInfo};
     use tidb_model::table_info::TableInfo;
@@ -495,5 +572,91 @@ mod tests {
             .expect("an ordinary global index uses the column sampling task");
         assert_eq!(plan.indexes().len(), 1);
         assert_eq!(plan.indexes()[0].id, 2);
+    }
+
+    struct RegionSnapshot(Vec<tidb_txnkv::transaction::SnapshotScanRegion>);
+
+    impl MetaSnapshot for RegionSnapshot {
+        fn get(&mut self, _key: &[u8]) -> Result<Option<Vec<u8>>, ClusterCatalogError> {
+            Ok(None)
+        }
+
+        fn scan_prefix(&mut self, _prefix: &[u8]) -> Result<MetaPairs, ClusterCatalogError> {
+            Ok(Vec::new())
+        }
+    }
+
+    impl PagedMetaSnapshot for RegionSnapshot {
+        fn scan_page(
+            &mut self,
+            _start: &[u8],
+            _end: &[u8],
+            _limit: usize,
+        ) -> Result<MetaPairs, ClusterCatalogError> {
+            Ok(Vec::new())
+        }
+    }
+
+    impl RegionPagedMetaSnapshot for RegionSnapshot {
+        fn scan_regions(
+            &mut self,
+            _start: &[u8],
+            _end: &[u8],
+        ) -> Result<Vec<tidb_txnkv::transaction::SnapshotScanRegion>, ClusterCatalogError> {
+            Ok(self.0.clone())
+        }
+    }
+
+    #[test]
+    fn independent_index_keeps_region_topn_boundaries() {
+        let table = TableInfo {
+            id: 42,
+            name: CiString::new("t"),
+            ..TableInfo::default()
+        };
+        let index = IndexInfo {
+            id: 7,
+            name: CiString::new("idx_a"),
+            state: SchemaState::PUBLIC,
+            global: true,
+            columns: vec![IndexColumn {
+                name: CiString::new("a"),
+                offset: 0,
+                length: 3,
+                use_changing_type: false,
+            }]
+            .into(),
+            ..IndexInfo::default()
+        };
+        let encoder = Encoder::new(false);
+        let one = encoder.encode_key(&[Datum::Int(1)]).unwrap();
+        let two = encoder.encode_key(&[Datum::Int(2)]).unwrap();
+        let key = |value: &[u8], handle: i64| {
+            let mut encoded = value.to_vec();
+            encoded.extend(encoder.encode_key(&[Datum::Int(handle)]).unwrap());
+            encode_index_seek_key(table.id, index.id, &encoded)
+        };
+        let mut snapshot = RegionSnapshot(vec![
+            tidb_txnkv::transaction::SnapshotScanRegion {
+                region: tidb_txnkv::region::RegionVerId::new(1, 1, 1),
+                end_key: key(&two, 1),
+                pairs: vec![(key(&one, 1), Vec::new()), (key(&two, 1), Vec::new())],
+            },
+            tidb_txnkv::transaction::SnapshotScanRegion {
+                region: tidb_txnkv::region::RegionVerId::new(2, 1, 1),
+                end_key: Vec::new(),
+                pairs: vec![(key(&two, 2), Vec::new()), (key(&two, 3), Vec::new())],
+            },
+        ]);
+        let mut options = AnalyzeOptions::default();
+        options.num_buckets = 2;
+        options.num_topn = 1;
+
+        let report =
+            analyze_independent_index(&mut snapshot, &table, &index, &options, 100).unwrap();
+        let item = &report.stats.indexes[0];
+        assert_eq!(report.scanned_rows, 4);
+        assert_eq!(item.topn.as_ref().unwrap().entries()[0].count, 2);
+        assert_eq!(item.histogram.buckets.last().unwrap().count, 2);
     }
 }

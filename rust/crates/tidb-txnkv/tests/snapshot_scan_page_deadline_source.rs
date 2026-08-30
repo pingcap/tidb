@@ -387,3 +387,36 @@ fn a_multi_page_scan_bounds_each_page_not_the_whole_range() {
         );
     }
 }
+
+#[test]
+fn region_scan_groups_all_pages_into_one_coprocessor_shaped_fragment() {
+    let recorded = Arc::new(Mutex::new(Recorded::default()));
+    let runtime = SharedReadRuntime::new_injected(
+        PagingScanClient::new(Arc::clone(&recorded)),
+        RegionCache::new(OneRegion),
+    );
+    let mut transaction = RealOptimisticTransaction::new_injected(
+        runtime,
+        FixedTimestamps(std::sync::atomic::AtomicU64::new(START_TS)),
+        CALLER_BUDGET,
+        START_TS,
+        Instant::now(),
+        1,
+        1024,
+    )
+    .unwrap();
+    let call = UnaryCallContext::with_timeout(CALLER_BUDGET);
+
+    let regions = transaction
+        .snapshot_scan_regions(b"a", b"z", &call)
+        .unwrap_or_else(|error| panic!("region scan failed: {error}"));
+
+    assert_eq!(regions.len(), 1);
+    assert_eq!(regions[0].region.id, REGION);
+    assert_eq!(regions[0].end_key, b"z");
+    assert_eq!(regions[0].pairs.len(), FULL_PAGES * 256);
+    assert_eq!(
+        recorded.lock().unwrap().page_budgets_ms.len(),
+        FULL_PAGES + 1
+    );
+}

@@ -111,6 +111,25 @@ where
     }
 }
 
+impl<C, L, T> crate::cluster_catalog::RegionPagedMetaSnapshot
+    for TransactionMetaSnapshot<'_, C, L, T>
+where
+    C: TransactionCommandClient + LockRecoveryClient,
+    L: RegionRecoveryLoader,
+    T: TimestampSource,
+{
+    fn scan_regions(
+        &mut self,
+        start: &[u8],
+        end: &[u8],
+    ) -> Result<Vec<tidb_txnkv::transaction::SnapshotScanRegion>, ClusterCatalogError> {
+        let call = UnaryCallContext::with_timeout(self.timeout);
+        self.transaction
+            .snapshot_scan_regions(start, end, &call)
+            .map_err(|error| ClusterCatalogError::Snapshot(error.to_string()))
+    }
+}
+
 /// The same meta-key snapshot over a transaction from the client-rust engine.
 ///
 /// [`TransactionMetaSnapshot`] adapts this crate's own coordinator
