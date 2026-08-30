@@ -54,6 +54,7 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - [x] (2026-08-29) Ported global-stat item slow-save fencing: the live configured stats lease, exact five-lease threshold, independent metadata-version transaction, generic retry diagnostic, and refreshed history version now match Go.
 - [x] (2026-08-29) Removed Rust's blanket global-index ANALYZE refusal; ordinary global indexes now participate in each partition's shared column-sampling task and the existing global merge, as pinned Go does.
 - [ ] Complete pinned `pkg/statistics/handle/globalstats`; dynamic ANALYZE now loads every partition, applies both missing-stat policies, merges FM/CMS/TopN/histograms, honors the async selector and TopN merge concurrency, persists each global item independently, continues after item-write errors, records historical metadata, and emits warnings 8243/8244. The full original test and benchmark inventory remains open.
+- [x] (2026-08-29) Restored the exported concurrent global-TopN merge boundary with caller-supplied batch sizing and both pinned globalstats benchmark shapes; integration-test inventory closure remains part of the open package claim above.
 - [ ] Wire all pinned Go `SHOW STATS_*` surfaces to the shared cache and storage semantics.
 - [ ] Inventory every production file, platform/generated variant, original test/support artifact, fixture, and validation gate in pinned `pkg/statistics`; close or explicitly retain seed-only gaps until the whole package is complete.
 - [ ] Run the Ready validation profile, including `make lint`, only after the complete package inventory is closed.
@@ -201,6 +202,9 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - Observation: Go's ordinary global indexes are part of the per-partition column-sampling task and are then merged into logical-table statistics; only a global prefix/expression index is split into an independent special-index task.
   Evidence: pinned `getModifiedIndexesInfoForAnalyze`, `IsSpecialGlobalIndex`, and `TestGlobalIndexStatistics`; Rust now admits the ordinary shape instead of rejecting every `IndexInfo.Global` value.
 
+- Observation: Go exposes its concurrent global-TopN worker boundary independently of the session-variable selector, and its benchmark calls that boundary with an already bounded batch size.
+  Evidence: pinned `MergeGlobalStatsTopNByConcurrency` and `topn_bench_test.go`; Rust previously kept the function private and recomputed its batch size internally, so it could not represent the original package API or benchmark artifact.
+
 ## Decision Log
 
 - Decision: reconstruct and test each pinned Go branch before editing Rust; do not preserve Rust-only fallback paths.
@@ -295,6 +299,8 @@ Revision note (2026-08-29): added the complete predicate-column storage primitiv
 Revision note (2026-08-29): moved synchronous waiting out of initial request dispatch and registered `SyncWaitStatsLoadPoint` at the pinned later logical-rule position.
 
 Revision note (2026-08-29): made production bootstrap and refresh consume the existing lite table loader, removed the unused snapshot wrapper, and added Go's resident-payload-preserving update behavior.
+
+Revision note (2026-08-29): restored the pinned globalstats package's exported concurrent TopN boundary and both benchmark workload shapes without closing the package-level claim; the original SQL integration-test inventory is still being reconciled.
 
 Revision note (2026-08-29): fixed the existing `SHOW STATS_META` production path before expanding the SHOW family; the new regression was observed failing with pseudo/global rows before the fix and passing afterward.
 

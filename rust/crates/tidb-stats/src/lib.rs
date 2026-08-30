@@ -117,8 +117,8 @@ pub use fmsketch_codec::{
 };
 pub use global_stats::{
     merge_partition_cmsketches, merge_partition_fm_sketches, merge_partition_histogram_topn,
-    merge_partition_stats_item, merge_partition_topn, GlobalStatsItem, GlobalStatsMergeError,
-    GlobalStatsMergeMode, PartitionStatsItem,
+    merge_partition_stats_item, merge_partition_topn, merge_partition_topn_concurrently,
+    GlobalStatsItem, GlobalStatsMergeError, GlobalStatsMergeMode, PartitionStatsItem,
 };
 pub use histogram::{Bucket, Histogram};
 pub use independent_index_analyze::{

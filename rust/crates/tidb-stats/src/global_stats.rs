@@ -215,7 +215,11 @@ pub fn merge_partition_topn<TZ: TimeZone>(
     Ok((global, remainder, histograms))
 }
 
-fn merge_partition_topn_concurrently<TZ: TimeZone + Sync>(
+/// Go `MergeGlobalStatsTopNByConcurrency`.
+///
+/// The caller supplies the already bounded batch size, just as the exported
+/// Go worker boundary does.
+pub fn merge_partition_topn_concurrently<TZ: TimeZone + Sync>(
     timezone: Option<&TZ>,
     analyze_version: i64,
     topns: &[Option<&TopN>],
@@ -224,6 +228,7 @@ fn merge_partition_topn_concurrently<TZ: TimeZone + Sync>(
     field_type: &FieldType,
     is_index: bool,
     merge_concurrency: usize,
+    merge_batch_size: usize,
     killer: &SqlKiller,
 ) -> Result<(Option<TopN>, Vec<TopNEntry>, Vec<Histogram>), GlobalStatsMergeError> {
     if crate::cmsketch::check_empty_topns(topns) {
@@ -231,7 +236,7 @@ fn merge_partition_topn_concurrently<TZ: TimeZone + Sync>(
     }
 
     let worker_count = merge_concurrency.min(topns.len());
-    let batch_size = (topns.len() / merge_concurrency).clamp(1, MAX_PARTITION_MERGE_BATCH_SIZE);
+    let batch_size = merge_batch_size;
     let next_partition = AtomicUsize::new(0);
     let counts = Mutex::new(HashMap::<Vec<u8>, f64>::new());
     let histograms = histograms.into_iter().map(Mutex::new).collect::<Vec<_>>();
@@ -500,6 +505,7 @@ pub fn merge_partition_histogram_topn<TZ: TimeZone + Sync>(
             killer,
         )?
     } else {
+        let batch_size = (topns.len() / merge_concurrency).clamp(1, MAX_PARTITION_MERGE_BATCH_SIZE);
         merge_partition_topn_concurrently(
             timezone,
             analyze_version,
@@ -509,6 +515,7 @@ pub fn merge_partition_histogram_topn<TZ: TimeZone + Sync>(
             field_type,
             is_index,
             merge_concurrency,
+            batch_size,
             killer,
         )?
     };
