@@ -341,6 +341,219 @@ fn add_column_ddl_initializes_null_statistics_like_go() {
         .parse::<u64>()
         .expect("stats version is an unsigned integer");
     assert!(new_version > old_version);
+
+    rows(
+        &mut session,
+        "ALTER TABLE stats_add_column ADD COLUMN c VARCHAR(15) DEFAULT '123'",
+    );
+    let defaulted_column_id = stack
+        .factory
+        .catalog
+        .load()
+        .find_table("test", "stats_add_column")
+        .expect("altered table is published")
+        .1
+        .columns
+        .iter_deref()
+        .find(|column| column.read().name.lowercase() == "c")
+        .expect("defaulted column is published")
+        .read()
+        .id;
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT distinct_count, null_count, tot_col_size, stats_ver \
+                 FROM mysql.stats_histograms WHERE table_id = {table_id} \
+                 AND is_index = 0 AND hist_id = {defaulted_column_id}"
+            ),
+        )),
+        [["1", "0", "9", "0"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT repeats, count, lower_bound, upper_bound FROM mysql.stats_buckets \
+                 WHERE table_id = {table_id} AND is_index = 0 \
+                 AND hist_id = {defaulted_column_id}"
+            ),
+        )),
+        [["3", "3", "123", "123"]]
+    );
+
+    rows(
+        &mut session,
+        "ALTER TABLE stats_add_column ADD COLUMN d BIGINT NOT NULL",
+    );
+    let zeroed_column_id = stack
+        .factory
+        .catalog
+        .load()
+        .find_table("test", "stats_add_column")
+        .expect("altered table is published")
+        .1
+        .columns
+        .iter_deref()
+        .find(|column| column.read().name.lowercase() == "d")
+        .expect("NOT NULL column is published")
+        .read()
+        .id;
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT distinct_count, null_count, tot_col_size, stats_ver \
+                 FROM mysql.stats_histograms WHERE table_id = {table_id} \
+                 AND is_index = 0 AND hist_id = {zeroed_column_id}"
+            ),
+        )),
+        [["1", "0", "0", "0"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT repeats, count, lower_bound, upper_bound FROM mysql.stats_buckets \
+                 WHERE table_id = {table_id} AND is_index = 0 \
+                 AND hist_id = {zeroed_column_id}"
+            ),
+        )),
+        [["3", "3", "0", "0"]]
+    );
+}
+
+/// Pinned `TestSystemTableDDLHasNoEvent`: `asyncNotifyEvent` suppresses every
+/// stats subscriber event for `metadef.IsMemOrSysDB`, so system-table DDL
+/// changes schema metadata but never creates or refreshes stats rows.
+#[test]
+fn system_table_ddl_does_not_publish_statistics_events_like_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(76))
+        .expect("session opens");
+    let assert_no_stats = |session: &mut ClusterServerSession, ids: &[i64]| {
+        let ids = ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",");
+        assert_eq!(
+            displayed(rows(
+                session,
+                &format!("SELECT count(*) FROM mysql.stats_meta WHERE table_id IN ({ids})"),
+            )),
+            [["0"]]
+        );
+    };
+
+    rows(&mut session, "CREATE TABLE mysql.stats_no_event (a INT)");
+    let old_id = stack
+        .factory
+        .catalog
+        .load()
+        .find_table("mysql", "stats_no_event")
+        .expect("system table is published")
+        .1
+        .id;
+    assert_no_stats(&mut session, &[old_id]);
+    rows(
+        &mut session,
+        "ALTER TABLE mysql.stats_no_event ADD COLUMN b INT",
+    );
+    rows(
+        &mut session,
+        "ALTER TABLE mysql.stats_no_event MODIFY COLUMN a BIGINT",
+    );
+    assert_no_stats(&mut session, &[old_id]);
+    rows(&mut session, "TRUNCATE TABLE mysql.stats_no_event");
+    let new_id = stack
+        .factory
+        .catalog
+        .load()
+        .find_table("mysql", "stats_no_event")
+        .expect("truncated system table is published")
+        .1
+        .id;
+    assert_ne!(new_id, old_id);
+    assert_no_stats(&mut session, &[old_id, new_id]);
+    rows(&mut session, "DROP TABLE mysql.stats_no_event");
+    assert_no_stats(&mut session, &[old_id, new_id]);
+
+    rows(
+        &mut session,
+        "CREATE TABLE mysql.stats_no_event_part (a INT) PARTITION BY RANGE (a) (\
+         PARTITION p0 VALUES LESS THAN (10))",
+    );
+    let (logical_id, p0_id) = {
+        let catalog = stack.factory.catalog.load();
+        let table = catalog
+            .find_table("mysql", "stats_no_event_part")
+            .expect("partitioned system table is published")
+            .1;
+        let definitions = table
+            .partition
+            .as_ref()
+            .expect("partition metadata exists")
+            .read()
+            .definitions
+            .snapshot();
+        (table.id, definitions[0].id)
+    };
+    rows(
+        &mut session,
+        "ALTER TABLE mysql.stats_no_event_part ADD PARTITION (\
+         PARTITION p1 VALUES LESS THAN MAXVALUE)",
+    );
+    let p1_id = {
+        let catalog = stack.factory.catalog.load();
+        let table = catalog
+            .find_table("mysql", "stats_no_event_part")
+            .expect("partitioned system table is published")
+            .1;
+        let definitions = table
+            .partition
+            .as_ref()
+            .expect("partition metadata exists")
+            .read()
+            .definitions
+            .snapshot();
+        definitions
+            .into_iter()
+            .find(|definition| definition.name.lowercase() == "p1")
+            .expect("p1 exists")
+            .id
+    };
+    assert_no_stats(&mut session, &[logical_id, p0_id, p1_id]);
+    rows(
+        &mut session,
+        "ALTER TABLE mysql.stats_no_event_part TRUNCATE PARTITION p1",
+    );
+    let replacement_p1_id = {
+        let catalog = stack.factory.catalog.load();
+        let table = catalog
+            .find_table("mysql", "stats_no_event_part")
+            .expect("partitioned system table is published")
+            .1;
+        let definitions = table
+            .partition
+            .as_ref()
+            .expect("partition metadata exists")
+            .read()
+            .definitions
+            .snapshot();
+        definitions
+            .into_iter()
+            .find(|definition| definition.name.lowercase() == "p1")
+            .expect("p1 exists")
+            .id
+    };
+    assert_ne!(replacement_p1_id, p1_id);
+    assert_no_stats(&mut session, &[logical_id, p0_id, p1_id, replacement_p1_id]);
+    rows(
+        &mut session,
+        "ALTER TABLE mysql.stats_no_event_part DROP PARTITION p1",
+    );
+    rows(&mut session, "DROP TABLE mysql.stats_no_event_part");
+    assert_no_stats(&mut session, &[logical_id, p0_id, p1_id, replacement_p1_id]);
 }
 
 /// Pinned DDL subscriber `ActionModifyColumn`: `InsertColStats2KV` is an

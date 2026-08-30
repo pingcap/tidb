@@ -36,6 +36,7 @@ tidb-unistore = { path = "../tidb-unistore" }
 tidb-executor = { path = "../tidb-executor" }
 tidb-error = { path = "../tidb-error" }
 tidb-errmsg = { path = "../tidb-errmsg" }
+tidb-metadef = { path = "../tidb-metadef" }
 tidb-model = { path = "../tidb-model" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-pd-client = { path = "../tidb-pd-client" }

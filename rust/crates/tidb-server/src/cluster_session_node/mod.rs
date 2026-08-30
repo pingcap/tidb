@@ -4275,6 +4275,29 @@ impl ClusterServerSession {
         if self.explicit.is_some() || self.session.in_transaction() {
             self.control_transaction("COMMIT")?;
         }
+        // Pinned `asyncNotifyEvent` suppresses every statistics event for
+        // `metadef.IsMemOrSysDB(job.SchemaName)`. Apply that once around all
+        // subscriber projections so table, column, and partition DDL cannot
+        // accidentally create `mysql.*` statistics rows.
+        let suppress_stats_event = match statement {
+            DdlStatement::DropDatabase { name, .. } => {
+                tidb_metadef::is_mem_or_sys_db(&name.to_lowercase())
+            }
+            DdlStatement::CreateTable { schema, .. }
+            | DdlStatement::CreateTableLike { schema, .. }
+            | DdlStatement::TruncateTable { schema, .. }
+            | DdlStatement::DropTable { schema, .. }
+            | DdlStatement::AddColumn { schema, .. }
+            | DdlStatement::ModifyColumn { schema, .. }
+            | DdlStatement::RenameColumn { schema, .. }
+            | DdlStatement::AlterAutoRandomBits { schema, .. }
+            | DdlStatement::AddPartitions { schema, .. }
+            | DdlStatement::DropPartitions { schema, .. }
+            | DdlStatement::TruncatePartitions { schema, .. } => {
+                tidb_metadef::is_mem_or_sys_db(&schema.to_lowercase())
+            }
+            _ => false,
+        };
         let table_stats_change = match statement {
             DdlStatement::DropDatabase { name, .. } => self
                 .catalog
@@ -4383,6 +4406,11 @@ impl ClusterServerSession {
                 })
             }
             _ => None,
+        };
+        let (table_stats_change, column_stats_change, partition_before) = if suppress_stats_event {
+            (None, None, None)
+        } else {
+            (table_stats_change, column_stats_change, partition_before)
         };
         let report = self.ddl.execute(statement)?;
         if matches!(report, ClusterDdlReport::Applied { .. }) {
