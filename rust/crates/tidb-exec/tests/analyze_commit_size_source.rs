@@ -41,12 +41,14 @@ use tidb_exec::cluster_stats_dump::{
     table_stats_to_json_from_loaded,
 };
 use tidb_exec::cluster_stats_write::{
-    load_analyze_options, plan_analyze_options_write, plan_column_stats_usage_dump,
-    plan_column_stats_usage_write, plan_get_predicate_columns,
+    count_outdated_historical_stats, load_analyze_options, plan_analyze_options_write,
+    plan_column_stats_usage_dump, plan_column_stats_usage_write, plan_get_predicate_columns,
     plan_historical_stats_data_write, plan_historical_stats_meta_write,
     plan_independent_index_stats_write, plan_loaded_stats_item_write, plan_loaded_stats_meta_write,
-    plan_loaded_stats_usage_write, plan_partial_stats_write, plan_partition_stats_write,
-    plan_stats_delta_updates, plan_stats_meta_version_refresh, plan_stats_write,
+    plan_loaded_stats_usage_write, plan_outdated_historical_data_delete,
+    plan_outdated_historical_meta_delete, plan_partial_stats_write,
+    plan_partition_stats_write, plan_stats_delta_updates, plan_stats_meta_version_refresh,
+    plan_stats_write,
 };
 use tidb_exec::mysql_bootstrap::{plan_mysql_bootstrap, BootstrapEnvironment, BootstrapWrite};
 use tidb_exec::mysql_system_tables::{scan_system_table, SystemRow, SystemTableView};
@@ -1691,6 +1693,75 @@ fn historical_stats_reader_selects_meta_and_data_versions_independently() {
         .expect("an older snapshot is valid"),
         None
     );
+}
+
+/// Pinned `ClearOutdatedHistoryStats` selects expiry from metadata, then
+/// removes metadata and payload rows through separate bounded statements.
+#[test]
+fn outdated_historical_stats_deletes_only_rows_at_or_before_the_cutoff() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let table_id = 4243;
+    let cutoff = now();
+    let newer = Time::from_date_checked(2027, 7, 29, 6, 12, 55, 0, TimeType::Timestamp, 0)
+        .expect("a fixed calendar date is a valid timestamp");
+
+    for (version, create_time) in [(1, cutoff), (2, newer)] {
+        let meta = plan_loaded_stats_meta_write(
+            &mut store,
+            &catalog,
+            table_id,
+            version,
+            0,
+            version as u64,
+            create_time,
+        )
+        .expect("metadata plans");
+        apply_mutations(&mut store, &meta.mutations);
+        let history_meta = plan_historical_stats_meta_write(
+            &mut store,
+            &catalog,
+            table_id,
+            version as u64,
+            "analyze",
+            create_time,
+        )
+        .expect("metadata history plans");
+        apply_mutations(&mut store, &history_meta.mutations);
+        let json = JsonTable {
+            database_name: "test".to_owned(),
+            table_name: "t".to_owned(),
+            version: version as u64,
+            count: version,
+            ..JsonTable::default()
+        };
+        let (_, history_data) =
+            plan_historical_stats_data_write(&mut store, &catalog, table_id, &json, create_time)
+                .expect("data history plans");
+        apply_mutations(&mut store, &history_data.mutations);
+    }
+
+    assert_eq!(
+        count_outdated_historical_stats(&mut store, &catalog, cutoff)
+            .expect("outdated metadata count succeeds"),
+        1
+    );
+    for deletion in [
+        plan_outdated_historical_meta_delete(&mut store, &catalog, cutoff, 1),
+        plan_outdated_historical_data_delete(&mut store, &catalog, cutoff, 1),
+    ] {
+        let deletion = deletion.expect("bounded historical deletion plans");
+        apply_mutations(&mut store, &deletion.mutations);
+    }
+    assert_eq!(
+        count_outdated_historical_stats(&mut store, &catalog, cutoff)
+            .expect("outdated metadata count succeeds"),
+        0
+    );
+    let restored = table_historical_stats_to_json(&mut store, &catalog, table_id, u64::MAX)
+        .expect("newer historical statistics read succeeds")
+        .expect("newer historical statistics remain");
+    assert_eq!(restored.version, 2);
 }
 
 /// Go `TableStatsToJSON(..., snapshot=0)` loads histogram payload first, then

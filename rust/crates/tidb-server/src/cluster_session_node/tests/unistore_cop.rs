@@ -169,6 +169,66 @@ fn analyze_records_historical_stats_through_the_domain_worker() {
     );
 }
 
+/// Pinned `TestGCOutdatedHistoryStats`: the global retention duration drives
+/// explicit historical metadata and payload cleanup.
+#[test]
+fn clear_outdated_history_stats_uses_the_go_retention_duration() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(78))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET GLOBAL tidb_enable_historical_stats = ON");
+    rows(&mut session, "CREATE TABLE history_gc (a INT)");
+    rows(&mut session, "ANALYZE TABLE history_gc");
+    let table_id = session
+        .historical_stats_worker
+        .get_one_historical_stats_table();
+    let handle = ClusterHistoricalStatsHandle {
+        transactions: Arc::clone(&stack.factory.transactions),
+        catalog: Arc::clone(&stack.factory.catalog),
+        global_vars: stack.factory.global_vars.clone(),
+    };
+    session
+        .historical_stats_worker
+        .dump_historical_stats(
+            table_id,
+            &handle,
+            &tidb_domain::historical_stats::NoopHistoricalStatsMetrics,
+        )
+        .expect("historical statistics dump succeeds");
+    for table in ["stats_meta_history", "stats_history"] {
+        assert_eq!(
+            displayed(rows(
+                &mut session,
+                &format!("SELECT count(*) FROM mysql.{table} WHERE table_id = {table_id}"),
+            )),
+            [["1"]]
+        );
+    }
+
+    rows(
+        &mut session,
+        "SET GLOBAL tidb_historical_stats_duration = '1s'",
+    );
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    stack
+        .factory
+        .clear_outdated_history_stats()
+        .expect("historical statistics GC succeeds");
+    for table in ["stats_meta_history", "stats_history"] {
+        assert_eq!(
+            displayed(rows(
+                &mut session,
+                &format!("SELECT count(*) FROM mysql.{table} WHERE table_id = {table_id}"),
+            )),
+            [["0"]]
+        );
+    }
+}
+
 /// Pinned `TestDumpHistoricalStatsFallback`: after ANALYZE ran with history
 /// disabled, historical dump uses the latest statistics and names that table
 /// in the fallback list once the feature is enabled.

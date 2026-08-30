@@ -684,6 +684,17 @@ impl ClusterSessionFactory {
         .dump_historical_stats_by_snapshot(database_name, table, snapshot_ts)
     }
 
+    /// Pinned Go `StatsGC.ClearOutdatedHistoryStats` over restricted
+    /// autocommit transactions.
+    pub fn clear_outdated_history_stats(&self) -> Result<(), String> {
+        ClusterHistoricalStatsHandle {
+            transactions: Arc::clone(&self.transactions),
+            catalog: Arc::clone(&self.catalog),
+            global_vars: self.global_vars.clone(),
+        }
+        .clear_outdated_history_stats()
+    }
+
     /// Starts Go Domain's usage workers after the factory has stable `Arc`
     /// ownership. Index GC runs for every lease; delta and column dumps run
     /// only for a positive lease.
@@ -1164,7 +1175,95 @@ struct ClusterHistoricalStatsHandle {
     global_vars: GlobalSysvars,
 }
 
+#[derive(Clone, Copy)]
+enum OutdatedHistoryTable {
+    Meta,
+    Data,
+}
+
 impl ClusterHistoricalStatsHandle {
+    fn commit_outdated_history_delete(
+        &self,
+        catalog: &ClusterCatalog,
+        table: OutdatedHistoryTable,
+        cutoff: tidb_datatype::Time,
+        limit: usize,
+    ) -> Result<(), String> {
+        let snapshot = self.transactions.open_snapshot("default")?;
+        let read_ts = snapshot.start_ts();
+        let plan = {
+            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+            match table {
+                OutdatedHistoryTable::Meta => {
+                    tidb_exec::cluster_stats_write::plan_outdated_historical_meta_delete(
+                        &mut snapshot,
+                        catalog,
+                        cutoff,
+                        limit,
+                    )
+                }
+                OutdatedHistoryTable::Data => {
+                    tidb_exec::cluster_stats_write::plan_outdated_historical_data_delete(
+                        &mut snapshot,
+                        catalog,
+                        cutoff,
+                        limit,
+                    )
+                }
+            }
+            .map_err(|error| error.to_string())?
+        };
+        self.transactions
+            .commit_optimistic_mutations(plan.mutations, read_ts, "default")
+            .map_err(|error| error.message)
+    }
+
+    /// Pinned Go `storage.ClearOutdatedHistoryStats` including its opening
+    /// metadata count, 1,000-row metadata statements, and the single 50-row
+    /// payload statement reached by Go's immediate return inside that loop.
+    fn clear_outdated_history_stats(&self) -> Result<(), String> {
+        let configured = self
+            .global_vars
+            .get(tidb_vardef::tidb_vars::TIDB_HISTORICAL_STATS_DURATION)
+            .map_err(|error| format!("read tidb_historical_stats_duration failed: {error:?}"))?;
+        let retention_nanos = serde_json::from_value::<tidb_config::configtypes::Duration>(
+            serde_json::Value::String(configured),
+        )
+        .map(|duration| duration.0)
+        .map_err(|error| error.to_string())?;
+        let retention_nanos = retention_nanos
+            .checked_neg()
+            .ok_or_else(|| "tidb_historical_stats_duration is out of range".to_owned())?;
+        let retention = tidb_datatype::MySqlDuration::from_nanoseconds(retention_nanos, 0)
+            .map_err(|error| error.to_string())?;
+        let cutoff = tidb_exec::mysql_bootstrap::utc_now_timestamp()
+            .add_duration(retention)
+            .map_err(|error| error.to_string())?;
+        let catalog = self.catalog.load();
+        let count = {
+            let snapshot = self.transactions.open_snapshot("default")?;
+            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+            tidb_exec::cluster_stats_write::count_outdated_historical_stats(
+                &mut snapshot,
+                &catalog,
+                cutoff,
+            )
+            .map_err(|error| error.to_string())?
+        };
+        if count == 0 {
+            return Ok(());
+        }
+        for _ in 0..count.div_ceil(1_000) {
+            self.commit_outdated_history_delete(
+                &catalog,
+                OutdatedHistoryTable::Meta,
+                cutoff,
+                1_000,
+            )?;
+        }
+        self.commit_outdated_history_delete(&catalog, OutdatedHistoryTable::Data, cutoff, 50)
+    }
+
     fn table_historical_json(
         &self,
         catalog: &ClusterCatalog,

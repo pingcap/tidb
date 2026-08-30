@@ -69,8 +69,8 @@ use crate::cluster_catalog::{ClusterCatalog, MetaSnapshot};
 use crate::cluster_predicate_column::ColumnStatsTimeInfo;
 use crate::cluster_stats_load::{ClusterStatsItem, ClusterTableStats};
 use crate::mysql_system_tables::{
-    scan_system_table, scan_system_table_prefixed, HandleLayout, SystemRow, SystemTableError,
-    SystemTableView,
+    scan_system_table, scan_system_table_index_prefixed, scan_system_table_prefixed, HandleLayout,
+    SystemRow, SystemTableError, SystemTableView,
 };
 use crate::system_row_write::{
     defaults_row, delete_clustered_row, delete_row, insert_row, rewrite_rowid_row, row_id_of,
@@ -947,6 +947,86 @@ pub fn plan_historical_stats_data_write<S: MetaSnapshot>(
     }
     rows.publish_watermark(catalog, &mut plan)?;
     Ok((version, plan))
+}
+
+/// Plans one pinned Go `ClearOutdatedHistoryStats` delete statement.
+///
+/// Go deletes metadata in batches of 1,000 and payload rows in batches of 50,
+/// using `idx_create_time` for both. The caller deliberately owns the loop
+/// and transaction boundary: every invocation corresponds to one restricted
+/// SQL statement and therefore one independent autocommit transaction.
+fn plan_outdated_historical_stats_delete<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    table_name: &str,
+    cutoff: Time,
+    limit: usize,
+) -> Result<StatsWritePlan, StatsWriteError> {
+    let table = locate(catalog, table_name)?;
+    let create_time_id = column_id(table, "create_time")?;
+    let stale = read_rows_with_keys_from_index(snapshot, table, "idx_create_time")?
+        .into_iter()
+        .filter_map(|(key, values)| {
+            let Datum::Time(create_time) = values.get(&create_time_id)? else {
+                return None;
+            };
+            (create_time.compare(cutoff) != std::cmp::Ordering::Greater).then_some((key, values))
+        })
+        .collect::<Vec<_>>();
+
+    let clustered = !matches!(HandleLayout::of(table), HandleLayout::RowId);
+    let mut plan = StatsWritePlan::default();
+    for (key, values) in stale.into_iter().take(limit) {
+        if clustered {
+            plan.mutations.extend(delete_clustered_row(table, &values)?);
+        } else {
+            plan.mutations.extend(delete_row(table, &key, &values)?);
+        }
+    }
+    Ok(plan)
+}
+
+/// Plans one pinned Go 1,000-row `stats_meta_history` expiry statement.
+pub fn plan_outdated_historical_meta_delete<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    cutoff: Time,
+    limit: usize,
+) -> Result<StatsWritePlan, StatsWriteError> {
+    plan_outdated_historical_stats_delete(snapshot, catalog, "stats_meta_history", cutoff, limit)
+}
+
+/// Plans one pinned Go 50-row `stats_history` expiry statement.
+pub fn plan_outdated_historical_data_delete<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    cutoff: Time,
+    limit: usize,
+) -> Result<StatsWritePlan, StatsWriteError> {
+    plan_outdated_historical_stats_delete(snapshot, catalog, "stats_history", cutoff, limit)
+}
+
+/// Counts the metadata rows selected by pinned Go
+/// `ClearOutdatedHistoryStats`' opening `SELECT count(*)` statement.
+pub fn count_outdated_historical_stats<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    cutoff: Time,
+) -> Result<usize, StatsWriteError> {
+    let table = locate(catalog, "stats_meta_history")?;
+    let create_time_id = column_id(table, "create_time")?;
+    Ok(
+        read_rows_with_keys_from_index(snapshot, table, "idx_create_time")?
+            .into_iter()
+            .filter(|(_, values)| {
+                matches!(
+                    values.get(&create_time_id),
+                    Some(Datum::Time(create_time))
+                        if create_time.compare(cutoff) != std::cmp::Ordering::Greater
+                )
+            })
+            .count(),
+    )
 }
 
 fn signed_value(value: Option<&Datum>) -> Option<i64> {
@@ -1846,10 +1926,32 @@ fn read_rows_with_keys<S: MetaSnapshot>(
         Some(id) => scan_system_table_prefixed(snapshot, &view, &[Datum::Int(id)])?,
         None => scan_system_table(snapshot, &view)?,
     };
+    decode_rows_with_keys(table, table_id, &view, pairs)
+}
+
+/// Reads all rows in one named secondary-index order. Go's historical GC
+/// forces `idx_create_time`; using that same ordered access path is what makes
+/// each bounded delete remove the oldest rows first without a Rust-only sort.
+fn read_rows_with_keys_from_index<S: MetaSnapshot>(
+    snapshot: &mut S,
+    table: &TableInfo,
+    index_name: &str,
+) -> Result<Vec<(Vec<u8>, RowValues)>, StatsWriteError> {
+    let view = full_view(table);
+    let pairs = scan_system_table_index_prefixed(snapshot, &view, index_name, &[])?;
+    decode_rows_with_keys(table, None, &view, pairs)
+}
+
+fn decode_rows_with_keys(
+    table: &TableInfo,
+    table_id: Option<i64>,
+    view: &SystemTableView,
+    pairs: crate::cluster_catalog::MetaPairs,
+) -> Result<Vec<(Vec<u8>, RowValues)>, StatsWriteError> {
     let mut rows = Vec::new();
     for (key, value) in pairs {
         let timezone = tidb_datatype::SessionTimeZone::utc();
-        let parsed = SystemRow::parse_in_timezone(&view, &key, &value, Some(&timezone))?;
+        let parsed = SystemRow::parse_in_timezone(view, &key, &value, Some(&timezone))?;
         let mut values = RowValues::new();
         for column in table.cols().iter_deref() {
             let (id, name) = {
