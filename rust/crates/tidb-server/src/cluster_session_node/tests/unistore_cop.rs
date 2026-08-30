@@ -1799,6 +1799,161 @@ fn global_index_statistics_match_go() {
     );
 }
 
+#[test]
+fn global_statistics_and_session_bindings_match_go() {
+    assert_global_statistics_and_session_bindings_match_go(1, 111);
+}
+
+#[test]
+fn concurrent_global_statistics_and_session_bindings_match_go() {
+    assert_global_statistics_and_session_bindings_match_go(2, 112);
+}
+
+/// Pinned `globalstats.TestGlobalStatsAndSQLBinding` and its concurrency-two
+/// twin: global statistics choose the index for hash, range, and list
+/// partitions, while a matching session binding's `IGNORE INDEX` moves the
+/// same statements to table scans until the binding is dropped.
+fn assert_global_statistics_and_session_bindings_match_go(
+    merge_concurrency: u64,
+    connection_id: u64,
+) {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(connection_id))
+        .expect("session opens");
+    rows(
+        &mut session,
+        &format!("SET GLOBAL tidb_merge_partition_stats_concurrency = {merge_concurrency}"),
+    );
+    rows(&mut session, "CREATE DATABASE test_global_stats");
+    rows(&mut session, "USE test_global_stats");
+    rows(
+        &mut session,
+        "SET SESSION tidb_partition_prune_mode = 'dynamic'",
+    );
+    rows(&mut session, "SET GLOBAL tidb_enable_auto_analyze = OFF");
+    rows(
+        &mut session,
+        "SET SESSION tidb_enable_non_prepared_plan_cache = 0",
+    );
+    rows(
+        &mut session,
+        "CREATE TABLE thash(a INT, b INT, KEY(a)) PARTITION BY HASH(a) PARTITIONS 4",
+    );
+    rows(
+        &mut session,
+        "CREATE TABLE trange(a INT, b INT, KEY(a)) PARTITION BY RANGE(a) (\
+         PARTITION p0 VALUES LESS THAN (200), PARTITION p1 VALUES LESS THAN (400), \
+         PARTITION p2 VALUES LESS THAN (600), PARTITION p3 VALUES LESS THAN (800), \
+         PARTITION p4 VALUES LESS THAN (1001))",
+    );
+    rows(
+        &mut session,
+        "CREATE TABLE tlist(a INT, b INT, KEY(a)) PARTITION BY LIST(a) (\
+         PARTITION p0 VALUES IN (0,1,2,3,4,5,6,7,8,9), \
+         PARTITION p1 VALUES IN (10,11,12,13,14,15,16,17,18,19), \
+         PARTITION p2 VALUES IN (20,21,22,23,24,25,26,27,28,29), \
+         PARTITION p3 VALUES IN (30,31,32,33,34,35,36,37,38,39), \
+         PARTITION p4 VALUES IN (40,41,42,43,44,45,46,47,48,49,50))",
+    );
+
+    let mut range_values = Vec::with_capacity(1000);
+    let mut list_values = Vec::with_capacity(1000);
+    for i in 0..1000 {
+        if i < 10 {
+            range_values.push(format!("({i},{i})"));
+            list_values.push("(0,0)".to_owned());
+        } else {
+            range_values.push(format!(
+                "({},{})",
+                100 + (i * 37) % 900,
+                100 + (i * 53) % 900
+            ));
+            list_values.push(format!("({},{})", 1 + (i * 17) % 50, 1 + (i * 29) % 50));
+        }
+    }
+    let range_values = range_values.join(",");
+    rows(
+        &mut session,
+        &format!("INSERT INTO thash VALUES {range_values}"),
+    );
+    rows(
+        &mut session,
+        &format!("INSERT INTO trange VALUES {range_values}"),
+    );
+    rows(
+        &mut session,
+        &format!("INSERT INTO tlist VALUES {}", list_values.join(",")),
+    );
+    for table in ["thash", "trange", "tlist"] {
+        rows(&mut session, &format!("ANALYZE TABLE {table}"));
+    }
+    rows(
+        &mut session,
+        "SET SESSION tidb_opt_table_full_scan_cost_factor = 100",
+    );
+
+    let queries = [
+        ("thash", "a < 100"),
+        ("trange", "a < 100"),
+        ("tlist", "a < 1"),
+    ];
+    for (table, predicate) in queries {
+        let plan = displayed(rows(
+            &mut session,
+            &format!("EXPLAIN SELECT * FROM {table} WHERE {predicate}"),
+        ));
+        assert!(
+            plan.iter().any(|row| row[0].contains("IndexRangeScan")),
+            "{table} must use its index before binding: {plan:?}"
+        );
+    }
+
+    for table in ["thash", "trange", "tlist"] {
+        rows(
+            &mut session,
+            &format!(
+                "CREATE SESSION BINDING FOR SELECT * FROM {table} WHERE a < 100 \
+                 USING SELECT * FROM {table} IGNORE INDEX(a) WHERE a < 100"
+            ),
+        );
+    }
+    for (table, predicate) in queries {
+        let plan = displayed(rows(
+            &mut session,
+            &format!("EXPLAIN SELECT * FROM {table} WHERE {predicate}"),
+        ));
+        assert!(
+            plan.iter().any(|row| row[0].contains("TableFullScan")),
+            "{table} must honor the binding's ignored index: {plan:?}"
+        );
+    }
+
+    for table in ["thash", "trange", "tlist"] {
+        rows(
+            &mut session,
+            &format!("DROP SESSION BINDING FOR SELECT * FROM {table} WHERE a < 100"),
+        );
+    }
+    for (table, predicate) in queries {
+        let plan = displayed(rows(
+            &mut session,
+            &format!("EXPLAIN SELECT * FROM {table} WHERE {predicate}"),
+        ));
+        assert!(
+            plan.iter().any(|row| row[0].contains("IndexRangeScan")),
+            "{table} must return to its index after dropping the binding: {plan:?}"
+        );
+    }
+    rows(&mut session, "SET GLOBAL tidb_enable_auto_analyze = ON");
+    rows(
+        &mut session,
+        "SET SESSION tidb_opt_table_full_scan_cost_factor = 1",
+    );
+}
+
 /// Pinned `globalstats.TestGlobalStatsData`: partition and global histograms
 /// retain Go's exact cumulative bucket counts, repeats, bounds, and zeroed
 /// merged bucket NDV for both the column and its index.
