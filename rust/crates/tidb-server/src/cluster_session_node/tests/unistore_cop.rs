@@ -308,6 +308,217 @@ fn stats_gc_matches_go_item_and_dropped_table_phases() {
     );
 }
 
+/// Pinned storage `TestGCPartition`, including its retained logical
+/// meta-only row after both physical partitions finish two-phase GC.
+#[test]
+fn stats_gc_matches_go_partition_phases() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(80))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET SESSION tidb_analyze_version = 2");
+    rows(
+        &mut session,
+        "SET SESSION tidb_partition_prune_mode = 'static'",
+    );
+    rows(
+        &mut session,
+        "CREATE TABLE stats_gc_partition (a BIGINT, b BIGINT, INDEX idx(a, b)) \
+         PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (3), \
+         PARTITION p1 VALUES LESS THAN (6))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO stats_gc_partition VALUES (1,2),(2,3),(3,4),(4,5),(5,6)",
+    );
+    rows(&mut session, "ANALYZE TABLE stats_gc_partition WITH 0 TOPN");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT count(*) FROM mysql.stats_histograms",
+        )),
+        vec![vec!["6".to_owned()]]
+    );
+
+    rows(
+        &mut session,
+        "ALTER TABLE stats_gc_partition DROP INDEX idx",
+    );
+    stack
+        .factory
+        .gc_stats(Duration::ZERO, Duration::ZERO)
+        .expect("partition index statistics GC succeeds");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT count(*) FROM mysql.stats_histograms",
+        )),
+        vec![vec!["4".to_owned()]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT count(*) FROM mysql.stats_buckets",
+        )),
+        vec![vec!["10".to_owned()]]
+    );
+
+    rows(&mut session, "ALTER TABLE stats_gc_partition DROP COLUMN b");
+    stack
+        .factory
+        .gc_stats(Duration::ZERO, Duration::ZERO)
+        .expect("partition column statistics GC succeeds");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT count(*) FROM mysql.stats_histograms",
+        )),
+        vec![vec!["2".to_owned()]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT count(*) FROM mysql.stats_buckets",
+        )),
+        vec![vec!["5".to_owned()]]
+    );
+
+    rows(&mut session, "DROP TABLE stats_gc_partition");
+    stack
+        .factory
+        .gc_stats(Duration::ZERO, Duration::ZERO)
+        .expect("first partition-table GC phase succeeds");
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT count(*) FROM mysql.stats_meta")),
+        vec![vec!["3".to_owned()]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT count(*) FROM mysql.stats_histograms",
+        )),
+        vec![vec!["0".to_owned()]]
+    );
+
+    std::thread::sleep(Duration::from_millis(2));
+    stack
+        .factory
+        .gc_stats(Duration::ZERO, Duration::ZERO)
+        .expect("second partition-table GC phase succeeds");
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT count(*) FROM mysql.stats_meta")),
+        vec![vec!["1".to_owned()]]
+    );
+}
+
+/// Pinned storage `TestGCColumnStatsUsage`: a dropped column removes only its
+/// usage row, then dropped-table GC removes every remaining usage row.
+#[test]
+fn stats_gc_matches_go_column_usage_cleanup() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(81))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "CREATE TABLE stats_gc_usage (a INT, b INT, c INT)",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO stats_gc_usage VALUES (1,1,1),(2,2,2),(3,3,3)",
+    );
+    rows(&mut session, "ANALYZE TABLE stats_gc_usage");
+    let table_id = stack
+        .factory
+        .catalog
+        .load()
+        .find_table("test", "stats_gc_usage")
+        .expect("table is in the live catalog")
+        .1
+        .id;
+    rows(
+        &mut session,
+        &format!(
+            "INSERT INTO mysql.column_stats_usage(table_id,column_id) VALUES \
+             ({table_id},1),({table_id},2),({table_id},3)"
+        ),
+    );
+
+    rows(&mut session, "ALTER TABLE stats_gc_usage DROP COLUMN a");
+    stack
+        .factory
+        .gc_stats(Duration::ZERO, Duration::ZERO)
+        .expect("dropped-column usage GC succeeds");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT count(*) FROM mysql.column_stats_usage",
+        )),
+        vec![vec!["2".to_owned()]]
+    );
+
+    rows(&mut session, "DROP TABLE stats_gc_usage");
+    stack
+        .factory
+        .gc_stats(Duration::ZERO, Duration::ZERO)
+        .expect("dropped-table usage GC succeeds");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT count(*) FROM mysql.column_stats_usage",
+        )),
+        vec![vec!["0".to_owned()]]
+    );
+}
+
+/// Pinned storage `TestExtremCaseOfGC`: an existing table with an empty
+/// histogram set must keep its `stats_meta` row.
+#[test]
+fn stats_gc_keeps_meta_for_existing_table_without_histograms() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(82))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "CREATE TABLE stats_gc_empty_hist (a INT, b INT)",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO stats_gc_empty_hist VALUES (1,2),(3,4)",
+    );
+    rows(&mut session, "ANALYZE TABLE stats_gc_empty_hist");
+    let table_id = stack
+        .factory
+        .catalog
+        .load()
+        .find_table("test", "stats_gc_empty_hist")
+        .expect("table is in the live catalog")
+        .1
+        .id;
+    rows(
+        &mut session,
+        &format!("DELETE FROM mysql.stats_histograms WHERE table_id = {table_id}"),
+    );
+    stack
+        .factory
+        .gc_stats(Duration::ZERO, Duration::ZERO)
+        .expect("empty-histogram GC succeeds");
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT count(*) FROM mysql.stats_meta")),
+        vec![vec!["1".to_owned()]]
+    );
+}
+
 /// Pinned `TestDumpHistoricalStatsFallback`: after ANALYZE ran with history
 /// disabled, historical dump uses the latest statistics and names that table
 /// in the fallback list once the feature is enabled.
