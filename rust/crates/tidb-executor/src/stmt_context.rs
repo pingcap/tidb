@@ -569,6 +569,8 @@ pub struct StmtContext {
     opt_index_prune_threshold: i32,
     /// Go `SessionVars.AlwaysKeepJoinKey`.
     always_keep_join_key: bool,
+    /// Go `SessionVars.EnableUnsafeSubstitute`.
+    enable_unsafe_substitute: bool,
     /// Go `SessionVars.GetMaxExecutionTime()`, in milliseconds.
     max_execution_time_ms: u64,
     /// Go `StmtCtx.IsSyncStatsFailed`.
@@ -808,6 +810,7 @@ impl StmtContext {
             stats_load_pseudo_timeout: tidb_vardef::defaults::DEF_TIDB_STATS_LOAD_PSEUDO_TIMEOUT,
             opt_index_prune_threshold: 20,
             always_keep_join_key: tidb_vardef::defaults::DEF_OPT_ALWAYS_KEEP_JOIN_KEY,
+            enable_unsafe_substitute: false,
             max_execution_time_ms: 0,
             sync_stats_failed: Arc::default(),
             operator_num: Arc::default(),
@@ -1078,6 +1081,13 @@ impl StmtContext {
         self
     }
 
+    /// Sets `@@tidb_enable_unsafe_substitute` for this statement.
+    #[must_use]
+    pub const fn with_enable_unsafe_substitute(mut self, enable: bool) -> Self {
+        self.enable_unsafe_substitute = enable;
+        self
+    }
+
     /// Attaches the AES mode selected by this session for the statement.
     #[must_use]
     pub fn with_block_encryption_mode(mut self, mode: tidb_expr::BlockEncryptionMode) -> Self {
@@ -1142,6 +1152,11 @@ impl StmtContext {
     /// Returns `@@tidb_opt_always_keep_join_key`.
     pub const fn always_keep_join_key(&self) -> bool {
         self.always_keep_join_key
+    }
+
+    /// Returns `@@tidb_enable_unsafe_substitute`.
+    pub const fn enable_unsafe_substitute(&self) -> bool {
+        self.enable_unsafe_substitute
     }
 
     /// Go caps synchronous statistics loading by `max_execution_time` when

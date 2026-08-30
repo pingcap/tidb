@@ -156,8 +156,11 @@
 //!   `GetOptFlag`'s "return 0", which cannot fire when nothing sets it.
 //! * `partitionedTable []table.PartitionedTable`, `hintProcessor`,
 //!   `renamingViewName`, `nonViableFTSMatch`, `predicateMatchSeen`,
-//!   `allowBuildCastArray` — no reader on the SELECT spine; each belongs to a
-//!   boundary above.
+//!   — no reader on the SELECT spine; each belongs to a boundary above.
+//! * `allowBuildCastArray` has one SELECT-side reader while resolving virtual
+//!   generated expressions. ARRAY cast construction remains an expression
+//!   dependency; ordinary generated expressions use the same rewrite path as
+//!   Go, while an ARRAY target is still rejected by `tidb-expr`.
 //! * `outerCTEs []*cteInfo` becomes [`OuterCte`], which 6d completed: the
 //!   seed and recursive plans, the storage ID, the shared `CTEClass` and every
 //!   recursion flag are all there now. The two fields that stay narrowed
@@ -1442,6 +1445,34 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             });
             schema_columns.push(column);
             names.push(name);
+        }
+
+        // Go rewrites every virtual generated expression after the complete
+        // DataSource schema exists, in the reading statement's expression
+        // context. Keeping the AST in catalog metadata preserves that same
+        // per-statement binding instead of reusing the DDL-time expression.
+        let generated_expressions = table
+            .columns
+            .iter()
+            .enumerate()
+            .filter_map(|(offset, column)| {
+                if !column.is_virtual_generated {
+                    return None;
+                }
+                column
+                    .generated_expr
+                    .as_ref()
+                    .map(|expression| (offset, expression.clone()))
+            })
+            .collect::<Vec<_>>();
+        if !generated_expressions.is_empty() {
+            let generated_schema = Schema::new(schema_columns.clone());
+            let no_markers = BTreeMap::new();
+            for (offset, expression) in generated_expressions {
+                let expression =
+                    self.rewrite_scalar(&expression, &generated_schema, &names, &no_markers)?;
+                schema_columns[offset].virtual_expr = Some(Box::new(expression));
+            }
         }
 
         // `:5221` "We append an extra handle column to the schema when the

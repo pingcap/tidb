@@ -85,6 +85,7 @@ fn test_context<'a>(allocator: &'a PlanIdAllocator) -> RuleContext<'a> {
         partition_pruning: None,
         opt_index_prune_threshold: 20,
         always_keep_join_key: true,
+        enable_unsafe_substitute: false,
         join_reorder_threshold: 0,
         advanced_join_reorder: true,
         cartesian_join_order_threshold: 0.0,

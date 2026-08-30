@@ -34,6 +34,8 @@ use super::{
 };
 use crate::expression_rewriter::ColumnIdAllocator;
 use crate::logical::rule::flags;
+use crate::logical::rule::logical_optimize;
+use crate::logical::rule_tests::test_context;
 use crate::logical::LogicalPlan;
 use crate::plan_base::PlanIdAllocator;
 
@@ -73,6 +75,7 @@ fn column(offset: usize, name: &str, primary: bool) -> SourceColumn {
         is_public: true,
         is_hidden: false,
         is_virtual_generated: false,
+        generated_expr: None,
     }
 }
 
@@ -504,6 +507,46 @@ fn test_generated_column_index_sets_the_gc_substitute_flag() {
     // `logical_plan_builder.go:5102`: only an INDEX on a virtual generated
     // column enables the substitution.
     assert_ne!(builder.opt_flag & flags::GC_SUBSTITUTE, 0);
+}
+
+#[test]
+fn indexed_virtual_generated_expression_is_substituted_by_the_ordinary_rule() {
+    let mut harness = Harness::new();
+    let generated_select = parse_select("SELECT a + 1 FROM t");
+    let tidb_ast::SelectField::Expr {
+        expr: generated_expr,
+        ..
+    } = &generated_select.fields.fields()[0]
+    else {
+        panic!("expected generated expression")
+    };
+    let generated = &mut harness.tables_mut()[0].columns[1];
+    generated.is_virtual_generated = true;
+    generated.generated_expr = Some(generated_expr.clone());
+
+    let mut builder = harness.builder();
+    let (plan, flags) = builder
+        .build_select(&parse_select("SELECT a + 1 FROM t WHERE a + 1 = 3"))
+        .expect("the generated-column query builds");
+    assert_ne!(flags & flags::GC_SUBSTITUTE, 0);
+
+    let optimized = logical_optimize(&test_context(&harness.plan_ids), flags::GC_SUBSTITUTE, plan)
+        .expect("generated-column substitution succeeds")
+        .plan;
+    let mut substituted = false;
+    optimized.walk_preorder(&mut |plan| {
+        let LogicalPlan::Selection(selection) = plan else {
+            return;
+        };
+        let Expression::ScalarFunction(comparison) = &selection.conditions[0] else {
+            return;
+        };
+        substituted = comparison
+            .args
+            .iter()
+            .any(|argument| matches!(argument, Expression::Column(column) if column.id == 2));
+    });
+    assert!(substituted, "a + 1 must be replaced by generated column b");
 }
 
 #[test]

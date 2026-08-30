@@ -1314,6 +1314,7 @@ fn optimize_built_logical(
         partition_pruning: Some(&partition_pruning),
         opt_index_prune_threshold: ctx.opt_index_prune_threshold(),
         always_keep_join_key: ctx.always_keep_join_key(),
+        enable_unsafe_substitute: ctx.enable_unsafe_substitute(),
         join_reorder_threshold: ctx.join_reorder_threshold(),
         advanced_join_reorder: ctx.advanced_join_reorder(),
         cartesian_join_order_threshold: ctx.cartesian_join_order_threshold(),
