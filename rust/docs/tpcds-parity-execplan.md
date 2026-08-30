@@ -26,6 +26,7 @@ The Go source of truth in this checkout is `pkg/planner/core/casetest/tpcds/tpcd
 - [x] (2026-08-28 03:40Z) Preserved the established executor path for legal scalar/correlated subquery shapes that the shared planner cannot lower yet: the gate now uses the original AST shape, declined receipts fall back without 1105, multi-table subquery leaves remain full-width, and ordinary fallback joins use hash lowering. Added a multi-table correlated aggregate execution regression test; the Q6 plan and result now execute successfully on the rebuilt release server.
 - [x] (2026-08-28 04:00Z) Rebased the focused fix onto remote `hparser-integration` tip `0dedc2fe0d8c6b5c0c19f40ee36f18dd3edb9451`. A follow-up full matrix was intentionally stopped at Q62 to honor the request to pause; the earlier complete 42-query receipt remains the authoritative matrix snapshot.
 - [x] (2026-08-30 09:00Z) Re-ran the 42-query one-concurrency smoke matrix on the newer remote tip `6472010efa` after the shared planner alignment advanced. This is recorded separately in `rust/testport/receipts/tpcds_latest_647_20260830.md`: 6 Rust plan errors, 13 Rust result errors, one result-hash mismatch, and no completion claim. The earlier 42/42 receipt remains scoped to its older revision.
+- [x] (2026-08-30 10:30Z) Rebased the clean replay worktree onto remote tip `ec47a40d2b` and reran the same 42-query, one-client, one-run matrix with the nightly Go endpoint and Rust release endpoint sharing the 25-table fixture. The new receipt `rust/testport/receipts/tpcds_latest_ec47_20260830.md` records 6 Rust plan errors, 12 Rust result errors, Q41's 0-versus-100-row mismatch, 29/42 equal result hashes, 0/42 normalized plan hashes, and the current one-run p50 medians. The Q3 error from the previous tip is resolved by the remote outer-join change; no production code was changed in this checkpoint.
 - [ ] Complete the Ready verification profile, including `make lint`, before claiming the entire goal complete.
 
 ## Surprises & Discoveries
@@ -76,11 +77,12 @@ The Go source of truth in this checkout is `pkg/planner/core/casetest/tpcds/tpcd
 
 The full minimum-fixture matrix covers all 42 generated statements in both requested source and TiKV-only control modes. The complete snapshot records result correctness for this fixture (42/42 hashes equal in each mode), Q6 with no EXPLAIN error, and Q3, Q43, Q48, Q52, and Q96 focused regression coverage. The follow-up on remote tip `0dedc2fe0d8c6b5c0c19f40ee36f18dd3edb9451` adds a multi-table correlated aggregate execution regression and keeps Q6 executable after the shared-planner alignment changes; its intentionally interrupted matrix is not a replacement for the complete snapshot. Plan parity remains incomplete (0/42 source, 11/42 control) because the Rust tree still lacks TiFlash/MPP execution; the latest absolute Rust latency is also higher (4.42x/1.38x median p50 versus Go). The exact Q64 Go unit-test MPP oracle is likewise still unmet. The plan therefore remains active: the next implementation unit must be an explicitly scoped MPP package boundary or another measured cost/executor correction, followed by the Ready profile.
 
-The newer remote tip `6472010efa` has a separate smoke receipt. It is intentionally
-not folded into the older acceptance snapshot: the shared planner changes now
-expose subquery, physical-column, and retained-lookup errors in 13 statements,
-plus one result mismatch. Those failures must be fixed and revalidated against
-the Go source packages before any completion claim.
+The newer remote tips have separate smoke receipts. They are intentionally not
+folded into the older acceptance snapshot: `6472010efa` exposed subquery,
+physical-column, retained-lookup, and index-join errors in 13 statements, while
+`ec47a40d2b` removes Q3 but still has 12 result errors plus one result mismatch.
+Those failures must be fixed and revalidated against the Go source packages
+before any completion claim.
 
 ## Context and Orientation
 
