@@ -2819,6 +2819,7 @@ impl ClusterServerSession {
                                 .as_ref()
                                 .expect("autocommit write created its transaction handoff"),
                         ),
+                        prelock_keys.to_vec(),
                         Arc::<str>::from(resource_group),
                     )
                 }
@@ -4866,6 +4867,15 @@ impl QuerySession for ClusterServerSession {
         // (LockKind::Update, default wait, no ORDER BY/LIMIT) draw that line.
         let prelock_keys = match self.explicit.as_ref() {
             Some(transaction) if transaction.is_pessimistic() => {
+                if let Some(bound) = bound_template.as_ref() {
+                    self.session.statement_prelock_keys(bound, &[])
+                } else if let Some(template) = effective {
+                    self.session.statement_prelock_keys(template, &params)
+                } else {
+                    Vec::new()
+                }
+            }
+            None if shape == StatementReadShape::AutocommitWrite => {
                 if let Some(bound) = bound_template.as_ref() {
                     self.session.statement_prelock_keys(bound, &[])
                 } else if let Some(template) = effective {

@@ -202,6 +202,42 @@ gap: prepared `index_updates + delete_inserts` is about 850 txn/s versus about
 interaction; changing pessimistic transaction semantics without a matching
 retry/lock implementation would be unsafe. Receipt: `/tmp/tc8228803-new.MMk3QB/sysbench-r1-latest64aaf`.
 
+### Autocommit prepared point-write follow-up (2026-08-31)
+
+The prepared autocommit DML path was changed to open a pessimistic statement
+transaction for point `UPDATE`/`DELETE` and to acquire the record key with
+return-values before the first source read. This reuses the existing
+lock-value cache (the text protocol already used this fold) and keeps the
+prelock key classifier fail-closed for non-point writes. The change is pushed
+as `db26c1b` on `hparser-integration`; `cargo check -p tidb-server --bin
+tidb-server` passed, and the release binary was linked on the TiUP Pod NVMe
+volume with SHA-256
+`4ad25505753382a06c0b7fb20b6a8e0c2f3d5f7d54d77c1af75a7a1dbb2a81da`.
+
+All three Rust listeners ran that binary. A serial ten-subtype Sysbench sweep
+used one 10-thread sample per engine, reused the restored data, used isolated
+empty tables for insert/bulk-insert, and completed in 212 seconds (under the
+300-second budget):
+
+| Subtype | Go QPS | Rust QPS | Rust/Go | Gate |
+|---|---:|---:|---:|---|
+| `oltp_read_write.lua` | 567.82 | 221.93 | 0.3908 | FAIL |
+| `oltp_read_only.lua` | 758.68 | 832.63 | 1.0975 | PASS |
+| `oltp_write_only.lua` | 2246.97 | 604.51 | 0.2690 | FAIL |
+| `oltp_point_select.lua` | 18837.18 | 23197.50 | 1.2315 | PASS |
+| `select_random_points.lua` | 8132.71 | 9266.78 | 1.1394 | PASS |
+| `select_random_ranges.lua` | 8191.45 | 8421.26 | 1.0281 | PASS |
+| `oltp_insert.lua` (isolated empty tables) | 8185.80 | 7554.97 | 0.9229 | PASS |
+| `oltp_update_index.lua` | 4588.04 | 3481.30 | 0.7588 | FAIL |
+| `oltp_update_non_index.lua` | 6444.14 | 3676.04 | 0.5704 | FAIL |
+| `bulk_insert.lua` (isolated empty tables) | 284590.44 | 192455.32 | 0.6763 | FAIL |
+
+The prelock fold improved the focused one-thread `oltp_update_index` sample
+from 359 to 404 events/s and `oltp_update_non_index` from 361 to 384 events/s
+without errors. The 10-thread gate remains below 0.80 for the write-heavy
+subtypes, so round 1 is still not accepted. Receipt:
+`/tmp/tc8228803-new.MMk3QB/sysbench-r1-autoprelock`.
+
 ## Acceptance status
 
 - Round 1 (0.80): **not passed** because Sysbench and BenchmarkSQL still fail;
