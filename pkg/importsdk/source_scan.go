@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
+	tablefilter "github.com/pingcap/tidb/pkg/util/table-filter"
 )
 
 const maxSourceScanErrorSamples = 5
@@ -75,21 +76,28 @@ func (s *fileScanner) ScanSource(ctx context.Context) (*SourceScanResult, error)
 		result.Inventory.MappedObjectCount += table.ObjectCount
 		result.Inventory.TotalObjectBytes += table.TotalObjectSize
 	}
-	if result.Inventory.MappedObjectCount == 0 {
-		return nil, &SourceScanError{Code: SourceScanErrorNoImportableFiles}
-	}
-
 	if !detection.matched {
-		result.Inventory.ImportableObjectCount = result.Inventory.MappedObjectCount
+		importableCount, err := s.validateDefaultCoverage(report, tables)
+		if err != nil {
+			return nil, err
+		}
+		result.Inventory.ImportableObjectCount = importableCount
 		result.Inventory.Digest = digestTableObjects(tables)
+		if result.Inventory.MappedObjectCount == 0 {
+			return nil, &SourceScanError{Code: SourceScanErrorNoImportableFiles}
+		}
 		return result, nil
 	}
 
 	result.Layout = SourceLayoutAuroraRDSSnapshot
 	result.Evidence.ExportRoot = detection.exportRoot
 	result.Evidence.PathForm = detection.pathForm
-	result.Inventory.ImportableObjectCount = int64(len(detection.files))
 	result.Inventory.TotalObjectBytes = 0
+	configuredFilter, err := tablefilter.Parse(s.config.filter)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	configuredFilter = tablefilter.CaseInsensitive(configuredFilter)
 
 	mappedPaths := make(map[string]struct{}, len(detection.files))
 	for _, table := range tables {
@@ -102,9 +110,11 @@ func (s *fileScanner) ScanSource(ctx context.Context) (*SourceScanResult, error)
 	var objectBytes int64
 	rawSizes := make(map[string]int64, len(detection.files))
 	for _, rawFile := range report.Files {
-		if _, ok := detection.files[rawFile.Path]; !ok {
+		parsed, ok := detection.files[rawFile.Path]
+		if !ok || !configuredFilter.MatchTable(parsed.Schema, parsed.Table) {
 			continue
 		}
+		result.Inventory.ImportableObjectCount++
 		rawSizes[rawFile.Path] = rawFile.Size
 		objectBytes += rawFile.Size
 		if _, ok := mappedPaths[rawFile.Path]; !ok {
@@ -118,11 +128,77 @@ func (s *fileScanner) ScanSource(ctx context.Context) (*SourceScanResult, error)
 			nil,
 		)
 	}
+	if result.Inventory.ImportableObjectCount == 0 {
+		return nil, &SourceScanError{Code: SourceScanErrorNoImportableFiles}
+	}
 
-	result.Inventory.MappedObjectCount = int64(len(detection.files))
+	result.Inventory.MappedObjectCount = result.Inventory.ImportableObjectCount
 	result.Inventory.TotalObjectBytes = objectBytes
 	result.Inventory.Digest = digestRawObjects(rawSizes)
 	return result, nil
+}
+
+func (s *fileScanner) validateDefaultCoverage(
+	report *mydump.ScanReport,
+	tables []*TableMeta,
+) (int64, error) {
+	// Explicit routers intentionally define what is importable. Preserve their
+	// established behavior instead of second-guessing them with default rules.
+	if report == nil || len(s.config.fileRouteRules) > 0 {
+		var count int64
+		for _, table := range tables {
+			count += table.ObjectCount
+		}
+		return count, nil
+	}
+
+	router, err := mydump.NewDefaultFileRouter(s.config.logger)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	configuredFilter, err := tablefilter.Parse(s.config.filter)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	configuredFilter = tablefilter.CaseInsensitive(configuredFilter)
+
+	mapped := make(map[string]struct{})
+	for _, table := range tables {
+		for _, file := range table.DataFiles {
+			mapped[file.Path] = struct{}{}
+		}
+	}
+
+	var importableCount int64
+	unmapped := make([]string, 0)
+	for _, raw := range report.Files {
+		routed, routeErr := router.Route(filepath.ToSlash(raw.Path))
+		if routeErr != nil {
+			return 0, newSourceScanError(SourceScanErrorUnsupportedPath, []string{raw.Path}, routeErr)
+		}
+		if routed == nil {
+			if isDataObject(raw.Path) {
+				unmapped = append(unmapped, raw.Path)
+			}
+			continue
+		}
+		if routed.Type != mydump.SourceTypeSQL &&
+			routed.Type != mydump.SourceTypeCSV &&
+			routed.Type != mydump.SourceTypeParquet {
+			continue
+		}
+		if !configuredFilter.MatchTable(routed.Schema, routed.Name) {
+			continue
+		}
+		importableCount++
+		if _, ok := mapped[raw.Path]; !ok {
+			unmapped = append(unmapped, raw.Path)
+		}
+	}
+	if len(unmapped) > 0 {
+		return 0, newSourceScanError(SourceScanErrorUnsupportedPath, unmapped, nil)
+	}
+	return importableCount, nil
 }
 
 func (s *fileScanner) detectAuroraSource(report *mydump.ScanReport) (*auroraSourceDetection, error) {
@@ -213,6 +289,16 @@ func isNonParquetDataObject(path string) bool {
 		return false
 	}
 	return strings.HasSuffix(name, ".sql") || strings.HasSuffix(name, ".csv")
+}
+
+func isDataObject(path string) bool {
+	name := strings.ToLower(filepath.Base(path))
+	if compression := mydump.ParseCompressionOnFileExtension(name); compression != mydump.CompressionNone {
+		name = strings.TrimSuffix(name, filepath.Ext(name))
+	}
+	return strings.HasSuffix(name, ".sql") ||
+		strings.HasSuffix(name, ".csv") ||
+		strings.HasSuffix(name, ".parquet")
 }
 
 func newSourceScanError(code SourceScanErrorCode, samples []string, cause error) *SourceScanError {

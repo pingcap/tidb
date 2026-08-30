@@ -20,7 +20,24 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/util/filter"
 )
+
+type auroraSnapshotRouter struct{}
+
+func (auroraSnapshotRouter) Route(path string) (*RouteResult, error) {
+	parsed, matched, err := ParseAuroraSnapshotFilePath(path)
+	if err != nil || !matched {
+		// SourceScanner performs source-wide validation and returns its stable,
+		// machine-readable ambiguity/unsupported-path errors. Do not make loader
+		// construction fail before that validation can run.
+		return nil, nil
+	}
+	return &RouteResult{
+		Table: filter.Table{Schema: parsed.Schema, Name: parsed.Table},
+		Type:  SourceTypeParquet,
+	}, nil
+}
 
 // AuroraSnapshotFilePattern matches the table layout documented for Amazon
 // Aurora and RDS snapshot exports. The source path may point at the export-task
@@ -36,6 +53,9 @@ import (
 const AuroraSnapshotFilePattern = `(?i)^/?((?:[^/]+/)*)([^/]+)/([^/.]+)\.([^/]+)/((?:[^/]+/)*)([^/]+\.parquet)$`
 
 var auroraSnapshotFileRegexp = regexp.MustCompile(AuroraSnapshotFilePattern)
+var genericParquetLeafRegexp = regexp.MustCompile(
+	`(?i)^[^/.]+\..+(?:\.[0-9]+)?(?:\.(?:snappy|gzip|gz|zstd|zst))?\.parquet$`,
+)
 
 // ErrAmbiguousAuroraSnapshotPath indicates that more than one directory
 // component could be interpreted as the schema.table base directory.
@@ -92,6 +112,14 @@ func ParseAuroraSnapshotFilePath(path string) (*AuroraSnapshotFilePath, bool, er
 	matches := auroraSnapshotFileRegexp.FindStringSubmatch(normalizedPath)
 	if len(matches) == 0 {
 		return nil, false, nil
+	}
+	// A direct-layout path whose leaf is also a complete generic
+	// schema.table parquet name has two valid interpretations. Do not let an
+	// unrelated dotted ancestor silently win merely because the Aurora router
+	// runs first (for example backup/v1.0/db1.t1.0000.parquet).
+	if matches[5] == "" && genericParquetLeafRegexp.MatchString(matches[6]) &&
+		!strings.HasPrefix(strings.ToLower(matches[6]), "part-") {
+		return nil, true, ErrAmbiguousAuroraSnapshotPath
 	}
 
 	unescape := func(value string) (string, error) {

@@ -257,6 +257,10 @@ type LoaderConfig struct {
 	// If it's true, the default file routing rules will be appended to the FileRouters.
 	// a little confusing, but it's true only when FileRouters is empty.
 	DefaultFileRules bool
+	// EnableAuroraSnapshotAutoRoute enables the Aurora/RDS snapshot-export
+	// structural router. It is intentionally opt-in so existing Lightning and
+	// Dumpling sources keep the default nested-path routing semantics.
+	EnableAuroraSnapshotAutoRoute bool
 }
 
 // NewLoaderCfg creates loader config from lightning config.
@@ -376,6 +380,12 @@ func NewLoaderWithStore(ctx context.Context, cfg LoaderConfig,
 	fileRouter, err := NewFileRouter(fileRouteRules, log.Wrap(logutil.Logger(ctx)))
 	if err != nil {
 		return nil, common.ErrInvalidConfig.Wrap(err).GenWithStack("parse file routing rule failed")
+	}
+	if cfg.EnableAuroraSnapshotAutoRoute && cfg.DefaultFileRules {
+		// The structural router must run before the generic leaf-name rules.
+		// Unlike the old regexp rule it validates the whole path and rejects
+		// multiple schema.table directory candidates.
+		fileRouter = chainRouters{auroraSnapshotRouter{}, fileRouter}
 	}
 
 	mdl := &MDLoader{

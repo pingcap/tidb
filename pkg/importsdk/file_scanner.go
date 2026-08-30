@@ -77,12 +77,13 @@ func NewFileScanner(ctx context.Context, sourcePath string, db *sql.DB, cfg *SDK
 	}
 
 	ldrCfg := mydump.LoaderConfig{
-		SourceURL:        sourcePath,
-		Filter:           cfg.filter,
-		FileRouters:      cfg.fileRouteRules,
-		DefaultFileRules: len(cfg.fileRouteRules) == 0,
-		CharacterSet:     cfg.charset,
-		Routes:           cfg.routes,
+		SourceURL:                     sourcePath,
+		Filter:                        cfg.filter,
+		FileRouters:                   cfg.fileRouteRules,
+		DefaultFileRules:              len(cfg.fileRouteRules) == 0,
+		CharacterSet:                  cfg.charset,
+		Routes:                        cfg.routes,
+		EnableAuroraSnapshotAutoRoute: len(cfg.fileRouteRules) == 0,
 	}
 
 	var loaderOptions []mydump.MDLoaderSetupOption

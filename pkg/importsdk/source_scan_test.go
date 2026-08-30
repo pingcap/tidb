@@ -116,6 +116,21 @@ func TestScanAuroraSnapshotRejectsNonParquetData(t *testing.T) {
 	require.Equal(t, []string{"db.other.0001.csv.gz"}, scanErr.Samples)
 }
 
+func TestScanAuroraSnapshotRespectsTableFilter(t *testing.T) {
+	root := t.TempDir()
+	writeSourceObject(t, root, "db/db.users/1/part-users.parquet", "a")
+	writeSourceObject(t, root, "db/db.orders/1/part-orders.parquet", "bb")
+
+	result, err := newTestFileScanner(t, root, WithFilter([]string{"db.users"})).ScanSource(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, SourceLayoutAuroraRDSSnapshot, result.Layout)
+	require.Equal(t, int64(1), result.Inventory.ImportableObjectCount)
+	require.Equal(t, int64(1), result.Inventory.MappedObjectCount)
+	require.Equal(t, int64(1), result.Inventory.TotalObjectBytes)
+	require.Len(t, result.Tables, 1)
+	require.Equal(t, "users", result.Tables[0].Table)
+}
+
 func TestScanAuroraSnapshotRejectsMultipleExportRoots(t *testing.T) {
 	root := t.TempDir()
 	writeSourceObject(t, root, "export-1/db/db.users/1/part-a.parquet", "a")
@@ -144,6 +159,16 @@ func TestScanAuroraSnapshotRejectsAmbiguousLayout(t *testing.T) {
 	require.ErrorAs(t, err, &scanErr)
 	require.Equal(t, SourceScanErrorAmbiguousLayout, scanErr.Code)
 	require.Equal(t, int64(1), scanErr.Count)
+}
+
+func TestScanAuroraSnapshotRejectsGenericLeafAmbiguity(t *testing.T) {
+	root := t.TempDir()
+	writeSourceObject(t, root, "backup/v1.0/db1.t1.0000.parquet", "a")
+
+	_, err := newTestFileScanner(t, root).ScanSource(context.Background())
+	var scanErr *SourceScanError
+	require.ErrorAs(t, err, &scanErr)
+	require.Equal(t, SourceScanErrorAmbiguousLayout, scanErr.Code)
 }
 
 func TestScanAuroraSnapshotRejectsIncompleteScan(t *testing.T) {
@@ -189,6 +214,18 @@ func TestScanSourcePreservesDefaultLayout(t *testing.T) {
 	require.Len(t, result.Tables, 1)
 	require.Equal(t, "db", result.Tables[0].Database)
 	require.Equal(t, "table", result.Tables[0].Table)
+}
+
+func TestScanSourceRejectsUnmappedDefaultDataObject(t *testing.T) {
+	root := t.TempDir()
+	writeSourceObject(t, root, "db.table.0001.csv", "1,2\n")
+	writeSourceObject(t, root, "unknown.csv", "3,4\n")
+
+	_, err := newTestFileScanner(t, root).ScanSource(context.Background())
+	var scanErr *SourceScanError
+	require.ErrorAs(t, err, &scanErr)
+	require.Equal(t, SourceScanErrorUnsupportedPath, scanErr.Code)
+	require.Equal(t, []string{"unknown.csv"}, scanErr.Samples)
 }
 
 func TestScanSourcePreservesExplicitFileRouter(t *testing.T) {

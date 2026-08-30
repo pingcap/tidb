@@ -94,4 +94,11 @@ func TestParseAuroraSnapshotFilePath(t *testing.T) {
 	require.ErrorIs(t, err, ErrAmbiguousAuroraSnapshotPath)
 	require.True(t, matched)
 	require.Nil(t, result)
+
+	result, matched, err = ParseAuroraSnapshotFilePath(
+		"backup/v1.0/db1.t1.0000.parquet",
+	)
+	require.ErrorIs(t, err, ErrAmbiguousAuroraSnapshotPath)
+	require.True(t, matched)
+	require.Nil(t, result)
 }
