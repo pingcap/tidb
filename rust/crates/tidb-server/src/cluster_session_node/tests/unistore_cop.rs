@@ -954,6 +954,74 @@ fn partition_analyze_show_surfaces_match_global_stats_visibility() {
     check("gs_dynamic", "dynamic", 3, 1, 6, 2, 6, 2, 3, 1);
 }
 
+/// Pinned `globalstats.TestGlobalStatsData`: partition and global histograms
+/// retain Go's exact cumulative bucket counts, repeats, bounds, and zeroed
+/// merged bucket NDV for both the column and its index.
+#[test]
+fn partition_global_stats_bucket_data_matches_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(58))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET SESSION tidb_analyze_version = 2");
+    rows(
+        &mut session,
+        "SET SESSION tidb_partition_prune_mode = 'dynamic'",
+    );
+    rows(
+        &mut session,
+        "CREATE TABLE global_data (a int, KEY(a)) PARTITION BY RANGE (a) \
+         (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO global_data VALUES \
+         (1),(2),(3),(4),(5),(6),(6),(NULL),\
+         (11),(12),(13),(14),(15),(16),(17),(18),(19),(19)",
+    );
+    rows(
+        &mut session,
+        "ANALYZE TABLE global_data WITH 0 TOPN, 2 BUCKETS",
+    );
+
+    let bucket_rows = |session: &mut _, is_index| {
+        displayed(rows(
+            session,
+            &format!(
+                "SHOW STATS_BUCKETS WHERE table_name = 'global_data' AND is_index = {is_index}"
+            ),
+        ))
+        .into_iter()
+        .map(|row| row.join(" "))
+        .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        bucket_rows(&mut session, 0),
+        [
+            "test global_data global a 0 0 7 2 1 6 0",
+            "test global_data global a 0 1 17 2 11 19 0",
+            "test global_data p0 a 0 0 4 1 1 4 0",
+            "test global_data p0 a 0 1 7 2 5 6 0",
+            "test global_data p1 a 0 0 6 1 11 16 0",
+            "test global_data p1 a 0 1 10 2 17 19 0",
+        ]
+    );
+    assert_eq!(
+        bucket_rows(&mut session, 1),
+        [
+            "test global_data global a 1 0 7 2 1 6 0",
+            "test global_data global a 1 1 17 2 11 19 0",
+            "test global_data p0 a 1 0 4 1 1 4 0",
+            "test global_data p0 a 1 1 7 2 5 6 0",
+            "test global_data p1 a 1 0 6 1 11 16 0",
+            "test global_data p1 a 1 1 10 2 17 19 0",
+        ]
+    );
+}
+
 /// A write takes the same access paths a `SELECT` does, which is
 /// `crate::explain`'s divergence 8 as it now stands.
 ///

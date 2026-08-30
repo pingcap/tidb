@@ -151,6 +151,30 @@ fn hash_join_versions_accept_only_legacy_or_optimized() {
     }
 }
 
+/// Pinned `sysvar.go`'s `TiDBAnalyzeVersion` entry: the compatibility
+/// variable still has the integer range `[1, 2]`, but its validation closure
+/// refuses v1 because the planner always uses Analyze v2.
+#[test]
+fn analyze_version_one_is_no_longer_supported() {
+    let mut session = Session::new();
+
+    let error = session
+        .apply_set("SET tidb_analyze_version = 1")
+        .expect_err("Analyze v1 must be refused")
+        .to_mysql_error();
+    assert_eq!(error.code, 1105);
+    assert_eq!(error.state, *b"HY000");
+    assert_eq!(
+        error.message,
+        "tidb_analyze_version=1 is no longer supported, please set tidb_analyze_version to 2"
+    );
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@tidb_analyze_version"),
+        Some("2".to_owned()),
+        "a refused SET leaves the v2 default intact"
+    );
+}
+
 /// `sql_mode` is normalized at SET time, so every reader afterwards sees the
 /// expanded, canonical set rather than the shorthand the user typed.
 ///

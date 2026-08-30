@@ -488,6 +488,15 @@ impl SysVarDef {
                 truncated: validated.truncated,
             });
         }
+        // Go keeps this compatibility variable in the integer range [1, 2],
+        // then its variable-specific validation closure rejects 1 because the
+        // planner no longer has an Analyze v1 path.
+        if self.name == tidb_vardef::tidb_vars::TIDB_ANALYZE_VERSION && validated.value == "1" {
+            return Err(ValidationError::Refused(
+                "tidb_analyze_version=1 is no longer supported, please set tidb_analyze_version to 2"
+                    .to_owned(),
+            ));
+        }
         if self.name == "tidb_workload_repository_dest" {
             return tidb_workloadrepo::validate_dest(&validated.value)
                 .map(|value| Validated {

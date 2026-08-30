@@ -59,6 +59,8 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - [x] (2026-08-29) Restored the pinned session/global validation warning emitted on every assignment to `tidb_enable_async_merge_global_stats`, including exact code 1105 and message text.
 - [x] (2026-08-29) Removed Rust-only historical-worker observation APIs and their tests, retained only Go's send/get surface plus package-internal shutdown, restored the full-mailbox warning, and removed stale documentation claiming partitioned ANALYZE is rejected.
 - [x] (2026-08-29) Made the cluster statistics cache track logical and every physical partition ID, restored zero-lease eager payload loading, installed physical statistics in session catalogs, and verified the pinned globalstats SHOW counts for static and dynamic pruning end to end.
+- [x] (2026-08-29) Restored the pinned `tidb_analyze_version` validation closure so Analyze v1 is rejected with Go's exact error before the v2-only global-statistics pipeline runs.
+- [x] (2026-08-29) Added an end-to-end receipt for pinned `globalstats.TestGlobalStatsData`, matching every global and physical column/index bucket count, repeat, bound, and merged bucket NDV.
 - [ ] Wire all pinned Go `SHOW STATS_*` surfaces to the shared cache and storage semantics.
 - [ ] Inventory every production file, platform/generated variant, original test/support artifact, fixture, and validation gate in pinned `pkg/statistics`; close or explicitly retain seed-only gaps until the whole package is complete.
 - [ ] Run the Ready validation profile, including `make lint`, only after the complete package inventory is closed.
@@ -94,6 +96,9 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 
 - Observation: a one-value Analyze v2 result has no bucket under the default TopN size because the value lives entirely in TopN; pinned bucket tests explicitly use `WITH 0 TOPN` when they require histogram rows.
   Evidence: the initial end-to-end bucket assertion returned no rows; with the pinned setup it produced `count=1`, `repeat=1`, equal bounds, and `ndv=0`.
+
+- Observation: pinned Go still declares `tidb_analyze_version` with the integer range `[1, 2]`, but a second validation closure rejects the otherwise type-valid value `1`. Rust had captured only the declarative range, which made its hard-coded v2 global merge reachable from a session claiming v1.
+  Evidence: pinned `sysvar.go` returns `tidb_analyze_version=1 is no longer supported, please set tidb_analyze_version to 2`; the Rust SQL receipt failed before the closure was added and now returns the same 1105 message without changing the session value.
 
 - Observation: Rust already aggregated column/index memory like Go, but histogram bytes were a caller-injected field that every production construction boundary discarded.
   Evidence: the full `Column`/`Index` types had `MemoryUsage`, while cluster-loaded and in-process planner statistics retained only the histogram, TopN, and CMS payloads. Moving measurement onto `Histogram` makes all ordinary construction paths report the resident payload without a SHOW-specific cache.
