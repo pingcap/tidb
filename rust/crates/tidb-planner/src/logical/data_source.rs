@@ -119,6 +119,8 @@ pub struct DataSource {
     pub db_name: String,
     /// Go `PhysicalTableID`: the partition's id, or the table's.
     pub physical_table_id: i64,
+    /// Go `SampleInfo`.
+    pub sample_info: Option<crate::table_sampler::TableSampleInfo>,
     /// Go `PartitionDefIdx`: which partition definition this reads.
     pub partition_def_idx: Option<usize>,
     /// Go `PartitionNames`: an explicit `PARTITION (p, ...)` restriction.
@@ -673,6 +675,7 @@ impl DataSource {
             table_as_name: self.table_as_name.clone(),
             db_name: self.db_name.clone(),
             physical_table_id: self.physical_table_id,
+            sample_info: self.sample_info.clone(),
             partition_def_idx: self.partition_def_idx,
             partition_names: self.partition_names.clone(),
             partition_definition_names: self.partition_definition_names.clone(),

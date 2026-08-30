@@ -258,7 +258,6 @@ pub struct TableAccessPath {
     store: AccessPathStore,
     empty_ranges: bool,
     partitioned: bool,
-    sampled: bool,
     has_filters: bool,
 }
 
@@ -278,7 +277,6 @@ impl TableAccessPath {
             store: AccessPathStore::TiKv,
             empty_ranges: false,
             partitioned: false,
-            sampled: false,
             has_filters: false,
         })
     }
@@ -302,13 +300,6 @@ impl TableAccessPath {
     #[must_use]
     pub const fn with_partitioned(mut self, partitioned: bool) -> Self {
         self.partitioned = partitioned;
-        self
-    }
-
-    /// Records a `TABLESAMPLE` path, which uses a different physical plan.
-    #[must_use]
-    pub const fn with_table_sample(mut self, sampled: bool) -> Self {
-        self.sampled = sampled;
         self
     }
 
@@ -365,12 +356,6 @@ impl TableAccessPath {
     #[must_use]
     pub const fn is_partitioned(&self) -> bool {
         self.partitioned
-    }
-
-    /// Reports whether this path came from `TABLESAMPLE`.
-    #[must_use]
-    pub const fn is_table_sample(&self) -> bool {
-        self.sampled
     }
 
     /// Reports whether a Selection would be required around the scan.

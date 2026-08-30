@@ -1930,6 +1930,20 @@ impl KvTable {
         Ok(rows)
     }
 
+    /// Decodes only the first record in the selected physical table range.
+    /// This is the local-storage form of Go table sampling's one `kv.Scan`
+    /// result per range.
+    pub(crate) fn first_row_with_handle_recomputed(
+        &mut self,
+        descending: bool,
+        context: &RowDecodeContext,
+    ) -> Result<Option<(TableHandle, Vec<Datum>)>, KvTableError> {
+        let decoder = self.row_decoder_recomputed(context)?;
+        let mut cursor =
+            self.row_cursor_with_decoder(decoder, None, descending, true, context.zone())?;
+        cursor.next_row()
+    }
+
     /// Legacy zone-only ranged handle scan; see [`KvTable::row_cursor`].
     pub fn scan_rows_with_handles_in(
         &mut self,

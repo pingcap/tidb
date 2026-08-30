@@ -337,12 +337,6 @@ fn table_path_fails_closed_on_unowned_planner_and_executor_shapes() {
         Some(ScanReadTaskRejection::Table(TableTaskRejection::Partition))
     );
     assert_eq!(
-        table_rejection(table_path(spec.clone()).with_table_sample(true), root),
-        Some(ScanReadTaskRejection::Table(
-            TableTaskRejection::TableSample
-        ))
-    );
-    assert_eq!(
         table_rejection(
             table_path(spec.clone()),
             root.with_ordering(IndexOrderingRequirement::KeepOrder),

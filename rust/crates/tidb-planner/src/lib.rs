@@ -175,6 +175,7 @@ pub mod signed_bigint_ranger;
 pub mod stack_contract;
 pub mod stats_info;
 pub mod string_writer;
+pub mod table_sampler;
 pub mod task;
 pub mod task_scheduler;
 pub mod task_stack;

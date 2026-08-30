@@ -53,6 +53,7 @@ use crate::selection::SelectionExec;
 use crate::sort::{SortByItem, SortExec};
 use crate::table_access::TableAccess;
 use crate::table_dual::TableDualExec;
+use crate::table_sample::{SampleOutputColumn, TableSampleExec};
 use crate::topn::TopNExec;
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{FieldType, FieldTypeCode};
@@ -64,7 +65,7 @@ use tidb_expr::schema::Schema;
 use tidb_planner::find_best_task::LogicalJoinType;
 use tidb_planner::physical::{
     PhysicalBatchPointGet, PhysicalIndexScan, PhysicalMemTable, PhysicalPlan, PhysicalPointGet,
-    PhysicalTableScan,
+    PhysicalTableSample, PhysicalTableScan,
 };
 
 use super::{Catalog, DriverError, SelectMeta, INIT_CAP, MAX_CHUNK_SIZE};
@@ -451,6 +452,81 @@ fn build_table_scan(
         stats,
         ctx.index_usage_collector().cloned(),
         None,
+    )))
+}
+
+fn build_table_sample(
+    plan: &PhysicalPlan,
+    sample: &PhysicalTableSample,
+    catalog: &Catalog,
+    ctx: &crate::StmtContext,
+) -> Result<Box<dyn Executor>, DriverError> {
+    let physical_ids = if sample.table_sample_info.partition_ids.is_empty() {
+        vec![sample.physical_table_id]
+    } else {
+        sample.table_sample_info.partition_ids.clone()
+    };
+    let mut tables = physical_ids
+        .into_iter()
+        .map(|physical_id| {
+            catalog.physical_kv_table_by_id(physical_id).ok_or_else(|| {
+                DriverError::unsupported("physical table-sample ID is absent from the catalog")
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    match tables.first().map(crate::KvTable::temp_table_type) {
+        Some(kind) if kind == tidb_model::TempTableType::LOCAL => {
+            return Err(DriverError::unsupported(
+                "TABLESAMPLE clause can not be applied to local temporary tables",
+            ));
+        }
+        Some(kind) if kind == tidb_model::TempTableType::GLOBAL => {
+            tables.clear();
+        }
+        _ => {}
+    }
+    if tables.is_empty() {
+        return Ok(Box::new(TableSampleExec::new(
+            meta(plan, plan_schema(plan)?),
+            tables,
+            Vec::new(),
+            sample.desc,
+            RowDecodeContext::for_query(ctx),
+        )));
+    }
+    let table = tables
+        .first()
+        .ok_or_else(|| DriverError::unsupported("a physical table sample has no table"))?;
+    let schema = plan_schema(plan)?;
+    let output_columns = schema
+        .columns
+        .iter()
+        .map(|column| {
+            if column.id == tidb_model::column::EXTRA_HANDLE_ID {
+                return Ok(SampleOutputColumn::ExtraHandle);
+            }
+            if column.id == tidb_model::column::EXTRA_COMMIT_TS_ID {
+                return Ok(SampleOutputColumn::ExtraCommitTs);
+            }
+            table
+                .columns
+                .iter()
+                .position(|stored| stored.id == column.id)
+                .map(SampleOutputColumn::Stored)
+                .ok_or_else(|| {
+                    DriverError::unsupported(format!(
+                        "table-sample output column {} is absent from physical table {}",
+                        column.id, table.table_id
+                    ))
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Box::new(TableSampleExec::new(
+        meta(plan, schema),
+        tables,
+        output_columns,
+        sample.desc,
+        RowDecodeContext::for_query(ctx),
     )))
 }
 
@@ -2577,6 +2653,7 @@ fn build_with_state(
     let executor: Box<dyn Executor> = match plan {
         PhysicalPlan::MemTable(scan) => build_mem_table(plan, scan, catalog),
         PhysicalPlan::TableScan(scan) => build_table_scan(plan, scan, catalog, ctx),
+        PhysicalPlan::TableSample(sample) => build_table_sample(plan, sample, catalog, ctx),
         PhysicalPlan::IndexScan(scan) => build_index_reader(
             plan,
             plan,

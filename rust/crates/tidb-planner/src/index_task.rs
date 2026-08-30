@@ -72,8 +72,6 @@ pub enum TableTaskRejection {
     InvalidCountAfterAccess,
     /// Partition pruning and physical-table identity are not represented.
     Partition,
-    /// `TABLESAMPLE` uses a separate physical plan and executor path.
-    TableSample,
     /// The pre-resolved scan named a feature outside the bounded TiKV path.
     UnsupportedScanFeature(UnsupportedScanFeature),
     /// A raw DAG scan lacks the source descriptor required by TableReader.

@@ -2343,6 +2343,10 @@ pub fn attach2_task(
             "a PhysicalTableScan is born inside a cop task by findBestTask, \
              never attached (convertToTableScan, find_best_task.go)",
         )),
+        PhysicalPlan::TableSample(_) => Err(PlanError::internal(
+            "a PhysicalTableSample is born inside its own root task by \
+             convertToSampleTable (find_best_task.go), never attached",
+        )),
         PhysicalPlan::IndexLookUpReader(_) => Err(PlanError::internal(
             "a PhysicalIndexLookUpReader is born by BuildIndexLookUpTask at \
              cop-to-root conversion, never attached",

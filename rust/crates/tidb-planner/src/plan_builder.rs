@@ -136,10 +136,9 @@
 //!   `setPreferredStoreType`. Table-syntax index hints and the consumed
 //!   query-block hint families have ordinary planner owners; the remaining
 //!   catalogue fields stay explicit dependencies rather than empty stubs.
-//! * `tablesampler.NewTableSampleInfo`, `tableHasDirtyContent`,
-//!   `addExtraPhysTblIDColumn4DS`, `BuildDataSourceFromView`. Table sampling,
-//!   the transaction membuffer and the view expander each need a handle this
-//!   crate does not hold; `buildDataSource`'s arms for them are marked.
+//! * `tableHasDirtyContent`, `addExtraPhysTblIDColumn4DS`,
+//!   `BuildDataSourceFromView`. The transaction membuffer and view expander
+//!   each need a handle this crate does not hold.
 //!
 //! # Narrowings, by name
 //!
@@ -151,9 +150,8 @@
 //!   `*expressionRewriter` to dodge Go's allocator. Rust constructs a rewriter
 //!   by value; pooling would be a pessimisation with no semantic content.
 //! * `isCreateView` / `capFlag`'s `canExpandAST` (`:267`), `inUpdateStmt` /
-//!   `inDeleteStmt` (`:234`), `isSampling` (`:274`) — DROPPED. All four gate
-//!   statement kinds this batch does not build. `isSampling`'s only reader is
-//!   `GetOptFlag`'s "return 0", which cannot fire when nothing sets it.
+//!   `inDeleteStmt` (`:234`) — DROPPED. These gate statement kinds this batch
+//!   does not build.
 //! * `partitionedTable []table.PartitionedTable`, `hintProcessor`,
 //!   `renamingViewName`, `nonViableFTSMatch`, `predicateMatchSeen`,
 //!   — no reader on the SELECT spine; each belongs to a boundary above.
@@ -587,6 +585,8 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
 
     /// Go `optFlag`; see this module's section 4.
     pub opt_flag: u64,
+    /// Go `isSampling`: disables logical rewrites for TABLESAMPLE queries.
+    pub is_sampling: bool,
     /// Go `curClause`.
     pub cur_clause: ClauseCode,
     /// Go `qbOffset`; [`Self::select_offset`] reads its tail.
@@ -902,6 +902,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             time_zone,
             resolve_ctx: tidb_model::GoShared::new(tidb_resolve::Context::new()),
             opt_flag: 0,
+            is_sampling: false,
             cur_clause: ClauseCode::Unknow,
             qb_offset: Vec::new(),
             next_qb_offset: 0,
@@ -952,11 +953,14 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         self.qb_offset.last().copied().unwrap_or(-1)
     }
 
-    /// Go `GetOptFlag()` (`planbuilder.go:455`). `isSampling`'s "return 0" arm
-    /// is a dropped narrowing; see this module's header.
+    /// Go `GetOptFlag()` (`planbuilder.go:455`).
     #[must_use]
     pub const fn get_opt_flag(&self) -> u64 {
-        self.opt_flag
+        if self.is_sampling {
+            0
+        } else {
+            self.opt_flag
+        }
     }
 
     /// Go's `b.optFlag |= rule.FlagXxx`, which every clause builder does.
@@ -1289,6 +1293,15 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     /// `ErrBadDB` for an unknown database, `ErrNoSuchTable` for an unknown
     /// table.
     pub fn build_data_source(&mut self, table_ref: &TableRef) -> Result<LogicalPlan, PlanError> {
+        if table_ref
+            .sample
+            .as_ref()
+            .is_some_and(|sample| sample.method != Some(tidb_ast::SampleMethod::Region))
+        {
+            return Err(PlanError::internal(
+                "Invalid TABLESAMPLE: Only supports REGIONS sampling method",
+            ));
+        }
         // `:4932` "Try CTE." An UNQUALIFIED name may name a CTE in scope, and
         // a CTE shadows a real table of the same name.
         if let [name] = table_ref.name.as_slice() {
@@ -1555,6 +1568,27 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         );
         self.handle_helper.push_map(handle_map);
 
+        let sample_info = crate::table_sampler::new_table_sample_info(
+            table_ref.sample.as_ref(),
+            &Schema::new(schema_columns.clone()),
+            if table_ref.partitions.is_empty() {
+                table.partition_definition_ids.clone()
+            } else {
+                table_ref
+                    .partitions
+                    .iter()
+                    .filter_map(|name| {
+                        table
+                            .partition_definition_names
+                            .iter()
+                            .position(|partition| partition.eq_ignore_ascii_case(name))
+                            .and_then(|index| table.partition_definition_ids.get(index).copied())
+                    })
+                    .collect()
+            },
+        );
+        self.is_sampling |= sample_info.is_some();
+
         let mut data_source = DataSource {
             base: self.base(DataSource::TYPE),
             table_id: table.table_id,
@@ -1562,6 +1596,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             table_as_name: as_name,
             db_name,
             physical_table_id: table.physical_table_id,
+            sample_info,
             partition_def_idx: table.partition_def_idx,
             partition_names: table_ref.partitions.clone(),
             partition_definition_names: table.partition_definition_names.clone(),
@@ -1642,9 +1677,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         data_source.base.base.set_output_names(names);
 
         // boundary: `tableInfo.IsView()` / `IsSequence()` (`:5047`, `:5081`),
-        // `tablesampler.NewTableSampleInfo` (`:5269`), `tableHasDirtyContent`
-        // and the `LogicalUnionScan` it wraps (`:5312`). Each needs a handle
-        // this crate does not hold; see the module boundaries.
+        // `tableHasDirtyContent` and the `LogicalUnionScan` it wraps (`:5312`).
+        // Each needs a handle this crate does not hold; see the module
+        // boundaries.
         Ok(LogicalPlan::DataSource(data_source))
     }
 

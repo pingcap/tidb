@@ -1334,6 +1334,36 @@ fn find_best_task_4_logical_data_source_without_enforcer(
     if let Some(dual) = try_to_get_dual_task(ds, ctx) {
         return Ok(dual);
     }
+    if let Some(sample_info) = &ds.sample_info {
+        if prop.task_tp != TaskType::Root || !prop.is_sort_item_empty() {
+            return Ok(Task::invalid_task());
+        }
+        if !ds
+            .enumerated_paths
+            .iter()
+            .any(|path| matches!(path, crate::access_path::PossiblePath::Table { .. }))
+        {
+            return Ok(Task::invalid_task());
+        }
+        let mut base = crate::physical::BasePhysicalPlan::new(
+            ctx.allocator,
+            "TableSample",
+            ds.base.base.query_block_offset(),
+        );
+        base.base.set_schema(ds.base.base.schema().cloned());
+        base.base
+            .set_stats(Some(crate::stats_info::StatsInfo::new(1.0, [])));
+        let mut root = crate::task::RootTask::default();
+        root.set_plan(PhysicalPlan::TableSample(
+            crate::physical::PhysicalTableSample {
+                base,
+                table_sample_info: sample_info.clone(),
+                physical_table_id: ds.physical_table_id,
+                desc: false,
+            },
+        ));
+        return Ok(Task::Root(root));
+    }
     // Per-path admission, the shape of Go's candidate loop: an empty
     // property admits every path unordered; a required order admits the
     // paths that MATCH it — the int-handle arm for the table path

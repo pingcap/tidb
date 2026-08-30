@@ -851,6 +851,33 @@ pub struct PhysicalTableScan {
     pub resolved_descriptor: Option<crate::access_path::ResolvedTableDescriptor>,
 }
 
+/// Go `physicalop.PhysicalTableSample`: a root leaf that returns the first
+/// record from every storage-region range.
+#[derive(Clone, Debug)]
+pub struct PhysicalTableSample {
+    /// The shared physical base.
+    pub base: BasePhysicalPlan,
+    /// Go `TableSampleInfo`.
+    pub table_sample_info: crate::table_sampler::TableSampleInfo,
+    /// Go `PhysicalTableID`.
+    pub physical_table_id: i64,
+    /// Go `Desc`.
+    pub desc: bool,
+}
+
+impl PhysicalTableSample {
+    /// Go `PhysicalTableSample.MemoryUsage` over Rust-owned metadata.
+    #[must_use]
+    pub fn memory_usage(&self) -> i64 {
+        self.base
+            .base
+            .memory_usage()
+            .saturating_add(self.table_sample_info.memory_usage())
+            .saturating_add(std::mem::size_of::<i64>() as i64)
+            .saturating_add(std::mem::size_of::<bool>() as i64)
+    }
+}
+
 /// Go `physicalop.PhysicalMemTable`: a root-side scan of a virtual table.
 #[derive(Clone, Debug, Default)]
 pub struct PhysicalMemTable {
@@ -2545,6 +2572,8 @@ pub enum PhysicalPlan {
     Limit(PhysicalLimit),
     /// Go `physicalop.PhysicalTableScan`.
     TableScan(PhysicalTableScan),
+    /// Go `physicalop.PhysicalTableSample`.
+    TableSample(PhysicalTableSample),
     /// Go `physicalop.PhysicalMemTable`.
     MemTable(PhysicalMemTable),
     /// Go `physicalop.PhysicalTableDual`.
@@ -2608,6 +2637,7 @@ impl PhysicalPlan {
             Self::Sort(op) => &op.base,
             Self::Limit(op) => &op.base,
             Self::TableScan(op) => &op.base,
+            Self::TableSample(op) => &op.base,
             Self::MemTable(op) => &op.base,
             Self::TableDual(op) => &op.base,
             Self::MaxOneRow(op) => &op.base,
@@ -2646,6 +2676,7 @@ impl PhysicalPlan {
             Self::Sort(op) => &mut op.base,
             Self::Limit(op) => &mut op.base,
             Self::TableScan(op) => &mut op.base,
+            Self::TableSample(op) => &mut op.base,
             Self::MemTable(op) => &mut op.base,
             Self::TableDual(op) => &mut op.base,
             Self::MaxOneRow(op) => &mut op.base,
@@ -2998,6 +3029,7 @@ impl PhysicalPlan {
         while let Some(node) = stack.pop() {
             total += match node {
                 Self::Sort(sort) => sort.memory_usage(),
+                Self::TableSample(sample) => sample.memory_usage(),
                 _ => node.base().base.memory_usage(),
             };
             for child in node.children() {
@@ -3171,6 +3203,12 @@ impl PhysicalPlan {
                 table_scan_penalty: op.table_scan_penalty,
                 tikv_pushdown: op.tikv_pushdown.clone(),
                 resolved_descriptor: op.resolved_descriptor,
+            }),
+            Self::TableSample(op) => Self::TableSample(PhysicalTableSample {
+                base: base_of(&op.base),
+                table_sample_info: op.table_sample_info.clone(),
+                physical_table_id: op.physical_table_id,
+                desc: op.desc,
             }),
             Self::MemTable(op) => Self::MemTable(PhysicalMemTable {
                 base: base_of(&op.base),

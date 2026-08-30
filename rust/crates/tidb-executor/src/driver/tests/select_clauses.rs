@@ -517,20 +517,110 @@ fn an_empty_correlated_having_subquery_is_null_and_drops_its_row() {
     }
 }
 
-/// Go's `findBestTask4LogicalDataSource` routes `ds.SampleInfo != nil` to
-/// `convertToSampleTable`; it never treats the clause as an ordinary scan.
-/// Rust parses the same syntax but has no TiKV region-sampling model, so the
-/// honest boundary is a refusal. The control query proves the table remains a
-/// normal readable table and that the error belongs to `TABLESAMPLE` itself.
+/// Go's non-TiKV `splitIntoMultiRanges` fallback produces one full table-key
+/// range, and `TableSampleExecutor` returns that range's first record.
 #[test]
-fn a_table_sample_clause_is_refused_rather_than_answered_in_full() {
+fn table_sample_regions_uses_the_ordinary_physical_executor_path() {
     let mut catalog = Catalog::default();
     crate::run_create_table_on("CREATE TABLE smp (a BIGINT PRIMARY KEY)", &mut catalog).unwrap();
     let ctx = crate::StmtContext::for_query();
     run_insert_on("INSERT INTO smp VALUES (1), (2), (3)", &mut catalog, &ctx).unwrap();
 
+    assert_eq!(
+        run_select_on("SELECT a FROM smp TABLESAMPLE REGIONS()", &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Int(1)]],
+    );
+    // Sampling precedes WHERE evaluation; a predicate must not turn the
+    // sample source back into an ordinary filtered scan.
+    assert!(run_select_on(
+        "SELECT a FROM smp TABLESAMPLE REGIONS() WHERE a = 2",
+        &catalog,
+        &ctx,
+    )
+    .unwrap()
+    .is_empty());
+    assert_eq!(
+        run_select_on(
+            "SELECT count(*) FROM smp TABLESAMPLE REGIONS()",
+            &catalog,
+            &ctx,
+        )
+        .unwrap(),
+        vec![vec![Datum::Int(1)]],
+    );
+
+    crate::run_create_table_on("CREATE TABLE empty_sample (a BIGINT)", &mut catalog).unwrap();
+    assert!(run_select_on(
+        "SELECT a FROM empty_sample TABLESAMPLE REGIONS()",
+        &catalog,
+        &ctx,
+    )
+    .unwrap()
+    .is_empty());
+
+    crate::run_create_table_on("CREATE TABLE generated_sample (a BIGINT)", &mut catalog).unwrap();
+    run_insert_on(
+        "INSERT INTO generated_sample VALUES (0), (1000)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    crate::run_alter_table_in(
+        "ALTER TABLE generated_sample ADD COLUMN b BIGINT NOT NULL DEFAULT 9",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .unwrap();
+    crate::run_alter_table_in(
+        "ALTER TABLE generated_sample ADD COLUMN c BIGINT AS (a + 1)",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .unwrap();
+    assert_eq!(
+        run_select_on(
+            "SELECT b, c, _tidb_rowid FROM generated_sample TABLESAMPLE REGIONS()",
+            &catalog,
+            &ctx,
+        )
+        .unwrap(),
+        vec![vec![Datum::Int(9), Datum::Int(1), Datum::Int(1)]],
+    );
+
+    crate::run_create_table_on(
+        "CREATE TABLE partition_sample (a BIGINT) PARTITION BY RANGE (a) (\
+         PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20))",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO partition_sample VALUES (2), (1), (12), (11)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    assert_eq!(
+        run_select_on(
+            "SELECT a FROM partition_sample TABLESAMPLE REGIONS() ORDER BY a",
+            &catalog,
+            &ctx,
+        )
+        .unwrap(),
+        vec![vec![Datum::Int(2)], vec![Datum::Int(12)]],
+    );
+    assert_eq!(
+        run_select_on(
+            "SELECT a FROM partition_sample PARTITION (p1) TABLESAMPLE REGIONS()",
+            &catalog,
+            &ctx,
+        )
+        .unwrap(),
+        vec![vec![Datum::Int(12)]],
+    );
+
     for sql in [
-        "SELECT a FROM smp TABLESAMPLE REGIONS()",
         "SELECT a FROM smp TABLESAMPLE BERNOULLI (10 PERCENT)",
         "SELECT a FROM smp TABLESAMPLE SYSTEM (2 ROWS) REPEATABLE(7)",
     ] {
@@ -539,7 +629,7 @@ fn a_table_sample_clause_is_refused_rather_than_answered_in_full() {
                 run_select_on(sql, &catalog, &ctx),
                 Err(DriverError::Unsupported(_))
             ),
-            "{sql} must refuse rather than answer the whole table",
+            "{sql} must reject the sampling method",
         );
     }
 

@@ -171,6 +171,7 @@ mod stmt_context;
 pub mod storage;
 pub mod table_access;
 pub mod table_dual;
+mod table_sample;
 #[cfg(test)]
 mod tests_duplicate_entry_message_source;
 #[cfg(test)]

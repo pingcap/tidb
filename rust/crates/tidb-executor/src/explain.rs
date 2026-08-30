@@ -338,6 +338,11 @@ fn physical_access(plan: &PhysicalPlan, catalog: &Catalog) -> Option<AccessObjec
             scan.table_id,
             scan.table_as_name.as_deref(),
         ))),
+        PhysicalPlan::TableSample(sample) => Some(AccessObject::Scan(table_access(
+            catalog,
+            sample.physical_table_id,
+            None,
+        ))),
         PhysicalPlan::MemTable(scan) => Some(AccessObject::Scan(ScanAccessObject {
             database: scan.db_name.clone(),
             table: scan.table_name.clone(),
@@ -440,6 +445,7 @@ fn physical_operator_info(plan: &PhysicalPlan, catalog: &Catalog) -> String {
             parts.join(", ")
         }
         PhysicalPlan::TableDual(dual) => dual.explain_info(),
+        PhysicalPlan::TableSample(_) => String::new(),
         PhysicalPlan::MemTable(_) => String::new(),
         PhysicalPlan::CTE(cte) => cte.operator_info(),
         PhysicalPlan::CTETable(table) => table.explain_info(),

@@ -492,6 +492,7 @@ fn bind_plan_expressions(
         }
         PhysicalPlan::Limit(_)
         | PhysicalPlan::TableScan(_)
+        | PhysicalPlan::TableSample(_)
         | PhysicalPlan::MemTable(_)
         | PhysicalPlan::TableDual(_)
         | PhysicalPlan::MaxOneRow(_)

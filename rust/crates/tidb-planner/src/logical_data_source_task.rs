@@ -213,9 +213,6 @@ fn build_supported_table_task(
     {
         return invalid_table(TableTaskRejection::Partition);
     }
-    if path.is_table_sample() {
-        return invalid_table(TableTaskRejection::TableSample);
-    }
     if property.ordering() != IndexOrderingRequirement::None
         || path.pushdown().keep_order
         || path.pushdown().desc

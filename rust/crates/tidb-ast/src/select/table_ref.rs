@@ -227,18 +227,9 @@ impl TableRef {
 /// spelling (this crate's own [`SampleMethod::Region`]) always restores as
 /// the singular `REGION`, confirmed via `godump restore`.
 ///
-/// ALWAYS `Unsupported` at execution time, unconditionally — the SAME
-/// precedent [`TableRef::partitions`] already established, for a similar
-/// reason: confirmed via `gorun` that `TABLESAMPLE` has a REAL semantic
-/// effect on real TiDB's own result rows (tied to actual TiKV storage
-/// region boundaries — `SELECT a FROM t TABLESAMPLE REGIONS()` returned
-/// only 1 of 5 rows in one probe), which this crate's in-memory `Vec<Row>`
-/// table representation has no analogue for; faithfully reproducing it
-/// would need a genuine storage-region model, a much larger undertaking
-/// than parse/restore fidelity. `SYSTEM`/`BERNOULLI` are read but
-/// (confirmed via `gorun`) always reject at EXECUTION time in real TiDB
-/// too, since TiKV has no notion of either sampling method — so rejecting
-/// unconditionally here doesn't narrow real TiDB's own accepted behavior.
+/// The planner accepts `REGION(S)` and routes it through Go's dedicated
+/// physical sample operator. `SYSTEM` and `BERNOULLI` parse for AST parity but
+/// are rejected by preprocessing, as they are in Go.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TableSample {
     /// The sampling method, if written.
