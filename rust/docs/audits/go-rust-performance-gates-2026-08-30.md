@@ -238,6 +238,33 @@ without errors. The 10-thread gate remains below 0.80 for the write-heavy
 subtypes, so round 1 is still not accepted. Receipt:
 `/tmp/tc8228803-new.MMk3QB/sysbench-r1-autoprelock`.
 
+### Sysbench repeat after Git/SSH setup (2026-08-31)
+
+Git and SSH access were verified inside the TiUP Pod, and the existing
+`hparser-integration` binary/listeners and restored datasets were reused. A
+serial ten-subtype Sysbench sweep used one 10-thread sample per engine and
+completed in 191 seconds (under the 300-second budget); BR restore was skipped.
+Insert and bulk-insert again used engine-specific isolated empty tables, leaving
+the restored `test.sbtest*` tables untouched. Receipt:
+`/tmp/tc8228803-new.MMk3QB/sysbench-r1-repeat0831`.
+
+| Subtype | Go QPS | Rust QPS | Rust/Go | Gate |
+|---|---:|---:|---:|---|
+| `oltp_read_write.lua` | 526.14 | 161.06 | 0.3061 | FAIL |
+| `oltp_read_only.lua` | 719.51 | 721.24 | 1.0024 | PASS |
+| `oltp_write_only.lua` | 2174.48 | 443.96 | 0.2042 | FAIL |
+| `oltp_point_select.lua` | 18178.95 | 22200.41 | 1.2212 | PASS |
+| `select_random_points.lua` | 7941.72 | 9147.40 | 1.1518 | PASS |
+| `select_random_ranges.lua` | 8026.39 | 8171.95 | 1.0181 | PASS |
+| `oltp_insert.lua` (isolated empty tables) | 8068.35 | 7282.70 | 0.9026 | PASS |
+| `oltp_update_index.lua` | 4858.91 | 3134.54 | 0.6451 | FAIL |
+| `oltp_update_non_index.lua` | 6298.32 | 3300.96 | 0.5241 | FAIL |
+| `bulk_insert.lua` (isolated empty tables) | 255520.44 | 224470.58 | 0.8785 | PASS |
+
+The repeat confirms the read and insert paths meet the round-1 threshold and
+bulk-insert now reaches 0.8785, while explicit write transactions remain the
+blocking gap (`oltp_read_write`, `oltp_write_only`, and both update variants).
+
 ## Acceptance status
 
 - Round 1 (0.80): **not passed** because Sysbench and BenchmarkSQL still fail;
