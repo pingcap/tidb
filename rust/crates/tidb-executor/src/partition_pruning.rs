@@ -250,37 +250,60 @@ fn mark_short_key_range(range: &IndexRange, partitions: u64, used: &mut [bool]) 
     true
 }
 
-/// A typed ranger point has one exact RANGE COLUMNS destination, so retain
-/// only that partition.  More complex tuple intervals remain a full scan
-/// until the ranger exposes enough normalized endpoint information to prove
-/// their intersection without risking a false negative.
+/// Go `multiColumnRangeColumnsPruner`: map every ranger tuple interval onto
+/// the half-open RANGE COLUMNS partitions it intersects. The ranger has
+/// already normalized the predicate into these endpoints; pruning only does
+/// the two source `sort.Search` operations over the partition bounds.
 fn prune_range_columns_ids(
     spec: &PartitionSpec,
     ranges: &[IndexRange],
     less_than: &[Vec<crate::partition_routing::RangeColumnBound>],
     field_types: &[tidb_datatype::FieldType],
 ) -> Vec<i64> {
+    if less_than.len() != spec.definitions.len()
+        || less_than
+            .iter()
+            .any(|bound| bound.len() != field_types.len())
+    {
+        return spec
+            .definitions
+            .iter()
+            .map(|definition| definition.id)
+            .collect();
+    }
+
     let mut used = vec![false; spec.definitions.len()];
     for range in ranges {
-        if !range.is_point(true) || range.low.len() != field_types.len() {
+        if range.low.len() > field_types.len() || range.high.len() > field_types.len() {
             return spec
                 .definitions
                 .iter()
                 .map(|definition| definition.id)
                 .collect();
         }
-        let Ok(ordinal) = crate::partition_routing::range_columns_partition_index_for_tuple(
-            &range.low,
-            less_than,
-            field_types,
-        ) else {
+
+        let Ok(start) = first_range_columns_bound(less_than, |bound| {
+            range_columns_min_cmp(bound, &range.low, field_types, range.low_exclusive)
+        }) else {
             return spec
                 .definitions
                 .iter()
                 .map(|definition| definition.id)
                 .collect();
         };
-        if let Some(slot) = used.get_mut(ordinal) {
+        let Ok(mut end) = first_range_columns_bound(less_than, |bound| {
+            range_columns_max_cmp(bound, &range.high, field_types, range.high_exclusive)
+        }) else {
+            return spec
+                .definitions
+                .iter()
+                .map(|definition| definition.id)
+                .collect();
+        };
+        if end < less_than.len() {
+            end += 1;
+        }
+        for slot in used.iter_mut().take(end).skip(start) {
             *slot = true;
         }
     }
@@ -289,6 +312,136 @@ fn prune_range_columns_ids(
         .zip(used)
         .filter_map(|(definition, used)| used.then_some(definition.id))
         .collect()
+}
+
+fn first_range_columns_bound(
+    bounds: &[Vec<crate::partition_routing::RangeColumnBound>],
+    mut compare: impl FnMut(
+        &[crate::partition_routing::RangeColumnBound],
+    ) -> Result<bool, crate::partition_routing::RoutingError>,
+) -> Result<usize, crate::partition_routing::RoutingError> {
+    let mut low = 0;
+    let mut high = bounds.len();
+    while low < high {
+        let middle = low + (high - low) / 2;
+        if compare(&bounds[middle])? {
+            high = middle;
+        } else {
+            low = middle + 1;
+        }
+    }
+    Ok(low)
+}
+
+fn range_columns_min_cmp(
+    bound: &[crate::partition_routing::RangeColumnBound],
+    low: &[Datum],
+    field_types: &[tidb_datatype::FieldType],
+    low_exclusive: bool,
+) -> Result<bool, crate::partition_routing::RoutingError> {
+    for ((bound, value), field_type) in bound.iter().zip(low).zip(field_types) {
+        match compare_range_column_bound(bound, value, field_type)? {
+            Ordering::Greater => return Ok(true),
+            Ordering::Less => return Ok(false),
+            Ordering::Equal => {}
+        }
+    }
+    if low.len() < bound.len() {
+        if low_exclusive {
+            return Ok(false);
+        }
+        if matches!(
+            bound[low.len()],
+            crate::partition_routing::RangeColumnBound::MaxValue
+        ) {
+            return Ok(true);
+        }
+        let field_type = &field_types[low.len()];
+        if !field_type.has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL) {
+            return Ok(true);
+        }
+        return Ok(!range_column_bound_is_type_minimum(
+            &bound[low.len()],
+            field_type,
+        ));
+    }
+    Ok(false)
+}
+
+fn range_columns_max_cmp(
+    bound: &[crate::partition_routing::RangeColumnBound],
+    high: &[Datum],
+    field_types: &[tidb_datatype::FieldType],
+    high_exclusive: bool,
+) -> Result<bool, crate::partition_routing::RoutingError> {
+    for ((bound, value), field_type) in bound.iter().zip(high).zip(field_types) {
+        match compare_range_column_bound(bound, value, field_type)? {
+            Ordering::Greater => return Ok(true),
+            Ordering::Less => return Ok(false),
+            Ordering::Equal => {}
+        }
+    }
+    if high.len() < bound.len()
+        && matches!(
+            bound[high.len()],
+            crate::partition_routing::RangeColumnBound::MaxValue
+        )
+    {
+        return Ok(true);
+    }
+    Ok(high_exclusive)
+}
+
+fn compare_range_column_bound(
+    bound: &crate::partition_routing::RangeColumnBound,
+    endpoint: &Datum,
+    field_type: &tidb_datatype::FieldType,
+) -> Result<Ordering, crate::partition_routing::RoutingError> {
+    let crate::partition_routing::RangeColumnBound::Value(bound) = bound else {
+        return Ok(Ordering::Greater);
+    };
+    match endpoint {
+        Datum::MinNotNull => Ok(if matches!(bound, Datum::Null) {
+            Ordering::Less
+        } else {
+            Ordering::Greater
+        }),
+        Datum::MaxValue => Ok(Ordering::Less),
+        _ => tidb_expr::compare_datums_with_collation(bound, endpoint, field_type.collation())
+            .map_err(crate::partition_routing::RoutingError::Eval),
+    }
+}
+
+fn range_column_bound_is_type_minimum(
+    bound: &crate::partition_routing::RangeColumnBound,
+    field_type: &tidb_datatype::FieldType,
+) -> bool {
+    let crate::partition_routing::RangeColumnBound::Value(bound) = bound else {
+        return false;
+    };
+    match field_type.eval_type() {
+        tidb_datatype::EvalType::Int if field_type.is_unsigned() => {
+            matches!(bound, Datum::UInt(0) | Datum::Int(0))
+        }
+        tidb_datatype::EvalType::Int => match field_type.code() {
+            tidb_datatype::FieldTypeCode::Tiny
+            | tidb_datatype::FieldTypeCode::Short
+            | tidb_datatype::FieldTypeCode::Int24
+            | tidb_datatype::FieldTypeCode::Long
+            | tidb_datatype::FieldTypeCode::LongLong
+            | tidb_datatype::FieldTypeCode::Enum => matches!(
+                bound,
+                Datum::Int(value)
+                    if *value == tidb_datatype::integer_signed_lower_bound(field_type.code())
+            ),
+            _ => false,
+        },
+        tidb_datatype::EvalType::Datetime | tidb_datatype::EvalType::Timestamp => {
+            matches!(bound, Datum::Time(value) if value.is_zero())
+        }
+        tidb_datatype::EvalType::String => bound.as_raw_bytes().is_some_and(<[u8]>::is_empty),
+        _ => false,
+    }
 }
 
 /// Go `ForListColumnPruning.LocateRanges`: a tuple belongs when its prefix
@@ -811,10 +964,60 @@ mod tests {
         }
     }
 
+    fn range_columns_table() -> PartitionSpec {
+        use crate::partition_routing::RangeColumnBound::{MaxValue, Value};
+
+        let field_types = vec![
+            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+        ];
+        PartitionSpec {
+            is_empty_columns: false,
+            kind: PartitionKind::RangeColumns {
+                less_than: vec![
+                    vec![Value(Datum::Int(1)), Value(Datum::Int(10))],
+                    vec![Value(Datum::Int(2)), Value(Datum::Int(5))],
+                    vec![Value(Datum::Int(2)), MaxValue],
+                    vec![MaxValue, MaxValue],
+                ],
+                field_types: field_types.clone(),
+            },
+            expr_text: String::new(),
+            expr: tidb_expr::expression::Expression::Constant(
+                tidb_expr::expression::Constant::new(Datum::Int(0), field_types[0].clone()),
+            ),
+            dependencies: vec!["a".to_owned(), "b".to_owned()],
+            definitions: (0..4)
+                .map(|ordinal| PartitionDef {
+                    id: 301 + ordinal,
+                    name: format!("p{ordinal}"),
+                    less_than: Vec::new(),
+                    in_values: Vec::new(),
+                    comment: String::new(),
+                    placement_policy: None,
+                })
+                .collect(),
+        }
+    }
+
     fn interval(low: Datum, low_exclusive: bool, high: Datum, high_exclusive: bool) -> IndexRange {
         IndexRange {
             low: vec![low],
             high: vec![high],
+            low_exclusive,
+            high_exclusive,
+        }
+    }
+
+    fn tuple_interval(
+        low: Vec<Datum>,
+        low_exclusive: bool,
+        high: Vec<Datum>,
+        high_exclusive: bool,
+    ) -> IndexRange {
+        IndexRange {
+            low,
+            high,
             low_exclusive,
             high_exclusive,
         }
@@ -887,6 +1090,118 @@ mod tests {
                 "a = {value}"
             );
         }
+    }
+
+    #[test]
+    fn range_columns_pruning_maps_tuple_intervals_with_gos_bound_searches() {
+        let spec = range_columns_table();
+
+        assert_eq!(
+            pruned_ids(
+                &spec,
+                &[tuple_interval(
+                    vec![Datum::Int(1), Datum::Int(10)],
+                    false,
+                    vec![Datum::Int(1), Datum::Int(10)],
+                    false,
+                )],
+            ),
+            Some(vec![302]),
+            "a point on a LESS THAN boundary belongs to the next partition"
+        );
+        assert_eq!(
+            pruned_ids(
+                &spec,
+                &[tuple_interval(
+                    vec![Datum::Int(1), Datum::Int(9)],
+                    false,
+                    vec![Datum::Int(2), Datum::Int(5)],
+                    true,
+                )],
+            ),
+            Some(vec![301, 302]),
+            "an exclusive high boundary must not add its destination partition"
+        );
+        assert_eq!(
+            pruned_ids(
+                &spec,
+                &[tuple_interval(
+                    vec![Datum::Int(2), Datum::Int(5)],
+                    false,
+                    vec![Datum::MaxValue, Datum::MaxValue],
+                    false,
+                )],
+            ),
+            Some(vec![303, 304]),
+            "the lower boundary and MAXVALUE endpoint retain the final partitions"
+        );
+        assert_eq!(
+            pruned_ids(
+                &spec,
+                &[
+                    tuple_interval(
+                        vec![Datum::Int(0), Datum::Int(0)],
+                        false,
+                        vec![Datum::Int(0), Datum::Int(0)],
+                        false,
+                    ),
+                    tuple_interval(
+                        vec![Datum::Int(2), Datum::Int(6)],
+                        false,
+                        vec![Datum::Int(2), Datum::Int(6)],
+                        false,
+                    ),
+                ],
+            ),
+            Some(vec![301, 303]),
+            "multiple ranger ranges union their partition spans"
+        );
+    }
+
+    #[test]
+    fn range_columns_pruning_uses_each_partition_columns_collation() {
+        use crate::partition_routing::RangeColumnBound::{MaxValue, Value};
+        use tidb_datatype::{Collation, FieldType, FieldTypeCode, StringDatum};
+
+        let string = |text: &str, collation| {
+            Datum::String(StringDatum::new(text.as_bytes().to_vec(), collation))
+        };
+        let mut spec = range_columns_table();
+        let field_types = vec![
+            FieldType::new(FieldTypeCode::Varchar).with_collation(Collation::Utf8Mb40900AiCi),
+            FieldType::new(FieldTypeCode::Varchar).with_collation(Collation::Utf8Mb4UnicodeCi),
+        ];
+        spec.kind = PartitionKind::RangeColumns {
+            less_than: vec![
+                vec![
+                    Value(string("i", Collation::Utf8Mb40900AiCi)),
+                    Value(string("i", Collation::Utf8Mb4UnicodeCi)),
+                ],
+                vec![MaxValue, MaxValue],
+            ],
+            field_types,
+        };
+        spec.definitions.truncate(2);
+
+        assert_eq!(
+            pruned_ids(
+                &spec,
+                &[tuple_interval(
+                    vec![
+                        string("I", Collation::Utf8Mb40900AiCi),
+                        string("I", Collation::Utf8Mb4UnicodeCi),
+                    ],
+                    false,
+                    vec![
+                        string("I", Collation::Utf8Mb40900AiCi),
+                        string("I", Collation::Utf8Mb4UnicodeCi),
+                    ],
+                    false,
+                )],
+            ),
+            Some(vec![302]),
+            "case-insensitive equality with the bound routes to the next partition"
+        );
     }
 
     /// LIST keeps exact owners for points/ranges, keeps its NULL owner only
