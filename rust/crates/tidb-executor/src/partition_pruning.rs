@@ -106,11 +106,15 @@ pub fn ids_for_selected_partitions(
 /// value below its bound qualifies, which is exactly what the interval test
 /// below asks.
 #[must_use]
-pub fn pruned_ids(spec: &PartitionSpec, ranges: &[IndexRange]) -> Option<Vec<i64>> {
+pub fn pruned_ids(
+    spec: &PartitionSpec,
+    ranges: &[IndexRange],
+    ctx: &impl tidb_expr::Columns,
+) -> Option<Vec<i64>> {
     match &spec.kind {
         // Every row is in partition 0, so there is nothing to prune away.
         PartitionKind::None => None,
-        PartitionKind::Hash => prune_hash_ids(spec, ranges),
+        PartitionKind::Hash => prune_hash_ids(spec, ranges, ctx),
         PartitionKind::Key => Some(prune_key_ids(spec, ranges)),
         PartitionKind::Range {
             less_than,
@@ -693,23 +697,57 @@ fn prune_range_ids(
     kept
 }
 
-/// Go `getUsedHashPartitions` for the admitted bare-integer partition
-/// expression. Points use the table router's conversion and modulus rule.
-/// A finite integer interval is enumerated only when its width is smaller
-/// than the partition count; wider or non-integer intervals conservatively
-/// keep the full scan.
-fn prune_hash_ids(spec: &PartitionSpec, ranges: &[IndexRange]) -> Option<Vec<i64>> {
+/// Go `getUsedHashPartitions`. Points evaluate the complete partition
+/// expression before applying the table router's conversion and modulus.
+/// Non-point enumeration is restricted to Go's bare integer-column branch;
+/// wider ranges keep the full scan, except BIT columns whose declared width
+/// proves that only the first `2^flen` hash values can occur.
+fn prune_hash_ids(
+    spec: &PartitionSpec,
+    ranges: &[IndexRange],
+    ctx: &impl tidb_expr::Columns,
+) -> Option<Vec<i64>> {
     let mut used = vec![false; spec.definitions.len()];
     for range in ranges {
         if range.is_point(true) {
-            let value = range.high.first()?;
-            let index = crate::partition_routing::hash_partition_index(value, spec.num()).ok()?;
+            if range.high.len() != spec.dependencies.len() {
+                return None;
+            }
+            let row = tidb_chunk::mutrow::MutRow::from_datums(&range.high);
+            let Ok(value) = spec.expr.eval(ctx, row.to_row()) else {
+                // Pinned Go skips a point whose partition expression cannot
+                // be evaluated; another ranger point may still be usable.
+                continue;
+            };
+            let Ok(index) = crate::partition_routing::hash_partition_index(&value, spec.num())
+            else {
+                continue;
+            };
             used[index] = true;
             continue;
         }
-        if !mark_short_hash_range(range, spec.num(), &mut used) {
+
+        let Some(column) = spec.expr.as_column() else {
+            return None;
+        };
+        let field_type = column.get_static_type()?;
+        if field_type.eval_type() != tidb_datatype::EvalType::Int {
             return None;
         }
+        if mark_short_hash_range(range, spec.num(), field_type, &mut used) {
+            continue;
+        }
+        if field_type.code() == tidb_datatype::FieldTypeCode::Bit
+            && field_type.flen() > 0
+            && field_type.flen() < 13
+        {
+            let possible_values = 1_usize << field_type.flen();
+            if possible_values < used.len() {
+                used[..possible_values].fill(true);
+                continue;
+            }
+        }
+        return None;
     }
     Some(
         spec.definitions
@@ -720,66 +758,60 @@ fn prune_hash_ids(spec: &PartitionSpec, ranges: &[IndexRange]) -> Option<Vec<i64
     )
 }
 
-fn mark_short_hash_range(range: &IndexRange, partitions: u64, used: &mut [bool]) -> bool {
+fn mark_short_hash_range(
+    range: &IndexRange,
+    partitions: u64,
+    field_type: &tidb_datatype::FieldType,
+    used: &mut [bool],
+) -> bool {
     let (Some(low), Some(high)) = (range.low.first(), range.high.first()) else {
         return false;
     };
-    match (low, high) {
-        (Datum::Int(low), Datum::Int(high)) => {
-            let low = if range.low_exclusive {
-                low.wrapping_add(1)
-            } else {
-                *low
-            };
-            let high = if range.high_exclusive {
-                high.wrapping_sub(1)
-            } else {
-                *high
-            };
-            let width = if high < low {
-                0
-            } else {
-                high.wrapping_sub(low) as u64
-            };
-            if width >= partitions {
-                return false;
-            }
-            for offset in 0..=width {
-                let value = Datum::Int(low.wrapping_add(offset as i64));
-                let Ok(index) = crate::partition_routing::hash_partition_index(&value, partitions)
-                else {
-                    return false;
-                };
-                used[index] = true;
-            }
-            true
+    let (Some(mut low), Some(mut high)) = (
+        hash_pruning_integer(low, field_type),
+        hash_pruning_integer(high, field_type),
+    ) else {
+        return false;
+    };
+    if range.low_exclusive {
+        low = low.wrapping_add(1);
+    }
+    if range.high_exclusive {
+        high = high.wrapping_sub(1);
+    }
+    let width = if field_type.is_unsigned() {
+        if (high as u64) < low as u64 {
+            0
+        } else {
+            (high as u64) - (low as u64)
         }
-        (Datum::UInt(low), Datum::UInt(high)) => {
-            let low = if range.low_exclusive {
-                low.wrapping_add(1)
-            } else {
-                *low
-            };
-            let high = if range.high_exclusive {
-                high.wrapping_sub(1)
-            } else {
-                *high
-            };
-            let width = high.saturating_sub(low);
-            if width >= partitions {
-                return false;
-            }
-            for offset in 0..=width {
-                let value = Datum::UInt(low.wrapping_add(offset));
-                let Ok(index) = crate::partition_routing::hash_partition_index(&value, partitions)
-                else {
-                    return false;
-                };
-                used[index] = true;
-            }
-            true
+    } else if high < low {
+        0
+    } else {
+        high.wrapping_sub(low) as u64
+    };
+    if width >= partitions {
+        return false;
+    }
+    for offset in 0..=width {
+        let value = low.wrapping_add(offset as i64);
+        let index = (value % partitions as i64).unsigned_abs() as usize;
+        used[index] = true;
+    }
+    true
+}
+
+fn hash_pruning_integer(value: &Datum, field_type: &tidb_datatype::FieldType) -> Option<i64> {
+    match value {
+        Datum::Null | Datum::MinNotNull | Datum::MaxValue => None,
+        Datum::Int(value) => Some(*value),
+        Datum::UInt(value) => Some(*value as i64),
+        Datum::Bit(value) | Datum::BinaryLiteral(value)
+            if field_type.code() == tidb_datatype::FieldTypeCode::Bit =>
+        {
+            Some(value.to_int().value() as i64)
         }
-        _ => false,
+        _ => None,
     }
 }
 
@@ -869,6 +901,10 @@ fn integer_endpoint(value: Option<&Datum>) -> Option<(i64, bool)> {
 mod tests {
     use super::*;
     use crate::partition_routing::PartitionDef;
+
+    fn pruned_ids(spec: &PartitionSpec, ranges: &[IndexRange]) -> Option<Vec<i64>> {
+        super::pruned_ids(spec, ranges, &tidb_expr::NoColumns)
+    }
 
     fn range_table() -> PartitionSpec {
         PartitionSpec {
@@ -1269,6 +1305,12 @@ mod tests {
     fn hash_pruning_keeps_only_the_partitions_the_values_route_into() {
         let mut spec = range_table();
         spec.kind = PartitionKind::Hash;
+        let mut column = tidb_expr::column::Column::new(
+            1,
+            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+        );
+        column.index = 0;
+        spec.expr = tidb_expr::expression::Expression::Column(column);
         assert_eq!(
             pruned_ids(
                 &spec,
@@ -1334,6 +1376,68 @@ mod tests {
                 &[interval(Datum::MinNotNull, false, Datum::MaxValue, false,)]
             ),
             None
+        );
+    }
+
+    #[test]
+    fn hash_point_pruning_evaluates_the_partition_expression() {
+        use tidb_ast::CiString;
+        use tidb_datatype::{FieldType, FieldTypeCode};
+        use tidb_expr::{
+            column::Column, constant::Constant, expression::Expression,
+            scalar_function::ScalarFunction,
+        };
+
+        let mut spec = range_table();
+        spec.kind = PartitionKind::Hash;
+        let field_type = FieldType::new(FieldTypeCode::LongLong);
+        let mut column = Column::new(1, field_type.clone());
+        column.index = 0;
+        spec.expr = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("plus"),
+            field_type.clone(),
+            vec![
+                Expression::Column(column),
+                Expression::Constant(Constant::new(Datum::Int(1), field_type)),
+            ],
+        ));
+
+        assert_eq!(
+            pruned_ids(
+                &spec,
+                &[interval(Datum::Int(1), false, Datum::Int(1), false)]
+            ),
+            Some(vec![103]),
+            "HASH(a + 1) must route a=1 through expression value 2"
+        );
+        assert_eq!(
+            pruned_ids(
+                &spec,
+                &[interval(Datum::Int(1), false, Datum::Int(2), false)]
+            ),
+            None,
+            "Go enumerates non-point ranges only for a bare integer column"
+        );
+    }
+
+    #[test]
+    fn hash_bit_range_uses_the_columns_finite_value_domain() {
+        use tidb_datatype::{FieldType, FieldTypeCode};
+        use tidb_expr::{column::Column, expression::Expression};
+
+        let mut spec = range_table();
+        spec.kind = PartitionKind::Hash;
+        let mut column = Column::new(1, FieldType::new(FieldTypeCode::Bit).with_flen(1));
+        column.index = 0;
+        spec.expr = Expression::Column(column);
+
+        assert_eq!(
+            pruned_ids(
+                &spec,
+                &[interval(Datum::MinNotNull, false, Datum::MaxValue, false,)]
+            ),
+            Some(vec![101, 102]),
+            "BIT(1) has only hash values 0 and 1 even with three partitions"
         );
     }
 

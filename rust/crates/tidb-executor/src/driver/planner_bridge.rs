@@ -860,6 +860,7 @@ fn optimize_built_logical(
     struct PlannerPartitionPruning<'a> {
         catalog: &'a Catalog,
         builder: &'a RealFunctionBuilder<'a, crate::StmtContext>,
+        context: &'a crate::StmtContext,
     }
 
     impl tidb_planner::logical::rule_partition_processor::PartitionPruning
@@ -946,7 +947,9 @@ fn optimize_built_logical(
                     high_exclusive: range.high_exclude,
                 })
                 .collect::<Vec<_>>();
-            if let Some(ids) = crate::partition_pruning::pruned_ids(partition, &ranges) {
+            if let Some(ids) =
+                crate::partition_pruning::pruned_ids(partition, &ranges, self.context)
+            {
                 surviving.retain(|index| ids.contains(&partition.definitions[*index].id));
             }
             Ok(surviving)
@@ -971,6 +974,7 @@ fn optimize_built_logical(
     let partition_pruning = PlannerPartitionPruning {
         catalog,
         builder: &function_builder,
+        context: ctx,
     };
     let rule_context = RuleContext {
         allocator: plan_ids,
