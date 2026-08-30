@@ -71,6 +71,7 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - [x] (2026-08-30) Added both pinned `globalstats.TestIssues24349` sequences; global TopN candidate recovery from sibling partition histograms and the post-pop remaining buckets match Go exactly at merge concurrency one and two.
 - [x] (2026-08-30) Added pinned `globalstats.TestMergeGlobalStatsForCMSketch`; equality estimation consumes the merged global sketch, dynamic pruning retains `p0`, and BRIEF explain now applies Go's statement-wide plan-ID suffix policy to nested table/index reader references. Replaced the remaining Rust-shaped `topn_test.go` fixtures and assertions with the pinned Go key tuples, bounds layout, and observable results.
 - [x] (2026-08-30) Added both pinned `globalstats.TestGlobalStatsData2` concurrency variants and `TestGlobalStatsData3`; column/index and composite-index global TopN, buckets, NDV, and null counts now have exact integration coverage across integer, string, double, decimal, and datetime keys. Added the pinned `TestEmptyHists` no-op contract for both async and blocking merge modes.
+- [x] (2026-08-30) Added pinned `globalstats.TestGlobalIndexStatistics` across table, named-index, and all-index ANALYZE. Dynamic partition pruning now retains ordinary global-index access paths during initial enumeration, static partition processing still removes them, and index-reader explain identity follows Go's range-resolved `PhysicalIndexScan.ExplainID`.
 - [ ] Wire all pinned Go `SHOW STATS_*` surfaces to the shared cache and storage semantics.
 - [ ] Inventory every production file, platform/generated variant, original test/support artifact, fixture, and validation gate in pinned `pkg/statistics`; close or explicitly retain seed-only gaps until the whole package is complete.
 - [ ] Run the Ready validation profile, including `make lint`, only after the complete package inventory is closed.
@@ -223,6 +224,12 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 
 - Observation: Go's ordinary global indexes are part of the per-partition column-sampling task and are then merged into logical-table statistics; only a global prefix/expression index is split into an independent special-index task.
   Evidence: pinned `getModifiedIndexesInfoForAnalyze`, `IsSpecialGlobalIndex`, and `TestGlobalIndexStatistics`; Rust now admits the ordinary shape instead of rejecting every `IndexInfo.Global` value.
+
+- Observation: global-index admission is governed by the static partition processor, not by partitioned-table metadata alone. Dynamic pruning must retain the path before physical optimization begins; clearing the processor flag after logical construction is too late.
+  Evidence: pinned `DataSource.getPossibleAccessPaths` receives `removeGlobalIndexes=hasFlagPartitionProcessor`, while the Rust regression initially fell back to `TableFullScan` until the session prune mode was supplied to `PlanBuilder` before access-path enumeration.
+
+- Observation: Go's `PhysicalIndexScan` overrides both `TP` and `ExplainID`, so an `IndexReader` names its pushed child `IndexRangeScan` or `IndexFullScan` according to the resolved ranges. Rust rendered the child row correctly but used the generic construction type `IndexScan` in the reader's operator info.
+  Evidence: pinned `physical_index_scan.go` and `physical_index_reader.go`; the exact BRIEF regression initially returned `index:IndexScan` while its child was `IndexRangeScan`.
 
 - Observation: Go exposes its concurrent global-TopN worker boundary independently of the session-variable selector, and its benchmark calls that boundary with an already bounded batch size.
   Evidence: pinned `MergeGlobalStatsTopNByConcurrency` and `topn_bench_test.go`; Rust previously kept the function private and recomputed its batch size internally, so it could not represent the original package API or benchmark artifact.

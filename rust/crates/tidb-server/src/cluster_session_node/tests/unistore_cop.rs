@@ -1703,6 +1703,102 @@ fn assert_scalar_column_and_index_global_stats_match_go(
     }
 }
 
+/// Pinned `globalstats.TestGlobalIndexStatistics`: all three ANALYZE forms
+/// populate a partitioned table's global unique-index statistics and the
+/// optimizer uses the global index across every partition.
+#[test]
+fn global_index_statistics_match_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(110))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET SESSION tidb_analyze_version = 2");
+
+    let create = |session: &mut _, clustered: bool| {
+        rows(session, "DROP TABLE IF EXISTS global_index_stats");
+        let key = if clustered {
+            "PRIMARY KEY(b,a) CLUSTERED"
+        } else {
+            "KEY(a)"
+        };
+        rows(
+            session,
+            &format!(
+                "CREATE TABLE global_index_stats (a INT, b INT, c INT DEFAULT 0, {key}) \
+                 PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (10), \
+                 PARTITION p1 VALUES LESS THAN (20), PARTITION p2 VALUES LESS THAN (30), \
+                 PARTITION p3 VALUES LESS THAN (40))"
+            ),
+        );
+        rows(
+            session,
+            "INSERT INTO global_index_stats(a,b) VALUES \
+             (1,1),(2,2),(3,3),(15,15),(25,25),(35,35)",
+        );
+        rows(
+            session,
+            "ALTER TABLE global_index_stats ADD UNIQUE INDEX idx(b) GLOBAL",
+        );
+    };
+    let expected = [
+        [
+            "IndexReader",
+            "5.00",
+            "root",
+            "partition:all",
+            "index:IndexRangeScan",
+        ],
+        [
+            "└─IndexRangeScan",
+            "5.00",
+            "cop[tikv]",
+            "table:global_index_stats, index:idx(b)",
+            "range:[-inf,16), keep order:true",
+        ],
+    ];
+
+    create(&mut session, false);
+    rows(&mut session, "ANALYZE TABLE global_index_stats");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT b FROM global_index_stats USE INDEX(idx) WHERE b < 16 ORDER BY b",
+        )),
+        [["1"], ["2"], ["3"], ["15"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "EXPLAIN FORMAT = 'brief' SELECT b FROM global_index_stats \
+             USE INDEX(idx) WHERE b < 16 ORDER BY b",
+        )),
+        expected
+    );
+
+    create(&mut session, true);
+    rows(&mut session, "ANALYZE TABLE global_index_stats INDEX idx");
+    let explain = displayed(rows(
+        &mut session,
+        "EXPLAIN FORMAT = 'brief' SELECT b FROM global_index_stats \
+         USE INDEX(idx) WHERE b < 16 ORDER BY b",
+    ));
+    assert_eq!(explain[0][1], "5.00");
+
+    create(&mut session, true);
+    rows(&mut session, "ANALYZE TABLE global_index_stats INDEX");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "EXPLAIN FORMAT = 'brief' SELECT b FROM global_index_stats \
+             USE INDEX(idx) WHERE b < 16 ORDER BY b",
+        )),
+        expected
+    );
+}
+
 /// Pinned `globalstats.TestGlobalStatsData`: partition and global histograms
 /// retain Go's exact cumulative bucket counts, repeats, bounds, and zeroed
 /// merged bucket NDV for both the column and its index.

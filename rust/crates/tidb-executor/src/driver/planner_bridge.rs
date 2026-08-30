@@ -579,6 +579,7 @@ pub(crate) fn logical_from_scope(
     let plan_ids = PlanIdAllocator::new();
     let column_ids = ColumnIdAllocator::new();
     let mut builder = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, ctx.session_zone());
+    builder.set_partition_processor_enabled(ctx.static_partition_prune());
     builder.flags.enable_no_decorrelate_in_select = ctx.enable_no_decorrelate_in_select();
     builder.enable_skew_distinct_agg = ctx.enable_skew_distinct_agg();
     builder.index_lookup_push_down_session = ctx.index_lookup_push_down_session();
@@ -1264,6 +1265,7 @@ fn planner_optimized_query_with_allocators(
     let source = catalog.planner_catalog(current_database, ctx.latest_index_schema());
     let session_zone = ctx.session_zone();
     let mut builder = PlanBuilder::new(&source, ctx, plan_ids, column_ids, session_zone.clone());
+    builder.set_partition_processor_enabled(ctx.static_partition_prune());
     builder.flags.enable_no_decorrelate_in_select = ctx.enable_no_decorrelate_in_select();
     builder.enable_skew_distinct_agg = ctx.enable_skew_distinct_agg();
     builder.index_lookup_push_down_session = ctx.index_lookup_push_down_session();
@@ -1302,6 +1304,7 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     let source = catalog.planner_catalog(current_database, ctx.latest_index_schema());
     let session_zone = ctx.session_zone();
     let mut builder = PlanBuilder::new(&source, ctx, plan_ids, column_ids, session_zone.clone());
+    builder.set_partition_processor_enabled(ctx.static_partition_prune());
     builder.flags.enable_no_decorrelate_in_select = ctx.enable_no_decorrelate_in_select();
     builder.enable_skew_distinct_agg = ctx.enable_skew_distinct_agg();
     builder.index_lookup_push_down_session = ctx.index_lookup_push_down_session();
@@ -1601,6 +1604,7 @@ pub(crate) fn statistics_usage_before_and_after_logical_optimization(
     let source = catalog.planner_catalog(current_database, ctx.latest_index_schema());
     let session_zone = ctx.session_zone();
     let mut builder = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, session_zone.clone());
+    builder.set_partition_processor_enabled(ctx.static_partition_prune());
     builder.flags.enable_no_decorrelate_in_select = ctx.enable_no_decorrelate_in_select();
     builder.enable_skew_distinct_agg = ctx.enable_skew_distinct_agg();
     builder.index_lookup_push_down_session = ctx.index_lookup_push_down_session();

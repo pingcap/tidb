@@ -563,6 +563,46 @@ fn test_partitioned_table_sets_the_partition_processor_flag() {
 }
 
 #[test]
+fn test_dynamic_partition_pruning_retains_global_index_paths() {
+    let mut harness = Harness::new();
+    let table = &mut harness.tables_mut()[0];
+    table.is_partitioned = true;
+    table.partition_definition_names = vec!["p0".to_owned(), "p1".to_owned()];
+    table.indexes[0].global = true;
+
+    let mut builder = harness.builder();
+    builder.set_partition_processor_enabled(false);
+    let (plan, flags) = builder
+        .build_select(&parse_select("SELECT a FROM t"))
+        .expect("the dynamic-pruning plan builds");
+    let LogicalPlan::Projection(projection) = plan else {
+        panic!("expected projection");
+    };
+    let LogicalPlan::DataSource(source) = &projection.base.children()[0] else {
+        panic!("expected data source");
+    };
+    assert_eq!(flags & flags::PARTITION_PROCESSOR, 0);
+    assert!(source
+        .enumerated_paths
+        .contains(&crate::access_path::PossiblePath::Index { index: 0 }));
+
+    let mut builder = harness.builder();
+    let (plan, flags) = builder
+        .build_select(&parse_select("SELECT a FROM t"))
+        .expect("the static-pruning plan builds");
+    let LogicalPlan::Projection(projection) = plan else {
+        panic!("expected projection");
+    };
+    let LogicalPlan::DataSource(source) = &projection.base.children()[0] else {
+        panic!("expected data source");
+    };
+    assert_ne!(flags & flags::PARTITION_PROCESSOR, 0);
+    assert!(!source
+        .enumerated_paths
+        .contains(&crate::access_path::PossiblePath::Index { index: 0 }));
+}
+
+#[test]
 fn test_partition_clause_matches_partition_metadata() {
     let mut harness = Harness::new();
     let mut builder = harness.builder();

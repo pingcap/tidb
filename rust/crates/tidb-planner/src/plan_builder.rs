@@ -585,6 +585,8 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
 
     /// Go `optFlag`; see this module's section 4.
     pub opt_flag: u64,
+    /// Whether Go's static `FlagPartitionProcessor` is active for this build.
+    partition_processor_enabled: bool,
     /// Go `isSampling`: disables logical rewrites for TABLESAMPLE queries.
     pub is_sampling: bool,
     /// Go `curClause`.
@@ -902,6 +904,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             time_zone,
             resolve_ctx: tidb_model::GoShared::new(tidb_resolve::Context::new()),
             opt_flag: 0,
+            partition_processor_enabled: true,
             is_sampling: false,
             cur_clause: ClauseCode::Unknow,
             qb_offset: Vec::new(),
@@ -966,6 +969,12 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
     /// Go's `b.optFlag |= rule.FlagXxx`, which every clause builder does.
     pub const fn add_opt_flag(&mut self, flag: u64) {
         self.opt_flag |= flag;
+    }
+
+    /// Applies the session's partition-pruning mode before access paths are
+    /// enumerated. Global indexes remain available in dynamic mode, as in Go.
+    pub const fn set_partition_processor_enabled(&mut self, enabled: bool) {
+        self.partition_processor_enabled = enabled;
     }
 
     fn base(&self, tp: &str) -> BaseLogicalPlan {
@@ -1343,10 +1352,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             return Ok(self.build_mem_table(&db_name, &table));
         }
 
-        // `b.optFlag |= rule.FlagPartitionProcessor` — Go sets it from the
-        // partition pruning mode; a table that reports a partition definition
-        // needs the processor.
-        if table.is_partitioned {
+        // `b.optFlag |= rule.FlagPartitionProcessor` is enabled only for
+        // static pruning. Dynamic pruning must retain global-index paths.
+        if table.is_partitioned && self.partition_processor_enabled {
             self.opt_flag |= flags::PARTITION_PROCESSOR;
         }
         if table.is_partitioned {
@@ -1643,7 +1651,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             &public_paths,
             &table_ref.hints,
             &data_source.index_hints,
-            table.is_partitioned,
+            table.is_partitioned && self.partition_processor_enabled,
             data_source.force_no_index_lookup_push_down,
             data_source.index_lookup_push_down_session,
         )?;

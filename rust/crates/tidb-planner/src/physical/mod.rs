@@ -1854,6 +1854,24 @@ pub struct PhysicalIndexScan {
 }
 
 impl PhysicalIndexScan {
+    /// Go `PhysicalIndexScan.ExplainID`: the operator identity follows the
+    /// resolved range shape instead of the generic construction-time type.
+    #[must_use]
+    pub fn resolved_explain_id(&self, ignore_suffix: bool) -> String {
+        let plan_type = if self.ranges.is_empty()
+            || crate::ranger::types::has_full_range(&self.ranges, false)
+        {
+            "IndexFullScan"
+        } else {
+            "IndexRangeScan"
+        };
+        if ignore_suffix {
+            plan_type.to_owned()
+        } else {
+            format!("{plan_type}_{}", self.base.base.id())
+        }
+    }
+
     /// Initializes one wired index scan from the source candidate and
     /// `CountAfterAccess` used by task comparison.
     #[must_use]
@@ -2732,7 +2750,13 @@ impl PhysicalPlan {
     /// Go `Plan.ExplainID(...)`.
     #[must_use]
     pub fn explain_id(&self, ignore_suffix: bool) -> String {
-        self.base().base.explain_id(ignore_suffix)
+        match self {
+            Self::TableScan(scan) => scan
+                .resolved_explain_id(ignore_suffix)
+                .unwrap_or_else(|| self.base().base.explain_id(ignore_suffix)),
+            Self::IndexScan(scan) => scan.resolved_explain_id(ignore_suffix),
+            _ => self.base().base.explain_id(ignore_suffix),
+        }
     }
 
     /// Go `Plan.QueryBlockOffset()`.
