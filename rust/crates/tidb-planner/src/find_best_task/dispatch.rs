@@ -121,8 +121,10 @@ pub struct DispatchContext<'a> {
     pub apply_cache_capacity: i64,
     /// Go `SessionVars.IsMPPAllowed()`, which controls MPP candidates.
     pub mpp_allowed: bool,
-    /// Go `BaseLogicalPlan.taskMap`, keyed here by `(plan id, prop key)`.
-    task_map: HashMap<(i32, String), Task>,
+    /// Go `BaseLogicalPlan.taskMap`, keyed by the logical plan object and
+    /// property. Numeric plan IDs are explain identities and are deliberately
+    /// shared by static-partition DataSource copies.
+    task_map: HashMap<(usize, String), Task>,
     /// Go `SessionVars.AllocPlanColumnID`: the column-id allocator the
     /// aggregate partial/final split draws fresh columns from. `None` keeps
     /// pre-split searches working; a search that can push aggregates sets it
@@ -665,7 +667,7 @@ pub fn find_best_task(
     // Operators with their own findBestTask override are routed first, as
     // Go's function-pointer wiring does. They are born in root tasks and
     // are never memoized poorly: the general tail below still stores them.
-    let key = (plan.id(), prop_key(prop));
+    let key = (std::ptr::from_ref(plan).addr(), prop_key(prop));
     if let Some(cached) = ctx.task_map.get(&key) {
         return Ok(cached.copy());
     }
@@ -1338,7 +1340,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
     let ordered = !prop.is_sort_item_empty();
     let desc = ordered && prop.sort_items[0].desc;
     let mut best = Task::invalid_task();
-    for path in &ds.enumerated_paths {
+    'paths: for path in &ds.enumerated_paths {
         if let Some(runtime) = &prop.index_join_prop {
             if !path_matches_index_join_runtime(ds, path, runtime) {
                 continue;
@@ -1347,11 +1349,11 @@ fn find_best_task_4_logical_data_source_without_enforcer(
         let cop = match path {
             crate::access_path::PossiblePath::Table { primary_index, .. } => {
                 if cop_multi_read {
-                    continue;
+                    continue 'paths;
                 }
                 let keep_order = ordered;
                 if keep_order && !table_path_matches_order(ds, prop) {
-                    continue;
+                    continue 'paths;
                 }
                 let mut base = crate::physical::BasePhysicalPlan::new(
                     ctx.allocator,
@@ -1366,7 +1368,12 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     .base
                     .base
                     .schema()
-                    .and_then(|schema| ds.get_pk_is_handle_col(schema));
+                    .and_then(|schema| ds.get_pk_is_handle_col(schema))
+                    .or_else(|| {
+                        ds.handle_cols
+                            .first()
+                            .filter(|column| column.id == tidb_model::column::EXTRA_HANDLE_ID)
+                    });
                 let handle_type = handle_column
                     .and_then(|col| col.ret_type.clone())
                     .unwrap_or_else(|| {
@@ -1516,6 +1523,101 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     ));
                 }
                 base.base.set_stats(stats.clone());
+                let table_range_rebuild = if table_access_conds.is_empty() {
+                    None
+                } else if common_handle.is_some() {
+                    Some(
+                        crate::physical_plan_cache::TableRangeRebuild::common_handle(
+                            table_access_conds.clone(),
+                            common_columns.clone(),
+                            common_lengths.clone(),
+                        ),
+                    )
+                } else {
+                    Some(crate::physical_plan_cache::TableRangeRebuild::int_handle(
+                        table_access_conds.clone(),
+                        handle_type.clone(),
+                        handle_type.is_unsigned(),
+                    ))
+                };
+                let explicit_physical_id = match ds.partition_names.as_slice() {
+                    [name] => ds
+                        .partition_definition_names
+                        .iter()
+                        .position(|definition| definition.eq_ignore_ascii_case(name))
+                        .and_then(|index| ds.partition_definition_ids.get(index).copied()),
+                    _ => None,
+                };
+                if prop.index_join_prop.is_none()
+                    && handle_column.is_some()
+                    && !ranges.is_empty()
+                    && ranges.iter().all(|range| {
+                        !range.low_exclude
+                            && !range.high_exclude
+                            && range.low_val == range.high_val
+                            && range.low_val.iter().all(|value| !value.is_null())
+                    })
+                    && (ds.partition_definition_ids.is_empty()
+                        || ds.physical_table_id != ds.table_id
+                        || explicit_physical_id.is_some())
+                {
+                    let mut point_base = crate::physical::BasePhysicalPlan::new(
+                        ctx.allocator,
+                        if ranges.len() == 1 {
+                            "Point_Get"
+                        } else {
+                            "Batch_Point_Get"
+                        },
+                        ds.base.base.query_block_offset(),
+                    );
+                    point_base.base.set_schema(ds.base.base.schema().cloned());
+                    point_base.base.set_stats(stats);
+                    let mut point = if ranges.len() == 1 {
+                        PhysicalPlan::PointGet(crate::physical::PhysicalPointGet {
+                            base: point_base,
+                            table_id: explicit_physical_id.unwrap_or(ds.physical_table_id),
+                            index_id: None,
+                            ranges,
+                            range_rebuild: table_range_rebuild
+                                .clone()
+                                .map(crate::physical_plan_cache::PointRangeRebuild::Table),
+                        })
+                    } else {
+                        PhysicalPlan::BatchPointGet(crate::physical::PhysicalBatchPointGet {
+                            base: point_base,
+                            table_id: explicit_physical_id.unwrap_or(ds.physical_table_id),
+                            index_id: None,
+                            ranges,
+                            range_rebuild: table_range_rebuild
+                                .clone()
+                                .map(crate::physical_plan_cache::PointRangeRebuild::Table),
+                            keep_order,
+                            desc,
+                        })
+                    };
+                    if !table_filters.is_empty() {
+                        let mut selection_base = crate::physical::BasePhysicalPlan::new(
+                            ctx.allocator,
+                            "Selection",
+                            ds.base.base.query_block_offset(),
+                        );
+                        selection_base
+                            .base
+                            .set_schema(ds.base.base.schema().cloned());
+                        selection_base
+                            .base
+                            .set_stats(ds.base.base.stats_info().cloned());
+                        selection_base.set_children(vec![point]);
+                        point = PhysicalPlan::Selection(crate::physical::PhysicalSelection {
+                            base: selection_base,
+                            conditions: table_filters,
+                            from_data_source: true,
+                        });
+                    }
+                    let mut root = crate::task::RootTask::default();
+                    root.set_plan(point);
+                    return Ok(Task::Root(root));
+                }
                 let scan_kind = if ranges
                     .iter()
                     .all(|range| range.is_full_range(handle_type.is_unsigned()))
@@ -1533,23 +1635,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     keep_order,
                     desc,
                     ranges: ranges.clone(),
-                    range_rebuild: if table_access_conds.is_empty() {
-                        None
-                    } else if common_handle.is_some() {
-                        Some(
-                            crate::physical_plan_cache::TableRangeRebuild::common_handle(
-                                table_access_conds.clone(),
-                                common_columns,
-                                common_lengths,
-                            ),
-                        )
-                    } else {
-                        Some(crate::physical_plan_cache::TableRangeRebuild::int_handle(
-                            table_access_conds.clone(),
-                            handle_type.clone(),
-                            handle_type.is_unsigned(),
-                        ))
-                    },
+                    range_rebuild: table_range_rebuild,
                     table_scan_penalty: ds.table_scan_penalty,
                     tikv_pushdown: None,
                     resolved_descriptor: Some(crate::access_path::ResolvedTableDescriptor::new(
@@ -1595,13 +1681,13 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     ..crate::task::CopTask::default()
                 })
             }
-            crate::access_path::PossiblePath::Index { index } => {
+            crate::access_path::PossiblePath::Index { index } => 'index_path: {
                 let Some(source_index) = ds.indexes.get(*index) else {
-                    continue;
+                    continue 'paths;
                 };
                 let keep_order = ordered;
                 if keep_order && !index_path_matches_order(ds, source_index, prop) {
-                    continue;
+                    continue 'paths;
                 }
                 // `convertToIndexScan`: a path that is NOT a single scan
                 // reads the table rows back through an IndexLookUp double
@@ -1613,7 +1699,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 if (prop.task_tp == TaskType::CopSingleRead && !single_scan)
                     || (cop_multi_read && single_scan)
                 {
-                    continue;
+                    continue 'paths;
                 }
                 let mut base = crate::physical::BasePhysicalPlan::new(
                     ctx.allocator,
@@ -1690,6 +1776,92 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     || ds.pushed_down_conds.clone(),
                     |result| result.remained_conds.clone(),
                 );
+                // Go retains `AccessCondition` on PhysicalIndexScan, not
+                // every pushed predicate. Rebuilding the latter would feed
+                // residual filters back into the ranger and make a safe
+                // parameter change look uncacheable.
+                let index_range_rebuild = declared_index_prefix_complete
+                    .then_some(detach.as_ref())
+                    .flatten()
+                    .filter(|result| !result.access_conds.is_empty())
+                    .map(|result| {
+                        crate::physical_plan_cache::IndexRangeRebuild::new(
+                            result.access_conds.clone(),
+                            index_cols.clone(),
+                            index_lengths.clone(),
+                        )
+                    });
+                // Go `tryConvertToPointGet`: a complete non-NULL point range
+                // on a unique index is a complete root point plan, not an
+                // IndexReader/IndexLookUp candidate. Residual conditions stay
+                // as the ordinary root Selection above it.
+                if prop.index_join_prop.is_none()
+                    && (ds.partition_definition_ids.is_empty()
+                        || ds.physical_table_id != ds.table_id)
+                    && source_index.unique
+                    && declared_index_prefix_complete
+                    && !ranges.is_empty()
+                    && ranges.iter().all(|range| range.is_point_non_nullable())
+                {
+                    let mut point_base = crate::physical::BasePhysicalPlan::new(
+                        ctx.allocator,
+                        if ranges.len() == 1 {
+                            "Point_Get"
+                        } else {
+                            "Batch_Point_Get"
+                        },
+                        ds.base.base.query_block_offset(),
+                    );
+                    point_base.base.set_schema(ds.base.base.schema().cloned());
+                    point_base
+                        .base
+                        .set_stats(ds.base.base.stats_info().cloned());
+                    let mut point = if ranges.len() == 1 {
+                        PhysicalPlan::PointGet(crate::physical::PhysicalPointGet {
+                            base: point_base,
+                            table_id: ds.physical_table_id,
+                            index_id: Some(source_index.id),
+                            ranges: ranges.clone(),
+                            range_rebuild: index_range_rebuild
+                                .clone()
+                                .map(crate::physical_plan_cache::PointRangeRebuild::Index),
+                        })
+                    } else {
+                        PhysicalPlan::BatchPointGet(crate::physical::PhysicalBatchPointGet {
+                            base: point_base,
+                            table_id: ds.physical_table_id,
+                            index_id: Some(source_index.id),
+                            ranges: ranges.clone(),
+                            range_rebuild: index_range_rebuild
+                                .clone()
+                                .map(crate::physical_plan_cache::PointRangeRebuild::Index),
+                            keep_order,
+                            desc,
+                        })
+                    };
+                    if !remained_conds.is_empty() {
+                        let mut selection_base = crate::physical::BasePhysicalPlan::new(
+                            ctx.allocator,
+                            "Selection",
+                            ds.base.base.query_block_offset(),
+                        );
+                        selection_base
+                            .base
+                            .set_schema(ds.base.base.schema().cloned());
+                        selection_base
+                            .base
+                            .set_stats(ds.base.base.stats_info().cloned());
+                        selection_base.set_children(vec![point]);
+                        point = PhysicalPlan::Selection(crate::physical::PhysicalSelection {
+                            base: selection_base,
+                            conditions: remained_conds,
+                            from_data_source: true,
+                        });
+                    }
+                    let mut root = crate::task::RootTask::default();
+                    root.set_plan(point);
+                    break 'index_path Task::Root(root);
+                }
                 let table_stats = ds
                     .table_stats
                     .clone()
@@ -1801,21 +1973,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     keep_order,
                     desc,
                     ranges: ranges.clone(),
-                    // Go retains `AccessCondition` on PhysicalIndexScan, not
-                    // every pushed predicate. Rebuilding the latter would
-                    // feed residual filters back into the ranger and make a
-                    // safe parameter change look uncacheable.
-                    range_rebuild: declared_index_prefix_complete
-                        .then_some(detach.as_ref())
-                        .flatten()
-                        .filter(|result| !result.access_conds.is_empty())
-                        .map(|result| {
-                            crate::physical_plan_cache::IndexRangeRebuild::new(
-                                result.access_conds.clone(),
-                                index_cols.clone(),
-                                index_lengths.clone(),
-                            )
-                        }),
+                    range_rebuild: index_range_rebuild,
                     covering_ranges: Vec::new(),
                     tikv_pushdown: None,
                 });
@@ -3228,5 +3386,35 @@ mod tests {
             format!("{:?}", first.plan().map(super::PhysicalPlan::tp)),
             format!("{:?}", second.plan().map(super::PhysicalPlan::tp)),
         );
+    }
+
+    #[test]
+    fn the_task_map_distinguishes_nodes_that_share_a_go_plan_id() {
+        // Go's static partition processor shallow-copies a DataSource and
+        // deliberately retains its numeric plan ID. Go's task map belongs to
+        // each plan object, so equal IDs must not alias one Rust memo entry.
+        let allocator = PlanIdAllocator::new();
+        let coster = CountCoster;
+        let mut ctx = DispatchContext::new(&allocator, &coster, 1.0);
+        let make_dual = |rows: usize| {
+            let mut base = BaseLogicalPlan::with_id(77, LogicalTableDual::TYPE, 0);
+            base.base.set_stats(Some(StatsInfo::new(rows as f64, [])));
+            LogicalPlan::TableDual(LogicalTableDual::new(base, rows))
+        };
+        let first = make_dual(1);
+        let second = make_dual(3);
+
+        let first_task = find_best_task(&first, &PhysicalProperty::default(), &mut ctx)
+            .expect("the first node plans");
+        let second_task = find_best_task(&second, &PhysicalProperty::default(), &mut ctx)
+            .expect("the second node plans independently");
+        assert!(matches!(
+            first_task.plan(),
+            Some(PhysicalPlan::TableDual(dual)) if dual.row_count == 1
+        ));
+        assert!(matches!(
+            second_task.plan(),
+            Some(PhysicalPlan::TableDual(dual)) if dual.row_count == 3
+        ));
     }
 }

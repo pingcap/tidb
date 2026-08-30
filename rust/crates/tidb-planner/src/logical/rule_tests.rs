@@ -49,7 +49,7 @@ use super::rule::{
 use super::selection::LogicalSelection;
 use super::sort::LogicalSort;
 use super::topn::LogicalTopN;
-use super::{BaseLogicalPlan, LogicalPlan};
+use super::{BaseLogicalPlan, LogicalPartitionUnionAll, LogicalPlan};
 
 pub(crate) const TEST_BUILDER: PreservingFunctionBuilder = PreservingFunctionBuilder;
 
@@ -67,6 +67,7 @@ pub(crate) fn test_context(allocator: &PlanIdAllocator) -> RuleContext<'_> {
         allow_derive_topn: true,
         disabled_rules: DisabledLogicalRules::default(),
         statistics_load: None,
+        partition_pruning: None,
         opt_index_prune_threshold: 20,
     }
 }
@@ -854,6 +855,67 @@ fn column_pruning_keeps_a_column_a_selection_reads() {
         vec![2, 3],
         "column 3 survives because the filter reads it"
     );
+    plan.dismantle();
+}
+
+#[test]
+fn column_pruning_projects_condition_only_columns_below_a_partition_union() {
+    // Go LogicalUnionAll.PruneColumns adds an identity projection when a
+    // child keeps a column solely to evaluate its pushed condition. Without
+    // it, the child row shape is wider than PartitionUnion's row shape.
+    let allocator = PlanIdAllocator::new();
+    let ctx = test_context(&allocator);
+    let child = || {
+        let mut source = data_source(&allocator, &[1, 2, 3]);
+        if let LogicalPlan::DataSource(data_source) = &mut source {
+            data_source.all_conds = vec![eq_const(2, 7)];
+        } else {
+            unreachable!("the helper builds a DataSource");
+        }
+        source
+    };
+    let mut union = LogicalPartitionUnionAll::new(base(
+        &allocator,
+        LogicalPartitionUnionAll::TYPE,
+        Some(schema_of(&[1, 2, 3])),
+    ));
+    union.union_all.base.set_children(vec![child(), child()]);
+
+    let (plan, failure) = super::rewrite::prune_columns(
+        &ctx,
+        LogicalPlan::PartitionUnionAll(union),
+        vec![column(1), column(3)],
+    );
+    assert!(failure.is_none());
+    assert_eq!(
+        plan.schema()
+            .expect("the union has a schema")
+            .columns
+            .iter()
+            .map(|column| column.unique_id)
+            .collect::<Vec<_>>(),
+        vec![1, 3]
+    );
+    for child in plan.children() {
+        let LogicalPlan::Projection(projection) = child else {
+            panic!("a condition-only column needs a projection, got {child:?}")
+        };
+        assert!(matches!(
+            projection.exprs.as_slice(),
+            [Expression::Column(first), Expression::Column(second)]
+                if first.unique_id == 1 && second.unique_id == 3
+        ));
+        assert_eq!(
+            projection.base.children()[0]
+                .schema()
+                .expect("the source has a schema")
+                .columns
+                .iter()
+                .map(|column| column.unique_id)
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+    }
     plan.dismantle();
 }
 

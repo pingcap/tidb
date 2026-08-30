@@ -1044,6 +1044,26 @@ impl Catalog {
                             table_name: table.name.clone(),
                             db_name: database.name.clone(),
                             physical_table_id: table.table_id,
+                            partition_definition_names: table
+                                .partition()
+                                .map(|partition| {
+                                    partition
+                                        .definitions
+                                        .iter()
+                                        .map(|definition| definition.name.clone())
+                                        .collect()
+                                })
+                                .unwrap_or_default(),
+                            partition_definition_ids: table
+                                .partition()
+                                .map(|partition| {
+                                    partition
+                                        .definitions
+                                        .iter()
+                                        .map(|definition| definition.id)
+                                        .collect()
+                                })
+                                .unwrap_or_default(),
                             columns,
                             indexes,
                             pk_is_handle: table.pk_handle_offset().is_some(),
@@ -1719,6 +1739,33 @@ impl Catalog {
                     TableEntry::Kv(table) if table.table_id == table_id => Some(table),
                     _ => None,
                 })
+        })
+    }
+
+    /// Resolves Go's physical table ID to a reader handle. A partition ID
+    /// names its logical table with the read restricted to that one physical
+    /// keyspace, matching executorBuilder's partition-table lookup.
+    pub(crate) fn physical_kv_table_by_id(&self, physical_id: i64) -> Option<crate::KvTable> {
+        self.databases.values().find_map(|database| {
+            database.tables.values().find_map(|entry| {
+                let TableEntry::Kv(table) = entry.as_ref() else {
+                    return None;
+                };
+                if table.table_id == physical_id {
+                    return Some(table.clone());
+                }
+                table.partition().and_then(|partition| {
+                    partition
+                        .definitions
+                        .iter()
+                        .any(|definition| definition.id == physical_id)
+                        .then(|| {
+                            let mut physical = table.clone();
+                            physical.restrict_read_to_partitions(&[physical_id]);
+                            physical
+                        })
+                })
+            })
         })
     }
 

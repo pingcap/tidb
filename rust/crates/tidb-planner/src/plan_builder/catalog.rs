@@ -158,12 +158,9 @@ pub struct SourceIndex {
 /// What the ported builder bodies read off a `*model.TableInfo` plus the
 /// partition selection `buildDataSource` has already made.
 ///
-/// One value per PHYSICAL table read: a partitioned table hands back one of
-/// these per targeted partition, with `physical_table_id` and
-/// `partition_def_idx` already resolved. That mirrors what
-/// [`DataSource`](crate::logical::data_source::DataSource) stores and keeps
-/// partition pruning on the implementor's side of the seam, where the
-/// partition expression lives.
+/// One value per logical table. Static partition pruning later copies the
+/// resulting `DataSource` once per surviving physical definition, exactly as
+/// Go's `PartitionProcessor.makeUnionAllChildren` does.
 #[derive(Clone, Debug, Default)]
 pub struct SourceTable {
     /// Go `DBInfo`, shared by every table occurrence in one infoschema.
@@ -185,6 +182,8 @@ pub struct SourceTable {
     pub partition_def_idx: Option<usize>,
     /// Go `TableInfo.GetPartitionInfo().Definitions[i].Name.O`.
     pub partition_definition_names: Vec<String>,
+    /// Go `TableInfo.GetPartitionInfo().Definitions[i].ID`.
+    pub partition_definition_ids: Vec<i64>,
     /// Go `TableInfo.Columns`, in offset order.
     pub columns: Vec<SourceColumn>,
     /// Go `TableInfo.Indices`, in declaration order.

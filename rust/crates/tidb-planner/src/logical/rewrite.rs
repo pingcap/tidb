@@ -950,10 +950,12 @@ enum PendingColumns {
     /// child plus the columns snapshotted on the way down — the parent's set
     /// for a TopN, this window's own result columns for a window.
     RebuildWithOwnColumns(Vec<Column>),
+    /// `LogicalUnionAll`: add Go's identity projection above a child that
+    /// retained condition-only columns after the union schema was pruned.
+    RepairUnionChildren(bool),
 }
 
 struct PruneColumns<'a, 'ctx> {
-    #[allow(dead_code)]
     ctx: &'a RuleContext<'ctx>,
     failure: RewriteFailure,
     stash: Vec<PendingColumns>,
@@ -1068,19 +1070,13 @@ impl OwnedRewrite for PruneColumns<'_, '_> {
                 self.stash.push(PendingColumns::Nothing);
                 Descend::Children(vec![op.prune_columns_local(&parent_used_cols)])
             }
-            // Go `LogicalUnionAll.PruneColumns` (`logical_union_all.go:113`).
-            //
-            // NARROWING: Go inserts a `LogicalProjection` above a branch that
-            // stayed WIDER than the union (see
-            // [`LogicalUnionAll::child_needs_pruning_projection`]); building
-            // that projection needs a plan-column allocator per branch column
-            // and is left to the batch that owns projection construction. The
-            // per-branch set and the union's own schema pruning are done.
+            // Go `LogicalUnionAll.PruneColumns` (`logical_union_all.go:59`).
             LogicalPlan::UnionAll(_) | LogicalPlan::PartitionUnionAll(_) => {
                 let pruning =
                     LogicalUnionAll::prune_columns_local(&parent_used_cols, &mut own_schema);
                 set_own_schema(node, own_schema);
-                self.stash.push(PendingColumns::Nothing);
+                self.stash
+                    .push(PendingColumns::RepairUnionChildren(pruning.has_been_used));
                 Descend::Children(vec![pruning.child_used_cols; child_count])
             }
             // Go `LogicalMemTable.PruneColumns` (`logical_mem_table.go:80`).
@@ -1208,6 +1204,48 @@ impl OwnedRewrite for PruneColumns<'_, '_> {
                 if let Some(schema) = rebuilt {
                     set_own_schema(&mut node, schema);
                 }
+                (node, ())
+            }
+            PendingColumns::RepairUnionChildren(has_been_used) => {
+                if !has_been_used {
+                    return (node, ());
+                }
+                let Some(schema) = node.schema().cloned() else {
+                    return (node, ());
+                };
+                let query_block_offset = node.base().base.query_block_offset();
+                let children = node.base_mut().take_children();
+                let children = children
+                    .into_iter()
+                    .map(|child| {
+                        if !LogicalUnionAll::child_needs_pruning_projection(
+                            schema.columns.len(),
+                            child
+                                .schema()
+                                .map_or(0, |child_schema| child_schema.columns.len()),
+                        ) {
+                            return child;
+                        }
+                        let expressions = schema
+                            .columns
+                            .iter()
+                            .cloned()
+                            .map(Expression::Column)
+                            .collect();
+                        let mut projection = LogicalProjection::new(
+                            BaseLogicalPlan::new(
+                                self.ctx.allocator,
+                                LogicalProjection::TYPE,
+                                query_block_offset,
+                            ),
+                            expressions,
+                        );
+                        projection.base.base.set_schema(Some(schema.clone()));
+                        projection.base.set_children(vec![child]);
+                        LogicalPlan::Projection(projection)
+                    })
+                    .collect();
+                node.set_children(children);
                 (node, ())
             }
         }

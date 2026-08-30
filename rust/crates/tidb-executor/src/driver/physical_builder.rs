@@ -399,9 +399,9 @@ fn build_table_scan(
     ctx: &crate::StmtContext,
 ) -> Result<Box<dyn Executor>, DriverError> {
     let table = catalog
-        .kv_table_by_id(scan.table_id)
+        .physical_kv_table_by_id(scan.table_id)
         .ok_or_else(|| DriverError::unsupported("physical table ID is absent from the catalog"))?;
-    let (schema, keep, extra_handle_slot) = table_scan_schema(scan, table)?;
+    let (schema, keep, extra_handle_slot) = table_scan_schema(scan, &table)?;
     let mut source = TableScanExec::new_with_context(
         meta(plan, schema.clone()),
         table.clone(),
@@ -846,9 +846,11 @@ fn build_index_reader(
 ) -> Result<Box<dyn Executor>, DriverError> {
     let scan = embedded_index_scan(index_plan)
         .ok_or_else(|| DriverError::unsupported("a physical index reader has no index scan"))?;
-    let table = catalog.kv_table_by_id(scan.table_id).ok_or_else(|| {
-        DriverError::unsupported("physical index table ID is absent from the catalog")
-    })?;
+    let table = catalog
+        .physical_kv_table_by_id(scan.table_id)
+        .ok_or_else(|| {
+            DriverError::unsupported("physical index table ID is absent from the catalog")
+        })?;
     if !table
         .indexes()
         .iter()
@@ -859,7 +861,7 @@ fn build_index_reader(
         ));
     }
     let schema = plan_schema(plan)?;
-    let (keep, extra_handle) = reader_output_offsets(&schema, scan, table)?;
+    let (keep, extra_handle) = reader_output_offsets(&schema, scan, &table)?;
     let ranges = if scan.ranges.is_empty() {
         vec![IndexRange::full()]
     } else {
@@ -1162,7 +1164,7 @@ fn index_join_probe_key_domains(
     let table_id = join.inner_access_table_id.ok_or_else(|| {
         DriverError::unsupported("a physical index join has no retained inner table ID")
     })?;
-    let table = catalog.kv_table_by_id(table_id).ok_or_else(|| {
+    let table = catalog.physical_kv_table_by_id(table_id).ok_or_else(|| {
         DriverError::unsupported("a physical index-join table ID is absent from the catalog")
     })?;
     let object_types = if let Some(index_id) = join.inner_access_index_id {
@@ -1283,7 +1285,7 @@ fn build_index_inner_reader(
     let table_id = join.inner_access_table_id.ok_or_else(|| {
         DriverError::unsupported("a physical index join has no retained inner table ID")
     })?;
-    let table = catalog.kv_table_by_id(table_id).ok_or_else(|| {
+    let table = catalog.physical_kv_table_by_id(table_id).ok_or_else(|| {
         DriverError::unsupported("a physical index-join table ID is absent from the catalog")
     })?;
     let (embedded, covering) = index_inner_reader_payload(plan).ok_or_else(|| {
@@ -1307,8 +1309,8 @@ fn build_index_inner_reader(
         LookupObject::CommonHandle
     };
     let schema = plan_schema(plan)?;
-    let output_offsets = index_inner_output_offsets(&schema, table)?;
-    let filter_schema = physical_table_schema(embedded, table);
+    let output_offsets = index_inner_output_offsets(&schema, &table)?;
+    let filter_schema = physical_table_schema(embedded, &table);
     let mut filters = Vec::new();
     collect_index_inner_filters(embedded, &filter_schema, &mut filters)?;
     let mut source = IndexJoinLookupExec::new_with_context(
@@ -2052,19 +2054,14 @@ fn build_point_get(
     ctx: &crate::StmtContext,
 ) -> Result<Box<dyn Executor>, DriverError> {
     let table = catalog
-        .kv_table_by_id(point.table_id)
+        .physical_kv_table_by_id(point.table_id)
         .ok_or_else(|| DriverError::unsupported("physical point-get table ID is absent"))?;
-    if table.partition().is_some() {
-        return Err(DriverError::unsupported(
-            "a partitioned PointGet lacks its retained physical table ID",
-        ));
-    }
     let schema = plan_schema(plan)?;
-    let output_columns = table_output_columns(&schema, table)?;
+    let output_columns = table_output_columns(&schema, &table)?;
     let executor_meta = ExecutorMeta::new(schema, i64::from(plan.base().base.id()), 1, 1);
     if let Some(index_id) = point.index_id {
         let index_values =
-            unique_index_point_values(table, index_id, &point.ranges, ctx, false, false, false)?;
+            unique_index_point_values(&table, index_id, &point.ranges, ctx, false, false, false)?;
         if index_values.len() != 1 {
             return Err(DriverError::unsupported(
                 "a physical unique-index PointGet does not retain exactly one key",
@@ -2080,7 +2077,7 @@ fn build_point_get(
             true,
         )));
     }
-    let handles = point_handles(table, &point.ranges, ctx)?;
+    let handles = point_handles(&table, &point.ranges, ctx)?;
     if handles.len() != 1 {
         return Err(DriverError::unsupported(
             "a physical PointGet does not retain exactly one key",
@@ -2102,18 +2099,13 @@ fn build_batch_point_get(
     ctx: &crate::StmtContext,
 ) -> Result<Box<dyn Executor>, DriverError> {
     let table = catalog
-        .kv_table_by_id(batch.table_id)
+        .physical_kv_table_by_id(batch.table_id)
         .ok_or_else(|| DriverError::unsupported("physical batch-point table ID is absent"))?;
-    if table.partition().is_some() {
-        return Err(DriverError::unsupported(
-            "a partitioned BatchPointGet lacks retained physical table IDs",
-        ));
-    }
     let schema = plan_schema(plan)?;
-    let output_columns = table_output_columns(&schema, table)?;
+    let output_columns = table_output_columns(&schema, &table)?;
     if let Some(index_id) = batch.index_id {
         let index_values = unique_index_point_values(
-            table,
+            &table,
             index_id,
             &batch.ranges,
             ctx,
@@ -2131,7 +2123,7 @@ fn build_batch_point_get(
             false,
         )));
     }
-    let mut handles = point_handles(table, &batch.ranges, ctx)?;
+    let mut handles = point_handles(&table, &batch.ranges, ctx)?;
     let mut seen = std::collections::HashSet::with_capacity(handles.len());
     handles.retain(|handle| seen.insert(handle.clone()));
     if batch.keep_order {
@@ -2255,7 +2247,7 @@ fn build_index_merge_reader(
             "a physical index-merge final table plan reads a different table",
         ));
     }
-    let table = catalog.kv_table_by_id(table_id).ok_or_else(|| {
+    let table = catalog.physical_kv_table_by_id(table_id).ok_or_else(|| {
         DriverError::unsupported("physical index-merge table ID is absent from the catalog")
     })?;
     if table.record_physical_ids().len() != 1 {
@@ -2267,7 +2259,7 @@ fn build_index_merge_reader(
     let mut partials: Vec<Box<dyn PartialHandleSource>> = Vec::new();
     for partial in &reader.partial_plans_raw {
         let partial_schema = plan_schema(partial)?;
-        let handle_columns = partial_handle_columns(&partial_schema, table)?;
+        let handle_columns = partial_handle_columns(&partial_schema, &table)?;
         let sort_key_columns = partial_sort_key_columns(&partial_schema, &reader.by_items)?;
         let executor = build_with_state(partial, catalog, ctx, state)?;
         if executor.schema().len() != partial_schema.len() {
@@ -2285,7 +2277,7 @@ fn build_index_merge_reader(
     }
 
     let schema = plan_schema(plan)?;
-    let output_columns = table_output_columns(&schema, table)?;
+    let output_columns = table_output_columns(&schema, &table)?;
     let by_items = reader
         .by_items
         .iter()

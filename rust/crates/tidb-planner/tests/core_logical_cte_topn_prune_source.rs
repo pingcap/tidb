@@ -80,6 +80,7 @@ fn test_context<'a>(allocator: &'a PlanIdAllocator) -> RuleContext<'a> {
         allow_derive_topn: true,
         disabled_rules: Default::default(),
         statistics_load: None,
+        partition_pruning: None,
         opt_index_prune_threshold: 20,
     }
 }

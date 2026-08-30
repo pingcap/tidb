@@ -148,7 +148,10 @@ impl OwnedRewrite for InitStats<'_> {
         let LogicalPlan::DataSource(source) = node else {
             return Descend::Children(vec![(); node.children().len()]);
         };
-        let stored_statistics = self.catalog.table_statistics(source.table_id);
+        // Go `initStats` calls `GetStatsTable(..., ds.PhysicalTableID)`: a
+        // static-pruning child owns one physical partition's statistics,
+        // while an ordinary/dynamic source keeps the logical table ID here.
+        let stored_statistics = self.catalog.table_statistics(source.physical_table_id);
         // Go `GetStatsTable` copies the cached table before marking an
         // outdated distribution pseudo. The switch belongs to this session,
         // so the shared statistics cache must remain unchanged for peers.
@@ -829,11 +832,116 @@ fn optimize_built_logical(
         }
     }
 
+    struct PlannerPartitionPruning<'a> {
+        catalog: &'a Catalog,
+        builder: &'a RealFunctionBuilder<'a, crate::StmtContext>,
+    }
+
+    impl tidb_planner::logical::rule_partition_processor::PartitionPruning
+        for PlannerPartitionPruning<'_>
+    {
+        fn partition_indices(
+            &self,
+            source: &tidb_planner::logical::DataSource,
+        ) -> Result<Vec<usize>, tidb_planner::plan_base::PlanError> {
+            let table = self
+                .catalog
+                .kv_table_by_id(source.table_id)
+                .ok_or_else(|| {
+                    tidb_planner::plan_base::PlanError::internal(
+                        "partitioned logical table is absent from the catalog",
+                    )
+                })?;
+            let partition = table.partition().ok_or_else(|| {
+                tidb_planner::plan_base::PlanError::internal(
+                    "partition processor received an unpartitioned table",
+                )
+            })?;
+            let mut surviving = partition
+                .definitions
+                .iter()
+                .enumerate()
+                .filter(|(_, definition)| {
+                    source.partition_names.is_empty()
+                        || source
+                            .partition_names
+                            .iter()
+                            .any(|name| name.eq_ignore_ascii_case(&definition.name))
+                })
+                .map(|(index, _)| index)
+                .collect::<Vec<_>>();
+            if source.all_conds.is_empty() || partition.dependencies.is_empty() {
+                return Ok(surviving);
+            }
+            let columns = partition
+                .dependencies
+                .iter()
+                .map(|dependency| {
+                    source
+                        .table_columns
+                        .iter()
+                        .find(|column| {
+                            column
+                                .orig_name
+                                .rsplit('.')
+                                .next()
+                                .is_some_and(|name| name.eq_ignore_ascii_case(dependency))
+                        })
+                        .cloned()
+                })
+                .collect::<Option<Vec<_>>>();
+            let Some(columns) = columns else {
+                return Ok(surviving);
+            };
+            let conditions = source
+                .all_conds
+                .iter()
+                .map(|condition| {
+                    tidb_expr::expr_util::push_not::push_down_not(condition, self.builder)
+                })
+                .collect::<Vec<_>>();
+            let lengths = vec![tidb_datatype::UNSPECIFIED_LENGTH; columns.len()];
+            let Ok(detached) =
+                tidb_planner::ranger::detacher::detach_cond_and_build_range_for_partition(
+                    &conditions,
+                    &columns,
+                    &lengths,
+                    0,
+                )
+            else {
+                return Ok(surviving);
+            };
+            let ranges = detached
+                .ranges
+                .iter()
+                .map(|range| crate::IndexRange {
+                    low: range.low_val.clone(),
+                    high: range.high_val.clone(),
+                    low_exclusive: range.low_exclude,
+                    high_exclusive: range.high_exclude,
+                })
+                .collect::<Vec<_>>();
+            if let Some(ids) = crate::partition_pruning::pruned_ids(partition, &ranges) {
+                surviving.retain(|index| ids.contains(&partition.definitions[*index].id));
+            }
+            Ok(surviving)
+        }
+    }
+
+    let flags = if ctx.static_partition_prune() {
+        flags
+    } else {
+        flags & !flags::PARTITION_PROCESSOR
+    };
     let flags = tidb_planner::logical::rule::add_second_column_prune(flags);
     let function_builder = RealFunctionBuilder::new(ctx);
     let statistics_load = PlannerStatisticsLoad {
         catalog,
         context: ctx,
+    };
+    let partition_pruning = PlannerPartitionPruning {
+        catalog,
+        builder: &function_builder,
     };
     let rule_context = RuleContext {
         allocator: plan_ids,
@@ -843,6 +951,7 @@ fn optimize_built_logical(
         allow_derive_topn: true,
         disabled_rules: DisabledLogicalRules::default(),
         statistics_load: Some(&statistics_load),
+        partition_pruning: Some(&partition_pruning),
         opt_index_prune_threshold: ctx.opt_index_prune_threshold(),
     };
     let optimized = logical_optimize(&rule_context, flags, plan)

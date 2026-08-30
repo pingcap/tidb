@@ -211,7 +211,7 @@ fn table_name(catalog: &Catalog, table_id: i64, alias: Option<&str>) -> String {
     alias.map_or_else(
         || {
             catalog
-                .kv_table_by_id(table_id)
+                .physical_kv_table_by_id(table_id)
                 .map_or_else(|| table_id.to_string(), |table| table.name.clone())
         },
         str::to_owned,
@@ -219,7 +219,20 @@ fn table_name(catalog: &Catalog, table_id: i64, alias: Option<&str>) -> String {
 }
 
 fn table_access(catalog: &Catalog, table_id: i64, alias: Option<&str>) -> String {
-    format!("table:{}", table_name(catalog, table_id, alias))
+    let mut access = format!("table:{}", table_name(catalog, table_id, alias));
+    if let Some(table) = catalog.physical_kv_table_by_id(table_id) {
+        if let Some(name) = table.partition().and_then(|partition| {
+            partition
+                .definitions
+                .iter()
+                .find(|definition| definition.id == table_id)
+                .map(|definition| definition.name.as_str())
+        }) {
+            access.push_str(", partition:");
+            access.push_str(name);
+        }
+    }
+    access
 }
 
 fn index_access(
@@ -230,7 +243,7 @@ fn index_access(
     index_name: Option<&str>,
 ) -> String {
     let table_access = table_access(catalog, table_id, alias);
-    let Some(table) = catalog.kv_table_by_id(table_id) else {
+    let Some(table) = catalog.physical_kv_table_by_id(table_id) else {
         return index_name.map_or(table_access.clone(), |name| {
             format!("{table_access}, index:{name}")
         });
@@ -255,7 +268,7 @@ fn point_access(catalog: &Catalog, table_id: i64, index_id: Option<i64>) -> Stri
         Some(index_id) => index_access(catalog, table_id, None, index_id, None),
         None => {
             let access = table_access(catalog, table_id, None);
-            let Some(table) = catalog.kv_table_by_id(table_id) else {
+            let Some(table) = catalog.physical_kv_table_by_id(table_id) else {
                 return access;
             };
             if table.common_handle_offsets().is_empty() {

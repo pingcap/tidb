@@ -81,10 +81,14 @@ pub struct DataSource {
     pub physical_table_id: i64,
     /// Go `PartitionDefIdx`: which partition definition this reads.
     pub partition_def_idx: Option<usize>,
+    /// Go `PartitionNames`: an explicit `PARTITION (p, ...)` restriction.
+    pub partition_names: Vec<String>,
     /// The partition definition names, so [`Self::explain_info`] can name the
     /// one `partition_def_idx` selects. Go reads
     /// `TableInfo.GetPartitionInfo().Definitions`.
     pub partition_definition_names: Vec<String>,
+    /// Physical IDs index-parallel to [`Self::partition_definition_names`].
+    pub partition_definition_ids: Vec<i64>,
     /// Go `Columns`, in schema order.
     pub columns: Vec<DataSourceColumn>,
     /// Go `TblCols`: the original table columns before logical pruning.
@@ -516,7 +520,9 @@ impl DataSource {
             db_name: self.db_name.clone(),
             physical_table_id: self.physical_table_id,
             partition_def_idx: self.partition_def_idx,
+            partition_names: self.partition_names.clone(),
             partition_definition_names: self.partition_definition_names.clone(),
+            partition_definition_ids: self.partition_definition_ids.clone(),
             columns: self.columns.clone(),
             table_columns: self.table_columns.clone(),
             pushed_down_conds: self.pushed_down_conds.clone(),
