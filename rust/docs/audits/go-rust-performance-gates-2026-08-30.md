@@ -265,6 +265,37 @@ The repeat confirms the read and insert paths meet the round-1 threshold and
 bulk-insert now reaches 0.8785, while explicit write transactions remain the
 blocking gap (`oltp_read_write`, `oltp_write_only`, and both update variants).
 
+### Sysbench repeat with session-worker shutdown (2026-08-31)
+
+The Rust listeners were rebuilt on the TiUP Pod NVMe from the worker-shutdown
+change (`tidb-executor: stop session statistics workers`) and restarted without
+restoring data. The startup thread count fell from roughly 300--560 threads per
+listener (over 475 `sync_load` workers on one listener) to 71; after the
+10-thread cells it stayed near 100 instead of growing without bound. A serial
+ten-subtype sweep completed in 199 seconds, still below the 300-second budget.
+BR restore was skipped, and insert/bulk-insert used fresh engine-specific empty
+tables. Receipt:
+`/tmp/tc8228803-new.MMk3QB/sysbench-r1-sync0831`.
+
+| Subtype | Go QPS | Rust QPS | Rust/Go | Gate |
+|---|---:|---:|---:|---|
+| `oltp_read_write.lua` | 545.39 | 187.76 | 0.3443 | FAIL |
+| `oltp_read_only.lua` | 745.36 | 742.57 | 0.9963 | PASS |
+| `oltp_write_only.lua` | 2183.88 | 434.73 | 0.1991 | FAIL |
+| `oltp_point_select.lua` | 18749.56 | 23159.77 | 1.2352 | PASS |
+| `select_random_points.lua` | 8043.11 | 9207.89 | 1.1448 | PASS |
+| `select_random_ranges.lua` | 8173.36 | 8336.55 | 1.0200 | PASS |
+| `oltp_insert.lua` (isolated empty tables) | 8042.06 | 7305.51 | 0.9084 | PASS |
+| `oltp_update_index.lua` | 5017.81 | 2985.23 | 0.5949 | FAIL |
+| `oltp_update_non_index.lua` | 6445.58 | 3408.32 | 0.5288 | FAIL |
+| `bulk_insert.lua` (isolated empty tables) | 292012.30 | 198596.73 | 0.6801 | FAIL |
+
+The worker lifecycle fix removes the observed session-worker growth and keeps
+the cluster stable, but it does not yet bring explicit write transactions to
+the 0.80 gate. A direct post-restart `oltp_update_index` check reached 3199.80
+Rust txn/s versus 4143.54 Go txn/s (0.7723), so the remaining gap is in the
+transaction/lock path rather than the worker leak alone.
+
 ## Acceptance status
 
 - Round 1 (0.80): **not passed** because Sysbench and BenchmarkSQL still fail;
