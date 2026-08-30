@@ -35,11 +35,10 @@
 //!    estimates from what it just wrote.
 //!
 //! Nothing the node serves from is touched until the 2PC commits. A statement
-//! that cannot analyze the table -- a partitioned one, a prefix index -- never
-//! reaches storage; a commit rejected by a write conflict with a Go TiDB's
-//! own concurrent `ANALYZE` leaves the cluster's statistics exactly as that
-//! other node wrote them, and the client is told. There is no rollback path
-//! to get wrong.
+//! rejected before execution never reaches storage; a commit rejected by a
+//! write conflict with a Go TiDB's own concurrent `ANALYZE` leaves the
+//! cluster's statistics exactly as that other node wrote them, and the client
+//! is told. There is no rollback path to get wrong.
 //!
 //! Step 5 is deliberately not a failure of the statement. The rows are
 //! durable; a node that could not refresh its own copy is a node whose next

@@ -33,11 +33,8 @@
 //!   `select { case w.tblCH <- tableID: default: log }`
 //!   (`historical_stats.go:48-53`): the send never blocks and never reports
 //!   failure, so a burst of more than [`TBL_CHANNEL_CAPACITY`] pending
-//!   tables loses the overflow with only a warning line. Reproduced:
-//!   [`HistoricalStatsWorker::send_tbl_to_dump_historical_stats`] returns
-//!   `()`, exactly like Go, and [`SendOutcome`] is offered only through the
-//!   separate [`HistoricalStatsWorker::send_tbl_to_dump_historical_stats_outcome`]
-//!   so a test can observe the drop that the real caller cannot.
+//!   tables loses the overflow with only a warning line. Reproduced by
+//!   [`HistoricalStatsWorker::send_tbl_to_dump_historical_stats`].
 //! - **The disabled switch is indistinguishable from a successful send.**
 //!   When `enableDumpHistoricalStats` is false the function returns before
 //!   touching the channel (`historical_stats.go:45-47`), again returning
@@ -48,14 +45,13 @@
 //!   does feed straight back into `DumpHistoricalStats` — the upstream tests
 //!   in `pkg/executor/historical_stats_test.go` do exactly that. This is
 //!   *not* a Go nil, so per the porting rules it stays a value and is not
-//!   collapsed into `Option`: the API returns `i64`. [`Self::try_recv_table`]
-//!   exposes the `Option` view for callers who want it.
+//!   collapsed into `Option`: the API returns `i64`.
 //! - **After the channel is closed, that same call returns `0`.**
 //!   `domain.go:1899` closes `tblCH` when the domain exits; a Go receive on
 //!   a closed-and-drained channel succeeds immediately with the zero value,
 //!   so `GetOneHistoricalStatsTable` flips from `-1` to `0` at shutdown.
-//!   Reproduced by [`HistoricalStatsWorker::close_table_channel`] and
-//!   asserted in the tests.
+//!   Reproduced by the crate-private shutdown operation and asserted in the
+//!   tests.
 //! - **Sending after the close panics.** Go's send on a closed channel is a
 //!   runtime panic, which is what a post-shutdown `ANALYZE` would hit.
 //!   Reproduced as a `panic!` with the Go message, rather than being
@@ -115,8 +111,8 @@
 //!   `domain.go`'s `DisableDumpHistoricalStats4Test` is that setter with
 //!   `false`.
 //! - `// boundary:` Go `pkg/util/logutil` warn lines (`:52`, and
-//!   `domain.go:1906`). Pure telemetry, dropped; the drop they announce is
-//!   observable through [`SendOutcome`] instead.
+//!   `domain.go:1906`). Rust emits the corresponding warning at the same
+//!   full-mailbox boundary.
 //!
 //! ## Tests
 //!
@@ -164,22 +160,6 @@ pub fn enable_dump_historical_stats() -> bool {
 /// package `init()`; both are this function.
 pub fn set_enable_dump_historical_stats(enabled: bool) {
     ENABLE_DUMP_HISTORICAL_STATS.store(enabled, Ordering::SeqCst);
-}
-
-/// What a send did — the information Go's `select`/`default` discards.
-///
-/// Go's `SendTblToDumpHistoricalStats` returns nothing, so a production
-/// caller cannot tell these apart. Neither can the Rust caller of
-/// [`HistoricalStatsWorker::send_tbl_to_dump_historical_stats`]; this enum
-/// exists only for the `_outcome` variant used by tests.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SendOutcome {
-    /// The table ID was queued.
-    Queued,
-    /// `enableDumpHistoricalStats` was false; the mailbox was not touched.
-    Disabled,
-    /// The mailbox was full; Go logs `"discard dump historical stats task"`.
-    Dropped,
 }
 
 /// Go `model.TableInfo`, narrowed to the two fields this file reads.
@@ -401,10 +381,6 @@ impl TableChannel {
         state.closed = true;
     }
 
-    fn len(&self) -> usize {
-        self.lock().queue.len()
-    }
-
     fn lock(&self) -> std::sync::MutexGuard<'_, TableChannelState> {
         self.state
             .lock()
@@ -435,56 +411,31 @@ impl<S> HistoricalStatsWorker<S> {
     /// [`Self::new`] with an explicit buffer size, so the drop-on-full
     /// behavior is testable without queueing sixteen tables.
     #[must_use]
-    pub fn with_capacity(sctx: S, capacity: usize) -> Self {
+    fn with_capacity(sctx: S, capacity: usize) -> Self {
         Self {
             tbl_ch: TableChannel::new(capacity),
             sctx,
         }
     }
 
-    /// The session this worker holds.
-    ///
-    /// boundary: Go's `sctx` field is unexported and read only by
-    /// `DumpHistoricalStats`; this accessor has no Go counterpart and
-    /// exists because Rust callers cannot reach a private field.
-    pub fn session(&self) -> &S {
-        &self.sctx
-    }
-
     /// Go `SendTblToDumpHistoricalStats`.
     ///
     /// Returns nothing, exactly like Go: a disabled switch and a full
-    /// mailbox are both invisible to the caller. Use
-    /// [`Self::send_tbl_to_dump_historical_stats_outcome`] to see which
-    /// happened.
+    /// mailbox are both invisible to the caller.
     ///
     /// # Panics
     ///
     /// Panics if the mailbox has been closed, reproducing Go's panic on a
     /// send to a closed channel.
     pub fn send_tbl_to_dump_historical_stats(&self, table_id: i64) {
-        let _ = self.send_tbl_to_dump_historical_stats_outcome(table_id);
-    }
-
-    /// [`Self::send_tbl_to_dump_historical_stats`], reporting what it did.
-    ///
-    /// This has no Go counterpart; it is the same code path with the
-    /// discarded verdict surfaced.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the mailbox has been closed.
-    pub fn send_tbl_to_dump_historical_stats_outcome(&self, table_id: i64) -> SendOutcome {
         // boundary: Go consults failpoint `sendHistoricalStats` here and
         // forces `send = true`. Failpoints have no Rust home; the global
         // switch alone decides.
         if !enable_dump_historical_stats() {
-            return SendOutcome::Disabled;
+            return;
         }
-        if self.tbl_ch.try_send(table_id) {
-            SendOutcome::Queued
-        } else {
-            SendOutcome::Dropped
+        if !self.tbl_ch.try_send(table_id) {
+            eprintln!("discard dump historical stats task: table-id={table_id}");
         }
     }
 
@@ -498,16 +449,6 @@ impl<S> HistoricalStatsWorker<S> {
         self.tbl_ch.try_recv().unwrap_or(NO_HISTORICAL_STATS_TABLE)
     }
 
-    /// The `Option` view of [`Self::get_one_historical_stats_table`], for
-    /// callers that want the absence separated from the sentinel.
-    ///
-    /// No Go counterpart. `Some(0)` after a close is retained rather than
-    /// mapped away, because the zero is a real Go receive.
-    #[must_use]
-    pub fn try_recv_table(&self) -> Option<i64> {
-        self.tbl_ch.try_recv()
-    }
-
     /// Go `close(do.historicalStatsWorker.tblCH)` (`domain.go:1899`).
     ///
     /// Lives here rather than in the (unported) `StartHistoricalStatsWorker`
@@ -517,14 +458,8 @@ impl<S> HistoricalStatsWorker<S> {
     /// # Panics
     ///
     /// Panics on a double close, reproducing Go.
-    pub fn close_table_channel(&self) {
+    pub(crate) fn close_table_channel(&self) {
         self.tbl_ch.close();
-    }
-
-    /// Number of table IDs currently buffered — Go `len(w.tblCH)`.
-    #[must_use]
-    pub fn pending_len(&self) -> usize {
-        self.tbl_ch.len()
     }
 }
 
@@ -730,11 +665,7 @@ mod tests {
     fn send_queues_when_enabled() {
         with_dump_switch(true, || {
             let worker = HistoricalStatsWorker::new(());
-            assert_eq!(
-                worker.send_tbl_to_dump_historical_stats_outcome(42),
-                SendOutcome::Queued
-            );
-            assert_eq!(worker.pending_len(), 1);
+            worker.send_tbl_to_dump_historical_stats(42);
             assert_eq!(worker.get_one_historical_stats_table(), 42);
         });
     }
@@ -743,14 +674,11 @@ mod tests {
     fn send_is_a_no_op_when_disabled() {
         with_dump_switch(false, || {
             let worker = HistoricalStatsWorker::new(());
-            assert_eq!(
-                worker.send_tbl_to_dump_historical_stats_outcome(42),
-                SendOutcome::Disabled
-            );
-            assert_eq!(worker.pending_len(), 0);
-            // The Go-shaped call reports nothing at all.
             worker.send_tbl_to_dump_historical_stats(42);
-            assert_eq!(worker.pending_len(), 0);
+            assert_eq!(
+                worker.get_one_historical_stats_table(),
+                NO_HISTORICAL_STATS_TABLE
+            );
         });
     }
 
@@ -758,19 +686,9 @@ mod tests {
     fn a_full_mailbox_silently_drops_the_overflow() {
         with_dump_switch(true, || {
             let worker = HistoricalStatsWorker::with_capacity((), 2);
-            assert_eq!(
-                worker.send_tbl_to_dump_historical_stats_outcome(1),
-                SendOutcome::Queued
-            );
-            assert_eq!(
-                worker.send_tbl_to_dump_historical_stats_outcome(2),
-                SendOutcome::Queued
-            );
-            assert_eq!(
-                worker.send_tbl_to_dump_historical_stats_outcome(3),
-                SendOutcome::Dropped
-            );
-            assert_eq!(worker.pending_len(), 2);
+            worker.send_tbl_to_dump_historical_stats(1);
+            worker.send_tbl_to_dump_historical_stats(2);
+            worker.send_tbl_to_dump_historical_stats(3);
             assert_eq!(worker.get_one_historical_stats_table(), 1);
             assert_eq!(worker.get_one_historical_stats_table(), 2);
             // The dropped one is simply gone.
@@ -783,14 +701,15 @@ mod tests {
         with_dump_switch(true, || {
             let worker = HistoricalStatsWorker::new(());
             for id in 0..i64::try_from(TBL_CHANNEL_CAPACITY).unwrap() {
-                assert_eq!(
-                    worker.send_tbl_to_dump_historical_stats_outcome(id),
-                    SendOutcome::Queued
-                );
+                worker.send_tbl_to_dump_historical_stats(id);
+            }
+            worker.send_tbl_to_dump_historical_stats(99);
+            for id in 0..i64::try_from(TBL_CHANNEL_CAPACITY).unwrap() {
+                assert_eq!(worker.get_one_historical_stats_table(), id);
             }
             assert_eq!(
-                worker.send_tbl_to_dump_historical_stats_outcome(99),
-                SendOutcome::Dropped
+                worker.get_one_historical_stats_table(),
+                NO_HISTORICAL_STATS_TABLE
             );
         });
     }
@@ -802,7 +721,6 @@ mod tests {
             worker.get_one_historical_stats_table(),
             NO_HISTORICAL_STATS_TABLE
         );
-        assert_eq!(worker.try_recv_table(), None);
     }
 
     #[test]
@@ -815,7 +733,6 @@ mod tests {
             // Go: a receive on a closed, drained channel succeeds with the
             // zero value, so the -1 sentinel is never reached again.
             assert_eq!(worker.get_one_historical_stats_table(), 0);
-            assert_eq!(worker.try_recv_table(), Some(0));
         });
     }
 
@@ -974,11 +891,5 @@ mod tests {
             );
         }
         assert_eq!(session.reads.load(Ordering::SeqCst), 3);
-    }
-
-    #[test]
-    fn session_accessor_returns_the_stored_session() {
-        let worker = HistoricalStatsWorker::new(7_u8);
-        assert_eq!(*worker.session(), 7);
     }
 }

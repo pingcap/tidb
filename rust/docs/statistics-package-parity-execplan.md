@@ -55,6 +55,7 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - [x] (2026-08-29) Removed Rust's blanket global-index ANALYZE refusal; ordinary global indexes now participate in each partition's shared column-sampling task and the existing global merge, as pinned Go does.
 - [ ] Complete pinned `pkg/statistics/handle/globalstats`; dynamic ANALYZE now loads every partition, applies both missing-stat policies, merges FM/CMS/TopN/histograms, honors the async selector and TopN merge concurrency, persists each global item independently, continues after item-write errors, records historical metadata, and emits warnings 8243/8244. The full original test and benchmark inventory remains open.
 - [x] (2026-08-29) Restored the exported concurrent global-TopN merge boundary with caller-supplied batch sizing and both pinned globalstats benchmark shapes; integration-test inventory closure remains part of the open package claim above.
+- [x] (2026-08-29) Removed Rust-only historical-worker observation APIs and their tests, retained only Go's send/get surface plus package-internal shutdown, restored the full-mailbox warning, and removed stale documentation claiming partitioned ANALYZE is rejected.
 - [ ] Wire all pinned Go `SHOW STATS_*` surfaces to the shared cache and storage semantics.
 - [ ] Inventory every production file, platform/generated variant, original test/support artifact, fixture, and validation gate in pinned `pkg/statistics`; close or explicitly retain seed-only gaps until the whole package is complete.
 - [ ] Run the Ready validation profile, including `make lint`, only after the complete package inventory is closed.
@@ -213,6 +214,9 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 
 - Observation: the async coordinator must preserve both failures when its IO and CPU workers fail together. Rust's early `?` on a CPU thread panic discarded an already captured IO error, and its panic wrappers added diagnostics Go does not return.
   Evidence: pinned `MergePartitionStats2GlobalStats` waits for both errgroups and uses `errors.Join`; each worker's recovery converts the panic payload with `fmt.Sprint` only. Rust now flattens both worker results before the join, retains IO-before-CPU ordering, and returns the raw panic payload.
+
+- Observation: the historical-stats worker exposed Rust-only result and inspection APIs solely to make its local tests easier, while Go deliberately makes disabled and full-mailbox sends indistinguishable to callers.
+  Evidence: pinned `SendTblToDumpHistoricalStats` returns nothing and `GetOneHistoricalStatsTable` returns the `-1`/`0` sentinels; Rust removed `SendOutcome`, the outcome-returning send, the optional receive, the public session accessor, and the public queue-length accessor.
 
 ## Decision Log
 
