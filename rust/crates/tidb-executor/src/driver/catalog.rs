@@ -2621,11 +2621,12 @@ mod statistics_request_tests {
         let (mut catalog, table_id, column_id) = analyzed_lite_catalog();
         let loader = Arc::new(RecordingLoader::default());
         catalog.set_statistics_item_loader(loader.clone());
-        let usage = Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+        let usage_list = tidb_stats_handle_usage::SessionStatsList::new();
+        let usage = usage_list.new_session_stats_item();
         let context = crate::StmtContext::for_query()
             .with_stats_load_policy(100, true, 0)
             .with_plan_replayer_capture(true)
-            .with_column_stats_usage(Arc::clone(&usage));
+            .with_column_stats_usage(Some(Arc::clone(&usage)));
 
         crate::run_select_on("SELECT * FROM t WHERE a > 1", &catalog, &context)
             .expect("planned query");
@@ -2639,9 +2640,10 @@ mod statistics_request_tests {
                 .map(|statistics| statistics.row_count),
             Some(10)
         );
-        assert!(usage
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        usage_list.sweep_session_stats_list();
+        assert!(usage_list
+            .session_stats_usage()
+            .get_usage_and_reset()
             .contains_key(&tidb_model::TableItemID {
                 table_id,
                 id: column_id,

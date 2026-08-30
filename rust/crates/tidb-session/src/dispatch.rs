@@ -944,8 +944,9 @@ impl Session {
         }
         let current_db = self.current_db.clone();
         let ctx = self.prepared_point_get_context();
+        let stmt_ctx = self.statement_context(false);
         let result = self.with_catalog_mut(|catalog| {
-            tidb_executor::run_prepared_point_get(&execution, catalog, &current_db, &ctx)
+            tidb_executor::run_prepared_point_get(&execution, catalog, &current_db, &ctx, &stmt_ctx)
         })?;
         let Some((columns, rows)) = result else {
             return Ok(None);

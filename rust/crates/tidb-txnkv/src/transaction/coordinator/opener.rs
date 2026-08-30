@@ -345,7 +345,7 @@ where
         &self,
         key: &[u8],
         call: &crate::rpc::UnaryCallContext,
-    ) -> Result<Option<Vec<u8>>, OptimisticCoordinatorError> {
+    ) -> Result<(Option<Vec<u8>>, u64), OptimisticCoordinatorError> {
         let runtime = self.open_read_runtime()?;
         if runtime.cluster_id() != self.pd.cluster_id() {
             return Err(OptimisticCoordinatorError::ClusterMismatch {
@@ -361,7 +361,7 @@ where
             key,
             call,
         )
-        .map(|result| result.value)
+        .map(|result| (result.value, result.rpc_count))
     }
 
     /// Reads a bounded range at `u64::MAX` without activating a transaction.

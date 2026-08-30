@@ -272,6 +272,7 @@ pub(crate) use catalog::sync_load;
 mod dml;
 mod errors;
 mod from;
+mod index_usage_reporter;
 pub mod infoschema_meta;
 mod multi_dml;
 mod params;

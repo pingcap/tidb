@@ -81,6 +81,12 @@ pub type SnapshotPairs = Vec<(Vec<u8>, Vec<u8>)>;
 /// implementation maps region errors, stale epochs and unresolvable locks onto
 /// [`StorageError::Retryable`]; anything else is [`StorageError::Backend`].
 pub trait ClusterSnapshot: fmt::Debug + Send {
+    /// Go `SnapshotRuntimeStats.GetCmdRPCCount` for point and batch-point
+    /// commands issued by this snapshot so far.
+    fn point_rpc_counts(&mut self) -> (u64, u64) {
+        (0, 0)
+    }
+
     /// Starts any asynchronous work needed by an ordinary statement snapshot.
     /// The first read still owns error delivery and timestamp publication.
     fn prepare(&mut self) -> Result<(), StorageError> {
@@ -590,6 +596,11 @@ impl SwappableSnapshot {
 }
 
 impl ClusterSnapshot for SwappableSnapshot {
+    fn point_rpc_counts(&mut self) -> (u64, u64) {
+        self.snapshot()
+            .map_or((0, 0), |snapshot| snapshot.point_rpc_counts())
+    }
+
     fn prepare(&mut self) -> Result<(), StorageError> {
         self.snapshot()?.prepare()
     }
@@ -705,6 +716,13 @@ impl ClusterTableStorage {
 }
 
 impl TableStorage for ClusterTableStorage {
+    fn point_rpc_counts(&mut self) -> (u64, u64) {
+        self.snapshot
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .point_rpc_counts()
+    }
+
     fn get(&mut self, key: &Key) -> Result<Vec<u8>, StorageError> {
         self.check_usable()?;
         // Counted at the SEAM, as the in-process backend counts it, so the

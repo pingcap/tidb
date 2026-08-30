@@ -56,6 +56,8 @@ pub struct SnapshotGetResult {
     pub region: crate::region::RegionVerId,
     /// Physical BatchCommands publication that produced the value.
     pub publication: TransactionBatchPublication,
+    /// Number of physical Get RPCs, including region/lock retries.
+    pub rpc_count: u64,
 }
 
 /// Key/value pairs one snapshot scan returned, in key order.
@@ -161,6 +163,7 @@ where
     // Go scopes the resolved/committed lock sets per KVSnapshot; a read at a
     // new timestamp is a new snapshot.
     resolved_locks.rescope(start_ts);
+    let mut rpc_count = 0_u64;
     loop {
         let route = point_route(runtime, key)
             .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
@@ -173,6 +176,7 @@ where
             version: start_ts,
             ..KvrpcGetRequest::default()
         };
+        rpc_count = rpc_count.wrapping_add(1);
         let response = begin_get(runtime, &route, &context, &request, call)?;
         if let Some(region_error) = response.response.region_error.as_ref() {
             recover_region_error_with(
@@ -245,6 +249,7 @@ where
             },
             region: route.region(),
             publication: response.publication,
+            rpc_count,
         });
     }
 }
@@ -589,6 +594,7 @@ where
         // shared, but the per-call ceiling and the `BoTxnLockFast` growth
         // are Go's.
         let mut lock_backoff = RegionBackoffBudget::campaign_default();
+        let mut rpc_count = 0_u64;
         loop {
             let route = point_route(&self.runtime, key)
                 .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
@@ -602,6 +608,8 @@ where
                 version: read_ts,
                 ..KvrpcGetRequest::default()
             };
+            self.snapshot_get_rpc_count = self.snapshot_get_rpc_count.wrapping_add(1);
+            rpc_count = rpc_count.wrapping_add(1);
             let response = begin_get(&self.runtime, &route, &context, &request, call)?;
             if let Some(region_error) = response.response.region_error.as_ref() {
                 self.recover_region_error(
@@ -673,6 +681,7 @@ where
                 value,
                 region: route.region(),
                 publication: response.publication,
+                rpc_count,
             });
         }
     }
@@ -746,6 +755,9 @@ where
                     )
                 })?
                 .publish_transaction_batch_gets(&requests, call);
+            self.snapshot_batch_get_rpc_count = self
+                .snapshot_batch_get_rpc_count
+                .wrapping_add(requests.len() as u64);
             for ((batch, request), published) in groups.iter().zip(&requests).zip(published) {
                 let response = match published {
                     PublishedCommand::Response(response) => response,

@@ -1400,6 +1400,12 @@ impl KvTable {
         std::mem::replace(&mut self.store, store)
     }
 
+    /// Go snapshot runtime `CmdGet` and `CmdBatchGet` totals for this table's
+    /// statement snapshot.
+    pub(crate) fn point_rpc_counts(&mut self) -> (u64, u64) {
+        self.store.point_rpc_counts()
+    }
+
     /// Records Go `TableInfo.TempTableType` (`setTemporaryType`).
     pub fn set_temp_table_type(&mut self, kind: tidb_model::TempTableType) {
         self.temp_table_type = kind;

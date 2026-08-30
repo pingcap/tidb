@@ -29,6 +29,7 @@ use crate::access_path::{
     UniqueIndexPointSourceExec,
 };
 use crate::apply::NestedLoopApplyExec;
+use crate::driver::index_usage_reporter::{PointCommand, PointIndexUsageExec};
 use crate::executor::{Executor, ExecutorMeta};
 use crate::hash_agg::{AggFunc, AggKind, GroupedStreamAggExec, HashAggExec, StreamAggExec};
 use crate::index_merge_reader::{
@@ -2074,7 +2075,7 @@ fn build_point_get(
                 "a physical unique-index PointGet does not retain exactly one key",
             ));
         }
-        return Ok(Box::new(UniqueIndexPointSourceExec::new(
+        let child = Box::new(UniqueIndexPointSourceExec::new(
             executor_meta,
             table.clone(),
             index_id,
@@ -2082,7 +2083,15 @@ fn build_point_get(
             output_columns,
             RowDecodeContext::for_query(ctx),
             true,
-        )));
+        ));
+        return Ok(wrap_point_index_usage(
+            child,
+            table,
+            catalog,
+            ctx,
+            Some(index_id),
+            PointCommand::Get,
+        ));
     }
     let handles = point_handles(&table, &point.ranges, ctx)?;
     if handles.len() != 1 {
@@ -2090,13 +2099,21 @@ fn build_point_get(
             "a physical PointGet does not retain exactly one key",
         ));
     }
-    Ok(Box::new(HandleSourceExec::new_point_mapped_with_context(
+    let child = Box::new(HandleSourceExec::new_point_mapped_with_context(
         executor_meta,
         table.clone(),
         handles.into_iter().next().expect("checked one handle"),
         output_columns,
         RowDecodeContext::for_query(ctx),
-    )))
+    ));
+    Ok(wrap_point_index_usage(
+        child,
+        table,
+        catalog,
+        ctx,
+        None,
+        PointCommand::Get,
+    ))
 }
 
 fn build_batch_point_get(
@@ -2120,7 +2137,7 @@ fn build_batch_point_get(
             batch.keep_order,
             batch.desc,
         )?;
-        return Ok(Box::new(UniqueIndexPointSourceExec::new(
+        let child = Box::new(UniqueIndexPointSourceExec::new(
             meta(plan, schema),
             table.clone(),
             index_id,
@@ -2128,7 +2145,15 @@ fn build_batch_point_get(
             output_columns,
             RowDecodeContext::for_query(ctx),
             false,
-        )));
+        ));
+        return Ok(wrap_point_index_usage(
+            child,
+            table,
+            catalog,
+            ctx,
+            Some(index_id),
+            PointCommand::BatchGet,
+        ));
     }
     let mut handles = point_handles(&table, &batch.ranges, ctx)?;
     let mut seen = std::collections::HashSet::with_capacity(handles.len());
@@ -2140,13 +2165,40 @@ fn build_batch_point_get(
             .is_some_and(|column| column.field_type.is_unsigned());
         sort_handles_for_keep_order(&mut handles, batch.desc, unsigned_pk_is_handle);
     }
-    Ok(Box::new(HandleSourceExec::new_mapped_with_context(
+    let child = Box::new(HandleSourceExec::new_mapped_with_context(
         meta(plan, schema),
         table.clone(),
         handles,
         output_columns,
         RowDecodeContext::for_query(ctx),
-    )))
+    ));
+    Ok(wrap_point_index_usage(
+        child,
+        table,
+        catalog,
+        ctx,
+        None,
+        PointCommand::BatchGet,
+    ))
+}
+
+fn wrap_point_index_usage(
+    child: Box<dyn Executor>,
+    table: crate::kv_table::KvTable,
+    catalog: &Catalog,
+    ctx: &crate::StmtContext,
+    index_id: Option<i64>,
+    command: PointCommand,
+) -> Box<dyn Executor> {
+    let stats = catalog.table_statistics(table.stats_physical_id());
+    Box::new(PointIndexUsageExec::new(
+        child,
+        table,
+        stats,
+        ctx.index_usage_collector().cloned(),
+        index_id,
+        command,
+    ))
 }
 
 fn schema_column_slot(schema: &Schema, wanted: &Column) -> Option<usize> {

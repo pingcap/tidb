@@ -199,6 +199,11 @@ where
 /// is single-threaded in spirit and its interior mutability stays behind
 /// `&mut self` methods.
 pub trait TableStorage: fmt::Debug + Send + Sync {
+    /// Go snapshot runtime command totals. In-process storage has no RPCs.
+    fn point_rpc_counts(&mut self) -> (u64, u64) {
+        (0, 0)
+    }
+
     /// Reads one key, Go `kv.Retriever.Get`. Reports
     /// [`StorageError::NotFound`] when the key has no value, as Go returns
     /// `kv.ErrNotExist`.

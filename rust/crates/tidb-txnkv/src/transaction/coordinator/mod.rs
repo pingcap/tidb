@@ -229,6 +229,9 @@ pub struct RealOptimisticTransaction<C, L, T> {
     protocol: CommitProtocol,
     /// Resource group inherited by Prewrite and Commit request contexts.
     resource_group_name: Option<String>,
+    /// Go `SnapshotRuntimeStats` command RPC totals for point readers.
+    snapshot_get_rpc_count: u64,
+    snapshot_batch_get_rpc_count: u64,
     /// Transactions whose locks every later read from this snapshot may step
     /// over, and transactions whose committed value every later read must see
     /// through their lock.
@@ -369,8 +372,20 @@ where
             gc_state,
             protocol: CommitProtocol::two_phase_only(),
             resource_group_name: None,
+            snapshot_get_rpc_count: 0,
+            snapshot_batch_get_rpc_count: 0,
             resolved_locks: crate::lock::SnapshotLockSet::default(),
         })
+    }
+
+    /// Go `SnapshotRuntimeStats.GetCmdRPCCount` for `CmdGet` and
+    /// `CmdBatchGet` on this transaction snapshot.
+    #[must_use]
+    pub const fn snapshot_point_rpc_counts(&self) -> (u64, u64) {
+        (
+            self.snapshot_get_rpc_count,
+            self.snapshot_batch_get_rpc_count,
+        )
     }
 
     /// Permits this transaction to attempt async commit and/or 1PC.

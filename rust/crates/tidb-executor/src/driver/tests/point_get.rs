@@ -803,9 +803,15 @@ fn prepared_point_plan_binds_common_handle_without_cloning_template() {
         .bind(&[Datum::Bytes(b"user-0001".to_vec())], &zone)
         .expect("the current marker value rebuilds its common handle");
     let decode = crate::kv_table::PreparedPointGetDecodeContext::for_query(false, zone);
-    let fast = run_prepared_point_get(&execution, &mut catalog, "test", &decode)
-        .unwrap()
-        .expect("the prepared common-handle point plan remains valid");
+    let fast = run_prepared_point_get(
+        &execution,
+        &mut catalog,
+        "test",
+        &decode,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap()
+    .expect("the prepared common-handle point plan remains valid");
     assert_eq!(fast.1.len(), 1);
     assert_eq!(datum_text_for_test(&fast.1[0][0]), "user-0001");
     assert_eq!(datum_text_for_test(&fast.1[0][1]), "value-1");
@@ -845,9 +851,15 @@ fn prepared_point_cache_admits_the_stock_sysbench_integer_handle() {
         .bind(&[Datum::Int(1)], &zone)
         .expect("the execute value rebuilds the cached handle");
     let decode = crate::kv_table::PreparedPointGetDecodeContext::for_query(false, zone);
-    let (_, rows) = run_prepared_point_get(&execution, &mut catalog, DEFAULT_DATABASE, &decode)
-        .unwrap()
-        .expect("the PREPARE-time plan remains valid on first execution");
+    let (_, rows) = run_prepared_point_get(
+        &execution,
+        &mut catalog,
+        DEFAULT_DATABASE,
+        &decode,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap()
+    .expect("the PREPARE-time plan remains valid on first execution");
     assert_eq!(datum_text_for_test(&rows[0][0]), "value");
 }
 
@@ -988,10 +1000,16 @@ fn cached_rows(
     values: &[Datum],
 ) -> Vec<Vec<Datum>> {
     let execution = plan.bind(values, zone).expect("binds");
-    run_prepared_point_get(&execution, catalog, DEFAULT_DATABASE, ctx)
-        .unwrap()
-        .expect("the cached read")
-        .1
+    run_prepared_point_get(
+        &execution,
+        catalog,
+        DEFAULT_DATABASE,
+        ctx,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap()
+    .expect("the cached read")
+    .1
 }
 
 /// `col IS NULL` beside the pins is a row-level residual: it never pins a

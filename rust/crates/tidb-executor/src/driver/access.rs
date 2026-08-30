@@ -1478,15 +1478,12 @@ pub fn run_prepared_point_get(
     catalog: &mut Catalog,
     current_database: &str,
     ctx: &crate::kv_table::PreparedPointGetDecodeContext,
+    stmt_ctx: &crate::StmtContext,
 ) -> Result<Option<SelectMeta>, DriverError> {
     let plan = execution.plan();
     if !plan.matches_catalog(catalog, current_database) {
         return Ok(None);
     }
-    let Some(TableEntry::Kv(table)) = catalog.get_mut_in_for_read(&plan.database, &plan.table)
-    else {
-        return Ok(None);
-    };
     // A NULL key bound to an always-empty execution; no read may run.
     if execution.handle.is_none() && execution.range_values.is_none() {
         return Ok(Some((plan.output.columns.clone(), Vec::new())));
@@ -1500,6 +1497,11 @@ pub fn run_prepared_point_get(
     let decode_error = |error: crate::kv_table::KvTableError| {
         ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
     };
+    let Some(TableEntry::Kv(table)) = catalog.get_mut_in_for_read(&plan.database, &plan.table)
+    else {
+        return Ok(None);
+    };
+    let before = table.point_rpc_counts();
     let rows = match plan.target {
         PreparedPointTarget::RowHandle => {
             let handle = execution.handle.as_ref().expect("row-handle arm binds one");
@@ -1532,6 +1534,32 @@ pub fn run_prepared_point_get(
             }
         }
     };
+    let after = table.point_rpc_counts();
+    let report_table = table.clone();
+    let stats_id = report_table.stats_physical_id();
+    let index_id = match plan.target {
+        PreparedPointTarget::RowHandle => None,
+        PreparedPointTarget::UniqueIndex { index_id } => Some(index_id),
+    };
+    let kv_requests = after.0.wrapping_sub(before.0);
+    let stats = catalog.table_statistics(stats_id);
+    let reporter =
+        super::index_usage_reporter::IndexUsageReporter::new(stmt_ctx.index_usage_collector());
+    match index_id {
+        Some(index_id) => reporter.report_point_for_table(
+            &report_table,
+            stats.as_deref(),
+            index_id,
+            kv_requests,
+            rows.len() as u64,
+        ),
+        None => reporter.report_point_for_handle(
+            &report_table,
+            stats.as_deref(),
+            kv_requests,
+            rows.len() as u64,
+        ),
+    }
     Ok(Some((plan.output.columns.clone(), rows)))
 }
 

@@ -521,6 +521,12 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> Drop
 impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> ClusterSnapshot
     for StatementSnapshot<C, L, P>
 {
+    fn point_rpc_counts(&mut self) -> (u64, u64) {
+        self.transaction
+            .as_ref()
+            .map_or((0, 0), RealOptimisticTransaction::snapshot_point_rpc_counts)
+    }
+
     fn get(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
         let call = self.call();
         let read_ts = self.start_ts;
@@ -575,6 +581,7 @@ pub struct MaxTsSnapshot<C = TonicCoprocessorClient, L = PdRegionLoader, P = PdC
     /// path) so MaxTS does not allocate a cancellation channel per operation.
     cancellation: UnaryCancellation,
     consumed: bool,
+    get_rpc_count: u64,
 }
 
 impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> MaxTsSnapshot<C, L, P> {
@@ -586,6 +593,7 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> MaxTsSnapsh
             timeout,
             cancellation: UnaryCancellation::new(),
             consumed: false,
+            get_rpc_count: 0,
         }
     }
 
@@ -611,15 +619,22 @@ impl<C, L, P> fmt::Debug for MaxTsSnapshot<C, L, P> {
 impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> ClusterSnapshot
     for MaxTsSnapshot<C, L, P>
 {
+    fn point_rpc_counts(&mut self) -> (u64, u64) {
+        (self.get_rpc_count, 0)
+    }
+
     fn get(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
         self.consume()?;
         let call = UnaryCallContext::with_deadline(
             Instant::now() + self.timeout,
             self.cancellation.clone(),
         );
-        self.opener
+        let (value, rpc_count) = self
+            .opener
             .snapshot_get_at_max_ts(key.as_bytes(), &call)
-            .map_err(classify)
+            .map_err(classify)?;
+        self.get_rpc_count = self.get_rpc_count.wrapping_add(rpc_count);
+        Ok(value)
     }
 
     fn scan(
@@ -1160,6 +1175,23 @@ impl<C, L, P: StorePdCapability> fmt::Debug for SessionSnapshot<C, L, P> {
 impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> ClusterSnapshot
     for SessionSnapshot<C, L, P>
 {
+    fn point_rpc_counts(&mut self) -> (u64, u64) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match &mut *state {
+            SessionTransactionState::Optimistic(transaction)
+            | SessionTransactionState::PessimisticPending { transaction, .. } => {
+                transaction.snapshot_point_rpc_counts()
+            }
+            SessionTransactionState::Pessimistic { transaction, .. } => {
+                transaction.snapshot().snapshot_point_rpc_counts()
+            }
+            SessionTransactionState::Finished => (0, 0),
+        }
+    }
+
     fn get(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
         // `snapshot_get_at` owns the request bytes before it crosses the
         // BatchCommands boundary. Keep the borrowed key through dispatch so
