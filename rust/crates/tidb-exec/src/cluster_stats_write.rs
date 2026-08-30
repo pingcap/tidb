@@ -61,7 +61,6 @@ use tidb_executor::analyze::{AnalyzeColumnChoice, AnalyzeOptionOverrides, SavedA
 use tidb_meta::{key, value};
 use tidb_model::table_info::TableInfo;
 use tidb_model::TableItemID;
-use tidb_stats::histogram::Bucket;
 use tidb_stats::{encode_cmsketch_without_topn, encode_fm_sketch};
 use tidb_stats::{JsonPredicateColumn, JsonTable};
 use tidb_txnkv::transaction::OptimisticMutation;
@@ -642,85 +641,6 @@ pub fn plan_stats_meta_version_refresh<S: MetaSnapshot>(
     );
     rows.store(snapshot, catalog, &values, &mut plan)?;
     rows.publish_watermark(catalog, &mut plan)?;
-    Ok(plan)
-}
-
-fn rewrite_all_rows<S: MetaSnapshot>(
-    snapshot: &mut S,
-    table: &TableInfo,
-    column: &str,
-    value: &Datum,
-    plan: &mut StatsWritePlan,
-) -> Result<(), StatsWriteError> {
-    for (key, stored) in read_rows_with_keys(snapshot, table, None)? {
-        let mut values = stored.clone();
-        set(table, &mut values, column, value.clone());
-        if matches!(HandleLayout::of(table), HandleLayout::RowId) {
-            plan.mutations
-                .extend(rewrite_rowid_row(table, &key, &stored, &values)?);
-        } else {
-            plan.mutations
-                .extend(store_clustered_row(table, Some(&stored), &values)?);
-        }
-    }
-    Ok(())
-}
-
-/// Plans pinned Go `UpdateStatsVersion` in its caller-owned transaction.
-///
-/// Go updates every `stats_meta` row first and every `stats_histograms` row
-/// second, using the same transaction start TSO for both statements.
-pub fn plan_update_stats_version<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &ClusterCatalog,
-    version: u64,
-) -> Result<StatsWritePlan, StatsWriteError> {
-    let mut plan = StatsWritePlan::default();
-    for table_name in ["stats_meta", "stats_histograms"] {
-        rewrite_all_rows(
-            snapshot,
-            locate(catalog, table_name)?,
-            "version",
-            &Datum::UInt(version),
-            &mut plan,
-        )?;
-    }
-    Ok(plan)
-}
-
-/// Plans pinned Go `ChangeGlobalStatsID`'s six statements, in order.
-///
-/// Row-id-backed system tables retain their existing hidden handle, matching
-/// SQL `UPDATE`; clustered tables move from the old record key to the new one.
-pub fn plan_change_global_stats_id<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &ClusterCatalog,
-    from: i64,
-    to: i64,
-) -> Result<StatsWritePlan, StatsWriteError> {
-    let mut plan = StatsWritePlan::default();
-    for table_name in [
-        "stats_meta",
-        "stats_top_n",
-        "stats_fm_sketch",
-        "stats_buckets",
-        "stats_histograms",
-        "column_stats_usage",
-    ] {
-        let table = locate(catalog, table_name)?;
-        for (key, stored) in read_rows_with_keys(snapshot, table, Some(from))? {
-            let mut values = stored.clone();
-            set(table, &mut values, "table_id", Datum::Int(to));
-            if matches!(HandleLayout::of(table), HandleLayout::RowId) {
-                plan.mutations
-                    .extend(rewrite_rowid_row(table, &key, &stored, &values)?);
-            } else {
-                plan.mutations.extend(delete_clustered_row(table, &stored)?);
-                plan.mutations
-                    .extend(store_clustered_row(table, None, &values)?);
-            }
-        }
-    }
     Ok(plan)
 }
 
@@ -2740,33 +2660,4 @@ fn first_free_row_id<S: MetaSnapshot>(
         .max()
         .unwrap_or(0);
     Ok(current.max(highest) + 1)
-}
-
-/// The buckets a stored histogram would read back as, for a caller that wants
-/// to check a round trip without a cluster.
-#[must_use]
-pub fn stored_bucket_counts(buckets: &[Bucket]) -> Vec<i64> {
-    let mut previous = 0;
-    buckets
-        .iter()
-        .map(|bucket| {
-            let delta = bucket.count - previous;
-            previous = bucket.count;
-            delta
-        })
-        .collect()
-}
-
-/// Whether one loaded item and one built item describe the same histogram.
-///
-/// Used by the round-trip tests: what was planned must be what the loader
-/// reads back.
-#[must_use]
-pub fn same_histogram(left: &ClusterStatsItem, right: &ClusterStatsItem) -> bool {
-    left.id == right.id
-        && left.is_index == right.is_index
-        && left.stats_ver == right.stats_ver
-        && left.histogram.ndv == right.histogram.ndv
-        && left.histogram.null_count == right.histogram.null_count
-        && left.histogram.buckets.len() == right.histogram.buckets.len()
 }
