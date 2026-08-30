@@ -56,11 +56,6 @@ type statementRUOperatorResult struct {
 	outputRowsObserved bool
 }
 
-type statementRUOperatorRU struct {
-	selfRU float64
-	cumRU  float64
-}
-
 // statementRUOwner owns the first-record-wins outcome and the first terminal
 // finalization for one ExecStmt. Its calculation setup is released when the
 // shared finishOnce is consumed.
@@ -221,12 +216,13 @@ func calculateStatementRUWithOperators(
 	metrics *execdetails.RUV2Metrics,
 	setup statementRUCalculationSetup,
 	rootEOF bool,
-) (statementRUFinalizedSnapshot, map[int]statementRUOperatorRU, bool) {
-	operatorRUs := make(map[int]statementRUOperatorRU)
+) (statementRUFinalizedSnapshot, *plannercore.ExplainRUResult, bool) {
+	operatorRUs := plannercore.NewExplainRUResult(flat)
 	finalized, ok := calculateStatementRUInternal(flat, runtimeStatsColl, metrics, setup, rootEOF, operatorRUs)
 	if !ok {
 		return statementRUFinalizedSnapshot{}, nil, false
 	}
+	operatorRUs.TotalRU = finalized.result.TotalRU
 	return finalized, operatorRUs, true
 }
 
@@ -236,9 +232,9 @@ func calculateStatementRUInternal(
 	metrics *execdetails.RUV2Metrics,
 	setup statementRUCalculationSetup,
 	rootEOF bool,
-	operatorRUs map[int]statementRUOperatorRU,
+	operatorRUs *plannercore.ExplainRUResult,
 ) (statementRUFinalizedSnapshot, bool) {
-	if !rootEOF || flat == nil || len(flat.Main) == 0 || len(flat.CTEs) != 0 || len(flat.ScalarSubQueries) != 0 {
+	if !rootEOF || flat == nil || len(flat.Main) == 0 {
 		return statementRUFinalizedSnapshot{}, false
 	}
 	calculator := newStatementRUCalculator(setup)
@@ -253,21 +249,88 @@ func calculateStatementRUInternal(
 		calculator.units.NetBytes = float64(netBytes)
 	}
 
-	planResult := calculateStatementRUPlan(
+	// The forest consumes only currently visible typed evidence. Response-level
+	// total-key-size, repeated Sort/TopN lifecycle, and recursive/Apply execution-
+	// opportunity evidence are not all available yet, so the finalized calibration
+	// remains Incomplete and the result is neither exact nor a mathematical upper
+	// or lower bound. Invalid values and malformed tree structure still fail closed.
+	mainRootUnits := calculator.units
+	mainResult := calculateStatementRUPlan(
 		flat.Main,
 		0,
 		runtimeStatsColl,
 		&calculator,
-		operatorRUs,
+		mainRootUnits,
+		statementRUExplainTree(operatorRUs, statementRUForestMain, 0),
 	)
-	if planResult.state != statementRUOperatorComplete {
+	if mainResult.state != statementRUOperatorComplete {
 		return statementRUFinalizedSnapshot{}, false
+	}
+	// FlattenPhysicalPlan deduplicates definitions by CTE.IDForStorage. Walking
+	// each tree once therefore charges one shared producer once; consumers stay
+	// in their owning trees and keep their own output-row evidence for parents.
+	for treeOrdinal, tree := range flat.CTEs {
+		result := calculateStatementRUPlan(
+			tree,
+			0,
+			runtimeStatsColl,
+			&calculator,
+			statementRURawUnits{},
+			statementRUExplainTree(operatorRUs, statementRUForestCTE, treeOrdinal),
+		)
+		if result.state != statementRUOperatorComplete {
+			return statementRUFinalizedSnapshot{}, false
+		}
+	}
+	for treeOrdinal, tree := range flat.ScalarSubQueries {
+		result := calculateStatementRUPlan(
+			tree,
+			0,
+			runtimeStatsColl,
+			&calculator,
+			statementRURawUnits{},
+			statementRUExplainTree(operatorRUs, statementRUForestScalarSubQuery, treeOrdinal),
+		)
+		if result.state != statementRUOperatorComplete {
+			return statementRUFinalizedSnapshot{}, false
+		}
 	}
 	finalized, ok := calculator.finalize()
 	if !ok {
 		return statementRUFinalizedSnapshot{}, false
 	}
 	return finalized, true
+}
+
+type statementRUForestKind uint8
+
+const (
+	statementRUForestMain statementRUForestKind = iota
+	statementRUForestCTE
+	statementRUForestScalarSubQuery
+)
+
+func statementRUExplainTree(
+	result *plannercore.ExplainRUResult,
+	kind statementRUForestKind,
+	treeOrdinal int,
+) []plannercore.ExplainRUOperatorResult {
+	if result == nil {
+		return nil
+	}
+	switch kind {
+	case statementRUForestMain:
+		return result.Main
+	case statementRUForestCTE:
+		if treeOrdinal >= 0 && treeOrdinal < len(result.CTEs) {
+			return result.CTEs[treeOrdinal]
+		}
+	case statementRUForestScalarSubQuery:
+		if treeOrdinal >= 0 && treeOrdinal < len(result.ScalarSubQueries) {
+			return result.ScalarSubQueries[treeOrdinal]
+		}
+	}
+	return nil
 }
 
 // calculateStatementRUPlan evaluates one subtree from a canonical
@@ -281,16 +344,59 @@ func calculateStatementRUPlan(
 	operatorIndex int,
 	runtimeStatsColl *execdetails.RuntimeStatsColl,
 	calculator *statementRUCalculator,
-	operatorRUs map[int]statementRUOperatorRU,
+	rootOwnedUnits statementRURawUnits,
+	operatorRUs []plannercore.ExplainRUOperatorResult,
 ) statementRUOperatorResult {
+	if !validateStatementRUFlatTree(tree) {
+		return statementRUOperatorResult{state: statementRUOperatorInvalid}
+	}
 	return calculateStatementRUPlanChildFirst(
 		tree,
 		operatorIndex,
 		runtimeStatsColl,
 		calculator,
 		len(tree),
+		rootOwnedUnits,
 		operatorRUs,
 	)
+}
+
+// validateStatementRUFlatTree verifies the canonical depth-first shape without
+// allocating occurrence state on the ResultOnly path. Every child subtree must
+// begin exactly where the preceding subtree ends, so duplicate references,
+// backward/cyclic edges, and unreachable entries all fail closed.
+func validateStatementRUFlatTree(tree plannercore.FlatPlanTree) bool {
+	if len(tree) == 0 {
+		return false
+	}
+	next, ok := validateStatementRUFlatSubtree(tree, 0, len(tree))
+	return ok && next == len(tree)
+}
+
+func validateStatementRUFlatSubtree(
+	tree plannercore.FlatPlanTree,
+	operatorIndex int,
+	remainingDepth int,
+) (int, bool) {
+	if operatorIndex < 0 || operatorIndex >= len(tree) || remainingDepth <= 0 {
+		return 0, false
+	}
+	operator := tree[operatorIndex]
+	if operator == nil || operator.Origin == nil {
+		return 0, false
+	}
+	next := operatorIndex + 1
+	for _, childIndex := range operator.ChildrenIdx {
+		if childIndex != next || childIndex <= operatorIndex {
+			return 0, false
+		}
+		var ok bool
+		next, ok = validateStatementRUFlatSubtree(tree, childIndex, remainingDepth-1)
+		if !ok {
+			return 0, false
+		}
+	}
+	return next, true
 }
 
 func calculateStatementRUPlanChildFirst(
@@ -299,7 +405,8 @@ func calculateStatementRUPlanChildFirst(
 	runtimeStatsColl *execdetails.RuntimeStatsColl,
 	calculator *statementRUCalculator,
 	remainingDepth int,
-	operatorRUs map[int]statementRUOperatorRU,
+	rootOwnedUnits statementRURawUnits,
+	operatorRUs []plannercore.ExplainRUOperatorResult,
 ) statementRUOperatorResult {
 	if operatorIndex < 0 || operatorIndex >= len(tree) || calculator == nil || remainingDepth <= 0 {
 		return statementRUOperatorResult{state: statementRUOperatorInvalid}
@@ -308,7 +415,6 @@ func calculateStatementRUPlanChildFirst(
 	if operator == nil || operator.Origin == nil {
 		return statementRUOperatorResult{state: statementRUOperatorInvalid}
 	}
-
 	beforeSubtree := calculator.units
 	children := make([]statementRUOperatorResult, len(operator.ChildrenIdx))
 	childState := statementRUOperatorComplete
@@ -319,6 +425,7 @@ func calculateStatementRUPlanChildFirst(
 			runtimeStatsColl,
 			calculator,
 			remainingDepth-1,
+			rootOwnedUnits,
 			operatorRUs,
 		)
 		childState = mergeStatementRUOperatorState(childState, children[childOrdinal].state)
@@ -329,6 +436,12 @@ func calculateStatementRUPlanChildFirst(
 
 	outputRows := int64(0)
 	outputRowsObserved := false
+	// Typed snapshots preserve observed zero through outputRowsObserved. Missing
+	// evidence remains an unobserved zero for best-effort linear/wrapper formulas,
+	// while operators that require proof of execution explicitly test Observed.
+	// Negative or otherwise invalid snapshots fail closed. Because the former two
+	// cases are not interchangeable, every successful forest remains calibration-
+	// Incomplete until direct opportunity coverage is available.
 	if runtimeStatsColl != nil {
 		if operator.IsRoot {
 			snapshot := runtimeStatsColl.GetRootRowsSnapshot(operator.Origin.ID())
@@ -415,6 +528,92 @@ func calculateStatementRUPlanChildFirst(
 		); state != statementRUOperatorComplete {
 			return statementRUOperatorResult{state: state}
 		}
+	case *physicalop.CTEDefinition:
+		// A CTEDefinition is the zero-self-RU ownership wrapper for one shared
+		// materialization. FlattenPhysicalPlan emits it once per IDForStorage;
+		// seed and recursive descendants already carry runtime evidence merged
+		// across actual rounds and must not be multiplied by consumer count or a
+		// separately inferred recursion count. Until direct phase/opportunity
+		// evidence exists, an intentionally skipped phase and missing evidence
+		// can both appear as zero; only a zero caused by missing evidence may
+		// undercount actual work. Forest calibration is therefore Incomplete and
+		// the result is not a mathematical bound.
+		if !operator.IsRoot || len(children) < 1 || len(children) > 2 ||
+			tree[operator.ChildrenIdx[0]].Label != plannercore.SeedPart ||
+			(len(children) == 2 && tree[operator.ChildrenIdx[1]].Label != plannercore.RecursivePart) {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+	case *physicalop.PhysicalCTE:
+		// The consumer owns no producer work. Its observed rows remain the
+		// occurrence output consumed by a parent Selection/Join/Aggregation.
+		if !operator.IsRoot || len(children) != 0 {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+	case *physicalop.PhysicalCTETable:
+		// A recursive CTE-table read is an orchestration leaf with zero modeled
+		// self RU; its actual output rows still feed the recursive parent tree.
+		if !operator.IsRoot || len(children) != 0 {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+	case *plannercore.ScalarSubqueryEvalCtx:
+		// ScalarSubqueryEvalCtx only owns the independent-tree boundary. The
+		// physical child was executed during optimization and owns all modeled
+		// work; it does not need another main-record-set EOF.
+		if !operator.IsRoot || len(children) != 1 {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+	case *physicalop.PhysicalProjection:
+		// Projection CPU work is one expression slot per actual input row. This
+		// is linear across repeated executions, so merged child rows are the
+		// sufficient statistic for the current model.
+		if !statementRUOperatorRunsAtSupportedSite(operator) || len(children) != 1 {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+		expressionCount, ok := checkedStatementRUExpressionCount(len(origin.Exprs))
+		if !ok || !addStatementRUCPUWork(
+			calculator,
+			float64(children[0].outputRows)*float64(expressionCount),
+		) {
+			return statementRUOperatorResult{state: statementRUOperatorInvalid}
+		}
+	case *physicalop.PhysicalMaxOneRow:
+		// MaxOneRow examines the direct child's actual output. It must not use
+		// the NULL row synthesized for an empty scalar subquery as input work.
+		if !operator.IsRoot || len(children) != 1 {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+		if !addStatementRUCPUWork(calculator, float64(children[0].outputRows)) {
+			return statementRUOperatorResult{state: statementRUOperatorInvalid}
+		}
+	case *physicalop.PhysicalTableDual:
+		// TableDual has zero modeled self RU. Runtime evidence, rather than the
+		// optimizer estimate, distinguishes its actual zero/one output for a
+		// parent operator.
+		if !operator.IsRoot || len(children) != 0 {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+	case *physicalop.PhysicalUnionAll:
+		// UnionAll is a zero-self-RU orchestration wrapper; each executed child
+		// subtree contributes independently.
+		if !operator.IsRoot || len(children) == 0 {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+	case *physicalop.PhysicalApply:
+		// Apply is a zero-self-RU orchestration wrapper in this model. Child
+		// runtime rows accumulate repeated inner work, but the current evidence
+		// cannot distinguish cache/filter skips from missing attempts and cannot
+		// reconstruct repeated nonlinear Sort/TopN work. The best-effort result
+		// therefore may undercount, remains Incomplete, and must not be treated as
+		// exact or as a mathematical bound.
+		if !operator.IsRoot || len(children) != 2 {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+	case *physicalop.PhysicalSequence:
+		// Sequence orders CTE orchestration and the main query but owns no modeled
+		// self RU. Its explicit children remain responsible for their own work.
+		if !operator.IsRoot || len(children) == 0 {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
 	case *physicalop.PhysicalSelection:
 		// CPU work for Selection is defined as the child output-row count
 		// multiplied by the number of conditions evaluated per row.
@@ -426,7 +625,11 @@ func calculateStatementRUPlanChildFirst(
 		}
 	case *physicalop.PhysicalSort:
 		// For n > 0, CPU work for Sort is defined as n * log2(max(n, 2)), where n
-		// is the child output-row count. Only root Sort is supported.
+		// is the child output-row count. Only root Sort is supported. When one
+		// occurrence is reopened by recursive CTE or Apply, current row evidence
+		// merges the executions before this nonlinear formula; superadditivity can
+		// overestimate their separately accumulated work until lifecycle-ready
+		// ordering evidence is available.
 		if !operator.IsRoot || len(children) != 1 {
 			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
 		}
@@ -437,7 +640,9 @@ func calculateStatementRUPlanChildFirst(
 	case *physicalop.PhysicalTopN:
 		// For n > 0 and k > 0, CPU work for TopN is defined as
 		// n * log2(max(min(n, k), 2)). Root k is Offset + Count; for pushed TopN,
-		// the planner has already folded Offset into Count.
+		// the planner has already folded Offset into Count. Repeated executions
+		// are currently merged before this nonlinear formula and can overestimate
+		// the sum of per-lifecycle work.
 		if !statementRUOperatorRunsAtSupportedSite(operator) || len(children) != 1 {
 			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
 		}
@@ -495,22 +700,23 @@ func calculateStatementRUPlanChildFirst(
 			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
 		}
 	default:
-		// Operators not listed above, including Projection, are outside the
+		// Operators not listed above are outside the
 		// supported statement-RU model and therefore fail closed.
 		return statementRUOperatorResult{state: statementRUOperatorUnsupported}
 	}
 
 	if operatorRUs != nil {
+		if len(operatorRUs) != len(tree) {
+			return statementRUOperatorResult{state: statementRUOperatorInvalid}
+		}
 		selfUnits := subtractStatementRURawUnits(calculator.units, beforeOperator)
 		cumUnits := subtractStatementRURawUnits(calculator.units, beforeSubtree)
 		if operatorIndex == 0 {
-			selfUnits = addStatementRURawUnits(selfUnits, beforeSubtree)
-			cumUnits = addStatementRURawUnits(cumUnits, beforeSubtree)
+			selfUnits = addStatementRURawUnits(selfUnits, rootOwnedUnits)
+			cumUnits = addStatementRURawUnits(cumUnits, rootOwnedUnits)
 		}
-		operatorRUs[operator.Origin.ID()] = statementRUOperatorRU{
-			selfRU: calculateStatementRUResultOnly(selfUnits).TotalRU,
-			cumRU:  calculateStatementRUResultOnly(cumUnits).TotalRU,
-		}
+		operatorRUs[operatorIndex].SelfRU = calculateStatementRUResultOnly(selfUnits).TotalRU
+		operatorRUs[operatorIndex].CumRU = calculateStatementRUResultOnly(cumUnits).TotalRU
 	}
 
 	return statementRUOperatorResult{
@@ -547,14 +753,26 @@ func collectStatementRUJoinUnits(
 	if !ok {
 		return statementRUOperatorUnsupported
 	}
-	for ordinal, childIndex := range operator.ChildrenIdx {
+	matchedOriginalChild := [2]bool{}
+	for _, childIndex := range operator.ChildrenIdx {
 		if childIndex < 0 || childIndex >= len(tree) || tree[childIndex] == nil {
 			return statementRUOperatorInvalid
 		}
-		if tree[childIndex].Origin != physicalJoin.Children()[ordinal] ||
-			tree[childIndex].Label != contract.childLabels[ordinal] {
+		matchedOrdinal := -1
+		for originalOrdinal, originalChild := range physicalJoin.Children() {
+			if matchedOriginalChild[originalOrdinal] || tree[childIndex].Origin != originalChild ||
+				tree[childIndex].Label != contract.childLabels[originalOrdinal] {
+				continue
+			}
+			if matchedOrdinal != -1 {
+				return statementRUOperatorUnsupported
+			}
+			matchedOrdinal = originalOrdinal
+		}
+		if matchedOrdinal == -1 {
 			return statementRUOperatorUnsupported
 		}
+		matchedOriginalChild[matchedOrdinal] = true
 	}
 	inputRows, valid := checkedStatementRURowSum(children[0].outputRows, children[1].outputRows)
 	if !valid || !addStatementRUCPUWork(&delta, float64(inputRows)*float64(contract.expressionCount)) ||
@@ -820,6 +1038,11 @@ func collectStatementRUReaderScanBytes(
 	calculator *statementRUCalculator,
 	requestRoots []base.Plan,
 ) statementRUOperatorState {
+	// GetCopScanDetail currently exposes totals merged across responses. Applying
+	// the processed-byte ratio after that merge can estimate above or below the
+	// sum of response-local physical sizes even when every field is present. A
+	// later producer change will consume response-level total-key-size evidence;
+	// until then the whole forest remains calibration-Incomplete.
 	if len(operator.ChildrenIdx) != len(requestRoots) {
 		return statementRUOperatorUnsupported
 	}

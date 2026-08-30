@@ -66,9 +66,10 @@ type statementRUResultOnly struct {
 // The current producers cannot prove that all successful or canceled remote
 // work contributed execution details. ResultOnly therefore publishes a
 // best-effort value from visible evidence, while every supported snapshot is
-// marked incomplete for the dormant calibration consumer. "Best-effort lower
-// bound" means missing units are not imputed; the aggregate scan-byte proxy is
-// non-monotone, so it is not a strict mathematical bound.
+// marked incomplete for the dormant calibration consumer. Missing execution
+// opportunities can underestimate work, while merged scan ratios and nonlinear
+// lifecycle formulas can estimate in either direction or overestimate. The
+// result is therefore neither exact nor a mathematical upper or lower bound.
 type statementRUCalibrationState uint8
 
 const (

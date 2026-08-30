@@ -268,6 +268,88 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		})
 	})
 
+	t.Run("forest totals and occurrence aliases stay independent", func(t *testing.T) {
+		fixture := newStatementRUSimpleSelectFixture(t)
+		planCtx := fixture.stmt.Ctx.(*mock.Context)
+		newDual := func(id int, rows int64) *physicalop.PhysicalTableDual {
+			dual := physicalop.PhysicalTableDual{RowCount: int(rows)}.Init(
+				planCtx,
+				&property.StatsInfo{RowCount: float64(rows)},
+				0,
+			)
+			dual.SetID(id)
+			recordRootRows(fixture, dual, rows)
+			return dual
+		}
+		newProjection := func(expressionCount int) *physicalop.PhysicalProjection {
+			exprs := make([]expression.Expression, expressionCount)
+			for i := range exprs {
+				exprs[i] = &expression.Column{}
+			}
+			projection := physicalop.PhysicalProjection{Exprs: exprs}.Init(
+				planCtx,
+				&property.StatsInfo{},
+				0,
+			)
+			// Legal CTE/scalar shallow copies can share a runtime lookup ID. The
+			// result must still retain a distinct value at every forest coordinate.
+			projection.SetID(101)
+			return projection
+		}
+
+		mainProjection := newProjection(1)
+		cteProjection := newProjection(2)
+		scalarProjection := newProjection(3)
+		recordRootRows(fixture, mainProjection, 4)
+		cteRoot := physicalop.PhysicalUnionAll{}.Init(planCtx, &property.StatsInfo{}, 0)
+		scalarRoot := plannercore.ScalarSubqueryEvalCtx{}.Init(planCtx, 0)
+		mainDual := newDual(201, 2)
+		cteDual := newDual(202, 3)
+		scalarDual := newDual(203, 4)
+		flat := &plannercore.FlatPhysicalPlan{
+			Main: plannercore.FlatPlanTree{
+				{Origin: mainProjection, IsRoot: true, StoreType: kv.TiDB, ChildrenIdx: []int{1}},
+				{Origin: mainDual, IsRoot: true, StoreType: kv.TiDB},
+			},
+			CTEs: []plannercore.FlatPlanTree{{
+				{Origin: cteRoot, IsRoot: true, StoreType: kv.TiDB, ChildrenIdx: []int{1}},
+				{Origin: cteProjection, IsRoot: true, StoreType: kv.TiDB, ChildrenIdx: []int{2}},
+				{Origin: cteDual, IsRoot: true, StoreType: kv.TiDB},
+			}},
+			ScalarSubQueries: []plannercore.FlatPlanTree{{
+				{Origin: scalarRoot, IsRoot: true, StoreType: kv.TiDB, ChildrenIdx: []int{1}},
+				{Origin: scalarProjection, IsRoot: true, StoreType: kv.TiDB, ChildrenIdx: []int{2}},
+				{Origin: scalarDual, IsRoot: true, StoreType: kv.TiDB},
+			}},
+		}
+		metrics := execdetails.NewRUV2Metrics()
+		metrics.AddTiKVCoprocessorResponseBytes(11)
+		finalized, operators, ok := calculateStatementRUWithOperators(
+			flat,
+			fixture.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl,
+			metrics,
+			statementRUCalculationSetup{frontendCompileBytes: 7},
+			true,
+		)
+		require.True(t, ok)
+		require.Equal(t, statementRURawUnits{
+			CPUWork:              20,
+			NetBytes:             11,
+			FrontendCompileBytes: 7,
+		}, finalized.units)
+		require.Equal(t, float64(38), finalized.result.TotalRU)
+		require.Equal(t, finalized.result.TotalRU, operators.TotalRU)
+		require.Equal(t, float64(20), operators.Main[0].SelfRU)
+		require.Equal(t, float64(20), operators.Main[0].CumRU)
+		require.Equal(t, float64(6), operators.CTEs[0][0].CumRU)
+		require.Equal(t, float64(12), operators.ScalarSubQueries[0][0].CumRU)
+		require.Equal(t, 101, operators.Main[0].PlanID)
+		require.Equal(t, 101, operators.CTEs[0][1].PlanID)
+		require.Equal(t, 101, operators.ScalarSubQueries[0][1].PlanID)
+		require.Equal(t, float64(20), operators.Main[0].SelfRU)
+		require.Equal(t, float64(6), operators.CTEs[0][1].SelfRU)
+		require.Equal(t, float64(12), operators.ScalarSubQueries[0][1].SelfRU)
+	})
 	newJoin := func(
 		fixture statementRUSimpleSelectFixture,
 		kind string,
@@ -443,6 +525,28 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 			requirePublication(t, fixture, want)
 		})
 	}
+
+	t.Run("Join accepts build-side-first display order", func(t *testing.T) {
+		fixture := newStatementRUSimpleSelectFixture(t)
+		join, left, right := newJoin(fixture, "hash")
+		recordJoinRows(fixture, join, left, right)
+		recordHashState(fixture, join, 2, true, false)
+		setPlan(fixture, join)
+		flat := plannercore.FlattenPhysicalPlan(join, true)
+		require.Len(t, flat.Main[0].ChildrenIdx, 2)
+		firstChild := flat.Main[flat.Main[0].ChildrenIdx[0]]
+		require.Equal(t, plannercore.BuildSide, firstChild.Label)
+		require.Same(t, right, firstChild.Origin)
+		fixture.stmt.Ctx.GetSessionVars().StmtCtx.SetFlatPlan(flat)
+
+		requirePublication(t, fixture, statementRURawUnits{
+			CPUWork:              5,
+			NetBytes:             20,
+			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+			HashStateRows:        2,
+			JoinOutputRows:       4,
+		})
+	})
 
 	t.Run("Join fails closed on wrong side role", func(t *testing.T) {
 		fixture := newStatementRUSimpleSelectFixture(t)
@@ -1054,6 +1158,22 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		requireNoPublication(t, fixture)
 	})
 
+	t.Run("duplicate child reference fails closed", func(t *testing.T) {
+		fixture := newStatementRUSimpleSelectFixture(t)
+		flat := fixture.stmt.Ctx.GetSessionVars().StmtCtx.GetFlatPlan().(*plannercore.FlatPhysicalPlan)
+		flat.Main[0].ChildrenIdx = []int{1, 1}
+
+		requireNoPublication(t, fixture)
+	})
+
+	t.Run("unreachable operator fails closed", func(t *testing.T) {
+		fixture := newStatementRUSimpleSelectFixture(t)
+		flat := fixture.stmt.Ctx.GetSessionVars().StmtCtx.GetFlatPlan().(*plannercore.FlatPhysicalPlan)
+		flat.Main[0].ChildrenIdx = nil
+
+		requireNoPublication(t, fixture)
+	})
+
 	t.Run("present negative child rows fail closed", func(t *testing.T) {
 		fixture := newStatementRUSimpleSelectFixture(t)
 		planCtx := fixture.stmt.Ctx.(*mock.Context)
@@ -1073,10 +1193,10 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		planCtx := fixture.stmt.Ctx.(*mock.Context)
 		reader := fixture.stmt.Plan.(*physicalop.PhysicalTableReader)
 		scan := reader.TablePlan.(*physicalop.PhysicalTableScan)
-		projection := physicalop.PhysicalProjection{}.Init(planCtx, &property.StatsInfo{RowCount: 1}, 0)
-		projection.SetChildren(scan)
-		reader.TablePlan = projection
-		reader.TablePlans = physicalop.FlattenListPushDownPlan(projection)
+		window := physicalop.PhysicalWindow{}.Init(planCtx, &property.StatsInfo{RowCount: 1}, 0)
+		window.SetChildren(scan)
+		reader.TablePlan = window
+		reader.TablePlans = physicalop.FlattenListPushDownPlan(window)
 		fixture.recordReaderScanDetail(reader, 1, 1, 10)
 		setPlan(fixture, reader)
 
