@@ -296,6 +296,13 @@ pub enum PlanErrorKind {
     },
     /// Go `plannererrors.ErrPartitionClauseOnNonpartitioned` (1747).
     PartitionClauseOnNonpartitioned,
+    /// Go `infoschema.ErrKeyNotExists` (1176).
+    KeyNotExists {
+        /// The index name as written.
+        key: String,
+        /// The table name from `TableInfo.Name.O`.
+        table: String,
+    },
     /// Go `plannererrors.ErrWrongNumberOfColumnsInSelect` (1222).
     WrongNumberOfColumnsInSelect,
     /// Go `dbterror.ErrViewWrongList` (1353).
@@ -359,6 +366,17 @@ impl PlanError {
         Self {
             kind: PlanErrorKind::PartitionClauseOnNonpartitioned,
             message: "PARTITION () clause on non partitioned table".to_owned(),
+        }
+    }
+
+    /// Go `plannererrors.ErrKeyDoesNotExist.FastGenByArgs(key, table)`.
+    #[must_use]
+    pub fn key_not_exists(key: impl Into<String>, table: impl Into<String>) -> Self {
+        let key = key.into();
+        let table = table.into();
+        Self {
+            message: format!("Key '{key}' doesn't exist in table '{table}'"),
+            kind: PlanErrorKind::KeyNotExists { key, table },
         }
     }
 

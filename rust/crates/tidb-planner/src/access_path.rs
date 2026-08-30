@@ -728,9 +728,10 @@ pub enum PossiblePath {
 /// * hypo indexes (`:1419-1441`) — explain-only session state;
 /// * the read-committed `GetLatestIndexInfo` re-check (`:1385-1395`) —
 ///   schema-validator machinery;
-/// * USE/IGNORE/FORCE INDEX and comment-style hints (`:1443` onward) — with
-///   no hints Go returns every public path available, which is exactly this
-///   answer.
+/// Hint filtering (`:1443` onward) is the separate
+/// [`apply_table_index_hints`] stage, matching Go's enumeration-then-filter
+/// structure. Comment-style hints must join that same stage through the
+/// query-block hint owner; they are not approximated here.
 #[must_use]
 pub fn get_possible_access_paths(
     table: &crate::plan_builder::catalog::SourceTable,
@@ -766,6 +767,87 @@ pub fn get_possible_access_paths(
         paths.push(PossiblePath::Index { index: offset });
     }
     paths
+}
+
+/// Applies Go `getPossibleAccessPaths`' table-syntax index-hint tail to an
+/// already enumerated public-path list.
+pub fn apply_table_index_hints(
+    table: &crate::plan_builder::catalog::SourceTable,
+    public_paths: &[PossiblePath],
+    hints: &[tidb_ast::IndexHint],
+) -> Result<(Vec<PossiblePath>, std::collections::BTreeSet<i64>), crate::plan_base::PlanError> {
+    use tidb_ast::{IndexHintKind, IndexHintScope};
+
+    let table_path = public_paths
+        .iter()
+        .find(|path| matches!(path, PossiblePath::Table { .. }))
+        .cloned()
+        .expect("getPossibleAccessPaths always creates a table path");
+    let mut has_scan_hint = false;
+    let mut has_use_or_force = false;
+    let mut available = Vec::new();
+    let mut ignored = std::collections::BTreeSet::new();
+    let mut forced_index_ids = std::collections::BTreeSet::new();
+
+    for hint in hints {
+        if hint.scope != IndexHintScope::All {
+            continue;
+        }
+        has_scan_hint = true;
+        if hint.indexes.is_empty() && hint.kind != IndexHintKind::Ignore {
+            has_use_or_force = true;
+            available.push(table_path.clone());
+        }
+        for name in &hint.indexes {
+            let path = public_paths.iter().find(|path| match path {
+                PossiblePath::Index { index } => table
+                    .indexes
+                    .get(*index)
+                    .is_some_and(|metadata| metadata.name.eq_ignore_ascii_case(name)),
+                PossiblePath::Table { .. } => {
+                    name.eq_ignore_ascii_case("primary")
+                        && (table.pk_is_handle || table.is_common_handle)
+                }
+            });
+            let Some(path) = path.cloned() else {
+                return Err(crate::plan_base::PlanError::key_not_exists(
+                    name,
+                    &table.table_name,
+                ));
+            };
+            if hint.kind == IndexHintKind::Ignore {
+                if let PossiblePath::Index { index } = path {
+                    ignored.insert(index);
+                }
+                continue;
+            }
+            has_use_or_force = true;
+            if let PossiblePath::Index { index } = path {
+                if let Some(metadata) = table.indexes.get(index) {
+                    forced_index_ids.insert(metadata.id);
+                }
+            }
+            available.push(path);
+        }
+    }
+
+    if !has_scan_hint || !has_use_or_force {
+        available = public_paths.to_vec();
+    }
+    available
+        .retain(|path| !matches!(path, PossiblePath::Index { index } if ignored.contains(index)));
+    if available.is_empty() {
+        available.push(table_path.clone());
+    }
+    if available.iter().all(|path| match path {
+        PossiblePath::Table { .. } => false,
+        PossiblePath::Index { index } => table.indexes.get(*index).is_some_and(|metadata| {
+            metadata.is_multi_valued || !metadata.condition_expr_string.is_empty()
+        }),
+    }) {
+        available.push(table_path);
+    }
+    Ok((available, forced_index_ids))
 }
 
 #[cfg(test)]

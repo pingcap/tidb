@@ -415,6 +415,12 @@ pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError)
         tidb_planner::plan_base::PlanErrorKind::PartitionClauseOnNonpartitioned => {
             DriverError::PartitionClauseOnNonpartitioned
         }
+        tidb_planner::plan_base::PlanErrorKind::KeyNotExists { key, table } => {
+            DriverError::KeyNotExists {
+                key: key.clone(),
+                table: table.clone(),
+            }
+        }
         tidb_planner::plan_base::PlanErrorKind::Internal => {
             DriverError::unsupported(error.to_string())
         }

@@ -132,10 +132,10 @@
 //!   materialised [`Datum`] rather than evaluating. A constant that is NOT
 //!   materialised (a parameter marker, a non-deterministic builtin) is
 //!   conservatively kept as a condition, which is Go's `useCache` arm.
-//! * `hint.QBHintHandler` / `hint.PlanHints` / `setPreferredStoreType`.
-//!   The hint catalogue is not transcreated; [`PlanBuilder::hints`] carries
-//!   the fields the ported bodies read, exactly as
-//!   [`crate::expression_rewriter::RewriterHints`] does.
+//! * `hint.QBHintHandler` / the unconsumed `hint.PlanHints` families /
+//!   `setPreferredStoreType`. Table-syntax index hints and the consumed
+//!   query-block hint families have ordinary planner owners; the remaining
+//!   catalogue fields stay explicit dependencies rather than empty stubs.
 //! * `tablesampler.NewTableSampleInfo`, `tableHasDirtyContent`,
 //!   `addExtraPhysTblIDColumn4DS`, `BuildDataSourceFromView`. Table sampling,
 //!   the transaction membuffer and the view expander each need a handle this
@@ -1398,10 +1398,14 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // [`DataSourceAccessPath`] demands an already-PROVEN ranger/statistics
         // input, and that costing seam fills them later, as Go's
         // `deriveStatsByFilter` stage does.
-        data_source.enumerated_paths = crate::access_path::get_possible_access_paths(
+        let public_paths = crate::access_path::get_possible_access_paths(
             table,
             self.optimizer_use_invisible_indexes,
         );
+        let (enumerated_paths, forced_index_ids) =
+            crate::access_path::apply_table_index_hints(table, &public_paths, &table_ref.hints)?;
+        data_source.enumerated_paths = enumerated_paths;
+        data_source.forced_index_ids = forced_index_ids;
         data_source.indexes = table.indexes.clone();
         debug_assert!(data_source.possible_access_paths.is_empty());
 

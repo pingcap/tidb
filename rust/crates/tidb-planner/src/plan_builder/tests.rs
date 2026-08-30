@@ -536,6 +536,56 @@ fn test_partition_clause_matches_partition_metadata() {
 }
 
 #[test]
+fn test_table_index_hints_filter_ordinary_planner_paths() {
+    let harness = Harness::new();
+    let mut builder = harness.builder();
+    let (plan, _) = builder
+        .build_select(&parse_select("SELECT a FROM t USE INDEX (idx_b)"))
+        .expect("the hinted plan builds");
+    let LogicalPlan::Projection(projection) = plan else {
+        panic!("expected projection");
+    };
+    let LogicalPlan::DataSource(source) = &projection.base.children()[0] else {
+        panic!("expected data source");
+    };
+    assert_eq!(
+        source.enumerated_paths,
+        vec![crate::access_path::PossiblePath::Index { index: 0 }]
+    );
+    assert_eq!(
+        source.forced_index_ids,
+        std::collections::BTreeSet::from([1])
+    );
+
+    let mut builder = harness.builder();
+    let (plan, _) = builder
+        .build_select(&parse_select("SELECT a FROM t USE INDEX ()"))
+        .expect("empty USE INDEX keeps only the table path");
+    let LogicalPlan::Projection(projection) = plan else {
+        panic!("expected projection");
+    };
+    let LogicalPlan::DataSource(source) = &projection.base.children()[0] else {
+        panic!("expected data source");
+    };
+    assert!(matches!(
+        source.enumerated_paths.as_slice(),
+        [crate::access_path::PossiblePath::Table { .. }]
+    ));
+
+    let mut builder = harness.builder();
+    let error = builder
+        .build_select(&parse_select("SELECT a FROM t IGNORE INDEX (missing)"))
+        .expect_err("table-syntax unknown indexes are errors");
+    assert_eq!(
+        error.kind(),
+        &crate::plan_base::PlanErrorKind::KeyNotExists {
+            key: "missing".to_owned(),
+            table: "t".to_owned(),
+        }
+    );
+}
+
+#[test]
 fn test_unknown_database_and_table_are_distinguished() {
     let harness = Harness::new();
     let mut builder = harness.builder();
