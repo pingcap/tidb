@@ -152,9 +152,18 @@ impl ClusterServerSession {
             statement.time_zone = self.session.session_time_zone();
             statement.options.memory_quota = memory_quota;
             let statement = &statement;
+            let historical_stats_enabled = || {
+                self.session
+                    .vars()
+                    .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS)
+                    .is_ok_and(|value| tidb_exec::option_values::tidb_opt_on(&value))
+            };
             let report = recover_analyze_panic(|| {
-                self.analyze
-                    .execute(statement, statement_memory.sql_killer())
+                self.analyze.execute(
+                    statement,
+                    statement_memory.sql_killer(),
+                    &historical_stats_enabled,
+                )
             })
             .map_err(|error| SqlQueryError::unknown(error.rendered_message()))??;
             if report.predicate_columns_empty {

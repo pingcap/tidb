@@ -27,6 +27,7 @@ impl ClusterAnalyze for UndeterminedAnalyze {
         &self,
         _: &tidb_exec::cluster_analyze::AnalyzeStatement,
         _: &tidb_util::sqlkiller::SqlKiller,
+        _: &dyn Fn() -> bool,
     ) -> Result<tidb_exec::real_tikv_analyze::ClusterAnalyzeReport, crate::sql_node::SqlQueryError>
     {
         Err(crate::sql_node::cluster_analyze_error(
@@ -44,6 +45,7 @@ impl ClusterAnalyze for PanickingAnalyze {
         &self,
         _: &tidb_exec::cluster_analyze::AnalyzeStatement,
         _: &tidb_util::sqlkiller::SqlKiller,
+        _: &dyn Fn() -> bool,
     ) -> Result<tidb_exec::real_tikv_analyze::ClusterAnalyzeReport, crate::sql_node::SqlQueryError>
     {
         panic!("{}", self.0)

@@ -59,8 +59,8 @@ use crate::cluster_stats_load::{
 };
 use crate::cluster_stats_write::{
     load_analyze_options, plan_analyze_options_write, plan_get_predicate_columns,
-    plan_partial_partition_stats_write, plan_partial_stats_write, plan_partition_stats_write,
-    plan_stats_write, StatsWritePlan,
+    plan_historical_stats_meta_write, plan_partial_partition_stats_write, plan_partial_stats_write,
+    plan_partition_stats_write, plan_stats_write, StatsWritePlan,
 };
 use crate::mysql_bootstrap::utc_now_timestamp;
 use crate::mysql_system_tables::SystemTableError;
@@ -148,6 +148,17 @@ pub struct ResolvedClusterAnalyze {
     physical_options: Vec<tidb_executor::analyze::PhysicalAnalyzeOptions>,
     partitioned: bool,
     ignored_partition_overrides: bool,
+}
+
+impl ResolvedClusterAnalyze {
+    /// The logical table whose global statistics are written.
+    #[must_use]
+    pub fn logical_table_id(&self) -> i64 {
+        self.physical_options
+            .first()
+            .expect("the logical table option is always present")
+            .physical_id
+    }
 }
 
 /// Reads and merges the saved table-level ANALYZE options before execution.
@@ -409,6 +420,12 @@ fn global_stats_merge_error(error: GlobalStatsMergeError) -> ClusterAnalyzeError
     }
 }
 
+/// Go's non-enforced historical-meta gate for one global-statistics save.
+#[must_use]
+pub fn record_global_history_enabled(enabled: bool, initialized: bool) -> bool {
+    enabled && initialized
+}
+
 /// `mysql.stats_meta.count` as the sample-rate rule reads it.
 ///
 /// Go's `RealtimeCount` is an `int64`, so a stored count past `i64::MAX` is
@@ -428,6 +445,7 @@ pub fn commit_cluster_analyze<C: StoreWriteClient, L: StoreWriteLoader, P: Store
     resolved: &ResolvedClusterAnalyze,
     timeout: Duration,
     killer: &SqlKiller,
+    record_global_history: &dyn Fn() -> bool,
 ) -> Result<ClusterAnalyzeReport, ClusterAnalyzeError> {
     let targets = if resolved.partitioned {
         resolved
@@ -479,9 +497,14 @@ pub fn commit_cluster_analyze<C: StoreWriteClient, L: StoreWriteLoader, P: Store
         report.table_id = table_id;
     }
     if resolved.partitioned && resolved.statement.dynamic_partition_prune {
-        if let Err(error) =
-            commit_cluster_global_stats(opener, resolved, &mut report, timeout, killer)
-        {
+        if let Err(error) = commit_cluster_global_stats(
+            opener,
+            resolved,
+            &mut report,
+            timeout,
+            killer,
+            record_global_history,
+        ) {
             match error {
                 ClusterAnalyzeError::MissingPartitionStats(_) => {
                     report.global_stats_warning = Some((8243, error.to_string()));
@@ -503,6 +526,7 @@ fn commit_cluster_global_stats<C: StoreWriteClient, L: StoreWriteLoader, P: Stor
     report: &mut ClusterAnalyzeReport,
     timeout: Duration,
     killer: &SqlKiller,
+    record_history: &dyn Fn() -> bool,
 ) -> Result<(), ClusterAnalyzeError> {
     let mut transaction = opener
         .begin_read_only()
@@ -691,6 +715,9 @@ fn commit_cluster_global_stats<C: StoreWriteClient, L: StoreWriteLoader, P: Stor
             commit_global_stats_item(opener, logical_id, total_count, modify_count, item, timeout)
         },
         |write| {
+            if record_history() {
+                record_analyze_history(opener, logical_id, write.0, timeout);
+            }
             report.version = report.version.max(write.0);
             report.histogram_count += write.1;
             report.bucket_count += write.2;
@@ -699,6 +726,38 @@ fn commit_cluster_global_stats<C: StoreWriteClient, L: StoreWriteLoader, P: Stor
     )?;
     report.table_id = logical_id;
     Ok(())
+}
+
+fn record_analyze_history<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
+    opener: &RealOptimisticTransactionOpener<C, L, P>,
+    table_id: i64,
+    version: u64,
+    timeout: Duration,
+) {
+    let result = (|| -> Result<(), ClusterAnalyzeError> {
+        let mut transaction = opener
+            .begin(ANALYZE_MAX_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)
+            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+        let plan = {
+            let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
+            let catalog = load_cluster_catalog(&mut snapshot)
+                .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+            plan_historical_stats_meta_write(
+                &mut snapshot,
+                &catalog,
+                table_id,
+                version,
+                "analyze",
+                utc_now_timestamp(),
+            )
+            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?
+        };
+        let outcome = transaction
+            .commit(plan.mutations, &UnaryCallContext::with_timeout(timeout))
+            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+        classify_commit_outcome(&outcome)
+    })();
+    let _: Result<(), ClusterAnalyzeError> = result;
 }
 
 fn write_global_stats_items<T, E>(
@@ -1482,7 +1541,8 @@ fn classify_commit_outcome(outcome: &OptimisticCommitOutcome) -> Result<(), Clus
 mod tests {
     use super::{
         analyze_partition_ids, classify_commit_outcome, final_column_choice, merge_global_items,
-        realtime_count_of, write_global_stats_items, ClusterAnalyzeError,
+        realtime_count_of, record_global_history_enabled, write_global_stats_items,
+        ClusterAnalyzeError,
     };
     use std::collections::BTreeMap;
     use std::thread;
@@ -1726,6 +1786,14 @@ mod tests {
         assert_eq!(attempted, vec![1, 2, 3, 4]);
         assert_eq!(recorded, vec![(2, 1, 2, 3), (4, 1, 2, 3)]);
         assert_eq!(error, "last");
+    }
+
+    #[test]
+    fn global_history_requires_both_the_live_switch_and_initialized_cache() {
+        assert!(!record_global_history_enabled(false, false));
+        assert!(!record_global_history_enabled(false, true));
+        assert!(!record_global_history_enabled(true, false));
+        assert!(record_global_history_enabled(true, true));
     }
 
     #[test]

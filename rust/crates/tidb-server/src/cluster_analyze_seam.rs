@@ -62,8 +62,8 @@ use tidb_exec::cluster_analyze::AnalyzeStatement;
 use tidb_exec::cluster_catalog::load_cluster_catalog;
 use tidb_exec::cluster_stats_load::column_types_of;
 use tidb_exec::real_tikv_analyze::{
-    commit_cluster_analyze, resolve_cluster_analyze_statement, save_cluster_analyze_options,
-    ClusterAnalyzeReport,
+    commit_cluster_analyze, record_global_history_enabled, resolve_cluster_analyze_statement,
+    save_cluster_analyze_options, ClusterAnalyzeReport,
 };
 use tidb_exec::real_tikv_catalog::TransactionMetaSnapshot;
 use tidb_exec::real_tikv_load_stats::{
@@ -87,6 +87,7 @@ pub trait ClusterAnalyze: Send + Sync {
         &self,
         statement: &AnalyzeStatement,
         killer: &SqlKiller,
+        historical_stats_enabled: &dyn Fn() -> bool,
     ) -> Result<ClusterAnalyzeReport, SqlQueryError>;
 
     /// Loads one client-transferred JSON statistics dump into cluster storage.
@@ -203,11 +204,28 @@ where
         &self,
         statement: &AnalyzeStatement,
         killer: &SqlKiller,
+        historical_stats_enabled: &dyn Fn() -> bool,
     ) -> Result<ClusterAnalyzeReport, SqlQueryError> {
         let statement = resolve_cluster_analyze_statement(&self.opener, statement, self.timeout)
             .map_err(cluster_analyze_error)?;
-        let mut report = commit_cluster_analyze(&self.opener, &statement, self.timeout, killer)
-            .map_err(cluster_analyze_error)?;
+        let logical_table_id = statement.logical_table_id();
+        let record_global_history = || {
+            let initialized = self
+                .stats
+                .load()
+                .get(&logical_table_id)
+                .and_then(tidb_exec::stats_watch::TableStatsState::loaded)
+                .is_some_and(|table| table.is_initialized());
+            record_global_history_enabled(historical_stats_enabled(), initialized)
+        };
+        let mut report = commit_cluster_analyze(
+            &self.opener,
+            &statement,
+            self.timeout,
+            killer,
+            &record_global_history,
+        )
+        .map_err(cluster_analyze_error)?;
         if let Err(error) = save_cluster_analyze_options(&self.opener, &statement, self.timeout) {
             report.option_save_warning = Some(error.to_string());
         }
