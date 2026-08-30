@@ -1296,7 +1296,7 @@ impl StmtContext {
         let Some(usage) = &self.column_stats_usage else {
             return;
         };
-        usage.update_col_stats_usage(items);
+        usage.update_col_stats_usage(items, std::time::SystemTime::now());
     }
 
     /// Installs Go `SessionVars.TxnCtx.TableDeltaMap`.

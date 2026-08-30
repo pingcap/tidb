@@ -15,6 +15,38 @@ use crate::tests_support::*;
 use crate::*;
 use tidb_executor::TableEntry;
 
+struct AnalyzeUsage(
+    std::collections::HashMap<
+        tidb_model::TableItemID,
+        (Option<tidb_datatype::Time>, Option<tidb_datatype::Time>),
+    >,
+);
+
+impl ColumnStatsUsageProvider for AnalyzeUsage {
+    fn load_column_stats_usage(
+        &self,
+        _location: &tidb_datatype::SessionTimeZone,
+        _resource_group: &str,
+    ) -> Result<
+        std::collections::HashMap<
+            tidb_model::TableItemID,
+            (Option<tidb_datatype::Time>, Option<tidb_datatype::Time>),
+        >,
+        String,
+    > {
+        Ok(self.0.clone())
+    }
+}
+
+fn analyze_usage_item(table_id: i64, column_id: i64) -> tidb_model::TableItemID {
+    tidb_model::TableItemID {
+        table_id,
+        id: column_id,
+        is_index: false,
+        is_sync_load_failed: false,
+    }
+}
+
 /// The scan row's `estRows` and `operator info`, which is where the statistics
 /// show up.
 fn scan_row(session: &mut Session, sql: &str) -> (String, String) {
@@ -468,6 +500,136 @@ fn analyze_predicate_columns_without_collected_usage_warns() {
             "No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
         ]]
     );
+}
+
+#[test]
+fn analyze_default_predicate_columns_follow_usage_and_mandatory_index_columns() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (a INT, b INT, c INT, KEY ib(b))")
+        .unwrap();
+    session
+        .run("INSERT INTO t VALUES (1,1,1),(2,2,2),(3,3,3)")
+        .unwrap();
+    let (table_id, a, b, c) = session
+        .with_catalog_mut(|catalog| {
+            let Some(TableEntry::Kv(table)) = catalog.table_in("test", "t") else {
+                panic!("t is a table")
+            };
+            Ok((
+                table.table_id,
+                table.columns[0].id,
+                table.columns[1].id,
+                table.columns[2].id,
+            ))
+        })
+        .unwrap();
+    session
+        .run("SET GLOBAL tidb_analyze_column_options = 'PREDICATE'")
+        .unwrap();
+    session.set_column_stats_usage_provider(std::sync::Arc::new(AnalyzeUsage(
+        [(analyze_usage_item(table_id, a), (None, None))]
+            .into_iter()
+            .collect(),
+    )));
+    session.run("ANALYZE TABLE t").unwrap();
+    session
+        .with_catalog_mut(|catalog| {
+            let statistics = catalog.table_statistics(table_id).expect("t was analyzed");
+            assert_eq!(
+                statistics
+                    .columns
+                    .keys()
+                    .copied()
+                    .collect::<std::collections::HashSet<_>>(),
+                std::collections::HashSet::from([a, b])
+            );
+            Ok(())
+        })
+        .unwrap();
+
+    session.set_column_stats_usage_provider(std::sync::Arc::new(AnalyzeUsage(
+        [
+            (analyze_usage_item(table_id, a), (None, None)),
+            (analyze_usage_item(table_id, c), (None, None)),
+        ]
+        .into_iter()
+        .collect(),
+    )));
+    session.run("ANALYZE TABLE t").unwrap();
+    session
+        .with_catalog_mut(|catalog| {
+            let statistics = catalog.table_statistics(table_id).expect("t was analyzed");
+            assert_eq!(
+                statistics
+                    .columns
+                    .keys()
+                    .copied()
+                    .collect::<std::collections::HashSet<_>>(),
+                std::collections::HashSet::from([a, b, c])
+            );
+            Ok(())
+        })
+        .unwrap();
+    session
+        .run("SET GLOBAL tidb_analyze_column_options = 'ALL'")
+        .unwrap();
+}
+
+#[test]
+fn analyze_empty_predicate_usage_keeps_only_go_mandatory_columns() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE plain (a INT, b INT)").unwrap();
+    session
+        .run("CREATE TABLE indexed (a INT, b INT, KEY iab(a,b))")
+        .unwrap();
+    session
+        .run("CREATE TABLE primary_key (a INT, b INT, c INT, PRIMARY KEY(a,b))")
+        .unwrap();
+    session.run("INSERT INTO plain VALUES (1,1)").unwrap();
+    session.run("INSERT INTO indexed VALUES (1,1)").unwrap();
+    session
+        .run("INSERT INTO primary_key VALUES (1,1,1)")
+        .unwrap();
+    session
+        .run("SET GLOBAL tidb_analyze_column_options = 'PREDICATE'")
+        .unwrap();
+    session.set_column_stats_usage_provider(std::sync::Arc::new(AnalyzeUsage(
+        std::collections::HashMap::new(),
+    )));
+
+    for table in ["plain", "indexed", "primary_key"] {
+        session.run(&format!("ANALYZE TABLE {table}")).unwrap();
+    }
+    session
+        .with_catalog_mut(|catalog| {
+            for (table_name, expected_offsets) in [
+                ("plain", Vec::<usize>::new()),
+                ("indexed", vec![0, 1]),
+                ("primary_key", vec![0, 1]),
+            ] {
+                let Some(TableEntry::Kv(table)) = catalog.table_in("test", table_name) else {
+                    panic!("{table_name} is a table")
+                };
+                let expected = expected_offsets
+                    .into_iter()
+                    .map(|offset| table.columns[offset].id)
+                    .collect::<std::collections::HashSet<_>>();
+                let actual = catalog
+                    .table_statistics(table.table_id)
+                    .expect("table was analyzed")
+                    .columns
+                    .keys()
+                    .copied()
+                    .collect::<std::collections::HashSet<_>>();
+                assert_eq!(actual, expected, "{table_name}");
+            }
+            Ok(())
+        })
+        .unwrap();
+    session
+        .run("SET GLOBAL tidb_analyze_column_options = 'ALL'")
+        .unwrap();
 }
 
 /// The in-process session is the second production consumer of the shared

@@ -268,8 +268,11 @@ impl SessionStatsItem {
     }
 
     /// Go `SessionStatsItem.UpdateColStatsUsage`.
-    pub fn update_col_stats_usage(&self, items: impl IntoIterator<Item = TableItemID>) {
-        let update_time = SystemTime::now();
+    pub fn update_col_stats_usage(
+        &self,
+        items: impl IntoIterator<Item = TableItemID>,
+        update_time: SystemTime,
+    ) {
         let mut state = self.state.lock().expect("session stats lock poisoned");
         for item in items {
             debug_assert!(
@@ -582,12 +585,6 @@ impl StatsUsageHandle {
     }
 }
 
-impl Default for StatsUsageHandle {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Drop for StatsUsageHandle {
     fn drop(&mut self) {
         self.index_usage.close();
@@ -619,18 +616,8 @@ mod tests {
 
         let old = SystemTime::UNIX_EPOCH + Duration::from_secs(10);
         let new = SystemTime::UNIX_EPOCH + Duration::from_secs(20);
-        first
-            .state
-            .lock()
-            .unwrap()
-            .stats_usage
-            .insert(column(7, 1), old);
-        second
-            .state
-            .lock()
-            .unwrap()
-            .stats_usage
-            .insert(column(7, 1), new);
+        first.update_col_stats_usage([column(7, 1)], old);
+        second.update_col_stats_usage([column(7, 1)], new);
 
         sessions.sweep_session_stats_list();
         assert_eq!(

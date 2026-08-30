@@ -57,6 +57,64 @@ struct WarningStatsLock {
     calls: AtomicUsize,
 }
 
+#[test]
+fn failed_later_column_usage_batch_requeues_every_entry() {
+    let sessions = tidb_stats_handle_usage::SessionStatsList::new();
+    let session = sessions.new_session_stats_item();
+    let used_at = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(10);
+    session.update_col_stats_usage(
+        (1..=tidb_stats_handle_usage::BATCH_INSERT_SIZE + 1).map(|column_id| {
+            tidb_model::TableItemID {
+                table_id: 1,
+                id: i64::try_from(column_id).expect("column ID fits in i64"),
+                is_index: false,
+                is_sync_load_failed: false,
+            }
+        }),
+        used_at,
+    );
+
+    {
+        let mut pending = sessions.begin_column_stats_usage_dump();
+        let entries = pending.entries();
+        let mut batches = 0;
+        let error = persist_column_stats_usage_batches(&mut pending, &entries, |_| {
+            batches += 1;
+            (batches == 1)
+                .then_some(())
+                .ok_or_else(|| "second batch failed".to_owned())
+        })
+        .expect_err("the second batch fails");
+        assert_eq!(error, "second batch failed");
+    }
+
+    let mut retry = sessions.begin_column_stats_usage_dump();
+    let entries = retry.entries();
+    assert_eq!(
+        entries.len(),
+        tidb_stats_handle_usage::BATCH_INSERT_SIZE + 1
+    );
+    persist_column_stats_usage_batches(&mut retry, &entries, |_| Ok(()))
+        .expect("the complete retry succeeds");
+    drop(retry);
+    assert!(sessions
+        .begin_column_stats_usage_dump()
+        .entries()
+        .is_empty());
+}
+
+#[test]
+fn column_usage_timestamp_matches_go_time_format_precision() {
+    let stored = system_time_timestamp(
+        std::time::SystemTime::UNIX_EPOCH
+            + std::time::Duration::from_secs(1_000_000)
+            + std::time::Duration::from_micros(654_321),
+    )
+    .expect("timestamp is representable");
+    assert_eq!(stored.core_time().microsecond(), 0);
+    assert_eq!(stored.fsp(), 6);
+}
+
 impl crate::cluster_stats_lock_seam::ClusterStatsLock for WarningStatsLock {
     fn execute(
         &self,

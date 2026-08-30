@@ -649,7 +649,7 @@ impl ClusterSessionFactory {
             .session_stats_list()
             .begin_column_stats_usage_dump();
         let entries = pending.entries();
-        for batch in entries.chunks(tidb_stats_handle_usage::BATCH_INSERT_SIZE) {
+        persist_column_stats_usage_batches(&mut pending, &entries, |batch| {
             let snapshot = self.transactions.open_snapshot(resource_group)?;
             let read_ts = snapshot.start_ts();
             let converted = batch
@@ -671,9 +671,8 @@ impl ClusterSessionFactory {
             self.transactions
                 .commit_optimistic_mutations(plan.mutations, read_ts, resource_group)
                 .map_err(|error| error.message)?;
-            pending.mark_persisted(batch.iter().map(|(item, _)| *item));
-        }
-        Ok(())
+            Ok(())
+        })
     }
 
     /// Go `statsUsageImpl.DumpStatsDeltaToKV`.
@@ -1043,6 +1042,18 @@ fn spawn_usage_worker(
         .expect("spawning statistics usage worker")
 }
 
+fn persist_column_stats_usage_batches(
+    pending: &mut tidb_stats_handle_usage::ColumnStatsUsageDump<'_>,
+    entries: &[(tidb_model::TableItemID, SystemTime)],
+    mut persist: impl FnMut(&[(tidb_model::TableItemID, SystemTime)]) -> Result<(), String>,
+) -> Result<(), String> {
+    for batch in entries.chunks(tidb_stats_handle_usage::BATCH_INSERT_SIZE) {
+        persist(batch)?;
+    }
+    pending.mark_persisted(entries.iter().map(|(item, _)| *item));
+    Ok(())
+}
+
 fn system_time_timestamp(value: SystemTime) -> Result<tidb_datatype::Time, String> {
     let value: chrono::DateTime<chrono::Utc> = value.into();
     tidb_datatype::Time::from_date_checked(
@@ -1052,7 +1063,7 @@ fn system_time_timestamp(value: SystemTime) -> Result<tidb_datatype::Time, Strin
         i32::try_from(value.hour()).expect("hour fits in i32"),
         i32::try_from(value.minute()).expect("minute fits in i32"),
         i32::try_from(value.second()).expect("second fits in i32"),
-        i32::try_from(value.timestamp_subsec_micros()).expect("microsecond fits in i32"),
+        0,
         tidb_datatype::TimeType::Timestamp,
         6,
     )
