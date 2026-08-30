@@ -1212,6 +1212,15 @@ struct MutationOverlaySnapshot {
     staged: MutationBuffer,
 }
 
+/// Gives one later statement in a transaction read-your-own-writes over the
+/// mutations staged by earlier statements.
+pub fn overlay_staged_mutations(
+    snapshot: Box<dyn ClusterSnapshot>,
+    staged: &MutationBuffer,
+) -> Box<dyn ClusterSnapshot> {
+    Box::new(MutationOverlaySnapshot::new(snapshot, staged.clone()))
+}
+
 impl MutationOverlaySnapshot {
     fn new(snapshot: Box<dyn ClusterSnapshot>, staged: MutationBuffer) -> Self {
         Self { snapshot, staged }
@@ -1295,10 +1304,7 @@ pub fn lock_pessimistic_statement<
                 Some(for_update_ts) => transaction.snapshot_at_for(for_update_ts, true),
                 None => transaction.snapshot_for(true),
             }
-            .map(|snapshot| {
-                Box::new(MutationOverlaySnapshot::new(snapshot, staged.clone()))
-                    as Box<dyn ClusterSnapshot>
-            })
+            .map(|snapshot| overlay_staged_mutations(snapshot, staged))
             .map_err(|error| error.to_string())
         },
         |keys, presume_not_exists, duplicate_hints| {

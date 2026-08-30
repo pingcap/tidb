@@ -59,9 +59,8 @@ use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoa
 use tidb_txnkv::PdRegionLoader;
 
 use tidb_exec::cluster_table_storage::{
-    commit_staged_buffer, lock_pessimistic_statement_with, mutation_buffer_from_mutations,
-    LockKeysOutcome, MaxTsSnapshot, PreparedStatementSnapshot, SessionTransaction,
-    StatementSnapshot,
+    commit_staged_buffer, mutation_buffer_from_mutations, LockKeysOutcome, MaxTsSnapshot,
+    PreparedStatementSnapshot, SessionTransaction, StatementSnapshot,
 };
 use tidb_exec::pessimistic_lock_error::LockSqlError;
 use tidb_exec::real_tikv_read::RealOptimisticTransactionOpener;
@@ -187,46 +186,6 @@ pub trait ClusterTransactions: Send + Sync {
 
     /// Checks the same physical key without retaining it.
     fn is_advisory_lock_used(&self, name: &str) -> bool;
-}
-
-/// Runs one Go restricted-session SQL statement inside `BEGIN PESSIMISTIC`.
-///
-/// A lock conflict rebuilds the statement from a snapshot at the advanced
-/// `for_update_ts`, while values written as statistics versions keep the
-/// transaction's original start timestamp. Multi-statement Go wrappers must
-/// call this only after retaining their original statement boundaries.
-pub(crate) fn run_pessimistic_statement<T>(
-    transactions: &dyn ClusterTransactions,
-    resource_group: &str,
-    build: impl FnMut(
-        Box<dyn ClusterSnapshot>,
-        u64,
-    ) -> Result<(T, Vec<tidb_txnkv::transaction::OptimisticMutation>), String>,
-) -> Result<T, String> {
-    let transaction = transactions.begin(true, resource_group)?;
-    let start_ts = transaction.start_ts();
-    let result = lock_pessimistic_statement_with(
-        start_ts,
-        |retry_read_ts| match retry_read_ts {
-            Some(for_update_ts) => transaction.snapshot_at_for(for_update_ts, true),
-            None => transaction.snapshot_for(true),
-        },
-        |keys, presume_not_exists, duplicate_hints| {
-            transaction.lock_staged_keys_with_assertions(keys, presume_not_exists, duplicate_hints)
-        },
-        build,
-    );
-    match result {
-        Ok((value, mutations)) => transaction
-            .commit(&mutation_buffer_from_mutations(mutations))
-            .map(|()| value)
-            .map_err(|error| error.message),
-        Err(error) => {
-            let error = error.to_string();
-            let _ = transaction.rollback();
-            Err(error)
-        }
-    }
 }
 
 /// Adapts the cluster transaction authority to the expression/session lock

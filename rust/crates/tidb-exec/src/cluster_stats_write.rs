@@ -867,31 +867,112 @@ pub fn plan_column_stats_usage_dump<S: MetaSnapshot>(
     Ok(plan)
 }
 
-/// Plans pinned Go `storage.UpdateStatsMeta` for one prepared delta batch.
-pub fn plan_stats_delta_updates<S: MetaSnapshot>(
+/// One SQL statement in pinned Go `storage.UpdateStatsMeta`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum StatsDeltaStatement {
+    /// Locks existing `stats_table_locked` rows selected by table ID.
+    LockLocked(Vec<i64>),
+    /// Locks existing `stats_meta` rows selected by table ID.
+    LockUnlocked(Vec<i64>),
+    /// Upserts every locked-table delta in one statement.
+    UpsertLocked(Vec<tidb_stats_handle_usage::DeltaUpdate>),
+    /// Upserts nonnegative unlocked deltas in one statement.
+    UpsertUnlockedPositive(Vec<tidb_stats_handle_usage::DeltaUpdate>),
+    /// Upserts negative unlocked deltas in one statement.
+    UpsertUnlockedNegative(Vec<tidb_stats_handle_usage::DeltaUpdate>),
+}
+
+/// Builds pinned Go `storage.UpdateStatsMeta`'s nonempty statements in order.
+#[must_use]
+pub fn stats_delta_statements(
+    updates: &[tidb_stats_handle_usage::DeltaUpdate],
+) -> Vec<StatsDeltaStatement> {
+    let mut locked_ids = Vec::new();
+    let mut unlocked_ids = Vec::new();
+    let mut locked = Vec::new();
+    let mut positive = Vec::new();
+    let mut negative = Vec::new();
+    for update in updates {
+        if update.is_locked {
+            locked_ids.push(update.table_id);
+            locked.push(*update);
+        } else {
+            unlocked_ids.push(update.table_id);
+            if update.delta.delta < 0 {
+                negative.push(*update);
+            } else {
+                positive.push(*update);
+            }
+        }
+    }
+    let mut statements = Vec::with_capacity(5);
+    if !locked_ids.is_empty() {
+        statements.push(StatsDeltaStatement::LockLocked(locked_ids));
+    }
+    if !unlocked_ids.is_empty() {
+        statements.push(StatsDeltaStatement::LockUnlocked(unlocked_ids));
+    }
+    if !locked.is_empty() {
+        statements.push(StatsDeltaStatement::UpsertLocked(locked));
+    }
+    if !positive.is_empty() {
+        statements.push(StatsDeltaStatement::UpsertUnlockedPositive(positive));
+    }
+    if !negative.is_empty() {
+        statements.push(StatsDeltaStatement::UpsertUnlockedNegative(negative));
+    }
+    statements
+}
+
+/// Plans one pinned Go `storage.UpdateStatsMeta` statement.
+pub fn plan_stats_delta_statement<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
-    updates: &[tidb_stats_handle_usage::DeltaUpdate],
+    statement: &StatsDeltaStatement,
     version: u64,
     now: Time,
 ) -> Result<StatsWritePlan, StatsWriteError> {
-    let mut grouped = BTreeMap::<(bool, i64), tidb_stats_handle_usage::TableDelta>::new();
-    for update in updates {
-        grouped
-            .entry((update.is_locked, update.table_id))
-            .or_default()
-            .merge_from(update.delta);
-    }
-    let mut plan = StatsWritePlan::default();
-    for ((locked, table_id), delta) in grouped {
-        let table = locate(
-            catalog,
-            if locked {
+    let (table_name, updates, negative) = match statement {
+        StatsDeltaStatement::LockLocked(table_ids)
+        | StatsDeltaStatement::LockUnlocked(table_ids) => {
+            let table_name = if matches!(statement, StatsDeltaStatement::LockLocked(_)) {
                 "stats_table_locked"
             } else {
                 "stats_meta"
-            },
-        )?;
+            };
+            let table = locate(catalog, table_name)?;
+            let mut plan = StatsWritePlan::default();
+            for table_id in table_ids {
+                let rows = StatsRows::open(snapshot, table, &["table_id"], *table_id)?;
+                for (key, _) in rows.existing.into_values() {
+                    plan.mutations
+                        .push(OptimisticMutation::lock_only(key).map_err(|error| {
+                            StatsWriteError::Encode(RowEncodeError(error.to_string()))
+                        })?);
+                }
+            }
+            return Ok(plan);
+        }
+        StatsDeltaStatement::UpsertLocked(updates) => {
+            ("stats_table_locked", updates.as_slice(), false)
+        }
+        StatsDeltaStatement::UpsertUnlockedPositive(updates) => {
+            ("stats_meta", updates.as_slice(), false)
+        }
+        StatsDeltaStatement::UpsertUnlockedNegative(updates) => {
+            ("stats_meta", updates.as_slice(), true)
+        }
+    };
+    let mut grouped = BTreeMap::<i64, Vec<tidb_stats_handle_usage::TableDelta>>::new();
+    for update in updates {
+        grouped
+            .entry(update.table_id)
+            .or_default()
+            .push(update.delta);
+    }
+    let mut plan = StatsWritePlan::default();
+    let table = locate(catalog, table_name)?;
+    for (table_id, deltas) in grouped {
         let mut rows = StatsRows::open(snapshot, table, &["table_id"], table_id)?;
         let mut values = defaults_row(table, now)?;
         set(table, &mut values, "table_id", Datum::Int(table_id));
@@ -902,24 +983,22 @@ pub fn plan_stats_delta_updates<S: MetaSnapshot>(
         }
         let current_modify =
             signed_value(values.get(&column_id(table, "modify_count")?)).unwrap_or_default();
-        let current_count =
-            signed_value(values.get(&column_id(table, "count")?)).unwrap_or_default();
-        let count = if locked || delta.delta >= 0 {
-            current_count.wrapping_add(delta.delta)
-        } else if existed {
-            current_count
-                .saturating_sub(delta.delta.wrapping_neg())
-                .max(0)
-        } else {
-            delta.delta.wrapping_neg()
-        };
+        let mut count = signed_value(values.get(&column_id(table, "count")?)).unwrap_or_default();
+        let mut modify_count = current_modify;
+        for (index, delta) in deltas.into_iter().enumerate() {
+            modify_count = modify_count.wrapping_add(delta.count);
+            count = if !negative {
+                count.wrapping_add(delta.delta)
+            } else if existed || index > 0 {
+                count.saturating_sub(delta.delta.wrapping_neg()).max(0)
+            } else {
+                // In one multi-row INSERT, the first missing-key tuple inserts
+                // `-delta`; later tuples for that key take the duplicate path.
+                delta.delta.wrapping_neg()
+            };
+        }
         set(table, &mut values, "version", Datum::UInt(version));
-        set(
-            table,
-            &mut values,
-            "modify_count",
-            Datum::Int(current_modify.wrapping_add(delta.count)),
-        );
+        set(table, &mut values, "modify_count", Datum::Int(modify_count));
         set(table, &mut values, "count", Datum::Int(count));
         rows.store(snapshot, catalog, &values, &mut plan)?;
         rows.publish_watermark(catalog, &mut plan)?;

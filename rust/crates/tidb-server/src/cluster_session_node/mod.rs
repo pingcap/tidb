@@ -873,32 +873,73 @@ impl ClusterSessionFactory {
             if original_updates.is_empty() {
                 continue;
             }
-            let (read_ts, updates) = transactions::run_pessimistic_statement(
-                transactions,
-                resource_group,
-                |snapshot, start_ts| {
+            let transaction = transactions.begin(true, resource_group)?;
+            let read_ts = transaction.start_ts();
+            let staged = MutationBuffer::new();
+            let prepared = (|| {
+                let locked = {
+                    let snapshot = transaction.snapshot_for(false)?;
                     let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-                    let locked = tidb_exec::cluster_stats_write::load_stats_locked_table_ids(
+                    tidb_exec::cluster_stats_write::load_stats_locked_table_ids(
                         &mut snapshot,
                         &catalog,
                     )
-                    .map_err(|error| error.to_string())?;
-                    let updates = tidb_stats_handle_usage::prepare_delta_updates(
-                        original_updates.clone(),
-                        |table_id| parents.get(&table_id).copied(),
-                        &locked,
-                    );
-                    let plan = tidb_exec::cluster_stats_write::plan_stats_delta_updates(
-                        &mut snapshot,
-                        &catalog,
-                        &updates,
-                        start_ts,
-                        tidb_exec::mysql_bootstrap::utc_now_timestamp(),
-                    )
-                    .map_err(|error| error.to_string())?;
-                    Ok(((start_ts, updates), plan.mutations))
-                },
-            )?;
+                    .map_err(|error| error.to_string())?
+                };
+                let updates = tidb_stats_handle_usage::prepare_delta_updates(
+                    original_updates.clone(),
+                    |table_id| parents.get(&table_id).copied(),
+                    &locked,
+                );
+                for statement in tidb_exec::cluster_stats_write::stats_delta_statements(&updates) {
+                    let ((), mutations) =
+                        tidb_exec::cluster_table_storage::lock_pessimistic_statement_with(
+                            transaction.start_ts(),
+                            |retry_ts| {
+                                let snapshot = match retry_ts {
+                                    Some(retry_ts) => transaction.snapshot_at_for(retry_ts, true),
+                                    None => transaction.snapshot_for(true),
+                                }?;
+                                Ok(tidb_exec::cluster_table_storage::overlay_staged_mutations(
+                                    snapshot, &staged,
+                                ))
+                            },
+                            |keys, presume_not_exists, duplicate_hints| {
+                                transaction.lock_staged_keys_with_assertions(
+                                    keys,
+                                    presume_not_exists,
+                                    duplicate_hints,
+                                )
+                            },
+                            |snapshot, _start_ts| {
+                                let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                                let plan =
+                                    tidb_exec::cluster_stats_write::plan_stats_delta_statement(
+                                        &mut snapshot,
+                                        &catalog,
+                                        &statement,
+                                        read_ts,
+                                        tidb_exec::mysql_bootstrap::utc_now_timestamp(),
+                                    )
+                                    .map_err(|error| error.to_string())?;
+                                Ok(((), plan.mutations))
+                            },
+                        )
+                        .map_err(|error| error.to_string())?;
+                    tidb_exec::cluster_table_storage::stage_mutations(&staged, mutations);
+                }
+                Ok::<_, String>(updates)
+            })();
+            let updates = match prepared {
+                Ok(updates) => updates,
+                Err(error) => {
+                    let _ = transaction.rollback();
+                    return Err(error);
+                }
+            };
+            if let Err(error) = transaction.commit(&staged) {
+                return Err(error.message);
+            }
             for update in original_updates {
                 pending.mark_persisted(update.table_id);
             }

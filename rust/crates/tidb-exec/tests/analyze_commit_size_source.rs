@@ -53,9 +53,9 @@ use tidb_exec::cluster_stats_write::{
     plan_loaded_stats_usage_write,
     plan_outdated_historical_data_delete, plan_outdated_historical_meta_delete,
     plan_change_global_stats_id, plan_partial_stats_write, plan_partition_stats_write,
-    plan_stats_delta_updates, plan_stats_gc_timestamp_write, plan_stats_item_delete,
+    plan_stats_delta_statement, plan_stats_gc_timestamp_write, plan_stats_item_delete,
     plan_stats_meta_version_refresh, plan_stats_write, plan_update_stats_version,
-    LoadedStatsItemStatement, StatsWriteError,
+    stats_delta_statements, LoadedStatsItemStatement, StatsDeltaStatement, StatsWriteError,
 };
 use tidb_exec::mysql_bootstrap::{plan_mysql_bootstrap, BootstrapEnvironment, BootstrapWrite};
 use tidb_exec::mysql_system_tables::{scan_system_table, SystemRow, SystemTableView};
@@ -155,6 +155,20 @@ fn apply_historical_stats_data_statements(
         apply_mutations(store, &plan.mutations);
     }
     Ok(version)
+}
+
+fn apply_stats_delta_statements(
+    store: &mut MetaStore,
+    catalog: &tidb_exec::cluster_catalog::ClusterCatalog,
+    updates: &[DeltaUpdate],
+    version: u64,
+    now: Time,
+) -> Result<(), StatsWriteError> {
+    for statement in stats_delta_statements(updates) {
+        let plan = plan_stats_delta_statement(store, catalog, &statement, version, now)?;
+        apply_mutations(store, &plan.mutations);
+    }
+    Ok(())
 }
 
 fn apply_loaded_stats_item(
@@ -1449,6 +1463,112 @@ fn slow_save_version_refresh_changes_only_the_two_go_columns() {
 }
 
 #[test]
+fn stats_delta_updates_use_go_statement_order() {
+    let updates = [
+        DeltaUpdate {
+            table_id: 1,
+            delta: TableDelta {
+                delta: -2,
+                count: 3,
+                init_time: None,
+            },
+            is_locked: true,
+        },
+        DeltaUpdate {
+            table_id: 2,
+            delta: TableDelta {
+                delta: 4,
+                count: 5,
+                init_time: None,
+            },
+            is_locked: false,
+        },
+        DeltaUpdate {
+            table_id: 3,
+            delta: TableDelta {
+                delta: -6,
+                count: 7,
+                init_time: None,
+            },
+            is_locked: false,
+        },
+    ];
+    let statements = stats_delta_statements(&updates);
+    assert!(matches!(
+        statements.as_slice(),
+        [
+            StatsDeltaStatement::LockLocked(_),
+            StatsDeltaStatement::LockUnlocked(_),
+            StatsDeltaStatement::UpsertLocked(_),
+            StatsDeltaStatement::UpsertUnlockedPositive(_),
+            StatsDeltaStatement::UpsertUnlockedNegative(_),
+        ]
+    ));
+}
+
+#[test]
+fn stats_delta_lock_statements_lock_only_selected_existing_rows() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let existing_id = 4241;
+    let initial =
+        plan_loaded_stats_meta_write(&mut store, &catalog, existing_id, 10, 2, 100, now())
+            .expect("initial meta plans");
+    apply_mutations(&mut store, &initial.mutations);
+
+    let plan = plan_stats_delta_statement(
+        &mut store,
+        &catalog,
+        &StatsDeltaStatement::LockUnlocked(vec![existing_id, 999_999]),
+        101,
+        now(),
+    )
+    .expect("locking SELECT plans");
+    assert_eq!(plan.mutations.len(), 1);
+    assert_eq!(plan.mutations[0].kind(), OptimisticMutationKind::LockOnly);
+}
+
+#[test]
+fn stats_delta_negative_multirow_insert_keeps_go_duplicate_key_order() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let table_id = 4240;
+    apply_stats_delta_statements(
+        &mut store,
+        &catalog,
+        &[
+            DeltaUpdate {
+                table_id,
+                delta: TableDelta {
+                    delta: -5,
+                    count: 3,
+                    init_time: None,
+                },
+                is_locked: false,
+            },
+            DeltaUpdate {
+                table_id,
+                delta: TableDelta {
+                    delta: -3,
+                    count: 4,
+                    init_time: None,
+                },
+                is_locked: false,
+            },
+        ],
+        101,
+        now(),
+    )
+    .expect("negative multi-row statement plans");
+
+    let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
+    assert_eq!(
+        loader.load_meta(&mut store, table_id).expect("meta loads"),
+        Some((101, 0, 7, 2, 0))
+    );
+}
+
+#[test]
 fn stats_delta_updates_match_go_positive_negative_and_locked_rows() {
     let mut store = bootstrapped();
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
@@ -1457,7 +1577,7 @@ fn stats_delta_updates_match_go_positive_negative_and_locked_rows() {
         .expect("initial meta plans");
     apply_mutations(&mut store, &initial.mutations);
 
-    let positive = plan_stats_delta_updates(
+    apply_stats_delta_statements(
         &mut store,
         &catalog,
         &[DeltaUpdate {
@@ -1472,9 +1592,8 @@ fn stats_delta_updates_match_go_positive_negative_and_locked_rows() {
         101,
         now(),
     )
-    .expect("positive delta plans");
-    apply_mutations(&mut store, &positive.mutations);
-    let negative = plan_stats_delta_updates(
+    .expect("positive delta statements plan");
+    apply_stats_delta_statements(
         &mut store,
         &catalog,
         &[DeltaUpdate {
@@ -1489,8 +1608,7 @@ fn stats_delta_updates_match_go_positive_negative_and_locked_rows() {
         102,
         now(),
     )
-    .expect("negative delta plans");
-    apply_mutations(&mut store, &negative.mutations);
+    .expect("negative delta statements plan");
 
     let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
     assert_eq!(
@@ -1499,7 +1617,7 @@ fn stats_delta_updates_match_go_positive_negative_and_locked_rows() {
     );
 
     let locked_id = 4343;
-    let locked = plan_stats_delta_updates(
+    apply_stats_delta_statements(
         &mut store,
         &catalog,
         &[DeltaUpdate {
@@ -1514,8 +1632,7 @@ fn stats_delta_updates_match_go_positive_negative_and_locked_rows() {
         103,
         now(),
     )
-    .expect("locked delta plans");
-    apply_mutations(&mut store, &locked.mutations);
+    .expect("locked delta statements plan");
     let locked_table = catalog
         .databases
         .iter()
@@ -1552,7 +1669,7 @@ fn stats_delta_update_keeps_go_row_delta_when_modify_count_is_zero() {
         .expect("initial meta plans");
     apply_mutations(&mut store, &initial.mutations);
 
-    let plan = plan_stats_delta_updates(
+    apply_stats_delta_statements(
         &mut store,
         &catalog,
         &[DeltaUpdate {
@@ -1567,8 +1684,7 @@ fn stats_delta_update_keeps_go_row_delta_when_modify_count_is_zero() {
         101,
         now(),
     )
-    .expect("row-only delta plans");
-    apply_mutations(&mut store, &plan.mutations);
+    .expect("row-only delta statements plan");
 
     let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
     assert_eq!(
