@@ -38,7 +38,8 @@ use tidb_exec::cluster_stats_load::{ClusterStatsItem, ClusterStatsLoader, Cluste
 use tidb_exec::cluster_stats_write::{
     load_analyze_options, plan_analyze_options_write, plan_get_predicate_columns,
     plan_historical_stats_meta_write, plan_loaded_stats_item_write, plan_loaded_stats_meta_write,
-    plan_loaded_stats_usage_write, plan_partial_stats_write, plan_stats_write,
+    plan_loaded_stats_usage_write, plan_partial_stats_write, plan_partition_stats_write,
+    plan_stats_write,
 };
 use tidb_exec::mysql_bootstrap::{plan_mysql_bootstrap, BootstrapEnvironment, BootstrapWrite};
 use tidb_exec::mysql_system_tables::{scan_system_table, SystemRow, SystemTableView};
@@ -49,7 +50,7 @@ use tidb_model::table_info::TableInfo;
 use tidb_model::SchemaState;
 use tidb_stats::cmsketch::{CmsSketch, TopN};
 use tidb_stats::histogram::{Bucket, Histogram};
-use tidb_stats::JsonPredicateColumn;
+use tidb_stats::{FmSketch, JsonPredicateColumn, MAX_SKETCH_SIZE};
 use tidb_txnkv::transaction::{
     OptimisticMutationKind, MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES,
 };
@@ -169,6 +170,7 @@ fn full_histogram(id: i64, is_index: bool) -> ClusterStatsItem {
         },
         topn: Some(topn),
         cms: None,
+        fm_sketch: None,
     }
 }
 
@@ -257,6 +259,59 @@ fn the_analyze_version_round_trips_through_the_stored_row() {
         )),
         "version, snapshot, modify_count, count, last_analyze_version"
     );
+}
+
+/// Pinned Go `SaveAnalyzeResultToStorage` keeps FM sketches only for physical
+/// partition results. Ordinary cache loads do not fetch them; the `loadAll`
+/// path used by partition-to-global merge does, and a global write removes
+/// any stale row instead of persisting a global sketch.
+#[test]
+fn partition_fm_sketch_round_trips_only_for_global_merge() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let expected = FmSketch::from_raw_parts(3, MAX_SKETCH_SIZE, [4, 8, 12]);
+    let mut column = full_histogram(1, false);
+    column.fm_sketch = Some(expected.clone());
+    let stats = ClusterTableStats {
+        table_id: 4242,
+        version: 440_000_000_000_000_000,
+        snapshot: 440_000_000_000_000_000,
+        last_analyze_version: 440_000_000_000_000_000,
+        last_stats_hist_version: 440_000_000_000_000_000,
+        modify_count: 0,
+        row_count: 10_240,
+        columns: vec![column],
+        indexes: vec![],
+    };
+    let plan = plan_partition_stats_write(&mut store, &catalog, &stats, now())
+        .expect("partition analyze plans");
+    apply_mutations(&mut store, &plan.mutations);
+
+    let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
+    let column_types = BTreeMap::from([(
+        1,
+        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+    )]);
+    let ordinary = loader
+        .load_table(&mut store, stats.table_id, &column_types)
+        .expect("ordinary statistics load")
+        .expect("stats_meta exists");
+    assert!(ordinary.columns[0].fm_sketch.is_none());
+
+    let merge_input = loader
+        .load_table_with_fm(&mut store, stats.table_id, &column_types)
+        .expect("merge-input statistics load")
+        .expect("stats_meta exists");
+    assert_eq!(merge_input.columns[0].fm_sketch.as_ref(), Some(&expected));
+
+    let global =
+        plan_stats_write(&mut store, &catalog, &stats, now()).expect("global analyze plans");
+    apply_mutations(&mut store, &global.mutations);
+    let merge_input = loader
+        .load_table_with_fm(&mut store, stats.table_id, &column_types)
+        .expect("merge-input statistics reload")
+        .expect("stats_meta exists");
+    assert!(merge_input.columns[0].fm_sketch.is_none());
 }
 
 /// Go `TestShowHistogramsLoadStatus`: a leased cache initializes analyzed

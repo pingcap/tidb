@@ -45,13 +45,10 @@
 //! shape cannot address at all. This module reads the cluster's own
 //! `TableInfo` and writes whichever shape it finds -- see [`StatsRows`].
 //!
-//! # What it does not write
-//!
-//! `mysql.stats_fm_sketch` is written only for a partitioned table's
-//! partitions, which this node does not analyze; `mysql.column_stats_usage`
-//! records when a column was last analyzed and is a predicate-column input,
-//! not a statistic. `cm_sketch` is left NULL because analyze v2 stores no
-//! CMSketch (`save.go:266`).
+//! Partition ANALYZE also writes `mysql.stats_fm_sketch`; logical/global
+//! writes delete stale sketches and leave no row, matching `needDumpFMS` in
+//! Go. `mysql.column_stats_usage` remains a separate predicate-column input.
+//! `cm_sketch` is left NULL because analyze v2 stores no CMSketch.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -63,9 +60,9 @@ use tidb_executor::analyze::{AnalyzeColumnChoice, AnalyzeOptionOverrides, SavedA
 use tidb_meta::{key, value};
 use tidb_model::table_info::TableInfo;
 use tidb_model::TableItemID;
-use tidb_stats::encode_cmsketch_without_topn;
 use tidb_stats::histogram::Bucket;
 use tidb_stats::JsonPredicateColumn;
+use tidb_stats::{encode_cmsketch_without_topn, encode_fm_sketch};
 use tidb_txnkv::transaction::OptimisticMutation;
 
 use crate::cluster_catalog::{ClusterCatalog, MetaSnapshot};
@@ -319,7 +316,17 @@ pub fn plan_stats_write<S: MetaSnapshot>(
     stats: &ClusterTableStats,
     now: Time,
 ) -> Result<StatsWritePlan, StatsWriteError> {
-    plan_stats_write_impl(snapshot, catalog, stats, now, true)
+    plan_stats_write_impl(snapshot, catalog, stats, now, true, false)
+}
+
+/// Plans a full physical-partition ANALYZE write, including FM sketches.
+pub fn plan_partition_stats_write<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    stats: &ClusterTableStats,
+    now: Time,
+) -> Result<StatsWritePlan, StatsWriteError> {
+    plan_stats_write_impl(snapshot, catalog, stats, now, true, true)
 }
 
 /// Plans an ANALYZE write that replaces only the histogram items present in
@@ -330,7 +337,17 @@ pub fn plan_partial_stats_write<S: MetaSnapshot>(
     stats: &ClusterTableStats,
     now: Time,
 ) -> Result<StatsWritePlan, StatsWriteError> {
-    plan_stats_write_impl(snapshot, catalog, stats, now, false)
+    plan_stats_write_impl(snapshot, catalog, stats, now, false, false)
+}
+
+/// Plans a partial physical-partition ANALYZE write, including FM sketches.
+pub fn plan_partial_partition_stats_write<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    stats: &ClusterTableStats,
+    now: Time,
+) -> Result<StatsWritePlan, StatsWriteError> {
+    plan_stats_write_impl(snapshot, catalog, stats, now, false, true)
 }
 
 fn plan_stats_write_impl<S: MetaSnapshot>(
@@ -339,12 +356,22 @@ fn plan_stats_write_impl<S: MetaSnapshot>(
     stats: &ClusterTableStats,
     now: Time,
     replace_all: bool,
+    dump_fm: bool,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let mut plan = StatsWritePlan::default();
     plan_meta(snapshot, catalog, stats, now, &mut plan)?;
     plan_histograms(snapshot, catalog, stats, now, replace_all, &mut plan)?;
     plan_buckets(snapshot, catalog, stats, now, replace_all, &mut plan)?;
     plan_topn(snapshot, catalog, stats, now, replace_all, &mut plan)?;
+    plan_fm_sketches(
+        snapshot,
+        catalog,
+        stats,
+        now,
+        replace_all,
+        dump_fm,
+        &mut plan,
+    )?;
     Ok(plan)
 }
 
@@ -1109,6 +1136,46 @@ fn plan_topn<S: MetaSnapshot>(
             plan.topn_count += 1;
         }
     }
+    retract_analyzed_items(&mut rows, stats, replace_all, plan)?;
+    rows.publish_watermark(catalog, plan)
+}
+
+fn plan_fm_sketches<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    stats: &ClusterTableStats,
+    now: Time,
+    replace_all: bool,
+    dump_fm: bool,
+    plan: &mut StatsWritePlan,
+) -> Result<(), StatsWriteError> {
+    let table = locate(catalog, "stats_fm_sketch")?;
+    let mut rows = StatsRows::open(
+        snapshot,
+        table,
+        &["table_id", "is_index", "hist_id"],
+        stats.table_id,
+    )?;
+    if dump_fm {
+        for item in stats.columns.iter().chain(&stats.indexes) {
+            let Some(encoded) = encode_fm_sketch(item.fm_sketch.as_ref()) else {
+                continue;
+            };
+            let mut values = defaults_row(table, now)?;
+            set(table, &mut values, "table_id", Datum::Int(stats.table_id));
+            set(
+                table,
+                &mut values,
+                "is_index",
+                Datum::Int(i64::from(item.is_index)),
+            );
+            set(table, &mut values, "hist_id", Datum::Int(item.id));
+            set(table, &mut values, "value", Datum::Bytes(encoded));
+            rows.store(snapshot, catalog, &values, plan)?;
+        }
+    }
+    // Go deletes the previous row for every analyzed item even when this is
+    // a logical/global write and `needDumpFMS` is false.
     retract_analyzed_items(&mut rows, stats, replace_all, plan)?;
     rows.publish_watermark(catalog, plan)
 }

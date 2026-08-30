@@ -54,11 +54,11 @@ pub mod panic_recovery;
 
 use tidb_codec::{encode_key, encode_value};
 use tidb_datatype::{Collation, Datum, EvalType, FieldType, FieldTypeCode};
-use tidb_stats::builder::{BuildOptions, SampleCollector, SampleItem, build_hist_and_topn};
+use tidb_stats::builder::{build_hist_and_topn, BuildOptions, SampleCollector, SampleItem};
 use tidb_stats::cmsketch::TopN;
 use tidb_stats::histogram::Histogram;
 use tidb_stats::row_sample_collector::{
-    RowSampleCollector, SamplePolicy, ScannedRow, SlotValue, adjusted_sample_rate,
+    adjusted_sample_rate, RowSampleCollector, SamplePolicy, ScannedRow, SlotValue,
 };
 use tidb_stats::sample_bytes::MAX_SAMPLE_VALUE_LENGTH;
 
@@ -841,6 +841,8 @@ pub struct AnalyzedHistogram {
     pub histogram: Histogram,
     /// The TopN, when this histogram has one.
     pub topn: Option<TopN>,
+    /// The full-scan FM sketch used to merge partition NDVs.
+    pub fm_sketch: Option<tidb_stats::FmSketch>,
 }
 
 /// Everything one `ANALYZE TABLE` computed about one table.
@@ -992,6 +994,7 @@ impl<'a> AnalyzeRun<'a> {
                 stats_ver: STATS_VERSION_2,
                 histogram: built.histogram,
                 topn: built.topn,
+                fm_sketch: slot.fm_sketch.clone(),
             });
         }
 
@@ -1028,6 +1031,7 @@ impl<'a> AnalyzeRun<'a> {
                 stats_ver: STATS_VERSION_2,
                 histogram: built.histogram,
                 topn: built.topn,
+                fm_sketch: slot.fm_sketch.clone(),
             });
         }
 

@@ -599,6 +599,7 @@ mod tests {
             },
             topn: None,
             cms: None,
+            fm_sketch: None,
         }
     }
 

@@ -77,18 +77,18 @@ use tidb_executor::analyze::AnalyzeError as ComputeError;
 use tidb_executor::analyze::{
     AnalyzePlan, AnalyzeRun, AnalyzedColumn, AnalyzedHistogram, AnalyzedIndex,
 };
-use tidb_model::SchemaState;
 use tidb_model::table_info::TableInfo;
+use tidb_model::SchemaState;
 
-use crate::cluster_catalog::{PagedMetaSnapshot, prefix_scan_end};
+use crate::cluster_catalog::{prefix_scan_end, PagedMetaSnapshot};
 use crate::cluster_stats_load::{ClusterStatsItem, ClusterTableStats};
 use crate::mysql_system_tables::{SystemRow, SystemTableError, SystemTableView};
 use crate::system_row_write::origin_default;
 
 pub use tidb_executor::analyze::{
-    AnalyzeColumnChoice, AnalyzeOptionOverrides, AnalyzeOptions, AnalyzeStatement,
-    MEM_QUOTA_ANALYZE_VARIABLE, STATS_VERSION_2, SampleMemoryExceeded, SampleMemoryQuota,
-    resolve_analyze_options,
+    resolve_analyze_options, AnalyzeColumnChoice, AnalyzeOptionOverrides, AnalyzeOptions,
+    AnalyzeStatement, SampleMemoryExceeded, SampleMemoryQuota, MEM_QUOTA_ANALYZE_VARIABLE,
+    STATS_VERSION_2,
 };
 
 /// Whether this statement is an `ANALYZE TABLE` this node runs, and against
@@ -331,6 +331,7 @@ fn stored_item(built: AnalyzedHistogram, is_index: bool) -> ClusterStatsItem {
         histogram: built.histogram,
         topn: built.topn,
         cms: None,
+        fm_sketch: built.fm_sketch,
     }
 }
 

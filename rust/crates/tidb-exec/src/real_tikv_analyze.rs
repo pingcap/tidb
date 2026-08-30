@@ -33,23 +33,24 @@ use std::time::Duration;
 
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{
-    MAX_OPTIMISTIC_TRANSACTION_BYTES, OptimisticCommitOutcome, RealOptimisticTransactionOpener,
+    OptimisticCommitOutcome, RealOptimisticTransactionOpener, MAX_OPTIMISTIC_TRANSACTION_BYTES,
 };
 use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
 
 use crate::cluster_analyze::{
-    AnalyzeColumnChoice, AnalyzeError, AnalyzeStatement, analyze_physical_table, lower_analyze,
-    resolve_analyze_options,
+    analyze_physical_table, lower_analyze, resolve_analyze_options, AnalyzeColumnChoice,
+    AnalyzeError, AnalyzeStatement,
 };
 use crate::cluster_catalog::load_cluster_catalog;
 use crate::cluster_stats_load::ClusterStatsLoader;
 use crate::cluster_stats_write::{
-    StatsWritePlan, load_analyze_options, plan_analyze_options_write, plan_get_predicate_columns,
-    plan_partial_stats_write, plan_stats_write,
+    load_analyze_options, plan_analyze_options_write, plan_get_predicate_columns,
+    plan_partial_partition_stats_write, plan_partial_stats_write, plan_partition_stats_write,
+    plan_stats_write, StatsWritePlan,
 };
 use crate::mysql_bootstrap::utc_now_timestamp;
 use crate::mysql_system_tables::SystemTableError;
-use crate::pessimistic_lock_error::{LockSqlError, commit_outcome_to_sql_error};
+use crate::pessimistic_lock_error::{commit_outcome_to_sql_error, LockSqlError};
 use crate::real_tikv_catalog::TransactionMetaSnapshot;
 
 /// The mutation-count budget one `ANALYZE TABLE` declares.
@@ -487,7 +488,16 @@ fn commit_cluster_analyze_target<C: StoreWriteClient, L: StoreWriteLoader, P: St
             selected.as_ref(),
         )
         .map_err(|error: AnalyzeError| ClusterAnalyzeError::Other(error.to_string()))?;
-        let mut write = if selected.is_some() {
+        let mut write = if options.is_partition && selected.is_some() {
+            plan_partial_partition_stats_write(
+                &mut snapshot,
+                &catalog,
+                &report.stats,
+                utc_now_timestamp(),
+            )
+        } else if options.is_partition {
+            plan_partition_stats_write(&mut snapshot, &catalog, &report.stats, utc_now_timestamp())
+        } else if selected.is_some() {
             plan_partial_stats_write(&mut snapshot, &catalog, &report.stats, utc_now_timestamp())
         } else {
             plan_stats_write(&mut snapshot, &catalog, &report.stats, utc_now_timestamp())
@@ -663,20 +673,20 @@ fn classify_commit_outcome(outcome: &OptimisticCommitOutcome) -> Result<(), Clus
 #[cfg(test)]
 mod tests {
     use super::{
-        ClusterAnalyzeError, analyze_partition_ids, classify_commit_outcome, final_column_choice,
-        realtime_count_of,
+        analyze_partition_ids, classify_commit_outcome, final_column_choice, realtime_count_of,
+        ClusterAnalyzeError,
     };
     use std::thread;
     use std::time::Duration;
     use tidb_ast::CiString;
     use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags};
     use tidb_executor::analyze::AnalyzeColumnChoice;
-    use tidb_model::SchemaState;
     use tidb_model::column::ColumnInfo;
     use tidb_model::go_runtime::GoShared;
     use tidb_model::index::{IndexColumn, IndexInfo};
     use tidb_model::partition::{PartitionDefinition, PartitionInfo};
     use tidb_model::table_info::TableInfo;
+    use tidb_model::SchemaState;
     use tidb_stats::row_sample_collector::adjusted_sample_rate;
     use tidb_txnkv::region::RegionBackoffKind;
     use tidb_txnkv::rpc::UnaryCallContext;

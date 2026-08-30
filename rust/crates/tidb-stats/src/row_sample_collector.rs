@@ -252,6 +252,8 @@ pub struct SlotStats {
     pub total_size: i64,
     /// The FM sketch's distinct-value estimate.
     pub ndv: i64,
+    /// The full FM sketch retained for partition statistics/global merging.
+    pub fm_sketch: Option<FmSketch>,
 }
 
 /// One row the sampler kept.
@@ -652,10 +654,14 @@ impl RowSampleCollector {
             .into_iter()
             .zip(self.total_sizes)
             .zip(self.sketches)
-            .map(|((null_count, total_size), sketch)| SlotStats {
-                null_count,
-                total_size,
-                ndv: sketch.as_ref().map_or(0, FmSketch::ndv),
+            .map(|((null_count, total_size), sketch)| {
+                let ndv = sketch.as_ref().map_or(0, FmSketch::ndv);
+                SlotStats {
+                    null_count,
+                    total_size,
+                    ndv,
+                    fm_sketch: sketch,
+                }
             })
             .collect();
         let mut rows_with_handles = Vec::with_capacity(self.samples.len());

@@ -216,6 +216,7 @@ fn loaded_columns(table: &Table) -> Vec<ClusterStatsItem> {
                 histogram: column.histogram.clone(),
                 topn: column.top_n.clone(),
                 cms: column.cmsketch.clone(),
+                fm_sketch: None,
             }
         })
         .collect()
@@ -239,6 +240,7 @@ fn loaded_indexes(table: &Table) -> Vec<ClusterStatsItem> {
                 histogram: index.histogram.clone(),
                 topn: index.top_n.clone(),
                 cms: index.cmsketch.clone(),
+                fm_sketch: None,
             }
         })
         .collect()

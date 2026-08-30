@@ -107,6 +107,8 @@ pub struct ClusterStatsItem {
     pub topn: Option<TopN>,
     /// `mysql.stats_histograms.cm_sketch`, when it holds one.
     pub cms: Option<CmsSketch>,
+    /// `mysql.stats_fm_sketch`, loaded only for partition-global merging.
+    pub fm_sketch: Option<tidb_stats::FmSketch>,
 }
 
 /// Everything one cluster snapshot says about one table's statistics.
@@ -314,6 +316,7 @@ pub struct ClusterStatsLoader {
     histograms: SystemTableView,
     buckets: SystemTableView,
     topn: SystemTableView,
+    fm_sketches: SystemTableView,
 }
 
 impl ClusterStatsLoader {
@@ -375,6 +378,11 @@ impl ClusterStatsLoader {
                 "stats_top_n",
                 &["table_id", "is_index", "hist_id", "value", "count"],
             )?,
+            fm_sketches: SystemTableView::locate(
+                catalog,
+                "stats_fm_sketch",
+                &["table_id", "is_index", "hist_id", "value"],
+            )?,
         })
     }
 
@@ -420,7 +428,18 @@ impl ClusterStatsLoader {
         table_id: i64,
         column_types: &BTreeMap<i64, FieldType>,
     ) -> Result<Option<ClusterTableStats>, SystemTableError> {
-        self.load_table_with_payload(snapshot, table_id, column_types, true)
+        self.load_table_with_payload(snapshot, table_id, column_types, true, false)
+    }
+
+    /// Go `tableStatsFromStorage(..., loadAll=true)` for global-stat merging:
+    /// load ordinary payload plus partition-only FM sketches.
+    pub fn load_table_with_fm<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        table_id: i64,
+        column_types: &BTreeMap<i64, FieldType>,
+    ) -> Result<Option<ClusterTableStats>, SystemTableError> {
+        self.load_table_with_payload(snapshot, table_id, column_types, true, true)
     }
 
     /// Go's leased `tableStatsFromStorage(..., loadAll=false)` initialization:
@@ -431,7 +450,7 @@ impl ClusterStatsLoader {
         table_id: i64,
         column_types: &BTreeMap<i64, FieldType>,
     ) -> Result<Option<ClusterTableStats>, SystemTableError> {
-        self.load_table_with_payload(snapshot, table_id, column_types, false)
+        self.load_table_with_payload(snapshot, table_id, column_types, false, false)
     }
 
     /// Pinned Go `TableStatsFromStorage(..., loadAll=false)` during a cache
@@ -574,6 +593,7 @@ impl ClusterStatsLoader {
         table_id: i64,
         column_types: &BTreeMap<i64, FieldType>,
         full_load: bool,
+        load_fm: bool,
     ) -> Result<Option<ClusterTableStats>, SystemTableError> {
         let Some((version, snapshot_ts, modify_count, row_count, last_stats_hist_version)) =
             self.load_meta(snapshot, table_id)?
@@ -587,6 +607,11 @@ impl ClusterStatsLoader {
         };
         let topn = if full_load {
             self.load_topn(snapshot, table_id)?
+        } else {
+            BTreeMap::new()
+        };
+        let fm_sketches = if load_fm {
+            self.load_fm_sketches(snapshot, table_id)?
         } else {
             BTreeMap::new()
         };
@@ -663,6 +688,7 @@ impl ClusterStatsLoader {
                 histogram,
                 topn: top,
                 cms,
+                fm_sketch: fm_sketches.get(&(is_index, id)).cloned(),
             };
             if is_index {
                 stats.indexes.push(item);
@@ -764,7 +790,37 @@ impl ClusterStatsLoader {
             histogram,
             topn,
             cms,
+            fm_sketch: None,
         }))
+    }
+
+    fn load_fm_sketches<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        table_id: i64,
+    ) -> Result<BTreeMap<(bool, i64), tidb_stats::FmSketch>, SystemTableError> {
+        let mut sketches = BTreeMap::new();
+        for (key, value) in
+            scan_system_table_prefixed(snapshot, &self.fm_sketches, &[Datum::Int(table_id)])?
+        {
+            let row = SystemRow::parse(&self.fm_sketches, &key, &value)?;
+            if row.i64("table_id")?.unwrap_or_default() != table_id {
+                continue;
+            }
+            let is_index = row.i64("is_index")?.unwrap_or_default() != 0;
+            let id = row.i64("hist_id")?.unwrap_or_default();
+            let encoded = row.bytes("value")?;
+            let sketch = tidb_stats::decode_fm_sketch(encoded.as_deref()).map_err(|error| {
+                SystemTableError::Decode {
+                    name: self.fm_sketches.name().to_owned(),
+                    detail: format!("{error:?}"),
+                }
+            })?;
+            if let Some(sketch) = sketch {
+                sketches.insert((is_index, id), sketch);
+            }
+        }
+        Ok(sketches)
     }
 
     /// Go `StatsMetaCountAndModifyCount`.
@@ -1031,6 +1087,7 @@ mod tests {
                     },
                     topn: Some(TopN::new(0)),
                     cms: None,
+                    fm_sketch: None,
                 },
                 // A dropped column's stale mysql.stats_histograms row is not
                 // retained in Go's statistics.Table.
@@ -1046,6 +1103,7 @@ mod tests {
                     },
                     topn: None,
                     cms: None,
+                    fm_sketch: None,
                 },
             ],
             indexes: Vec::new(),
@@ -1095,6 +1153,7 @@ mod tests {
                 },
                 topn: None,
                 cms: None,
+                fm_sketch: None,
             }],
             indexes: Vec::new(),
         };
