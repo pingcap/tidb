@@ -1075,6 +1075,133 @@ pub fn plan_historical_stats_meta_delete_for_table<S: MetaSnapshot>(
     )
 }
 
+/// Reads pinned Go `GCStats`' version window from `mysql.stats_meta`.
+pub fn load_stats_gc_candidates<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    last_gc: u64,
+    gc_version: u64,
+) -> Result<Vec<i64>, StatsWriteError> {
+    let table = locate(catalog, "stats_meta")?;
+    let view = SystemTableView::project("mysql.stats_meta", table, &["table_id", "version"]);
+    let mut candidates = Vec::new();
+    for (key, value) in scan_system_table(snapshot, &view)? {
+        let row = SystemRow::parse(&view, &key, &value)?;
+        let Some(table_id) = row.i64("table_id")? else {
+            continue;
+        };
+        let version = row.u64("version")?.unwrap_or_default();
+        if version >= last_gc && version < gc_version {
+            candidates.push(table_id);
+        }
+    }
+    Ok(candidates)
+}
+
+/// Reads pinned Go `gcTableStats`' `(is_index, hist_id)` rows for one table.
+pub fn load_stats_gc_histograms<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    physical_id: i64,
+) -> Result<Vec<(bool, i64)>, StatsWriteError> {
+    let view = SystemTableView::locate(
+        catalog,
+        "stats_histograms",
+        &["table_id", "is_index", "hist_id"],
+    )?;
+    let mut histograms = Vec::new();
+    for (key, value) in scan_system_table_prefixed(snapshot, &view, &[Datum::Int(physical_id)])? {
+        let row = SystemRow::parse(&view, &key, &value)?;
+        if row.i64("table_id")? != Some(physical_id) {
+            continue;
+        }
+        let Some(hist_id) = row.i64("hist_id")? else {
+            continue;
+        };
+        histograms.push((row.i64("is_index")?.unwrap_or_default() == 1, hist_id));
+    }
+    Ok(histograms)
+}
+
+/// Plans pinned Go `gcTableStats`' second dropped-table phase: delete only
+/// the `stats_meta` row after a prior pass removed every histogram row.
+pub fn plan_stats_meta_delete_for_table<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    physical_id: i64,
+) -> Result<StatsWritePlan, StatsWriteError> {
+    plan_historical_stats_table_delete(snapshot, catalog, "stats_meta", &["table_id"], physical_id)
+}
+
+const STATS_GC_LAST_TS: &str = "tidb_stats_gc_last_ts";
+
+/// Reads pinned Go `getLastGCTimestamp` from `mysql.tidb`.
+pub fn load_stats_gc_timestamp<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+) -> Result<u64, StatsWriteError> {
+    let view = SystemTableView::locate(catalog, "tidb", &["variable_name", "variable_value"])?;
+    for (key, value) in scan_system_table(snapshot, &view)? {
+        let row = SystemRow::parse(&view, &key, &value)?;
+        if row.text("variable_name")?.as_deref() != Some(STATS_GC_LAST_TS) {
+            continue;
+        }
+        let value = row.text("variable_value")?.unwrap_or_default();
+        return value.parse::<u64>().map_err(|error| {
+            StatsWriteError::HistoricalMeta(format!(
+                "invalid {STATS_GC_LAST_TS} value {value:?}: {error}"
+            ))
+        });
+    }
+    Ok(0)
+}
+
+/// Plans pinned Go `writeGCTimestampToKV`'s one upsert into `mysql.tidb`.
+pub fn plan_stats_gc_timestamp_write<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    gc_version: u64,
+    now: Time,
+) -> Result<StatsWritePlan, StatsWriteError> {
+    let table = locate(catalog, "tidb")?;
+    let mut rows = StatsRows::open_all(snapshot, table, &["variable_name"])?;
+    let name_type = table
+        .cols()
+        .iter_deref()
+        .find(|column| column.read().name.lowercase() == "variable_name")
+        .map(|column| column.read().field_type.clone())
+        .ok_or_else(|| StatsWriteError::MissingTable("mysql.tidb.variable_name".to_owned()))?;
+    let value_type = table
+        .cols()
+        .iter_deref()
+        .find(|column| column.read().name.lowercase() == "variable_value")
+        .map(|column| column.read().field_type.clone())
+        .ok_or_else(|| StatsWriteError::MissingTable("mysql.tidb.variable_value".to_owned()))?;
+    let name = Datum::String(tidb_datatype::StringDatum::new(
+        STATS_GC_LAST_TS.as_bytes().to_vec(),
+        name_type.collation(),
+    ));
+    let identity = vec![format!("{name:?}")];
+    let mut values = rows
+        .existing_values(&identity)
+        .cloned()
+        .unwrap_or(defaults_row(table, now)?);
+    set(table, &mut values, "variable_name", name);
+    set(
+        table,
+        &mut values,
+        "variable_value",
+        Datum::String(tidb_datatype::StringDatum::new(
+            gc_version.to_string().into_bytes(),
+            value_type.collation(),
+        )),
+    );
+    let mut plan = StatsWritePlan::default();
+    rows.store(snapshot, catalog, &values, &mut plan)?;
+    rows.publish_watermark(catalog, &mut plan)?;
+    Ok(plan)
+}
+
 fn retract_stats_item_rows<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,

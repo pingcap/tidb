@@ -21,6 +21,7 @@
 //! --cluster-session` boots and pins those plans.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use tidb_datatype::Datum;
 
@@ -227,6 +228,84 @@ fn clear_outdated_history_stats_uses_the_go_retention_duration() {
             [["0"]]
         );
     }
+}
+
+/// Pinned storage `TestGCStats`: stale index and column rows are removed one
+/// item transaction at a time, while a dropped table needs one pass to clear
+/// payload and a later pass to remove `stats_meta`.
+#[test]
+fn stats_gc_matches_go_item_and_dropped_table_phases() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(79))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET SESSION tidb_analyze_version = 2");
+    rows(
+        &mut session,
+        "CREATE TABLE stats_gc_t (a INT, b INT, INDEX idx(a, b), INDEX idx_a(a))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO stats_gc_t VALUES (1,1),(2,2),(3,3)",
+    );
+    rows(&mut session, "ANALYZE TABLE stats_gc_t WITH 0 TOPN");
+
+    rows(&mut session, "ALTER TABLE stats_gc_t DROP INDEX idx");
+    stack
+        .factory
+        .gc_stats(Duration::ZERO, Duration::ZERO)
+        .expect("index statistics GC succeeds");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT count(*) FROM mysql.stats_histograms",
+        )),
+        vec![vec!["3".to_owned()]]
+    );
+
+    rows(&mut session, "ALTER TABLE stats_gc_t DROP INDEX idx_a");
+    rows(&mut session, "ALTER TABLE stats_gc_t DROP COLUMN a");
+    stack
+        .factory
+        .gc_stats(Duration::ZERO, Duration::ZERO)
+        .expect("column statistics GC succeeds");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT count(*) FROM mysql.stats_histograms",
+        )),
+        vec![vec!["1".to_owned()]]
+    );
+
+    rows(&mut session, "DROP TABLE stats_gc_t");
+    stack
+        .factory
+        .gc_stats(Duration::ZERO, Duration::ZERO)
+        .expect("first dropped-table GC phase succeeds");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT count(*) FROM mysql.stats_histograms",
+        )),
+        vec![vec!["0".to_owned()]]
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT count(*) FROM mysql.stats_meta")),
+        vec![vec!["1".to_owned()]]
+    );
+
+    std::thread::sleep(Duration::from_millis(2));
+    stack
+        .factory
+        .gc_stats(Duration::ZERO, Duration::ZERO)
+        .expect("second dropped-table GC phase succeeds");
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT count(*) FROM mysql.stats_meta")),
+        vec![vec!["0".to_owned()]]
+    );
 }
 
 /// Pinned `TestDumpHistoricalStatsFallback`: after ANALYZE ran with history

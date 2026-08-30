@@ -41,16 +41,17 @@ use tidb_exec::cluster_stats_dump::{
     table_stats_to_json_from_loaded,
 };
 use tidb_exec::cluster_stats_write::{
-    count_outdated_historical_stats, load_analyze_options, plan_analyze_options_write,
-    plan_column_stats_usage_dump, plan_column_stats_usage_write, plan_get_predicate_columns,
-    plan_delete_table_stats,
+    count_outdated_historical_stats, load_analyze_options, load_stats_gc_candidates,
+    load_stats_gc_timestamp, plan_analyze_options_write, plan_column_stats_usage_dump,
+    plan_column_stats_usage_write, plan_delete_table_stats, plan_get_predicate_columns,
     plan_historical_stats_data_delete_for_table, plan_historical_stats_data_write,
     plan_historical_stats_meta_delete_for_table, plan_historical_stats_meta_write,
     plan_independent_index_stats_write, plan_loaded_stats_item_write,
     plan_loaded_stats_meta_write, plan_loaded_stats_usage_write,
     plan_outdated_historical_data_delete, plan_outdated_historical_meta_delete,
     plan_partial_stats_write, plan_partition_stats_write, plan_stats_delta_updates,
-    plan_stats_item_delete, plan_stats_meta_version_refresh, plan_stats_write,
+    plan_stats_gc_timestamp_write, plan_stats_item_delete, plan_stats_meta_version_refresh,
+    plan_stats_write,
 };
 use tidb_exec::mysql_bootstrap::{plan_mysql_bootstrap, BootstrapEnvironment, BootstrapWrite};
 use tidb_exec::mysql_system_tables::{scan_system_table, SystemRow, SystemTableView};
@@ -880,6 +881,48 @@ fn table_stats_delete_preserves_go_soft_and_hard_phases() {
         .expect("stats_meta remains for phase two");
     assert_eq!(hard.version, hard_version);
     assert!(hard.column(1).is_none());
+}
+
+/// Pinned `GCStats` scans a half-open metadata-version window and persists
+/// its upper bound in the single `mysql.tidb` row used by the next pass.
+#[test]
+fn stats_gc_window_and_timestamp_are_half_open_and_persistent() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    for (table_id, version) in [(4250, 100), (4251, 200)] {
+        let stats = ClusterTableStats {
+            table_id,
+            version,
+            snapshot: 0,
+            last_analyze_version: version,
+            last_stats_hist_version: version,
+            modify_count: 0,
+            row_count: 1,
+            columns: Vec::new(),
+            indexes: Vec::new(),
+        };
+        let plan = plan_stats_write(&mut store, &catalog, &stats, now()).expect("stats plan");
+        apply_mutations(&mut store, &plan.mutations);
+    }
+
+    assert_eq!(
+        load_stats_gc_candidates(&mut store, &catalog, 100, 200)
+            .expect("GC window loads"),
+        vec![4250]
+    );
+    assert_eq!(
+        load_stats_gc_timestamp(&mut store, &catalog).expect("missing timestamp is zero"),
+        0
+    );
+    for version in [200, 300] {
+        let plan = plan_stats_gc_timestamp_write(&mut store, &catalog, version, now())
+            .expect("GC timestamp upsert plans");
+        apply_mutations(&mut store, &plan.mutations);
+        assert_eq!(
+            load_stats_gc_timestamp(&mut store, &catalog).expect("GC timestamp reloads"),
+            version
+        );
+    }
 }
 
 /// Pinned Go reads raw options, filters stale LIST IDs through current table

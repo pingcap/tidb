@@ -695,6 +695,17 @@ impl ClusterSessionFactory {
         .clear_outdated_history_stats()
     }
 
+    /// Pinned Go `StatsGC.GCStats` over the current shared schema and
+    /// independent restricted cluster transactions.
+    pub fn gc_stats(&self, stats_lease: Duration, ddl_lease: Duration) -> Result<(), String> {
+        ClusterHistoricalStatsHandle {
+            transactions: Arc::clone(&self.transactions),
+            catalog: Arc::clone(&self.catalog),
+            global_vars: self.global_vars.clone(),
+        }
+        .gc_stats(stats_lease, ddl_lease)
+    }
+
     /// Starts Go Domain's usage workers after the factory has stable `Arc`
     /// ownership. Index GC runs for every lease; delta and column dumps run
     /// only for a positive lease.
@@ -1182,6 +1193,21 @@ enum OutdatedHistoryTable {
 }
 
 impl ClusterHistoricalStatsHandle {
+    fn commit_stats_plan(
+        &self,
+        build: impl FnOnce(
+            &mut SnapshotMetaSnapshot,
+            u64,
+        ) -> Result<tidb_exec::cluster_stats_write::StatsWritePlan, String>,
+    ) -> Result<(), String> {
+        let snapshot = self.transactions.open_snapshot("default")?;
+        let read_ts = snapshot.start_ts();
+        let plan = build(&mut SnapshotMetaSnapshot::new(snapshot), read_ts)?;
+        self.transactions
+            .commit_optimistic_mutations(plan.mutations, read_ts, "default")
+            .map_err(|error| error.message)
+    }
+
     fn commit_outdated_history_delete(
         &self,
         catalog: &ClusterCatalog,
@@ -1262,6 +1288,181 @@ impl ClusterHistoricalStatsHandle {
             )?;
         }
         self.commit_outdated_history_delete(&catalog, OutdatedHistoryTable::Data, cutoff, 50)
+    }
+
+    fn physical_table<'catalog>(
+        catalog: &'catalog ClusterCatalog,
+        physical_id: i64,
+    ) -> Option<&'catalog tidb_model::table_info::TableInfo> {
+        catalog
+            .databases
+            .iter()
+            .flat_map(|database| &database.tables)
+            .find(|table| {
+                table.id == physical_id
+                    || table.get_partition_info().is_some_and(|partition| {
+                        partition
+                            .read()
+                            .definitions
+                            .snapshot()
+                            .iter()
+                            .any(|definition| definition.id == physical_id)
+                    })
+            })
+    }
+
+    fn gc_table_stats(&self, catalog: &ClusterCatalog, physical_id: i64) -> Result<bool, String> {
+        let histograms = {
+            let snapshot = self.transactions.open_snapshot("default")?;
+            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+            tidb_exec::cluster_stats_write::load_stats_gc_histograms(
+                &mut snapshot,
+                catalog,
+                physical_id,
+            )
+            .map_err(|error| error.to_string())?
+        };
+        let Some(table) = Self::physical_table(catalog, physical_id) else {
+            if histograms.is_empty() {
+                self.commit_stats_plan(|snapshot, _| {
+                    tidb_exec::cluster_stats_write::plan_stats_meta_delete_for_table(
+                        snapshot,
+                        catalog,
+                        physical_id,
+                    )
+                    .map_err(|error| error.to_string())
+                })?;
+            } else {
+                self.commit_stats_plan(|snapshot, version| {
+                    tidb_exec::cluster_stats_write::plan_delete_table_stats(
+                        snapshot,
+                        catalog,
+                        &[physical_id],
+                        false,
+                        version,
+                    )
+                    .map_err(|error| error.to_string())
+                })?;
+            }
+            return Ok(false);
+        };
+
+        let logical_table_exists = table.id == physical_id;
+        for (is_index, hist_id) in histograms {
+            let exists = if is_index {
+                table
+                    .indices
+                    .iter_deref()
+                    .any(|index| index.read().id == hist_id)
+            } else {
+                table
+                    .cols()
+                    .iter_deref()
+                    .any(|column| column.read().id == hist_id)
+            };
+            if exists {
+                continue;
+            }
+            self.commit_stats_plan(|snapshot, version| {
+                tidb_exec::cluster_stats_write::plan_stats_item_delete(
+                    snapshot,
+                    catalog,
+                    physical_id,
+                    hist_id,
+                    is_index,
+                    version,
+                )
+                .map_err(|error| error.to_string())
+            })?;
+        }
+        Ok(logical_table_exists)
+    }
+
+    fn delete_table_history(
+        &self,
+        catalog: &ClusterCatalog,
+        physical_id: i64,
+    ) -> Result<(), String> {
+        self.commit_stats_plan(|snapshot, _| {
+            tidb_exec::cluster_stats_write::plan_historical_stats_data_delete_for_table(
+                snapshot,
+                catalog,
+                physical_id,
+            )
+            .map_err(|error| error.to_string())
+        })?;
+        self.commit_stats_plan(|snapshot, _| {
+            tidb_exec::cluster_stats_write::plan_historical_stats_meta_delete_for_table(
+                snapshot,
+                catalog,
+                physical_id,
+            )
+            .map_err(|error| error.to_string())
+        })
+    }
+
+    fn wall_clock_tso() -> Result<u64, String> {
+        let millis = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_millis();
+        let millis = u64::try_from(millis).map_err(|_| "wall clock overflows u64".to_owned())?;
+        Ok(millis << 18)
+    }
+
+    /// Pinned Go `storage.GCStats`, including its version window, per-item
+    /// transaction boundaries, dropped-table two phases, history cleanup,
+    /// warning-only expiry cleanup, and final persisted timestamp.
+    fn gc_stats(&self, stats_lease: Duration, ddl_lease: Duration) -> Result<(), String> {
+        let lease = stats_lease.max(ddl_lease);
+        let nanos = i64::try_from(lease.as_nanos())
+            .map_err(|_| "statistics GC lease exceeds Go time.Duration".to_owned())?;
+        let offset = ((nanos.wrapping_mul(10) / 1_000_000) as u64) << 18;
+        let now = Self::wall_clock_tso()?;
+        if now < offset {
+            return Ok(());
+        }
+        let gc_version = now - offset;
+        let catalog = self.catalog.load();
+        let last_gc = {
+            let snapshot = self.transactions.open_snapshot("default")?;
+            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+            tidb_exec::cluster_stats_write::load_stats_gc_timestamp(&mut snapshot, &catalog)
+                .map_err(|error| error.to_string())?
+        };
+        let candidates = {
+            let snapshot = self.transactions.open_snapshot("default")?;
+            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+            tidb_exec::cluster_stats_write::load_stats_gc_candidates(
+                &mut snapshot,
+                &catalog,
+                last_gc,
+                gc_version,
+            )
+            .map_err(|error| error.to_string())?
+        };
+
+        for physical_id in candidates {
+            let exists = self.gc_table_stats(&catalog, physical_id)?;
+            if !exists {
+                self.delete_table_history(&catalog, physical_id)?;
+            }
+        }
+
+        if let Err(error) = self.clear_outdated_history_stats() {
+            eprintln!(
+                "{{\"event\":\"clear_outdated_historical_stats_failed\",\"error\":{error:?}}}"
+            );
+        }
+        self.commit_stats_plan(|snapshot, _| {
+            tidb_exec::cluster_stats_write::plan_stats_gc_timestamp_write(
+                snapshot,
+                &catalog,
+                gc_version,
+                tidb_exec::mysql_bootstrap::utc_now_timestamp(),
+            )
+            .map_err(|error| error.to_string())
+        })
     }
 
     fn table_historical_json(
