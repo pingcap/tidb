@@ -99,6 +99,32 @@ func TestExplainAnalyzeRUFormatEndToEndMonotonicity(t *testing.T) {
 		require.FailNowf(tb, "operator not found", "operator %s not found in rows %v", operator, rows)
 		return 0
 	}
+	requireForestReconciliation := func(tb testing.TB, rows [][]any) {
+		tb.Helper()
+		var totalRU float64
+		for _, row := range rows {
+			require.Len(tb, row, 7)
+			selfText, ok := row[selfRUColumn].(string)
+			require.True(tb, ok)
+			require.NotEmpty(tb, selfText, "missing forest RU in row %v; all rows: %v", row, rows)
+			selfRU, err := strconv.ParseFloat(selfText, 64)
+			require.NoError(tb, err)
+			totalRU += selfRU
+		}
+		require.Positive(tb, totalRU)
+		for _, row := range rows {
+			cumText, ok := row[cumRUColumn].(string)
+			require.True(tb, ok)
+			require.NotEmpty(tb, cumText, "missing forest RU in row %v; all rows: %v", row, rows)
+			cumRU, err := strconv.ParseFloat(cumText, 64)
+			require.NoError(tb, err)
+			pctText, ok := row[5].(string)
+			require.True(tb, ok)
+			pct, err := strconv.ParseFloat(strings.TrimSuffix(pctText, "%"), 64)
+			require.NoError(tb, err)
+			require.InDelta(tb, cumRU/totalRU*100, pct, 0.02)
+		}
+	}
 	insertIntRows := func(table string, start, count int) {
 		var sql strings.Builder
 		sql.WriteString("insert into ")
@@ -248,5 +274,72 @@ func TestExplainAnalyzeRUFormatEndToEndMonotonicity(t *testing.T) {
 		insertIndexedRows("t_unistore_ru_index_lookup", 20, 80)
 		largeRU := getOperatorRU(t, explainRU(t, "select * from t_unistore_ru_index_lookup use index(idx_b) where b >= ''"), "IndexLookUp", cumRUColumn)
 		require.Greater(t, largeRU, smallRU)
+	})
+
+	t.Run("CTE forest uses one statement denominator", func(t *testing.T) {
+		tk.MustExec("drop table if exists t_unistore_ru_cte_forest")
+		tk.MustExec("create table t_unistore_ru_cte_forest(a int)")
+		tk.MustExec("insert into t_unistore_ru_cte_forest values (1), (2), (3)")
+		rows := explainRU(t, "with cte as (select a from t_unistore_ru_cte_forest where a > 0) select a from cte union all select a from cte")
+		requireForestReconciliation(t, rows)
+		cteConsumers := 0
+		cteDefinitions := 0
+		for _, row := range rows {
+			id := row[0].(string)
+			if strings.Contains(id, "CTEFullScan") {
+				cteConsumers++
+			}
+			if strings.HasPrefix(id, "CTE_") {
+				cteDefinitions++
+			}
+		}
+		require.Equal(t, 2, cteConsumers, "both consumer occurrences must be rendered: %v", rows)
+		require.Equal(t, 1, cteDefinitions, "the shared producer definition must be rendered once: %v", rows)
+		mainPct, err := strconv.ParseFloat(strings.TrimSuffix(rows[0][5].(string), "%"), 64)
+		require.NoError(t, err)
+		require.Less(t, mainPct, float64(100), "the main root must not absorb the independent CTE tree")
+	})
+
+	t.Run("scalar tree uses one statement denominator", func(t *testing.T) {
+		tk.MustExec("set @@tidb_opt_enable_non_eval_scalar_subquery = 1")
+		tk.MustExec("drop table if exists t_unistore_ru_scalar_forest")
+		tk.MustExec("create table t_unistore_ru_scalar_forest(a int)")
+		tk.MustExec("insert into t_unistore_ru_scalar_forest values (1)")
+		rows := explainRU(t, "select (select a from t_unistore_ru_scalar_forest limit 1)")
+		requireForestReconciliation(t, rows)
+		require.Positive(t, getOperatorRU(t, rows, "ScalarSubQuery", cumRUColumn))
+		mainPct, err := strconv.ParseFloat(strings.TrimSuffix(rows[0][5].(string), "%"), 64)
+		require.NoError(t, err)
+		require.Less(t, mainPct, float64(100), "the main root must not absorb the independent scalar tree")
+	})
+
+	t.Run("join display order is supported in CTE and scalar trees", func(t *testing.T) {
+		tk.MustExec("set @@tidb_hash_join_version = 'optimized'")
+		tk.MustExec("set @@tidb_opt_enable_non_eval_scalar_subquery = 1")
+		tk.MustExec("drop table if exists t_unistore_ru_join_left, t_unistore_ru_join_right")
+		tk.MustExec("create table t_unistore_ru_join_left(a int primary key)")
+		tk.MustExec("create table t_unistore_ru_join_right(a int primary key)")
+		tk.MustExec("insert into t_unistore_ru_join_left values (1), (2)")
+		tk.MustExec("insert into t_unistore_ru_join_right values (1), (2)")
+
+		cteRows := explainRU(t, "with cte as (select /*+ merge_join(t_unistore_ru_join_left, t_unistore_ru_join_right) */ t_unistore_ru_join_left.a from t_unistore_ru_join_left join t_unistore_ru_join_right on t_unistore_ru_join_left.a = t_unistore_ru_join_right.a) select * from cte union all select * from cte")
+		requireForestReconciliation(t, cteRows)
+		require.Positive(t, getOperatorRU(t, cteRows, "MergeJoin", cumRUColumn))
+
+		scalarRows := explainRU(t, "select (select /*+ merge_join(l, r) */ l.a from t_unistore_ru_join_left l join t_unistore_ru_join_right r on l.a = r.a limit 1)")
+		requireForestReconciliation(t, scalarRows)
+		require.Positive(t, getOperatorRU(t, scalarRows, "MergeJoin", cumRUColumn))
+	})
+
+	t.Run("correlated scalar Apply keeps wrapper RU at zero", func(t *testing.T) {
+		tk.MustExec("drop table if exists t_unistore_ru_apply_outer, t_unistore_ru_apply_inner")
+		tk.MustExec("create table t_unistore_ru_apply_outer(a int)")
+		tk.MustExec("create table t_unistore_ru_apply_inner(a int, b int)")
+		tk.MustExec("insert into t_unistore_ru_apply_outer values (1), (2)")
+		tk.MustExec("insert into t_unistore_ru_apply_inner values (1, 10), (2, 20)")
+		rows := explainRU(t, "select a, (select /*+ no_decorrelate() */ b from t_unistore_ru_apply_inner where t_unistore_ru_apply_inner.a = t_unistore_ru_apply_outer.a) from t_unistore_ru_apply_outer")
+		requireForestReconciliation(t, rows)
+		require.Zero(t, getOperatorRU(t, rows, "Apply", selfRUColumn))
+		require.Positive(t, getOperatorRU(t, rows, "Apply", cumRUColumn))
 	})
 }

@@ -281,7 +281,7 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 			{name: "HashAgg parallel", query: "select /*+ HASH_AGG() */ count(*) from t group by b", rows: testkit.Rows("1", "1", "1"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalHashAgg], sortRows: true, wantPublish: true, wantCPUWork: true, wantHashState: true, wantHashRows: 6, wantRootAndCop: true},
 			{name: "HashAgg serial", before: []string{"set tidb_hashagg_partial_concurrency = 1", "set tidb_hashagg_final_concurrency = 1"}, after: []string{"set tidb_hashagg_partial_concurrency = default", "set tidb_hashagg_final_concurrency = default"}, query: "select /*+ HASH_AGG() */ count(*) from t group by b", rows: testkit.Rows("1", "1", "1"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalHashAgg], sortRows: true, wantPublish: true, wantCPUWork: true, wantHashState: true, wantHashRows: 6, wantRootAndCop: true},
 			{name: "StreamAgg", query: "select /*+ STREAM_AGG() */ count(*) from t group by b", rows: testkit.Rows("1", "1", "1"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalStreamAgg], sortRows: true, wantPublish: true, wantCPUWork: true, wantRootAndCop: true},
-			{name: "unsupported Projection", query: "select b + 1 from t ignore index (idx_b)", rows: testkit.Rows("11", "21", "31"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalProjection], sortRows: true},
+			{name: "unsupported Window", query: "select row_number() over () from t ignore index (idx_b)", rows: testkit.Rows("1", "2", "3"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalWindow], sortRows: true},
 		}
 		for _, tc := range testCases {
 			t.Run(tc.name, func(t *testing.T) {
@@ -782,9 +782,7 @@ func TestStatementRUScalarSubqueryTerminalLifecycle(t *testing.T) {
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
 		tk.MustExec("set @@tidb_opt_enable_non_eval_scalar_subquery = 1")
-		tk.MustExec("create table t1(a int)")
 		tk.MustExec("create table t2(a int)")
-		tk.MustExec("insert into t1 values (1)")
 		tk.MustExec("insert into t2 values (1)")
 
 		var observation *statementRUObservation
@@ -794,8 +792,25 @@ func TestStatementRUScalarSubqueryTerminalLifecycle(t *testing.T) {
 			}
 			observation = observeInstalledStatementRUOwner(stmt)
 		})
+		connectionID := tk.Session().GetSessionVars().ConnectionID
+		var calibrationCount atomic.Int64
+		var scanBytes float64
+		testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
+			observedConnectionID uint64,
+			state string,
+			_, observedScanBytes, _, _, _, _ float64,
+		) {
+			if observedConnectionID != connectionID {
+				return
+			}
+			require.Equal(t, "incomplete", state)
+			calibrationCount.Add(1)
+			scanBytes = observedScanBytes
+		})
 
-		rs, err := tk.Exec("select * from t1 where a = (select a from t2 limit 1)")
+		// The main tree is a TableDual, so every scan byte belongs to the
+		// independently executed scalar-subquery tree.
+		rs, err := tk.Exec("select (select a from t2 limit 1)")
 		require.NoError(t, err)
 		require.NoError(t, drainStatementRURecordSet(t, rs))
 		require.NoError(t, rs.Close())
@@ -805,6 +820,142 @@ func TestStatementRUScalarSubqueryTerminalLifecycle(t *testing.T) {
 		require.Positive(t, expectedTotal)
 		require.Positive(t, expectedScalar)
 		require.True(t, observation.owner.ConsumedForTest())
+		require.Equal(t, int64(1), calibrationCount.Load())
+		require.Positive(t, scanBytes)
+	})
+
+	t.Run("shared CTE producer is one statement tree", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table t(a int)")
+		tk.MustExec("insert into t values (1), (2), (3)")
+
+		var observation *statementRUObservation
+		testfailpoint.EnableCall(t, statementRUOwnerInstallFailpoint, func(stmt *executor.ExecStmt) {
+			if stmt.Ctx == tk.Session() {
+				observation = observeInstalledStatementRUOwner(stmt)
+			}
+		})
+		connectionID := tk.Session().GetSessionVars().ConnectionID
+		var calibrationCount atomic.Int64
+		var scanBytes []float64
+		testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
+			observedConnectionID uint64,
+			state string,
+			_, observedScanBytes, _, _, _, _ float64,
+		) {
+			if observedConnectionID != connectionID {
+				return
+			}
+			require.Equal(t, "incomplete", state)
+			calibrationCount.Add(1)
+			scanBytes = append(scanBytes, observedScanBytes)
+		})
+
+		run := func(query string) *plannercore.FlatPhysicalPlan {
+			observation = nil
+			rs, err := tk.Exec(query)
+			require.NoError(t, err)
+			require.NoError(t, drainStatementRURecordSet(t, rs))
+			require.NoError(t, rs.Close())
+			require.NotNil(t, observation)
+			return requireStatementRUTerminalFlatPlan(t, observation.stmt)
+		}
+		doubleConsumer := run("with cte as (select a from t where a > 0) select a from cte where a = 1 union all select a from cte where a > 1")
+		tripleConsumer := run("with cte as (select a from t where a > 0) select a from cte where a = 1 union all select a from cte where a > 1 union all select a from cte where a = 999")
+		require.NotNil(t, observation)
+		require.Len(t, doubleConsumer.CTEs, 1, "one IDForStorage producer must remain one forest tree despite two consumers")
+		require.Len(t, tripleConsumer.CTEs, 1, "one IDForStorage producer must remain one forest tree despite three consumers")
+		require.True(t, observation.owner.ConsumedForTest())
+		require.Equal(t, int64(2), calibrationCount.Load())
+		require.Len(t, scanBytes, 2)
+		require.Positive(t, scanBytes[0], "the main tree has only CTE consumers; scan evidence must come from the producer tree")
+		require.Equal(t, scanBytes[0], scanBytes[1], "adding a consumer must not charge the shared producer again")
+	})
+
+	t.Run("dependent CTE producers are distinct statement trees", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table t(a int)")
+		tk.MustExec("insert into t values (1), (2), (3)")
+
+		var observation *statementRUObservation
+		testfailpoint.EnableCall(t, statementRUOwnerInstallFailpoint, func(stmt *executor.ExecStmt) {
+			if stmt.Ctx == tk.Session() {
+				observation = observeInstalledStatementRUOwner(stmt)
+			}
+		})
+		connectionID := tk.Session().GetSessionVars().ConnectionID
+		var calibrationCount atomic.Int64
+		var scanBytes float64
+		testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
+			observedConnectionID uint64,
+			state string,
+			_, observedScanBytes, _, _, _, _ float64,
+		) {
+			if observedConnectionID != connectionID {
+				return
+			}
+			require.Equal(t, "incomplete", state)
+			calibrationCount.Add(1)
+			scanBytes = observedScanBytes
+		})
+
+		query := "with c1 as (select a from t where a > 0), c2 as (select a from c1 where a > 1) select a from c2 union all select a from c2 union all select a from c1 where a = 1"
+		rs, err := tk.Exec(query)
+		require.NoError(t, err)
+		require.NoError(t, drainStatementRURecordSet(t, rs))
+		require.NoError(t, rs.Close())
+		require.NotNil(t, observation)
+		flat := requireStatementRUTerminalFlatPlan(t, observation.stmt)
+		require.Len(t, flat.CTEs, 2, "c1 and c2 must each own one deduplicated producer tree")
+		require.True(t, observation.owner.ConsumedForTest())
+		require.Equal(t, int64(1), calibrationCount.Load())
+		require.Positive(t, scanBytes, "the physical scan owned by c1 must contribute to the statement")
+	})
+
+	t.Run("recursive CTE consumes accumulated rounds once", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+
+		connectionID := tk.Session().GetSessionVars().ConnectionID
+		var cpuWork []float64
+		testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
+			observedConnectionID uint64,
+			state string,
+			observedCPUWork, _, _, _, _, _ float64,
+		) {
+			if observedConnectionID != connectionID {
+				return
+			}
+			require.Equal(t, "incomplete", state)
+			cpuWork = append(cpuWork, observedCPUWork)
+		})
+
+		tk.MustQuery("with recursive cte(n) as (select 1 union all select n + 1 from cte where n < 3) select * from cte").Check(testkit.Rows("1", "2", "3"))
+		tk.MustQuery("with recursive cte(n) as (select 1 union all select n + 1 from cte where n < 6) select * from cte").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
+		tk.MustQuery("with recursive cte(n) as (select 1 where false union all select n + 1 from cte where n < 3) select * from cte").Check(testkit.Rows())
+
+		require.Len(t, cpuWork, 3)
+		require.Greater(t, cpuWork[1], cpuWork[0], "more recursive rounds must contribute more accumulated linear work")
+		require.GreaterOrEqual(t, cpuWork[2], float64(0), "an empty seed is a legal best-effort zero, not invalid evidence")
+	})
+
+	t.Run("scalar cardinality semantics stay unchanged", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("set @@tidb_opt_enable_non_eval_scalar_subquery = 1")
+		tk.MustExec("create table t(a int)")
+		tk.MustExec("insert into t values (1), (2)")
+
+		tk.MustQuery("select (select a from t where a = 3)").Check(testkit.Rows("<nil>"))
+		tk.MustQuery("select (select a from t where a = 1)").Check(testkit.Rows("1"))
+		_, err := tk.Exec("select (select a from t)")
+		require.ErrorContains(t, err, "Subquery returns more than 1 row")
 	})
 
 	t.Run("prepared execute and rebuild use terminal-returned trees", func(t *testing.T) {
