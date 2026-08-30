@@ -122,7 +122,8 @@ pub use global_stats::{
 };
 pub use histogram::{Bucket, Histogram};
 pub use independent_index_analyze::{
-    IndependentIndexAnalyze, IndependentIndexStatistics, DEFAULT_INDEX_CMS_DEPTH,
+    merge_independent_index_fragments, IndependentIndexAnalyze, IndependentIndexFragment,
+    IndependentIndexMergeError, IndependentIndexStatistics, DEFAULT_INDEX_CMS_DEPTH,
     DEFAULT_INDEX_CMS_WIDTH,
 };
 pub use index::{copy_index, index_is_all_evicted, Index, IndexInfo};
