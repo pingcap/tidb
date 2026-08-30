@@ -95,6 +95,114 @@ fn displayed(rows: Vec<Vec<Datum>>) -> Vec<Vec<String>> {
         .collect()
 }
 
+/// Pinned DDL subscriber `ActionCreateTable`, `ActionTruncateTable`, and
+/// `ActionDropTable`: create every physical table's zero-valued statistics
+/// placeholders, then retire the old physical ID by advancing stats_meta.
+#[test]
+fn table_lifecycle_ddl_updates_statistics_like_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(74))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "CREATE TABLE stats_lifecycle (a INT, b INT, INDEX idx_b(b))",
+    );
+    let old_id = stack
+        .factory
+        .catalog
+        .load()
+        .find_table("test", "stats_lifecycle")
+        .expect("created table is published")
+        .1
+        .id;
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!("SELECT modify_count, count FROM mysql.stats_meta WHERE table_id = {old_id}"),
+        )),
+        [["0", "0"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!("SELECT count(*) FROM mysql.stats_histograms WHERE table_id = {old_id}"),
+        )),
+        [["3"]]
+    );
+
+    rows(
+        &mut session,
+        "CREATE TABLE stats_lifecycle_like LIKE stats_lifecycle",
+    );
+    let like_id = stack
+        .factory
+        .catalog
+        .load()
+        .find_table("test", "stats_lifecycle_like")
+        .expect("CREATE TABLE LIKE result is published")
+        .1
+        .id;
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!("SELECT count(*) FROM mysql.stats_histograms WHERE table_id = {like_id}"),
+        )),
+        [["3"]]
+    );
+
+    rows(&mut session, "INSERT INTO stats_lifecycle VALUES (1, 2)");
+    rows(&mut session, "ANALYZE TABLE stats_lifecycle");
+    let old_version = displayed(rows(
+        &mut session,
+        &format!("SELECT version FROM mysql.stats_meta WHERE table_id = {old_id}"),
+    ))[0][0]
+        .parse::<u64>()
+        .expect("stats version is an unsigned integer");
+    rows(&mut session, "TRUNCATE TABLE stats_lifecycle");
+    let new_id = stack
+        .factory
+        .catalog
+        .load()
+        .find_table("test", "stats_lifecycle")
+        .expect("truncated table is published")
+        .1
+        .id;
+    assert_ne!(new_id, old_id, "truncate allocates a new physical ID");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!("SELECT modify_count, count FROM mysql.stats_meta WHERE table_id = {new_id}"),
+        )),
+        [["0", "0"]]
+    );
+    let retired_version = displayed(rows(
+        &mut session,
+        &format!("SELECT version FROM mysql.stats_meta WHERE table_id = {old_id}"),
+    ))[0][0]
+        .parse::<u64>()
+        .expect("retired stats version is an unsigned integer");
+    assert!(retired_version > old_version);
+
+    let new_version = displayed(rows(
+        &mut session,
+        &format!("SELECT version FROM mysql.stats_meta WHERE table_id = {new_id}"),
+    ))[0][0]
+        .parse::<u64>()
+        .expect("new stats version is an unsigned integer");
+    rows(&mut session, "DROP TABLE stats_lifecycle");
+    let dropped_version = displayed(rows(
+        &mut session,
+        &format!("SELECT version FROM mysql.stats_meta WHERE table_id = {new_id}"),
+    ))[0][0]
+        .parse::<u64>()
+        .expect("dropped stats version is an unsigned integer");
+    assert!(dropped_version > new_version);
+}
+
 /// Pinned `TestRecordHistoryStatsAfterAnalyze`: the global switch suppresses
 /// task creation while off; once enabled, a successful ANALYZE posts its
 /// physical ID and the domain dump path writes canonical blocks to
@@ -281,6 +389,10 @@ fn stats_gc_matches_go_item_and_dropped_table_phases() {
     );
 
     rows(&mut session, "DROP TABLE stats_gc_t");
+    // Embedded DDL and GC can share one physical millisecond. Go's TSO has a
+    // positive logical component while GC's wall-clock TSO has zero, so wait
+    // until the strict `version < gcVer` window can include the drop event.
+    std::thread::sleep(Duration::from_millis(2));
     stack
         .factory
         .gc_stats(Duration::ZERO, Duration::ZERO)
@@ -323,6 +435,10 @@ fn stats_gc_matches_go_partition_phases() {
     rows(
         &mut session,
         "SET SESSION tidb_partition_prune_mode = 'static'",
+    );
+    rows(
+        &mut session,
+        "SET GLOBAL tidb_partition_prune_mode = 'static'",
     );
     rows(
         &mut session,
@@ -387,6 +503,7 @@ fn stats_gc_matches_go_partition_phases() {
     );
 
     rows(&mut session, "DROP TABLE stats_gc_partition");
+    std::thread::sleep(Duration::from_millis(2));
     stack
         .factory
         .gc_stats(Duration::ZERO, Duration::ZERO)
@@ -464,6 +581,7 @@ fn stats_gc_matches_go_column_usage_cleanup() {
     );
 
     rows(&mut session, "DROP TABLE stats_gc_usage");
+    std::thread::sleep(Duration::from_millis(2));
     stack
         .factory
         .gc_stats(Duration::ZERO, Duration::ZERO)

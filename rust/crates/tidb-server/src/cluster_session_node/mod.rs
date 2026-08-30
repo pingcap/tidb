@@ -360,6 +360,21 @@ enum PartitionStatsDdlKind {
     Truncate,
 }
 
+enum TableStatsDdlChange {
+    Create {
+        schema: String,
+        table: String,
+    },
+    Truncate {
+        schema: String,
+        table: String,
+        old_table: Box<tidb_model::table_info::TableInfo>,
+    },
+    Drop {
+        old_table: Box<tidb_model::table_info::TableInfo>,
+    },
+}
+
 enum FlushStatsDeltaTargets {
     All,
     Tables(Vec<i64>),
@@ -2000,6 +2015,23 @@ fn partition_id_map(
             .map(|definition| (definition.name.lowercase().to_owned(), definition.id))
             .collect(),
     ))
+}
+
+fn stats_physical_ids(table: &tidb_model::table_info::TableInfo, dynamic: bool) -> Vec<i64> {
+    let Some(partition) = &table.partition else {
+        return vec![table.id];
+    };
+    let mut ids = partition
+        .read()
+        .definitions
+        .snapshot()
+        .into_iter()
+        .map(|definition| definition.id)
+        .collect::<Vec<_>>();
+    if dynamic {
+        ids.push(table.id);
+    }
+    ids
 }
 
 impl QuerySessionFactory for ClusterSessionFactory {
@@ -3696,10 +3728,31 @@ impl ClusterServerSession {
             kind,
             PartitionStatsDdlKind::Drop | PartitionStatsDdlKind::Truncate
         );
+        let mut current_ids = vec![logical_table_id];
+        current_ids.extend(new_ids.into_iter().map(|(_, physical_id)| physical_id));
+        self.apply_stats_ddl_change(
+            table,
+            Some(logical_table_id),
+            &inserted_ids,
+            &retired_ids,
+            adjust_global,
+            &current_ids,
+        )
+    }
+
+    fn apply_stats_ddl_change(
+        &mut self,
+        table: &tidb_model::table_info::TableInfo,
+        logical_table_id: Option<i64>,
+        inserted_ids: &[i64],
+        retired_ids: &[i64],
+        adjust_global: bool,
+        current_ids: &[i64],
+    ) -> Result<(), SqlQueryError> {
         if inserted_ids.is_empty() && retired_ids.is_empty() {
             return Ok(());
         }
-
+        let catalog = self.catalog.load();
         let resource_group = self.session.current_resource_group().to_owned();
         let transaction = self
             .transactions
@@ -3763,11 +3816,11 @@ impl ClusterServerSession {
                 )
             };
 
-            // Pinned Go `ActionTruncateTablePartition` first calls
-            // `InsertTableStats2KV` for every new physical partition. That
+            // Pinned Go create and truncate actions first call
+            // `InsertTableStats2KV` for every new physical table ID. That
             // helper is one INSERT IGNORE for stats_meta followed by one for
             // every column and index histogram placeholder.
-            for &new_id in &inserted_ids {
+            for &new_id in inserted_ids {
                 for statement in
                     tidb_exec::cluster_stats_write::insert_table_stats_statements(table, new_id)
                 {
@@ -3797,18 +3850,24 @@ impl ClusterServerSession {
             // `StatsMetaCountAndModifyCount` statement, then emits the usual
             // `UpdateStatsMeta` statement sequence for the global table.
             let mut count = 0i64;
-            for &old_id in &retired_ids {
-                let snapshot = transaction.snapshot_for(false)?;
-                let snapshot =
-                    tidb_exec::cluster_table_storage::overlay_staged_mutations(snapshot, &staged);
-                let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-                let partition_count = loader
-                    .load_meta(&mut snapshot, old_id)
-                    .map_err(|error| error.to_string())?
-                    .map_or(0, |(_, _, _, count, _)| count as i64);
-                count = count.wrapping_add(partition_count);
+            if adjust_global {
+                for &old_id in retired_ids {
+                    let snapshot = transaction.snapshot_for(false)?;
+                    let snapshot = tidb_exec::cluster_table_storage::overlay_staged_mutations(
+                        snapshot, &staged,
+                    );
+                    let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                    let partition_count = loader
+                        .load_meta(&mut snapshot, old_id)
+                        .map_err(|error| error.to_string())?
+                        .map_or(0, |(_, _, _, count, _)| count as i64);
+                    count = count.wrapping_add(partition_count);
+                }
             }
-            if adjust_global && count != 0 {
+            if count != 0 {
+                let logical_table_id = logical_table_id.ok_or_else(|| {
+                    "partition statistics update is missing its logical table id".to_owned()
+                })?;
                 let snapshot = transaction.snapshot_for(false)?;
                 let snapshot =
                     tidb_exec::cluster_table_storage::overlay_staged_mutations(snapshot, &staged);
@@ -3851,7 +3910,7 @@ impl ClusterServerSession {
             // Last, Go refreshes every dropped partition's stats_meta version
             // and records schema-change history when that physical table has
             // initialized cached statistics.
-            for &old_id in &retired_ids {
+            for &old_id in retired_ids {
                 transactions::stage_pessimistic_statement(
                     transaction.as_ref(),
                     &staged,
@@ -3877,6 +3936,15 @@ impl ClusterServerSession {
         }
         transaction.commit(&staged)?;
 
+        let mut published = self.stats.load().as_ref().clone();
+        for old_id in retired_ids {
+            published.remove(old_id);
+        }
+        if current_ids.is_empty() {
+            self.stats.store(published);
+            return Ok(());
+        }
+
         let column_types = tidb_exec::cluster_stats_load::column_types_of(table);
         let snapshot = self
             .transactions
@@ -3885,13 +3953,7 @@ impl ClusterServerSession {
         let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
         let loader = ClusterStatsLoader::locate(&catalog)
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        let mut published = self.stats.load().as_ref().clone();
-        for old_id in &retired_ids {
-            published.remove(old_id);
-        }
-        let mut current_ids = vec![logical_table_id];
-        current_ids.extend(new_ids.into_iter().map(|(_, physical_id)| physical_id));
-        for physical_id in current_ids {
+        for &physical_id in current_ids {
             let state = loader
                 .load_table(&mut snapshot, physical_id, &column_types)
                 .map_err(|error| SqlQueryError::unknown(error.to_string()))?
@@ -3904,6 +3966,53 @@ impl ClusterServerSession {
         }
         self.stats.store(published);
         Ok(())
+    }
+
+    fn dynamic_partition_pruning(&self) -> Result<bool, SqlQueryError> {
+        self.global_vars
+            .get(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
+            .map(|mode| mode == "dynamic")
+            .map_err(|error| SqlQueryError::unknown(format!("{error:?}")))
+    }
+
+    fn update_table_ddl_stats(&mut self, change: TableStatsDdlChange) -> Result<(), SqlQueryError> {
+        match change {
+            TableStatsDdlChange::Create { schema, table } => {
+                let table = self
+                    .catalog
+                    .load()
+                    .find_table(&schema, &table)
+                    .map(|(_, table)| table.clone())
+                    .ok_or_else(|| {
+                        SqlQueryError::unknown("created table disappeared from catalog")
+                    })?;
+                let ids = stats_physical_ids(&table, self.dynamic_partition_pruning()?);
+                self.apply_stats_ddl_change(&table, None, &ids, &[], false, &ids)
+            }
+            TableStatsDdlChange::Truncate {
+                schema,
+                table,
+                old_table,
+            } => {
+                let table = self
+                    .catalog
+                    .load()
+                    .find_table(&schema, &table)
+                    .map(|(_, table)| table.clone())
+                    .ok_or_else(|| {
+                        SqlQueryError::unknown("truncated table disappeared from catalog")
+                    })?;
+                // Pinned Go calls `getPhysicalIDs` independently for the new
+                // and dropped TableInfo, including its GLOBAL sysvar read.
+                let new_ids = stats_physical_ids(&table, self.dynamic_partition_pruning()?);
+                let old_ids = stats_physical_ids(&old_table, self.dynamic_partition_pruning()?);
+                self.apply_stats_ddl_change(&table, None, &new_ids, &old_ids, false, &new_ids)
+            }
+            TableStatsDdlChange::Drop { old_table } => {
+                let old_ids = stats_physical_ids(&old_table, self.dynamic_partition_pruning()?);
+                self.apply_stats_ddl_change(&old_table, None, &[], &old_ids, false, &[])
+            }
+        }
     }
 
     /// Performs one cluster catalog change.
@@ -3932,6 +4041,32 @@ impl ClusterServerSession {
         if self.explicit.is_some() || self.session.in_transaction() {
             self.control_transaction("COMMIT")?;
         }
+        let table_stats_change = match statement {
+            DdlStatement::CreateTable { schema, table, .. }
+            | DdlStatement::CreateTableLike { schema, table, .. } => {
+                Some(TableStatsDdlChange::Create {
+                    schema: schema.clone(),
+                    table: table.clone(),
+                })
+            }
+            DdlStatement::TruncateTable { schema, table } => self
+                .catalog
+                .load()
+                .find_table(schema, table)
+                .map(|(_, old_table)| TableStatsDdlChange::Truncate {
+                    schema: schema.clone(),
+                    table: table.clone(),
+                    old_table: Box::new(old_table.clone()),
+                }),
+            DdlStatement::DropTable { schema, table, .. } => self
+                .catalog
+                .load()
+                .find_table(schema, table)
+                .map(|(_, old_table)| TableStatsDdlChange::Drop {
+                    old_table: Box::new(old_table.clone()),
+                }),
+            _ => None,
+        };
         let partition_before = match statement {
             DdlStatement::AddPartitions { schema, table, .. } => {
                 partition_id_map(&self.catalog.load(), schema, table).map(|(logical_id, ids)| {
@@ -3970,6 +4105,9 @@ impl ClusterServerSession {
         };
         let report = self.ddl.execute(statement)?;
         if matches!(report, ClusterDdlReport::Applied { .. }) {
+            if let Some(change) = table_stats_change {
+                self.update_table_ddl_stats(change)?;
+            }
             if let Some((schema, table, logical_id, old_ids, kind)) = partition_before {
                 self.update_partition_ddl_stats(&schema, &table, logical_id, &old_ids, kind)?;
             }
