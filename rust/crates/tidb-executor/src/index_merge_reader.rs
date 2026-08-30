@@ -118,8 +118,10 @@
 //!   the partition its handles belong to.
 //! * `IndexMergeRuntimeStat` (:2060), the `memory.Tracker` accounting, the
 //!   `failpoint` injections, `handleWorkerPanic` (:939), `syncErr` (:1734),
-//!   correlated-column range rebuilding (`rebuildRangeForCorCol` :201) and
-//!   `IndexUsageReporter` have no counterpart in this tier.
+//!   correlated-column range rebuilding (`rebuildRangeForCorCol` :201) have
+//!   no counterpart in this tier. Index-usage reporting stays on each ordinary
+//!   partial scan executor: closing the partials records the same per-plan
+//!   coprocessor summaries that Go's root reporter reads in `Close` (:978).
 //! * `fetchLoopIntersectionWithOrderBy` (:1569) is an empty `// todo` in Go
 //!   itself. It is refused here for the same reason.
 

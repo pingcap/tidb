@@ -598,6 +598,8 @@ impl Drop for StatsUsageHandle {
 mod tests {
     use super::*;
 
+    use tidb_model::{IndexInfo, TableInfo};
+
     fn column(table_id: i64, column_id: i64) -> TableItemID {
         TableItemID {
             table_id,
@@ -789,5 +791,78 @@ mod tests {
                 is_locked: true,
             }]
         );
+    }
+
+    #[test]
+    fn source_index_usage_integration_test_gc_index_usage() {
+        const TABLE_COUNT: i64 = 10;
+        const INDEX_COUNT: i64 = 10;
+
+        let usage = StatsUsageHandle::new();
+        usage.start_worker();
+        let mut session = usage.new_session_index_usage_collector();
+        let mut tables = HashMap::new();
+        for table_id in 0..TABLE_COUNT {
+            let indices = (0..INDEX_COUNT)
+                .map(|index_id| IndexInfo {
+                    id: index_id,
+                    ..IndexInfo::default()
+                })
+                .collect::<Vec<_>>()
+                .into();
+            tables.insert(
+                table_id,
+                Arc::new(TableInfo {
+                    id: table_id,
+                    indices,
+                    ..TableInfo::default()
+                }),
+            );
+            for index_id in 0..INDEX_COUNT {
+                session.update(
+                    table_id,
+                    index_id,
+                    tidb_stats_handle_usage_indexusage::new_sample(1, 2, 3, 4),
+                );
+            }
+        }
+        session.flush();
+        usage.close();
+
+        let verify = |table_limit: i64, index_limit: i64| {
+            for table_id in 0..TABLE_COUNT {
+                for index_id in 0..INDEX_COUNT {
+                    let actual = usage.get_index_usage(table_id, index_id);
+                    if table_id < table_limit && index_id < index_limit {
+                        assert_eq!(actual.query_total, 1);
+                        assert_eq!(actual.kv_req_total, 2);
+                        assert_eq!(actual.row_access_total, 3);
+                        assert_eq!(actual.percentage_access, [0, 0, 0, 0, 0, 1, 0]);
+                    } else {
+                        assert_eq!(actual, Sample::default());
+                    }
+                }
+            }
+        };
+
+        verify(TABLE_COUNT, INDEX_COUNT);
+
+        for table in tables.values_mut() {
+            let retained = table
+                .indices
+                .iter_deref()
+                .filter_map(|index| {
+                    let index = index.read();
+                    (index.id < 5).then(|| index.clone())
+                })
+                .collect::<Vec<_>>();
+            Arc::make_mut(table).indices = retained.into();
+        }
+        usage.gc_index_usage(|table_id| tables.get(&table_id).cloned());
+        verify(TABLE_COUNT, 5);
+
+        tables.retain(|table_id, _| *table_id < 5);
+        usage.gc_index_usage(|table_id| tables.get(&table_id).cloned());
+        verify(5, 5);
     }
 }
