@@ -135,7 +135,7 @@ pub fn prune_indexes_by_where_and_order(
     let has_specified_indexes = source
         .index_merge_hints
         .iter()
-        .any(|names| !names.is_empty());
+        .any(|hint| !hint.index_names.is_empty());
 
     for path in paths {
         match path {
@@ -158,7 +158,7 @@ pub fn prune_indexes_by_where_and_order(
                     && source
                         .index_merge_hints
                         .iter()
-                        .flatten()
+                        .flat_map(|hint| &hint.index_names)
                         .any(|name| metadata.name.eq_ignore_ascii_case(name))
                 {
                     index_merge_paths.push(path.clone());
@@ -327,7 +327,10 @@ mod tests {
     #[test]
     fn a_named_index_merge_path_survives_without_a_score() {
         let mut source = source();
-        source.index_merge_hints = vec![vec!["IDX_B".to_owned()]];
+        source.index_merge_hints = vec![crate::logical::data_source::DataSourceIndexMergeHint {
+            index_names: vec!["IDX_B".to_owned()],
+            ..Default::default()
+        }];
         assert_eq!(
             prune_indexes_by_where_and_order(&source, &source.enumerated_paths, 1),
             vec![

@@ -23,6 +23,47 @@ use crate::plan_base::PlanError;
 use super::rule::{conds_to_table_dual, LogicalOptRule, RuleContext};
 use super::rule_predicate_simplification::apply_predicate_simplification;
 
+fn resolve_index_merge_hints_for_partition(source: &mut DataSource, partition_name: &str) {
+    source.index_merge_hints.retain(|hint| {
+        hint.partitions.is_empty()
+            || hint
+                .partitions
+                .iter()
+                .any(|partition| partition.eq_ignore_ascii_case(partition_name))
+    });
+}
+
+fn warn_for_unknown_index_merge_partitions(
+    ctx: &RuleContext<'_>,
+    source: &DataSource,
+    used_partition_names: &std::collections::BTreeSet<String>,
+) {
+    let Some(sink) = ctx.hint_warning_sink else {
+        return;
+    };
+    for hint in &source.index_merge_hints {
+        let unknown = unknown_hint_partitions(&hint.partitions, used_partition_names);
+        if !unknown.is_empty() {
+            sink.set_hint_warning(&format!(
+                "unknown partitions ({}) in optimizer hint {}",
+                unknown.join(","),
+                hint.restored
+            ));
+        }
+    }
+}
+
+fn unknown_hint_partitions(
+    partitions: &[String],
+    used_partition_names: &std::collections::BTreeSet<String>,
+) -> Vec<String> {
+    partitions
+        .iter()
+        .filter(|partition| !used_partition_names.contains(&partition.to_ascii_lowercase()))
+        .cloned()
+        .collect()
+}
+
 /// The ranger-backed half of Go's partition processor. The planner owns the
 /// tree rewrite; the catalog implementation owns partition expressions and
 /// therefore answers which definition ordinals survive.
@@ -36,6 +77,7 @@ fn make_children(ctx: &RuleContext<'_>, source: DataSource, indices: Vec<usize>)
     let schema = source.base.base.schema().cloned();
     let query_block_offset = source.base.base.query_block_offset();
     let mut children = Vec::with_capacity(indices.len());
+    let mut used_partition_names = std::collections::BTreeSet::new();
     for index in indices {
         let Some(physical_id) = source.partition_definition_ids.get(index).copied() else {
             continue;
@@ -43,8 +85,13 @@ fn make_children(ctx: &RuleContext<'_>, source: DataSource, indices: Vec<usize>)
         let mut child = source.clone_shallow();
         child.partition_def_idx = Some(index);
         child.physical_table_id = physical_id;
+        if let Some(partition_name) = source.partition_definition_names.get(index) {
+            resolve_index_merge_hints_for_partition(&mut child, partition_name);
+            used_partition_names.insert(partition_name.to_ascii_lowercase());
+        }
         children.push(LogicalPlan::DataSource(child));
     }
+    warn_for_unknown_index_merge_partitions(ctx, &source, &used_partition_names);
     match children.len() {
         0 => {
             let mut dual = LogicalTableDual::new(
@@ -174,5 +221,45 @@ impl LogicalOptRule for PartitionProcessor {
 
     fn name(&self) -> &'static str {
         "partition_processor"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::logical::data_source::DataSourceIndexMergeHint;
+
+    #[test]
+    fn index_merge_hints_are_resolved_per_static_partition() {
+        let global = DataSourceIndexMergeHint {
+            index_names: vec!["idx_global".to_owned()],
+            restored: "USE_INDEX_MERGE(`t`, `idx_global`)".to_owned(),
+            ..Default::default()
+        };
+        let p0 = DataSourceIndexMergeHint {
+            index_names: vec!["idx_p0".to_owned()],
+            partitions: vec!["p0".to_owned()],
+            restored: "USE_INDEX_MERGE(`t` PARTITION(`p0`), `idx_p0`)".to_owned(),
+        };
+        let p1 = DataSourceIndexMergeHint {
+            index_names: vec!["idx_p1".to_owned()],
+            partitions: vec!["P1".to_owned()],
+            restored: "USE_INDEX_MERGE(`t` PARTITION(`P1`), `idx_p1`)".to_owned(),
+        };
+        let mut source = DataSource {
+            index_merge_hints: vec![global.clone(), p0, p1.clone()],
+            ..DataSource::default()
+        };
+
+        resolve_index_merge_hints_for_partition(&mut source, "p1");
+        assert_eq!(source.index_merge_hints, vec![global, p1]);
+        assert_eq!(
+            unknown_hint_partitions(
+                &["p0".to_owned(), "P1".to_owned()],
+                &std::collections::BTreeSet::from(["p1".to_owned()]),
+            ),
+            vec!["p0"],
+            "Go warns in written order and matches partition names case-insensitively"
+        );
     }
 }

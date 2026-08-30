@@ -63,6 +63,18 @@ pub struct DataSourceColumn {
     pub is_primary_key: bool,
 }
 
+/// Go `h.HintedIndex` fields consumed by partition processing and index-merge
+/// path pruning.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct DataSourceIndexMergeHint {
+    /// Go `IndexHint.IndexNames`.
+    pub index_names: Vec<String>,
+    /// Go `HintedIndex.Partitions`.
+    pub partitions: Vec<String>,
+    /// Go `Restore2IndexHint(HintIndexMerge, hint)`, used in warnings.
+    pub restored: String,
+}
+
 /// Go `logicalop.DataSource` (`logical_datasource.go:58`).
 #[derive(Clone, Debug, Default)]
 pub struct DataSource {
@@ -140,9 +152,9 @@ pub struct DataSource {
     pub interesting_columns: Vec<Column>,
     /// Index IDs whose access paths have Go `AccessPath.Forced` set.
     pub forced_index_ids: std::collections::BTreeSet<i64>,
-    /// Go `IndexMergeHints`, as their optional index-name lists. An empty
-    /// inner list is a general `USE_INDEX_MERGE(table)` hint.
-    pub index_merge_hints: Vec<Vec<String>>,
+    /// Go `IndexMergeHints`. An empty `index_names` list is a general
+    /// `USE_INDEX_MERGE(table)` hint; `partitions` scopes it per static child.
+    pub index_merge_hints: Vec<DataSourceIndexMergeHint>,
     /// Go fix control 52869 after session-variable resolution.
     pub prefer_index_merge_by_fix_control: bool,
     /// Go `TableStats`: the table-level profile before any filtering.

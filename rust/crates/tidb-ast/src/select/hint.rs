@@ -92,8 +92,9 @@ pub enum IndexHintScope {
 /// (`STREAM_AGG`/`HASH_AGG`/`AGG_TO_COP`/`NO_DECORRELATE`/
 /// `NO_INDEX_MERGE`/`IGNORE_PLAN_CACHE`/`LIMIT_TO_COP`/`USE_PLAN_CACHE`/
 /// `SEMI_JOIN_REWRITE`/`STRAIGHT_JOIN`), `RESOURCE_GROUP(name)`, `MAX_EXECUTION_TIME`/
-/// `NTH_PLAN`'s own `([@qb_name] N)` numeric-argument shape, and
-/// `QB_NAME(name [, view...])` (see [`HintKind::QbName`]'s own doc).
+/// `NTH_PLAN`'s own `([@qb_name] N)` numeric-argument shape,
+/// `QB_NAME(name [, view...])` (see [`HintKind::QbName`]'s own doc), and
+/// `READ_FROM_STORAGE` (see [`HintKind::ReadFromStorage`]).
 /// `MERGE` is a special, isolated case straddling both: it PARSES a
 /// table list exactly like `MERGE_JOIN` above, but ALWAYS restores as
 /// bare `MERGE()`, discarding the parsed tables entirely — confirmed via
@@ -108,8 +109,8 @@ pub enum IndexHintScope {
 /// TiDB's own behavior exactly (`Parser::is_recognized_hint_token_name`/
 /// `is_always_unsupported_hint_name`, called from
 /// `Parser::parse_hint_comment` — see their own docs for the exact
-/// verified name lists). `READ_FROM_STORAGE` and the handful of other
-/// REAL, recognized hint names this crate hasn't implemented full
+/// verified name lists). The handful of other REAL, recognized hint names
+/// this crate hasn't implemented full
 /// grammar for yet (its own `HintKind` variant/dispatch arm) stay
 /// genuine `ParseError`s here instead — a real, narrower, deliberate
 /// scope boundary: these DO carry real content in real TiDB (confirmed

@@ -207,7 +207,9 @@ use crate::expression_rewriter::{
     RewriteError, RewriterEnv, RewriterHints, RewriterSessionFlags, ScalarSubqueryOutcome,
     SubQueryCtx,
 };
-use crate::logical::data_source::{DataSource, DataSourceColumn, EXTRA_HANDLE_ID};
+use crate::logical::data_source::{
+    DataSource, DataSourceColumn, DataSourceIndexMergeHint, EXTRA_HANDLE_ID,
+};
 use crate::logical::limit::LogicalLimit;
 use crate::logical::projection::LogicalProjection;
 use crate::logical::rule::flags;
@@ -388,6 +390,35 @@ struct IndexMergeHint {
     table_name: String,
     /// Optional index names; empty means general index-merge preference.
     index_names: Vec<String>,
+    /// Go `HintedIndex.Partitions`.
+    partitions: Vec<String>,
+    /// Go `Restore2IndexHint(HintIndexMerge, hint)` warning text.
+    restored: String,
+}
+
+fn restore_index_merge_hint(table: &tidb_ast::HintTable, indexes: &[String]) -> String {
+    let mut restored = format!("/*+ USE_INDEX_MERGE({}", table.name.to_ascii_lowercase());
+    if !table.partitions.is_empty() {
+        restored.push_str(" PARTITION(");
+        restored.push_str(
+            &table
+                .partitions
+                .iter()
+                .map(|partition| partition.to_ascii_lowercase())
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+        restored.push(')');
+    }
+    for (index, name) in indexes.iter().enumerate() {
+        if index > 0 {
+            restored.push(',');
+        }
+        restored.push(' ');
+        restored.push_str(&name.to_ascii_lowercase());
+    }
+    restored.push_str(") */");
+    restored
 }
 
 fn index_merge_hints_from_select(select: &SelectStmt) -> Vec<IndexMergeHint> {
@@ -413,6 +444,8 @@ fn index_merge_hints_from_select(select: &SelectStmt) -> Vec<IndexMergeHint> {
                 db_name: table.db_name.clone(),
                 table_name: table.name.clone(),
                 index_names: indexes.clone(),
+                partitions: table.partitions.clone(),
+                restored: restore_index_merge_hint(table, indexes),
             })
         })
         .collect()
@@ -1208,7 +1241,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 hint.table_name.eq_ignore_ascii_case(&visible_table)
                     && hint_db.eq_ignore_ascii_case(&db_name)
             })
-            .map(|hint| hint.index_names.clone())
+            .map(|hint| DataSourceIndexMergeHint {
+                index_names: hint.index_names.clone(),
+                partitions: hint.partitions.clone(),
+                restored: hint.restored.clone(),
+            })
             .collect();
 
         let mut columns = Vec::with_capacity(table.columns.len() + 2);

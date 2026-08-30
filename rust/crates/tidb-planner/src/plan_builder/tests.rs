@@ -709,7 +709,33 @@ fn use_index_merge_is_attached_to_the_matching_data_source() {
     plan.walk_preorder(&mut |node| {
         if let LogicalPlan::DataSource(source) = node {
             matched += 1;
-            assert_eq!(source.index_merge_hints, vec![vec!["idx_b".to_owned()]]);
+            assert_eq!(source.index_merge_hints.len(), 1);
+            assert_eq!(source.index_merge_hints[0].index_names, ["idx_b"]);
+            assert!(source.index_merge_hints[0].partitions.is_empty());
+        }
+    });
+    assert_eq!(matched, 1);
+}
+
+#[test]
+fn use_index_merge_keeps_its_partition_scope() {
+    let harness = Harness::new();
+    let mut builder = harness.builder();
+    let select =
+        parse_select("SELECT /*+ USE_INDEX_MERGE(x PARTITION(p1), idx_b) */ * FROM test.t AS x");
+    let (plan, _) = builder.build_select(&select).expect("the SELECT builds");
+
+    let mut matched = 0;
+    plan.walk_preorder(&mut |node| {
+        if let LogicalPlan::DataSource(source) = node {
+            matched += 1;
+            assert_eq!(source.index_merge_hints.len(), 1);
+            assert_eq!(source.index_merge_hints[0].index_names, ["idx_b"]);
+            assert_eq!(source.index_merge_hints[0].partitions, ["p1"]);
+            assert_eq!(
+                source.index_merge_hints[0].restored,
+                "/*+ USE_INDEX_MERGE(x PARTITION(p1) idx_b) */"
+            );
         }
     });
     assert_eq!(matched, 1);
