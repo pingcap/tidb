@@ -21,12 +21,17 @@ use tidb_stats::histogram::{Bucket, Histogram};
 use tidb_stats::{
     merge_partition_stats_item, merge_partition_topn, merge_partition_topn_concurrently,
     CmsSketch, FmSketch, GlobalStatsMergeError, GlobalStatsMergeMode, PartitionStatsItem, TopN,
-    MAX_SKETCH_SIZE,
+    MAX_PARTITION_MERGE_BATCH_SIZE, MAX_SKETCH_SIZE,
 };
 use tidb_util::sqlkiller::{KillSignal, SqlKiller};
 
 fn encoded(value: i64) -> Vec<u8> {
     encode_key(&[Datum::Int(value)]).expect("integer key encodes")
+}
+
+#[test]
+fn source_max_partition_merge_batch_size() {
+    assert_eq!(MAX_PARTITION_MERGE_BATCH_SIZE, 256);
 }
 
 #[test]

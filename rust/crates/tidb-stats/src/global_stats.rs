@@ -32,7 +32,9 @@ use crate::histogram::{
 };
 use crate::{fm_sketch_ndv, merge_fm_sketch, DatumMapCache, FmSketch};
 
-const MAX_PARTITION_MERGE_BATCH_SIZE: usize = 256;
+/// Go `MaxPartitionMergeBatchSize`, the largest partition batch assigned to
+/// one concurrent TopN merge task.
+pub const MAX_PARTITION_MERGE_BATCH_SIZE: usize = 256;
 
 /// Which pinned Go global-statistics worker owns the merge.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
