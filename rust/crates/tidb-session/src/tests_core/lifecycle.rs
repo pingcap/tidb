@@ -198,6 +198,28 @@ fn advanced_join_reorder_switch_reaches_every_statement_context() {
     assert!(session.statement_context(false).advanced_join_reorder());
 }
 
+#[test]
+fn either_plan_replayer_capture_switch_enables_statement_statistics_capture() {
+    let mut session = Session::new();
+    assert!(session
+        .statement_context(false)
+        .plan_replayer_capture_enabled());
+
+    session
+        .run("SET @@tidb_enable_plan_replayer_capture = OFF")
+        .unwrap();
+    assert!(!session
+        .statement_context(false)
+        .plan_replayer_capture_enabled());
+
+    session
+        .run("SET @@tidb_enable_plan_replayer_continuous_capture = ON")
+        .unwrap();
+    assert!(session
+        .statement_context(false)
+        .plan_replayer_capture_enabled());
+}
+
 /// A whole session lifecycle from SQL strings alone: DDL, writes, reads.
 #[test]
 fn session_runs_a_sql_lifecycle() {

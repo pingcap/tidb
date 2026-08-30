@@ -2547,4 +2547,118 @@ mod statistics_request_tests {
         assert!(items.iter().any(|item| item.table_item_id == column));
         assert!(!items.iter().any(|item| item.table_item_id.is_index));
     }
+
+    #[test]
+    fn direct_virtual_column_dependencies_request_expression_index_stats_only() {
+        let mut catalog = Catalog::default();
+        crate::run_create_table_on(
+            "CREATE TABLE t(a INT, v INT AS (a + 1), KEY iv(v))",
+            &mut catalog,
+        )
+        .expect("fixture DDL");
+        let TableEntry::Kv(table) = catalog.get_in("test", "t").expect("fixture table") else {
+            panic!("fixture is not a KV table")
+        };
+        let table_id = table.table_id;
+        let a = table
+            .columns
+            .iter()
+            .find(|column| column.name == "a")
+            .unwrap()
+            .id;
+        let v = table
+            .columns
+            .iter()
+            .find(|column| column.name == "v")
+            .unwrap()
+            .id;
+        let index_id = table.indexes().first().expect("expression index").id;
+        catalog.set_table_statistics(
+            table_id,
+            Arc::new(crate::access_cost::TableStatistics {
+                pseudo: false,
+                row_count: 10,
+                column_load_status: [
+                    (a, tidb_stats::StatsLoadedStatus::all_evicted()),
+                    (v, tidb_stats::StatsLoadedStatus::all_evicted()),
+                ]
+                .into_iter()
+                .collect(),
+                index_load_status: [(index_id, tidb_stats::StatsLoadedStatus::all_evicted())]
+                    .into_iter()
+                    .collect(),
+                column_stats_existence: [(a, true), (v, true)].into_iter().collect(),
+                index_stats_existence: [(index_id, true)].into_iter().collect(),
+                ..crate::access_cost::TableStatistics::default()
+            }),
+        );
+        let requested = tidb_model::TableItemID {
+            table_id,
+            id: a,
+            is_index: false,
+            is_sync_load_failed: false,
+        };
+        let usage = tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage {
+            predicate_columns: [(requested, true)].into_iter().collect(),
+            ..Default::default()
+        };
+
+        let items = catalog.statistics_load_items(&usage, true);
+        assert!(items.iter().any(|item| item.table_item_id == requested));
+        assert!(items.iter().any(|item| {
+            item.table_item_id.table_id == table_id
+                && item.table_item_id.id == index_id
+                && item.table_item_id.is_index
+                && item.full_load
+        }));
+        assert!(!items
+            .iter()
+            .any(|item| { item.table_item_id.id == v && !item.table_item_id.is_index }));
+    }
+
+    #[test]
+    fn ordinary_planning_runs_both_statistics_rule_points() {
+        let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
+        let (mut catalog, table_id, column_id) = analyzed_lite_catalog();
+        let loader = Arc::new(RecordingLoader::default());
+        catalog.set_statistics_item_loader(loader.clone());
+        let usage = Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+        let context = crate::StmtContext::for_query()
+            .with_stats_load_policy(100, true, 0)
+            .with_plan_replayer_capture(true)
+            .with_column_stats_usage(Arc::clone(&usage));
+
+        crate::run_select_on("SELECT * FROM t WHERE a > 1", &catalog, &context)
+            .expect("planned query");
+
+        assert!(context.operator_num() > 0);
+        assert_eq!(
+            context
+                .table_runtime_statistics()
+                .get(&table_id)
+                .and_then(Option::as_deref)
+                .map(|statistics| statistics.row_count),
+            Some(10)
+        );
+        assert!(usage
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contains_key(&tidb_model::TableItemID {
+                table_id,
+                id: column_id,
+                is_index: false,
+                is_sync_load_failed: false,
+            }));
+        assert!(loader
+            .requests
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .any(|item| {
+                item.table_item_id.table_id == table_id
+                    && item.table_item_id.id == column_id
+                    && !item.table_item_id.is_index
+                    && item.full_load
+            }));
+    }
 }

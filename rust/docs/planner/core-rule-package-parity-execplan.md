@@ -26,7 +26,7 @@ Rust currently exposes Go's logical-rule list but several entries are missing, n
 - [x] (2026-08-29) Ported the complete pinned `OrderAwareJoinReorder` source behavior without registering a half-pipeline: TopN/Sort order extraction, Projection/Limit/Selection propagation, mutable-selection fence, carrier-only recursion, exact DataSource index proof, and internal LEADING annotation. Focused tests cover the forward-column contract and an indexed carrier below TopN.
 - [x] (2026-08-29) Read, inventoried, and ported all four pinned legacy join-reorder production sources (`rule_join_reorder.go`, DP, greedy, and projection-inline). `JoinReOrderSolver` now dispatches to the advanced or legacy implementation using the same session variable as Go; both it and `OrderAwareJoinReorder` are registered in the ordinary rule pipeline.
 - [x] (2026-08-29) Wired SELECT preorder query-block offsets and current-block `sel_N`/`QB_NAME` matching into join hints, replacing the prior all-`-1` plan identity that made scoped hints inapplicable.
-- [ ] Complete the statistics-collection slice (completed: full pinned `collect_column_stats_usage.go` read, base-column lineage, predicate/full-histogram classification, interesting-column pruning input, CTE traversal, and operator count; newly completed: `Schema.ExtractColGroups` plus projection/join/apply/window group translation and `DataSource.AskedColumnGroup` propagation even when index pruning is disabled; remaining: complete original three-test artifact mapping and `rule_collect_plan_stats.go` dependency audit).
+- [ ] Complete the statistics-collection slice (completed: full pinned `collect_column_stats_usage.go` read, base-column lineage, predicate/full-histogram classification, interesting-column pruning input, CTE traversal, `Schema.ExtractColGroups`, projection/join/apply/window group translation, `DataSource.AskedColumnGroup`, ordinary `adjustOptimizationFlags` enablement of both statistics rule points, statement operator-count publication, session predicate-usage publication, direct virtual-column dependency expansion, plan-replayer table-runtime capture under the exact two-variable gate, and removal of its stale ignored gap test; remaining: complete original three-test artifact mapping. The separate pinned `pkg/statistics/handle/usage` package still owns sweeping and persistence of the session-local usage map and must be completed atomically before that dependency is claimed).
 - [ ] Run the Ready validation profile and record the complete package receipt.
 
 ## Surprises & Discoveries
@@ -81,6 +81,12 @@ Rust currently exposes Go's logical-rule list but several entries are missing, n
 
 - Observation: the statistics collector's lineage walk existed, but Rust's logical interface returned no column groups for projections, joins, applies, or windows.
   Evidence: pinned `CollectColumnStatsUsage` passes `ExtractColGroups` results to each child and stores matching groups on each DataSource for index statistics; Rust now ports the expression-schema primitive and all four operator overrides, with a regression covering a two-key join while index pruning is disabled.
+
+- Observation: the ordinary Rust planner never enabled Go's two statistics rule points.
+  Evidence: the plan builder correctly omitted session-owned flags, but the executor bridge had no equivalent of Go `adjustOptimizationFlags`; an ordinary filtered query therefore left `StmtCtx.OperatorNum` at zero and never requested its analyzed column. The bridge now enables collection and the later wait together, and an end-to-end executor regression proves both effects.
+
+- Observation: Go's column collector also snapshots each visited logical table's statistics for plan-replayer capture; this is not part of the later executor dump path.
+  Evidence: pinned `CollectColumnStatsUsage` gates `recordTableRuntimeStats` on `EnablePlanReplayerCapture || EnablePlanReplayedContinuesCapture`. Rust now carries the same session-variable OR into the statement context and records both present and absent statistics entries during the ordinary collection rule.
 
 ## Decision Log
 

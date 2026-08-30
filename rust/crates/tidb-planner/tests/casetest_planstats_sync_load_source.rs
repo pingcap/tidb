@@ -100,21 +100,6 @@ fn prepared_plan_cache_invalidated_after_sync_load_timeout_fresh_stats_refill() 
 #[ignore = "go-parity-gap: mem-quota eviction statuses recorded into StmtCtx used-stats need stats handle"]
 fn plan_stats_status_record_marks_all_evicted_after_capacity_shrink() {}
 
-/// GO PORT of `planstats/plan_stats_test.go:524 TestCollectDependingVirtualCols`.
-///
-/// Re-derived contract: tables t (three expression indexes over json casts)
-/// and t1 (virtual chain vab=a+b, vc=c-5, vvc=b-vc, vvabvvc=vab*vvc plus
-/// index expressions ib/icvab/ivvcvab, :511-526) feed neededItems built from
-/// the plan_stats_suite book input columns through FindPublicColumnByName
-/// (:553-558) then rule.CollectDependingVirtualCols (:561); output col IDs
-/// are mapped
-/// back to names, sorted, and must equal the book's OutputColNames exactly -
-/// direct dependencies only (vvc not collected when only b needed), virtual
-/// columns over multi-column dependencies collected once.
-#[test]
-#[ignore = "go-parity-gap: rule.CollectDependingVirtualCols has no Rust port anywhere in the workspace"]
-fn collect_depending_virtual_cols_direct_dependencies_match_book() {}
-
 /// GO PORT of `planstats/plan_stats_test.go:594 TestStatsAnalyzedInDDL`.
 ///
 /// Re-derived contract: tidb_stats_update_during_ddl=1 session var (:584);

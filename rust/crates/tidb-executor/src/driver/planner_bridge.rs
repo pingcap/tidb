@@ -842,6 +842,13 @@ fn optimize_built_logical(
             &self,
             usage: &tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage,
         ) -> Result<(), tidb_planner::plan_base::PlanError> {
+            self.context.set_operator_num(usage.operator_count);
+            self.context
+                .update_col_stats_usage(usage.predicate_columns.keys().copied());
+            self.context.record_table_runtime_statistics(
+                usage.visited_logical_table_ids.iter().copied(),
+                |table_id| self.catalog.table_statistics(table_id),
+            );
             self.catalog.request_statistics_load(usage, self.context)
         }
 
@@ -946,6 +953,10 @@ fn optimize_built_logical(
         }
     }
 
+    // Go `adjustOptimizationFlags` enables both statistics rules for every
+    // ordinary (non-restricted) statement; the builder never owns these
+    // flags because they are session/execution policy, not AST shape.
+    let flags = flags | flags::COLLECT_PREDICATE_COLUMNS_POINT | flags::SYNC_WAIT_STATS_LOAD_POINT;
     let flags = if ctx.static_partition_prune() {
         flags
     } else {

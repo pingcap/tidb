@@ -552,6 +552,11 @@ pub struct Session {
     data_lock_waits: Option<std::sync::Arc<dyn DataLockWaitsProvider>>,
     /// The statistics handle's persisted predicate-column usage reader.
     column_stats_usage: Option<std::sync::Arc<dyn ColumnStatsUsageProvider>>,
+    /// Go's session-local `SessionStatsItem.statsUsage`, swept into the
+    /// statistics handle independently of statement execution.
+    pending_column_stats_usage: std::sync::Arc<
+        std::sync::Mutex<std::collections::HashMap<tidb_model::TableItemID, std::time::SystemTime>>,
+    >,
     /// Parsed-products cache over the raw system-variable text, keyed by
     /// [`vars::SessionVars::generation`]. Go holds these as typed fields on
     /// `SessionVars`, updated by each variable's `SetSession` hook, so a
@@ -740,6 +745,7 @@ impl Default for Session {
             index_usage_collector: Arc::new(tidb_stats_handle_usage_indexusage::Collector::new()),
             data_lock_waits: None,
             column_stats_usage: None,
+            pending_column_stats_usage: std::sync::Arc::default(),
             mdl_related_tables: None,
             statement_var_cache: std::cell::RefCell::new(None),
             cost_env_cache: std::cell::RefCell::new(None),

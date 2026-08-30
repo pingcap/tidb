@@ -570,6 +570,18 @@ pub struct StmtContext {
     max_execution_time_ms: u64,
     /// Go `StmtCtx.IsSyncStatsFailed`.
     sync_stats_failed: Arc<AtomicBool>,
+    /// Go `StmtCtx.OperatorNum`, populated by
+    /// `CollectPredicateColumnsPoint` before later optimizer phases.
+    operator_num: Arc<AtomicU64>,
+    /// Go session `SessionStatsItem.statsUsage`, shared by every statement
+    /// context built for this session.
+    column_stats_usage: Option<Arc<Mutex<HashMap<tidb_model::TableItemID, std::time::SystemTime>>>>,
+    /// Go `SessionVars.IsPlanReplayerCaptureEnabled()`.
+    plan_replayer_capture_enabled: bool,
+    /// Go `StmtCtx.TableStats`, populated while predicate columns are
+    /// collected so a plan-replayer dump uses the same runtime snapshot.
+    table_runtime_statistics:
+        Arc<Mutex<HashMap<i64, Option<Arc<crate::access_cost::TableStatistics>>>>>,
     /// Go `StmtCtx.SetSkipPlanCache`'s first reason.
     skip_plan_cache_reason: Arc<Mutex<Option<String>>>,
     /// Go `StmtCtx.StatsLoad`: requests are started by
@@ -788,6 +800,10 @@ impl StmtContext {
             always_keep_join_key: tidb_vardef::defaults::DEF_OPT_ALWAYS_KEEP_JOIN_KEY,
             max_execution_time_ms: 0,
             sync_stats_failed: Arc::default(),
+            operator_num: Arc::default(),
+            column_stats_usage: None,
+            plan_replayer_capture_enabled: false,
+            table_runtime_statistics: Arc::default(),
             skip_plan_cache_reason: Arc::default(),
             pending_statistics_load: Arc::default(),
             block_encryption_mode: tidb_expr::BlockEncryptionMode::default(),
@@ -1140,6 +1156,85 @@ impl StmtContext {
     pub fn sync_stats_failed(&self) -> bool {
         self.sync_stats_failed
             .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Records Go `StmtCtx.OperatorNum`.
+    pub fn set_operator_num(&self, count: u64) {
+        self.operator_num.store(count, Ordering::Relaxed);
+    }
+
+    /// Go `StmtCtx.OperatorNum`.
+    #[must_use]
+    pub fn operator_num(&self) -> u64 {
+        self.operator_num.load(Ordering::Relaxed)
+    }
+
+    /// Attaches Go's per-session predicate-column usage collector.
+    #[must_use]
+    pub fn with_column_stats_usage(
+        mut self,
+        usage: Arc<Mutex<HashMap<tidb_model::TableItemID, std::time::SystemTime>>>,
+    ) -> Self {
+        self.column_stats_usage = Some(usage);
+        self
+    }
+
+    /// Go `session.UpdateColStatsUsage`: all items from one planning pass get
+    /// the same timestamp before the session collector is unlocked.
+    pub fn update_col_stats_usage(&self, items: impl IntoIterator<Item = tidb_model::TableItemID>) {
+        let Some(usage) = &self.column_stats_usage else {
+            return;
+        };
+        let now = std::time::SystemTime::now();
+        let mut usage = usage
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        usage.extend(items.into_iter().map(|item| (item, now)));
+    }
+
+    /// Sets Go `SessionVars.IsPlanReplayerCaptureEnabled()` for this statement.
+    #[must_use]
+    pub fn with_plan_replayer_capture(mut self, enabled: bool) -> Self {
+        self.plan_replayer_capture_enabled = enabled;
+        self
+    }
+
+    /// Whether Go's plan-replayer table-statistics capture is enabled.
+    #[must_use]
+    pub const fn plan_replayer_capture_enabled(&self) -> bool {
+        self.plan_replayer_capture_enabled
+    }
+
+    /// Go `recordTableRuntimeStats`: retain one entry for every visited
+    /// logical table, including `None` when the table has no loaded stats.
+    pub fn record_table_runtime_statistics(
+        &self,
+        table_ids: impl IntoIterator<Item = i64>,
+        mut get: impl FnMut(i64) -> Option<Arc<crate::access_cost::TableStatistics>>,
+    ) {
+        if !self.plan_replayer_capture_enabled {
+            return;
+        }
+        let mut captured = self
+            .table_runtime_statistics
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        captured.extend(
+            table_ids
+                .into_iter()
+                .map(|table_id| (table_id, get(table_id))),
+        );
+    }
+
+    /// Snapshot of Go `StmtCtx.TableStats` for plan-replayer dumping.
+    #[must_use]
+    pub fn table_runtime_statistics(
+        &self,
+    ) -> HashMap<i64, Option<Arc<crate::access_cost::TableStatistics>>> {
+        self.table_runtime_statistics
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     pub(crate) fn install_pending_statistics_load(

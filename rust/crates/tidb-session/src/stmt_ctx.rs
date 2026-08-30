@@ -60,6 +60,7 @@ pub(crate) struct StatementVarSnapshot {
     enable_pseudo_for_outdated_stats: bool,
     stats_load_sync_wait_ms: u64,
     stats_load_pseudo_timeout: bool,
+    plan_replayer_capture_enabled: bool,
     opt_index_prune_threshold: i32,
     always_keep_join_key: bool,
     max_execution_time_ms: u64,
@@ -608,6 +609,8 @@ impl Session {
                 .map_or(true, |value| {
                     !value.eq_ignore_ascii_case("OFF") && value != "0"
                 }),
+            plan_replayer_capture_enabled: on("tidb_enable_plan_replayer_capture")
+                || on("tidb_enable_plan_replayer_continuous_capture"),
             opt_index_prune_threshold: self
                 .vars
                 .get_system("tidb_opt_index_prune_threshold")
@@ -748,6 +751,7 @@ impl Session {
         let enable_pseudo_for_outdated_stats = snapshot.enable_pseudo_for_outdated_stats;
         let stats_load_sync_wait_ms = snapshot.stats_load_sync_wait_ms;
         let stats_load_pseudo_timeout = snapshot.stats_load_pseudo_timeout;
+        let plan_replayer_capture_enabled = snapshot.plan_replayer_capture_enabled;
         let opt_index_prune_threshold = snapshot.opt_index_prune_threshold;
         let always_keep_join_key = snapshot.always_keep_join_key;
         let max_execution_time_ms = snapshot.max_execution_time_ms;
@@ -854,6 +858,8 @@ impl Session {
                     stats_load_pseudo_timeout,
                     max_execution_time_ms,
                 )
+                .with_plan_replayer_capture(plan_replayer_capture_enabled)
+                .with_column_stats_usage(Arc::clone(&self.pending_column_stats_usage))
                 .with_opt_index_prune_threshold(opt_index_prune_threshold)
                 .with_always_keep_join_key(always_keep_join_key)
                 .with_sysdate_is_now(sysdate_is_now)
@@ -913,6 +919,8 @@ impl Session {
             stats_load_pseudo_timeout,
             max_execution_time_ms,
         )
+        .with_plan_replayer_capture(plan_replayer_capture_enabled)
+        .with_column_stats_usage(Arc::clone(&self.pending_column_stats_usage))
         .with_opt_index_prune_threshold(opt_index_prune_threshold)
         .with_always_keep_join_key(always_keep_join_key)
         .with_auto_increment_step(increment, offset)
