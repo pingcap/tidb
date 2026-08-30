@@ -50,6 +50,7 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - [x] (2026-08-29) Reproduced the async global-stat I/O/CPU handoff: FM and CMS use capacity-five channels, histogram+TopN uses an unbuffered channel, payload phases close in Go order, FM memory is released before CMS, worker exits unblock the peer, panics become errors, and simultaneous failures are joined.
 - [x] (2026-08-29) Threaded the canonical per-statement SQL killer through routed cluster ANALYZE and matched both sequential and concurrent TopN polling, including Go's concurrent worker-error joining and client error identity.
 - [x] (2026-08-29) Recorded non-enforced `source="analyze"` historical metadata after each successful global column/index save, gated by the live switch and pre-save initialized cache exactly like Go.
+- [x] (2026-08-29) Removed the Rust-only refusal of stored generated columns from cluster ANALYZE; stored generated values are sampled from row bytes while virtual generated columns remain excluded like Go.
 - [ ] Complete pinned `pkg/statistics/handle/globalstats`; dynamic ANALYZE now loads every partition, applies both missing-stat policies, merges FM/CMS/TopN/histograms, honors the async selector and TopN merge concurrency, persists each global item independently, continues after item-write errors, records historical metadata, and emits warnings 8243/8244. The full original test and benchmark inventory remains open.
 - [ ] Wire all pinned Go `SHOW STATS_*` surfaces to the shared cache and storage semantics.
 - [ ] Inventory every production file, platform/generated variant, original test/support artifact, fixture, and validation gate in pinned `pkg/statistics`; close or explicitly retain seed-only gaps until the whole package is complete.
@@ -188,6 +189,9 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 
 - Observation: global-statistics history is recorded per successful item, not once after the whole merge, and `enforce=false` suppresses it until the logical table already exists as initialized statistics in the handle cache.
   Evidence: pinned `WriteGlobalStatsToStorage`, `statsReadWriter.SaveColOrIdxStatsToStorage`, and `RecordHistoricalStatsMeta`; Rust now performs the same independent, nonfatal `stats_meta_history` transaction with source `analyze`.
+
+- Observation: Go excludes only virtual generated columns from ANALYZE sampling; a stored generated column is decoded from the ordinary persisted row bytes.
+  Evidence: pinned `analyze_col_sampling.go` and both global-stat target builders test `IsVirtualGenerated`/`GeneratedStored`; Rust's scan already reads stored columns by name, so its additional all-generated-column rejection had no Go equivalent and was removed.
 
 ## Decision Log
 

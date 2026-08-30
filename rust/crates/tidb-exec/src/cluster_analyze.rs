@@ -364,14 +364,6 @@ fn cluster_analyze_plan(
         if column.is_virtual_generated() {
             continue;
         }
-        if column.is_generated() {
-            return Err(AnalyzeError::unsupported(format!(
-                "this node does not analyze `{}`.`{}`: a generated column's value is an \
-                 expression it does not evaluate over stored rows",
-                table.name.original(),
-                column.name.original()
-            )));
-        }
         let qualified = format!("`{}`.`{}`", table.name.original(), column.name.original());
         let collation = AnalyzedColumn::sampling_collation(&column.field_type, &qualified)?;
         // Materialised once, here, so a column whose origin default this
