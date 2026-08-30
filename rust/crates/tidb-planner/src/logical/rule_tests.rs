@@ -63,12 +63,14 @@ pub(crate) fn test_context(allocator: &PlanIdAllocator) -> RuleContext<'_> {
         column_allocator: &COLUMN_ALLOCATOR,
         builder: &TEST_BUILDER,
         use_plan_cache: false,
+        plan_cache_marker: None,
         // Go's `AllowDeriveTopN` defaults ON in `sessionVars`.
         allow_derive_topn: true,
         disabled_rules: DisabledLogicalRules::default(),
         statistics_load: None,
         partition_pruning: None,
         opt_index_prune_threshold: 20,
+        always_keep_join_key: true,
     }
 }
 
@@ -344,6 +346,7 @@ fn logical_optimize_runs_the_ported_rules_in_order_and_reports_the_rest() {
         | flags::BUILD_KEY_INFO
         | flags::CONSTANT_PROPAGATION
         | flags::PREDICATE_PUSH_DOWN
+        | flags::PREDICATE_SIMPLIFICATION
         | flags::PUSH_DOWN_TOPN
         | flags::ELIMINATE_AGG;
     let outcome = logical_optimize(&ctx, flag, topn).expect("no rule fails on this plan");
@@ -355,6 +358,7 @@ fn logical_optimize_runs_the_ported_rules_in_order_and_reports_the_rest() {
             RuleId::AggregationEliminator,
             RuleId::ConstantPropagationSolver,
             RuleId::PpdSolver,
+            RuleId::PredicateSimplification,
             RuleId::PushDownTopNOptimizer,
         ],
         "Go's execution order, not the flag-bit order"
@@ -448,12 +452,16 @@ fn every_ported_rule_names_itself_as_go_does() {
     );
     assert_eq!(PpdSolver.name(), RuleId::PpdSolver.name());
     assert_eq!(
+        super::rule_predicate_simplification::PredicateSimplification.name(),
+        RuleId::PredicateSimplification.name()
+    );
+    assert_eq!(
         PushDownTopNOptimizer.name(),
         RuleId::PushDownTopNOptimizer.name()
     );
 }
 
-// ***** AddSelection and its simplification subset *****
+// ***** AddSelection and predicate simplification *****
 
 #[test]
 fn add_selection_returns_the_child_when_there_is_nothing_to_filter() {
@@ -466,7 +474,7 @@ fn add_selection_returns_the_child_when_there_is_nothing_to_filter() {
 }
 
 #[test]
-fn add_selection_drops_a_condition_the_simplification_subset_deletes() {
+fn add_selection_drops_a_true_condition() {
     // Go's `constraint.DeleteTrueExprs`: `WHERE TRUE` filters nothing, so the
     // whole `LogicalSelection` never appears.
     let allocator = PlanIdAllocator::new();
@@ -524,10 +532,11 @@ fn add_selection_leaves_an_already_empty_dual_alone() {
 }
 
 #[test]
-fn the_simplification_subset_keeps_what_it_cannot_decide() {
+fn predicate_simplification_keeps_a_nonconstant_condition() {
     let allocator = PlanIdAllocator::new();
     let ctx = test_context(&allocator);
-    let kept = rule::apply_predicate_simplification(&ctx, vec![eq_const(1, 7), const_true()]);
+    let kept =
+        rule::apply_predicate_simplification(&ctx, vec![eq_const(1, 7), const_true()], false);
     assert_eq!(kept.len(), 1, "only the constant TRUE is deleted");
 }
 
@@ -816,6 +825,9 @@ fn join_simplification_does_not_substitute_column_equalities() {
     let conditions = super::rule::apply_predicate_simplification_for_join(
         &ctx,
         vec![eq_cols(1, 2), eq_cols(1, 3)],
+        &schema_of(&[1]),
+        &schema_of(&[2, 3]),
+        true,
     );
 
     assert!(
@@ -833,6 +845,47 @@ fn join_simplification_does_not_substitute_column_equalities() {
         }),
         "Go marks column-column equalities visited before substitution, so they cannot synthesize the transitive 2 = 3 join key"
     );
+}
+
+#[test]
+fn join_key_retention_follows_the_session_variable() {
+    fn is_join_key(condition: &Expression) -> bool {
+        let Expression::ScalarFunction(function) = condition else {
+            return false;
+        };
+        matches!(
+            function.get_args(),
+            [Expression::Column(left), Expression::Column(right)]
+                if function.func_name.lowercase() == "eq"
+                    && left.unique_id == 1
+                    && right.unique_id == 2
+        )
+    }
+    let allocator = PlanIdAllocator::new();
+    let left = schema_of(&[1]);
+    let right = schema_of(&[2]);
+    let input = vec![eq_cols(1, 2), eq_const(1, 7)];
+
+    let keep_context = test_context(&allocator);
+    let kept = super::rule::apply_predicate_simplification_for_join(
+        &keep_context,
+        input.clone(),
+        &left,
+        &right,
+        true,
+    );
+    assert!(kept.iter().any(is_join_key));
+
+    let mut drop_context = test_context(&allocator);
+    drop_context.always_keep_join_key = false;
+    let dropped = super::rule::apply_predicate_simplification_for_join(
+        &drop_context,
+        input,
+        &left,
+        &right,
+        true,
+    );
+    assert!(!dropped.iter().any(is_join_key), "{dropped:#?}");
 }
 
 #[test]

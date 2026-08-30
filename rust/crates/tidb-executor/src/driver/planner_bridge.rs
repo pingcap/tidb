@@ -49,6 +49,12 @@ use super::catalog::{Catalog, TableEntry};
 use super::from::FromScope;
 use super::FromTable;
 
+impl tidb_planner::logical::rule::PlanCacheMarker for crate::StmtContext {
+    fn set_skip_plan_cache(&self, reason: &str) {
+        crate::StmtContext::set_skip_plan_cache(self, reason);
+    }
+}
+
 /// Builds the name-resolution scope of one `FROM` node through Go's logical
 /// `buildResultSetNode` path. Correlation discovery needs the logical schema
 /// and output names, not an executor or a second AST-side join builder.
@@ -948,11 +954,13 @@ fn optimize_built_logical(
         column_allocator: column_ids,
         builder: &function_builder,
         use_plan_cache,
+        plan_cache_marker: Some(ctx),
         allow_derive_topn: true,
         disabled_rules: DisabledLogicalRules::default(),
         statistics_load: Some(&statistics_load),
         partition_pruning: Some(&partition_pruning),
         opt_index_prune_threshold: ctx.opt_index_prune_threshold(),
+        always_keep_join_key: ctx.always_keep_join_key(),
     };
     let optimized = logical_optimize(&rule_context, flags, plan)
         .map_err(|(_, error)| error)?

@@ -587,7 +587,7 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
             // Go `LogicalSelection.PredicatePushDown` (`logical_selection.go:96`).
             LogicalPlan::Selection(op) => {
                 let conditions = std::mem::take(&mut op.conditions);
-                op.conditions = apply_predicate_simplification(self.ctx, conditions);
+                op.conditions = apply_predicate_simplification(self.ctx, conditions, false);
                 let (can_push, cannot_push) =
                     super::LogicalSelection::split_set_get_var_func(&op.conditions);
                 self.stash.push(PendingPredicates::Selection(cannot_push));
@@ -613,7 +613,15 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
                     left_schema,
                     right_schema,
                     &opts,
-                    |conds| super::rule::apply_predicate_simplification_for_join(self.ctx, conds),
+                    |conds, propagate_constant| {
+                        super::rule::apply_predicate_simplification_for_join(
+                            self.ctx,
+                            conds,
+                            left_schema,
+                            right_schema,
+                            propagate_constant,
+                        )
+                    },
                 );
                 if let Some(conds) = &split.dual_conditions {
                     if let Some(dual) =
@@ -639,7 +647,15 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
                     left_schema,
                     right_schema,
                     &opts,
-                    |conds| super::rule::apply_predicate_simplification_for_join(self.ctx, conds),
+                    |conds, propagate_constant| {
+                        super::rule::apply_predicate_simplification_for_join(
+                            self.ctx,
+                            conds,
+                            left_schema,
+                            right_schema,
+                            propagate_constant,
+                        )
+                    },
                 );
                 if let Some(conds) = &split.dual_conditions {
                     if let Some(dual) =
@@ -856,7 +872,7 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
                     node.dismantle();
                     return (child, Vec::new());
                 }
-                let simplified = apply_predicate_simplification(self.ctx, ret);
+                let simplified = apply_predicate_simplification(self.ctx, ret, true);
                 if let Some(dual) = conds_to_table_dual(
                     self.ctx,
                     &simplified,

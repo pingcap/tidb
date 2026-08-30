@@ -413,17 +413,169 @@ fn constant_folding_sees_through_internal_charset_transcodes() {
 #[ignore = "go-parity-gap: folded CONCAT over a GBK-tagged constant plus a BINARY constant keeps UTF-8 bytes instead of transcoding the character half to its own encoding"]
 fn constant_folding_charset_binary_result_diverges() {}
 
-/// `pkg/expression/constant_test.go:72 TestConstantPropagation` drives
-/// `newPropConstSolver().PropagateConstant(ctx, false, nil, nil, nil, conds)`
-/// over eleven condition groups (union-find over equalities, IN-list spread,
-/// LE-with-multiply self-substitution, rand() blocking). That solver lives in
-/// `pkg/expression/constant_propagation.go` and is unported here; only the
-/// outer-join special case (`PropConstForOuterJoin`, :987) has any carrier in
-/// this workspace, and it lives at plan level in `tidb-session`
-/// (`tests_join_predicate_placement.rs`), outside this crate's seam.
+/// First two tables of `pkg/expression/constant_test.go:72
+/// TestConstantPropagation`: constants walk through an equality class and an
+/// unrelated predicate remains unchanged.
 #[test]
-#[ignore = "go-parity-gap: expression.PropagateConstantSolver/newPropConstSolver (constant_propagation.go:773/:1240) is unported; tidb-expr has no union-find equality propagation to drive"]
-fn test_constant_propagation() {}
+fn test_constant_propagation() {
+    let eq = |left, right| build("eq", vec![left, right]);
+    fn shape(expression: &Expression) -> String {
+        match expression {
+            Expression::Column(column) => format!("c{}", column.unique_id),
+            Expression::Constant(constant) => match constant.value {
+                Datum::Int(value) => value.to_string(),
+                Datum::UInt(value) => value.to_string(),
+                Datum::Null => "null".to_owned(),
+                ref value => format!("{value:?}"),
+            },
+            Expression::ScalarFunction(function) => format!(
+                "{}({})",
+                function.func_name.lowercase(),
+                function
+                    .get_args()
+                    .iter()
+                    .map(shape)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+            Expression::CorrelatedColumn(column) => format!("cor{}", column.column.unique_id),
+        }
+    }
+    fn solve(builder: &dyn FunctionBuilder, conditions: Vec<Expression>) -> Vec<String> {
+        let mut result =
+            crate::constant_propagation::propagate_constant(builder, false, conditions, None)
+                .conditions
+                .iter()
+                .map(shape)
+                .collect::<Vec<_>>();
+        result.sort();
+        result
+    }
+    let conditions = vec![
+        eq(column(0), column(1)),
+        eq(column(1), column(2)),
+        eq(column(2), column(3)),
+        eq(column(3), int_const(1)),
+        build("or", vec![int_const(1), column(0)]),
+    ];
+    let builder = RealFunctionBuilder::new(&NoColumns);
+    let result = crate::constant_propagation::propagate_constant(&builder, false, conditions, None);
+    assert_eq!(result.conditions.len(), 5);
+    assert!(result.conditions.iter().any(
+        |condition| matches!(condition, Expression::Constant(constant) if matches!(constant.value, Datum::Int(1)))
+    ));
+    for id in 0..4 {
+        assert!(result.conditions.iter().any(|condition| {
+            let Expression::ScalarFunction(function) = condition else {
+                return false;
+            };
+            matches!(
+                function.get_args(),
+                [Expression::Column(column), Expression::Constant(constant)]
+                    if function.func_name.lowercase() == "eq"
+                        && column.unique_id == id
+                        && matches!(constant.value, Datum::Int(1))
+            )
+        }));
+    }
+
+    let unrelated = build("ne", vec![column(2), int_const(2)]);
+    let result = crate::constant_propagation::propagate_constant(
+        &builder,
+        false,
+        vec![
+            eq(column(0), column(1)),
+            eq(column(1), int_const(1)),
+            unrelated.clone(),
+        ],
+        None,
+    );
+    assert!(result
+        .conditions
+        .iter()
+        .any(|condition| condition.equal(&unrelated)));
+
+    let scalar = |name: &str, left, right| build(name, vec![left, right]);
+    assert_eq!(
+        solve(
+            &builder,
+            vec![
+                eq(column(0), column(1)),
+                eq(column(1), int_const(1)),
+                eq(column(2), column(3)),
+                scalar("ge", column(2), int_const(2)),
+                scalar("ne", column(2), int_const(4)),
+                scalar("ne", column(3), int_const(5)),
+            ],
+        ),
+        [
+            "eq(c0,1)",
+            "eq(c1,1)",
+            "eq(c2,c3)",
+            "ge(c2,2)",
+            "ge(c3,2)",
+            "ne(c2,4)",
+            "ne(c2,5)",
+            "ne(c3,4)",
+            "ne(c3,5)",
+        ]
+    );
+    assert_eq!(
+        solve(
+            &builder,
+            vec![
+                eq(column(0), column(1)),
+                eq(column(0), column(2)),
+                scalar("ge", column(1), int_const(0)),
+            ],
+        ),
+        ["eq(c0,c1)", "eq(c0,c2)", "ge(c0,0)", "ge(c1,0)", "ge(c2,0)",]
+    );
+    assert_eq!(
+        solve(
+            &builder,
+            vec![
+                eq(column(0), column(1)),
+                scalar("gt", column(0), int_const(2)),
+                scalar("gt", column(1), int_const(3)),
+                scalar("lt", column(0), int_const(1)),
+                scalar("gt", int_const(2), column(1)),
+            ],
+        ),
+        [
+            "eq(c0,c1)",
+            "gt(2,c0)",
+            "gt(2,c1)",
+            "gt(c0,2)",
+            "gt(c0,3)",
+            "gt(c1,2)",
+            "gt(c1,3)",
+            "lt(c0,1)",
+            "lt(c1,1)",
+        ]
+    );
+    assert_eq!(
+        solve(&builder, vec![eq(int_const(1), column(0)), int_const(0)]),
+        ["0"]
+    );
+    assert_eq!(
+        solve(
+            &builder,
+            vec![
+                eq(column(0), column(1)),
+                build("in", vec![column(0), int_const(1), int_const(2)]),
+                build("in", vec![column(1), int_const(3), int_const(4)]),
+            ],
+        ),
+        [
+            "eq(c0,c1)",
+            "in(c0,1,2)",
+            "in(c0,3,4)",
+            "in(c1,1,2)",
+            "in(c1,3,4)",
+        ]
+    );
+}
 
 /// `pkg/expression/constant_test.go:336 TestDeferredParamNotNull` reads
 /// `PlanCacheParams.GetParamValue(order)` through each typed evaluator.

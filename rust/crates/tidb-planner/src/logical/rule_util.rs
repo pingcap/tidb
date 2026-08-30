@@ -177,8 +177,9 @@ pub const fn set_predicate_push_down_flag(flag: u64) -> u64 {
 pub fn apply_predicate_simplification(
     context: &super::rule::RuleContext<'_>,
     predicates: Vec<Expression>,
+    propagate_constant: bool,
 ) -> Vec<Expression> {
-    super::rule::apply_predicate_simplification(context, predicates)
+    super::rule::apply_predicate_simplification(context, predicates, propagate_constant)
 }
 
 /// Rust's direct-function form of Go's join simplification hook.
@@ -186,8 +187,17 @@ pub fn apply_predicate_simplification(
 pub fn apply_predicate_simplification_for_join(
     context: &super::rule::RuleContext<'_>,
     predicates: Vec<Expression>,
+    left_schema: &tidb_expr::schema::Schema,
+    right_schema: &tidb_expr::schema::Schema,
+    propagate_constant: bool,
 ) -> Vec<Expression> {
-    super::rule::apply_predicate_simplification_for_join(context, predicates)
+    super::rule::apply_predicate_simplification_for_join(
+        context,
+        predicates,
+        left_schema,
+        right_schema,
+        propagate_constant,
+    )
 }
 
 /// Go `BuildKeyInfoPortal`; the implementation is iterative in Rust.

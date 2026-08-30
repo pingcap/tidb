@@ -12,11 +12,12 @@ Rust currently exposes Go's logical-rule list but several entries are missing, n
 
 - [x] (2026-08-29) Inventoried pinned `pkg/planner/core/rule` and its nested, separate Go package `pkg/planner/core/rule/util`.
 - [x] (2026-08-29) Wired the static `PartitionProcessor` rule into the ordinary logical and physical execution path; committed and pushed as `d6285efd11`.
-- [ ] Complete `pkg/planner/core/rule/util` as the first atomic package (completed: centralized expression replacement, column-set tests, nullable-key max-one-row behavior, unique-index key derivation, flag hook, and iterative key-info portal; removed duplicate CTE/projection/index-key bodies; remaining: the two simplification hooks depend on incomplete parent-package predicate simplification).
+- [ ] Complete `pkg/planner/core/rule/util` as the first atomic package (completed: centralized expression replacement, column-set tests, nullable-key max-one-row behavior, unique-index key derivation, flag hook, iterative key-info portal, and both predicate-simplification hook signatures; removed duplicate CTE/projection/index-key bodies; remaining: dependency closure for the outer-join constant-propagation owner).
 - [ ] Audit every direct artifact in `pkg/planner/core/rule`, mapping production symbols and original tests to Rust owners.
 - [ ] Implement dependency-closed missing rule bodies; when a body depends on an incomplete Go package, complete that dependency package before claiming this package.
 - [x] (2026-08-29) Implemented pinned `ConstantPropagationSolver` with Go's preorder traversal, join-type sides, projection column rewrite, parent selection shape, and hard-coded unchanged flag.
 - [x] (2026-08-29) Replaced the disconnected max/min classifier with pinned `MaxMinEliminator`: recursive CTE boundary, eligibility gates, nullable filtering, sort/limit construction, indexed multi-aggregate splitting, cloned subplans, and cartesian joins.
+- [x] (2026-08-29) Replaced the narrowed predicate helper and planner-local join-equivalence solver with the registered pinned `PredicateSimplification` rule and expression-owned general propagation: PushDownNot, logical-constant short circuit, IN/NE merge, redundant OR removal, impossible OR-branch pruning, DataSource recursion, plan-cache skip reasons, and session-controlled join-key retention.
 - [ ] Run the Ready validation profile and record the complete package receipt.
 
 ## Surprises & Discoveries
@@ -36,6 +37,9 @@ Rust currently exposes Go's logical-rule list but several entries are missing, n
 - Observation: postorder constant propagation is not equivalent to Go's preorder rule for nested joins.
   Evidence: a postorder walk would expose a newly created child-join Selection to its parent join in the same pass; the explicit-stack implementation snapshots candidates on entry and a regression proves the parent remains unchanged.
 
+- Observation: `ApplyPredicateSimplificationForJoin` does not always request propagation, and join-key retention is not a fixed policy.
+  Evidence: pinned `LogicalJoin.PredicatePushDown` passes `propagateConstant=false` for the left-outer family and `SessionVars.AlwaysKeepJoinKey` into `PropagateConstantForJoin`; Rust previously used one cache-specific closure and hard-coded key retention on.
+
 ## Decision Log
 
 - Decision: Close `pkg/planner/core/rule/util` before continuing the parent `rule` package.
@@ -49,6 +53,8 @@ Rust currently exposes Go's logical-rule list but several entries are missing, n
 ## Outcomes & Retrospective
 
 Work is in progress. Static partition planning is integrated and pushed, but neither the parent `rule` package nor the nested `rule/util` package is yet claimed complete.
+
+The registered predicate-simplification body and ordinary/inner-join propagation are now integrated as dependency work. The remaining constant-propagation dependency is Go's outer-join solver and its join-leaf validity filters; no package-completion claim is made for this slice.
 
 ## Context and Orientation
 

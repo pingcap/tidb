@@ -39,8 +39,8 @@ use std::rc::Rc;
 
 use tidb_expr::aggregation::ByItems;
 use tidb_expr::column::Column;
-use tidb_expr::expression::Expression;
 use tidb_expr::expr_util::builder::PreservingFunctionBuilder;
+use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 
 use tidb_planner::logical::cte::{CteClass, LogicalCTE};
@@ -52,9 +52,10 @@ use tidb_planner::plan_base::{PlanIdAllocator, PossiblePropertiesInfo};
 use tidb_planner::logical::{BaseLogicalPlan, LogicalPlan};
 
 fn column(unique_id: i64) -> Column {
-    let mut col = Column::new(unique_id, tidb_datatype::FieldType::new(
-        tidb_datatype::FieldTypeCode::LongLong,
-    ));
+    let mut col = Column::new(
+        unique_id,
+        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+    );
     col.id = unique_id;
     col.index = (unique_id as i64 - 1).max(0);
     col
@@ -76,12 +77,14 @@ fn test_context<'a>(allocator: &'a PlanIdAllocator) -> RuleContext<'a> {
         column_allocator: &COLUMN_ALLOCATOR,
         builder: &PreservingFunctionBuilder,
         use_plan_cache: false,
+        plan_cache_marker: None,
         // Go's `AllowDeriveTopN` defaults ON.
         allow_derive_topn: true,
         disabled_rules: Default::default(),
         statistics_load: None,
         partition_pruning: None,
         opt_index_prune_threshold: 20,
+        always_keep_join_key: true,
     }
 }
 

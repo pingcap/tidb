@@ -560,6 +560,8 @@ pub struct StmtContext {
     stats_load_pseudo_timeout: bool,
     /// Go `SessionVars.OptIndexPruneThreshold`.
     opt_index_prune_threshold: i32,
+    /// Go `SessionVars.AlwaysKeepJoinKey`.
+    always_keep_join_key: bool,
     /// Go `SessionVars.GetMaxExecutionTime()`, in milliseconds.
     max_execution_time_ms: u64,
     /// Go `StmtCtx.IsSyncStatsFailed`.
@@ -776,6 +778,7 @@ impl StmtContext {
             stats_load_sync_wait_ms: tidb_vardef::defaults::DEF_TIDB_STATS_LOAD_SYNC_WAIT as u64,
             stats_load_pseudo_timeout: tidb_vardef::defaults::DEF_TIDB_STATS_LOAD_PSEUDO_TIMEOUT,
             opt_index_prune_threshold: 20,
+            always_keep_join_key: tidb_vardef::defaults::DEF_OPT_ALWAYS_KEEP_JOIN_KEY,
             max_execution_time_ms: 0,
             sync_stats_failed: Arc::default(),
             skip_plan_cache_reason: Arc::default(),
@@ -1033,6 +1036,13 @@ impl StmtContext {
         self
     }
 
+    /// Sets `@@tidb_opt_always_keep_join_key` for this statement.
+    #[must_use]
+    pub const fn with_always_keep_join_key(mut self, always_keep: bool) -> Self {
+        self.always_keep_join_key = always_keep;
+        self
+    }
+
     /// Attaches the AES mode selected by this session for the statement.
     #[must_use]
     pub fn with_block_encryption_mode(mut self, mode: tidb_expr::BlockEncryptionMode) -> Self {
@@ -1092,6 +1102,11 @@ impl StmtContext {
     #[must_use]
     pub const fn opt_index_prune_threshold(&self) -> i32 {
         self.opt_index_prune_threshold
+    }
+
+    /// Returns `@@tidb_opt_always_keep_join_key`.
+    pub const fn always_keep_join_key(&self) -> bool {
+        self.always_keep_join_key
     }
 
     /// Go caps synchronous statistics loading by `max_execution_time` when

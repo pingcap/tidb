@@ -357,6 +357,7 @@ pub mod rule_eliminate_unionall_dual_item;
 pub mod rule_join_key_type_cast;
 pub mod rule_max_min_elimination;
 pub mod rule_partition_processor;
+pub mod rule_predicate_simplification;
 pub mod rule_projection_elimination;
 pub mod rule_prune_indexes;
 pub mod rule_push_down_sequence;

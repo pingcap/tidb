@@ -598,7 +598,7 @@ impl LogicalJoin {
         left_schema: &Schema,
         right_schema: &Schema,
         opts: &SubstituteOptions<'_>,
-        simplify: impl Fn(Vec<Expression>) -> Vec<Expression>,
+        simplify: impl Fn(Vec<Expression>, bool) -> Vec<Expression>,
     ) -> JoinPredicatePushDown {
         // Go's leading `switch p.JoinType`: for everything but the semi/inner
         // and outer-semi families, `OtherConditions` is simplified in place so
@@ -611,7 +611,7 @@ impl LogicalJoin {
             | LogicalJoinType::Inner => {}
             LogicalJoinType::LeftOuter | LogicalJoinType::RightOuter => {
                 let other = std::mem::take(&mut self.other_conditions);
-                self.other_conditions = simplify(other);
+                self.other_conditions = simplify(other, false);
             }
         }
 
@@ -620,7 +620,7 @@ impl LogicalJoin {
             LogicalJoinType::LeftOuter
             | LogicalJoinType::LeftOuterSemi
             | LogicalJoinType::AntiLeftOuterSemi => {
-                let predicates = simplify(predicates);
+                let predicates = simplify(predicates, false);
                 if !predicates.is_empty() {
                     result.dual_conditions = Some(predicates.clone());
                 }
@@ -643,7 +643,7 @@ impl LogicalJoin {
                 result.ret.extend(split.right);
             }
             LogicalJoinType::RightOuter => {
-                let predicates = simplify(predicates);
+                let predicates = simplify(predicates, true);
                 if !predicates.is_empty() {
                     result.dual_conditions = Some(predicates.clone());
                 }
@@ -676,7 +676,7 @@ impl LogicalJoin {
                 temp_cond.extend(scalar_funcs_to_exprs(&self.equal_conditions));
                 temp_cond.extend(self.other_conditions.iter().cloned());
                 temp_cond.extend(predicates);
-                let temp_cond = simplify(extract_filters_from_dnfs(temp_cond));
+                let temp_cond = simplify(extract_filters_from_dnfs(temp_cond), true);
                 if !temp_cond.is_empty() {
                     result.dual_conditions = Some(temp_cond.clone());
                 }
@@ -696,7 +696,7 @@ impl LogicalJoin {
                 result.right_cond = split.right;
             }
             LogicalJoinType::AntiSemi => {
-                let predicates = simplify(predicates);
+                let predicates = simplify(predicates, true);
                 if !predicates.is_empty() {
                     result.dual_conditions = Some(predicates.clone());
                 }
