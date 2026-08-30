@@ -474,8 +474,12 @@ fn cluster_analyze_plan(
                         .get(index_column.offset as usize)
                         .is_some_and(|column| column.read().is_virtual_generated())
             });
+        if is_special_global {
+            // Pinned Go removes this index from the ordinary column-sampling
+            // task and creates one independent ordered index task for it.
+            continue;
+        }
         if index.mv_index
-            || is_special_global
             || index.vector_info.is_some()
             || index.inverted_info.is_some()
             || index.full_text_info.is_some()
@@ -572,6 +576,35 @@ mod tests {
             .expect("an ordinary global index uses the column sampling task");
         assert_eq!(plan.indexes().len(), 1);
         assert_eq!(plan.indexes()[0].id, 2);
+    }
+
+    #[test]
+    fn special_global_index_is_not_in_the_ordinary_sampling_plan() {
+        let column = ColumnInfo::new(1, "a", FieldType::new(FieldTypeCode::Varchar));
+        let table = TableInfo {
+            name: CiString::new("t"),
+            columns: vec![column].into(),
+            indices: vec![IndexInfo {
+                id: 2,
+                name: CiString::new("idx_a"),
+                state: SchemaState::PUBLIC,
+                global: true,
+                columns: vec![IndexColumn {
+                    name: CiString::new("a"),
+                    offset: 0,
+                    length: 3,
+                    use_changing_type: false,
+                }]
+                .into(),
+                ..IndexInfo::default()
+            }]
+            .into(),
+            ..TableInfo::default()
+        };
+
+        let plan = cluster_analyze_plan(&table, None)
+            .expect("the independent task owns a special global index");
+        assert!(plan.indexes().is_empty());
     }
 
     struct RegionSnapshot(Vec<tidb_txnkv::transaction::SnapshotScanRegion>);

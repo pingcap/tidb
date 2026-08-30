@@ -350,6 +350,27 @@ pub fn plan_partial_partition_stats_write<S: MetaSnapshot>(
     plan_stats_write_impl(snapshot, catalog, stats, now, false, true)
 }
 
+/// Plans pinned Go's `ForMVIndexOrGlobalIndex` ANALYZE write.
+///
+/// A special global-index task replaces only the index item it produced. If
+/// `stats_meta` already exists, Go advances only its version markers; if it
+/// does not, Go creates it with count and snapshot zero. In both cases the
+/// independently scanned index must not overwrite table row-count metadata.
+pub fn plan_independent_index_stats_write<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    stats: &ClusterTableStats,
+    now: Time,
+) -> Result<StatsWritePlan, StatsWriteError> {
+    let mut plan = StatsWritePlan::default();
+    plan_independent_index_meta(snapshot, catalog, stats, now, &mut plan)?;
+    plan_histograms(snapshot, catalog, stats, now, false, &mut plan)?;
+    plan_buckets(snapshot, catalog, stats, now, false, &mut plan)?;
+    plan_topn(snapshot, catalog, stats, now, false, &mut plan)?;
+    plan_fm_sketches(snapshot, catalog, stats, now, false, false, &mut plan)?;
+    Ok(plan)
+}
+
 fn plan_stats_write_impl<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
@@ -987,6 +1008,37 @@ fn plan_meta<S: MetaSnapshot>(
     // Deliberately no retraction: `mysql.stats_meta` holds one row per table
     // and the identity IS the table, so there is never a leftover. Retracting
     // here would only be a way to delete a row this `ANALYZE` did not write.
+    rows.publish_watermark(catalog, plan)
+}
+
+fn plan_independent_index_meta<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    stats: &ClusterTableStats,
+    now: Time,
+    plan: &mut StatsWritePlan,
+) -> Result<(), StatsWriteError> {
+    let table = locate(catalog, "stats_meta")?;
+    let mut rows = StatsRows::open(snapshot, table, &["table_id"], stats.table_id)?;
+    let identity = vec![format!("{:?}", Datum::Int(stats.table_id))];
+    let mut values = match rows.existing_values(&identity).cloned() {
+        Some(values) => values,
+        None => {
+            let mut values = defaults_row(table, now)?;
+            set(table, &mut values, "table_id", Datum::Int(stats.table_id));
+            set(table, &mut values, "count", Datum::Int(0));
+            set(table, &mut values, "snapshot", Datum::UInt(0));
+            values
+        }
+    };
+    set(table, &mut values, "version", Datum::UInt(stats.version));
+    set(
+        table,
+        &mut values,
+        "last_stats_histograms_version",
+        Datum::UInt(stats.version),
+    );
+    rows.store(snapshot, catalog, &values, plan)?;
     rows.publish_watermark(catalog, plan)
 }
 

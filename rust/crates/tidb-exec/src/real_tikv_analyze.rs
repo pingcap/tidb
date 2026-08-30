@@ -50,8 +50,8 @@ use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoa
 use tidb_util::sqlkiller::SqlKiller;
 
 use crate::cluster_analyze::{
-    analyze_physical_table, lower_analyze, resolve_analyze_options, AnalyzeColumnChoice,
-    AnalyzeError, AnalyzeStatement,
+    analyze_independent_index, analyze_physical_table, lower_analyze, resolve_analyze_options,
+    AnalyzeColumnChoice, AnalyzeError, AnalyzeStatement,
 };
 use crate::cluster_catalog::load_cluster_catalog;
 use crate::cluster_stats_load::{
@@ -59,8 +59,9 @@ use crate::cluster_stats_load::{
 };
 use crate::cluster_stats_write::{
     load_analyze_options, plan_analyze_options_write, plan_get_predicate_columns,
-    plan_historical_stats_meta_write, plan_partial_partition_stats_write, plan_partial_stats_write,
-    plan_partition_stats_write, plan_stats_meta_version_refresh, plan_stats_write, StatsWritePlan,
+    plan_historical_stats_meta_write, plan_independent_index_stats_write,
+    plan_partial_partition_stats_write, plan_partial_stats_write, plan_partition_stats_write,
+    plan_stats_meta_version_refresh, plan_stats_write, StatsWritePlan,
 };
 use crate::mysql_bootstrap::utc_now_timestamp;
 use crate::mysql_system_tables::SystemTableError;
@@ -151,6 +152,8 @@ pub struct ResolvedClusterAnalyze {
     physical_options: Vec<tidb_executor::analyze::PhysicalAnalyzeOptions>,
     partitioned: bool,
     ignored_partition_overrides: bool,
+    run_full_sampling: bool,
+    independent_index_ids: Vec<i64>,
 }
 
 impl ResolvedClusterAnalyze {
@@ -200,7 +203,7 @@ pub fn resolve_cluster_analyze_statement<
         .finish_without_writes()
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
 
-    validate_index_target(&table, statement)?;
+    let index_tasks = select_index_tasks(&table, statement)?;
 
     let mut resolution = resolve_analyze_options(
         table.id,
@@ -228,15 +231,54 @@ pub fn resolve_cluster_analyze_statement<
         physical_options: resolution.physical,
         partitioned: table.partition.is_some(),
         ignored_partition_overrides: resolution.ignored_partition_overrides,
+        run_full_sampling: index_tasks.run_full_sampling,
+        independent_index_ids: index_tasks.independent_index_ids,
     })
 }
 
-fn validate_index_target(
+#[derive(Debug)]
+struct IndexTaskSelection {
+    run_full_sampling: bool,
+    independent_index_ids: Vec<i64>,
+}
+
+fn is_special_global_index(
+    table: &tidb_model::table_info::TableInfo,
+    index: &tidb_model::index::IndexInfo,
+) -> bool {
+    index.global
+        && index.columns.iter_deref().any(|column| {
+            let column = column.read();
+            column.length != UNSPECIFIED_LENGTH
+                || table
+                    .cols()
+                    .get(column.offset as usize)
+                    .is_some_and(|column| column.read().is_virtual_generated())
+        })
+}
+
+fn select_index_tasks(
     table: &tidb_model::table_info::TableInfo,
     statement: &AnalyzeStatement,
-) -> Result<(), ClusterAnalyzeError> {
+) -> Result<IndexTaskSelection, ClusterAnalyzeError> {
     let Some(names) = &statement.index_names else {
-        return Ok(());
+        return Ok(IndexTaskSelection {
+            run_full_sampling: true,
+            independent_index_ids: if statement.partitions.is_empty() {
+                table
+                    .indices
+                    .iter_deref()
+                    .filter_map(|index| {
+                        let index = index.read();
+                        (index.state == tidb_model::SchemaState::PUBLIC
+                            && is_special_global_index(table, &index))
+                        .then_some(index.id)
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            },
+        });
     };
     let indexes = table.indices.iter_deref().filter_map(|index| {
         let index = index.read();
@@ -266,24 +308,48 @@ fn validate_index_target(
             })
             .collect::<Result<Vec<_>, _>>()?
     };
-    let all_special_global = selected.iter().all(|index| {
-        index.global
-            && index.columns.iter_deref().any(|column| {
-                let column = column.read();
-                column.length != UNSPECIFIED_LENGTH
-                    || table
-                        .cols()
-                        .get(column.offset as usize)
-                        .is_some_and(|column| column.read().is_virtual_generated())
-            })
-    });
-    if all_special_global {
-        return Err(ClusterAnalyzeError::Other(
-            "this node does not yet build Go's independent ANALYZE task for a special global index"
-                .to_owned(),
-        ));
+    for index in &selected {
+        if !is_special_global_index(table, index) {
+            return Ok(IndexTaskSelection {
+                run_full_sampling: true,
+                independent_index_ids: if statement.partitions.is_empty() {
+                    table
+                        .indices
+                        .iter_deref()
+                        .filter_map(|index| {
+                            let index = index.read();
+                            (index.state == tidb_model::SchemaState::PUBLIC
+                                && is_special_global_index(table, &index))
+                            .then_some(index.id)
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                },
+            });
+        }
+        if !statement.partitions.is_empty() {
+            return Err(ClusterAnalyzeError::Other(format!(
+                "Analyze global index '{}' can't work with analyze specified partitions",
+                index.name.original()
+            )));
+        }
     }
-    Ok(())
+    Ok(IndexTaskSelection {
+        run_full_sampling: false,
+        // Pinned Go deliberately iterates the explicitly named list in this
+        // branch. Therefore `ANALYZE TABLE t INDEX` with no names and only
+        // special global indexes creates no independent task.
+        independent_index_ids: names
+            .iter()
+            .filter_map(|name| {
+                selected
+                    .iter()
+                    .find(|index| index.name.lowercase().eq_ignore_ascii_case(name))
+                    .map(|index| index.id)
+            })
+            .collect(),
+    })
 }
 
 fn analyze_partition_ids(
@@ -508,7 +574,9 @@ pub fn commit_cluster_analyze<C: StoreWriteClient, L: StoreWriteLoader, P: Store
     killer: &SqlKiller,
     record_global_history: &dyn Fn() -> bool,
 ) -> Result<ClusterAnalyzeReport, ClusterAnalyzeError> {
-    let targets = if resolved.partitioned {
+    let targets = if !resolved.run_full_sampling {
+        Vec::new()
+    } else if resolved.partitioned {
         resolved
             .physical_options
             .iter()
@@ -527,27 +595,25 @@ pub fn commit_cluster_analyze<C: StoreWriteClient, L: StoreWriteLoader, P: Store
         )?);
     }
     let mut reports = reports.into_iter();
-    let mut report = reports.next().ok_or_else(|| {
-        ClusterAnalyzeError::Other("this ANALYZE has no physical target".to_owned())
-    })?;
+    let mut report = reports.next().unwrap_or_else(|| ClusterAnalyzeReport {
+        table_id: resolved.logical_table_id(),
+        version: 0,
+        scanned_rows: 0,
+        sampled_rows: 0,
+        sample_rate: 1.0,
+        histogram_count: 0,
+        bucket_count: 0,
+        topn_count: 0,
+        predicate_columns_empty: false,
+        option_save_warning: None,
+        global_stats_warning: None,
+        ignored_partition_overrides: false,
+        collected_all_for_index_target: false,
+        analyzed_column_ids: Vec::new(),
+        analyzed_index_ids: Vec::new(),
+    });
     for next in reports {
-        report.version = report.version.max(next.version);
-        report.scanned_rows = report.scanned_rows.saturating_add(next.scanned_rows);
-        report.sampled_rows = report.sampled_rows.saturating_add(next.sampled_rows);
-        report.histogram_count += next.histogram_count;
-        report.bucket_count += next.bucket_count;
-        report.topn_count += next.topn_count;
-        report.predicate_columns_empty |= next.predicate_columns_empty;
-        for id in next.analyzed_column_ids {
-            if !report.analyzed_column_ids.contains(&id) {
-                report.analyzed_column_ids.push(id);
-            }
-        }
-        for id in next.analyzed_index_ids {
-            if !report.analyzed_index_ids.contains(&id) {
-                report.analyzed_index_ids.push(id);
-            }
-        }
+        merge_analyze_report(&mut report, next);
     }
     if resolved.partitioned {
         let table_id = resolved
@@ -557,7 +623,10 @@ pub fn commit_cluster_analyze<C: StoreWriteClient, L: StoreWriteLoader, P: Store
             .physical_id;
         report.table_id = table_id;
     }
-    if resolved.partitioned && resolved.statement.dynamic_partition_prune {
+    if resolved.run_full_sampling
+        && resolved.partitioned
+        && resolved.statement.dynamic_partition_prune
+    {
         if let Err(error) = commit_cluster_global_stats(
             opener,
             resolved,
@@ -578,8 +647,43 @@ pub fn commit_cluster_analyze<C: StoreWriteClient, L: StoreWriteLoader, P: Store
             }
         }
     }
+    let independent_options = &resolved
+        .physical_options
+        .first()
+        .expect("the logical table option is present")
+        .effective;
+    for index_id in &resolved.independent_index_ids {
+        let next = commit_cluster_independent_index(
+            opener,
+            &resolved.statement,
+            *index_id,
+            independent_options,
+            timeout,
+        )?;
+        merge_analyze_report(&mut report, next);
+    }
     report.ignored_partition_overrides = resolved.ignored_partition_overrides;
     Ok(report)
+}
+
+fn merge_analyze_report(report: &mut ClusterAnalyzeReport, next: ClusterAnalyzeReport) {
+    report.version = report.version.max(next.version);
+    report.scanned_rows = report.scanned_rows.saturating_add(next.scanned_rows);
+    report.sampled_rows = report.sampled_rows.saturating_add(next.sampled_rows);
+    report.histogram_count += next.histogram_count;
+    report.bucket_count += next.bucket_count;
+    report.topn_count += next.topn_count;
+    report.predicate_columns_empty |= next.predicate_columns_empty;
+    for id in next.analyzed_column_ids {
+        if !report.analyzed_column_ids.contains(&id) {
+            report.analyzed_column_ids.push(id);
+        }
+    }
+    for id in next.analyzed_index_ids {
+        if !report.analyzed_index_ids.contains(&id) {
+            report.analyzed_index_ids.push(id);
+        }
+    }
 }
 
 fn commit_cluster_global_stats<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
@@ -1519,6 +1623,75 @@ fn commit_cluster_analyze_target<C: StoreWriteClient, L: StoreWriteLoader, P: St
     Ok(receipt)
 }
 
+fn commit_cluster_independent_index<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+>(
+    opener: &RealOptimisticTransactionOpener<C, L, P>,
+    statement: &AnalyzeStatement,
+    index_id: i64,
+    options: &tidb_executor::analyze::AnalyzeOptions,
+    timeout: Duration,
+) -> Result<ClusterAnalyzeReport, ClusterAnalyzeError> {
+    let mut transaction = opener
+        .begin(ANALYZE_MAX_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)
+        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+    let start_ts = transaction.start_ts();
+    let (report, write) = {
+        let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
+        let catalog = load_cluster_catalog(&mut snapshot)
+            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+        let table = find_statement_table(&catalog, statement)?.clone();
+        let index = table
+            .indices
+            .iter_deref()
+            .find_map(|index| {
+                let index = index.read();
+                (index.id == index_id && index.state == tidb_model::SchemaState::PUBLIC)
+                    .then(|| index.clone())
+            })
+            .ok_or_else(|| {
+                ClusterAnalyzeError::Other(format!(
+                    "independent ANALYZE index {index_id} no longer exists on table '{}'",
+                    table.name.original()
+                ))
+            })?;
+        let report = analyze_independent_index(&mut snapshot, &table, &index, options, start_ts)
+            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+        let write = plan_independent_index_stats_write(
+            &mut snapshot,
+            &catalog,
+            &report.stats,
+            utc_now_timestamp(),
+        )
+        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+        (report, write)
+    };
+    let receipt = ClusterAnalyzeReport {
+        table_id: report.stats.table_id,
+        version: start_ts,
+        scanned_rows: report.scanned_rows,
+        sampled_rows: report.sampled_rows,
+        sample_rate: report.sample_rate,
+        histogram_count: write.histogram_count,
+        bucket_count: write.bucket_count,
+        topn_count: write.topn_count,
+        predicate_columns_empty: false,
+        option_save_warning: None,
+        global_stats_warning: None,
+        ignored_partition_overrides: false,
+        collected_all_for_index_target: false,
+        analyzed_column_ids: Vec::new(),
+        analyzed_index_ids: vec![index_id],
+    };
+    let outcome = transaction
+        .commit(write.mutations, &UnaryCallContext::with_timeout(timeout))
+        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+    classify_commit_outcome(&outcome)?;
+    Ok(receipt)
+}
+
 fn selected_columns<S: crate::cluster_catalog::MetaSnapshot>(
     snapshot: &mut S,
     catalog: &crate::cluster_catalog::ClusterCatalog,
@@ -1650,8 +1823,8 @@ fn classify_commit_outcome(outcome: &OptimisticCommitOutcome) -> Result<(), Clus
 mod tests {
     use super::{
         analyze_partition_ids, classify_commit_outcome, final_column_choice, merge_global_items,
-        realtime_count_of, record_global_history_enabled, slow_stats_save_needs_version_refresh,
-        write_global_stats_items, ClusterAnalyzeError,
+        realtime_count_of, record_global_history_enabled, select_index_tasks,
+        slow_stats_save_needs_version_refresh, write_global_stats_items, ClusterAnalyzeError,
     };
     use std::collections::BTreeMap;
     use std::thread;
@@ -1739,6 +1912,92 @@ mod tests {
             time_zone: tidb_datatype::SessionTimeZone::utc(),
             options: Default::default(),
         }
+    }
+
+    fn index_task_table() -> TableInfo {
+        let mut a = ColumnInfo::new(1, "a", FieldType::new(FieldTypeCode::Varchar));
+        a.offset = 0;
+        TableInfo {
+            id: 42,
+            name: CiString::new("t"),
+            columns: vec![a].into(),
+            indices: vec![
+                IndexInfo {
+                    id: 7,
+                    name: CiString::new("special"),
+                    state: SchemaState::PUBLIC,
+                    global: true,
+                    columns: vec![IndexColumn {
+                        name: CiString::new("a"),
+                        offset: 0,
+                        length: 3,
+                        ..IndexColumn::default()
+                    }]
+                    .into(),
+                    ..IndexInfo::default()
+                },
+                IndexInfo {
+                    id: 8,
+                    name: CiString::new("ordinary"),
+                    state: SchemaState::PUBLIC,
+                    columns: vec![IndexColumn {
+                        name: CiString::new("a"),
+                        offset: 0,
+                        ..IndexColumn::default()
+                    }]
+                    .into(),
+                    ..IndexInfo::default()
+                },
+            ]
+            .into(),
+            ..TableInfo::default()
+        }
+    }
+
+    #[test]
+    fn special_global_index_tasks_follow_pinned_go_selection() {
+        let table = index_task_table();
+        let mut statement = global_statement(true);
+        let tasks = select_index_tasks(&table, &statement).unwrap();
+        assert!(tasks.run_full_sampling);
+        assert_eq!(tasks.independent_index_ids, vec![7]);
+
+        statement.index_names = Some(vec!["special".to_owned()]);
+        let tasks = select_index_tasks(&table, &statement).unwrap();
+        assert!(!tasks.run_full_sampling);
+        assert_eq!(tasks.independent_index_ids, vec![7]);
+
+        statement.index_names = Some(vec!["ordinary".to_owned()]);
+        let tasks = select_index_tasks(&table, &statement).unwrap();
+        assert!(tasks.run_full_sampling);
+        assert_eq!(tasks.independent_index_ids, vec![7]);
+    }
+
+    #[test]
+    fn special_global_index_partition_error_and_empty_name_branch_match_go() {
+        let mut table = index_task_table();
+        table.indices = vec![table
+            .indices
+            .iter_deref()
+            .next()
+            .expect("the special index exists")
+            .read()
+            .clone()]
+        .into();
+        let mut statement = global_statement(true);
+        statement.index_names = Some(Vec::new());
+        let tasks = select_index_tasks(&table, &statement).unwrap();
+        assert!(!tasks.run_full_sampling);
+        assert!(tasks.independent_index_ids.is_empty());
+
+        statement.index_names = Some(vec!["special".to_owned()]);
+        statement.partitions = vec!["p0".to_owned()];
+        assert_eq!(
+            select_index_tasks(&table, &statement)
+                .unwrap_err()
+                .to_string(),
+            "Analyze global index 'special' can't work with analyze specified partitions"
+        );
     }
 
     #[test]

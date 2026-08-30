@@ -37,9 +37,10 @@ use tidb_exec::cluster_predicate_column::{
 use tidb_exec::cluster_stats_load::{ClusterStatsItem, ClusterStatsLoader, ClusterTableStats};
 use tidb_exec::cluster_stats_write::{
     load_analyze_options, plan_analyze_options_write, plan_get_predicate_columns,
-    plan_historical_stats_meta_write, plan_loaded_stats_item_write, plan_loaded_stats_meta_write,
-    plan_loaded_stats_usage_write, plan_partial_stats_write, plan_partition_stats_write,
-    plan_stats_meta_version_refresh, plan_stats_write,
+    plan_historical_stats_meta_write, plan_independent_index_stats_write,
+    plan_loaded_stats_item_write, plan_loaded_stats_meta_write, plan_loaded_stats_usage_write,
+    plan_partial_stats_write, plan_partition_stats_write, plan_stats_meta_version_refresh,
+    plan_stats_write,
 };
 use tidb_exec::mysql_bootstrap::{plan_mysql_bootstrap, BootstrapEnvironment, BootstrapWrite};
 use tidb_exec::mysql_system_tables::{scan_system_table, SystemRow, SystemTableView};
@@ -422,10 +423,7 @@ fn async_global_stats_loads_each_payload_by_item() {
                 tidb_metadef::system::STATS_HISTOGRAMS_TABLE_ID,
                 &index_kind,
             ),
-            tidb_codec::encode_row_key(
-                tidb_metadef::system::STATS_FMSKETCH_TABLE_ID,
-                &column_item,
-            ),
+            tidb_codec::encode_row_key(tidb_metadef::system::STATS_FMSKETCH_TABLE_ID, &column_item,),
             tidb_codec::encode_row_key(
                 tidb_metadef::system::STATS_FMSKETCH_TABLE_ID,
                 &cms_item_prefix,
@@ -438,10 +436,7 @@ fn async_global_stats_loads_each_payload_by_item() {
                 tidb_metadef::system::STATS_HISTOGRAMS_TABLE_ID,
                 &column_item,
             ),
-            tidb_codec::encode_row_key(
-                tidb_metadef::system::STATS_BUCKETS_TABLE_ID,
-                &column_item,
-            ),
+            tidb_codec::encode_row_key(tidb_metadef::system::STATS_BUCKETS_TABLE_ID, &column_item,),
             tidb_codec::table_key::encode_index_seek_key(
                 tidb_metadef::system::STATS_TOP_NTABLE_ID,
                 1,
@@ -921,6 +916,99 @@ fn partial_analyze_write_preserves_unselected_histograms() {
             .len(),
         256
     );
+}
+
+/// Pinned Go's `ForMVIndexOrGlobalIndex` path never lets an independently
+/// scanned index overwrite table-level row metadata.
+#[test]
+fn independent_index_write_preserves_existing_meta_values() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let table_id = 4242;
+    let initial = ClusterTableStats {
+        table_id,
+        version: 440_000_000_000_000_000,
+        snapshot: 439_000_000_000_000_000,
+        last_analyze_version: 440_000_000_000_000_000,
+        last_stats_hist_version: 440_000_000_000_000_000,
+        modify_count: 37,
+        row_count: 10_240,
+        columns: vec![full_histogram(1, false)],
+        indexes: Vec::new(),
+    };
+    let plan = plan_stats_write(&mut store, &catalog, &initial, now()).expect("analyze plans");
+    apply_mutations(&mut store, &plan.mutations);
+
+    let next_version = initial.version + 1;
+    let mut index = full_histogram(7, true);
+    index.histogram.last_update_version = next_version;
+    let independent = ClusterTableStats {
+        table_id,
+        version: next_version,
+        snapshot: next_version,
+        last_analyze_version: next_version,
+        last_stats_hist_version: next_version,
+        modify_count: 0,
+        row_count: 99_999,
+        columns: Vec::new(),
+        indexes: vec![index],
+    };
+    let plan = plan_independent_index_stats_write(&mut store, &catalog, &independent, now())
+        .expect("independent index analyze plans");
+    apply_mutations(&mut store, &plan.mutations);
+
+    let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
+    let stored = loader
+        .load_table(
+            &mut store,
+            table_id,
+            &BTreeMap::from([(
+                1,
+                tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            )]),
+        )
+        .expect("statistics reload")
+        .expect("stats_meta exists");
+    assert_eq!(stored.version, next_version);
+    assert_eq!(stored.last_stats_hist_version, next_version);
+    assert_eq!(stored.row_count, initial.row_count);
+    assert_eq!(stored.modify_count, initial.modify_count);
+    assert_eq!(stored.snapshot, initial.snapshot);
+    assert!(stored.index(7).is_some());
+    assert!(stored.column(1).is_some());
+}
+
+#[test]
+fn independent_index_write_creates_zero_count_zero_snapshot_meta() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let version = 440_000_000_000_000_001;
+    let stats = ClusterTableStats {
+        table_id: 4242,
+        version,
+        snapshot: version,
+        last_analyze_version: version,
+        last_stats_hist_version: version,
+        modify_count: 91,
+        row_count: 99_999,
+        columns: Vec::new(),
+        indexes: vec![full_histogram(7, true)],
+    };
+    let plan = plan_independent_index_stats_write(&mut store, &catalog, &stats, now())
+        .expect("independent index analyze plans");
+    apply_mutations(&mut store, &plan.mutations);
+
+    let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
+    let stored = loader
+        .load_table(&mut store, stats.table_id, &BTreeMap::new())
+        .expect("statistics reload")
+        .expect("stats_meta exists");
+    assert_eq!(stored.version, version);
+    assert_eq!(stored.last_stats_hist_version, version);
+    assert_eq!(stored.row_count, 0);
+    assert_eq!(stored.modify_count, 0);
+    assert_eq!(stored.snapshot, 0);
+    assert!(stored.index(7).is_some());
 }
 
 /// Pinned Go's negative-count branch uses UPDATE rather than REPLACE: only
