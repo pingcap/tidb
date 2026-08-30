@@ -61,8 +61,8 @@ use tidb_meta::{key, value};
 use tidb_model::table_info::TableInfo;
 use tidb_model::TableItemID;
 use tidb_stats::histogram::Bucket;
-use tidb_stats::JsonPredicateColumn;
 use tidb_stats::{encode_cmsketch_without_topn, encode_fm_sketch};
+use tidb_stats::{JsonPredicateColumn, JsonTable};
 use tidb_txnkv::transaction::OptimisticMutation;
 
 use crate::cluster_catalog::{ClusterCatalog, MetaSnapshot};
@@ -97,6 +97,8 @@ pub enum StatsWriteError {
     PredicateTime(String),
     /// The exact statistics version needed for a history row is no longer current.
     HistoricalMeta(String),
+    /// A historical statistics JSON object could not be compressed.
+    HistoricalData(String),
 }
 
 impl std::fmt::Display for StatsWriteError {
@@ -114,6 +116,7 @@ impl std::fmt::Display for StatsWriteError {
                 )
             }
             Self::HistoricalMeta(detail) => formatter.write_str(detail),
+            Self::HistoricalData(detail) => formatter.write_str(detail),
         }
     }
 }
@@ -897,6 +900,53 @@ pub fn plan_historical_stats_meta_write<S: MetaSnapshot>(
     rows.store(snapshot, catalog, &history_values, &mut plan)?;
     rows.publish_watermark(catalog, &mut plan)?;
     Ok(plan)
+}
+
+/// Pinned Go `history.RecordHistoricalStatsToStorage`: gzip one statistics
+/// JSON object, split it below the `LONG_BLOB` row limit, and upsert each
+/// `(table_id, version, seq_no)` block with one shared microsecond timestamp.
+pub fn plan_historical_stats_data_write<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    physical_id: i64,
+    json: &JsonTable,
+    now: Time,
+) -> Result<(u64, StatsWritePlan), StatsWriteError> {
+    const MAX_COLUMN_SIZE: usize = 5 << 20;
+    let version = match json.partitions.as_ref() {
+        Some(partitions) if !partitions.is_empty() => partitions
+            .values()
+            .map(|partition| {
+                partition
+                    .as_ref()
+                    .expect("nil partition in historical statistics JSON")
+                    .version
+            })
+            .max()
+            .unwrap_or(0),
+        _ => json.version,
+    };
+    let blocks = tidb_executor::load_stats::json_table_to_blocks(json, MAX_COLUMN_SIZE)
+        .map_err(|error| StatsWriteError::HistoricalData(error.to_string()))?;
+    let history = locate(catalog, "stats_history")?;
+    let mut rows = StatsRows::open(
+        snapshot,
+        history,
+        &["table_id", "version", "seq_no"],
+        physical_id,
+    )?;
+    let mut plan = StatsWritePlan::default();
+    for (sequence, block) in blocks.into_iter().enumerate() {
+        let mut values = defaults_row(history, now)?;
+        set(history, &mut values, "table_id", Datum::Int(physical_id));
+        set(history, &mut values, "stats_data", Datum::Bytes(block));
+        set(history, &mut values, "seq_no", Datum::Int(sequence as i64));
+        set(history, &mut values, "version", Datum::UInt(version));
+        set(history, &mut values, "create_time", Datum::Time(now));
+        rows.store(snapshot, catalog, &values, &mut plan)?;
+    }
+    rows.publish_watermark(catalog, &mut plan)?;
+    Ok((version, plan))
 }
 
 fn signed_value(value: Option<&Datum>) -> Option<i64> {

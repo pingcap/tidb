@@ -38,7 +38,8 @@ use tidb_exec::cluster_predicate_column::{
 use tidb_exec::cluster_stats_load::{ClusterStatsItem, ClusterStatsLoader, ClusterTableStats};
 use tidb_exec::cluster_stats_write::{
     load_analyze_options, plan_analyze_options_write, plan_column_stats_usage_dump,
-    plan_column_stats_usage_write, plan_get_predicate_columns, plan_historical_stats_meta_write,
+    plan_column_stats_usage_write, plan_get_predicate_columns,
+    plan_historical_stats_data_write, plan_historical_stats_meta_write,
     plan_independent_index_stats_write, plan_loaded_stats_item_write, plan_loaded_stats_meta_write,
     plan_loaded_stats_usage_write, plan_partial_stats_write, plan_partition_stats_write,
     plan_stats_delta_updates, plan_stats_meta_version_refresh, plan_stats_write,
@@ -52,7 +53,7 @@ use tidb_model::table_info::TableInfo;
 use tidb_model::SchemaState;
 use tidb_stats::cmsketch::{CmsSketch, TopN};
 use tidb_stats::histogram::{Bucket, Histogram};
-use tidb_stats::{FmSketch, JsonPredicateColumn, MAX_SKETCH_SIZE};
+use tidb_stats::{FmSketch, JsonPredicateColumn, JsonTable, MAX_SKETCH_SIZE};
 use tidb_stats_handle_usage::{DeltaUpdate, TableDelta};
 use tidb_txnkv::transaction::{
     OptimisticMutationKind, MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES,
@@ -1531,4 +1532,69 @@ fn loaded_stats_history_requires_the_exact_current_meta_version() {
         row.bytes("source").unwrap().as_deref(),
         Some(b"load stats".as_slice())
     );
+}
+
+/// Pinned `history.RecordHistoricalStatsToStorage` stores the gzip-framed
+/// JSON blocks under `(table_id, version, seq_no)` and returns the dump's
+/// statistics version.
+#[test]
+fn historical_stats_data_round_trips_through_stats_history() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let table_id = 4242;
+    let json = JsonTable {
+        database_name: "test".to_owned(),
+        table_name: "t".to_owned(),
+        count: 55,
+        modify_count: 3,
+        version: 440_000_000_000_000_000,
+        ..JsonTable::default()
+    };
+    let (version, plan) =
+        plan_historical_stats_data_write(&mut store, &catalog, table_id, &json, now())
+            .expect("historical statistics data plans");
+    assert_eq!(version, json.version);
+    apply_mutations(&mut store, &plan.mutations);
+
+    let table = catalog
+        .databases
+        .iter()
+        .find(|database| database.info.name.lowercase() == "mysql")
+        .and_then(|database| {
+            database
+                .tables
+                .iter()
+                .find(|table| table.name.lowercase() == "stats_history")
+        })
+        .expect("stats_history exists");
+    let view = SystemTableView::project(
+        "mysql.stats_history",
+        table,
+        &["table_id", "stats_data", "seq_no", "version"],
+    );
+    let timezone = tidb_datatype::SessionTimeZone::utc();
+    let mut blocks = scan_system_table(&mut store, &view)
+        .expect("history rows scan")
+        .into_iter()
+        .map(|(key, value)| {
+            SystemRow::parse_in_timezone(&view, &key, &value, Some(&timezone))
+                .expect("history row decodes")
+        })
+        .filter(|row| row.i64("table_id").unwrap() == Some(table_id))
+        .map(|row| {
+            assert_eq!(row.u64("version").unwrap(), Some(version));
+            (
+                row.i64("seq_no").unwrap().expect("sequence number"),
+                row.bytes("stats_data")
+                    .unwrap()
+                    .expect("compressed statistics block"),
+            )
+        })
+        .collect::<Vec<_>>();
+    blocks.sort_by_key(|(sequence, _)| *sequence);
+    let restored = tidb_executor::load_stats::blocks_to_json_table(
+        &blocks.into_iter().map(|(_, block)| block).collect::<Vec<_>>(),
+    )
+    .expect("historical statistics JSON restores");
+    assert_eq!(restored, json);
 }
