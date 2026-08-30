@@ -129,9 +129,10 @@ fn remap_partition_indices(
         .filter_map(|index| partition.overlapping_dropping_partition_index(index))
         .filter(|index| {
             partition_names.is_empty()
-                || partition_names
-                    .iter()
-                    .any(|name| name.eq_ignore_ascii_case(&partition.definitions[*index].name))
+                || partition_names.iter().any(|name| {
+                    tidb_ast::CiString::new(name)
+                        == tidb_ast::CiString::new(&partition.definitions[*index].name)
+                })
         })
         .filter(|index| used_ids.insert(partition.definitions[*index].id))
         .collect()
@@ -277,6 +278,89 @@ fn list_columns_pruned_ids(
     )
 }
 
+fn partition_indices_for_spec(
+    partition: &crate::partition_routing::PartitionSpec,
+    source: &tidb_planner::logical::DataSource,
+    builder: &RealFunctionBuilder<'_, crate::StmtContext>,
+    context: &crate::StmtContext,
+) -> Result<Vec<usize>, tidb_planner::plan_base::PlanError> {
+    let mut surviving = (0..partition.definitions.len()).collect::<Vec<_>>();
+    if source.all_conds.is_empty() || partition.dependencies.is_empty() {
+        return Ok(remap_partition_indices(
+            partition,
+            &source.partition_names,
+            0..partition.definitions.len(),
+        ));
+    }
+    let columns = partition
+        .dependencies
+        .iter()
+        .map(|dependency| {
+            let dependency = tidb_ast::CiString::new(dependency);
+            source
+                .table_columns
+                .iter()
+                .find(|column| {
+                    column
+                        .orig_name
+                        .rsplit('.')
+                        .next()
+                        .is_some_and(|name| tidb_ast::CiString::new(name) == dependency)
+                })
+                .cloned()
+        })
+        .collect::<Option<Vec<_>>>();
+    let Some(columns) = columns else {
+        return Ok(remap_partition_indices(
+            partition,
+            &source.partition_names,
+            0..partition.definitions.len(),
+        ));
+    };
+    let conditions = source
+        .all_conds
+        .iter()
+        .map(|condition| tidb_expr::expr_util::push_not::push_down_not(condition, builder))
+        .collect::<Vec<_>>();
+    if matches!(
+        partition.kind,
+        crate::partition_routing::PartitionKind::ListColumns { .. }
+    ) {
+        if let Some(ids) = list_columns_pruned_ids(partition, &conditions, &columns)? {
+            surviving.retain(|index| ids.contains(&partition.definitions[*index].id));
+        }
+        return Ok(remap_partition_indices(
+            partition,
+            &source.partition_names,
+            surviving,
+        ));
+    }
+    let lengths = vec![tidb_datatype::UNSPECIFIED_LENGTH; columns.len()];
+    let Ok(detached) = tidb_planner::ranger::detacher::detach_cond_and_build_range_for_partition(
+        &conditions,
+        &columns,
+        &lengths,
+        0,
+    ) else {
+        return Ok(remap_partition_indices(
+            partition,
+            &source.partition_names,
+            0..partition.definitions.len(),
+        ));
+    };
+    let pruned =
+        crate::partition_pruning::pruned_ids_from_ranger(partition, &detached.ranges, context)
+            .map_err(|error| tidb_planner::plan_base::PlanError::internal(format!("{error:?}")))?;
+    if let Some(ids) = pruned {
+        surviving.retain(|index| ids.contains(&partition.definitions[*index].id));
+    }
+    Ok(remap_partition_indices(
+        partition,
+        &source.partition_names,
+        surviving,
+    ))
+}
+
 #[cfg(test)]
 mod list_columns_pruning_tests {
     use super::*;
@@ -411,6 +495,24 @@ mod list_columns_pruning_tests {
         assert!(
             remap_partition_indices(&spec, &[], [0]).is_empty(),
             "Go skips a dropping definition with no readable overlap"
+        );
+    }
+
+    #[test]
+    fn partition_pruning_fallback_keeps_explicit_partition_names() {
+        let spec = list_columns_spec();
+        let mut source = tidb_planner::logical::DataSource::default();
+        source.partition_names = vec!["p1".to_owned()];
+        source.all_conds = vec![Expression::Constant(Constant::new(
+            Datum::Int(1),
+            FieldType::new(FieldTypeCode::Tiny),
+        ))];
+        let context = crate::StmtContext::for_query();
+        let builder = RealFunctionBuilder::new(&context);
+
+        assert_eq!(
+            partition_indices_for_spec(&spec, &source, &builder, &context).unwrap(),
+            vec![1]
         );
     }
 }
@@ -1259,79 +1361,7 @@ fn optimize_built_logical(
                     "partition processor received an unpartitioned table",
                 )
             })?;
-            let mut surviving = (0..partition.definitions.len()).collect::<Vec<_>>();
-            if source.all_conds.is_empty() || partition.dependencies.is_empty() {
-                return Ok(remap_partition_indices(
-                    partition,
-                    &source.partition_names,
-                    surviving,
-                ));
-            }
-            let columns = partition
-                .dependencies
-                .iter()
-                .map(|dependency| {
-                    source
-                        .table_columns
-                        .iter()
-                        .find(|column| {
-                            column
-                                .orig_name
-                                .rsplit('.')
-                                .next()
-                                .is_some_and(|name| name.eq_ignore_ascii_case(dependency))
-                        })
-                        .cloned()
-                })
-                .collect::<Option<Vec<_>>>();
-            let Some(columns) = columns else {
-                return Ok(surviving);
-            };
-            let conditions = source
-                .all_conds
-                .iter()
-                .map(|condition| {
-                    tidb_expr::expr_util::push_not::push_down_not(condition, self.builder)
-                })
-                .collect::<Vec<_>>();
-            if matches!(
-                partition.kind,
-                crate::partition_routing::PartitionKind::ListColumns { .. }
-            ) {
-                if let Some(ids) = list_columns_pruned_ids(partition, &conditions, &columns)? {
-                    surviving.retain(|index| ids.contains(&partition.definitions[*index].id));
-                }
-                return Ok(remap_partition_indices(
-                    partition,
-                    &source.partition_names,
-                    surviving,
-                ));
-            }
-            let lengths = vec![tidb_datatype::UNSPECIFIED_LENGTH; columns.len()];
-            let Ok(detached) =
-                tidb_planner::ranger::detacher::detach_cond_and_build_range_for_partition(
-                    &conditions,
-                    &columns,
-                    &lengths,
-                    0,
-                )
-            else {
-                return Ok(surviving);
-            };
-            let pruned = crate::partition_pruning::pruned_ids_from_ranger(
-                partition,
-                &detached.ranges,
-                self.context,
-            )
-            .map_err(|error| tidb_planner::plan_base::PlanError::internal(format!("{error:?}")))?;
-            if let Some(ids) = pruned {
-                surviving.retain(|index| ids.contains(&partition.definitions[*index].id));
-            }
-            Ok(remap_partition_indices(
-                partition,
-                &source.partition_names,
-                surviving,
-            ))
+            partition_indices_for_spec(partition, source, self.builder, self.context)
         }
     }
 
