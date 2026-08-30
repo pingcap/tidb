@@ -531,9 +531,6 @@ pub fn plan_column_stats_usage_write<S: MetaSnapshot>(
     let table = locate(catalog, "column_stats_usage")?;
     let mut rows_by_table = BTreeMap::new();
     for item in usage.keys() {
-        if item.is_index {
-            continue;
-        }
         if !rows_by_table.contains_key(&item.table_id) {
             rows_by_table.insert(
                 item.table_id,
@@ -542,9 +539,6 @@ pub fn plan_column_stats_usage_write<S: MetaSnapshot>(
         }
     }
     for (item, times) in usage {
-        if item.is_index {
-            continue;
-        }
         let rows = rows_by_table
             .get_mut(&item.table_id)
             .expect("the table's rows were opened above");

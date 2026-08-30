@@ -24,23 +24,24 @@
 //! PESSIMISTIC` ... `COMMIT`), and enforces no mutation *count* on it at all --
 //! only the byte limits. This test states the same for this node's path.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use tidb_ast::CiString;
 use tidb_datatype::{Datum, Time, TimeType};
 use tidb_exec::cluster_catalog::{
     load_cluster_catalog, ClusterCatalogError, MetaPairs, MetaSnapshot,
 };
+use tidb_exec::cluster_predicate_column::ColumnStatsTimeInfo;
 use tidb_exec::cluster_predicate_column::{
     load_column_stats_usage, load_column_stats_usage_for_table,
 };
 use tidb_exec::cluster_stats_load::{ClusterStatsItem, ClusterStatsLoader, ClusterTableStats};
 use tidb_exec::cluster_stats_write::{
-    load_analyze_options, plan_analyze_options_write, plan_get_predicate_columns,
-    plan_historical_stats_meta_write, plan_independent_index_stats_write,
-    plan_loaded_stats_item_write, plan_loaded_stats_meta_write, plan_loaded_stats_usage_write,
-    plan_partial_stats_write, plan_partition_stats_write, plan_stats_meta_version_refresh,
-    plan_stats_write,
+    load_analyze_options, plan_analyze_options_write, plan_column_stats_usage_write,
+    plan_get_predicate_columns, plan_historical_stats_meta_write,
+    plan_independent_index_stats_write, plan_loaded_stats_item_write, plan_loaded_stats_meta_write,
+    plan_loaded_stats_usage_write, plan_partial_stats_write, plan_partition_stats_write,
+    plan_stats_meta_version_refresh, plan_stats_write,
 };
 use tidb_exec::mysql_bootstrap::{plan_mysql_bootstrap, BootstrapEnvironment, BootstrapWrite};
 use tidb_exec::mysql_system_tables::{scan_system_table, SystemRow, SystemTableView};
@@ -1202,6 +1203,34 @@ fn loaded_stats_usage_replaces_timestamps_in_one_plan() {
         row.datum("last_analyzed_at").unwrap(),
         Some(&Datum::Time(expected))
     );
+}
+
+#[test]
+fn column_stats_usage_write_does_not_filter_the_table_item_kind() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let table_id = 4242;
+    let usage = HashMap::from([(
+        tidb_model::TableItemID {
+            table_id,
+            id: 99,
+            is_index: true,
+            is_sync_load_failed: false,
+        },
+        ColumnStatsTimeInfo::default(),
+    )]);
+    let plan = plan_column_stats_usage_write(&mut store, &catalog, &usage, now())
+        .expect("Go writes every supplied TableItemID");
+    apply_mutations(&mut store, &plan.mutations);
+
+    let loaded = load_column_stats_usage_for_table(
+        &mut store,
+        &catalog,
+        &tidb_datatype::SessionTimeZone::utc(),
+        table_id,
+    )
+    .expect("usage reloads");
+    assert!(loaded.keys().any(|item| item.id == 99));
 }
 
 /// Pinned predicatecolumn reads project UTC instants into the requested
