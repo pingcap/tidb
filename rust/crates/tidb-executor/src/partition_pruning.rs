@@ -22,15 +22,13 @@
 //! of physical table ids a scan reads, and the scan applies whichever
 //! narrowing it was handed.
 //!
-//! # Pruning is a RANGE question, answered by the crate's range algebra
+//! # Pruning consumes the ranger's intervals over Go's pruning columns
 //!
-//! Go prunes with `pkg/util/ranger`, and so does this: the caller hands over
-//! the [`tidb_executor::index_range`](crate::index_range) intervals it
-//! already built for the partition expression's column, and this module maps
-//! each interval onto the partition ordinals it can intersect. There is no
-//! second range implementation here -- the point algebra, the exclusivity
-//! and the NULL handling all belong to `index_range` and are read, not
-//! reimplemented.
+//! The caller hands over [`IndexRange`] intervals built for the columns read
+//! by the partition expression. As pinned Go does, scalar RANGE pruning
+//! evaluates the full expression for points and for the supported monotone
+//! functions, HASH and LIST evaluate points, and COLUMNS methods compare the
+//! ranger tuples directly.
 //!
 //! # Why pruning may only ever read a SUPERSET
 //!
@@ -79,14 +77,13 @@ pub fn ids_for_selected_partitions(
 }
 
 /// The physical ids a scan restricted by `ranges` over the partition
-/// expression must read, or `None` when nothing can be pruned. RANGE maps
-/// intervals onto definition bounds; HASH maps point and short integer
-/// intervals through the same router used by writes.
+/// expression's pruning columns must read, or `None` when nothing can be
+/// pruned. RANGE maps evaluated expression intervals onto definition bounds;
+/// HASH maps point and short integer intervals through Go's pruning rules.
 ///
-/// `ranges` are the [`IndexRange`] intervals the RANGER built for the
-/// partition expression's OWN value -- the same intervals a single-column
-/// index on it would take, and the caller must pass the ranger's output
-/// rather than a list it assembled. `None` back means "read everything",
+/// `ranges` are the [`IndexRange`] intervals the ranger built for Go's
+/// pruning columns, and the caller must pass the ranger's output rather than
+/// a list it assembled. `None` back means "read everything",
 /// which is what an unprunable table and a method without pruning reduce to;
 /// an unprunable PREDICATE never reaches here, because the ranger answers
 /// `None` for it one level up.
@@ -119,7 +116,7 @@ pub fn pruned_ids(
         PartitionKind::Range {
             less_than,
             unsigned,
-        } => Some(prune_range_ids(spec, ranges, less_than, *unsigned)),
+        } => Some(prune_range_ids(spec, ranges, less_than, *unsigned, ctx)),
         PartitionKind::RangeColumns {
             less_than,
             field_types,
@@ -704,7 +701,48 @@ fn prune_range_ids(
     ranges: &[IndexRange],
     less_than: &[RangeBound],
     unsigned: bool,
+    ctx: &impl tidb_expr::Columns,
 ) -> Vec<i64> {
+    let transformed = if spec.expr.as_column().is_some() {
+        ranges.to_vec()
+    } else if ranges.iter().all(|range| range.is_point(true)) {
+        match ranges
+            .iter()
+            .map(|range| evaluate_range_partition_point(spec, range, ctx))
+            .collect::<Option<Vec<_>>>()
+        {
+            Some(ranges) => ranges,
+            None => {
+                return spec
+                    .definitions
+                    .iter()
+                    .map(|definition| definition.id)
+                    .collect();
+            }
+        }
+    } else {
+        let Some(mode) = range_partition_monotone_mode(&spec.expr) else {
+            return spec
+                .definitions
+                .iter()
+                .map(|definition| definition.id)
+                .collect();
+        };
+        match ranges
+            .iter()
+            .map(|range| transform_monotone_range(spec, range, mode, ctx))
+            .collect::<Option<Vec<_>>>()
+        {
+            Some(ranges) => ranges,
+            None => {
+                return spec
+                    .definitions
+                    .iter()
+                    .map(|definition| definition.id)
+                    .collect();
+            }
+        }
+    };
     let mut kept = Vec::with_capacity(spec.definitions.len());
     for (index, definition) in spec.definitions.iter().enumerate() {
         let low = if index == 0 {
@@ -722,7 +760,7 @@ fn prune_range_ids(
             RangeBound::Value(value) => Some(value),
             RangeBound::MaxValue => None,
         };
-        if ranges.iter().any(|range| {
+        if transformed.iter().any(|range| {
             (index == 0 && interval_includes_null(range))
                 || (!interval_is_null_point(range)
                     && range_meets_partition(range, low, high, unsigned))
@@ -731,6 +769,142 @@ fn prune_range_ids(
         }
     }
     kept
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum RangeMonotoneMode {
+    Strict,
+    NonStrict,
+}
+
+fn range_partition_monotone_mode(
+    expression: &tidb_expr::expression::Expression,
+) -> Option<RangeMonotoneMode> {
+    use tidb_expr::expression::Expression;
+
+    let Expression::ScalarFunction(function) = expression else {
+        return expression.as_column().map(|_| RangeMonotoneMode::Strict);
+    };
+    let name = function.func_name.lowercase();
+    let args = function.get_args();
+    match name {
+        "year" | "to_days" if matches!(args.first(), Some(Expression::Column(_))) => {
+            Some(RangeMonotoneMode::NonStrict)
+        }
+        "unix_timestamp" | "plus" | "minus"
+            if matches!(args.first(), Some(Expression::Column(_))) =>
+        {
+            Some(RangeMonotoneMode::Strict)
+        }
+        "floor" => {
+            let Some(Expression::ScalarFunction(unix_timestamp)) = args.first() else {
+                return None;
+            };
+            (unix_timestamp.func_name.lowercase() == "unix_timestamp"
+                && matches!(
+                    unix_timestamp.get_args().first(),
+                    Some(Expression::Column(_))
+                ))
+            .then_some(RangeMonotoneMode::NonStrict)
+        }
+        "extract" => extract_partition_monotone_mode(args),
+        _ => None,
+    }
+}
+
+fn extract_partition_monotone_mode(
+    args: &[tidb_expr::expression::Expression],
+) -> Option<RangeMonotoneMode> {
+    use tidb_datatype::FieldTypeCode;
+    use tidb_expr::expression::Expression;
+
+    let [Expression::Constant(unit), value] = args else {
+        return None;
+    };
+    let unit = unit.value.as_raw_bytes()?;
+    let column = match value {
+        Expression::Column(column) => column,
+        Expression::ScalarFunction(cast)
+            if cast.func_name.lowercase() == "cast"
+                && cast.get_static_type()?.code() == FieldTypeCode::Duration
+                && matches!(cast.get_args().first(), Some(Expression::Column(_))) =>
+        {
+            cast.get_args().first()?.as_column()?
+        }
+        _ => return None,
+    };
+    let code = column.get_static_type()?.code();
+    let unit = std::str::from_utf8(unit).ok()?.to_ascii_uppercase();
+    let monotone = match code {
+        FieldTypeCode::Date | FieldTypeCode::Datetime => {
+            matches!(unit.as_str(), "YEAR" | "YEAR_MONTH")
+        }
+        FieldTypeCode::Duration => matches!(
+            unit.as_str(),
+            "HOUR" | "HOUR_MINUTE" | "HOUR_SECOND" | "HOUR_MICROSECOND"
+        ),
+        _ => false,
+    };
+    monotone.then_some(RangeMonotoneMode::NonStrict)
+}
+
+fn evaluate_range_partition_point(
+    spec: &PartitionSpec,
+    range: &IndexRange,
+    ctx: &impl tidb_expr::Columns,
+) -> Option<IndexRange> {
+    if range.high.len() != spec.dependencies.len() {
+        return None;
+    }
+    let row = tidb_chunk::mutrow::MutRow::from_datums(&range.high);
+    let value = spec.expr.eval(ctx, row.to_row()).ok()?;
+    range_partition_integer(value).map(|value| IndexRange {
+        low: vec![value.clone()],
+        high: vec![value],
+        low_exclusive: false,
+        high_exclusive: false,
+    })
+}
+
+fn transform_monotone_range(
+    spec: &PartitionSpec,
+    range: &IndexRange,
+    mode: RangeMonotoneMode,
+    ctx: &impl tidb_expr::Columns,
+) -> Option<IndexRange> {
+    if range.low.len() != 1 || range.high.len() != 1 || spec.dependencies.len() != 1 {
+        return None;
+    }
+    let low = evaluate_range_partition_endpoint(spec, &range.low[0], ctx)?;
+    let high = evaluate_range_partition_endpoint(spec, &range.high[0], ctx)?;
+    Some(IndexRange {
+        low: vec![low],
+        high: vec![high],
+        low_exclusive: range.low_exclusive && mode == RangeMonotoneMode::Strict,
+        high_exclusive: range.high_exclusive && mode == RangeMonotoneMode::Strict,
+    })
+}
+
+fn evaluate_range_partition_endpoint(
+    spec: &PartitionSpec,
+    value: &Datum,
+    ctx: &impl tidb_expr::Columns,
+) -> Option<Datum> {
+    if matches!(value, Datum::Null | Datum::MinNotNull | Datum::MaxValue) {
+        return Some(value.clone());
+    }
+    let row = tidb_chunk::mutrow::MutRow::from_datums(std::slice::from_ref(value));
+    range_partition_integer(spec.expr.eval(ctx, row.to_row()).ok()?)
+}
+
+fn range_partition_integer(value: Datum) -> Option<Datum> {
+    match value {
+        Datum::Null | Datum::Int(_) | Datum::UInt(_) => Some(value),
+        Datum::Bit(value) | Datum::BinaryLiteral(value) => {
+            Some(Datum::UInt(value.to_int().value()))
+        }
+        _ => None,
+    }
 }
 
 /// Go `getUsedHashPartitions`. Points evaluate the complete partition
@@ -954,12 +1128,14 @@ mod tests {
                 unsigned: false,
             },
             expr_text: "`a`".to_owned(),
-            expr: tidb_expr::expression::Expression::Constant(
-                tidb_expr::expression::Constant::new(
-                    Datum::Int(0),
+            expr: {
+                let mut column = tidb_expr::column::Column::new(
+                    1,
                     tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
-                ),
-            ),
+                );
+                column.index = 0;
+                tidb_expr::expression::Expression::Column(column)
+            },
             dependencies: vec!["a".to_owned()],
             definitions: vec![
                 PartitionDef {
@@ -1162,6 +1338,104 @@ mod tests {
                 "a = {value}"
             );
         }
+    }
+
+    #[test]
+    fn range_pruning_evaluates_go_supported_partition_functions() {
+        use tidb_ast::CiString;
+        use tidb_datatype::{FieldType, FieldTypeCode};
+        use tidb_expr::{
+            column::Column, constant::Constant, expression::Expression,
+            scalar_function::ScalarFunction,
+        };
+
+        let mut spec = range_table();
+        let field_type = FieldType::new(FieldTypeCode::LongLong);
+        let mut column = Column::new(1, field_type.clone());
+        column.index = 0;
+        spec.expr = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("plus"),
+            field_type.clone(),
+            vec![
+                Expression::Column(column.clone()),
+                Expression::Constant(Constant::new(Datum::Int(1), field_type.clone())),
+            ],
+        ));
+
+        assert_eq!(
+            pruned_ids(
+                &spec,
+                &[interval(Datum::Int(9), false, Datum::Int(9), false)]
+            ),
+            Some(vec![102]),
+            "RANGE(a + 1) must compare the evaluated value at an exact point"
+        );
+        assert_eq!(
+            pruned_ids(
+                &spec,
+                &[interval(Datum::Int(8), false, Datum::Int(9), false)]
+            ),
+            Some(vec![101, 102]),
+            "Go transforms both endpoints of a strictly monotone partition function"
+        );
+
+        spec.expr = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("mod"),
+            field_type.clone(),
+            vec![
+                Expression::Column(column),
+                Expression::Constant(Constant::new(Datum::Int(2), field_type)),
+            ],
+        ));
+        assert_eq!(
+            pruned_ids(
+                &spec,
+                &[interval(Datum::Int(21), false, Datum::Int(21), false)]
+            ),
+            Some(vec![101]),
+            "Go evaluates equality constants even for a non-monotone function"
+        );
+        assert_eq!(
+            pruned_ids(
+                &spec,
+                &[interval(Datum::Int(20), false, Datum::Int(21), false)]
+            ),
+            Some(vec![101, 102, 103]),
+            "Go cannot prune a non-point predicate through a non-monotone function"
+        );
+
+        let datetime_type = FieldType::new(FieldTypeCode::Datetime);
+        let mut datetime_column = Column::new(1, datetime_type);
+        datetime_column.index = 0;
+        spec.kind = PartitionKind::Range {
+            less_than: vec![
+                RangeBound::Value(2007),
+                RangeBound::Value(2008),
+                RangeBound::MaxValue,
+            ],
+            unsigned: false,
+        };
+        spec.expr = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("year"),
+            FieldType::new(FieldTypeCode::LongLong),
+            vec![Expression::Column(datetime_column)],
+        ));
+        let march_2007 = Datum::Time(
+            tidb_datatype::Time::new(
+                tidb_datatype::CoreTime::from_date(2007, 3, 8, 0, 0, 0, 0),
+                tidb_datatype::TimeType::DateTime,
+                0,
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            pruned_ids(
+                &spec,
+                &[interval(Datum::MinNotNull, false, march_2007, true)]
+            ),
+            Some(vec![101, 102]),
+            "Go relaxes < to <= through a non-strict monotone function"
+        );
     }
 
     #[test]
