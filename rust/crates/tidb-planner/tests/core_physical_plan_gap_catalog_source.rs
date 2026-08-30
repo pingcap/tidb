@@ -31,9 +31,10 @@
 //!   SQL→plan builder exists in this crate — every assertion below would be a
 //!   guess.
 //! * `pkg/planner/core/operator/logicalop/logicalop_test/
-//!   logical_operator_test.go` (:34, :77, :136, :160) — clone/copy-on-write
-//!   aliasing semantics unrepresentable over owned-value operators, plus two
-//!   session/golden suites.
+//!   logical_operator_test.go` (:34, :77) — clone aliasing semantics
+//!   unrepresentable over owned-value operators, plus two session/golden
+//!   suites. The copy-on-write tests at :136 and :160 are executable in
+//!   `logicalop_rule_util_copy_on_write_source.rs`.
 //! * `pkg/planner/core/operator/logicalop/logicalop_test/plan_execute_test.go`
 //!   (:23 TestIssue58743) — result-set equivalence through the executor.
 //! * `pkg/planner/core/operator/physicalop/{fragment_test.go,
@@ -204,28 +205,6 @@ fn logical_schema_struct_copy_shares_schema_pointer_and_children() {}
 #[test]
 #[ignore]
 fn logical_apply_struct_copy_shares_equal_conditions_backing_array() {}
-
-/// GO PARITY GAP port of
-/// `...logical_operator_test.go:136 TestReplaceColumnOfExprCopyOnWrite`.
-///
-/// go-parity-gap: `ruleutil.ReplaceColumnOfExpr`
-/// (`pkg/planner/core/rule/util/expression.go_utils`) builds a NEW scalar
-/// function whose args point at dstCol while leaving the ORIGINAL untouched;
-/// the helper is not transcreated (see `src/logical/apply.rs` module header,
-/// "ReplaceExprColumns needs ruleutil.ResolveExprAndReplace").
-#[test]
-#[ignore]
-fn replace_column_of_expr_copies_on_write_instead_of_mutating() {}
-
-/// GO PARITY GAP port of
-/// `...logical_operator_test.go:160 TestResolveExprAndReplaceCopyOnWrite`.
-///
-/// go-parity-gap: `ruleutil.ResolveExprAndReplace(expr, hashCode->col map)`
-/// rewrites matches by column HashCode, again copy-on-write; same missing
-/// ruleutil surface.
-#[test]
-#[ignore]
-fn resolve_expr_and_replace_rewrites_by_hash_code_without_mutating_source() {}
 
 /// GO PARITY GAP port of
 /// `...logical_operator_test.go:199 TestLogicalProjectionPushDownTopN`.

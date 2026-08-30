@@ -854,7 +854,7 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
                                 .into_iter()
                                 .map(|predicate| {
                                     super::rule_util::resolve_expr_and_replace(
-                                        predicate,
+                                        &predicate,
                                         &class.column_map,
                                     )
                                 })

@@ -282,7 +282,7 @@ fn merge_adjacent_projections(
     let options = SubstituteOptions::new(builder);
     for expression in &mut projection.exprs {
         let replaced =
-            super::rule_util::replace_column_of_expr(expression, &child.exprs, &child_schema).0;
+            super::rule_util::replace_column_of_expr(expression, &child.exprs, &child_schema);
         let mut folded =
             tidb_expr::expr_util::fold::fold_constant(&replaced, &tidb_expr::NoColumns, &options);
         preserve_not_null_flag(&replaced, &mut folded);

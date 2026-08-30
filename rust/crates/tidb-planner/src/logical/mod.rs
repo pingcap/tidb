@@ -866,7 +866,7 @@ impl LogicalPlan {
                         let mut columns = tidb_expr::simple_expr::extract_columns(predicate);
                         columns.len() == 1 && replace.contains_key(columns[0].hash_code())
                     })
-                    .map(|predicate| rule_util::resolve_expr_and_replace(predicate, &replace))
+                    .map(|predicate| rule_util::resolve_expr_and_replace(&predicate, &replace))
                     .collect()
             }
             Self::Join(_)

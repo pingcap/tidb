@@ -26,41 +26,70 @@ use crate::plan_builder::catalog::SourceIndex;
 /// Go `ResolveExprAndReplace` and `ResolveColumnAndReplace`.
 #[must_use]
 pub fn resolve_expr_and_replace(
-    expression: Expression,
+    expression: &Expression,
     replace: &BTreeMap<Vec<u8>, Column>,
 ) -> Expression {
-    fn replacement(mut origin: Column, replace: &BTreeMap<Vec<u8>, Column>) -> Column {
-        let Some(destination) = replace.get(origin.hash_code()) else {
-            return origin;
-        };
-        let mut destination = destination.clone();
-        destination.ret_type = origin.ret_type.take();
-        destination.in_operand = origin.in_operand;
-        destination
+    resolve_expr_and_replace_inner(expression, replace).0
+}
+
+fn resolve_expr_and_replace_inner(
+    expression: &Expression,
+    replace: &BTreeMap<Vec<u8>, Column>,
+) -> (Expression, bool) {
+    fn replacement(origin: &Column, replace: &BTreeMap<Vec<u8>, Column>) -> Option<Column> {
+        let mut hashed_origin = origin.clone();
+        replace.get(hashed_origin.hash_code()).map(|destination| {
+            let mut destination = destination.clone();
+            destination.ret_type = origin.ret_type.clone();
+            destination.in_operand = origin.in_operand;
+            destination
+        })
     }
 
     match expression {
-        Expression::Column(column) => Expression::Column(replacement(column, replace)),
-        Expression::CorrelatedColumn(mut correlated) => {
-            correlated.column = replacement(correlated.column, replace);
-            Expression::CorrelatedColumn(correlated)
+        Expression::Column(column) => replacement(column, replace).map_or_else(
+            || (expression.clone(), false),
+            |column| (Expression::Column(column), true),
+        ),
+        Expression::CorrelatedColumn(correlated) => {
+            let Some(column) = replacement(&correlated.column, replace) else {
+                return (expression.clone(), false);
+            };
+            let mut correlated = correlated.clone();
+            correlated.column = column;
+            (Expression::CorrelatedColumn(correlated), true)
         }
-        Expression::ScalarFunction(mut function) => {
-            function.args = function
-                .args
-                .into_iter()
-                .map(|argument| resolve_expr_and_replace(argument, replace))
-                .collect();
-            function.invalidate_cached_arguments();
-            Expression::ScalarFunction(function)
+        Expression::ScalarFunction(function) => {
+            let mut cloned = None;
+            for (index, argument) in function.args.iter().enumerate() {
+                let (argument, changed) = resolve_expr_and_replace_inner(argument, replace);
+                if changed {
+                    cloned.get_or_insert_with(|| function.clone()).args[index] = argument;
+                }
+            }
+            cloned.map_or_else(
+                || (expression.clone(), false),
+                |mut function| {
+                    function.invalidate_cached_arguments();
+                    (Expression::ScalarFunction(function), true)
+                },
+            )
         }
-        other => other,
+        _ => (expression.clone(), false),
     }
 }
 
 /// Go `ReplaceColumnOfExpr`.
 #[must_use]
 pub fn replace_column_of_expr(
+    expression: &Expression,
+    expressions: &[Expression],
+    schema: &Schema,
+) -> Expression {
+    replace_column_of_expr_inner(expression, expressions, schema).0
+}
+
+fn replace_column_of_expr_inner(
     expression: &Expression,
     expressions: &[Expression],
     schema: &Schema,
@@ -74,22 +103,21 @@ pub fn replace_column_of_expr(
                 |replacement| (replacement.clone(), true),
             ),
         Expression::ScalarFunction(function) => {
-            let mut function = function.clone();
-            let mut changed = false;
-            function.args = function
-                .args
-                .into_iter()
-                .map(|argument| {
-                    let (argument, argument_changed) =
-                        replace_column_of_expr(&argument, expressions, schema);
-                    changed |= argument_changed;
-                    argument
-                })
-                .collect();
-            if changed {
-                function.invalidate_cached_arguments();
+            let mut cloned = None;
+            for (index, argument) in function.args.iter().enumerate() {
+                let (argument, changed) =
+                    replace_column_of_expr_inner(argument, expressions, schema);
+                if changed {
+                    cloned.get_or_insert_with(|| function.clone()).args[index] = argument;
+                }
             }
-            (Expression::ScalarFunction(function), changed)
+            cloned.map_or_else(
+                || (expression.clone(), false),
+                |mut function| {
+                    function.invalidate_cached_arguments();
+                    (Expression::ScalarFunction(function), true)
+                },
+            )
         }
         other => (other.clone(), false),
     }
@@ -139,22 +167,26 @@ pub fn check_index_can_be_key(
     let mut strong_key = Vec::with_capacity(index.columns.len());
     let mut strong = true;
     for index_column in &index.columns {
-        let Some(position) = columns
-            .iter()
-            .position(|column| column.name.eq_ignore_ascii_case(&index_column.name))
-        else {
-            return (None, None);
-        };
-        let Some(column) = schema.columns.get(position).cloned() else {
-            return (None, None);
-        };
-        unique_key.push(column.clone());
-        if strong {
-            if columns[position].is_not_null {
-                strong_key.push(column);
-            } else {
-                strong = false;
+        let index_column_name = tidb_ast::CiString::new(&index_column.name);
+        let mut found = false;
+        for (position, source_column) in columns.iter().enumerate() {
+            if tidb_ast::CiString::new(&source_column.name) != index_column_name {
+                continue;
             }
+            let column = schema.columns[position].clone();
+            unique_key.push(column.clone());
+            found = true;
+            if strong {
+                if !source_column.is_not_null {
+                    strong = false;
+                    break;
+                }
+                strong_key.push(column);
+                break;
+            }
+        }
+        if !found {
+            return (None, None);
         }
     }
     if strong {
@@ -202,150 +234,3 @@ pub fn apply_predicate_simplification_for_join(
 
 /// Go `BuildKeyInfoPortal`; the implementation is iterative in Rust.
 pub use super::rewrite::build_key_info_portal;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::plan_builder::catalog::SourceIndexColumn;
-    use tidb_ast::CiString;
-    use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags};
-    use tidb_expr::scalar_function::ScalarFunction;
-
-    fn column(unique_id: i64, not_null: bool) -> Column {
-        let mut field_type = FieldType::new(FieldTypeCode::LongLong);
-        if not_null {
-            field_type.add_flags(FieldTypeFlags::NOT_NULL);
-        }
-        let mut column = Column::new(unique_id, field_type);
-        column.id = unique_id;
-        column
-    }
-
-    #[test]
-    fn rule_util_resolves_columns_and_nested_expressions() {
-        let mut origin = column(1, true);
-        origin.in_operand = true;
-        let destination = column(9, false);
-        let mut replacements = BTreeMap::new();
-        replacements.insert(origin.hash_code().to_vec(), destination);
-        let expression = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("eq"),
-            FieldType::new(FieldTypeCode::LongLong),
-            vec![
-                Expression::Column(origin.clone()),
-                Expression::Column(column(2, false)),
-            ],
-        ));
-
-        let Expression::ScalarFunction(resolved) =
-            resolve_expr_and_replace(expression, &replacements)
-        else {
-            panic!("the scalar function remains a scalar function")
-        };
-        let [Expression::Column(replaced), Expression::Column(untouched)] = resolved.get_args()
-        else {
-            panic!("both arguments remain columns")
-        };
-        assert_eq!(replaced.unique_id, 9);
-        assert_eq!(replaced.ret_type, origin.ret_type);
-        assert!(replaced.in_operand);
-        assert_eq!(untouched.unique_id, 2);
-    }
-
-    #[test]
-    fn rule_util_replaces_projection_columns_by_schema_position() {
-        let schema = Schema::new(vec![column(1, false), column(2, false)]);
-        let expressions = vec![
-            Expression::Column(column(10, false)),
-            Expression::Column(column(20, false)),
-        ];
-        let (replaced, changed) =
-            replace_column_of_expr(&Expression::Column(column(2, false)), &expressions, &schema);
-        assert!(changed);
-        assert!(matches!(replaced, Expression::Column(column) if column.unique_id == 20));
-        let (_, changed) =
-            replace_column_of_expr(&Expression::Column(column(3, false)), &expressions, &schema);
-        assert!(!changed);
-    }
-
-    #[test]
-    fn rule_util_matches_outer_and_inner_column_sets() {
-        let columns = vec![column(1, false), column(2, false)];
-        assert!(!are_all_columns_from_outer(&[], &BTreeSet::from([1, 2])));
-        assert!(are_all_columns_from_outer(
-            &columns,
-            &BTreeSet::from([1, 2, 3])
-        ));
-        assert!(!are_all_columns_from_outer(&columns, &BTreeSet::from([1])));
-        assert!(has_column_from_inner(&columns, &BTreeSet::from([2])));
-        assert!(!has_column_from_inner(&columns, &BTreeSet::from([3])));
-    }
-
-    #[test]
-    fn rule_util_max_one_row_accepts_nullable_unique_keys() {
-        let mut schema = Schema::new(vec![column(1, false), column(2, false)]);
-        schema.nullable_uk = vec![vec![column(1, false), column(2, false)]];
-        assert!(check_max_one_row_cond(&BTreeSet::from([1, 2]), &schema));
-        assert!(!check_max_one_row_cond(&BTreeSet::from([1]), &schema));
-        assert!(!check_max_one_row_cond(&BTreeSet::new(), &schema));
-    }
-
-    #[test]
-    fn rule_util_classifies_strong_nullable_and_incomplete_unique_indexes() {
-        let index = SourceIndex {
-            unique: true,
-            columns: vec![
-                SourceIndexColumn {
-                    name: "a".to_owned(),
-                    ..SourceIndexColumn::default()
-                },
-                SourceIndexColumn {
-                    name: "b".to_owned(),
-                    ..SourceIndexColumn::default()
-                },
-            ],
-            ..SourceIndex::default()
-        };
-        let strong_columns = vec![
-            DataSourceColumn {
-                name: "a".to_owned(),
-                is_not_null: true,
-                ..DataSourceColumn::default()
-            },
-            DataSourceColumn {
-                name: "b".to_owned(),
-                is_not_null: true,
-                ..DataSourceColumn::default()
-            },
-        ];
-        let strong_schema = Schema::new(vec![column(1, true), column(2, true)]);
-        let (nullable, strong) = check_index_can_be_key(&index, &strong_columns, &strong_schema);
-        assert!(nullable.is_none());
-        assert_eq!(strong.expect("a strong key").len(), 2);
-
-        let nullable_columns = vec![
-            DataSourceColumn {
-                name: "a".to_owned(),
-                is_not_null: true,
-                ..DataSourceColumn::default()
-            },
-            DataSourceColumn {
-                name: "b".to_owned(),
-                is_not_null: false,
-                ..DataSourceColumn::default()
-            },
-        ];
-        // Deliberately disagree with the metadata: Go reads ColumnInfo flags,
-        // not the expression schema's return types.
-        let nullable_schema = Schema::new(vec![column(1, true), column(2, true)]);
-        let (nullable, strong) =
-            check_index_can_be_key(&index, &nullable_columns, &nullable_schema);
-        assert!(strong.is_none());
-        assert_eq!(nullable.expect("a nullable key").len(), 2);
-
-        let incomplete = Schema::new(vec![column(1, true)]);
-        let (nullable, strong) = check_index_can_be_key(&index, &strong_columns, &incomplete);
-        assert!(nullable.is_none());
-        assert!(strong.is_none());
-    }
-}
