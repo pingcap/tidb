@@ -210,6 +210,12 @@ pub struct AnalyzeStatement {
     pub default_columns: AnalyzeColumnChoice,
     /// Whether this statement uses Go's dynamic partition-pruning mode.
     pub dynamic_partition_prune: bool,
+    /// Pinned `tidb_skip_missing_partition_stats` value for global merging.
+    pub skip_missing_partition_stats: bool,
+    /// Pinned `tidb_enable_async_merge_global_stats` worker selection.
+    pub enable_async_merge_global_stats: bool,
+    /// Statement timezone used to decode column TopN candidates.
+    pub time_zone: tidb_datatype::SessionTimeZone,
     /// The effective knobs.
     pub options: AnalyzeOptions,
 }
@@ -524,6 +530,9 @@ pub fn lower_analyze_admin(
             persist_options: true,
             default_columns: AnalyzeColumnChoice::All,
             dynamic_partition_prune: true,
+            skip_missing_partition_stats: true,
+            enable_async_merge_global_stats: true,
+            time_zone: tidb_datatype::SessionTimeZone::utc(),
             options,
         });
     }

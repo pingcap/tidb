@@ -44,6 +44,7 @@ pub mod estimate;
 pub mod existence_map;
 pub mod fmsketch;
 pub mod fmsketch_codec;
+pub mod global_stats;
 mod go_pdqsort;
 mod go_stable_sort;
 pub mod histogram;
@@ -112,6 +113,10 @@ pub use fmsketch_codec::{
     hash_datum_with_error_policy, hash_row, hash_row_with_error_policy, insert_encoded_row,
     insert_encoded_value, insert_row_value, insert_row_value_with_error_policy, insert_value,
     insert_value_with_error_policy, FmSketchCodecError, FmSketchProto,
+};
+pub use global_stats::{
+    merge_partition_stats_item, merge_partition_topn, GlobalStatsItem, GlobalStatsMergeError,
+    GlobalStatsMergeMode, PartitionStatsItem,
 };
 pub use histogram::{Bucket, Histogram};
 pub use index::{copy_index, index_is_all_evicted, Index, IndexInfo};

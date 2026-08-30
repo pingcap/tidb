@@ -10,7 +10,7 @@
 //! `variable.SetMemQuotaAnalyze` (`pkg/executor/select.go:141`, the quota
 //! below).
 
-use tidb_exec::cluster_analyze::{AnalyzeStatement, MEM_QUOTA_ANALYZE_VARIABLE, SampleMemoryQuota};
+use tidb_exec::cluster_analyze::{AnalyzeStatement, SampleMemoryQuota, MEM_QUOTA_ANALYZE_VARIABLE};
 use tidb_exec::cluster_stats_lock::ClusterStatsLockStatement;
 use tidb_executor::analyze::panic_recovery::recover_analyze_panic;
 use tidb_session::privilege::GlobalPriv;
@@ -131,6 +131,17 @@ impl ClusterServerSession {
                 .vars()
                 .get_system("tidb_partition_prune_mode")
                 .is_ok_and(|value| value.eq_ignore_ascii_case("static"));
+            statement.skip_missing_partition_stats = self
+                .session
+                .vars()
+                .get_system(tidb_vardef::tidb_vars::TIDB_SKIP_MISSING_PARTITION_STATS)
+                .is_ok_and(|value| tidb_exec::option_values::tidb_opt_on(&value));
+            statement.enable_async_merge_global_stats = self
+                .session
+                .vars()
+                .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_ASYNC_MERGE_GLOBAL_STATS)
+                .is_ok_and(|value| tidb_exec::option_values::tidb_opt_on(&value));
+            statement.time_zone = self.session.session_time_zone();
             statement.options.memory_quota = memory_quota;
             let statement = &statement;
             let report = recover_analyze_panic(|| self.analyze.execute(statement))
@@ -153,6 +164,9 @@ impl ClusterServerSession {
             }
             if let Some(warning) = &report.option_save_warning {
                 self.session.append_routed_warning(1105, warning.clone());
+            }
+            if let Some((code, warning)) = &report.global_stats_warning {
+                self.session.append_routed_warning(*code, warning.clone());
             }
             eprintln!(
                 "{{\"event\":\"cluster_table_analyzed\",\"schema\":{},\"table\":{},\
