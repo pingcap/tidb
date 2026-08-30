@@ -136,13 +136,13 @@ pub fn resolve_cluster_analyze_statement<
     let mut transaction = opener
         .begin_read_only()
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-    let (table_id, saved) = {
+    let (table, saved) = {
         let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
         let catalog = load_cluster_catalog(&mut snapshot)
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         let table = find_statement_table(&catalog, statement)?;
         (
-            table.id,
+            table.clone(),
             load_analyze_options(&mut snapshot, &catalog, table, table.id)
                 .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?,
         )
@@ -152,10 +152,10 @@ pub fn resolve_cluster_analyze_statement<
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
 
     let saved = saved
-        .map(|saved| std::collections::HashMap::from([(table_id, saved)]))
+        .map(|saved| std::collections::HashMap::from([(table.id, saved)]))
         .unwrap_or_default();
     let options = resolve_analyze_options(
-        table_id,
+        table.id,
         &[],
         statement.raw_options,
         &statement.columns,
@@ -169,11 +169,47 @@ pub fn resolve_cluster_analyze_statement<
     .expect("the logical table option is always present");
     let mut resolved = statement.clone();
     resolved.raw_options = options.raw;
-    resolved.columns = options.columns;
+    resolved.columns = final_column_choice(&table, &options.columns)?;
     let memory_quota = statement.options.memory_quota;
     resolved.options = options.effective;
     resolved.options.memory_quota = memory_quota;
     Ok(resolved)
+}
+
+fn final_column_choice(
+    table: &tidb_model::table_info::TableInfo,
+    columns: &AnalyzeColumnChoice,
+) -> Result<AnalyzeColumnChoice, ClusterAnalyzeError> {
+    let AnalyzeColumnChoice::Explicit(names) = columns else {
+        return Ok(columns.clone());
+    };
+    let mut selected = HashSet::new();
+    for name in names {
+        let column = table
+            .cols()
+            .iter_deref()
+            .find(|column| column.read().name.lowercase() == name.to_lowercase())
+            .ok_or_else(|| {
+                ClusterAnalyzeError::Other(format!(
+                    "column `{name}` does not exist in `{}`",
+                    table.name.original()
+                ))
+            })?;
+        selected.insert(column.read().id);
+    }
+    add_mandatory_columns(table, &mut selected);
+    Ok(AnalyzeColumnChoice::Explicit(
+        table
+            .cols()
+            .iter_deref()
+            .filter_map(|column| {
+                let column = column.read();
+                selected
+                    .contains(&column.id)
+                    .then(|| column.name.original().to_owned())
+            })
+            .collect(),
+    ))
 }
 
 /// Saves the merged raw options in Go's later, independent restricted
@@ -495,9 +531,18 @@ fn classify_commit_outcome(outcome: &OptimisticCommitOutcome) -> Result<(), Clus
 
 #[cfg(test)]
 mod tests {
-    use super::{ClusterAnalyzeError, classify_commit_outcome, realtime_count_of};
+    use super::{
+        ClusterAnalyzeError, classify_commit_outcome, final_column_choice, realtime_count_of,
+    };
     use std::thread;
     use std::time::Duration;
+    use tidb_ast::CiString;
+    use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags};
+    use tidb_executor::analyze::AnalyzeColumnChoice;
+    use tidb_model::SchemaState;
+    use tidb_model::column::ColumnInfo;
+    use tidb_model::index::{IndexColumn, IndexInfo};
+    use tidb_model::table_info::TableInfo;
     use tidb_stats::row_sample_collector::adjusted_sample_rate;
     use tidb_txnkv::region::RegionBackoffKind;
     use tidb_txnkv::rpc::UnaryCallContext;
@@ -505,6 +550,42 @@ mod tests {
         OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction,
         TransactionCause,
     };
+
+    #[test]
+    fn explicit_column_choice_is_saved_after_mandatory_columns_in_schema_order() {
+        let mut primary_type = FieldType::new(FieldTypeCode::LongLong);
+        primary_type.add_flags(FieldTypeFlags::PRI_KEY);
+        let mut a = ColumnInfo::new(1, "a", primary_type);
+        a.offset = 0;
+        let mut b = ColumnInfo::new(2, "b", FieldType::new(FieldTypeCode::LongLong));
+        b.offset = 1;
+        let mut c = ColumnInfo::new(3, "c", FieldType::new(FieldTypeCode::LongLong));
+        c.offset = 2;
+        let table = TableInfo {
+            name: CiString::new("t"),
+            pk_is_handle: true,
+            columns: vec![a, b, c].into(),
+            indices: vec![IndexInfo {
+                name: CiString::new("kb"),
+                state: SchemaState::PUBLIC,
+                columns: vec![IndexColumn {
+                    name: CiString::new("b"),
+                    offset: 1,
+                    ..IndexColumn::default()
+                }]
+                .into(),
+                ..IndexInfo::default()
+            }]
+            .into(),
+            ..TableInfo::default()
+        };
+
+        assert_eq!(
+            final_column_choice(&table, &AnalyzeColumnChoice::Explicit(vec!["c".to_owned()]))
+                .expect("the final LIST is valid"),
+            AnalyzeColumnChoice::Explicit(vec!["a".to_owned(), "b".to_owned(), "c".to_owned(),])
+        );
+    }
 
     #[test]
     fn the_commit_budget_is_minted_after_the_scan_not_before_it() {
