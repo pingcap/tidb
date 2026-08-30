@@ -73,6 +73,11 @@ The current binary reused the existing `tpcc` restore and completed in a
 |---|---:|---:|---:|---|
 | TPCC | 4229.3 | 3647.7 | 0.8625 | PASS |
 
+The Rust TPCC log also contains `invalid connection` retries while executing
+the ORDER_STATUS statement near the end of the run. The throughput ratio
+clears the 0.80 threshold, but this transaction/error signal must be resolved
+before treating TPCC as a clean acceptance result.
+
 ### YCSB round 1 (threshold 0.80)
 
 `test.usertable` was restored once (100 million rows) and reused. All A–F
