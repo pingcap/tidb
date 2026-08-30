@@ -17,7 +17,10 @@
 //! the one-retry worker contract.
 
 use std::collections::HashMap;
-use std::sync::{mpsc, Arc, LazyLock, Mutex, Weak};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    mpsc, Arc, LazyLock, Mutex, Weak,
+};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use super::{StatisticsCache, StatisticsItemLoader};
@@ -67,6 +70,7 @@ pub(crate) struct SyncLoadService {
     needed_items: mpsc::SyncSender<NeededItemTask>,
     _needed_items_receiver: Arc<Mutex<mpsc::Receiver<NeededItemTask>>>,
     _timeout_items_receiver: Arc<Mutex<mpsc::Receiver<NeededItemTask>>>,
+    stop: Arc<AtomicBool>,
 }
 
 impl SyncLoadService {
@@ -108,12 +112,14 @@ impl SyncLoadService {
         let (timeout_tx, timeout_rx) = mpsc::sync_channel(queue_size);
         let needed_rx = Arc::new(Mutex::new(needed_rx));
         let timeout_rx = Arc::new(Mutex::new(timeout_rx));
+        let stop = Arc::new(AtomicBool::new(false));
         for _ in 0..concurrency {
             let loader = Arc::clone(&loader);
             let cache = cache.clone();
             let needed_rx = Arc::clone(&needed_rx);
             let timeout_rx = Arc::clone(&timeout_rx);
             let timeout_tx = timeout_tx.clone();
+            let stop = Arc::clone(&stop);
             std::thread::spawn(move || {
                 worker_loop(
                     loader,
@@ -122,6 +128,7 @@ impl SyncLoadService {
                     timeout_rx,
                     timeout_tx,
                     retry_backoff,
+                    stop,
                 );
             });
         }
@@ -129,6 +136,7 @@ impl SyncLoadService {
             needed_items: needed_tx,
             _needed_items_receiver: needed_rx,
             _timeout_items_receiver: timeout_rx,
+            stop,
         })
     }
 
@@ -227,6 +235,17 @@ impl SyncLoadService {
     }
 }
 
+impl Drop for SyncLoadService {
+    fn drop(&mut self) {
+        // The worker threads intentionally outlive individual requests, but
+        // the service itself is owned by a catalog. Catalogs are created per
+        // SQL session, so leaving workers blocked on their receiver leaks a
+        // thread group for every connection. Signal them before the receiver
+        // Arcs are released; `drain_task` wakes at most every 10ms.
+        self.stop.store(true, Ordering::Release);
+    }
+}
+
 fn worker_loop(
     loader: Arc<dyn StatisticsItemLoader>,
     cache: Weak<StatisticsCache>,
@@ -234,8 +253,9 @@ fn worker_loop(
     timeout_rx: Arc<Mutex<mpsc::Receiver<NeededItemTask>>>,
     timeout_tx: mpsc::SyncSender<NeededItemTask>,
     retry_backoff: Duration,
+    stop: Arc<AtomicBool>,
 ) {
-    while let Some(task) = drain_task(&needed_rx, &timeout_rx, &timeout_tx) {
+    while let Some(task) = drain_task(&needed_rx, &timeout_rx, &timeout_tx, &stop) {
         handle_task(&loader, &cache, task, retry_backoff);
     }
 }
@@ -244,8 +264,12 @@ fn drain_task(
     needed_rx: &Mutex<mpsc::Receiver<NeededItemTask>>,
     timeout_rx: &Mutex<mpsc::Receiver<NeededItemTask>>,
     timeout_tx: &mpsc::SyncSender<NeededItemTask>,
+    stop: &AtomicBool,
 ) -> Option<NeededItemTask> {
     loop {
+        if stop.load(Ordering::Acquire) {
+            return None;
+        }
         if let Ok(task) = needed_rx
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -508,8 +532,14 @@ mod tests {
             .send(task(108, Instant::now() + Duration::from_secs(1)))
             .expect("urgent task");
 
-        let drained = drain_task(&Mutex::new(needed_rx), &Mutex::new(timeout_rx), &timeout_tx)
-            .expect("one task");
+        let stop = AtomicBool::new(false);
+        let drained = drain_task(
+            &Mutex::new(needed_rx),
+            &Mutex::new(timeout_rx),
+            &timeout_tx,
+            &stop,
+        )
+        .expect("one task");
         assert_eq!(drained.item, item(108, true));
     }
 }
