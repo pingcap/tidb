@@ -75,6 +75,26 @@ pub struct DataSourceIndexMergeHint {
     pub restored: String,
 }
 
+/// Go `h.HintedIndex` fields used by ordinary path resolution and static
+/// partition processing.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DataSourceIndexHint {
+    /// Go `IndexHint.HintType`.
+    pub kind: tidb_ast::IndexHintKind,
+    /// Go `IndexHint.IndexNames`.
+    pub index_names: Vec<String>,
+    /// Go `HintedIndex.Partitions`.
+    pub partitions: Vec<String>,
+    /// Go `HintedIndex.PushDownLookUp`.
+    pub push_down_lookup: bool,
+    /// Whether the hint is `ORDER_INDEX`.
+    pub force_keep_order: bool,
+    /// Whether the hint is `NO_ORDER_INDEX`.
+    pub force_no_keep_order: bool,
+    /// Go `Restore2IndexHint(HintedIndex.HintTypeString(), hint)`.
+    pub restored: String,
+}
+
 /// Go `logicalop.DataSource` (`logical_datasource.go:58`).
 #[derive(Clone, Debug, Default)]
 pub struct DataSource {
@@ -116,6 +136,13 @@ pub struct DataSource {
     /// port keeps the stages as two typed lists, and the grown lists below
     /// stay empty until the costing seam fills them.
     pub enumerated_paths: Vec<crate::access_path::PossiblePath>,
+    /// The unfiltered public paths from which static partition children rerun
+    /// Go `getPossibleAccessPaths` after partition-scoped hint selection.
+    pub public_enumerated_paths: Vec<crate::access_path::PossiblePath>,
+    /// Go `AstIndexHints`: table-syntax hints, which apply to every child.
+    pub ast_index_hints: Vec<tidb_ast::IndexHint>,
+    /// Go `IndexHints`: comment-style hints matched to this DataSource.
+    pub index_hints: Vec<DataSourceIndexHint>,
     /// The catalog's index metadata, in the SAME order
     /// [`Self::enumerated_paths`]' `Index { index }` offsets address — what
     /// Go reads off `ds.TableInfo.Indices` when it fills `path.IdxCols`
@@ -152,6 +179,16 @@ pub struct DataSource {
     pub interesting_columns: Vec<Column>,
     /// Index IDs whose access paths have Go `AccessPath.Forced` set.
     pub forced_index_ids: std::collections::BTreeSet<i64>,
+    /// Index IDs carrying Go `ForceKeepOrder`.
+    pub force_keep_order_index_ids: std::collections::BTreeSet<i64>,
+    /// Index IDs carrying Go `ForceNoKeepOrder`.
+    pub force_no_keep_order_index_ids: std::collections::BTreeSet<i64>,
+    /// Whether the TiKV table path carries Go `ForceKeepOrder`.
+    pub force_keep_order_table_path: bool,
+    /// Whether the TiKV table path carries Go `ForceNoKeepOrder`.
+    pub force_no_keep_order_table_path: bool,
+    /// Index IDs carrying Go `IndexLookUpPushDownByHint`.
+    pub push_down_lookup_index_ids: std::collections::BTreeSet<i64>,
     /// Go `IndexMergeHints`. An empty `index_names` list is a general
     /// `USE_INDEX_MERGE(table)` hint; `partitions` scopes it per static child.
     pub index_merge_hints: Vec<DataSourceIndexMergeHint>,
@@ -524,6 +561,9 @@ impl DataSource {
             pushed_down_conds: self.pushed_down_conds.clone(),
             all_conds: self.all_conds.clone(),
             enumerated_paths: self.enumerated_paths.clone(),
+            public_enumerated_paths: self.public_enumerated_paths.clone(),
+            ast_index_hints: self.ast_index_hints.clone(),
+            index_hints: self.index_hints.clone(),
             indexes: self.indexes.clone(),
             all_possible_access_paths: self.all_possible_access_paths.clone(),
             possible_access_paths: self.possible_access_paths.clone(),
@@ -540,6 +580,11 @@ impl DataSource {
             asked_column_group: self.asked_column_group.clone(),
             interesting_columns: self.interesting_columns.clone(),
             forced_index_ids: self.forced_index_ids.clone(),
+            force_keep_order_index_ids: self.force_keep_order_index_ids.clone(),
+            force_no_keep_order_index_ids: self.force_no_keep_order_index_ids.clone(),
+            force_keep_order_table_path: self.force_keep_order_table_path,
+            force_no_keep_order_table_path: self.force_no_keep_order_table_path,
+            push_down_lookup_index_ids: self.push_down_lookup_index_ids.clone(),
             index_merge_hints: self.index_merge_hints.clone(),
             prefer_index_merge_by_fix_control: self.prefer_index_merge_by_fix_control,
             table_stats: self.table_stats.clone(),

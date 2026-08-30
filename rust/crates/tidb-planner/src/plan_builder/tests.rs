@@ -22,9 +22,9 @@
 use std::collections::BTreeMap;
 
 use tidb_ast::{Expr, SelectStmt, Stmt};
-use tidb_datatype::{FieldType, FieldTypeCode, SessionTimeZone};
+use tidb_datatype::{Datum, FieldType, FieldTypeCode, SessionTimeZone};
 use tidb_expr::expression::Expression;
-use tidb_expr::ZonedNoColumns;
+use tidb_expr::{Columns, ZonedNoColumns};
 
 use super::catalog::{SourceColumn, SourceIndex, SourceIndexColumn, SourceTable, TableSource};
 use super::marker::{MarkerKind, PlanMarker};
@@ -110,6 +110,22 @@ struct Harness {
     ctx: ZonedNoColumns,
     plan_ids: PlanIdAllocator,
     column_ids: ColumnIdAllocator,
+}
+
+#[derive(Default)]
+struct WarningColumns(std::sync::Mutex<Vec<(u16, String)>>);
+
+impl Columns for WarningColumns {
+    fn get(&self, _: &[String]) -> Option<Datum> {
+        None
+    }
+
+    fn append_warning(&self, code: u16, message: &str) {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push((code, message.to_owned()));
+    }
 }
 
 impl Harness {
@@ -559,6 +575,43 @@ fn test_table_index_hints_filter_ordinary_planner_paths() {
 
     let mut builder = harness.builder();
     let (plan, _) = builder
+        .build_select(&parse_select("SELECT /*+ USE_INDEX(t, idx) */ a FROM t"))
+        .expect("Go accepts a unique index-name prefix in a comment hint");
+    let LogicalPlan::Projection(projection) = plan else {
+        panic!("expected projection");
+    };
+    let LogicalPlan::DataSource(source) = &projection.base.children()[0] else {
+        panic!("expected data source");
+    };
+    assert_eq!(
+        source.enumerated_paths,
+        vec![crate::access_path::PossiblePath::Index { index: 0 }]
+    );
+    assert_eq!(
+        source.forced_index_ids,
+        std::collections::BTreeSet::from([1])
+    );
+
+    let mut builder = harness.builder();
+    let (plan, _) = builder
+        .build_select(&parse_select(
+            "SELECT /*+ ORDER_INDEX(t, PRIMARY) */ a FROM t",
+        ))
+        .expect("ORDER_INDEX may name the clustered PRIMARY table path");
+    let LogicalPlan::Projection(projection) = plan else {
+        panic!("expected projection");
+    };
+    let LogicalPlan::DataSource(source) = &projection.base.children()[0] else {
+        panic!("expected data source");
+    };
+    assert!(matches!(
+        source.enumerated_paths.as_slice(),
+        [crate::access_path::PossiblePath::Table { .. }]
+    ));
+    assert!(source.force_keep_order_table_path);
+
+    let mut builder = harness.builder();
+    let (plan, _) = builder
         .build_select(&parse_select("SELECT a FROM t USE INDEX ()"))
         .expect("empty USE INDEX keeps only the table path");
     let LogicalPlan::Projection(projection) = plan else {
@@ -582,6 +635,53 @@ fn test_table_index_hints_filter_ordinary_planner_paths() {
             key: "missing".to_owned(),
             table: "t".to_owned(),
         }
+    );
+}
+
+#[test]
+fn test_comment_index_hint_warnings_match_go() {
+    let harness = Harness::new();
+    let warnings = WarningColumns::default();
+    let mut builder = PlanBuilder::new(
+        &harness.catalog,
+        &warnings,
+        &harness.plan_ids,
+        &harness.column_ids,
+        SessionTimeZone::utc(),
+    );
+    builder
+        .build_select(&parse_select(
+            "SELECT /*+ USE_INDEX(t, missing) */ a FROM t",
+        ))
+        .expect("an unknown comment-style index is only a warning");
+    assert_eq!(
+        *warnings
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+        vec![(1176, "Key 'missing' doesn't exist in table 't'".to_owned())]
+    );
+
+    warnings
+        .0
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clear();
+    builder
+        .build_select(&parse_select(
+            "SELECT /*+ ORDER_INDEX(missing, idx_b) */ a FROM t",
+        ))
+        .expect("an unmatched comment-style index hint is only a warning");
+    assert_eq!(
+        *warnings
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+        vec![(
+            1815,
+            "(test.missing, idx_b) is inapplicable, check whether the table(test.missing) exists"
+                .to_owned()
+        )]
     );
 }
 

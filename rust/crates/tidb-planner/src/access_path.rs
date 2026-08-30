@@ -769,13 +769,37 @@ pub fn get_possible_access_paths(
     paths
 }
 
-/// Applies Go `getPossibleAccessPaths`' table-syntax index-hint tail to an
-/// already enumerated public-path list.
+/// Go `getPossibleAccessPaths`' hint-filtering result.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ResolvedIndexPaths {
+    /// Go `available` after ignore and fallback handling.
+    pub paths: Vec<PossiblePath>,
+    /// Index IDs whose path has `Forced` set.
+    pub forced_index_ids: std::collections::BTreeSet<i64>,
+    /// Index IDs whose path has `ForceKeepOrder` set.
+    pub force_keep_order_index_ids: std::collections::BTreeSet<i64>,
+    /// Index IDs whose path has `ForceNoKeepOrder` set.
+    pub force_no_keep_order_index_ids: std::collections::BTreeSet<i64>,
+    /// Whether the TiKV table path has `ForceKeepOrder` set.
+    pub force_keep_order_table_path: bool,
+    /// Whether the TiKV table path has `ForceNoKeepOrder` set.
+    pub force_no_keep_order_table_path: bool,
+    /// Index IDs whose path has `IndexLookUpPushDownByHint` set.
+    pub push_down_lookup_index_ids: std::collections::BTreeSet<i64>,
+    /// Unknown names from comment-style hints; Go downgrades these to 1176
+    /// warnings while table-syntax hints return the error directly.
+    pub unknown_comment_indexes: Vec<String>,
+}
+
+/// Applies Go `getPossibleAccessPaths`' table-syntax and already-matched
+/// comment-style index-hint tail to an enumerated public-path list.
 pub fn apply_table_index_hints(
     table: &crate::plan_builder::catalog::SourceTable,
     public_paths: &[PossiblePath],
     hints: &[tidb_ast::IndexHint],
-) -> Result<(Vec<PossiblePath>, std::collections::BTreeSet<i64>), crate::plan_base::PlanError> {
+    comment_hints: &[crate::logical::data_source::DataSourceIndexHint],
+    remove_global_indexes: bool,
+) -> Result<ResolvedIndexPaths, crate::plan_base::PlanError> {
     use tidb_ast::{IndexHintKind, IndexHintScope};
 
     let table_path = public_paths
@@ -787,44 +811,123 @@ pub fn apply_table_index_hints(
     let mut has_use_or_force = false;
     let mut available = Vec::new();
     let mut ignored = std::collections::BTreeSet::new();
-    let mut forced_index_ids = std::collections::BTreeSet::new();
+    let mut result = ResolvedIndexPaths::default();
 
-    for hint in hints {
+    let table_hints = hints.iter().filter_map(|hint| {
         if hint.scope != IndexHintScope::All {
-            continue;
+            return None;
         }
+        Some((
+            hint.kind,
+            hint.indexes.as_slice(),
+            false,
+            false,
+            false,
+            false,
+        ))
+    });
+    let comment_hints = comment_hints.iter().map(|hint| {
+        (
+            hint.kind,
+            hint.index_names.as_slice(),
+            true,
+            hint.force_keep_order,
+            hint.force_no_keep_order,
+            hint.push_down_lookup,
+        )
+    });
+    for (kind, indexes, comment_style, force_keep_order, force_no_keep_order, push_down_lookup) in
+        table_hints.chain(comment_hints)
+    {
         has_scan_hint = true;
-        if hint.indexes.is_empty() && hint.kind != IndexHintKind::Ignore {
+        if indexes.is_empty() && kind != IndexHintKind::Ignore {
             has_use_or_force = true;
             available.push(table_path.clone());
         }
-        for name in &hint.indexes {
-            let path = public_paths.iter().find(|path| match path {
-                PossiblePath::Index { index } => table
-                    .indexes
-                    .get(*index)
-                    .is_some_and(|metadata| metadata.name.eq_ignore_ascii_case(name)),
+        for name in indexes {
+            let mut prefix_path = None;
+            let mut prefix_matches = 0;
+            let exact_path = public_paths.iter().find(|path| match path {
                 PossiblePath::Table { .. } => {
                     name.eq_ignore_ascii_case("primary")
                         && (table.pk_is_handle || table.is_common_handle)
                 }
+                PossiblePath::Index { index } => {
+                    table.indexes.get(*index).is_some_and(|metadata| {
+                        if metadata.name.eq_ignore_ascii_case(name) {
+                            return true;
+                        }
+                        if metadata
+                            .name
+                            .to_ascii_lowercase()
+                            .starts_with(&name.to_ascii_lowercase())
+                        {
+                            prefix_path = Some(*path);
+                            prefix_matches += 1;
+                        }
+                        false
+                    })
+                }
+            });
+            let path = exact_path.or_else(|| {
+                if prefix_matches == 1 {
+                    prefix_path
+                } else {
+                    None
+                }
             });
             let Some(path) = path.cloned() else {
+                if comment_style {
+                    result.unknown_comment_indexes.push(name.clone());
+                    continue;
+                }
                 return Err(crate::plan_base::PlanError::key_not_exists(
                     name,
                     &table.table_name,
                 ));
             };
-            if hint.kind == IndexHintKind::Ignore {
+            if kind == IndexHintKind::Ignore {
                 if let PossiblePath::Index { index } = path {
                     ignored.insert(index);
                 }
                 continue;
             }
             has_use_or_force = true;
-            if let PossiblePath::Index { index } = path {
-                if let Some(metadata) = table.indexes.get(index) {
-                    forced_index_ids.insert(metadata.id);
+            match path {
+                PossiblePath::Index { index } => {
+                    if let Some(metadata) = table.indexes.get(index) {
+                        result.forced_index_ids.insert(metadata.id);
+                        if force_keep_order {
+                            result.force_keep_order_index_ids.insert(metadata.id);
+                        }
+                        if force_no_keep_order {
+                            result.force_no_keep_order_index_ids.insert(metadata.id);
+                        }
+                        if push_down_lookup {
+                            result.push_down_lookup_index_ids.insert(metadata.id);
+                        }
+                    }
+                }
+                PossiblePath::Table { primary_index, .. } => {
+                    if force_keep_order {
+                        result.force_keep_order_table_path = true;
+                    }
+                    if force_no_keep_order {
+                        result.force_no_keep_order_table_path = true;
+                    }
+                    if let Some(metadata) = primary_index.and_then(|index| table.indexes.get(index))
+                    {
+                        result.forced_index_ids.insert(metadata.id);
+                        if force_keep_order {
+                            result.force_keep_order_index_ids.insert(metadata.id);
+                        }
+                        if force_no_keep_order {
+                            result.force_no_keep_order_index_ids.insert(metadata.id);
+                        }
+                        if push_down_lookup {
+                            result.push_down_lookup_index_ids.insert(metadata.id);
+                        }
+                    }
                 }
             }
             available.push(path);
@@ -836,6 +939,12 @@ pub fn apply_table_index_hints(
     }
     available
         .retain(|path| !matches!(path, PossiblePath::Index { index } if ignored.contains(index)));
+    if remove_global_indexes {
+        available.retain(|path| {
+            !matches!(path, PossiblePath::Index { index }
+                if table.indexes.get(*index).is_some_and(|metadata| metadata.global))
+        });
+    }
     if available.is_empty() {
         available.push(table_path.clone());
     }
@@ -847,7 +956,8 @@ pub fn apply_table_index_hints(
     }) {
         available.push(table_path);
     }
-    Ok((available, forced_index_ids))
+    result.paths = available;
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -870,6 +980,7 @@ mod enumeration_tests {
             is_visible: true,
             is_columnar: false,
             is_multi_valued: false,
+            global: false,
             condition_expr_string: String::new(),
             affect_column_offsets: Vec::new(),
         }

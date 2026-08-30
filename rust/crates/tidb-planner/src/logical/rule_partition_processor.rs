@@ -33,6 +33,41 @@ fn resolve_index_merge_hints_for_partition(source: &mut DataSource, partition_na
     });
 }
 
+fn resolve_index_hints_for_partition(
+    source: &mut DataSource,
+    partition_name: &str,
+) -> Result<(), PlanError> {
+    source.index_hints.retain(|hint| {
+        hint.partitions.is_empty()
+            || hint
+                .partitions
+                .iter()
+                .any(|partition| partition.eq_ignore_ascii_case(partition_name))
+    });
+    let table = crate::plan_builder::catalog::SourceTable {
+        table_name: source.table_name.clone(),
+        indexes: source.indexes.clone(),
+        pk_is_handle: source.pk_is_handle,
+        is_common_handle: !source.common_handle_cols.is_empty(),
+        ..Default::default()
+    };
+    let resolution = crate::access_path::apply_table_index_hints(
+        &table,
+        &source.public_enumerated_paths,
+        &source.ast_index_hints,
+        &source.index_hints,
+        true,
+    )?;
+    source.enumerated_paths = resolution.paths;
+    source.forced_index_ids = resolution.forced_index_ids;
+    source.force_keep_order_index_ids = resolution.force_keep_order_index_ids;
+    source.force_no_keep_order_index_ids = resolution.force_no_keep_order_index_ids;
+    source.force_keep_order_table_path = resolution.force_keep_order_table_path;
+    source.force_no_keep_order_table_path = resolution.force_no_keep_order_table_path;
+    source.push_down_lookup_index_ids = resolution.push_down_lookup_index_ids;
+    Ok(())
+}
+
 fn warn_for_unknown_index_merge_partitions(
     ctx: &RuleContext<'_>,
     source: &DataSource,
@@ -42,6 +77,26 @@ fn warn_for_unknown_index_merge_partitions(
         return;
     };
     for hint in &source.index_merge_hints {
+        let unknown = unknown_hint_partitions(&hint.partitions, used_partition_names);
+        if !unknown.is_empty() {
+            sink.set_hint_warning(&format!(
+                "unknown partitions ({}) in optimizer hint {}",
+                unknown.join(","),
+                hint.restored
+            ));
+        }
+    }
+}
+
+fn warn_for_unknown_index_partitions(
+    ctx: &RuleContext<'_>,
+    source: &DataSource,
+    used_partition_names: &std::collections::BTreeSet<String>,
+) {
+    let Some(sink) = ctx.hint_warning_sink else {
+        return;
+    };
+    for hint in &source.index_hints {
         let unknown = unknown_hint_partitions(&hint.partitions, used_partition_names);
         if !unknown.is_empty() {
             sink.set_hint_warning(&format!(
@@ -73,7 +128,11 @@ pub trait PartitionPruning {
     fn partition_indices(&self, source: &DataSource) -> Result<Vec<usize>, PlanError>;
 }
 
-fn make_children(ctx: &RuleContext<'_>, source: DataSource, indices: Vec<usize>) -> LogicalPlan {
+fn make_children(
+    ctx: &RuleContext<'_>,
+    source: DataSource,
+    indices: Vec<usize>,
+) -> Result<LogicalPlan, PlanError> {
     let schema = source.base.base.schema().cloned();
     let query_block_offset = source.base.base.query_block_offset();
     let mut children = Vec::with_capacity(indices.len());
@@ -86,13 +145,15 @@ fn make_children(ctx: &RuleContext<'_>, source: DataSource, indices: Vec<usize>)
         child.partition_def_idx = Some(index);
         child.physical_table_id = physical_id;
         if let Some(partition_name) = source.partition_definition_names.get(index) {
+            resolve_index_hints_for_partition(&mut child, partition_name)?;
             resolve_index_merge_hints_for_partition(&mut child, partition_name);
             used_partition_names.insert(partition_name.to_ascii_lowercase());
         }
         children.push(LogicalPlan::DataSource(child));
     }
+    warn_for_unknown_index_partitions(ctx, &source, &used_partition_names);
     warn_for_unknown_index_merge_partitions(ctx, &source, &used_partition_names);
-    match children.len() {
+    Ok(match children.len() {
         0 => {
             let mut dual = LogicalTableDual::new(
                 crate::logical::BaseLogicalPlan::new(
@@ -116,7 +177,7 @@ fn make_children(ctx: &RuleContext<'_>, source: DataSource, indices: Vec<usize>)
             union.union_all.base.set_children(children);
             LogicalPlan::PartitionUnionAll(union)
         }
-    }
+    })
 }
 
 fn prune_data_source(
@@ -143,7 +204,7 @@ fn prune_data_source(
     if let Some(marker) = ctx.plan_cache_marker {
         marker.set_skip_plan_cache("Static partition pruning mode");
     }
-    Ok(make_children(ctx, source, indices))
+    make_children(ctx, source, indices)
 }
 
 fn rewrite(ctx: &RuleContext<'_>, mut plan: LogicalPlan) -> Result<LogicalPlan, PlanError> {
@@ -227,7 +288,9 @@ impl LogicalOptRule for PartitionProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::logical::data_source::DataSourceIndexMergeHint;
+    use crate::access_path::PossiblePath;
+    use crate::logical::data_source::{DataSourceIndexHint, DataSourceIndexMergeHint};
+    use crate::plan_builder::catalog::SourceIndex;
 
     #[test]
     fn index_merge_hints_are_resolved_per_static_partition() {
@@ -261,5 +324,67 @@ mod tests {
             vec!["p0"],
             "Go warns in written order and matches partition names case-insensitively"
         );
+    }
+
+    #[test]
+    fn ordinary_index_hints_are_resolved_per_static_partition() {
+        let hinted = |name: &str, partitions: &[&str]| DataSourceIndexHint {
+            kind: tidb_ast::IndexHintKind::Use,
+            index_names: vec![name.to_owned()],
+            partitions: partitions.iter().map(|name| (*name).to_owned()).collect(),
+            push_down_lookup: false,
+            force_keep_order: false,
+            force_no_keep_order: false,
+            restored: format!("/*+ USE_INDEX(t, {name}) */"),
+        };
+        let mut source = DataSource {
+            table_name: "t".to_owned(),
+            indexes: vec![
+                SourceIndex {
+                    id: 1,
+                    name: "idx_all".to_owned(),
+                    ..SourceIndex::default()
+                },
+                SourceIndex {
+                    id: 2,
+                    name: "idx_p0".to_owned(),
+                    ..SourceIndex::default()
+                },
+                SourceIndex {
+                    id: 3,
+                    name: "idx_p1".to_owned(),
+                    ..SourceIndex::default()
+                },
+            ],
+            public_enumerated_paths: vec![
+                PossiblePath::Table {
+                    is_int_handle: true,
+                    primary_index: None,
+                },
+                PossiblePath::Index { index: 0 },
+                PossiblePath::Index { index: 1 },
+                PossiblePath::Index { index: 2 },
+            ],
+            index_hints: vec![
+                hinted("idx_all", &[]),
+                hinted("idx_p0", &["p0"]),
+                hinted("idx_p1", &["P1"]),
+            ],
+            ..DataSource::default()
+        };
+
+        resolve_index_hints_for_partition(&mut source, "p1").expect("paths resolve");
+        assert_eq!(
+            source.enumerated_paths,
+            vec![
+                PossiblePath::Index { index: 0 },
+                PossiblePath::Index { index: 2 }
+            ]
+        );
+        assert_eq!(
+            source.forced_index_ids,
+            std::collections::BTreeSet::from([1, 3])
+        );
+        assert_eq!(source.index_hints.len(), 2);
     }
 }

@@ -153,6 +153,8 @@ pub struct SourceIndex {
     pub is_columnar: bool,
     /// Go `IndexInfo.MVIndex`.
     pub is_multi_valued: bool,
+    /// Go `IndexInfo.Global`.
+    pub global: bool,
     /// Go `IndexInfo.ConditionExprString`: non-empty for a partial index.
     pub condition_expr_string: String,
     /// Go `IndexInfo.AffectColumn`, represented by table-column offsets.

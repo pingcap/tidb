@@ -208,7 +208,7 @@ use crate::expression_rewriter::{
     SubQueryCtx,
 };
 use crate::logical::data_source::{
-    DataSource, DataSourceColumn, DataSourceIndexMergeHint, EXTRA_HANDLE_ID,
+    DataSource, DataSourceColumn, DataSourceIndexHint, DataSourceIndexMergeHint, EXTRA_HANDLE_ID,
 };
 use crate::logical::limit::LogicalLimit;
 use crate::logical::projection::LogicalProjection;
@@ -396,8 +396,22 @@ struct IndexMergeHint {
     restored: String,
 }
 
-fn restore_index_merge_hint(table: &tidb_ast::HintTable, indexes: &[String]) -> String {
-    let mut restored = format!("/*+ USE_INDEX_MERGE({}", table.name.to_ascii_lowercase());
+#[derive(Clone, Debug)]
+struct IndexHint {
+    db_name: Option<String>,
+    table_name: String,
+    kind: tidb_ast::IndexHintKind,
+    index_names: Vec<String>,
+    partitions: Vec<String>,
+    push_down_lookup: bool,
+    force_keep_order: bool,
+    force_no_keep_order: bool,
+    restored: String,
+    matched: bool,
+}
+
+fn restore_index_hint(name: &str, table: &tidb_ast::HintTable, indexes: &[String]) -> String {
+    let mut restored = format!("/*+ {name}({}", table.name.to_ascii_lowercase());
     if !table.partitions.is_empty() {
         restored.push_str(" PARTITION(");
         restored.push_str(
@@ -419,6 +433,74 @@ fn restore_index_merge_hint(table: &tidb_ast::HintTable, indexes: &[String]) -> 
     }
     restored.push_str(") */");
     restored
+}
+
+fn current_query_block_name(select: &SelectStmt) -> Option<&str> {
+    select.hints.iter().find_map(|hint| match &hint.kind {
+        tidb_ast::HintKind::QbName { qb_name, views } if views.is_empty() => Some(qb_name.as_str()),
+        _ => None,
+    })
+}
+
+fn hint_belongs_to_block(qb_name: Option<&str>, named: Option<&str>, offset: i32) -> bool {
+    qb_name.is_none_or(|name| {
+        name.eq_ignore_ascii_case(&format!("sel_{offset}"))
+            || named.is_some_and(|named| name.eq_ignore_ascii_case(named))
+    })
+}
+
+fn index_hints_from_select(select: &SelectStmt, offset: i32) -> (Vec<IndexHint>, bool) {
+    let named = current_query_block_name(select);
+    let mut invalid_lookup_pushdown = false;
+    let hints = select
+        .hints
+        .iter()
+        .filter_map(|hint| {
+            let tidb_ast::HintKind::Index {
+                qb_name,
+                table,
+                indexes,
+            } = &hint.kind
+            else {
+                return None;
+            };
+            if !hint_belongs_to_block(qb_name.as_deref(), named, offset)
+                || !hint_belongs_to_block(table.qb_name.as_deref(), named, offset)
+            {
+                return None;
+            }
+            let upper = hint.name.to_ascii_uppercase();
+            let (kind, push_down_lookup, force_keep_order, force_no_keep_order) =
+                match upper.as_str() {
+                    "USE_INDEX" => (tidb_ast::IndexHintKind::Use, false, false, false),
+                    "IGNORE_INDEX" => (tidb_ast::IndexHintKind::Ignore, false, false, false),
+                    "FORCE_INDEX" => (tidb_ast::IndexHintKind::Force, false, false, false),
+                    "ORDER_INDEX" => (tidb_ast::IndexHintKind::Use, false, true, false),
+                    "NO_ORDER_INDEX" => (tidb_ast::IndexHintKind::Use, false, false, true),
+                    "INDEX_LOOKUP_PUSHDOWN" if !indexes.is_empty() => {
+                        (tidb_ast::IndexHintKind::Use, true, false, false)
+                    }
+                    "INDEX_LOOKUP_PUSHDOWN" => {
+                        invalid_lookup_pushdown = true;
+                        return None;
+                    }
+                    _ => return None,
+                };
+            Some(IndexHint {
+                db_name: table.db_name.clone(),
+                table_name: table.name.clone(),
+                kind,
+                index_names: indexes.clone(),
+                partitions: table.partitions.clone(),
+                push_down_lookup,
+                force_keep_order,
+                force_no_keep_order,
+                restored: restore_index_hint(&upper, table, indexes),
+                matched: false,
+            })
+        })
+        .collect();
+    (hints, invalid_lookup_pushdown)
 }
 
 fn index_merge_hints_from_select(select: &SelectStmt) -> Vec<IndexMergeHint> {
@@ -445,7 +527,7 @@ fn index_merge_hints_from_select(select: &SelectStmt) -> Vec<IndexMergeHint> {
                 table_name: table.name.clone(),
                 index_names: indexes.clone(),
                 partitions: table.partitions.clone(),
-                restored: restore_index_merge_hint(table, indexes),
+                restored: restore_index_hint("USE_INDEX_MERGE", table, indexes),
             })
         })
         .collect()
@@ -547,6 +629,8 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     pub join_hints: Rc<from::JoinHints>,
     /// Go `PlanHints.IndexMergeHintList` for the current query block.
     index_merge_hints: Vec<IndexMergeHint>,
+    /// Go `PlanHints.IndexHintList` for the current query block.
+    index_hints: Vec<IndexHint>,
 
     /// Go `b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy()`, which gates
     /// [`only_full_group_by`]'s whole rule and `buildSortWithCheck`.
@@ -813,6 +897,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             hints: RewriterHints::default(),
             join_hints: Rc::new(from::JoinHints::default()),
             index_merge_hints: Vec::new(),
+            index_hints: Vec::new(),
             // Go's default `sql_mode` carries `ONLY_FULL_GROUP_BY`.
             only_full_group_by: true,
             // Go `DefTiDBOptimizerUseInvisibleIndexes = false`.
@@ -1243,6 +1328,28 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
 
         let as_name = table_ref.alias.clone();
         let visible_table = as_name.clone().unwrap_or_else(|| table.table_name.clone());
+        let mut index_hints = Vec::new();
+        for hint in &mut self.index_hints {
+            let hint_db = hint
+                .db_name
+                .as_deref()
+                .unwrap_or_else(|| self.source.current_database());
+            if !hint.table_name.eq_ignore_ascii_case(&visible_table)
+                || !(hint_db.eq_ignore_ascii_case(&db_name) || hint_db == "*")
+            {
+                continue;
+            }
+            hint.matched = true;
+            index_hints.push(DataSourceIndexHint {
+                kind: hint.kind,
+                index_names: hint.index_names.clone(),
+                partitions: hint.partitions.clone(),
+                push_down_lookup: hint.push_down_lookup,
+                force_keep_order: hint.force_keep_order,
+                force_no_keep_order: hint.force_no_keep_order,
+                restored: hint.restored.clone(),
+            });
+        }
         let index_merge_hints = self
             .index_merge_hints
             .iter()
@@ -1388,6 +1495,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             prefer_store_type: table.prefer_store_type,
             is_for_update_read: self.is_for_update_read,
             prefer_index_merge_by_fix_control: self.prefer_index_merge_by_fix_control,
+            ast_index_hints: table_ref.hints.clone(),
+            index_hints,
             index_merge_hints,
             ..DataSource::default()
         };
@@ -1402,10 +1511,30 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             table,
             self.optimizer_use_invisible_indexes,
         );
-        let (enumerated_paths, forced_index_ids) =
-            crate::access_path::apply_table_index_hints(table, &public_paths, &table_ref.hints)?;
-        data_source.enumerated_paths = enumerated_paths;
-        data_source.forced_index_ids = forced_index_ids;
+        let resolution = crate::access_path::apply_table_index_hints(
+            table,
+            &public_paths,
+            &table_ref.hints,
+            &data_source.index_hints,
+            table.is_partitioned,
+        )?;
+        for index in &resolution.unknown_comment_indexes {
+            self.ctx.append_warning(
+                1176,
+                &format!(
+                    "Key '{index}' doesn't exist in table '{}'",
+                    table.table_name
+                ),
+            );
+        }
+        data_source.public_enumerated_paths = public_paths;
+        data_source.enumerated_paths = resolution.paths;
+        data_source.forced_index_ids = resolution.forced_index_ids;
+        data_source.force_keep_order_index_ids = resolution.force_keep_order_index_ids;
+        data_source.force_no_keep_order_index_ids = resolution.force_no_keep_order_index_ids;
+        data_source.force_keep_order_table_path = resolution.force_keep_order_table_path;
+        data_source.force_no_keep_order_table_path = resolution.force_no_keep_order_table_path;
+        data_source.push_down_lookup_index_ids = resolution.push_down_lookup_index_ids;
         data_source.indexes = table.indexes.clone();
         debug_assert!(data_source.possible_access_paths.is_empty());
 
@@ -2263,10 +2392,48 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             &mut self.index_merge_hints,
             index_merge_hints_from_select(select),
         );
+        let (index_hints, invalid_lookup_pushdown) = index_hints_from_select(select, select_offset);
+        if invalid_lookup_pushdown {
+            self.ctx.append_warning(
+                1815,
+                "hint INDEX_LOOKUP_PUSH_DOWN is inapplicable, the index names should be specified",
+            );
+        }
+        let parent_index_hints = std::mem::replace(&mut self.index_hints, index_hints);
         let built = self.build_select_body(select);
+        for hint in self.index_hints.iter().filter(|hint| !hint.matched) {
+            let db = hint
+                .db_name
+                .as_deref()
+                .unwrap_or_else(|| self.source.current_database());
+            let mut indexes = String::new();
+            for index in &hint.index_names {
+                indexes.push_str(", ");
+                indexes.push_str(&index.to_ascii_lowercase());
+            }
+            let type_string = if hint.force_keep_order || hint.force_no_keep_order {
+                ""
+            } else if hint.push_down_lookup {
+                "index_lookup_pushdown"
+            } else {
+                match hint.kind {
+                    tidb_ast::IndexHintKind::Use => "use_index",
+                    tidb_ast::IndexHintKind::Ignore => "ignore_index",
+                    tidb_ast::IndexHintKind::Force => "force_index",
+                }
+            };
+            self.ctx.append_warning(
+                1815,
+                &format!(
+                    "{type_string}({db}.{}{indexes}) is inapplicable, check whether the table({db}.{}) exists",
+                    hint.table_name, hint.table_name
+                ),
+            );
+        }
         self.hints = parent_hints;
         self.join_hints = parent_join_hints;
         self.index_merge_hints = parent_index_merge_hints;
+        self.index_hints = parent_index_hints;
         let result = built.map(|(plan, flag)| {
             // `:4652` the trailing `return b.tryToBuildSequence(currentLayerCTEs, p)`,
             // which Go evaluates BEFORE the deferred truncation runs.

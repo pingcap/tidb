@@ -1348,6 +1348,11 @@ fn find_best_task_4_logical_data_source_without_enforcer(
         }
         let cop = match path {
             crate::access_path::PossiblePath::Table { primary_index, .. } => {
+                if (!ordered && ds.force_keep_order_table_path)
+                    || (ordered && ds.force_no_keep_order_table_path)
+                {
+                    continue 'paths;
+                }
                 if cop_multi_read {
                     continue 'paths;
                 }
@@ -1685,6 +1690,11 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 let Some(source_index) = ds.indexes.get(*index) else {
                     continue 'paths;
                 };
+                if (!ordered && ds.force_keep_order_index_ids.contains(&source_index.id))
+                    || (ordered && ds.force_no_keep_order_index_ids.contains(&source_index.id))
+                {
+                    continue 'paths;
+                }
                 let keep_order = ordered;
                 if keep_order && !index_path_matches_order(ds, source_index, prop) {
                     continue 'paths;

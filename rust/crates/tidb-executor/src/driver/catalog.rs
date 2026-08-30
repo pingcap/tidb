@@ -1024,6 +1024,7 @@ impl Catalog {
                                 is_visible: index.visible,
                                 is_columnar: false,
                                 is_multi_valued: table.mv_key_part_source(index.id).is_some(),
+                                global: index.global,
                                 condition_expr_string: String::new(),
                                 affect_column_offsets: Vec::new(),
                             })
