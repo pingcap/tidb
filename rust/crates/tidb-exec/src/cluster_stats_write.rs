@@ -1029,6 +1029,230 @@ pub fn count_outdated_historical_stats<S: MetaSnapshot>(
     )
 }
 
+fn plan_historical_stats_table_delete<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    table_name: &str,
+    identity: &'static [&'static str],
+    physical_id: i64,
+) -> Result<StatsWritePlan, StatsWriteError> {
+    let table = locate(catalog, table_name)?;
+    let mut rows = StatsRows::open(snapshot, table, identity, physical_id)?;
+    let mut plan = StatsWritePlan::default();
+    rows.retract_remaining(&mut plan)?;
+    Ok(plan)
+}
+
+/// Plans pinned Go `gcHistoryStatsFromKV`'s first statement, which deletes
+/// every payload block for one dropped physical table.
+pub fn plan_historical_stats_data_delete_for_table<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    physical_id: i64,
+) -> Result<StatsWritePlan, StatsWriteError> {
+    plan_historical_stats_table_delete(
+        snapshot,
+        catalog,
+        "stats_history",
+        &["table_id", "version", "seq_no"],
+        physical_id,
+    )
+}
+
+/// Plans pinned Go `gcHistoryStatsFromKV`'s second statement, which deletes
+/// every metadata version for one dropped physical table.
+pub fn plan_historical_stats_meta_delete_for_table<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    physical_id: i64,
+) -> Result<StatsWritePlan, StatsWriteError> {
+    plan_historical_stats_table_delete(
+        snapshot,
+        catalog,
+        "stats_meta_history",
+        &["table_id", "version"],
+        physical_id,
+    )
+}
+
+fn retract_stats_item_rows<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    table_name: &str,
+    identity: &'static [&'static str],
+    physical_id: i64,
+    prefix: &[String],
+    plan: &mut StatsWritePlan,
+) -> Result<(), StatsWriteError> {
+    let table = locate(catalog, table_name)?;
+    let mut rows = StatsRows::open(snapshot, table, identity, physical_id)?;
+    rows.retract_prefix(prefix, plan)
+}
+
+/// Plans pinned Go `deleteHistStatsFromKV` as its one wrapped transaction:
+/// advance both metadata versions, then delete one column/index histogram and
+/// every dependent TopN, bucket, FM-sketch, and column-usage row.
+pub fn plan_stats_item_delete<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    physical_id: i64,
+    hist_id: i64,
+    is_index: bool,
+    version: u64,
+) -> Result<StatsWritePlan, StatsWriteError> {
+    let mut plan = plan_stats_meta_version_refresh(snapshot, catalog, physical_id, version)?;
+    let prefix = [
+        format!("{:?}", Datum::Int(physical_id)),
+        format!("{:?}", Datum::Int(i64::from(is_index))),
+        format!("{:?}", Datum::Int(hist_id)),
+    ];
+    for (table_name, identity) in [
+        ("stats_histograms", &["table_id", "is_index", "hist_id"][..]),
+        (
+            "stats_top_n",
+            &["table_id", "is_index", "hist_id", "value"][..],
+        ),
+        (
+            "stats_buckets",
+            &["table_id", "is_index", "hist_id", "bucket_id"][..],
+        ),
+        ("stats_fm_sketch", &["table_id", "is_index", "hist_id"][..]),
+    ] {
+        retract_stats_item_rows(
+            snapshot,
+            catalog,
+            table_name,
+            identity,
+            physical_id,
+            &prefix,
+            &mut plan,
+        )?;
+    }
+    if !is_index {
+        let usage_prefix = [
+            format!("{:?}", Datum::Int(physical_id)),
+            format!("{:?}", Datum::Int(hist_id)),
+        ];
+        retract_stats_item_rows(
+            snapshot,
+            catalog,
+            "column_stats_usage",
+            &["table_id", "column_id"],
+            physical_id,
+            &usage_prefix,
+            &mut plan,
+        )?;
+    }
+    Ok(plan)
+}
+
+fn retract_stats_table_rows<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    table_name: &str,
+    identity: &'static [&'static str],
+    physical_id: i64,
+    plan: &mut StatsWritePlan,
+) -> Result<(), StatsWriteError> {
+    let table = locate(catalog, table_name)?;
+    let mut rows = StatsRows::open(snapshot, table, identity, physical_id)?;
+    rows.retract_remaining(plan)
+}
+
+fn reset_table_histograms<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    physical_id: i64,
+    version: u64,
+    plan: &mut StatsWritePlan,
+) -> Result<(), StatsWriteError> {
+    let table = locate(catalog, "stats_histograms")?;
+    let mut rows = StatsRows::open(
+        snapshot,
+        table,
+        &["table_id", "is_index", "hist_id"],
+        physical_id,
+    )?;
+    let stored = rows
+        .existing
+        .values()
+        .map(|(_, values)| values.clone())
+        .collect::<Vec<_>>();
+    for mut values in stored {
+        for column in [
+            "distinct_count",
+            "null_count",
+            "tot_col_size",
+            "modify_count",
+            "stats_ver",
+            "flag",
+        ] {
+            set(table, &mut values, column, Datum::Int(0));
+        }
+        set(table, &mut values, "version", Datum::UInt(version));
+        set(table, &mut values, "cm_sketch", Datum::Null);
+        set(table, &mut values, "correlation", Datum::Real(0.0));
+        set(table, &mut values, "last_analyze_pos", Datum::Null);
+        rows.store(snapshot, catalog, &values, plan)?;
+    }
+    rows.publish_watermark(catalog, plan)
+}
+
+/// Plans pinned Go `DeleteTableStatsFromKV` for every supplied physical ID in
+/// its single wrapped transaction. `soft` retains zeroed histogram metadata;
+/// hard deletion removes it. Both modes remove all dependent payload, usage,
+/// analyze-option, and statistics-lock rows after advancing metadata versions.
+pub fn plan_delete_table_stats<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    physical_ids: &[i64],
+    soft: bool,
+    version: u64,
+) -> Result<StatsWritePlan, StatsWriteError> {
+    let mut plan = StatsWritePlan::default();
+    for &physical_id in physical_ids {
+        plan.mutations.extend(
+            plan_stats_meta_version_refresh(snapshot, catalog, physical_id, version)?.mutations,
+        );
+        if soft {
+            reset_table_histograms(snapshot, catalog, physical_id, version, &mut plan)?;
+        } else {
+            retract_stats_table_rows(
+                snapshot,
+                catalog,
+                "stats_histograms",
+                &["table_id", "is_index", "hist_id"],
+                physical_id,
+                &mut plan,
+            )?;
+        }
+        for (table_name, identity) in [
+            (
+                "stats_buckets",
+                &["table_id", "is_index", "hist_id", "bucket_id"][..],
+            ),
+            (
+                "stats_top_n",
+                &["table_id", "is_index", "hist_id", "value"][..],
+            ),
+            ("stats_fm_sketch", &["table_id", "is_index", "hist_id"][..]),
+            ("column_stats_usage", &["table_id", "column_id"][..]),
+            ("analyze_options", &["table_id"][..]),
+            ("stats_table_locked", &["table_id"][..]),
+        ] {
+            retract_stats_table_rows(
+                snapshot,
+                catalog,
+                table_name,
+                identity,
+                physical_id,
+                &mut plan,
+            )?;
+        }
+    }
+    Ok(plan)
+}
+
 fn signed_value(value: Option<&Datum>) -> Option<i64> {
     match value {
         Some(Datum::Int(value)) => Some(*value),

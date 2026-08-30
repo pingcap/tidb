@@ -43,12 +43,14 @@ use tidb_exec::cluster_stats_dump::{
 use tidb_exec::cluster_stats_write::{
     count_outdated_historical_stats, load_analyze_options, plan_analyze_options_write,
     plan_column_stats_usage_dump, plan_column_stats_usage_write, plan_get_predicate_columns,
-    plan_historical_stats_data_write, plan_historical_stats_meta_write,
-    plan_independent_index_stats_write, plan_loaded_stats_item_write, plan_loaded_stats_meta_write,
-    plan_loaded_stats_usage_write, plan_outdated_historical_data_delete,
-    plan_outdated_historical_meta_delete, plan_partial_stats_write,
-    plan_partition_stats_write, plan_stats_delta_updates, plan_stats_meta_version_refresh,
-    plan_stats_write,
+    plan_delete_table_stats,
+    plan_historical_stats_data_delete_for_table, plan_historical_stats_data_write,
+    plan_historical_stats_meta_delete_for_table, plan_historical_stats_meta_write,
+    plan_independent_index_stats_write, plan_loaded_stats_item_write,
+    plan_loaded_stats_meta_write, plan_loaded_stats_usage_write,
+    plan_outdated_historical_data_delete, plan_outdated_historical_meta_delete,
+    plan_partial_stats_write, plan_partition_stats_write, plan_stats_delta_updates,
+    plan_stats_item_delete, plan_stats_meta_version_refresh, plan_stats_write,
 };
 use tidb_exec::mysql_bootstrap::{plan_mysql_bootstrap, BootstrapEnvironment, BootstrapWrite};
 use tidb_exec::mysql_system_tables::{scan_system_table, SystemRow, SystemTableView};
@@ -763,6 +765,121 @@ fn loaded_stats_item_write_replaces_only_the_named_histogram() {
     let untouched = stored.column(2).expect("unmentioned column remains");
     assert_eq!(untouched.histogram.buckets.len(), 256);
     assert_eq!(untouched.topn.as_ref().map(TopN::num), Some(100));
+}
+
+/// Pinned `deleteHistStatsFromKV` advances the table versions and removes
+/// exactly one column's histogram payload plus its predicate-usage row.
+#[test]
+fn stats_item_gc_removes_only_the_dropped_column_in_one_plan() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let table_id = 4244;
+    let stats = ClusterTableStats {
+        table_id,
+        version: 440_000_000_000_000_000,
+        snapshot: 439_000_000_000_000_000,
+        last_analyze_version: 440_000_000_000_000_000,
+        last_stats_hist_version: 440_000_000_000_000_000,
+        modify_count: 0,
+        row_count: 10_240,
+        columns: vec![full_histogram(1, false), full_histogram(2, false)],
+        indexes: Vec::new(),
+    };
+    let plan = plan_stats_write(&mut store, &catalog, &stats, now()).expect("analyze plans");
+    apply_mutations(&mut store, &plan.mutations);
+    let usage = HashMap::from([
+        (usage_item(table_id, 1), ColumnStatsTimeInfo::default()),
+        (usage_item(table_id, 2), ColumnStatsTimeInfo::default()),
+    ]);
+    let plan = plan_column_stats_usage_write(&mut store, &catalog, &usage, now())
+        .expect("predicate usage plans");
+    apply_mutations(&mut store, &plan.mutations);
+
+    let gc_version = stats.version + 10;
+    let plan = plan_stats_item_delete(&mut store, &catalog, table_id, 1, false, gc_version)
+        .expect("column GC plans");
+    apply_mutations(&mut store, &plan.mutations);
+
+    let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
+    let column_types = BTreeMap::from([
+        (
+            1,
+            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+        ),
+        (
+            2,
+            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+        ),
+    ]);
+    let stored = loader
+        .load_table(&mut store, table_id, &column_types)
+        .expect("statistics reload")
+        .expect("stats_meta remains");
+    assert_eq!(stored.version, gc_version);
+    assert!(stored.column(1).is_none());
+    assert!(stored.column(2).is_some());
+    let usage = load_column_stats_usage_for_table(
+        &mut store,
+        &catalog,
+        &tidb_datatype::SessionTimeZone::utc(),
+        table_id,
+    )
+    .expect("predicate usage reloads");
+    assert!(!usage.contains_key(&usage_item(table_id, 1)));
+    assert!(usage.contains_key(&usage_item(table_id, 2)));
+}
+
+/// Pinned `DeleteTableStatsFromKV` keeps zeroed histogram metadata for soft
+/// DROP STATS and removes it for hard table GC while retaining stats_meta for
+/// the second GC phase.
+#[test]
+fn table_stats_delete_preserves_go_soft_and_hard_phases() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let table_id = 4245;
+    let stats = ClusterTableStats {
+        table_id,
+        version: 440_000_000_000_000_000,
+        snapshot: 439_000_000_000_000_000,
+        last_analyze_version: 440_000_000_000_000_000,
+        last_stats_hist_version: 440_000_000_000_000_000,
+        modify_count: 0,
+        row_count: 10_240,
+        columns: vec![full_histogram(1, false)],
+        indexes: Vec::new(),
+    };
+    let plan = plan_stats_write(&mut store, &catalog, &stats, now()).expect("analyze plans");
+    apply_mutations(&mut store, &plan.mutations);
+    let column_types = BTreeMap::from([(
+        1,
+        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+    )]);
+    let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
+
+    let soft_version = stats.version + 10;
+    let plan = plan_delete_table_stats(&mut store, &catalog, &[table_id], true, soft_version)
+        .expect("soft DROP STATS plans");
+    apply_mutations(&mut store, &plan.mutations);
+    let soft = loader
+        .load_table(&mut store, table_id, &column_types)
+        .expect("soft-deleted statistics reload")
+        .expect("stats_meta remains");
+    assert_eq!(soft.version, soft_version);
+    let histogram = soft.column(1).expect("soft delete retains histogram metadata");
+    assert_eq!(histogram.histogram.ndv, 0);
+    assert!(histogram.histogram.buckets.is_empty());
+    assert!(histogram.topn.is_none());
+
+    let hard_version = soft_version + 10;
+    let plan = plan_delete_table_stats(&mut store, &catalog, &[table_id], false, hard_version)
+        .expect("hard table GC plans");
+    apply_mutations(&mut store, &plan.mutations);
+    let hard = loader
+        .load_table(&mut store, table_id, &column_types)
+        .expect("hard-deleted statistics reload")
+        .expect("stats_meta remains for phase two");
+    assert_eq!(hard.version, hard_version);
+    assert!(hard.column(1).is_none());
 }
 
 /// Pinned Go reads raw options, filters stale LIST IDs through current table
@@ -1762,6 +1879,19 @@ fn outdated_historical_stats_deletes_only_rows_at_or_before_the_cutoff() {
         .expect("newer historical statistics read succeeds")
         .expect("newer historical statistics remain");
     assert_eq!(restored.version, 2);
+
+    for deletion in [
+        plan_historical_stats_data_delete_for_table(&mut store, &catalog, table_id),
+        plan_historical_stats_meta_delete_for_table(&mut store, &catalog, table_id),
+    ] {
+        let deletion = deletion.expect("dropped-table historical deletion plans");
+        apply_mutations(&mut store, &deletion.mutations);
+    }
+    assert_eq!(
+        table_historical_stats_to_json(&mut store, &catalog, table_id, u64::MAX)
+            .expect("a deleted table has no historical read error"),
+        None
+    );
 }
 
 /// Go `TableStatsToJSON(..., snapshot=0)` loads histogram payload first, then
