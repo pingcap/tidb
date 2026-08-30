@@ -79,8 +79,8 @@ use tidb_stats::cmsketch::{
 use tidb_stats::histogram::Histogram;
 use tidb_stats::{
     fm_sketch_from_proto, ColAndIdxExistenceMap, Column, ColumnInfo, FmSketchProto, HistColl,
-    Index, IndexInfo, JsonBucket, JsonCmSketch, JsonColumn, JsonFmSketch, JsonHistogram,
-    StatsLoadedStatus, Table,
+    Index, IndexInfo, JsonBucket, JsonCmSketch, JsonCmSketchRow, JsonCmSketchTopN, JsonColumn,
+    JsonFmSketch, JsonHistogram, JsonPredicateColumn, StatsLoadedStatus, Table,
 };
 pub use tidb_stats::{JsonTable, TIDB_GLOBAL_STATS};
 
@@ -260,6 +260,176 @@ pub fn blocks_to_json_table(blocks: &[Vec<u8>]) -> Result<JsonTable, LoadStatsEr
         .read_to_end(&mut json)
         .map_err(|error| LoadStatsError::Gzip(error.to_string()))?;
     serde_json::from_slice(&json).map_err(|error| LoadStatsError::Json(error.to_string()))
+}
+
+fn encode_base64(value: &[u8]) -> String {
+    base64::engine::general_purpose::STANDARD.encode(value)
+}
+
+fn histogram_to_json(
+    histogram: &Histogram,
+    column_bounds: bool,
+) -> Result<JsonHistogram, LoadStatsError> {
+    let mut buckets = Vec::with_capacity(histogram.buckets.len());
+    for bucket in &histogram.buckets {
+        let bound = |value: &Datum| {
+            if column_bounds {
+                value
+                    .sql_bytes()
+                    .map_err(|error| LoadStatsError::Convert(error.to_string()))
+            } else {
+                Ok(value.go_bytes().to_vec())
+            }
+        };
+        buckets.push(Some(JsonBucket {
+            count: bucket.count,
+            lower_bound: Some(encode_base64(&bound(&bucket.lower_bound)?)),
+            upper_bound: Some(encode_base64(&bound(&bucket.upper_bound)?)),
+            repeats: bucket.repeat,
+            ndv: Some(bucket.ndv),
+        }));
+    }
+    Ok(JsonHistogram {
+        ndv: histogram.ndv,
+        buckets: Some(buckets),
+    })
+}
+
+fn cmsketch_to_json(
+    sketch: Option<&tidb_stats::CmsSketch>,
+    topn: Option<&tidb_stats::TopN>,
+) -> Option<JsonCmSketch> {
+    if sketch.is_none() && topn.is_none() {
+        return None;
+    }
+    let rows = sketch.map(|sketch| {
+        (0..sketch.depth())
+            .map(|row| {
+                Some(JsonCmSketchRow {
+                    counters: Some(
+                        (0..sketch.width())
+                            .map(|column| {
+                                sketch
+                                    .counter_at(row, column)
+                                    .expect("CMSketch coordinate inside dimensions")
+                            })
+                            .collect(),
+                    ),
+                })
+            })
+            .collect()
+    });
+    let top_n = topn.map(|topn| {
+        topn.resolved_entries()
+            .into_iter()
+            .map(|entry| {
+                Some(JsonCmSketchTopN {
+                    data: Some(encode_base64(&entry.encoded)),
+                    count: entry.count,
+                })
+            })
+            .collect()
+    });
+    Some(JsonCmSketch {
+        rows,
+        top_n,
+        default_value: sketch.map_or(0, tidb_stats::CmsSketch::default_value),
+    })
+}
+
+fn stats_item_to_json(
+    histogram: &Histogram,
+    cmsketch: Option<&tidb_stats::CmsSketch>,
+    topn: Option<&tidb_stats::TopN>,
+    fm_sketch: Option<&tidb_stats::FmSketch>,
+    stats_ver: i64,
+    column_bounds: bool,
+) -> Result<JsonColumn, LoadStatsError> {
+    let fm_sketch = fm_sketch.map(|sketch| {
+        let proto = tidb_stats::fm_sketch_to_proto(Some(sketch));
+        JsonFmSketch {
+            mask: proto.mask,
+            hashset: Some(proto.hashset),
+        }
+    });
+    Ok(JsonColumn {
+        histogram: Some(histogram_to_json(histogram, column_bounds)?),
+        cm_sketch: cmsketch_to_json(cmsketch, topn),
+        fm_sketch,
+        stats_ver: Some(stats_ver),
+        null_count: histogram.null_count,
+        tot_col_size: histogram.tot_col_size,
+        last_update_version: histogram.last_update_version,
+        correlation: histogram.correlation,
+    })
+}
+
+/// Go `storage.GenJSONTableFromStats`: converts one canonical full statistics
+/// table to the shared dump/load JSON object model.
+pub fn gen_json_table_from_stats(
+    database_name: &str,
+    table_name: &str,
+    table: &Table,
+    predicate_columns: Option<Vec<Option<JsonPredicateColumn>>>,
+) -> Result<JsonTable, LoadStatsError> {
+    let mut columns = BTreeMap::new();
+    for column in table.hist_coll.stable_columns() {
+        let column = column
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let name = column
+            .info
+            .as_ref()
+            .expect("column has no metadata")
+            .name
+            .to_lowercase();
+        columns.insert(
+            name,
+            Some(stats_item_to_json(
+                &column.histogram,
+                column.cmsketch.as_ref(),
+                column.top_n.as_ref(),
+                column.fm_sketch.as_ref(),
+                column.stats_version,
+                true,
+            )?),
+        );
+    }
+    let mut indices = BTreeMap::new();
+    for index in table.hist_coll.stable_indices() {
+        let index = index
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let name = index
+            .info
+            .as_ref()
+            .expect("index has no metadata")
+            .name
+            .to_lowercase();
+        indices.insert(
+            name,
+            Some(stats_item_to_json(
+                &index.histogram,
+                index.cmsketch.as_ref(),
+                index.top_n.as_ref(),
+                None,
+                index.stats_version,
+                false,
+            )?),
+        );
+    }
+    Ok(JsonTable {
+        columns: Some(columns),
+        indices: Some(indices),
+        partitions: None,
+        database_name: database_name.to_owned(),
+        table_name: table_name.to_lowercase(),
+        predicate_columns,
+        count: table.hist_coll.realtime_count,
+        modify_count: table.hist_coll.modify_count,
+        version: table.version,
+        is_historical_stats: false,
+    })
 }
 
 fn decode_base64(field: Option<&String>) -> Result<Vec<u8>, LoadStatsError> {
@@ -779,6 +949,88 @@ mod tests {
             serde_json::to_value(converted).expect("converted JSON"),
             serde_json::to_value(source).expect("source JSON")
         );
+    }
+
+    /// Go `storage.GenJSONTableFromStats`: columns are converted to BLOB
+    /// bounds while index key bytes remain unchanged.
+    #[test]
+    fn canonical_table_dumps_back_to_go_json_shape() {
+        let mut coll = HistColl::new(41, 9, 2, 1, 1);
+        let mut column_histogram = Histogram::new(1, 1, 1, 7, 1, 0);
+        column_histogram.append_bucket(Datum::Int(10), Datum::Int(20), 8, 3);
+        coll.set_column(
+            1,
+            Column {
+                info: Some(ColumnInfo {
+                    id: 1,
+                    name: "A".to_owned(),
+                    primary_key: false,
+                }),
+                histogram: column_histogram,
+                stats_version: 2,
+                physical_id: 41,
+                ..Column::default()
+            },
+        );
+        let mut index_histogram = Histogram::new(2, 1, 0, 0, 1, 0);
+        index_histogram.append_bucket(Datum::Bytes(vec![1, 2]), Datum::Bytes(vec![3, 4]), 9, 1);
+        coll.set_index(
+            2,
+            Index {
+                info: Some(IndexInfo {
+                    id: 2,
+                    name: "IDX_A".to_owned(),
+                    ..IndexInfo::default()
+                }),
+                histogram: index_histogram,
+                stats_version: 2,
+                physical_id: 41,
+                ..Index::default()
+            },
+        );
+        let table = Table {
+            hist_coll: coll,
+            version: 88,
+            ..statistics_table_from_json_schema(
+                &LoadStatsTableSchema {
+                    columns: Vec::new(),
+                    indexes: Vec::new(),
+                    pk_is_handle: false,
+                },
+                41,
+                &JsonTable::default(),
+            )
+            .expect("empty canonical table")
+        };
+
+        let dumped = gen_json_table_from_stats("Test", "T", &table, None).expect("dump stats");
+        assert_eq!(dumped.database_name, "Test");
+        assert_eq!(dumped.table_name, "t");
+        assert_eq!(dumped.count, 9);
+        assert_eq!(dumped.modify_count, 2);
+        assert_eq!(dumped.version, 88);
+        let column = dumped.columns.unwrap()["a"].as_ref().unwrap().clone();
+        let bucket = column.histogram.unwrap().buckets.unwrap()[0]
+            .as_ref()
+            .unwrap()
+            .clone();
+        assert_eq!(decode_base64(bucket.lower_bound.as_ref()).unwrap(), b"10");
+        assert_eq!(decode_base64(bucket.upper_bound.as_ref()).unwrap(), b"20");
+        assert_eq!(column.stats_ver, Some(2));
+        let indices = dumped.indices.unwrap();
+        let index = indices["idx_a"]
+            .as_ref()
+            .unwrap()
+            .histogram
+            .as_ref()
+            .unwrap()
+            .buckets
+            .as_ref()
+            .unwrap()[0]
+            .as_ref()
+            .unwrap();
+        assert_eq!(decode_base64(index.lower_bound.as_ref()).unwrap(), [1, 2]);
+        assert_eq!(decode_base64(index.upper_bound.as_ref()).unwrap(), [3, 4]);
     }
 
     /// Go `TableStatsFromJSON` walks `TableInfo.Columns`, including hidden
