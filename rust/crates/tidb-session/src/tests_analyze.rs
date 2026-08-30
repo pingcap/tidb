@@ -682,6 +682,92 @@ fn ordinary_index_target_collects_all_statistics() {
     );
 }
 
+/// Go removes a special GLOBAL prefix index from the ordinary column-sampling
+/// task and analyzes its logical-table keyspace through an independent index
+/// task. That task replaces only the index item: it must not overwrite the
+/// existing table row count, and it cannot be scoped to one partition.
+#[test]
+fn special_global_index_uses_the_independent_analyze_task() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE only_special (a INT, b VARCHAR(16), UNIQUE KEY gb(b(2)) GLOBAL) \
+             PARTITION BY HASH(a) PARTITIONS 2",
+        )
+        .unwrap();
+    session
+        .run("INSERT INTO only_special VALUES (1,'aa')")
+        .unwrap();
+    session.run("ANALYZE TABLE only_special INDEX").unwrap();
+    session
+        .with_catalog_mut(|catalog| {
+            let Some(TableEntry::Kv(table)) = catalog.table_in("test", "only_special") else {
+                panic!("only_special is not stored as table bytes")
+            };
+            assert!(
+                catalog.table_statistics(table.table_id).is_none(),
+                "pinned Go's empty-name all-special branch creates no task"
+            );
+            Ok(())
+        })
+        .unwrap();
+
+    session
+        .run(
+            "CREATE TABLE sg (a INT, b VARCHAR(16), UNIQUE KEY gb(b(2)) GLOBAL) \
+             PARTITION BY HASH(a) PARTITIONS 2",
+        )
+        .unwrap();
+    session
+        .run("INSERT INTO sg VALUES (1,'aa'),(2,'bb'),(3,'cc'),(4,'dd')")
+        .unwrap();
+
+    session.run("ANALYZE TABLE sg").unwrap();
+    session.run("INSERT INTO sg VALUES (5,'ee')").unwrap();
+    session.run("ANALYZE TABLE sg INDEX gb").unwrap();
+    assert!(warnings_of(&session).is_empty());
+    session
+        .with_catalog_mut(|catalog| {
+            let Some(TableEntry::Kv(table)) = catalog.table_in("test", "sg") else {
+                panic!("sg is not stored as table bytes")
+            };
+            let index_id = table
+                .indexes()
+                .iter()
+                .find(|index| index.name.eq_ignore_ascii_case("gb"))
+                .expect("gb exists")
+                .id;
+            let statistics = catalog
+                .table_statistics(table.table_id)
+                .expect("the independent task writes logical-table statistics");
+            assert_eq!(
+                statistics.row_count, 4,
+                "an independent index task preserves existing stats_meta.count"
+            );
+            let index = statistics
+                .indexes
+                .get(&index_id)
+                .expect("the independent task publishes gb");
+            assert_eq!(
+                index.histogram.total_row_count()
+                    + index
+                        .topn
+                        .as_ref()
+                        .map_or(0.0, |topn| topn.total_count() as f64),
+                5.0
+            );
+            Ok(())
+        })
+        .unwrap();
+
+    let error = session
+        .run("ANALYZE TABLE sg PARTITION p0 INDEX gb")
+        .expect_err("Go cannot scope a global-index task to one partition");
+    assert!(error
+        .to_string()
+        .contains("Analyze global index 'gb' can't work with analyze specified partitions"));
+}
+
 /// `ANALYZE` inside an explicit transaction runs through the process-wide
 /// statistics handle, so a later `ROLLBACK` does not take its statistics back.
 /// Captured from TiDB:

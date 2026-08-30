@@ -55,6 +55,29 @@ use crate::analyze::{
 };
 use crate::kv_table::{KvTable, RowDecodeContext};
 
+/// Go `handleutil.IsSpecialGlobalIndex`: these indexes cannot be rebuilt from
+/// the ordinary column sample and therefore own an independent ordered index
+/// task.
+#[must_use]
+pub fn is_special_global_index(table: &KvTable, index: &crate::kv_table::KvIndex) -> bool {
+    index.global
+        && index
+            .column_offsets
+            .iter()
+            .enumerate()
+            .any(|(position, offset)| {
+                index
+                    .prefix_lengths
+                    .get(position)
+                    .is_some_and(|length| *length != crate::ddl::index_prefix::UNSPECIFIED_LENGTH)
+                    || table
+                        .columns()
+                        .get(*offset)
+                        .and_then(|column| column.generated.as_ref())
+                        .is_some_and(|generated| !generated.stored)
+            })
+}
+
 /// Runs one `ANALYZE TABLE` over a table's stored rows.
 ///
 /// `realtime_count` is what this table's statistics currently say its row
@@ -133,6 +156,68 @@ pub fn analyze_kv_table_columns(
     // physical half in the high bits, exactly what
     // `show_stats::version_to_time` decodes back for `SHOW STATS_META`.
     .with_stat_versions(now_tso_shaped(), now_tso_shaped()))
+}
+
+/// Runs Go's independent stats-v2 task for one special global index.
+///
+/// The encoded index columns are consumed directly and in key order. This is
+/// essential for prefix and virtual-generated indexes: reconstructing their
+/// keys from a table-row sample is not the same operation.
+pub fn analyze_kv_table_independent_index(
+    table: &mut KvTable,
+    index_id: i64,
+    options: &AnalyzeOptions,
+) -> Result<TableStatistics, AnalyzeError> {
+    let index = table
+        .indexes()
+        .iter()
+        .find(|index| index.id == index_id)
+        .cloned()
+        .ok_or_else(|| AnalyzeError::Unsupported(format!("no such index id {index_id}")))?;
+    if !is_special_global_index(table, &index) {
+        return Err(AnalyzeError::Unsupported(format!(
+            "index `{}` is not a special global index",
+            index.name
+        )));
+    }
+    let bucket_count = usize::try_from(options.num_buckets)
+        .map_err(|_| AnalyzeError::Unsupported("invalid ANALYZE bucket count".to_owned()))?;
+    let topn_count = usize::try_from(options.num_topn)
+        .map_err(|_| AnalyzeError::Unsupported("invalid ANALYZE TopN count".to_owned()))?;
+    let mut processor = tidb_stats::IndependentIndexAnalyze::new(
+        index.id,
+        index.column_offsets.len(),
+        bucket_count,
+        topn_count,
+    );
+    for entry in table
+        .index_entry_records_for_check(index.id)
+        .map_err(|error| AnalyzeError::Unsupported(format!("{error:?}")))?
+    {
+        let (encoded_columns, _) =
+            tidb_tablecodec::cut_index_key(&entry.key, index.column_offsets.len())
+                .map_err(|error| AnalyzeError::Unsupported(error.to_string()))?;
+        processor
+            .push(&encoded_columns)
+            .map_err(|error| AnalyzeError::Unsupported(error.to_string()))?;
+    }
+    let built = processor
+        .finish()
+        .map_err(|error| AnalyzeError::Unsupported(error.to_string()))?;
+    let mut indexes = BTreeMap::new();
+    indexes.insert(
+        index.id,
+        IndexStats {
+            histogram: built.histogram,
+            topn: Some(built.topn),
+            cms: None,
+            stats_ver: 2,
+            num_columns: index.column_offsets.len(),
+            unique: index.unique,
+        },
+    );
+    Ok(TableStatistics::new(0, 0, BTreeMap::new(), indexes)
+        .with_stat_versions(now_tso_shaped(), now_tso_shaped()))
 }
 
 /// The current wall clock as a Go TSO: milliseconds since the epoch shifted
@@ -233,6 +318,9 @@ fn kv_analyze_plan(
     let mut indexes = Vec::with_capacity(table.indexes().len());
     let mut source_indexes = Vec::with_capacity(table.indexes().len());
     for (source_index, index) in table.indexes().iter().enumerate() {
+        if is_special_global_index(table, index) {
+            continue;
+        }
         let mut column_positions = Vec::with_capacity(index.column_offsets.len());
         for offset in &index.column_offsets {
             if *offset >= visible.len() {
