@@ -643,6 +643,177 @@ fn analyze_job_lifecycle_is_persisted_like_go() {
     .is_empty());
 }
 
+/// Pinned `TestCleanupCorruptedAnalyzeJobsOnCurrentInstance` and
+/// `TestCleanupCorruptedAnalyzeJobsOnDeadInstances`: the two restricted
+/// transactions select different corruptions and preserve the timestamps Go
+/// does not update in `BatchUpdateAnalyzeJobSQL`.
+#[test]
+fn corrupted_analyze_job_cleanup_matches_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(79))
+        .expect("session opens");
+    let local_instance = "127.0.0.1:0";
+    let now = tidb_exec::mysql_bootstrap::utc_now_timestamp();
+    let old = now
+        .add_duration(MySqlDuration::from_nanoseconds(-660_000_000_000, 0).unwrap())
+        .unwrap();
+    let handle = ClusterHistoricalStatsHandle {
+        transactions: Arc::clone(&stack.factory.transactions),
+        catalog: Arc::clone(&stack.factory.catalog),
+        global_vars: stack.factory.global_vars.clone(),
+    };
+    for (process_id, instance, created_at) in [
+        (1, local_instance, old),
+        (2, local_instance, old),
+        (3, local_instance, old),
+        (4, local_instance, old),
+        (5, local_instance, old),
+        (6, local_instance, now),
+        (7, "10.0.0.1:4000", old),
+    ] {
+        handle
+            .commit_stats_plan(|snapshot, _| {
+                let (_, plan) = tidb_exec::cluster_stats_write::plan_insert_analyze_job(
+                    snapshot,
+                    &stack.factory.catalog.load(),
+                    "test",
+                    "t",
+                    "",
+                    b"job",
+                    instance,
+                    process_id,
+                    created_at,
+                )
+                .map_err(|error| error.to_string())?;
+                Ok(plan)
+            })
+            .expect("pending job commits");
+    }
+    for id in [2, 3, 4] {
+        handle
+            .commit_stats_plan(|snapshot, _| {
+                tidb_exec::cluster_stats_write::plan_start_analyze_job(
+                    snapshot,
+                    &stack.factory.catalog.load(),
+                    id,
+                    old,
+                )
+                .map_err(|error| error.to_string())
+            })
+            .expect("running job commits");
+    }
+    handle
+        .commit_stats_plan(|snapshot, _| {
+            tidb_exec::cluster_stats_write::plan_finish_analyze_job(
+                snapshot,
+                &stack.factory.catalog.load(),
+                2,
+                0,
+                None,
+                old,
+            )
+            .map_err(|error| error.to_string())
+        })
+        .expect("temporary finish commits");
+    handle
+        .commit_stats_plan(|snapshot, _| {
+            tidb_exec::cluster_stats_write::plan_start_analyze_job(
+                snapshot,
+                &stack.factory.catalog.load(),
+                2,
+                old,
+            )
+            .map_err(|error| error.to_string())
+        })
+        .expect("NULL-process running job commits");
+    handle
+        .commit_stats_plan(|snapshot, _| {
+            tidb_exec::cluster_stats_write::plan_finish_analyze_job(
+                snapshot,
+                &stack.factory.catalog.load(),
+                5,
+                0,
+                None,
+                old,
+            )
+            .map_err(|error| error.to_string())
+        })
+        .expect("finished job commits");
+
+    let processes = stack.factory.processes();
+    let _analyze = processes.register(
+        3,
+        "root".to_owned(),
+        "local".to_owned(),
+        "test".to_owned(),
+        None,
+    );
+    processes.statement_started(3, "/*+ hint */ANALYZE TABLE test.t", "executing");
+    let _ordinary = processes.register(
+        4,
+        "root".to_owned(),
+        "local".to_owned(),
+        "test".to_owned(),
+        None,
+    );
+    processes.statement_started(4, "SELECT 1", "executing");
+
+    let cutoff = now
+        .add_duration(MySqlDuration::from_nanoseconds(-600_000_000_000, 0).unwrap())
+        .unwrap();
+    let update_times_before = displayed(rows(
+        &mut session,
+        "SELECT id, update_time FROM mysql.analyze_jobs ORDER BY id",
+    ));
+    stack
+        .factory
+        .cleanup_corrupted_analyze_jobs_on_current_instance(cutoff)
+        .expect("current-instance cleanup commits");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT id, state, process_id IS NULL, fail_reason IS NULL \
+             FROM mysql.analyze_jobs ORDER BY id",
+        )),
+        [
+            ["1", "failed", "1", "0"],
+            ["2", "running", "1", "1"],
+            ["3", "running", "0", "1"],
+            ["4", "failed", "1", "0"],
+            ["5", "finished", "1", "1"],
+            ["6", "pending", "0", "1"],
+            ["7", "pending", "0", "1"],
+        ]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT id, update_time FROM mysql.analyze_jobs ORDER BY id",
+        )),
+        update_times_before,
+        "BatchUpdateAnalyzeJobSQL does not refresh update_time",
+    );
+
+    stack
+        .factory
+        .cleanup_corrupted_analyze_jobs_on_dead_instances(cutoff)
+        .expect("dead-instance cleanup commits");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT state, process_id IS NULL, fail_reason FROM mysql.analyze_jobs WHERE id = 7",
+        )),
+        [[
+            "failed",
+            "1",
+            tidb_exec::cluster_stats_write::CORRUPTED_ANALYZE_JOB_FAILURE,
+        ]]
+    );
+}
+
 /// Go creates one pending job for every physical partition task before
 /// dispatch, then creates independent global-merge jobs after all partition
 /// results have been saved. Global jobs never accumulate processed rows.

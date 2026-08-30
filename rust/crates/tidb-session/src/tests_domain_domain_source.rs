@@ -17,8 +17,7 @@
 //! `TestUpdateExternalWorkloadTTLJobEnableOnlyFromMaster` (:268),
 //! `TestShouldStartTTLJobManagerWithExternalWorkloadRole` (:282),
 //! `TestLoadSysVarCacheLoopReappliesStmtSummaryInternalQuery` (:336),
-//! `TestClosestReplicaReadChecker` (:413), and `TestIsAnalyzeTableSQL`
-//! (:621).
+//! and `TestClosestReplicaReadChecker` (:413).
 //!
 //! `TestInfo` is `t.Skip`ped upstream itself ("TestInfo will hang
 //! currently") and additionally needs an embedded etcd cluster; it is
@@ -96,13 +95,3 @@ fn load_sys_var_cache_loop_reapplies_stmt_summary_internal_query() {}
 #[test]
 #[ignore = "go-parity-gap: Domain.checkReplicaRead is not transcreated"]
 fn closest_replica_read_checker() {}
-
-/// Go `pkg/domain/domain_test.go:621::TestIsAnalyzeTableSQL`:
-/// `isAnalyzeTableSQL` (domain.go:2465) accepts `analyze table ...` in any
-/// case, with surrounding spaces, after a plain/multi-line comment, and
-/// directly after a hint comment with no space.
-// go-parity-gap: domain.go's isAnalyzeTableSQL helper is not transcreated.
-#[test]
-#[ignore = "go-parity-gap: domain.go:2465 isAnalyzeTableSQL is not \
-           transcreated"]
-fn is_analyze_table_sql() {}

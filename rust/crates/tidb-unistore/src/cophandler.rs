@@ -72,6 +72,23 @@ pub enum TimeZoneSpec {
     Named(String),
 }
 
+impl TimeZoneSpec {
+    fn resolve(&self) -> Result<tidb_datatype::SessionTimeZone, String> {
+        match self {
+            Self::FixedOffset(offset) => Ok(tidb_datatype::SessionTimeZone::Fixed {
+                name: "UTC".to_owned(),
+                offset_secs: i32::try_from(*offset)
+                    .map_err(|_| format!("invalid time zone offset {offset}"))?,
+            }),
+            Self::System => Ok(tidb_datatype::SessionTimeZone::Local),
+            Self::Named(name) => name
+                .parse::<chrono_tz::Tz>()
+                .map(tidb_datatype::SessionTimeZone::Named)
+                .map_err(|error| error.to_string()),
+        }
+    }
+}
+
 /// Go `HandleCopRequest` (`cop_handler.go`): the type dispatch. The unknown
 /// arm's message is Go's exact `fmt.Sprintf`.
 pub fn handle_cop_request(
@@ -305,6 +322,10 @@ fn exec_table_scan(
     limit: usize,
     aggregation: Option<&tipb::Aggregation>,
 ) -> coprocessor::Response {
+    let timezone = match context.time_zone.resolve() {
+        Ok(timezone) => timezone,
+        Err(error) => return other_error(&error),
+    };
     let mut aggregator = match aggregation {
         Some(aggregation) => match RegionAggregator::build(aggregation, &tbl_scan.columns) {
             Ok(aggregator) => Some(aggregator),
@@ -373,11 +394,14 @@ fn exec_table_scan(
                 }
                 Err(err) => return other_error(&format!("invalid record key: {err:?}")),
             };
-            let decoded =
-                match tidb_tablecodec::decode_table_row_to_map(&pair.value, &column_types, None) {
-                    Ok(map) => map,
-                    Err(err) => return other_error(&format!("decode row failed: {err:?}")),
-                };
+            let decoded = match tidb_tablecodec::decode_table_row_to_map(
+                &pair.value,
+                &column_types,
+                Some(&timezone),
+            ) {
+                Ok(map) => map,
+                Err(err) => return other_error(&format!("decode row failed: {err:?}")),
+            };
             let mut row_datums = Vec::with_capacity(tbl_scan.columns.len());
             for column in &tbl_scan.columns {
                 if column.pk_handle() {
@@ -1469,6 +1493,13 @@ mod tests {
         let context = build_dag(&req).expect("parses");
         assert_eq!(context.start_ts, 42);
         assert_eq!(context.time_zone, TimeZoneSpec::FixedOffset(3600));
+        assert_eq!(
+            context.time_zone.resolve().expect("fixed zone"),
+            tidb_datatype::SessionTimeZone::Fixed {
+                name: "UTC".to_owned(),
+                offset_secs: 3600,
+            }
+        );
 
         let named = tipb::DagRequest {
             time_zone_name: Some("Asia/Shanghai".to_owned()),
@@ -1487,6 +1518,13 @@ mod tests {
             context.time_zone,
             TimeZoneSpec::Named("Asia/Shanghai".to_owned())
         );
+        assert_eq!(
+            context.time_zone.resolve().expect("named zone"),
+            tidb_datatype::SessionTimeZone::Named(chrono_tz::Asia::Shanghai)
+        );
+        assert!(TimeZoneSpec::Named("Not/AZone".to_owned())
+            .resolve()
+            .is_err());
     }
 
     #[test]

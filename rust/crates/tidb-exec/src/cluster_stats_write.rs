@@ -50,7 +50,7 @@
 //! Go. `mysql.column_stats_usage` remains a separate predicate-column input.
 //! `cm_sketch` is left NULL because analyze v2 stores no CMSketch.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range;
 
 use tidb_datatype::{
@@ -160,6 +160,10 @@ pub type PersistedAnalyzeOptions = SavedAnalyzeOptions;
 
 /// One persisted `mysql.analyze_jobs` identifier.
 pub type AnalyzeJobId = u64;
+
+/// Pinned Go `BatchUpdateAnalyzeJobSQL`'s failure reason.
+pub const CORRUPTED_ANALYZE_JOB_FAILURE: &str =
+    "The TiDB Server has either shut down or the analyze query was terminated during the analyze job execution";
 
 impl StatsWritePlan {
     /// Whether the plan writes nothing.
@@ -396,6 +400,103 @@ pub fn plan_delete_analyze_jobs<S: MetaSnapshot>(
         }
     }
     Ok(plan)
+}
+
+/// Plans pinned Go `CleanupCorruptedAnalyzeJobsOnCurrentInstance`.
+///
+/// The caller supplies only process IDs whose current SQL normalizes to an
+/// `ANALYZE TABLE` statement. A NULL persisted process ID is deliberately
+/// ignored, matching the otherwise-surprising guard in Go's row loop.
+pub fn plan_cleanup_corrupted_analyze_jobs_on_current_instance<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    instance: &str,
+    current_analyze_process_ids: &HashSet<u64>,
+    cutoff: &Time,
+) -> Result<StatsWritePlan, StatsWriteError> {
+    plan_cleanup_corrupted_analyze_jobs(snapshot, catalog, cutoff, |table, values| {
+        Ok(
+            datum_bytes(values.get(&column_id(table, "instance")?)) == Some(instance.as_bytes())
+                && datum_u64(values.get(&column_id(table, "process_id")?))
+                    .is_some_and(|process_id| !current_analyze_process_ids.contains(&process_id)),
+        )
+    })
+}
+
+/// Plans pinned Go `CleanupCorruptedAnalyzeJobsOnDeadInstances`.
+pub fn plan_cleanup_corrupted_analyze_jobs_on_dead_instances<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    alive_instances: &HashSet<String>,
+    cutoff: &Time,
+) -> Result<StatsWritePlan, StatsWriteError> {
+    plan_cleanup_corrupted_analyze_jobs(snapshot, catalog, cutoff, |table, values| {
+        Ok(
+            datum_bytes(values.get(&column_id(table, "instance")?)).is_some_and(|instance| {
+                std::str::from_utf8(instance)
+                    .map_or(true, |instance| !alive_instances.contains(instance))
+            }),
+        )
+    })
+}
+
+fn plan_cleanup_corrupted_analyze_jobs<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    cutoff: &Time,
+    select: impl Fn(&TableInfo, &RowValues) -> Result<bool, StatsWriteError>,
+) -> Result<StatsWritePlan, StatsWriteError> {
+    let table = locate(catalog, "analyze_jobs")?;
+    let state = column_id(table, "state")?;
+    let update_time = column_id(table, "update_time")?;
+    let mut selected = Vec::new();
+    for (_, values) in read_rows_with_keys(snapshot, table, None)? {
+        let active = datum_bytes(values.get(&state)).is_some_and(|state| {
+            state.eq_ignore_ascii_case(tidb_stats::ANALYZE_PENDING.as_bytes())
+                || state.eq_ignore_ascii_case(tidb_stats::ANALYZE_RUNNING.as_bytes())
+        });
+        let stale = matches!(values.get(&update_time), Some(Datum::Time(time)) if time.compare(*cutoff) == std::cmp::Ordering::Less);
+        if active && stale && select(table, &values)? {
+            selected.push(values);
+        }
+    }
+
+    let mut rows = StatsRows::open_all(snapshot, table, &["id"])?;
+    let mut plan = StatsWritePlan::default();
+    for mut values in selected {
+        set(
+            table,
+            &mut values,
+            "state",
+            Datum::Bytes(tidb_stats::ANALYZE_FAILED.as_bytes().to_vec()),
+        );
+        set(
+            table,
+            &mut values,
+            "fail_reason",
+            Datum::Bytes(CORRUPTED_ANALYZE_JOB_FAILURE.as_bytes().to_vec()),
+        );
+        set(table, &mut values, "process_id", Datum::Null);
+        rows.store(snapshot, catalog, &values, &mut plan)?;
+    }
+    Ok(plan)
+}
+
+fn datum_bytes(value: Option<&Datum>) -> Option<&[u8]> {
+    match value {
+        Some(Datum::Bytes(value)) => Some(value),
+        Some(Datum::String(value)) => Some(value.bytes()),
+        Some(Datum::Enum(value, _)) => Some(value.name().as_bytes()),
+        _ => None,
+    }
+}
+
+fn datum_u64(value: Option<&Datum>) -> Option<u64> {
+    match value {
+        Some(Datum::UInt(value)) => Some(*value),
+        Some(Datum::Int(value)) => u64::try_from(*value).ok(),
+        _ => None,
+    }
 }
 
 /// Loads and schema-filters one persisted ANALYZE option row.

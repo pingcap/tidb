@@ -168,6 +168,7 @@
 
 use std::borrow::Cow;
 use std::cell::Cell;
+use std::collections::HashSet;
 use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -216,6 +217,12 @@ use crate::sql_node::{
     QuerySessionFactory, SessionContext, SqlQueryError, WriteOutcome,
 };
 use crate::wire_status::WireStatus;
+
+fn is_analyze_table_sql(sql: &str) -> bool {
+    tidb_parser::normalize_digest(sql)
+        .0
+        .starts_with("analyze table")
+}
 
 /// The PD/TiKV control-plane deadline this node's boot and statements use, the
 /// same one the bounded node applies.
@@ -770,6 +777,86 @@ impl ClusterSessionFactory {
             tidb_exec::cluster_stats_write::plan_delete_analyze_jobs(
                 snapshot,
                 &self.catalog.load(),
+                &cutoff,
+            )
+            .map_err(|error| error.to_string())
+        })
+    }
+
+    /// Pinned Go `CleanupCorruptedAnalyzeJobsOnCurrentInstance` over one
+    /// restricted transaction.
+    pub fn cleanup_corrupted_analyze_jobs_on_current_instance(
+        &self,
+        cutoff: tidb_datatype::Time,
+    ) -> Result<(), String> {
+        let syncer = self
+            .server_info
+            .as_ref()
+            .ok_or_else(|| "server info is not initialized".to_owned())?;
+        let local = syncer.local_server_info();
+        let instance = tidb_domain::serverinfo_syncer::join_host_port(
+            &local.static_info.ip,
+            local.static_info.port,
+        );
+        let analyze_process_ids = self
+            .processes
+            .snapshot()
+            .into_iter()
+            .filter_map(|process| {
+                process
+                    .info
+                    .as_deref()
+                    .is_some_and(is_analyze_table_sql)
+                    .then_some(process.id)
+            })
+            .collect::<HashSet<_>>();
+        ClusterHistoricalStatsHandle {
+            transactions: Arc::clone(&self.transactions),
+            catalog: Arc::clone(&self.catalog),
+            global_vars: self.global_vars.clone(),
+        }
+        .commit_stats_plan(|snapshot, _| {
+            tidb_exec::cluster_stats_write::plan_cleanup_corrupted_analyze_jobs_on_current_instance(
+                snapshot,
+                &self.catalog.load(),
+                &instance,
+                &analyze_process_ids,
+                &cutoff,
+            )
+            .map_err(|error| error.to_string())
+        })
+    }
+
+    /// Pinned Go `CleanupCorruptedAnalyzeJobsOnDeadInstances` over one
+    /// restricted transaction.
+    pub fn cleanup_corrupted_analyze_jobs_on_dead_instances(
+        &self,
+        cutoff: tidb_datatype::Time,
+    ) -> Result<(), String> {
+        let syncer = self
+            .server_info
+            .as_ref()
+            .ok_or_else(|| "server info is not initialized".to_owned())?;
+        let alive_instances = syncer
+            .all_server_info()?
+            .into_values()
+            .map(|info| {
+                tidb_domain::serverinfo_syncer::join_host_port(
+                    &info.static_info.ip,
+                    info.static_info.port,
+                )
+            })
+            .collect::<HashSet<_>>();
+        ClusterHistoricalStatsHandle {
+            transactions: Arc::clone(&self.transactions),
+            catalog: Arc::clone(&self.catalog),
+            global_vars: self.global_vars.clone(),
+        }
+        .commit_stats_plan(|snapshot, _| {
+            tidb_exec::cluster_stats_write::plan_cleanup_corrupted_analyze_jobs_on_dead_instances(
+                snapshot,
+                &self.catalog.load(),
+                &alive_instances,
                 &cutoff,
             )
             .map_err(|error| error.to_string())
