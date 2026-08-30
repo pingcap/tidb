@@ -18,15 +18,17 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use tidb_datatype::SessionTimeZone;
-use tidb_executor::load_stats::{gen_json_table_from_stats, LoadStatsError};
+use tidb_datatype::{Datum, SessionTimeZone};
+use tidb_executor::load_stats::{blocks_to_json_table, gen_json_table_from_stats, LoadStatsError};
 use tidb_model::table_info::TableInfo;
 use tidb_stats::{JsonPredicateColumn, JsonTable, Table, TIDB_GLOBAL_STATS};
 
 use crate::cluster_catalog::{ClusterCatalog, MetaSnapshot};
 use crate::cluster_predicate_column::load_column_stats_usage_for_table;
 use crate::cluster_stats_load::{column_types_of, ClusterStatsLoader};
-use crate::mysql_system_tables::SystemTableError;
+use crate::mysql_system_tables::{
+    scan_system_table_prefixed, SystemRow, SystemTableError, SystemTableView,
+};
 
 /// A live statistics table could not be converted to the canonical JSON dump.
 #[derive(Debug)]
@@ -178,4 +180,94 @@ pub fn dump_stats_to_json<S: MetaSnapshot>(
         partitions: Some(partitions),
         ..JsonTable::default()
     }))
+}
+
+/// Pinned Go `storage.TableHistoricalStatsToJSON`.
+///
+/// Metadata and payload versions are deliberately selected independently:
+/// a stats-delta flush can create a newer metadata history row without a new
+/// histogram dump. Go then combines those newer counts with the newest data
+/// dump at or before `snapshot`, which this preserves.
+pub fn table_historical_stats_to_json<S: MetaSnapshot>(
+    snapshot_store: &mut S,
+    catalog: &ClusterCatalog,
+    physical_id: i64,
+    snapshot: u64,
+) -> Result<Option<JsonTable>, StatsDumpError> {
+    let meta = SystemTableView::locate(
+        catalog,
+        "stats_meta_history",
+        &["table_id", "modify_count", "count", "version"],
+    )?;
+    let mut meta_at_snapshot = None;
+    for (key, value) in
+        scan_system_table_prefixed(snapshot_store, &meta, &[Datum::Int(physical_id)])?
+    {
+        let row = SystemRow::parse(&meta, &key, &value)?;
+        if row.i64("table_id")? != Some(physical_id) {
+            continue;
+        }
+        let Some(version) = row.u64("version")? else {
+            continue;
+        };
+        if version > snapshot
+            || meta_at_snapshot
+                .as_ref()
+                .is_some_and(|(current, _, _)| version <= *current)
+        {
+            continue;
+        }
+        let modify_count = row.i64("modify_count")?.unwrap_or_default();
+        let count = row.i64("count")?.unwrap_or_default();
+        meta_at_snapshot = Some((version, modify_count, count));
+    }
+    let Some((_, modify_count, count)) = meta_at_snapshot else {
+        return Ok(None);
+    };
+
+    let history = SystemTableView::locate(
+        catalog,
+        "stats_history",
+        &["table_id", "stats_data", "seq_no", "version"],
+    )?;
+    let rows = scan_system_table_prefixed(snapshot_store, &history, &[Datum::Int(physical_id)])?;
+    let mut data_version = None;
+    let mut decoded = Vec::with_capacity(rows.len());
+    for (key, value) in rows {
+        let row = SystemRow::parse(&history, &key, &value)?;
+        if row.i64("table_id")? != Some(physical_id) {
+            continue;
+        }
+        let Some(version) = row.u64("version")? else {
+            continue;
+        };
+        if version <= snapshot {
+            data_version = Some(data_version.map_or(version, |current: u64| current.max(version)));
+        }
+        decoded.push(row);
+    }
+    let Some(data_version) = data_version else {
+        return Ok(None);
+    };
+    let mut blocks = Vec::new();
+    for row in decoded {
+        if row.u64("version")? != Some(data_version) {
+            continue;
+        }
+        blocks.push((
+            row.i64("seq_no")?.unwrap_or_default(),
+            row.bytes("stats_data")?.unwrap_or_default(),
+        ));
+    }
+    blocks.sort_by_key(|(sequence, _)| *sequence);
+    let mut table = blocks_to_json_table(
+        &blocks
+            .into_iter()
+            .map(|(_, block)| block)
+            .collect::<Vec<_>>(),
+    )?;
+    table.count = count;
+    table.modify_count = modify_count;
+    table.is_historical_stats = true;
+    Ok(Some(table))
 }

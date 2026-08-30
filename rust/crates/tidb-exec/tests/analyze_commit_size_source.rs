@@ -37,7 +37,8 @@ use tidb_exec::cluster_predicate_column::{
 };
 use tidb_exec::cluster_stats_load::{ClusterStatsItem, ClusterStatsLoader, ClusterTableStats};
 use tidb_exec::cluster_stats_dump::{
-    load_table_stats_payload, table_stats_to_json_from_loaded,
+    load_table_stats_payload, table_historical_stats_to_json,
+    table_stats_to_json_from_loaded,
 };
 use tidb_exec::cluster_stats_write::{
     load_analyze_options, plan_analyze_options_write, plan_column_stats_usage_dump,
@@ -1600,6 +1601,96 @@ fn historical_stats_data_round_trips_through_stats_history() {
     )
     .expect("historical statistics JSON restores");
     assert_eq!(restored, json);
+}
+
+/// Pinned `TableHistoricalStatsToJSON` independently selects metadata and
+/// payload versions. A later delta-flush meta row overlays its counts on the
+/// newest older histogram dump and marks the reconstructed JSON historical.
+#[test]
+fn historical_stats_reader_selects_meta_and_data_versions_independently() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let table_id = 4242;
+    let data_version = 440_000_000_000_000_000;
+    let data = JsonTable {
+        database_name: "test".to_owned(),
+        table_name: "t".to_owned(),
+        count: 10,
+        modify_count: 0,
+        version: data_version,
+        ..JsonTable::default()
+    };
+    let meta = plan_loaded_stats_meta_write(
+        &mut store,
+        &catalog,
+        table_id,
+        data.count,
+        data.modify_count,
+        data_version,
+        now(),
+    )
+    .expect("initial metadata plans");
+    apply_mutations(&mut store, &meta.mutations);
+    let history_meta = plan_historical_stats_meta_write(
+        &mut store,
+        &catalog,
+        table_id,
+        data_version,
+        "analyze",
+        now(),
+    )
+    .expect("initial metadata history plans");
+    apply_mutations(&mut store, &history_meta.mutations);
+    let (_, history_data) =
+        plan_historical_stats_data_write(&mut store, &catalog, table_id, &data, now())
+            .expect("initial data history plans");
+    apply_mutations(&mut store, &history_data.mutations);
+
+    let meta_version = data_version + 10;
+    let meta = plan_loaded_stats_meta_write(
+        &mut store,
+        &catalog,
+        table_id,
+        17,
+        7,
+        meta_version,
+        now(),
+    )
+    .expect("newer metadata plans");
+    apply_mutations(&mut store, &meta.mutations);
+    let history_meta = plan_historical_stats_meta_write(
+        &mut store,
+        &catalog,
+        table_id,
+        meta_version,
+        "flush stats",
+        now(),
+    )
+    .expect("newer metadata history plans");
+    apply_mutations(&mut store, &history_meta.mutations);
+
+    let restored = table_historical_stats_to_json(
+        &mut store,
+        &catalog,
+        table_id,
+        meta_version,
+    )
+    .expect("historical statistics read succeeds")
+    .expect("historical statistics exist");
+    assert_eq!(restored.version, data_version);
+    assert_eq!(restored.count, 17);
+    assert_eq!(restored.modify_count, 7);
+    assert!(restored.is_historical_stats);
+    assert_eq!(
+        table_historical_stats_to_json(
+            &mut store,
+            &catalog,
+            table_id,
+            data_version - 1,
+        )
+        .expect("an older snapshot is valid"),
+        None
+    );
 }
 
 /// Go `TableStatsToJSON(..., snapshot=0)` loads histogram payload first, then

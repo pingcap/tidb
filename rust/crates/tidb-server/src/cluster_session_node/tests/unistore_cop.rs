@@ -151,6 +151,84 @@ fn analyze_records_historical_stats_through_the_domain_worker() {
         )),
         [["1"]]
     );
+    let catalog = stack.factory.catalog.load();
+    let (_, table) = catalog
+        .find_table("test", "history_analyze")
+        .expect("analyzed table remains published");
+    let table = table.clone();
+    drop(catalog);
+    let (historical, fallbacks) = stack
+        .factory
+        .dump_historical_stats_by_snapshot("test", &table, u64::MAX)
+        .expect("historical statistics reload succeeds");
+    assert!(fallbacks.is_empty(), "unexpected fallbacks: {fallbacks:?}");
+    assert!(
+        historical
+            .expect("historical statistics exist")
+            .is_historical_stats
+    );
+}
+
+/// Pinned `TestDumpHistoricalStatsFallback`: after ANALYZE ran with history
+/// disabled, historical dump uses the latest statistics and names that table
+/// in the fallback list once the feature is enabled.
+#[test]
+fn historical_stats_reader_falls_back_to_latest_stats_like_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(77))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET SESSION tidb_analyze_version = 2");
+    rows(
+        &mut session,
+        "CREATE TABLE history_fallback (a INT, INDEX idx(a)) \
+         PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6))",
+    );
+    rows(
+        &mut session,
+        "SET GLOBAL tidb_enable_historical_stats = OFF",
+    );
+    rows(&mut session, "ANALYZE TABLE history_fallback");
+    let catalog = stack.factory.catalog.load();
+    let (_, table) = catalog
+        .find_table("test", "history_fallback")
+        .expect("analyzed table remains published");
+    let table = table.clone();
+    drop(catalog);
+    assert_eq!(
+        stack
+            .factory
+            .dump_historical_stats_by_snapshot("test", &table, u64::MAX)
+            .expect_err("the Go feature gate rejects historical reads"),
+        "tidb_enable_historical_stats should be enabled"
+    );
+    rows(&mut session, "SET GLOBAL tidb_enable_historical_stats = ON");
+    let (latest, fallbacks) = stack
+        .factory
+        .dump_historical_stats_by_snapshot("test", &table, u64::MAX)
+        .expect("latest statistics fallback succeeds");
+    assert_eq!(
+        fallbacks,
+        ["test.history_fallback p0", "test.history_fallback global"]
+    );
+    let latest = latest.expect("latest statistics exist");
+    assert!(!latest.is_historical_stats);
+    let partitions = latest.partitions.expect("partition statistics exist");
+    assert!(
+        !partitions["p0"]
+            .as_ref()
+            .expect("partition fallback exists")
+            .is_historical_stats
+    );
+    assert!(
+        !partitions[tidb_stats::TIDB_GLOBAL_STATS]
+            .as_ref()
+            .expect("global fallback exists")
+            .is_historical_stats
+    );
 }
 
 /// Pinned `TestDumpHistoricalStatsByTable`: static ANALYZE queues only the
@@ -184,6 +262,7 @@ fn partition_analyze_queues_the_same_historical_stats_ids_as_go() {
         .definitions
         .snapshot()[0]
         .id;
+    let table = table.clone();
     drop(catalog);
 
     rows(
@@ -252,6 +331,16 @@ fn partition_analyze_queues_the_same_historical_stats_ids_as_go() {
             [["1"]]
         );
     }
+    let (historical, _) = stack
+        .factory
+        .dump_historical_stats_by_snapshot("test", &table, u64::MAX)
+        .expect("partition historical statistics reload succeeds");
+    let partitions = historical
+        .expect("partition historical statistics exist")
+        .partitions
+        .expect("partition map exists");
+    assert!(partitions["p0"].is_some());
+    assert!(partitions[tidb_stats::TIDB_GLOBAL_STATS].is_some());
 }
 
 /// The probe-33 regression: a derived table whose inner SELECT plans as a

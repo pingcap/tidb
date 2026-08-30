@@ -668,6 +668,22 @@ impl ClusterSessionFactory {
             ));
     }
 
+    /// Pinned Go `StatsHandle.DumpHistoricalStatsBySnapshot` over the live
+    /// shared catalog and restricted cluster transactions.
+    pub fn dump_historical_stats_by_snapshot(
+        &self,
+        database_name: &str,
+        table: &tidb_model::table_info::TableInfo,
+        snapshot_ts: u64,
+    ) -> Result<(Option<tidb_stats::JsonTable>, Vec<String>), String> {
+        ClusterHistoricalStatsHandle {
+            transactions: Arc::clone(&self.transactions),
+            catalog: Arc::clone(&self.catalog),
+            global_vars: self.global_vars.clone(),
+        }
+        .dump_historical_stats_by_snapshot(database_name, table, snapshot_ts)
+    }
+
     /// Starts Go Domain's usage workers after the factory has stable `Arc`
     /// ownership. Index GC runs for every lease; delta and column dumps run
     /// only for a positive lease.
@@ -1149,6 +1165,23 @@ struct ClusterHistoricalStatsHandle {
 }
 
 impl ClusterHistoricalStatsHandle {
+    fn table_historical_json(
+        &self,
+        catalog: &ClusterCatalog,
+        physical_id: i64,
+        snapshot_ts: u64,
+    ) -> Result<Option<tidb_stats::JsonTable>, String> {
+        let snapshot = self.transactions.open_snapshot("default")?;
+        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+        tidb_exec::cluster_stats_dump::table_historical_stats_to_json(
+            &mut snapshot,
+            catalog,
+            physical_id,
+            snapshot_ts,
+        )
+        .map_err(|error| error.to_string())
+    }
+
     fn table_json(
         &self,
         catalog: &ClusterCatalog,
@@ -1210,6 +1243,110 @@ impl ClusterHistoricalStatsHandle {
             partitions: Some(partitions),
             ..tidb_stats::JsonTable::default()
         }))
+    }
+
+    fn historical_or_latest_json(
+        &self,
+        catalog: &ClusterCatalog,
+        database_name: &str,
+        table: &tidb_model::table_info::TableInfo,
+        physical_id: i64,
+        snapshot_ts: u64,
+    ) -> Result<(Option<tidb_stats::JsonTable>, bool), String> {
+        if let Some(historical) = self.table_historical_json(catalog, physical_id, snapshot_ts)? {
+            return Ok((Some(historical), false));
+        }
+        Ok((
+            self.table_json(catalog, database_name, table, physical_id)?,
+            snapshot_ts != 0,
+        ))
+    }
+
+    /// Pinned Go `statsReadWriter.DumpHistoricalStatsBySnapshot`, including
+    /// its feature gate, per-physical-table fallback names, and dump metrics.
+    fn dump_historical_stats_by_snapshot(
+        &self,
+        database_name: &str,
+        table: &tidb_model::table_info::TableInfo,
+        snapshot_ts: u64,
+    ) -> Result<(Option<tidb_stats::JsonTable>, Vec<String>), String> {
+        let enabled = self
+            .global_vars
+            .get(tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS)
+            .map_err(|error| format!("check tidb_enable_historical_stats failed: {error:?}"))?;
+        if !tidb_exec::option_values::tidb_opt_on(&enabled) {
+            return Err("tidb_enable_historical_stats should be enabled".to_owned());
+        }
+        let result =
+            self.dump_historical_stats_by_snapshot_inner(database_name, table, snapshot_ts);
+        if result.is_ok() {
+            tidb_stats_handle_metrics::dump_historical_stats_success_counter().inc();
+        } else {
+            tidb_stats_handle_metrics::dump_historical_stats_failed_counter().inc();
+        }
+        result
+    }
+
+    fn dump_historical_stats_by_snapshot_inner(
+        &self,
+        database_name: &str,
+        table: &tidb_model::table_info::TableInfo,
+        snapshot_ts: u64,
+    ) -> Result<(Option<tidb_stats::JsonTable>, Vec<String>), String> {
+        let catalog = self.catalog.load();
+        let Some(partition) = table.get_partition_info() else {
+            let (json, fallback) = self.historical_or_latest_json(
+                &catalog,
+                database_name,
+                table,
+                table.id,
+                snapshot_ts,
+            )?;
+            return Ok((
+                json,
+                fallback
+                    .then(|| format!("{database_name}.{}", table.name.original()))
+                    .into_iter()
+                    .collect(),
+            ));
+        };
+
+        let mut partitions = std::collections::BTreeMap::new();
+        let mut fallbacks = Vec::new();
+        for definition in partition.read().definitions.snapshot() {
+            let (json, fallback) = self.historical_or_latest_json(
+                &catalog,
+                database_name,
+                table,
+                definition.id,
+                snapshot_ts,
+            )?;
+            if fallback {
+                fallbacks.push(format!(
+                    "{database_name}.{} {}",
+                    table.name.original(),
+                    definition.name.original()
+                ));
+            }
+            partitions.insert(definition.name.lowercase().to_owned(), json);
+        }
+        let (global, fallback) =
+            self.historical_or_latest_json(&catalog, database_name, table, table.id, snapshot_ts)?;
+        if fallback {
+            fallbacks.push(format!("{database_name}.{} global", table.name.original()));
+        }
+        if global.is_some() {
+            partitions.insert(tidb_stats::TIDB_GLOBAL_STATS.to_owned(), global);
+        }
+        Ok((
+            Some(tidb_stats::JsonTable {
+                database_name: database_name.to_owned(),
+                table_name: table.name.lowercase().to_owned(),
+                partitions: Some(partitions),
+                ..tidb_stats::JsonTable::default()
+            }),
+            fallbacks,
+        ))
     }
 }
 
