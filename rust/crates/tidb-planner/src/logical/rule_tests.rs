@@ -38,6 +38,7 @@ use crate::find_best_task::LogicalJoinType;
 use crate::plan_base::PlanIdAllocator;
 
 use super::aggregation::{LogicalAggregation, AGG_FUNC_COUNT};
+use super::apply::LogicalApply;
 use super::data_source::DataSource;
 use super::fold::{fold_owned, Descend, OwnedRewrite};
 use super::join::LogicalJoin;
@@ -609,6 +610,194 @@ fn ordinary_predicate_simplification_forwards_the_validity_filter() {
         !conditions.iter().any(|condition| is_gt_on_column(condition, 2)),
         "Go forwards the validity filter to constant propagation, so it rejects the derived predicate"
     );
+}
+
+#[test]
+fn convert_outer_to_inner_join_uses_the_parent_selection_predicate() {
+    let allocator = PlanIdAllocator::new();
+    let ctx = test_context(&allocator);
+    let left = data_source(&allocator, &[1]);
+    let right = data_source(&allocator, &[2]);
+    let mut join = LogicalPlan::Join(LogicalJoin::new(
+        base(&allocator, "Join", Some(schema_of(&[1, 2]))),
+        LogicalJoinType::LeftOuter,
+    ));
+    join.set_children(vec![left, right]);
+    let mut selection = LogicalPlan::Selection(LogicalSelection::new(
+        base(&allocator, "Selection", Some(schema_of(&[1, 2]))),
+        vec![eq_const(2, 7)],
+    ));
+    selection.set_children(vec![join]);
+
+    let (plan, changed) = super::rule_outer_to_inner_join::ConvertOuterToInnerJoin
+        .optimize(&ctx, selection)
+        .expect("outer-to-inner conversion succeeds");
+    assert!(!changed, "pinned Go keeps planChanged false");
+    let LogicalPlan::Selection(selection) = plan else {
+        panic!("the Selection must remain");
+    };
+    let [LogicalPlan::Join(join)] = selection.base.children() else {
+        panic!("expected the converted Join below the Selection");
+    };
+    assert_eq!(join.join_type, LogicalJoinType::Inner);
+}
+
+#[test]
+fn convert_outer_to_inner_join_preserves_a_non_null_rejecting_outer_join() {
+    let allocator = PlanIdAllocator::new();
+    let ctx = test_context(&allocator);
+    let mut join = LogicalPlan::Join(LogicalJoin::new(
+        base(&allocator, "Join", Some(schema_of(&[1, 2]))),
+        LogicalJoinType::LeftOuter,
+    ));
+    join.set_children(vec![
+        data_source(&allocator, &[1]),
+        data_source(&allocator, &[2]),
+    ]);
+    let is_null = Expression::ScalarFunction(ScalarFunction::new(
+        CiString::new("isnull"),
+        int_type(),
+        vec![col_expr(2)],
+    ));
+    let mut selection = LogicalPlan::Selection(LogicalSelection::new(
+        base(&allocator, "Selection", Some(schema_of(&[1, 2]))),
+        vec![is_null],
+    ));
+    selection.set_children(vec![join]);
+
+    let (plan, _) = super::rule_outer_to_inner_join::ConvertOuterToInnerJoin
+        .optimize(&ctx, selection)
+        .expect("outer-to-inner conversion succeeds");
+    let LogicalPlan::Selection(selection) = plan else {
+        panic!("the Selection must remain");
+    };
+    let [LogicalPlan::Join(join)] = selection.base.children() else {
+        panic!("expected the Join below the Selection");
+    };
+    assert_eq!(join.join_type, LogicalJoinType::LeftOuter);
+}
+
+#[test]
+fn convert_outer_to_inner_join_maps_predicates_through_projection() {
+    let allocator = PlanIdAllocator::new();
+    let ctx = test_context(&allocator);
+    let mut join = LogicalPlan::Join(LogicalJoin::new(
+        base(&allocator, "Join", Some(schema_of(&[1, 2]))),
+        LogicalJoinType::LeftOuter,
+    ));
+    join.set_children(vec![
+        data_source(&allocator, &[1]),
+        data_source(&allocator, &[2]),
+    ]);
+    let mut projection = LogicalPlan::Projection(LogicalProjection::new(
+        base(&allocator, "Projection", Some(schema_of(&[3]))),
+        vec![col_expr(2)],
+    ));
+    projection.set_children(vec![join]);
+    let mut selection = LogicalPlan::Selection(LogicalSelection::new(
+        base(&allocator, "Selection", Some(schema_of(&[3]))),
+        vec![gt_const(3, 0)],
+    ));
+    selection.set_children(vec![projection]);
+
+    let (plan, _) = super::rule_outer_to_inner_join::ConvertOuterToInnerJoin
+        .optimize(&ctx, selection)
+        .expect("outer-to-inner conversion succeeds");
+    let LogicalPlan::Selection(selection) = plan else {
+        panic!("the Selection must remain");
+    };
+    let [LogicalPlan::Projection(projection)] = selection.base.children() else {
+        panic!("expected the Projection below the Selection");
+    };
+    let [LogicalPlan::Join(join)] = projection.base.children() else {
+        panic!("expected the Join below the Projection");
+    };
+    assert_eq!(join.join_type, LogicalJoinType::Inner);
+}
+
+#[test]
+fn convert_outer_to_inner_join_propagates_parent_on_clause_to_nested_join() {
+    let allocator = PlanIdAllocator::new();
+    let ctx = test_context(&allocator);
+    let mut nested = LogicalPlan::Join(LogicalJoin::new(
+        base(&allocator, "Join", Some(schema_of(&[1, 2]))),
+        LogicalJoinType::LeftOuter,
+    ));
+    nested.set_children(vec![
+        data_source(&allocator, &[1]),
+        data_source(&allocator, &[2]),
+    ]);
+    let mut parent = LogicalJoin::new(
+        base(&allocator, "Join", Some(schema_of(&[1, 2, 3]))),
+        LogicalJoinType::Inner,
+    );
+    parent.other_conditions = vec![gt_const(2, 0)];
+    parent
+        .base
+        .set_children(vec![nested, data_source(&allocator, &[3])]);
+
+    let (plan, _) = super::rule_outer_to_inner_join::ConvertOuterToInnerJoin
+        .optimize(&ctx, LogicalPlan::Join(parent))
+        .expect("outer-to-inner conversion succeeds");
+    let LogicalPlan::Join(parent) = plan else {
+        panic!("expected the parent Join");
+    };
+    let [LogicalPlan::Join(nested), _] = parent.base.children() else {
+        panic!("expected the nested Join");
+    };
+    assert_eq!(nested.join_type, LogicalJoinType::Inner);
+}
+
+#[test]
+fn convert_outer_to_inner_join_handles_right_outer_inner_side() {
+    let allocator = PlanIdAllocator::new();
+    let ctx = test_context(&allocator);
+    let mut join = LogicalPlan::Join(LogicalJoin::new(
+        base(&allocator, "Join", Some(schema_of(&[1, 2]))),
+        LogicalJoinType::RightOuter,
+    ));
+    join.set_children(vec![
+        data_source(&allocator, &[1]),
+        data_source(&allocator, &[2]),
+    ]);
+    let mut selection = LogicalPlan::Selection(LogicalSelection::new(
+        base(&allocator, "Selection", Some(schema_of(&[1, 2]))),
+        vec![gt_const(1, 0)],
+    ));
+    selection.set_children(vec![join]);
+
+    let (plan, _) = super::rule_outer_to_inner_join::ConvertOuterToInnerJoin
+        .optimize(&ctx, selection)
+        .expect("outer-to-inner conversion succeeds");
+    let LogicalPlan::Selection(selection) = plan else {
+        panic!("the Selection must remain");
+    };
+    let [LogicalPlan::Join(join)] = selection.base.children() else {
+        panic!("expected the Join below the Selection");
+    };
+    assert_eq!(join.join_type, LogicalJoinType::Inner);
+}
+
+#[test]
+fn convert_outer_to_inner_join_matches_go_promoted_apply_method() {
+    let allocator = PlanIdAllocator::new();
+    let ctx = test_context(&allocator);
+    let mut apply = LogicalApply::new(
+        base(&allocator, LogicalApply::TYPE, Some(schema_of(&[1, 2]))),
+        LogicalJoinType::LeftOuter,
+    );
+    apply.join.base.set_children(vec![
+        data_source(&allocator, &[1]),
+        data_source(&allocator, &[2]),
+    ]);
+
+    let (plan, _) = super::rule_outer_to_inner_join::ConvertOuterToInnerJoin
+        .optimize(&ctx, LogicalPlan::Apply(apply))
+        .expect("outer-to-inner conversion succeeds");
+    let LogicalPlan::Join(join) = plan else {
+        panic!("Go's promoted LogicalJoin method returns its embedded Join receiver");
+    };
+    assert_eq!(join.join_type, LogicalJoinType::LeftOuter);
 }
 
 // ***** predicate pushdown, per operator *****

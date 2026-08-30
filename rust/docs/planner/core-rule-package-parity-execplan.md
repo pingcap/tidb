@@ -50,6 +50,7 @@ Rust currently exposes Go's logical-rule list but several entries are missing, n
 - [x] (2026-08-30) Ran the Ready validation profile and recorded the complete root usage-package receipt.
 - [x] (2026-08-30) Filled the parent-rule dependency for pinned `GcSubstituter`: the catalog bridge retains virtual generated-column ASTs, `buildDataSource` resolves them against the complete DataSource schema, the registered ordinary rule implements Go's indexed-path/type/schema/operator/CTE/TiFlash/constant and plan-cache gates, and `tidb_enable_unsafe_substitute` now reaches the rule through the statement snapshot. This is dependency progress only; the parent `pkg/planner/core/rule` package remains incomplete, and ARRAY-cast construction remains an explicit expression dependency.
 - [x] (2026-08-30) Filled the parent-rule dependency for pinned `SemiJoinRewriter`: the complete 68-line wrapper and `LogicalJoin.SemiJoinRewrite` behavior are registered in Go rule order; hint/session gates, CTE boundary, warning/refusal cases, right Selection, grouping FIRST_ROW Aggregation, inner Join field transfer, identity Projection, consumed hint bit, and hard-coded unchanged flag match the pinned source. `tidb_opt_enable_semi_join_rewrite` now reaches the rule through the statement snapshot. This is dependency progress only; the parent `pkg/planner/core/rule` package remains incomplete.
+- [x] (2026-08-30) Filled the parent-rule dependency for pinned `ConvertOuterToInnerJoin`: the complete rule wrapper plus BaseLogicalPlan, Selection, Projection, and LogicalJoin dispatch are registered in Go order; preorder null-rejection, left/right inner-side selection, ON/WHERE predicate routing by join type, projection substitution, promoted Apply behavior, and hard-coded unchanged flag match the pinned source. The existing expression-owned `IsNullRejected` port supplies the complete structural proof behavior. This is dependency progress only; the parent `pkg/planner/core` package remains incomplete.
 
 ## Surprises & Discoveries
 
@@ -172,6 +173,9 @@ Rust currently exposes Go's logical-rule list but several entries are missing, n
 
 - Observation: pinned semi-join rewriting deliberately reports no plan change even after replacing the tree.
   Evidence: `SemiJoinRewriter.Optimize` returns the recursive rewrite result with `false`, and `LogicalJoin.SemiJoinRewrite` consumes the rewrite-hint bit before its two refusal checks. Rust preserves both externally visible details instead of normalizing them to the ordinary rule convention.
+
+- Observation: Go's `LogicalApply` comment says it inherits the base outer-to-inner method, but the concrete method set promotes the nearer `LogicalJoin.ConvertOuterToInnerJoin` implementation.
+  Evidence: `LogicalApply` embeds `LogicalJoin` by value and declares no override; Go method promotion therefore selects the join receiver, whose return value is the embedded `*LogicalJoin`. Rust mirrors that concrete transition when this rule flag reaches an Apply rather than following the stale inheritance comment.
 
 ## Decision Log
 

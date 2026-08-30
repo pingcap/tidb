@@ -434,10 +434,12 @@ impl RuleId {
             }
             Self::GcSubstituter => Some(&super::rule_generate_column_substitute::GcSubstituter),
             Self::SemiJoinRewriter => Some(&super::rule_semi_join_rewrite::SemiJoinRewriter),
+            Self::ConvertOuterToInnerJoin => {
+                Some(&super::rule_outer_to_inner_join::ConvertOuterToInnerJoin)
+            }
             Self::DecorrelateSolver
             | Self::SkewDistinctAggRewriter
             | Self::FullTextIndexResolverWhere
-            | Self::ConvertOuterToInnerJoin
             | Self::OuterJoinEliminator
             | Self::AggregationPushDownSolver
             | Self::FullTextIndexResolverTopN

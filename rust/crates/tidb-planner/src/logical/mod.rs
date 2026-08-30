@@ -360,6 +360,7 @@ pub mod rule_join_reorder;
 pub mod rule_max_min_elimination;
 pub mod rule_order_aware_join_reorder;
 pub mod rule_outer_join_to_semi_join;
+pub mod rule_outer_to_inner_join;
 pub mod rule_partition_processor;
 pub mod rule_predicate_simplification;
 pub mod rule_projection_elimination;
