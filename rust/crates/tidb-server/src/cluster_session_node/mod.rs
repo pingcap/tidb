@@ -1683,6 +1683,13 @@ impl StatsUsageWorkers {
             flush_on_drop,
         }
     }
+
+    /// Stops and joins every usage worker before Go's shutdown delta flush.
+    fn stop_before_shutdown_flush(self) -> bool {
+        let flush = self.flush_on_drop;
+        drop(self);
+        flush
+    }
 }
 
 impl Drop for StatsUsageWorkers {
@@ -1701,11 +1708,11 @@ impl Drop for StatsUsageWorkers {
 
 impl Drop for ClusterSessionFactory {
     fn drop(&mut self) {
-        if self
+        let flush_stats = self
             .stats_usage_workers
-            .get()
-            .is_some_and(|workers| workers.flush_on_drop)
-        {
+            .take()
+            .is_some_and(StatsUsageWorkers::stop_before_shutdown_flush);
+        if flush_stats {
             if let Err(error) = self.dump_stats_delta_to_kv(true, &[], "default") {
                 eprintln!("{{\"event\":\"dump_stats_delta_failed\",\"error\":{error:?}}}");
             }

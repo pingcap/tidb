@@ -121,6 +121,31 @@ fn column_usage_timestamp_matches_go_time_format_precision() {
     assert_eq!(stored.fsp(), 6);
 }
 
+#[test]
+fn usage_workers_stop_before_the_shutdown_delta_flush() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let stop = Arc::new(UsageWorkerStop {
+        stopped: Mutex::new(false),
+        wake: Condvar::new(),
+    });
+    let worker_stop = Arc::clone(&stop);
+    let worker_events = Arc::clone(&events);
+    let thread = std::thread::spawn(move || {
+        worker_stop.wait(std::time::Duration::from_secs(60));
+        worker_events.lock().unwrap().push("stopped");
+    });
+    let workers = StatsUsageWorkers {
+        stop,
+        threads: vec![thread],
+        flush_on_drop: true,
+    };
+
+    if workers.stop_before_shutdown_flush() {
+        events.lock().unwrap().push("flush");
+    }
+    assert_eq!(*events.lock().unwrap(), ["stopped", "flush"]);
+}
+
 impl crate::cluster_stats_lock_seam::ClusterStatsLock for WarningStatsLock {
     fn execute(
         &self,
