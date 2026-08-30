@@ -23,8 +23,10 @@
 //! * `physical_plan_test.go:843 TestExchangeSenderResolveIndices` — honest
 //!   `#[ignore]` gap port (index resolution unported).
 
+use tidb_expr::aggregation::ByItems;
+use tidb_expr::column::Column;
+use tidb_expr::expression::Expression;
 use tidb_planner::physical::{BasePhysicalPlan, PhysicalPlan, PhysicalSort};
-use tidb_planner::physical_property::SortItem;
 
 /// GO PORT (Sort half) of `pkg/planner/core/physical_plan_test.go:677
 /// TestPhysicalPlanMemoryTrace`.
@@ -44,7 +46,10 @@ fn physical_sort_memory_usage_grows_with_each_by_item() {
     let size = empty.memory_usage();
     let with_item = PhysicalPlan::Sort(PhysicalSort {
         base: BasePhysicalPlan::with_id(1, "Sort", 0),
-        by_items: vec![SortItem::new(1, false)],
+        by_items: vec![ByItems::new(
+            Expression::Column(Column::default()),
+            false,
+        )],
         is_partial_sort: false,
     });
     assert!(with_item.memory_usage() > size);
