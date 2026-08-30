@@ -353,6 +353,13 @@ enum StatementRoute {
     StatsLock(ClusterStatsLockStatement),
 }
 
+#[derive(Clone, Copy)]
+enum PartitionStatsDdlKind {
+    Add,
+    Drop,
+    Truncate,
+}
+
 enum FlushStatsDeltaTargets {
     All,
     Tables(Vec<i64>),
@@ -1981,7 +1988,7 @@ fn partition_id_map(
     catalog: &ClusterCatalog,
     schema: &str,
     table: &str,
-) -> Option<(i64, std::collections::BTreeMap<String, i64>)> {
+) -> Option<(i64, Vec<(String, i64)>)> {
     let (_, table) = catalog.find_table(schema, table)?;
     let partition = table.partition.as_ref()?.read();
     Some((
@@ -3655,31 +3662,41 @@ impl ClusterServerSession {
         })
     }
 
-    fn update_truncated_partition_stats(
+    fn update_partition_ddl_stats(
         &mut self,
         schema: &str,
         table_name: &str,
         logical_table_id: i64,
-        old_ids: &std::collections::BTreeMap<String, i64>,
+        old_ids: &[(String, i64)],
+        kind: PartitionStatsDdlKind,
     ) -> Result<(), SqlQueryError> {
         let catalog = self.catalog.load();
         let (_, new_ids) = partition_id_map(&catalog, schema, table_name)
-            .ok_or_else(|| SqlQueryError::unknown("truncated table disappeared from catalog"))?;
+            .ok_or_else(|| SqlQueryError::unknown("partitioned table disappeared from catalog"))?;
         let (_, table) = catalog
             .find_table(schema, table_name)
-            .ok_or_else(|| SqlQueryError::unknown("truncated table disappeared from catalog"))?;
-        let replacements = table
-            .partition
-            .as_ref()
-            .map(|partition| partition.read().definitions.snapshot())
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|definition| {
-                let old_id = old_ids.get(definition.name.lowercase())?;
-                (definition.id != *old_id).then_some((*old_id, definition.id))
-            })
+            .ok_or_else(|| SqlQueryError::unknown("partitioned table disappeared from catalog"))?;
+        let old_by_name = old_ids
+            .iter()
+            .cloned()
+            .collect::<std::collections::HashMap<_, _>>();
+        let new_by_name = new_ids
+            .iter()
+            .cloned()
+            .collect::<std::collections::HashMap<_, _>>();
+        let inserted_ids = new_ids
+            .iter()
+            .filter_map(|(name, new_id)| (old_by_name.get(name) != Some(new_id)).then_some(*new_id))
             .collect::<Vec<_>>();
-        if replacements.is_empty() {
+        let retired_ids = old_ids
+            .iter()
+            .filter_map(|(name, old_id)| (new_by_name.get(name) != Some(old_id)).then_some(*old_id))
+            .collect::<Vec<_>>();
+        let adjust_global = matches!(
+            kind,
+            PartitionStatsDdlKind::Drop | PartitionStatsDdlKind::Truncate
+        );
+        if inserted_ids.is_empty() && retired_ids.is_empty() {
             return Ok(());
         }
 
@@ -3750,7 +3767,7 @@ impl ClusterServerSession {
             // `InsertTableStats2KV` for every new physical partition. That
             // helper is one INSERT IGNORE for stats_meta followed by one for
             // every column and index histogram placeholder.
-            for &(_, new_id) in &replacements {
+            for &new_id in &inserted_ids {
                 for statement in
                     tidb_exec::cluster_stats_write::insert_table_stats_statements(table, new_id)
                 {
@@ -3780,7 +3797,7 @@ impl ClusterServerSession {
             // `StatsMetaCountAndModifyCount` statement, then emits the usual
             // `UpdateStatsMeta` statement sequence for the global table.
             let mut count = 0i64;
-            for &(old_id, _) in &replacements {
+            for &old_id in &retired_ids {
                 let snapshot = transaction.snapshot_for(false)?;
                 let snapshot =
                     tidb_exec::cluster_table_storage::overlay_staged_mutations(snapshot, &staged);
@@ -3791,7 +3808,7 @@ impl ClusterServerSession {
                     .map_or(0, |(_, _, _, count, _)| count as i64);
                 count = count.wrapping_add(partition_count);
             }
-            if count != 0 {
+            if adjust_global && count != 0 {
                 let snapshot = transaction.snapshot_for(false)?;
                 let snapshot =
                     tidb_exec::cluster_table_storage::overlay_staged_mutations(snapshot, &staged);
@@ -3834,7 +3851,7 @@ impl ClusterServerSession {
             // Last, Go refreshes every dropped partition's stats_meta version
             // and records schema-change history when that physical table has
             // initialized cached statistics.
-            for &(old_id, _) in &replacements {
+            for &old_id in &retired_ids {
                 transactions::stage_pessimistic_statement(
                     transaction.as_ref(),
                     &staged,
@@ -3869,11 +3886,11 @@ impl ClusterServerSession {
         let loader = ClusterStatsLoader::locate(&catalog)
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
         let mut published = self.stats.load().as_ref().clone();
-        for (old_id, _) in &replacements {
+        for old_id in &retired_ids {
             published.remove(old_id);
         }
         let mut current_ids = vec![logical_table_id];
-        current_ids.extend(new_ids.into_values());
+        current_ids.extend(new_ids.into_iter().map(|(_, physical_id)| physical_id));
         for physical_id in current_ids {
             let state = loader
                 .load_table(&mut snapshot, physical_id, &column_types)
@@ -3915,17 +3932,46 @@ impl ClusterServerSession {
         if self.explicit.is_some() || self.session.in_transaction() {
             self.control_transaction("COMMIT")?;
         }
-        let truncate_before = match statement {
+        let partition_before = match statement {
+            DdlStatement::AddPartitions { schema, table, .. } => {
+                partition_id_map(&self.catalog.load(), schema, table).map(|(logical_id, ids)| {
+                    (
+                        schema.clone(),
+                        table.clone(),
+                        logical_id,
+                        ids,
+                        PartitionStatsDdlKind::Add,
+                    )
+                })
+            }
+            DdlStatement::DropPartitions { schema, table, .. } => {
+                partition_id_map(&self.catalog.load(), schema, table).map(|(logical_id, ids)| {
+                    (
+                        schema.clone(),
+                        table.clone(),
+                        logical_id,
+                        ids,
+                        PartitionStatsDdlKind::Drop,
+                    )
+                })
+            }
             DdlStatement::TruncatePartitions { schema, table, .. } => {
-                partition_id_map(&self.catalog.load(), schema, table)
-                    .map(|(logical_id, ids)| (schema.clone(), table.clone(), logical_id, ids))
+                partition_id_map(&self.catalog.load(), schema, table).map(|(logical_id, ids)| {
+                    (
+                        schema.clone(),
+                        table.clone(),
+                        logical_id,
+                        ids,
+                        PartitionStatsDdlKind::Truncate,
+                    )
+                })
             }
             _ => None,
         };
         let report = self.ddl.execute(statement)?;
         if matches!(report, ClusterDdlReport::Applied { .. }) {
-            if let Some((schema, table, logical_id, old_ids)) = truncate_before {
-                self.update_truncated_partition_stats(&schema, &table, logical_id, &old_ids)?;
+            if let Some((schema, table, logical_id, old_ids, kind)) = partition_before {
+                self.update_partition_ddl_stats(&schema, &table, logical_id, &old_ids, kind)?;
             }
         }
         // Go raises `job.Warning` on the session's own statement context, so

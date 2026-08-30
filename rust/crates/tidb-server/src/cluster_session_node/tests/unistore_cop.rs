@@ -2880,6 +2880,7 @@ fn partition_scoped_analyze_refreshes_global_count_and_modify_count() {
         &mut session,
         "ALTER TABLE global_stats_version DROP PARTITION p2",
     );
+    assert_eq!(global_meta(&mut session)[5], "7");
     rows(&mut session, "FLUSH STATS_DELTA *.*");
     rows(&mut session, "ANALYZE TABLE global_stats_version");
     let meta = global_meta(&mut session);
