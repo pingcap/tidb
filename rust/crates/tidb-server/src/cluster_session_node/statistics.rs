@@ -141,6 +141,13 @@ impl ClusterServerSession {
                 .vars()
                 .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_ASYNC_MERGE_GLOBAL_STATS)
                 .is_ok_and(|value| tidb_exec::option_values::tidb_opt_on(&value));
+            statement.partition_merge_concurrency = self
+                .session
+                .vars()
+                .get_system(tidb_vardef::tidb_vars::TIDB_MERGE_PARTITION_STATS_CONCURRENCY)
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(1);
             statement.time_zone = self.session.session_time_zone();
             statement.options.memory_quota = memory_quota;
             let statement = &statement;

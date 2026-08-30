@@ -45,7 +45,8 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - [x] (2026-08-29) Removed the live cache's reduced `ClusterTableStats` authority: bootstrap, refresh, sync load, planner derivation, and row-cache reads now share canonical full `statistics.Table` objects like Go.
 - [x] (2026-08-29) Wired cluster `LOAD STATS` through Go's text-protocol client-local-file transfer, independent restricted TiKV transactions, optional history writes, final metadata publication, and the common shared-cache refresh path.
 - [x] (2026-08-29) Wired `SHOW COLUMN_STATS_USAGE` to a fresh shared-storage snapshot, including session-location timestamps and logical/global plus all-partition traversal in both prune modes.
-- [ ] Complete pinned persisted ANALYZE options across table and partition targets; cluster static mode now resolves Go-ordered physical targets, analyzes each requested partition by physical ID, saves logical plus partition option rows after successful execution, and persists partition FM sketches for the later global merge. The in-process path persists and inherits table/static-partition rows and honors the live persistence gate. Cluster dynamic global-statistics merge remains open.
+- [x] (2026-08-29) Completed pinned persisted ANALYZE options across table and partition targets, including Go-ordered static targets, final mandatory-column LIST persistence, live persistence gating, and partition FM-sketch storage.
+- [ ] Complete pinned `pkg/statistics/handle/globalstats`; dynamic ANALYZE now loads every partition, applies both missing-stat policies, merges FM/CMS/TopN/histograms, honors the async selector and TopN merge concurrency, persists each global item independently, continues after item-write errors, and emits warnings 8243/8244. Historical dump/job lifecycle and the full original test inventory remain open.
 - [ ] Wire all pinned Go `SHOW STATS_*` surfaces to the shared cache and storage semantics.
 - [ ] Inventory every production file, platform/generated variant, original test/support artifact, fixture, and validation gate in pinned `pkg/statistics`; close or explicitly retain seed-only gaps until the whole package is complete.
 - [ ] Run the Ready validation profile, including `make lint`, only after the complete package inventory is closed.
@@ -165,6 +166,12 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 
 - Observation: pinned Go persists the final schema-ordered LIST after mandatory primary-key/index columns are added, not the user's literal `COLUMNS` list. A later statement with persistence disabled neither reads nor replaces that saved row.
   Evidence: pinned `getFullAnalyzeColumnsInfo` returns `colList` after `combineColumnSets`, `saveAnalyzeOptions` stores those IDs, and `genV2AnalyzeOptions` returns empty saved-option maps immediately when persistence is off; the in-process regressions cover all three effects.
+
+- Observation: pinned global-statistics storage is a sequence of independent item transactions. It logs a failed item, continues with later histograms, and returns the last failure; Rust previously stopped at the first failed global item.
+  Evidence: pinned `WriteGlobalStatsToStorage` assigns `err` in every loop iteration without returning early; the Rust regression proves every item is attempted, successful receipts remain visible, and the last error wins.
+
+- Observation: `tidb_merge_partition_stats_concurrency` controls only TopN candidate probing, with a maximum batch of 256 partitions; the histogram merge remains a later single merge over the mutated partition histograms.
+  Evidence: pinned `mergeGlobalStatsTopN` and `MergeGlobalStatsTopNByConcurrency`; Rust now snapshots the session value and produces the same TopN and histogram receipt at concurrency one and two.
 
 ## Decision Log
 

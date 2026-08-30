@@ -214,6 +214,8 @@ pub struct AnalyzeStatement {
     pub skip_missing_partition_stats: bool,
     /// Pinned `tidb_enable_async_merge_global_stats` worker selection.
     pub enable_async_merge_global_stats: bool,
+    /// Pinned `tidb_merge_partition_stats_concurrency` TopN worker count.
+    pub partition_merge_concurrency: usize,
     /// Statement timezone used to decode column TopN candidates.
     pub time_zone: tidb_datatype::SessionTimeZone,
     /// The effective knobs.
@@ -532,6 +534,7 @@ pub fn lower_analyze_admin(
             dynamic_partition_prune: true,
             skip_missing_partition_stats: true,
             enable_async_merge_global_stats: true,
+            partition_merge_concurrency: 1,
             time_zone: tidb_datatype::SessionTimeZone::utc(),
             options,
         });

@@ -99,6 +99,62 @@ fn source_merge_partition_topn_counts_and_removes_histogram_values() {
     assert_eq!(histograms[1].buckets[0].count, 36);
 }
 
+#[test]
+fn source_concurrent_topn_merge_matches_the_blocking_worker_result() {
+    let partitions = (0..10)
+        .map(|partition| {
+            let mut item = partition_item([partition, partition + 100]);
+            let mut topn = TopN::new(3);
+            topn.append(&encoded(1), 2);
+            topn.append(&encoded(2), 2);
+            if partition % 2 == 0 {
+                topn.append(&encoded(3), 3);
+            }
+            item.topn = Some(topn);
+            item.histogram.buckets[0].count = 40;
+            item.histogram.buckets[0].repeat = 10;
+            item
+        })
+        .collect::<Vec<_>>();
+    let merge = |concurrency| {
+        merge_partition_stats_item(
+            Some(&Utc),
+            2,
+            2,
+            256,
+            400,
+            &FieldType::new(FieldTypeCode::Tiny),
+            false,
+            GlobalStatsMergeMode::Blocking,
+            concurrency,
+            partitions.clone(),
+        )
+        .expect("global item merge succeeds")
+    };
+    let sequential = merge(1);
+    let concurrent = merge(2);
+    let topn_receipt = |topn: Option<TopN>| {
+        topn.expect("global TopN exists")
+            .entries()
+            .iter()
+            .map(|entry| (entry.encoded.clone(), entry.count))
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(topn_receipt(sequential.topn), topn_receipt(concurrent.topn));
+    let sequential = sequential.histogram.expect("global histogram exists");
+    let concurrent = concurrent.histogram.expect("global histogram exists");
+    assert_eq!(sequential.ndv, concurrent.ndv);
+    assert_eq!(sequential.total_row_count(), concurrent.total_row_count());
+    assert_eq!(sequential.buckets.len(), concurrent.buckets.len());
+    for (sequential, concurrent) in sequential.buckets.iter().zip(&concurrent.buckets) {
+        assert_eq!(sequential.count, concurrent.count);
+        assert_eq!(sequential.repeat, concurrent.repeat);
+        assert_eq!(sequential.lower_bound, concurrent.lower_bound);
+        assert_eq!(sequential.upper_bound, concurrent.upper_bound);
+    }
+}
+
 fn partition_item(fm_hashes: impl IntoIterator<Item = u64>) -> PartitionStatsItem {
     PartitionStatsItem {
         histogram: Histogram {
@@ -133,6 +189,7 @@ fn source_merge_item_uses_fm_ndv_and_clears_bucket_ndv() {
         &FieldType::new(FieldTypeCode::Tiny),
         false,
         GlobalStatsMergeMode::Async,
+        1,
         vec![partition_item([1, 2]), partition_item([2, 3])],
     )
     .expect("global item merge succeeds");
@@ -158,6 +215,7 @@ fn source_async_and_blocking_cms_nil_order_matches_go_workers() {
             &FieldType::new(FieldTypeCode::Tiny),
             false,
             mode,
+            1,
             vec![first.clone(), second.clone()],
         )
         .expect("global item merge succeeds")

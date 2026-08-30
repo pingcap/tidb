@@ -598,19 +598,41 @@ fn commit_cluster_global_stats<C: StoreWriteClient, L: StoreWriteLoader, P: Stor
         }
     }?;
 
-    for item in items {
-        let write =
-            commit_global_stats_item(opener, logical_id, total_count, modify_count, item, timeout)?;
-        report.version = report.version.max(write.0);
-        report.histogram_count += write.1;
-        report.bucket_count += write.2;
-        report.topn_count += write.3;
-    }
+    write_global_stats_items(
+        items,
+        |item| {
+            commit_global_stats_item(opener, logical_id, total_count, modify_count, item, timeout)
+        },
+        |write| {
+            report.version = report.version.max(write.0);
+            report.histogram_count += write.1;
+            report.bucket_count += write.2;
+            report.topn_count += write.3;
+        },
+    )?;
     report.table_id = logical_id;
     Ok(())
 }
 
-fn merge_global_items<TZ: TimeZone>(
+fn write_global_stats_items<T, E>(
+    items: impl IntoIterator<Item = T>,
+    mut write: impl FnMut(T) -> Result<(u64, usize, usize, usize), E>,
+    mut record: impl FnMut((u64, usize, usize, usize)),
+) -> Result<(), E> {
+    let mut last_error = None;
+    for item in items {
+        match write(item) {
+            Ok(receipt) => record(receipt),
+            Err(error) => last_error = Some(error),
+        }
+    }
+    match last_error {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
+}
+
+fn merge_global_items<TZ: TimeZone + Sync>(
     timezone: Option<&TZ>,
     partitions: &[(String, Option<ClusterTableStats>)],
     column_ids: &[i64],
@@ -698,6 +720,7 @@ fn merge_global_items<TZ: TimeZone>(
                 &field_type,
                 is_index,
                 mode,
+                statement.partition_merge_concurrency,
                 inputs,
             )
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
@@ -939,6 +962,7 @@ fn selected_columns_for_choice<S: crate::cluster_catalog::MetaSnapshot>(
         dynamic_partition_prune: true,
         skip_missing_partition_stats: true,
         enable_async_merge_global_stats: true,
+        partition_merge_concurrency: 1,
         time_zone: tidb_datatype::SessionTimeZone::utc(),
         options: Default::default(),
     };
@@ -1007,7 +1031,7 @@ fn classify_commit_outcome(outcome: &OptimisticCommitOutcome) -> Result<(), Clus
 mod tests {
     use super::{
         analyze_partition_ids, classify_commit_outcome, final_column_choice, merge_global_items,
-        realtime_count_of, ClusterAnalyzeError,
+        realtime_count_of, write_global_stats_items, ClusterAnalyzeError,
     };
     use std::collections::BTreeMap;
     use std::thread;
@@ -1089,6 +1113,7 @@ mod tests {
             dynamic_partition_prune: true,
             skip_missing_partition_stats: skip_missing,
             enable_async_merge_global_stats: true,
+            partition_merge_concurrency: 1,
             time_zone: tidb_datatype::SessionTimeZone::utc(),
             options: Default::default(),
         }
@@ -1165,6 +1190,29 @@ mod tests {
             error.to_string(),
             "Build global-level stats failed due to missing partition-level column stats: table `t` partition `p0` column `a`, please run analyze table to refresh columns of all partitions"
         );
+    }
+
+    #[test]
+    fn global_stats_storage_attempts_every_item_and_returns_the_last_error() {
+        let mut attempted = Vec::new();
+        let mut recorded = Vec::new();
+        let error = write_global_stats_items(
+            [1_u64, 2, 3, 4],
+            |item| {
+                attempted.push(item);
+                match item {
+                    1 => Err("first"),
+                    3 => Err("last"),
+                    _ => Ok((item, 1, 2, 3)),
+                }
+            },
+            |receipt| recorded.push(receipt),
+        )
+        .expect_err("Go returns the last storage error after attempting every item");
+
+        assert_eq!(attempted, vec![1, 2, 3, 4]);
+        assert_eq!(recorded, vec![(2, 1, 2, 3), (4, 1, 2, 3)]);
+        assert_eq!(error, "last");
     }
 
     #[test]
