@@ -65,12 +65,10 @@ var (
 				execMetricsCounter
 			}
 			pools struct {
-				internal        atomic.Int64
-				internalSession atomic.Int64
-
-				small   atomic.Int64
-				big     atomic.Int64
-				intoBig atomic.Int64
+				internal atomic.Int64
+				small    atomic.Int64
+				big      atomic.Int64
+				intoBig  atomic.Int64
 			}
 			init atomic.Bool
 			sync.Mutex
@@ -144,7 +142,6 @@ func reportGlobalMemArbitratorMetrics() {
 			metrics.SetGlobalMemArbitratorGauge(metrics.GlobalMemArbitratorRootPool, label, value)
 		}
 		setRootPool("rootpool-total", m.RootPoolNum())
-		setRootPool("rootpool-internal", globalArbitrator.metrics.pools.internalSession.Load())
 		setRootPool("under-kill", m.underKill.approxSize())
 		setRootPool("under-cancel", m.underCancel.approxSize())
 		setRootPool("digest-cache", m.digestProfileCache.num.Load())

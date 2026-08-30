@@ -1201,9 +1201,6 @@ func (m *MemArbitrator) RemoveRootPoolByID(uid uint64) bool {
 	}
 
 	if m.removeRootPoolEntry(entry) {
-		if ctx := entry.ctx.Load(); ctx != nil && ctx.arbitrateHelper != nil {
-			ctx.arbitrateHelper.Finish()
-		}
 		m.wake()
 		return true
 	}
@@ -3144,7 +3141,6 @@ type MemUsage struct {
 type ArbitrateHelper interface {
 	Stop(ArbitratorStopReason) bool // kill by arbitrator only when meeting oom risk; cancel by arbitrator;
 	MemUsage() MemUsage             // track mem usage
-	Finish()
 	Done() <-chan struct{}
 }
 
