@@ -119,9 +119,11 @@ pub fn enforce_property(
         mpp_partition_tp: Default::default(),
         sort_items_for_partition: Vec::new(),
         cte_producer_status: prop.cte_producer_status,
+        vector_prop: Default::default(),
         no_cop_push_down: prop.no_cop_push_down,
         advisory_sort_items: Vec::new(),
         index_join_prop: None,
+        partial_order_info: None,
     };
     let child = task
         .plan()
@@ -129,29 +131,16 @@ pub fn enforce_property(
     let mut base = BasePhysicalPlan::new(allocator, "Sort", child.query_block_offset());
     base.base.set_stats(child.stats_info().cloned());
     base.set_children_req_props(vec![Some(sort_req_prop)]);
-    let schema = child
-        .schema()
-        .ok_or_else(|| PlanError::internal("EnforceProperty: the task plan has no schema"))?;
     let by_items = prop
         .sort_items
         .iter()
         .map(|item| {
-            schema
-                .columns
-                .iter()
-                .find(|column| column.unique_id == item.col)
-                .cloned()
-                .map(|column| {
-                    tidb_expr::aggregation::ByItems::new(
-                        tidb_expr::expression::Expression::Column(column),
-                        item.desc,
-                    )
-                })
-                .ok_or_else(|| {
-                    PlanError::internal("EnforceProperty: a sort column is absent from the task")
-                })
+            tidb_expr::aggregation::ByItems::new(
+                tidb_expr::expression::Expression::Column(item.col.clone()),
+                item.desc,
+            )
         })
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect();
     let sort = PhysicalPlan::Sort(PhysicalSort {
         base,
         by_items,

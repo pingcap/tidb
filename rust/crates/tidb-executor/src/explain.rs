@@ -81,13 +81,11 @@ fn expression_text(expression: &tidb_expr::expression::Expression) -> String {
 
 /// Go appends `stats:pseudo` only when a scan's `StatsInfo.StatsVersion` is
 /// `statistics.PseudoVersion` (and no statement-specific `UsedStatsInfo`
-/// replaces it). Rust carries that same bit on the retained histogram
-/// collection.
+/// replaces it).
 fn scan_uses_pseudo_statistics(base: &tidb_planner::physical::BasePhysicalPlan) -> bool {
     base.base
         .stats_info()
-        .and_then(tidb_planner::stats_info::StatsInfo::hist_coll)
-        .is_none_or(tidb_planner::stats_info::HistColl::pseudo)
+        .is_none_or(|stats| stats.stats_version() == tidb_stats::PSEUDO_VERSION)
 }
 
 fn expressions_text(expressions: &[tidb_expr::expression::Expression]) -> String {

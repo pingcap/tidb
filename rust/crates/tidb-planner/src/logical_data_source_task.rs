@@ -33,9 +33,21 @@ use crate::{
     },
     logical_data_source::LogicalDataSource,
     physical::{BasePhysicalPlan, PhysicalIndexScan, PhysicalTableDual, PhysicalTableScan},
-    physical_property::IndexOrderingRequirement,
     task_type::TaskType,
 };
+
+/// Ordering refusal used only by this legacy bounded task builder.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IndexOrderingRequirement {
+    /// No required order.
+    None,
+    /// Full keep-order request.
+    KeepOrder,
+    /// Prefix-index partial-order request.
+    PartialOrder,
+    /// Grouped-range merge-sort request.
+    MergeSort,
+}
 
 /// Dependency-closed task-property input accepted by the index task builder.
 #[derive(Clone, Copy, Debug, PartialEq)]

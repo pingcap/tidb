@@ -727,7 +727,7 @@ impl PhysicalLimit {
                 if index > 0 {
                     result.push_str(", ");
                 }
-                result.push_str(self.explained_column(item.col));
+                result.push_str(self.explained_column(item.col.unique_id));
             }
             result.push_str(", ");
         }
@@ -2159,7 +2159,7 @@ pub fn match_items(prop: &PhysicalProperty, items: &[tidb_expr::aggregation::ByI
             return false;
         }
         matches!(&item.expr,
-            tidb_expr::expression::Expression::Column(c) if c.unique_id == col.col)
+            tidb_expr::expression::Expression::Column(c) if c.unique_id == col.col.unique_id)
     })
 }
 

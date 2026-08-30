@@ -230,6 +230,8 @@ pub fn matches_indices_prop(
     }
     prop_items.iter().enumerate().all(|(i, item)| {
         col_lens.get(i).copied() == Some(UNSPECIFIED_LENGTH)
-            && idx_cols.get(i).is_some_and(|col| col.unique_id == item.col)
+            && idx_cols
+                .get(i)
+                .is_some_and(|col| col.unique_id == item.col.unique_id)
     })
 }

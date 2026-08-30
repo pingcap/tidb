@@ -711,11 +711,13 @@ impl OwnedRewrite for InitStats<'_> {
             })
             .collect::<Vec<_>>();
         source.table_stats = Some(
-            StatsInfo::new(row_count, ndvs).with_hist_coll(HistColl::new(
-                statistics.is_none_or(|statistics| statistics.pseudo),
-                row_count as i64,
-                row_size_columns,
-            )),
+            StatsInfo::new(row_count, ndvs)
+                .with_hist_coll(HistColl::new(
+                    statistics.is_none_or(|statistics| statistics.pseudo),
+                    row_count as i64,
+                    row_size_columns,
+                ))
+                .with_stats_version(statistics.map_or(tidb_stats::PSEUDO_VERSION, |s| s.version)),
         );
         if let (Some(_), Some(predicate), Some(TableEntry::Kv(table)), Some(table_stats)) = (
             self.select,

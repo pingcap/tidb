@@ -133,6 +133,7 @@ pub mod logical_limit;
 pub mod logical_lock;
 pub mod logical_max_one_row;
 pub mod logical_mem_table;
+pub mod logical_property;
 pub mod logical_schema_producer;
 pub mod logical_sequence;
 pub mod logical_show;

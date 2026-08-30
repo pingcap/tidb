@@ -16,9 +16,8 @@ use tidb_planner::{
     },
     index_task::{IndexTaskRejection, ScanReadTask, ScanReadTaskRejection, TableTaskRejection},
     logical_data_source::LogicalDataSource,
-    logical_data_source_task::IndexTaskProperty,
+    logical_data_source_task::{IndexOrderingRequirement, IndexTaskProperty},
     physical::{PhysicalTableReader, PhysicalTableScan},
-    physical_property::IndexOrderingRequirement,
     task_type::TaskType,
     tikv_scan_spec::{ScanColumnInfo, TiKvTableScanSpec, UnsupportedScanFeature},
 };

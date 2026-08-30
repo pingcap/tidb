@@ -15,9 +15,8 @@ use tidb_planner::{
     cardinality::live_index_optimizer::{IndexPointStatistics, LiveIndexCandidate},
     index_task::{CopIndexTask, IndexTask, IndexTaskRejection},
     logical_data_source::LogicalDataSource,
-    logical_data_source_task::IndexTaskProperty,
+    logical_data_source_task::{IndexOrderingRequirement, IndexTaskProperty},
     physical::PhysicalIndexScan,
-    physical_property::IndexOrderingRequirement,
     task_type::TaskType,
     tikv_scan_spec::TiKvTableScanSpec,
 };

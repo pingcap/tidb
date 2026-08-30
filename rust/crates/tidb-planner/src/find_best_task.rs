@@ -250,7 +250,7 @@ pub fn sort_prop_compatible_with_join_keys(sort_items: &[SortItem], join_keys: &
         && sort_items
             .iter()
             .zip(join_keys)
-            .all(|(item, key)| item.col == *key)
+            .all(|(item, key)| item.col.unique_id == *key)
 }
 
 /// The child properties `PhysicalMergeJoin.tryToGetChildReqProp` builds, or
@@ -355,8 +355,14 @@ fn enforced_merge_join_candidates(
 
     let mut offsets = Vec::with_capacity(join.left_keys.len());
     for item in &prop.sort_items {
-        let left_at = join.left_keys.iter().position(|key| *key == item.col);
-        let right_at = join.right_keys.iter().position(|key| *key == item.col);
+        let left_at = join
+            .left_keys
+            .iter()
+            .position(|key| *key == item.col.unique_id);
+        let right_at = join
+            .right_keys
+            .iter()
+            .position(|key| *key == item.col.unique_id);
         let Some(at) = left_at.or(right_at) else {
             return Vec::new();
         };
@@ -378,10 +384,7 @@ fn enforced_merge_join_candidates(
     let left_keys: Vec<i64> = offsets.iter().map(|at| join.left_keys[*at]).collect();
     let right_keys: Vec<i64> = offsets.iter().map(|at| join.right_keys[*at]).collect();
     let child_prop = |keys: &[i64]| PhysicalProperty {
-        sort_items: keys
-            .iter()
-            .map(|col| SortItem { col: *col, desc })
-            .collect(),
+        sort_items: keys.iter().map(|col| SortItem::new(*col, desc)).collect(),
         task_tp: TaskType::Root,
         expected_cnt: f64::MAX,
         can_add_enforcer: true,
@@ -389,9 +392,11 @@ fn enforced_merge_join_candidates(
         mpp_partition_tp: Default::default(),
         sort_items_for_partition: Vec::new(),
         cte_producer_status: prop.cte_producer_status,
+        vector_prop: Default::default(),
         no_cop_push_down: prop.no_cop_push_down,
         advisory_sort_items: Vec::new(),
         index_join_prop: None,
+        partial_order_info: None,
     };
     vec![EnumeratedJoin {
         strategy: JoinStrategy::Merge {
@@ -464,7 +469,7 @@ fn index_join_candidates(join: &LogicalJoin, prop: &PhysicalProperty) -> Vec<Enu
         if !prop
             .sort_items
             .iter()
-            .all(|item| outer_schema.contains(&item.col))
+            .all(|item| outer_schema.contains(&item.col.unique_id))
         {
             continue;
         }
@@ -480,9 +485,11 @@ fn index_join_candidates(join: &LogicalJoin, prop: &PhysicalProperty) -> Vec<Enu
             mpp_partition_tp: Default::default(),
             sort_items_for_partition: Vec::new(),
             cte_producer_status: prop.cte_producer_status,
+            vector_prop: Default::default(),
             no_cop_push_down: prop.no_cop_push_down,
             advisory_sort_items: Vec::new(),
             index_join_prop: None,
+            partial_order_info: prop.partial_order_info.clone(),
         };
         child_props[1 - outer_idx] = PhysicalProperty {
             cte_producer_status: prop.cte_producer_status,
@@ -536,9 +543,11 @@ fn hash_join_candidates(join: &LogicalJoin, prop: &PhysicalProperty) -> Vec<Enum
         mpp_partition_tp: Default::default(),
         sort_items_for_partition: Vec::new(),
         cte_producer_status: prop.cte_producer_status,
+        vector_prop: Default::default(),
         no_cop_push_down: prop.no_cop_push_down,
         advisory_sort_items: Vec::new(),
         index_join_prop: None,
+        partial_order_info: None,
     };
     let mut candidates = Vec::new();
     for shape in hash_join_shapes(join.join_type) {

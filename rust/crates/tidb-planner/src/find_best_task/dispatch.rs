@@ -228,10 +228,10 @@ fn prop_key(prop: &PhysicalProperty) -> String {
         prop.task_tp, prop.expected_cnt, prop.can_add_enforcer
     );
     for item in &prop.sort_items {
-        let _ = write!(key, "|{}:{}", item.col, item.desc);
+        let _ = write!(key, "|{}:{}", item.col.unique_id, item.desc);
     }
     for item in &prop.advisory_sort_items {
-        let _ = write!(key, "|advisory:{}:{}", item.col, item.desc);
+        let _ = write!(key, "|advisory:{}:{}", item.col.unique_id, item.desc);
     }
     if let Some(runtime) = &prop.index_join_prop {
         let _ = write!(
@@ -553,7 +553,7 @@ fn exhaust_physical_plans(
                     outer_schema
                         .columns
                         .iter()
-                        .any(|column| column.unique_id == item.col)
+                        .any(|column| column.unique_id == item.col.unique_id)
                 })
             {
                 return Ok(Vec::new());
@@ -594,9 +594,11 @@ fn exhaust_physical_plans(
                 mpp_partition_tp: Default::default(),
                 sort_items_for_partition: Vec::new(),
                 cte_producer_status: prop.cte_producer_status,
+                vector_prop: Default::default(),
                 no_cop_push_down: true,
                 advisory_sort_items: Vec::new(),
                 index_join_prop: None,
+                partial_order_info: prop.partial_order_info.clone(),
             };
             let inner_prop = PhysicalProperty {
                 cte_producer_status: prop.cte_producer_status,
@@ -948,7 +950,7 @@ fn table_path_matches_order(ds: &crate::logical::DataSource, prop: &PhysicalProp
         let [item] = prop.sort_items.as_slice() else {
             return false;
         };
-        return item.col == pk_col.unique_id;
+        return item.col.unique_id == pk_col.unique_id;
     }
     let (all_same, _) = prop.all_same_order();
     if !all_same || prop.sort_items.is_empty() {
@@ -961,7 +963,9 @@ fn table_path_matches_order(ds: &crate::logical::DataSource, prop: &PhysicalProp
         while let Some(column) = ds.common_handle_cols.get(handle_offset) {
             let length = ds.common_handle_lens.get(handle_offset).copied();
             handle_offset += 1;
-            if length == Some(tidb_datatype::UNSPECIFIED_LENGTH) && column.unique_id == item.col {
+            if length == Some(tidb_datatype::UNSPECIFIED_LENGTH)
+                && column.unique_id == item.col.unique_id
+            {
                 found = true;
                 break;
             }
@@ -1027,7 +1031,7 @@ fn index_path_matches_order(
             index_offset += 1;
             let schema_column = ds.schema_column_for_index_column(index_column);
             if index_column.length < 0
-                && schema_column.is_some_and(|column| column.unique_id == item.col)
+                && schema_column.is_some_and(|column| column.unique_id == item.col.unique_id)
             {
                 found = true;
                 break;
@@ -2787,9 +2791,10 @@ mod tests {
         assert_eq!(scan.ranges.len(), 1);
         assert_eq!(scan.ranges[0].to_display_string(), "(5,+inf]");
         assert!(!crate::ranger::types::has_full_range(&scan.ranges, false));
-        // The pseudo CountAfterAccess: 100 rows / pseudoLessRate(3).
+        // Go's `adjustCountAfterAccess` raises the pseudo range estimate to
+        // the logical DataSource row count when the access estimate is lower.
         let scanned = scan.base.base.stats_info().expect("stats").row_count();
-        assert!((scanned - 100.0 / 3.0).abs() < 1e-9, "{scanned}");
+        assert!((scanned - 100.0).abs() < 1e-9, "{scanned}");
 
         // A predicate on an ordinary column is residual to the table path.
         // It must not be interpreted as an integer-handle point/range merely

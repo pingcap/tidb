@@ -15,9 +15,7 @@
 //! Dependency-closed statistics-property arithmetic from
 //! `pkg/planner/property/stats_info.go`.
 //!
-//! The Go `StatsInfo` also owns histogram handles and session-driven NDV
-//! scaling. This leaf keeps row-count truncation and limit-derived NDV caps
-//! over caller-supplied scalar maps, without reconstructing those owners.
+//! This module owns the complete value behavior of Go `property.StatsInfo`.
 
 use std::collections::BTreeMap;
 
@@ -89,6 +87,8 @@ pub struct StatsInfo {
     /// Go `StatsInfo.HistColl`. Its presence is preserved only by operators
     /// whose Go derivation copies the child profile or calls `Scale`.
     hist_coll: Option<HistColl>,
+    /// Go `StatsInfo.StatsVersion`.
+    stats_version: u64,
     /// Go `StatsInfo.GroupNDVs`: exact NDVs of composite column groups
     /// supplied by indexes. Empty for every profile whose source has no
     /// loaded index statistics, which is Go's nil.
@@ -111,6 +111,7 @@ impl StatsInfo {
             row_count,
             col_ndvs: col_ndvs.into_iter().collect(),
             hist_coll: None,
+            stats_version: 0,
             group_ndvs: Vec::new(),
         }
     }
@@ -126,6 +127,19 @@ impl StatsInfo {
     #[must_use]
     pub const fn hist_coll(&self) -> Option<&HistColl> {
         self.hist_coll.as_ref()
+    }
+
+    /// The same profile carrying Go's statistics version.
+    #[must_use]
+    pub const fn with_stats_version(mut self, stats_version: u64) -> Self {
+        self.stats_version = stats_version;
+        self
+    }
+
+    /// Go `StatsInfo.StatsVersion`.
+    #[must_use]
+    pub const fn stats_version(&self) -> u64 {
+        self.stats_version
     }
 
     /// The same profile carrying group NDVs — Go's `GroupNDVs` field, set by
@@ -173,6 +187,7 @@ impl StatsInfo {
     }
 
     #[must_use]
+    /// Scale row count and every NDV using Go's `ScaleNDVFunc` behavior.
     pub fn scale(&self, factor: f64, skew_ratio: f64) -> Self {
         let scale_ndv = crate::cardinality::derive_stats::scale_ndv;
         let scaled_row_count = self.row_count * factor;
@@ -199,6 +214,7 @@ impl StatsInfo {
             col_ndvs,
             // Go `StatsInfo.Scale` retains the exact HistColl pointer.
             hist_coll: self.hist_coll.clone(),
+            stats_version: self.stats_version,
             group_ndvs,
         }
     }
@@ -212,6 +228,7 @@ impl StatsInfo {
     }
 
     #[must_use]
+    /// Go `StatsInfo.RowCount`.
     pub const fn row_count(&self) -> f64 {
         self.row_count
     }
@@ -228,6 +245,19 @@ impl StatsInfo {
         self.row_count as i64
     }
 
+    /// Go `GetGroupNDV4Cols`: exact match after sorting requested column IDs.
+    #[must_use]
+    pub fn group_ndv_for_cols(&self, cols: &[tidb_expr::column::Column]) -> Option<&GroupNdv> {
+        if cols.is_empty() || self.group_ndvs.is_empty() {
+            return None;
+        }
+        let mut ids: Vec<_> = cols.iter().map(|col| col.unique_id).collect();
+        ids.sort_unstable();
+        self.group_ndvs
+            .iter()
+            .find(|group| group.columns.len() == ids.len() && group.columns == ids)
+    }
+
     /// Derives limit statistics by capping row count and every column NDV.
     #[must_use]
     pub fn derive_limit_stats(&self, limit_count: f64) -> Self {
@@ -242,9 +272,50 @@ impl StatsInfo {
             col_ndvs,
             // Go `DeriveLimitStats` retains HistColl but not GroupNDVs.
             hist_coll: self.hist_coll.clone(),
+            // Go `DeriveLimitStats` leaves StatsVersion at its zero value.
+            stats_version: 0,
             group_ndvs: Vec::new(),
         }
     }
+}
+
+impl std::fmt::Display for StatsInfo {
+    /// Go `StatsInfo.String`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "count {}, ColNDVs map[", self.row_count)?;
+        for (index, (id, ndv)) in self.col_ndvs.iter().enumerate() {
+            if index > 0 {
+                f.write_str(" ")?;
+            }
+            write!(f, "{id}:{ndv}")?;
+        }
+        f.write_str("]")
+    }
+}
+
+/// Go `ToString`, used by statistics tests.
+#[must_use]
+pub fn group_ndvs_to_string(groups: &[GroupNdv]) -> String {
+    let values = groups
+        .iter()
+        .map(|group| {
+            let cols = group
+                .columns
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(" ");
+            format!("{{[{cols}] {}}}", group.ndv)
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!("[{values}]")
+}
+
+/// Go `DeriveLimitStats`.
+#[must_use]
+pub fn derive_limit_stats(child: &StatsInfo, limit_count: f64) -> StatsInfo {
+    child.derive_limit_stats(limit_count)
 }
 
 // Go's math.Min returns NaN for NaN inputs and otherwise follows ordered
@@ -270,7 +341,9 @@ fn source_min(left: f64, right: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{HistColl, StatsInfo};
+    use crate::cardinality::ndv::GroupNdv;
     use crate::cardinality::row_size::{RowSizeColumnStats, RowSizeType};
+    use tidb_expr::column::Column;
 
     #[test]
     fn scale_and_limit_retain_hist_coll_like_go() {
@@ -290,5 +363,43 @@ mod tests {
             assert_eq!(retained.realtime_count(), 100);
             assert!(retained.column(7).is_some());
         }
+    }
+
+    #[test]
+    fn scale_retains_version_and_groups_but_limit_drops_them() {
+        let profile = StatsInfo::new(100.0, [(7, 80.0)])
+            .with_stats_version(42)
+            .with_group_ndvs(vec![GroupNdv {
+                columns: vec![7, 9],
+                ndv: 60.0,
+            }]);
+        let scaled = profile.scale(0.5, 1.0);
+        assert_eq!(scaled.stats_version(), 42);
+        assert_eq!(scaled.group_ndvs()[0].ndv, 30.0);
+
+        let limited = profile.derive_limit_stats(10.0);
+        assert_eq!(limited.stats_version(), 0);
+        assert!(limited.group_ndvs().is_empty());
+        assert_eq!(limited.col_ndv(7), 10.0);
+    }
+
+    #[test]
+    fn group_ndv_lookup_sorts_requested_columns_and_matches_exactly() {
+        let profile = StatsInfo::new(100.0, []).with_group_ndvs(vec![GroupNdv {
+            columns: vec![7, 9],
+            ndv: 12.0,
+        }]);
+        let mut nine = Column::default();
+        nine.unique_id = 9;
+        let mut seven = Column::default();
+        seven.unique_id = 7;
+        assert_eq!(
+            profile
+                .group_ndv_for_cols(&[nine.clone(), seven])
+                .map(|g| g.ndv),
+            Some(12.0)
+        );
+        assert!(profile.group_ndv_for_cols(&[nine]).is_none());
+        assert!(profile.group_ndv_for_cols(&[]).is_none());
     }
 }

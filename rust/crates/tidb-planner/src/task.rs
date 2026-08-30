@@ -59,12 +59,10 @@
 //! * `statistics.HistColl` (`TblColHists`) is unported; the fields carrying
 //!   it are absent. Network/scan-width costing that reads them is cost-model
 //!   work, not representation work.
-//! * `PhysPlanPartInfo`, `property.PhysicalPropMatchResult` and
-//!   `PartialOrderMatchResult` are unported; their `CopTask` fields are absent
-//!   by the same rule.
-//! * `StatsInfo.StatsVersion` does not exist on the ported profile, so
-//!   [`CopTask::finish_index_plan`] cannot preserve it; the stats MOVE is
-//!   ported, the version pin is named here.
+//! * `PhysPlanPartInfo` and the task fields carrying property match results
+//!   are not yet wired; the property result types themselves are complete.
+//! * `StatsInfo.StatsVersion` is carried by the property profile; preserving
+//!   it through every task transition belongs to this task package.
 
 use crate::physical::PhysicalPlan;
 use crate::physical_property::MppPartitionType;
@@ -322,8 +320,8 @@ pub struct CopTask {
     // `TblColHists`, `TblCols`,
     // `IdxMergeMatchWithAdvisorySortItems`, `IdxMergePartPlansMatchResults`,
     // `PhysPlanPartInfo`,
-    // `PartialOrderMatchResult` — each blocked on an unported type named in
-    // the module header, absent rather than stubbed.
+    // `PartialOrderMatchResult` — task integration remains absent rather than
+    // stubbed; the property type itself is complete.
     /// Go `Warnings`.
     pub warnings: SimpleWarnings,
 }
@@ -2238,15 +2236,15 @@ pub fn attach2_task(
         // this port's TiKV-only cop tasks.
         PhysicalPlan::StreamAgg(_) => match first.copy() {
             Task::Cop(cop) => {
-                // Keep the scan task intact across aggregate attachment.  The
-                // current partial-aggregate lowering can lose a bounded table
-                // range and turn a point/range access into a full scan (most
-                // visible in TPCC order_line SUM/GROUP BY).  Root aggregation
-                // preserves the original TableRangeScan until the cop-side
-                // range propagation is fixed; this is also the safe fallback
-                // used by Go when pushdown is disabled.
-                let t = Task::Cop(cop).convert_to_root_task(allocator)?;
-                Ok(attach_plan_to_task(plan, t))
+                if (cop.index_plan.is_some() && cop.table_plan.is_some() && cop.keep_order)
+                    || !cop.root_task_conds.is_empty()
+                    || !cop.idx_merge_part_plans.is_empty()
+                {
+                    let t = Task::Cop(cop).convert_to_root_task(allocator)?;
+                    Ok(attach_plan_to_task(plan, t))
+                } else {
+                    attach_agg_over_cop(plan, cop, column_ids, allocator)
+                }
             }
             Task::Mpp(_) => Err(PlanError::internal(
                 "attach2Task4PhysicalStreamAgg's MPP arm is not ported",
@@ -2260,11 +2258,12 @@ pub fn attach2_task(
         // only on root-side filters and index merge.
         PhysicalPlan::HashAgg(_) => match first.copy() {
             Task::Cop(cop) => {
-                // See StreamAgg above.  Do not split this aggregate while the
-                // cop-side range-preservation bug is present; converting to a
-                // root task keeps bounded TableRangeScan access for TPCC.
-                let t = Task::Cop(cop).convert_to_root_task(allocator)?;
-                Ok(attach_plan_to_task(plan, t))
+                if cop.root_task_conds.is_empty() && cop.idx_merge_part_plans.is_empty() {
+                    attach_agg_over_cop(plan, cop, column_ids, allocator)
+                } else {
+                    let t = Task::Cop(cop).convert_to_root_task(allocator)?;
+                    Ok(attach_plan_to_task(plan, t))
+                }
             }
             Task::Mpp(_) => Err(PlanError::internal(
                 "attach2Task4PhysicalHashAgg's MPP arm is not ported",

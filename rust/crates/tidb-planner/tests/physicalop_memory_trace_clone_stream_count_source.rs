@@ -14,9 +14,8 @@
 
 //! `pkg/planner.part14` ports of physical-operator METADATA invariants:
 //!
-//! * `physical_plan_test.go:677 TestPhysicalPlanMemoryTrace` — the Sort half
-//!   RUNS against the wired [`tidb_planner::physical::PhysicalSort`]; the
-//!   `PhysicalProperty` half is an honest `#[ignore]` gap port.
+//! * `physical_plan_test.go:677 TestPhysicalPlanMemoryTrace` — both the Sort
+//!   and completed `PhysicalProperty` halves run.
 //! * `plan_test.go:723 TestCloneFineGrainedShuffleStreamCount` — honest
 //!   `#[ignore]` gap port (the wired physical tree has no Window or MPP
 //!   stream-count state).
@@ -27,6 +26,7 @@ use tidb_expr::aggregation::ByItems;
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 use tidb_planner::physical::{BasePhysicalPlan, PhysicalPlan, PhysicalSort};
+use tidb_planner::physical_property::{MppPartitionColumn, PhysicalProperty};
 
 /// GO PORT (Sort half) of `pkg/planner/core/physical_plan_test.go:677
 /// TestPhysicalPlanMemoryTrace`.
@@ -34,8 +34,7 @@ use tidb_planner::physical::{BasePhysicalPlan, PhysicalPlan, PhysicalSort};
 /// Go builds a zero `physicalop.PhysicalSort`, records `MemoryUsage()`,
 /// appends one `&util.ByItems{}`, and requires the usage to grow. The same
 /// monotonic contract is documented on
-/// [`tidb_planner::physical::PhysicalSort::memory_usage`]; the
-/// PhysicalProperty half of the Go test is a separate gap port below.
+/// [`tidb_planner::physical::PhysicalSort::memory_usage`].
 #[test]
 fn physical_sort_memory_usage_grows_with_each_by_item() {
     let empty = PhysicalPlan::Sort(PhysicalSort {
@@ -55,19 +54,19 @@ fn physical_sort_memory_usage_grows_with_each_by_item() {
     assert!(with_item.memory_usage() > size);
 }
 
-/// GO PARITY GAP port (PhysicalProperty half) of
+/// GO PORT (PhysicalProperty half) of
 /// `pkg/planner/core/physical_plan_test.go:677
 /// TestPhysicalPlanMemoryTrace`.
 ///
-/// go-parity-gap: Go appends a `&property.MPPPartitionColumn{}` to
+/// Go appends a `&property.MPPPartitionColumn{}` to
 /// `PhysicalProperty.MPPPartitionCols` and requires `MemoryUsage()` to grow.
-/// This crate's `physical_property::PhysicalProperty` deliberately omits the
-/// MPP partitioning fields (see its module header: "deliberately absent
-/// rather than stubbed"), and with them the property-side memory accounting,
-/// so the assertion is unexpressable.
 #[test]
-#[ignore = "go-parity-gap: PhysicalProperty.MPPPartitionCols and its memory accounting are deliberately absent from this crate's property leaf"]
-fn physical_property_memory_usage_grows_with_mpp_partition_cols() {}
+fn physical_property_memory_usage_grows_with_mpp_partition_cols() {
+    let mut property = PhysicalProperty::default();
+    let empty = property.memory_usage();
+    property.mpp_partition_cols.push(MppPartitionColumn::new(1, 0));
+    assert!(property.memory_usage() > empty);
+}
 
 /// GO PORT of `pkg/planner/core/plan_test.go:723
 /// TestCloneFineGrainedShuffleStreamCount`.

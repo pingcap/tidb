@@ -122,7 +122,7 @@ impl LogicalProjection {
             let idx = schema
                 .columns
                 .iter()
-                .position(|c| c.unique_id == item.col)?;
+                .position(|c| c.unique_id == item.col.unique_id)?;
             match self.exprs.get(idx)? {
                 Expression::Column(col) => {
                     new_items.push(crate::physical_property::SortItem::new(

@@ -1062,7 +1062,7 @@ fn a_projection_maps_the_order_or_refuses_and_drops_constant_items() {
         .try_to_get_child_prop(&prop)
         .expect("column+constant order crosses");
     assert_eq!(child.sort_items.len(), 1, "the constant item vanished");
-    assert_eq!(child.sort_items[0].col, 1);
+    assert_eq!(child.sort_items[0].col.unique_id, 1);
 
     // A scalar-function item refuses the enumeration entirely.
     let prop = PhysicalProperty::new(TaskType::Root, &[103], false, f64::MAX, false);
