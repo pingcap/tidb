@@ -141,19 +141,6 @@ fn push_down_sequence_attaches_above_childless_table_dual() {
     assert_eq!(optimized, expected_unary_over_sequence_over_join);
 }
 
-/// GO PORT of `pkg/planner/core/issuetest/panicrisk_tier2_test.go:44
-/// TestSkewDistinctAggConstantArg`.
-///
-/// Re-derived contract: skew-distinct-agg rewrite (tidb_opt_skew_distinct_agg=1)
-/// decomposing count(distinct 1)/sum(distinct 2) — constants — must not hit
-/// an unchecked *Column assertion (:52-58); results stay literal group-wise
-/// values ("10 1","20 1" / "10 2","20 2"). The rewrite itself is enum-only
-/// in this crate (logical/rule.rs RuleId::SkewDistinctAggRewriter) with no
-/// transform implementation.
-#[test]
-#[ignore = "go-parity-gap: SkewDistinctAggRewriter transform unported (only the rule id exists)"]
-fn skew_distinct_agg_constant_argument_stays_column_safe() {}
-
 /// GO PORT of `pkg/planner/core/issuetest/planner_issue_test.go:33
 /// TestPlannerIssueRegressions`.
 ///

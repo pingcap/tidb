@@ -573,6 +573,8 @@ pub struct StmtContext {
     enable_unsafe_substitute: bool,
     /// Go `SessionVars.EnableSemiJoinRewrite`.
     enable_semi_join_rewrite: bool,
+    /// Go `SessionVars.EnableSkewDistinctAgg`.
+    enable_skew_distinct_agg: bool,
     /// Go `SessionVars.GetMaxExecutionTime()`, in milliseconds.
     max_execution_time_ms: u64,
     /// Go `StmtCtx.IsSyncStatsFailed`.
@@ -814,6 +816,7 @@ impl StmtContext {
             always_keep_join_key: tidb_vardef::defaults::DEF_OPT_ALWAYS_KEEP_JOIN_KEY,
             enable_unsafe_substitute: false,
             enable_semi_join_rewrite: tidb_vardef::defaults::DEF_OPT_ENABLE_SEMI_JOIN_REWRITE,
+            enable_skew_distinct_agg: tidb_vardef::defaults::DEF_TIDB_SKEW_DISTINCT_AGG,
             max_execution_time_ms: 0,
             sync_stats_failed: Arc::default(),
             operator_num: Arc::default(),
@@ -1098,6 +1101,13 @@ impl StmtContext {
         self
     }
 
+    /// Sets `@@tidb_opt_skew_distinct_agg` for this statement.
+    #[must_use]
+    pub const fn with_enable_skew_distinct_agg(mut self, enable: bool) -> Self {
+        self.enable_skew_distinct_agg = enable;
+        self
+    }
+
     /// Attaches the AES mode selected by this session for the statement.
     #[must_use]
     pub fn with_block_encryption_mode(mut self, mode: tidb_expr::BlockEncryptionMode) -> Self {
@@ -1172,6 +1182,11 @@ impl StmtContext {
     /// Returns `@@tidb_opt_enable_semi_join_rewrite`.
     pub const fn enable_semi_join_rewrite(&self) -> bool {
         self.enable_semi_join_rewrite
+    }
+
+    /// Returns `@@tidb_opt_skew_distinct_agg`.
+    pub const fn enable_skew_distinct_agg(&self) -> bool {
+        self.enable_skew_distinct_agg
     }
 
     /// Go caps synchronous statistics loading by `max_execution_time` when

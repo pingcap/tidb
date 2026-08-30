@@ -1895,6 +1895,8 @@ mod tests_session_var_hooks;
 mod tests_show;
 mod tests_show_admin;
 #[cfg(test)]
+mod tests_skew_distinct_agg;
+#[cfg(test)]
 mod tests_sql_mode_scanner;
 #[cfg(test)]
 mod tests_statement_rollback;

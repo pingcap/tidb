@@ -349,6 +349,7 @@ pub mod projection;
 pub mod rewrite;
 pub mod rule;
 pub mod rule_aggregation_elimination;
+pub mod rule_aggregation_skew_rewrite;
 pub mod rule_collect_plan_stats;
 pub mod rule_constant_propagation;
 pub mod rule_derive_topn_from_window;

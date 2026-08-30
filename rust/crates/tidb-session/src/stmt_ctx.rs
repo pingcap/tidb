@@ -65,6 +65,7 @@ pub(crate) struct StatementVarSnapshot {
     always_keep_join_key: bool,
     enable_unsafe_substitute: bool,
     enable_semi_join_rewrite: bool,
+    enable_skew_distinct_agg: bool,
     max_execution_time_ms: u64,
     advanced_join_reorder: bool,
     constraint_check_in_place: bool,
@@ -663,6 +664,7 @@ impl Session {
             always_keep_join_key: on(tidb_vardef::tidb_vars::TIDB_OPT_ALWAYS_KEEP_JOIN_KEY),
             enable_unsafe_substitute: on(tidb_vardef::tidb_vars::TIDB_ENABLE_UNSAFE_SUBSTITUTE),
             enable_semi_join_rewrite: on(tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_SEMI_JOIN_REWRITE),
+            enable_skew_distinct_agg: on(tidb_vardef::tidb_vars::TIDB_OPT_SKEW_DISTINCT_AGG),
             max_execution_time_ms: self
                 .vars
                 .get_system("max_execution_time")
@@ -802,6 +804,7 @@ impl Session {
         let always_keep_join_key = snapshot.always_keep_join_key;
         let enable_unsafe_substitute = snapshot.enable_unsafe_substitute;
         let enable_semi_join_rewrite = snapshot.enable_semi_join_rewrite;
+        let enable_skew_distinct_agg = snapshot.enable_skew_distinct_agg;
         let max_execution_time_ms = snapshot.max_execution_time_ms;
         let advanced_join_reorder = snapshot.advanced_join_reorder;
         let constraint_check_in_place = snapshot.constraint_check_in_place;
@@ -930,6 +933,7 @@ impl Session {
                 .with_always_keep_join_key(always_keep_join_key)
                 .with_enable_unsafe_substitute(enable_unsafe_substitute)
                 .with_enable_semi_join_rewrite(enable_semi_join_rewrite)
+                .with_enable_skew_distinct_agg(enable_skew_distinct_agg)
                 .with_sysdate_is_now(sysdate_is_now)
                 .with_resource_group_name(self.active_resource_group.clone())
                 .with_lazy_clock(snapshot.timestamp, zone);
@@ -995,6 +999,7 @@ impl Session {
         .with_always_keep_join_key(always_keep_join_key)
         .with_enable_unsafe_substitute(enable_unsafe_substitute)
         .with_enable_semi_join_rewrite(enable_semi_join_rewrite)
+        .with_enable_skew_distinct_agg(enable_skew_distinct_agg)
         .with_auto_increment_step(increment, offset)
         .with_auto_increment_zero_explicit(sql_mode.has_no_auto_value_on_zero_mode())
         .with_foreign_key_checks(self.foreign_key_checks())
@@ -1325,5 +1330,14 @@ mod tests {
             .run("SET tidb_opt_enable_semi_join_rewrite = ON")
             .unwrap();
         assert!(session.statement_context(false).enable_semi_join_rewrite());
+    }
+
+    #[test]
+    fn skew_distinct_agg_uses_the_session_snapshot() {
+        let mut session = Session::new();
+        assert!(!session.statement_context(false).enable_skew_distinct_agg());
+
+        session.run("SET tidb_opt_skew_distinct_agg = ON").unwrap();
+        assert!(session.statement_context(false).enable_skew_distinct_agg());
     }
 }
