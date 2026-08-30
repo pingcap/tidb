@@ -96,14 +96,14 @@ fn source_range_kind_and_suffix_policy_drive_reader_explain_id() {
 
     assert_eq!(scan.scan_kind(), Some(ResolvedTableScanKind::Range));
     assert_eq!(
-        scan.resolved_explain_id().as_deref(),
+        scan.resolved_explain_id(false).as_deref(),
         Some("TableRangeScan")
     );
     assert_eq!(
-        reader.table_plan_explain().as_deref(),
+        reader.table_plan_explain(false).as_deref(),
         Some("TableRangeScan")
     );
-    assert_eq!(reader.explain_info(), "data:TableRangeScan");
+    assert_eq!(reader.explain_info(false), "data:TableRangeScan");
     assert!(!reader.is_common_handle());
 }
 
@@ -111,7 +111,7 @@ fn source_range_kind_and_suffix_policy_drive_reader_explain_id() {
 fn raw_dag_table_scan_cannot_become_a_table_reader() {
     let raw = PhysicalTableScan::init(3, 0, TiKvTableScanSpec::new(7, vec![]));
     assert_eq!(raw.descriptor(), None);
-    assert_eq!(raw.resolved_explain_id(), None);
+    assert_eq!(raw.resolved_explain_id(false), None);
     assert_eq!(raw.resolved_is_common_handle(), None);
     assert_eq!(
         PhysicalTableReader::from_table_scan(raw)
@@ -199,16 +199,17 @@ fn source_admitted_table_path_becomes_one_root_table_reader() {
         Some(tidb_planner::physical::PhysicalPlan::TableScan(_))
     ));
     assert_eq!(
-        reader.table_plan_explain().as_deref(),
+        reader.table_plan_explain(false).as_deref(),
         Some("TableFullScan_91")
     );
-    assert_eq!(reader.explain_info(), "data:TableFullScan_91");
+    assert_eq!(reader.explain_info(false), "data:TableFullScan_91");
+    assert_eq!(reader.explain_info(true), "data:TableFullScan");
     assert!(reader.is_common_handle());
     assert_eq!(scan.base.base.tp(), "TableScan");
     assert_eq!(scan.descriptor(), Some(descriptor));
     assert_eq!(scan.scan_kind(), Some(ResolvedTableScanKind::Full));
     assert_eq!(
-        scan.resolved_explain_id().as_deref(),
+        scan.resolved_explain_id(false).as_deref(),
         Some("TableFullScan_91")
     );
     assert_eq!(scan.resolved_is_common_handle(), Some(true));

@@ -959,14 +959,15 @@ impl PhysicalTableScan {
 
     /// Returns Go's bounded `PhysicalTableScan.ExplainID` result.
     #[must_use]
-    pub fn resolved_explain_id(&self) -> Option<String> {
+    pub fn resolved_explain_id(&self, ignore_suffix: bool) -> Option<String> {
         let descriptor = self.resolved_descriptor?;
         let plan_type = descriptor.scan_kind().plan_type();
-        Some(match descriptor.explain_id_suffix() {
-            crate::access_path::TableScanExplainIdSuffix::IncludePlanId => {
+        Some(match (ignore_suffix, descriptor.explain_id_suffix()) {
+            (true, _) => plan_type.to_owned(),
+            (false, crate::access_path::TableScanExplainIdSuffix::IncludePlanId) => {
                 format!("{plan_type}_{}", self.base.base.id())
             }
-            crate::access_path::TableScanExplainIdSuffix::Omit => plan_type.to_owned(),
+            (false, crate::access_path::TableScanExplainIdSuffix::Omit) => plan_type.to_owned(),
         })
     }
 
@@ -1701,7 +1702,7 @@ impl PhysicalTableReader {
             .resolved_is_common_handle()
             .ok_or(MissingTableDescriptorError)?;
         table_scan
-            .resolved_explain_id()
+            .resolved_explain_id(false)
             .ok_or(MissingTableDescriptorError)?;
         let mut base = BasePhysicalPlan::with_id(
             table_scan.base.base.id(),
@@ -1782,17 +1783,20 @@ impl PhysicalTableReader {
 
     /// The pushed-down root's explain identity.
     #[must_use]
-    pub fn table_plan_explain(&self) -> Option<String> {
+    pub fn table_plan_explain(&self, ignore_suffix: bool) -> Option<String> {
         match self.table_plan.as_deref()? {
-            PhysicalPlan::TableScan(scan) => scan.resolved_explain_id(),
-            plan => Some(plan.explain_id(false)),
+            PhysicalPlan::TableScan(scan) => scan.resolved_explain_id(ignore_suffix),
+            plan => Some(plan.explain_id(ignore_suffix)),
         }
     }
 
     /// Go `ExplainInfo` for an ordinary cop reader.
     #[must_use]
-    pub fn explain_info(&self) -> String {
-        format!("data:{}", self.table_plan_explain().unwrap_or_default())
+    pub fn explain_info(&self, ignore_suffix: bool) -> String {
+        format!(
+            "data:{}",
+            self.table_plan_explain(ignore_suffix).unwrap_or_default()
+        )
     }
 
     /// Go `ExplainNormalizedInfo`.
@@ -1803,8 +1807,11 @@ impl PhysicalTableReader {
 
     /// Go `OperatorInfo`.
     #[must_use]
-    pub fn operator_info(&self) -> String {
-        format!("data:{}", self.table_plan_explain().unwrap_or_default())
+    pub fn operator_info(&self, ignore_suffix: bool) -> String {
+        format!(
+            "data:{}",
+            self.table_plan_explain(ignore_suffix).unwrap_or_default()
+        )
     }
 }
 

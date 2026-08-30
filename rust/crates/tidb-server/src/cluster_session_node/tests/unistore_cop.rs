@@ -1146,18 +1146,36 @@ fn build_global_level_stats_matches_go() {
     assert_eq!(histogram_count(&mut session, "global_level"), 20);
 }
 
-/// Pinned `globalstats.TestIssues24349`: global TopN candidates include
-/// values recovered from sibling partition histograms before the remaining
-/// histogram buckets are merged.
 #[test]
 fn global_topn_merge_matches_issue_24349() {
+    assert_global_topn_merge_matches_issue_24349(None, 104);
+}
+
+#[test]
+fn concurrent_global_topn_merge_matches_issue_24349() {
+    assert_global_topn_merge_matches_issue_24349(Some(2), 105);
+}
+
+/// Pinned `globalstats.TestIssues24349` and its concurrency-two twin: global
+/// TopN candidates include values recovered from sibling partition histograms
+/// before the remaining histogram buckets are merged.
+fn assert_global_topn_merge_matches_issue_24349(
+    merge_concurrency: Option<u64>,
+    connection_id: u64,
+) {
     let (stack, _users) =
         cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
-        .open_session(session_context(104))
+        .open_session(session_context(connection_id))
         .expect("session opens");
     rows(&mut session, "USE test");
+    if let Some(merge_concurrency) = merge_concurrency {
+        rows(
+            &mut session,
+            &format!("SET GLOBAL tidb_merge_partition_stats_concurrency = {merge_concurrency}"),
+        );
+    }
     rows(
         &mut session,
         "SET SESSION tidb_partition_prune_mode = 'dynamic'",
@@ -1306,6 +1324,65 @@ fn global_topn_merge_matches_issue_24349() {
                 "4",
                 "4",
                 "0"
+            ],
+        ]
+    );
+}
+
+/// Pinned `globalstats.TestMergeGlobalStatsForCMSketch`: a global equality
+/// estimate uses the merged sketch while partition pruning retains p0.
+#[test]
+fn merged_global_cmsketch_drives_equality_estimate() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(106))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET SESSION tidb_analyze_version = 2");
+    rows(
+        &mut session,
+        "SET SESSION tidb_partition_prune_mode = 'dynamic'",
+    );
+    rows(
+        &mut session,
+        "CREATE TABLE global_cms (a INT) PARTITION BY RANGE (a) (\
+         PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO global_cms VALUES \
+         (1),(2),(3),(4),(5),(6),(6),(NULL),(11),(12),(13),(14),(15),(16),(17),(18),(19),(19)",
+    );
+    rows(&mut session, "ANALYZE TABLE global_cms");
+
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "EXPLAIN FORMAT = 'brief' SELECT * FROM global_cms WHERE a = 1",
+        )),
+        [
+            [
+                "TableReader",
+                "1.00",
+                "root",
+                "partition:p0",
+                "data:Selection"
+            ],
+            [
+                "└─Selection",
+                "1.00",
+                "cop[tikv]",
+                "",
+                "eq(test.global_cms.a, 1)"
+            ],
+            [
+                "  └─TableFullScan",
+                "18.00",
+                "cop[tikv]",
+                "table:global_cms",
+                "keep order:false"
             ],
         ]
     );

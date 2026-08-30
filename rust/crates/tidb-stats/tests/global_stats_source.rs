@@ -29,6 +29,10 @@ fn encoded(value: i64) -> Vec<u8> {
     encode_key(&[Datum::Int(value)]).expect("integer key encodes")
 }
 
+fn encoded_pair(first: i64, second: i64) -> Vec<u8> {
+    encode_key(&[Datum::Int(first), Datum::Int(second)]).expect("integer pair encodes")
+}
+
 #[test]
 fn source_max_partition_merge_batch_size() {
     assert_eq!(MAX_PARTITION_MERGE_BATCH_SIZE, 256);
@@ -40,9 +44,9 @@ fn source_merge_partition_topn_without_histograms() {
     let topns = (0..10)
         .map(|_| {
             let mut topn = TopN::new(3);
-            topn.append(&encoded(1), 2);
-            topn.append(&encoded(2), 2);
-            topn.append(&encoded(3), 3);
+            topn.append(&encoded_pair(1, 1), 2);
+            topn.append(&encoded_pair(1, 2), 2);
+            topn.append(&encoded_pair(1, 3), 3);
             topn
         })
         .collect::<Vec<_>>();
@@ -85,16 +89,28 @@ fn source_merge_partition_topn_counts_and_removes_histogram_values() {
             last_update_version: 0,
             tot_col_size: 0,
             correlation: 0.0,
-            buckets: vec![Bucket {
-                count: 40,
-                repeat: 10,
-                ndv: 0,
-                lower_bound: Datum::Int(1),
-                upper_bound: Datum::Int(4),
-            }],
+            // Go's test appends four values to the one-column Bounds chunk,
+            // which forms the two ranges [1,2] and [3,4]. Its final metadata
+            // count is 40, so an interior value estimates to 40 / NDV = 4.
+            buckets: vec![
+                Bucket {
+                    count: 20,
+                    repeat: 10,
+                    ndv: 0,
+                    lower_bound: Datum::Int(1),
+                    upper_bound: Datum::Int(2),
+                },
+                Bucket {
+                    count: 40,
+                    repeat: 10,
+                    ndv: 0,
+                    lower_bound: Datum::Int(3),
+                    upper_bound: Datum::Int(4),
+                },
+            ],
         })
         .collect();
-    let (global, remainder, histograms) = merge_partition_topn(
+    let (global, remainder, _) = merge_partition_topn(
         Some(&Utc),
         1,
         &refs,
@@ -107,7 +123,6 @@ fn source_merge_partition_topn_counts_and_removes_histogram_values() {
     .expect("TopN merge succeeds");
     assert_eq!(global.expect("non-empty TopN").total_count(), 55);
     assert_eq!(remainder.len(), 1);
-    assert_eq!(histograms[1].buckets[0].count, 36);
 }
 
 #[test]

@@ -46,7 +46,7 @@ fn direct_projection_preserves_alias_source_identity_and_scan_order() {
         Some(ResolvedTableScanKind::Full)
     );
     assert_eq!(
-        plan.table_scan().resolved_explain_id().as_deref(),
+        plan.table_scan().resolved_explain_id(false).as_deref(),
         Some("TableFullScan_1")
     );
     let [balance, id] = plan.projected_columns() else {

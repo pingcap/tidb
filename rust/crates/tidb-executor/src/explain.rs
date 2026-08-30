@@ -420,7 +420,11 @@ fn point_handle_text(range: &tidb_planner::ranger::types::Range) -> String {
         .unwrap_or_default()
 }
 
-fn physical_operator_info(plan: &PhysicalPlan, catalog: &Catalog) -> String {
+fn physical_operator_info(
+    plan: &PhysicalPlan,
+    catalog: &Catalog,
+    ignore_explain_id_suffix: bool,
+) -> String {
     match plan {
         PhysicalPlan::Selection(selection) => expressions_text(&selection.conditions),
         PhysicalPlan::Projection(projection) => expressions_text(&projection.exprs),
@@ -482,7 +486,7 @@ fn physical_operator_info(plan: &PhysicalPlan, catalog: &Catalog) -> String {
         PhysicalPlan::Sequence(_) => {
             tidb_planner::physical::PhysicalSequence::explain_info().to_owned()
         }
-        PhysicalPlan::TableReader(reader) => reader.explain_info(),
+        PhysicalPlan::TableReader(reader) => reader.explain_info(ignore_explain_id_suffix),
         PhysicalPlan::IndexScan(scan) => {
             let mut parts = Vec::new();
             if !scan.ranges.is_empty()
@@ -501,18 +505,24 @@ fn physical_operator_info(plan: &PhysicalPlan, catalog: &Catalog) -> String {
             reader
                 .index_plan
                 .as_deref()
-                .map_or_else(String::new, |plan| plan.explain_id(false))
+                .map_or_else(String::new, |plan| {
+                    plan.explain_id(ignore_explain_id_suffix)
+                })
         ),
         PhysicalPlan::IndexLookUpReader(reader) => format!(
             "index:{}, table:{}",
             reader
                 .index_plan
                 .as_deref()
-                .map_or_else(String::new, |plan| plan.explain_id(false)),
+                .map_or_else(String::new, |plan| {
+                    plan.explain_id(ignore_explain_id_suffix)
+                }),
             reader
                 .table_plan
                 .as_deref()
-                .map_or_else(String::new, |plan| plan.explain_id(false))
+                .map_or_else(String::new, |plan| {
+                    plan.explain_id(ignore_explain_id_suffix)
+                })
         ),
         PhysicalPlan::LocalIndexLookUp(lookup) => {
             format!("index handle offsets:{:?}", lookup.index_handle_offsets)
@@ -600,6 +610,7 @@ fn physical_explain_operator(
     task: ExplainTask,
     label: &str,
     runtime: Option<&crate::driver::physical_builder::PhysicalRuntimeStats>,
+    ignore_explain_id_suffix: bool,
 ) -> ExplainOperator {
     let mut children = match plan {
         PhysicalPlan::TableReader(reader) => reader
@@ -615,6 +626,7 @@ fn physical_explain_operator(
                     },
                     "",
                     runtime,
+                    ignore_explain_id_suffix,
                 )]
             })
             .unwrap_or_default(),
@@ -631,6 +643,7 @@ fn physical_explain_operator(
                     },
                     "",
                     runtime,
+                    ignore_explain_id_suffix,
                 )]
             })
             .unwrap_or_default(),
@@ -650,6 +663,7 @@ fn physical_explain_operator(
                 },
                 label,
                 runtime,
+                ignore_explain_id_suffix,
             )
         })
         .collect(),
@@ -668,6 +682,7 @@ fn physical_explain_operator(
                     },
                     label,
                     runtime,
+                    ignore_explain_id_suffix,
                 )
             })
             .collect(),
@@ -681,13 +696,23 @@ fn physical_explain_operator(
                     ExplainTask::Root,
                     "",
                     runtime,
+                    ignore_explain_id_suffix,
                 )]
             })
             .unwrap_or_default(),
         _ => plan
             .children()
             .iter()
-            .map(|child| physical_explain_operator(child, catalog, task.clone(), "", runtime))
+            .map(|child| {
+                physical_explain_operator(
+                    child,
+                    catalog,
+                    task.clone(),
+                    "",
+                    runtime,
+                    ignore_explain_id_suffix,
+                )
+            })
             .collect(),
     };
 
@@ -721,7 +746,11 @@ fn physical_explain_operator(
 
     let mut operator = ExplainOperator::new(physical_operator_name(plan), plan.id())
         .with_task(task)
-        .with_operator_info(physical_operator_info(plan, catalog))
+        .with_operator_info(physical_operator_info(
+            plan,
+            catalog,
+            ignore_explain_id_suffix,
+        ))
         .with_children(children);
     if let Some(access_object) = physical_access(plan, catalog) {
         operator = operator.with_access_object(access_object);
@@ -745,6 +774,7 @@ fn cte_definitions(
     runtime: Option<&crate::driver::physical_builder::PhysicalRuntimeStats>,
     seen: &mut std::collections::BTreeSet<i32>,
     out: &mut Vec<ExplainOperator>,
+    ignore_explain_id_suffix: bool,
 ) {
     if let PhysicalPlan::CTE(cte) = plan {
         if seen.insert(cte.id_for_storage) {
@@ -754,6 +784,7 @@ fn cte_definitions(
                 ExplainTask::Root,
                 "(Seed Part)",
                 runtime,
+                ignore_explain_id_suffix,
             )];
             if let Some(recursive) = cte.recursive_plan.as_deref() {
                 children.push(physical_explain_operator(
@@ -762,6 +793,7 @@ fn cte_definitions(
                     ExplainTask::Root,
                     "(Recursive Part)",
                     runtime,
+                    ignore_explain_id_suffix,
                 ));
             }
             let mut definition = ExplainOperator::new("CTE", cte.id_for_storage)
@@ -776,36 +808,50 @@ fn cte_definitions(
                 .map(tidb_planner::stats_info::StatsInfo::row_count);
             out.push(definition);
         }
-        cte_definitions(&cte.seed_plan, catalog, runtime, seen, out);
+        cte_definitions(
+            &cte.seed_plan,
+            catalog,
+            runtime,
+            seen,
+            out,
+            ignore_explain_id_suffix,
+        );
         if let Some(recursive) = cte.recursive_plan.as_deref() {
-            cte_definitions(recursive, catalog, runtime, seen, out);
+            cte_definitions(
+                recursive,
+                catalog,
+                runtime,
+                seen,
+                out,
+                ignore_explain_id_suffix,
+            );
         }
     }
     for child in plan.children() {
-        cte_definitions(child, catalog, runtime, seen, out);
+        cte_definitions(child, catalog, runtime, seen, out, ignore_explain_id_suffix);
     }
     match plan {
         PhysicalPlan::TableReader(reader) => {
             if let Some(child) = reader.table_plan.as_deref() {
-                cte_definitions(child, catalog, runtime, seen, out);
+                cte_definitions(child, catalog, runtime, seen, out, ignore_explain_id_suffix);
             }
         }
         PhysicalPlan::IndexReader(reader) => {
             if let Some(child) = reader.index_plan.as_deref() {
-                cte_definitions(child, catalog, runtime, seen, out);
+                cte_definitions(child, catalog, runtime, seen, out, ignore_explain_id_suffix);
             }
         }
         PhysicalPlan::IndexLookUpReader(reader) => {
             if let Some(child) = reader.index_plan.as_deref() {
-                cte_definitions(child, catalog, runtime, seen, out);
+                cte_definitions(child, catalog, runtime, seen, out, ignore_explain_id_suffix);
             }
             if let Some(child) = reader.table_plan.as_deref() {
-                cte_definitions(child, catalog, runtime, seen, out);
+                cte_definitions(child, catalog, runtime, seen, out, ignore_explain_id_suffix);
             }
         }
         PhysicalPlan::Dml(root) => {
             if let Some(child) = root.select_plan.as_deref() {
-                cte_definitions(child, catalog, runtime, seen, out);
+                cte_definitions(child, catalog, runtime, seen, out, ignore_explain_id_suffix);
             }
         }
         _ => {}
@@ -819,12 +865,14 @@ fn render_physical_plan(
     analyze: bool,
     runtime: Option<&crate::driver::physical_builder::PhysicalRuntimeStats>,
 ) -> Result<SelectMeta, DriverError> {
+    let ignore_explain_id_suffix = matches!(format, ExplainFormat::Brief | ExplainFormat::PlanTree);
     let mut roots = vec![physical_explain_operator(
         physical,
         catalog,
         ExplainTask::Root,
         "",
         runtime,
+        ignore_explain_id_suffix,
     )];
     cte_definitions(
         physical,
@@ -832,6 +880,7 @@ fn render_physical_plan(
         runtime,
         &mut std::collections::BTreeSet::new(),
         &mut roots,
+        ignore_explain_id_suffix,
     );
 
     let mut rows = Vec::new();
