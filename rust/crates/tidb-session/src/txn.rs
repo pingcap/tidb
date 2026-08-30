@@ -718,6 +718,22 @@ impl Session {
         &mut self,
         body: impl FnOnce(&mut Catalog) -> Result<T, DriverError>,
     ) -> Result<T, DriverError> {
+        // The normal cluster session has no LOCAL/GLOBAL temporary tables.
+        // Avoid constructing and swapping an empty overlay on every
+        // statement; temporary-table sessions retain the attach/detach path
+        // below.
+        if self.local_temporary_tables.is_empty() && self.global_temporary_data.is_empty() {
+            return match &mut self.txn {
+                Some(txn) => body(&mut txn.working),
+                None => {
+                    let mut catalog = self
+                        .catalog
+                        .lock()
+                        .map_err(|_| DriverError::CatalogPoisoned)?;
+                    body(&mut catalog)
+                }
+            };
+        }
         // Go wraps every statement's infoschema in a
         // `SessionExtendedInfoSchema` (`temptable.AttachLocalTemporaryTable
         // InfoSchema`) and installs a snapshot interceptor for the temporary
@@ -814,7 +830,18 @@ impl Session {
         &mut self,
         body: impl FnOnce(&mut Catalog) -> Result<T, DriverError>,
     ) -> Result<T, DriverError> {
+        // Cluster sessions keep statement writes in the outer
+        // `MutationBuffer`/`BufferCheckpoint` owned by `ClusterServerSession`.
+        // Their catalog contains only KV-backed tables, so taking a deep image
+        // here duplicates schema maps on every prepared DML without adding a
+        // rollback capability.  The in-process backend still has to retain
+        // the image (and an internal Session transaction must always retain
+        // it), hence the deliberately narrow fast path.
+        let cluster_catalog = self.txn.is_none();
         self.with_catalog_mut(|catalog| {
+            if cluster_catalog && !catalog.has_mem_tables() {
+                return body(catalog);
+            }
             let mut guard = CatalogStage {
                 stage: Some(catalog.clone()),
                 catalog,
@@ -825,6 +852,57 @@ impl Session {
             guard.stage = None;
             Ok(value)
         })
+    }
+
+    /// Runs a DML statement over its target table without taking a catalog
+    /// image when the target is cluster-backed.  Cluster sessions keep row
+    /// mutations in the outer statement savepoint, while the image remains
+    /// necessary for an in-process `MemTable` target and for Session-owned
+    /// transactions.
+    pub(crate) fn with_staged_catalog_for_table<T>(
+        &mut self,
+        database: &str,
+        table_name: &str,
+        body: impl FnOnce(&mut Catalog) -> Result<T, DriverError>,
+    ) -> Result<T, DriverError> {
+        let cluster_catalog = self.txn.is_none();
+        self.with_catalog_mut(|catalog| {
+            let needs_stage = catalog
+                .table_in(database, table_name)
+                .is_some_and(|entry| matches!(entry, tidb_executor::TableEntry::Mem(_)));
+            if cluster_catalog && !needs_stage {
+                return body(catalog);
+            }
+            let mut guard = CatalogStage {
+                stage: Some(catalog.clone()),
+                catalog,
+            };
+            let value = body(guard.catalog)?;
+            guard.stage = None;
+            Ok(value)
+        })
+    }
+
+    /// Path-resolving wrapper for [`Self::with_staged_catalog_for_table`].
+    /// Invalid/empty paths keep the original staged behavior so the executor
+    /// remains responsible for returning the canonical schema error.
+    pub(crate) fn with_staged_catalog_for_path<T>(
+        &mut self,
+        path: &[String],
+        current_database: &str,
+        body: impl FnOnce(&mut Catalog) -> Result<T, DriverError>,
+    ) -> Result<T, DriverError> {
+        let target = match path {
+            [table] if !current_database.is_empty() => Some((current_database, table.as_str())),
+            [database, table] => Some((database.as_str(), table.as_str())),
+            _ => None,
+        };
+        match target {
+            Some((database, table_name)) => {
+                self.with_staged_catalog_for_table(database, table_name, body)
+            }
+            None => self.with_staged_catalog(body),
+        }
     }
 
     /// Go `serverStatus2Str` over this session's status bits: the `State`

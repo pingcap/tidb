@@ -535,6 +535,24 @@ impl TableEntry {
 }
 
 impl Catalog {
+    /// Whether this catalog contains any in-process matrix-backed tables.
+    ///
+    /// Cluster sessions keep row changes in their shared `MutationBuffer`,
+    /// and their `KvTable` entries therefore do not need the deep catalog
+    /// image that the in-process `MemTable` executor uses for statement
+    /// rollback.  The session layer uses this distinction to avoid cloning
+    /// the full schema on every prepared DML statement while retaining the
+    /// image-based rollback for the mock/in-memory backend.
+    #[must_use]
+    pub fn has_mem_tables(&self) -> bool {
+        self.databases.values().any(|database| {
+            database
+                .tables
+                .values()
+                .any(|entry| matches!(entry.as_ref(), TableEntry::Mem(_)))
+        })
+    }
+
     /// Registers a matrix-backed `table` in the default database.
     ///
     /// # Panics

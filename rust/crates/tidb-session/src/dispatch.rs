@@ -1698,21 +1698,22 @@ impl Session {
                     if insert.source.is_some() {
                         self.write_sli.set_invalid();
                     }
-                    let result = self.with_staged_catalog(|catalog| {
-                        // Go executes the statement the protocol BOUND
-                        // (`pkg/server`'s `statement`/`executableParams`
-                        // carry the values): re-parsing `sql` here would run
-                        // a tree whose markers never met their execute-time
-                        // values, which is a wrong answer for every binary-
-                        // protocol write.
-                        tidb_executor::run_insert_stmt_with_physical(
-                            insert,
-                            catalog,
-                            &current_db,
-                            &ctx,
-                            physical_plan,
-                        )
-                    });
+                    let result =
+                        self.with_staged_catalog_for_path(&insert.table, &current_db, |catalog| {
+                            // Go executes the statement the protocol BOUND
+                            // (`pkg/server`'s `statement`/`executableParams`
+                            // carry the values): re-parsing `sql` here would run
+                            // a tree whose markers never met their execute-time
+                            // values, which is a wrong answer for every binary-
+                            // protocol write.
+                            tidb_executor::run_insert_stmt_with_physical(
+                                insert,
+                                catalog,
+                                &current_db,
+                                &ctx,
+                                physical_plan,
+                            )
+                        });
                     self.drain_eval_warnings(&ctx);
                     // Go `session.LastInsertID()`, the OK packet's field:
                     // `StmtCtx.LastInsertID` when the statement PUBLISHED an
@@ -1747,20 +1748,38 @@ impl Session {
                     let ctx = self
                         .statement_context_for_update_read(update.ignore)
                         .with_statement_class(tidb_executor::StatementClass::UpdateOrDelete);
-                    let output = self.with_staged_catalog(|catalog| {
-                        // Bound AST, not SQL text: the text still carries the
-                        // markers the binary protocol already replaced. See
-                        // the INSERT arm above.
-                        Ok(StmtOutput::Affected(
-                            tidb_executor::run_update_stmt_with_physical(
-                                update,
-                                catalog,
+                    let output = match &update.kind {
+                        tidb_ast::UpdateKind::Single(table_ref) => self
+                            .with_staged_catalog_for_path(
+                                &table_ref.name,
                                 &current_db,
-                                &ctx,
-                                physical_plan,
-                            )?,
-                        ))
-                    });
+                                |catalog| {
+                                    // Bound AST, not SQL text: the text still
+                                    // carries the markers the binary protocol
+                                    // already replaced. See the INSERT arm.
+                                    Ok(StmtOutput::Affected(
+                                        tidb_executor::run_update_stmt_with_physical(
+                                            update,
+                                            catalog,
+                                            &current_db,
+                                            &ctx,
+                                            physical_plan,
+                                        )?,
+                                    ))
+                                },
+                            ),
+                        tidb_ast::UpdateKind::Multi { .. } => self.with_staged_catalog(|catalog| {
+                            Ok(StmtOutput::Affected(
+                                tidb_executor::run_update_stmt_with_physical(
+                                    update,
+                                    catalog,
+                                    &current_db,
+                                    &ctx,
+                                    physical_plan,
+                                )?,
+                            ))
+                        }),
+                    };
                     self.drain_eval_warnings(&ctx);
                     output
                 }
@@ -1775,18 +1794,37 @@ impl Session {
                     let ctx = self
                         .statement_context_for_update_read(delete.ignore)
                         .with_statement_class(tidb_executor::StatementClass::UpdateOrDelete);
-                    let output = self.with_staged_catalog(|catalog| {
-                        // Bound AST, not SQL text -- see the UPDATE arm.
-                        Ok(StmtOutput::Affected(
-                            tidb_executor::run_delete_stmt_with_physical(
-                                delete,
-                                catalog,
+                    let output = match &delete.kind {
+                        tidb_ast::DeleteKind::Single(table_ref) => self
+                            .with_staged_catalog_for_path(
+                                &table_ref.name,
                                 &current_db,
-                                &ctx,
-                                physical_plan,
-                            )?,
-                        ))
-                    });
+                                |catalog| {
+                                    // Bound AST, not SQL text -- see the
+                                    // UPDATE arm.
+                                    Ok(StmtOutput::Affected(
+                                        tidb_executor::run_delete_stmt_with_physical(
+                                            delete,
+                                            catalog,
+                                            &current_db,
+                                            &ctx,
+                                            physical_plan,
+                                        )?,
+                                    ))
+                                },
+                            ),
+                        tidb_ast::DeleteKind::Multi { .. } => self.with_staged_catalog(|catalog| {
+                            Ok(StmtOutput::Affected(
+                                tidb_executor::run_delete_stmt_with_physical(
+                                    delete,
+                                    catalog,
+                                    &current_db,
+                                    &ctx,
+                                    physical_plan,
+                                )?,
+                            ))
+                        }),
+                    };
                     self.drain_eval_warnings(&ctx);
                     output
                 }

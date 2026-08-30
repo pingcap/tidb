@@ -19,7 +19,7 @@
 use std::collections::HashMap;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    mpsc, Arc, LazyLock, Mutex, Weak,
+    mpsc, Arc, LazyLock, Mutex, OnceLock, Weak,
 };
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -59,6 +59,8 @@ struct NeededItemTask {
     resource_group: String,
     to_timeout: Instant,
     result: mpsc::SyncSender<SyncLoadOutcome>,
+    loader: Arc<dyn StatisticsItemLoader>,
+    cache: Weak<StatisticsCache>,
 }
 
 type Listener = mpsc::SyncSender<SyncLoadOutcome>;
@@ -66,11 +68,65 @@ type Listener = mpsc::SyncSender<SyncLoadOutcome>;
 static GLOBAL_SINGLEFLIGHT: LazyLock<Mutex<HashMap<String, Vec<Listener>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-pub(crate) struct SyncLoadService {
+/// One process-wide worker pool for synchronous statistics loads.
+///
+/// Go owns this queue in the domain's `StatsHandle`; it is not recreated for
+/// every SQL session. Rust catalogs are intentionally per-session snapshots,
+/// so keeping the receivers in each `SyncLoadService` multiplied the worker
+/// group by the number of live connections (and made a ten-connection
+/// Sysbench run create hundreds of competing threads). Tasks carry their
+/// loader and weak cache so one shared pool still publishes into the catalog
+/// that requested the item.
+struct SyncLoadPool {
     needed_items: mpsc::SyncSender<NeededItemTask>,
     _needed_items_receiver: Arc<Mutex<mpsc::Receiver<NeededItemTask>>>,
     _timeout_items_receiver: Arc<Mutex<mpsc::Receiver<NeededItemTask>>>,
     stop: Arc<AtomicBool>,
+}
+
+static GLOBAL_WORKER_POOL: OnceLock<Arc<SyncLoadPool>> = OnceLock::new();
+
+impl SyncLoadPool {
+    fn new(concurrency: usize, queue_size: usize, retry_backoff: Duration) -> Arc<Self> {
+        let (needed_tx, needed_rx) = mpsc::sync_channel(queue_size);
+        let (timeout_tx, timeout_rx) = mpsc::sync_channel(queue_size);
+        let needed_rx = Arc::new(Mutex::new(needed_rx));
+        let timeout_rx = Arc::new(Mutex::new(timeout_rx));
+        let stop = Arc::new(AtomicBool::new(false));
+        for _ in 0..concurrency {
+            let needed_rx = Arc::clone(&needed_rx);
+            let timeout_rx = Arc::clone(&timeout_rx);
+            let timeout_tx = timeout_tx.clone();
+            let stop = Arc::clone(&stop);
+            std::thread::spawn(move || {
+                worker_loop(needed_rx, timeout_rx, timeout_tx, retry_backoff, stop);
+            });
+        }
+        Arc::new(Self {
+            needed_items: needed_tx,
+            _needed_items_receiver: needed_rx,
+            _timeout_items_receiver: timeout_rx,
+            stop,
+        })
+    }
+
+    fn global(concurrency: usize, queue_size: usize, retry_backoff: Duration) -> Arc<Self> {
+        GLOBAL_WORKER_POOL
+            .get_or_init(|| Self::new(concurrency, queue_size, retry_backoff))
+            .clone()
+    }
+}
+
+impl Drop for SyncLoadPool {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+    }
+}
+
+pub(crate) struct SyncLoadService {
+    pool: Arc<SyncLoadPool>,
+    loader: Arc<dyn StatisticsItemLoader>,
+    cache: Weak<StatisticsCache>,
 }
 
 impl SyncLoadService {
@@ -92,13 +148,12 @@ impl SyncLoadService {
         .map(Duration::from_nanos)
         .filter(|duration| !duration.is_zero())
         .unwrap_or(Duration::from_secs(3));
-        Self::with_settings(
-            loader,
-            cache,
+        let pool = SyncLoadPool::global(
             concurrency,
             performance.stats_load_queue_size.max(1),
             lease / 10,
-        )
+        );
+        Self::with_pool(loader, cache, pool)
     }
 
     fn with_settings(
@@ -108,35 +163,22 @@ impl SyncLoadService {
         queue_size: usize,
         retry_backoff: Duration,
     ) -> Arc<Self> {
-        let (needed_tx, needed_rx) = mpsc::sync_channel(queue_size);
-        let (timeout_tx, timeout_rx) = mpsc::sync_channel(queue_size);
-        let needed_rx = Arc::new(Mutex::new(needed_rx));
-        let timeout_rx = Arc::new(Mutex::new(timeout_rx));
-        let stop = Arc::new(AtomicBool::new(false));
-        for _ in 0..concurrency {
-            let loader = Arc::clone(&loader);
-            let cache = cache.clone();
-            let needed_rx = Arc::clone(&needed_rx);
-            let timeout_rx = Arc::clone(&timeout_rx);
-            let timeout_tx = timeout_tx.clone();
-            let stop = Arc::clone(&stop);
-            std::thread::spawn(move || {
-                worker_loop(
-                    loader,
-                    cache,
-                    needed_rx,
-                    timeout_rx,
-                    timeout_tx,
-                    retry_backoff,
-                    stop,
-                );
-            });
-        }
+        Self::with_pool(
+            loader,
+            cache,
+            SyncLoadPool::new(concurrency, queue_size, retry_backoff),
+        )
+    }
+
+    fn with_pool(
+        loader: Arc<dyn StatisticsItemLoader>,
+        cache: Weak<StatisticsCache>,
+        pool: Arc<SyncLoadPool>,
+    ) -> Arc<Self> {
         Arc::new(Self {
-            needed_items: needed_tx,
-            _needed_items_receiver: needed_rx,
-            _timeout_items_receiver: timeout_rx,
-            stop,
+            pool,
+            loader,
+            cache,
         })
     }
 
@@ -201,9 +243,11 @@ impl SyncLoadService {
             resource_group,
             to_timeout: deadline,
             result: result_tx,
+            loader: Arc::clone(&self.loader),
+            cache: self.cache.clone(),
         };
         loop {
-            match self.needed_items.try_send(task) {
+            match self.pool.needed_items.try_send(task) {
                 Ok(()) => break,
                 Err(mpsc::TrySendError::Full(returned)) => {
                     task = returned;
@@ -235,20 +279,7 @@ impl SyncLoadService {
     }
 }
 
-impl Drop for SyncLoadService {
-    fn drop(&mut self) {
-        // The worker threads intentionally outlive individual requests, but
-        // the service itself is owned by a catalog. Catalogs are created per
-        // SQL session, so leaving workers blocked on their receiver leaks a
-        // thread group for every connection. Signal them before the receiver
-        // Arcs are released; `drain_task` wakes at most every 10ms.
-        self.stop.store(true, Ordering::Release);
-    }
-}
-
 fn worker_loop(
-    loader: Arc<dyn StatisticsItemLoader>,
-    cache: Weak<StatisticsCache>,
     needed_rx: Arc<Mutex<mpsc::Receiver<NeededItemTask>>>,
     timeout_rx: Arc<Mutex<mpsc::Receiver<NeededItemTask>>>,
     timeout_tx: mpsc::SyncSender<NeededItemTask>,
@@ -256,7 +287,7 @@ fn worker_loop(
     stop: Arc<AtomicBool>,
 ) {
     while let Some(task) = drain_task(&needed_rx, &timeout_rx, &timeout_tx, &stop) {
-        handle_task(&loader, &cache, task, retry_backoff);
+        handle_task(task, retry_backoff);
     }
 }
 
@@ -311,16 +342,12 @@ fn drain_task(
     }
 }
 
-fn handle_task(
-    loader: &Arc<dyn StatisticsItemLoader>,
-    cache: &Weak<StatisticsCache>,
-    task: NeededItemTask,
-    retry_backoff: Duration,
-) {
+fn handle_task(task: NeededItemTask, retry_backoff: Duration) {
     let mut error = None;
     for retry in 0..=RETRY_COUNT {
         let loaded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            loader.load_items(std::slice::from_ref(&task.item), &task.resource_group)
+            task.loader
+                .load_items(std::slice::from_ref(&task.item), &task.resource_group)
         }))
         .unwrap_or_else(|panic| {
             let message = panic.downcast_ref::<&str>().map_or_else(
@@ -336,7 +363,7 @@ fn handle_task(
         });
         match loaded {
             Ok(tables) => {
-                if let Some(cache) = cache.upgrade() {
+                if let Some(cache) = task.cache.upgrade() {
                     let mut values = cache
                         .values
                         .write()
@@ -433,6 +460,8 @@ mod tests {
             resource_group: "rg".to_owned(),
             to_timeout,
             result,
+            loader: Arc::new(TestLoader::default()),
+            cache: Weak::new(),
         }
     }
 
@@ -509,6 +538,7 @@ mod tests {
         let service =
             SyncLoadService::with_settings(loader, Arc::downgrade(&cache), 0, 1, Duration::ZERO);
         service
+            .pool
             .needed_items
             .send(task(105, Instant::now() + Duration::from_secs(1)))
             .expect("fill the sole queue slot");
