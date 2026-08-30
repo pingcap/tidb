@@ -52,6 +52,7 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - [x] (2026-08-29) Recorded non-enforced `source="analyze"` historical metadata after each successful global column/index save, gated by the live switch and pre-save initialized cache exactly like Go.
 - [x] (2026-08-29) Removed the Rust-only refusal of stored generated columns from cluster ANALYZE; stored generated values are sampled from row bytes while virtual generated columns remain excluded like Go.
 - [x] (2026-08-29) Ported global-stat item slow-save fencing: the live configured stats lease, exact five-lease threshold, independent metadata-version transaction, generic retry diagnostic, and refreshed history version now match Go.
+- [x] (2026-08-29) Removed Rust's blanket global-index ANALYZE refusal; ordinary global indexes now participate in each partition's shared column-sampling task and the existing global merge, as pinned Go does.
 - [ ] Complete pinned `pkg/statistics/handle/globalstats`; dynamic ANALYZE now loads every partition, applies both missing-stat policies, merges FM/CMS/TopN/histograms, honors the async selector and TopN merge concurrency, persists each global item independently, continues after item-write errors, records historical metadata, and emits warnings 8243/8244. The full original test and benchmark inventory remains open.
 - [ ] Wire all pinned Go `SHOW STATS_*` surfaces to the shared cache and storage semantics.
 - [ ] Inventory every production file, platform/generated variant, original test/support artifact, fixture, and validation gate in pinned `pkg/statistics`; close or explicitly retain seed-only gaps until the whole package is complete.
@@ -196,6 +197,9 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 
 - Observation: a successful global-stat item save can still require a second transaction when its duration reaches five statistics leases; this prevents another node's cache watermark from passing the original version while the item is still being stored.
   Evidence: pinned `statsReadWriter.handleSlowStatsSaving`, `cache.LeaseOffset`, and `UpdateStatsMetaVerAndLastHistUpdateVer`; Rust now preserves all metadata except `version` and `last_stats_histograms_version`, and uses the refreshed version for history just like Go.
+
+- Observation: Go's ordinary global indexes are part of the per-partition column-sampling task and are then merged into logical-table statistics; only a global prefix/expression index is split into an independent special-index task.
+  Evidence: pinned `getModifiedIndexesInfoForAnalyze`, `IsSpecialGlobalIndex`, and `TestGlobalIndexStatistics`; Rust now admits the ordinary shape instead of rejecting every `IndexInfo.Global` value.
 
 ## Decision Log
 

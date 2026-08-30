@@ -393,8 +393,17 @@ fn cluster_analyze_plan(
         if index.state != SchemaState::PUBLIC {
             continue;
         }
+        let is_special_global = index.global
+            && index.columns.iter_deref().any(|index_column| {
+                let index_column = index_column.read();
+                index_column.length != UNSPECIFIED_LENGTH
+                    || table
+                        .cols()
+                        .get(index_column.offset as usize)
+                        .is_some_and(|column| column.read().is_virtual_generated())
+            });
         if index.mv_index
-            || index.global
+            || is_special_global
             || index.vector_info.is_some()
             || index.inverted_info.is_some()
             || index.full_text_info.is_some()
@@ -445,4 +454,46 @@ fn cluster_analyze_plan(
     }
 
     Ok(AnalyzePlan::new(columns, indexes, table.name.original())?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cluster_analyze_plan;
+    use tidb_ast::CiString;
+    use tidb_datatype::UNSPECIFIED_LENGTH;
+    use tidb_datatype::{FieldType, FieldTypeCode};
+    use tidb_model::column::ColumnInfo;
+    use tidb_model::index::{IndexColumn, IndexInfo};
+    use tidb_model::table_info::TableInfo;
+    use tidb_model::SchemaState;
+
+    #[test]
+    fn ordinary_global_index_is_sampled_with_partition_rows_like_go() {
+        let column = ColumnInfo::new(1, "a", FieldType::new(FieldTypeCode::LongLong));
+        let table = TableInfo {
+            name: CiString::new("t"),
+            columns: vec![column].into(),
+            indices: vec![IndexInfo {
+                id: 2,
+                name: CiString::new("idx_a"),
+                state: SchemaState::PUBLIC,
+                global: true,
+                columns: vec![IndexColumn {
+                    name: CiString::new("a"),
+                    offset: 0,
+                    length: UNSPECIFIED_LENGTH,
+                    use_changing_type: false,
+                }]
+                .into(),
+                ..IndexInfo::default()
+            }]
+            .into(),
+            ..TableInfo::default()
+        };
+
+        let plan = cluster_analyze_plan(&table, None)
+            .expect("an ordinary global index uses the column sampling task");
+        assert_eq!(plan.indexes().len(), 1);
+        assert_eq!(plan.indexes()[0].id, 2);
+    }
 }
