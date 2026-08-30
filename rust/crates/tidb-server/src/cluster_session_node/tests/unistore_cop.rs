@@ -203,6 +203,75 @@ fn table_lifecycle_ddl_updates_statistics_like_go() {
     assert!(dropped_version > new_version);
 }
 
+/// Pinned DDL subscriber `ActionAddColumn`: a defaultless nullable column is
+/// NULL for every existing row, and `InsertColStats2KV` persists that fact
+/// before advancing the physical table's statistics version.
+#[test]
+fn add_column_ddl_initializes_null_statistics_like_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(73))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "CREATE TABLE stats_add_column (a INT)");
+    rows(
+        &mut session,
+        "INSERT INTO stats_add_column VALUES (1),(2),(3)",
+    );
+    rows(&mut session, "ANALYZE TABLE stats_add_column");
+    let table_id = stack
+        .factory
+        .catalog
+        .load()
+        .find_table("test", "stats_add_column")
+        .expect("created table is published")
+        .1
+        .id;
+    let old_version = displayed(rows(
+        &mut session,
+        &format!("SELECT version FROM mysql.stats_meta WHERE table_id = {table_id}"),
+    ))[0][0]
+        .parse::<u64>()
+        .expect("stats version is an unsigned integer");
+
+    rows(
+        &mut session,
+        "ALTER TABLE stats_add_column ADD COLUMN b INT",
+    );
+    let column_id = stack
+        .factory
+        .catalog
+        .load()
+        .find_table("test", "stats_add_column")
+        .expect("altered table is published")
+        .1
+        .columns
+        .iter_deref()
+        .find(|column| column.read().name.lowercase() == "b")
+        .expect("added column is published")
+        .read()
+        .id;
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT distinct_count, null_count, stats_ver FROM mysql.stats_histograms \
+                 WHERE table_id = {table_id} AND is_index = 0 AND hist_id = {column_id}"
+            ),
+        )),
+        [["0", "3", "0"]]
+    );
+    let new_version = displayed(rows(
+        &mut session,
+        &format!("SELECT version FROM mysql.stats_meta WHERE table_id = {table_id}"),
+    ))[0][0]
+        .parse::<u64>()
+        .expect("stats version is an unsigned integer");
+    assert!(new_version > old_version);
+}
+
 /// Pinned `TestRecordHistoryStatsAfterAnalyze`: the global switch suppresses
 /// task creation while off; once enabled, a successful ANALYZE posts its
 /// physical ID and the domain dump path writes canonical blocks to

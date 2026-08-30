@@ -3740,6 +3740,59 @@ impl ClusterServerSession {
         )
     }
 
+    fn record_schema_change_history(
+        &self,
+        transaction: &dyn OpenClusterTransaction,
+        staged: &MutationBuffer,
+        catalog: &ClusterCatalog,
+        physical_id: i64,
+        version: u64,
+    ) -> Result<(), String> {
+        let enabled = self
+            .global_vars
+            .get(tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS)
+            .is_ok_and(|value| tidb_exec::option_values::tidb_opt_on(&value));
+        if !enabled
+            || !self
+                .stats
+                .load()
+                .get(&physical_id)
+                .and_then(tidb_exec::stats_watch::TableStatsState::loaded)
+                .is_some_and(|stats| stats.is_initialized())
+        {
+            return Ok(());
+        }
+        let (modify_count, count) =
+            transactions::stage_pessimistic_statement(transaction, staged, |snapshot, _| {
+                let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                let (counts, plan) =
+                    tidb_exec::cluster_stats_write::plan_historical_stats_meta_lock(
+                        &mut snapshot,
+                        catalog,
+                        physical_id,
+                        version,
+                    )
+                    .map_err(|error| error.to_string())?;
+                Ok((counts, plan.mutations))
+            })?;
+        let now = system_time_timestamp(SystemTime::now())?;
+        transactions::stage_pessimistic_statement(transaction, staged, |snapshot, _| {
+            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+            let plan = tidb_exec::cluster_stats_write::plan_historical_stats_meta_replace(
+                &mut snapshot,
+                catalog,
+                physical_id,
+                modify_count,
+                count,
+                version,
+                "schema change",
+                now,
+            )
+            .map_err(|error| error.to_string())?;
+            Ok(((), plan.mutations))
+        })
+    }
+
     fn apply_stats_ddl_change(
         &mut self,
         table: &tidb_model::table_info::TableInfo,
@@ -3762,59 +3815,6 @@ impl ClusterServerSession {
         let staged = MutationBuffer::new();
         let prepared = (|| -> Result<(), String> {
             let loader = ClusterStatsLoader::locate(&catalog).map_err(|error| error.to_string())?;
-            let record_historical_meta = |physical_id| -> Result<(), String> {
-                let enabled = self
-                    .global_vars
-                    .get(tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS)
-                    .is_ok_and(|value| tidb_exec::option_values::tidb_opt_on(&value));
-                if !enabled
-                    || !self
-                        .stats
-                        .load()
-                        .get(&physical_id)
-                        .and_then(tidb_exec::stats_watch::TableStatsState::loaded)
-                        .is_some_and(|stats| stats.is_initialized())
-                {
-                    return Ok(());
-                }
-                let (modify_count, count) = transactions::stage_pessimistic_statement(
-                    transaction.as_ref(),
-                    &staged,
-                    |snapshot, _| {
-                        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-                        let (counts, plan) =
-                            tidb_exec::cluster_stats_write::plan_historical_stats_meta_lock(
-                                &mut snapshot,
-                                &catalog,
-                                physical_id,
-                                version,
-                            )
-                            .map_err(|error| error.to_string())?;
-                        Ok((counts, plan.mutations))
-                    },
-                )?;
-                let now = system_time_timestamp(SystemTime::now())?;
-                transactions::stage_pessimistic_statement(
-                    transaction.as_ref(),
-                    &staged,
-                    |snapshot, _| {
-                        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-                        let plan =
-                            tidb_exec::cluster_stats_write::plan_historical_stats_meta_replace(
-                                &mut snapshot,
-                                &catalog,
-                                physical_id,
-                                modify_count,
-                                count,
-                                version,
-                                "schema change",
-                                now,
-                            )
-                            .map_err(|error| error.to_string())?;
-                        Ok(((), plan.mutations))
-                    },
-                )
-            };
 
             // Pinned Go create and truncate actions first call
             // `InsertTableStats2KV` for every new physical table ID. That
@@ -3843,7 +3843,13 @@ impl ClusterServerSession {
                         },
                     )?;
                 }
-                record_historical_meta(new_id)?;
+                self.record_schema_change_history(
+                    transaction.as_ref(),
+                    &staged,
+                    &catalog,
+                    new_id,
+                    version,
+                )?;
             }
 
             // Go next reads each dropped partition with one
@@ -3926,7 +3932,13 @@ impl ClusterServerSession {
                         Ok(((), plan.mutations))
                     },
                 )?;
-                record_historical_meta(old_id)?;
+                self.record_schema_change_history(
+                    transaction.as_ref(),
+                    &staged,
+                    &catalog,
+                    old_id,
+                    version,
+                )?;
             }
             Ok(())
         })();
@@ -4015,6 +4027,130 @@ impl ClusterServerSession {
         }
     }
 
+    fn update_added_column_stats(
+        &mut self,
+        schema: &str,
+        table_name: &str,
+        column_name: &str,
+    ) -> Result<(), SqlQueryError> {
+        let catalog = self.catalog.load();
+        let (_, table) = catalog
+            .find_table(schema, table_name)
+            .ok_or_else(|| SqlQueryError::unknown("altered table disappeared from catalog"))?;
+        let column_id = table
+            .columns
+            .iter_deref()
+            .find(|column| column.read().name.lowercase() == column_name.to_lowercase())
+            .map(|column| column.read().id)
+            .ok_or_else(|| SqlQueryError::unknown("added column disappeared from catalog"))?;
+        let physical_ids = stats_physical_ids(table, self.dynamic_partition_pruning()?);
+        let resource_group = self.session.current_resource_group().to_owned();
+        let transaction = self
+            .transactions
+            .begin(true, &resource_group)
+            .map_err(SqlQueryError::unknown)?;
+        let version = transaction.start_ts();
+        let staged = MutationBuffer::new();
+        let prepared = (|| -> Result<(), String> {
+            let loader = ClusterStatsLoader::locate(&catalog).map_err(|error| error.to_string())?;
+            for &physical_id in &physical_ids {
+                // Pinned `InsertColStats2KV` begins with an ordinary SELECT
+                // and returns without writes when the physical stats row does
+                // not exist.
+                let snapshot = transaction.snapshot_for(false)?;
+                let snapshot =
+                    tidb_exec::cluster_table_storage::overlay_staged_mutations(snapshot, &staged);
+                let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                let Some((_, _, _, count, _)) = loader
+                    .load_meta(&mut snapshot, physical_id)
+                    .map_err(|error| error.to_string())?
+                else {
+                    self.record_schema_change_history(
+                        transaction.as_ref(),
+                        &staged,
+                        &catalog,
+                        physical_id,
+                        version,
+                    )?;
+                    continue;
+                };
+                let inserted = transactions::stage_pessimistic_statement(
+                    transaction.as_ref(),
+                    &staged,
+                    |snapshot, _| {
+                        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                        let (inserted, plan) =
+                            tidb_exec::cluster_stats_write::plan_insert_null_column_stats(
+                                &mut snapshot,
+                                &catalog,
+                                physical_id,
+                                column_id,
+                                count as i64,
+                                version,
+                                system_time_timestamp(SystemTime::now())?,
+                            )
+                            .map_err(|error| error.to_string())?;
+                        Ok((inserted, plan.mutations))
+                    },
+                )?;
+                if inserted {
+                    transactions::stage_pessimistic_statement(
+                        transaction.as_ref(),
+                        &staged,
+                        |snapshot, _| {
+                            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                            let plan =
+                                tidb_exec::cluster_stats_write::plan_stats_meta_version_refresh(
+                                    &mut snapshot,
+                                    &catalog,
+                                    physical_id,
+                                    version,
+                                )
+                                .map_err(|error| error.to_string())?;
+                            Ok(((), plan.mutations))
+                        },
+                    )?;
+                }
+                self.record_schema_change_history(
+                    transaction.as_ref(),
+                    &staged,
+                    &catalog,
+                    physical_id,
+                    version,
+                )?;
+            }
+            Ok(())
+        })();
+        if let Err(error) = prepared {
+            let _ = transaction.rollback();
+            return Err(SqlQueryError::unknown(error));
+        }
+        transaction.commit(&staged)?;
+
+        let column_types = tidb_exec::cluster_stats_load::column_types_of(table);
+        let snapshot = self
+            .transactions
+            .open_snapshot(&resource_group)
+            .map_err(SqlQueryError::unknown)?;
+        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+        let loader = ClusterStatsLoader::locate(&catalog)
+            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+        let mut published = self.stats.load().as_ref().clone();
+        for physical_id in physical_ids {
+            let state = loader
+                .load_table(&mut snapshot, physical_id, &column_types)
+                .map_err(|error| SqlQueryError::unknown(error.to_string()))?
+                .map_or(tidb_exec::stats_watch::TableStatsState::Pseudo, |stats| {
+                    tidb_exec::stats_watch::TableStatsState::Loaded(
+                        stats.to_statistics_table(table),
+                    )
+                });
+            published.insert(physical_id, state);
+        }
+        self.stats.store(published);
+        Ok(())
+    }
+
     /// Performs one cluster catalog change.
     ///
     /// An open transaction is committed first: MySQL and Go both commit
@@ -4067,6 +4203,15 @@ impl ClusterServerSession {
                 }),
             _ => None,
         };
+        let added_column = match statement {
+            DdlStatement::AddColumn {
+                schema,
+                table,
+                column,
+                ..
+            } => Some((schema.clone(), table.clone(), column.name.clone())),
+            _ => None,
+        };
         let partition_before = match statement {
             DdlStatement::AddPartitions { schema, table, .. } => {
                 partition_id_map(&self.catalog.load(), schema, table).map(|(logical_id, ids)| {
@@ -4107,6 +4252,9 @@ impl ClusterServerSession {
         if matches!(report, ClusterDdlReport::Applied { .. }) {
             if let Some(change) = table_stats_change {
                 self.update_table_ddl_stats(change)?;
+            }
+            if let Some((schema, table, column)) = added_column {
+                self.update_added_column_stats(&schema, &table, column.as_str())?;
             }
             if let Some((schema, table, logical_id, old_ids, kind)) = partition_before {
                 self.update_partition_ddl_stats(&schema, &table, logical_id, &old_ids, kind)?;

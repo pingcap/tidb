@@ -640,6 +640,46 @@ pub fn plan_insert_table_stats_statement<S: MetaSnapshot>(
     Ok(plan)
 }
 
+/// Plans the nullable-default branch of pinned Go `InsertColStats2KV`.
+///
+/// The caller has already run Go's preceding `SELECT count` statement. The
+/// returned boolean is that SQL statement's affected-row verdict, which
+/// decides whether `stats_meta` is version-refreshed afterwards.
+pub fn plan_insert_null_column_stats<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    physical_id: i64,
+    column_id: i64,
+    count: i64,
+    version: u64,
+    now: Time,
+) -> Result<(bool, StatsWritePlan), StatsWriteError> {
+    let table = locate(catalog, "stats_histograms")?;
+    let identity_columns = &["table_id", "is_index", "hist_id"];
+    let mut rows = StatsRows::open(snapshot, table, identity_columns, physical_id)?;
+    let mut values = defaults_row(table, now)?;
+    set(table, &mut values, "table_id", Datum::Int(physical_id));
+    set(table, &mut values, "is_index", Datum::Int(0));
+    set(table, &mut values, "hist_id", Datum::Int(column_id));
+    set(table, &mut values, "distinct_count", Datum::Int(0));
+    set(table, &mut values, "null_count", Datum::Int(count));
+    set(table, &mut values, "version", Datum::UInt(version));
+    set(table, &mut values, "tot_col_size", Datum::Int(0));
+    set(table, &mut values, "modify_count", Datum::Int(0));
+    set(table, &mut values, "cm_sketch", Datum::Null);
+    set(table, &mut values, "stats_ver", Datum::Int(0));
+    set(table, &mut values, "flag", Datum::Int(0));
+    set(table, &mut values, "correlation", Datum::Real(0.0));
+    let identity = identity_of(table, identity_columns, &values)?;
+    if rows.existing_values(&identity).is_some() {
+        return Ok((false, StatsWritePlan::default()));
+    }
+    let mut plan = StatsWritePlan::default();
+    rows.store(snapshot, catalog, &values, &mut plan)?;
+    rows.publish_watermark(catalog, &mut plan)?;
+    Ok((true, plan))
+}
+
 /// Plans Go `UpdateStatsMetaVerAndLastHistUpdateVer`.
 ///
 /// The update deliberately does not create a missing metadata row and leaves
