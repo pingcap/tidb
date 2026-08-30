@@ -615,6 +615,8 @@ impl ClusterAnalyze for MockAnalyze {
     fn execute(
         &self,
         statement: &AnalyzeStatement,
+        _: &str,
+        _: &dyn tidb_exec::real_tikv_analyze::ApproximateTableCountProvider,
         _: &tidb_util::sqlkiller::SqlKiller,
         _: &dyn Fn() -> bool,
         _: &dyn tidb_exec::real_tikv_analyze::AnalyzeJobLifecycle,

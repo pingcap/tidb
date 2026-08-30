@@ -26,6 +26,8 @@ impl ClusterAnalyze for UndeterminedAnalyze {
     fn execute(
         &self,
         _: &tidb_exec::cluster_analyze::AnalyzeStatement,
+        _: &str,
+        _: &dyn tidb_exec::real_tikv_analyze::ApproximateTableCountProvider,
         _: &tidb_util::sqlkiller::SqlKiller,
         _: &dyn Fn() -> bool,
         _: &dyn tidb_exec::real_tikv_analyze::AnalyzeJobLifecycle,
@@ -45,6 +47,8 @@ impl ClusterAnalyze for PanickingAnalyze {
     fn execute(
         &self,
         _: &tidb_exec::cluster_analyze::AnalyzeStatement,
+        _: &str,
+        _: &dyn tidb_exec::real_tikv_analyze::ApproximateTableCountProvider,
         _: &tidb_util::sqlkiller::SqlKiller,
         _: &dyn Fn() -> bool,
         _: &dyn tidb_exec::real_tikv_analyze::AnalyzeJobLifecycle,

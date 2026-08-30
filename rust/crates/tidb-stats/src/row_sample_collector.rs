@@ -161,22 +161,19 @@ impl SamplePolicy {
     }
 }
 
-/// Go `getAdjustedSampleRate`, reduced to the inputs this node can answer
-/// for.
+/// Go `getAdjustedSampleRate`, reduced to its two count inputs.
 ///
 /// `realtime_count` is `mysql.stats_meta.count` for the table, `None` when it
 /// has no row there at all; `approximate_count` is PD's region-derived
-/// estimate, `None` when it was not asked for. The branches are Go's, in Go's
-/// order, and the one divergence is stated: Go's `statsTbl == nil && !hasPD`
-/// branch returns `0.001`, but that branch describes a table whose
-/// `mysql.stats_meta` row a Go DDL always creates. A table this node finds
-/// with no row there is one nothing has ever counted, so it takes Go's
-/// *empty-table* answer -- read all of it -- rather than sampling one row in
-/// a thousand of a table that may hold three.
+/// estimate, `None` when PD/storage could not provide one. The branches are
+/// Go's, in Go's order.
 #[must_use]
 pub fn adjusted_sample_rate(realtime_count: Option<i64>, approximate_count: Option<f64>) -> f64 {
+    if realtime_count.is_none() && approximate_count.is_none() {
+        return 0.001;
+    }
     let realtime = realtime_count.unwrap_or(0);
-    if realtime == 0 {
+    if realtime == 0 && approximate_count.is_none() {
         return 1.0;
     }
     // Go's workaround for issue 29216: a `stats_meta` count far below what PD
@@ -187,7 +184,23 @@ pub fn adjusted_sample_rate(realtime_count: Option<i64>, approximate_count: Opti
             return 1.0_f64.min(150_000.0 / approximate);
         }
     }
+    if realtime == 0 {
+        return 1.0;
+    }
     1.0_f64.min(DEF_ROWS_FOR_SAMPLE_RATE / realtime as f64)
+}
+
+#[cfg(test)]
+mod adjusted_sample_rate_tests {
+    use super::adjusted_sample_rate;
+
+    #[test]
+    fn follows_go_row_count_fallbacks_and_stale_stats_rule() {
+        assert_eq!(adjusted_sample_rate(None, None), 0.001);
+        assert_eq!(adjusted_sample_rate(Some(0), None), 1.0);
+        assert_eq!(adjusted_sample_rate(Some(10_000), Some(1_000_000.0)), 0.15);
+        assert_eq!(adjusted_sample_rate(Some(10_000), Some(40_000.0)), 1.0);
+    }
 }
 
 /// Go's analyze memory quota, as one `ANALYZE` reads it.

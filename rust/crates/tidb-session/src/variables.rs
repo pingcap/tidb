@@ -280,6 +280,12 @@ impl Session {
         &self.resource_group
     }
 
+    /// Go `StmtCtx.ResourceGroupName` for the statement currently executing.
+    #[must_use]
+    pub fn active_resource_group(&self) -> &str {
+        &self.active_resource_group
+    }
+
     /// Resolves Go `StmtCtx.ResourceGroupName`: the last top-level
     /// `RESOURCE_GROUP(name)` hint wins for this statement, otherwise the
     /// connection's `SET RESOURCE GROUP` selection is used.

@@ -212,6 +212,22 @@ impl ApproximateTableCountCache {
         self.lru.push_back(key);
     }
 
+    /// Deletes every entry whose TTL has elapsed.
+    pub fn delete_expired(&mut self, now: Duration) {
+        self.entries.retain(|_, entry| now < entry.expires_at);
+        self.lru.retain(|key| self.entries.contains_key(key));
+    }
+
+    /// Returns how long the cleanup worker should wait for the next expiry.
+    #[must_use]
+    pub fn next_expiration_delay(&self, now: Duration) -> Duration {
+        self.entries
+            .values()
+            .map(|entry| entry.expires_at.saturating_sub(now))
+            .min()
+            .unwrap_or(self.ttl)
+    }
+
     /// Runs the source key derivation and cache lookup for one table.
     pub fn get_or_load_table<F>(
         &mut self,

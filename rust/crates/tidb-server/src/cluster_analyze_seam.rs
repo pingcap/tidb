@@ -61,7 +61,8 @@ use tidb_exec::cluster_analyze::AnalyzeStatement;
 use tidb_exec::cluster_catalog::load_cluster_catalog;
 use tidb_exec::real_tikv_analyze::{
     commit_cluster_analyze, record_global_history_enabled, resolve_cluster_analyze_statement,
-    save_cluster_analyze_options, AnalyzeJobLifecycle, ClusterAnalyzeReport,
+    save_cluster_analyze_options, AnalyzeJobLifecycle, ApproximateTableCountProvider,
+    ClusterAnalyzeReport,
 };
 use tidb_exec::real_tikv_catalog::TransactionMetaSnapshot;
 use tidb_exec::real_tikv_load_stats::{
@@ -84,6 +85,8 @@ pub trait ClusterAnalyze: Send + Sync {
     fn execute(
         &self,
         statement: &AnalyzeStatement,
+        resource_group: &str,
+        approximate_counts: &dyn ApproximateTableCountProvider,
         killer: &SqlKiller,
         historical_stats_enabled: &dyn Fn() -> bool,
         jobs: &dyn AnalyzeJobLifecycle,
@@ -203,12 +206,20 @@ where
     fn execute(
         &self,
         statement: &AnalyzeStatement,
+        resource_group: &str,
+        approximate_counts: &dyn ApproximateTableCountProvider,
         killer: &SqlKiller,
         historical_stats_enabled: &dyn Fn() -> bool,
         jobs: &dyn AnalyzeJobLifecycle,
     ) -> Result<ClusterAnalyzeReport, SqlQueryError> {
-        let statement = resolve_cluster_analyze_statement(&self.opener, statement, self.timeout)
-            .map_err(cluster_analyze_error)?;
+        let statement = resolve_cluster_analyze_statement(
+            &self.opener,
+            statement,
+            self.timeout,
+            resource_group,
+            approximate_counts,
+        )
+        .map_err(cluster_analyze_error)?;
         let logical_table_id = statement.logical_table_id();
         let record_history = || historical_stats_enabled();
         let record_global_history = || {

@@ -157,3 +157,20 @@ fn approximate_table_count_key_preserves_source_join() {
         "-1_db_with_under_table_"
     );
 }
+
+#[test]
+fn cleanup_worker_primitives_delete_expired_entries_at_the_next_deadline() {
+    let mut cache = ApproximateTableCountCache::new(2, Duration::from_millis(100));
+    cache.insert("first".to_owned(), Duration::from_millis(10), 1.0);
+    cache.insert("second".to_owned(), Duration::from_millis(40), 2.0);
+
+    assert_eq!(
+        cache.next_expiration_delay(Duration::from_millis(50)),
+        Duration::from_millis(60)
+    );
+    cache.delete_expired(Duration::from_millis(110));
+    assert_eq!(cache.len(), 1);
+    assert_eq!(cache.get("second", Duration::from_millis(110)), Some(2.0));
+    cache.delete_expired(Duration::from_millis(140));
+    assert!(cache.is_empty());
+}

@@ -258,7 +258,7 @@ impl ClusterServerSession {
             }
         }
         drop(catalog);
-        let resource_group = self.session.current_resource_group().to_owned();
+        let resource_group = self.session.active_resource_group().to_owned();
         super::ClusterSessionFactory::dump_stats_delta_to_kv_parts(
             self.stats_usage.as_ref(),
             self.transactions.as_ref(),
@@ -335,6 +335,8 @@ impl ClusterServerSession {
             let analyzed = recover_analyze_panic(|| {
                 self.analyze.execute(
                     statement,
+                    &resource_group,
+                    self.approximate_table_counts.as_ref(),
                     statement_memory.sql_killer(),
                     &historical_stats_enabled,
                     &jobs,

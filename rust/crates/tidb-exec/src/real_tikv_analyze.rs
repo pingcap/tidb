@@ -80,6 +80,20 @@ use crate::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
 const ANALYZE_JOB_MAX_DELTA: i64 = 10_000_000;
 const ANALYZE_JOB_DUMP_INTERVAL: Duration = Duration::from_secs(5);
 
+/// Go `pdhelper.PDHelper`'s approximate-count query as consumed by ANALYZE.
+pub trait ApproximateTableCountProvider: Send + Sync {
+    /// Returns the count and whether PD/storage supplied it. Cached values
+    /// return `true`, matching Go's cache-hit contract.
+    fn approximate_table_count(
+        &self,
+        resource_group: &str,
+        physical_id: i64,
+        database: &str,
+        table: &str,
+        partition: &str,
+    ) -> (f64, bool);
+}
+
 /// One row Go publishes in `mysql.analyze_jobs` before dispatching the
 /// corresponding physical analyze task.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -471,6 +485,8 @@ pub fn resolve_cluster_analyze_statement<
     opener: &RealOptimisticTransactionOpener<C, L, P>,
     statement: &AnalyzeStatement,
     timeout: Duration,
+    resource_group: &str,
+    approximate_counts: &dyn ApproximateTableCountProvider,
 ) -> Result<ResolvedClusterAnalyze, ClusterAnalyzeError> {
     let mut transaction = opener
         .begin_read_only()
@@ -546,9 +562,17 @@ pub fn resolve_cluster_analyze_statement<
     for options in &mut resolution.physical {
         options.columns = final_column_choice(&table, &options.columns)?;
         if options.effective.num_samples == 0 && options.effective.sample_rate.is_none() {
-            options.effective.sample_rate = Some(adjusted_sample_rate(
+            let partition = partition_names
+                .get(&options.physical_id)
+                .map_or("", String::as_str);
+            options.effective.sample_rate = Some(automatic_sample_rate(
                 realtime_counts.get(&options.physical_id).copied().flatten(),
-                None,
+                approximate_counts,
+                resource_group,
+                options.physical_id,
+                &statement.schema,
+                &statement.table,
+                partition,
             ));
         }
     }
@@ -600,6 +624,25 @@ pub fn resolve_cluster_analyze_statement<
         run_full_sampling: index_tasks.run_full_sampling,
         independent_index_ids: index_tasks.independent_index_ids,
     })
+}
+
+fn automatic_sample_rate(
+    realtime_count: Option<i64>,
+    approximate_counts: &dyn ApproximateTableCountProvider,
+    resource_group: &str,
+    physical_id: i64,
+    database: &str,
+    table: &str,
+    partition: &str,
+) -> f64 {
+    let (approximate_count, has_pd) = approximate_counts.approximate_table_count(
+        resource_group,
+        physical_id,
+        database,
+        table,
+        partition,
+    );
+    adjusted_sample_rate(realtime_count, has_pd.then_some(approximate_count))
 }
 
 #[derive(Debug)]
@@ -2412,11 +2455,11 @@ fn classify_commit_outcome(outcome: &OptimisticCommitOutcome) -> Result<(), Clus
 #[cfg(test)]
 mod tests {
     use super::{
-        analyze_partition_ids, classify_commit_outcome, fail_analyze_jobs, final_column_choice,
-        merge_global_items, realtime_count_of, record_global_history_enabled, select_index_tasks,
-        slow_stats_save_needs_version_refresh, write_global_stats_items, AnalyzeJobHandle,
-        AnalyzeJobKind, AnalyzeJobLifecycle, AnalyzeJobProgress, AnalyzeJobSpec,
-        ClusterAnalyzeError, ANALYZE_JOB_MAX_DELTA,
+        analyze_partition_ids, automatic_sample_rate, classify_commit_outcome, fail_analyze_jobs,
+        final_column_choice, merge_global_items, realtime_count_of, record_global_history_enabled,
+        select_index_tasks, slow_stats_save_needs_version_refresh, write_global_stats_items,
+        AnalyzeJobHandle, AnalyzeJobKind, AnalyzeJobLifecycle, AnalyzeJobProgress, AnalyzeJobSpec,
+        ApproximateTableCountProvider, ClusterAnalyzeError, ANALYZE_JOB_MAX_DELTA,
     };
     use std::collections::BTreeMap;
     use std::thread;
@@ -2434,6 +2477,51 @@ mod tests {
     struct RecordingAnalyzeJobs {
         next_id: std::sync::atomic::AtomicU64,
         events: std::sync::Mutex<Vec<String>>,
+    }
+
+    struct RecordingApproximateCount {
+        call: std::sync::Mutex<Option<(String, i64, String, String, String)>>,
+    }
+
+    impl ApproximateTableCountProvider for RecordingApproximateCount {
+        fn approximate_table_count(
+            &self,
+            resource_group: &str,
+            physical_id: i64,
+            database: &str,
+            table: &str,
+            partition: &str,
+        ) -> (f64, bool) {
+            *self.call.lock().unwrap() = Some((
+                resource_group.to_owned(),
+                physical_id,
+                database.to_owned(),
+                table.to_owned(),
+                partition.to_owned(),
+            ));
+            (1_000_000.0, true)
+        }
+    }
+
+    #[test]
+    fn automatic_sample_rate_uses_pdhelper_identity_and_stale_count() {
+        let provider = RecordingApproximateCount {
+            call: std::sync::Mutex::new(None),
+        };
+        assert_eq!(
+            automatic_sample_rate(Some(10_000), &provider, "oltp", 42, "test", "orders", "p0",),
+            0.15
+        );
+        assert_eq!(
+            provider.call.into_inner().unwrap(),
+            Some((
+                "oltp".to_owned(),
+                42,
+                "test".to_owned(),
+                "orders".to_owned(),
+                "p0".to_owned(),
+            ))
+        );
     }
 
     impl AnalyzeJobLifecycle for RecordingAnalyzeJobs {

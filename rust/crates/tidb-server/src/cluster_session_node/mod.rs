@@ -411,10 +411,123 @@ struct ClusterColumnStatsUsageProvider {
     catalog: Arc<SharedClusterCatalog>,
 }
 
+struct ClusterApproximateTableCountProvider {
+    transactions: Arc<dyn ClusterTransactions>,
+    cache: Arc<Mutex<tidb_exec::pd_approximate_count::ApproximateTableCountCache>>,
+    cleanup_tx: std::sync::mpsc::SyncSender<bool>,
+    cleanup_worker: Mutex<Option<std::thread::JoinHandle<()>>>,
+}
+
+impl ClusterApproximateTableCountProvider {
+    fn new(transactions: Arc<dyn ClusterTransactions>) -> Self {
+        let cache = Arc::new(Mutex::new(
+            tidb_exec::pd_approximate_count::ApproximateTableCountCache::new(
+                1_048_576,
+                Duration::from_secs(30),
+            ),
+        ));
+        let (cleanup_tx, cleanup_rx) = std::sync::mpsc::sync_channel(1);
+        let cleanup_cache = Arc::clone(&cache);
+        let cleanup_worker = std::thread::Builder::new()
+            .name("pd-helper-cleanup".to_owned())
+            .spawn(move || loop {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default();
+                let wait = cleanup_cache
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .next_expiration_delay(now)
+                    .max(Duration::from_micros(1));
+                match cleanup_rx.recv_timeout(wait) {
+                    Ok(true) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                    Ok(false) => {}
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default();
+                        cleanup_cache
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .delete_expired(now);
+                    }
+                }
+            })
+            .expect("PD helper cleanup worker must start");
+        Self {
+            transactions,
+            cache,
+            cleanup_tx,
+            cleanup_worker: Mutex::new(Some(cleanup_worker)),
+        }
+    }
+}
+
+impl Drop for ClusterApproximateTableCountProvider {
+    fn drop(&mut self) {
+        let _ = self.cleanup_tx.send(true);
+        if let Some(worker) = self
+            .cleanup_worker
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+        {
+            let _ = worker.join();
+        }
+    }
+}
+
+impl tidb_exec::real_tikv_analyze::ApproximateTableCountProvider
+    for ClusterApproximateTableCountProvider
+{
+    fn approximate_table_count(
+        &self,
+        resource_group: &str,
+        physical_id: i64,
+        database: &str,
+        table: &str,
+        partition: &str,
+    ) -> (f64, bool) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        let key = tidb_exec::pd_approximate_count::approximate_table_count_key(
+            physical_id,
+            database,
+            table,
+            partition,
+        );
+        if let Some(count) = self
+            .cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&key, now)
+        {
+            return (count, true);
+        }
+        // Go's concurrent cache releases its lock before invoking PD or
+        // restricted SQL, so concurrent misses may load the same key twice.
+        let loaded = match self.transactions.record_region_stats(physical_id) {
+            Ok(Some(stats)) if stats.count > 2 => (stats.storage_keys as f64, true),
+            Ok(Some(_)) => {
+                exact_physical_row_count(self.transactions.as_ref(), resource_group, physical_id)
+                    .map_or((0.0, false), |count| (count as f64, true))
+            }
+            Ok(None) | Err(_) => (0.0, false),
+        };
+        self.cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(key, now, loaded.0);
+        let _ = self.cleanup_tx.try_send(false);
+        loaded
+    }
+}
+
 struct ClusterAnalyzeStatusProvider {
     transactions: Arc<dyn ClusterTransactions>,
     catalog: Arc<SharedClusterCatalog>,
-    approximate_counts: Arc<Mutex<tidb_exec::pd_approximate_count::ApproximateTableCountCache>>,
+    approximate_counts: Arc<ClusterApproximateTableCountProvider>,
 }
 
 impl tidb_session::AnalyzeStatusProvider for ClusterAnalyzeStatusProvider {
@@ -438,38 +551,15 @@ impl tidb_session::AnalyzeStatusProvider for ClusterAnalyzeStatusProvider {
         table: &str,
         partition: &str,
     ) -> i64 {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default();
-        let key = tidb_exec::pd_approximate_count::approximate_table_count_key(
+        tidb_exec::real_tikv_analyze::ApproximateTableCountProvider::approximate_table_count(
+            self.approximate_counts.as_ref(),
+            resource_group,
             physical_id,
             database,
             table,
             partition,
-        );
-        if let Some(count) = self
-            .approximate_counts
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(&key, now)
-        {
-            return count as i64;
-        }
-        // The concurrent Go cache does not hold its own lock while a miss
-        // invokes PD or restricted SQL; concurrent misses may load twice.
-        let count = match self.transactions.record_region_stats(physical_id) {
-            Ok(Some(stats)) if stats.count > 2 => stats.storage_keys as f64,
-            Ok(Some(_)) => {
-                exact_physical_row_count(self.transactions.as_ref(), resource_group, physical_id)
-                    .map_or(0.0, |count| count as f64)
-            }
-            Ok(None) | Err(_) => 0.0,
-        };
-        self.approximate_counts
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(key, now, count);
-        count as i64
+        )
+        .0 as i64
     }
 }
 
@@ -751,8 +841,7 @@ pub struct ClusterSessionFactory {
     /// Go `StartHistoricalStatsWorker`, installed after stable `Arc` ownership.
     historical_stats_runtime: std::sync::OnceLock<HistoricalStatsRuntime>,
     /// Go's process-global approximate table-count cache.
-    approximate_table_counts:
-        Arc<Mutex<tidb_exec::pd_approximate_count::ApproximateTableCountCache>>,
+    approximate_table_counts: Arc<ClusterApproximateTableCountProvider>,
 }
 
 impl ClusterSessionFactory {
@@ -789,6 +878,9 @@ impl ClusterSessionFactory {
             Arc::new(HistoricalStatsWorker::new(ClusterHistoricalInfoSchema {
                 catalog: Arc::clone(&catalog),
             }));
+        let approximate_table_counts = Arc::new(ClusterApproximateTableCountProvider::new(
+            Arc::clone(&transactions),
+        ));
         Self {
             transactions,
             data_lock_waits,
@@ -818,12 +910,7 @@ impl ClusterSessionFactory {
             analyze_jobs_cleanup_worker: std::sync::OnceLock::new(),
             historical_stats_worker,
             historical_stats_runtime: std::sync::OnceLock::new(),
-            approximate_table_counts: Arc::new(Mutex::new(
-                tidb_exec::pd_approximate_count::ApproximateTableCountCache::new(
-                    1_048_576,
-                    Duration::from_secs(30),
-                ),
-            )),
+            approximate_table_counts,
         }
     }
 
@@ -2545,6 +2632,7 @@ impl QuerySessionFactory for ClusterSessionFactory {
             accounts: Arc::clone(&self.accounts),
             sysvars: Arc::clone(&self.sysvars),
             analyze: Arc::clone(&self.analyze),
+            approximate_table_counts: Arc::clone(&self.approximate_table_counts),
             stats_lock: Arc::clone(&self.stats_lock),
             catalog: Arc::clone(&self.catalog),
             schema_version: loaded.schema_version,
@@ -2781,6 +2869,8 @@ pub struct ClusterServerSession {
     /// The route an `ANALYZE TABLE` takes; see
     /// [`crate::cluster_analyze_seam`].
     analyze: Arc<dyn ClusterAnalyze>,
+    /// Go's node-global `pdhelper.GlobalPDHelper`, shared by SHOW and ANALYZE.
+    approximate_table_counts: Arc<ClusterApproximateTableCountProvider>,
     /// The route a persisted statistics-lock operation takes.
     stats_lock: Arc<dyn ClusterStatsLock>,
     /// The node's catalog, which this connection follows.
