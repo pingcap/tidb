@@ -495,64 +495,6 @@ fn can_be_prune_monotone_datetime_and_unix_timestamp() {}
 #[ignore = "go-parity-gap: expression parsing/eval for PartitionRangeForExpr is unported"]
 fn partition_range_for_expr_int_bounds() {}
 
-/// GO PORT of `rule_partition_pruning_test.go:337 TestPartitionRangePruner2VarChar`.
-///
-/// Fixture `t(a VARCHAR(32))` partitioned by `a`; RANGE COLUMNS bounds parsed
-/// as CONSTANTS `'c','f','h','l','t',MAXVALUE`; `RangeColumnsPruner{LessThan,
-/// PartCols}` (`:1419-1425` interface, `minCmp/maxCmp` datum comparators
-/// :1208-1326). Thirteen cases incl. `'mm' > a` → `{0,5}` and `'f' <= a` →
-/// `{2,6}` (:351-365).
-#[test]
-#[ignore = "go-parity-gap: datum-comparator RangeColumns pruning (minCmp/maxCmp) unported"]
-fn range_columns_pruner_varchar_bounds() {}
-
-/// GO PORT of `rule_partition_pruning_test.go:382
-/// TestPartitionRangePruner2CharWithCollation`.
-///
-/// Same shape but the column collates `utf8mb4_unicode_ci`, so bounds mix
-/// cases ('c','F','h','L','t') and every query uses different casing yet
-/// prunes IDENTICALLY to the case-sensitive varchar run (15 cases, :396-412) —
-/// comparisons must route through the collator, not raw bytes.
-#[test]
-#[ignore = "go-parity-gap: collated string comparison inside RangeColumns pruning unported"]
-fn range_columns_pruner_char_collation_aware_bounds() {}
-
-/// GO PORT of `rule_partition_pruning_test.go:432 TestPartitionRangePruner2Date`.
-///
-/// Fixture `t(a DATE)`; RANGE COLUMNS bounds accept compact forms
-/// ('19990601', '20080401', ...) folded to date constants (7 partitions incl.
-/// MAXVALUE). Fourteen cases pin boundary behaviour such as
-/// `a between '2003-03-30' AND '20080808'` → `{2,4}` and
-/// `a > '2016-02-01' and a < '20000103'` → EMPTY (:444-459).
-#[test]
-#[ignore = "go-parity-gap: date-datum RangeColumns comparisons unported"]
-fn range_columns_pruner_date_bounds() {}
-
-/// GO PORT of `rule_partition_pruning_test.go:488 TestPartitionRangeColumnsForExpr`.
-///
-/// Multi-column RANGE COLUMNS `(a INT UNSIGNED, b INT)` with 14 definitions
-/// whose bounds mix MAXVALUE per position (`-99` encodes nil/:492-520);
-/// conditions are SplitCNFItems-split then fed to `PartitionRangeForCNFExpr`
-/// (:1373-1385). Thirty-one cases cover tuple literals `(a,b) < (4,4)` →
-/// `{0,4}`, lexicographic prefixes `(a,b,c) < (4,4,4)` → `{0,5}`, columns
-/// outside the partition key leaving the range untouched (`b > 3` → full),
-/// and contradictions yielding empty (:524-555).
-#[test]
-#[ignore = "go-parity-gap: multi-column tuple-compare CNF pruning unported"]
-fn partition_range_columns_tuple_compare_boundaries() {}
-
-/// GO PORT of `rule_partition_pruning_test.go:568
-/// TestPartitionRangeColumnsForExprWithSpecialCollation`.
-///
-/// Columns `a` (`utf8mb4_0900_ai_ci`) and `b` (`utf8mb4_unicode_ci`) get ONE
-/// split point `('i','i')` before MAXVALUE; fourteen mixed-case equality and
-/// inequality pairs assert accent/case-insensitive routing to `{0,1}` vs
-/// `{1,2}`, including cross-column conjunctions and the contradiction
-/// `a = 'h' and a = 'j'` → empty (:587-602).
-#[test]
-#[ignore = "go-parity-gap: per-column collators in multi-column pruning unported"]
-fn partition_range_columns_special_collation_rows() {}
-
 /// GO PORT of `benchmarkRangeColumnsPruner`
 /// (`rule_partition_pruning_test.go:643-661`), instantiated at 2 parts.
 ///

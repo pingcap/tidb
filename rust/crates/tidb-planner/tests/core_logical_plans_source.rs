@@ -192,19 +192,6 @@ fn group_by_when_not_exist_cols_reports_nonaggregated_column() {}
 #[ignore = "go-parity-gap: nondeterministic-function pushdown policy belongs to the unported expression rewrite over joins"]
 fn dup_rand_join_conds_push_down_shapes() {}
 
-/// GO PORT of
-/// `pkg/planner/core/logical_plans_test.go:472 TestTablePartition`.
-///
-/// Range partition pruning against a mocked five-partition InfoSchema
-/// (LessThan 16/32/64/128/maxvalue, IDs 41-45 :477-503) plus a variant WITH
-/// the maxvalue partition removed (:505-512); each golden SQL selects an
-/// infoschema index, optimizes with FlagPartitionProcessor (:533-536), and
-/// the pruned plan's `ToString` must match the recording. Pins both static
-/// range cuts and the dynamic-prune shape choice.
-#[test]
-#[ignore = "go-parity-gap: partition definitions and the PartitionProcessor are outside the Rust crate today"]
-fn table_partition_pruning_golden_plans() {}
-
 /// GO PORT of `pkg/planner/core/logical_plans_test.go:540 TestSubquery`.
 ///
 /// Golden sweep (incl. Preprocess + BuildKeyInfo/Decorrelate/
@@ -224,15 +211,6 @@ fn subquery_optimized_plans_golden() {}
 #[ignore = "go-parity-gap: the PlanBuilder itself and its session variables are unported"]
 fn plan_builder_outputs_golden() {}
 
-/// GO PORT of `pkg/planner/core/logical_plans_test.go:598 TestJoinReOrder`.
-///
-/// Multi-table queries optimized with
-/// FlagPredicatePushDown|FlagJoinReOrder (:610-611) must produce the recorded
-/// deterministic join orders/leaf arrangements.
-#[test]
-#[ignore = "go-parity-gap: join reorder requires built multi-datasource trees the crate cannot construct from SQL yet"]
-fn join_re_order_golden_orders() {}
-
 /// GO PORT of
 /// `pkg/planner/core/logical_plans_test.go:623 TestEagerAggregation`.
 ///
@@ -242,28 +220,6 @@ fn join_re_order_golden_orders() {}
 #[test]
 #[ignore = "go-parity-gap: aggregation pushdown rule + session var plumbing unported"]
 fn eager_aggregation_pushdown_golden() {}
-
-/// GO PORT of
-/// `pkg/planner/core/logical_plans_test.go:652 TestColumnPruning`.
-///
-/// After PPD+prune, EVERY DataSource/UnionAll/Limit node in each plan must
-/// expose exactly the recorded schema column list (walker
-/// `checkDataSourceCols` :696-720 comparing StringWithCtx per column against
-/// the golden map keyed by plan ID).
-#[test]
-#[ignore = "go-parity-gap: column pruning runs across whole built trees; the crate has neither builder nor per-plan-id goldens"]
-fn column_pruning_datasource_columns_golden() {}
-
-/// GO PORT of
-/// `pkg/planner/core/logical_plans_test.go:679 TestSortByItemsPruning`.
-///
-/// Each eliminated-projection+prune-optimized tree is walked for LogicalSort
-/// nodes whose ByItems render exactly to the recorded list
-/// (`checkOrderByItems` :718-741); also asserts single-child chains throughout
-/// the walk (:733-735).
-#[test]
-#[ignore = "go-parity-gap: sort-item pruning depends on the unported prune-columns pass"]
-fn sort_by_items_pruning_golden_lists() {}
 
 /// GO PORT of
 /// `pkg/planner/core/logical_plans_test.go:706 TestProjectionEliminator`.
@@ -299,26 +255,6 @@ fn cs3389_no_projection_between_aggregation_and_join() {}
 #[test]
 #[ignore = "go-parity-gap: expression/tableau validation and terror classification live in the unported validator/builder"]
 fn validate_statement_errors_match_terrors() {}
-
-/// GO PORT of
-/// `pkg/planner/core/logical_plans_test.go:1038 TestUniqueKeyInfo`.
-///
-/// After PPD+prune+BuildKeyInfo, every node's `Schema.PKOrUK` keys (walked by
-/// `checkUniqueKeys` :1054-1080) must match the recorded per-plan-ID key
-/// sets — unique-index-derived keys survive projections/joins/aggregates
-/// correctly.
-#[test]
-#[ignore = "go-parity-gap: BuildKeyInfo propagation needs the built-tree pipeline"]
-fn unique_key_info_propagation_golden() {}
-
-/// GO PORT of `pkg/planner/core/logical_plans_test.go:1066 TestAggPrune`.
-///
-/// Aggregate-pruning sweep (flags incl. FlagEliminateAgg + EliminateProjection
-/// :1081-1084, with domain infoschema reload per statement :1077) against
-/// golden `ToString` outputs.
-#[test]
-#[ignore = "go-parity-gap: aggregate elimination pass unreachable without the rule driver"]
-fn agg_prune_golden_plans() {}
 
 /// GO PORT of
 /// `pkg/planner/core/logical_plans_test.go:1092 TestVisitInfo`.

@@ -85,46 +85,6 @@
 fn dual_null_comparisons_fold_to_table_dual() {}
 
 /// GO PORT of
-/// `pkg/planner/core/casetest/rule/rule_cdc_join_reorder_test.go:122
-/// TestCDCJoinReorder`.
-///
-/// Five empty-schema tables t1..t5 with overlapping key values plus ANALYZE;
-/// loads the `cdc_join_reorder_suite` book under cascades ON/OFF. Phase 1
-/// collects ground-truth results with the old reorder algorithm before any
-/// CD-C state; phase 2 replays every input checking the recorded
-/// `EXPLAIN FORMAT='plan_tree'` golden and requires the CD-C answers to equal
-/// the pre-enablement baseline per case (expectedResults :155, require.Equalf :173).
-#[test]
-#[ignore = "go-parity-gap: CD-C join reorder planning, analyze'd mock tables and plan_tree goldens all need the unported session/optimize stack"]
-fn cdc_join_reorder_result_matches_pre_cdc_baseline() {}
-
-/// GO PORT of
-/// `pkg/planner/core/casetest/rule/rule_cdc_join_reorder_test.go:178
-/// TestJoinReorderPushSelection`.
-///
-/// `set @@tidb_opt_join_reorder_through_sel = 1` then five PRIMARY KEY tables
-/// joined pairwise; per book entry SET statements execute directly and every
-/// other input's explain output is compared positionally, requiring input and
-/// output counts to agree exactly (`:210-235`). Pins plans when join reorder
-/// must look through Selection nodes.
-#[test]
-#[ignore = "go-parity-gap: through-selection join reorder decisions run inside the unported optimizer"]
-fn join_reorder_push_selection_plans_with_sel_on_top() {}
-
-/// GO PORT of
-/// `pkg/planner/core/casetest/rule/rule_cdc_join_reorder_test.go:244
-/// TestDPJoinReorder`.
-///
-/// Same five-table fixture; enables
-/// `tidb_opt_enable_advanced_join_reorder=1`. With threshold 0 every ≤5-table
-/// group takes greedy; with threshold 10 DP handles them. Each case's
-/// plan_tree golden is checked and the DP result MUST equal the greedy
-/// greedy baseline collected at :277-280 and compared afterwards (`:294-301`).
-#[test]
-#[ignore = "go-parity-gap: DP/greedy join reorder algorithms and their cross-validation need live optimization"]
-fn dp_join_reorder_result_matches_greedy_baseline() {}
-
-/// GO PORT of
 /// `pkg/planner/core/casetest/rule/rule_cdc_join_reorder_test.go:299
 /// TestOrderAwareJoinReorderPushSelection`.
 ///
@@ -404,16 +364,3 @@ fn semi_join_rewrite_hint_enables_index_hash_join_delete() {}
 #[test]
 #[ignore = "go-parity-gap: predicate-pushdown planning over collations/TiFlash isolation engines is unported"]
 fn predicate_pushdown_suite_constant_propagation_and_pushdown() {}
-
-/// GO PORT of
-/// `pkg/planner/core/casetest/rule/rule_predicate_simplification_test.go:24
-/// TestPredicateSimplification`.
-///
-/// Eleven varied tables (gbk/text/json/expression-index/columnar shapes)
-/// with global+session fix-control 44830:ON and non-prepared plan cache ON
-/// (:55-70). Every suite entry runs the raw query, records plan_tree,
-/// warnings AND whether `@@last_plan_from_cache` flipped (:144-162) — pinning
-/// simplification behavior across cached and freshly built plans.
-#[test]
-#[ignore = "go-parity-gap: plan-cache interaction with predicate simplification is outside the crate today"]
-fn predicate_simplification_suite_plan_cache_aware_golden() {}
