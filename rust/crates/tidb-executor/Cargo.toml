@@ -37,6 +37,7 @@ tidb-planner = { path = "../tidb-planner" }
 tidb-resolve = { path = "../tidb-resolve" }
 tidb-stats = { path = "../tidb-stats" }
 tidb-stats-handle-usage = { path = "../tidb-stats-handle-usage" }
+tidb-stats-handle-usage-indexusage = { path = "../tidb-stats-handle-usage-indexusage" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-util = { path = "../tidb-util" }

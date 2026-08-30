@@ -3456,6 +3456,7 @@ dependencies = [
  "tidb-resolve",
  "tidb-stats",
  "tidb-stats-handle-usage",
+ "tidb-stats-handle-usage-indexusage",
  "tidb-tablecodec",
  "tidb-txnkv",
  "tidb-util",

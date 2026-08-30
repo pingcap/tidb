@@ -829,6 +829,13 @@ impl Session {
         let result_authority =
             self.build_statement_result_authority(&snapshot, oom_action, tmp_storage_on_oom);
         let statement_memory = result_authority.statement_memory();
+        let index_usage_collector = self.session_index_usage_collector.as_ref().map(|session| {
+            Arc::new(
+                tidb_stats_handle_usage_indexusage::StmtIndexUsageCollector::new(Arc::clone(
+                    session,
+                )),
+            )
+        });
         self.statement_result_authority
             .replace(Some(result_authority));
         // The SAME three bits on both branches: a query reads them for
@@ -911,6 +918,7 @@ impl Session {
                 )
                 .with_plan_replayer_capture(plan_replayer_capture_enabled)
                 .with_column_stats_usage(self.stats_collector.clone())
+                .with_index_usage_collector(index_usage_collector)
                 .with_table_delta(std::sync::Arc::clone(&self.transaction_table_delta))
                 .with_opt_index_prune_threshold(opt_index_prune_threshold)
                 .with_always_keep_join_key(always_keep_join_key)
@@ -973,6 +981,7 @@ impl Session {
         )
         .with_plan_replayer_capture(plan_replayer_capture_enabled)
         .with_column_stats_usage(self.stats_collector.clone())
+        .with_index_usage_collector(index_usage_collector)
         .with_table_delta(std::sync::Arc::clone(&self.transaction_table_delta))
         .with_opt_index_prune_threshold(opt_index_prune_threshold)
         .with_always_keep_join_key(always_keep_join_key)

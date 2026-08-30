@@ -1130,6 +1130,16 @@ impl QuerySessionFactory for ClusterSessionFactory {
             }));
         let mut session = Session::with_catalog(Arc::new(Mutex::new(built.catalog)));
         session.set_index_usage_collector(self.stats_usage.index_usage_collector());
+        if self
+            .stats_usage_workers
+            .get()
+            .is_some_and(|workers| workers.flush_on_drop)
+            && tidb_config::config_tree::config::get_global_config().enable_collect_execution_info
+        {
+            session.set_session_index_usage_collector(
+                self.stats_usage.new_session_index_usage_collector(),
+            );
+        }
         session.set_stats_collector(self.stats_usage.new_session_stats_item());
         session.set_data_lock_waits_provider(self.data_lock_waits.clone());
         session.set_column_stats_usage_provider(Arc::new(ClusterColumnStatsUsageProvider {

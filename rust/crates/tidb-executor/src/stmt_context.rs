@@ -579,6 +579,9 @@ pub struct StmtContext {
     /// Go session `SessionStatsItem.statsUsage`, shared by every statement
     /// context built for this session.
     column_stats_usage: Option<Arc<tidb_stats_handle_usage::SessionStatsItem>>,
+    /// Go `StmtCtx.IndexUsageCollector`, allocated for one statement from
+    /// the session-local collector when execution-info collection is on.
+    index_usage_collector: Option<Arc<tidb_stats_handle_usage_indexusage::StmtIndexUsageCollector>>,
     /// Go `SessionVars.TxnCtx.TableDeltaMap` for the open transaction.
     table_delta: Option<Arc<tidb_stats_handle_usage::TableDeltaMap>>,
     /// Go `SessionVars.IsPlanReplayerCaptureEnabled()`.
@@ -809,6 +812,7 @@ impl StmtContext {
             sync_stats_failed: Arc::default(),
             operator_num: Arc::default(),
             column_stats_usage: None,
+            index_usage_collector: None,
             table_delta: None,
             plan_replayer_capture_enabled: false,
             table_runtime_statistics: Arc::default(),
@@ -1185,6 +1189,24 @@ impl StmtContext {
     ) -> Self {
         self.column_stats_usage = usage;
         self
+    }
+
+    /// Installs Go `StmtCtx.IndexUsageCollector`.
+    #[must_use]
+    pub fn with_index_usage_collector(
+        mut self,
+        collector: Option<Arc<tidb_stats_handle_usage_indexusage::StmtIndexUsageCollector>>,
+    ) -> Self {
+        self.index_usage_collector = collector;
+        self
+    }
+
+    /// Returns the statement-local index-usage collector, when enabled.
+    #[must_use]
+    pub fn index_usage_collector(
+        &self,
+    ) -> Option<&Arc<tidb_stats_handle_usage_indexusage::StmtIndexUsageCollector>> {
+        self.index_usage_collector.as_ref()
     }
 
     /// Go `session.UpdateColStatsUsage`: all items from one planning pass get

@@ -548,6 +548,10 @@ pub struct Session {
     /// Go Domain's node-global index-usage collector, read by
     /// `information_schema.TIDB_INDEX_USAGE`.
     index_usage_collector: Arc<tidb_stats_handle_usage_indexusage::Collector>,
+    /// Go session `idxUsageCollector`, present only while Domain statistics
+    /// updating and execution-info collection are both enabled.
+    session_index_usage_collector:
+        Option<Arc<Mutex<tidb_stats_handle_usage_indexusage::SessionIndexUsageCollector>>>,
     /// The node's storage-backed current lock-wait reader.
     data_lock_waits: Option<std::sync::Arc<dyn DataLockWaitsProvider>>,
     /// The statistics handle's persisted predicate-column usage reader.
@@ -743,6 +747,7 @@ impl Default for Session {
             cluster_schema_version: None,
             workload_repository: None,
             index_usage_collector: Arc::new(tidb_stats_handle_usage_indexusage::Collector::new()),
+            session_index_usage_collector: None,
             data_lock_waits: None,
             column_stats_usage: None,
             stats_collector: None,
@@ -788,6 +793,12 @@ impl Default for Session {
 
 impl Drop for Session {
     fn drop(&mut self) {
+        if let Some(collector) = &self.session_index_usage_collector {
+            collector
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .flush();
+        }
         if let Some(collector) = &self.stats_collector {
             collector.delete();
         }
@@ -972,6 +983,14 @@ impl Session {
         collector: Arc<tidb_stats_handle_usage_indexusage::Collector>,
     ) {
         self.index_usage_collector = collector;
+    }
+
+    /// Installs Go's Domain-owned session index-usage collector.
+    pub fn set_session_index_usage_collector(
+        &mut self,
+        collector: tidb_stats_handle_usage_indexusage::SessionIndexUsageCollector,
+    ) {
+        self.session_index_usage_collector = Some(Arc::new(Mutex::new(collector)));
     }
 
     /// Installs Go's Domain-owned session statistics collector.
@@ -1598,6 +1617,12 @@ impl Session {
         let restore = std::mem::take(&mut self.set_var_hint_restore);
         self.vars.restore_system(restore);
         self.publish_statement_status(&result);
+        if let Some(collector) = &self.session_index_usage_collector {
+            collector
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .report();
+        }
         if let Some(guard) = &self.process {
             guard
                 .registry()
@@ -1614,7 +1639,8 @@ impl Session {
 #[cfg(test)]
 mod session_source_tests {
     use super::{
-        approx_compile_plan_token_count, approx_parse_sql_token_count, DomainMap, NoAvailableDomain,
+        approx_compile_plan_token_count, approx_parse_sql_token_count, DomainMap,
+        NoAvailableDomain, Session,
     };
 
     // Go pkg/session/tidb_test.go::TestDomapHandleNil.
@@ -1672,6 +1698,32 @@ mod session_source_tests {
             approx_compile_plan_token_count("select @@version @a", false),
             3
         );
+    }
+
+    #[test]
+    fn statement_index_usage_collector_is_session_owned_and_flushed_on_close() {
+        let global = tidb_stats_handle_usage_indexusage::Collector::new();
+        global.start_worker();
+        let mut session = Session::default();
+        session.set_session_index_usage_collector(global.spawn_session_collector());
+
+        let context = session.statement_context(false);
+        context
+            .index_usage_collector()
+            .expect("positive stats updating installs a statement collector")
+            .update(
+                41,
+                7,
+                tidb_stats_handle_usage_indexusage::new_sample(0, 2, 3, 10),
+            );
+        drop(context);
+        drop(session);
+
+        let sample = global.get_index_usage(41, 7);
+        assert_eq!(sample.query_total, 1);
+        assert_eq!(sample.kv_req_total, 2);
+        assert_eq!(sample.row_access_total, 3);
+        global.close();
     }
 }
 
