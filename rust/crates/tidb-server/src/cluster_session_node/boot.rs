@@ -180,6 +180,22 @@ pub(crate) fn run_cluster_session_node_with_spill(
             None
         }
     };
+    let stats_owner: Arc<dyn tidb_owner::Manager> =
+        match crate::real_tikv_node::connect_schema_notifier(&config) {
+            Some(client) => Arc::new(tidb_owner::OwnerManager::new(
+                tidb_owner::Context::background(),
+                client as Arc<dyn tidb_owner::OwnerStore>,
+                super::STATS_OWNER_PROMPT,
+                server_info.local_server_info().static_info.id,
+                super::STATS_OWNER_KEY,
+            )),
+            None => Arc::new(tidb_owner::MockManager::new(
+                tidb_owner::Context::background(),
+                server_info.local_server_info().static_info.id,
+                None,
+                super::STATS_OWNER_KEY,
+            )),
+        };
     // The other half of being registered: a node the owner can SEE must also
     // ANSWER. Go's `WaitVersionSynced` waits on every `/tidb/server/info`
     // entry, so this acknowledger is spawned exactly when the registration
@@ -257,6 +273,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
     )
     .with_cop_scans(cop_scans)
     .with_server_info(Arc::clone(&server_info))
+    .with_stats_owner(stats_owner)
     .with_schema_pins(schema_pins)
     .with_spill_storage(spill_storage);
     let factory = match memory_arbitrator {
@@ -264,7 +281,19 @@ pub(crate) fn run_cluster_session_node_with_spill(
         None => factory,
     };
     let factory = Arc::new(factory);
+    if tidb_config::config_tree::config::get_global_config()
+        .instance
+        .tidb_enable_stats_owner
+        .load()
+    {
+        factory.campaign_stats_owner().map_err(|error| {
+            RunConfiguredNodeError::Engine(SqlQueryError::unknown(format!(
+                "campaign stats owner failed: {error}"
+            )))
+        })?;
+    }
     factory.start_stats_usage_workers(config.stats_lease);
+    factory.start_analyze_jobs_cleanup_worker(config.stats_lease);
     factory.start_historical_stats_worker();
     let workload_etcd = crate::real_tikv_node::connect_schema_notifier(&config);
     let workload_store = workload_etcd

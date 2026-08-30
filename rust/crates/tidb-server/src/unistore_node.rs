@@ -331,7 +331,19 @@ pub(crate) fn run_unistore_cluster_session(
         None => factory,
     };
     let factory = Arc::new(factory);
+    if tidb_config::config_tree::config::get_global_config()
+        .instance
+        .tidb_enable_stats_owner
+        .load()
+    {
+        factory.campaign_stats_owner().map_err(|error| {
+            RunConfiguredNodeError::Engine(SqlQueryError::unknown(format!(
+                "campaign stats owner failed: {error}"
+            )))
+        })?;
+    }
     factory.start_stats_usage_workers(config.stats_lease);
+    factory.start_analyze_jobs_cleanup_worker(config.stats_lease);
     factory.start_historical_stats_worker();
     let stats_receipt = stats.receipt();
 
@@ -495,6 +507,12 @@ pub(crate) fn unistore_cluster_session_stack(
         crate::serverinfo_etcd::node_server_info(config),
         None,
     ));
+    let stats_owner: Arc<dyn tidb_owner::Manager> = Arc::new(tidb_owner::MockManager::new(
+        tidb_owner::Context::background(),
+        server_info.local_server_info().static_info.id.clone(),
+        None,
+        crate::cluster_session_node::STATS_OWNER_KEY,
+    ));
     let cop_scans: Arc<dyn tidb_executor::remote_scan::PushdownScanner> =
         Arc::new(tidb_exec::cop_scan::CopScanSource::new(transport_factory));
 
@@ -544,7 +562,8 @@ pub(crate) fn unistore_cluster_session_stack(
         )),
     )
     .with_cop_scans(cop_scans)
-    .with_server_info(server_info);
+    .with_server_info(server_info)
+    .with_stats_owner(stats_owner);
 
     Ok(UnistoreClusterStack {
         factory,

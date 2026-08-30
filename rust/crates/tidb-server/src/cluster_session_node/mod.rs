@@ -228,6 +228,11 @@ fn is_analyze_table_sql(sql: &str) -> bool {
 /// same one the bounded node applies.
 const CONTROL_PLANE_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Pinned Go `statistics/handle.StatsOwnerKey`.
+pub(crate) const STATS_OWNER_KEY: &str = "/tidb/stats/owner";
+/// Pinned Go `statistics/handle.StatsPrompt`.
+pub(crate) const STATS_OWNER_PROMPT: &str = "stats";
+
 /// Go `errno.ErrTableaccessDenied`.
 const ER_TABLEACCESS_DENIED_ERROR: u16 = 1142;
 
@@ -648,6 +653,11 @@ pub struct ClusterSessionFactory {
     stats_usage: Arc<tidb_stats_handle_usage::StatsUsageHandle>,
     /// Go Domain's index-GC and positive-lease usage-dump workers.
     stats_usage_workers: std::sync::OnceLock<StatsUsageWorkers>,
+    /// Go Domain's statistics owner, used by analyze-job history GC and
+    /// dead-instance cleanup.
+    stats_owner: Option<Arc<dyn tidb_owner::Manager>>,
+    /// Go `analyzeJobsCleanupWorker`, installed after stable `Arc` ownership.
+    analyze_jobs_cleanup_worker: std::sync::OnceLock<AnalyzeJobsCleanupWorker>,
     /// Go Domain's capacity-16 historical-statistics mailbox.
     historical_stats_worker: Arc<HistoricalStatsWorker<ClusterHistoricalInfoSchema>>,
     /// Go `StartHistoricalStatsWorker`, installed after stable `Arc` ownership.
@@ -713,6 +723,8 @@ impl ClusterSessionFactory {
             workload_repository: std::sync::OnceLock::new(),
             stats_usage,
             stats_usage_workers: std::sync::OnceLock::new(),
+            stats_owner: None,
+            analyze_jobs_cleanup_worker: std::sync::OnceLock::new(),
             historical_stats_worker,
             historical_stats_runtime: std::sync::OnceLock::new(),
         }
@@ -887,6 +899,23 @@ impl ClusterSessionFactory {
         let _ = self
             .stats_usage_workers
             .set(StatsUsageWorkers::start(self, lease));
+    }
+
+    /// Starts pinned Go `analyzeJobsCleanupWorker`. Go starts it only when
+    /// `statsLease > 0`; zero and negative leases return before this worker.
+    pub(crate) fn start_analyze_jobs_cleanup_worker(
+        self: &Arc<Self>,
+        lease: crate::node_config::StatsLease,
+    ) {
+        let crate::node_config::StatsLease::Positive(lease) = lease else {
+            return;
+        };
+        if self.analyze_jobs_cleanup_worker.get().is_some() {
+            return;
+        }
+        let _ = self
+            .analyze_jobs_cleanup_worker
+            .set(AnalyzeJobsCleanupWorker::start(self, lease));
     }
 
     /// Go `statsUsageImpl.DumpColStatsUsageToKV`.
@@ -1241,6 +1270,22 @@ impl ClusterSessionFactory {
         self
     }
 
+    /// Binds Go Domain's `/tidb/stats/owner` manager.
+    #[must_use]
+    pub(crate) fn with_stats_owner(mut self, owner: Arc<dyn tidb_owner::Manager>) -> Self {
+        self.stats_owner = Some(owner);
+        self
+    }
+
+    /// Starts Go Domain's statistics-owner campaign after the factory has
+    /// reached its stable process lifetime.
+    pub(crate) fn campaign_stats_owner(&self) -> Result<(), String> {
+        self.stats_owner
+            .as_ref()
+            .ok_or_else(|| "statistics owner is not initialized".to_owned())?
+            .campaign_owner(&[])
+    }
+
     /// The boot catalog's tables this node cannot serve, with their reasons.
     #[must_use]
     pub fn boot_skipped_tables(&self) -> &[SkippedTable] {
@@ -1272,6 +1317,121 @@ struct StatsUsageWorkers {
     stop: Arc<UsageWorkerStop>,
     threads: Vec<std::thread::JoinHandle<()>>,
     flush_on_drop: bool,
+}
+
+struct AnalyzeJobsCleanupWorker {
+    stop: Arc<UsageWorkerStop>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl AnalyzeJobsCleanupWorker {
+    fn start(factory: &Arc<ClusterSessionFactory>, stats_lease: Duration) -> Self {
+        let stop = Arc::new(UsageWorkerStop {
+            stopped: Mutex::new(false),
+            wake: Condvar::new(),
+        });
+        let weak = Arc::downgrade(factory);
+        let running = Arc::clone(&stop);
+        let thread = std::thread::Builder::new()
+            .name("analyze-jobs-cleanup".to_owned())
+            .spawn(move || {
+                let gc_interval = Duration::from_secs(60 * 60);
+                let cleanup_interval = stats_lease.saturating_mul(100);
+                let mut next_gc = std::time::Instant::now() + gc_interval;
+                let mut next_cleanup = std::time::Instant::now() + cleanup_interval;
+                loop {
+                    let now = std::time::Instant::now();
+                    let next = next_gc.min(next_cleanup);
+                    if running.wait(next.saturating_duration_since(now)) {
+                        return;
+                    }
+                    let Some(factory) = weak.upgrade() else {
+                        return;
+                    };
+                    let now = std::time::Instant::now();
+                    if now >= next_gc {
+                        next_gc = now + gc_interval;
+                        if factory
+                            .stats_owner
+                            .as_ref()
+                            .is_some_and(|owner| owner.is_owner())
+                        {
+                            match timestamp_before(Duration::from_secs(7 * 24 * 60 * 60)) {
+                                Ok(cutoff) => {
+                                    if let Err(error) = factory.delete_analyze_jobs_before(cutoff) {
+                                        eprintln!(
+                                            "{{\"event\":\"gc_analyze_history_failed\",\"error\":{error:?}}}"
+                                        );
+                                    }
+                                }
+                                Err(error) => eprintln!(
+                                    "{{\"event\":\"gc_analyze_history_failed\",\"error\":{error:?}}}"
+                                ),
+                            }
+                        }
+                    }
+                    if now >= next_cleanup {
+                        next_cleanup = now + cleanup_interval;
+                        match timestamp_before(Duration::from_secs(10 * 60)) {
+                            Ok(cutoff) => {
+                                if let Err(error) = factory
+                                    .cleanup_corrupted_analyze_jobs_on_current_instance(cutoff)
+                                {
+                                    eprintln!(
+                                        "{{\"event\":\"cleanup_analyze_jobs_current_instance_failed\",\"error\":{error:?}}}"
+                                    );
+                                }
+                                if factory
+                                    .stats_owner
+                                    .as_ref()
+                                    .is_some_and(|owner| owner.is_owner())
+                                {
+                                    if let Err(error) = factory
+                                        .cleanup_corrupted_analyze_jobs_on_dead_instances(cutoff)
+                                    {
+                                        eprintln!(
+                                            "{{\"event\":\"cleanup_analyze_jobs_dead_instances_failed\",\"error\":{error:?}}}"
+                                        );
+                                    }
+                                }
+                            }
+                            Err(error) => eprintln!(
+                                "{{\"event\":\"cleanup_analyze_jobs_current_instance_failed\",\"error\":{error:?}}}"
+                            ),
+                        }
+                    }
+                }
+            })
+            .expect("analyze-jobs cleanup worker spawns");
+        Self {
+            stop,
+            thread: Some(thread),
+        }
+    }
+}
+
+impl Drop for AnalyzeJobsCleanupWorker {
+    fn drop(&mut self) {
+        *self
+            .stop
+            .stopped
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = true;
+        self.stop.wake.notify_all();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+fn timestamp_before(duration: Duration) -> Result<tidb_datatype::Time, String> {
+    let nanoseconds = i64::try_from(duration.as_nanos())
+        .map_err(|_| "analyze-job cleanup duration is too large".to_owned())?;
+    let delta = tidb_datatype::MySqlDuration::from_nanoseconds(-nanoseconds, 0)
+        .map_err(|error| error.to_string())?;
+    tidb_exec::mysql_bootstrap::utc_now_timestamp()
+        .add_duration(delta)
+        .map_err(|error| error.to_string())
 }
 
 struct UsageWorkerStop {

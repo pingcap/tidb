@@ -814,6 +814,22 @@ fn corrupted_analyze_job_cleanup_matches_go() {
     );
 }
 
+#[test]
+fn analyze_job_cleanup_worker_uses_gos_positive_lease_gate_and_stops() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let factory = Arc::new(stack.factory);
+    factory.start_analyze_jobs_cleanup_worker(crate::node_config::StatsLease::Zero);
+    assert!(factory.analyze_jobs_cleanup_worker.get().is_none());
+    factory.start_analyze_jobs_cleanup_worker(crate::node_config::StatsLease::Disabled);
+    assert!(factory.analyze_jobs_cleanup_worker.get().is_none());
+    factory.start_analyze_jobs_cleanup_worker(crate::node_config::StatsLease::Positive(
+        Duration::from_secs(60),
+    ));
+    assert!(factory.analyze_jobs_cleanup_worker.get().is_some());
+    drop(factory);
+}
+
 /// Go creates one pending job for every physical partition task before
 /// dispatch, then creates independent global-merge jobs after all partition
 /// results have been saved. Global jobs never accumulate processed rows.
