@@ -415,6 +415,10 @@ struct DeferredSnapshot {
     /// statement snapshot is dropped.  The slot is shared because the storage
     /// seam intentionally exposes only `ClusterSnapshot` to the executor.
     write_handoff: Option<WriteTransactionSlot>,
+    /// Record keys a point DML locks before its first source read. Autocommit
+    /// writes use the same pessimistic lock+return-value fold as an explicit
+    /// transaction, so the source can consume the row returned by TiKV.
+    prelock_keys: Vec<Vec<u8>>,
     /// Behind one `Mutex` because `start_ts` takes `&self` and must answer
     /// with the timestamp of the same transaction the reads use -- and because
     /// the declaration below must be settled against the open atomically.
@@ -470,6 +474,7 @@ impl DeferredSnapshot {
             resource_group,
             read_ts,
             write_handoff: None,
+            prelock_keys: Vec::new(),
             state: Mutex::new(DeferredState::default()),
         }
     }
@@ -478,6 +483,7 @@ impl DeferredSnapshot {
         transactions: Arc<dyn ClusterTransactions>,
         read_ts: StatementReadTs,
         write_handoff: WriteTransactionSlot,
+        prelock_keys: Vec<Vec<u8>>,
         resource_group: Arc<str>,
     ) -> Self {
         let (reply, answer) = mpsc::sync_channel(1);
@@ -495,6 +501,7 @@ impl DeferredSnapshot {
             resource_group,
             read_ts,
             write_handoff: Some(write_handoff),
+            prelock_keys,
             state: Mutex::new(DeferredState {
                 prefetched_write,
                 ..DeferredState::default()
@@ -546,7 +553,24 @@ impl DeferredSnapshot {
                         )
                     })
                     .map_err(StorageError::Backend)?;
-                let snapshot = transaction.snapshot().map_err(StorageError::Backend)?;
+                let snapshot = if self.prelock_keys.is_empty() {
+                    transaction.snapshot()
+                } else {
+                    let outcome = transaction
+                        .lock_staged_keys_with_values(self.prelock_keys.clone())
+                        .map_err(StorageError::Backend)?;
+                    match outcome {
+                        LockKeysOutcome::Locked { .. } => transaction.snapshot_for(true),
+                        LockKeysOutcome::RetryStatement { for_update_ts, .. } => {
+                            transaction.snapshot_at_for(for_update_ts, true)
+                        }
+                        LockKeysOutcome::StatementError(error)
+                        | LockKeysOutcome::TransactionError(error) => {
+                            return Err(StorageError::Backend(error.message));
+                        }
+                    }
+                }
+                .map_err(StorageError::Backend)?;
                 guard.write_transaction = Some(transaction);
                 Ok(snapshot)
             } else if let Some(prepared) = guard.prepared.take() {
@@ -674,12 +698,14 @@ pub(crate) fn prefetched_write_snapshot(
     transactions: Arc<dyn ClusterTransactions>,
     read_ts: StatementReadTs,
     write_handoff: WriteTransactionSlot,
+    prelock_keys: Vec<Vec<u8>>,
     resource_group: Arc<str>,
 ) -> Box<dyn ClusterSnapshot> {
     Box::new(DeferredSnapshot::new_prefetched_write(
         transactions,
         read_ts,
         write_handoff,
+        prelock_keys,
         resource_group,
     ))
 }
@@ -932,7 +958,11 @@ where
         &self,
         resource_group: &str,
     ) -> Result<Box<dyn OpenClusterTransaction>, String> {
-        SessionTransaction::begin(
+        // Go's default `tidb_txn_mode=pessimistic` also applies to a single
+        // autocommit UPDATE/DELETE. Opening the statement transaction in
+        // pessimistic mode lets the point-DML prelock fold return the source
+        // row into the lock RPC, avoiding a second point read.
+        SessionTransaction::begin_pessimistic(
             self.opener_for_resource_group(resource_group),
             self.timeout,
             tidb_exec::session_commit_protocol::session_commit_protocol(),
