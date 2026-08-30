@@ -1317,6 +1317,78 @@ fn flush_stats_delta_missing_targets_match_go_warnings() {
     );
 }
 
+/// Pinned `globalstats.TestDDLPartition4GlobalStats`: truncating partitions
+/// replaces their physical IDs, subtracts their persisted counts from the
+/// logical global row, and installs replacement partition metadata.
+#[test]
+fn truncate_partitions_refreshes_global_stats_meta_like_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(64))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET SESSION tidb_analyze_version = 2");
+    rows(
+        &mut session,
+        "SET SESSION tidb_partition_prune_mode = 'dynamic'",
+    );
+    rows(
+        &mut session,
+        "CREATE TABLE global_stats_truncate (a INT) PARTITION BY RANGE (a) (\
+         PARTITION p0 VALUES LESS THAN (10),\
+         PARTITION p1 VALUES LESS THAN (20),\
+         PARTITION p2 VALUES LESS THAN (30),\
+         PARTITION p3 VALUES LESS THAN (40),\
+         PARTITION p4 VALUES LESS THAN (50),\
+         PARTITION p5 VALUES LESS THAN (60))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO global_stats_truncate VALUES \
+         (1),(2),(3),(4),(5),(11),(21),(31),(41),(51),\
+         (12),(22),(32),(42),(52)",
+    );
+    rows(&mut session, "FLUSH STATS_DELTA *.*");
+    rows(&mut session, "ANALYZE TABLE global_stats_truncate");
+    let global_count = |session: &mut _| {
+        displayed(rows(
+            session,
+            "SHOW STATS_META WHERE table_name = 'global_stats_truncate' \
+             AND partition_name = 'global'",
+        ))[0][5]
+            .clone()
+    };
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SHOW STATS_META WHERE table_name = 'global_stats_truncate'",
+        ))
+        .len(),
+        7
+    );
+    assert_eq!(global_count(&mut session), "15");
+
+    rows(
+        &mut session,
+        "ALTER TABLE global_stats_truncate TRUNCATE PARTITION p2, p4",
+    );
+    rows(&mut session, "FLUSH STATS_DELTA *.*");
+    assert_eq!(global_count(&mut session), "11");
+
+    rows(&mut session, "ANALYZE TABLE global_stats_truncate");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SHOW STATS_META WHERE table_name = 'global_stats_truncate'",
+        ))
+        .len(),
+        7
+    );
+    assert_eq!(global_count(&mut session), "11");
+}
+
 /// A write takes the same access paths a `SELECT` does, which is
 /// `crate::explain`'s divergence 8 as it now stands.
 ///

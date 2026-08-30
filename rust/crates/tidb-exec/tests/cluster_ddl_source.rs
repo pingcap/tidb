@@ -2830,6 +2830,36 @@ fn cluster_truncate_reassigns_partition_ids() {
     }
 }
 
+#[test]
+fn cluster_truncate_partition_reassigns_only_selected_physical_ids() {
+    let mut store = bootstrapped();
+    let created = plan(
+        &mut store,
+        "CREATE TABLE u6.pt (a INT) PARTITION BY RANGE (a) \
+         (PARTITION p0 VALUES LESS THAN (10), \
+          PARTITION p1 VALUES LESS THAN (20), \
+          PARTITION p2 VALUES LESS THAN (30))",
+        7,
+    );
+    apply(&mut store, &created);
+    let before = partition_ids(&mut store, "pt");
+
+    let truncated = plan(
+        &mut store,
+        "ALTER TABLE u6.pt TRUNCATE PARTITION p0, p2",
+        8,
+    );
+    assert_eq!(
+        truncated.diff.action_type,
+        tidb_model::ActionType::ACTION_TRUNCATE_TABLE_PARTITION
+    );
+    apply(&mut store, &truncated);
+    let after = partition_ids(&mut store, "pt");
+    assert_ne!(after[0], before[0]);
+    assert_eq!(after[1], before[1]);
+    assert_ne!(after[2], before[2]);
+}
+
 /// The physical ids of one table's partitions, in definition order.
 fn partition_ids(store: &mut MetaStore, table: &str) -> Vec<i64> {
     let catalog =

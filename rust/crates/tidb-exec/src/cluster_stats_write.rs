@@ -456,6 +456,92 @@ pub fn plan_loaded_stats_meta_write<S: MetaSnapshot>(
     Ok(plan)
 }
 
+/// Plans pinned Go's statistics DDL subscriber for
+/// `ActionTruncateTablePartition`.
+pub fn plan_truncate_partition_stats_write<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    logical_table_id: i64,
+    replacements: &[(i64, i64)],
+    version: u64,
+    now: Time,
+) -> Result<StatsWritePlan, StatsWriteError> {
+    let table = locate(catalog, "stats_meta")?;
+    let mut rows = StatsRows::open_all(snapshot, table, &["table_id"])?;
+    let mut plan = StatsWritePlan::default();
+    let mut truncated_count = 0i64;
+    let signed = |datum: Option<&Datum>, name: &str| -> Result<i64, StatsWriteError> {
+        match datum.unwrap_or(&Datum::Int(0)) {
+            Datum::Int(value) => Ok(*value),
+            Datum::UInt(value) => i64::try_from(*value).map_err(|_| {
+                StatsWriteError::HistoricalMeta(format!("stats_meta.{name} overflows int64"))
+            }),
+            other => Err(StatsWriteError::HistoricalMeta(format!(
+                "invalid stats_meta.{name} {other:?}"
+            ))),
+        }
+    };
+    let count_id = column_id(table, "count")?;
+    let modify_id = column_id(table, "modify_count")?;
+
+    for &(old_id, new_id) in replacements {
+        let old_identity = vec![format!("{:?}", Datum::Int(old_id))];
+        if let Some(mut values) = rows.existing_values(&old_identity).cloned() {
+            truncated_count = truncated_count
+                .checked_add(signed(values.get(&count_id), "count")?)
+                .ok_or_else(|| {
+                    StatsWriteError::HistoricalMeta(
+                        "truncated partition count overflows int64".to_owned(),
+                    )
+                })?;
+            set(table, &mut values, "version", Datum::UInt(version));
+            rows.store(snapshot, catalog, &values, &mut plan)?;
+        }
+
+        let mut values = defaults_row(table, now)?;
+        set(table, &mut values, "table_id", Datum::Int(new_id));
+        set(table, &mut values, "version", Datum::UInt(version));
+        set(table, &mut values, "modify_count", Datum::Int(0));
+        set(table, &mut values, "count", Datum::Int(0));
+        rows.store(snapshot, catalog, &values, &mut plan)?;
+    }
+
+    let global_identity = vec![format!("{:?}", Datum::Int(logical_table_id))];
+    if let Some(mut values) = rows.existing_values(&global_identity).cloned() {
+        let count = signed(values.get(&count_id), "count")?;
+        let modify_count = signed(values.get(&modify_id), "modify_count")?;
+        set(table, &mut values, "version", Datum::UInt(version));
+        set(
+            table,
+            &mut values,
+            "count",
+            Datum::Int(if count > truncated_count {
+                count - truncated_count
+            } else {
+                0
+            }),
+        );
+        set(
+            table,
+            &mut values,
+            "modify_count",
+            Datum::Int(
+                modify_count
+                    .checked_add(truncated_count)
+                    .ok_or_else(|| {
+                        StatsWriteError::HistoricalMeta(
+                            "stats_meta.modify_count overflows int64".to_owned(),
+                        )
+                    })?
+                    .max(0),
+            ),
+        );
+        rows.store(snapshot, catalog, &values, &mut plan)?;
+    }
+    rows.publish_watermark(catalog, &mut plan)?;
+    Ok(plan)
+}
+
 /// Plans Go `UpdateStatsMetaVerAndLastHistUpdateVer`.
 ///
 /// The update deliberately does not create a missing metadata row and leaves
@@ -1449,6 +1535,25 @@ struct StatsRows<'table> {
 }
 
 impl<'table> StatsRows<'table> {
+    fn open_all<S: MetaSnapshot>(
+        snapshot: &mut S,
+        table: &'table TableInfo,
+        identity: &'static [&'static str],
+    ) -> Result<Self, StatsWriteError> {
+        let clustered = !matches!(HandleLayout::of(table), HandleLayout::RowId);
+        let mut existing = BTreeMap::new();
+        for (key, values) in read_rows_with_keys(snapshot, table, None)? {
+            existing.insert(identity_of(table, identity, &values)?, (key, values));
+        }
+        Ok(Self {
+            table,
+            identity,
+            clustered,
+            existing,
+            next_row_id: None,
+        })
+    }
+
     fn open<S: MetaSnapshot>(
         snapshot: &mut S,
         table: &'table TableInfo,

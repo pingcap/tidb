@@ -1117,6 +1117,24 @@ fn stats_delta_table(catalog: &ClusterCatalog, physical_id: i64) -> Option<(&str
     None
 }
 
+fn partition_id_map(
+    catalog: &ClusterCatalog,
+    schema: &str,
+    table: &str,
+) -> Option<(i64, std::collections::BTreeMap<String, i64>)> {
+    let (_, table) = catalog.find_table(schema, table)?;
+    let partition = table.partition.as_ref()?.read();
+    Some((
+        table.id,
+        partition
+            .definitions
+            .snapshot()
+            .into_iter()
+            .map(|definition| (definition.name.lowercase().to_owned(), definition.id))
+            .collect(),
+    ))
+}
+
 impl QuerySessionFactory for ClusterSessionFactory {
     type Session = ClusterServerSession;
 
@@ -2774,6 +2792,84 @@ impl ClusterServerSession {
         })
     }
 
+    fn update_truncated_partition_stats(
+        &mut self,
+        schema: &str,
+        table_name: &str,
+        logical_table_id: i64,
+        old_ids: &std::collections::BTreeMap<String, i64>,
+    ) -> Result<(), SqlQueryError> {
+        let catalog = self.catalog.load();
+        let (_, new_ids) = partition_id_map(&catalog, schema, table_name)
+            .ok_or_else(|| SqlQueryError::unknown("truncated table disappeared from catalog"))?;
+        let replacements = old_ids
+            .iter()
+            .filter_map(|(name, old_id)| {
+                new_ids
+                    .get(name)
+                    .copied()
+                    .filter(|new_id| new_id != old_id)
+                    .map(|new_id| (*old_id, new_id))
+            })
+            .collect::<Vec<_>>();
+        if replacements.is_empty() {
+            return Ok(());
+        }
+
+        let resource_group = self.session.current_resource_group().to_owned();
+        let snapshot = self
+            .transactions
+            .open_snapshot(&resource_group)
+            .map_err(SqlQueryError::unknown)?;
+        let version = snapshot.start_ts();
+        let plan = {
+            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+            tidb_exec::cluster_stats_write::plan_truncate_partition_stats_write(
+                &mut snapshot,
+                &catalog,
+                logical_table_id,
+                &replacements,
+                version,
+                system_time_timestamp(SystemTime::now()).map_err(SqlQueryError::unknown)?,
+            )
+            .map_err(|error| SqlQueryError::unknown(error.to_string()))?
+        };
+        self.transactions
+            .commit_optimistic_mutations(plan.mutations, version, &resource_group)
+            .map_err(|error| SqlQueryError::unknown(error.message))?;
+
+        let (_, table) = catalog
+            .find_table(schema, table_name)
+            .ok_or_else(|| SqlQueryError::unknown("truncated table disappeared from catalog"))?;
+        let column_types = tidb_exec::cluster_stats_load::column_types_of(table);
+        let snapshot = self
+            .transactions
+            .open_snapshot(&resource_group)
+            .map_err(SqlQueryError::unknown)?;
+        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+        let loader = ClusterStatsLoader::locate(&catalog)
+            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+        let mut published = self.stats.load().as_ref().clone();
+        for (old_id, _) in &replacements {
+            published.remove(old_id);
+        }
+        let mut current_ids = vec![logical_table_id];
+        current_ids.extend(new_ids.into_values());
+        for physical_id in current_ids {
+            let state = loader
+                .load_table(&mut snapshot, physical_id, &column_types)
+                .map_err(|error| SqlQueryError::unknown(error.to_string()))?
+                .map_or(tidb_exec::stats_watch::TableStatsState::Pseudo, |stats| {
+                    tidb_exec::stats_watch::TableStatsState::Loaded(
+                        stats.to_statistics_table(table),
+                    )
+                });
+            published.insert(physical_id, state);
+        }
+        self.stats.store(published);
+        Ok(())
+    }
+
     /// Performs one cluster catalog change.
     ///
     /// An open transaction is committed first: MySQL and Go both commit
@@ -2800,7 +2896,19 @@ impl ClusterServerSession {
         if self.explicit.is_some() || self.session.in_transaction() {
             self.control_transaction("COMMIT")?;
         }
+        let truncate_before = match statement {
+            DdlStatement::TruncatePartitions { schema, table, .. } => {
+                partition_id_map(&self.catalog.load(), schema, table)
+                    .map(|(logical_id, ids)| (schema.clone(), table.clone(), logical_id, ids))
+            }
+            _ => None,
+        };
         let report = self.ddl.execute(statement)?;
+        if matches!(report, ClusterDdlReport::Applied { .. }) {
+            if let Some((schema, table, logical_id, old_ids)) = truncate_before {
+                self.update_truncated_partition_stats(&schema, &table, logical_id, &old_ids)?;
+            }
+        }
         // Go raises `job.Warning` on the session's own statement context, so
         // `SHOW WARNINGS` reports what the change did differently from what
         // was written. `toTError` gives a plain `fmt.Errorf` the generic

@@ -320,6 +320,16 @@ pub enum DdlStatement {
         /// Canonical SQL for the shared partition DDL implementation.
         sql: String,
     },
+    /// `ALTER TABLE ... TRUNCATE PARTITION`, through the ordinary partition
+    /// DDL implementation with fresh cluster-global physical IDs.
+    TruncatePartitions {
+        /// The resolved database name.
+        schema: String,
+        /// The table name as written.
+        table: String,
+        /// Canonical SQL for the shared partition DDL implementation.
+        sql: String,
+    },
     /// The single-action `ALTER TABLE ... DROP COLUMN` this node serves.
     ///
     /// Go `onDropColumn` + `isDroppableColumn`: the last column of the table,
@@ -1494,6 +1504,19 @@ fn lower_alter_table_catalog(
         tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::Drop { .. }) => {
             let (schema, table) = split_name(&alter.name, default_schema, "table")?;
             Ok(Some(DdlStatement::DropPartitions {
+                schema,
+                table,
+                sql: Stmt::Ddl(tidb_ast::NodeBox::new(DdlStmt::AlterTable(Box::new(
+                    alter.clone(),
+                ))))
+                .restore(),
+            }))
+        }
+        tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::Truncate {
+            ..
+        }) => {
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            Ok(Some(DdlStatement::TruncatePartitions {
                 schema,
                 table,
                 sql: Stmt::Ddl(tidb_ast::NodeBox::new(DdlStmt::AlterTable(Box::new(
@@ -3492,6 +3515,87 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             } else {
                 ActionType::ACTION_DROP_TABLE_PARTITION
             };
+            diff.schema_id = db_id;
+            diff.table_id = table_id;
+        }
+        DdlStatement::TruncatePartitions { schema, table, sql } => {
+            let (db_id, stored) = locate_table(&catalog, schema, table)?;
+            let transformed = apply_partition_change(stored, schema, table, sql)?;
+            let old_ids = stored
+                .partition
+                .as_ref()
+                .expect("the partition change validated partitioning")
+                .read()
+                .definitions
+                .snapshot()
+                .into_iter()
+                .map(|definition| (definition.name.lowercase().to_owned(), definition.id))
+                .collect::<BTreeMap<_, _>>();
+            let replaced = transformed
+                .definitions
+                .iter()
+                .filter(|definition| {
+                    old_ids
+                        .get(&definition.name.to_ascii_lowercase())
+                        .is_some_and(|old_id| *old_id != definition.id)
+                })
+                .count();
+            if replaced == 0 {
+                return Ok(already(format!(
+                    "partition truncate on `{schema}`.`{table}` changes no partition"
+                )));
+            }
+            let mut allocated = allocate(
+                snapshot,
+                &mut writes,
+                i64::try_from(replaced).expect("partition count fits in i64"),
+            )?
+            .into_iter();
+            let definitions = transformed
+                .definitions
+                .into_iter()
+                .map(|definition| {
+                    let old_id = old_ids[&definition.name.to_ascii_lowercase()];
+                    let id = if definition.id == old_id {
+                        old_id
+                    } else {
+                        allocated
+                            .next()
+                            .expect("one global id was allocated for every truncated partition")
+                    };
+                    let mut converted = tidb_model::partition::PartitionDefinition {
+                        id,
+                        name: CiString::new(definition.name),
+                        comment: definition.comment,
+                        placement_policy_ref: definition.placement_policy.map(GoShared::new),
+                        ..tidb_model::partition::PartitionDefinition::default()
+                    };
+                    converted.less_than = definition.less_than.into();
+                    converted.in_values = definition
+                        .in_values
+                        .into_iter()
+                        .map(Into::into)
+                        .collect::<Vec<_>>()
+                        .into();
+                    converted
+                })
+                .collect::<Vec<_>>();
+            debug_assert!(allocated.next().is_none());
+            let mut info = stored.clone_like_go();
+            info.partition
+                .as_ref()
+                .expect("the partition change validated partitioning")
+                .write()
+                .definitions = definitions.into();
+            info.update_ts = start_ts;
+            let table_id = info.id;
+            let encoded = value::serialize_table_info(&info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            writes.push(OptimisticMutation::meta_put(
+                key::table_kv_key(db_id, table_id),
+                encoded,
+            )?);
+            diff.action_type = ActionType::ACTION_TRUNCATE_TABLE_PARTITION;
             diff.schema_id = db_id;
             diff.table_id = table_id;
         }
