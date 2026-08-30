@@ -25,7 +25,7 @@ use std::time::Duration;
 
 use tidb_datatype::Datum;
 
-use super::super::ClusterHistoricalStatsHandle;
+use super::super::{ClusterHistoricalStatsHandle, ClusterServerSession};
 use super::node_fixture::{rows, session_context, ABC_HASH};
 use crate::configured_user_store::ConfiguredUserStore;
 use crate::sql_node::QuerySession;
@@ -270,6 +270,96 @@ fn add_column_ddl_initializes_null_statistics_like_go() {
         .parse::<u64>()
         .expect("stats version is an unsigned integer");
     assert!(new_version > old_version);
+}
+
+/// Pinned DDL subscriber `ActionModifyColumn`: `InsertColStats2KV` is an
+/// `INSERT IGNORE`, but if the histogram is absent it recreates it before
+/// refreshing meta. An original CREATE TABLE column has no origin default,
+/// even when it has a declared INSERT default, so Go records all old rows as
+/// NULL and creates no bucket. Both MODIFY and RENAME COLUMN are this action.
+#[test]
+fn modify_column_ddl_recreates_missing_default_statistics_like_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(74))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "CREATE TABLE stats_modify_column (a INT DEFAULT 7)",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO stats_modify_column VALUES (DEFAULT),(DEFAULT),(DEFAULT)",
+    );
+    rows(&mut session, "ANALYZE TABLE stats_modify_column");
+    let (table_id, column_id) = {
+        let catalog = stack.factory.catalog.load();
+        let table = catalog
+            .find_table("test", "stats_modify_column")
+            .expect("created table is published")
+            .1;
+        (
+            table.id,
+            table.columns.get(0).expect("column exists").read().id,
+        )
+    };
+
+    let remove_column_stats = |session: &mut ClusterServerSession| {
+        rows(
+            session,
+            &format!(
+                "DELETE FROM mysql.stats_buckets WHERE table_id = {table_id} \
+                 AND is_index = 0 AND hist_id = {column_id}"
+            ),
+        );
+        rows(
+            session,
+            &format!(
+                "DELETE FROM mysql.stats_histograms WHERE table_id = {table_id} \
+                 AND is_index = 0 AND hist_id = {column_id}"
+            ),
+        );
+    };
+    let assert_recreated = |session: &mut ClusterServerSession| {
+        assert_eq!(
+            displayed(rows(
+                session,
+                &format!(
+                    "SELECT distinct_count, null_count, tot_col_size, stats_ver \
+                     FROM mysql.stats_histograms WHERE table_id = {table_id} \
+                     AND is_index = 0 AND hist_id = {column_id}"
+                ),
+            )),
+            [["0", "3", "0", "0"]]
+        );
+        assert_eq!(
+            displayed(rows(
+                session,
+                &format!(
+                    "SELECT count(*) FROM mysql.stats_buckets WHERE table_id = {table_id} \
+                     AND is_index = 0 AND hist_id = {column_id}"
+                ),
+            )),
+            [["0"]]
+        );
+    };
+
+    remove_column_stats(&mut session);
+    rows(
+        &mut session,
+        "ALTER TABLE stats_modify_column MODIFY COLUMN a BIGINT",
+    );
+    assert_recreated(&mut session);
+
+    remove_column_stats(&mut session);
+    rows(
+        &mut session,
+        "ALTER TABLE stats_modify_column RENAME COLUMN a TO b",
+    );
+    assert_recreated(&mut session);
 }
 
 /// Pinned `TestRecordHistoryStatsAfterAnalyze`: the global switch suppresses

@@ -640,17 +640,20 @@ pub fn plan_insert_table_stats_statement<S: MetaSnapshot>(
     Ok(plan)
 }
 
-/// Plans the nullable-default branch of pinned Go `InsertColStats2KV`.
+/// Plans one histogram `INSERT IGNORE` from pinned Go `InsertColStats2KV`.
 ///
 /// The caller has already run Go's preceding `SELECT count` statement. The
 /// returned boolean is that SQL statement's affected-row verdict, which
 /// decides whether `stats_meta` is version-refreshed afterwards.
-pub fn plan_insert_null_column_stats<S: MetaSnapshot>(
+/// `None` represents a virtual generated column; `Some(NULL)` and a non-NULL
+/// datum select Go's two origin-default branches.
+pub fn plan_insert_column_stats<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
     physical_id: i64,
     column_id: i64,
     count: i64,
+    origin_default: Option<&Datum>,
     version: u64,
     now: Time,
 ) -> Result<(bool, StatsWritePlan), StatsWriteError> {
@@ -661,10 +664,33 @@ pub fn plan_insert_null_column_stats<S: MetaSnapshot>(
     set(table, &mut values, "table_id", Datum::Int(physical_id));
     set(table, &mut values, "is_index", Datum::Int(0));
     set(table, &mut values, "hist_id", Datum::Int(column_id));
-    set(table, &mut values, "distinct_count", Datum::Int(0));
-    set(table, &mut values, "null_count", Datum::Int(count));
+    let is_non_null = origin_default.is_some_and(|value| !value.is_null());
+    set(
+        table,
+        &mut values,
+        "distinct_count",
+        Datum::Int(i64::from(is_non_null)),
+    );
+    set(
+        table,
+        &mut values,
+        "null_count",
+        Datum::Int(if origin_default.is_some_and(Datum::is_null) {
+            count
+        } else {
+            0
+        }),
+    );
     set(table, &mut values, "version", Datum::UInt(version));
-    set(table, &mut values, "tot_col_size", Datum::Int(0));
+    let total_size = origin_default
+        .filter(|value| !value.is_null())
+        .map_or(0, |value| {
+            i64::try_from(value.go_bytes().len())
+                .unwrap_or(i64::MAX)
+                .wrapping_mul(count)
+                .max(0)
+        });
+    set(table, &mut values, "tot_col_size", Datum::Int(total_size));
     set(table, &mut values, "modify_count", Datum::Int(0));
     set(table, &mut values, "cm_sketch", Datum::Null);
     set(table, &mut values, "stats_ver", Datum::Int(0));
@@ -678,6 +704,39 @@ pub fn plan_insert_null_column_stats<S: MetaSnapshot>(
     rows.store(snapshot, catalog, &values, &mut plan)?;
     rows.publish_watermark(catalog, &mut plan)?;
     Ok((true, plan))
+}
+
+/// Plans the default-value bucket inserted after a successful non-NULL
+/// histogram insert in pinned Go `InsertColStats2KV`.
+pub fn plan_insert_column_default_bucket<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    physical_id: i64,
+    column_id: i64,
+    count: i64,
+    origin_default: &Datum,
+    now: Time,
+) -> Result<StatsWritePlan, StatsWriteError> {
+    let table = locate(catalog, "stats_buckets")?;
+    let identity_columns = &["table_id", "is_index", "hist_id", "bucket_id"];
+    let mut rows = StatsRows::open(snapshot, table, identity_columns, physical_id)?;
+    let mut values = defaults_row(table, now)?;
+    set(table, &mut values, "table_id", Datum::Int(physical_id));
+    set(table, &mut values, "is_index", Datum::Int(0));
+    set(table, &mut values, "hist_id", Datum::Int(column_id));
+    set(table, &mut values, "bucket_id", Datum::Int(0));
+    set(table, &mut values, "repeats", Datum::Int(count));
+    set(table, &mut values, "count", Datum::Int(count));
+    let bound = bound_blob(origin_default)?;
+    set(table, &mut values, "lower_bound", bound.clone());
+    set(table, &mut values, "upper_bound", bound);
+    let identity = identity_of(table, identity_columns, &values)?;
+    let mut plan = StatsWritePlan::default();
+    if rows.existing_values(&identity).is_none() {
+        rows.store(snapshot, catalog, &values, &mut plan)?;
+        rows.publish_watermark(catalog, &mut plan)?;
+    }
+    Ok(plan)
 }
 
 /// Plans Go `UpdateStatsMetaVerAndLastHistUpdateVer`.

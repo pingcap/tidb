@@ -4027,7 +4027,7 @@ impl ClusterServerSession {
         }
     }
 
-    fn update_added_column_stats(
+    fn update_column_ddl_stats(
         &mut self,
         schema: &str,
         table_name: &str,
@@ -4037,12 +4037,21 @@ impl ClusterServerSession {
         let (_, table) = catalog
             .find_table(schema, table_name)
             .ok_or_else(|| SqlQueryError::unknown("altered table disappeared from catalog"))?;
-        let column_id = table
+        let column = table
             .columns
             .iter_deref()
             .find(|column| column.read().name.lowercase() == column_name.to_lowercase())
-            .map(|column| column.read().id)
-            .ok_or_else(|| SqlQueryError::unknown("added column disappeared from catalog"))?;
+            .map(|column| column.read().clone())
+            .ok_or_else(|| SqlQueryError::unknown("changed column disappeared from catalog"))?;
+        let column_id = column.id;
+        let origin_default = if column.is_virtual_generated() {
+            None
+        } else {
+            Some(
+                tidb_exec::system_row_write::origin_default(&column, table.name.original())
+                    .map_err(|error| SqlQueryError::unknown(error.to_string()))?,
+            )
+        };
         let physical_ids = stats_physical_ids(table, self.dynamic_partition_pruning()?);
         let resource_group = self.session.current_resource_group().to_owned();
         let transaction = self
@@ -4080,12 +4089,13 @@ impl ClusterServerSession {
                     |snapshot, _| {
                         let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
                         let (inserted, plan) =
-                            tidb_exec::cluster_stats_write::plan_insert_null_column_stats(
+                            tidb_exec::cluster_stats_write::plan_insert_column_stats(
                                 &mut snapshot,
                                 &catalog,
                                 physical_id,
                                 column_id,
                                 count as i64,
+                                origin_default.as_ref(),
                                 version,
                                 system_time_timestamp(SystemTime::now())?,
                             )
@@ -4093,6 +4103,30 @@ impl ClusterServerSession {
                         Ok((inserted, plan.mutations))
                     },
                 )?;
+                if inserted {
+                    if let Some(default) =
+                        origin_default.as_ref().filter(|default| !default.is_null())
+                    {
+                        transactions::stage_pessimistic_statement(
+                            transaction.as_ref(),
+                            &staged,
+                            |snapshot, _| {
+                                let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                                let plan = tidb_exec::cluster_stats_write::plan_insert_column_default_bucket(
+                                    &mut snapshot,
+                                    &catalog,
+                                    physical_id,
+                                    column_id,
+                                    count as i64,
+                                    default,
+                                    system_time_timestamp(SystemTime::now())?,
+                                )
+                                .map_err(|error| error.to_string())?;
+                                Ok(((), plan.mutations))
+                            },
+                        )?;
+                    }
+                }
                 if inserted {
                     transactions::stage_pessimistic_statement(
                         transaction.as_ref(),
@@ -4203,13 +4237,28 @@ impl ClusterServerSession {
                 }),
             _ => None,
         };
-        let added_column = match statement {
+        let column_stats_change = match statement {
             DdlStatement::AddColumn {
                 schema,
                 table,
                 column,
                 ..
             } => Some((schema.clone(), table.clone(), column.name.clone())),
+            DdlStatement::ModifyColumn {
+                schema,
+                table,
+                column,
+                ..
+            } => Some((schema.clone(), table.clone(), column.name.clone())),
+            DdlStatement::RenameColumn {
+                schema, table, to, ..
+            } => Some((schema.clone(), table.clone(), to.clone())),
+            DdlStatement::AlterAutoRandomBits {
+                schema,
+                table,
+                column,
+                ..
+            } => Some((schema.clone(), table.clone(), column.clone())),
             _ => None,
         };
         let partition_before = match statement {
@@ -4253,8 +4302,8 @@ impl ClusterServerSession {
             if let Some(change) = table_stats_change {
                 self.update_table_ddl_stats(change)?;
             }
-            if let Some((schema, table, column)) = added_column {
-                self.update_added_column_stats(&schema, &table, column.as_str())?;
+            if let Some((schema, table, column)) = column_stats_change {
+                self.update_column_ddl_stats(&schema, &table, column.as_str())?;
             }
             if let Some((schema, table, logical_id, old_ids, kind)) = partition_before {
                 self.update_partition_ddl_stats(&schema, &table, logical_id, &old_ids, kind)?;

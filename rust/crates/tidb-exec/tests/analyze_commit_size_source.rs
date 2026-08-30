@@ -53,7 +53,8 @@ use tidb_exec::cluster_stats_write::{
     plan_loaded_stats_usage_write,
     plan_outdated_historical_data_delete, plan_outdated_historical_meta_delete,
     plan_partial_stats_write, plan_partition_stats_write,
-    insert_table_stats_statements, plan_insert_table_stats_statement,
+    insert_table_stats_statements, plan_insert_column_default_bucket,
+    plan_insert_column_stats, plan_insert_table_stats_statement,
     plan_stats_delta_statement, plan_stats_gc_timestamp_write, plan_stats_item_delete,
     plan_stats_meta_version_refresh, plan_stats_write,
     stats_delta_statements, InsertTableStatsStatement, LoadedStatsItemStatement,
@@ -1555,6 +1556,141 @@ fn insert_table_stats_uses_go_statement_order_and_histogram_placeholders() {
         .expect("existing InsertTableStats2KV rows are ignored");
         assert!(ignored.mutations.is_empty());
     }
+}
+
+#[test]
+fn insert_column_stats_uses_go_origin_default_branches() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let physical_id = 4244;
+    let version = 440_000_000_000_000_001;
+    let initial = ClusterTableStats {
+        table_id: physical_id,
+        version: version - 1,
+        snapshot: 0,
+        last_analyze_version: 0,
+        last_stats_hist_version: version - 1,
+        modify_count: 0,
+        row_count: 3,
+        columns: Vec::new(),
+        indexes: Vec::new(),
+    };
+    let plan = plan_stats_write(&mut store, &catalog, &initial, now()).expect("meta plans");
+    apply_mutations(&mut store, &plan.mutations);
+
+    let defaults = [
+        None,
+        Some(Datum::Null),
+        Some(Datum::Bytes(b"xy".to_vec())),
+    ];
+    for (offset, origin_default) in defaults.iter().enumerate() {
+        let column_id = 11 + offset as i64;
+        let (inserted, plan) = plan_insert_column_stats(
+            &mut store,
+            &catalog,
+            physical_id,
+            column_id,
+            3,
+            origin_default.as_ref(),
+            version,
+            now(),
+        )
+        .expect("InsertColStats2KV histogram plans");
+        assert!(inserted);
+        apply_mutations(&mut store, &plan.mutations);
+        if let Some(default) = origin_default.as_ref().filter(|value| !value.is_null()) {
+            let plan = plan_insert_column_default_bucket(
+                &mut store,
+                &catalog,
+                physical_id,
+                column_id,
+                3,
+                default,
+                now(),
+            )
+            .expect("InsertColStats2KV bucket plans");
+            apply_mutations(&mut store, &plan.mutations);
+        }
+    }
+
+    let mysql_table = |name: &str| {
+        catalog
+            .databases
+            .iter()
+            .find(|database| database.info.name.lowercase() == "mysql")
+            .and_then(|database| {
+                database
+                    .tables
+                    .iter()
+                    .find(|table| table.name.lowercase() == name)
+            })
+            .expect("statistics table exists")
+    };
+    let hist_view = SystemTableView::project(
+        "mysql.stats_histograms",
+        mysql_table("stats_histograms"),
+        &[
+            "table_id",
+            "hist_id",
+            "distinct_count",
+            "null_count",
+            "tot_col_size",
+        ],
+    );
+    let hist_rows = scan_system_table(&mut store, &hist_view).expect("histograms scan");
+    let mut shapes = hist_rows
+        .iter()
+        .map(|(key, value)| SystemRow::parse(&hist_view, key, value).expect("histogram decodes"))
+        .filter(|row| row.i64("table_id").unwrap() == Some(physical_id))
+        .map(|row| {
+            (
+                row.i64("hist_id").unwrap().unwrap(),
+                row.i64("distinct_count").unwrap().unwrap(),
+                row.i64("null_count").unwrap().unwrap(),
+                row.i64("tot_col_size").unwrap().unwrap(),
+            )
+        })
+        .collect::<Vec<_>>();
+    shapes.sort_unstable();
+    assert_eq!(shapes, [(11, 0, 0, 0), (12, 0, 3, 0), (13, 1, 0, 6)]);
+
+    let bucket_view = SystemTableView::project(
+        "mysql.stats_buckets",
+        mysql_table("stats_buckets"),
+        &[
+            "table_id",
+            "hist_id",
+            "repeats",
+            "count",
+            "lower_bound",
+            "upper_bound",
+        ],
+    );
+    let bucket_rows = scan_system_table(&mut store, &bucket_view).expect("buckets scan");
+    let bucket = bucket_rows
+        .iter()
+        .map(|(key, value)| SystemRow::parse(&bucket_view, key, value).expect("bucket decodes"))
+        .find(|row| row.i64("table_id").unwrap() == Some(physical_id))
+        .expect("only the non-NULL default creates a bucket");
+    assert_eq!(bucket.i64("hist_id").unwrap(), Some(13));
+    assert_eq!(bucket.i64("repeats").unwrap(), Some(3));
+    assert_eq!(bucket.i64("count").unwrap(), Some(3));
+    assert_eq!(bucket.bytes("lower_bound").unwrap().as_deref(), Some(&b"xy"[..]));
+    assert_eq!(bucket.bytes("upper_bound").unwrap().as_deref(), Some(&b"xy"[..]));
+
+    let (inserted, ignored) = plan_insert_column_stats(
+        &mut store,
+        &catalog,
+        physical_id,
+        13,
+        3,
+        Some(&Datum::Bytes(b"replacement".to_vec())),
+        version + 1,
+        now(),
+    )
+    .expect("existing histogram is INSERT IGNORE");
+    assert!(!inserted);
+    assert!(ignored.mutations.is_empty());
 }
 
 #[test]
