@@ -185,6 +185,7 @@ pub mod window;
 mod window_tests;
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::rc::Rc;
 
 use tidb_ast::{Expr, JoinNode, Limit, SelectField, SelectStmt, TableRef};
 use tidb_datatype::{
@@ -444,6 +445,8 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     pub cur_clause: ClauseCode,
     /// Go `qbOffset`; [`Self::select_offset`] reads its tail.
     pub qb_offset: Vec<i32>,
+    /// The next query-block offset assigned by the statement's preorder walk.
+    next_qb_offset: i32,
 
     /// Go `outerSchemas`, outermost first.
     pub outer_schemas: Vec<Schema>,
@@ -507,7 +510,7 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     pub hints: RewriterHints,
     /// Go `b.TableHints()`'s JOIN half, which `buildJoin` reads through
     /// `SetPreferredJoinTypeAndOrder`; see [`from::JoinHints`].
-    pub join_hints: from::JoinHints,
+    pub join_hints: Rc<from::JoinHints>,
     /// Go `PlanHints.IndexMergeHintList` for the current query block.
     index_merge_hints: Vec<IndexMergeHint>,
 
@@ -749,6 +752,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             opt_flag: 0,
             cur_clause: ClauseCode::Unknow,
             qb_offset: Vec::new(),
+            next_qb_offset: 0,
             outer_schemas: Vec::new(),
             outer_names: Vec::new(),
             lateral_outer_count: 0,
@@ -773,7 +777,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             is_for_update_read: false,
             flags: RewriterSessionFlags::default(),
             hints: RewriterHints::default(),
-            join_hints: from::JoinHints::default(),
+            join_hints: Rc::new(from::JoinHints::default()),
             index_merge_hints: Vec::new(),
             // Go's default `sql_mode` carries `ONLY_FULL_GROUP_BY`.
             only_full_group_by: true,
@@ -2023,6 +2027,17 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     /// Any clause's error, or an unported clause (locking, `INTO OUTFILE`) or
     /// unported shape inside one, each naming its Go symbol.
     pub fn build_select(&mut self, select: &SelectStmt) -> Result<(LogicalPlan, u64), PlanError> {
+        self.next_qb_offset += 1;
+        self.qb_offset.push(self.next_qb_offset);
+        let result = self.build_select_in_query_block(select);
+        self.qb_offset.pop();
+        result
+    }
+
+    fn build_select_in_query_block(
+        &mut self,
+        select: &SelectStmt,
+    ) -> Result<(LogicalPlan, u64), PlanError> {
         // `:4264` the recursive-query-block guards. Each is a shape whose
         // fixpoint is not defined, and Go refuses all four before building
         // anything. `b.buildingLateralSubquery` is a 6b narrowing (see
@@ -2077,8 +2092,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             current_hints.prefer_agg_type = 0;
         }
         let parent_hints = std::mem::replace(&mut self.hints, current_hints);
-        let parent_join_hints =
-            std::mem::replace(&mut self.join_hints, from::JoinHints::from_select(select));
+        let select_offset = self.select_offset();
+        let parent_join_hints = std::mem::replace(
+            &mut self.join_hints,
+            Rc::new(from::JoinHints::from_select_at(select, select_offset)),
+        );
         let parent_index_merge_hints = std::mem::replace(
             &mut self.index_merge_hints,
             index_merge_hints_from_select(select),

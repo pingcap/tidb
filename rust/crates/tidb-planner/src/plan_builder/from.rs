@@ -73,14 +73,9 @@
 //!
 //! # Boundaries, by exact Go symbol
 //!
-//! * `hint.PlanHints` / `hint.HintedTable`'s query-block matching.
-//!   [`JoinHints`] is the narrowing: a table alias to the
-//!   [`join_hint_flags`] bits hinted for it. Go additionally matches on the
-//!   hint's `SelectOffset`, so a hint written in one query block cannot reach
-//!   another; there is no `QBHintHandler` in this workspace to supply those
-//!   offsets, so [`JoinHints`] matches on the alias alone. That is WIDER than
-//!   Go, and is why [`extract_table_alias`] still reproduces Go's
-//!   conflicting-name rejection exactly — it is the only narrowing left.
+//! * `hint.PlanHints` / `hint.HintedTable`'s query-block matching is retained
+//!   for the SELECT builder's preorder offsets and `sel_N` names. View-path
+//!   hint resolution remains owned by `BuildDataSourceFromView`, as in Go.
 //! * `coreusage.ExtractCorColumnsBySchema4LogicalPlan`. Present, as
 //!   [`crate::expression_rewriter::extract_cor_columns_by_schema_4_logical_plan`];
 //!   used unchanged.
@@ -138,6 +133,7 @@
 //!   privilege arm, itself a boundary above.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::rc::Rc;
 
 use tidb_ast::{Join, JoinNode, JoinType, QueryStmt};
 use tidb_datatype::{
@@ -227,8 +223,7 @@ pub mod join_hint_flags {
     pub const RIGHT_AS_HJ_PROBE: u32 = 1 << 24;
 }
 
-/// Go `hint.HintedTable`, narrowed to the identity
-/// [`extract_table_alias`] produces and [`JoinHints`] matches on.
+/// Go `hint.HintedTable` identity used by join hints.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct HintedTable {
     /// Go `HintedTable.DBName.L`, empty when the plan's names carry none.
@@ -237,13 +232,14 @@ pub struct HintedTable {
     pub table_name: String,
 }
 
-/// Go `hint.PlanHints`' join half, narrowed; see this module's boundaries for
-/// the query-block matching that is NOT reproduced.
+/// Go `hint.PlanHints`' join half for the current query block.
 #[derive(Clone, Debug, Default)]
 pub struct JoinHints {
     /// Table alias (lowercase, `db.table` when the hint is qualified and
     /// `table` otherwise) to the [`join_hint_flags`] bits hinted for it.
     pub tables: BTreeMap<String, u32>,
+    /// Go `PlanHints.LeadingList`, retaining the nested AST order.
+    pub leading: Option<Vec<tidb_ast::LeadingElement>>,
 }
 
 impl JoinHints {
@@ -253,17 +249,46 @@ impl JoinHints {
     /// handoff; physical dispatch remains the only family selector.
     #[must_use]
     pub fn from_select(select: &tidb_ast::SelectStmt) -> Self {
+        Self::from_select_at(select, 1)
+    }
+
+    /// Resolves join hints for the SELECT at `select_offset`.
+    #[must_use]
+    pub fn from_select_at(select: &tidb_ast::SelectStmt, select_offset: i32) -> Self {
         use tidb_ast::HintKind;
 
         let mut hints = Self::default();
+        let named_block = select.hints.iter().find_map(|hint| match &hint.kind {
+            HintKind::QbName { qb_name, views } if views.is_empty() => {
+                Some(qb_name.to_ascii_lowercase())
+            }
+            _ => None,
+        });
+        let belongs_to_current_block = |qb_name: Option<&str>| {
+            qb_name.is_none_or(|qb_name| {
+                qb_name.eq_ignore_ascii_case(&format!("sel_{select_offset}"))
+                    || named_block
+                        .as_deref()
+                        .is_some_and(|name| qb_name.eq_ignore_ascii_case(name))
+            })
+        };
         for hint in &select.hints {
+            if let HintKind::Leading { qb_name, elements } = &hint.kind {
+                if belongs_to_current_block(qb_name.as_deref()) {
+                    let mut elements = elements.clone();
+                    normalize_leading_query_blocks(
+                        &mut elements,
+                        select_offset,
+                        named_block.as_deref(),
+                    );
+                    hints.leading = Some(elements);
+                }
+                continue;
+            }
             let HintKind::Tables { qb_name, tables } = &hint.kind else {
                 continue;
             };
-            // Query-block-name resolution needs the owning block offset. Do
-            // not let a scoped hint leak into the current block when that
-            // identity is unavailable.
-            if qb_name.is_some() {
+            if !belongs_to_current_block(qb_name.as_deref()) {
                 continue;
             }
             let flag = match hint.name.to_ascii_uppercase().as_str() {
@@ -283,7 +308,10 @@ impl JoinHints {
                 "SHUFFLE_JOIN" => join_hint_flags::SHUFFLE_JOIN,
                 _ => continue,
             };
-            for table in tables.iter().filter(|table| table.qb_name.is_none()) {
+            for table in tables
+                .iter()
+                .filter(|table| belongs_to_current_block(table.qb_name.as_deref()))
+            {
                 hints.hint_table(
                     table.db_name.as_deref().unwrap_or_default(),
                     &table.name,
@@ -317,6 +345,28 @@ impl JoinHints {
             format!("{}.{}", db_name.to_lowercase(), table_name.to_lowercase())
         };
         *self.tables.entry(key).or_insert(0) |= flags;
+    }
+}
+
+fn normalize_leading_query_blocks(
+    elements: &mut [tidb_ast::LeadingElement],
+    select_offset: i32,
+    named_block: Option<&str>,
+) {
+    for element in elements {
+        match element {
+            tidb_ast::LeadingElement::Table(table) => {
+                if table.qb_name.as_deref().is_some_and(|query_block| {
+                    query_block.eq_ignore_ascii_case(&format!("sel_{select_offset}"))
+                        || named_block.is_some_and(|name| query_block.eq_ignore_ascii_case(name))
+                }) {
+                    table.qb_name = Some(format!("sel_{select_offset}"));
+                }
+            }
+            tidb_ast::LeadingElement::Group(group) => {
+                normalize_leading_query_blocks(group, select_offset, named_block);
+            }
+        }
     }
 }
 
@@ -365,7 +415,7 @@ pub fn extract_table_alias(names: &[FieldName]) -> Option<HintedTable> {
 /// children have moved by then, so the names arrive as parameters.
 pub fn set_preferred_join_type_and_order(
     join: &mut LogicalJoin,
-    hints: &JoinHints,
+    hints: &Rc<JoinHints>,
     left_names: &[FieldName],
     right_names: &[FieldName],
 ) {
@@ -412,6 +462,36 @@ pub fn set_preferred_join_type_and_order(
         if hints.prefers(rhs.as_ref(), hinted) {
             join.prefer_join_type |= right_bit;
             join.right_prefer_join_type |= hinted;
+        }
+    }
+    if let Some(leading) = &hints.leading {
+        let mut tables = Vec::new();
+        collect_leading_tables(leading, &mut tables);
+        join.prefer_join_order = [lhs.as_ref(), rhs.as_ref()].iter().all(|alias| {
+            alias.is_some_and(|alias| {
+                tables.iter().any(|table| {
+                    table.name.eq_ignore_ascii_case(&alias.table_name)
+                        && table
+                            .db_name
+                            .as_deref()
+                            .is_none_or(|db| db == "*" || db.eq_ignore_ascii_case(&alias.db_name))
+                })
+            })
+        });
+    }
+    if join.prefer_join_type != 0 || join.prefer_join_order {
+        join.hint_info = Some(Rc::clone(hints));
+    }
+}
+
+fn collect_leading_tables<'a>(
+    elements: &'a [tidb_ast::LeadingElement],
+    tables: &mut Vec<&'a tidb_ast::HintTable>,
+) {
+    for element in elements {
+        match element {
+            tidb_ast::LeadingElement::Table(table) => tables.push(table),
+            tidb_ast::LeadingElement::Group(group) => collect_leading_tables(group, tables),
         }
     }
 }

@@ -167,7 +167,10 @@ fn covered_condition_mask(conditions: &[Expression], access: &[Expression]) -> u
 
 /// Go `LogicalJoin.getProj`: make a child projection that initially exposes
 /// the child's complete schema through identity expressions.
-fn ensure_join_projection(ctx: &RuleContext<'_>, child: &mut LogicalPlan) -> Result<(), PlanError> {
+pub(crate) fn ensure_join_projection(
+    ctx: &RuleContext<'_>,
+    child: &mut LogicalPlan,
+) -> Result<(), PlanError> {
     if matches!(child, LogicalPlan::Projection(_)) {
         return Ok(());
     }
@@ -196,7 +199,7 @@ fn ensure_join_projection(ctx: &RuleContext<'_>, child: &mut LogicalPlan) -> Res
 }
 
 /// Go `LogicalProjection.AppendExpr`, used only by `updateEQCond`.
-fn append_join_projection_expr(
+pub(crate) fn append_join_projection_expr(
     ctx: &RuleContext<'_>,
     child: &mut LogicalPlan,
     expression: Expression,
@@ -230,6 +233,21 @@ fn append_join_projection_expr(
     schema.columns.push(column.clone());
     projection.base.base.set_schema(Some(schema));
     Ok(column)
+}
+
+/// Go `logicalop.InjectExpr`: make sure `plan` is a projection and append a
+/// non-column expression in the child's expression space.
+pub(crate) fn inject_join_expression(
+    ctx: &RuleContext<'_>,
+    mut plan: LogicalPlan,
+    expression: Expression,
+) -> Result<(LogicalPlan, Column), PlanError> {
+    if let Expression::Column(column) = expression {
+        return Ok((plan, column));
+    }
+    ensure_join_projection(ctx, &mut plan)?;
+    let column = append_join_projection_expr(ctx, &mut plan, expression)?;
+    Ok((plan, column))
 }
 
 fn build_join_equality(

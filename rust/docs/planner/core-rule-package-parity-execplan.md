@@ -21,6 +21,11 @@ Rust currently exposes Go's logical-rule list but several entries are missing, n
 - [x] (2026-08-29) Integrated pinned `PropConstForOuterJoin`: preserved-side constants, transitive equality classes, null-sensitive modes, inner `IS NOT NULL` derivation, recursive safe replacement, `allJoinLeaf`, and join-type-specific validity filters now use the ordinary join executor path.
 - [x] (2026-08-29) Replaced the absent/partial outer-join anti pattern with pinned `OuterJoinToSemiJoin`: recursive selection discovery, identity-projection traversal, right-join normalization, join-predicate and NOT NULL witnesses, typed NULL restoration, and Apply/NullEQ refusal.
 - [x] (2026-08-29) Replaced the static-only index-pruning shortcuts with the pinned `rule_prune_indexes.go` branches reachable before stats derivation: forced-path bypass, INDEX_MERGE preservation/preference, fix-control 52869, partial-index affected-column precheck, deterministic scoring, default-ten selection, and the exact safety fallback. Removed master-only clustered-prefix/internal-scoring gap stubs that are absent from the pinned tree.
+- [x] (2026-08-29) Inventoried the complete pinned `pkg/planner/core/joinorder` dependency: four production files, two original test/benchmark files, and `BUILD.bazel`. Removed Rust's disconnected `ProjectionInlineShape` adapter, derived benchmark assertions, and partial/ignored test catalogs; none was a Go planner type or executable original test path.
+- [x] (2026-08-29) Completed and registered `pkg/planner/core/joinorder`: real-expression substitution and equality alignment, CD-C graph/conflict rules, statistics and cumulative cost, DP and multi-start greedy enumeration, Cartesian/bushy recovery, ordered-leading index proof, nested LEADING construction, derived-table preservation, method-hint restoration, warning plumbing, and the complete pinned artifact inventory.
+- [x] (2026-08-29) Ported the complete pinned `OrderAwareJoinReorder` source behavior without registering a half-pipeline: TopN/Sort order extraction, Projection/Limit/Selection propagation, mutable-selection fence, carrier-only recursion, exact DataSource index proof, and internal LEADING annotation. Focused tests cover the forward-column contract and an indexed carrier below TopN.
+- [x] (2026-08-29) Read, inventoried, and ported all four pinned legacy join-reorder production sources (`rule_join_reorder.go`, DP, greedy, and projection-inline). `JoinReOrderSolver` now dispatches to the advanced or legacy implementation using the same session variable as Go; both it and `OrderAwareJoinReorder` are registered in the ordinary rule pipeline.
+- [x] (2026-08-29) Wired SELECT preorder query-block offsets and current-block `sel_N`/`QB_NAME` matching into join hints, replacing the prior all-`-1` plan identity that made scoped hints inapplicable.
 - [ ] Run the Ready validation profile and record the complete package receipt.
 
 ## Surprises & Discoveries
@@ -52,6 +57,27 @@ Rust currently exposes Go's logical-rule list but several entries are missing, n
 - Observation: the ignored pruning inventory mixed current-master behavior into a pinned-commit parity task.
   Evidence: `TestIndexPruneWithSharedClusteredPrefix`, `effectiveIndexColumnIDs`, and the internal bad-offset test do not exist at `e2788410`; the pinned rule's fallback path deliberately has no consecutive-column IDs. Those stubs were removed rather than importing newer pruning policy.
 
+- Observation: Rust's projection-inline seed modeled a custom expression-shape API instead of Go's planner behavior.
+  Evidence: pinned Go's `rule_join_reorder_projection_inline.go` consumes real `LogicalProjection`, `expression.Expression`, schemas, statistics, and plan construction; Rust's `ProjectionInlineShape` accepted effect booleans supplied by tests and was not called by the optimizer.
+
+- Observation: Rust's existing join-order benchmark ledger changed a non-asserting Go benchmark into derived correctness assertions while leaving both original package tests ignored.
+  Evidence: `core_joinorder_greedy_start_isolation_source.rs` asserted a hand-derived `sink` value rather than running Go's benchmark workload, and its `chooseBestGreedyStart`/clone-isolation functions had no production owner. The file was removed; original coverage will be colocated with the real package implementation.
+
+- Observation: pinned `OrderAwareJoinReorder` cannot be completed as an isolated wrapper.
+  Evidence: its carrier selection, index-order proof, annotation, and ordinary reorder path call the separate `pkg/planner/core/joinorder` package, whose complete pinned inventory is `conflict_detector.go`, `join_order.go`, `ordered_leading.go`, `util.go`, `join_order_test.go`, `bitset_bench_test.go`, and `BUILD.bazel`.
+
+- Observation: Go's advanced `ConflictDetector.TryCreateCartesianCheckResult` mutates the detector even though the edge has no predicates.
+  Evidence: it calls `makeEdge`, which appends the synthetic edge and advances later edge indices. Rust's first draft only returned a detached edge; the detector now records it before constructing the result.
+
+- Observation: Go shares one `*PlanHints` object across all joins built in a query block and distinguishes conflicting LEADING hints by pointer identity.
+  Evidence: `CheckAndGenerateLeadingHint` compares the pointers, while `SetNewJoinWithHint` retains the same object after reorder. Rust's builder now carries `Rc<JoinHints>` and logical joins retain that shared owner instead of cloning independent hint values.
+
+- Observation: the pinned `JoinReOrderSolver` dispatches directly to the separate advanced `joinorder.Optimize` package only when `TiDBOptEnableAdvancedJoinReorder` is true; false selects the legacy solver in `rule_join_reorder.go`.
+  Evidence: the complete pinned rule wrapper was read before registration. The advanced package will not be registered as an unconditional replacement because that would erase the session-variable behavior.
+
+- Observation: Rust already carried query-block offsets on every logical plan and used them while matching LEADING tables, but the SELECT builder never pushed an offset.
+  Evidence: ordinary plans were constructed with `select_offset() == -1`; the builder now assigns Go's preorder `sel_1`, `sel_2`, ... identities, restores the stack on every result, and focused tests prove scoped and named-block join-hint matching.
+
 ## Decision Log
 
 - Decision: Close `pkg/planner/core/rule/util` before continuing the parent `rule` package.
@@ -60,6 +86,14 @@ Rust currently exposes Go's logical-rule list but several entries are missing, n
 
 - Decision: Keep Go hooks as direct Rust functions rather than mutable process-global function variables.
   Rationale: the Go variables break an import cycle; Rust modules in one crate have no such cycle. Call behavior and signatures remain centralized without introducing mutable global state that Go does not behaviorally expose.
+  Date/Author: 2026-08-29 / Codex
+
+- Decision: Complete the pinned `joinorder` package before wiring `OrderAwareJoinReorder` or `JoinReOrderSolver` into `RuleId::body`.
+  Rationale: registering either rule without the shared conflict detector, enumeration, hint, and ordered-leading behavior would create another narrower execution path and violate package-level completion.
+  Date/Author: 2026-08-29 / Codex
+
+- Decision: Preserve the pinned legacy and advanced join-reorder implementations as separate branches selected by `TiDBOptEnableAdvancedJoinReorder`.
+  Rationale: the two Go algorithms have different extraction, projection-inline, DP, greedy, Cartesian, and hint behavior. Routing both settings to one Rust solver would not be behavioral parity.
   Date/Author: 2026-08-29 / Codex
 
 ## Outcomes & Retrospective
@@ -71,6 +105,8 @@ The registered predicate-simplification body and ordinary/inner/outer-join propa
 ## Context and Orientation
 
 The parent pinned package contains `BUILD.bazel`, thirteen production `.go` files, four original `_test.go` files, and the nested `util` package. The Rust rule driver is `rust/crates/tidb-planner/src/logical/rule.rs`; tree rewrites are in `logical/rewrite.rs`; rule-specific bodies are `logical/rule_*.rs`. Executor-owned catalog and partition-expression access is in `rust/crates/tidb-executor/src/driver/planner_bridge.rs`.
+
+The pinned `pkg/planner/core/joinorder` package is a direct dependency of both the parent package's ordinary join reorder and nested `rule` package's order-aware wrapper. Its complete artifact inventory is four production files (`conflict_detector.go`, `join_order.go`, `ordered_leading.go`, `util.go`), two original test/support files (`join_order_test.go`, `bitset_bench_test.go`), and `BUILD.bazel`; it has no fixtures, generated files or inputs, build-tag/platform variants, fuzz targets, or examples.
 
 The nested pinned `pkg/planner/core/rule/util` package contains exactly `misc.go` and `BUILD.bazel`, with no package-local tests, fixtures, generated files, build-tag variants, benchmarks, fuzz targets, or examples. Its behaviors are expression/column replacement, outer/inner column-set tests, maximum-one-row key tests, unique-index key derivation, three import-cycle hooks, and bottom-up key-info traversal.
 

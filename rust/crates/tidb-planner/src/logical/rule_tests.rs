@@ -71,6 +71,14 @@ pub(crate) fn test_context(allocator: &PlanIdAllocator) -> RuleContext<'_> {
         partition_pruning: None,
         opt_index_prune_threshold: 20,
         always_keep_join_key: true,
+        join_reorder_threshold: 0,
+        advanced_join_reorder: true,
+        cartesian_join_order_threshold: 0.0,
+        join_reorder_through_proj: false,
+        join_reorder_through_sel: false,
+        outer_join_reorder: true,
+        advanced_join_hint: true,
+        hint_warning_sink: None,
     }
 }
 

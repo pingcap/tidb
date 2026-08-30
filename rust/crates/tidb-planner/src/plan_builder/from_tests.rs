@@ -715,7 +715,7 @@ fn test_join_hints_set_the_preferred_type_on_the_named_side() {
     );
 
     let mut builder = harness.builder();
-    builder.join_hints = hints;
+    builder.join_hints = hints.into();
     let plan = builder
         .build_join(&from_clause("SELECT * FROM t1 LEFT JOIN t2 ON t1.a = t2.a"))
         .expect("the join builds");
@@ -732,6 +732,27 @@ fn test_join_hints_set_the_preferred_type_on_the_named_side() {
 }
 
 #[test]
+fn test_leading_hint_is_retained_on_the_join() {
+    let harness = Harness::new();
+    let mut builder = harness.builder();
+    let select = parse_select("SELECT /*+ LEADING(t1, t2) */ * FROM t1 JOIN t2 ON t1.a = t2.a");
+    builder.join_hints = std::rc::Rc::new(JoinHints::from_select(&select));
+    let plan = builder
+        .build_join(select.from.as_ref().expect("FROM clause"))
+        .expect("the join builds");
+    let mut retained = None;
+    plan.walk_preorder(&mut |node| {
+        if let LogicalPlan::Join(join) = node {
+            retained = Some((join.prefer_join_order, join.hint_info.clone()));
+        }
+    });
+    let (prefer_join_order, hint) = retained.expect("expected Join");
+    assert!(prefer_join_order);
+    let hint = hint.expect("usable hint info");
+    assert_eq!(hint.leading.as_ref().map(Vec::len), Some(2));
+}
+
+#[test]
 fn test_select_ast_join_hints_reach_the_logical_join() {
     let harness = Harness::new();
     for (hint, expected) in [
@@ -744,18 +765,56 @@ fn test_select_ast_join_hints_reach_the_logical_join() {
             "SELECT /*+ {hint} */ * FROM t1 JOIN t2 ON t1.a = t2.a"
         ));
         let (plan, _) = builder.build_select(&select).expect("the SELECT builds");
-        let LogicalPlan::Projection(projection) = plan else {
-            panic!("the SELECT keeps its output projection");
-        };
-        let LogicalPlan::Join(join) = &projection.base.children()[0] else {
-            panic!("the projection child is the hinted join");
-        };
-        assert_ne!(
-            join.prefer_join_type & expected,
-            0,
-            "{hint} did not reach LogicalJoin"
-        );
+        let mut retained = false;
+        plan.walk_preorder(&mut |node| {
+            if let LogicalPlan::Join(join) = node {
+                retained |= join.prefer_join_type & expected != 0;
+            }
+        });
+        assert!(retained, "{hint} did not reach reordered LogicalJoin");
     }
+}
+
+#[test]
+fn test_join_hints_match_the_current_query_block() {
+    let harness = Harness::new();
+    for (hint, expected) in [
+        ("TIDB_HJ(@sel_1 t1, t2)", true),
+        ("TIDB_HJ(@sel_2 t1, t2)", false),
+        ("QB_NAME(main) TIDB_HJ(@main t1, t2)", true),
+    ] {
+        let mut builder = harness.builder();
+        let select = parse_select(&format!(
+            "SELECT /*+ {hint} */ * FROM t1 JOIN t2 ON t1.a = t2.a"
+        ));
+        let (plan, _) = builder.build_select(&select).expect("the SELECT builds");
+        let mut retained = false;
+        plan.walk_preorder(&mut |node| {
+            if let LogicalPlan::Join(join) = node {
+                retained |= join.prefer_join_type & join_hint_flags::HASH_JOIN != 0;
+            }
+        });
+        assert_eq!(retained, expected, "hint {hint}");
+    }
+}
+
+#[test]
+fn test_select_builder_assigns_preorder_query_block_offsets() {
+    let harness = Harness::new();
+    let mut builder = harness.builder();
+    let select = parse_select("SELECT * FROM (SELECT a FROM t1) AS d");
+    let (plan, _) = builder.build_select(&select).expect("the SELECT builds");
+    let mut offsets = std::collections::BTreeSet::new();
+    plan.walk_preorder(&mut |node| {
+        offsets.insert(node.query_block_offset());
+    });
+    assert!(offsets.contains(&1), "outer SELECT offset");
+    assert!(offsets.contains(&2), "derived SELECT offset");
+    assert_eq!(
+        builder.select_offset(),
+        -1,
+        "the query-block stack is restored"
+    );
 }
 
 #[test]

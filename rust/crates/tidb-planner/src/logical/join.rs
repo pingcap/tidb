@@ -35,6 +35,7 @@
 //!   it and physical join reads it.
 
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
 use tidb_datatype::{Datum, FieldName, FieldTypeFlags};
 use tidb_expr::column::Column;
@@ -75,6 +76,10 @@ pub struct LogicalJoin {
     pub prefer_join_order: bool,
     /// Go `InternalPreferJoinOrder`.
     pub internal_prefer_join_order: bool,
+    /// Go `HintInfo`.
+    pub hint_info: Option<Rc<crate::plan_builder::from::JoinHints>>,
+    /// Go `InternalHintInfo`.
+    pub internal_hint_info: Option<Rc<crate::plan_builder::from::JoinHints>>,
     /// Go `LeftPreferJoinType`.
     pub left_prefer_join_type: u32,
     /// Go `RightPreferJoinType`.
@@ -126,6 +131,8 @@ impl Default for LogicalJoin {
             prefer_join_type: 0,
             prefer_join_order: false,
             internal_prefer_join_order: false,
+            hint_info: None,
+            internal_hint_info: None,
             left_prefer_join_type: 0,
             right_prefer_join_type: 0,
             equal_conditions: Vec::new(),
@@ -1228,6 +1235,8 @@ impl LogicalJoin {
             prefer_join_type: self.prefer_join_type,
             prefer_join_order: self.prefer_join_order,
             internal_prefer_join_order: self.internal_prefer_join_order,
+            hint_info: self.hint_info.clone(),
+            internal_hint_info: self.internal_hint_info.clone(),
             left_prefer_join_type: self.left_prefer_join_type,
             right_prefer_join_type: self.right_prefer_join_type,
             equal_conditions: self.equal_conditions.clone(),

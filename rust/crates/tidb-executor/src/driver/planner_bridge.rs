@@ -55,6 +55,12 @@ impl tidb_planner::logical::rule::PlanCacheMarker for crate::StmtContext {
     }
 }
 
+impl tidb_planner::logical::rule::HintWarningSink for crate::StmtContext {
+    fn set_hint_warning(&self, message: &str) {
+        self.append_warning_parts(1815, message);
+    }
+}
+
 /// Builds the name-resolution scope of one `FROM` node through Go's logical
 /// `buildResultSetNode` path. Correlation discovery needs the logical schema
 /// and output names, not an executor or a second AST-side join builder.
@@ -967,6 +973,14 @@ fn optimize_built_logical(
         partition_pruning: Some(&partition_pruning),
         opt_index_prune_threshold: ctx.opt_index_prune_threshold(),
         always_keep_join_key: ctx.always_keep_join_key(),
+        join_reorder_threshold: ctx.join_reorder_threshold(),
+        advanced_join_reorder: ctx.advanced_join_reorder(),
+        cartesian_join_order_threshold: ctx.cartesian_join_order_threshold(),
+        join_reorder_through_proj: ctx.join_reorder_through_proj(),
+        join_reorder_through_sel: ctx.join_reorder_through_sel(),
+        outer_join_reorder: ctx.outer_join_reorder(),
+        advanced_join_hint: ctx.advanced_join_hint(),
+        hint_warning_sink: Some(ctx),
     };
     let optimized = logical_optimize(&rule_context, flags, plan)
         .map_err(|(_, error)| error)?

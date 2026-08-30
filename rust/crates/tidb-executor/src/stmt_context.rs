@@ -443,6 +443,10 @@ pub struct StmtContext {
     /// join reorder uses the advanced framework. Its greedy solver compares
     /// the two cheapest starting leaves; the legacy framework uses only one.
     advanced_join_reorder: bool,
+    /// Go `SessionVars.CartesianJoinOrderThreshold`.
+    cartesian_join_order_threshold: f64,
+    /// Go `SessionVars.EnableAdvancedJoinHint`.
+    advanced_join_hint: bool,
     /// Go `SessionVars.OptOrderingIdxSelRatio`
     /// (`@@tidb_opt_ordering_index_selectivity_ratio`, default `0.01`): the
     /// fraction of an order-preserving access range expected to be scanned
@@ -745,6 +749,9 @@ impl StmtContext {
             join_reorder_threshold: tidb_vardef::defaults::DEF_TIDB_OPT_JOIN_REORDER_THRESHOLD
                 as i32,
             advanced_join_reorder: tidb_vardef::defaults::DEF_TIDB_OPT_ENABLE_ADVANCED_JOIN_REORDER,
+            cartesian_join_order_threshold:
+                tidb_vardef::defaults::DEF_OPT_CARTESIAN_JOIN_ORDER_THRESHOLD,
+            advanced_join_hint: tidb_vardef::defaults::DEF_TIDB_OPT_ADVANCED_JOIN_HINT,
             ordering_index_selectivity_ratio: 0.01,
             allow_projection_push_down: true,
             limit_push_down_threshold: tidb_vardef::defaults::DEF_OPT_LIMIT_PUSH_DOWN_THRESHOLD
@@ -1419,6 +1426,32 @@ impl StmtContext {
     #[must_use]
     pub fn advanced_join_reorder(&self) -> bool {
         self.advanced_join_reorder
+    }
+
+    /// Sets `@@tidb_opt_cartesian_join_order_threshold` for this statement.
+    #[must_use]
+    pub fn with_cartesian_join_order_threshold(mut self, threshold: f64) -> Self {
+        self.cartesian_join_order_threshold = threshold;
+        self
+    }
+
+    /// Go `SessionVars.CartesianJoinOrderThreshold`.
+    #[must_use]
+    pub fn cartesian_join_order_threshold(&self) -> f64 {
+        self.cartesian_join_order_threshold
+    }
+
+    /// Sets `@@tidb_opt_advanced_join_hint` for this statement.
+    #[must_use]
+    pub fn with_advanced_join_hint(mut self, enabled: bool) -> Self {
+        self.advanced_join_hint = enabled;
+        self
+    }
+
+    /// Go `SessionVars.EnableAdvancedJoinHint`.
+    #[must_use]
+    pub fn advanced_join_hint(&self) -> bool {
+        self.advanced_join_hint
     }
 
     /// Sets `@@tidb_opt_join_reorder_through_proj` for this statement.

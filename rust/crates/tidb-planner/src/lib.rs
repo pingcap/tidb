@@ -121,7 +121,7 @@ pub mod index_advisor_model;
 pub mod index_columns;
 pub mod index_task;
 pub mod join_condition;
-pub mod join_reorder_projection_inline;
+pub mod joinorder;
 pub mod logical;
 pub mod logical_cte_table;
 pub mod logical_data_source;

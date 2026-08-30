@@ -421,6 +421,10 @@ impl RuleId {
             Self::PredicateSimplification => {
                 Some(&super::rule_predicate_simplification::PredicateSimplification)
             }
+            Self::OrderAwareJoinReorder => {
+                Some(&super::rule_order_aware_join_reorder::OrderAwareJoinReorder)
+            }
+            Self::JoinReOrderSolver => Some(&super::rule_join_reorder::JoinReOrderSolver),
             Self::OuterJoinToSemiJoin => {
                 Some(&super::rule_outer_join_to_semi_join::OuterJoinToSemiJoin)
             }
@@ -434,8 +438,6 @@ impl RuleId {
             | Self::AggregationPushDownSolver
             | Self::FullTextIndexResolverTopN
             | Self::FullTextIndexResolverProjection
-            | Self::OrderAwareJoinReorder
-            | Self::JoinReOrderSolver
             | Self::CorrelateSolver
             | Self::FullTextIndexResolverRejectRemaining => None,
         }
@@ -606,6 +608,28 @@ pub struct RuleContext<'a> {
     pub opt_index_prune_threshold: i32,
     /// Go `SessionVars.AlwaysKeepJoinKey`.
     pub always_keep_join_key: bool,
+    /// Go `SessionVars.TiDBOptJoinReorderThreshold`.
+    pub join_reorder_threshold: i32,
+    /// Go `SessionVars.TiDBOptEnableAdvancedJoinReorder`.
+    pub advanced_join_reorder: bool,
+    /// Go `SessionVars.CartesianJoinOrderThreshold`.
+    pub cartesian_join_order_threshold: f64,
+    /// Go `SessionVars.TiDBOptJoinReorderThroughProj`.
+    pub join_reorder_through_proj: bool,
+    /// Go `SessionVars.TiDBOptJoinReorderThroughSel`.
+    pub join_reorder_through_sel: bool,
+    /// Go `SessionVars.EnableOuterJoinReorder`.
+    pub outer_join_reorder: bool,
+    /// Go `SessionVars.EnableAdvancedJoinHint`.
+    pub advanced_join_hint: bool,
+    /// Go `StmtCtx.SetHintWarning`.
+    pub hint_warning_sink: Option<&'a dyn HintWarningSink>,
+}
+
+/// The optimizer-hint warning side effect exposed by Go's statement context.
+pub trait HintWarningSink {
+    /// Appends one hint warning.
+    fn set_hint_warning(&self, message: &str);
 }
 
 /// The session side effect Go's expression and rule simplifiers perform.
