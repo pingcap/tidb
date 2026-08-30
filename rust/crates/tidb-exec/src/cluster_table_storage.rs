@@ -119,6 +119,27 @@ pub enum LockKeysOutcome {
     TransactionError(LockSqlError),
 }
 
+/// Failure while executing one restricted SQL statement in a pessimistic
+/// transaction.
+#[derive(Debug)]
+pub enum PessimisticStatementTransactionError {
+    /// Snapshot creation or statement planning failed before locking.
+    Build(String),
+    /// Locking or the final transaction commit produced a SQL error.
+    Transaction(LockSqlError),
+}
+
+impl fmt::Display for PessimisticStatementTransactionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Build(detail) => formatter.write_str(detail),
+            Self::Transaction(error) => formatter.write_str(&error.message),
+        }
+    }
+}
+
+impl std::error::Error for PessimisticStatementTransactionError {}
+
 /// The keys one statement's staged writes owe pessimistic locks -- Go
 /// `LazyTxn.KeysNeedToLock` over the statement's staging delta, filtered by
 /// `KeyNeedToLock` (`pkg/session/txn.go`).
@@ -151,6 +172,43 @@ pub fn pessimistic_lock_delta(
         .filter(|(key, value)| statement_key_needs_lock(key.as_bytes(), value.as_deref()))
         .map(|(key, _)| key.as_bytes().to_vec())
         .collect()
+}
+
+/// Converts a direct system-table mutation plan into the session transaction
+/// buffer used by the ordinary pessimistic statement path.
+///
+/// Statistics restricted SQL and user SQL produce the same TiKV mutation
+/// kinds. Keeping this conversion here makes both paths apply the same lazy
+/// INSERT assertions and lock-key classifier.
+#[must_use]
+pub fn mutation_buffer_from_mutations(mutations: Vec<OptimisticMutation>) -> MutationBuffer {
+    let buffer = MutationBuffer::new();
+    stage_mutations(&buffer, mutations);
+    buffer
+}
+
+/// Stages direct mutation-plan output into an existing transaction buffer.
+pub fn stage_mutations(buffer: &MutationBuffer, mutations: Vec<OptimisticMutation>) {
+    use tidb_txnkv::transaction::OptimisticMutationKind;
+
+    for mutation in mutations {
+        let key = Key::from_bytes(mutation.key().to_vec());
+        match mutation.kind() {
+            OptimisticMutationKind::Delete
+            | OptimisticMutationKind::IndexDelete
+            | OptimisticMutationKind::MetaDelete => buffer.delete(key),
+            OptimisticMutationKind::Insert | OptimisticMutationKind::UniqueIndexInsert => {
+                buffer.set(key.clone(), mutation.value().to_vec());
+                buffer.mark_presume_key_not_exists(&key);
+            }
+            OptimisticMutationKind::PutExisting
+            | OptimisticMutationKind::IndexPut
+            | OptimisticMutationKind::MetaPut => {
+                buffer.set(key, mutation.value().to_vec());
+            }
+            OptimisticMutationKind::LockOnly => {}
+        }
+    }
 }
 
 /// Go `KeyNeedToLock` (`pkg/session/txn.go`), reduced as
@@ -810,9 +868,26 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
         timeout: Duration,
         commit_protocol: CommitProtocol,
     ) -> Result<Self, OptimisticCoordinatorError> {
+        Self::begin_pessimistic_with_budget(
+            opener,
+            timeout,
+            commit_protocol,
+            MAX_OPTIMISTIC_MUTATIONS,
+            MAX_OPTIMISTIC_TRANSACTION_BYTES,
+        )
+    }
+
+    /// [`Self::begin_pessimistic`] with the publication budget supplied by the
+    /// Go caller whose restricted transaction is being represented.
+    pub fn begin_pessimistic_with_budget(
+        opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+        timeout: Duration,
+        commit_protocol: CommitProtocol,
+        planned_mutation_count: usize,
+        planned_aggregate_bytes: usize,
+    ) -> Result<Self, OptimisticCoordinatorError> {
         let opened_at = Instant::now();
-        let mut transaction =
-            opener.begin(MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)?;
+        let mut transaction = opener.begin(planned_mutation_count, planned_aggregate_bytes)?;
         transaction.set_commit_protocol(commit_protocol);
         let start_ts = transaction.start_ts();
         Ok(Self {
@@ -1095,6 +1170,204 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         finish_session_transaction(&mut state).map_err(|error| error.to_string())
+    }
+}
+
+/// Executes and commits one restricted SQL statement inside the ordinary
+/// pessimistic transaction path.
+///
+/// The statement is rebuilt after Go-equivalent pessimistic lock conflicts at
+/// the advanced `for_update_ts`; its transaction `start_ts` remains stable and
+/// is supplied separately for version columns. Callers with multiple Go SQL
+/// statements must call [`lock_pessimistic_statement`] once per statement and
+/// commit their combined mutations only after every statement succeeds.
+pub fn commit_pessimistic_statement<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+    T,
+>(
+    opener: &RealOptimisticTransactionOpener<C, L, P>,
+    timeout: Duration,
+    build: impl FnMut(Box<dyn ClusterSnapshot>, u64) -> Result<(T, Vec<OptimisticMutation>), String>,
+) -> Result<T, PessimisticStatementTransactionError> {
+    let transaction = SessionTransaction::begin_pessimistic_with_budget(
+        Arc::new(opener.clone()),
+        timeout,
+        opener.commit_protocol(),
+        usize::MAX,
+        MAX_OPTIMISTIC_TRANSACTION_BYTES,
+    )
+    .map_err(|error| PessimisticStatementTransactionError::Build(error.to_string()))?;
+    let staged = MutationBuffer::new();
+    let value = lock_pessimistic_statement(&transaction, &staged, build)?;
+    transaction
+        .commit(&staged)
+        .map_err(PessimisticStatementTransactionError::Transaction)?;
+    Ok(value)
+}
+
+struct MutationOverlaySnapshot {
+    snapshot: Box<dyn ClusterSnapshot>,
+    staged: MutationBuffer,
+}
+
+impl MutationOverlaySnapshot {
+    fn new(snapshot: Box<dyn ClusterSnapshot>, staged: MutationBuffer) -> Self {
+        Self { snapshot, staged }
+    }
+}
+
+impl fmt::Debug for MutationOverlaySnapshot {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("MutationOverlaySnapshot")
+            .field("start_ts", &self.snapshot.start_ts())
+            .finish()
+    }
+}
+
+impl ClusterSnapshot for MutationOverlaySnapshot {
+    fn point_rpc_counts(&mut self) -> (u64, u64) {
+        self.snapshot.point_rpc_counts()
+    }
+
+    fn prepare(&mut self) -> Result<(), StorageError> {
+        self.snapshot.prepare()
+    }
+
+    fn get(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
+        match self.staged.get(key) {
+            Some(value) => Ok(value),
+            None => self.snapshot.get(key),
+        }
+    }
+
+    fn scan(
+        &mut self,
+        start: &Key,
+        end: &Key,
+        limit: Option<usize>,
+    ) -> Result<SnapshotPairs, StorageError> {
+        let mut rows = self
+            .snapshot
+            .scan(start, end, None)?
+            .into_iter()
+            .collect::<BTreeMap<_, _>>();
+        for (key, value) in self.staged.range(start, end) {
+            match value {
+                Some(value) => {
+                    rows.insert(key.as_bytes().to_vec(), value);
+                }
+                None => {
+                    rows.remove(key.as_bytes());
+                }
+            }
+        }
+        Ok(rows.into_iter().take(limit.unwrap_or(usize::MAX)).collect())
+    }
+
+    fn start_ts(&self) -> u64 {
+        self.snapshot.start_ts()
+    }
+
+    fn declare_autocommit_point_get(&mut self) -> bool {
+        self.snapshot.declare_autocommit_point_get()
+    }
+}
+
+/// Locks one Go SQL statement and returns its mutations for the enclosing
+/// transaction's eventual commit.
+pub fn lock_pessimistic_statement<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+    T,
+>(
+    transaction: &SessionTransaction<C, L, P>,
+    staged: &MutationBuffer,
+    build: impl FnMut(Box<dyn ClusterSnapshot>, u64) -> Result<(T, Vec<OptimisticMutation>), String>,
+) -> Result<T, PessimisticStatementTransactionError> {
+    let (value, mutations) = lock_pessimistic_statement_with(
+        transaction.start_ts(),
+        |read_ts| {
+            match read_ts {
+                Some(for_update_ts) => transaction.snapshot_at_for(for_update_ts, true),
+                None => transaction.snapshot_for(true),
+            }
+            .map(|snapshot| {
+                Box::new(MutationOverlaySnapshot::new(snapshot, staged.clone()))
+                    as Box<dyn ClusterSnapshot>
+            })
+            .map_err(|error| error.to_string())
+        },
+        |keys, presume_not_exists, duplicate_hints| {
+            transaction
+                .lock_keys_with_assertions(keys, presume_not_exists, duplicate_hints, false)
+                .map_err(|error| error.to_string())
+        },
+        build,
+    )?;
+    stage_mutations(staged, mutations);
+    Ok(value)
+}
+
+/// Shared Go pessimistic statement rebuild loop used by both the concrete
+/// TiKV transaction and the server's testable transaction authority.
+pub fn lock_pessimistic_statement_with<T>(
+    start_ts: u64,
+    mut snapshot: impl FnMut(Option<u64>) -> Result<Box<dyn ClusterSnapshot>, String>,
+    mut lock: impl FnMut(
+        Vec<Vec<u8>>,
+        BTreeSet<Vec<u8>>,
+        BTreeMap<Vec<u8>, DuplicateKeyHint>,
+    ) -> Result<LockKeysOutcome, String>,
+    mut build: impl FnMut(Box<dyn ClusterSnapshot>, u64) -> Result<(T, Vec<OptimisticMutation>), String>,
+) -> Result<(T, Vec<OptimisticMutation>), PessimisticStatementTransactionError> {
+    const MAX_PESSIMISTIC_STATEMENT_RETRIES: u32 = 256;
+
+    let mut retry_read_ts = None;
+    let mut retries = 0;
+    loop {
+        let snapshot =
+            snapshot(retry_read_ts).map_err(PessimisticStatementTransactionError::Build)?;
+        let (value, mutations) =
+            build(snapshot, start_ts).map_err(PessimisticStatementTransactionError::Build)?;
+        let buffer = mutation_buffer_from_mutations(mutations.clone());
+        let keys = pessimistic_lock_delta(&[], &buffer.snapshot());
+        if keys.is_empty() {
+            return Ok((value, mutations));
+        }
+        let presume_not_exists = buffer
+            .presume_not_exists_keys()
+            .into_iter()
+            .filter(|key| keys.contains(key))
+            .collect::<BTreeSet<_>>();
+        let duplicate_hints = presume_not_exists
+            .iter()
+            .filter_map(|key| {
+                buffer
+                    .duplicate_key_hint_for(key)
+                    .map(|hint| (key.clone(), hint))
+            })
+            .collect::<BTreeMap<_, _>>();
+        match lock(keys, presume_not_exists, duplicate_hints)
+            .map_err(PessimisticStatementTransactionError::Build)?
+        {
+            LockKeysOutcome::Locked { .. } => return Ok((value, mutations)),
+            LockKeysOutcome::RetryStatement { for_update_ts, .. } => {
+                if retries >= MAX_PESSIMISTIC_STATEMENT_RETRIES {
+                    return Err(PessimisticStatementTransactionError::Build(
+                        "pessimistic lock retry limit reached".to_owned(),
+                    ));
+                }
+                retries += 1;
+                retry_read_ts = Some(for_update_ts);
+            }
+            LockKeysOutcome::StatementError(error) | LockKeysOutcome::TransactionError(error) => {
+                return Err(PessimisticStatementTransactionError::Transaction(error));
+            }
+        }
     }
 }
 
@@ -1513,6 +1786,64 @@ fn engine_sql_error(detail: impl fmt::Display) -> LockSqlError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Debug)]
+    struct MapSnapshot(BTreeMap<Vec<u8>, Vec<u8>>);
+
+    impl ClusterSnapshot for MapSnapshot {
+        fn get(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
+            Ok(self.0.get(key.as_bytes()).cloned())
+        }
+
+        fn scan(
+            &mut self,
+            start: &Key,
+            end: &Key,
+            limit: Option<usize>,
+        ) -> Result<SnapshotPairs, StorageError> {
+            Ok(self
+                .0
+                .range(start.as_bytes().to_vec()..end.as_bytes().to_vec())
+                .take(limit.unwrap_or(usize::MAX))
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect())
+        }
+    }
+
+    #[test]
+    fn later_restricted_statements_read_the_transactions_staged_writes() {
+        let staged = MutationBuffer::new();
+        staged.set(Key::from_bytes(b"b".to_vec()), b"new".to_vec());
+        staged.delete(Key::from_bytes(b"c".to_vec()));
+        let mut snapshot = MutationOverlaySnapshot::new(
+            Box::new(MapSnapshot(BTreeMap::from([
+                (b"a".to_vec(), b"one".to_vec()),
+                (b"b".to_vec(), b"old".to_vec()),
+                (b"c".to_vec(), b"gone".to_vec()),
+            ]))),
+            staged,
+        );
+
+        assert_eq!(
+            snapshot
+                .get(&Key::from_bytes(b"b".to_vec()))
+                .expect("overlay get"),
+            Some(b"new".to_vec())
+        );
+        assert_eq!(
+            snapshot
+                .scan(
+                    &Key::from_bytes(b"a".to_vec()),
+                    &Key::from_bytes(b"d".to_vec()),
+                    None,
+                )
+                .expect("overlay scan"),
+            vec![
+                (b"a".to_vec(), b"one".to_vec()),
+                (b"b".to_vec(), b"new".to_vec()),
+            ]
+        );
+    }
 
     /// The handle is still `Send`, and now so is the transaction inside it.
     ///

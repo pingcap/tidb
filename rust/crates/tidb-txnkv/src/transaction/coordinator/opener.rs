@@ -195,6 +195,13 @@ where
         self
     }
 
+    /// Returns the commit protocol inherited by transactions opened through
+    /// this capability.
+    #[must_use]
+    pub const fn commit_protocol(&self) -> CommitProtocol {
+        self.protocol
+    }
+
     /// Assigns the SQL resource group inherited by every TiKV request opened
     /// through this capability.
     ///

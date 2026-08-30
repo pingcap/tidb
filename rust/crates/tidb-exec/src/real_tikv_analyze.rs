@@ -63,10 +63,13 @@ use crate::cluster_stats_write::{
     plan_partial_partition_stats_write, plan_partial_stats_write, plan_partition_stats_write,
     plan_stats_meta_version_refresh, plan_stats_write, StatsWritePlan,
 };
+use crate::cluster_table_storage::{
+    commit_pessimistic_statement, PessimisticStatementTransactionError,
+};
 use crate::mysql_bootstrap::utc_now_timestamp;
 use crate::mysql_system_tables::SystemTableError;
 use crate::pessimistic_lock_error::{commit_outcome_to_sql_error, LockSqlError};
-use crate::real_tikv_catalog::TransactionMetaSnapshot;
+use crate::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
 
 /// The mutation-count budget one `ANALYZE TABLE` declares.
 ///
@@ -1563,22 +1566,26 @@ fn refresh_stats_meta_version<C: StoreWriteClient, L: StoreWriteLoader, P: Store
     table_id: i64,
     timeout: Duration,
 ) -> Result<u64, ClusterAnalyzeError> {
-    let mut transaction = opener
-        .begin(ANALYZE_MAX_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)
-        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-    let version = transaction.start_ts();
-    let plan = {
-        let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
-        let catalog = load_cluster_catalog(&mut snapshot)
-            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-        plan_stats_meta_version_refresh(&mut snapshot, &catalog, table_id, version)
-            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?
-    };
-    let outcome = transaction
-        .commit(plan.mutations, &UnaryCallContext::with_timeout(timeout))
-        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-    classify_commit_outcome(&outcome)?;
-    Ok(version)
+    commit_pessimistic_statement(opener, timeout, |snapshot, version| {
+        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+        let catalog = load_cluster_catalog(&mut snapshot).map_err(|error| error.to_string())?;
+        let plan = plan_stats_meta_version_refresh(&mut snapshot, &catalog, table_id, version)
+            .map_err(|error| error.to_string())?;
+        Ok((version, plan.mutations))
+    })
+    .map_err(|error| match error {
+        PessimisticStatementTransactionError::Build(detail) => ClusterAnalyzeError::Other(detail),
+        PessimisticStatementTransactionError::Transaction(error)
+            if error.is_result_undetermined() =>
+        {
+            ClusterAnalyzeError::Undetermined(
+                "the ANALYZE transaction returned no commit verdict".to_owned(),
+            )
+        }
+        PessimisticStatementTransactionError::Transaction(error) => {
+            ClusterAnalyzeError::Commit(error)
+        }
+    })
 }
 
 fn commit_cluster_analyze_target<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
