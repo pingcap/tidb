@@ -499,6 +499,18 @@ impl KvTable {
             if index.clustered_primary {
                 continue;
             }
+            // If none of the indexed columns changed, the entry key and its
+            // payload (which only carries indexed/restored values plus the
+            // unchanged handle) cannot change either.  Avoid encoding both
+            // keys and values in this common non-index UPDATE path; Go's
+            // `SkipWriteUntouchedIndices` makes the same early decision.
+            if index
+                .column_offsets
+                .iter()
+                .all(|offset| old_row.get(*offset) == new_row.get(*offset))
+            {
+                continue;
+            }
             let (old_key, old_distinct) =
                 self.index_key(index, old_row, handle, physical_id, zone)?;
             let (new_key, new_distinct) =
