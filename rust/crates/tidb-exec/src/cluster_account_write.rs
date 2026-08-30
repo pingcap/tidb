@@ -47,7 +47,7 @@
 
 use std::collections::BTreeMap;
 
-use tidb_datatype::{Datum, Time};
+use tidb_datatype::{Datum, SessionTimeZone, Time};
 use tidb_meta::{key, value};
 use tidb_model::table_info::TableInfo;
 use tidb_txnkv::transaction::OptimisticMutation;
@@ -509,15 +509,17 @@ fn read_rows<S: MetaSnapshot>(
     table: &TableInfo,
 ) -> Result<Vec<StoredRow>, AccountWriteError> {
     let view = full_view(table);
+    let timezone = SessionTimeZone::utc();
     let mut rows = Vec::new();
     for (key, value) in scan_system_table(snapshot, &view)? {
-        let values = tidb_tablecodec::decode_table_row_to_map(&value, &column_types(table), None)
-            .map_err(|error| {
-            AccountWriteError::Read(SystemTableError::Decode {
-                name: format!("{SYSTEM_DB}.{}", table.name.original()),
-                detail: error.to_string(),
-            })
-        })?;
+        let values =
+            tidb_tablecodec::decode_table_row_to_map(&value, &column_types(table), Some(&timezone))
+                .map_err(|error| {
+                    AccountWriteError::Read(SystemTableError::Decode {
+                        name: format!("{SYSTEM_DB}.{}", table.name.original()),
+                        detail: error.to_string(),
+                    })
+                })?;
         rows.push(StoredRow { key, values });
     }
     Ok(rows)

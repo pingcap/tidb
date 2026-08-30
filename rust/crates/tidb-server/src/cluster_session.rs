@@ -536,6 +536,19 @@ pub fn cluster_session_catalog_with_templates(
                             .get_or_build(table.id, || planner_statistics(loaded_stats, table));
                         catalog.set_table_statistics(table.id, statistics);
                     }
+                    if let Some(partition) = &table.partition {
+                        for definition in partition.read().definitions.snapshot() {
+                            let physical_id = definition.id;
+                            if let Some(loaded_stats) =
+                                stats.get(&physical_id).and_then(TableStatsState::loaded)
+                            {
+                                let statistics = stats_templates.get_or_build(physical_id, || {
+                                    planner_statistics(loaded_stats, table)
+                                });
+                                catalog.set_table_statistics(physical_id, statistics);
+                            }
+                        }
+                    }
                     catalog
                         .register_kv_in(&schema, table.name.original(), kv_table)
                         .expect("the schema was created just above this loop");

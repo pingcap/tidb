@@ -148,10 +148,7 @@ fn stats_targets(catalog: &ClusterCatalog) -> Vec<tidb_exec::real_tikv_stats::St
         .databases
         .iter()
         .flat_map(|database| database.tables.iter())
-        .map(|table| tidb_exec::real_tikv_stats::StatsTarget {
-            table: table.clone(),
-            column_types: tidb_exec::cluster_stats_load::column_types_of(table),
-        })
+        .flat_map(tidb_exec::real_tikv_stats::StatsTarget::for_table)
         .collect()
 }
 
@@ -210,9 +207,13 @@ where
             let shared = &published;
             let targets = current_stats_targets(&catalog);
             if loader.is_none() {
-                let (snapshot, located) =
-                    load_stats_snapshot_and_loader(&opener, timeout, &targets)
-                        .map_err(|error| error.to_string())?;
+                let (snapshot, located) = load_stats_snapshot_and_loader(
+                    &opener,
+                    timeout,
+                    &targets,
+                    stats_lease == crate::node_config::StatsLease::Zero,
+                )
+                .map_err(|error| error.to_string())?;
                 loader = Some(located);
                 let receipt = tidb_exec::stats_watch::receipt_of(&snapshot);
                 eprintln!(
@@ -244,6 +245,7 @@ where
                             timeout,
                             &targets,
                             current.as_ref(),
+                            stats_lease == crate::node_config::StatsLease::Zero,
                         )
                         .map(Some)
                         .map_err(|error| error.to_string())

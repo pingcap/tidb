@@ -59,7 +59,6 @@ use tidb_txnkv::PdRegionLoader;
 
 use tidb_exec::cluster_analyze::AnalyzeStatement;
 use tidb_exec::cluster_catalog::load_cluster_catalog;
-use tidb_exec::cluster_stats_load::column_types_of;
 use tidb_exec::real_tikv_analyze::{
     commit_cluster_analyze, record_global_history_enabled, resolve_cluster_analyze_statement,
     save_cluster_analyze_options, ClusterAnalyzeReport,
@@ -155,6 +154,7 @@ where
             self.timeout,
             &targets,
             current.as_ref(),
+            self.stats_lease.is_zero(),
         ) {
             Ok(snapshot) => {
                 let receipt = tidb_exec::stats_watch::receipt_of(&snapshot);
@@ -183,10 +183,7 @@ where
                 .databases
                 .iter()
                 .flat_map(|database| database.tables.iter())
-                .map(|table| StatsTarget {
-                    table: table.clone(),
-                    column_types: column_types_of(table),
-                })
+                .flat_map(StatsTarget::for_table)
                 .collect()
         };
         transaction

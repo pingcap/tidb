@@ -46,6 +46,36 @@ pub struct StatsTarget {
     pub column_types: BTreeMap<i64, FieldType>,
 }
 
+impl StatsTarget {
+    /// Expands one logical table into the IDs Go's statistics cache tracks:
+    /// the logical/global ID and every physical partition ID.
+    #[must_use]
+    pub fn for_table(table: &TableInfo) -> Vec<Self> {
+        let column_types = crate::cluster_stats_load::column_types_of(table);
+        let mut targets = Vec::with_capacity(
+            1 + table
+                .partition
+                .as_ref()
+                .map_or(0, |partition| partition.read().definitions.len()),
+        );
+        targets.push(Self {
+            table: table.clone(),
+            column_types: column_types.clone(),
+        });
+        if let Some(partition) = &table.partition {
+            for definition in partition.read().definitions.snapshot() {
+                let mut physical = table.clone();
+                physical.id = definition.id;
+                targets.push(Self {
+                    table: physical,
+                    column_types: column_types.clone(),
+                });
+            }
+        }
+        targets
+    }
+}
+
 /// Reads one table's statistics through one fresh read-only transaction.
 ///
 /// The catalog is loaded at that same timestamp, so the column types the
@@ -133,10 +163,12 @@ pub fn load_stats_item_from_cluster<
 /// transaction and returns the located `mysql.stats_*` views for later cache
 /// updates.
 ///
-/// This is pinned Go `InitStatsLite`: table meta plus column/index existence
-/// and load-state metadata are resident, while buckets, TopN, and CMSketch
-/// stay evicted until the ordinary item loader is requested by planning. A
-/// table with no `mysql.stats_meta` row becomes [`TableStatsState::Pseudo`].
+/// With a positive stats lease this is pinned Go `InitStatsLite`: table meta
+/// plus column/index existence and load-state metadata are resident, while
+/// buckets, TopN, and CMSketch stay evicted until planning requests them.
+/// `load_all` represents Go's zero-lease mode, where lazy loading is disabled
+/// and the same pass loads every item payload. A table with no
+/// `mysql.stats_meta` row becomes [`TableStatsState::Pseudo`].
 pub fn load_stats_snapshot_and_loader<
     C: StoreWriteClient,
     L: StoreWriteLoader,
@@ -145,6 +177,7 @@ pub fn load_stats_snapshot_and_loader<
     opener: &RealOptimisticTransactionOpener<C, L, P>,
     timeout: Duration,
     tables: &[StatsTarget],
+    load_all: bool,
 ) -> Result<(StatsSnapshot, ClusterStatsLoader), SystemTableError> {
     let mut transaction = opener
         .begin_read_only()
@@ -156,13 +189,21 @@ pub fn load_stats_snapshot_and_loader<
         let mut result = StatsSnapshot::new();
         for target in tables {
             let table_id = target.table.id;
-            let state =
+            let state = if load_all {
+                match loader.load_table(&mut snapshot, table_id, &target.column_types)? {
+                    Some(stats) => {
+                        TableStatsState::Loaded(stats.to_statistics_table(&target.table))
+                    }
+                    None => TableStatsState::Pseudo,
+                }
+            } else {
                 match loader.load_table_lite(&mut snapshot, table_id, &target.column_types)? {
                     Some(stats) => {
                         TableStatsState::Loaded(stats.to_statistics_table(&target.table))
                     }
                     None => TableStatsState::Pseudo,
-                };
+                }
+            };
             result.insert(table_id, state);
         }
         Ok((result, loader))
@@ -173,9 +214,10 @@ pub fn load_stats_snapshot_and_loader<
     loaded
 }
 
-/// Pinned Go `StatsCacheImpl.Update`: refreshes the lite cache image while
-/// preserving already resident items whose histogram version did not move,
-/// and eagerly refreshes only changed items that were resident before.
+/// Pinned Go `StatsCacheImpl.Update`: with a positive lease, refreshes the
+/// lite cache image while preserving already resident items whose histogram
+/// version did not move and eagerly refreshes only changed resident items.
+/// `load_all` selects Go's zero-lease behavior, where lazy loading is off.
 pub fn refresh_stats_snapshot_from_cluster<
     C: StoreWriteClient,
     L: StoreWriteLoader,
@@ -185,6 +227,7 @@ pub fn refresh_stats_snapshot_from_cluster<
     timeout: Duration,
     tables: &[StatsTarget],
     current: &StatsSnapshot,
+    load_all: bool,
 ) -> Result<StatsSnapshot, SystemTableError> {
     let mut transaction = opener
         .begin_read_only()
@@ -196,15 +239,24 @@ pub fn refresh_stats_snapshot_from_cluster<
         let mut result = StatsSnapshot::new();
         for target in tables {
             let table_id = target.table.id;
-            let current = current.get(&table_id).and_then(TableStatsState::loaded);
-            let state = match loader.load_statistics_table_for_update(
-                &mut snapshot,
-                &target.table,
-                &target.column_types,
-                current.map(|stats| stats.as_ref()),
-            )? {
-                Some(stats) => TableStatsState::Loaded(stats),
-                None => TableStatsState::Pseudo,
+            let state = if load_all {
+                match loader.load_table(&mut snapshot, table_id, &target.column_types)? {
+                    Some(stats) => {
+                        TableStatsState::Loaded(stats.to_statistics_table(&target.table))
+                    }
+                    None => TableStatsState::Pseudo,
+                }
+            } else {
+                let current = current.get(&table_id).and_then(TableStatsState::loaded);
+                match loader.load_statistics_table_for_update(
+                    &mut snapshot,
+                    &target.table,
+                    &target.column_types,
+                    current.map(|stats| stats.as_ref()),
+                )? {
+                    Some(stats) => TableStatsState::Loaded(stats),
+                    None => TableStatsState::Pseudo,
+                }
             };
             result.insert(table_id, state);
         }

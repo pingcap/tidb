@@ -31,7 +31,13 @@ use crate::unistore_node::{unistore_cluster_session_stack, UnistoreClusterStack}
 use crate::QuerySessionFactory;
 
 fn cop_backed_stack() -> (UnistoreClusterStack, Arc<ConfiguredUserStore>) {
-    let config = crate::node_config::NodeConfig::parse([
+    cop_backed_stack_with_stats_lease(None)
+}
+
+fn cop_backed_stack_with_stats_lease(
+    stats_lease: Option<crate::node_config::StatsLease>,
+) -> (UnistoreClusterStack, Arc<ConfiguredUserStore>) {
+    let mut config = crate::node_config::NodeConfig::parse([
         "tidb-server",
         "--store",
         "unistore",
@@ -44,6 +50,9 @@ fn cop_backed_stack() -> (UnistoreClusterStack, Arc<ConfiguredUserStore>) {
         "/dev/null",
     ])
     .expect("node config");
+    if let Some(stats_lease) = stats_lease {
+        config.stats_lease = stats_lease;
+    }
     let users = Arc::new(
         ConfiguredUserStore::parse(&format!("root\t%\tmysql_native_password\t{ABC_HASH}\n"))
             .expect("configured user store"),
@@ -828,6 +837,121 @@ fn analyze_does_not_change_a_grouped_aggregate_answer() {
         expected,
         "the answer changed once statistics existed"
     );
+}
+
+/// Pinned `globalstats.TestShowGlobalStatsWithAsyncMergeGlobal` and
+/// `TestShowGlobalStatsWithoutAsyncMergeGlobal`: static pruning publishes
+/// only physical-partition statistics, while dynamic pruning also publishes
+/// the logical table's global column and index statistics. Every SHOW surface
+/// must traverse the same set.
+#[test]
+fn partition_analyze_show_surfaces_match_global_stats_visibility() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(57))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET SESSION tidb_analyze_version = 2");
+
+    let mut check = |table: &str,
+                     prune_mode: &str,
+                     meta_count: usize,
+                     global_meta_count: usize,
+                     bucket_count: usize,
+                     global_bucket_count: usize,
+                     histogram_count: usize,
+                     global_histogram_count: usize,
+                     healthy_count: usize,
+                     global_healthy_count: usize| {
+        rows(
+            &mut session,
+            &format!("SET SESSION tidb_partition_prune_mode = '{prune_mode}'"),
+        );
+        rows(
+            &mut session,
+            &format!("CREATE TABLE {table} (a int, KEY(a)) PARTITION BY HASH(a) PARTITIONS 2"),
+        );
+        rows(
+            &mut session,
+            &format!("INSERT INTO {table} VALUES (1), (2), (3), (4)"),
+        );
+        rows(
+            &mut session,
+            &format!("ANALYZE TABLE {table} WITH 0 TOPN, 1 BUCKETS"),
+        );
+
+        let show_count =
+            |session: &mut _, statement: &str| displayed(rows(session, statement)).len();
+        assert_eq!(
+            show_count(
+                &mut session,
+                &format!("SHOW STATS_META WHERE table_name = '{table}'"),
+            ),
+            meta_count
+        );
+        assert_eq!(
+            show_count(
+                &mut session,
+                &format!(
+                    "SHOW STATS_META WHERE table_name = '{table}' AND partition_name = 'global'"
+                ),
+            ),
+            global_meta_count
+        );
+        assert_eq!(
+            show_count(
+                &mut session,
+                &format!("SHOW STATS_BUCKETS WHERE table_name = '{table}'"),
+            ),
+            bucket_count
+        );
+        assert_eq!(
+            show_count(
+                &mut session,
+                &format!(
+                    "SHOW STATS_BUCKETS WHERE table_name = '{table}' AND partition_name = 'global'"
+                ),
+            ),
+            global_bucket_count
+        );
+        assert_eq!(
+            show_count(
+                &mut session,
+                &format!("SHOW STATS_HISTOGRAMS WHERE table_name = '{table}'"),
+            ),
+            histogram_count
+        );
+        assert_eq!(
+            show_count(
+                &mut session,
+                &format!(
+                    "SHOW STATS_HISTOGRAMS WHERE table_name = '{table}' AND partition_name = 'global'"
+                ),
+            ),
+            global_histogram_count
+        );
+        assert_eq!(
+            show_count(
+                &mut session,
+                &format!("SHOW STATS_HEALTHY WHERE table_name = '{table}'"),
+            ),
+            healthy_count
+        );
+        assert_eq!(
+            show_count(
+                &mut session,
+                &format!(
+                    "SHOW STATS_HEALTHY WHERE table_name = '{table}' AND partition_name = 'global'"
+                ),
+            ),
+            global_healthy_count
+        );
+    };
+
+    check("gs_static", "static", 2, 0, 4, 0, 4, 0, 2, 0);
+    check("gs_dynamic", "dynamic", 3, 1, 6, 2, 6, 2, 3, 1);
 }
 
 /// A write takes the same access paths a `SELECT` does, which is
