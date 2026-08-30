@@ -151,35 +151,103 @@ pub fn pruned_ids(spec: &PartitionSpec, ranges: &[IndexRange]) -> Option<Vec<i64
     }
 }
 
-/// Go's KEY pruner can use an exact range only when every partition column is
-/// constrained.  A partial key predicate may hash into every partition, so it
+/// Go `getUsedKeyPartitions`: exact tuples route directly; a short integer
+/// interval over one KEY column is enumerated while its width is smaller than
+/// the partition count. A partial multi-column key may hash anywhere and
 /// remains a full scan.
 fn prune_key_ids(spec: &PartitionSpec, ranges: &[IndexRange]) -> Vec<i64> {
     let mut used = vec![false; spec.definitions.len()];
     for range in ranges {
-        if !range.is_point(true) || range.low.len() != spec.dependencies.len() {
-            return spec
-                .definitions
-                .iter()
-                .map(|definition| definition.id)
-                .collect();
+        if range.is_point(true) && range.low.len() == spec.dependencies.len() {
+            let Ok(ordinal) =
+                crate::partition_routing::key_partition_index_for_tuple(&range.low, spec.num())
+            else {
+                return spec
+                    .definitions
+                    .iter()
+                    .map(|definition| definition.id)
+                    .collect();
+            };
+            used[ordinal] = true;
+            continue;
         }
-        let Ok(ordinal) =
-            crate::partition_routing::key_partition_index_for_tuple(&range.low, spec.num())
-        else {
-            return spec
-                .definitions
-                .iter()
-                .map(|definition| definition.id)
-                .collect();
-        };
-        used[ordinal] = true;
+        if spec.dependencies.len() == 1 && mark_short_key_range(range, spec.num(), &mut used) {
+            continue;
+        }
+        return spec
+            .definitions
+            .iter()
+            .map(|definition| definition.id)
+            .collect();
     }
     spec.definitions
         .iter()
         .zip(used)
         .filter_map(|(definition, used)| used.then_some(definition.id))
         .collect()
+}
+
+fn mark_short_key_range(range: &IndexRange, partitions: u64, used: &mut [bool]) -> bool {
+    let (Some(low), Some(high)) = (range.low.first(), range.high.first()) else {
+        return false;
+    };
+    let (low, high, unsigned) = match (low, high) {
+        (Datum::Int(low), Datum::Int(high)) => {
+            let low = if range.low_exclusive {
+                low.wrapping_add(1)
+            } else {
+                *low
+            };
+            let high = if range.high_exclusive {
+                high.wrapping_sub(1)
+            } else {
+                *high
+            };
+            (low as u64, high as u64, false)
+        }
+        (Datum::UInt(low), Datum::UInt(high)) => {
+            let low = if range.low_exclusive {
+                low.wrapping_add(1)
+            } else {
+                *low
+            };
+            let high = if range.high_exclusive {
+                high.wrapping_sub(1)
+            } else {
+                *high
+            };
+            (low, high, true)
+        }
+        _ => return false,
+    };
+    let width = if unsigned {
+        high.saturating_sub(low)
+    } else {
+        let low = low as i64;
+        let high = high as i64;
+        if high < low {
+            0
+        } else {
+            high.wrapping_sub(low) as u64
+        }
+    };
+    if width >= partitions {
+        return false;
+    }
+    for offset in 0..=width {
+        let value = if unsigned {
+            Datum::UInt(low.wrapping_add(offset))
+        } else {
+            Datum::Int((low as i64).wrapping_add(offset as i64))
+        };
+        let Ok(ordinal) =
+            crate::partition_routing::key_partition_index_for_tuple(&[value], partitions)
+        else {
+            continue;
+        };
+        used[ordinal] = true;
+    }
+    true
 }
 
 /// A typed ranger point has one exact RANGE COLUMNS destination, so retain
@@ -938,6 +1006,49 @@ mod tests {
                 &[interval(Datum::MinNotNull, false, Datum::MaxValue, false,)]
             ),
             None
+        );
+    }
+
+    #[test]
+    fn key_pruning_enumerates_short_single_integer_ranges() {
+        let mut spec = range_table();
+        spec.kind = PartitionKind::Key;
+
+        let expected_for = |values: &[i64]| {
+            let mut used = vec![false; spec.definitions.len()];
+            for value in values {
+                let ordinal = crate::partition_routing::key_partition_index_for_tuple(
+                    &[Datum::Int(*value)],
+                    spec.num(),
+                )
+                .expect("integer key routing");
+                used[ordinal] = true;
+            }
+            spec.definitions
+                .iter()
+                .zip(used)
+                .filter_map(|(definition, used)| used.then_some(definition.id))
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            pruned_ids(
+                &spec,
+                &[interval(Datum::Int(3), false, Datum::Int(4), false)]
+            ),
+            Some(expected_for(&[3, 4]))
+        );
+        assert_eq!(
+            pruned_ids(&spec, &[interval(Datum::Int(0), true, Datum::Int(2), true)]),
+            Some(expected_for(&[1]))
+        );
+        assert_eq!(
+            pruned_ids(
+                &spec,
+                &[interval(Datum::Int(0), false, Datum::Int(3), false)]
+            ),
+            Some(vec![101, 102, 103]),
+            "Go falls back to FullRange when interval width reaches partition count"
         );
     }
 
