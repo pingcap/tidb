@@ -143,6 +143,16 @@ pub struct ClusterAnalyzeReport {
     pub collected_all_for_index_target: bool,
     analyzed_column_ids: Vec<i64>,
     analyzed_index_ids: Vec<i64>,
+    historical_stats_table_ids: Vec<i64>,
+}
+
+impl ClusterAnalyzeReport {
+    /// Physical IDs pinned Go queues for historical-statistics generation
+    /// after all successful result saves and global-stat merges finish.
+    #[must_use]
+    pub fn historical_stats_table_ids(&self) -> &[i64] {
+        &self.historical_stats_table_ids
+    }
 }
 
 /// The pinned planner's physical ANALYZE targets and merged options.
@@ -614,6 +624,7 @@ pub fn commit_cluster_analyze<C: StoreWriteClient, L: StoreWriteLoader, P: Store
         collected_all_for_index_target: false,
         analyzed_column_ids: Vec::new(),
         analyzed_index_ids: Vec::new(),
+        historical_stats_table_ids: Vec::new(),
     });
     for next in reports {
         merge_analyze_report(&mut report, next);
@@ -632,6 +643,15 @@ pub fn commit_cluster_analyze<C: StoreWriteClient, L: StoreWriteLoader, P: Store
     {
         let column_ids = report.analyzed_column_ids.clone();
         let index_ids = report.analyzed_index_ids.clone();
+        if (!column_ids.is_empty() || !index_ids.is_empty())
+            && !report
+                .historical_stats_table_ids
+                .contains(&resolved.logical_table_id())
+        {
+            report
+                .historical_stats_table_ids
+                .push(resolved.logical_table_id());
+        }
         if !column_ids.is_empty() {
             let result = commit_cluster_global_stats(
                 opener,
@@ -718,6 +738,11 @@ fn merge_analyze_report(report: &mut ClusterAnalyzeReport, next: ClusterAnalyzeR
     for id in next.analyzed_index_ids {
         if !report.analyzed_index_ids.contains(&id) {
             report.analyzed_index_ids.push(id);
+        }
+    }
+    for id in next.historical_stats_table_ids {
+        if !report.historical_stats_table_ids.contains(&id) {
+            report.historical_stats_table_ids.push(id);
         }
     }
 }
@@ -1654,6 +1679,7 @@ fn commit_cluster_analyze_target<C: StoreWriteClient, L: StoreWriteLoader, P: St
         collected_all_for_index_target: statement.index_names.is_some(),
         analyzed_column_ids: report.stats.columns.iter().map(|item| item.id).collect(),
         analyzed_index_ids: report.stats.indexes.iter().map(|item| item.id).collect(),
+        historical_stats_table_ids: vec![report.stats.table_id],
     };
     // The commit mints its own deadline here rather than inheriting one from
     // function entry: everything above it -- the catalog read, the previous
@@ -1747,6 +1773,7 @@ fn commit_cluster_independent_index<
         collected_all_for_index_target: false,
         analyzed_column_ids: Vec::new(),
         analyzed_index_ids: vec![index_id],
+        historical_stats_table_ids: vec![report.stats.table_id],
     };
     let outcome = transaction
         .commit(write.mutations, &UnaryCallContext::with_timeout(timeout))

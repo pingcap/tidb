@@ -241,7 +241,7 @@ impl ClusterServerSession {
             for (code, warning) in &report.global_stats_warnings {
                 self.session.append_routed_warning(*code, warning.clone());
             }
-            successful_table_ids.insert(report.table_id);
+            successful_table_ids.extend(report.historical_stats_table_ids());
             eprintln!(
                 "{{\"event\":\"cluster_table_analyzed\",\"schema\":{},\"table\":{},\
                  \"table_id\":{},\"version\":{},\"scanned_rows\":{},\"sampled_rows\":{},\

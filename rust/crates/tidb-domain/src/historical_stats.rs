@@ -119,10 +119,10 @@
 //! `pkg/domain` has no test for this file. Every upstream exercise of these
 //! symbols lives in `pkg/executor/historical_stats_test.go`,
 //! `pkg/server/handler/optimizor/statistics_handler_test.go`, and
-//! `plan_replayer_test.go`, all of which need a bootstrapped mockstore, a
-//! real `ANALYZE`, the `mysql.stats_history` table, and the
-//! `sendHistoricalStats` failpoint. None of that is reachable, so nothing is
-//! transcreated; the tests below are written against the seams.
+//! `plan_replayer_test.go`. The tests below retain the package-local channel
+//! contracts; the cluster unistore suite additionally exercises the real
+//! `ANALYZE` enqueue and `mysql.stats_history` write path corresponding to
+//! the executor tests.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};

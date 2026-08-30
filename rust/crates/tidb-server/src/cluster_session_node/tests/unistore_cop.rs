@@ -24,6 +24,7 @@ use std::sync::Arc;
 
 use tidb_datatype::Datum;
 
+use super::super::ClusterHistoricalStatsHandle;
 use super::node_fixture::{rows, session_context, ABC_HASH};
 use crate::configured_user_store::ConfiguredUserStore;
 use crate::sql_node::QuerySession;
@@ -91,6 +92,166 @@ fn displayed(rows: Vec<Vec<Datum>>) -> Vec<Vec<String>> {
                 .collect()
         })
         .collect()
+}
+
+/// Pinned `TestRecordHistoryStatsAfterAnalyze`: the global switch suppresses
+/// task creation while off; once enabled, a successful ANALYZE posts its
+/// physical ID and the domain dump path writes canonical blocks to
+/// `mysql.stats_history`.
+#[test]
+fn analyze_records_historical_stats_through_the_domain_worker() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(75))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET SESSION tidb_analyze_version = 2");
+    rows(
+        &mut session,
+        "CREATE TABLE history_analyze (a INT, b VARCHAR(10), INDEX idx(a, b))",
+    );
+
+    rows(
+        &mut session,
+        "SET GLOBAL tidb_enable_historical_stats = OFF",
+    );
+    rows(&mut session, "ANALYZE TABLE history_analyze WITH 2 TOPN");
+    assert_eq!(
+        session
+            .historical_stats_worker
+            .get_one_historical_stats_table(),
+        tidb_domain::historical_stats::NO_HISTORICAL_STATS_TABLE
+    );
+
+    rows(&mut session, "SET GLOBAL tidb_enable_historical_stats = ON");
+    rows(&mut session, "ANALYZE TABLE history_analyze WITH 2 TOPN");
+    let table_id = session
+        .historical_stats_worker
+        .get_one_historical_stats_table();
+    assert!(table_id > 0, "a successful ANALYZE posts its table ID");
+    let handle = ClusterHistoricalStatsHandle {
+        transactions: Arc::clone(&stack.factory.transactions),
+        catalog: Arc::clone(&stack.factory.catalog),
+        global_vars: stack.factory.global_vars.clone(),
+    };
+    session
+        .historical_stats_worker
+        .dump_historical_stats(
+            table_id,
+            &handle,
+            &tidb_domain::historical_stats::NoopHistoricalStatsMetrics,
+        )
+        .expect("historical statistics dump succeeds");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!("SELECT count(*) FROM mysql.stats_history WHERE table_id = {table_id}"),
+        )),
+        [["1"]]
+    );
+}
+
+/// Pinned `TestDumpHistoricalStatsByTable`: static ANALYZE queues only the
+/// physical partition, while dynamic ANALYZE queues that partition and the
+/// logical table whose dump contains global statistics.
+#[test]
+fn partition_analyze_queues_the_same_historical_stats_ids_as_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(76))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET SESSION tidb_analyze_version = 2");
+    rows(&mut session, "SET GLOBAL tidb_enable_historical_stats = ON");
+    rows(
+        &mut session,
+        "CREATE TABLE history_partition (a INT, b INT, INDEX idx(b)) \
+         PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6))",
+    );
+    let catalog = stack.factory.catalog.load();
+    let (_, table) = catalog
+        .find_table("test", "history_partition")
+        .expect("partitioned table is published");
+    let logical_id = table.id;
+    let partition_id = table
+        .get_partition_info()
+        .expect("partition metadata")
+        .read()
+        .definitions
+        .snapshot()[0]
+        .id;
+    drop(catalog);
+
+    rows(
+        &mut session,
+        "SET SESSION tidb_partition_prune_mode = 'static'",
+    );
+    rows(&mut session, "ANALYZE TABLE history_partition");
+    assert_eq!(
+        session
+            .historical_stats_worker
+            .get_one_historical_stats_table(),
+        partition_id
+    );
+    assert_eq!(
+        session
+            .historical_stats_worker
+            .get_one_historical_stats_table(),
+        tidb_domain::historical_stats::NO_HISTORICAL_STATS_TABLE
+    );
+
+    rows(
+        &mut session,
+        "SET SESSION tidb_partition_prune_mode = 'dynamic'",
+    );
+    rows(&mut session, "ANALYZE TABLE history_partition");
+    let mut queued = vec![
+        session
+            .historical_stats_worker
+            .get_one_historical_stats_table(),
+        session
+            .historical_stats_worker
+            .get_one_historical_stats_table(),
+    ];
+    queued.sort_unstable();
+    let mut expected = vec![partition_id, logical_id];
+    expected.sort_unstable();
+    assert_eq!(queued, expected);
+    assert_eq!(
+        session
+            .historical_stats_worker
+            .get_one_historical_stats_table(),
+        tidb_domain::historical_stats::NO_HISTORICAL_STATS_TABLE
+    );
+
+    let handle = ClusterHistoricalStatsHandle {
+        transactions: Arc::clone(&stack.factory.transactions),
+        catalog: Arc::clone(&stack.factory.catalog),
+        global_vars: stack.factory.global_vars.clone(),
+    };
+    for table_id in queued {
+        session
+            .historical_stats_worker
+            .dump_historical_stats(
+                table_id,
+                &handle,
+                &tidb_domain::historical_stats::NoopHistoricalStatsMetrics,
+            )
+            .expect("partition/global historical dump succeeds");
+    }
+    for table_id in [partition_id, logical_id] {
+        assert_eq!(
+            displayed(rows(
+                &mut session,
+                &format!("SELECT count(*) FROM mysql.stats_history WHERE table_id = {table_id}"),
+            )),
+            [["1"]]
+        );
+    }
 }
 
 /// The probe-33 regression: a derived table whose inner SELECT plans as a
