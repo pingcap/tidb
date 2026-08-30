@@ -331,6 +331,22 @@ fn physical_operator_name(plan: &PhysicalPlan) -> String {
 
 fn physical_access(plan: &PhysicalPlan, catalog: &Catalog) -> Option<AccessObject> {
     match plan {
+        PhysicalPlan::TableReader(reader) => reader
+            .table_plan
+            .as_deref()
+            .and_then(dynamic_partition_access),
+        PhysicalPlan::IndexReader(reader) => reader
+            .index_plan
+            .as_deref()
+            .and_then(dynamic_partition_access),
+        PhysicalPlan::IndexLookUpReader(reader) => reader
+            .index_plan
+            .as_deref()
+            .and_then(dynamic_partition_access),
+        PhysicalPlan::IndexMergeReader(reader) => reader
+            .partial_plans_raw
+            .first()
+            .and_then(dynamic_partition_access),
         PhysicalPlan::TableScan(scan) => Some(AccessObject::Scan(table_access(
             catalog,
             scan.table_id,
@@ -379,6 +395,21 @@ fn physical_access(plan: &PhysicalPlan, catalog: &Catalog) -> Option<AccessObjec
         }
         _ => None,
     }
+}
+
+fn dynamic_partition_access(plan: &PhysicalPlan) -> Option<AccessObject> {
+    let access = match plan {
+        PhysicalPlan::TableScan(scan) => scan.dynamic_partition_access.clone(),
+        PhysicalPlan::IndexScan(scan) => scan.dynamic_partition_access.clone(),
+        _ => None,
+    };
+    access
+        .map(|object| {
+            AccessObject::DynamicPartitions(tidb_planner::access::DynamicPartitionAccessObjects(
+                vec![object],
+            ))
+        })
+        .or_else(|| plan.children().iter().find_map(dynamic_partition_access))
 }
 
 fn point_handle_text(range: &tidb_planner::ranger::types::Range) -> String {

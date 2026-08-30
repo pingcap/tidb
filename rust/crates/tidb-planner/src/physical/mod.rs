@@ -826,6 +826,8 @@ pub struct PhysicalTableScan {
     pub table_id: i64,
     /// Go `TableAsName`: the query-visible alias, when one was written.
     pub table_as_name: Option<String>,
+    /// Dynamic partition access selected for the reader above this scan.
+    pub dynamic_partition_access: Option<crate::access::DynamicPartitionAccessObject>,
     /// Go `TblCols`: all original table columns used by scan costing.
     pub cost_columns: Vec<Column>,
     /// Go `StoreType`: which engine serves this scan. `CopTask.GetStoreType`
@@ -1818,6 +1820,8 @@ pub struct PhysicalIndexScan {
     pub table_id: i64,
     /// Go `TableAsName`: the query-visible alias, when one was written.
     pub table_as_name: Option<String>,
+    /// Dynamic partition access selected for the reader above this scan.
+    pub dynamic_partition_access: Option<crate::access::DynamicPartitionAccessObject>,
     /// Go's physical index-scan schema used by scan costing: all index
     /// columns plus the encoded handle when it is not already present.
     pub cost_columns: Vec<Column>,
@@ -3196,6 +3200,7 @@ impl PhysicalPlan {
                 desc: op.desc,
                 table_id: op.table_id,
                 table_as_name: op.table_as_name.clone(),
+                dynamic_partition_access: op.dynamic_partition_access.clone(),
                 cost_columns: op.cost_columns.clone(),
                 store_type: op.store_type,
                 ranges: op.ranges.clone(),
@@ -3306,6 +3311,7 @@ impl PhysicalPlan {
                 base: base_of(&op.base),
                 table_id: op.table_id,
                 table_as_name: op.table_as_name.clone(),
+                dynamic_partition_access: op.dynamic_partition_access.clone(),
                 cost_columns: op.cost_columns.clone(),
                 index_id: op.index_id,
                 index_name: op.index_name.clone(),

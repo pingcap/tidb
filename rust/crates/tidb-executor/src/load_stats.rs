@@ -705,6 +705,11 @@ pub fn table_statistics_from_table_schema(
     .with_stat_versions(stats.version, stats.last_analyze_version)
     .with_load_statuses(column_load_status, index_load_status)
     .with_stats_existence(column_stats_existence, index_stats_existence);
+    // Go `GetStatsTable` marks the planner copy pseudo when the canonical
+    // table has no initialized column or index statistics. Do not infer this
+    // from the reduced maps above: unloaded placeholder items can still have
+    // histogram metadata and therefore survive that conversion.
+    statistics.pseudo = stats.hist_coll.pseudo || !stats.is_initialized();
     statistics.cache_pseudo = stats.hist_coll.pseudo;
     statistics
 }
@@ -846,5 +851,46 @@ mod tests {
         drop(hidden);
         let planner = table_statistics_from_table(&stats, &schema);
         assert!(planner.columns.contains_key(&2));
+    }
+
+    /// Go `GetStatsTable` consults `Table.IsInitialized`, rather than the
+    /// presence of reduced histogram metadata, when marking its planner copy
+    /// pseudo.
+    #[test]
+    fn uninitialized_placeholder_keeps_realtime_count_and_is_pseudo() {
+        let schema = KvTable::new(41, vec![column(1, "a")]);
+        let stats = statistics_table_from_json(
+            &schema,
+            41,
+            &JsonTable {
+                count: 5,
+                ..JsonTable::default()
+            },
+        )
+        .expect("build meta-only stats");
+        stats.hist_coll.set_column(
+            1,
+            Column {
+                info: Some(ColumnInfo {
+                    id: 1,
+                    name: "a".to_owned(),
+                    primary_key: false,
+                }),
+                histogram: Histogram {
+                    id: 1,
+                    ndv: 1,
+                    ..Histogram::default()
+                },
+                physical_id: 41,
+                ..Column::default()
+            },
+        );
+
+        assert!(!stats.is_initialized());
+        let planner = table_statistics_from_table(&stats, &schema);
+        assert_eq!(planner.row_count, 5);
+        assert!(planner.columns.contains_key(&1));
+        assert!(planner.pseudo);
+        assert!(!planner.cache_pseudo);
     }
 }

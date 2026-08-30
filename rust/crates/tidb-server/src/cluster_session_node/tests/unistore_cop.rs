@@ -1389,6 +1389,216 @@ fn truncate_partitions_refreshes_global_stats_meta_like_go() {
     assert_eq!(global_count(&mut session), "11");
 }
 
+/// Pinned `globalstats.TestGlobalStats`: dynamic partition pruning consumes
+/// logical-table statistics, static pruning consumes each physical
+/// partition's statistics under `PartitionUnion`, and switching to dynamic
+/// before a global row exists uses pseudo statistics until the next analyze.
+#[test]
+fn global_stats_drive_partition_plans_like_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(65))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET SESSION tidb_analyze_version = 2");
+
+    let plan_of = |session: &mut _, sql: &str| {
+        displayed(rows(session, sql))
+            .into_iter()
+            .map(|row| row.join(" "))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    rows(
+        &mut session,
+        "CREATE TABLE global_stats_plan (a INT, KEY(a)) PARTITION BY RANGE (a) (\
+         PARTITION p0 VALUES LESS THAN (10),\
+         PARTITION p1 VALUES LESS THAN (20),\
+         PARTITION p2 VALUES LESS THAN (30))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO global_stats_plan VALUES (1),(5),(NULL),(11),(15),(21),(25)",
+    );
+    rows(
+        &mut session,
+        "SET SESSION tidb_partition_prune_mode = 'dynamic'",
+    );
+    rows(&mut session, "ANALYZE TABLE global_stats_plan");
+
+    let dynamic = plan_of(
+        &mut session,
+        "EXPLAIN FORMAT = 'brief' SELECT a FROM global_stats_plan WHERE a > 5",
+    );
+    assert!(
+        dynamic.contains("IndexRangeScan") && dynamic.contains("4.00"),
+        "{dynamic}"
+    );
+    assert!(dynamic.contains("partition:all"), "{dynamic}");
+    assert!(
+        !dynamic.contains("PartitionUnion") && !dynamic.contains("stats:pseudo"),
+        "{dynamic}"
+    );
+
+    let explicit = plan_of(
+        &mut session,
+        "EXPLAIN FORMAT = 'brief' SELECT * FROM global_stats_plan PARTITION(p1) WHERE a > 15",
+    );
+    assert!(
+        explicit.contains("IndexRangeScan") && explicit.contains("2.00"),
+        "{explicit}"
+    );
+    assert!(explicit.contains("partition:p1"), "{explicit}");
+    assert!(!explicit.contains("stats:pseudo"), "{explicit}");
+
+    rows(
+        &mut session,
+        "SET SESSION tidb_partition_prune_mode = 'static'",
+    );
+    let static_plan = plan_of(
+        &mut session,
+        "EXPLAIN FORMAT = 'brief' SELECT a FROM global_stats_plan WHERE a > 5",
+    );
+    assert!(
+        static_plan.contains("PartitionUnion") && static_plan.contains("5.00"),
+        "{static_plan}"
+    );
+    for partition in ["p0", "p1", "p2"] {
+        assert!(
+            static_plan.contains(&format!("partition:{partition}")),
+            "{static_plan}"
+        );
+    }
+
+    rows(&mut session, "DROP TABLE global_stats_plan");
+    rows(
+        &mut session,
+        "CREATE TABLE global_stats_plan (a INT, b INT, KEY(a)) \
+         PARTITION BY HASH(a) PARTITIONS 2",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO global_stats_plan VALUES (1,1),(3,3),(4,4),(2,2),(5,5)",
+    );
+    rows(&mut session, "ANALYZE TABLE global_stats_plan");
+    let static_meta = displayed(rows(
+        &mut session,
+        "SHOW STATS_META WHERE table_name = 'global_stats_plan'",
+    ));
+    assert_eq!(static_meta.len(), 2);
+    assert_eq!(
+        static_meta
+            .iter()
+            .map(|row| row[5].as_str())
+            .collect::<Vec<_>>(),
+        ["2", "3"]
+    );
+
+    rows(
+        &mut session,
+        "SET SESSION tidb_partition_prune_mode = 'dynamic'",
+    );
+    let pseudo = plan_of(
+        &mut session,
+        "EXPLAIN FORMAT = 'brief' SELECT a FROM global_stats_plan WHERE a > 3",
+    );
+    assert!(
+        pseudo.contains("IndexRangeScan") && pseudo.contains("1.67"),
+        "{pseudo}"
+    );
+    assert!(
+        pseudo.contains("partition:all") && pseudo.contains("stats:pseudo"),
+        "{pseudo}"
+    );
+    assert!(!pseudo.contains("PartitionUnion"), "{pseudo}");
+
+    rows(&mut session, "ANALYZE TABLE global_stats_plan");
+    let dynamic_meta = displayed(rows(
+        &mut session,
+        "SHOW STATS_META WHERE table_name = 'global_stats_plan'",
+    ));
+    assert_eq!(dynamic_meta.len(), 3);
+    assert_eq!(
+        dynamic_meta
+            .iter()
+            .map(|row| row[5].as_str())
+            .collect::<Vec<_>>(),
+        ["5", "2", "3"]
+    );
+    let analyzed = plan_of(
+        &mut session,
+        "EXPLAIN FORMAT = 'brief' SELECT a FROM global_stats_plan WHERE a > 3",
+    );
+    assert!(
+        analyzed.contains("IndexRangeScan") && analyzed.contains("2.00"),
+        "{analyzed}"
+    );
+    assert!(analyzed.contains("partition:all"), "{analyzed}");
+    assert!(
+        !analyzed.contains("PartitionUnion") && !analyzed.contains("stats:pseudo"),
+        "{analyzed}"
+    );
+
+    rows(&mut session, "DROP TABLE global_stats_plan");
+    rows(
+        &mut session,
+        "CREATE TABLE global_stats_plan (a INT, b INT, c INT) \
+         PARTITION BY HASH(a) PARTITIONS 2",
+    );
+    rows(
+        &mut session,
+        "CREATE INDEX idx_ab ON global_stats_plan(a, b)",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO global_stats_plan VALUES \
+         (1,1,1),(5,5,5),(11,11,11),(15,15,15),(21,21,21),(25,25,25)",
+    );
+    rows(&mut session, "ANALYZE TABLE global_stats_plan");
+
+    let index_scan = plan_of(
+        &mut session,
+        "EXPLAIN FORMAT = 'brief' SELECT b FROM global_stats_plan WHERE a > 5 AND b > 10",
+    );
+    assert!(
+        index_scan.contains("IndexRangeScan") && index_scan.contains("2.67"),
+        "{index_scan}"
+    );
+    assert!(
+        index_scan.contains("partition:all") && !index_scan.contains("stats:pseudo"),
+        "{index_scan}"
+    );
+
+    let index_lookup = plan_of(
+        &mut session,
+        "EXPLAIN FORMAT = 'brief' SELECT * FROM global_stats_plan USE INDEX(idx_ab) WHERE a > 1",
+    );
+    assert!(
+        index_lookup.contains("IndexLookUp") && index_lookup.contains("5.00"),
+        "{index_lookup}"
+    );
+    assert!(
+        index_lookup.contains("partition:all") && !index_lookup.contains("stats:pseudo"),
+        "{index_lookup}"
+    );
+
+    let table_scan = plan_of(
+        &mut session,
+        "EXPLAIN FORMAT = 'brief' SELECT * FROM global_stats_plan",
+    );
+    assert!(
+        table_scan.contains("TableFullScan") && table_scan.contains("6.00"),
+        "{table_scan}"
+    );
+    assert!(
+        table_scan.contains("partition:all") && !table_scan.contains("stats:pseudo"),
+        "{table_scan}"
+    );
+}
+
 /// A write takes the same access paths a `SELECT` does, which is
 /// `crate::explain`'s divergence 8 as it now stands.
 ///

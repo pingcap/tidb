@@ -131,6 +131,10 @@ pub struct DataSource {
     pub partition_definition_names: Vec<String>,
     /// Physical IDs index-parallel to [`Self::partition_definition_names`].
     pub partition_definition_ids: Vec<i64>,
+    /// Go `PhysPlanPartInfo` after dynamic partition pruning, retained so
+    /// reader access objects report the partitions selected by the same
+    /// predicates used for execution.
+    pub dynamic_partition_access: Option<crate::access::DynamicPartitionAccessObject>,
     /// Go `Columns`, in schema order.
     pub columns: Vec<DataSourceColumn>,
     /// Go `TblCols`: the original table columns before logical pruning.
@@ -680,6 +684,7 @@ impl DataSource {
             partition_names: self.partition_names.clone(),
             partition_definition_names: self.partition_definition_names.clone(),
             partition_definition_ids: self.partition_definition_ids.clone(),
+            dynamic_partition_access: self.dynamic_partition_access.clone(),
             columns: self.columns.clone(),
             table_columns: self.table_columns.clone(),
             pushed_down_conds: self.pushed_down_conds.clone(),

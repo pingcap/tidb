@@ -361,6 +361,43 @@ fn partition_indices_for_spec(
     ))
 }
 
+fn attach_dynamic_partition_access(
+    plan: &mut LogicalPlan,
+    pruning: &dyn tidb_planner::logical::rule_partition_processor::PartitionPruning,
+) -> Result<(), tidb_planner::plan_base::PlanError> {
+    if let LogicalPlan::DataSource(source) = plan {
+        if !source.partition_definition_ids.is_empty() {
+            let indices = pruning.partition_indices(source)?;
+            let all_partitions = source.partition_names.is_empty()
+                && indices.len() == source.partition_definition_ids.len();
+            let partitions = if all_partitions {
+                Vec::new()
+            } else {
+                indices
+                    .into_iter()
+                    .filter_map(|index| source.partition_definition_names.get(index).cloned())
+                    .collect()
+            };
+            source.dynamic_partition_access =
+                Some(tidb_planner::access::DynamicPartitionAccessObject {
+                    database: source.db_name.clone(),
+                    table: source
+                        .table_as_name
+                        .clone()
+                        .unwrap_or_else(|| source.table_name.clone()),
+                    all_partitions,
+                    partitions,
+                    error: String::new(),
+                });
+        }
+        return Ok(());
+    }
+    for child in plan.base_mut().children_mut() {
+        attach_dynamic_partition_access(child, pruning)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod list_columns_pruning_tests {
     use super::*;
@@ -717,7 +754,13 @@ impl OwnedRewrite for InitStats<'_> {
                     row_count as i64,
                     row_size_columns,
                 ))
-                .with_stats_version(statistics.map_or(tidb_stats::PSEUDO_VERSION, |s| s.version)),
+                .with_stats_version(statistics.map_or(tidb_stats::PSEUDO_VERSION, |statistics| {
+                    if statistics.pseudo {
+                        tidb_stats::PSEUDO_VERSION
+                    } else {
+                        statistics.version
+                    }
+                })),
         );
         if let (Some(_), Some(predicate), Some(TableEntry::Kv(table)), Some(table_stats)) = (
             self.select,
@@ -1433,7 +1476,29 @@ fn optimize_built_logical(
     let mut optimized = logical_optimize(&rule_context, flags, plan)
         .map_err(|(_, error)| error)?
         .plan;
+    // Go initializes each DataSource's statistics after static partition
+    // processing has replaced the logical table ID with one physical
+    // partition ID. Rust initializes once before logical rules so join
+    // reorder can cost its inputs; static pruning therefore needs this
+    // source-equivalent second pass for the newly created children.
+    if ctx.static_partition_prune() {
+        optimized = fold_owned(
+            &mut InitStats {
+                catalog,
+                select: (source_count == 1).then_some(select_hint).flatten(),
+                default_string_match_selectivity: ctx.default_string_match_selectivity(),
+                enable_pseudo_for_outdated_stats: ctx.enable_pseudo_for_outdated_stats(),
+                zone: session_zone,
+            },
+            optimized,
+            (),
+        )
+        .0;
+    }
     optimized = check_partial_index_paths(optimized, ctx, use_plan_cache);
+    if !ctx.static_partition_prune() {
+        attach_dynamic_partition_access(&mut optimized, &partition_pruning)?;
+    }
     optimize_cte_classes(
         &optimized,
         catalog,

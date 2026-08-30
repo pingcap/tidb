@@ -103,6 +103,51 @@ impl ClusterServerSession {
         for statement in tables {
             self.require_insert_and_select_privileges(&statement.schema, &statement.table)?;
         }
+        // Go `AnalyzeExec.Next` broadcasts `FLUSH STATS_DELTA` for every
+        // physical table named by the analyze plan before sampling. Persist
+        // this session's pending deltas through the same statistics-handle
+        // path so a static analyze still leaves the logical table's
+        // realtime count available to dynamic pseudo estimation.
+        self.session.publish_table_delta();
+        let catalog = self.catalog.load();
+        let mut target_ids = Vec::new();
+        for statement in tables {
+            let Some((_, table)) = catalog.find_table(&statement.schema, &statement.table) else {
+                continue;
+            };
+            match &table.partition {
+                Some(partition) => {
+                    target_ids.extend(
+                        partition
+                            .read()
+                            .definitions
+                            .snapshot()
+                            .into_iter()
+                            .filter(|definition| {
+                                statement.partitions.is_empty()
+                                    || statement.partitions.iter().any(|name| {
+                                        name.eq_ignore_ascii_case(definition.name.original())
+                                    })
+                            })
+                            .map(|definition| definition.id),
+                    );
+                }
+                None => target_ids.push(table.id),
+            }
+        }
+        drop(catalog);
+        let resource_group = self.session.current_resource_group().to_owned();
+        super::ClusterSessionFactory::dump_stats_delta_to_kv_parts(
+            self.stats_usage.as_ref(),
+            self.transactions.as_ref(),
+            self.catalog.as_ref(),
+            self.stats.as_ref(),
+            &self.global_vars,
+            true,
+            &target_ids,
+            &resource_group,
+        )
+        .map_err(SqlQueryError::unknown)?;
         // Go's analyze memory quota is process-wide and read at execution:
         // `variable.SetMemQuotaAnalyze` drives one `GlobalAnalyzeMemoryTracker`
         // (`pkg/executor/select.go:141`), so the value in force is whatever
