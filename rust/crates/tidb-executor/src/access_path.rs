@@ -2197,6 +2197,48 @@ impl IndexRangeSourceExec {
         // the fetch itself, and the answer is byte-identical. Larger batches
         // keep the dedicated thread so lookups still overlap planning.
         if handles.len() <= INDEX_LOOKUP_INLINE_HANDLES {
+            // A clean, unpartitioned table with no residual predicate can
+            // answer the lookup directly from the record keys.  The index
+            // stream has already applied the complete range, so opening a
+            // second coprocessor table request only adds the transport and
+            // response handoff.  BatchGet preserves the requested handle
+            // order and returns `None` for a concurrently deleted row, which
+            // is exactly the table-side semantics required here.  Keep all
+            // shapes that may need staged writes, partition routing, or a
+            // table filter on the existing staged-row path.
+            let direct_batch_get = self.filter.is_none()
+                && self.pushed.is_empty()
+                && self.top_n.is_none()
+                && !self.table.has_dirty_content()
+                && self.table.partition().is_none()
+                && handles
+                    .iter()
+                    .all(|handle| matches!(handle, TableHandle::Int(_)));
+            if direct_batch_get {
+                let rows = self
+                    .table
+                    .get_rows_by_handles_projected_with_context(
+                        &handles,
+                        Some(&self.keep),
+                        &self.decode_context,
+                    )
+                    .map_err(|error| {
+                        ExecError::unsupported(format!("direct table lookup failed: {error:?}"))
+                    })?;
+                let rows = handles
+                    .into_iter()
+                    .zip(rows)
+                    .filter_map(|(handle, row)| row.map(|row| (handle, row)))
+                    .collect();
+                return Ok(LookupBatchJob {
+                    handle_count,
+                    receiver: None,
+                    // Reuse the normal remote-row handoff: direct BatchGet
+                    // has fully materialized rows and evaluated no residual
+                    // table predicate.
+                    ready: Some(Ok(LookupFetch::Remote(rows, true, 0))),
+                });
+            }
             let staged = self
                 .table
                 .stage_rows_by_handles_filtered(

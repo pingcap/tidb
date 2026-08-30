@@ -761,6 +761,19 @@ where
             unreachable!("the pessimistic mode check above admits only a pessimistic transaction");
         };
         let held: BTreeSet<Vec<u8>> = transaction.locked_keys().into_iter().collect();
+        // The session prelock path may already own these point-write keys.
+        // Match Go's KVTxn.LockKeys behavior by omitting held keys from the
+        // request; a repeated PessimisticLock RPC only adds statement latency.
+        // A held key without a cached value still falls through to snapshot
+        // storage, so this does not change read semantics.
+        let missing = keys
+            .iter()
+            .filter(|key| !held.contains(*key))
+            .cloned()
+            .collect::<Vec<_>>();
+        if missing.is_empty() {
+            return Ok(());
+        }
         let mut attempt = 0;
         let acquired = loop {
             // This shared lock path deliberately carries no absence
@@ -774,9 +787,9 @@ where
             // request flag, set from `InitReturnValues` when an executor needs
             // the row it is about to modify (`pkg/executor/point_get.go:614`).
             let retry_reason = match if return_values {
-                transaction.acquire_locks_returning_values(keys, &BTreeSet::new(), wait, &call)
+                transaction.acquire_locks_returning_values(&missing, &BTreeSet::new(), wait, &call)
             } else {
-                transaction.acquire_locks(keys, &BTreeSet::new(), wait, &call)
+                transaction.acquire_locks(&missing, &BTreeSet::new(), wait, &call)
             } {
                 Ok(acquired) => {
                     // Cache whatever rows rode back BEFORE deciding what the

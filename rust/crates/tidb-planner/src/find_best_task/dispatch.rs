@@ -1392,26 +1392,32 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         .filter_map(|column| ds.schema_column_for_index_column(column).cloned())
                         .collect::<Vec<_>>()
                 });
+                // A pruned schema may omit trailing PRIMARY KEY columns
+                // (for example TPCC order_line.ol_number).  Ranging only the
+                // retained leading handle columns is still valid; requiring
+                // all catalog columns here incorrectly falls back to a full
+                // scan whenever projection/aggregation prunes that suffix.
                 let common_lengths = common_handle.map_or_else(Vec::new, |index| {
                     index
                         .columns
                         .iter()
-                        .map(|column| column.length)
+                        .filter_map(|column| {
+                            ds.schema_column_for_index_column(column)
+                                .map(|_| column.length)
+                        })
                         .collect::<Vec<_>>()
                 });
-                let common_detach = common_handle.and_then(|index| {
-                    (!ds.pushed_down_conds.is_empty()
-                        && common_columns.len() == index.columns.len())
-                    .then(|| {
-                        crate::ranger::detacher::detach_cond_and_build_range_for_index(
-                            &ds.pushed_down_conds,
-                            &common_columns,
-                            &common_lengths,
-                            0,
-                        )
-                        .ok()
-                    })
-                    .flatten()
+                let common_detach = common_handle.and_then(|_index| {
+                    if ds.pushed_down_conds.is_empty() || common_columns.is_empty() {
+                        return None;
+                    }
+                    crate::ranger::detacher::detach_cond_and_build_range_for_index(
+                        &ds.pushed_down_conds,
+                        &common_columns,
+                        &common_lengths,
+                        0,
+                    )
+                    .ok()
                 });
                 let int_access_conditions = handle_column.map_or_else(Vec::new, |handle| {
                     crate::ranger::detacher::extract_access_conditions_for_column(

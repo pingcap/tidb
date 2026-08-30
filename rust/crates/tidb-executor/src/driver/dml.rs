@@ -2311,7 +2311,7 @@ fn cached_dml_physical_plan(
         }
         _ => return None,
     };
-    let root = physical_dml_plan_with_cache_mode(
+    let mut root = physical_dml_plan_with_cache_mode(
         operator,
         source.as_ref(),
         operator.eq_ignore_ascii_case("Insert"),
@@ -2322,11 +2322,83 @@ fn cached_dml_physical_plan(
         true,
     )
     .ok()?;
+    // Keep a cached single-row UPDATE/DELETE source as a point access path.
+    // The DML root stores its source in `select_plan`, outside the common
+    // physical child list, so the helper explicitly descends through it.
+    if matches!(operator, "Update" | "Delete") {
+        promote_cached_dml_point_source(&mut root);
+    }
     if ctx.skip_plan_cache() {
         return None;
     }
     tidb_planner::physical_plan_cache::plan_cacheable(&root, cacheability).ok()?;
     Some(root)
+}
+
+fn promote_cached_dml_point_source(plan: &mut tidb_planner::physical::PhysicalPlan) {
+    use tidb_planner::physical::{PhysicalPlan, PhysicalPointGet};
+    use tidb_planner::physical_plan_cache::PointRangeRebuild;
+
+    if let PhysicalPlan::Dml(dml) = plan {
+        if let Some(child) = dml.select_plan.as_deref_mut() {
+            promote_cached_dml_point_source(child);
+        }
+        return;
+    }
+    if let PhysicalPlan::TableScan(scan) = plan {
+        let Some(rebuild) = scan.range_rebuild.clone() else {
+            return;
+        };
+        if scan.ranges.len() != 1 || !scan.ranges[0].is_point_nullable() {
+            return;
+        }
+        *plan = PhysicalPlan::PointGet(PhysicalPointGet {
+            base: scan.base.clone(),
+            table_id: scan.table_id,
+            index_id: None,
+            ranges: scan.ranges.clone(),
+            range_rebuild: Some(PointRangeRebuild::Table(rebuild)),
+        });
+        return;
+    }
+    if let PhysicalPlan::TableReader(reader) = plan {
+        if let Some(child) = reader.table_plan.as_deref_mut() {
+            promote_cached_dml_point_source(child);
+        }
+    }
+    for child in plan.base_mut().children_mut() {
+        promote_cached_dml_point_source(child);
+    }
+}
+
+fn physical_plan_contains_point_get(plan: &tidb_planner::physical::PhysicalPlan) -> bool {
+    use tidb_planner::physical::PhysicalPlan;
+
+    if let PhysicalPlan::Dml(dml) = plan {
+        return dml
+            .select_plan
+            .as_deref()
+            .is_some_and(physical_plan_contains_point_get);
+    }
+    if matches!(
+        plan,
+        PhysicalPlan::PointGet(_) | PhysicalPlan::BatchPointGet(_)
+    ) {
+        return true;
+    }
+    if let PhysicalPlan::TableReader(reader) = plan {
+        if reader
+            .table_plan
+            .as_deref()
+            .is_some_and(physical_plan_contains_point_get)
+        {
+            return true;
+        }
+    }
+    plan.base()
+        .children()
+        .iter()
+        .any(physical_plan_contains_point_get)
 }
 
 fn prepared_dml_table_names(statement: &Stmt, current_database: &str) -> Vec<(String, String)> {
@@ -2658,11 +2730,15 @@ fn run_update_with_physical(
     // physical child unchanged.
     // Keep the temporary query alive while the fast plan is built; the
     // helper borrows the SELECT AST while constructing the owned plan.
-    let fast_source_query = if physical_kv_source && update_allows_fast_plan(update) {
-        update_source_query(update)
-    } else {
-        None
-    };
+    let retained_point_source = physical_source
+        .as_deref()
+        .is_some_and(physical_plan_contains_point_get);
+    let fast_source_query =
+        if physical_kv_source && update_allows_fast_plan(update) && !retained_point_source {
+            update_source_query(update)
+        } else {
+            None
+        };
     let mut fast_point_source = fast_source_query.as_ref().and_then(|source| {
         let tidb_ast::QueryStmt::Select(select) = source else {
             return None;
