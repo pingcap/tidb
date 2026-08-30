@@ -947,9 +947,11 @@ fn optimize_built_logical(
                     high_exclusive: range.high_exclude,
                 })
                 .collect::<Vec<_>>();
-            if let Some(ids) =
-                crate::partition_pruning::pruned_ids(partition, &ranges, self.context)
-            {
+            let pruned = crate::partition_pruning::pruned_ids(partition, &ranges, self.context)
+                .map_err(|error| {
+                    tidb_planner::plan_base::PlanError::internal(format!("{error:?}"))
+                })?;
+            if let Some(ids) = pruned {
                 surviving.retain(|index| ids.contains(&partition.definitions[*index].id));
             }
             Ok(surviving)

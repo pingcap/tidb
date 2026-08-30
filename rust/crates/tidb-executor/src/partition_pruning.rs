@@ -110,8 +110,8 @@ pub fn pruned_ids(
     spec: &PartitionSpec,
     ranges: &[IndexRange],
     ctx: &impl tidb_expr::Columns,
-) -> Option<Vec<i64>> {
-    match &spec.kind {
+) -> Result<Option<Vec<i64>>, tidb_expr::EvalError> {
+    Ok(match &spec.kind {
         // Every row is in partition 0, so there is nothing to prune away.
         PartitionKind::None => None,
         PartitionKind::Hash => prune_hash_ids(spec, ranges, ctx),
@@ -141,7 +141,8 @@ pub fn pruned_ids(
             *null_partition,
             *default_partition,
             *unsigned,
-        )),
+            ctx,
+        )?),
         PartitionKind::ListColumns {
             values,
             default_partition,
@@ -152,7 +153,7 @@ pub fn pruned_ids(
             values,
             *default_partition,
         )),
-    }
+    })
 }
 
 /// Go `getUsedKeyPartitions`: exact tuples route directly; a short integer
@@ -518,21 +519,41 @@ fn prune_list_ids(
     null_partition: Option<usize>,
     default_partition: Option<usize>,
     unsigned: bool,
-) -> Vec<i64> {
+    ctx: &impl tidb_expr::Columns,
+) -> Result<Vec<i64>, tidb_expr::EvalError> {
+    let full = || {
+        spec.definitions
+            .iter()
+            .map(|definition| definition.id)
+            .collect::<Vec<_>>()
+    };
     let mut used = vec![false; spec.definitions.len()];
     for range in ranges {
-        if interval_is_null_point(range) {
-            if let Some(ordinal) = null_partition.filter(|ordinal| *ordinal < used.len()) {
+        if range.high.len() != spec.dependencies.len() || range.is_full() {
+            return Ok(full());
+        }
+        if range.is_point(true) {
+            let row = tidb_chunk::mutrow::MutRow::from_datums(&range.high);
+            let value = spec.expr.eval(ctx, row.to_row())?;
+            let (value, is_null) = list_pruning_integer(&value)?;
+            let ordinal = if is_null {
+                null_partition.or(default_partition)
+            } else {
+                values
+                    .iter()
+                    .find_map(|(candidate, ordinal)| (*candidate == value).then_some(*ordinal))
+                    .or(default_partition)
+            };
+            if let Some(ordinal) = ordinal.filter(|ordinal| *ordinal < used.len()) {
                 used[ordinal] = true;
             }
             continue;
         }
+        if spec.expr.as_column().is_none() {
+            return Ok(full());
+        }
         let Some((low, high)) = scalar_interval(range) else {
-            return spec
-                .definitions
-                .iter()
-                .map(|definition| definition.id)
-                .collect();
+            return Ok(full());
         };
         for (value, ordinal) in values {
             if *ordinal < used.len() && scalar_in_interval(*value, low, high, unsigned) {
@@ -544,15 +565,30 @@ fn prune_list_ids(
                 used[ordinal] = true;
             }
         }
+        if let Some(ordinal) = default_partition.filter(|ordinal| *ordinal < used.len()) {
+            used[ordinal] = true;
+        }
     }
-    if let Some(ordinal) = default_partition.filter(|ordinal| *ordinal < used.len()) {
-        used[ordinal] = true;
-    }
-    spec.definitions
+    Ok(spec
+        .definitions
         .iter()
         .zip(used)
         .filter_map(|(definition, used)| used.then_some(definition.id))
-        .collect()
+        .collect())
+}
+
+fn list_pruning_integer(value: &Datum) -> Result<(i64, bool), tidb_expr::EvalError> {
+    Ok(match value {
+        Datum::Null => (0, true),
+        Datum::Int(value) => (*value, false),
+        Datum::UInt(value) => (*value as i64, false),
+        Datum::Bit(value) | Datum::BinaryLiteral(value) => (value.to_int().value() as i64, false),
+        _ => {
+            return Err(tidb_expr::EvalError::Unsupported(
+                "LIST partition expression did not evaluate as integer",
+            ));
+        }
+    })
 }
 
 /// A scalar range endpoint: its value, whether the endpoint is EXCLUSIVE,
@@ -903,7 +939,7 @@ mod tests {
     use crate::partition_routing::PartitionDef;
 
     fn pruned_ids(spec: &PartitionSpec, ranges: &[IndexRange]) -> Option<Vec<i64>> {
-        super::pruned_ids(spec, ranges, &tidb_expr::NoColumns)
+        super::pruned_ids(spec, ranges, &tidb_expr::NoColumns).expect("partition pruning")
     }
 
     fn range_table() -> PartitionSpec {
@@ -1240,17 +1276,23 @@ mod tests {
         );
     }
 
-    /// LIST keeps exact owners for points/ranges, keeps its NULL owner only
-    /// for an `IS NULL` range, and always retains DEFAULT for a possible gap.
+    /// LIST points keep their exact owner (DEFAULT only owns a point gap),
+    /// while intervals also retain DEFAULT because they may contain gaps.
     #[test]
     fn list_pruning_matches_gos_explicit_and_default_owners() {
-        let spec = list_table();
+        let mut spec = list_table();
+        let mut column = tidb_expr::column::Column::new(
+            1,
+            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+        );
+        column.index = 0;
+        spec.expr = tidb_expr::expression::Expression::Column(column);
         assert_eq!(
             pruned_ids(
                 &spec,
                 &[interval(Datum::Int(1), false, Datum::Int(1), false)]
             ),
-            Some(vec![201, 203])
+            Some(vec![201])
         );
         assert_eq!(
             pruned_ids(
@@ -1261,7 +1303,7 @@ mod tests {
         );
         assert_eq!(
             pruned_ids(&spec, &[interval(Datum::Null, false, Datum::Null, false)]),
-            Some(vec![202, 203])
+            Some(vec![202])
         );
 
         let mut without_default = spec.clone();
@@ -1273,8 +1315,56 @@ mod tests {
         }
         assert_eq!(
             pruned_ids(&without_default, &[IndexRange::full()]),
-            Some(vec![201, 202]),
-            "a full range must retain the explicit NULL owner"
+            Some(vec![201, 202, 203]),
+            "a full ranger interval must retain every definition"
+        );
+    }
+
+    #[test]
+    fn list_point_pruning_evaluates_the_partition_expression() {
+        use tidb_ast::CiString;
+        use tidb_datatype::{FieldType, FieldTypeCode};
+        use tidb_expr::{
+            column::Column, constant::Constant, expression::Expression,
+            scalar_function::ScalarFunction,
+        };
+
+        let mut spec = list_table();
+        let field_type = FieldType::new(FieldTypeCode::LongLong);
+        let mut column = Column::new(1, field_type.clone());
+        column.index = 0;
+        spec.expr = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("plus"),
+            field_type.clone(),
+            vec![
+                Expression::Column(column),
+                Expression::Constant(Constant::new(Datum::Int(1), field_type)),
+            ],
+        ));
+
+        assert_eq!(
+            pruned_ids(
+                &spec,
+                &[interval(Datum::Int(0), false, Datum::Int(0), false)]
+            ),
+            Some(vec![201]),
+            "LIST(a + 1) must locate a=0 through expression value 1"
+        );
+        assert_eq!(
+            pruned_ids(
+                &spec,
+                &[interval(Datum::Int(1), false, Datum::Int(1), false)]
+            ),
+            Some(vec![203]),
+            "the DEFAULT partition owns a point whose expression value is absent"
+        );
+        assert_eq!(
+            pruned_ids(
+                &spec,
+                &[interval(Datum::Int(0), false, Datum::Int(1), false)]
+            ),
+            Some(vec![201, 202, 203]),
+            "Go declines non-point pruning for a compound LIST expression"
         );
     }
 
