@@ -51,8 +51,8 @@ use std::sync::Arc;
 use tidb_executor::analyze::kv::analyze_kv_table_columns;
 use tidb_executor::analyze::panic_recovery::recover_analyze_panic;
 use tidb_executor::analyze::{
-    AnalyzeColumnChoice, AnalyzeStatement, MEM_QUOTA_ANALYZE_VARIABLE, PhysicalAnalyzeOptions,
-    SampleMemoryQuota, SavedAnalyzeOptions, lower_analyze_admin, resolve_analyze_options,
+    lower_analyze_admin, resolve_analyze_options, AnalyzeColumnChoice, AnalyzeStatement,
+    PhysicalAnalyzeOptions, SampleMemoryQuota, SavedAnalyzeOptions, MEM_QUOTA_ANALYZE_VARIABLE,
 };
 use tidb_executor::{DriverError, SchemaErrorKind, TableEntry};
 
@@ -102,6 +102,51 @@ fn merge_partial_statistics(
         || (merged.column_stats_existence.values().all(|exists| !exists)
             && merged.index_stats_existence.values().all(|exists| !exists));
     merged
+}
+
+fn validate_index_target(
+    table: &tidb_executor::kv_table::KvTable,
+    statement: &AnalyzeStatement,
+) -> Result<bool, DriverError> {
+    let Some(names) = &statement.index_names else {
+        return Ok(false);
+    };
+    let selected = if names.is_empty() {
+        table.indexes().iter().collect::<Vec<_>>()
+    } else {
+        names
+            .iter()
+            .map(|name| {
+                table
+                    .indexes()
+                    .iter()
+                    .find(|index| index.name.eq_ignore_ascii_case(name))
+                    .ok_or_else(|| {
+                        DriverError::unsupported(format!(
+                            "Index '{name}' in field list does not exist in table '{}'",
+                            table.name
+                        ))
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    let all_special_global = selected.iter().all(|index| {
+        index.global
+            && (index.has_prefix()
+                || index.column_offsets.iter().any(|offset| {
+                    table
+                        .columns()
+                        .get(*offset)
+                        .and_then(|column| column.generated.as_ref())
+                        .is_some_and(|generated| !generated.stored)
+                }))
+    });
+    if all_special_global {
+        return Err(DriverError::unsupported(
+            "this node does not yet build Go's independent ANALYZE task for a special global index",
+        ));
+    }
+    Ok(true)
 }
 
 fn analyze_partition_ids(
@@ -382,6 +427,12 @@ impl Session {
                     )));
                 }
             };
+            if validate_index_target(&table, statement)? {
+                ctx.append_warning_parts(
+                    1105,
+                    "The version 2 would collect all statistics not only the selected indexes",
+                );
+            }
             if matches!(statement.columns, AnalyzeColumnChoice::Explicit(_)) {
                 let mut suppress_predicate_warning = true;
                 let mut explicit_warning_emitted = false;

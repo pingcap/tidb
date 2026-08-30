@@ -182,6 +182,13 @@ impl ClusterServerSession {
                     "Ignore columns and options when analyze partition in dynamic mode".to_owned(),
                 );
             }
+            if report.collected_all_for_index_target {
+                self.session.append_routed_warning(
+                    1105,
+                    "The version 2 would collect all statistics not only the selected indexes"
+                        .to_owned(),
+                );
+            }
             if let Some(warning) = &report.option_save_warning {
                 self.session.append_routed_warning(1105, warning.clone());
             }

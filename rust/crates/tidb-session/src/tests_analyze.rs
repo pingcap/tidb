@@ -651,29 +651,34 @@ fn analyze_resolves_and_refuses_names() {
     );
 }
 
-/// A clause this engine does not implement is refused by name rather than
-/// answered OK -- an `ANALYZE` that returns success without rebuilding the
-/// histograms would leave the planner estimating from whatever was there
-/// before while the client believes it just measured the table.
+/// Stats v2 treats an ordinary index target as a request for the normal full
+/// sampling task, exactly as Go's `buildAnalyzeFullSamplingTask` does.
 #[test]
-fn an_unimplemented_analyze_clause_is_refused() {
+fn ordinary_index_target_collects_all_statistics() {
     let mut session = Session::new();
     session.run("CREATE TABLE t (a INT, KEY ka(a))").unwrap();
     session.run("INSERT INTO t VALUES (1),(2)").unwrap();
 
-    for refused in [
-        "ANALYZE TABLE t INDEX ka",
-        "ANALYZE INCREMENTAL TABLE t INDEX ka",
-    ] {
-        assert!(
-            session.run(refused).is_err(),
-            "`{refused}` must refuse rather than answer OK"
-        );
-    }
-    // ... and the refusals left the table unanalyzed, not half-analyzed.
+    session.run("ANALYZE TABLE t INDEX ka").unwrap();
     assert_eq!(
-        scan_row(&mut session, "EXPLAIN SELECT * FROM t").1,
-        "keep order:false, stats:pseudo"
+        warnings_of(&session),
+        vec![(
+            1105,
+            "The version 2 would collect all statistics not only the selected indexes".to_owned(),
+        )]
+    );
+    assert_eq!(scan_row(&mut session, "EXPLAIN SELECT * FROM t").0, "2.00");
+
+    let missing = session
+        .run("ANALYZE TABLE t INDEX missing")
+        .expect_err("Go rejects a named index that is not public metadata");
+    assert!(missing
+        .to_string()
+        .contains("Index 'missing' in field list does not exist in table 't'"));
+
+    assert!(
+        session.run("ANALYZE INCREMENTAL TABLE t INDEX ka").is_err(),
+        "the separate incremental v2 gap remains an explicit refusal"
     );
 }
 

@@ -34,7 +34,7 @@ use std::sync::mpsc::sync_channel;
 use std::time::{Duration, Instant};
 
 use chrono::TimeZone;
-use tidb_datatype::{FieldType, FieldTypeCode, SessionTimeZone};
+use tidb_datatype::{FieldType, FieldTypeCode, SessionTimeZone, UNSPECIFIED_LENGTH};
 use tidb_error::mysql::SqlError;
 use tidb_stats::histogram::Histogram;
 use tidb_stats::{
@@ -137,6 +137,9 @@ pub struct ClusterAnalyzeReport {
     pub global_stats_warning: Option<(u16, String)>,
     /// Whether Go ignores explicit partition options in dynamic mode.
     pub ignored_partition_overrides: bool,
+    /// Whether stats v2 expanded an index-targeted statement to the normal
+    /// full statistics collection path.
+    pub collected_all_for_index_target: bool,
     analyzed_column_ids: Vec<i64>,
     analyzed_index_ids: Vec<i64>,
 }
@@ -197,6 +200,8 @@ pub fn resolve_cluster_analyze_statement<
         .finish_without_writes()
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
 
+    validate_index_target(&table, statement)?;
+
     let mut resolution = resolve_analyze_options(
         table.id,
         &partition_ids,
@@ -224,6 +229,61 @@ pub fn resolve_cluster_analyze_statement<
         partitioned: table.partition.is_some(),
         ignored_partition_overrides: resolution.ignored_partition_overrides,
     })
+}
+
+fn validate_index_target(
+    table: &tidb_model::table_info::TableInfo,
+    statement: &AnalyzeStatement,
+) -> Result<(), ClusterAnalyzeError> {
+    let Some(names) = &statement.index_names else {
+        return Ok(());
+    };
+    let indexes = table.indices.iter_deref().filter_map(|index| {
+        let index = index.read();
+        (index.state == tidb_model::SchemaState::PUBLIC).then(|| index.clone())
+    });
+    let selected = if names.is_empty() {
+        indexes.collect::<Vec<_>>()
+    } else {
+        names
+            .iter()
+            .map(|name| {
+                table
+                    .indices
+                    .iter_deref()
+                    .find_map(|index| {
+                        let index = index.read();
+                        (index.state == tidb_model::SchemaState::PUBLIC
+                            && index.name.lowercase().eq_ignore_ascii_case(name))
+                        .then(|| index.clone())
+                    })
+                    .ok_or_else(|| {
+                        ClusterAnalyzeError::Other(format!(
+                            "Index '{name}' in field list does not exist in table '{}'",
+                            table.name.original()
+                        ))
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    let all_special_global = selected.iter().all(|index| {
+        index.global
+            && index.columns.iter_deref().any(|column| {
+                let column = column.read();
+                column.length != UNSPECIFIED_LENGTH
+                    || table
+                        .cols()
+                        .get(column.offset as usize)
+                        .is_some_and(|column| column.read().is_virtual_generated())
+            })
+    });
+    if all_special_global {
+        return Err(ClusterAnalyzeError::Other(
+            "this node does not yet build Go's independent ANALYZE task for a special global index"
+                .to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn analyze_partition_ids(
@@ -1436,6 +1496,7 @@ fn commit_cluster_analyze_target<C: StoreWriteClient, L: StoreWriteLoader, P: St
         option_save_warning: None,
         global_stats_warning: None,
         ignored_partition_overrides: false,
+        collected_all_for_index_target: statement.index_names.is_some(),
         analyzed_column_ids: report.stats.columns.iter().map(|item| item.id).collect(),
         analyzed_index_ids: report.stats.indexes.iter().map(|item| item.id).collect(),
     };
@@ -1512,6 +1573,7 @@ fn selected_columns_for_choice<S: crate::cluster_catalog::MetaSnapshot>(
         schema: String::new(),
         table: String::new(),
         partitions: Vec::new(),
+        index_names: None,
         columns: choice.clone(),
         raw_options: Default::default(),
         persist_options: false,
@@ -1665,6 +1727,7 @@ mod tests {
             schema: "test".to_owned(),
             table: "t".to_owned(),
             partitions: Vec::new(),
+            index_names: None,
             columns: AnalyzeColumnChoice::All,
             raw_options: Default::default(),
             persist_options: true,

@@ -200,6 +200,11 @@ pub struct AnalyzeStatement {
     pub table: String,
     /// Explicit partition names. Empty means every partition.
     pub partitions: Vec<String>,
+    /// `Some` for `ANALYZE TABLE ... INDEX`, including an empty vector for
+    /// the form that names every index. In stats v2 Go uses this during
+    /// planning: any ordinary selected index takes the normal full-sampling
+    /// path, while an all-special-global selection takes index-only tasks.
+    pub index_names: Option<Vec<String>>,
     /// Which columns the pinned planner selects before execution.
     pub columns: AnalyzeColumnChoice,
     /// Options explicitly named by this statement, before saved-option merge.
@@ -393,19 +398,16 @@ pub fn lower_analyze_admin(
         }
         _ => return Ok(None),
     };
-    let columns = match &analyze.target {
-        tidb_ast::AnalyzeTarget::Default => AnalyzeColumnChoice::Default,
-        tidb_ast::AnalyzeTarget::AllColumns => AnalyzeColumnChoice::All,
-        tidb_ast::AnalyzeTarget::Index(_) => {
-            return Err(AnalyzeError::Unsupported(
-                "this node does not run ANALYZE TABLE ... INDEX: it rewrites a table's whole \
-                 statistics, and storing only some of them would leave the rest describing an \
-                 older row count"
-                    .to_owned(),
-            ));
+    let (columns, index_names) = match &analyze.target {
+        tidb_ast::AnalyzeTarget::Default => (AnalyzeColumnChoice::Default, None),
+        tidb_ast::AnalyzeTarget::AllColumns => (AnalyzeColumnChoice::All, None),
+        tidb_ast::AnalyzeTarget::Index(names) => {
+            (AnalyzeColumnChoice::Default, Some(names.clone()))
         }
-        tidb_ast::AnalyzeTarget::PredicateColumns => AnalyzeColumnChoice::Predicate,
-        tidb_ast::AnalyzeTarget::Columns(names) => AnalyzeColumnChoice::Explicit(names.clone()),
+        tidb_ast::AnalyzeTarget::PredicateColumns => (AnalyzeColumnChoice::Predicate, None),
+        tidb_ast::AnalyzeTarget::Columns(names) => {
+            (AnalyzeColumnChoice::Explicit(names.clone()), None)
+        }
         tidb_ast::AnalyzeTarget::Histogram { .. } => {
             return Err(AnalyzeError::Unsupported(
                 "this node does not run UPDATE/DROP HISTOGRAM ON".to_owned(),
@@ -527,6 +529,7 @@ pub fn lower_analyze_admin(
             schema,
             table,
             partitions: analyze.partitions.clone(),
+            index_names: index_names.clone(),
             columns: columns.clone(),
             raw_options,
             persist_options: true,
