@@ -16,6 +16,7 @@ Rust currently exposes Go's logical-rule list but several entries are missing, n
 - [ ] Audit every direct artifact in `pkg/planner/core/rule`, mapping production symbols and original tests to Rust owners.
 - [ ] Implement dependency-closed missing rule bodies; when a body depends on an incomplete Go package, complete that dependency package before claiming this package.
 - [x] (2026-08-29) Implemented pinned `ConstantPropagationSolver` with Go's preorder traversal, join-type sides, projection column rewrite, parent selection shape, and hard-coded unchanged flag.
+- [x] (2026-08-29) Replaced the disconnected max/min classifier with pinned `MaxMinEliminator`: recursive CTE boundary, eligibility gates, nullable filtering, sort/limit construction, indexed multi-aggregate splitting, cloned subplans, and cartesian joins.
 - [ ] Run the Ready validation profile and record the complete package receipt.
 
 ## Surprises & Discoveries

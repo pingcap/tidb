@@ -138,7 +138,6 @@ pub mod logical_sort;
 pub mod logical_table_dual;
 pub mod logical_top_n;
 pub mod logical_union_all;
-pub mod max_min_elimination;
 pub mod memo_group_id;
 pub mod pattern;
 pub mod pattern_engine;
