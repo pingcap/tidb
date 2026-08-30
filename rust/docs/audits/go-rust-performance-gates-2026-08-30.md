@@ -123,6 +123,35 @@ The planner fix accepts the standard STOCK_LEVEL `s_i_id IN (SELECT ol_i_id
 unsupported-expression errors. Rust throughput remains below the gate, so the
 BenchmarkSQL performance gate is still failed and requires optimization.
 
+### Thin-LTO Sysbench follow-up
+
+To separate code-generation effects from source changes, the same
+`hparser-integration` binary was rebuilt with the repository's default thin LTO
+profile on the TiUP Pod NVMe disk. The binary was installed on all three Rust
+listeners and each copy matched SHA256
+`320764be80a156cefccfea0608b9a349b59d7fad881c9c1514b1e5aad4c29dd2`. The
+full ten-subtype sweep completed in 202 seconds, with no restore and isolated
+empty tables for INSERT/bulk INSERT:
+
+| Subtype | Go QPS | Rust QPS | Rust/Go | Gate |
+|---|---:|---:|---:|---|
+| `oltp_read_write.lua` | 580.59 | 204.96 | 0.3530 | FAIL |
+| `oltp_read_only.lua` | 780.97 | 853.40 | 1.0927 | PASS |
+| `oltp_write_only.lua` | 2205.25 | 719.32 | 0.3262 | FAIL |
+| `oltp_point_select.lua` | 18399.76 | 22875.93 | 1.2433 | PASS |
+| `select_random_points.lua` | 8079.22 | 9198.56 | 1.1385 | PASS |
+| `select_random_ranges.lua` | 8149.06 | 1.60 | 0.0002 | FAIL* |
+| `oltp_insert.lua` (isolated empty tables) | 8181.14 | 7666.08 | 0.9370 | PASS |
+| `oltp_update_index.lua` | 4385.97 | 2838.69 | 0.6472 | FAIL |
+| `oltp_update_non_index.lua` | 6364.54 | 4293.76 | 0.6746 | FAIL |
+| `bulk_insert.lua` (isolated empty tables) | 306461.04 | 194029.27 | 0.6331 | FAIL |
+
+`select_random_ranges.lua` hit a transient TiKV `MissingLeader` error in this
+short sweep. A focused retry after the listeners settled completed in 28
+seconds and produced Go 8310.41 / Rust 4483.90 (ratio 0.5396), still below the
+round-1 threshold. The LTO run is therefore diagnostic rather than an
+acceptance result; it did not close the remaining write/range gaps.
+
 ## Acceptance status
 
 - Round 1 (0.80): **not passed** because Sysbench and BenchmarkSQL still fail;
