@@ -454,6 +454,44 @@ impl tidb_executor::driver::StatisticsItemLoader for ClusterStatisticsItemLoader
             }) {
                 continue;
             }
+            let current = self.stats.load();
+            let Some(current) = current
+                .get(&item.table_id)
+                .and_then(tidb_exec::stats_watch::TableStatsState::loaded)
+            else {
+                continue;
+            };
+            if item.is_index {
+                if !current.index_load_needed(item.id).1 {
+                    continue;
+                }
+            } else {
+                let (_, load_needed, analyzed) =
+                    current.column_load_needed(item.id, requested.full_load);
+                if !load_needed {
+                    continue;
+                }
+                if !analyzed {
+                    let empty = tidb_exec::cluster_stats_load::ClusterStatsItem {
+                        id: item.id,
+                        is_index: false,
+                        stats_ver: 0,
+                        flag: 0,
+                        load_status: tidb_stats::StatsLoadedStatus::default(),
+                        histogram: tidb_stats::Histogram {
+                            id: item.id,
+                            ..tidb_stats::Histogram::default()
+                        },
+                        topn: None,
+                        cms: None,
+                        fm_sketch: None,
+                    };
+                    if self.stats.update_item(item.table_id, empty, table) {
+                        updated.insert(item.table_id);
+                    }
+                    continue;
+                }
+            }
             let snapshot = self.transactions.open_snapshot(resource_group)?;
             let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
             let loaded = loader
@@ -466,7 +504,7 @@ impl tidb_executor::driver::StatisticsItemLoader for ClusterStatisticsItemLoader
                     requested.full_load,
                 )
                 .map_err(|error| error.to_string())?;
-            if loaded.is_some_and(|loaded| self.stats.update_item(item.table_id, loaded)) {
+            if loaded.is_some_and(|loaded| self.stats.update_item(item.table_id, loaded, table)) {
                 updated.insert(item.table_id);
             }
         }

@@ -232,7 +232,7 @@ impl ClusterTableStats {
 }
 
 impl ClusterStatsItem {
-    fn to_column(&self, table_id: i64, table_info: &TableInfo) -> Option<Column> {
+    pub(crate) fn to_column(&self, table_id: i64, table_info: &TableInfo) -> Option<Column> {
         let (metadata, is_handle) = table_info.cols().iter_deref().find_map(|column| {
             let column = column.read();
             (column.id == self.id).then(|| {
@@ -261,7 +261,7 @@ impl ClusterStatsItem {
         })
     }
 
-    fn to_index(&self, table_id: i64, table_info: &TableInfo) -> Option<Index> {
+    pub(crate) fn to_index(&self, table_id: i64, table_info: &TableInfo) -> Option<Index> {
         let metadata = table_info.indices.iter_deref().find_map(|index| {
             let index = index.read();
             (index.id == self.id).then(|| IndexInfo {

@@ -214,9 +214,15 @@ impl SharedStats {
 
     /// Go sync-load's `updateCachedItem`: copy the cached table, replace only
     /// the requested column/index, and atomically publish a new cache image.
+    /// Applies Go sync-load's cache update with the current schema metadata.
     /// A fully loaded item is never downgraded, and a metadata-only request
     /// does not replace an item already present.
-    pub fn update_item(&self, table_id: i64, item: ClusterStatsItem) -> bool {
+    pub fn update_item(
+        &self,
+        table_id: i64,
+        item: ClusterStatsItem,
+        table_info: &tidb_model::table_info::TableInfo,
+    ) -> bool {
         let mut guard = match self.published.write() {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
@@ -231,30 +237,32 @@ impl SharedStats {
             CopyIntent::ColumnMapWritable
         });
         if item.is_index {
-            let Some(existing) = current.hist_coll.get_index(item.id) else {
-                return false;
-            };
-            let existing = existing
-                .read()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            // Go returns true for an already-satisfied index request even
-            // though it does not publish another table.
-            if existing.is_full_load() || !full_loaded {
-                return true;
-            }
-            table.hist_coll.set_index(
-                item.id,
+            let replacement = if let Some(existing) = current.hist_coll.get_index(item.id) {
+                let existing = existing
+                    .read()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                // Go returns true for an already-satisfied index request even
+                // though it does not publish another table.
+                if existing.is_full_load() || !full_loaded {
+                    return true;
+                }
                 Index {
-                    cmsketch: item.cms,
-                    top_n: item.topn,
+                    cmsketch: item.cms.clone(),
+                    top_n: item.topn.clone(),
                     fm_sketch: None,
                     info: existing.info.clone(),
-                    histogram: item.histogram,
+                    histogram: item.histogram.clone(),
                     stats_loaded_status: item.load_status,
                     stats_version: item.stats_ver,
                     physical_id: existing.physical_id,
-                },
-            );
+                }
+            } else {
+                let Some(replacement) = item.to_index(table_id, table_info) else {
+                    return false;
+                };
+                replacement
+            };
+            table.hist_coll.set_index(item.id, replacement);
             if item.stats_ver > 0 {
                 if let Some(existence) = &table.existence_map {
                     existence
@@ -265,31 +273,33 @@ impl SharedStats {
                 table.hist_coll.stats_version = i32::try_from(item.stats_ver).unwrap_or(i32::MAX);
             }
         } else {
-            let Some(existing) = current.hist_coll.get_column(item.id) else {
-                return false;
-            };
-            let existing = existing
-                .read()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if existing.is_full_load() || !full_loaded {
-                return false;
-            }
             let available =
                 item.stats_ver != 0 || item.histogram.ndv > 0 || item.histogram.null_count > 0;
-            table.hist_coll.set_column(
-                item.id,
+            let replacement = if let Some(existing) = current.hist_coll.get_column(item.id) {
+                let existing = existing
+                    .read()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if existing.is_full_load() || !full_loaded {
+                    return false;
+                }
                 Column {
-                    cmsketch: item.cms,
-                    top_n: item.topn,
+                    cmsketch: item.cms.clone(),
+                    top_n: item.topn.clone(),
                     fm_sketch: None,
                     info: existing.info.clone(),
-                    histogram: item.histogram,
+                    histogram: item.histogram.clone(),
                     stats_loaded_status: item.load_status,
                     physical_id: existing.physical_id,
                     stats_version: item.stats_ver,
                     is_handle: existing.is_handle,
-                },
-            );
+                }
+            } else {
+                let Some(replacement) = item.to_column(table_id, table_info) else {
+                    return false;
+                };
+                replacement
+            };
+            table.hist_coll.set_column(item.id, replacement);
             if let Some(existence) = &table.existence_map {
                 existence
                     .write()
@@ -300,14 +310,12 @@ impl SharedStats {
                 table.hist_coll.stats_version = i32::try_from(item.stats_ver).unwrap_or(i32::MAX);
             }
         }
+        let table = Arc::new(table);
         self.cache.update_stats_cache(CacheUpdate {
-            updated: vec![Arc::new(table)],
+            updated: vec![Arc::clone(&table)],
             deleted: Vec::new(),
             skip_move_forward: false,
         });
-        let Some(table) = self.cache.get(table_id) else {
-            return false;
-        };
         let mut snapshot = guard.as_ref().clone();
         snapshot.insert(table_id, TableStatsState::Loaded(table));
         *guard = Arc::new(snapshot);
@@ -638,7 +646,26 @@ mod tests {
     }
 
     fn shared_stats(snapshot: StatsSnapshot) -> SharedStats {
+        tidb_vardef::STATS_CACHE_MEM_QUOTA.store(1024 * 1024, std::sync::atomic::Ordering::SeqCst);
         SharedStats::new(snapshot).expect("statistics cache")
+    }
+
+    fn table_info() -> tidb_model::table_info::TableInfo {
+        tidb_model::table_info::TableInfo {
+            id: 1,
+            columns: tidb_model::GoSharedPointerSlice::from_handles(vec![Some(
+                tidb_model::GoShared::new(tidb_model::column::ColumnInfo {
+                    id: 1,
+                    name: tidb_ast::CiString::new("a"),
+                    field_type: tidb_datatype::FieldType::new(
+                        tidb_datatype::FieldTypeCode::LongLong,
+                    ),
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::column::ColumnInfo::default()
+                }),
+            )]),
+            ..tidb_model::table_info::TableInfo::default()
+        }
     }
 
     #[test]
@@ -692,7 +719,12 @@ mod tests {
         )]));
         let held = shared.load();
 
-        assert!(shared.update_item(1, item(1, tidb_stats::StatsLoadedStatus::full_load())));
+        let table_info = table_info();
+        assert!(shared.update_item(
+            1,
+            item(1, tidb_stats::StatsLoadedStatus::full_load()),
+            &table_info,
+        ));
         assert!(held[&1]
             .loaded()
             .unwrap()
@@ -711,7 +743,11 @@ mod tests {
             .read()
             .unwrap()
             .is_full_load());
-        assert!(!shared.update_item(1, item(1, tidb_stats::StatsLoadedStatus::all_evicted())));
+        assert!(!shared.update_item(
+            1,
+            item(1, tidb_stats::StatsLoadedStatus::all_evicted()),
+            &table_info,
+        ));
         assert!(shared.load()[&1]
             .loaded()
             .unwrap()
@@ -721,6 +757,81 @@ mod tests {
             .read()
             .unwrap()
             .is_full_load());
+    }
+
+    #[test]
+    fn sync_load_installs_go_empty_column_for_known_unanalyzed_metadata() {
+        let table = match loaded_at(1, 42).1 {
+            TableStatsState::Loaded(table) => table.as_ref().clone(),
+            TableStatsState::Pseudo => unreachable!(),
+        };
+        table
+            .existence_map
+            .as_ref()
+            .unwrap()
+            .write()
+            .unwrap()
+            .insert_column(1, false);
+        let shared = shared_stats(StatsSnapshot::from([(
+            1,
+            TableStatsState::Loaded(Arc::new(table)),
+        )]));
+        let table_info = table_info();
+        let empty = ClusterStatsItem {
+            id: 1,
+            is_index: false,
+            stats_ver: 0,
+            flag: 0,
+            load_status: tidb_stats::StatsLoadedStatus::default(),
+            histogram: Histogram {
+                id: 1,
+                ..Histogram::default()
+            },
+            topn: None,
+            cms: None,
+            fm_sketch: None,
+        };
+
+        assert!(shared.update_item(1, empty, &table_info));
+        let current = shared.load();
+        let current = current[&1].loaded().unwrap();
+        assert!(current.hist_coll.get_column(1).is_some());
+        let (column, load_needed, analyzed) = current.column_load_needed(1, true);
+        assert!(column.is_none());
+        assert!(!load_needed);
+        assert!(!analyzed);
+    }
+
+    #[test]
+    fn sync_load_inserts_analyzed_column_without_a_resident_object() {
+        let table = match loaded_at(1, 42).1 {
+            TableStatsState::Loaded(table) => table.as_ref().clone(),
+            TableStatsState::Pseudo => unreachable!(),
+        };
+        table
+            .existence_map
+            .as_ref()
+            .unwrap()
+            .write()
+            .unwrap()
+            .insert_column(1, true);
+        let shared = shared_stats(StatsSnapshot::from([(
+            1,
+            TableStatsState::Loaded(Arc::new(table)),
+        )]));
+        let table_info = table_info();
+
+        assert!(shared.update_item(
+            1,
+            item(1, tidb_stats::StatsLoadedStatus::full_load()),
+            &table_info,
+        ));
+        let current = shared.load();
+        let current = current[&1].loaded().unwrap();
+        let (column, load_needed, analyzed) = current.column_load_needed(1, true);
+        assert!(column.unwrap().read().unwrap().is_full_load());
+        assert!(!load_needed);
+        assert!(analyzed);
     }
 
     #[test]
