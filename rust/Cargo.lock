@@ -3767,6 +3767,8 @@ dependencies = [
  "tidb-protocol",
  "tidb-session",
  "tidb-stats",
+ "tidb-stats-handle-autoanalyze-exec",
+ "tidb-stats-handle-autoanalyze-priorityqueue",
  "tidb-stats-handle-cache",
  "tidb-stats-handle-initstats",
  "tidb-stats-handle-metrics",
@@ -3879,6 +3881,19 @@ dependencies = [
  "tidb-syssession",
  "tidb-util",
  "tidb-vardef",
+]
+
+[[package]]
+name = "tidb-stats-handle-autoanalyze-priorityqueue"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "tidb-ast",
+ "tidb-metadef",
+ "tidb-model",
+ "tidb-stats",
+ "tidb-stats-handle-util",
 ]
 
 [[package]]

@@ -183,6 +183,13 @@ impl SharedStats {
         }
     }
 
+    /// Go `StatsHandle.GetNextCheckVersionWithOffset` over the canonical
+    /// cache owned by this shared statistics image.
+    #[must_use]
+    pub fn next_check_version_with_offset(&self, lease: Duration) -> u64 {
+        self.cache.next_check_version_with_offset(lease)
+    }
+
     /// Replaces the published snapshot atomically.
     pub fn store(&self, snapshot: StatsSnapshot) {
         let mut guard = match self.published.write() {

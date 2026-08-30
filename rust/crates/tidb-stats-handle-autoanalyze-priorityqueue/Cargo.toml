@@ -1,0 +1,22 @@
+[package]
+name = "tidb-stats-handle-autoanalyze-priorityqueue"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB auto-analyze priority queue package."
+
+[lints]
+workspace = true
+
+[dependencies]
+chrono = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+tidb-model = { path = "../tidb-model" }
+tidb-metadef = { path = "../tidb-metadef" }
+tidb-stats = { path = "../tidb-stats" }
+tidb-stats-handle-util = { path = "../tidb-stats-handle-util" }
+
+[dev-dependencies]
+tidb-ast = { path = "../tidb-ast" }

@@ -95,6 +95,71 @@ fn displayed(rows: Vec<Vec<Datum>>) -> Vec<Vec<String>> {
         .collect()
 }
 
+#[test]
+fn auto_analyze_priority_queue_uses_shared_stats_ddl_and_ordinary_analyze_path() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let factory = Arc::new(stack.factory);
+    let mut session = factory
+        .open_session(session_context(140))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "CREATE TABLE queue_analyze (a INT)");
+    rows(&mut session, "CREATE TABLE queue_drop (a INT)");
+    let values = (0..1_000)
+        .map(|value| format!("({value})"))
+        .collect::<Vec<_>>()
+        .join(",");
+    rows(
+        &mut session,
+        &format!("INSERT INTO queue_analyze VALUES {values}"),
+    );
+    rows(
+        &mut session,
+        &format!("INSERT INTO queue_drop VALUES {values}"),
+    );
+    let reloads = stack._stats_reloader.stats().reloads;
+    rows(&mut session, "FLUSH STATS_DELTA *.*");
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while stack._stats_reloader.stats().reloads == reloads {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "statistics update did not run after FLUSH STATS_DELTA"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let catalog = factory.catalog.load();
+    let analyze_id = catalog
+        .find_table("test", "queue_analyze")
+        .expect("analyze table exists")
+        .1
+        .id;
+    let dropped_id = catalog
+        .find_table("test", "queue_drop")
+        .expect("drop table exists")
+        .1
+        .id;
+    drop(catalog);
+
+    let queue = factory.auto_analyze_priority_queue(Duration::ZERO);
+    queue.initialize().expect("priority queue initializes");
+    assert_eq!(queue.len().unwrap(), 2);
+    rows(&mut session, "DROP TABLE queue_drop");
+    let snapshot = queue.snapshot().unwrap();
+    assert_eq!(snapshot.current_jobs.len(), 1);
+    assert_eq!(snapshot.current_jobs[0].table_id, analyze_id);
+    assert_ne!(snapshot.current_jobs[0].table_id, dropped_id);
+
+    let mut job = queue.pop().unwrap();
+    assert_eq!(job.table_id(), analyze_id);
+    let validation = job.validate_and_prepare();
+    assert!(validation.valid, "job validation failed: {validation:?}");
+    assert!(job.analyze(1));
+    assert!(queue.running_jobs().is_empty());
+    queue.close();
+}
+
 /// Pinned DDL subscriber `ActionCreateTable`, `ActionTruncateTable`, and
 /// `ActionDropTable`: create every physical table's zero-valued statistics
 /// placeholders, then retire the old physical ID by advancing stats_meta.

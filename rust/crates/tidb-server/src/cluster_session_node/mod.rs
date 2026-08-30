@@ -842,6 +842,13 @@ pub struct ClusterSessionFactory {
     historical_stats_runtime: std::sync::OnceLock<HistoricalStatsRuntime>,
     /// Go's process-global approximate table-count cache.
     approximate_table_counts: Arc<ClusterApproximateTableCountProvider>,
+    /// Go StatsHandle's one auto-analyze priority queue. The refresher creates
+    /// it lazily because the source needs a weak reference to this factory.
+    auto_analyze_priority_queue: Arc<
+        std::sync::OnceLock<
+            Arc<tidb_stats_handle_autoanalyze_priorityqueue::AnalysisPriorityQueue>,
+        >,
+    >,
 }
 
 impl ClusterSessionFactory {
@@ -911,7 +918,24 @@ impl ClusterSessionFactory {
             historical_stats_worker,
             historical_stats_runtime: std::sync::OnceLock::new(),
             approximate_table_counts,
+            auto_analyze_priority_queue: Arc::new(std::sync::OnceLock::new()),
         }
+    }
+
+    /// Returns Go StatsHandle's single auto-analyze priority queue.
+    pub(crate) fn auto_analyze_priority_queue(
+        self: &Arc<Self>,
+        stats_lease: Duration,
+    ) -> Arc<tidb_stats_handle_autoanalyze_priorityqueue::AnalysisPriorityQueue> {
+        Arc::clone(self.auto_analyze_priority_queue.get_or_init(|| {
+            let source: Arc<dyn tidb_stats_handle_autoanalyze_priorityqueue::PriorityQueueSource> =
+                Arc::new(ClusterPriorityQueueSource {
+                    factory: Arc::downgrade(self),
+                    stats_lease,
+                    next_connection_id: std::sync::atomic::AtomicU64::new(1_u64 << 61),
+                });
+            tidb_stats_handle_autoanalyze_priorityqueue::AnalysisPriorityQueue::new(source)
+        }))
     }
 
     /// Starts Go `Domain.StartHistoricalStatsWorker`.
@@ -1708,6 +1732,9 @@ impl Drop for StatsUsageWorkers {
 
 impl Drop for ClusterSessionFactory {
     fn drop(&mut self) {
+        if let Some(queue) = self.auto_analyze_priority_queue.get() {
+            queue.close();
+        }
         let flush_stats = self
             .stats_usage_workers
             .take()
@@ -2476,6 +2503,21 @@ fn partition_id_map(
     ))
 }
 
+fn table_and_partition_ids(table: &tidb_model::table_info::TableInfo) -> Vec<i64> {
+    let mut ids = vec![table.id];
+    if let Some(partition) = &table.partition {
+        ids.extend(
+            partition
+                .read()
+                .definitions
+                .snapshot()
+                .into_iter()
+                .map(|definition| definition.id),
+        );
+    }
+    ids
+}
+
 fn stats_physical_ids(table: &tidb_model::table_info::TableInfo, dynamic: bool) -> Vec<i64> {
     let Some(partition) = &table.partition else {
         return vec![table.id];
@@ -2653,12 +2695,286 @@ impl QuerySessionFactory for ClusterSessionFactory {
             connection_id: context.connection_id,
             transaction_pin: None,
             historical_stats_worker: Arc::clone(&self.historical_stats_worker),
+            auto_analyze_priority_queue: Arc::clone(&self.auto_analyze_priority_queue),
         })
     }
 
     fn session_manager(&self) -> Option<Arc<dyn tidb_util::memoryusagealarm::SessionManager>> {
         Some(Arc::new(self.processes.clone()))
     }
+}
+
+struct ClusterPriorityQueueSource {
+    factory: Weak<ClusterSessionFactory>,
+    stats_lease: Duration,
+    next_connection_id: std::sync::atomic::AtomicU64,
+}
+
+impl ClusterPriorityQueueSource {
+    fn factory(&self) -> Result<Arc<ClusterSessionFactory>, String> {
+        self.factory
+            .upgrade()
+            .ok_or_else(|| "cluster session factory is stopped".to_owned())
+    }
+
+    fn open_session(&self) -> Result<ClusterServerSession, String> {
+        use std::sync::atomic::Ordering;
+
+        let factory = self.factory()?;
+        let connection_id = self.next_connection_id.fetch_add(1, Ordering::Relaxed);
+        factory
+            .open_session(SessionContext {
+                connection_id,
+                peer_addr: "127.0.0.1:0".parse().expect("loopback socket address"),
+                identity: crate::configured_user_store::AuthenticatedIdentity::internal(),
+                secure_transport: false,
+                tls_status: None,
+                cancellation: crate::sql_node::ConnectionCancellation::default(),
+                close: crate::sql_node::ConnectionClose::default(),
+            })
+            .map_err(|error| error.message)
+    }
+
+    fn scalar(&self, sql: &str) -> Result<Option<tidb_datatype::Datum>, String> {
+        let mut session = self.open_session()?;
+        let mut result = session.execute(sql).map_err(|error| error.message)?;
+        let source = result.source();
+        let mut batch = source.next_batch(1)?;
+        let value = batch
+            .pop()
+            .and_then(|mut row| (!row.is_empty()).then(|| row.remove(0)));
+        source.finish()?;
+        source.close()?;
+        Ok(value)
+    }
+}
+
+impl tidb_stats_handle_autoanalyze_priorityqueue::PriorityQueueSource
+    for ClusterPriorityQueueSource
+{
+    fn next_check_version_with_offset(&self) -> u64 {
+        self.factory()
+            .map(|factory| {
+                factory
+                    .stats
+                    .next_check_version_with_offset(self.stats_lease)
+            })
+            .unwrap_or(0)
+    }
+
+    fn queue_inventory(
+        &self,
+    ) -> Result<tidb_stats_handle_autoanalyze_priorityqueue::QueueInventory, String> {
+        use tidb_stats_handle_autoanalyze_priorityqueue::{
+            InventoryTable, PartitionIdAndName, PartitionPruneMode, QueueInventory,
+        };
+
+        let factory = self.factory()?;
+        let catalog = factory.catalog.load();
+        let statistics = factory.stats.load();
+        let snapshot = factory.transactions.open_snapshot("default")?;
+        let current_ts = snapshot.start_ts();
+        let locked_table_ids = {
+            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+            tidb_exec::cluster_stats_write::load_stats_locked_table_ids(&mut snapshot, &catalog)
+                .map_err(|error| error.to_string())?
+        };
+        let ratio = factory
+            .global_vars
+            .get(tidb_vardef::tidb_vars::TIDB_AUTO_ANALYZE_RATIO)
+            .map_err(|error| format!("{error:?}"))?;
+        let prune_mode = factory
+            .global_vars
+            .get(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
+            .map_err(|error| format!("{error:?}"))?;
+        let requested_version = factory
+            .global_vars
+            .get(tidb_vardef::tidb_vars::TIDB_ANALYZE_VERSION)
+            .map_err(|error| format!("{error:?}"))?
+            .parse::<i32>()
+            .map_err(|error| error.to_string())?;
+        let mut tables = Vec::new();
+        for database in &catalog.databases {
+            for table in &database.tables {
+                let global_stats = statistics
+                    .get(&table.id)
+                    .and_then(tidb_exec::stats_watch::TableStatsState::loaded)
+                    .map(|stats| stats.as_ref().clone());
+                let mut partition_stats = std::collections::HashMap::new();
+                if let Some(partition) = table.get_partition_info() {
+                    for definition in partition.read().definitions.snapshot() {
+                        if let Some(stats) = statistics
+                            .get(&definition.id)
+                            .and_then(tidb_exec::stats_watch::TableStatsState::loaded)
+                        {
+                            partition_stats.insert(
+                                PartitionIdAndName::new(definition.name.original(), definition.id),
+                                stats.as_ref().clone(),
+                            );
+                        }
+                    }
+                }
+                tables.push(InventoryTable {
+                    schema_name: database.info.name.original().to_owned(),
+                    table: Arc::new(table.clone()),
+                    global_stats,
+                    partition_stats,
+                });
+            }
+        }
+        Ok(QueueInventory {
+            tables,
+            locked_table_ids,
+            prune_mode: if prune_mode.eq_ignore_ascii_case("static") {
+                PartitionPruneMode::Static
+            } else {
+                PartitionPruneMode::Dynamic
+            },
+            auto_analyze_ratio: tidb_stats_handle_autoanalyze_exec::parse_auto_analyze_ratio(
+                &ratio,
+            ),
+            requested_version,
+            current_ts,
+            auto_analyze_min_count: tidb_stats::DEFAULT_AUTO_ANALYZE_MIN_COUNT,
+        })
+    }
+}
+
+impl tidb_stats_handle_autoanalyze_priorityqueue::AnalysisJobContext
+    for ClusterPriorityQueueSource
+{
+    fn lookup_table(
+        &self,
+        table_id: i64,
+    ) -> tidb_stats_handle_autoanalyze_priorityqueue::TableLookup {
+        let Ok(factory) = self.factory() else {
+            return tidb_stats_handle_autoanalyze_priorityqueue::TableLookup::TableMissing;
+        };
+        let catalog = factory.catalog.load();
+        for database in &catalog.databases {
+            if let Some(table) = database.tables.iter().find(|table| table.id == table_id) {
+                return tidb_stats_handle_autoanalyze_priorityqueue::TableLookup::Found {
+                    schema_name: database.info.name.original().to_owned(),
+                    table: Arc::new(table.clone()),
+                };
+            }
+        }
+        tidb_stats_handle_autoanalyze_priorityqueue::TableLookup::TableMissing
+    }
+
+    fn last_failed_analysis_duration(
+        &self,
+        schema: &str,
+        table: &str,
+        partitions: &[String],
+    ) -> Result<i64, String> {
+        let schema = sql_string_literal(schema);
+        let table = sql_string_literal(table);
+        let sql = if partitions.is_empty() {
+            format!(
+                "SELECT TIMESTAMPDIFF(SECOND, start_time, CURRENT_TIMESTAMP) FROM mysql.analyze_jobs WHERE table_schema = {schema} AND table_name = {table} AND state = 'failed' AND partition_name = '' ORDER BY id DESC LIMIT 1"
+            )
+        } else {
+            let partitions = partitions
+                .iter()
+                .map(|partition| sql_string_literal(partition))
+                .collect::<Vec<_>>()
+                .join(",");
+            format!(
+                "SELECT MIN(TIMESTAMPDIFF(SECOND, aj.start_time, CURRENT_TIMESTAMP)) AS min_duration FROM (SELECT MAX(id) AS max_id FROM mysql.analyze_jobs WHERE table_schema = {schema} AND table_name = {table} AND state = 'failed' AND partition_name IN ({partitions}) GROUP BY partition_name) AS latest_failures JOIN mysql.analyze_jobs aj ON aj.id = latest_failures.max_id"
+            )
+        };
+        match self.scalar(&sql)? {
+            None | Some(tidb_datatype::Datum::Null) => Ok(
+                tidb_stats_handle_autoanalyze_priorityqueue::last_failed_analysis_duration(None),
+            ),
+            Some(tidb_datatype::Datum::Int(seconds)) => Ok(
+                tidb_stats_handle_autoanalyze_priorityqueue::last_failed_analysis_duration(Some(
+                    seconds,
+                )),
+            ),
+            Some(value) => Err(format!("invalid last failed analysis duration {value:?}")),
+        }
+    }
+
+    fn average_analysis_duration(
+        &self,
+        schema: &str,
+        table: &str,
+        partitions: &[String],
+    ) -> Result<i64, String> {
+        let schema = sql_string_literal(schema);
+        let table = sql_string_literal(table);
+        let predicate = if partitions.is_empty() {
+            "partition_name = ''".to_owned()
+        } else {
+            let partitions = partitions
+                .iter()
+                .map(|partition| sql_string_literal(partition))
+                .collect::<Vec<_>>()
+                .join(",");
+            format!("partition_name IN ({partitions})")
+        };
+        let sql = format!(
+            "SELECT AVG(TIMESTAMPDIFF(SECOND, start_time, end_time)) AS avg_duration FROM (SELECT start_time, end_time FROM mysql.analyze_jobs WHERE table_schema = {schema} AND table_name = {table} AND state = 'finished' AND fail_reason IS NULL AND {predicate} ORDER BY id DESC LIMIT 5) AS recent_analyses"
+        );
+        match self.scalar(&sql)? {
+            None | Some(tidb_datatype::Datum::Null) => {
+                Ok(tidb_stats_handle_autoanalyze_priorityqueue::average_analysis_duration(None))
+            }
+            Some(value) => {
+                let seconds = value.to_f64().map_err(|error| error.to_string())?.value;
+                Ok(
+                    tidb_stats_handle_autoanalyze_priorityqueue::average_analysis_duration(Some(
+                        seconds,
+                    )),
+                )
+            }
+        }
+    }
+
+    fn auto_analyze(
+        &self,
+        _stats_version: i32,
+        _need_version_rewrite_warning: bool,
+        sql: &str,
+        arguments: &[String],
+    ) -> bool {
+        let Ok(sql) = bind_identifier_sql(sql, arguments) else {
+            return false;
+        };
+        self.open_session()
+            .and_then(|mut session| {
+                session
+                    .execute_write(&sql)
+                    .map_err(|error| error.message)
+                    .and_then(|outcome| {
+                        outcome
+                            .map(|_| ())
+                            .ok_or_else(|| "ANALYZE did not use the write route".to_owned())
+                    })
+            })
+            .is_ok()
+    }
+}
+
+fn sql_string_literal(value: &str) -> String {
+    format!("'{}'", value.replace('\\', "\\\\").replace('\'', "''"))
+}
+
+fn bind_identifier_sql(sql: &str, arguments: &[String]) -> Result<String, String> {
+    let mut rendered = sql.to_owned();
+    for argument in arguments {
+        let Some(index) = rendered.find("%n") else {
+            return Err("too many ANALYZE identifiers".to_owned());
+        };
+        let identifier = format!("`{}`", argument.replace('`', "``"));
+        rendered.replace_range(index..index + 2, &identifier);
+    }
+    if rendered.contains("%n") {
+        return Err("not enough ANALYZE identifiers".to_owned());
+    }
+    Ok(rendered)
 }
 
 struct WorkloadRepositorySessionPool {
@@ -2935,6 +3251,13 @@ pub struct ClusterServerSession {
     transaction_pin: Option<schema_sync::SchemaPinGuard>,
     /// The domain-global mailbox successful ANALYZE results enqueue into.
     historical_stats_worker: Arc<HistoricalStatsWorker<ClusterHistoricalInfoSchema>>,
+    /// The factory's lazily installed queue, observed by DDL sessions even
+    /// when they were opened before auto analyze acquired ownership.
+    auto_analyze_priority_queue: Arc<
+        std::sync::OnceLock<
+            Arc<tidb_stats_handle_autoanalyze_priorityqueue::AnalysisPriorityQueue>,
+        >,
+    >,
 }
 
 /// The session layer's next move after a pessimistic statement's lock step.
@@ -4169,7 +4492,7 @@ impl ClusterServerSession {
         logical_table_id: i64,
         old_ids: &[(String, i64)],
         kind: PartitionStatsDdlKind,
-    ) -> Result<(), SqlQueryError> {
+    ) -> Result<Vec<i64>, SqlQueryError> {
         let catalog = self.catalog.load();
         let (_, new_ids) = partition_id_map(&catalog, schema, table_name)
             .ok_or_else(|| SqlQueryError::unknown("partitioned table disappeared from catalog"))?;
@@ -4205,7 +4528,20 @@ impl ClusterServerSession {
             &retired_ids,
             adjust_global,
             &current_ids,
-        )
+        )?;
+        Ok(retired_ids)
+    }
+
+    fn notify_auto_analyze_priority_queue(
+        &self,
+        event: tidb_stats_handle_autoanalyze_priorityqueue::PriorityQueueDdlEvent,
+    ) {
+        let Some(queue) = self.auto_analyze_priority_queue.get() else {
+            return;
+        };
+        if queue.is_initialized() {
+            let _ = queue.handle_ddl_event(true, &event);
+        }
     }
 
     fn record_schema_change_history(
@@ -4913,6 +5249,41 @@ impl ClusterServerSession {
         } else {
             (table_stats_change, column_stats_changes, partition_before)
         };
+        let table_queue_event = table_stats_change.as_ref().map(|change| {
+            use tidb_stats_handle_autoanalyze_priorityqueue::PriorityQueueDdlEvent;
+            match change {
+                TableStatsDdlChange::DropSchema { retired_ids } => {
+                    PriorityQueueDdlEvent::DropSchema {
+                        dropped_ids: retired_ids.clone(),
+                    }
+                }
+                TableStatsDdlChange::Truncate { old_table, .. } => {
+                    PriorityQueueDdlEvent::TruncateTable {
+                        dropped_ids: table_and_partition_ids(old_table),
+                    }
+                }
+                TableStatsDdlChange::Drop { old_table } => PriorityQueueDdlEvent::DropTable {
+                    dropped_ids: table_and_partition_ids(old_table),
+                },
+                TableStatsDdlChange::Create { .. } => PriorityQueueDdlEvent::Other,
+            }
+        });
+        let added_index_table = match statement {
+            DdlStatement::CreateIndex { schema, table, .. } => {
+                Some((schema.as_str(), table.as_str()))
+            }
+            DdlStatement::MultiSchemaChange {
+                schema,
+                table,
+                actions,
+            } if actions
+                .iter()
+                .any(|action| matches!(action, AlterColumnAction::AddIndex { .. })) =>
+            {
+                Some((schema.as_str(), table.as_str()))
+            }
+            _ => None,
+        };
         let report = self.ddl.execute(statement)?;
         if matches!(report, ClusterDdlReport::Applied { .. }) {
             if let Some(change) = table_stats_change {
@@ -4922,7 +5293,37 @@ impl ClusterServerSession {
                 self.update_column_ddl_stats(&schema, &table, column.as_str())?;
             }
             if let Some((schema, table, logical_id, old_ids, kind)) = partition_before {
-                self.update_partition_ddl_stats(&schema, &table, logical_id, &old_ids, kind)?;
+                let retired_ids =
+                    self.update_partition_ddl_stats(&schema, &table, logical_id, &old_ids, kind)?;
+                use tidb_stats_handle_autoanalyze_priorityqueue::PriorityQueueDdlEvent;
+                match kind {
+                    PartitionStatsDdlKind::Drop => self.notify_auto_analyze_priority_queue(
+                        PriorityQueueDdlEvent::DropPartition {
+                            table_id: logical_id,
+                            dropped_partition_ids: retired_ids,
+                        },
+                    ),
+                    PartitionStatsDdlKind::Truncate => self.notify_auto_analyze_priority_queue(
+                        PriorityQueueDdlEvent::TruncatePartition {
+                            table_id: logical_id,
+                            dropped_partition_ids: retired_ids,
+                        },
+                    ),
+                    PartitionStatsDdlKind::Add => {}
+                }
+            }
+            if let Some(event) = table_queue_event {
+                self.notify_auto_analyze_priority_queue(event);
+            }
+            if let Some((schema, table)) = added_index_table {
+                if let Some((_, table)) = self.catalog.load().find_table(schema, table) {
+                    self.notify_auto_analyze_priority_queue(
+                        tidb_stats_handle_autoanalyze_priorityqueue::PriorityQueueDdlEvent::AddIndex {
+                            table_id: table.id,
+                            analyzed: false,
+                        },
+                    );
+                }
             }
         }
         // Go raises `job.Warning` on the session's own statement context, so

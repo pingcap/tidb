@@ -16,9 +16,9 @@
 //! coprocessor's front door: request dispatch, DAG decode, and the
 //! flat-list-to-tree executor conversion.
 //!
-//! SEED of `cophandler` (~5k lines): the PARSE half lands here; DAG
-//! EXECUTION (`closure_exec.go`'s scan-and-evaluate machine), analyze, and
-//! checksum are the following courses, refusing by name until they land.
+//! SEED of `cophandler` (~5k lines): request parsing plus the ordinary table
+//! and index scan DAG composition land here. Analyze, checksum, TopN, and the
+//! remaining closure-executor expressions refuse by name until they land.
 //!
 //! # Narrowings, by name
 //!
@@ -178,13 +178,7 @@ fn exec_dag(store: &mut MvccStore, context: &DagContext) -> coprocessor::Respons
         let Some(idx_scan) = scan.idx_scan.as_ref() else {
             return other_error("executor missing idx_scan body");
         };
-        if !conditions.is_empty() || limit != usize::MAX {
-            return other_error("an index Selection/Limit is a later course of this port");
-        }
-        let Some(aggregation) = aggregation else {
-            return other_error("a bare index scan is a later course of this port");
-        };
-        return exec_index_aggregate(store, context, idx_scan, aggregation);
+        return exec_index_scan(store, context, idx_scan, &conditions, limit, aggregation);
     }
     if scan.tp() != tipb::ExecType::TypeTableScan {
         return other_error("index scans (closure_exec.go) are a later course of this port");
@@ -195,31 +189,102 @@ fn exec_dag(store: &mut MvccStore, context: &DagContext) -> coprocessor::Respons
     exec_table_scan(store, context, tbl_scan, &conditions, limit, aggregation)
 }
 
-/// The covering-index aggregation: index entries scanned in range, the
-/// indexed column values decoded out of the KEY (values first, an optional
-/// non-unique handle tail ignored), and the partial aggregation applied --
-/// Go's `[IndexScan, Aggregation]` closure executor for the shapes the
-/// reader pushes (`COUNT` over the leading key column today).
-fn exec_index_aggregate(
+/// Go `indexScanProcessor` and `indexScanProcessCore`: decode every index
+/// entry into the executor schema, then apply the same optional Selection,
+/// Limit, and partial Aggregation processors as a table scan. Handles are
+/// recovered from the key suffix for non-unique indexes and from the value
+/// for unique indexes by `DecodeIndexKV`, including common handles and
+/// restored collation data.
+fn exec_index_scan(
     store: &mut MvccStore,
     context: &DagContext,
     idx_scan: &tipb::IndexScan,
-    aggregation: &tipb::Aggregation,
+    conditions: &[SimpleExpr],
+    limit: usize,
+    aggregation: Option<&tipb::Aggregation>,
 ) -> coprocessor::Response {
     use tidb_datatype::Datum;
-    let mut aggregator = match RegionAggregator::build(aggregation, &idx_scan.columns) {
-        Ok(aggregator) => aggregator,
-        Err(message) => return other_error(&message),
+    const EXTRA_HANDLE_ID: i64 = -1;
+    const EXTRA_PHYSICAL_TABLE_ID: i64 = -3;
+
+    let timezone = match context.time_zone.resolve() {
+        Ok(timezone) => timezone,
+        Err(error) => return other_error(&error),
     };
-    let width = idx_scan.columns.len();
-    for range in &context.key_ranges {
+    let field_types = idx_scan
+        .columns
+        .iter()
+        .map(field_type_from_pb_column)
+        .collect::<Vec<_>>();
+    let column_infos = idx_scan
+        .columns
+        .iter()
+        .zip(&field_types)
+        .filter(|(column, _)| column.column_id() != EXTRA_HANDLE_ID)
+        .map(|(column, field_type)| tidb_codec::ColumnInfo {
+            id: column.column_id(),
+            is_pk_handle: column.pk_handle(),
+            virtual_generated: false,
+            field_type: field_type.clone(),
+        })
+        .collect::<Vec<_>>();
+
+    // Go `initIdxScanCtx`: `columnLen` counts only index-key columns. The
+    // trailing handle columns are materialized separately by DecodeIndexKV.
+    let has_physical_id = idx_scan
+        .columns
+        .last()
+        .is_some_and(|column| column.column_id() == EXTRA_PHYSICAL_TABLE_ID);
+    let mut schema_len = idx_scan.columns.len() - usize::from(has_physical_id);
+    let handle_status = if !idx_scan.primary_column_ids.is_empty() {
+        schema_len = schema_len.saturating_sub(idx_scan.primary_column_ids.len());
+        tidb_tablecodec::HandleStatus::Default
+    } else if let Some(handle) = schema_len
+        .checked_sub(1)
+        .and_then(|offset| idx_scan.columns.get(offset))
+        .filter(|column| column.pk_handle() || column.column_id() == EXTRA_HANDLE_ID)
+    {
+        schema_len -= 1;
+        if field_type_from_pb_column(handle).is_unsigned() {
+            tidb_tablecodec::HandleStatus::Unsigned
+        } else {
+            tidb_tablecodec::HandleStatus::Default
+        }
+    } else {
+        tidb_tablecodec::HandleStatus::NotNeeded
+    };
+
+    let mut aggregator = match aggregation {
+        Some(aggregation) => match RegionAggregator::build(aggregation, &idx_scan.columns) {
+            Ok(aggregator) => Some(aggregator),
+            Err(message) => return other_error(&message),
+        },
+        None => None,
+    };
+    let mut rows = Vec::new();
+    let mut emitted = 0_usize;
+    if aggregation.is_none() && limit == 0 {
+        return encode_default_rows(rows);
+    }
+    let descending = idx_scan.desc();
+    let mut ranges = context.key_ranges.iter().collect::<Vec<_>>();
+    if descending {
+        ranges.reverse();
+    }
+
+    'ranges: for range in ranges {
+        let (start_key, end_key) = if descending {
+            (range.end.clone(), range.start.clone())
+        } else {
+            (range.start.clone(), range.end.clone())
+        };
         let pairs = store.scan(&crate::mvcc_store::ScanReq {
-            start_key: range.start.clone(),
-            end_key: range.end.clone(),
+            start_key,
+            end_key,
             limit: u32::MAX,
             version: context.start_ts,
             sample_step: 0,
-            reverse: false,
+            reverse: descending,
         });
         for pair in pairs {
             if let Some(err) = pair.error {
@@ -231,39 +296,97 @@ fn exec_index_aggregate(
                 }
                 return other_error(&format!("scan error: {err:?}"));
             }
-            let encoded = tidb_codec::table_key::cut_index_prefix(&pair.key);
-            let row: Vec<Datum> = match tidb_codec::decode(encoded, width) {
-                Ok(datums) => datums.into_iter().take(width).collect(),
-                Err(err) => return other_error(&format!("invalid index entry: {err:?}")),
+            let encoded = match tidb_tablecodec::decode_index_kv(
+                true,
+                &pair.key,
+                &pair.value,
+                schema_len,
+                handle_status,
+                &column_infos,
+            ) {
+                Ok(values) => values,
+                Err(error) => return other_error(&format!("invalid index entry: {error:?}")),
             };
-            if let Err(message) = aggregator.update(&row) {
-                return other_error(&message);
-            }
-        }
-    }
-    let mut chunks: Vec<tipb::Chunk> = Vec::new();
-    let mut current = Vec::new();
-    let mut current_rows = 0_usize;
-    for row in aggregator.finish() {
-        let projected: Vec<Datum> = if context.dag_req.output_offsets.is_empty() {
-            row
-        } else {
-            let mut projected = Vec::with_capacity(context.dag_req.output_offsets.len());
-            for offset in &context.dag_req.output_offsets {
-                match row.get(*offset as usize) {
-                    Some(datum) => projected.push(datum.clone()),
-                    None => {
-                        return other_error(&format!(
-                            "output offset {offset} is outside the aggregate schema"
-                        ))
+            let mut row = Vec::with_capacity(idx_scan.columns.len());
+            for (offset, value) in encoded.iter().enumerate() {
+                let Some(field_type) = field_types.get(offset) else {
+                    return other_error("decoded index entry exceeds its executor schema");
+                };
+                match tidb_tablecodec::decode_column_value(value, field_type, Some(&timezone)) {
+                    Ok(value) => row.push(value),
+                    Err(error) => {
+                        return other_error(&format!("invalid index column: {error:?}"));
                     }
                 }
             }
-            projected
-        };
-        let encoded = match tidb_codec::encode_value(&projected) {
+            if has_physical_id && row.len() < idx_scan.columns.len() {
+                row.push(Datum::Int(tidb_codec::decode_table_id(&pair.key)));
+            }
+            if row.len() != idx_scan.columns.len() {
+                return other_error("decoded index entry does not match its executor schema");
+            }
+            if !conditions
+                .iter()
+                .all(|condition| eval_expr(condition, &row).is_some_and(|value| value != 0))
+            {
+                continue;
+            }
+            if let Some(aggregator) = aggregator.as_mut() {
+                if let Err(message) = aggregator.update(&row) {
+                    return other_error(&message);
+                }
+                continue;
+            }
+            let projected = if context.dag_req.output_offsets.is_empty() {
+                row
+            } else {
+                let mut projected = Vec::with_capacity(context.dag_req.output_offsets.len());
+                for offset in &context.dag_req.output_offsets {
+                    let Some(value) = row.get(*offset as usize) else {
+                        return other_error(&format!(
+                            "output offset {offset} is outside the scanned columns"
+                        ));
+                    };
+                    projected.push(value.clone());
+                }
+                projected
+            };
+            rows.push(projected);
+            emitted += 1;
+            if emitted == limit {
+                break 'ranges;
+            }
+        }
+    }
+    if let Some(aggregator) = aggregator {
+        for row in aggregator.finish() {
+            if context.dag_req.output_offsets.is_empty() {
+                rows.push(row);
+                continue;
+            }
+            let mut projected = Vec::with_capacity(context.dag_req.output_offsets.len());
+            for offset in &context.dag_req.output_offsets {
+                let Some(value) = row.get(*offset as usize) else {
+                    return other_error(&format!(
+                        "output offset {offset} is outside the aggregate schema"
+                    ));
+                };
+                projected.push(value.clone());
+            }
+            rows.push(projected);
+        }
+    }
+    encode_default_rows(rows)
+}
+
+fn encode_default_rows(rows: Vec<Vec<tidb_datatype::Datum>>) -> coprocessor::Response {
+    let mut chunks = Vec::new();
+    let mut current = Vec::new();
+    let mut current_rows = 0_usize;
+    for row in rows {
+        let encoded = match tidb_codec::encode_value(&row) {
             Ok(encoded) => encoded,
-            Err(err) => return other_error(&format!("encode row failed: {err:?}")),
+            Err(error) => return other_error(&format!("encode row failed: {error:?}")),
         };
         current.extend_from_slice(&encoded);
         current_rows += 1;
