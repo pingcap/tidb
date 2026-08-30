@@ -66,6 +66,9 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - [x] (2026-08-30) Added pinned `globalstats.TestGlobalStatsVersion` and wired foreground `FLUSH STATS_DELTA` to the node-global usage collector and existing TiKV delta transaction, preserving pending modifications from unanalyzed partitions while refreshing global count/version state.
 - [x] (2026-08-30) Added pinned `globalstats.TestDDLPartition4GlobalStats`; cluster `TRUNCATE PARTITION` now replaces only selected physical IDs and runs Go's statistics DDL-subscriber transaction for replacement rows, delayed-GC versions, and logical count/modify deltas.
 - [x] (2026-08-30) Added pinned `globalstats.TestGlobalStats`; dynamic plans now retain Go's partition access object, static partition children reload physical statistics, ANALYZE force-flushes target deltas before sampling, and meta-only global statistics preserve their realtime estimate while carrying pseudo distribution/version state.
+- [x] (2026-08-30) Added pinned `globalstats.TestGlobalStatsHealthy` and removed per-session bootstrap from shared-catalog construction; cluster sessions no longer publish row deltas from a discarded local `mysql` catalog, and global/partition count, modify-count, and health sequences now match Go exactly.
+- [x] (2026-08-30) Added pinned `globalstats.TestBuildGlobalLevelStats`; static and dynamic multi-table ANALYZE, predicate-column demand, named-index ANALYZE, physical/global row counts, and complete histogram inventories match the source sequence.
+- [x] (2026-08-30) Added the default-concurrency pinned `globalstats.TestIssues24349` sequence; global TopN candidate recovery from sibling partition histograms and the post-pop remaining buckets match Go exactly. The separate concurrency-two source artifact remains in the open inventory.
 - [ ] Wire all pinned Go `SHOW STATS_*` surfaces to the shared cache and storage semantics.
 - [ ] Inventory every production file, platform/generated variant, original test/support artifact, fixture, and validation gate in pinned `pkg/statistics`; close or explicitly retain seed-only gaps until the whole package is complete.
 - [ ] Run the Ready validation profile, including `make lint`, only after the complete package inventory is closed.
@@ -242,6 +245,9 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 
 - Observation: Go's dynamic partition access text and pseudo marker are retained planner state, not EXPLAIN-time reconstruction. Static partition children also receive statistics only after `PartitionProcessor` assigns their physical IDs, and ANALYZE flushes each target's delta before sampling.
   Evidence: pinned `PhysPlanPartInfo`, `initStats`, `AnalyzeExec.Next`, and `GetStatsTable`; the source regression initially omitted `partition:all`, summed global statistics across static children, lost the logical realtime count, and omitted `stats:pseudo` before those four ownership boundaries were matched.
+
+- Observation: `Session::with_catalog` bootstrapped a fresh local catalog through `Session::default` and then discarded that catalog, but retained the bootstrap DML's table-delta map. The first harmless autocommit statement published those fake IDs, which could later collide with newly allocated user tables.
+  Evidence: pinned Go `createSessionWithOpt` only constructs session state over the domain infoschema; bootstrap runs separately in `bootstrapSessionImpl`. The failing health sequence observed local deltas for IDs 1 and 2 before any user DML, and both disappeared when shared-catalog construction stopped invoking the standalone-store bootstrap.
 
 ## Decision Log
 

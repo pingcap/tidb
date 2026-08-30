@@ -954,6 +954,363 @@ fn partition_analyze_show_surfaces_match_global_stats_visibility() {
     check("gs_dynamic", "dynamic", 3, 1, 6, 2, 6, 2, 3, 1);
 }
 
+/// Pinned `globalstats.TestGlobalStatsHealthy`: global and physical metadata
+/// receive the same flushed deltas, while health is calculated against each
+/// object's own analyzed row count.
+#[test]
+fn partition_global_stats_health_matches_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(102))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET SESSION tidb_analyze_version = 2");
+    rows(
+        &mut session,
+        "SET SESSION tidb_partition_prune_mode = 'dynamic'",
+    );
+    rows(
+        &mut session,
+        "CREATE TABLE global_health (a INT, KEY(a)) PARTITION BY RANGE (a) (\
+         PARTITION p0 VALUES LESS THAN (10),\
+         PARTITION p1 VALUES LESS THAN (20))",
+    );
+
+    let check_meta = |session: &mut _, expected: [(&str, &str); 3]| {
+        let actual = displayed(rows(
+            session,
+            "SHOW STATS_META WHERE table_name = 'global_health'",
+        ));
+        assert_eq!(actual.len(), 3, "{actual:?}");
+        assert_eq!(
+            actual
+                .iter()
+                .map(|row| (row[4].as_str(), row[5].as_str()))
+                .collect::<Vec<_>>(),
+            expected
+        );
+    };
+    let check_healthy = |session: &mut _, expected: [&str; 3]| {
+        let actual = displayed(rows(
+            session,
+            "SHOW STATS_HEALTHY WHERE table_name = 'global_health'",
+        ));
+        assert_eq!(actual.len(), 3, "{actual:?}");
+        assert_eq!(
+            actual.iter().map(|row| row[3].as_str()).collect::<Vec<_>>(),
+            expected
+        );
+    };
+    let flush_and_update = |session: &mut _| {
+        let reloads = stack._stats_reloader.stats().reloads;
+        rows(session, "FLUSH STATS_DELTA *.*");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while stack._stats_reloader.stats().reloads == reloads {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "statistics update did not run after FLUSH STATS_DELTA"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    };
+
+    rows(&mut session, "ANALYZE TABLE global_health");
+    check_meta(&mut session, [("0", "0"), ("0", "0"), ("0", "0")]);
+    check_healthy(&mut session, ["100", "100", "100"]);
+
+    rows(&mut session, "INSERT INTO global_health VALUES (1),(2)");
+    flush_and_update(&mut session);
+    check_meta(&mut session, [("2", "2"), ("2", "2"), ("0", "0")]);
+    check_healthy(&mut session, ["0", "0", "100"]);
+
+    rows(
+        &mut session,
+        "INSERT INTO global_health VALUES (11),(12),(13),(14)",
+    );
+    flush_and_update(&mut session);
+    check_meta(&mut session, [("6", "6"), ("2", "2"), ("4", "4")]);
+    check_healthy(&mut session, ["0", "0", "0"]);
+
+    rows(&mut session, "ANALYZE TABLE global_health");
+    check_meta(&mut session, [("0", "6"), ("0", "2"), ("0", "4")]);
+    check_healthy(&mut session, ["100", "100", "100"]);
+
+    rows(
+        &mut session,
+        "INSERT INTO global_health VALUES (4),(5),(15),(16)",
+    );
+    flush_and_update(&mut session);
+    check_meta(&mut session, [("4", "10"), ("2", "4"), ("2", "6")]);
+    check_healthy(&mut session, ["33", "0", "50"]);
+}
+
+/// Pinned `globalstats.TestBuildGlobalLevelStats`: static ANALYZE publishes
+/// physical rows only, dynamic ANALYZE adds the logical global row, and
+/// predicate-column demand controls the complete histogram inventory.
+#[test]
+fn build_global_level_stats_matches_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(103))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET SESSION tidb_analyze_version = 2");
+    rows(
+        &mut session,
+        "SET SESSION tidb_partition_prune_mode = 'static'",
+    );
+    rows(
+        &mut session,
+        "CREATE TABLE global_level (a INT, b INT, c INT) PARTITION BY HASH(a) PARTITIONS 3",
+    );
+    rows(&mut session, "CREATE TABLE global_level_plain (a INT)");
+    rows(
+        &mut session,
+        "INSERT INTO global_level VALUES (1,1,1),(3,12,3),(4,20,4),(2,7,2),(5,21,5)",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO global_level_plain VALUES (1),(3),(4),(2),(5)",
+    );
+    rows(
+        &mut session,
+        "CREATE INDEX idx_global_level_ab ON global_level(a,b)",
+    );
+    rows(
+        &mut session,
+        "CREATE INDEX idx_global_level_b ON global_level(b)",
+    );
+    rows(&mut session, "SELECT * FROM global_level WHERE c = 0");
+    rows(&mut session, "SELECT * FROM global_level_plain WHERE a = 0");
+    stack
+        .factory
+        .dump_col_stats_usage_to_kv("default")
+        .expect("predicate-column usage dump");
+
+    let count_rows = |session: &mut _, table: &str| {
+        let mut counts = displayed(rows(
+            session,
+            &format!("SHOW STATS_META WHERE table_name = '{table}'"),
+        ))
+        .into_iter()
+        .map(|row| row[5].clone())
+        .collect::<Vec<_>>();
+        counts.sort();
+        counts
+    };
+    let histogram_count = |session: &mut _, table: &str| {
+        rows(
+            session,
+            &format!("SHOW STATS_HISTOGRAMS WHERE table_name = '{table}'"),
+        )
+        .len()
+    };
+
+    rows(
+        &mut session,
+        "ANALYZE TABLE global_level, global_level_plain",
+    );
+    assert_eq!(count_rows(&mut session, "global_level"), ["1", "2", "2"]);
+    assert_eq!(histogram_count(&mut session, "global_level"), 15);
+    assert_eq!(count_rows(&mut session, "global_level_plain"), ["5"]);
+    assert_eq!(histogram_count(&mut session, "global_level_plain"), 1);
+
+    rows(
+        &mut session,
+        "SET SESSION tidb_partition_prune_mode = 'dynamic'",
+    );
+    rows(
+        &mut session,
+        "ANALYZE TABLE global_level, global_level_plain",
+    );
+    assert_eq!(
+        count_rows(&mut session, "global_level"),
+        ["1", "2", "2", "5"]
+    );
+    assert_eq!(histogram_count(&mut session, "global_level"), 20);
+    assert_eq!(count_rows(&mut session, "global_level_plain"), ["5"]);
+    assert_eq!(histogram_count(&mut session, "global_level_plain"), 1);
+
+    rows(
+        &mut session,
+        "ANALYZE TABLE global_level INDEX idx_global_level_ab, idx_global_level_b",
+    );
+    assert_eq!(
+        count_rows(&mut session, "global_level"),
+        ["1", "2", "2", "5"]
+    );
+    assert_eq!(histogram_count(&mut session, "global_level"), 20);
+}
+
+/// Pinned `globalstats.TestIssues24349`: global TopN candidates include
+/// values recovered from sibling partition histograms before the remaining
+/// histogram buckets are merged.
+#[test]
+fn global_topn_merge_matches_issue_24349() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(104))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "SET SESSION tidb_partition_prune_mode = 'dynamic'",
+    );
+    rows(&mut session, "SET SESSION tidb_analyze_version = 2");
+    rows(
+        &mut session,
+        "CREATE TABLE global_topn_merge (a INT, b INT) PARTITION BY HASH(a) PARTITIONS 3",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO global_topn_merge VALUES \
+         (0,3),(0,3),(0,3),(0,2),(1,1),(1,2),(1,2),(1,2),(1,3),(1,4),(2,1),(2,1)",
+    );
+    rows(
+        &mut session,
+        "SELECT * FROM global_topn_merge WHERE a = 0 AND b = 3",
+    );
+    stack
+        .factory
+        .dump_col_stats_usage_to_kv("default")
+        .expect("predicate-column usage dump");
+    rows(
+        &mut session,
+        "ANALYZE TABLE global_topn_merge WITH 1 TOPN, 3 BUCKETS",
+    );
+
+    let mut global_topn = displayed(rows(
+        &mut session,
+        "SHOW STATS_TOPN WHERE table_name = 'global_topn_merge' AND partition_name = 'global'",
+    ));
+    global_topn.sort();
+    assert_eq!(
+        global_topn,
+        [
+            ["test", "global_topn_merge", "global", "a", "0", "1", "6"],
+            ["test", "global_topn_merge", "global", "b", "0", "2", "4"],
+        ]
+    );
+
+    rows(
+        &mut session,
+        "EXPLAIN SELECT * FROM global_topn_merge WHERE a > 0 AND b > 0",
+    );
+    let mut all_topn = displayed(rows(
+        &mut session,
+        "SHOW STATS_TOPN WHERE table_name = 'global_topn_merge'",
+    ));
+    all_topn.sort();
+    assert_eq!(
+        all_topn,
+        [
+            ["test", "global_topn_merge", "global", "a", "0", "1", "6"],
+            ["test", "global_topn_merge", "global", "b", "0", "2", "4"],
+            ["test", "global_topn_merge", "p0", "a", "0", "0", "4"],
+            ["test", "global_topn_merge", "p0", "b", "0", "3", "3"],
+            ["test", "global_topn_merge", "p1", "a", "0", "1", "6"],
+            ["test", "global_topn_merge", "p1", "b", "0", "2", "3"],
+            ["test", "global_topn_merge", "p2", "a", "0", "2", "2"],
+            ["test", "global_topn_merge", "p2", "b", "0", "1", "2"],
+        ]
+    );
+
+    let mut buckets = displayed(rows(
+        &mut session,
+        "SHOW STATS_BUCKETS WHERE table_name = 'global_topn_merge'",
+    ));
+    buckets.sort();
+    assert_eq!(
+        buckets,
+        [
+            [
+                "test",
+                "global_topn_merge",
+                "global",
+                "a",
+                "0",
+                "0",
+                "4",
+                "4",
+                "0",
+                "0",
+                "0"
+            ],
+            [
+                "test",
+                "global_topn_merge",
+                "global",
+                "a",
+                "0",
+                "1",
+                "6",
+                "2",
+                "2",
+                "2",
+                "0"
+            ],
+            [
+                "test",
+                "global_topn_merge",
+                "global",
+                "b",
+                "0",
+                "0",
+                "8",
+                "1",
+                "1",
+                "4",
+                "0"
+            ],
+            [
+                "test",
+                "global_topn_merge",
+                "p0",
+                "b",
+                "0",
+                "0",
+                "1",
+                "1",
+                "2",
+                "2",
+                "0"
+            ],
+            [
+                "test",
+                "global_topn_merge",
+                "p1",
+                "b",
+                "0",
+                "0",
+                "2",
+                "1",
+                "1",
+                "3",
+                "0"
+            ],
+            [
+                "test",
+                "global_topn_merge",
+                "p1",
+                "b",
+                "0",
+                "1",
+                "3",
+                "1",
+                "4",
+                "4",
+                "0"
+            ],
+        ]
+    );
+}
+
 /// Pinned `globalstats.TestGlobalStatsData`: partition and global histograms
 /// retain Go's exact cumulative bucket counts, repeats, bounds, and zeroed
 /// merged bucket NDV for both the column and its index.

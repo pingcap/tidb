@@ -699,18 +699,13 @@ pub struct Session {
     prev_found_in_binding: bool,
 }
 
-impl Default for Session {
-    /// A session on its own empty catalog, with `test` selected as a fresh
-    /// TiDB connection has.
-    ///
-    /// This is the ONE place a [`Session`] is built. Everything a front end
-    /// installs afterwards -- a shared catalog, an identity, a process
-    /// registration, a privilege registry, a globals table -- arrives through a
-    /// setter, so a field added to `Session` has exactly one construction site
-    /// that must name it.
-    fn default() -> Self {
-        let mut session = Session {
-            catalog: SharedCatalog::default(),
+impl Session {
+    /// Builds the Go `createSessionWithOpt` state over an already selected
+    /// infoschema. Cluster bootstrap is owned by the store/domain, not by each
+    /// session opened on it.
+    fn unbootstrapped(catalog: SharedCatalog) -> Self {
+        Session {
+            catalog,
             server_start_timestamp: None,
             tidb_decode_key_cache: std::sync::Mutex::new(None),
             session_memory: tidb_executor::SessionMemory::new(
@@ -782,7 +777,19 @@ impl Default for Session {
             planned_apply: Arc::default(),
             found_in_binding: false,
             prev_found_in_binding: false,
-        };
+        }
+    }
+}
+
+impl Default for Session {
+    /// A session on its own empty catalog, with `test` selected as a fresh
+    /// TiDB connection has.
+    ///
+    /// The standalone in-memory session owns its fresh store, so it performs
+    /// the one store bootstrap that Go's `BootstrapSession` performs before
+    /// serving connections.
+    fn default() -> Self {
+        let mut session = Session::unbootstrapped(SharedCatalog::default());
         // Go bootstraps the system tables the first time a store comes up
         // (`pkg/session/bootstrap.go`); this catalog is born here, so its
         // bootstrap runs here. See `crate::bootstrap`.
@@ -1321,14 +1328,9 @@ impl Session {
     }
 
     /// A session sharing `catalog` with its peers.
-    ///
-    /// Every other field comes from [`Session::default`], which is the crate's
-    /// one `Session` construction site -- see its doc.
     #[must_use]
     pub fn with_catalog(catalog: SharedCatalog) -> Self {
-        let mut session = Session::default();
-        session.catalog = catalog;
-        session
+        Session::unbootstrapped(catalog)
     }
 
     /// Installs the server-owned spill policy for every statement created by
