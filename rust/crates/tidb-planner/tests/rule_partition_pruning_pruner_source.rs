@@ -13,30 +13,22 @@
 // limitations under the License.
 
 //! Ports for `pkg/planner/core/rule/rule_partition_pruning_test.go`
-//! (`pkg/planner.part15` items 844–858 on `origin/master`, production source
-//! `pkg/planner/core/rule/rule_partition_processor.go`).
+//! at pinned Go revision `e2788410d8d696605e8cb002585877a063ccc909`.
 //!
-//! Three items are REAL functional ports over verbatim reproductions of the
-//! dependency-closed algorithm kernels they exercise — the same pattern as
-//! `rule_inject_extra_projection_wrap_cast_source.rs` from part9: the kernels
-//! have no home crate yet (`pkg/planner/core/rule` is not transcreated), so
-//! [`prune_use_binary_search`] / [`PartitionRangeOr`] below reproduce their Go
-//! bodies line-for-line, and when that package IS transcreated these tables
-//! must move onto it.
+//! The three tests below reproduce Go's package-private partition-range
+//! algebra line-for-line. The ordinary pruning path and all remaining original
+//! cases are owned by `tidb_executor::partition_pruning`; the benchmark cases
+//! are owned by the `tidb-executor` `partition_pruning` benchmark target.
 //!
 //! | Go function (`rule_partition_pruning_test.go`) | Rust test |
 //! | --- | --- |
-//! | `:35 TestCanBePrune` | [`can_be_prune_monotone_datetime_and_unix_timestamp`] (gap) |
+//! | `:35 TestCanBePrune` | `tidb_executor::partition_pruning::tests::range_pruning_matches_go_monotone_datetime_and_timestamp_cases` |
 //! | `:85 TestPruneUseBinarySearchSigned` | [`prune_use_binary_search_signed_table`] (ported) |
 //! | `:128 TestPruneUseBinarySearchUnSigned` | [`prune_use_binary_search_unsigned_table`] (ported) |
-//! | `:243 TestPartitionRangeForExpr` | [`partition_range_for_expr_int_bounds`] (gap) |
+//! | `:243 TestPartitionRangeForExpr` | `tidb_executor::partition_pruning::tests::range_pruning_matches_go_partition_range_for_expr_matrix` |
 //! | `:275 TestPartitionRangeOperation` | [`partition_range_or_intersection_union_simplify_operations`] (ported) |
-//! | `:337 TestPartitionRangePruner2VarChar` | [`range_columns_pruner_varchar_bounds`] (gap) |
-//! | `:382 TestPartitionRangePruner2CharWithCollation` | [`range_columns_pruner_char_collation_aware_bounds`] (gap) |
-//! | `:432 TestPartitionRangePruner2Date` | [`range_columns_pruner_date_bounds`] (gap) |
-//! | `:488 TestPartitionRangeColumnsForExpr` | [`partition_range_columns_tuple_compare_boundaries`] (gap) |
-//! | `:568 TestPartitionRangeColumnsForExprWithSpecialCollation` | [`partition_range_columns_special_collation_rows`] (gap) |
-//! | `:663/:667/:671/:675/:679 BenchmarkRangeColumnsPruner{2,10,100,1000,8000}` | [`benchmark_range_columns_pruner_parts_2`] .. [`benchmark_range_columns_pruner_parts_8000`] (gap benches; the batch gate filter `not test(/bench/)` excludes them exactly as `go test` excludes Benchmarks) |
+//! | `:337–639` RANGE COLUMNS cases | executable `tidb_executor::partition_pruning::tests::range_columns_*` cases |
+//! | `:663/:667/:671/:675/:679 BenchmarkRangeColumnsPruner{2,10,100,1000,8000}` | `tidb-executor --bench partition_pruning` |
 
 /// GO PORT of `pkg/planner/core/rule/rule_partition_pruning_test.go:85
 /// TestPruneUseBinarySearchSigned`.
@@ -196,11 +188,7 @@ fn partition_range_or_intersection_union_simplify_operations() {
 
     // IntersectionRange table (`rule_partition_pruning_test.go:277-286`).
     let test_intersection_range: &[(&[(usize, usize)], (usize, usize), &[(usize, usize)])] = &[
-        (
-            &[(0, 3), (6, 12)],
-            (4, 7),
-            &[(6, 7)],
-        ),
+        (&[(0, 3), (6, 12)], (4, 7), &[(6, 7)]),
         (&[(0, 5)], (6, 7), &[]),
         (
             &[(0, 4), (6, 7), (8, 11)],
@@ -210,21 +198,17 @@ fn partition_range_or_intersection_union_simplify_operations() {
     ];
     for (i, (input1, input2, want)) in test_intersection_range.iter().enumerate() {
         let result = intersection_range(&or(input1), input2.0, input2.1);
-        assert_eq!(want_rows(want), rows(&result), "IntersectionRange fail = {i}");
+        assert_eq!(
+            want_rows(want),
+            rows(&result),
+            "IntersectionRange fail = {i}"
+        );
     }
 
     // Intersection table (`:288-303`).
     let test_intersection: &[(&[(usize, usize)], &[(usize, usize)], &[(usize, usize)])] = &[
-        (
-            &[(0, 3), (6, 12)],
-            &[(4, 7)],
-            &[(6, 7)],
-        ),
-        (
-            &[(4, 7)],
-            &[(0, 3), (6, 12)],
-            &[(6, 7)],
-        ),
+        (&[(0, 3), (6, 12)], &[(4, 7)], &[(6, 7)]),
+        (&[(4, 7)], &[(0, 3), (6, 12)], &[(6, 7)]),
         (
             &[(4, 7), (8, 10)],
             &[(0, 5), (6, 12)],
@@ -238,21 +222,9 @@ fn partition_range_or_intersection_union_simplify_operations() {
 
     // Union table (`:305-314`).
     let test_union: &[(&[(usize, usize)], &[(usize, usize)], &[(usize, usize)])] = &[
-        (
-            &[(0, 1), (2, 7)],
-            &[(3, 5)],
-            &[(0, 1), (2, 7)],
-        ),
-        (
-            &[(2, 7)],
-            &[(0, 3), (4, 12)],
-            &[(0, 12)],
-        ),
-        (
-            &[(4, 7), (8, 10)],
-            &[(0, 5)],
-            &[(0, 7), (8, 10)],
-        ),
+        (&[(0, 1), (2, 7)], &[(3, 5)], &[(0, 1), (2, 7)]),
+        (&[(2, 7)], &[(0, 3), (4, 12)], &[(0, 12)]),
+        (&[(4, 7), (8, 10)], &[(0, 5)], &[(0, 7), (8, 10)]),
     ];
     for (i, (input1, input2, want)) in test_union.iter().enumerate() {
         let result = union(or(input1), or(input2));
@@ -262,9 +234,10 @@ fn partition_range_or_intersection_union_simplify_operations() {
 
 // ---------------------------------------------------------------------------
 // Verbatim reproductions of the Go kernels the running tests above pin. Both
-// bodies are mechanical transcriptions of origin/master
+// bodies are mechanical transcriptions of the pinned Go revision's
 // `pkg/planner/core/rule/rule_partition_processor.go` and
-// `pkg/types/compare.go`; they exist only until that package is transcreated.
+// `pkg/types/compare.go`. Rust's production owner consumes ranger intervals,
+// so these package-private intermediate structures remain test-local.
 // ---------------------------------------------------------------------------
 
 /// Go `types.CompareInt` (`pkg/types/compare.go:90-113`): an integer
@@ -349,7 +322,10 @@ fn go_sort_search(n: usize, f: impl Fn(usize) -> bool) -> usize {
 
 /// GO PORT of `PruneUseBinarySearch`
 /// (`rule_partition_processor.go:1721-1762`).
-fn prune_use_binary_search(less_than: LessThanDataInt<'_>, data: DataForPrune<'_>) -> (usize, usize) {
+fn prune_use_binary_search(
+    less_than: LessThanDataInt<'_>,
+    data: DataForPrune<'_>,
+) -> (usize, usize) {
     let length = less_than.length();
     let (start, end) = match data.op {
         "=" => {
@@ -357,8 +333,7 @@ fn prune_use_binary_search(less_than: LessThanDataInt<'_>, data: DataForPrune<'_
             (pos, pos + 1)
         }
         "<" => {
-            let pos =
-                go_sort_search(length, |i| less_than.compare(i, data.c, data.unsigned) >= 0);
+            let pos = go_sort_search(length, |i| less_than.compare(i, data.c, data.unsigned) >= 0);
             (0, pos + 1)
         }
         ">=" => {
@@ -369,9 +344,7 @@ fn prune_use_binary_search(less_than: LessThanDataInt<'_>, data: DataForPrune<'_
         // (:1753); reproduce with wrapping add.
         ">" => {
             let pos = go_sort_search(length, |i| {
-                less_than
-                    .compare(i, data.c.wrapping_add(1), data.unsigned)
-                    > 0
+                less_than.compare(i, data.c.wrapping_add(1), data.unsigned) > 0
             });
             (pos, length)
         }
@@ -448,84 +421,14 @@ fn intersection(or: Vec<PartitionRange>, x: Vec<PartitionRange>) -> Vec<Partitio
     }
     // Rename so the LONGER side is iterated against the shorter side, as Go
     // does at :1033-1037 (`if or.Len() > x.Len() { x, y = or, x }`).
-    let (longer, shorter) = if or.len() > x.len() { (&or, &x) } else { (&x, &or) };
+    let (longer, shorter) = if or.len() > x.len() {
+        (&or, &x)
+    } else {
+        (&x, &or)
+    };
     let mut res: Vec<PartitionRange> = Vec::with_capacity(shorter.len());
     for r in shorter {
         res.extend(intersection_range(longer, r.start, r.end));
     }
     simplify(res)
 }
-
-// ---------------------------------------------------------------------------
-// Documentary gap ports: the exercised surface (expression parse/fold +
-// monotone partition-function classification + RangeColumns datum comparisons)
-// does not exist on the Rust side yet. Contracts re-derived from the Go test
-// bodies on origin/master; never approximated.
-// ---------------------------------------------------------------------------
-
-/// GO PORT of `rule_partition_pruning_test.go:35 TestCanBePrune`.
-///
-/// Two `prepareTestCtx` fixtures build a mock session, parse a CREATE TABLE,
-/// derive columns via `ColumnInfos2ColumnsAndNames`, and locate the
-/// partitioning column/function pair via `MakePartitionByFnCol`
-/// (`rule_partition_processor.go:1108`):
-/// - `t(d DATETIME NOT NULL)` partitioned by `to_days(d)` with bounds
-///   `[733108, 733132]`, `MonotoneModeNonStrict`: `d < '2000-03-08...'`
-///   prunes to `{0,1}` and `d > '2018-03-08...'` prunes to NOTHING (:51-62);
-/// - `t(report_updated TIMESTAMP)` partitioned by `unix_timestamp(...)`,
-///   bounds `[1199145600, 1207008000, 1262304000, MAXVALUE]`, strict mode:
-///   `report_updated > '2008-05-01...'` yields `{2,4}` (:73-76).
-/// The sibling query comparing against `unix_timestamp('2008-05-01...')`
-/// folds to `gt(col, NULL)` (issue #12028), so Go runs it but asserts NOTHING
-/// (:77-84) — that commented-out expectation is reproduced as a no-check run.
-#[test]
-#[ignore = "go-parity-gap: needs ParseSimpleExpr/constant folding plus MakePartitionByFnCol monotone classification, neither transcreated"]
-fn can_be_prune_monotone_datetime_and_unix_timestamp() {}
-
-/// GO PORT of `rule_partition_pruning_test.go:243 TestPartitionRangeForExpr`.
-///
-/// Fixture `t(a INT)` partitioned by plain column `a` with
-/// `LessThanDataInt{Data:[4,7,11,14,17,0], Maxvalue:false}` (length 6);
-/// `MonotoneModeInvalid`. Thirteen SQL fragments through
-/// `ParseSimpleExpr` + `PartitionRangeForExpr` (`:1387-1417`) pin the
-/// single-column int outcomes including mirrored operands (`12 > a`,
-/// `4 <= a`) and disjunctions producing two ordinals
-/// (`a < 2 or a >= 15` → `[{0,1},{4,6}]`) (:250-266).
-#[test]
-#[ignore = "go-parity-gap: expression parsing/eval for PartitionRangeForExpr is unported"]
-fn partition_range_for_expr_int_bounds() {}
-
-/// GO PORT of `benchmarkRangeColumnsPruner`
-/// (`rule_partition_pruning_test.go:643-661`), instantiated at 2 parts.
-///
-/// Builds `bigint unsigned` single-column RANGE COLUMNS with `parts - 1`
-/// multiples-of-10000 bounds plus MAXVALUE, then repeatedly resets to the
-/// full range and re-prunes CNF `a > 11000` — a shape benchmark for
-/// `PartitionRangeForCNFExpr` scaling.
-#[test]
-#[ignore = "go-parity-gap: benchmark; needs PartitionRangeForCNFExpr over parsed scalar exprs"]
-fn benchmark_range_columns_pruner_parts_2() {}
-
-/// GO PORT of `BenchmarkRangeColumnsPruner10`
-/// (`rule_partition_pruning_test.go:667`): same harness at 10 parts.
-#[test]
-#[ignore = "go-parity-gap: benchmark; needs PartitionRangeForCNFExpr over parsed scalar exprs"]
-fn benchmark_range_columns_pruner_parts_10() {}
-
-/// GO PORT of `BenchmarkRangeColumnsPruner100`
-/// (`rule_partition_pruning_test.go:671`): same harness at 100 parts.
-#[test]
-#[ignore = "go-parity-gap: benchmark; needs PartitionRangeForCNFExpr over parsed scalar exprs"]
-fn benchmark_range_columns_pruner_parts_100() {}
-
-/// GO PORT of `BenchmarkRangeColumnsPruner1000`
-/// (`rule_partition_pruning_test.go:675`): same harness at 1000 parts.
-#[test]
-#[ignore = "go-parity-gap: benchmark; needs PartitionRangeForCNFExpr over parsed scalar exprs"]
-fn benchmark_range_columns_pruner_parts_1000() {}
-
-/// GO PORT of `BenchmarkRangeColumnsPruner8000`
-/// (`rule_partition_pruning_test.go:679`): same harness at 8000 parts.
-#[test]
-#[ignore = "go-parity-gap: benchmark; needs PartitionRangeForCNFExpr over parsed scalar exprs"]
-fn benchmark_range_columns_pruner_parts_8000() {}

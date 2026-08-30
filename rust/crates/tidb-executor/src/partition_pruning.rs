@@ -105,7 +105,7 @@ pub fn ids_for_selected_partitions(
 /// below asks. Unlike an executor scan range, the ranger range carries the
 /// comparison collator for every tuple position; RANGE COLUMNS pruning must
 /// retain that metadata through `minCmp`/`maxCmp`.
-pub(crate) fn pruned_ids_from_ranger(
+pub fn pruned_ids_from_ranger(
     spec: &PartitionSpec,
     ranger_ranges: &[tidb_planner::ranger::types::Range],
     ctx: &impl tidb_expr::Columns,
@@ -1329,6 +1329,33 @@ mod tests {
         }
     }
 
+    fn range_table_with_bounds(bounds: Vec<RangeBound>) -> PartitionSpec {
+        let field_type = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
+        let mut column = tidb_expr::column::Column::new(1, field_type);
+        column.index = 0;
+        PartitionSpec {
+            overlapping_dropping_partition_indices: Vec::new(),
+            is_empty_columns: false,
+            kind: PartitionKind::Range {
+                unsigned: false,
+                less_than: bounds.clone(),
+            },
+            expr_text: "`a`".to_owned(),
+            expr: tidb_expr::expression::Expression::Column(column),
+            dependencies: vec!["a".to_owned()],
+            definitions: (0..bounds.len())
+                .map(|ordinal| PartitionDef {
+                    id: ordinal as i64,
+                    name: format!("p{ordinal}"),
+                    less_than: Vec::new(),
+                    in_values: Vec::new(),
+                    comment: String::new(),
+                    placement_policy: None,
+                })
+                .collect(),
+        }
+    }
+
     fn list_table() -> PartitionSpec {
         PartitionSpec {
             overlapping_dropping_partition_indices: Vec::new(),
@@ -1642,6 +1669,170 @@ mod tests {
             Some(vec![101, 102]),
             "Go relaxes < to <= through a non-strict monotone function"
         );
+    }
+
+    #[test]
+    fn range_pruning_matches_go_monotone_datetime_and_timestamp_cases() {
+        use tidb_ast::CiString;
+        use tidb_datatype::{CoreTime, FieldType, FieldTypeCode, Time, TimeType};
+        use tidb_expr::{column::Column, expression::Expression, scalar_function::ScalarFunction};
+
+        let datetime_type = FieldType::new(FieldTypeCode::Datetime);
+        let mut datetime_column = Column::new(1, datetime_type.clone());
+        datetime_column.index = 0;
+        let mut datetime_spec =
+            range_table_with_bounds(vec![RangeBound::Value(733_108), RangeBound::Value(733_132)]);
+        datetime_spec.expr_text = "to_days(`d`)".to_owned();
+        datetime_spec.expr = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("to_days"),
+            FieldType::new(FieldTypeCode::LongLong),
+            vec![Expression::Column(datetime_column)],
+        ));
+        datetime_spec.dependencies = vec!["d".to_owned()];
+        let datetime = |year, month, day| {
+            Datum::Time(
+                Time::new(
+                    CoreTime::from_date(year, month, day, 0, 0, 0, 0),
+                    TimeType::DateTime,
+                    0,
+                )
+                .unwrap(),
+            )
+        };
+        assert_eq!(
+            pruned_ids(
+                &datetime_spec,
+                &[interval(
+                    Datum::MinNotNull,
+                    false,
+                    datetime(2000, 3, 8),
+                    true,
+                )],
+            ),
+            Some(vec![0])
+        );
+        assert_eq!(
+            pruned_ids(
+                &datetime_spec,
+                &[interval(datetime(2018, 3, 8), true, Datum::MaxValue, false,)],
+            ),
+            Some(Vec::new())
+        );
+
+        let timestamp_type = FieldType::new(FieldTypeCode::Timestamp);
+        let mut timestamp_column = Column::new(1, timestamp_type);
+        timestamp_column.index = 0;
+        let mut timestamp_spec = range_table_with_bounds(vec![
+            RangeBound::Value(1_199_145_600),
+            RangeBound::Value(1_207_008_000),
+            RangeBound::Value(1_262_304_000),
+            RangeBound::MaxValue,
+        ]);
+        timestamp_spec.expr_text = "unix_timestamp(`report_updated`)".to_owned();
+        timestamp_spec.expr = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("unix_timestamp"),
+            FieldType::new(FieldTypeCode::LongLong),
+            vec![Expression::Column(timestamp_column)],
+        ));
+        timestamp_spec.dependencies = vec!["report_updated".to_owned()];
+        let may_2008 = Datum::Time(
+            Time::new(
+                CoreTime::from_date(2008, 5, 1, 0, 0, 0, 0),
+                TimeType::Timestamp,
+                0,
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            pruned_ids(
+                &timestamp_spec,
+                &[interval(may_2008, true, Datum::MaxValue, false)],
+            ),
+            Some(vec![2, 3])
+        );
+    }
+
+    #[test]
+    fn range_pruning_matches_go_partition_range_for_expr_matrix() {
+        let spec = range_table_with_bounds(vec![
+            RangeBound::Value(4),
+            RangeBound::Value(7),
+            RangeBound::Value(11),
+            RangeBound::Value(14),
+            RangeBound::Value(17),
+            RangeBound::MaxValue,
+        ]);
+        let min = Datum::MinNotNull;
+        let max = Datum::MaxValue;
+        let cases = [
+            ("a < 2 and a > 10", Vec::new(), Vec::new()),
+            (
+                "a > 3",
+                vec![interval(Datum::Int(3), true, max.clone(), false)],
+                vec![1, 2, 3, 4, 5],
+            ),
+            (
+                "a < 3",
+                vec![interval(min.clone(), false, Datum::Int(3), true)],
+                vec![0],
+            ),
+            (
+                "a >= 11",
+                vec![interval(Datum::Int(11), false, max.clone(), false)],
+                vec![3, 4, 5],
+            ),
+            (
+                "a > 11",
+                vec![interval(Datum::Int(11), true, max.clone(), false)],
+                vec![3, 4, 5],
+            ),
+            (
+                "a < 11",
+                vec![interval(min.clone(), false, Datum::Int(11), true)],
+                vec![0, 1, 2],
+            ),
+            (
+                "a = 16",
+                vec![interval(Datum::Int(16), false, Datum::Int(16), false)],
+                vec![4],
+            ),
+            (
+                "a > 66",
+                vec![interval(Datum::Int(66), true, max.clone(), false)],
+                vec![5],
+            ),
+            (
+                "a > 2 and a < 10",
+                vec![interval(Datum::Int(2), true, Datum::Int(10), true)],
+                vec![0, 1, 2],
+            ),
+            (
+                "a < 2 or a >= 15",
+                vec![
+                    interval(min.clone(), false, Datum::Int(2), true),
+                    interval(Datum::Int(15), false, max.clone(), false),
+                ],
+                vec![0, 4, 5],
+            ),
+            (
+                "a is null",
+                vec![interval(Datum::Null, false, Datum::Null, false)],
+                vec![0],
+            ),
+            (
+                "12 > a",
+                vec![interval(min.clone(), false, Datum::Int(12), true)],
+                vec![0, 1, 2, 3],
+            ),
+            (
+                "4 <= a",
+                vec![interval(Datum::Int(4), false, max, false)],
+                vec![1, 2, 3, 4, 5],
+            ),
+        ];
+        for (predicate, ranges, expected) in cases {
+            assert_eq!(pruned_ids(&spec, &ranges), Some(expected), "{predicate}");
+        }
     }
 
     #[test]

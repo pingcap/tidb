@@ -57,3 +57,7 @@ path = "tests/all.rs"
 [[test]]
 name = "cteutil_source"
 path = "tests/cteutil_source.rs"
+
+[[bench]]
+name = "partition_pruning"
+harness = false

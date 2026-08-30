@@ -34,3 +34,7 @@ path = "tests/all.rs"
 [[test]]
 name = "configured_relation_tree_binding_source"
 path = "tests/configured_relation_tree_binding_source.rs"
+
+[[test]]
+name = "rule_partition_pruning_pruner_source"
+path = "tests/rule_partition_pruning_pruner_source.rs"
