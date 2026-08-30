@@ -361,6 +361,9 @@ enum PartitionStatsDdlKind {
 }
 
 enum TableStatsDdlChange {
+    DropSchema {
+        retired_ids: Vec<i64>,
+    },
     Create {
         schema: String,
         table: String,
@@ -3990,6 +3993,9 @@ impl ClusterServerSession {
 
     fn update_table_ddl_stats(&mut self, change: TableStatsDdlChange) -> Result<(), SqlQueryError> {
         match change {
+            TableStatsDdlChange::DropSchema { retired_ids } => {
+                self.update_drop_schema_stats(&retired_ids)
+            }
             TableStatsDdlChange::Create { schema, table } => {
                 let table = self
                     .catalog
@@ -4026,6 +4032,63 @@ impl ClusterServerSession {
                 self.apply_stats_ddl_change(&old_table, None, &[], &old_ids, false, &[])
             }
         }
+    }
+
+    fn update_drop_schema_stats(&mut self, retired_ids: &[i64]) -> Result<(), SqlQueryError> {
+        if retired_ids.is_empty() {
+            return Ok(());
+        }
+        let catalog = self.catalog.load();
+        let resource_group = self.session.current_resource_group().to_owned();
+        let transaction = self
+            .transactions
+            .begin(true, &resource_group)
+            .map_err(SqlQueryError::unknown)?;
+        let version = transaction.start_ts();
+        let staged = MutationBuffer::new();
+        for &physical_id in retired_ids {
+            let refreshed = transactions::stage_pessimistic_statement(
+                transaction.as_ref(),
+                &staged,
+                |snapshot, _| {
+                    let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                    let plan = tidb_exec::cluster_stats_write::plan_stats_meta_version_refresh(
+                        &mut snapshot,
+                        &catalog,
+                        physical_id,
+                        version,
+                    )
+                    .map_err(|error| error.to_string())?;
+                    Ok(((), plan.mutations))
+                },
+            );
+            if let Err(error) = refreshed {
+                eprintln!(
+                    "{{\"event\":\"stats_drop_schema_gc_version_failed\",\"physical_id\":{physical_id},\"error\":{}}}",
+                    serde_json::to_string(&error).unwrap_or_else(|_| "\"unknown\"".to_owned())
+                );
+                continue;
+            }
+            if let Err(error) = self.record_schema_change_history(
+                transaction.as_ref(),
+                &staged,
+                &catalog,
+                physical_id,
+                version,
+            ) {
+                eprintln!(
+                    "{{\"event\":\"stats_drop_schema_history_failed\",\"physical_id\":{physical_id},\"error\":{}}}",
+                    serde_json::to_string(&error).unwrap_or_else(|_| "\"unknown\"".to_owned())
+                );
+            }
+        }
+        transaction.commit(&staged)?;
+        let mut published = self.stats.load().as_ref().clone();
+        for physical_id in retired_ids {
+            published.remove(physical_id);
+        }
+        self.stats.store(published);
+        Ok(())
     }
 
     fn update_column_ddl_stats(
@@ -4213,6 +4276,29 @@ impl ClusterServerSession {
             self.control_transaction("COMMIT")?;
         }
         let table_stats_change = match statement {
+            DdlStatement::DropDatabase { name, .. } => self
+                .catalog
+                .load()
+                .databases
+                .iter()
+                .find(|database| database.info.name.lowercase() == name.to_lowercase())
+                .map(|database| {
+                    let mut retired_ids = Vec::new();
+                    for table in &database.tables {
+                        if let Some(partition) = &table.partition {
+                            retired_ids.extend(
+                                partition
+                                    .read()
+                                    .definitions
+                                    .snapshot()
+                                    .into_iter()
+                                    .map(|definition| definition.id),
+                            );
+                        }
+                        retired_ids.push(table.id);
+                    }
+                    TableStatsDdlChange::DropSchema { retired_ids }
+                }),
             DdlStatement::CreateTable { schema, table, .. }
             | DdlStatement::CreateTableLike { schema, table, .. } => {
                 Some(TableStatsDdlChange::Create {

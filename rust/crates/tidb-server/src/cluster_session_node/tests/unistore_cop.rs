@@ -203,6 +203,77 @@ fn table_lifecycle_ddl_updates_statistics_like_go() {
     assert!(dropped_version > new_version);
 }
 
+/// Pinned DDL subscriber `ActionDropSchema` visits every table's partition
+/// IDs in definition order and then its logical table ID, advancing each
+/// extant stats row for delayed GC without failing the DROP on stats errors.
+#[test]
+fn drop_schema_ddl_retires_all_statistics_like_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(72))
+        .expect("session opens");
+    rows(
+        &mut session,
+        "SET GLOBAL tidb_partition_prune_mode = 'dynamic'",
+    );
+    rows(&mut session, "CREATE DATABASE stats_drop_schema");
+    rows(&mut session, "USE stats_drop_schema");
+    rows(&mut session, "CREATE TABLE ordinary (a INT)");
+    rows(
+        &mut session,
+        "CREATE TABLE partitioned (a INT) PARTITION BY RANGE (a) (\
+         PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN MAXVALUE)",
+    );
+    let retired_ids = {
+        let catalog = stack.factory.catalog.load();
+        let database = catalog
+            .databases
+            .iter()
+            .find(|database| database.info.name.lowercase() == "stats_drop_schema")
+            .expect("created database is published");
+        let mut ids = Vec::new();
+        for table in &database.tables {
+            if let Some(partition) = &table.partition {
+                ids.extend(
+                    partition
+                        .read()
+                        .definitions
+                        .snapshot()
+                        .into_iter()
+                        .map(|definition| definition.id),
+                );
+            }
+            ids.push(table.id);
+        }
+        ids
+    };
+    assert_eq!(retired_ids.len(), 4);
+    let old_versions = retired_ids
+        .iter()
+        .map(|physical_id| {
+            displayed(rows(
+                &mut session,
+                &format!("SELECT version FROM mysql.stats_meta WHERE table_id = {physical_id}"),
+            ))[0][0]
+                .parse::<u64>()
+                .expect("stats version is an unsigned integer")
+        })
+        .collect::<Vec<_>>();
+
+    rows(&mut session, "DROP DATABASE stats_drop_schema");
+    for (physical_id, old_version) in retired_ids.iter().zip(old_versions) {
+        let retired_version = displayed(rows(
+            &mut session,
+            &format!("SELECT version FROM mysql.stats_meta WHERE table_id = {physical_id}"),
+        ))[0][0]
+            .parse::<u64>()
+            .expect("retired stats version is an unsigned integer");
+        assert!(retired_version > old_version);
+    }
+}
+
 /// Pinned DDL subscriber `ActionAddColumn`: a defaultless nullable column is
 /// NULL for every existing row, and `InsertColStats2KV` persists that fact
 /// before advancing the physical table's statistics version.
