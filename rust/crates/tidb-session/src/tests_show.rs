@@ -19,6 +19,21 @@
 use crate::tests_support::*;
 use crate::*;
 
+/// Pinned Go `TestShowStatsExtendedRemoved`: the parser still accepts the
+/// statement, but execution returns the feature-removal error verbatim.
+#[test]
+fn show_stats_extended_reports_the_go_removal_error() {
+    let mut session = Session::new();
+    let error = session
+        .run("SHOW STATS_EXTENDED")
+        .expect_err("removed extended statistics must not return rows")
+        .to_mysql_error();
+    assert_eq!(
+        error.message,
+        "Extended statistics feature has been removed"
+    );
+}
+
 /// SHOW DATABASES and SHOW TABLES, with Go's column naming and ordering.
 #[test]
 fn show_databases_and_tables() {

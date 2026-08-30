@@ -35,9 +35,8 @@
 //!
 //! # Reused rather than restated
 //!
-//! * [`tidb_stats::Table`] IS the full Go `statistics.Table` shape used by
-//!   the isolated metadata row helper. The production catalog carries
-//!   [`TableStatistics`]; its `stats_healthy` method owns Go's
+//! * [`TableStatistics`] is the shared production statistics object used by
+//!   the SHOW paths. Its `stats_healthy` method owns Go's
 //!   `GetStatsHealthy` calculation for the wired [`healthy_row`].
 //! * [`tidb_stats::Histogram`] and [`tidb_stats::Bucket`] ARE Go
 //!   `statistics.Histogram` / `Bucket`, so [`histogram_row`] and
@@ -87,7 +86,7 @@
 
 use tidb_datatype::{core_time_from_datetime, Datum, FieldTypeCode, Time, TimeType};
 use tidb_stats::memory_usage::{ColumnMemUsage, IndexMemUsage};
-use tidb_stats::{Histogram, Table, TopN};
+use tidb_stats::{Histogram, TopN};
 
 use crate::access_cost::TableStatistics;
 
@@ -266,17 +265,17 @@ impl MetaFilters {
 /// the delta-tracking path maintains without any `ANALYZE`), but reports NULL
 /// rather than a fabricated `last_analyze_time`.
 #[must_use]
-pub fn stats_meta_row<TZ: chrono::TimeZone>(
+pub fn table_statistics_meta_row<TZ: chrono::TimeZone>(
     db_name: &str,
     table_name: &str,
     partition: &PartitionLabel,
-    stats: &Table,
+    stats: &TableStatistics,
     zone: &TZ,
 ) -> Option<Vec<Datum>> {
-    if stats.hist_coll.pseudo {
+    if stats.is_synthetic_pseudo() {
         return None;
     }
-    let last_analyze = if stats.is_analyzed() {
+    let last_analyze = if stats.last_analyze_version > 0 {
         version_to_time(stats.last_analyze_version, zone).map_or(Datum::Null, Datum::Time)
     } else {
         Datum::Null
@@ -286,8 +285,8 @@ pub fn stats_meta_row<TZ: chrono::TimeZone>(
         Datum::new_string(table_name.as_bytes().to_vec()),
         Datum::new_string(partition.as_str().as_bytes().to_vec()),
         version_to_time(stats.version, zone).map_or(Datum::Null, Datum::Time),
-        Datum::Int(stats.hist_coll.modify_count),
-        Datum::Int(stats.hist_coll.realtime_count),
+        Datum::Int(stats.modify_count),
+        Datum::Int(stats.row_count),
         last_analyze,
     ])
 }
@@ -631,19 +630,6 @@ pub fn column_stats_usage_label(global: bool, definition_name: Option<&str>) -> 
 mod tests {
     use super::*;
     use tidb_stats::histogram::Bucket;
-    use tidb_stats::table::HistColl;
-
-    fn empty_stats_table() -> Table {
-        Table {
-            existence_map: None,
-            hist_coll: HistColl::new(1, 0, 0, 0, 0),
-            version: 0,
-            last_analyze_version: 0,
-            last_stats_hist_version: 0,
-            table_info_update_ts: 0,
-            is_pk_handle: false,
-        }
-    }
 
     fn label_names(targets: &[PhysicalTarget]) -> Vec<(i64, String)> {
         targets
@@ -743,14 +729,13 @@ mod tests {
     #[test]
     fn stats_meta_row_nulls_the_analyze_time_when_never_analyzed() {
         let version = 1_700_000_000_000u64 << PHYSICAL_SHIFT_BITS;
-        let mut stats = empty_stats_table();
+        let mut stats = TableStatistics::default();
         stats.version = version;
-        stats.hist_coll.modify_count = 5;
-        stats.hist_coll.realtime_count = 100;
+        stats.modify_count = 5;
+        stats.row_count = 100;
         stats.last_analyze_version = 0;
-        assert!(!stats.is_analyzed());
 
-        let row = stats_meta_row("d", "t", &PartitionLabel::None, &stats, &chrono::Utc)
+        let row = table_statistics_meta_row("d", "t", &PartitionLabel::None, &stats, &chrono::Utc)
             .expect("a non-pseudo table produces a row");
         assert_eq!(row.len(), 7);
         assert_eq!(row[4], Datum::Int(5));
@@ -759,13 +744,16 @@ mod tests {
         assert_eq!(row[6], Datum::Null);
 
         stats.last_analyze_version = version;
-        assert!(stats.is_analyzed());
-        let row = stats_meta_row("d", "t", &PartitionLabel::None, &stats, &chrono::Utc).unwrap();
+        let row = table_statistics_meta_row("d", "t", &PartitionLabel::None, &stats, &chrono::Utc)
+            .unwrap();
         assert!(matches!(row[6], Datum::Time(_)));
 
         // A pseudo table produces no row at all.
-        stats.hist_coll.pseudo = true;
-        assert!(stats_meta_row("d", "t", &PartitionLabel::None, &stats, &chrono::Utc).is_none());
+        stats.cache_pseudo = true;
+        assert!(
+            table_statistics_meta_row("d", "t", &PartitionLabel::None, &stats, &chrono::Utc)
+                .is_none()
+        );
     }
 
     // WRITTEN test for :135-142.

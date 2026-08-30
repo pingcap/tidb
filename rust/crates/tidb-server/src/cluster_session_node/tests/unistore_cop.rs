@@ -685,6 +685,63 @@ fn show_analyze_status_reads_persisted_jobs_like_go() {
     assert_eq!(shown[0][13], "NULL");
 
     rows(&mut session, "DELETE FROM mysql.analyze_jobs");
+    rows(
+        &mut session,
+        "CREATE TABLE stats_show_analyze_partition (a INT PRIMARY KEY, b INT) \
+         PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO stats_show_analyze_partition VALUES (1,1),(2,2)",
+    );
+    rows(&mut session, "ANALYZE TABLE stats_show_analyze_partition");
+    let partition_jobs = displayed(rows(
+        &mut session,
+        "SHOW ANALYZE STATUS WHERE table_name = 'stats_show_analyze_partition'",
+    ));
+    assert_eq!(partition_jobs.len(), 2);
+    let mut job_infos = partition_jobs
+        .iter()
+        .map(|row| row[3].clone())
+        .collect::<Vec<_>>();
+    job_infos.sort();
+    assert_eq!(
+        job_infos,
+        [
+            "analyze table all columns with 256 buckets, 100 topn, 1 samplerate",
+            "merge global stats for test.stats_show_analyze_partition columns",
+        ]
+    );
+
+    rows(&mut session, "DELETE FROM mysql.analyze_jobs");
+    rows(
+        &mut session,
+        "ALTER TABLE stats_show_analyze_partition ADD INDEX idx(b)",
+    );
+    rows(
+        &mut session,
+        "ANALYZE TABLE stats_show_analyze_partition INDEX idx",
+    );
+    let partition_index_jobs = displayed(rows(
+        &mut session,
+        "SHOW ANALYZE STATUS WHERE table_name = 'stats_show_analyze_partition'",
+    ));
+    assert_eq!(partition_index_jobs.len(), 3);
+    let mut job_infos = partition_index_jobs
+        .iter()
+        .map(|row| row[3].clone())
+        .collect::<Vec<_>>();
+    job_infos.sort();
+    assert_eq!(
+        job_infos,
+        [
+            "analyze table all indexes, all columns with 256 buckets, 100 topn, 1 samplerate",
+            "merge global stats for test.stats_show_analyze_partition columns",
+            "merge global stats for test.stats_show_analyze_partition's index idx",
+        ]
+    );
+
+    rows(&mut session, "DELETE FROM mysql.analyze_jobs");
     let started_at = tidb_exec::mysql_bootstrap::utc_now_timestamp()
         .add_duration(MySqlDuration::from_nanoseconds(-60_000_000_000, 0).unwrap())
         .unwrap();

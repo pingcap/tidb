@@ -1548,38 +1548,15 @@ impl Session {
                         let Some(statistics) = catalog.table_statistics(target.physical_id) else {
                             continue;
                         };
-                        // Go calls `GetNonPseudoPhysicalTableStats`: a pseudo
-                        // cache entry is an optimizer fallback, not stored
-                        // statistics to expose through SHOW.
-                        if statistics.is_synthetic_pseudo() {
-                            continue;
-                        }
-                        let update_time = tidb_executor::show_stats::version_to_time(
-                            statistics.version,
+                        if let Some(row) = tidb_executor::show_stats::table_statistics_meta_row(
+                            &database,
+                            &name,
+                            &target.label,
+                            &statistics,
                             &chrono::Local,
-                        )
-                        .map_or(Datum::Null, Datum::Time);
-                        // Go's `IsAnalyzed()`: `LastAnalyzeVersion > 0`. A
-                        // table with a stats row but no analysis keeps the
-                        // last column NULL rather than inventing a time.
-                        let last_analyze_time = if statistics.last_analyze_version > 0 {
-                            tidb_executor::show_stats::version_to_time(
-                                statistics.last_analyze_version,
-                                &chrono::Local,
-                            )
-                            .map_or(Datum::Null, Datum::Time)
-                        } else {
-                            Datum::Null
-                        };
-                        rows.push(vec![
-                            Datum::new_string(database.as_bytes().to_vec()),
-                            Datum::new_string(name.as_bytes().to_vec()),
-                            Datum::new_string(target.label.as_str().as_bytes().to_vec()),
-                            update_time,
-                            Datum::Int(statistics.modify_count),
-                            Datum::Int(statistics.row_count),
-                            last_analyze_time,
-                        ]);
+                        ) {
+                            rows.push(row);
+                        }
                     }
                 }
             }
@@ -2927,6 +2904,13 @@ impl Session {
             // Go `ShowExec.fetchShowProcessList`: one row per live
             // connection of this server, read from the session manager.
             tidb_ast::AdminStmt::ShowInspection(show) => {
+                // Pinned Go `ShowExec.fetchAll` keeps the grammar entry but
+                // rejects execution because extended statistics was removed.
+                if show.kind == tidb_ast::ShowInspectionKind::StatsExtended {
+                    return Err(DriverError::unsupported(
+                        "Extended statistics feature has been removed",
+                    ));
+                }
                 // Go `ShowExec.fetchShowBindingCacheStatus`; see
                 // `crate::binding_arm`.
                 if show.kind == tidb_ast::ShowInspectionKind::BindingCacheStatus {
