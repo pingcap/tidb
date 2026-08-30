@@ -387,6 +387,10 @@ impl Session {
                     tidb_ast::AdminStmt::AnalyzeTable(_)
                         | tidb_ast::AdminStmt::AnalyzeIncremental(_)
                         | tidb_ast::AdminStmt::LoadStats(_)
+                ) || matches!(
+                    admin.as_ref(),
+                    tidb_ast::AdminStmt::Flush(flush)
+                        if matches!(flush.target, tidb_ast::FlushTarget::StatsDelta { .. })
                 ) =>
             {
                 StoredStateChange::Statistics

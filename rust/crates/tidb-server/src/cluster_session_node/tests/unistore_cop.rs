@@ -1084,6 +1084,239 @@ fn partition_global_stats_ndv_matches_go() {
     check_ndv(&mut session, &["13", "3", "3", "3", "4"]);
 }
 
+/// Pinned `globalstats.TestGlobalStatsIndexNDV`: FM-sketch union uses the
+/// index-key encoding consistently for every datum family accepted by the
+/// source test, so equal values in different partitions remain one NDV.
+#[test]
+fn partition_global_index_ndv_matches_go_for_all_source_types() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(61))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET SESSION tidb_analyze_version = 2");
+    rows(
+        &mut session,
+        "SET SESSION tidb_partition_prune_mode = 'dynamic'",
+    );
+
+    let check_ndv = |session: &mut _, table: &str, expected: &[&str]| {
+        rows(session, &format!("ANALYZE TABLE {table}"));
+        let actual = displayed(rows(
+            session,
+            &format!("SHOW STATS_HISTOGRAMS WHERE is_index = 1 AND table_name = '{table}'"),
+        ));
+        assert_eq!(actual.len(), expected.len());
+        assert_eq!(
+            actual.iter().map(|row| row[6].as_str()).collect::<Vec<_>>(),
+            expected
+        );
+    };
+
+    let run_case = |session: &mut _, table: &str, sql_type: &str, values: [&str; 8]| {
+        rows(
+            session,
+            &format!(
+                "CREATE TABLE {table} (a INT, b {sql_type}, KEY(b)) \
+                 PARTITION BY RANGE (a) (\
+                 PARTITION p0 VALUES LESS THAN (10),\
+                 PARTITION p1 VALUES LESS THAN (20))"
+            ),
+        );
+        rows(
+            session,
+            &format!(
+                "INSERT INTO {table} VALUES (1,{}),(1,{}),(1,{})",
+                values[0], values[1], values[2]
+            ),
+        );
+        check_ndv(session, table, &["3", "3", "0"]);
+        rows(
+            session,
+            &format!(
+                "INSERT INTO {table} VALUES (11,{}),(11,{}),(11,{})",
+                values[0], values[1], values[2]
+            ),
+        );
+        check_ndv(session, table, &["3", "3", "3"]);
+        rows(
+            session,
+            &format!(
+                "INSERT INTO {table} VALUES (11,{}),(11,{}),(11,{})",
+                values[3], values[4], values[5]
+            ),
+        );
+        check_ndv(session, table, &["6", "3", "6"]);
+        rows(
+            session,
+            &format!(
+                "INSERT INTO {table} VALUES (1,{}),(1,{}),(1,{}),(1,{}),(1,{})",
+                values[3], values[4], values[5], values[6], values[7]
+            ),
+        );
+        check_ndv(session, table, &["8", "8", "6"]);
+    };
+
+    run_case(
+        &mut session,
+        "global_index_ndv_int",
+        "INT",
+        ["1", "2", "3", "4", "5", "6", "7", "8"],
+    );
+    run_case(
+        &mut session,
+        "global_index_ndv_double",
+        "DOUBLE",
+        ["1.1", "2.2", "3.3", "4.4", "5.5", "6.6", "7.7", "8.8"],
+    );
+    run_case(
+        &mut session,
+        "global_index_ndv_decimal",
+        "DECIMAL(30,15)",
+        ["1.1", "2.2", "3.3", "4.4", "5.5", "6.6", "7.7", "8.8"],
+    );
+    run_case(
+        &mut session,
+        "global_index_ndv_string",
+        "VARCHAR(30)",
+        [
+            "'111'", "'222'", "'333'", "'444'", "'555'", "'666'", "'777'", "'888'",
+        ],
+    );
+    run_case(
+        &mut session,
+        "global_index_ndv_datetime",
+        "DATETIME",
+        [
+            "'2001-01-01'",
+            "'2002-01-01'",
+            "'2003-01-01'",
+            "'2004-01-01'",
+            "'2005-01-01'",
+            "'2006-01-01'",
+            "'2007-01-01'",
+            "'2008-01-01'",
+        ],
+    );
+}
+
+/// Pinned `globalstats.TestGlobalStatsVersion`: after global stats exist,
+/// analyzing a newly added partition refreshes the global row while retaining
+/// modifications in another partition until that partition is analyzed.
+#[test]
+fn partition_scoped_analyze_refreshes_global_count_and_modify_count() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(62))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET SESSION tidb_analyze_version = 2");
+    rows(
+        &mut session,
+        "SET SESSION tidb_partition_prune_mode = 'dynamic'",
+    );
+    rows(
+        &mut session,
+        "CREATE TABLE global_stats_version (a INT) PARTITION BY RANGE (a) (\
+         PARTITION p0 VALUES LESS THAN (10),\
+         PARTITION p1 VALUES LESS THAN (20))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO global_stats_version VALUES (1),(5),(NULL),(11),(15)",
+    );
+    rows(&mut session, "FLUSH STATS_DELTA *.*");
+    rows(&mut session, "ANALYZE TABLE global_stats_version");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SHOW STATS_META WHERE table_name = 'global_stats_version'",
+        ))
+        .len(),
+        3
+    );
+
+    let global_meta = |session: &mut _| {
+        displayed(rows(
+            session,
+            "SHOW STATS_META WHERE table_name = 'global_stats_version' \
+             AND partition_name = 'global'",
+        ))
+        .into_iter()
+        .next()
+        .expect("global stats meta row")
+    };
+
+    rows(
+        &mut session,
+        "ALTER TABLE global_stats_version ADD PARTITION \
+         (PARTITION p2 VALUES LESS THAN (30))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO global_stats_version VALUES (13),(14),(22),(23)",
+    );
+    rows(&mut session, "FLUSH STATS_DELTA *.*");
+    rows(
+        &mut session,
+        "ANALYZE TABLE global_stats_version PARTITION p2",
+    );
+    rows(&mut session, "FLUSH STATS_DELTA *.*");
+    let meta = global_meta(&mut session);
+    assert_eq!((meta[4].as_str(), meta[5].as_str()), ("2", "9"));
+
+    rows(
+        &mut session,
+        "ANALYZE TABLE global_stats_version PARTITION p1",
+    );
+    let meta = global_meta(&mut session);
+    assert_eq!((meta[4].as_str(), meta[5].as_str()), ("0", "9"));
+
+    rows(
+        &mut session,
+        "ALTER TABLE global_stats_version DROP PARTITION p2",
+    );
+    rows(&mut session, "FLUSH STATS_DELTA *.*");
+    rows(&mut session, "ANALYZE TABLE global_stats_version");
+    let meta = global_meta(&mut session);
+    assert_eq!(meta[5], "7");
+}
+
+#[test]
+fn flush_stats_delta_missing_targets_match_go_warnings() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(63))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+
+    rows(
+        &mut session,
+        "FLUSH STATS_DELTA missing_database.*, test.missing_table",
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "SHOW WARNINGS")),
+        vec![
+            vec![
+                "Warning".to_owned(),
+                "1049".to_owned(),
+                "Unknown database 'missing_database'".to_owned(),
+            ],
+            vec![
+                "Warning".to_owned(),
+                "1146".to_owned(),
+                "Table 'test.missing_table' doesn't exist".to_owned(),
+            ],
+        ]
+    );
+}
+
 /// A write takes the same access paths a `SELECT` does, which is
 /// `crate::explain`'s divergence 8 as it now stands.
 ///

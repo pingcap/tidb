@@ -343,8 +343,15 @@ enum StatementRoute {
     Analyze(Vec<AnalyzeStatement>),
     /// One LOAD STATS statement awaiting its client-local file bytes.
     LoadStats,
+    /// One foreground dump of this node's pending statistics deltas.
+    FlushStatsDelta(FlushStatsDeltaTargets),
     /// One persisted `LOCK STATS` or `UNLOCK STATS` operation.
     StatsLock(ClusterStatsLockStatement),
+}
+
+enum FlushStatsDeltaTargets {
+    All,
+    Tables(Vec<i64>),
 }
 
 struct ClusterDataLockWaits {
@@ -682,15 +689,35 @@ impl ClusterSessionFactory {
         target_table_ids: &[i64],
         resource_group: &str,
     ) -> Result<(), String> {
-        let mut pending = self
-            .stats_usage
-            .session_stats_list()
-            .begin_table_delta_dump();
+        Self::dump_stats_delta_to_kv_parts(
+            self.stats_usage.as_ref(),
+            self.transactions.as_ref(),
+            self.catalog.as_ref(),
+            self.stats.as_ref(),
+            &self.global_vars,
+            force_dump,
+            target_table_ids,
+            resource_group,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn dump_stats_delta_to_kv_parts(
+        stats_usage: &tidb_stats_handle_usage::StatsUsageHandle,
+        transactions: &dyn ClusterTransactions,
+        catalog_store: &SharedClusterCatalog,
+        stats_store: &SharedStats,
+        global_vars: &GlobalSysvars,
+        force_dump: bool,
+        target_table_ids: &[i64],
+        resource_group: &str,
+    ) -> Result<(), String> {
+        let mut pending = stats_usage.session_stats_list().begin_table_delta_dump();
         let table_ids = pending.pending_table_ids(target_table_ids);
         for batch in table_ids.chunks(tidb_stats_handle_usage::DUMP_DELTA_BATCH_SIZE) {
             let batch_time = SystemTime::now();
-            let catalog = self.catalog.load();
-            let stats = self.stats.load();
+            let catalog = catalog_store.load();
+            let stats = stats_store.load();
             let mut original_updates = Vec::new();
             let mut parents = std::collections::HashMap::new();
             for &table_id in batch {
@@ -736,7 +763,7 @@ impl ClusterSessionFactory {
             if original_updates.is_empty() {
                 continue;
             }
-            let snapshot = self.transactions.open_snapshot(resource_group)?;
+            let snapshot = transactions.open_snapshot(resource_group)?;
             let read_ts = snapshot.start_ts();
             let (plan, updates) = {
                 let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
@@ -760,14 +787,13 @@ impl ClusterSessionFactory {
                 .map_err(|error| error.to_string())?;
                 (plan, updates)
             };
-            self.transactions
+            transactions
                 .commit_optimistic_mutations(plan.mutations, read_ts, resource_group)
                 .map_err(|error| error.message)?;
             for update in original_updates {
                 pending.mark_persisted(update.table_id);
             }
-            let historical_stats_enabled = self
-                .global_vars
+            let historical_stats_enabled = global_vars
                 .get(tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS)
                 .is_ok_and(|value| tidb_exec::option_values::tidb_opt_on(&value));
             if historical_stats_enabled {
@@ -781,7 +807,7 @@ impl ClusterSessionFactory {
                         continue;
                     }
                     let result = (|| {
-                        let snapshot = self.transactions.open_snapshot(resource_group)?;
+                        let snapshot = transactions.open_snapshot(resource_group)?;
                         let history_read_ts = snapshot.start_ts();
                         let plan = {
                             let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
@@ -795,7 +821,7 @@ impl ClusterSessionFactory {
                             )
                             .map_err(|error| error.to_string())?
                         };
-                        self.transactions
+                        transactions
                             .commit_optimistic_mutations(
                                 plan.mutations,
                                 history_read_ts,
@@ -1222,6 +1248,8 @@ impl QuerySessionFactory for ClusterSessionFactory {
 
         Ok(ClusterServerSession {
             session,
+            stats_usage: Arc::clone(&self.stats_usage),
+            global_vars: self.global_vars.clone(),
             buffer,
             slot,
             storage,
@@ -1440,6 +1468,10 @@ impl tidb_workloadrepo::RepositorySession for WorkloadRepositorySession {
 /// One connection's wide-SQL session over cluster storage.
 pub struct ClusterServerSession {
     session: Session,
+    /// Go Domain's node-global pending statistics deltas.
+    stats_usage: Arc<tidb_stats_handle_usage::StatsUsageHandle>,
+    /// Process-global variables consulted while persisting statistics deltas.
+    global_vars: GlobalSysvars,
     /// This connection's staged writes, published by `COMMIT` (or by the end
     /// of an autocommit statement).
     buffer: MutationBuffer,
@@ -1534,6 +1566,39 @@ impl ClusterServerSession {
     #[must_use]
     pub fn skipped_tables(&self) -> &[SkippedTable] {
         &self.skipped
+    }
+
+    fn run_flush_stats_delta(
+        &mut self,
+        targets: &FlushStatsDeltaTargets,
+    ) -> Result<WriteOutcome, SqlQueryError> {
+        if matches!(targets, FlushStatsDeltaTargets::Tables(ids) if ids.is_empty()) {
+            return Ok(WriteOutcome {
+                affected_rows: 0,
+                last_insert_id: 0,
+            });
+        }
+        self.session.publish_table_delta();
+        let resource_group = self.session.current_resource_group().to_owned();
+        let target_ids = match targets {
+            FlushStatsDeltaTargets::All => &[][..],
+            FlushStatsDeltaTargets::Tables(ids) => ids.as_slice(),
+        };
+        ClusterSessionFactory::dump_stats_delta_to_kv_parts(
+            self.stats_usage.as_ref(),
+            self.transactions.as_ref(),
+            self.catalog.as_ref(),
+            self.stats.as_ref(),
+            &self.global_vars,
+            true,
+            target_ids,
+            &resource_group,
+        )
+        .map_err(SqlQueryError::unknown)?;
+        Ok(WriteOutcome {
+            affected_rows: 0,
+            last_insert_id: 0,
+        })
     }
 
     /// Runs one statement inside this mode's snapshot/buffer lifecycle. When
@@ -2467,6 +2532,73 @@ impl ClusterServerSession {
         self.schema_route_for_change(sql, change)
     }
 
+    fn flush_stats_delta_targets(
+        &mut self,
+        sql: &str,
+    ) -> Result<Option<FlushStatsDeltaTargets>, SqlQueryError> {
+        let prepared = self.session.prepare_ast(sql).map_err(map_error)?;
+        let tidb_ast::Stmt::Admin(admin) = prepared.statement() else {
+            return Ok(None);
+        };
+        let tidb_ast::AdminStmt::Flush(flush) = admin.as_ref() else {
+            return Ok(None);
+        };
+        let tidb_ast::FlushTarget::StatsDelta { objects, .. } = &flush.target else {
+            return Ok(None);
+        };
+        if objects
+            .iter()
+            .any(|object| matches!(object, tidb_ast::StatsObject::Global))
+        {
+            return Ok(Some(FlushStatsDeltaTargets::All));
+        }
+
+        let current_database = self.session.current_database().to_owned();
+        let shared = self.session.shared_catalog();
+        let catalog = shared
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut ids = Vec::new();
+        let mut warnings = Vec::new();
+        let append_table =
+            |database: &str, table: &str, ids: &mut Vec<i64>, warnings: &mut Vec<(u16, String)>| {
+                let Some(tidb_executor::TableEntry::Kv(table)) = catalog.table_in(database, table)
+                else {
+                    warnings.push((1146, format!("Table '{database}.{table}' doesn't exist")));
+                    return;
+                };
+                ids.push(table.table_id);
+                if let Some(partition) = table.partition() {
+                    ids.extend(partition.definitions.iter().map(|definition| definition.id));
+                }
+            };
+        for object in objects {
+            match object {
+                tidb_ast::StatsObject::Global => unreachable!("handled above"),
+                tidb_ast::StatsObject::Database(database) => {
+                    if let Some(tables) = catalog.table_names(database) {
+                        for table in tables {
+                            append_table(database, &table, &mut ids, &mut warnings);
+                        }
+                    } else {
+                        warnings.push((1049, format!("Unknown database '{database}'")));
+                    }
+                }
+                tidb_ast::StatsObject::Table { database, table } => {
+                    let database = database.as_deref().unwrap_or(&current_database);
+                    append_table(database, table, &mut ids, &mut warnings);
+                }
+            }
+        }
+        ids.sort_unstable();
+        ids.dedup();
+        drop(catalog);
+        for (code, message) in warnings {
+            self.session.append_routed_warning(code, message);
+        }
+        Ok(Some(FlushStatsDeltaTargets::Tables(ids)))
+    }
+
     fn schema_route_for_change(
         &mut self,
         sql: &str,
@@ -2477,6 +2609,9 @@ impl ClusterServerSession {
             StoredStateChange::Accounts => Ok(StatementRoute::Accounts),
             StoredStateChange::GlobalVars => Ok(StatementRoute::GlobalVars),
             StoredStateChange::Statistics => {
+                if let Some(targets) = self.flush_stats_delta_targets(sql)? {
+                    return Ok(StatementRoute::FlushStatsDelta(targets));
+                }
                 if prepare_cluster_load_stats(sql).is_some() {
                     return Ok(StatementRoute::LoadStats);
                 }
@@ -2880,6 +3015,9 @@ impl QuerySession for ClusterServerSession {
                     "LOAD STATS requires client-local file transfer",
                 ))
             }
+            StatementRoute::FlushStatsDelta(targets) => {
+                return self.run_flush_stats_delta(&targets).map(Some);
+            }
             StatementRoute::StatsLock(statement) => {
                 return self.run_stats_lock(&statement).map(Some)
             }
@@ -3099,6 +3237,11 @@ impl QuerySession for ClusterServerSession {
                 return Err(SqlQueryError::unknown(
                     "LOAD STATS requires client-local file transfer",
                 ))
+            }
+            StatementRoute::FlushStatsDelta(targets) => {
+                return self
+                    .run_flush_stats_delta(&targets)
+                    .map(GeneralExecuteOutcome::Write)
             }
             StatementRoute::StatsLock(statement) => {
                 return self
@@ -3381,6 +3524,12 @@ impl QuerySession for ClusterServerSession {
                 return Err(SqlQueryError::unknown(
                     "LOAD STATS requires client-local file transfer",
                 ))
+            }
+            StatementRoute::FlushStatsDelta(targets) => {
+                self.run_flush_stats_delta(&targets)?;
+                return Ok(QueryResult::new(Box::new(
+                    crate::pipeline_session::affected_rows_source(0),
+                )));
             }
             StatementRoute::StatsLock(statement) => {
                 self.run_stats_lock(&statement)?;
