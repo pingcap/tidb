@@ -578,7 +578,9 @@ pub struct StmtContext {
     operator_num: Arc<AtomicU64>,
     /// Go session `SessionStatsItem.statsUsage`, shared by every statement
     /// context built for this session.
-    column_stats_usage: Option<Arc<Mutex<HashMap<tidb_model::TableItemID, std::time::SystemTime>>>>,
+    column_stats_usage: Option<Arc<tidb_stats_handle_usage::SessionStatsItem>>,
+    /// Go `SessionVars.TxnCtx.TableDeltaMap` for the open transaction.
+    table_delta: Option<Arc<tidb_stats_handle_usage::TableDeltaMap>>,
     /// Go `SessionVars.IsPlanReplayerCaptureEnabled()`.
     plan_replayer_capture_enabled: bool,
     /// Go `StmtCtx.TableStats`, populated while predicate columns are
@@ -807,6 +809,7 @@ impl StmtContext {
             sync_stats_failed: Arc::default(),
             operator_num: Arc::default(),
             column_stats_usage: None,
+            table_delta: None,
             plan_replayer_capture_enabled: false,
             table_runtime_statistics: Arc::default(),
             skip_plan_cache_reason: Arc::default(),
@@ -1178,9 +1181,9 @@ impl StmtContext {
     #[must_use]
     pub fn with_column_stats_usage(
         mut self,
-        usage: Arc<Mutex<HashMap<tidb_model::TableItemID, std::time::SystemTime>>>,
+        usage: Option<Arc<tidb_stats_handle_usage::SessionStatsItem>>,
     ) -> Self {
-        self.column_stats_usage = Some(usage);
+        self.column_stats_usage = usage;
         self
     }
 
@@ -1190,11 +1193,21 @@ impl StmtContext {
         let Some(usage) = &self.column_stats_usage else {
             return;
         };
-        let now = std::time::SystemTime::now();
-        let mut usage = usage
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        usage.extend(items.into_iter().map(|item| (item, now)));
+        usage.update_col_stats_usage(items);
+    }
+
+    /// Installs Go `SessionVars.TxnCtx.TableDeltaMap`.
+    #[must_use]
+    pub fn with_table_delta(mut self, delta: Arc<tidb_stats_handle_usage::TableDeltaMap>) -> Self {
+        self.table_delta = Some(delta);
+        self
+    }
+
+    /// Go `TransactionContext.UpdateDeltaForTable`.
+    pub fn update_table_delta(&self, physical_table_id: i64, delta: i64, count: i64) {
+        if let Some(table_delta) = &self.table_delta {
+            table_delta.update(physical_table_id, delta, count);
+        }
     }
 
     /// Sets Go `SessionVars.IsPlanReplayerCaptureEnabled()` for this statement.

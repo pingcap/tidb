@@ -2466,7 +2466,7 @@ impl KvTable {
         shard: i64,
         ctx: &impl tidb_expr::Columns,
     ) -> Result<TableHandle, KvTableError> {
-        self.insert_row_in(row, row_id, shard, ctx, false, false)
+        self.insert_row_in(row, row_id, shard, ctx, false, false, None)
     }
 
     /// [`Self::insert_row_with_row_id`] for the INSERT executor, which names
@@ -2484,10 +2484,10 @@ impl KvTable {
         row: &[Datum],
         row_id: Option<i64>,
         shard: i64,
-        ctx: &impl tidb_expr::Columns,
+        ctx: &crate::StmtContext,
         lazy_dup_check: bool,
     ) -> Result<TableHandle, KvTableError> {
-        self.insert_row_in(row, row_id, shard, ctx, lazy_dup_check, false)
+        self.insert_row_in(row, row_id, shard, ctx, lazy_dup_check, false, Some(ctx))
     }
 
     /// [`Self::insert_row_with_row_id_checked`] for a normal clustered INSERT
@@ -2499,10 +2499,10 @@ impl KvTable {
         row: &[Datum],
         row_id: Option<i64>,
         shard: i64,
-        ctx: &impl tidb_expr::Columns,
+        ctx: &crate::StmtContext,
         lazy_dup_check: bool,
     ) -> Result<TableHandle, KvTableError> {
-        self.insert_row_in(row, row_id, shard, ctx, lazy_dup_check, true)
+        self.insert_row_in(row, row_id, shard, ctx, lazy_dup_check, true, Some(ctx))
     }
 
     fn insert_row_in(
@@ -2513,6 +2513,7 @@ impl KvTable {
         ctx: &impl tidb_expr::Columns,
         lazy_dup_check: bool,
         skip_primary_duplicate_check: bool,
+        stats_ctx: Option<&crate::StmtContext>,
     ) -> Result<TableHandle, KvTableError> {
         let zone = ctx.time_zone();
         // The generated columns are recomputed HERE, at the one place every
@@ -2608,6 +2609,9 @@ impl KvTable {
         self.dirty_content
             .0
             .store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(stats_ctx) = stats_ctx {
+            stats_ctx.update_table_delta(physical_id, 1, 1);
+        }
         Ok(handle)
     }
 
@@ -2795,7 +2799,32 @@ impl KvTable {
         row: &[Datum],
         ctx: &crate::StmtContext,
     ) -> Result<(), KvTableError> {
-        self.update_row_in(handle, None, row, ctx, &RowDecodeContext::for_write(ctx))
+        self.update_row_in(
+            handle,
+            None,
+            row,
+            ctx,
+            &RowDecodeContext::for_write(ctx),
+            Some(ctx),
+        )
+    }
+
+    /// [`Self::update_row_with_old`] with Go transaction-delta collection.
+    pub fn update_row_with_old_context(
+        &mut self,
+        handle: &TableHandle,
+        old_row: Option<&[Datum]>,
+        row: &[Datum],
+        ctx: &crate::StmtContext,
+    ) -> Result<(), KvTableError> {
+        self.update_row_in(
+            handle,
+            old_row,
+            row,
+            ctx,
+            &RowDecodeContext::for_write(ctx),
+            Some(ctx),
+        )
     }
 
     /// Replaces a row when the caller already holds the selected row. Passing
@@ -2815,6 +2844,7 @@ impl KvTable {
             row,
             ctx,
             &RowDecodeContext::legacy_default(&zone),
+            None,
         )
     }
 
@@ -2833,6 +2863,7 @@ impl KvTable {
             row,
             ctx,
             &RowDecodeContext::legacy_default(&zone),
+            None,
         )
     }
 
@@ -2843,6 +2874,7 @@ impl KvTable {
         row: &[Datum],
         ctx: &impl tidb_expr::Columns,
         decode_context: &RowDecodeContext,
+        stats_ctx: Option<&crate::StmtContext>,
     ) -> Result<(), KvTableError> {
         let zone = ctx.time_zone();
         // Recomputed, never carried over: an UPDATE that changes a dependency
@@ -3003,6 +3035,14 @@ impl KvTable {
         self.dirty_content
             .0
             .store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(stats_ctx) = stats_ctx {
+            if old_physical_id == new_physical_id {
+                stats_ctx.update_table_delta(old_physical_id, 0, 1);
+            } else {
+                stats_ctx.update_table_delta(old_physical_id, -1, 1);
+                stats_ctx.update_table_delta(new_physical_id, 1, 1);
+            }
+        }
         Ok(())
     }
 
@@ -3013,7 +3053,7 @@ impl KvTable {
         ctx: &crate::StmtContext,
     ) -> Result<(), KvTableError> {
         let zone = ctx.session_zone();
-        self.delete_row_in(handle, &zone, &RowDecodeContext::for_write(ctx))
+        self.delete_row_in(handle, &zone, &RowDecodeContext::for_write(ctx), Some(ctx))
     }
 
     /// Legacy zone-only row delete retained for unmigrated DML/FK callers.
@@ -3023,7 +3063,7 @@ impl KvTable {
         handle: &TableHandle,
         zone: &SessionTimeZone,
     ) -> Result<(), KvTableError> {
-        self.delete_row_in(handle, zone, &RowDecodeContext::legacy_default(zone))
+        self.delete_row_in(handle, zone, &RowDecodeContext::legacy_default(zone), None)
     }
 
     /// [`KvTable::delete_row`] for a row THIS STATEMENT already fetched.
@@ -3058,11 +3098,25 @@ impl KvTable {
         Ok(())
     }
 
+    /// [`Self::delete_row_with_old`] with Go transaction-delta collection.
+    pub fn delete_row_with_old_context(
+        &mut self,
+        handle: &TableHandle,
+        old_row: &[Datum],
+        ctx: &crate::StmtContext,
+    ) -> Result<(), KvTableError> {
+        let physical_id = self.record_physical_id(old_row, ctx)?;
+        self.delete_row_with_old(handle, old_row, ctx)?;
+        ctx.update_table_delta(physical_id, -1, 1);
+        Ok(())
+    }
+
     fn delete_row_in(
         &mut self,
         handle: &TableHandle,
         zone: &SessionTimeZone,
         decode_context: &RowDecodeContext,
+        stats_ctx: Option<&crate::StmtContext>,
     ) -> Result<(), KvTableError> {
         let Some(key) = self.stored_record_key(handle)? else {
             return Ok(());
@@ -3079,6 +3133,9 @@ impl KvTable {
         self.dirty_content
             .0
             .store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(stats_ctx) = stats_ctx {
+            stats_ctx.update_table_delta(physical_id, -1, 1);
+        }
         Ok(())
     }
 }

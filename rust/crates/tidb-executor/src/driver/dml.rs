@@ -1129,7 +1129,11 @@ fn run_insert_with_physical(
                     // count is one per deleted row plus one for the inserted
                     // row.
                     target(catalog, &database, &table_name)
-                        .delete_row(handle, &ctx.session_zone())
+                        .delete_row_with_old_context(
+                            handle,
+                            existing.as_deref().expect("unchanged rows continued above"),
+                            ctx,
+                        )
                         .map_err(|e| kv_read_error("row delete failed", e))?;
                     inserted += 1;
                 }
@@ -1654,7 +1658,7 @@ fn apply_on_duplicate(
             .map_err(kv_write_error)?;
     }
     table
-        .update_row(handle, &updated, ctx)
+        .update_row_with_context(handle, &updated, ctx)
         .map_err(kv_write_error)?;
     Ok(2)
 }
@@ -2937,7 +2941,7 @@ fn run_update_with_physical(
                 let Some(TableEntry::Kv(kv)) = catalog.get_mut_in(&database, &name) else {
                     unreachable!("only a byte-backed table stages rewrites")
                 };
-                match kv.update_row_with_old(&handle, Some(&old_row), &new_row, ctx) {
+                match kv.update_row_with_old_context(&handle, Some(&old_row), &new_row, ctx) {
                     Ok(()) => changed += 1,
                     Err(crate::kv_table::KvTableError::DuplicateEntry { value, key }) => {
                         let warning = DriverError::DuplicateEntry { value, key }.to_mysql_error();
@@ -2974,7 +2978,7 @@ fn run_update_with_physical(
                 unreachable!("only a byte-backed table stages rewrites")
             };
             for (handle, old_row, new_row) in &rewrites {
-                kv.update_row_with_old(handle, Some(old_row), new_row, ctx)
+                kv.update_row_with_old_context(handle, Some(old_row), new_row, ctx)
                     .map_err(kv_write_error)?;
                 changed += 1;
             }
@@ -3428,7 +3432,7 @@ fn run_delete_with_physical(
         for (handle, old_row) in &doomed {
             // One read per deleted row: the fetch above already produced the
             // old row its index entries are removed from (Go RemoveRecord).
-            kv.delete_row_with_old(handle, old_row, ctx)
+            kv.delete_row_with_old_context(handle, old_row, ctx)
                 .map_err(|e| kv_read_error("row delete failed", e))?;
             deleted += 1;
         }

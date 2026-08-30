@@ -1042,9 +1042,9 @@ fn write_row(
             mem.rows[*index] = row.to_vec();
             Ok(())
         }
-        (TableEntry::Kv(kv), RowId::Kv(handle)) => {
-            kv.update_row(handle, row, ctx).map_err(kv_write_error)
-        }
+        (TableEntry::Kv(kv), RowId::Kv(handle)) => kv
+            .update_row_with_context(handle, row, ctx)
+            .map_err(kv_write_error),
         // The identity was read off this very entry a moment ago.
         _ => Err(DriverError::unsupported(
             "table storage changed during a multi-table write",
@@ -1128,10 +1128,9 @@ pub(crate) fn run_multi_delete(
             (TableEntry::Mem(mem), RowId::Mem(index)) => {
                 mem.rows.remove(*index);
             }
-            (TableEntry::Kv(kv), RowId::Kv(handle)) => {
-                kv.delete_row(handle, &ctx.session_zone())
-                    .map_err(|e| super::dml::kv_read_error("row delete failed", e))?
-            }
+            (TableEntry::Kv(kv), RowId::Kv(handle)) => kv
+                .delete_row_with_context(handle, ctx)
+                .map_err(|e| super::dml::kv_read_error("row delete failed", e))?,
             _ => {
                 return Err(DriverError::unsupported(
                     "table storage changed during a multi-table write",

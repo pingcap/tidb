@@ -28,6 +28,7 @@ tidb-naming = { path = "../tidb-naming" }
 tidb-parser = { path = "../tidb-parser" }
 tidb-planner = { path = "../tidb-planner" }
 tidb-stats = { path = "../tidb-stats" }
+tidb-stats-handle-usage = { path = "../tidb-stats-handle-usage" }
 tidb-stats-handle-usage-indexusage = { path = "../tidb-stats-handle-usage-indexusage" }
 tidb-stmtsummary = { path = "../tidb-stmtsummary" }
 tidb-txnkv = { path = "../tidb-txnkv" }

@@ -223,6 +223,61 @@ fn an_explicit_transaction_publishes_once_at_commit() {
     assert_eq!(cluster.live.load(Ordering::Acquire), 0);
 }
 
+#[test]
+fn table_delta_follows_commit_rollback_and_savepoint_lifecycle() {
+    let node = MockNode::start();
+    let (mut session, usage) = open_session_on_with_usage(&node);
+    let table_id = node
+        .catalog
+        .load()
+        .databases
+        .iter()
+        .find(|database| database.info.name.lowercase() == "app")
+        .and_then(|database| {
+            database
+                .tables
+                .iter()
+                .find(|table| table.name.lowercase() == "t")
+        })
+        .expect("app.t exists")
+        .id;
+
+    session.control_transaction("BEGIN").expect("begin");
+    session
+        .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
+        .expect("first insert");
+    session
+        .control_transaction("SAVEPOINT before_second")
+        .expect("savepoint");
+    session
+        .execute_write("INSERT INTO t (id, v) VALUES (2, 20)")
+        .expect("second insert");
+    session
+        .control_transaction("ROLLBACK TO SAVEPOINT before_second")
+        .expect("rollback to savepoint");
+    session.control_transaction("COMMIT").expect("commit");
+
+    let committed = usage
+        .session_stats_list()
+        .begin_table_delta_dump()
+        .get(table_id)
+        .expect("committed delta is collected");
+    assert_eq!(committed.delta, 1);
+    assert_eq!(committed.count, 1);
+
+    usage.session_stats_list().session_table_delta().reset();
+    session.control_transaction("BEGIN").expect("begin");
+    session
+        .execute_write("INSERT INTO t (id, v) VALUES (3, 30)")
+        .expect("insert before rollback");
+    session.control_transaction("ROLLBACK").expect("rollback");
+    assert!(usage
+        .session_stats_list()
+        .begin_table_delta_dump()
+        .get(table_id)
+        .is_none());
+}
+
 /// One `BEGIN` takes one timestamp, and every statement until `COMMIT`
 /// reads through that same transaction rather than opening its own.
 #[test]

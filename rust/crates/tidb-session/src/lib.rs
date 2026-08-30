@@ -552,11 +552,11 @@ pub struct Session {
     data_lock_waits: Option<std::sync::Arc<dyn DataLockWaitsProvider>>,
     /// The statistics handle's persisted predicate-column usage reader.
     column_stats_usage: Option<std::sync::Arc<dyn ColumnStatsUsageProvider>>,
-    /// Go's session-local `SessionStatsItem.statsUsage`, swept into the
-    /// statistics handle independently of statement execution.
-    pending_column_stats_usage: std::sync::Arc<
-        std::sync::Mutex<std::collections::HashMap<tidb_model::TableItemID, std::time::SystemTime>>,
-    >,
+    /// Go's session-local `SessionStatsItem`, swept into the statistics
+    /// handle independently of statement execution.
+    stats_collector: Option<std::sync::Arc<tidb_stats_handle_usage::SessionStatsItem>>,
+    /// Go `SessionVars.TxnCtx.TableDeltaMap`, published only after commit.
+    transaction_table_delta: std::sync::Arc<tidb_stats_handle_usage::TableDeltaMap>,
     /// Parsed-products cache over the raw system-variable text, keyed by
     /// [`vars::SessionVars::generation`]. Go holds these as typed fields on
     /// `SessionVars`, updated by each variable's `SetSession` hook, so a
@@ -745,7 +745,10 @@ impl Default for Session {
             index_usage_collector: Arc::new(tidb_stats_handle_usage_indexusage::Collector::new()),
             data_lock_waits: None,
             column_stats_usage: None,
-            pending_column_stats_usage: std::sync::Arc::default(),
+            stats_collector: None,
+            transaction_table_delta: std::sync::Arc::new(
+                tidb_stats_handle_usage::TableDeltaMap::new(),
+            ),
             mdl_related_tables: None,
             statement_var_cache: std::cell::RefCell::new(None),
             cost_env_cache: std::cell::RefCell::new(None),
@@ -785,6 +788,9 @@ impl Default for Session {
 
 impl Drop for Session {
     fn drop(&mut self) {
+        if let Some(collector) = &self.stats_collector {
+            collector.delete();
+        }
         self.advisory_locks.release_all();
     }
 }
@@ -966,6 +972,47 @@ impl Session {
         collector: Arc<tidb_stats_handle_usage_indexusage::Collector>,
     ) {
         self.index_usage_collector = collector;
+    }
+
+    /// Installs Go's Domain-owned session statistics collector.
+    pub fn set_stats_collector(
+        &mut self,
+        collector: std::sync::Arc<tidb_stats_handle_usage::SessionStatsItem>,
+    ) {
+        self.stats_collector = Some(collector);
+    }
+
+    /// Publishes Go's committed `TxnCtx.TableDeltaMap` to the session collector.
+    pub fn publish_table_delta(&self) {
+        let delta = self.transaction_table_delta.get_delta_and_reset();
+        if let Some(collector) = &self.stats_collector {
+            for (table_id, item) in delta {
+                if table_id > 0 {
+                    collector.update(table_id, item.delta, item.count);
+                }
+            }
+        }
+    }
+
+    /// Discards Go's rolled-back `TxnCtx.TableDeltaMap`.
+    pub fn clear_table_delta(&self) {
+        self.transaction_table_delta.reset();
+    }
+
+    /// Clones Go's table-delta part of one transaction savepoint.
+    #[must_use]
+    pub fn table_delta_savepoint(
+        &self,
+    ) -> std::collections::HashMap<i64, tidb_stats_handle_usage::TableDelta> {
+        self.transaction_table_delta.snapshot()
+    }
+
+    /// Restores Go's table-delta part of one transaction savepoint.
+    pub fn restore_table_delta_savepoint(
+        &self,
+        savepoint: std::collections::HashMap<i64, tidb_stats_handle_usage::TableDelta>,
+    ) {
+        self.transaction_table_delta.restore(savepoint);
     }
 
     /// Installs the same storage authority `kv.Storage.GetLockWaits` reads in

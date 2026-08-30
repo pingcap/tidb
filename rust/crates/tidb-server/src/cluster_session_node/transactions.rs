@@ -154,6 +154,38 @@ pub trait ClusterTransactions: Send + Sync {
         resource_group: &str,
     ) -> Result<(), SqlQueryError>;
 
+    /// Publishes one restricted-session write plan at the snapshot timestamp
+    /// that produced it.
+    fn commit_optimistic_mutations(
+        &self,
+        mutations: Vec<tidb_txnkv::transaction::OptimisticMutation>,
+        read_ts: u64,
+        resource_group: &str,
+    ) -> Result<(), SqlQueryError> {
+        use tidb_txnkv::transaction::OptimisticMutationKind;
+
+        let buffer = MutationBuffer::new();
+        for mutation in mutations {
+            let key = Key::from_bytes(mutation.key().to_vec());
+            match mutation.kind() {
+                OptimisticMutationKind::Delete
+                | OptimisticMutationKind::IndexDelete
+                | OptimisticMutationKind::MetaDelete => buffer.delete(key),
+                OptimisticMutationKind::Insert | OptimisticMutationKind::UniqueIndexInsert => {
+                    buffer.set(key.clone(), mutation.value().to_vec());
+                    buffer.mark_presume_key_not_exists(&key);
+                }
+                OptimisticMutationKind::PutExisting
+                | OptimisticMutationKind::IndexPut
+                | OptimisticMutationKind::MetaPut => {
+                    buffer.set(key, mutation.value().to_vec());
+                }
+                OptimisticMutationKind::LockOnly => {}
+            }
+        }
+        self.commit(&buffer, Some(read_ts), resource_group)
+    }
+
     /// Opens the one transaction an explicit `BEGIN` holds until `COMMIT` or
     /// `ROLLBACK`. `pessimistic` is the session's `tidb_txn_mode` verdict at
     /// `BEGIN` -- Go's default is pessimistic (`DefTiDBTxnMode`), and the
@@ -915,6 +947,35 @@ where
         )
         .map(|_| ())
         .map_err(sql_error)
+    }
+
+    fn commit_optimistic_mutations(
+        &self,
+        mutations: Vec<tidb_txnkv::transaction::OptimisticMutation>,
+        read_ts: u64,
+        resource_group: &str,
+    ) -> Result<(), SqlQueryError> {
+        if mutations.is_empty() {
+            return Ok(());
+        }
+        let planned_bytes = mutations.iter().fold(0_usize, |total, mutation| {
+            total
+                .saturating_add(mutation.key().len())
+                .saturating_add(mutation.value().len())
+        });
+        let transaction = self
+            .opener_for_resource_group(resource_group)
+            .begin_at(read_ts, mutations.len(), planned_bytes)
+            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+        let outcome = transaction
+            .commit(mutations, &UnaryCallContext::with_timeout(self.timeout))
+            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+        match outcome {
+            tidb_txnkv::transaction::OptimisticCommitOutcome::Committed(_) => Ok(()),
+            other => Err(SqlQueryError::unknown(format!(
+                "restricted transaction did not commit: {other:?}"
+            ))),
+        }
     }
 
     fn begin(

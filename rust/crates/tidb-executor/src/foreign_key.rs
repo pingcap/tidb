@@ -523,13 +523,7 @@ fn cascade_at_depth(
                 let nested: Vec<ParentChange<'_>> =
                     doomed.iter().map(|row| ParentChange::Delete(row)).collect();
                 cascade_at_depth(catalog, &child_db, &child_table, &nested, depth + 1, ctx)?;
-                delete_rows(
-                    catalog,
-                    &child_db,
-                    &child_table,
-                    &doomed,
-                    &ctx.session_zone(),
-                )?;
+                delete_rows(catalog, &child_db, &child_table, &doomed, ctx)?;
             }
             FkAction::Cascade | FkAction::SetNull => {
                 // ON UPDATE CASCADE repoints the referencing columns; SET
@@ -567,19 +561,19 @@ fn delete_rows(
     database: &str,
     table: &str,
     rows: &[Vec<Datum>],
-    zone: &tidb_datatype::SessionTimeZone,
+    ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
     let Some(TableEntry::Kv(kv)) = catalog.get_mut_for_foreign_key(database, table) else {
         return Ok(());
     };
     let stored = kv
-        .scan_rows_with_handles(zone)
+        .scan_rows_with_handles(&ctx.session_zone())
         .map_err(|e| crate::driver::kv_read_error("row decode failed", e))?;
     let mut remaining: Vec<&Vec<Datum>> = rows.iter().collect();
     for (handle, row) in stored {
         if let Some(position) = remaining.iter().position(|wanted| ***wanted == row[..]) {
             remaining.swap_remove(position);
-            kv.delete_row(&handle, zone)
+            kv.delete_row_with_old_context(&handle, &row, ctx)
                 .map_err(crate::driver::kv_write_error)?;
         }
     }
@@ -604,7 +598,7 @@ fn rewrite_rows(
     for (handle, row) in stored {
         if let Some(position) = remaining.iter().position(|(old, _)| old[..] == row[..]) {
             let (_, new) = remaining.swap_remove(position);
-            kv.update_row(&handle, new, ctx)
+            kv.update_row_with_context(&handle, new, ctx)
                 .map_err(crate::driver::kv_write_error)?;
         }
     }

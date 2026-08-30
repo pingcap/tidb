@@ -565,6 +565,143 @@ pub fn plan_column_stats_usage_write<S: MetaSnapshot>(
     Ok(plan)
 }
 
+/// Plans one pinned Go `DumpColStatsUsageEntries` batch.
+///
+/// The caller owns Go's 2,048-row batching and commits each returned plan in
+/// its own restricted transaction. Existing non-NULL timestamps advance only
+/// after the pinned twelve-hour threshold; a missing/NULL value is written
+/// immediately.
+pub fn plan_column_stats_usage_dump<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    entries: &[(TableItemID, Time)],
+    now: Time,
+) -> Result<StatsWritePlan, StatsWriteError> {
+    let mut plan = StatsWritePlan::default();
+    let table = locate(catalog, "column_stats_usage")?;
+    let mut rows_by_table = BTreeMap::new();
+    for (item, _) in entries {
+        if !rows_by_table.contains_key(&item.table_id) {
+            rows_by_table.insert(
+                item.table_id,
+                StatsRows::open(snapshot, table, &["table_id", "column_id"], item.table_id)?,
+            );
+        }
+    }
+    let last_used_id = column_id(table, "last_used_at")?;
+    let threshold_nanoseconds = i64::try_from(
+        tidb_stats_handle_usage::COL_STATS_USAGE_LAST_USED_THROTTLE_INTERVAL.as_nanos(),
+    )
+    .expect("twelve hours fits in i64 nanoseconds");
+    for (item, incoming) in entries {
+        let rows = rows_by_table
+            .get_mut(&item.table_id)
+            .expect("the table's rows were opened above");
+        let mut values = defaults_row(table, now)?;
+        set(table, &mut values, "table_id", Datum::Int(item.table_id));
+        set(table, &mut values, "column_id", Datum::Int(item.id));
+        let identity = identity_of(table, &["table_id", "column_id"], &values)?;
+        if let Some(stored) = rows.existing_values(&identity) {
+            values = stored.clone();
+        }
+        let should_update = match values.get(&last_used_id) {
+            None | Some(Datum::Null) => true,
+            Some(Datum::Time(stored)) => incoming
+                .sub(*stored, &chrono::Utc)
+                .is_ok_and(|elapsed| elapsed.nanoseconds() >= threshold_nanoseconds),
+            Some(_) => true,
+        };
+        if !should_update {
+            continue;
+        }
+        set(
+            table,
+            &mut values,
+            "last_used_at",
+            predicate_time_value(table, "last_used_at", Some(*incoming))?,
+        );
+        rows.store(snapshot, catalog, &values, &mut plan)?;
+    }
+    for rows in rows_by_table.values() {
+        rows.publish_watermark(catalog, &mut plan)?;
+    }
+    Ok(plan)
+}
+
+/// Plans pinned Go `storage.UpdateStatsMeta` for one prepared delta batch.
+pub fn plan_stats_delta_updates<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    updates: &[tidb_stats_handle_usage::DeltaUpdate],
+    version: u64,
+    now: Time,
+) -> Result<StatsWritePlan, StatsWriteError> {
+    let mut grouped = BTreeMap::<(bool, i64), tidb_stats_handle_usage::TableDelta>::new();
+    for update in updates.iter().filter(|update| update.delta.count != 0) {
+        grouped
+            .entry((update.is_locked, update.table_id))
+            .or_default()
+            .merge_from(update.delta);
+    }
+    let mut plan = StatsWritePlan::default();
+    for ((locked, table_id), delta) in grouped {
+        let table = locate(
+            catalog,
+            if locked {
+                "stats_table_locked"
+            } else {
+                "stats_meta"
+            },
+        )?;
+        let mut rows = StatsRows::open(snapshot, table, &["table_id"], table_id)?;
+        let mut values = defaults_row(table, now)?;
+        set(table, &mut values, "table_id", Datum::Int(table_id));
+        let identity = identity_of(table, &["table_id"], &values)?;
+        let existed = rows.existing_values(&identity).is_some();
+        if let Some(stored) = rows.existing_values(&identity) {
+            values = stored.clone();
+        }
+        let current_modify =
+            signed_value(values.get(&column_id(table, "modify_count")?)).unwrap_or_default();
+        let current_count =
+            signed_value(values.get(&column_id(table, "count")?)).unwrap_or_default();
+        let count = if locked || delta.delta >= 0 {
+            current_count.wrapping_add(delta.delta)
+        } else if existed {
+            current_count
+                .saturating_sub(delta.delta.wrapping_neg())
+                .max(0)
+        } else {
+            delta.delta.wrapping_neg()
+        };
+        set(table, &mut values, "version", Datum::UInt(version));
+        set(
+            table,
+            &mut values,
+            "modify_count",
+            Datum::Int(current_modify.wrapping_add(delta.count)),
+        );
+        set(table, &mut values, "count", Datum::Int(count));
+        rows.store(snapshot, catalog, &values, &mut plan)?;
+        rows.publish_watermark(catalog, &mut plan)?;
+    }
+    Ok(plan)
+}
+
+/// Reads Go `GetLockedTables`' stored ID set from the dump transaction snapshot.
+pub fn load_stats_locked_table_ids<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+) -> Result<std::collections::HashSet<i64>, StatsWriteError> {
+    let table = locate(catalog, "stats_table_locked")?;
+    let table_id_column = column_id(table, "table_id")?;
+    read_rows_with_keys(snapshot, table, None).map(|rows| {
+        rows.into_iter()
+            .filter_map(|(_, values)| signed_value(values.get(&table_id_column)))
+            .collect()
+    })
+}
+
 /// Plans pinned Go `GetPredicateColumns`, including its same-transaction
 /// cleanup of usage rows for columns no longer present in the latest schema.
 ///

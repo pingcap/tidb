@@ -31,6 +31,7 @@ tidb-proto = { path = "../tidb-proto" }
 tidb-resolve = { path = "../tidb-resolve" }
 tidb-stats = { path = "../tidb-stats" }
 tidb-stats-handle-cache = { path = "../tidb-stats-handle-cache" }
+tidb-stats-handle-usage = { path = "../tidb-stats-handle-usage" }
 tidb-sqlexec = { path = "../tidb-sqlexec" }
 tidb-protocol = { path = "../tidb-protocol" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }

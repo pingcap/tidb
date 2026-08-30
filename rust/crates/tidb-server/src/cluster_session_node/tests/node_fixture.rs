@@ -441,6 +441,43 @@ fn open_session_on_with_context_and_seams(
     stats_lock: Arc<dyn crate::cluster_stats_lock_seam::ClusterStatsLock>,
     context: SessionContext,
 ) -> ClusterServerSession {
+    open_session_on_with_context_and_seams_and_usage(
+        node, ddl, accounts, sysvars, analyze, stats_lock, context,
+    )
+    .0
+}
+
+pub(super) fn open_session_on_with_usage(
+    node: &MockNode,
+) -> (
+    ClusterServerSession,
+    Arc<tidb_stats_handle_usage::StatsUsageHandle>,
+) {
+    let (mut session, usage) = open_session_on_with_context_and_seams_and_usage(
+        node,
+        Arc::clone(&node.ddl) as Arc<dyn ClusterDdl>,
+        Arc::clone(&node.accounts) as Arc<dyn ClusterAccountWriter>,
+        Arc::clone(&node.sysvars) as Arc<dyn crate::cluster_sysvar_seam::ClusterSysvarWriter>,
+        Arc::new(MockAnalyze) as Arc<dyn ClusterAnalyze>,
+        Arc::new(MockStatsLock) as Arc<dyn crate::cluster_stats_lock_seam::ClusterStatsLock>,
+        session_context(1),
+    );
+    session.execute_write("USE app").expect("USE app");
+    (session, usage)
+}
+
+fn open_session_on_with_context_and_seams_and_usage(
+    node: &MockNode,
+    ddl: Arc<dyn ClusterDdl>,
+    accounts: Arc<dyn ClusterAccountWriter>,
+    sysvars: Arc<dyn crate::cluster_sysvar_seam::ClusterSysvarWriter>,
+    analyze: Arc<dyn ClusterAnalyze>,
+    stats_lock: Arc<dyn crate::cluster_stats_lock_seam::ClusterStatsLock>,
+    context: SessionContext,
+) -> (
+    ClusterServerSession,
+    Arc<tidb_stats_handle_usage::StatsUsageHandle>,
+) {
     let cluster = Arc::clone(&node.cluster);
     let factory = ClusterSessionFactory::new(
         Arc::new(MockTransactions(cluster)),
@@ -458,9 +495,11 @@ fn open_session_on_with_context_and_seams(
         ),
         Arc::new(crate::cluster_session::LocalTableAutoIds::default()),
     );
-    factory
+    let usage = Arc::clone(&factory.stats_usage);
+    let session = factory
         .open_session(context)
-        .expect("the cluster session opens")
+        .expect("the cluster session opens");
+    (session, usage)
 }
 
 pub(super) fn session_context(connection_id: u64) -> SessionContext {

@@ -910,7 +910,8 @@ impl Session {
                     max_execution_time_ms,
                 )
                 .with_plan_replayer_capture(plan_replayer_capture_enabled)
-                .with_column_stats_usage(Arc::clone(&self.pending_column_stats_usage))
+                .with_column_stats_usage(self.stats_collector.clone())
+                .with_table_delta(std::sync::Arc::clone(&self.transaction_table_delta))
                 .with_opt_index_prune_threshold(opt_index_prune_threshold)
                 .with_always_keep_join_key(always_keep_join_key)
                 .with_sysdate_is_now(sysdate_is_now)
@@ -971,7 +972,8 @@ impl Session {
             max_execution_time_ms,
         )
         .with_plan_replayer_capture(plan_replayer_capture_enabled)
-        .with_column_stats_usage(Arc::clone(&self.pending_column_stats_usage))
+        .with_column_stats_usage(self.stats_collector.clone())
+        .with_table_delta(std::sync::Arc::clone(&self.transaction_table_delta))
         .with_opt_index_prune_threshold(opt_index_prune_threshold)
         .with_always_keep_join_key(always_keep_join_key)
         .with_auto_increment_step(increment, offset)

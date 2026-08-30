@@ -37,11 +37,11 @@ use tidb_exec::cluster_predicate_column::{
 };
 use tidb_exec::cluster_stats_load::{ClusterStatsItem, ClusterStatsLoader, ClusterTableStats};
 use tidb_exec::cluster_stats_write::{
-    load_analyze_options, plan_analyze_options_write, plan_column_stats_usage_write,
-    plan_get_predicate_columns, plan_historical_stats_meta_write,
+    load_analyze_options, plan_analyze_options_write, plan_column_stats_usage_dump,
+    plan_column_stats_usage_write, plan_get_predicate_columns, plan_historical_stats_meta_write,
     plan_independent_index_stats_write, plan_loaded_stats_item_write, plan_loaded_stats_meta_write,
     plan_loaded_stats_usage_write, plan_partial_stats_write, plan_partition_stats_write,
-    plan_stats_meta_version_refresh, plan_stats_write,
+    plan_stats_delta_updates, plan_stats_meta_version_refresh, plan_stats_write,
 };
 use tidb_exec::mysql_bootstrap::{plan_mysql_bootstrap, BootstrapEnvironment, BootstrapWrite};
 use tidb_exec::mysql_system_tables::{scan_system_table, SystemRow, SystemTableView};
@@ -53,6 +53,7 @@ use tidb_model::SchemaState;
 use tidb_stats::cmsketch::{CmsSketch, TopN};
 use tidb_stats::histogram::{Bucket, Histogram};
 use tidb_stats::{FmSketch, JsonPredicateColumn, MAX_SKETCH_SIZE};
+use tidb_stats_handle_usage::{DeltaUpdate, TableDelta};
 use tidb_txnkv::transaction::{
     OptimisticMutationKind, MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES,
 };
@@ -1128,6 +1129,101 @@ fn slow_save_version_refresh_changes_only_the_two_go_columns() {
     );
 }
 
+#[test]
+fn stats_delta_updates_match_go_positive_negative_and_locked_rows() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let table_id = 4242;
+    let initial = plan_loaded_stats_meta_write(&mut store, &catalog, table_id, 10, 2, 100, now())
+        .expect("initial meta plans");
+    apply_mutations(&mut store, &initial.mutations);
+
+    let positive = plan_stats_delta_updates(
+        &mut store,
+        &catalog,
+        &[DeltaUpdate {
+            table_id,
+            delta: TableDelta {
+                delta: 3,
+                count: 4,
+                init_time: None,
+            },
+            is_locked: false,
+        }],
+        101,
+        now(),
+    )
+    .expect("positive delta plans");
+    apply_mutations(&mut store, &positive.mutations);
+    let negative = plan_stats_delta_updates(
+        &mut store,
+        &catalog,
+        &[DeltaUpdate {
+            table_id,
+            delta: TableDelta {
+                delta: -20,
+                count: 5,
+                init_time: None,
+            },
+            is_locked: false,
+        }],
+        102,
+        now(),
+    )
+    .expect("negative delta plans");
+    apply_mutations(&mut store, &negative.mutations);
+
+    let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
+    assert_eq!(
+        loader.load_meta(&mut store, table_id).expect("meta loads"),
+        Some((102, 0, 11, 0, 100))
+    );
+
+    let locked_id = 4343;
+    let locked = plan_stats_delta_updates(
+        &mut store,
+        &catalog,
+        &[DeltaUpdate {
+            table_id: locked_id,
+            delta: TableDelta {
+                delta: -2,
+                count: 3,
+                init_time: None,
+            },
+            is_locked: true,
+        }],
+        103,
+        now(),
+    )
+    .expect("locked delta plans");
+    apply_mutations(&mut store, &locked.mutations);
+    let locked_table = catalog
+        .databases
+        .iter()
+        .find(|database| database.info.name.lowercase() == "mysql")
+        .and_then(|database| {
+            database
+                .tables
+                .iter()
+                .find(|table| table.name.lowercase() == "stats_table_locked")
+        })
+        .expect("stats_table_locked exists");
+    let view = SystemTableView::project(
+        "mysql.stats_table_locked",
+        locked_table,
+        &["table_id", "version", "modify_count", "count"],
+    );
+    let row = scan_system_table(&mut store, &view)
+        .expect("locked rows scan")
+        .into_iter()
+        .map(|(key, value)| SystemRow::parse(&view, &key, &value).expect("lock row decodes"))
+        .find(|row| row.i64("table_id").unwrap() == Some(locked_id))
+        .expect("lock row exists");
+    assert_eq!(row.u64("version").unwrap(), Some(103));
+    assert_eq!(row.i64("modify_count").unwrap(), Some(3));
+    assert_eq!(row.i64("count").unwrap(), Some(-2));
+}
+
 /// Pinned Go `SaveColumnStatsUsageForTable` runs one transaction for the
 /// complete slice and REPLACEs all four values, so an explicit nil timestamp
 /// clears an older stored value instead of preserving it.
@@ -1231,6 +1327,78 @@ fn column_stats_usage_write_does_not_filter_the_table_item_kind() {
     )
     .expect("usage reloads");
     assert!(loaded.keys().any(|item| item.id == 99));
+}
+
+fn usage_item(table_id: i64, column_id: i64) -> tidb_model::TableItemID {
+    tidb_model::TableItemID {
+        table_id,
+        id: column_id,
+        is_index: false,
+        is_sync_load_failed: false,
+    }
+}
+
+fn dump_usage(store: &mut MetaStore, item: tidb_model::TableItemID, used_at: Time) {
+    let catalog = load_cluster_catalog(&mut *store).expect("the bootstrapped catalog loads");
+    let plan = plan_column_stats_usage_dump(store, &catalog, &[(item, used_at)], now())
+        .expect("column usage dump plans");
+    apply_mutations(store, &plan.mutations);
+}
+
+#[test]
+fn predicate_usage_first_touch_creates_row() {
+    let mut store = bootstrapped();
+    let item = usage_item(4243, 11);
+    dump_usage(&mut store, item, now());
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let usage = load_column_stats_usage_for_table(
+        &mut store,
+        &catalog,
+        &tidb_datatype::SessionTimeZone::utc(),
+        item.table_id,
+    )
+    .expect("usage reloads");
+    assert_eq!(usage[&item].last_used_at, Some(now()));
+}
+
+#[test]
+fn predicate_usage_no_bump_within_throttle() {
+    let mut store = bootstrapped();
+    let item = usage_item(4244, 12);
+    let first = Time::from_date_checked(2026, 7, 29, 6, 0, 0, 0, TimeType::Timestamp, 0)
+        .expect("fixed timestamp");
+    let shortly_after = Time::from_date_checked(2026, 7, 29, 6, 10, 0, 0, TimeType::Timestamp, 0)
+        .expect("fixed timestamp");
+    dump_usage(&mut store, item, first);
+    dump_usage(&mut store, item, shortly_after);
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let usage = load_column_stats_usage_for_table(
+        &mut store,
+        &catalog,
+        &tidb_datatype::SessionTimeZone::utc(),
+        item.table_id,
+    )
+    .expect("usage reloads");
+    assert_eq!(usage[&item].last_used_at, Some(first));
+}
+
+#[test]
+fn predicate_usage_bump_after_old_stored_value() {
+    let mut store = bootstrapped();
+    let item = usage_item(4245, 13);
+    let old = Time::from_date_checked(2000, 1, 1, 0, 0, 0, 0, TimeType::Timestamp, 0)
+        .expect("fixed timestamp");
+    dump_usage(&mut store, item, old);
+    dump_usage(&mut store, item, now());
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let usage = load_column_stats_usage_for_table(
+        &mut store,
+        &catalog,
+        &tidb_datatype::SessionTimeZone::utc(),
+        item.table_id,
+    )
+    .expect("usage reloads");
+    assert_eq!(usage[&item].last_used_at, Some(now()));
 }
 
 /// Pinned predicatecolumn reads project UTC instants into the requested

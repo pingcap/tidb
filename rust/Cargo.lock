@@ -3416,6 +3416,7 @@ dependencies = [
  "tidb-sqlexec",
  "tidb-stats",
  "tidb-stats-handle-cache",
+ "tidb-stats-handle-usage",
  "tidb-tablecodec",
  "tidb-txnkv",
  "tidb-util",
@@ -3454,6 +3455,7 @@ dependencies = [
  "tidb-planner",
  "tidb-resolve",
  "tidb-stats",
+ "tidb-stats-handle-usage",
  "tidb-tablecodec",
  "tidb-txnkv",
  "tidb-util",
@@ -3718,6 +3720,7 @@ name = "tidb-server"
 version = "0.0.0"
 dependencies = [
  "base64 0.22.1",
+ "chrono",
  "ctrlc",
  "fail",
  "prost 0.14.4",
@@ -3752,6 +3755,7 @@ dependencies = [
  "tidb-stats",
  "tidb-stats-handle-cache",
  "tidb-stats-handle-initstats",
+ "tidb-stats-handle-usage",
  "tidb-stats-handle-usage-indexusage",
  "tidb-tablecodec",
  "tidb-txnkv",
@@ -3788,6 +3792,7 @@ dependencies = [
  "tidb-parser",
  "tidb-planner",
  "tidb-stats",
+ "tidb-stats-handle-usage",
  "tidb-stats-handle-usage-indexusage",
  "tidb-stmtsummary",
  "tidb-tablecodec",
@@ -3933,6 +3938,14 @@ name = "tidb-stats-handle-metrics"
 version = "0.0.0"
 dependencies = [
  "prometheus 0.14.0",
+]
+
+[[package]]
+name = "tidb-stats-handle-usage"
+version = "0.0.0"
+dependencies = [
+ "tidb-model",
+ "tidb-stats-handle-usage-indexusage",
 ]
 
 [[package]]

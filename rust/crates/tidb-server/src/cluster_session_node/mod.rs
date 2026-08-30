@@ -172,8 +172,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::resultset_source::ResultSetSource;
+use chrono::{Datelike, Timelike};
 use tidb_exec::catalog_watch::SharedCatalog as SharedClusterCatalog;
 use tidb_exec::cluster_analyze::AnalyzeStatement;
+use tidb_exec::cluster_catalog::ClusterCatalog;
 use tidb_exec::cluster_ddl::DdlStatement;
 use tidb_exec::cluster_load_stats::prepare_cluster_load_stats;
 use tidb_exec::cluster_stats_load::ClusterStatsLoader;
@@ -561,8 +563,8 @@ pub struct ClusterSessionFactory {
     session_kv_cache: Arc<Mutex<KvTableTemplates>>,
     /// Go Domain's single workload-repository worker.
     workload_repository: std::sync::OnceLock<Arc<tidb_workloadrepo::Worker>>,
-    /// Go Domain/StatsHandle's one node-global index-usage collector.
-    index_usage_collector: Arc<tidb_stats_handle_usage_indexusage::Collector>,
+    /// Go Domain/StatsHandle's one node-global usage implementation.
+    stats_usage: Arc<tidb_stats_handle_usage::StatsUsageHandle>,
 }
 
 impl ClusterSessionFactory {
@@ -590,8 +592,8 @@ impl ClusterSessionFactory {
             auto_ids.as_ref(),
         )
         .skipped;
-        let index_usage_collector = Arc::new(tidb_stats_handle_usage_indexusage::Collector::new());
-        index_usage_collector.start_worker();
+        let stats_usage = Arc::new(tidb_stats_handle_usage::StatsUsageHandle::new());
+        stats_usage.start_worker();
         let data_lock_waits = Arc::new(ClusterDataLockWaits {
             transactions: Arc::clone(&transactions),
         });
@@ -618,8 +620,182 @@ impl ClusterSessionFactory {
             session_stats_cache: Arc::new(Mutex::new(StatsTemplates::default())),
             session_kv_cache: Arc::new(Mutex::new(KvTableTemplates::default())),
             workload_repository: std::sync::OnceLock::new(),
-            index_usage_collector,
+            stats_usage,
         }
+    }
+
+    /// Go `statsUsageImpl.DumpColStatsUsageToKV`.
+    pub fn dump_col_stats_usage_to_kv(&self, resource_group: &str) -> Result<(), String> {
+        let mut pending = self
+            .stats_usage
+            .session_stats_list()
+            .begin_column_stats_usage_dump();
+        let entries = pending.entries();
+        for batch in entries.chunks(tidb_stats_handle_usage::BATCH_INSERT_SIZE) {
+            let snapshot = self.transactions.open_snapshot(resource_group)?;
+            let read_ts = snapshot.start_ts();
+            let converted = batch
+                .iter()
+                .map(|(item, used_at)| {
+                    system_time_timestamp(*used_at).map(|used_at| (*item, used_at))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let plan = {
+                let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                tidb_exec::cluster_stats_write::plan_column_stats_usage_dump(
+                    &mut snapshot,
+                    &self.catalog.load(),
+                    &converted,
+                    tidb_exec::mysql_bootstrap::utc_now_timestamp(),
+                )
+                .map_err(|error| error.to_string())?
+            };
+            self.transactions
+                .commit_optimistic_mutations(plan.mutations, read_ts, resource_group)
+                .map_err(|error| error.message)?;
+            pending.mark_persisted(batch.iter().map(|(item, _)| *item));
+        }
+        Ok(())
+    }
+
+    /// Go `statsUsageImpl.DumpStatsDeltaToKV`.
+    pub fn dump_stats_delta_to_kv(
+        &self,
+        force_dump: bool,
+        target_table_ids: &[i64],
+        resource_group: &str,
+    ) -> Result<(), String> {
+        let mut pending = self
+            .stats_usage
+            .session_stats_list()
+            .begin_table_delta_dump();
+        let table_ids = pending.pending_table_ids(target_table_ids);
+        for batch in table_ids.chunks(tidb_stats_handle_usage::DUMP_DELTA_BATCH_SIZE) {
+            let batch_time = SystemTime::now();
+            let catalog = self.catalog.load();
+            let stats = self.stats.load();
+            let mut original_updates = Vec::new();
+            let mut parents = std::collections::HashMap::new();
+            for &table_id in batch {
+                pending.initialize_time(table_id, batch_time);
+                let Some((database, parent_id)) = stats_delta_table(&catalog, table_id) else {
+                    continue;
+                };
+                if matches!(
+                    database,
+                    "information_schema"
+                        | "performance_schema"
+                        | "metrics_schema"
+                        | "mysql"
+                        | "sys"
+                        | "workload_schema"
+                ) {
+                    continue;
+                }
+                let Some(delta) = pending.get(table_id) else {
+                    continue;
+                };
+                let realtime_count = stats
+                    .get(&table_id)
+                    .and_then(tidb_exec::stats_watch::TableStatsState::loaded)
+                    .map(|table| table.hist_coll.realtime_count);
+                if !tidb_stats_handle_usage::need_dump_stats_delta(
+                    force_dump,
+                    delta,
+                    batch_time,
+                    realtime_count,
+                ) {
+                    continue;
+                }
+                if let Some(parent_id) = parent_id {
+                    parents.insert(table_id, parent_id);
+                }
+                original_updates.push(tidb_stats_handle_usage::DeltaUpdate {
+                    table_id,
+                    delta,
+                    is_locked: false,
+                });
+            }
+            if original_updates.is_empty() {
+                continue;
+            }
+            let snapshot = self.transactions.open_snapshot(resource_group)?;
+            let read_ts = snapshot.start_ts();
+            let (plan, updates) = {
+                let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                let locked = tidb_exec::cluster_stats_write::load_stats_locked_table_ids(
+                    &mut snapshot,
+                    &catalog,
+                )
+                .map_err(|error| error.to_string())?;
+                let updates = tidb_stats_handle_usage::prepare_delta_updates(
+                    original_updates.clone(),
+                    |table_id| parents.get(&table_id).copied(),
+                    &locked,
+                );
+                let plan = tidb_exec::cluster_stats_write::plan_stats_delta_updates(
+                    &mut snapshot,
+                    &catalog,
+                    &updates,
+                    read_ts,
+                    tidb_exec::mysql_bootstrap::utc_now_timestamp(),
+                )
+                .map_err(|error| error.to_string())?;
+                (plan, updates)
+            };
+            self.transactions
+                .commit_optimistic_mutations(plan.mutations, read_ts, resource_group)
+                .map_err(|error| error.message)?;
+            for update in original_updates {
+                pending.mark_persisted(update.table_id);
+            }
+            let historical_stats_enabled = self
+                .global_vars
+                .get(tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS)
+                .is_ok_and(|value| tidb_exec::option_values::tidb_opt_on(&value));
+            if historical_stats_enabled {
+                for update in updates {
+                    if update.is_locked
+                        || !stats
+                            .get(&update.table_id)
+                            .and_then(tidb_exec::stats_watch::TableStatsState::loaded)
+                            .is_some_and(|table| table.is_initialized())
+                    {
+                        continue;
+                    }
+                    let result = (|| {
+                        let snapshot = self.transactions.open_snapshot(resource_group)?;
+                        let history_read_ts = snapshot.start_ts();
+                        let plan = {
+                            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                            tidb_exec::cluster_stats_write::plan_historical_stats_meta_write(
+                                &mut snapshot,
+                                &catalog,
+                                update.table_id,
+                                read_ts,
+                                "flush stats",
+                                tidb_exec::mysql_bootstrap::utc_now_timestamp(),
+                            )
+                            .map_err(|error| error.to_string())?
+                        };
+                        self.transactions
+                            .commit_optimistic_mutations(
+                                plan.mutations,
+                                history_read_ts,
+                                resource_group,
+                            )
+                            .map_err(|error| error.message)
+                    })();
+                    if let Err(error) = result {
+                        eprintln!(
+                            "{{\"event\":\"record_historical_stats_meta_failed\",\"version\":{read_ts},\"source\":\"flush stats\",\"table_id\":{},\"error\":{error:?}}}",
+                            update.table_id
+                        );
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Installs Go Domain's single workload-repository worker after the
@@ -710,6 +886,43 @@ impl ClusterSessionFactory {
     }
 }
 
+fn system_time_timestamp(value: SystemTime) -> Result<tidb_datatype::Time, String> {
+    let value: chrono::DateTime<chrono::Utc> = value.into();
+    tidb_datatype::Time::from_date_checked(
+        value.year(),
+        i32::try_from(value.month()).expect("month fits in i32"),
+        i32::try_from(value.day()).expect("day fits in i32"),
+        i32::try_from(value.hour()).expect("hour fits in i32"),
+        i32::try_from(value.minute()).expect("minute fits in i32"),
+        i32::try_from(value.second()).expect("second fits in i32"),
+        i32::try_from(value.timestamp_subsec_micros()).expect("microsecond fits in i32"),
+        tidb_datatype::TimeType::Timestamp,
+        6,
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn stats_delta_table(catalog: &ClusterCatalog, physical_id: i64) -> Option<(&str, Option<i64>)> {
+    for database in &catalog.databases {
+        for table in &database.tables {
+            if table.id == physical_id {
+                return Some((database.info.name.lowercase(), None));
+            }
+            if table.partition.as_ref().is_some_and(|partition| {
+                partition
+                    .read()
+                    .definitions
+                    .snapshot()
+                    .iter()
+                    .any(|definition| definition.id == physical_id)
+            }) {
+                return Some((database.info.name.lowercase(), Some(table.id)));
+            }
+        }
+    }
+    None
+}
+
 impl QuerySessionFactory for ClusterSessionFactory {
     type Session = ClusterServerSession;
 
@@ -759,7 +972,8 @@ impl QuerySessionFactory for ClusterSessionFactory {
                 global_vars: self.global_vars.clone(),
             }));
         let mut session = Session::with_catalog(Arc::new(Mutex::new(built.catalog)));
-        session.set_index_usage_collector(Arc::clone(&self.index_usage_collector));
+        session.set_index_usage_collector(self.stats_usage.index_usage_collector());
+        session.set_stats_collector(self.stats_usage.new_session_stats_item());
         session.set_data_lock_waits_provider(self.data_lock_waits.clone());
         session.set_column_stats_usage_provider(Arc::new(ClusterColumnStatsUsageProvider {
             transactions: Arc::clone(&self.transactions),
@@ -1103,7 +1317,11 @@ pub struct ClusterServerSession {
     /// The two stacks stay in step because both apply the same rules to the
     /// same statement sequence, and the session's error arm runs FIRST -- a
     /// name this stack could not find is one the session already refused.
-    savepoints: Vec<(String, BufferCheckpoint)>,
+    savepoints: Vec<(
+        String,
+        BufferCheckpoint,
+        std::collections::HashMap<i64, tidb_stats_handle_usage::TableDelta>,
+    )>,
     /// Tables of the cluster this connection's catalog could not include,
     /// answered by name when a statement names one. Rebuilt with the catalog.
     skipped: Vec<SkippedTable>,
@@ -1202,6 +1420,7 @@ impl ClusterServerSession {
             .schema_pins
             .hold(self.connection_id, self.schema_version);
         let savepoint = self.buffer.checkpoint();
+        let delta_savepoint = self.session.table_delta_savepoint();
         let mut retried: u32 = 0;
         let outcome = loop {
             match self.attempt_statement(
@@ -1213,6 +1432,8 @@ impl ClusterServerSession {
             ) {
                 Ok(value) => break Ok(value),
                 Err(error) => {
+                    self.session
+                        .restore_table_delta_savepoint(delta_savepoint.clone());
                     if !self.may_retry_autocommit_statement(&error, retried) {
                         break Err(error);
                     }
@@ -1825,10 +2046,12 @@ impl ClusterServerSession {
                 return match transaction.commit(&self.buffer) {
                     Ok(()) => {
                         self.record_write_details(write_details);
+                        self.session.publish_table_delta();
                         Ok(())
                     }
                     Err(error) => {
                         self.buffer.reset();
+                        self.session.clear_table_delta();
                         Err(error)
                     }
                 };
@@ -1837,6 +2060,9 @@ impl ClusterServerSession {
         let outcome = self.commit_autocommit_buffer(read_ts, resource_group);
         if outcome.is_ok() {
             self.record_write_details(write_details);
+            self.session.publish_table_delta();
+        } else {
+            self.session.clear_table_delta();
         }
         outcome
     }
@@ -1923,10 +2149,12 @@ impl ClusterServerSession {
         match transaction.commit(&self.buffer) {
             Ok(()) => {
                 self.record_write_details(write_details);
+                self.session.publish_table_delta();
                 Ok(())
             }
             Err(error) => {
                 self.buffer.reset();
+                self.session.clear_table_delta();
                 Err(error)
             }
         }
@@ -1960,19 +2188,22 @@ impl ClusterServerSession {
                 }
                 let name = name.to_lowercase();
                 let image = self.buffer.checkpoint();
-                self.savepoints.retain(|(existing, _)| *existing != name);
-                self.savepoints.push((name, image));
+                let delta = self.session.table_delta_savepoint();
+                self.savepoints.retain(|(existing, _, _)| *existing != name);
+                self.savepoints.push((name, image, delta));
             }
             TransactionControl::RollbackToSavepoint(name) => {
                 let name = name.to_lowercase();
-                if let Some(index) = self.savepoints.iter().position(|(sp, _)| *sp == name) {
+                if let Some(index) = self.savepoints.iter().position(|(sp, _, _)| *sp == name) {
                     self.buffer.restore(self.savepoints[index].1.clone());
+                    self.session
+                        .restore_table_delta_savepoint(self.savepoints[index].2.clone());
                     self.savepoints.truncate(index + 1);
                 }
             }
             TransactionControl::ReleaseSavepoint(name) => {
                 let name = name.to_lowercase();
-                if let Some(index) = self.savepoints.iter().position(|(sp, _)| *sp == name) {
+                if let Some(index) = self.savepoints.iter().position(|(sp, _, _)| *sp == name) {
                     self.savepoints.truncate(index);
                 }
             }
@@ -1985,6 +2216,7 @@ impl ClusterServerSession {
     /// every write it staged.
     fn discard_explicit(&mut self) -> Result<(), SqlQueryError> {
         self.buffer.reset();
+        self.session.clear_table_delta();
         self.savepoints.clear();
         self.session.current_tso().clear();
         self.transaction_pin = None;
