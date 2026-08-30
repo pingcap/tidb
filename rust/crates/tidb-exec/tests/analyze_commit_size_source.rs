@@ -1391,6 +1391,40 @@ fn stats_delta_updates_match_go_positive_negative_and_locked_rows() {
     assert_eq!(row.i64("count").unwrap(), Some(-2));
 }
 
+#[test]
+fn stats_delta_update_keeps_go_row_delta_when_modify_count_is_zero() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let table_id = 4244;
+    let initial = plan_loaded_stats_meta_write(&mut store, &catalog, table_id, 10, 2, 100, now())
+        .expect("initial meta plans");
+    apply_mutations(&mut store, &initial.mutations);
+
+    let plan = plan_stats_delta_updates(
+        &mut store,
+        &catalog,
+        &[DeltaUpdate {
+            table_id,
+            delta: TableDelta {
+                delta: 3,
+                count: 0,
+                init_time: None,
+            },
+            is_locked: false,
+        }],
+        101,
+        now(),
+    )
+    .expect("row-only delta plans");
+    apply_mutations(&mut store, &plan.mutations);
+
+    let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
+    assert_eq!(
+        loader.load_meta(&mut store, table_id).expect("meta loads"),
+        Some((101, 0, 2, 13, 100))
+    );
+}
+
 /// Pinned Go `SaveColumnStatsUsageForTable` runs one transaction for the
 /// complete slice and REPLACEs all four values, so an explicit nil timestamp
 /// clears an older stored value instead of preserving it.

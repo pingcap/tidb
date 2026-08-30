@@ -726,7 +726,7 @@ pub fn plan_stats_delta_updates<S: MetaSnapshot>(
     now: Time,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let mut grouped = BTreeMap::<(bool, i64), tidb_stats_handle_usage::TableDelta>::new();
-    for update in updates.iter().filter(|update| update.delta.count != 0) {
+    for update in updates {
         grouped
             .entry((update.is_locked, update.table_id))
             .or_default()
