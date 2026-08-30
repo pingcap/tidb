@@ -830,7 +830,9 @@ pub(crate) fn cluster_table(
     } else if table.is_common_handle {
         let handles = clustered_handle_offsets(table, &columns)?;
         kv_table.set_common_handle_offsets(handles);
+        kv_table.set_common_handle_version(table.common_handle_version);
     }
+    kv_table.set_has_affinity(table.affinity.is_some());
     if table.contains_auto_random_bits() {
         let offset = if table.pk_is_handle {
             kv_table

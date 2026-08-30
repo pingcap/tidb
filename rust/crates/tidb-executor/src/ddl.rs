@@ -1379,7 +1379,10 @@ pub fn run_create_table_in(
     match &handle {
         HandleKind::RowId => {}
         HandleKind::IntHandle(offset) => table.set_pk_handle_offset(*offset),
-        HandleKind::CommonHandle(offsets) => table.set_common_handle_offsets(offsets.clone()),
+        HandleKind::CommonHandle(offsets) => {
+            table.set_common_handle_offsets(offsets.clone());
+            table.set_common_handle_version(1);
+        }
     }
     if let Some(spec) = auto_random {
         table.set_auto_random(spec);

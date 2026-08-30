@@ -464,6 +464,9 @@ pub struct StmtContext {
     /// the same value that the session writer validated, including a
     /// statement-local `SET_VAR(tidb_opt_fix_control=...)` overlay.
     optimizer_fix_control: tidb_planner::fix_control::OptimizerFixControl,
+    /// The statement snapshot consumed by Go's
+    /// `checkIndexLookUpPushDownSupported` and system-variable policy.
+    index_lookup_push_down_session: tidb_planner::access_path::IndexLookupPushDownSession,
     /// The statement snapshot of every session value read by cost model v2.
     optimizer_cost_env: tidb_planner::find_best_task::coster::CostEnv,
     /// Go `SessionVars.ExecutorConcurrency`, shared by executor families that
@@ -769,6 +772,8 @@ impl StmtContext {
             limit_push_down_threshold: tidb_vardef::defaults::DEF_OPT_LIMIT_PUSH_DOWN_THRESHOLD
                 as u64,
             optimizer_fix_control: tidb_planner::fix_control::OptimizerFixControl::default(),
+            index_lookup_push_down_session:
+                tidb_planner::access_path::IndexLookupPushDownSession::default(),
             optimizer_cost_env: tidb_planner::find_best_task::coster::CostEnv::default(),
             executor_concurrency: tidb_vardef::defaults::DEF_EXECUTOR_CONCURRENCY as usize,
             hashagg_partial_concurrency: tidb_vardef::defaults::DEF_EXECUTOR_CONCURRENCY as usize,
@@ -1459,6 +1464,25 @@ impl StmtContext {
     #[must_use]
     pub const fn optimizer_fix_control(&self) -> &tidb_planner::fix_control::OptimizerFixControl {
         &self.optimizer_fix_control
+    }
+
+    /// Attaches the session and transaction facts used by index-lookup
+    /// pushdown planning.
+    #[must_use]
+    pub const fn with_index_lookup_push_down_session(
+        mut self,
+        session: tidb_planner::access_path::IndexLookupPushDownSession,
+    ) -> Self {
+        self.index_lookup_push_down_session = session;
+        self
+    }
+
+    /// The statement snapshot used by index-lookup pushdown planning.
+    #[must_use]
+    pub const fn index_lookup_push_down_session(
+        &self,
+    ) -> tidb_planner::access_path::IndexLookupPushDownSession {
+        self.index_lookup_push_down_session
     }
 
     /// Attaches the resolved statement snapshot used by cost model v2.

@@ -702,6 +702,61 @@ pub enum PossiblePath {
     },
 }
 
+/// Go `util.IndexLookUpPushDownByType`.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum IndexLookupPushDownBy {
+    /// Go `IndexLookUpPushDownNone`.
+    #[default]
+    None,
+    /// Go `IndexLookUpPushDownByHint`.
+    Hint,
+    /// Go `IndexLookUpPushDownBySysVar`.
+    SysVar,
+}
+
+/// Go `SessionVars.IndexLookUpPushDownPolicy`.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum IndexLookupPushDownPolicy {
+    /// Go `IndexLookUpPushDownPolicyHintOnly`.
+    #[default]
+    HintOnly,
+    /// Go `IndexLookUpPushDownPolicyAffinityForce`.
+    AffinityForce,
+    /// Go `IndexLookUpPushDownPolicyForce`.
+    Force,
+}
+
+/// The session/transaction facts read by pinned
+/// `checkIndexLookUpPushDownSupported`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct IndexLookupPushDownSession {
+    /// Whether the transaction isolation is `REPEATABLE-READ`.
+    pub repeatable_read: bool,
+    /// Whether replica read is exactly leader-only.
+    pub leader_read: bool,
+    /// Go `TxnCtx.IsStaleness`.
+    pub staleness: bool,
+    /// Whether `SnapshotTS != 0`.
+    pub historical_read: bool,
+    /// Go `SessionVars.MaxKeysRead`.
+    pub max_keys_read: u64,
+    /// Go `IndexLookUpPushDownPolicy`.
+    pub policy: IndexLookupPushDownPolicy,
+}
+
+impl Default for IndexLookupPushDownSession {
+    fn default() -> Self {
+        Self {
+            repeatable_read: true,
+            leader_read: true,
+            staleness: false,
+            historical_read: false,
+            max_keys_read: 0,
+            policy: IndexLookupPushDownPolicy::HintOnly,
+        }
+    }
+}
+
 /// Go `getPossibleAccessPaths` (`planbuilder.go:1320-1441`) without hints —
 /// the enumeration Go performs before any hint filtering.
 ///
@@ -784,11 +839,13 @@ pub struct ResolvedIndexPaths {
     pub force_keep_order_table_path: bool,
     /// Whether the TiKV table path has `ForceNoKeepOrder` set.
     pub force_no_keep_order_table_path: bool,
-    /// Index IDs whose path has `IndexLookUpPushDownByHint` set.
-    pub push_down_lookup_index_ids: std::collections::BTreeSet<i64>,
+    /// Go `AccessPath.IndexLookUpPushDownBy`, keyed by index ID.
+    pub index_lookup_push_down_by: std::collections::BTreeMap<i64, IndexLookupPushDownBy>,
     /// Unknown names from comment-style hints; Go downgrades these to 1176
     /// warnings while table-syntax hints return the error directly.
     pub unknown_comment_indexes: Vec<String>,
+    /// Go statement-context hint warnings produced while resolving paths.
+    pub hint_warnings: Vec<String>,
 }
 
 /// Applies Go `getPossibleAccessPaths`' table-syntax and already-matched
@@ -799,6 +856,8 @@ pub fn apply_table_index_hints(
     hints: &[tidb_ast::IndexHint],
     comment_hints: &[crate::logical::data_source::DataSourceIndexHint],
     remove_global_indexes: bool,
+    force_no_index_lookup_push_down: bool,
+    session: IndexLookupPushDownSession,
 ) -> Result<ResolvedIndexPaths, crate::plan_base::PlanError> {
     use tidb_ast::{IndexHintKind, IndexHintScope};
 
@@ -812,6 +871,53 @@ pub fn apply_table_index_hints(
     let mut available = Vec::new();
     let mut ignored = std::collections::BTreeSet::new();
     let mut result = ResolvedIndexPaths::default();
+
+    let unsupported_reason = |metadata: &crate::plan_builder::catalog::SourceIndex| {
+        if table.is_common_handle && table.common_handle_version < 1 {
+            Some("common handle table with old encoding version is not supported")
+        } else if metadata.global {
+            Some("the global index in partition table is not supported")
+        } else if table.is_temporary {
+            Some("temporary table is not supported")
+        } else if table.is_cached {
+            Some("cached table is not supported")
+        } else if metadata.is_multi_valued {
+            Some("multi-valued index is not supported")
+        } else if !session.repeatable_read {
+            Some("transaction isolation level is not REPEATABLE-READ")
+        } else if !session.leader_read {
+            Some("only leader read is supported")
+        } else if session.staleness {
+            Some("stale read is not supported")
+        } else if session.historical_read {
+            Some("historical read is not supported")
+        } else if session.max_keys_read > 0 {
+            Some("tidb_max_keys_read is set")
+        } else {
+            None
+        }
+    };
+    if !force_no_index_lookup_push_down
+        && matches!(
+            session.policy,
+            IndexLookupPushDownPolicy::Force | IndexLookupPushDownPolicy::AffinityForce
+        )
+        && (session.policy != IndexLookupPushDownPolicy::AffinityForce || table.has_affinity)
+    {
+        for path in public_paths {
+            let PossiblePath::Index { index } = path else {
+                continue;
+            };
+            let Some(metadata) = table.indexes.get(*index) else {
+                continue;
+            };
+            if unsupported_reason(metadata).is_none() {
+                result
+                    .index_lookup_push_down_by
+                    .insert(metadata.id, IndexLookupPushDownBy::SysVar);
+            }
+        }
+    }
 
     let table_hints = hints.iter().filter_map(|hint| {
         if hint.scope != IndexHintScope::All {
@@ -904,7 +1010,21 @@ pub fn apply_table_index_hints(
                             result.force_no_keep_order_index_ids.insert(metadata.id);
                         }
                         if push_down_lookup {
-                            result.push_down_lookup_index_ids.insert(metadata.id);
+                            if force_no_index_lookup_push_down {
+                                result.hint_warnings.push(
+                                    "hint INDEX_LOOKUP_PUSHDOWN cannot be inapplicable, NO_INDEX_LOOKUP_PUSHDOWN is specified".to_owned(),
+                                );
+                                continue;
+                            }
+                            if let Some(reason) = unsupported_reason(metadata) {
+                                result.hint_warnings.push(format!(
+                                    "hint INDEX_LOOKUP_PUSHDOWN is inapplicable, {reason}"
+                                ));
+                                continue;
+                            }
+                            result
+                                .index_lookup_push_down_by
+                                .insert(metadata.id, IndexLookupPushDownBy::Hint);
                         }
                     }
                 }
@@ -925,7 +1045,21 @@ pub fn apply_table_index_hints(
                             result.force_no_keep_order_index_ids.insert(metadata.id);
                         }
                         if push_down_lookup {
-                            result.push_down_lookup_index_ids.insert(metadata.id);
+                            if force_no_index_lookup_push_down {
+                                result.hint_warnings.push(
+                                    "hint INDEX_LOOKUP_PUSHDOWN cannot be inapplicable, NO_INDEX_LOOKUP_PUSHDOWN is specified".to_owned(),
+                                );
+                                continue;
+                            }
+                            if let Some(reason) = unsupported_reason(metadata) {
+                                result.hint_warnings.push(format!(
+                                    "hint INDEX_LOOKUP_PUSHDOWN is inapplicable, {reason}"
+                                ));
+                                continue;
+                            }
+                            result
+                                .index_lookup_push_down_by
+                                .insert(metadata.id, IndexLookupPushDownBy::Hint);
                         }
                     }
                 }

@@ -841,6 +841,7 @@ fn build_index_reader(
     keep_order: bool,
     pushed_limit: Option<tidb_planner::physical::PushedDownLimit>,
     expect_cnt: Option<u64>,
+    lookup_pushdown: bool,
     catalog: &Catalog,
     ctx: &crate::StmtContext,
 ) -> Result<Box<dyn Executor>, DriverError> {
@@ -880,6 +881,9 @@ fn build_index_reader(
     }
     source.read_table_columns(keep);
     source.set_lookup_concurrency(ctx.executor_concurrency());
+    if lookup_pushdown {
+        source.enable_lookup_pushdown();
+    }
     if covering {
         source.mark_covering();
         source.answer_in_index_order();
@@ -2508,6 +2512,7 @@ fn build_with_state(
             scan.keep_order,
             None,
             None,
+            false,
             catalog,
             ctx,
         ),
@@ -2530,6 +2535,7 @@ fn build_with_state(
                 reader.keep_order,
                 reader.pushed_limit,
                 reader.paging.then_some(reader.expect_cnt),
+                reader.index_lookup_push_down,
                 catalog,
                 ctx,
             )?;

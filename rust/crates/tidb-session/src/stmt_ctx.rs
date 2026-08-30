@@ -69,6 +69,7 @@ pub(crate) struct StatementVarSnapshot {
     ordering_index_selectivity_ratio: f64,
     allow_projection_push_down: bool,
     limit_push_down_threshold: u64,
+    index_lookup_push_down_session: tidb_planner::access_path::IndexLookupPushDownSession,
     join_reorder_through_proj: bool,
     join_reorder_through_sel: bool,
     outer_join_reorder: bool,
@@ -529,6 +530,46 @@ impl Session {
                 .and_then(|value| usize::try_from(value).ok())
                 .unwrap_or(executor_concurrency)
         };
+        let index_lookup_push_down_policy = match self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_INDEX_LOOK_UP_PUSH_DOWN_POLICY)
+            .as_deref()
+        {
+            Ok("force") => tidb_planner::access_path::IndexLookupPushDownPolicy::Force,
+            Ok("affinity-force") => {
+                tidb_planner::access_path::IndexLookupPushDownPolicy::AffinityForce
+            }
+            _ => tidb_planner::access_path::IndexLookupPushDownPolicy::HintOnly,
+        };
+        let read_staleness = self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_READ_STALENESS)
+            .ok()
+            .and_then(|value| value.trim().parse::<i64>().ok())
+            .is_some_and(|value| value != 0);
+        let index_lookup_push_down_session =
+            tidb_planner::access_path::IndexLookupPushDownSession {
+                repeatable_read: self
+                    .vars
+                    .get_system("transaction_isolation")
+                    .is_ok_and(|value| value.eq_ignore_ascii_case("REPEATABLE-READ")),
+                leader_read: self
+                    .vars
+                    .get_system(tidb_vardef::tidb_vars::TIDB_REPLICA_READ)
+                    .is_ok_and(|value| value.eq_ignore_ascii_case("leader")),
+                staleness: read_staleness,
+                historical_read: self
+                    .vars
+                    .get_system(tidb_vardef::tidb_vars::TIDB_SNAPSHOT)
+                    .is_ok_and(|value| !value.is_empty()),
+                max_keys_read: self
+                    .vars
+                    .get_system("tidb_max_keys_read")
+                    .ok()
+                    .and_then(|value| value.parse::<u64>().ok())
+                    .unwrap_or(0),
+                policy: index_lookup_push_down_policy,
+            };
         let snapshot = std::rc::Rc::new(StatementVarSnapshot {
             generation,
             version: self.vars.get_system("version").ok(),
@@ -641,6 +682,7 @@ impl Session {
                 .ok()
                 .and_then(|value| value.parse::<u64>().ok())
                 .unwrap_or(tidb_vardef::defaults::DEF_OPT_LIMIT_PUSH_DOWN_THRESHOLD as u64),
+            index_lookup_push_down_session,
             join_reorder_through_proj: on(
                 tidb_vardef::tidb_vars::TIDB_OPT_JOIN_REORDER_THROUGH_PROJ,
             ),
@@ -760,6 +802,14 @@ impl Session {
         let ordering_index_selectivity_ratio = snapshot.ordering_index_selectivity_ratio;
         let allow_projection_push_down = snapshot.allow_projection_push_down;
         let limit_push_down_threshold = snapshot.limit_push_down_threshold;
+        let mut index_lookup_push_down_session = snapshot.index_lookup_push_down_session;
+        // Transaction state is not part of the variable-table generation
+        // that keys `StatementVarSnapshot`, so read it at every statement
+        // boundary like Go reads `TxnCtx.IsStaleness`.
+        index_lookup_push_down_session.staleness |= self
+            .txn
+            .as_ref()
+            .is_some_and(|transaction| transaction.is_stale_read());
         let join_reorder_through_proj = snapshot.join_reorder_through_proj;
         let join_reorder_through_sel = snapshot.join_reorder_through_sel;
         let outer_join_reorder = snapshot.outer_join_reorder;
@@ -804,6 +854,7 @@ impl Session {
                 .with_ordering_index_selectivity_ratio(ordering_index_selectivity_ratio)
                 .with_projection_push_down(allow_projection_push_down)
                 .with_limit_push_down_threshold(limit_push_down_threshold)
+                .with_index_lookup_push_down_session(index_lookup_push_down_session)
                 .with_optimizer_fix_control(self.vars.optimizer_fix_control().clone())
                 .with_optimizer_cost_env(optimizer_cost_env.clone())
                 .with_hashagg_concurrency(hashagg_partial_concurrency, hashagg_final_concurrency)
@@ -944,6 +995,7 @@ impl Session {
         .with_ordering_index_selectivity_ratio(ordering_index_selectivity_ratio)
         .with_projection_push_down(allow_projection_push_down)
         .with_limit_push_down_threshold(limit_push_down_threshold)
+        .with_index_lookup_push_down_session(index_lookup_push_down_session)
         .with_optimizer_fix_control(self.vars.optimizer_fix_control().clone())
         .with_optimizer_cost_env(optimizer_cost_env)
         .with_hashagg_concurrency(hashagg_partial_concurrency, hashagg_final_concurrency)
@@ -1205,5 +1257,30 @@ mod tests {
             executing_memory.stmt_tracker(),
             retained_memory.stmt_tracker(),
         ));
+    }
+
+    #[test]
+    fn index_lookup_pushdown_uses_one_typed_statement_snapshot() {
+        let mut session = Session::new();
+        session
+            .run("SET tidb_index_lookup_pushdown_policy = 'force'")
+            .unwrap();
+        session
+            .run("SET transaction_isolation = 'READ-COMMITTED'")
+            .unwrap();
+        session.run("SET tidb_replica_read = 'follower'").unwrap();
+        session.run("SET tidb_max_keys_read = 7").unwrap();
+
+        let context = session.statement_context(false);
+        let snapshot = context.index_lookup_push_down_session();
+        assert_eq!(
+            snapshot.policy,
+            tidb_planner::access_path::IndexLookupPushDownPolicy::Force
+        );
+        assert!(!snapshot.repeatable_read);
+        assert!(!snapshot.leader_read);
+        assert_eq!(snapshot.max_keys_read, 7);
+        assert!(!snapshot.staleness);
+        assert!(!snapshot.historical_read);
     }
 }

@@ -1923,6 +1923,8 @@ pub struct PhysicalIndexLookUpReader {
     pub index_plan: Option<Box<PhysicalPlan>>,
     /// Go `TablePlan`.
     pub table_plan: Option<Box<PhysicalPlan>>,
+    /// Go `IndexLookUpPushDown`, true after `tryPushDownLookUp` succeeds.
+    pub index_lookup_push_down: bool,
     /// Go `KeepOrder`.
     pub keep_order: bool,
     /// Go `ExpectedCnt`, from the cop task's `ExpectCnt` — the paging
@@ -3202,6 +3204,7 @@ impl PhysicalPlan {
                 base: base_of(&op.base),
                 index_plan: op.index_plan.clone(),
                 table_plan: op.table_plan.clone(),
+                index_lookup_push_down: op.index_lookup_push_down,
                 keep_order: op.keep_order,
                 expect_cnt: op.expect_cnt,
                 paging: op.paging,

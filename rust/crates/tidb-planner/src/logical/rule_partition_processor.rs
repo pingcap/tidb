@@ -48,7 +48,11 @@ fn resolve_index_hints_for_partition(
         table_name: source.table_name.clone(),
         indexes: source.indexes.clone(),
         pk_is_handle: source.pk_is_handle,
-        is_common_handle: !source.common_handle_cols.is_empty(),
+        is_common_handle: source.is_common_handle,
+        common_handle_version: source.common_handle_version,
+        is_temporary: source.is_temporary,
+        is_cached: source.is_cached,
+        has_affinity: source.has_affinity,
         ..Default::default()
     };
     let resolution = crate::access_path::apply_table_index_hints(
@@ -57,6 +61,8 @@ fn resolve_index_hints_for_partition(
         &source.ast_index_hints,
         &source.index_hints,
         true,
+        source.force_no_index_lookup_push_down,
+        source.index_lookup_push_down_session,
     )?;
     source.enumerated_paths = resolution.paths;
     source.forced_index_ids = resolution.forced_index_ids;
@@ -64,7 +70,7 @@ fn resolve_index_hints_for_partition(
     source.force_no_keep_order_index_ids = resolution.force_no_keep_order_index_ids;
     source.force_keep_order_table_path = resolution.force_keep_order_table_path;
     source.force_no_keep_order_table_path = resolution.force_no_keep_order_table_path;
-    source.push_down_lookup_index_ids = resolution.push_down_lookup_index_ids;
+    source.index_lookup_push_down_by = resolution.index_lookup_push_down_by;
     Ok(())
 }
 

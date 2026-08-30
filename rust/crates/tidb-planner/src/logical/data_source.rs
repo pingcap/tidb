@@ -154,6 +154,18 @@ pub struct DataSource {
     pub possible_access_paths: Vec<DataSourceAccessPath>,
     /// Go `TableInfo.PKIsHandle`.
     pub pk_is_handle: bool,
+    /// Go `TableInfo.IsCommonHandle`.
+    pub is_common_handle: bool,
+    /// Go `TableInfo.CommonHandleVersion`.
+    pub common_handle_version: u16,
+    /// Go `TableInfo.TempTableType != model.TempTableNone`.
+    pub is_temporary: bool,
+    /// Go `TableInfo.TableCacheStatusType != model.TableCacheStatusDisable`.
+    pub is_cached: bool,
+    /// Whether Go `TableInfo.Affinity` is non-nil.
+    pub has_affinity: bool,
+    /// Session/transaction inputs to Go's lookup-pushdown support check.
+    pub index_lookup_push_down_session: crate::access_path::IndexLookupPushDownSession,
     /// Go `HandleCols`' columns; empty when the table has no usable handle.
     pub handle_cols: Vec<Column>,
     /// Whether Go's `HandleCols.IsInt()` holds.
@@ -187,8 +199,12 @@ pub struct DataSource {
     pub force_keep_order_table_path: bool,
     /// Whether the TiKV table path carries Go `ForceNoKeepOrder`.
     pub force_no_keep_order_table_path: bool,
-    /// Index IDs carrying Go `IndexLookUpPushDownByHint`.
-    pub push_down_lookup_index_ids: std::collections::BTreeSet<i64>,
+    /// Go `AccessPath.IndexLookUpPushDownBy`, keyed by index ID.
+    pub index_lookup_push_down_by:
+        std::collections::BTreeMap<i64, crate::access_path::IndexLookupPushDownBy>,
+    /// Go `forceNoIndexLookUpPushDown`, set by a matching
+    /// `NO_INDEX_LOOKUP_PUSHDOWN` hint before paths are enumerated.
+    pub force_no_index_lookup_push_down: bool,
     /// Go `IndexMergeHints`. An empty `index_names` list is a general
     /// `USE_INDEX_MERGE(table)` hint; `partitions` scopes it per static child.
     pub index_merge_hints: Vec<DataSourceIndexMergeHint>,
@@ -568,6 +584,12 @@ impl DataSource {
             all_possible_access_paths: self.all_possible_access_paths.clone(),
             possible_access_paths: self.possible_access_paths.clone(),
             pk_is_handle: self.pk_is_handle,
+            is_common_handle: self.is_common_handle,
+            common_handle_version: self.common_handle_version,
+            is_temporary: self.is_temporary,
+            is_cached: self.is_cached,
+            has_affinity: self.has_affinity,
+            index_lookup_push_down_session: self.index_lookup_push_down_session,
             handle_cols: self.handle_cols.clone(),
             handle_is_int: self.handle_is_int,
             common_handle_cols: self.common_handle_cols.clone(),
@@ -584,7 +606,8 @@ impl DataSource {
             force_no_keep_order_index_ids: self.force_no_keep_order_index_ids.clone(),
             force_keep_order_table_path: self.force_keep_order_table_path,
             force_no_keep_order_table_path: self.force_no_keep_order_table_path,
-            push_down_lookup_index_ids: self.push_down_lookup_index_ids.clone(),
+            index_lookup_push_down_by: self.index_lookup_push_down_by.clone(),
+            force_no_index_lookup_push_down: self.force_no_index_lookup_push_down,
             index_merge_hints: self.index_merge_hints.clone(),
             prefer_index_merge_by_fix_control: self.prefer_index_merge_by_fix_control,
             table_stats: self.table_stats.clone(),

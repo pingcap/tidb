@@ -1649,6 +1649,14 @@ impl IndexRangeSourceExec {
         self.lookup_concurrency = width.max(1);
     }
 
+    /// Enables Go's `LocalIndexLookUp` storage-side lookup mode. The planner
+    /// has already rejected ordered readers and unsupported table/index
+    /// metadata before this executor is built.
+    pub(crate) fn enable_lookup_pushdown(&mut self) {
+        debug_assert!(self.can_reorder_handles);
+        self.lookup_pushdown = true;
+    }
+
     /// Legacy zone-only constructor retained for unmigrated callers. Origin
     /// defaults use the exact former `DEFAULT_STATEMENT_FLAGS` behavior.
     #[must_use]

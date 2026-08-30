@@ -295,6 +295,9 @@ pub struct CopTask {
     pub index_plan: Option<Box<PhysicalPlan>>,
     /// Go `TablePlan`.
     pub table_plan: Option<Box<PhysicalPlan>>,
+    /// Go `IndexLookUpPushDownBy`: whether a double read should become one
+    /// storage-side local index lookup, and which authority requested it.
+    pub index_lookup_push_down_by: crate::access_path::IndexLookupPushDownBy,
     /// Go `IndexPlanFinished`: whether the index half is sealed, which
     /// decides which half [`CopTask::plan`] and [`CopTask::count`] read.
     pub index_plan_finished: bool,
@@ -322,7 +325,7 @@ pub struct CopTask {
     // boundary: `OriginSchema`, `ExtraHandleCol`, `CommonHandleCols`,
     // `TblColHists`, `TblCols`,
     // `IdxMergeMatchWithAdvisorySortItems`, `IdxMergePartPlansMatchResults`,
-    // `PhysPlanPartInfo`, `IndexLookUpPushDownBy`,
+    // `PhysPlanPartInfo`,
     // `PartialOrderMatchResult` — each blocked on an unported type named in
     // the module header, absent rather than stubbed.
     /// Go `Warnings`.
@@ -467,9 +470,7 @@ impl CopTask {
     /// Go `BuildIndexLookUpTask` (`physical_indexlookup_reader.go:284`): the
     /// double-read cop task becomes a root task holding a
     /// `PhysicalIndexLookUpReader` whose schema and stats are the TABLE
-    /// side's (`Init`, `:205`). `IndexLookUpPushDownBy` is always
-    /// `IndexLookUpPushDownNone` on this port (`tryPushDownLookUp` returns
-    /// immediately), and the `NeedExtraProj` projection reads the unported
+    /// side's (`Init`, `:205`). The `NeedExtraProj` projection reads the unported
     /// `OriginSchema` — a task that needs it refuses by name rather than
     /// serving a broken schema. Go skips that projection when the table side
     /// already holds a pushed partial aggregate.
@@ -502,10 +503,25 @@ impl CopTask {
         );
         base.base.set_stats(table_plan.stats_info().cloned());
         base.base.set_schema(table_plan.schema().cloned());
+        let index_lookup_push_down = if self.index_lookup_push_down_by
+            == crate::access_path::IndexLookupPushDownBy::None
+        {
+            false
+        } else if self.keep_order {
+            if self.index_lookup_push_down_by == crate::access_path::IndexLookupPushDownBy::Hint {
+                self.warnings.append_warning(
+                    "hint INDEX_LOOKUP_PUSHDOWN is inapplicable, keep order is not supported.",
+                );
+            }
+            false
+        } else {
+            true
+        };
         let reader = PhysicalPlan::IndexLookUpReader(crate::physical::PhysicalIndexLookUpReader {
             base,
             index_plan: Some(index_plan),
             table_plan: Some(table_plan),
+            index_lookup_push_down,
             keep_order: self.keep_order,
             expect_cnt: self.expect_cnt,
             paging: false,
@@ -1052,6 +1068,41 @@ mod tests {
         let task = Task::invalid_task();
         assert!(task.invalid());
         assert!(task.plan().is_none());
+    }
+
+    #[test]
+    fn lookup_pushdown_is_applied_only_without_keep_order() {
+        let build = |keep_order| {
+            Task::Cop(CopTask {
+                index_plan: Some(Box::new(dual_with_rows(1.0))),
+                table_plan: Some(Box::new(dual_with_rows(1.0))),
+                index_lookup_push_down_by: crate::access_path::IndexLookupPushDownBy::Hint,
+                keep_order,
+                ..CopTask::default()
+            })
+            .convert_to_root_task(&PlanIdAllocator::new())
+            .expect("lookup task builds")
+        };
+
+        let unordered = build(false);
+        let Some(PhysicalPlan::IndexLookUpReader(reader)) = unordered.plan() else {
+            panic!("an IndexLookUpReader");
+        };
+        assert!(reader.index_lookup_push_down);
+
+        let ordered = build(true);
+        let Task::Root(root) = &ordered else {
+            panic!("a root task");
+        };
+        let Some(PhysicalPlan::IndexLookUpReader(reader)) = ordered.plan() else {
+            panic!("an IndexLookUpReader");
+        };
+        assert!(!reader.index_lookup_push_down);
+        assert_eq!(root.warnings.warning_count(), 1);
+        assert_eq!(
+            root.warnings.warnings[0].message,
+            "hint INDEX_LOOKUP_PUSHDOWN is inapplicable, keep order is not supported."
+        );
     }
 
     #[test]

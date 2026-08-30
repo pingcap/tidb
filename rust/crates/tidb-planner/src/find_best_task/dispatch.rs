@@ -2093,6 +2093,14 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 Task::Cop(crate::task::CopTask {
                     index_plan: Some(Box::new(index_plan)),
                     table_plan: table_side,
+                    index_lookup_push_down_by: if single_scan {
+                        crate::access_path::IndexLookupPushDownBy::None
+                    } else {
+                        ds.index_lookup_push_down_by
+                            .get(&source_index.id)
+                            .copied()
+                            .unwrap_or(crate::access_path::IndexLookupPushDownBy::None)
+                    },
                     root_task_conds,
                     index_plan_finished: false,
                     keep_order,

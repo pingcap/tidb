@@ -410,6 +410,13 @@ struct IndexHint {
     matched: bool,
 }
 
+#[derive(Clone, Debug)]
+struct NoIndexLookupPushDownHint {
+    db_name: Option<String>,
+    table_name: String,
+    matched: bool,
+}
+
 fn restore_index_hint(name: &str, table: &tidb_ast::HintTable, indexes: &[String]) -> String {
     let mut restored = format!("/*+ {name}({}", table.name.to_ascii_lowercase());
     if !table.partitions.is_empty() {
@@ -449,13 +456,18 @@ fn hint_belongs_to_block(qb_name: Option<&str>, named: Option<&str>, offset: i32
     })
 }
 
-fn index_hints_from_select(select: &SelectStmt, offset: i32) -> (Vec<IndexHint>, bool) {
+fn index_hints_from_select(
+    select: &SelectStmt,
+    offset: i32,
+) -> (
+    Vec<IndexHint>,
+    Vec<NoIndexLookupPushDownHint>,
+    Vec<&'static str>,
+) {
     let named = current_query_block_name(select);
-    let mut invalid_lookup_pushdown = false;
-    let hints = select
-        .hints
-        .iter()
-        .filter_map(|hint| {
+    let mut no_lookup = Vec::new();
+    let mut warnings = Vec::new();
+    let hints = select.hints.iter().filter_map(|hint| {
             let tidb_ast::HintKind::Index {
                 qb_name,
                 table,
@@ -470,6 +482,20 @@ fn index_hints_from_select(select: &SelectStmt, offset: i32) -> (Vec<IndexHint>,
                 return None;
             }
             let upper = hint.name.to_ascii_uppercase();
+            if upper == "NO_INDEX_LOOKUP_PUSHDOWN" {
+                if !indexes.is_empty() {
+                    warnings.push(
+                        "hint NO_INDEX_LOOKUP_PUSH_DOWN is inapplicable, only table name without indexes is supported",
+                    );
+                } else {
+                    no_lookup.push(NoIndexLookupPushDownHint {
+                        db_name: table.db_name.clone(),
+                        table_name: table.name.clone(),
+                        matched: false,
+                    });
+                }
+                return None;
+            }
             let (kind, push_down_lookup, force_keep_order, force_no_keep_order) =
                 match upper.as_str() {
                     "USE_INDEX" => (tidb_ast::IndexHintKind::Use, false, false, false),
@@ -481,7 +507,9 @@ fn index_hints_from_select(select: &SelectStmt, offset: i32) -> (Vec<IndexHint>,
                         (tidb_ast::IndexHintKind::Use, true, false, false)
                     }
                     "INDEX_LOOKUP_PUSHDOWN" => {
-                        invalid_lookup_pushdown = true;
+                        warnings.push(
+                            "hint INDEX_LOOKUP_PUSH_DOWN is inapplicable, the index names should be specified",
+                        );
                         return None;
                     }
                     _ => return None,
@@ -498,9 +526,8 @@ fn index_hints_from_select(select: &SelectStmt, offset: i32) -> (Vec<IndexHint>,
                 restored: restore_index_hint(&upper, table, indexes),
                 matched: false,
             })
-        })
-        .collect();
-    (hints, invalid_lookup_pushdown)
+        }).collect();
+    (hints, no_lookup, warnings)
 }
 
 fn index_merge_hints_from_select(select: &SelectStmt) -> Vec<IndexMergeHint> {
@@ -631,6 +658,8 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     index_merge_hints: Vec<IndexMergeHint>,
     /// Go `PlanHints.IndexHintList` for the current query block.
     index_hints: Vec<IndexHint>,
+    /// Go `PlanHints.NoIndexLookUpPushDown` for the current query block.
+    no_index_lookup_push_down_hints: Vec<NoIndexLookupPushDownHint>,
 
     /// Go `b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy()`, which gates
     /// [`only_full_group_by`]'s whole rule and `buildSortWithCheck`.
@@ -645,6 +674,8 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     /// Go fix control 52869, consumed by index pruning through the built
     /// `DataSource`.
     pub prefer_index_merge_by_fix_control: bool,
+    /// Session/transaction facts used by Go's index-lookup-pushdown gates.
+    pub index_lookup_push_down_session: crate::access_path::IndexLookupPushDownSession,
     /// Go `b.ctx.GetSessionVars().EnableSkewDistinctAgg`
     /// (`buildAggregation`, `:271`).
     pub enable_skew_distinct_agg: bool,
@@ -898,11 +929,13 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             join_hints: Rc::new(from::JoinHints::default()),
             index_merge_hints: Vec::new(),
             index_hints: Vec::new(),
+            no_index_lookup_push_down_hints: Vec::new(),
             // Go's default `sql_mode` carries `ONLY_FULL_GROUP_BY`.
             only_full_group_by: true,
             // Go `DefTiDBOptimizerUseInvisibleIndexes = false`.
             optimizer_use_invisible_indexes: false,
             prefer_index_merge_by_fix_control: false,
+            index_lookup_push_down_session: Default::default(),
             enable_skew_distinct_agg: false,
             enable_force_inline_cte: false,
             enable_mpp_shared_cte_execution: false,
@@ -1328,6 +1361,20 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
 
         let as_name = table_ref.alias.clone();
         let visible_table = as_name.clone().unwrap_or_else(|| table.table_name.clone());
+        let mut force_no_index_lookup_push_down = false;
+        for hint in &mut self.no_index_lookup_push_down_hints {
+            let hint_db = hint
+                .db_name
+                .as_deref()
+                .unwrap_or_else(|| self.source.current_database());
+            if hint.table_name.eq_ignore_ascii_case(&visible_table)
+                && (hint_db.eq_ignore_ascii_case(&db_name) || hint_db == "*")
+            {
+                hint.matched = true;
+                force_no_index_lookup_push_down = true;
+                break;
+            }
+        }
         let mut index_hints = Vec::new();
         for hint in &mut self.index_hints {
             let hint_db = hint
@@ -1488,6 +1535,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             columns,
             table_columns,
             pk_is_handle: table.pk_is_handle,
+            is_common_handle: table.is_common_handle,
+            common_handle_version: table.common_handle_version,
+            is_temporary: table.is_temporary,
+            is_cached: table.is_cached,
+            has_affinity: table.has_affinity,
+            index_lookup_push_down_session: self.index_lookup_push_down_session,
             handle_cols,
             handle_is_int,
             common_handle_cols,
@@ -1498,6 +1551,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             ast_index_hints: table_ref.hints.clone(),
             index_hints,
             index_merge_hints,
+            force_no_index_lookup_push_down,
             ..DataSource::default()
         };
         // Go `getPossibleAccessPaths` (`:5042`): the ENUMERATION runs here,
@@ -1517,6 +1571,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             &table_ref.hints,
             &data_source.index_hints,
             table.is_partitioned,
+            data_source.force_no_index_lookup_push_down,
+            data_source.index_lookup_push_down_session,
         )?;
         for index in &resolution.unknown_comment_indexes {
             self.ctx.append_warning(
@@ -1527,6 +1583,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 ),
             );
         }
+        for warning in &resolution.hint_warnings {
+            self.ctx.append_warning(1815, warning);
+        }
         data_source.public_enumerated_paths = public_paths;
         data_source.enumerated_paths = resolution.paths;
         data_source.forced_index_ids = resolution.forced_index_ids;
@@ -1534,7 +1593,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         data_source.force_no_keep_order_index_ids = resolution.force_no_keep_order_index_ids;
         data_source.force_keep_order_table_path = resolution.force_keep_order_table_path;
         data_source.force_no_keep_order_table_path = resolution.force_no_keep_order_table_path;
-        data_source.push_down_lookup_index_ids = resolution.push_down_lookup_index_ids;
+        data_source.index_lookup_push_down_by = resolution.index_lookup_push_down_by;
         data_source.indexes = table.indexes.clone();
         debug_assert!(data_source.possible_access_paths.is_empty());
 
@@ -2392,14 +2451,16 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             &mut self.index_merge_hints,
             index_merge_hints_from_select(select),
         );
-        let (index_hints, invalid_lookup_pushdown) = index_hints_from_select(select, select_offset);
-        if invalid_lookup_pushdown {
-            self.ctx.append_warning(
-                1815,
-                "hint INDEX_LOOKUP_PUSH_DOWN is inapplicable, the index names should be specified",
-            );
+        let (index_hints, no_index_lookup_push_down_hints, index_hint_warnings) =
+            index_hints_from_select(select, select_offset);
+        for warning in index_hint_warnings {
+            self.ctx.append_warning(1815, warning);
         }
         let parent_index_hints = std::mem::replace(&mut self.index_hints, index_hints);
+        let parent_no_index_lookup_push_down_hints = std::mem::replace(
+            &mut self.no_index_lookup_push_down_hints,
+            no_index_lookup_push_down_hints,
+        );
         let built = self.build_select_body(select);
         for hint in self.index_hints.iter().filter(|hint| !hint.matched) {
             let db = hint
@@ -2430,10 +2491,28 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 ),
             );
         }
+        for hint in self
+            .no_index_lookup_push_down_hints
+            .iter()
+            .filter(|hint| !hint.matched)
+        {
+            let db = hint
+                .db_name
+                .as_deref()
+                .unwrap_or_else(|| self.source.current_database());
+            self.ctx.append_warning(
+                1815,
+                &format!(
+                    "no_index_lookup_pushdown({db}.{}) is inapplicable, check whether the table({db}.{}) exists",
+                    hint.table_name, hint.table_name
+                ),
+            );
+        }
         self.hints = parent_hints;
         self.join_hints = parent_join_hints;
         self.index_merge_hints = parent_index_merge_hints;
         self.index_hints = parent_index_hints;
+        self.no_index_lookup_push_down_hints = parent_no_index_lookup_push_down_hints;
         let result = built.map(|(plan, flag)| {
             // `:4652` the trailing `return b.tryToBuildSequence(currentLayerCTEs, p)`,
             // which Go evaluates BEFORE the deferred truncation runs.

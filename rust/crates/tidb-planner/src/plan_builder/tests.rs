@@ -686,6 +686,235 @@ fn test_comment_index_hint_warnings_match_go() {
 }
 
 #[test]
+fn test_no_index_lookup_pushdown_matches_and_overrides_positive_hint() {
+    let harness = Harness::new();
+    let warnings = WarningColumns::default();
+    let mut builder = PlanBuilder::new(
+        &harness.catalog,
+        &warnings,
+        &harness.plan_ids,
+        &harness.column_ids,
+        SessionTimeZone::utc(),
+    );
+    let (plan, _) = builder
+        .build_select(&parse_select(
+            "SELECT /*+ INDEX_LOOKUP_PUSHDOWN(t, idx_b) NO_INDEX_LOOKUP_PUSHDOWN(t) */ a FROM t",
+        ))
+        .expect("conflicting lookup hints fall back to ordinary paths");
+    let LogicalPlan::Projection(projection) = plan else {
+        panic!("expected projection");
+    };
+    let LogicalPlan::DataSource(source) = &projection.base.children()[0] else {
+        panic!("expected data source");
+    };
+    assert!(source.force_no_index_lookup_push_down);
+    assert!(source.index_lookup_push_down_by.is_empty());
+    assert!(matches!(
+        source.enumerated_paths.as_slice(),
+        [crate::access_path::PossiblePath::Table { .. }]
+    ));
+    assert_eq!(
+        *warnings
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+        vec![(
+            1815,
+            "hint INDEX_LOOKUP_PUSHDOWN cannot be inapplicable, NO_INDEX_LOOKUP_PUSHDOWN is specified"
+                .to_owned(),
+        )]
+    );
+}
+
+#[test]
+fn test_lookup_pushdown_rejects_go_unsupported_index_metadata() {
+    for (global, multi_valued, reason) in [
+        (
+            true,
+            false,
+            "the global index in partition table is not supported",
+        ),
+        (false, true, "multi-valued index is not supported"),
+    ] {
+        let mut harness = Harness::new();
+        harness.tables_mut()[0].indexes[0].global = global;
+        harness.tables_mut()[0].indexes[0].is_multi_valued = multi_valued;
+        let warnings = WarningColumns::default();
+        let mut builder = PlanBuilder::new(
+            &harness.catalog,
+            &warnings,
+            &harness.plan_ids,
+            &harness.column_ids,
+            SessionTimeZone::utc(),
+        );
+        let (plan, _) = builder
+            .build_select(&parse_select(
+                "SELECT /*+ INDEX_LOOKUP_PUSHDOWN(t, idx_b) */ a FROM t",
+            ))
+            .expect("unsupported lookup-pushdown metadata is a warning");
+        let LogicalPlan::Projection(projection) = plan else {
+            panic!("expected projection");
+        };
+        let LogicalPlan::DataSource(source) = &projection.base.children()[0] else {
+            panic!("expected data source");
+        };
+        assert!(source.index_lookup_push_down_by.is_empty());
+        assert!(matches!(
+            source.enumerated_paths.as_slice(),
+            [crate::access_path::PossiblePath::Table { .. }]
+        ));
+        assert_eq!(
+            *warnings
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+            vec![(
+                1815,
+                format!("hint INDEX_LOOKUP_PUSHDOWN is inapplicable, {reason}"),
+            )]
+        );
+    }
+}
+
+#[test]
+fn test_lookup_pushdown_support_gates_and_auto_policy_match_go() {
+    use crate::access_path::{
+        apply_table_index_hints, get_possible_access_paths, IndexLookupPushDownBy,
+        IndexLookupPushDownPolicy, IndexLookupPushDownSession,
+    };
+    use crate::logical::data_source::DataSourceIndexHint;
+
+    let hint = DataSourceIndexHint {
+        kind: tidb_ast::IndexHintKind::Use,
+        index_names: vec!["idx_b".to_owned()],
+        partitions: Vec::new(),
+        push_down_lookup: true,
+        force_keep_order: false,
+        force_no_keep_order: false,
+        restored: "INDEX_LOOKUP_PUSHDOWN(t, idx_b)".to_owned(),
+    };
+    let resolve = |table: &SourceTable, session| {
+        let paths = get_possible_access_paths(table, false);
+        apply_table_index_hints(
+            table,
+            &paths,
+            &[],
+            std::slice::from_ref(&hint),
+            false,
+            false,
+            session,
+        )
+        .expect("lookup-pushdown hint resolution")
+    };
+
+    let cases: [(fn(&mut SourceTable, &mut IndexLookupPushDownSession), &str); 10] = [
+        (
+            |table: &mut SourceTable, _: &mut IndexLookupPushDownSession| {
+                table.is_common_handle = true;
+                table.common_handle_version = 0;
+            },
+            "common handle table with old encoding version is not supported",
+        ),
+        (
+            |table, _| table.indexes[0].global = true,
+            "the global index in partition table is not supported",
+        ),
+        (
+            |table, _| table.is_temporary = true,
+            "temporary table is not supported",
+        ),
+        (
+            |table, _| table.is_cached = true,
+            "cached table is not supported",
+        ),
+        (
+            |table, _| table.indexes[0].is_multi_valued = true,
+            "multi-valued index is not supported",
+        ),
+        (
+            |_, session| session.repeatable_read = false,
+            "transaction isolation level is not REPEATABLE-READ",
+        ),
+        (
+            |_, session| session.leader_read = false,
+            "only leader read is supported",
+        ),
+        (
+            |_, session| session.staleness = true,
+            "stale read is not supported",
+        ),
+        (
+            |_, session| session.historical_read = true,
+            "historical read is not supported",
+        ),
+        (
+            |_, session| session.max_keys_read = 1,
+            "tidb_max_keys_read is set",
+        ),
+    ];
+    for (mutate, reason) in cases {
+        let mut table = catalog().tables.remove(0);
+        let mut session = IndexLookupPushDownSession::default();
+        mutate(&mut table, &mut session);
+        let result = resolve(&table, session);
+        assert!(result.index_lookup_push_down_by.is_empty());
+        assert_eq!(
+            result.hint_warnings,
+            vec![format!(
+                "hint INDEX_LOOKUP_PUSHDOWN is inapplicable, {reason}"
+            )]
+        );
+    }
+
+    let table = catalog().tables.remove(0);
+    let forced = resolve(
+        &table,
+        IndexLookupPushDownSession {
+            policy: IndexLookupPushDownPolicy::Force,
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        forced.index_lookup_push_down_by.get(&1),
+        Some(&IndexLookupPushDownBy::Hint),
+        "an explicit hint overrides the system-policy origin"
+    );
+
+    let paths = get_possible_access_paths(&table, false);
+    let auto = apply_table_index_hints(
+        &table,
+        &paths,
+        &[],
+        &[],
+        false,
+        false,
+        IndexLookupPushDownSession {
+            policy: IndexLookupPushDownPolicy::Force,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        auto.index_lookup_push_down_by.get(&1),
+        Some(&IndexLookupPushDownBy::SysVar)
+    );
+    let affinity_only = apply_table_index_hints(
+        &table,
+        &paths,
+        &[],
+        &[],
+        false,
+        false,
+        IndexLookupPushDownSession {
+            policy: IndexLookupPushDownPolicy::AffinityForce,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(affinity_only.index_lookup_push_down_by.is_empty());
+}
+
+#[test]
 fn test_fast_index_hint_check_keeps_go_smaller_boundary() {
     let select = parse_select("SELECT /*+ USE_INDEX(t, idx) */ a FROM t");
     let table_hints = match &select.from.as_ref().expect("FROM").left {

@@ -202,6 +202,14 @@ pub struct SourceTable {
     pub pk_is_handle: bool,
     /// Go `TableInfo.IsCommonHandle`.
     pub is_common_handle: bool,
+    /// Go `TableInfo.CommonHandleVersion`.
+    pub common_handle_version: u16,
+    /// Go `TableInfo.TempTableType != model.TempTableNone`.
+    pub is_temporary: bool,
+    /// Go `TableInfo.TableCacheStatusType != model.TableCacheStatusDisable`.
+    pub is_cached: bool,
+    /// Whether Go `TableInfo.Affinity` is non-nil.
+    pub has_affinity: bool,
     /// Offsets into [`Self::columns`] of Go `HandleCols`' columns. Empty when
     /// the table has no usable handle, in which case `buildDataSource` appends
     /// the `_tidb_rowid` extra handle.

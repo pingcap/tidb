@@ -1072,6 +1072,11 @@ impl Catalog {
                             indexes,
                             pk_is_handle: table.pk_handle_offset().is_some(),
                             is_common_handle: !table.common_handle_offsets().is_empty(),
+                            common_handle_version: table.common_handle_version(),
+                            is_temporary: table.is_temporary(),
+                            is_cached: table.cache_status()
+                                != tidb_model::TableCacheStatusType::DISABLE,
+                            has_affinity: table.has_affinity(),
                             handle_col_offsets: table
                                 .pk_handle_offset()
                                 .into_iter()

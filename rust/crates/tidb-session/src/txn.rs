@@ -80,6 +80,10 @@ pub(crate) struct Transaction {
 }
 
 impl Transaction {
+    pub(crate) const fn is_stale_read(&self) -> bool {
+        self.stale_read_ts.is_some()
+    }
+
     /// Opens a transaction over `catalog`: the ONE place a [`Transaction`] is
     /// built.
     ///

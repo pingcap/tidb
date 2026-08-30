@@ -394,6 +394,7 @@ pub(crate) fn logical_from_scope(
     let plan_ids = PlanIdAllocator::new();
     let column_ids = ColumnIdAllocator::new();
     let mut builder = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, ctx.session_zone());
+    builder.index_lookup_push_down_session = ctx.index_lookup_push_down_session();
     let plan = builder.build_join(join)?;
     let schema = plan.schema().ok_or_else(|| {
         tidb_planner::plan_base::PlanError::internal("FROM logical plan has no schema")
@@ -1067,6 +1068,7 @@ fn planner_optimized_query_with_allocators(
     let source = catalog.planner_catalog(current_database);
     let session_zone = ctx.session_zone();
     let mut builder = PlanBuilder::new(&source, ctx, plan_ids, column_ids, session_zone.clone());
+    builder.index_lookup_push_down_session = ctx.index_lookup_push_down_session();
     builder.prefer_index_merge_by_fix_control = ctx
         .optimizer_fix_control()
         .get_bool_with_default(tidb_planner::fix_control::FIX_52869, false);
@@ -1102,6 +1104,7 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     let source = catalog.planner_catalog(current_database);
     let session_zone = ctx.session_zone();
     let mut builder = PlanBuilder::new(&source, ctx, plan_ids, column_ids, session_zone.clone());
+    builder.index_lookup_push_down_session = ctx.index_lookup_push_down_session();
     builder.prefer_index_merge_by_fix_control = ctx
         .optimizer_fix_control()
         .get_bool_with_default(tidb_planner::fix_control::FIX_52869, false);
@@ -1444,6 +1447,7 @@ pub(crate) fn statistics_usage_before_and_after_logical_optimization(
     let source = catalog.planner_catalog(current_database);
     let session_zone = ctx.session_zone();
     let mut builder = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, session_zone.clone());
+    builder.index_lookup_push_down_session = ctx.index_lookup_push_down_session();
     let node = tidb_resolve::NodeW::new(query.clone());
     let plan = builder.build_query_node(&node, false)?;
     let flags = builder.get_opt_flag();

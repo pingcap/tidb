@@ -462,6 +462,8 @@ pub struct KvTable {
     /// offsets, whose encoding IS the row handle. Empty when the table has no
     /// clustered common handle.
     common_handle_offsets: Vec<usize>,
+    /// Go `TableInfo.CommonHandleVersion`.
+    common_handle_version: u16,
     /// Go `TableInfo.Charset`/`Collate`: the table's default character set and
     /// collation, which its unqualified string columns inherit.
     charset: TableCharset,
@@ -493,6 +495,8 @@ pub struct KvTable {
     /// disabled here; cluster-loaded metadata may still carry the source
     /// value verbatim.
     cache_status: tidb_model::TableCacheStatusType,
+    /// Whether Go `TableInfo.Affinity` is non-nil.
+    has_affinity: bool,
     /// Go `TableInfo.TempTableType` (`setTemporaryType`, `create_table.go`):
     /// whether this is an ordinary table, a GLOBAL temporary table, or a
     /// LOCAL one.
@@ -788,6 +792,7 @@ impl KvTable {
             pk_handle_offset: None,
             indexes: std::sync::Arc::new(Vec::new()),
             common_handle_offsets: Vec::new(),
+            common_handle_version: 0,
             auto_increment_offset: None,
             auto_id: AutoIdAllocator::new(),
             auto_random: None,
@@ -795,6 +800,7 @@ impl KvTable {
             charset: TableCharset::default(),
             comment: String::new(),
             cache_status: tidb_model::TableCacheStatusType::DISABLE,
+            has_affinity: false,
             temp_table_type: tidb_model::TempTableType::NONE,
             use_new_collation,
             foreign_keys: Vec::new(),
@@ -895,6 +901,8 @@ impl KvTable {
         copy.pk_handle_offset = self.pk_handle_offset;
         copy.indexes = self.indexes.clone();
         copy.common_handle_offsets = self.common_handle_offsets.clone();
+        copy.common_handle_version = self.common_handle_version;
+        copy.has_affinity = self.has_affinity;
         copy.auto_increment_offset = self.auto_increment_offset;
         copy.auto_random = self.auto_random;
         if let Some(spec) = copy.auto_random {
@@ -1403,6 +1411,12 @@ impl KvTable {
         self.temp_table_type
     }
 
+    /// Go `TableInfo.TableCacheStatusType`.
+    #[must_use]
+    pub const fn cache_status(&self) -> tidb_model::TableCacheStatusType {
+        self.cache_status
+    }
+
     /// Whether this table is temporary at all, in either scope -- Go's
     /// `tbl.Meta().TempTableType != model.TempTableNone`, which is the exact
     /// test every 8006 refusal makes.
@@ -1459,6 +1473,28 @@ impl KvTable {
     /// records as `TableInfo.IsCommonHandle`.
     pub fn set_common_handle_offsets(&mut self, offsets: Vec<usize>) {
         self.common_handle_offsets = offsets;
+    }
+
+    /// Records Go `TableInfo.CommonHandleVersion`.
+    pub fn set_common_handle_version(&mut self, version: u16) {
+        self.common_handle_version = version;
+    }
+
+    /// Go `TableInfo.CommonHandleVersion`.
+    #[must_use]
+    pub const fn common_handle_version(&self) -> u16 {
+        self.common_handle_version
+    }
+
+    /// Records whether Go `TableInfo.Affinity` is non-nil.
+    pub fn set_has_affinity(&mut self, has_affinity: bool) {
+        self.has_affinity = has_affinity;
+    }
+
+    /// Whether Go `TableInfo.Affinity` is non-nil.
+    #[must_use]
+    pub const fn has_affinity(&self) -> bool {
+        self.has_affinity
     }
 
     /// The clustered primary key's column offsets, empty when there is none.
