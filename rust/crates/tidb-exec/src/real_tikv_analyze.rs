@@ -34,6 +34,7 @@ use std::time::Duration;
 use chrono::TimeZone;
 use tidb_datatype::{FieldType, FieldTypeCode, SessionTimeZone};
 use tidb_stats::{
+    merge_partition_cmsketches, merge_partition_fm_sketches, merge_partition_histogram_topn,
     merge_partition_stats_item, GlobalStatsMergeMode, PartitionStatsItem, StatsLoadedStatus,
 };
 use tidb_txnkv::rpc::UnaryCallContext;
@@ -772,7 +773,14 @@ where
     let mut result = Vec::with_capacity(column_ids.len() + index_ids.len());
     for (is_index, ids) in [(false, column_ids), (true, index_ids)] {
         for &id in ids {
-            let mut inputs = Vec::with_capacity(partitions.len());
+            let field_type = if is_index {
+                FieldType::new(FieldTypeCode::Blob)
+            } else {
+                column_types.get(&id).cloned().ok_or_else(|| {
+                    ClusterAnalyzeError::Other(format!("unknown analyzed column ID {id}"))
+                })?
+            };
+            let mut active = Vec::with_capacity(partitions.len());
             for partition in partitions {
                 if if is_index {
                     !partition.has_indexes
@@ -781,11 +789,12 @@ where
                 } {
                     continue;
                 }
-                let field_type = (!is_index).then(|| column_types.get(&id)).flatten();
-                let Some(mut item) = loader
-                    .load_item(snapshot, partition.id, is_index, id, field_type, true)
+                let column_type = (!is_index).then_some(&field_type);
+                let exists = loader
+                    .load_item(snapshot, partition.id, is_index, id, column_type, false)
                     .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?
-                else {
+                    .is_some();
+                if !exists {
                     if statement.skip_missing_partition_stats {
                         continue;
                     }
@@ -801,35 +810,74 @@ where
                         partition.name,
                         if is_index { "index" } else { "column" }
                     )));
-                };
-                item.fm_sketch = loader
-                    .load_fm_sketch(snapshot, partition.id, is_index, id)
-                    .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-                inputs.push(PartitionStatsItem {
-                    histogram: item.histogram,
-                    cmsketch: item.cms,
-                    topn: item.topn,
-                    fm_sketch: item.fm_sketch,
-                });
+                }
+                active.push(partition);
             }
-            let field_type = if is_index {
-                FieldType::new(FieldTypeCode::Blob)
-            } else {
-                column_types.get(&id).cloned().ok_or_else(|| {
-                    ClusterAnalyzeError::Other(format!("unknown analyzed column ID {id}"))
-                })?
-            };
-            let merged = merge_partition_stats_item(
+
+            let mut fm_sketches = Vec::with_capacity(active.len());
+            for partition in &active {
+                fm_sketches.push(
+                    loader
+                        .load_fm_sketch(snapshot, partition.id, is_index, id)
+                        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?,
+                );
+            }
+            let global_ndv =
+                merge_partition_fm_sketches(total_count, fm_sketches.iter().map(Option::as_ref));
+            drop(fm_sketches);
+
+            let mut cmsketches = Vec::with_capacity(active.len());
+            for partition in &active {
+                cmsketches.push(
+                    loader
+                        .load_item_cmsketch(snapshot, partition.id, is_index, id)
+                        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?,
+                );
+            }
+            let cmsketch = merge_partition_cmsketches(
+                GlobalStatsMergeMode::Async,
+                cmsketches.iter().map(Option::as_ref),
+            )
+            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+            drop(cmsketches);
+
+            let mut histograms = Vec::with_capacity(active.len());
+            let mut topns = Vec::with_capacity(active.len());
+            for partition in active {
+                let histogram = loader
+                    .load_item_histogram(
+                        snapshot,
+                        partition.id,
+                        is_index,
+                        id,
+                        (!is_index).then_some(&field_type),
+                    )
+                    .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?
+                    .ok_or_else(|| {
+                        ClusterAnalyzeError::Other(format!(
+                            "histogram {id} disappeared from partition {} in one snapshot",
+                            partition.id
+                        ))
+                    })?;
+                histograms.push(histogram);
+                topns.push(
+                    loader
+                        .load_item_topn(snapshot, partition.id, is_index, id)
+                        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?,
+                );
+            }
+            let merged = merge_partition_histogram_topn(
                 timezone,
                 2,
                 statement.options.num_topn as u32,
                 statement.options.num_buckets as usize,
-                total_count,
                 &field_type,
                 is_index,
-                GlobalStatsMergeMode::Async,
                 statement.partition_merge_concurrency,
-                inputs,
+                global_ndv,
+                cmsketch,
+                histograms,
+                topns,
             )
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
             if let Some(histogram) = merged.histogram {

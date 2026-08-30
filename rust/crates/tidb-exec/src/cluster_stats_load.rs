@@ -62,7 +62,9 @@ use tidb_datatype::{
     BinaryLiteral, BinaryLiteralWidth, ConversionFlags, Datum, EvalType, FieldType, FieldTypeCode,
 };
 use tidb_model::table_info::TableInfo;
-use tidb_stats::cmsketch::{decode_cmsketch_and_topn, CmsSketch, TopN};
+use tidb_stats::cmsketch::{
+    decode_cmsketch, decode_cmsketch_and_topn, decode_topn_rows, CmsSketch, TopN,
+};
 use tidb_stats::histogram::{Bucket, Histogram};
 use tidb_stats::{
     ColAndIdxExistenceMap, Column, ColumnInfo, HistColl, Index, IndexInfo, StatsLoadedStatus, Table,
@@ -504,6 +506,88 @@ impl ClusterStatsLoader {
             name: self.fm_sketches.name().to_owned(),
             detail: format!("{error:?}"),
         })
+    }
+
+    /// Pinned async-global-stats `CMSketchFromStorage` for one item.
+    pub fn load_item_cmsketch<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        table_id: i64,
+        is_index: bool,
+        id: i64,
+    ) -> Result<Option<CmsSketch>, SystemTableError> {
+        let prefix = [
+            Datum::Int(table_id),
+            Datum::Int(i64::from(is_index)),
+            Datum::Int(id),
+        ];
+        let Some((key, value)) = scan_system_table_prefixed(snapshot, &self.histograms, &prefix)?
+            .into_iter()
+            .next()
+        else {
+            return Ok(None);
+        };
+        let row = SystemRow::parse(&self.histograms, &key, &value)?;
+        if row.i64("table_id")?.unwrap_or_default() != table_id
+            || (row.i64("is_index")?.unwrap_or_default() != 0) != is_index
+            || row.i64("hist_id")?.unwrap_or_default() != id
+        {
+            return Ok(None);
+        }
+        decode_cmsketch(row.bytes("cm_sketch")?.as_deref().unwrap_or_default()).map_err(|error| {
+            SystemTableError::Decode {
+                name: self.histograms.name().to_owned(),
+                detail: error.to_string(),
+            }
+        })
+    }
+
+    /// Pinned async-global-stats `LoadHistogram` for one item.
+    pub fn load_item_histogram<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        table_id: i64,
+        is_index: bool,
+        id: i64,
+        column_type: Option<&FieldType>,
+    ) -> Result<Option<Histogram>, SystemTableError> {
+        let Some(mut item) =
+            self.load_item(snapshot, table_id, is_index, id, column_type, false)?
+        else {
+            return Ok(None);
+        };
+        let prefix = [
+            Datum::Int(table_id),
+            Datum::Int(i64::from(is_index)),
+            Datum::Int(id),
+        ];
+        let column_types = column_type
+            .map(|field_type| BTreeMap::from([(id, field_type.clone())]))
+            .unwrap_or_default();
+        item.histogram.buckets = self
+            .load_buckets_prefixed(snapshot, &prefix, &column_types)?
+            .remove(&(is_index, id))
+            .unwrap_or_default();
+        Ok(Some(item.histogram))
+    }
+
+    /// Pinned async-global-stats `TopNFromStorage` for one item.
+    pub fn load_item_topn<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        table_id: i64,
+        is_index: bool,
+        id: i64,
+    ) -> Result<Option<TopN>, SystemTableError> {
+        let prefix = [
+            Datum::Int(table_id),
+            Datum::Int(i64::from(is_index)),
+            Datum::Int(id),
+        ];
+        let rows = self.load_topn_prefixed(snapshot, &prefix)?;
+        Ok(decode_topn_rows(
+            rows.get(&(is_index, id)).map_or(&[][..], Vec::as_slice),
+        ))
     }
 
     /// Pinned Go `TableStatsFromStorage(..., loadAll=false)` during a cache

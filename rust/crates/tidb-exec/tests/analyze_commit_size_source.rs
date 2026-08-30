@@ -315,13 +315,15 @@ fn partition_fm_sketch_round_trips_only_for_global_merge() {
 }
 
 /// Pinned async global-stat preparation probes histogram existence by item
-/// kind, then its FM worker reads exactly one `(table_id, is_index, hist_id)`
-/// sketch at a time.
+/// kind, then each worker phase reads exactly one
+/// `(table_id, is_index, hist_id)` payload at a time.
 #[test]
-fn async_global_stats_probes_kind_and_loads_one_fm_sketch() {
+fn async_global_stats_loads_each_payload_by_item() {
     let mut store = bootstrapped();
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let expected = FmSketch::from_raw_parts(3, MAX_SKETCH_SIZE, [8, 16, 24]);
+    let mut expected_cms = CmsSketch::new(2, 8);
+    expected_cms.insert_bytes_by_count(b"x", 5);
     let mut column = full_histogram(1, false);
     column.fm_sketch = Some(expected.clone());
     let stats = ClusterTableStats {
@@ -337,6 +339,20 @@ fn async_global_stats_probes_kind_and_loads_one_fm_sketch() {
     };
     let plan = plan_partition_stats_write(&mut store, &catalog, &stats, now())
         .expect("partition analyze plans");
+    apply_mutations(&mut store, &plan.mutations);
+    let mut cms_item = full_histogram(2, false);
+    cms_item.stats_ver = 1;
+    cms_item.cms = Some(expected_cms);
+    let plan = plan_loaded_stats_item_write(
+        &mut store,
+        &catalog,
+        stats.table_id,
+        stats.row_count as i64,
+        &cms_item,
+        stats.version,
+        now(),
+    )
+    .expect("a version-1 CMSketch load plans");
     apply_mutations(&mut store, &plan.mutations);
 
     let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
@@ -358,6 +374,32 @@ fn async_global_stats_probes_kind_and_loads_one_fm_sketch() {
         .load_fm_sketch(&mut store, stats.table_id, false, 2)
         .expect("a missing FM sketch is not an error")
         .is_none());
+    assert_eq!(
+        loader
+            .load_item_cmsketch(&mut store, stats.table_id, false, 2)
+            .expect("one CMSketch loads")
+            .expect("the CMSketch exists")
+            .total_count(),
+        5
+    );
+    let field_type = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
+    assert_eq!(
+        loader
+            .load_item_histogram(&mut store, stats.table_id, false, 1, Some(&field_type))
+            .expect("one histogram loads")
+            .expect("the histogram exists")
+            .buckets
+            .len(),
+        256
+    );
+    assert_eq!(
+        loader
+            .load_item_topn(&mut store, stats.table_id, false, 1)
+            .expect("one TopN loads")
+            .as_ref()
+            .map(TopN::num),
+        Some(100)
+    );
 
     let column_kind = tidb_codec::encode_key(&[Datum::Int(stats.table_id), Datum::Int(0)])
         .expect("column-kind prefix encodes");
@@ -366,9 +408,9 @@ fn async_global_stats_probes_kind_and_loads_one_fm_sketch() {
     let column_item =
         tidb_codec::encode_key(&[Datum::Int(stats.table_id), Datum::Int(0), Datum::Int(1)])
             .expect("column-item prefix encodes");
-    let missing_item =
+    let cms_item_prefix =
         tidb_codec::encode_key(&[Datum::Int(stats.table_id), Datum::Int(0), Datum::Int(2)])
-            .expect("missing-item prefix encodes");
+            .expect("CMS-item prefix encodes");
     assert_eq!(
         store.scans,
         vec![
@@ -386,7 +428,24 @@ fn async_global_stats_probes_kind_and_loads_one_fm_sketch() {
             ),
             tidb_codec::encode_row_key(
                 tidb_metadef::system::STATS_FMSKETCH_TABLE_ID,
-                &missing_item,
+                &cms_item_prefix,
+            ),
+            tidb_codec::encode_row_key(
+                tidb_metadef::system::STATS_HISTOGRAMS_TABLE_ID,
+                &cms_item_prefix,
+            ),
+            tidb_codec::encode_row_key(
+                tidb_metadef::system::STATS_HISTOGRAMS_TABLE_ID,
+                &column_item,
+            ),
+            tidb_codec::encode_row_key(
+                tidb_metadef::system::STATS_BUCKETS_TABLE_ID,
+                &column_item,
+            ),
+            tidb_codec::table_key::encode_index_seek_key(
+                tidb_metadef::system::STATS_TOP_NTABLE_ID,
+                1,
+                &column_item,
             ),
         ]
     );

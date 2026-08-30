@@ -199,6 +199,26 @@ fn source_merge_item_uses_fm_ndv_and_clears_bucket_ndv() {
 }
 
 #[test]
+fn source_merge_item_without_fm_uses_go_s_nil_ndv() {
+    let mut item = partition_item([]);
+    item.fm_sketch = None;
+    let merged = merge_partition_stats_item(
+        Some(&Utc),
+        2,
+        100,
+        256,
+        10,
+        &FieldType::new(FieldTypeCode::Tiny),
+        false,
+        GlobalStatsMergeMode::Async,
+        1,
+        vec![item],
+    )
+    .expect("Go's nil FM sketch receiver reports NDV zero");
+    assert_eq!(merged.histogram.expect("histogram is produced").ndv, 0);
+}
+
+#[test]
 fn source_async_and_blocking_cms_nil_order_matches_go_workers() {
     let first = partition_item([1]);
     let mut second = partition_item([2]);

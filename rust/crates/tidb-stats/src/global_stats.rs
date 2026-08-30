@@ -27,7 +27,7 @@ use crate::histogram::{
     merge_partition_histograms, Histogram, HistogramMergeError, PartitionMergeOptions,
     TopNMergeEntry,
 };
-use crate::{merge_fm_sketch, DatumMapCache, FmSketch};
+use crate::{fm_sketch_ndv, merge_fm_sketch, DatumMapCache, FmSketch};
 
 const MAX_PARTITION_MERGE_BATCH_SIZE: usize = 256;
 
@@ -76,8 +76,6 @@ pub enum GlobalStatsMergeError {
     Cms(MergeError),
     /// Partition histograms could not be merged.
     Histogram(HistogramMergeError),
-    /// Go cannot derive global NDV without any partition FM sketch.
-    MissingFmSketch,
 }
 
 impl fmt::Display for GlobalStatsMergeError {
@@ -87,7 +85,6 @@ impl fmt::Display for GlobalStatsMergeError {
             Self::Datum(error) => error.fmt(formatter),
             Self::Cms(error) => error.fmt(formatter),
             Self::Histogram(error) => error.fmt(formatter),
-            Self::MissingFmSketch => formatter.write_str("partition FM sketch is missing"),
         }
     }
 }
@@ -343,9 +340,49 @@ pub fn merge_partition_stats_item<TZ: TimeZone + Sync>(
         });
     }
 
+    let global_ndv = merge_partition_fm_sketches(
+        total_count,
+        partitions
+            .iter()
+            .map(|partition| partition.fm_sketch.as_ref()),
+    );
+    let cmsketch = merge_partition_cmsketches(
+        mode,
+        partitions
+            .iter()
+            .map(|partition| partition.cmsketch.as_ref()),
+    )?;
+    let topns = partitions
+        .iter()
+        .map(|partition| partition.topn.clone())
+        .collect();
+    let histograms = partitions
+        .into_iter()
+        .map(|partition| partition.histogram)
+        .collect();
+    merge_partition_histogram_topn(
+        timezone,
+        analyze_version,
+        requested_topn,
+        expected_buckets,
+        field_type,
+        is_index,
+        merge_concurrency,
+        global_ndv,
+        cmsketch,
+        histograms,
+        topns,
+    )
+}
+
+/// Pinned Go FM-worker reduction, including nil receiver NDV zero.
+pub fn merge_partition_fm_sketches<'a>(
+    total_count: i64,
+    sketches: impl IntoIterator<Item = Option<&'a FmSketch>>,
+) -> i64 {
     let mut fm_sketch = None;
-    for partition in &partitions {
-        match (&mut fm_sketch, &partition.fm_sketch) {
+    for sketch in sketches {
+        match (&mut fm_sketch, sketch) {
             (None, Some(source)) => fm_sketch = Some(source.clone()),
             (Some(destination), Some(source)) => {
                 merge_fm_sketch(Some(destination), Some(source));
@@ -353,27 +390,30 @@ pub fn merge_partition_stats_item<TZ: TimeZone + Sync>(
             _ => {}
         }
     }
-    let global_ndv = fm_sketch
-        .as_ref()
-        .ok_or(GlobalStatsMergeError::MissingFmSketch)?
-        .ndv()
-        .min(total_count);
+    fm_sketch_ndv(fm_sketch.as_ref()).min(total_count)
+}
 
+/// Pinned Go CMS-worker reduction. The blocking worker anchors on the first
+/// partition even when it is nil; the async worker adopts the first non-nil
+/// sketch it receives.
+pub fn merge_partition_cmsketches<'a>(
+    mode: GlobalStatsMergeMode,
+    sketches: impl IntoIterator<Item = Option<&'a CmsSketch>>,
+) -> Result<Option<CmsSketch>, GlobalStatsMergeError> {
+    let sketches = sketches.into_iter().collect::<Vec<_>>();
     let mut cmsketch = None;
     match mode {
         GlobalStatsMergeMode::Blocking => {
-            cmsketch = partitions[0].cmsketch.clone();
+            cmsketch = sketches.first().copied().flatten().cloned();
             if let Some(destination) = &mut cmsketch {
-                for partition in &partitions[1..] {
-                    if let Some(source) = &partition.cmsketch {
-                        destination.merge(source)?;
-                    }
+                for source in sketches.iter().skip(1).copied().flatten() {
+                    destination.merge(source)?;
                 }
             }
         }
         GlobalStatsMergeMode::Async => {
-            for partition in &partitions {
-                match (&mut cmsketch, &partition.cmsketch) {
+            for source in sketches {
+                match (&mut cmsketch, source) {
                     (None, Some(source)) => cmsketch = Some(source.clone()),
                     (Some(destination), Some(source)) => destination.merge(source)?,
                     _ => {}
@@ -381,15 +421,32 @@ pub fn merge_partition_stats_item<TZ: TimeZone + Sync>(
             }
         }
     }
+    Ok(cmsketch)
+}
 
-    let topns = partitions
-        .iter()
-        .map(|partition| partition.topn.as_ref())
-        .collect::<Vec<_>>();
-    let histograms = partitions
-        .iter()
-        .map(|partition| partition.histogram.clone())
-        .collect();
+/// Pinned Go histogram-and-TopN worker after FM and CMS phases finish.
+#[allow(clippy::too_many_arguments)]
+pub fn merge_partition_histogram_topn<TZ: TimeZone + Sync>(
+    timezone: Option<&TZ>,
+    analyze_version: i64,
+    requested_topn: u32,
+    expected_buckets: usize,
+    field_type: &FieldType,
+    is_index: bool,
+    merge_concurrency: usize,
+    global_ndv: i64,
+    cmsketch: Option<CmsSketch>,
+    histograms: Vec<Histogram>,
+    topns: Vec<Option<TopN>>,
+) -> Result<GlobalStatsItem, GlobalStatsMergeError> {
+    if histograms.is_empty() {
+        return Ok(GlobalStatsItem {
+            histogram: None,
+            cmsketch,
+            topn: None,
+        });
+    }
+    let topns = topns.iter().map(Option::as_ref).collect::<Vec<_>>();
     let (topn, remainder, histograms) = if merge_concurrency < 2 {
         merge_partition_topn(
             timezone,

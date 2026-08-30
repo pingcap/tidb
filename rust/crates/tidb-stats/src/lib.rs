@@ -115,6 +115,7 @@ pub use fmsketch_codec::{
     insert_value_with_error_policy, FmSketchCodecError, FmSketchProto,
 };
 pub use global_stats::{
+    merge_partition_cmsketches, merge_partition_fm_sketches, merge_partition_histogram_topn,
     merge_partition_stats_item, merge_partition_topn, GlobalStatsItem, GlobalStatsMergeError,
     GlobalStatsMergeMode, PartitionStatsItem,
 };

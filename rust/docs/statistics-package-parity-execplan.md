@@ -177,6 +177,9 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - Observation: the blocking and async global-statistics workers deliberately classify missing data differently. Blocking treats an unanalyzed item as 8243 and a nonempty partition whose histogram plus TopN are empty as 8244; async always skips a partition with no histogram rows for that item kind, reports an absent target histogram row as 8244 when sibling rows exist, and does not reject an existing-but-empty payload.
   Evidence: pinned `blockingMergePartitionStats2GlobalStats` versus async `prepare`, `CheckSkipPartition`, and `CheckSkipColumnPartiion`; focused Rust regressions now cover every branch instead of applying the blocking predicate to both modes.
 
+- Observation: a missing FM sketch is not a merge error. Go deliberately calls the nil-safe `(*FMSketch).NDV`, which returns zero, and then continues to CMS, TopN, and histogram merging.
+  Evidence: pinned `FMSketch.NDV`, blocking `globalStats.Fms[i].NDV()`, and async `dealFMSketch`; Rust removed its extra `MissingFmSketch` error and now performs the same FM, CMS, and histogram/TopN phase reductions over exact per-item storage reads.
+
 ## Decision Log
 
 - Decision: reconstruct and test each pinned Go branch before editing Rust; do not preserve Rust-only fallback paths.
