@@ -273,11 +273,10 @@ pub enum DdlStatement {
         /// Signedness written by the new column definition.
         unsigned: bool,
     },
-    /// The single-action `ALTER TABLE ... ADD COLUMN` this node serves:
-    /// one nullable, defaultless column appended at the end. Existing rows
-    /// read the implicit NULL with no rewrite, which is MySQL's answer for
-    /// the same shape; everything needing a row rewrite is refused by name
-    /// at admission (`build_added_column`).
+    /// The single-action `ALTER TABLE ... ADD COLUMN` this node serves,
+    /// including Go's default/origin-default shapes and virtual generated
+    /// columns. Stored generated ADD remains Go's own 3106 refusal because it
+    /// would require a backfill.
     AddColumn {
         /// The resolved database name.
         schema: String,
@@ -1665,9 +1664,22 @@ fn apply_add_column(
     // flattened that to the generic 1105 and prefixed the client's message
     // with "catalog encode failed", which names an internal step the
     // statement never reached.
-    let mut added =
-        crate::table_info_build::build_added_column(column, &info.charset, &info.collate, context)
-            .map_err(DdlPlanError::Admission)?;
+    let appended = info.columns.len();
+    let destination = locate_offset_to_move(appended, position, info)?;
+    let generated_preceding = info
+        .columns
+        .iter_deref()
+        .take(destination)
+        .map(|column| column.read().clone_like_go())
+        .collect::<Vec<_>>();
+    let mut added = crate::table_info_build::build_added_column(
+        column,
+        &info.charset,
+        &info.collate,
+        context,
+        Some(&generated_preceding),
+    )
+    .map_err(DdlPlanError::Admission)?;
     // Go `AllocateColumnID`: ids only ever grow, so a dropped column's id is
     // never reused.
     info.max_column_id += 1;
@@ -1678,8 +1690,6 @@ fn apply_add_column(
     // Go `onAddColumn`'s write-reorganization step: the column is APPENDED
     // first and only then moved to where `FIRST`/`AFTER` asked for, which
     // is why the destination is computed against the appended layout.
-    let appended = info.columns.len() - 1;
-    let destination = locate_offset_to_move(appended, position, info)?;
     move_column_info(info, appended, destination);
     Ok(AlterColumnOutcome::Applied)
 }
@@ -1990,12 +2000,10 @@ fn lower_create_table(
 /// Admits a `CREATE INDEX`, refusing every shape whose entries this node would
 /// not go on to maintain.
 ///
-/// The gate is not a taste judgement: [`crate::cluster_catalog`]'s loader and
-/// the session's table builder refuse a prefix index and a generated column
-/// outright, so publishing one here would write a `TableInfo` this very node
-/// then drops from its own catalog — the table would vanish from the
-/// connection that just indexed it. Each refusal names which half cannot carry
-/// the shape.
+/// The gate is not a taste judgement: [`crate::cluster_catalog`]'s bounded
+/// loader still refuses a prefix index, so publishing one here would write a
+/// `TableInfo` that path cannot serve. The refusal names the unsupported
+/// storage shape.
 fn lower_create_index(
     create: &CreateIndexStmt,
     default_schema: &str,
@@ -3763,6 +3771,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 &stored.charset,
                 &stored.collate,
                 &context.0,
+                None,
             )
             .map_err(DdlPlanError::Admission)?;
             // Go `dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(reason)`

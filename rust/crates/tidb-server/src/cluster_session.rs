@@ -736,6 +736,36 @@ pub(crate) fn cluster_table(
                     })?,
             )
         };
+        let generated = if column.is_generated() {
+            let expression =
+                tidb_model::generated_expr::parse_expression(&column.generated_expr_string)
+                    .map_err(|error| {
+                        format!("its generated column {name} has an invalid expression: {error:?}")
+                    })?;
+            let preceding_names = kv_columns
+                .iter()
+                .map(|column| column.name.clone())
+                .collect::<Vec<_>>();
+            let preceding_types = kv_columns
+                .iter()
+                .map(|column| column.field_type.clone())
+                .collect::<Vec<_>>();
+            Some(
+                tidb_executor::generated_column::build_added_generated_column(
+                    &name,
+                    &expression,
+                    column.generated_stored,
+                    &preceding_names,
+                    &preceding_types,
+                    &tidb_datatype::SessionTimeZone::utc(),
+                )
+                .map_err(|error| {
+                    format!("its generated column {name} cannot be built: {error:?}")
+                })?,
+            )
+        } else {
+            None
+        };
         kv_columns.push(KvColumn {
             name,
             id: column.id,
@@ -744,10 +774,7 @@ pub(crate) fn cluster_table(
             // Go `ColumnInfo.Comment`, which `SHOW CREATE TABLE` prints and
             // `information_schema.columns.column_comment` reports.
             comment: column.comment.clone(),
-            // The cluster catalog loader refuses a generated column outright
-            // (`tidb_exec::cluster_catalog`), so a table that reaches here
-            // never has one.
-            generated: None,
+            generated,
             default_value,
             origin_default,
         });

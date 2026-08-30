@@ -406,6 +406,7 @@ pub fn build_table_info_with_context(
             &table_charset,
             &table_collate,
             context,
+            None,
         )?;
         // An inline PRIMARY KEY / UNIQUE becomes a constraint of its own, in
         // the position Go appends it: after every table-level one.
@@ -719,10 +720,9 @@ fn index_type_of(options: &IndexOptions) -> Option<IndexType> {
 
 /// Builds the one column an `ALTER TABLE ... ADD COLUMN` appends, against the
 /// stored table's charset pair — Go `buildColumnAndConstraint` run by the
-/// add-column DDL job. The nullable-no-default shape is the one this tier
-/// serves: existing rows then read the implicit NULL default with no rewrite,
-/// which is also MySQL's answer. Every option that would need a row rewrite
-/// or a second allocator is refused BY NAME.
+/// add-column DDL job. `generated_preceding` is present only for the ADD path
+/// that can validate a virtual generated expression against the columns
+/// before it; CREATE/MODIFY keep their existing admission boundary.
 /// Names a column option the way the statement spelled it.
 ///
 /// A refusal reaches the client verbatim, so it must not carry a Rust `Debug`
@@ -759,6 +759,7 @@ pub fn build_added_column(
     table_charset: &str,
     table_collate: &str,
     context: &tidb_executor::StmtContext,
+    generated_preceding: Option<&[ColumnInfo]>,
 ) -> Refusal<ColumnInfo> {
     for option in &column.options {
         match option {
@@ -766,6 +767,14 @@ pub fn build_added_column(
             | ColumnOption::Comment(_)
             | ColumnOption::NotNull
             | ColumnOption::Default(_) => {}
+            ColumnOption::Generated { stored: false, .. } if generated_preceding.is_some() => {}
+            ColumnOption::Generated { stored: true, .. } if generated_preceding.is_some() => {
+                return Err(DdlAdmissionError::with_code(
+                    tidb_error::tidb::errcode::ErrUnsupportedOnGeneratedColumn,
+                    "'Adding generated stored column through ALTER TABLE' is not supported \
+                         for generated columns.",
+                ));
+            }
             other => {
                 return Err(DdlAdmissionError::unsupported(format!(
                     "ADD COLUMN {} waits on its DDL course",
@@ -774,8 +783,15 @@ pub fn build_added_column(
             }
         }
     }
-    let (mut info, constraints) =
-        build_column(0, column, None, table_charset, table_collate, context)?;
+    let (mut info, constraints) = build_column(
+        0,
+        column,
+        None,
+        table_charset,
+        table_collate,
+        context,
+        generated_preceding,
+    )?;
     if !constraints.is_empty() {
         return Err(DdlAdmissionError::unsupported(
             "ADD COLUMN must not introduce constraints on this node",
@@ -889,6 +905,7 @@ fn build_column(
     table_charset: &str,
     table_collate: &str,
     context: &tidb_executor::StmtContext,
+    generated_preceding: Option<&[ColumnInfo]>,
 ) -> Refusal<(ColumnInfo, Vec<Constraint>)> {
     let name = &column.name;
     if !column.qualifier.is_empty() {
@@ -1088,6 +1105,38 @@ fn build_column(
             // part of the AUTO_RANDOM contract.
             ColumnOption::AutoRandom(_) => {}
             ColumnOption::Comment(comment) => info.comment = comment.clone(),
+            ColumnOption::Generated {
+                expression, stored, ..
+            } => {
+                let Some(preceding) = generated_preceding else {
+                    return Err(DdlAdmissionError::unsupported(
+                        "a generated expression waits on its DDL course",
+                    ));
+                };
+                let names = preceding
+                    .iter()
+                    .map(|column| column.name.original().to_owned())
+                    .collect::<Vec<_>>();
+                let types = preceding
+                    .iter()
+                    .map(|column| column.field_type.clone())
+                    .collect::<Vec<_>>();
+                let generated = tidb_executor::generated_column::build_added_generated_column_with_like_default_escape(
+                    name,
+                    expression,
+                    *stored,
+                    &names,
+                    &types,
+                    &context.session_zone(),
+                    context.like_default_escape(),
+                )
+                .map_err(generated_column_admission_error)?;
+                info.generated_expr_string = generated.expr_text;
+                info.generated_stored = generated.stored;
+                for dependency in generated.dependencies {
+                    info.dependences.insert(dependency);
+                }
+            }
             // Already folded into the charset/collation resolution above.
             ColumnOption::Collate(collate) => {
                 if field_type.has_charset() {
@@ -1168,6 +1217,31 @@ fn build_column(
         persist_column_default(name, &mut info, staged_default, context)?;
     }
     Ok((info, constraints))
+}
+
+fn generated_column_admission_error(
+    error: tidb_executor::generated_column::GeneratedDdlError,
+) -> DdlAdmissionError {
+    use tidb_executor::generated_column::GeneratedDdlError;
+    match error {
+        GeneratedDdlError::UnknownDependency(name) => DdlAdmissionError::with_code(
+            1054,
+            format!("Unknown column '{name}' in 'generated column function'"),
+        ),
+        GeneratedDdlError::NonPrior => DdlAdmissionError::with_code(
+            tidb_error::tidb::errcode::ErrGeneratedColumnNonPrior,
+            "Generated column can refer only to generated columns defined prior to it.",
+        ),
+        GeneratedDdlError::DisallowedFunction(column) => DdlAdmissionError::with_code(
+            tidb_error::tidb::errcode::ErrGeneratedColumnFunctionIsNotAllowed,
+            format!("Expression of generated column '{column}' contains a disallowed function."),
+        ),
+        GeneratedDdlError::Unsupported(reason) => DdlAdmissionError::with_code(
+            tidb_error::tidb::errcode::ErrUnsupportedOnGeneratedColumn,
+            format!("'{reason}' is not supported for generated columns."),
+        ),
+        GeneratedDdlError::Unbuildable(reason) => DdlAdmissionError::unsupported(reason),
+    }
 }
 
 /// Go `AlterColumn` followed by `updateColumnDefaultValue`: replaces one

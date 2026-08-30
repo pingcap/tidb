@@ -762,61 +762,48 @@ fn a_fractional_current_timestamp_default_is_storable() {
 }
 
 /// A refusal reaches the client verbatim, so it must name the user's SQL and
-/// carry Go's own error number.
-///
-/// `ADD COLUMN ... AS (a+1) VIRTUAL` used to be refused as
-/// `1105 catalog encode failed: Unsupported ADD COLUMN option Generated {
-/// expression: Binary(Plus, Column(["a"]), Int("1")), expression_text:
-/// [97, 43, 49], stored: false }` -- this port's AST, the byte spelling of
-/// the user's own expression, an internal step the statement never reached,
-/// and the generic code in place of `ErrUnsupportedDDLOperation` (8200),
-/// which `DdlAdmissionError::unsupported` had set all along.
+/// Go accepts a virtual generated column added after its dependencies, but
+/// rejects the stored spelling because ALTER would have to backfill it.
 #[test]
-fn an_add_column_refusal_names_the_option_and_keeps_gos_code() {
+fn add_virtual_generated_column_and_refuse_stored_like_go() {
     let mut store = bootstrapped();
-    let write = plan(
+    let create = plan(
         &mut store,
         "CREATE TABLE u6.t (id BIGINT PRIMARY KEY CLUSTERED, a BIGINT, b BIGINT)",
         100,
     );
-    apply(&mut store, &write);
+    let table_id = create.created_id.expect("CREATE TABLE allocates an id");
+    apply(&mut store, &create);
 
-    for (sql, expected) in [
-        (
-            "ALTER TABLE u6.t ADD COLUMN c BIGINT AS (a+b) VIRTUAL",
-            "a VIRTUAL generated expression",
-        ),
-        (
-            "ALTER TABLE u6.t ADD COLUMN d BIGINT AS (a*2) STORED",
-            "a STORED generated expression",
-        ),
-        (
-            "ALTER TABLE u6.t ADD COLUMN e BIGINT AUTO_INCREMENT",
-            "AUTO_INCREMENT",
-        ),
-        (
-            "ALTER TABLE u6.t ADD COLUMN f BIGINT COLLATE utf8mb4_bin",
-            "COLLATE",
-        ),
-    ] {
-        let error = plan_ddl(&mut store, &statement(sql), 200).expect_err("refused");
-        match error {
-            DdlPlanError::Admission(ref admission) => {
-                assert_eq!(admission.code, 8200, "`{sql}`: {admission:?}");
-                assert_eq!(
-                    admission.reason,
-                    format!("Unsupported ADD COLUMN {expected} waits on its DDL course"),
-                );
-            }
-            other => panic!("`{sql}` expected an admission refusal, got {other:?}"),
-        }
-        // Nothing of the port's own vocabulary reaches the client.
-        assert!(
-            !error.to_string().contains("catalog encode failed")
-                && !error.to_string().contains('{'),
-            "{error}"
-        );
-    }
+    let add = plan(
+        &mut store,
+        "ALTER TABLE u6.t ADD COLUMN c BIGINT AS (a+b) VIRTUAL",
+        200,
+    );
+    let stored = stored_table(&add, table_id);
+    let column = stored["cols"]
+        .as_array()
+        .expect("column array")
+        .last()
+        .expect("added column");
+    assert_eq!(column["generated_expr_string"], "`a` + `b`");
+    assert_eq!(column["generated_stored"], false);
+    assert_eq!(column["dependences"], serde_json::json!({"a": {}, "b": {}}));
+
+    let error = plan_ddl(
+        &mut store,
+        &statement("ALTER TABLE u6.t ADD COLUMN d BIGINT AS (a*2) STORED"),
+        201,
+    )
+    .expect_err("stored generated ADD is refused");
+    let DdlPlanError::Admission(admission) = error else {
+        panic!("stored generated ADD reached the wrong refusal: {error:?}");
+    };
+    assert_eq!(admission.code, 3106);
+    assert_eq!(
+        admission.reason,
+        "'Adding generated stored column through ALTER TABLE' is not supported for generated columns."
+    );
 }
 
 /// No DDL refusal may reach a client carrying this port's own vocabulary.

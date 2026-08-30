@@ -3981,6 +3981,20 @@ impl Executor for TableScanExec {
         self.partial_pending = None;
         self.partial_rows = None;
         self.partial_done = false;
+        // Go never asks TiKV to return a virtual generated column: the root
+        // table reader decodes its dependencies and evaluates the expression
+        // in the statement context. This coprocessor seam can return only
+        // stored column bytes, so keep the scan at the root whenever its
+        // output contains a virtual generated column.
+        if self.keep.iter().any(|offset| {
+            self.table
+                .columns
+                .get(*offset)
+                .and_then(|column| column.generated.as_ref())
+                .is_some_and(|generated| !generated.stored)
+        }) {
+            return self.open_local_cursor();
+        }
         if let Some(aggregate) = self.partial_aggregate.clone() {
             self.partial_remote = self
                 .table

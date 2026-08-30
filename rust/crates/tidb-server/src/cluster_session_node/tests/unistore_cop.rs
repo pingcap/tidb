@@ -278,7 +278,7 @@ fn drop_schema_ddl_retires_all_statistics_like_go() {
 /// NULL for every existing row, and `InsertColStats2KV` persists that fact
 /// before advancing the physical table's statistics version.
 #[test]
-fn add_column_ddl_initializes_null_statistics_like_go() {
+fn add_column_ddl_initializes_statistics_like_go() {
     let (stack, _users) =
         cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
     let mut session = stack
@@ -420,6 +420,73 @@ fn add_column_ddl_initializes_null_statistics_like_go() {
             ),
         )),
         [["3", "3", "0", "0"]]
+    );
+
+    rows(
+        &mut session,
+        "ALTER TABLE stats_add_column ADD COLUMN e INT GENERATED ALWAYS AS (a + 1) VIRTUAL",
+    );
+    let virtual_column_id = {
+        let catalog = stack.factory.catalog.load();
+        let column = catalog
+            .find_table("test", "stats_add_column")
+            .expect("altered table is published")
+            .1
+            .columns
+            .iter_deref()
+            .find(|column| column.read().name.lowercase() == "e")
+            .expect("virtual column is published")
+            .read()
+            .clone_like_go();
+        assert!(column.is_virtual_generated());
+        assert_eq!(column.generated_expr_string, "`a` + 1");
+        assert!(column.dependences.contains("a"));
+        column.id
+    };
+    session.rebuild_catalog_if_stale();
+    {
+        let catalog = session.session.shared_catalog();
+        let catalog = catalog.lock().expect("session catalog is available");
+        let tidb_executor::driver::TableEntry::Kv(table) = catalog
+            .table_in("test", "stats_add_column")
+            .expect("rebuilt executor table is available")
+        else {
+            panic!("rebuilt executor table is storage-backed");
+        };
+        assert!(table
+            .columns
+            .iter()
+            .find(|column| column.name.eq_ignore_ascii_case("e"))
+            .expect("executor virtual column exists")
+            .generated
+            .is_some());
+    }
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT a, e FROM stats_add_column ORDER BY a",
+        )),
+        [["1", "2"], ["2", "3"], ["3", "4"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT distinct_count, null_count, stats_ver FROM mysql.stats_histograms \
+                 WHERE table_id = {table_id} AND is_index = 0 AND hist_id = {virtual_column_id}"
+            ),
+        )),
+        [["0", "0", "0"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT count(*) FROM mysql.stats_buckets WHERE table_id = {table_id} \
+                 AND is_index = 0 AND hist_id = {virtual_column_id}"
+            ),
+        )),
+        [["0"]]
     );
 }
 
