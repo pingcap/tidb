@@ -23,6 +23,7 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/stretchr/testify/require"
 )
 
@@ -65,7 +66,7 @@ func TestScanAuroraSnapshotSource(t *testing.T) {
 	result, err := scanner.ScanSource(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, SourceLayoutAuroraRDSSnapshot, result.Layout)
-	require.Equal(t, "mixed", result.Evidence.PathForm)
+	require.Equal(t, mydump.AuroraSnapshotPathFormMixed, result.Evidence.PathForm)
 	require.Empty(t, result.Evidence.ExportRoot)
 	require.True(t, result.Inventory.Complete)
 	require.Equal(t, int64(6), result.Inventory.ScannedObjectCount)
@@ -146,6 +147,7 @@ func TestScanAuroraSnapshotRejectsMultipleExportRoots(t *testing.T) {
 
 func TestScanAuroraSnapshotRejectsAmbiguousLayout(t *testing.T) {
 	root := t.TempDir()
+	writeSourceObject(t, root, "database/schema.valid/part.parquet", "b")
 	writeSourceObject(
 		t,
 		root,
@@ -161,14 +163,16 @@ func TestScanAuroraSnapshotRejectsAmbiguousLayout(t *testing.T) {
 	require.Equal(t, int64(1), scanErr.Count)
 }
 
-func TestScanAuroraSnapshotRejectsGenericLeafAmbiguity(t *testing.T) {
+func TestScanDefaultSourceIgnoresAuroraParseFailure(t *testing.T) {
 	root := t.TempDir()
-	writeSourceObject(t, root, "backup/v1.0/db1.t1.0000.parquet", "a")
+	writeSourceObject(t, root, "warehouse/db.tbl/2024.01/db.tbl.0001.parquet", "a")
 
-	_, err := newTestFileScanner(t, root).ScanSource(context.Background())
-	var scanErr *SourceScanError
-	require.ErrorAs(t, err, &scanErr)
-	require.Equal(t, SourceScanErrorAmbiguousLayout, scanErr.Code)
+	result, err := newTestFileScanner(t, root).ScanSource(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, SourceLayoutDefault, result.Layout)
+	require.Len(t, result.Tables, 1)
+	require.Equal(t, "db", result.Tables[0].Database)
+	require.Equal(t, "tbl", result.Tables[0].Table)
 }
 
 func TestScanAuroraSnapshotRejectsIncompleteScan(t *testing.T) {
@@ -181,6 +185,18 @@ func TestScanAuroraSnapshotRejectsIncompleteScan(t *testing.T) {
 	var scanErr *SourceScanError
 	require.True(t, errors.As(err, &scanErr))
 	require.Equal(t, SourceScanErrorIncompleteScan, scanErr.Code)
+	require.Equal(t, int64(1), scanErr.Count)
+	require.Error(t, scanErr.Cause)
+}
+
+func TestScanSourceObservesCancellation(t *testing.T) {
+	root := t.TempDir()
+	writeSourceObject(t, root, "db/db.users/1/part-a.parquet", "a")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := newTestFileScanner(t, root).ScanSource(ctx)
+	require.ErrorIs(t, err, context.Canceled)
 }
 
 func TestScanSourceInventoryDigestChangesWithObject(t *testing.T) {

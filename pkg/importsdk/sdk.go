@@ -17,6 +17,8 @@ package importsdk
 import (
 	"context"
 	"database/sql"
+
+	"github.com/pingcap/errors"
 )
 
 // SDK defines the interface for cloud import services
@@ -51,9 +53,14 @@ func NewImportSDK(ctx context.Context, sourcePath string, db *sql.DB, options ..
 	jobManager := NewJobManager(db)
 	sqlGenerator := NewSQLGenerator()
 
+	sourceScanner, ok := scanner.(SourceScanner)
+	if !ok {
+		_ = scanner.Close()
+		return nil, errors.New("file scanner does not support source scanning")
+	}
 	return &importSDK{
 		FileScanner:   scanner,
-		SourceScanner: scanner.(SourceScanner),
+		SourceScanner: sourceScanner,
 		JobManager:    jobManager,
 		SQLGenerator:  sqlGenerator,
 	}, nil

@@ -33,8 +33,25 @@ const maxSourceScanErrorSamples = 5
 type auroraSourceDetection struct {
 	matched    bool
 	exportRoot string
-	pathForm   string
-	files      map[string]*mydump.AuroraSnapshotFilePath
+	pathForm   mydump.AuroraSnapshotPathForm
+	files      map[string]auroraDetectedFile
+}
+
+type auroraDetectedFile struct {
+	schema string
+	table  string
+}
+
+type sourceScanErrorSamples struct {
+	count   int64
+	samples []string
+}
+
+func (s *sourceScanErrorSamples) add(path string) {
+	s.count++
+	if len(s.samples) < maxSourceScanErrorSamples {
+		s.samples = append(s.samples, path)
+	}
 }
 
 // SourceScanner provides the high-level automatic-mapping result used by
@@ -49,9 +66,13 @@ type SourceScanner interface {
 func (s *fileScanner) ScanSource(ctx context.Context) (*SourceScanResult, error) {
 	report := s.loader.GetScanReport()
 	if report != nil && !report.Complete {
-		return nil, &SourceScanError{Code: SourceScanErrorIncompleteScan}
+		return nil, &SourceScanError{
+			Code:  SourceScanErrorIncompleteScan,
+			Count: int64(len(report.Files)),
+			Cause: report.Err,
+		}
 	}
-	detection, err := s.detectAuroraSource(report)
+	detection, err := s.detectAuroraSource(ctx, report)
 	if err != nil {
 		return nil, err
 	}
@@ -77,7 +98,7 @@ func (s *fileScanner) ScanSource(ctx context.Context) (*SourceScanResult, error)
 		result.Inventory.TotalObjectBytes += table.TotalObjectSize
 	}
 	if !detection.matched {
-		importableCount, err := s.validateDefaultCoverage(report, tables)
+		importableCount, err := s.validateDefaultCoverage(ctx, report, tables)
 		if err != nil {
 			return nil, err
 		}
@@ -106,25 +127,29 @@ func (s *fileScanner) ScanSource(ctx context.Context) (*SourceScanResult, error)
 		}
 	}
 
-	unmapped := make([]string, 0)
+	var unmapped sourceScanErrorSamples
 	var objectBytes int64
-	rawSizes := make(map[string]int64, len(detection.files))
+	rawObjects := make([]mydump.RawFile, 0, len(detection.files))
 	for _, rawFile := range report.Files {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		parsed, ok := detection.files[rawFile.Path]
-		if !ok || !configuredFilter.MatchTable(parsed.Schema, parsed.Table) {
+		if !ok || !configuredFilter.MatchTable(parsed.schema, parsed.table) {
 			continue
 		}
 		result.Inventory.ImportableObjectCount++
-		rawSizes[rawFile.Path] = rawFile.Size
+		rawObjects = append(rawObjects, rawFile)
 		objectBytes += rawFile.Size
 		if _, ok := mappedPaths[rawFile.Path]; !ok {
-			unmapped = append(unmapped, rawFile.Path)
+			unmapped.add(rawFile.Path)
 		}
 	}
-	if len(unmapped) > 0 {
-		return nil, newSourceScanError(
+	if unmapped.count > 0 {
+		return nil, newSourceScanErrorWithCount(
 			SourceScanErrorUnsupportedPath,
-			unmapped,
+			unmapped.count,
+			unmapped.samples,
 			nil,
 		)
 	}
@@ -134,11 +159,12 @@ func (s *fileScanner) ScanSource(ctx context.Context) (*SourceScanResult, error)
 
 	result.Inventory.MappedObjectCount = result.Inventory.ImportableObjectCount
 	result.Inventory.TotalObjectBytes = objectBytes
-	result.Inventory.Digest = digestRawObjects(rawSizes)
+	result.Inventory.Digest = digestRawFileObjects(rawObjects)
 	return result, nil
 }
 
 func (s *fileScanner) validateDefaultCoverage(
+	ctx context.Context,
 	report *mydump.ScanReport,
 	tables []*TableMeta,
 ) (int64, error) {
@@ -170,15 +196,18 @@ func (s *fileScanner) validateDefaultCoverage(
 	}
 
 	var importableCount int64
-	unmapped := make([]string, 0)
+	var unmapped sourceScanErrorSamples
 	for _, raw := range report.Files {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
 		routed, routeErr := router.Route(filepath.ToSlash(raw.Path))
 		if routeErr != nil {
 			return 0, newSourceScanError(SourceScanErrorUnsupportedPath, []string{raw.Path}, routeErr)
 		}
 		if routed == nil {
 			if isDataObject(raw.Path) {
-				unmapped = append(unmapped, raw.Path)
+				unmapped.add(raw.Path)
 			}
 			continue
 		}
@@ -192,51 +221,72 @@ func (s *fileScanner) validateDefaultCoverage(
 		}
 		importableCount++
 		if _, ok := mapped[raw.Path]; !ok {
-			unmapped = append(unmapped, raw.Path)
+			unmapped.add(raw.Path)
 		}
 	}
-	if len(unmapped) > 0 {
-		return 0, newSourceScanError(SourceScanErrorUnsupportedPath, unmapped, nil)
+	if unmapped.count > 0 {
+		return 0, newSourceScanErrorWithCount(
+			SourceScanErrorUnsupportedPath, unmapped.count, unmapped.samples, nil,
+		)
 	}
 	return importableCount, nil
 }
 
-func (s *fileScanner) detectAuroraSource(report *mydump.ScanReport) (*auroraSourceDetection, error) {
-	result := &auroraSourceDetection{files: make(map[string]*mydump.AuroraSnapshotFilePath)}
+func (s *fileScanner) detectAuroraSource(
+	ctx context.Context,
+	report *mydump.ScanReport,
+) (*auroraSourceDetection, error) {
+	result := &auroraSourceDetection{files: make(map[string]auroraDetectedFile)}
 	// Explicit file routers describe a user-selected layout and must retain
 	// their existing semantics.
 	if report == nil || len(s.config.fileRouteRules) > 0 {
 		return result, nil
 	}
 
-	unmatched := make([]string, 0)
+	defaultRouter, err := mydump.NewDefaultFileRouter(s.config.logger)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	var unmatched sourceScanErrorSamples
+	var parseFailures sourceScanErrorSamples
+	var parseFailureCause error
+	parseFailureCode := SourceScanErrorUnsupportedPath
 	exportRoots := make(map[string]struct{})
 	pathForms := make(map[mydump.AuroraSnapshotPathForm]struct{})
 
 	for _, file := range report.Files {
-		if !strings.HasSuffix(strings.ToLower(file.Path), ".parquet") {
-			if isNonParquetDataObject(file.Path) {
-				unmatched = append(unmatched, file.Path)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if !strings.EqualFold(filepath.Ext(file.Path), ".parquet") {
+			isData, routeErr := isDefaultDataObject(defaultRouter, file.Path)
+			if routeErr != nil {
+				return nil, newSourceScanError(SourceScanErrorUnsupportedPath, []string{file.Path}, routeErr)
+			}
+			if isData {
+				unmatched.add(file.Path)
 			}
 			continue
 		}
-		parsed, matched, err := mydump.ParseAuroraSnapshotFilePath(file.Path)
-		if err != nil {
-			code := SourceScanErrorUnsupportedPath
-			if errors.ErrorEqual(err, mydump.ErrAmbiguousAuroraSnapshotPath) {
-				code = SourceScanErrorAmbiguousLayout
+		parsed, matched, parseErr := mydump.ParseAuroraSnapshotFilePath(file.Path)
+		if parseErr != nil {
+			parseFailures.add(file.Path)
+			if parseFailureCause == nil {
+				parseFailureCause = parseErr
 			}
-			return nil, newSourceScanError(
-				code,
-				[]string{file.Path},
-				err,
-			)
+			if errors.ErrorEqual(parseErr, mydump.ErrAmbiguousAuroraSnapshotPath) {
+				parseFailureCode = SourceScanErrorAmbiguousLayout
+			}
+			continue
 		}
 		if !matched {
-			unmatched = append(unmatched, file.Path)
+			unmatched.add(file.Path)
 			continue
 		}
-		result.files[file.Path] = parsed
+		result.files[file.Path] = auroraDetectedFile{
+			schema: parsed.Schema,
+			table:  parsed.Table,
+		}
 		exportRoots[parsed.ExportRoot] = struct{}{}
 		pathForms[parsed.Form] = struct{}{}
 	}
@@ -246,8 +296,15 @@ func (s *fileScanner) detectAuroraSource(report *mydump.ScanReport) (*auroraSour
 	}
 	result.matched = true
 
-	if len(unmatched) > 0 {
-		return nil, newSourceScanError(SourceScanErrorMixedLayout, unmatched, nil)
+	if parseFailures.count > 0 {
+		return nil, newSourceScanErrorWithCount(
+			parseFailureCode, parseFailures.count, parseFailures.samples, parseFailureCause,
+		)
+	}
+	if unmatched.count > 0 {
+		return nil, newSourceScanErrorWithCount(
+			SourceScanErrorMixedLayout, unmatched.count, unmatched.samples, nil,
+		)
 	}
 	if len(exportRoots) != 1 {
 		roots := make([]string, 0, len(exportRoots))
@@ -265,30 +322,27 @@ func (s *fileScanner) detectAuroraSource(report *mydump.ScanReport) (*auroraSour
 	}
 	if len(pathForms) == 1 {
 		for form := range pathForms {
-			result.pathForm = string(form)
+			result.pathForm = form
 		}
 	} else {
 		// Both AWS leaf conventions retain the same unambiguous table base
 		// prefix and can safely coexist across tables.
-		result.pathForm = "mixed"
+		result.pathForm = mydump.AuroraSnapshotPathFormMixed
 	}
 	return result, nil
 }
 
-func isNonParquetDataObject(path string) bool {
-	name := strings.ToLower(filepath.Base(path))
-	if compression := mydump.ParseCompressionOnFileExtension(name); compression != mydump.CompressionNone {
-		name = strings.TrimSuffix(name, filepath.Ext(name))
+func isDefaultDataObject(router mydump.FileRouter, path string) (bool, error) {
+	routed, err := router.Route(filepath.ToSlash(path))
+	if err != nil {
+		return false, err
 	}
-
-	if strings.HasSuffix(name, "-schema-create.sql") ||
-		strings.HasSuffix(name, "-schema.sql") ||
-		strings.HasSuffix(name, "-schema-view.sql") ||
-		strings.HasSuffix(name, "-schema-trigger.sql") ||
-		strings.HasSuffix(name, "-schema-post.sql") {
-		return false
+	if routed == nil {
+		return isDataObject(path), nil
 	}
-	return strings.HasSuffix(name, ".sql") || strings.HasSuffix(name, ".csv")
+	return routed.Type == mydump.SourceTypeSQL ||
+		routed.Type == mydump.SourceTypeCSV ||
+		routed.Type == mydump.SourceTypeParquet, nil
 }
 
 func isDataObject(path string) bool {
@@ -302,16 +356,33 @@ func isDataObject(path string) bool {
 }
 
 func newSourceScanError(code SourceScanErrorCode, samples []string, cause error) *SourceScanError {
-	count := len(samples)
+	return newSourceScanErrorWithCount(code, int64(len(samples)), samples, cause)
+}
+
+func newSourceScanErrorWithCount(
+	code SourceScanErrorCode,
+	count int64,
+	samples []string,
+	cause error,
+) *SourceScanError {
 	if len(samples) > maxSourceScanErrorSamples {
 		samples = samples[:maxSourceScanErrorSamples]
 	}
 	return &SourceScanError{
 		Code:    code,
-		Count:   int64(count),
-		Samples: samples,
+		Count:   count,
+		Samples: append([]string(nil), samples...),
 		Cause:   cause,
 	}
+}
+
+func digestRawFileObjects(objects []mydump.RawFile) string {
+	sort.Slice(objects, func(i, j int) bool { return objects[i].Path < objects[j].Path })
+	hash := sha256.New()
+	for _, object := range objects {
+		_, _ = fmt.Fprintf(hash, "%s\x00%d\n", object.Path, object.Size)
+	}
+	return hex.EncodeToString(hash.Sum(nil))
 }
 
 func digestTableObjects(tables []*TableMeta) string {

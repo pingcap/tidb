@@ -72,6 +72,9 @@ const (
 	// AuroraSnapshotPathFormBatched is the current form that places part files
 	// in one or more directories below the schema.table directory.
 	AuroraSnapshotPathFormBatched AuroraSnapshotPathForm = "batched"
+	// AuroraSnapshotPathFormMixed means both supported leaf layouts were found
+	// in one source inventory.
+	AuroraSnapshotPathFormMixed AuroraSnapshotPathForm = "mixed"
 )
 
 // AuroraSnapshotFilePath is the structural interpretation of an Aurora/RDS
@@ -80,10 +83,15 @@ type AuroraSnapshotFilePath struct {
 	// ExportRoot is relative to the configured source path. It is empty when
 	// the source path already points at the export-task root.
 	ExportRoot string
-	Database   string
-	Schema     string
-	Table      string
-	Form       AuroraSnapshotPathForm
+	// Database is the AWS export-path database directory. It is distinct from
+	// Schema, which is the MySQL schema used for import routing.
+	Database string
+	// Schema is the MySQL schema used for import routing.
+	Schema string
+	// Table is the MySQL table used for import routing.
+	Table string
+	// Form describes the observed AWS snapshot-export leaf layout.
+	Form AuroraSnapshotPathForm
 }
 
 // ParseAuroraSnapshotFilePath parses an Aurora/RDS snapshot-export parquet

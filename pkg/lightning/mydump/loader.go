@@ -299,6 +299,9 @@ type RawFile struct {
 type ScanReport struct {
 	Files    []RawFile
 	Complete bool
+	// Err is the listing or file-construction error that made the report
+	// incomplete.
+	Err error
 }
 
 type parquetInfo struct {
@@ -503,6 +506,7 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 		s.loader.scanReport = &ScanReport{
 			Files:    allFiles,
 			Complete: iterErr == nil,
+			Err:      iterErr,
 		}
 	}
 	if iterErr != nil {
@@ -517,6 +521,7 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 	if err != nil {
 		if s.loader.scanReport != nil {
 			s.loader.scanReport.Complete = false
+			s.loader.scanReport.Err = err
 		}
 		if !s.setupCfg.ReturnPartialResultOnError {
 			return common.ErrStorageUnknown.Wrap(err).GenWithStack("list file failed")

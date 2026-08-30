@@ -184,6 +184,9 @@ func (s *fileScanner) GetTableMetas(ctx context.Context) ([]*TableMeta, error) {
 	var results []*TableMeta
 	for _, dbMeta := range dbMetas {
 		for _, tblMeta := range dbMeta.Tables {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			tableMeta, err := s.buildTableMeta(dbMeta, tblMeta, allFiles)
 			if err != nil {
 				if s.config.skipInvalidFiles {

@@ -48,8 +48,11 @@ const (
 // SourceScanError reports an automatic-mapping failure without requiring Cloud
 // Import callers to parse an error string.
 type SourceScanError struct {
-	Code    SourceScanErrorCode
-	Count   int64
+	Code SourceScanErrorCode
+	// Count is the authoritative total number of affected objects.
+	Count int64
+	// Samples contains at most a small bounded prefix of affected object paths;
+	// it is not necessarily exhaustive when Count is larger than len(Samples).
 	Samples []string
 	Cause   error
 }

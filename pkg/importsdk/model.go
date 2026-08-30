@@ -57,11 +57,19 @@ const (
 // SourceInventory summarizes the source objects considered by automatic
 // mapping.
 type SourceInventory struct {
-	Complete              bool
-	ScannedObjectCount    int64
+	// Complete reports whether source enumeration finished without truncation.
+	Complete bool
+	// ScannedObjectCount includes data and supported non-data sidecar objects.
+	ScannedObjectCount int64
+	// ImportableObjectCount is the number of selected source data objects that
+	// must be accounted for by automatic mapping.
 	ImportableObjectCount int64
-	MappedObjectCount     int64
-	TotalObjectBytes      int64
+	// MappedObjectCount is the number of selected source data objects assigned
+	// to a table. A successful complete scan requires it to equal
+	// ImportableObjectCount.
+	MappedObjectCount int64
+	// TotalObjectBytes is the storage-reported size of importable objects.
+	TotalObjectBytes int64
 	// Digest identifies the importable object paths and storage-reported sizes.
 	Digest string
 }
@@ -72,9 +80,8 @@ type SourceLayoutEvidence struct {
 	// ExportRoot is relative to the configured source path and is empty when
 	// that path already points at the export-task root.
 	ExportRoot string
-	// PathForm is "batched", "direct", or "mixed" for an Aurora/RDS snapshot
-	// export.
-	PathForm string
+	// PathForm describes the Aurora/RDS snapshot-export leaf layout.
+	PathForm mydump.AuroraSnapshotPathForm
 }
 
 // SourceScanResult is the complete automatic-mapping result returned to Cloud
