@@ -22,6 +22,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_planner::access::{AccessObject, IndexAccess, OtherAccessObject, ScanAccessObject};
 use tidb_planner::explain::{
     Explain as PlannerExplain, ExplainContext as PlannerExplainContext,
     ExplainFormat as PlannerExplainFormat, ExplainOperator, ExplainTask,
@@ -218,8 +219,15 @@ fn table_name(catalog: &Catalog, table_id: i64, alias: Option<&str>) -> String {
     )
 }
 
-fn table_access(catalog: &Catalog, table_id: i64, alias: Option<&str>) -> String {
-    let mut access = format!("table:{}", table_name(catalog, table_id, alias));
+fn table_access(catalog: &Catalog, table_id: i64, alias: Option<&str>) -> ScanAccessObject {
+    let mut access = ScanAccessObject {
+        database: catalog
+            .physical_kv_table_database_by_id(table_id)
+            .unwrap_or_default()
+            .to_owned(),
+        table: table_name(catalog, table_id, alias),
+        ..ScanAccessObject::default()
+    };
     if let Some(table) = catalog.physical_kv_table_by_id(table_id) {
         if let Some(name) = table.partition().and_then(|partition| {
             partition
@@ -228,8 +236,7 @@ fn table_access(catalog: &Catalog, table_id: i64, alias: Option<&str>) -> String
                 .find(|definition| definition.id == table_id)
                 .map(|definition| definition.name.as_str())
         }) {
-            access.push_str(", partition:");
-            access.push_str(name);
+            access.partitions.push(name.to_owned());
         }
     }
     access
@@ -241,33 +248,45 @@ fn index_access(
     alias: Option<&str>,
     index_id: i64,
     index_name: Option<&str>,
-) -> String {
-    let table_access = table_access(catalog, table_id, alias);
+) -> ScanAccessObject {
+    let mut table_access = table_access(catalog, table_id, alias);
     let Some(table) = catalog.physical_kv_table_by_id(table_id) else {
-        return index_name.map_or(table_access.clone(), |name| {
-            format!("{table_access}, index:{name}")
-        });
+        if let Some(name) = index_name {
+            table_access.indexes.push(IndexAccess {
+                name: name.to_owned(),
+                ..IndexAccess::default()
+            });
+        }
+        return table_access;
     };
     let Some(index) = table.plan_indexes().find(|index| index.id == index_id) else {
-        return index_name.map_or(table_access.clone(), |name| {
-            format!("{table_access}, index:{name}")
-        });
+        if let Some(name) = index_name {
+            table_access.indexes.push(IndexAccess {
+                name: name.to_owned(),
+                ..IndexAccess::default()
+            });
+        }
+        return table_access;
     };
-    let columns = index
+    let cols = index
         .column_offsets
         .iter()
         .filter_map(|offset| table.columns.get(*offset))
-        .map(|column| column.name.as_str())
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!("{table_access}, index:{}({columns})", index.name)
+        .map(|column| column.name.clone())
+        .collect();
+    table_access.indexes.push(IndexAccess {
+        name: index.name.clone(),
+        cols,
+        is_clustered_index: false,
+    });
+    table_access
 }
 
-fn point_access(catalog: &Catalog, table_id: i64, index_id: Option<i64>) -> String {
+fn point_access(catalog: &Catalog, table_id: i64, index_id: Option<i64>) -> ScanAccessObject {
     match index_id {
         Some(index_id) => index_access(catalog, table_id, None, index_id, None),
         None => {
-            let access = table_access(catalog, table_id, None);
+            let mut access = table_access(catalog, table_id, None);
             let Some(table) = catalog.physical_kv_table_by_id(table_id) else {
                 return access;
             };
@@ -278,10 +297,14 @@ fn point_access(catalog: &Catalog, table_id: i64, index_id: Option<i64>) -> Stri
                     .common_handle_offsets()
                     .iter()
                     .filter_map(|offset| table.columns.get(*offset))
-                    .map(|column| column.name.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                format!("{access}, clustered index:PRIMARY({columns})")
+                    .map(|column| column.name.clone())
+                    .collect();
+                access.indexes.push(IndexAccess {
+                    name: "PRIMARY".to_owned(),
+                    cols: columns,
+                    is_clustered_index: true,
+                });
+                access
             }
         }
     }
@@ -308,33 +331,50 @@ fn physical_operator_name(plan: &PhysicalPlan) -> String {
     }
 }
 
-fn physical_access(plan: &PhysicalPlan, catalog: &Catalog) -> String {
+fn physical_access(plan: &PhysicalPlan, catalog: &Catalog) -> Option<AccessObject> {
     match plan {
-        PhysicalPlan::TableScan(scan) => {
-            table_access(catalog, scan.table_id, scan.table_as_name.as_deref())
-        }
-        PhysicalPlan::MemTable(scan) => format!("table:{}", scan.table_name),
-        PhysicalPlan::IndexScan(scan) => index_access(
+        PhysicalPlan::TableScan(scan) => Some(AccessObject::Scan(table_access(
+            catalog,
+            scan.table_id,
+            scan.table_as_name.as_deref(),
+        ))),
+        PhysicalPlan::MemTable(scan) => Some(AccessObject::Scan(ScanAccessObject {
+            database: scan.db_name.clone(),
+            table: scan.table_name.clone(),
+            ..ScanAccessObject::default()
+        })),
+        PhysicalPlan::IndexScan(scan) => Some(AccessObject::Scan(index_access(
             catalog,
             scan.table_id,
             scan.table_as_name.as_deref(),
             scan.index_id,
             Some(&scan.index_name),
-        ),
-        PhysicalPlan::PointGet(point) => point_access(catalog, point.table_id, point.index_id),
-        PhysicalPlan::BatchPointGet(point) => point_access(catalog, point.table_id, point.index_id),
+        ))),
+        PhysicalPlan::PointGet(point) => Some(AccessObject::Scan(point_access(
+            catalog,
+            point.table_id,
+            point.index_id,
+        ))),
+        PhysicalPlan::BatchPointGet(point) => Some(AccessObject::Scan(point_access(
+            catalog,
+            point.table_id,
+            point.index_id,
+        ))),
         PhysicalPlan::CTE(cte) => {
             if cte.cte_name.eq_ignore_ascii_case(&cte.cte_as_name) {
-                format!("CTE:{}", cte.cte_name.to_ascii_lowercase())
+                Some(AccessObject::Other(OtherAccessObject(format!(
+                    "CTE:{}",
+                    cte.cte_name.to_ascii_lowercase()
+                ))))
             } else {
-                format!(
+                Some(AccessObject::Other(OtherAccessObject(format!(
                     "CTE:{} AS {}",
                     cte.cte_name.to_ascii_lowercase(),
                     cte.cte_as_name.to_ascii_lowercase()
-                )
+                ))))
             }
         }
-        _ => String::new(),
+        _ => None,
     }
 }
 
@@ -646,9 +686,11 @@ fn physical_explain_operator(
 
     let mut operator = ExplainOperator::new(physical_operator_name(plan), plan.id())
         .with_task(task)
-        .with_access_object(physical_access(plan, catalog))
         .with_operator_info(physical_operator_info(plan, catalog))
         .with_children(children);
+    if let Some(access_object) = physical_access(plan, catalog) {
+        operator = operator.with_access_object(access_object);
+    }
     operator.label = label.to_owned();
     if let Some(rows) = plan
         .stats_info()

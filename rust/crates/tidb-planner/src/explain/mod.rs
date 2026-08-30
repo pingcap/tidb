@@ -16,6 +16,8 @@ use std::fmt;
 use tidb_ast::{LoadDataFields, LoadDataLines};
 use tidb_util::texttree::{indent_4_child, pretty_identifier};
 
+use crate::access::AccessObject;
+
 /// `LineFieldsInfo` defaults and overrides shared by LOAD DATA/SELECT INTO.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LineFieldsInfo {
@@ -203,8 +205,8 @@ pub struct ExplainOperator {
     pub actual_rows: Option<u64>,
     /// Task in which the operator executes.
     pub task: ExplainTask,
-    /// Table, index, partition, or other accessed object description.
-    pub access_object: String,
+    /// Table, index, partition, or other accessed object.
+    pub access_object: Option<AccessObject>,
     /// Operator-specific planning details.
     pub operator_info: String,
     /// Child operators in display order.
@@ -222,7 +224,7 @@ impl ExplainOperator {
             estimated_rows: None,
             actual_rows: None,
             task: ExplainTask::Root,
-            access_object: String::new(),
+            access_object: None,
             operator_info: String::new(),
             children: Vec::new(),
         }
@@ -251,8 +253,8 @@ impl ExplainOperator {
 
     /// Sets the accessed-object description.
     #[must_use]
-    pub fn with_access_object(mut self, value: impl Into<String>) -> Self {
-        self.access_object = value.into();
+    pub fn with_access_object(mut self, value: AccessObject) -> Self {
+        self.access_object = Some(value);
         self
     }
 
@@ -468,7 +470,10 @@ fn render_operator(
         );
         row.extend([
             operator.task.to_string(),
-            operator.access_object.clone(),
+            operator
+                .access_object
+                .as_ref()
+                .map_or_else(String::new, ToString::to_string),
             "N/A".to_owned(),
             operator.operator_info.clone(),
             "N/A".to_owned(),
@@ -477,7 +482,10 @@ fn render_operator(
     } else {
         row.extend([
             operator.task.to_string(),
-            operator.access_object.clone(),
+            operator
+                .access_object
+                .as_ref()
+                .map_or_else(String::new, ToString::to_string),
             operator.operator_info.clone(),
         ]);
     }

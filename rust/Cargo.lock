@@ -3660,6 +3660,7 @@ dependencies = [
  "tidb-hash",
  "tidb-model",
  "tidb-parser",
+ "tidb-proto",
  "tidb-resolve",
  "tidb-stats",
  "tidb-util",

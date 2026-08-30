@@ -85,6 +85,7 @@
 //! alternatives. [`plan::PlanNode`] remains an explain-only metadata view and
 //! is not a second plan representation — see its module header.
 
+pub mod access;
 pub mod access_path;
 pub mod aggregation_descriptor;
 pub mod base_traits;

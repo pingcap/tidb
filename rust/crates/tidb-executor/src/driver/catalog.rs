@@ -1781,6 +1781,25 @@ impl Catalog {
         })
     }
 
+    /// Resolves a logical or partition table ID to its owning database name.
+    pub(crate) fn physical_kv_table_database_by_id(&self, physical_id: i64) -> Option<&str> {
+        self.databases.values().find_map(|database| {
+            database.tables.values().find_map(|entry| {
+                let TableEntry::Kv(table) = entry.as_ref() else {
+                    return None;
+                };
+                (table.table_id == physical_id
+                    || table.partition().is_some_and(|partition| {
+                        partition
+                            .definitions
+                            .iter()
+                            .any(|definition| definition.id == physical_id)
+                    }))
+                .then_some(database.name.as_str())
+            })
+        })
+    }
+
     /// A table of the default database, for tests that inspect the entry.
     #[must_use]
     pub fn get_table_for_test(&self, name: &str) -> Option<&TableEntry> {

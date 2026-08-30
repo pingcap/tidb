@@ -23,6 +23,7 @@ tidb-funcdep = { path = "../tidb-funcdep" }
 tidb-hash = { path = "../tidb-hash" }
 tidb-model = { path = "../tidb-model" }
 tidb-parser = { path = "../tidb-parser" }
+tidb-proto = { path = "../tidb-proto" }
 tidb-resolve = { path = "../tidb-resolve" }
 tidb-stats = { path = "../tidb-stats" }
 tidb-util = { path = "../tidb-util" }
