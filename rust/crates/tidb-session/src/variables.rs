@@ -338,6 +338,14 @@ impl Session {
             // Go restores a variable to its registry default by clearing the
             // session (or global) override.
             tidb_ast::SetVariableValue::Default => {
+                if assignment
+                    .name
+                    .eq_ignore_ascii_case("tidb_enable_async_merge_global_stats")
+                {
+                    // Go resolves DEFAULT to a value and then runs the same
+                    // unconditional Validation warning as an explicit value.
+                    self.warn_sysvar_assignment(&assignment.name, "ON");
+                }
                 if is_global {
                     self.vars
                         .reset_global(&assignment.name)

@@ -387,6 +387,16 @@ fn async_global_stats_switch_warns_on_every_assignment() {
         .run("SET GLOBAL tidb_enable_async_merge_global_stats = ON")
         .unwrap();
     assert_eq!(row_text(session.run("SHOW WARNINGS")), expected);
+
+    session
+        .run("SET SESSION tidb_enable_async_merge_global_stats = DEFAULT")
+        .unwrap();
+    assert_eq!(row_text(session.run("SHOW WARNINGS")), expected);
+
+    session
+        .run("SET GLOBAL tidb_enable_async_merge_global_stats = DEFAULT")
+        .unwrap();
+    assert_eq!(row_text(session.run("SHOW WARNINGS")), expected);
 }
 
 /// `tidb_session_alias` is cut to 64 RUNES and then stripped of trailing
