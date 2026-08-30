@@ -22,6 +22,8 @@
 //! decisions directly on hand-built plans: which node ends up where, which
 //! predicate travels how far, which column survives.
 
+use std::cell::RefCell;
+
 use tidb_ast::CiString;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_expr::aggregation::ByItems;
@@ -43,13 +45,14 @@ use super::limit::LogicalLimit;
 use super::projection::LogicalProjection;
 use super::rule::{
     self, add_selection, flags, logical_optimize, no_unexpected_zero_column_schema, BuildKeySolver,
-    ColumnPruner, DisabledLogicalRules, LogicalOptRule, PpdSolver, PushDownTopNOptimizer,
-    RuleContext, RuleId, OPT_RULE_FLAGS, OPT_RULE_LIST,
+    ColumnPruner, DisabledLogicalRules, LogicalOptRule, PlanCacheMarker, PpdSolver,
+    PushDownTopNOptimizer, RuleContext, RuleId, OPT_RULE_FLAGS, OPT_RULE_LIST,
 };
+use super::rule_partition_processor::{PartitionProcessor, PartitionPruning};
 use super::selection::LogicalSelection;
 use super::sort::LogicalSort;
 use super::topn::LogicalTopN;
-use super::{BaseLogicalPlan, LogicalPartitionUnionAll, LogicalPlan};
+use super::{BaseLogicalPlan, LogicalPartitionUnionAll, LogicalPlan, LogicalUnionScan};
 
 pub(crate) const TEST_BUILDER: PreservingFunctionBuilder = PreservingFunctionBuilder;
 
@@ -997,6 +1000,92 @@ fn predicate_push_down_moves_supported_conditions_into_a_data_source() {
     assert_eq!(source.all_conds.len(), 1);
     assert_eq!(source.pushed_down_conds.len(), 1);
     out.dismantle();
+}
+
+struct FixedPartitionPruning(Vec<usize>);
+
+impl PartitionPruning for FixedPartitionPruning {
+    fn partition_indices(
+        &self,
+        _source: &DataSource,
+    ) -> Result<Vec<usize>, crate::plan_base::PlanError> {
+        Ok(self.0.clone())
+    }
+}
+
+#[derive(Default)]
+struct RecordingPlanCacheMarker(RefCell<Option<String>>);
+
+impl PlanCacheMarker for RecordingPlanCacheMarker {
+    fn set_skip_plan_cache(&self, reason: &str) {
+        *self.0.borrow_mut() = Some(reason.to_owned());
+    }
+}
+
+#[test]
+fn partition_processor_puts_union_scan_inside_each_partition_branch() {
+    let allocator = PlanIdAllocator::new();
+    let mut source = data_source(&allocator, &[1, 2]);
+    let LogicalPlan::DataSource(source_ref) = &mut source else {
+        unreachable!("the helper builds a DataSource");
+    };
+    source_ref.partition_definition_ids = vec![101, 102, 103];
+
+    let conditions = vec![eq_const(2, 7)];
+    let handles = vec![column(1)];
+    let mut union_scan = LogicalUnionScan::new(
+        base(&allocator, LogicalUnionScan::TYPE, None),
+        handles.clone(),
+    );
+    union_scan.conditions.clone_from(&conditions);
+    union_scan.base.set_children(vec![source]);
+
+    let pruning = FixedPartitionPruning(vec![0, 2]);
+    let marker = RecordingPlanCacheMarker::default();
+    let mut ctx = test_context(&allocator);
+    ctx.partition_pruning = Some(&pruning);
+    ctx.plan_cache_marker = Some(&marker);
+
+    let (plan, changed) = PartitionProcessor
+        .optimize(&ctx, LogicalPlan::UnionScan(union_scan))
+        .expect("static partition rewrite");
+    assert!(!changed);
+    let LogicalPlan::PartitionUnionAll(union) = &plan else {
+        panic!("expected a PartitionUnionAll, got {plan:?}");
+    };
+    let physical_ids = union
+        .union_all
+        .base
+        .children()
+        .iter()
+        .map(|branch| {
+            let LogicalPlan::UnionScan(branch) = branch else {
+                panic!("each partition must be wrapped by UnionScan");
+            };
+            assert!(matches!(
+                branch.conditions.as_slice(),
+                [Expression::ScalarFunction(condition)] if condition.func_name.lowercase() == "eq"
+            ));
+            assert_eq!(
+                branch
+                    .handle_cols
+                    .iter()
+                    .map(|column| column.unique_id)
+                    .collect::<Vec<_>>(),
+                vec![1]
+            );
+            let [LogicalPlan::DataSource(source)] = branch.base.children() else {
+                panic!("UnionScan must directly own its partition DataSource");
+            };
+            source.physical_table_id
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(physical_ids, vec![101, 103]);
+    assert_eq!(
+        marker.0.borrow().as_deref(),
+        Some("Static partition pruning mode")
+    );
+    plan.dismantle();
 }
 
 // ***** column pruning, per operator *****

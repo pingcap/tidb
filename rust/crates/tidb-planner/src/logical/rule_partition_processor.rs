@@ -14,7 +14,10 @@
 
 //! Go `pkg/planner/core/rule/rule_partition_processor.go`.
 
-use crate::logical::{DataSource, LogicalPartitionUnionAll, LogicalPlan, LogicalTableDual};
+use crate::logical::{
+    BaseLogicalPlan, DataSource, LogicalPartitionUnionAll, LogicalPlan, LogicalTableDual,
+    LogicalUnionScan,
+};
 use crate::plan_base::PlanError;
 
 use super::rule::{LogicalOptRule, RuleContext};
@@ -68,16 +71,63 @@ fn make_children(ctx: &RuleContext<'_>, source: DataSource, indices: Vec<usize>)
     }
 }
 
+fn prune_data_source(ctx: &RuleContext<'_>, source: DataSource) -> Result<LogicalPlan, PlanError> {
+    if source.partition_definition_ids.is_empty() {
+        return Ok(LogicalPlan::DataSource(source));
+    }
+    let indices = ctx.partition_pruning.map_or_else(
+        || Ok((0..source.partition_definition_ids.len()).collect()),
+        |pruning| pruning.partition_indices(&source),
+    )?;
+    if let Some(marker) = ctx.plan_cache_marker {
+        marker.set_skip_plan_cache("Static partition pruning mode");
+    }
+    Ok(make_children(ctx, source, indices))
+}
+
 fn rewrite(ctx: &RuleContext<'_>, mut plan: LogicalPlan) -> Result<LogicalPlan, PlanError> {
     if let LogicalPlan::DataSource(source) = plan {
-        if source.partition_definition_ids.is_empty() {
-            return Ok(LogicalPlan::DataSource(source));
+        return prune_data_source(ctx, source);
+    }
+    if let LogicalPlan::UnionScan(mut union_scan) = plan {
+        let children = union_scan.base.take_children();
+        if children.len() != 1 {
+            let children = children
+                .into_iter()
+                .map(|child| rewrite(ctx, child))
+                .collect::<Result<Vec<_>, _>>()?;
+            union_scan.base.set_children(children);
+            return Ok(LogicalPlan::UnionScan(union_scan));
         }
-        let indices = ctx.partition_pruning.map_or_else(
-            || Ok((0..source.partition_definition_ids.len()).collect()),
-            |pruning| pruning.partition_indices(&source),
-        )?;
-        return Ok(make_children(ctx, source, indices));
+        let child = children.into_iter().next().expect("one UnionScan child");
+        let LogicalPlan::DataSource(source) = child else {
+            union_scan.base.set_children(vec![rewrite(ctx, child)?]);
+            return Ok(LogicalPlan::UnionScan(union_scan));
+        };
+        let pruned = prune_data_source(ctx, source)?;
+        if let LogicalPlan::PartitionUnionAll(mut partition_union) = pruned {
+            let children = partition_union.union_all.base.take_children();
+            let children = children
+                .into_iter()
+                .map(|child| {
+                    let mut branch = LogicalUnionScan::new(
+                        BaseLogicalPlan::new(
+                            ctx.allocator,
+                            LogicalUnionScan::TYPE,
+                            partition_union.union_all.base.base.query_block_offset(),
+                        ),
+                        union_scan.handle_cols.clone(),
+                    );
+                    branch.conditions.clone_from(&union_scan.conditions);
+                    branch.base.set_children(vec![child]);
+                    LogicalPlan::UnionScan(branch)
+                })
+                .collect();
+            partition_union.union_all.base.set_children(children);
+            return Ok(LogicalPlan::PartitionUnionAll(partition_union));
+        }
+        union_scan.base.set_children(vec![pruned]);
+        return Ok(LogicalPlan::UnionScan(union_scan));
     }
     // Go deliberately does not enter a CTE definition here.
     if matches!(plan, LogicalPlan::CTE(_)) {
