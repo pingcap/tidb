@@ -46,6 +46,7 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - [x] (2026-08-29) Wired cluster `LOAD STATS` through Go's text-protocol client-local-file transfer, independent restricted TiKV transactions, optional history writes, final metadata publication, and the common shared-cache refresh path.
 - [x] (2026-08-29) Wired `SHOW COLUMN_STATS_USAGE` to a fresh shared-storage snapshot, including session-location timestamps and logical/global plus all-partition traversal in both prune modes.
 - [x] (2026-08-29) Completed pinned persisted ANALYZE options across table and partition targets, including Go-ordered static targets, final mandatory-column LIST persistence, live persistence gating, and partition FM-sketch storage.
+- [x] (2026-08-29) Split dynamic global-stat preparation by Go worker mode: blocking retains its full partition-table load, while async applies kind/item skip classification and reads one histogram item and FM sketch across partitions at a time instead of retaining every payload for every partition.
 - [ ] Complete pinned `pkg/statistics/handle/globalstats`; dynamic ANALYZE now loads every partition, applies both missing-stat policies, merges FM/CMS/TopN/histograms, honors the async selector and TopN merge concurrency, persists each global item independently, continues after item-write errors, and emits warnings 8243/8244. Historical dump/job lifecycle and the full original test inventory remain open.
 - [ ] Wire all pinned Go `SHOW STATS_*` surfaces to the shared cache and storage semantics.
 - [ ] Inventory every production file, platform/generated variant, original test/support artifact, fixture, and validation gate in pinned `pkg/statistics`; close or explicitly retain seed-only gaps until the whole package is complete.
@@ -172,6 +173,9 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 
 - Observation: `tidb_merge_partition_stats_concurrency` controls only TopN candidate probing, with a maximum batch of 256 partitions; the histogram merge remains a later single merge over the mutated partition histograms.
   Evidence: pinned `mergeGlobalStatsTopN` and `MergeGlobalStatsTopNByConcurrency`; Rust now snapshots the session value and produces the same TopN and histogram receipt at concurrency one and two.
+
+- Observation: the blocking and async global-statistics workers deliberately classify missing data differently. Blocking treats an unanalyzed item as 8243 and a nonempty partition whose histogram plus TopN are empty as 8244; async always skips a partition with no histogram rows for that item kind, reports an absent target histogram row as 8244 when sibling rows exist, and does not reject an existing-but-empty payload.
+  Evidence: pinned `blockingMergePartitionStats2GlobalStats` versus async `prepare`, `CheckSkipPartition`, and `CheckSkipColumnPartiion`; focused Rust regressions now cover every branch instead of applying the blocking predicate to both modes.
 
 ## Decision Log
 

@@ -486,7 +486,7 @@ fn commit_cluster_global_stats<C: StoreWriteClient, L: StoreWriteLoader, P: Stor
     let mut transaction = opener
         .begin_read_only()
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-    let (logical_id, partitions, column_types, column_names, index_names) = {
+    let (logical_id, total_count, modify_count, items) = {
         let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
         let catalog = load_cluster_catalog(&mut snapshot)
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
@@ -517,86 +517,146 @@ fn commit_cluster_global_stats<C: StoreWriteClient, L: StoreWriteLoader, P: Stor
                 (index.id, index.name.original().to_owned())
             })
             .collect();
-        let mut partitions = Vec::with_capacity(definitions.len());
-        for definition in definitions.iter() {
-            let stats = loader
-                .load_table_with_fm(&mut snapshot, definition.id, &column_types)
-                .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-            partitions.push((definition.name.original().to_owned(), stats));
+        let mode = if resolved.statement.enable_async_merge_global_stats {
+            GlobalStatsMergeMode::Async
+        } else {
+            GlobalStatsMergeMode::Blocking
+        };
+        if mode == GlobalStatsMergeMode::Async {
+            let partitions = prepare_async_global_partitions(
+                &mut snapshot,
+                &loader,
+                definitions
+                    .iter()
+                    .map(|definition| (definition.id, definition.name.original().to_owned())),
+                !report.analyzed_column_ids.is_empty(),
+                !report.analyzed_index_ids.is_empty(),
+            )?;
+            let total_count = partitions.iter().fold(0_i64, |total, partition| {
+                total.wrapping_add(partition.row_count)
+            });
+            let modify_count = partitions.iter().fold(0_i64, |total, partition| {
+                total.wrapping_add(partition.modify_count)
+            });
+            let items = match &resolved.statement.time_zone {
+                SessionTimeZone::Local => merge_global_items_async(
+                    &mut snapshot,
+                    &loader,
+                    Some(&chrono::Local),
+                    &partitions,
+                    &report.analyzed_column_ids,
+                    &report.analyzed_index_ids,
+                    &column_types,
+                    &column_names,
+                    &index_names,
+                    &resolved.statement,
+                    total_count,
+                ),
+                SessionTimeZone::Named(zone) => merge_global_items_async(
+                    &mut snapshot,
+                    &loader,
+                    Some(zone),
+                    &partitions,
+                    &report.analyzed_column_ids,
+                    &report.analyzed_index_ids,
+                    &column_types,
+                    &column_names,
+                    &index_names,
+                    &resolved.statement,
+                    total_count,
+                ),
+                SessionTimeZone::Fixed { offset_secs, .. } => {
+                    let zone = chrono::FixedOffset::east_opt(*offset_secs).ok_or_else(|| {
+                        ClusterAnalyzeError::Other("invalid session timezone offset".to_owned())
+                    })?;
+                    merge_global_items_async(
+                        &mut snapshot,
+                        &loader,
+                        Some(&zone),
+                        &partitions,
+                        &report.analyzed_column_ids,
+                        &report.analyzed_index_ids,
+                        &column_types,
+                        &column_names,
+                        &index_names,
+                        &resolved.statement,
+                        total_count,
+                    )
+                }
+            }?;
+            (table.id, total_count, modify_count, items)
+        } else {
+            let mut partitions = Vec::with_capacity(definitions.len());
+            for definition in definitions.iter() {
+                let stats = loader
+                    .load_table_with_fm(&mut snapshot, definition.id, &column_types)
+                    .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+                partitions.push((definition.name.original().to_owned(), stats));
+            }
+            let total_count = partitions.iter().try_fold(0_i64, |total, (_, stats)| {
+                let count = stats
+                    .as_ref()
+                    .map_or(Ok(0), |stats| i64::try_from(stats.row_count))
+                    .map_err(|_| {
+                        ClusterAnalyzeError::Other(
+                            "partition statistics count exceeds int64".to_owned(),
+                        )
+                    })?;
+                Ok::<_, ClusterAnalyzeError>(total.wrapping_add(count))
+            })?;
+            let modify_count = partitions
+                .iter()
+                .filter_map(|(_, stats)| stats.as_ref())
+                .fold(0_i64, |total, stats| total.wrapping_add(stats.modify_count));
+            let items = match &resolved.statement.time_zone {
+                SessionTimeZone::Local => merge_global_items(
+                    Some(&chrono::Local),
+                    &partitions,
+                    &report.analyzed_column_ids,
+                    &report.analyzed_index_ids,
+                    &column_types,
+                    &column_names,
+                    &index_names,
+                    &resolved.statement,
+                    total_count,
+                    mode,
+                ),
+                SessionTimeZone::Named(zone) => merge_global_items(
+                    Some(zone),
+                    &partitions,
+                    &report.analyzed_column_ids,
+                    &report.analyzed_index_ids,
+                    &column_types,
+                    &column_names,
+                    &index_names,
+                    &resolved.statement,
+                    total_count,
+                    mode,
+                ),
+                SessionTimeZone::Fixed { offset_secs, .. } => {
+                    let zone = chrono::FixedOffset::east_opt(*offset_secs).ok_or_else(|| {
+                        ClusterAnalyzeError::Other("invalid session timezone offset".to_owned())
+                    })?;
+                    merge_global_items(
+                        Some(&zone),
+                        &partitions,
+                        &report.analyzed_column_ids,
+                        &report.analyzed_index_ids,
+                        &column_types,
+                        &column_names,
+                        &index_names,
+                        &resolved.statement,
+                        total_count,
+                        mode,
+                    )
+                }
+            }?;
+            (table.id, total_count, modify_count, items)
         }
-        (
-            table.id,
-            partitions,
-            column_types,
-            column_names,
-            index_names,
-        )
     };
     transaction
         .finish_without_writes()
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-
-    let total_count = partitions.iter().try_fold(0_i64, |total, (_, stats)| {
-        let count = stats
-            .as_ref()
-            .map_or(Ok(0), |stats| i64::try_from(stats.row_count))
-            .map_err(|_| {
-                ClusterAnalyzeError::Other("partition statistics count exceeds int64".to_owned())
-            })?;
-        Ok::<_, ClusterAnalyzeError>(total.wrapping_add(count))
-    })?;
-    let modify_count = partitions
-        .iter()
-        .filter_map(|(_, stats)| stats.as_ref())
-        .fold(0_i64, |total, stats| total.wrapping_add(stats.modify_count));
-    let mode = if resolved.statement.enable_async_merge_global_stats {
-        GlobalStatsMergeMode::Async
-    } else {
-        GlobalStatsMergeMode::Blocking
-    };
-    let items = match &resolved.statement.time_zone {
-        SessionTimeZone::Local => merge_global_items(
-            Some(&chrono::Local),
-            &partitions,
-            &report.analyzed_column_ids,
-            &report.analyzed_index_ids,
-            &column_types,
-            &column_names,
-            &index_names,
-            &resolved.statement,
-            total_count,
-            mode,
-        ),
-        SessionTimeZone::Named(zone) => merge_global_items(
-            Some(zone),
-            &partitions,
-            &report.analyzed_column_ids,
-            &report.analyzed_index_ids,
-            &column_types,
-            &column_names,
-            &index_names,
-            &resolved.statement,
-            total_count,
-            mode,
-        ),
-        SessionTimeZone::Fixed { offset_secs, .. } => {
-            let zone = chrono::FixedOffset::east_opt(*offset_secs).ok_or_else(|| {
-                ClusterAnalyzeError::Other("invalid session timezone offset".to_owned())
-            })?;
-            merge_global_items(
-                Some(&zone),
-                &partitions,
-                &report.analyzed_column_ids,
-                &report.analyzed_index_ids,
-                &column_types,
-                &column_names,
-                &index_names,
-                &resolved.statement,
-                total_count,
-                mode,
-            )
-        }
-    }?;
 
     write_global_stats_items(
         items,
@@ -632,6 +692,164 @@ fn write_global_stats_items<T, E>(
     }
 }
 
+#[derive(Clone, Debug)]
+struct AsyncGlobalPartition {
+    id: i64,
+    name: String,
+    row_count: i64,
+    modify_count: i64,
+    has_columns: bool,
+    has_indexes: bool,
+}
+
+fn prepare_async_global_partitions<S: crate::cluster_catalog::MetaSnapshot>(
+    snapshot: &mut S,
+    loader: &ClusterStatsLoader,
+    definitions: impl IntoIterator<Item = (i64, String)>,
+    merge_columns: bool,
+    merge_indexes: bool,
+) -> Result<Vec<AsyncGlobalPartition>, ClusterAnalyzeError> {
+    let mut partitions = Vec::new();
+    for (id, name) in definitions {
+        let meta = loader
+            .load_meta(snapshot, id)
+            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+        let (modify_count, row_count) = match meta {
+            Some((_, _, modify_count, row_count, _)) => (
+                modify_count,
+                i64::try_from(row_count).map_err(|_| {
+                    ClusterAnalyzeError::Other(
+                        "partition statistics count exceeds int64".to_owned(),
+                    )
+                })?,
+            ),
+            None => (0, 0),
+        };
+        let has_columns = if merge_columns {
+            loader
+                .has_histogram_rows(snapshot, id, false)
+                .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?
+        } else {
+            false
+        };
+        let has_indexes = if merge_indexes {
+            loader
+                .has_histogram_rows(snapshot, id, true)
+                .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?
+        } else {
+            false
+        };
+        partitions.push(AsyncGlobalPartition {
+            id,
+            name,
+            row_count,
+            modify_count,
+            has_columns,
+            has_indexes,
+        });
+    }
+    Ok(partitions)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn merge_global_items_async<S, TZ>(
+    snapshot: &mut S,
+    loader: &ClusterStatsLoader,
+    timezone: Option<&TZ>,
+    partitions: &[AsyncGlobalPartition],
+    column_ids: &[i64],
+    index_ids: &[i64],
+    column_types: &std::collections::BTreeMap<i64, FieldType>,
+    column_names: &std::collections::BTreeMap<i64, String>,
+    index_names: &std::collections::BTreeMap<i64, String>,
+    statement: &AnalyzeStatement,
+    total_count: i64,
+) -> Result<Vec<ClusterStatsItem>, ClusterAnalyzeError>
+where
+    S: crate::cluster_catalog::MetaSnapshot,
+    TZ: TimeZone + Sync,
+{
+    let mut result = Vec::with_capacity(column_ids.len() + index_ids.len());
+    for (is_index, ids) in [(false, column_ids), (true, index_ids)] {
+        for &id in ids {
+            let mut inputs = Vec::with_capacity(partitions.len());
+            for partition in partitions {
+                if if is_index {
+                    !partition.has_indexes
+                } else {
+                    !partition.has_columns
+                } {
+                    continue;
+                }
+                let field_type = (!is_index).then(|| column_types.get(&id)).flatten();
+                let Some(mut item) = loader
+                    .load_item(snapshot, partition.id, is_index, id, field_type, true)
+                    .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?
+                else {
+                    if statement.skip_missing_partition_stats {
+                        continue;
+                    }
+                    let name = if is_index {
+                        index_names.get(&id)
+                    } else {
+                        column_names.get(&id)
+                    }
+                    .map_or("", String::as_str);
+                    return Err(ClusterAnalyzeError::MissingPartitionItemStats(format!(
+                        "table `{}` partition `{}` {} `{name}`",
+                        statement.table,
+                        partition.name,
+                        if is_index { "index" } else { "column" }
+                    )));
+                };
+                item.fm_sketch = loader
+                    .load_fm_sketch(snapshot, partition.id, is_index, id)
+                    .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+                inputs.push(PartitionStatsItem {
+                    histogram: item.histogram,
+                    cmsketch: item.cms,
+                    topn: item.topn,
+                    fm_sketch: item.fm_sketch,
+                });
+            }
+            let field_type = if is_index {
+                FieldType::new(FieldTypeCode::Blob)
+            } else {
+                column_types.get(&id).cloned().ok_or_else(|| {
+                    ClusterAnalyzeError::Other(format!("unknown analyzed column ID {id}"))
+                })?
+            };
+            let merged = merge_partition_stats_item(
+                timezone,
+                2,
+                statement.options.num_topn as u32,
+                statement.options.num_buckets as usize,
+                total_count,
+                &field_type,
+                is_index,
+                GlobalStatsMergeMode::Async,
+                statement.partition_merge_concurrency,
+                inputs,
+            )
+            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+            if let Some(histogram) = merged.histogram {
+                result.push(ClusterStatsItem {
+                    id,
+                    is_index,
+                    stats_ver: 2,
+                    flag: 0,
+                    load_status: StatsLoadedStatus::full_load(),
+                    histogram,
+                    topn: merged.topn,
+                    cms: merged.cmsketch,
+                    fm_sketch: None,
+                });
+            }
+        }
+    }
+    Ok(result)
+}
+
 fn merge_global_items<TZ: TimeZone + Sync>(
     timezone: Option<&TZ>,
     partitions: &[(String, Option<ClusterTableStats>)],
@@ -650,6 +868,9 @@ fn merge_global_items<TZ: TimeZone + Sync>(
             let mut inputs = Vec::with_capacity(partitions.len());
             for (partition_name, stats) in partitions {
                 let Some(stats) = stats else {
+                    if mode == GlobalStatsMergeMode::Async {
+                        continue;
+                    }
                     if statement.skip_missing_partition_stats {
                         continue;
                     }
@@ -658,6 +879,15 @@ fn merge_global_items<TZ: TimeZone + Sync>(
                         statement.table
                     )));
                 };
+                if mode == GlobalStatsMergeMode::Async
+                    && if is_index {
+                        stats.indexes.is_empty()
+                    } else {
+                        stats.columns.is_empty()
+                    }
+                {
+                    continue;
+                }
                 let item = if is_index {
                     stats.index(id)
                 } else {
@@ -673,14 +903,22 @@ fn merge_global_items<TZ: TimeZone + Sync>(
                         column_names.get(&id)
                     }
                     .map_or("", String::as_str);
-                    return Err(ClusterAnalyzeError::MissingPartitionStats(format!(
+                    let detail = format!(
                         "table `{}` partition `{partition_name}` {} `{name}`",
                         statement.table,
                         if is_index { "index" } else { "column" }
-                    )));
+                    );
+                    return Err(if mode == GlobalStatsMergeMode::Async {
+                        ClusterAnalyzeError::MissingPartitionItemStats(detail)
+                    } else {
+                        ClusterAnalyzeError::MissingPartitionStats(detail)
+                    });
                 };
                 let topn_count = item.topn.as_ref().map_or(0, |topn| topn.total_count());
-                if stats.row_count > 0 && item.histogram.total_row_count() <= 0.0 && topn_count == 0
+                if mode == GlobalStatsMergeMode::Blocking
+                    && stats.row_count > 0
+                    && item.histogram.total_row_count() <= 0.0
+                    && topn_count == 0
                 {
                     if statement.skip_missing_partition_stats {
                         continue;
@@ -1140,7 +1378,7 @@ mod tests {
             &BTreeMap::new(),
             &global_statement(false),
             5,
-            GlobalStatsMergeMode::Async,
+            GlobalStatsMergeMode::Blocking,
         )
         .expect_err("missing partition stats are reported when skipping is disabled");
         assert_eq!(
@@ -1163,6 +1401,21 @@ mod tests {
         .expect("the configured missing partition is skipped");
         assert_eq!(merged.len(), 1);
         assert_eq!(merged[0].histogram.ndv, 2);
+
+        let merged = merge_global_items(
+            Some(&chrono::Utc),
+            &partitions,
+            &[1],
+            &[],
+            &column_types,
+            &column_names,
+            &BTreeMap::new(),
+            &global_statement(false),
+            5,
+            GlobalStatsMergeMode::Async,
+        )
+        .expect("the async worker always skips a partition with no histogram rows");
+        assert_eq!(merged.len(), 1);
     }
 
     #[test]
@@ -1183,9 +1436,47 @@ mod tests {
             &BTreeMap::new(),
             &global_statement(false),
             5,
-            GlobalStatsMergeMode::Async,
+            GlobalStatsMergeMode::Blocking,
         )
         .expect_err("an empty item on a non-empty partition is reported");
+        assert_eq!(
+            error.to_string(),
+            "Build global-level stats failed due to missing partition-level column stats: table `t` partition `p0` column `a`, please run analyze table to refresh columns of all partitions"
+        );
+
+        let merged = merge_global_items(
+            Some(&chrono::Utc),
+            &partitions,
+            &[1],
+            &[],
+            &column_types,
+            &column_names,
+            &BTreeMap::new(),
+            &global_statement(false),
+            5,
+            GlobalStatsMergeMode::Async,
+        )
+        .expect("the async worker only checks whether the histogram row exists");
+        assert_eq!(merged.len(), 1);
+        assert!(merged[0].histogram.buckets.is_empty());
+
+        let partitions = vec![(
+            "p0".to_owned(),
+            Some(global_partition_stats(Some(global_partition_item(2, 5)))),
+        )];
+        let error = merge_global_items(
+            Some(&chrono::Utc),
+            &partitions,
+            &[1],
+            &[],
+            &column_types,
+            &column_names,
+            &BTreeMap::new(),
+            &global_statement(false),
+            5,
+            GlobalStatsMergeMode::Async,
+        )
+        .expect_err("the async worker reports a missing item when sibling rows exist");
         assert_eq!(
             error.to_string(),
             "Build global-level stats failed due to missing partition-level column stats: table `t` partition `p0` column `a`, please run analyze table to refresh columns of all partitions"

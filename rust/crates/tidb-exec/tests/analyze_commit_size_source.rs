@@ -314,6 +314,84 @@ fn partition_fm_sketch_round_trips_only_for_global_merge() {
     assert!(merge_input.columns[0].fm_sketch.is_none());
 }
 
+/// Pinned async global-stat preparation probes histogram existence by item
+/// kind, then its FM worker reads exactly one `(table_id, is_index, hist_id)`
+/// sketch at a time.
+#[test]
+fn async_global_stats_probes_kind_and_loads_one_fm_sketch() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let expected = FmSketch::from_raw_parts(3, MAX_SKETCH_SIZE, [8, 16, 24]);
+    let mut column = full_histogram(1, false);
+    column.fm_sketch = Some(expected.clone());
+    let stats = ClusterTableStats {
+        table_id: 4242,
+        version: 440_000_000_000_000_000,
+        snapshot: 440_000_000_000_000_000,
+        last_analyze_version: 440_000_000_000_000_000,
+        last_stats_hist_version: 440_000_000_000_000_000,
+        modify_count: 0,
+        row_count: 10_240,
+        columns: vec![column],
+        indexes: Vec::new(),
+    };
+    let plan = plan_partition_stats_write(&mut store, &catalog, &stats, now())
+        .expect("partition analyze plans");
+    apply_mutations(&mut store, &plan.mutations);
+
+    let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
+    store.scans.clear();
+    assert!(loader
+        .has_histogram_rows(&mut store, stats.table_id, false)
+        .expect("column histogram existence probe succeeds"));
+    assert!(!loader
+        .has_histogram_rows(&mut store, stats.table_id, true)
+        .expect("index histogram existence probe succeeds"));
+    assert_eq!(
+        loader
+            .load_fm_sketch(&mut store, stats.table_id, false, 1)
+            .expect("one FM sketch loads")
+            .as_ref(),
+        Some(&expected)
+    );
+    assert!(loader
+        .load_fm_sketch(&mut store, stats.table_id, false, 2)
+        .expect("a missing FM sketch is not an error")
+        .is_none());
+
+    let column_kind = tidb_codec::encode_key(&[Datum::Int(stats.table_id), Datum::Int(0)])
+        .expect("column-kind prefix encodes");
+    let index_kind = tidb_codec::encode_key(&[Datum::Int(stats.table_id), Datum::Int(1)])
+        .expect("index-kind prefix encodes");
+    let column_item =
+        tidb_codec::encode_key(&[Datum::Int(stats.table_id), Datum::Int(0), Datum::Int(1)])
+            .expect("column-item prefix encodes");
+    let missing_item =
+        tidb_codec::encode_key(&[Datum::Int(stats.table_id), Datum::Int(0), Datum::Int(2)])
+            .expect("missing-item prefix encodes");
+    assert_eq!(
+        store.scans,
+        vec![
+            tidb_codec::encode_row_key(
+                tidb_metadef::system::STATS_HISTOGRAMS_TABLE_ID,
+                &column_kind,
+            ),
+            tidb_codec::encode_row_key(
+                tidb_metadef::system::STATS_HISTOGRAMS_TABLE_ID,
+                &index_kind,
+            ),
+            tidb_codec::encode_row_key(
+                tidb_metadef::system::STATS_FMSKETCH_TABLE_ID,
+                &column_item,
+            ),
+            tidb_codec::encode_row_key(
+                tidb_metadef::system::STATS_FMSKETCH_TABLE_ID,
+                &missing_item,
+            ),
+        ]
+    );
+}
+
 /// Go `TestShowHistogramsLoadStatus`: a leased cache initializes analyzed
 /// histograms from metadata only, so their payload is absent and their load
 /// state is `allEvicted` until sync-load requests that item.

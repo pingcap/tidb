@@ -453,6 +453,59 @@ impl ClusterStatsLoader {
         self.load_table_with_payload(snapshot, table_id, column_types, false, false)
     }
 
+    /// Pinned async-global-stats `CheckSkipPartition`: whether this physical
+    /// table has any histogram row of the requested item kind.
+    pub fn has_histogram_rows<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        table_id: i64,
+        is_index: bool,
+    ) -> Result<bool, SystemTableError> {
+        let prefix = [Datum::Int(table_id), Datum::Int(i64::from(is_index))];
+        for (key, value) in scan_system_table_prefixed(snapshot, &self.histograms, &prefix)? {
+            let row = SystemRow::parse(&self.histograms, &key, &value)?;
+            if row.i64("table_id")?.unwrap_or_default() == table_id
+                && (row.i64("is_index")?.unwrap_or_default() != 0) == is_index
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Pinned async-global-stats `FMSketchFromStorage` for one item.
+    pub fn load_fm_sketch<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        table_id: i64,
+        is_index: bool,
+        id: i64,
+    ) -> Result<Option<tidb_stats::FmSketch>, SystemTableError> {
+        let prefix = [
+            Datum::Int(table_id),
+            Datum::Int(i64::from(is_index)),
+            Datum::Int(id),
+        ];
+        let Some((key, value)) = scan_system_table_prefixed(snapshot, &self.fm_sketches, &prefix)?
+            .into_iter()
+            .next()
+        else {
+            return Ok(None);
+        };
+        let row = SystemRow::parse(&self.fm_sketches, &key, &value)?;
+        if row.i64("table_id")?.unwrap_or_default() != table_id
+            || (row.i64("is_index")?.unwrap_or_default() != 0) != is_index
+            || row.i64("hist_id")?.unwrap_or_default() != id
+        {
+            return Ok(None);
+        }
+        let encoded = row.bytes("value")?;
+        tidb_stats::decode_fm_sketch(encoded.as_deref()).map_err(|error| SystemTableError::Decode {
+            name: self.fm_sketches.name().to_owned(),
+            detail: format!("{error:?}"),
+        })
+    }
+
     /// Pinned Go `TableStatsFromStorage(..., loadAll=false)` during a cache
     /// update. Metadata-only refreshes preserve resident payload, while a
     /// newer histogram is reloaded in full only when its old item was already
