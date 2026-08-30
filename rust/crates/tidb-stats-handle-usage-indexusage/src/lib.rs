@@ -15,7 +15,7 @@
 //! Go `pkg/statistics/handle/usage/indexusage`.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use chrono::{DateTime, TimeZone, Utc};
 use tidb_model::TableInfo;
@@ -105,6 +105,30 @@ pub fn new_sample(
 
 type IndexUsage = HashMap<GlobalIndexId, Sample>;
 
+fn index_usage_pool() -> &'static Mutex<Vec<IndexUsage>> {
+    static POOL: OnceLock<Mutex<Vec<IndexUsage>>> = OnceLock::new();
+    POOL.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn take_index_usage() -> IndexUsage {
+    index_usage_pool()
+        .lock()
+        .expect("index usage pool lock poisoned")
+        .pop()
+        .unwrap_or_default()
+}
+
+fn recycle_index_usage(delta: Arc<IndexUsage>) {
+    let Ok(mut delta) = Arc::try_unwrap(delta) else {
+        return;
+    };
+    delta.clear();
+    index_usage_pool()
+        .lock()
+        .expect("index usage pool lock poisoned")
+        .push(delta);
+}
+
 fn update_by_key(usage: &mut IndexUsage, id: GlobalIndexId, sample: Sample) {
     let item = usage.entry(id).or_default();
     item.query_total = item.query_total.wrapping_add(sample.query_total);
@@ -138,13 +162,14 @@ impl Collector {
     /// Go `NewCollector`.
     #[must_use]
     pub fn new() -> Self {
-        let index_usage = Arc::new(RwLock::new(IndexUsage::new()));
+        let index_usage = Arc::new(RwLock::new(take_index_usage()));
         let target = Arc::clone(&index_usage);
         let collector = GlobalCollector::new(move |delta: Arc<IndexUsage>| {
             merge(
                 &mut target.write().expect("index usage lock poisoned"),
                 &delta,
             );
+            recycle_index_usage(delta);
         });
         Self {
             collector,
@@ -167,7 +192,7 @@ impl Collector {
     #[must_use]
     pub fn spawn_session_collector(&self) -> SessionIndexUsageCollector {
         SessionIndexUsageCollector {
-            index_usage: Arc::new(IndexUsage::new()),
+            index_usage: Arc::new(take_index_usage()),
             collector: self.collector.spawn_session(),
         }
     }
@@ -221,7 +246,7 @@ impl SessionIndexUsageCollector {
             return;
         }
         if self.collector.send_delta(Arc::clone(&self.index_usage)) {
-            self.index_usage = Arc::new(IndexUsage::new());
+            self.index_usage = Arc::new(take_index_usage());
         }
     }
 
@@ -232,7 +257,7 @@ impl SessionIndexUsageCollector {
         }
         self.collector
             .send_delta_sync(Arc::clone(&self.index_usage));
-        self.index_usage = Arc::new(IndexUsage::new());
+        self.index_usage = Arc::new(take_index_usage());
     }
 }
 
