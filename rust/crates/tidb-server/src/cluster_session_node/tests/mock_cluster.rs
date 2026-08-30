@@ -15,7 +15,7 @@ use super::super::*;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use tidb_exec::pessimistic_lock_error::commit_outcome_to_sql_error;
-use tidb_executor::cluster_storage::SnapshotPairs;
+use tidb_executor::cluster_storage::{DuplicateKeyHint, SnapshotPairs};
 use tidb_executor::storage::StorageError;
 use tidb_txnkv::region::RegionBackoffKind;
 use tidb_txnkv::transaction::{
@@ -53,6 +53,10 @@ pub(super) struct MockCluster {
     pub(super) opened_at_max_ts: AtomicUsize,
     /// Explicit transactions opened by `BEGIN`.
     pub(super) begun: AtomicUsize,
+    /// Explicit transactions opened specifically in pessimistic mode.
+    pub(super) pessimistic_begun: AtomicUsize,
+    /// Makes the next pessimistic statement lock report a newer read timestamp.
+    pub(super) retry_next_pessimistic_lock: AtomicBool,
     /// Read handles still bound. A statement that leaks one leaves this
     /// above zero, which is the lock-left-behind failure in miniature.
     pub(super) live: AtomicUsize,
@@ -367,6 +371,7 @@ impl ClusterTransactions for MockTransactions {
             data: self.0.snapshot(),
             cluster: Arc::clone(&self.0),
             max_ts: false,
+            pessimistic: false,
         }))
     }
 
@@ -426,16 +431,20 @@ impl ClusterTransactions for MockTransactions {
 
     fn begin(
         &self,
-        _pessimistic: bool,
+        pessimistic: bool,
         resource_group: &str,
     ) -> Result<Box<dyn OpenClusterTransaction>, String> {
         self.0.record_resource_group(resource_group);
         self.0.begun.fetch_add(1, Ordering::AcqRel);
+        if pessimistic {
+            self.0.pessimistic_begun.fetch_add(1, Ordering::AcqRel);
+        }
         Ok(Box::new(MockSessionTransaction {
             start_ts: self.0.timestamp(),
             data: self.0.snapshot(),
             cluster: Arc::clone(&self.0),
             max_ts: false,
+            pessimistic,
         }))
     }
 }
@@ -449,6 +458,7 @@ pub(super) struct MockSessionTransaction {
     pub(super) data: BTreeMap<Vec<u8>, Vec<u8>>,
     pub(super) cluster: Arc<MockCluster>,
     pub(super) max_ts: bool,
+    pub(super) pessimistic: bool,
 }
 
 impl OpenClusterTransaction for MockSessionTransaction {
@@ -505,5 +515,43 @@ impl OpenClusterTransaction for MockSessionTransaction {
 
     fn rollback(self: Box<Self>) -> Result<(), String> {
         Ok(())
+    }
+
+    fn is_pessimistic(&self) -> bool {
+        self.pessimistic
+    }
+
+    fn snapshot_at(&self, read_ts: u64) -> Result<Box<dyn ClusterSnapshot>, String> {
+        self.cluster.live.fetch_add(1, Ordering::AcqRel);
+        Ok(Box::new(MockSnapshot {
+            data: self.cluster.snapshot(),
+            cluster: Arc::clone(&self.cluster),
+            start_ts: read_ts,
+        }))
+    }
+
+    fn lock_staged_keys_with_assertions(
+        &self,
+        keys: Vec<Vec<u8>>,
+        _presume_not_exists: std::collections::BTreeSet<Vec<u8>>,
+        _duplicate_hints: std::collections::BTreeMap<Vec<u8>, DuplicateKeyHint>,
+    ) -> Result<LockKeysOutcome, String> {
+        if !self.pessimistic {
+            return Err("only a pessimistic transaction locks statement keys".to_owned());
+        }
+        if self
+            .cluster
+            .retry_next_pessimistic_lock
+            .swap(false, Ordering::AcqRel)
+        {
+            return Ok(LockKeysOutcome::RetryStatement {
+                for_update_ts: self.cluster.timestamp(),
+                newly_locked: keys,
+            });
+        }
+        Ok(LockKeysOutcome::Locked {
+            for_update_ts: self.start_ts,
+            newly_locked: keys,
+        })
     }
 }

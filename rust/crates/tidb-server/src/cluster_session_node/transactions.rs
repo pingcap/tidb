@@ -59,8 +59,8 @@ use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoa
 use tidb_txnkv::PdRegionLoader;
 
 use tidb_exec::cluster_table_storage::{
-    commit_staged_buffer, LockKeysOutcome, MaxTsSnapshot, PreparedStatementSnapshot,
-    SessionTransaction, StatementSnapshot,
+    commit_staged_buffer, pessimistic_lock_delta, LockKeysOutcome, MaxTsSnapshot,
+    PreparedStatementSnapshot, SessionTransaction, StatementSnapshot,
 };
 use tidb_exec::pessimistic_lock_error::LockSqlError;
 use tidb_exec::real_tikv_read::RealOptimisticTransactionOpener;
@@ -162,27 +162,7 @@ pub trait ClusterTransactions: Send + Sync {
         read_ts: u64,
         resource_group: &str,
     ) -> Result<(), SqlQueryError> {
-        use tidb_txnkv::transaction::OptimisticMutationKind;
-
-        let buffer = MutationBuffer::new();
-        for mutation in mutations {
-            let key = Key::from_bytes(mutation.key().to_vec());
-            match mutation.kind() {
-                OptimisticMutationKind::Delete
-                | OptimisticMutationKind::IndexDelete
-                | OptimisticMutationKind::MetaDelete => buffer.delete(key),
-                OptimisticMutationKind::Insert | OptimisticMutationKind::UniqueIndexInsert => {
-                    buffer.set(key.clone(), mutation.value().to_vec());
-                    buffer.mark_presume_key_not_exists(&key);
-                }
-                OptimisticMutationKind::PutExisting
-                | OptimisticMutationKind::IndexPut
-                | OptimisticMutationKind::MetaPut => {
-                    buffer.set(key, mutation.value().to_vec());
-                }
-                OptimisticMutationKind::LockOnly => {}
-            }
-        }
+        let buffer = mutation_buffer(mutations);
         self.commit(&buffer, Some(read_ts), resource_group)
     }
 
@@ -206,6 +186,122 @@ pub trait ClusterTransactions: Send + Sync {
 
     /// Checks the same physical key without retaining it.
     fn is_advisory_lock_used(&self, name: &str) -> bool;
+}
+
+fn mutation_buffer(mutations: Vec<tidb_txnkv::transaction::OptimisticMutation>) -> MutationBuffer {
+    use tidb_txnkv::transaction::OptimisticMutationKind;
+
+    let buffer = MutationBuffer::new();
+    for mutation in mutations {
+        let key = Key::from_bytes(mutation.key().to_vec());
+        match mutation.kind() {
+            OptimisticMutationKind::Delete
+            | OptimisticMutationKind::IndexDelete
+            | OptimisticMutationKind::MetaDelete => buffer.delete(key),
+            OptimisticMutationKind::Insert | OptimisticMutationKind::UniqueIndexInsert => {
+                buffer.set(key.clone(), mutation.value().to_vec());
+                buffer.mark_presume_key_not_exists(&key);
+            }
+            OptimisticMutationKind::PutExisting
+            | OptimisticMutationKind::IndexPut
+            | OptimisticMutationKind::MetaPut => {
+                buffer.set(key, mutation.value().to_vec());
+            }
+            OptimisticMutationKind::LockOnly => {}
+        }
+    }
+    buffer
+}
+
+/// Runs one Go restricted-session SQL statement inside `BEGIN PESSIMISTIC`.
+///
+/// A lock conflict rebuilds the statement from a snapshot at the advanced
+/// `for_update_ts`, while values written as statistics versions keep the
+/// transaction's original start timestamp. Multi-statement Go wrappers must
+/// call this only after retaining their original statement boundaries.
+pub(crate) fn run_pessimistic_statement<T>(
+    transactions: &dyn ClusterTransactions,
+    resource_group: &str,
+    mut build: impl FnMut(
+        Box<dyn ClusterSnapshot>,
+        u64,
+    ) -> Result<(T, Vec<tidb_txnkv::transaction::OptimisticMutation>), String>,
+) -> Result<T, String> {
+    const MAX_PESSIMISTIC_STATEMENT_RETRIES: u32 = 256;
+
+    let transaction = transactions.begin(true, resource_group)?;
+    let start_ts = transaction.start_ts();
+    let mut retry_read_ts = None;
+    let mut retries = 0;
+    loop {
+        let snapshot = match retry_read_ts {
+            Some(for_update_ts) => transaction.snapshot_at_for(for_update_ts, true),
+            None => transaction.snapshot_for(true),
+        };
+        let snapshot = match snapshot {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                let _ = transaction.rollback();
+                return Err(error);
+            }
+        };
+        let (value, mutations) = match build(snapshot, start_ts) {
+            Ok(result) => result,
+            Err(error) => {
+                let _ = transaction.rollback();
+                return Err(error);
+            }
+        };
+        let buffer = mutation_buffer(mutations);
+        let keys = pessimistic_lock_delta(&[], &buffer.snapshot());
+        if keys.is_empty() {
+            return transaction
+                .commit(&buffer)
+                .map(|()| value)
+                .map_err(|error| error.message);
+        }
+        let presume_not_exists = buffer
+            .presume_not_exists_keys()
+            .into_iter()
+            .filter(|key| keys.contains(key))
+            .collect::<BTreeSet<_>>();
+        let duplicate_hints = presume_not_exists
+            .iter()
+            .filter_map(|key| {
+                buffer
+                    .duplicate_key_hint_for(key)
+                    .map(|hint| (key.clone(), hint))
+            })
+            .collect::<BTreeMap<_, _>>();
+        let outcome =
+            transaction.lock_staged_keys_with_assertions(keys, presume_not_exists, duplicate_hints);
+        match outcome {
+            Ok(LockKeysOutcome::Locked { .. }) => {
+                return transaction
+                    .commit(&buffer)
+                    .map(|()| value)
+                    .map_err(|error| error.message);
+            }
+            Ok(LockKeysOutcome::RetryStatement { for_update_ts, .. }) => {
+                if retries >= MAX_PESSIMISTIC_STATEMENT_RETRIES {
+                    let _ = transaction.rollback();
+                    return Err("pessimistic lock retry limit reached".to_owned());
+                }
+                retries += 1;
+                retry_read_ts = Some(for_update_ts);
+            }
+            Ok(LockKeysOutcome::StatementError(error))
+            | Ok(LockKeysOutcome::TransactionError(error)) => {
+                let error = sql_error(error).message;
+                let _ = transaction.rollback();
+                return Err(error);
+            }
+            Err(error) => {
+                let _ = transaction.rollback();
+                return Err(error);
+            }
+        }
+    }
 }
 
 /// Adapts the cluster transaction authority to the expression/session lock

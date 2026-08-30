@@ -10,14 +10,63 @@
 //! happening to produce the same rows.
 
 use super::super::*;
+use super::mock_cluster::MockTransactions;
 use super::node_fixture::*;
 use std::sync::atomic::Ordering;
 use tidb_datatype::Datum;
 use tidb_exec::pessimistic_lock_error::{commit_outcome_to_sql_error, ERR_WRITE_CONFLICT};
 use tidb_txnkv::transaction::{
-    OptimisticCommitOutcome, OptimisticTransactionReceipt, TransactionCause,
+    OptimisticCommitOutcome, OptimisticMutation, OptimisticTransactionReceipt, TransactionCause,
     UndeterminedTransaction,
 };
+
+#[test]
+fn restricted_wrapped_statement_uses_pessimistic_transaction() {
+    let cluster = Arc::new(super::mock_cluster::MockCluster::default());
+    cluster
+        .retry_next_pessimistic_lock
+        .store(true, Ordering::Release);
+    let transactions = MockTransactions(Arc::clone(&cluster));
+    let attempts = std::sync::atomic::AtomicUsize::new(0);
+    let observed_timestamps = Mutex::new(Vec::new());
+    let version = super::super::transactions::run_pessimistic_statement(
+        &transactions,
+        "stats-rg",
+        |snapshot, start_ts| {
+            attempts.fetch_add(1, Ordering::AcqRel);
+            observed_timestamps
+                .lock()
+                .expect("timestamps")
+                .push((snapshot.start_ts(), start_ts));
+            Ok((
+                start_ts,
+                vec![
+                    OptimisticMutation::meta_put(b"stats/meta".to_vec(), b"row".to_vec())
+                        .expect("valid mutation"),
+                ],
+            ))
+        },
+    )
+    .expect("wrapped statement commits");
+
+    assert!(version > 0);
+    assert_eq!(attempts.load(Ordering::Acquire), 2);
+    let observed_timestamps = observed_timestamps.lock().expect("timestamps");
+    assert_eq!(observed_timestamps[0], (version, version));
+    assert!(observed_timestamps[1].0 > version);
+    assert_eq!(observed_timestamps[1].1, version);
+    assert_eq!(cluster.begun.load(Ordering::Acquire), 1);
+    assert_eq!(cluster.pessimistic_begun.load(Ordering::Acquire), 1);
+    assert_eq!(cluster.publications.load(Ordering::Acquire), 1);
+    assert_eq!(
+        cluster
+            .committed
+            .lock()
+            .expect("committed")
+            .get(b"stats/meta".as_slice()),
+        Some(&b"row".to_vec())
+    );
+}
 
 /// Go `pkg/executor/executor_failpoint_test.go::TestTxnWriteThroughputSLI`.
 #[test]

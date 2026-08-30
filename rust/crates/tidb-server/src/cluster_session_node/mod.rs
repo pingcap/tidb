@@ -873,33 +873,32 @@ impl ClusterSessionFactory {
             if original_updates.is_empty() {
                 continue;
             }
-            let snapshot = transactions.open_snapshot(resource_group)?;
-            let read_ts = snapshot.start_ts();
-            let (plan, updates) = {
-                let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-                let locked = tidb_exec::cluster_stats_write::load_stats_locked_table_ids(
-                    &mut snapshot,
-                    &catalog,
-                )
-                .map_err(|error| error.to_string())?;
-                let updates = tidb_stats_handle_usage::prepare_delta_updates(
-                    original_updates.clone(),
-                    |table_id| parents.get(&table_id).copied(),
-                    &locked,
-                );
-                let plan = tidb_exec::cluster_stats_write::plan_stats_delta_updates(
-                    &mut snapshot,
-                    &catalog,
-                    &updates,
-                    read_ts,
-                    tidb_exec::mysql_bootstrap::utc_now_timestamp(),
-                )
-                .map_err(|error| error.to_string())?;
-                (plan, updates)
-            };
-            transactions
-                .commit_optimistic_mutations(plan.mutations, read_ts, resource_group)
-                .map_err(|error| error.message)?;
+            let (read_ts, updates) = transactions::run_pessimistic_statement(
+                transactions,
+                resource_group,
+                |snapshot, start_ts| {
+                    let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                    let locked = tidb_exec::cluster_stats_write::load_stats_locked_table_ids(
+                        &mut snapshot,
+                        &catalog,
+                    )
+                    .map_err(|error| error.to_string())?;
+                    let updates = tidb_stats_handle_usage::prepare_delta_updates(
+                        original_updates.clone(),
+                        |table_id| parents.get(&table_id).copied(),
+                        &locked,
+                    );
+                    let plan = tidb_exec::cluster_stats_write::plan_stats_delta_updates(
+                        &mut snapshot,
+                        &catalog,
+                        &updates,
+                        start_ts,
+                        tidb_exec::mysql_bootstrap::utc_now_timestamp(),
+                    )
+                    .map_err(|error| error.to_string())?;
+                    Ok(((start_ts, updates), plan.mutations))
+                },
+            )?;
             for update in original_updates {
                 pending.mark_persisted(update.table_id);
             }
