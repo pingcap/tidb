@@ -170,6 +170,38 @@ three-sample focused run completed in 53 seconds without restore:
 The measured ratio remains below 0.80, so the dominant cost is still the
 transaction/read/commit path rather than untouched-index maintenance.
 
+## Latest follow-up (2026-08-31)
+
+The `hparser-integration` branch was fast-forwarded to `64aaf2e` (tablesampler
+and coretestsdk parity) before this run. A thin-LTO `tidb-server` binary was
+built on the TiUP Pod NVMe volume and deployed to all three Rust listeners;
+the binary SHA-256 was `43fb24938d30076acc8af3d9e3ba246d6cb403bc381950dfb7c60a905efba432`.
+The Go listeners were not restarted. The Rust listener smoke query passed and
+no `panic`, `FATAL`, or `connection_panic` was observed in the three TiDB logs.
+
+The ten Sysbench subtypes were rerun serially with one 10-thread sample per
+engine in a 224-second window (under the 300-second limit), without BR restore:
+
+| Subtype | Go QPS | Rust QPS | Rust/Go | Gate |
+|---|---:|---:|---:|---|
+| `oltp_read_write.lua` | 544.51 | 206.93 | 0.3800 | FAIL |
+| `oltp_read_only.lua` | 764.70 | 863.02 | 1.1286 | PASS |
+| `oltp_write_only.lua` | 2193.81 | 689.74 | 0.3144 | FAIL |
+| `oltp_point_select.lua` | 18841.17 | 22615.11 | 1.2003 | PASS |
+| `select_random_points.lua` | 7423.00 | 9392.86 | 1.2654 | PASS |
+| `select_random_ranges.lua` | 8314.85 | 5661.04 | 0.6808 | FAIL |
+| `oltp_insert.lua` (isolated empty tables) | 7979.52 | 7636.15 | 0.9570 | PASS |
+| `oltp_update_index.lua` | 4897.05 | 2461.29 | 0.5026 | FAIL |
+| `oltp_update_non_index.lua` | 6356.25 | 4259.06 | 0.6701 | FAIL |
+| `bulk_insert.lua` (isolated empty tables) | 289507.01 | 132497.91 | 0.4577 | FAIL |
+
+The focused write-only experiment identifies the current highest-leverage
+gap: prepared `index_updates + delete_inserts` is about 850 txn/s versus about
+2040 txn/s over text protocol, while non-index update combinations are about
+2060 txn/s. This is evidence for a prepared explicit-transaction/index-write
+interaction; changing pessimistic transaction semantics without a matching
+retry/lock implementation would be unsafe. Receipt: `/tmp/tc8228803-new.MMk3QB/sysbench-r1-latest64aaf`.
+
 ## Acceptance status
 
 - Round 1 (0.80): **not passed** because Sysbench and BenchmarkSQL still fail;
