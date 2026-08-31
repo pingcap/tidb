@@ -19,7 +19,7 @@
 use std::collections::HashMap;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    mpsc, Arc, LazyLock, Mutex, OnceLock, Weak,
+    mpsc, Arc, LazyLock, Mutex, Weak,
 };
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -68,23 +68,14 @@ type Listener = mpsc::SyncSender<SyncLoadOutcome>;
 static GLOBAL_SINGLEFLIGHT: LazyLock<Mutex<HashMap<String, Vec<Listener>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-/// One process-wide worker pool for synchronous statistics loads.
-///
-/// Go owns this queue in the domain's `StatsHandle`; it is not recreated for
-/// every SQL session. Rust catalogs are intentionally per-session snapshots,
-/// so keeping the receivers in each `SyncLoadService` multiplied the worker
-/// group by the number of live connections (and made a ten-connection
-/// Sysbench run create hundreds of competing threads). Tasks carry their
-/// loader and weak cache so one shared pool still publishes into the catalog
-/// that requested the item.
+/// One statistics handle's synchronous-load queues and workers.
 struct SyncLoadPool {
     needed_items: mpsc::SyncSender<NeededItemTask>,
     _needed_items_receiver: Arc<Mutex<mpsc::Receiver<NeededItemTask>>>,
     _timeout_items_receiver: Arc<Mutex<mpsc::Receiver<NeededItemTask>>>,
     stop: Arc<AtomicBool>,
+    workers: Vec<std::thread::JoinHandle<()>>,
 }
-
-static GLOBAL_WORKER_POOL: OnceLock<Arc<SyncLoadPool>> = OnceLock::new();
 
 impl SyncLoadPool {
     fn new(concurrency: usize, queue_size: usize, retry_backoff: Duration) -> Arc<Self> {
@@ -93,33 +84,32 @@ impl SyncLoadPool {
         let needed_rx = Arc::new(Mutex::new(needed_rx));
         let timeout_rx = Arc::new(Mutex::new(timeout_rx));
         let stop = Arc::new(AtomicBool::new(false));
+        let mut workers = Vec::with_capacity(concurrency);
         for _ in 0..concurrency {
             let needed_rx = Arc::clone(&needed_rx);
             let timeout_rx = Arc::clone(&timeout_rx);
             let timeout_tx = timeout_tx.clone();
             let stop = Arc::clone(&stop);
-            std::thread::spawn(move || {
+            workers.push(std::thread::spawn(move || {
                 worker_loop(needed_rx, timeout_rx, timeout_tx, retry_backoff, stop);
-            });
+            }));
         }
         Arc::new(Self {
             needed_items: needed_tx,
             _needed_items_receiver: needed_rx,
             _timeout_items_receiver: timeout_rx,
             stop,
+            workers,
         })
-    }
-
-    fn global(concurrency: usize, queue_size: usize, retry_backoff: Duration) -> Arc<Self> {
-        GLOBAL_WORKER_POOL
-            .get_or_init(|| Self::new(concurrency, queue_size, retry_backoff))
-            .clone()
     }
 }
 
 impl Drop for SyncLoadPool {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
+        for worker in self.workers.drain(..) {
+            let _ = worker.join();
+        }
     }
 }
 
@@ -148,11 +138,7 @@ impl SyncLoadService {
         .map(Duration::from_nanos)
         .filter(|duration| !duration.is_zero())
         .unwrap_or(Duration::from_secs(3));
-        let pool = SyncLoadPool::global(
-            concurrency,
-            performance.stats_load_queue_size.max(1),
-            lease / 10,
-        );
+        let pool = SyncLoadPool::new(concurrency, performance.stats_load_queue_size, lease / 10);
         Self::with_pool(loader, cache, pool)
     }
 
@@ -217,11 +203,10 @@ impl SyncLoadService {
         let resource_group = resource_group.to_owned();
         std::thread::spawn(move || {
             let outcome = service.run_flight(item, resource_group, timeout);
-            let listeners = GLOBAL_SINGLEFLIGHT
+            let mut flights = GLOBAL_SINGLEFLIGHT
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .remove(&key)
-                .unwrap_or_default();
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let listeners = flights.remove(&key).unwrap_or_default();
             for listener in listeners {
                 let _ = listener.send(outcome.clone());
             }
@@ -266,15 +251,26 @@ impl SyncLoadService {
                 }
             }
         }
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        match result_rx.recv_timeout(remaining) {
-            Ok(result) => result,
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                SyncLoadOutcome::TransportError("sync load took too long to return".to_owned())
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => SyncLoadOutcome::TransportError(
-                "sync load stats channel closed unexpectedly".to_owned(),
-            ),
+        wait_for_task_result(result_rx, deadline)
+    }
+}
+
+fn wait_for_task_result(
+    result_rx: mpsc::Receiver<SyncLoadOutcome>,
+    deadline: Instant,
+) -> SyncLoadOutcome {
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    match result_rx.recv_timeout(remaining) {
+        Ok(result) => result,
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            SyncLoadOutcome::TransportError("sync load took too long to return".to_owned())
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            // Go's request goroutine retains task.ResultCh even when an expired
+            // task is dropped because the timeout queue is full. In that case
+            // only the original request timer completes the request.
+            std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
+            SyncLoadOutcome::TransportError("sync load took too long to return".to_owned())
         }
     }
 }
@@ -441,6 +437,29 @@ mod tests {
         }
     }
 
+    struct BlockingLoader {
+        started: mpsc::SyncSender<()>,
+        release: Mutex<mpsc::Receiver<()>>,
+        finished: Arc<AtomicBool>,
+    }
+
+    impl StatisticsItemLoader for BlockingLoader {
+        fn load_items(
+            &self,
+            _items: &[tidb_model::StatsLoadItem],
+            _resource_group: &str,
+        ) -> Result<Vec<(i64, Arc<crate::access_cost::TableStatistics>)>, String> {
+            self.started.send(()).expect("test receives worker start");
+            self.release
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .recv()
+                .expect("test releases worker");
+            self.finished.store(true, Ordering::Release);
+            Ok(Vec::new())
+        }
+    }
+
     fn item(id: i64, full_load: bool) -> tidb_model::StatsLoadItem {
         tidb_model::StatsLoadItem {
             table_item_id: tidb_model::TableItemID {
@@ -470,6 +489,58 @@ mod tests {
         let service =
             SyncLoadService::with_settings(loader, Arc::downgrade(&cache), 1, 8, Duration::ZERO);
         (cache, service)
+    }
+
+    #[test]
+    fn production_services_own_independent_worker_pools() {
+        let first_cache = Arc::new(StatisticsCache::default());
+        let second_cache = Arc::new(StatisticsCache::default());
+        let first = SyncLoadService::new(
+            Arc::new(TestLoader::default()),
+            Arc::downgrade(&first_cache),
+        );
+        let second = SyncLoadService::new(
+            Arc::new(TestLoader::default()),
+            Arc::downgrade(&second_cache),
+        );
+
+        assert!(!Arc::ptr_eq(&first.pool, &second.pool));
+    }
+
+    #[test]
+    fn dropping_a_worker_pool_waits_for_an_active_worker() {
+        let (started_tx, started_rx) = mpsc::sync_channel(1);
+        let (release_tx, release_rx) = mpsc::sync_channel(1);
+        let finished = Arc::new(AtomicBool::new(false));
+        let loader = Arc::new(BlockingLoader {
+            started: started_tx,
+            release: Mutex::new(release_rx),
+            finished: Arc::clone(&finished),
+        });
+        let pool = SyncLoadPool::new(1, 1, Duration::ZERO);
+        let (result, _receiver) = mpsc::sync_channel(1);
+        pool.needed_items
+            .send(NeededItemTask {
+                item: item(100, true),
+                resource_group: "rg".to_owned(),
+                to_timeout: Instant::now() + Duration::from_secs(1),
+                result,
+                loader,
+                cache: Weak::new(),
+            })
+            .expect("queue task");
+        started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("worker starts task");
+        let releaser = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(20));
+            release_tx.send(()).expect("release worker");
+        });
+
+        drop(pool);
+        let finished_when_drop_returned = finished.load(Ordering::Acquire);
+        releaser.join().expect("releaser exits");
+        assert!(finished_when_drop_returned);
     }
 
     #[test]
@@ -571,5 +642,19 @@ mod tests {
         )
         .expect("one task");
         assert_eq!(drained.item, item(108, true));
+    }
+
+    #[test]
+    fn dropped_expired_task_waits_for_the_singleflight_timer() {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        drop(sender);
+        let started = Instant::now();
+        let outcome = wait_for_task_result(receiver, started + Duration::from_millis(20));
+        assert!(started.elapsed() >= Duration::from_millis(15));
+        assert!(matches!(
+            outcome,
+            SyncLoadOutcome::TransportError(error)
+                if error == "sync load took too long to return"
+        ));
     }
 }

@@ -339,49 +339,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn source_bucket_configs_match_go_order_and_labels() {
-        assert_eq!(HEALTHY_BUCKET_CONFIGS.len(), STATS_HEALTHY_BUCKET_COUNT);
-        assert_eq!(
-            HEALTHY_BUCKET_CONFIGS
-                .iter()
-                .map(|config| (config.index, config.upper_bound, config.label))
-                .collect::<Vec<_>>(),
-            vec![
-                (0, 50, "[0,50)"),
-                (1, 55, "[50,55)"),
-                (2, 60, "[55,60)"),
-                (3, 70, "[60,70)"),
-                (4, 80, "[70,80)"),
-                (5, 100, "[80,100)"),
-                (6, 101, "[100,100]"),
-                (7, 0, "[0,100]"),
-                (8, 0, "unneeded analyze"),
-                (9, 0, "pseudo"),
-            ]
-        );
-    }
-
-    #[test]
-    fn source_init_binds_all_gauges_and_historical_counters() {
-        init_metrics_vars();
-        let gauges = stats_healthy_gauges();
-        assert_eq!(gauges.len(), STATS_HEALTHY_BUCKET_COUNT);
-        for (index, gauge) in gauges.iter().enumerate() {
-            gauge.set(index as f64);
-            assert_eq!(gauge.get(), index as f64);
-        }
-
-        let success = dump_historical_stats_success_counter();
-        let failed = dump_historical_stats_failed_counter();
-        let success_before = success.get();
-        let failed_before = failed.get();
-        success.inc();
-        failed.inc();
-        assert_eq!(success.get(), success_before + 1.0);
-        assert_eq!(failed.get(), failed_before + 1.0);
-    }
-
-    #[test]
     fn domain_source_init_binds_all_seven_handles_separately() {
         domain_metrics::init_metrics_vars();
         let generated = domain_metrics::generate_historical_stats_success_counter();

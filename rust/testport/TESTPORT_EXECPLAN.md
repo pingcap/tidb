@@ -60,18 +60,17 @@ For each bounded behavior cluster:
   real `tidb_stats::Table` values with Go's count, textual-histogram,
   CMSketch, nil-aware TopN, and existence-map semantics. Inventory and WIP
   gates are in `receipts/statistics_handle_internal.md`.
-- 2026-08-30: completed the pinned Go `pkg/statistics/handle/metrics` package
-  against the shared gauge/counter collectors. The ten ordered health buckets,
-  historical dump children, and rebinding behavior are live; handle and domain
-  package initializers remain separate so one Go package cannot rebind another
-  package's handles.
+- 2026-08-30: audited the complete pinned Go
+  `pkg/statistics/handle/metrics` package. It remains unclaimed because its
+  shared 60-artifact `pkg/metrics` collector owner is absent. The wired private
+  collectors remain seed integration only; two source-absent leaf tests were
+  removed. Inventory is in
+  `receipts/statistics_handle_metrics_audit.md`.
 - 2026-08-30: completed the pinned two-artifact `pkg/domain/metrics` package.
   All seven historical-stat and plan-replayer handles bind their shared
   collectors together, and the live domain/server consumers increment or set
   them at Go's generation, dump, channel, and collection points. Inventory is
   in `receipts/domain_metrics.md`.
-  The handle package inventory is in
-  `receipts/statistics_handle_metrics_audit.md`.
 - 2026-08-29: completed the pinned Go `pkg/statistics/handle/logutil`
   package in `tidb-stats-handle-logutil`. Its four exported constructors now
   compose the completed shared background/error-verbose and sampled logger
@@ -825,11 +824,13 @@ For each bounded behavior cluster:
       sampled/error logging, and close/wait lifecycle. Wire `/status` to the
       shared percentage. Inventory and gates are in
       `receipts/statistics_handle_initstats.md`.
-- [x] Audit the complete pinned `pkg/statistics/handle/syncload` package.
-      Remove the CPU-threshold-only carrier, its source-absent test, and six
-      empty gap tests. Go owns a live cache/session/storage worker subsystem
-      with queues, singleflight, retries, priority, metrics, and lifecycle;
-      those dependencies are not complete. The inventory is in
+- [x] Audit and wire the complete pinned `pkg/statistics/handle/syncload`
+      package behavior. Distinct statistics handles own distinct configured
+      queues/workers, shutdown joins active workers, global singleflight
+      preserves Go's locked completion order, and a dropped expired task waits
+      for its original timer. Keep the atomic package unclaimed until the
+      complete shared `pkg/metrics` owner supplies its five collectors. The
+      inventory and three fail-before/pass-after regressions are in
       `receipts/statistics_handle_syncload_audit.md`.
 - [x] Audit the complete pinned `pkg/statistics/handle/updatetest` package.
       Remove all 15 ignored empty Rust functions: Go's 23 tests and benchmark
@@ -898,11 +899,12 @@ For each bounded behavior cluster:
       package. The production parent calculator now runs all 690 source matrix
       cases and byte-compares the exact pinned golden CSV. Inventory is in
       `receipts/statistics_handle_autoanalyze_calculatoranalysis_audit.md`.
-- [x] Audit the complete pinned
+- [x] Complete the pinned
       `pkg/statistics/handle/autoanalyze/priorityqueue/intervaltimezone`
-      package. Rust has no corresponding contaminated-timezone store/domain
-      integration test; leave it unclaimed with the parent handle/session
-      dependency. Inventory is in
+      test package. Its complete build/test inventory maps to the production
+      statistics-session pool, analyze-job persistence plans, and restricted
+      duration query; reused sessions refresh the live global timezone before
+      evaluating the persisted interval. Inventory is in
       `receipts/statistics_handle_autoanalyze_intervaltimezone_audit.md`.
 - [x] Audit the complete pinned `pkg/statistics/handle/autoanalyze/refresher`
       package. Remove two unconsumed scalar condition leaves and their six
@@ -1025,11 +1027,11 @@ For each bounded behavior cluster:
   `pkg/util/logutil` owner. It must not introduce another sink, sampler, or
   logging policy; cloned sampled handles retain the one shared per-factory
   state required by Go. Date/Author: 2026-08-29, Codex.
-- Decision: `pkg/statistics/handle/metrics` binds the shared collector families
-  and owns only its ten health gauge children plus two historical-dump counter
-  children. Generate-result children used by the server belong to Go's
-  separate `pkg/domain/metrics` initializer; keeping separate binding cells
-  preserves both packages' observable reinitialization behavior.
+- Decision: `pkg/statistics/handle/metrics` may own only its ten health-gauge
+  children and two historical-dump counter children; construction,
+  reinitialization, and registration of their parent collectors belong to the
+  complete `pkg/metrics` package. Do not extend leaf-local collectors. Existing
+  wires are seed evidence and remain unclaimed until that owner lands.
   Date/Author: 2026-08-30, Codex.
 - Decision: the complete `pkg/domain/metrics` package shares collector identity
   with the statistics metrics owner while retaining its own seven-handle
@@ -1098,12 +1100,14 @@ For each bounded behavior cluster:
   process parallelism is the native `GOMAXPROCS(0)` input; all remaining
   config, channel, atomic, logging, progress, task, and wait behavior is owned
   directly by the package. Date/Author: 2026-08-29, Codex.
-- Decision: `pkg/statistics/handle/syncload` cannot be represented by a pure
-  threshold function accepting a caller-supplied CPU count. Pinned Go probes
-  live process parallelism only as one input to an integrated cache, session,
-  storage, metrics, queue, retry, and worker lifecycle. The extracted Rust API
-  and source-absent tests are removed until the complete package can land.
-  Date/Author: 2026-08-29, Codex.
+- Decision: `pkg/statistics/handle/syncload` is implemented through the live
+  cache, session, storage, planner, queue, retry, and worker lifecycle rather
+  than an extracted CPU-threshold carrier. Its queues/workers belong to each
+  statistics handle, only singleflight is global, and handle shutdown waits
+  for workers. The atomic package remains unclaimed solely because its five
+  collectors belong to the separate incomplete 60-artifact `pkg/metrics`
+  owner; duplicating them locally would change collector identity.
+  Date/Author: 2026-08-30, Codex.
 - Decision: `pkg/statistics/handle/updatetest` is one integration-test package
   over the real stats handle. Empty functions cannot stand in for its session,
   transaction, SQL/storage, partition, auto-analyze, usage, lock, and leak

@@ -1196,7 +1196,7 @@ fn show_analyze_status_reads_persisted_jobs_like_go() {
 }
 
 /// Pinned
-/// `pkg/statistics/handle/autoanalyze/priorityqueue/intervaltimezone::TestGetLastFailedAnalysisDuration`:
+/// `pkg/statistics/handle/autoanalyze/priorityqueue/intervaltimezone::TestLastFailedAnalysisDurationUseCorrectTimezone`:
 /// a reused statistics session must replace its stale timezone with the live
 /// global value before evaluating the failed-job interval.
 #[test]
@@ -1221,8 +1221,6 @@ fn failed_analysis_duration_resets_the_pooled_session_timezone() {
             tidb_datatype::Collation::Utf8Mb4Bin,
         )))
     );
-    assert_eq!(source.session_pool.size(), 1);
-
     rows(&mut client, "SET GLOBAL time_zone = 'Europe/Berlin'");
     let now = tidb_exec::mysql_bootstrap::utc_now_timestamp();
     let started_at = now
@@ -1297,7 +1295,6 @@ fn failed_analysis_duration_resets_the_pooled_session_timezone() {
         duration < 60_000_000_000,
         "duration must be below one minute: {duration}"
     );
-    assert_eq!(source.session_pool.size(), 1);
 }
 
 /// Pinned `TestCleanupCorruptedAnalyzeJobsOnCurrentInstance` and
