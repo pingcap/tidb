@@ -58,6 +58,12 @@ func preSplitIndexRegions(
 	if err != nil {
 		return errors.Trace(err)
 	}
+	autoPreSplitCfg := getAutoPreSplitConfig()
+	// Start one shared AUTO budget before the first index. Manual pre-splitting
+	// keeps its original context, but its wall time still reduces this budget.
+	autoPreSplitCtx, cancel := context.WithTimeout(
+		ctx, autoPreSplitCfg.statsLoadTimeout+sctx.GetSessionVars().GetSplitRegionTimeout())
+	defer cancel()
 	// Preserve the target keyspace used by explicit PRE_SPLIT_REGIONS: txn reorg
 	// splits normal index keys, while ingest and txn-merge split temporary index
 	// keys used by concurrent DML. Fast reorg does not additionally split the
@@ -75,7 +81,7 @@ func preSplitIndexRegions(
 		var skipReason string
 		if idxArg.AutoPreSplit {
 			splitResult, skipReason, err = autoPreSplitIndexRegion(
-				ctx, sctx, store, tblInfo, idxInfo, statsProvider,
+				autoPreSplitCtx, sctx, store, tblInfo, idxInfo, statsProvider,
 				autoPreSplitBoundaryCache, splitOnTempIdx)
 		} else {
 			splitArgs, evalErr := evalSplitDatumFromArgs(exprCtx, tblInfo, idxInfo, idxArg)

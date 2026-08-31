@@ -578,6 +578,64 @@ func TestAutoPreSplitIndexRegionsGateAndManualOverride(t *testing.T) {
 		t, hotStatsTbl.GetCol(tblInfo.Columns[1].ID), tblInfo.Columns[1], 0,
 		types.MakeDatums(40), []int64{10})
 	hotStatsProvider := &fakeAutoPreSplitStatsProvider{stats: hotStatsTbl}
+	t.Run("manual work consumes shared AUTO deadline", func(t *testing.T) {
+		testfailpoint.Enable(
+			t, "github.com/pingcap/tidb/pkg/ddl/mockAutoPresplitStatsLoadTimeout", "return(100)")
+		sctx := mock.NewContext()
+		sctx.GetSessionVars().WaitSplitRegionTimeout = 1
+		tblInfo, _ := buildAutoPreSplitTestTableInfoFromSQL(
+			t, "create table t(a bigint, b bigint, index idx_manual(a), index idx_auto1(b), index idx_auto2(b, a))")
+		statsTbl := buildAutoPreSplitTestStats(
+			tblInfo.ID, 100, 0, tblInfo.Columns[1], hotTopN)
+		setAutoPreSplitTestHistogram(
+			t, statsTbl.GetCol(tblInfo.Columns[1].ID), tblInfo.Columns[1], 0,
+			types.MakeDatums(40), []int64{10})
+		args := &model.ModifyIndexArgs{IndexArgs: []*model.IndexArg{
+			{SplitOpt: &model.IndexArgSplitOpt{Num: 4}},
+			{AutoPreSplit: true},
+			{AutoPreSplit: true},
+		}}
+
+		splitCalls := 0
+		var firstAutoDeadline time.Time
+		store := &fakeAutoPreSplitStore{splitFunc: func(splitCtx context.Context) ([]uint64, error) {
+			splitCalls++
+			if splitCalls == 1 {
+				timer := time.NewTimer(300 * time.Millisecond)
+				defer timer.Stop()
+				select {
+				case <-timer.C:
+					return nil, nil
+				case <-splitCtx.Done():
+					return nil, splitCtx.Err()
+				}
+			}
+			deadline, ok := splitCtx.Deadline()
+			require.True(t, ok)
+			if splitCalls == 2 {
+				firstAutoDeadline = deadline
+				require.Less(t, time.Until(deadline), 900*time.Millisecond)
+
+				timer := time.NewTimer(300 * time.Millisecond)
+				defer timer.Stop()
+				select {
+				case <-timer.C:
+					return nil, nil
+				case <-splitCtx.Done():
+					return nil, splitCtx.Err()
+				}
+			}
+			require.True(t, deadline.Equal(firstAutoDeadline))
+			require.Less(t, time.Until(deadline), 600*time.Millisecond)
+			return nil, nil
+		}}
+
+		err := preSplitIndexRegions(
+			context.Background(), sctx, store, tblInfo, tblInfo.Indices, reorgMeta,
+			args, &fakeAutoPreSplitStatsProvider{stats: statsTbl})
+		require.NoError(t, err)
+		require.Equal(t, 3, splitCalls)
+	})
 	t.Run("reuse boundaries for indexes sharing leading column", func(t *testing.T) {
 		tblInfo, _ := buildAutoPreSplitTestTableInfoFromSQL(
 			t, "create table t(a bigint, b bigint, index idx1(b), index idx2(b, a))")

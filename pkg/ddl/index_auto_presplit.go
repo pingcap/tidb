@@ -103,7 +103,8 @@ func getAutoPreSplitConfig() autoPreSplitConfig {
 		// AUTO is intended for large tables, where distributing add-index writes
 		// outweighs the statistics loading and Region operation overhead.
 		minTableRows: 1_000_000,
-		// Bound the delay this optional optimization can add before add-index starts.
+		// Bound one leading-column statistics load. This allowance is also added to
+		// the Region timeout to form the shared AUTO deadline.
 		statsLoadTimeout: 30 * time.Second,
 		// Require statistics with no more than about 20% modified rows so stale
 		// distributions do not produce poor split boundaries.
@@ -114,15 +115,16 @@ func getAutoPreSplitConfig() autoPreSplitConfig {
 	}
 	failpoint.Inject("mockAutoPresplitConfig", func(val failpoint.Value) {
 		if minRows, ok := val.(int); ok && minRows > 0 {
-			cfg.applyTestConfigOverrides(minRows)
+			cfg.minTableRows = int64(minRows)
+			cfg.minStatsHealthy = 0
+		}
+	})
+	failpoint.Inject("mockAutoPresplitStatsLoadTimeout", func(val failpoint.Value) {
+		if timeoutMS, ok := val.(int); ok && timeoutMS > 0 {
+			cfg.statsLoadTimeout = time.Duration(timeoutMS) * time.Millisecond
 		}
 	})
 	return cfg
-}
-
-func (cfg *autoPreSplitConfig) applyTestConfigOverrides(minRows int) {
-	cfg.minTableRows = int64(minRows)
-	cfg.minStatsHealthy = 0
 }
 
 func planAutoPreSplitWithCache(
