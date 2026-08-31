@@ -30,10 +30,10 @@ use tidb_exec::cluster_catalog::{
 };
 use tidb_exec::cluster_ddl::{
     lower_ddl, lower_ddl_with_context, plan_check_constraint_job_rollingback,
-    plan_check_constraint_job_submission, plan_ddl, plan_ddl_with_collation,
-    plan_persisted_check_constraint_job_step, AlterColumnAction, DdlPlan, DdlPlanError,
-    DdlStatement,
+    plan_ddl, plan_ddl_with_collation, plan_persisted_check_constraint_job_step,
+    prepare_check_constraint_job_submission, AlterColumnAction, DdlPlan, DdlPlanError, DdlStatement,
 };
+use tidb_exec::ddl_job_submit::{finish_insert_attempt, plan_insert_attempt};
 use tidb_exec::ddl_job_table::DdlJobTable;
 use tidb_exec::ddl_history_table::DdlHistoryTable;
 use tidb_exec::table_info_build::{build_table_info, ClusteredIndexDefMode};
@@ -128,6 +128,36 @@ pub(crate) fn bootstrapped() -> MetaStore {
         );
     }
     store
+}
+
+struct PlannedCheckSubmission {
+    job: Job,
+    mutations: Vec<OptimisticMutation>,
+}
+
+fn plan_check_constraint_job_submission(
+    store: &mut MetaStore,
+    statement: &DdlStatement,
+    start_ts: u64,
+) -> Result<Option<PlannedCheckSubmission>, DdlPlanError> {
+    let Some(mut spec) =
+        prepare_check_constraint_job_submission(store, statement, start_ts)?
+    else {
+        return Ok(None);
+    };
+    let catalog = load_cluster_catalog(store)?;
+    let mut before_insert_with_assigned_ids =
+        |_: &[tidb_exec::ddl_job_submit::JobSpec]| Option::<fn()>::None;
+    let (mutations, _) = plan_insert_attempt(
+        store,
+        &catalog,
+        std::slice::from_mut(&mut spec),
+        &mut before_insert_with_assigned_ids,
+    )?;
+    Ok(Some(PlannedCheckSubmission {
+        job: spec.job,
+        mutations,
+    }))
 }
 
 pub(crate) fn statement(sql: &str) -> DdlStatement {
@@ -458,6 +488,70 @@ fn check_job_submission_precedes_every_schema_transition() {
     meta_history.decode(encoded).expect("meta history job decodes");
     assert_eq!(meta_history.id, job_id);
     assert_eq!(meta_history.state, JobState::DONE);
+}
+
+#[test]
+fn failed_job_insert_attempt_cleans_up_assigned_id_registration_before_retry() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    let mut store = bootstrapped();
+    let create = plan(&mut store, "CREATE TABLE retry_cleanup (a INT)", 2_100);
+    apply(&mut store, &create);
+    let parsed = tidb_parser::parse(
+        "ALTER TABLE retry_cleanup ADD CONSTRAINT c_positive CHECK (a > 0)",
+    )
+    .expect("CHECK DDL parses");
+    let context = tidb_executor::StmtContext::for_query().with_enable_check_constraint(true);
+    let statement = lower_ddl_with_context(&parsed, "u6", &context)
+        .expect("CHECK DDL is admitted")
+        .expect("CHECK DDL owns a catalog route");
+    let mut spec = prepare_check_constraint_job_submission(&mut store, &statement, 2_101)
+        .expect("Go submission preflight succeeds")
+        .expect("ADD CHECK creates a job spec");
+    let catalog = load_cluster_catalog(&mut store).expect("catalog loads");
+
+    let assigned_ids = Rc::new(RefCell::new(Vec::new()));
+    let cleanup_ids = Rc::new(RefCell::new(Vec::new()));
+    let mut before_insert_with_assigned_ids = {
+        let assigned_ids = Rc::clone(&assigned_ids);
+        let cleanup_ids = Rc::clone(&cleanup_ids);
+        move |specs: &[tidb_exec::ddl_job_submit::JobSpec]| {
+            assert_eq!(specs.len(), 1);
+            let id = specs[0].job.id;
+            assert_ne!(id, 0);
+            assigned_ids.borrow_mut().push(id);
+            let cleanup_ids = Rc::clone(&cleanup_ids);
+            Some(move || cleanup_ids.borrow_mut().push(id))
+        }
+    };
+
+    let (_, cleanup) = plan_insert_attempt(
+        &mut store,
+        &catalog,
+        std::slice::from_mut(&mut spec),
+        &mut before_insert_with_assigned_ids,
+    )
+    .expect("the first insertion attempt plans");
+    assert_eq!(
+        finish_insert_attempt::<(), _, _>(Err("retryable"), cleanup),
+        Err("retryable")
+    );
+
+    let (_, cleanup) = plan_insert_attempt(
+        &mut store,
+        &catalog,
+        std::slice::from_mut(&mut spec),
+        &mut before_insert_with_assigned_ids,
+    )
+    .expect("the retry insertion attempt plans");
+    finish_insert_attempt::<_, &str, _>(Ok(()), cleanup).expect("the retry commits");
+
+    let assigned_ids = assigned_ids.borrow();
+    let cleanup_ids = cleanup_ids.borrow();
+    assert_eq!(assigned_ids.len(), 2);
+    assert_eq!(cleanup_ids.as_slice(), &assigned_ids[..1]);
+    assert_eq!(assigned_ids[1], spec.job.id);
 }
 
 #[test]

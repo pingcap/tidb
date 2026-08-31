@@ -468,6 +468,13 @@ pub struct SubJob {
 }
 
 impl SubJob {
+    /// Returns the typed `JobArgs` interface stored in Go's public `JobArgs`
+    /// field, or `None` for a nil/non-JobArgs interface.
+    #[must_use]
+    pub fn job_args_value(&self) -> Option<&crate::JobArgsValue> {
+        self.job_args.job_args_value()
+    }
+
     /// Reports whether the sub-job is outside cancellation and rollback states.
     #[must_use]
     pub fn is_normal(&self) -> bool {

@@ -22,8 +22,13 @@ After this work, Rust accepts, stores, displays, and enforces CHECK constraints 
 - [x] (2026-08-31) Persisted the complete CHECK argument envelope in `mysql.tidb_ddl_job`; every phase and rollback reloads it from a fresh snapshot, updates `job_meta`, and removes the active row only at a terminal state.
 - [x] (2026-08-31) Matched terminal history behavior: `FinishedTS`, process-local sequence allocation, best-effort SQL `INSERT IGNORE`, authoritative meta history, error count/error retention, and DONE/ROLLBACK_DONE states.
 - [x] (2026-08-31) Removed the superseded statement-local CHECK continuation/carrier and direct one-transaction ADD/DROP/ALTER planners.
-- [ ] Start a general Go-parity DDL owner/scheduler that scans active jobs independently of the submitting request; do not add a CHECK-only owner loop.
-- [ ] Capture the remaining common job metadata supplied by Go's executor (`CDCWriteSource`, ADD priority, and non-default trace/session fields).
+- [x] (2026-08-31) Started one owner-elected persisted-job scheduler that scans the active queue independently of submitters and dispatches the currently persisted CHECK action family; unsupported action types remain active rather than entering a second CHECK-only owner path.
+- [x] (2026-08-31) Captured Go's common CHECK job envelope (`CDCWriteSource`, ADD priority, connection ID, session alias, SQL mode, and query); trace ID remains empty because Rust has no session trace-context carrier yet.
+- [x] (2026-08-31) Removed the synchronous cache/request-local CHECK runner: submitters now persist, notify the elected owner, and wait on authoritative history.
+- [x] (2026-08-31) Pushed the owner/scheduler and job-envelope batch as `3a67a86b7c` to `origin/hparser-integration`.
+- [x] (2026-08-31) Replaced CHECK's private insertion wrapper with pinned `pkg/ddl/jobsubmit`'s common prepared-`JobSpec` transaction: pessimistic global-ID locking, source-shaped typed arguments, post-ID callback ordering, failed-attempt cleanup, and atomic ID/job-row commit.
+- [x] (2026-08-31) Ported `ModifyIndexArgs` V1/V2 and finished-job wire layouts and made BDR admission inspect the same typed job/subjob arguments as Go instead of Rust's reduced unique-index surrogate.
+- [x] (2026-08-31) Matched owner notification after enqueue: the local owner wakes directly, a non-owner writes `/tidb/ddl/add_ddl_job_general`, and the elected Rust scheduler watches that key.
 - [ ] Add concurrent-writer regressions corresponding to every scenario in pinned `pkg/ddl/constraint_test.go`.
 - [ ] Inventory every remaining pinned production/test/support/build artifact before making a package-level claim.
 
@@ -51,6 +56,15 @@ After this work, Rust accepts, stores, displays, and enforces CHECK constraints 
 - Observation: Go's preprocessor validates a LIKE source before `setTemporaryType`. Therefore a temporary source or an inherited forbidden setting outranks `ON COMMIT PRESERVE ROWS`.
   Evidence: pinned `checkCreateTableGrammar` and `checkReferInfoForTemporaryTable`; the cluster regression now pins every source refusal in that order, including a missing/temporary source outranking a missing target database.
 
+- Observation: Rust's DDL builder uses the query-shaped statement context, but `tidb_enable_check_constraint` was copied only into the DML-shaped context. A committed global ON value therefore still lowered cluster ALTER CHECK as ignored.
+  Evidence: the embedded-store owner-queue regression failed before scheduler submission even though the shared global table contained `ON`; copying the setting into the query-shaped context made the same regression reach history and enforce error 3819.
+
+- Observation: Go's `BeforeInsertWithAssignedIDs` callback runs after every retry has reassigned IDs but before `insertDDLJobs2Table` fills/encodes arguments. Its cleanup is per attempt and runs on any failed insertion transaction; the successful attempt deliberately retains the registration.
+  Evidence: pinned `pkg/ddl/jobsubmit/submit.go::GenGIDAndInsertJobsWithRetry` and `TestSubmitBatchRetryCleanup`; the executable Rust regression now records two callbacks, one cleanup, and the final job ID without asserting that a rolled-back allocation must change.
+
+- Observation: Go serializes all job allocations by pessimistically locking the meta `NextGlobalID` key and reads the allocation snapshot at the resulting `forUpdateTS`. An optimistic read-plus-write retry is not equivalent because job insertion order is part of scheduler correctness.
+  Evidence: pinned `lockGlobalIDKey`; Rust submission now uses `SessionTransaction::begin_pessimistic`, locks `next_global_id_kv_key`, and binds catalog reads to the returned statement timestamp.
+
 ## Decision Log
 
 - Decision: do not describe the current same-snapshot validator as CHECK DDL parity.
@@ -69,9 +83,13 @@ After this work, Rust accepts, stores, displays, and enforces CHECK constraints 
   Rationale: a durable intermediate state without durable immutable job arguments cannot be resumed after process/owner loss, whereas pinned Go resumes it from the job table. A passing straight-line transition test is insufficient evidence for the package contract.
   Date/Author: 2026-08-31 / Codex
 
+- Decision: use one owner-elected active-job scanner shared by every persisted action family, while allowing only action handlers that have actually been ported.
+  Rationale: this matches Go's submitter/scheduler boundary without pretending that Rust's ordinary direct DDL actions are already persisted. Unknown active actions are retained for a future capable owner instead of being consumed incorrectly.
+  Date/Author: 2026-08-31 / Codex
+
 ## Outcomes & Retrospective
 
-The current batch establishes one persisted CHECK execution route from submission through synchronized intermediate states, validation, rollback, and both history stores. The old in-memory continuation route is gone. Package completion is not yet claimed: Rust still needs the general owner/scheduler, remaining common job-envelope fields, concurrent cluster regressions, and the complete pinned package inventory.
+The pushed batches establish one persisted CHECK execution route from submission through the elected owner, synchronized intermediate states, validation, rollback, and both history stores. The old in-memory continuation and request-local worker routes are gone. Package completion is not claimed: the scheduler dispatches only action families whose persisted worker exists, Rust has no trace-ID carrier, concurrent cluster regressions remain incomplete, and the complete pinned package inventory is still open.
 
 ## Context and Orientation
 
@@ -169,6 +187,20 @@ Current durable-job evidence:
     cargo test --locked --offline -p tidb-exec --test all ddl_sql_history_uses_go_insert_ignore_semantics -- --nocapture
     test result: all passed
 
+Current common job-submission evidence:
+
+    cargo test --locked --offline -q -p tidb-model go_test_ --lib -- --nocapture
+    test result: ok. 13 passed
+
+    cargo test --locked --offline -q -p tidb-exec ddl_job_submit::tests --lib -- --nocapture
+    test result: ok. 9 passed
+
+    cargo test --locked --offline -q -p tidb-exec --test all failed_job_insert_attempt_cleans_up_assigned_id_registration_before_retry -- --nocapture
+    test result: ok. 1 passed
+
+    cargo check --locked --offline -p tidb-exec -p tidb-server
+    Finished dev profile
+
 The broader `cargo test -p tidb-txnkv` command was not a valid scoped check because pre-existing unrelated integration targets do not compile (`lock_resolver_source`, `batch_scheduler_source`, and `batch_wire_source`); rerunning the new unit regression with `--lib` passed.
 
 ## Interfaces and Dependencies
@@ -184,3 +216,7 @@ Revision note (2026-08-31): completed the CREATE LIKE source-admission/error-ord
 Revision note (2026-08-31): implemented and tested the straight-line distributed CHECK state machine, rollback, MDL wait, and cleanup semantics; recorded the remaining durable job/restart gap and withheld the batch from commit.
 
 Revision note (2026-08-31): persisted CHECK jobs and terminal history, removed the in-memory continuation path, added fresh-owner ADD/DROP/ALTER/rollback regressions, and narrowed the remaining gap to the general DDL scheduler and common envelope fields.
+
+Revision note (2026-08-31): added the owner-elected active-job scanner, separated submission from execution, completed the available common job envelope, fixed the query-shaped DDL context's missing CHECK enablement, and pushed commit `3a67a86b7c`.
+
+Revision note (2026-08-31): transcreated the common jobsubmit allocation/insertion retry contract, source-shaped modify-index arguments and BDR admission, removed the CHECK-only submission carrier, and added cross-node owner notification. Package completion remains withheld while ordinary Rust DDL actions still bypass the persisted common submit route and the pinned server-state dependency is not yet transcreated.

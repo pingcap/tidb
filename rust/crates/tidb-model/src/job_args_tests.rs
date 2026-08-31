@@ -1523,3 +1523,170 @@ pub(crate) fn go_test_truncate_table_args() {
         }
     }
 }
+
+#[test]
+pub(crate) fn go_test_add_index_args() {
+    let index = IndexArg {
+        unique: true,
+        index_name: tidb_ast::CiString::new("idx1"),
+        index_part_specifications: vec![tidb_ast::IndexPartSpecification {
+            length: 2,
+            ..Default::default()
+        }]
+        .into(),
+        index_option: Some(GoShared::new(tidb_ast::IndexOption::default())),
+        hidden_cols: vec![ColumnInfo::default(), ColumnInfo::default()].into(),
+        sql_mode: 1,
+        index_id: 1,
+        func_expr: "test_string".to_owned(),
+        ..Default::default()
+    };
+
+    for version in [JobVersion::V1, JobVersion::V2] {
+        let mut job = encoded_job(
+            version,
+            ActionType::ACTION_ADD_INDEX,
+            GoShared::new(ModifyIndexArgs {
+                index_args: vec![index.clone()].into(),
+                partition_ids: GoSharedSlice::from_vec(vec![100, 101, 102]),
+                op_type: IndexOp::ADD_INDEX,
+            }),
+        );
+        let decoded = get_modify_index_args(&mut job).unwrap().unwrap();
+        let decoded = decoded.read().index_args.get(0).unwrap();
+        let decoded = decoded.read();
+        assert!(decoded.unique);
+        assert_eq!(decoded.index_name, index.index_name);
+        assert_eq!(
+            decoded
+                .index_part_specifications
+                .get(0)
+                .unwrap()
+                .read()
+                .length,
+            2
+        );
+        assert!(decoded.index_option.is_some());
+        assert_eq!(decoded.hidden_cols.len(), 2);
+    }
+
+    for version in [JobVersion::V1, JobVersion::V2] {
+        let mut primary = index.clone();
+        primary.is_pk = true;
+        let mut job = encoded_job(
+            version,
+            ActionType::ACTION_ADD_PRIMARY_KEY,
+            GoShared::new(ModifyIndexArgs {
+                index_args: vec![primary].into(),
+                ..Default::default()
+            }),
+        );
+        let decoded = get_modify_index_args(&mut job).unwrap().unwrap();
+        let decoded = decoded.read().index_args.get(0).unwrap();
+        let decoded = decoded.read();
+        assert!(decoded.unique);
+        assert!(decoded.is_pk);
+        assert_eq!(decoded.sql_mode, 1);
+        assert!(decoded.index_option.is_some());
+    }
+
+    for version in [JobVersion::V1, JobVersion::V2] {
+        let mut columnar = index.clone();
+        columnar.is_columnar = true;
+        columnar.columnar_index_type = ColumnarIndexType::INVERTED;
+        let mut job = encoded_job(
+            version,
+            ActionType::ACTION_ADD_COLUMNAR_INDEX,
+            GoShared::new(ModifyIndexArgs {
+                index_args: vec![columnar].into(),
+                ..Default::default()
+            }),
+        );
+        let decoded = get_modify_index_args(&mut job).unwrap().unwrap();
+        let decoded = decoded.read().index_args.get(0).unwrap();
+        let decoded = decoded.read();
+        assert!(decoded.is_columnar);
+        assert_eq!(decoded.columnar_index_type, ColumnarIndexType::INVERTED);
+        assert_eq!(decoded.func_expr, "test_string");
+    }
+
+    for version in [JobVersion::V1, JobVersion::V2] {
+        let mut finished = index.clone();
+        finished.is_global = false;
+        let mut job = encoded_finished_job(
+            version,
+            ActionType::ACTION_ADD_INDEX,
+            GoShared::new(ModifyIndexArgs {
+                index_args: vec![finished].into(),
+                partition_ids: GoSharedSlice::from_vec(vec![100, 101, 102]),
+                op_type: IndexOp::ADD_INDEX,
+            }),
+        );
+        let decoded = get_finished_modify_index_args(&mut job).unwrap().unwrap();
+        let decoded_read = decoded.read();
+        let decoded_index = decoded_read.index_args.get(0).unwrap();
+        assert_eq!(decoded_index.read().index_id, 1);
+        assert_eq!(decoded_read.partition_ids.snapshot(), [100, 101, 102]);
+    }
+}
+
+#[test]
+pub(crate) fn go_test_drop_index_arguments() {
+    let args = GoShared::new(ModifyIndexArgs {
+        index_args: vec![IndexArg {
+            index_name: tidb_ast::CiString::new("i2"),
+            if_exist: true,
+            is_columnar: true,
+            index_id: 1,
+            ..Default::default()
+        }]
+        .into(),
+        partition_ids: GoSharedSlice::from_vec(vec![100, 101, 102, 103]),
+        op_type: IndexOp::DROP_INDEX,
+    });
+    for version in [JobVersion::V1, JobVersion::V2] {
+        let mut job = encoded_job(version, ActionType::ACTION_DROP_INDEX, args.clone());
+        let decoded = get_drop_index_args(&mut job).unwrap().unwrap();
+        let index = decoded.read().index_args.get(0).unwrap();
+        assert_eq!(index.read().index_name, tidb_ast::CiString::new("i2"));
+        assert!(index.read().if_exist);
+
+        let mut job = encoded_finished_job(version, ActionType::ACTION_DROP_INDEX, args.clone());
+        let decoded = get_finished_modify_index_args(&mut job).unwrap().unwrap();
+        let decoded_read = decoded.read();
+        let index = decoded_read.index_args.get(0).unwrap();
+        assert_eq!(index.read().index_id, 1);
+        assert_eq!(decoded_read.partition_ids.snapshot(), [100, 101, 102, 103]);
+    }
+}
+
+#[test]
+pub(crate) fn go_test_get_rename_index_args() {
+    let args = GoShared::new(ModifyIndexArgs {
+        index_args: vec![
+            IndexArg {
+                index_name: tidb_ast::CiString::new("old"),
+                ..Default::default()
+            },
+            IndexArg {
+                index_name: tidb_ast::CiString::new("new"),
+                ..Default::default()
+            },
+        ]
+        .into(),
+        ..Default::default()
+    });
+    for version in [JobVersion::V1, JobVersion::V2] {
+        let mut job = encoded_job(version, ActionType::ACTION_RENAME_INDEX, args.clone());
+        let decoded = get_modify_index_args(&mut job).unwrap().unwrap();
+        let decoded = decoded.read();
+        assert_eq!(
+            decoded.index_args.get(0).unwrap().read().index_name,
+            tidb_ast::CiString::new("old")
+        );
+        assert_eq!(
+            decoded.index_args.get(1).unwrap().read().index_name,
+            tidb_ast::CiString::new("new")
+        );
+    }
+}

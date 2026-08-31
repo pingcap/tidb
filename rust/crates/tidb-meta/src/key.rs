@@ -365,6 +365,12 @@ pub fn bootstrap_kv_key() -> Vec<u8> {
     encode_string_data_key(BOOTSTRAP)
 }
 
+/// The raw KV key holding Go `Mutator.GetBDRRole`.
+#[must_use]
+pub fn bdr_role_kv_key() -> Vec<u8> {
+    encode_string_data_key(BDR_ROLE)
+}
+
 /// The raw KV key holding the DDL-table version. Go
 /// `Mutator.GetDDLTableVersion`, which stores it as a plain string value, not
 /// a field of any hash.

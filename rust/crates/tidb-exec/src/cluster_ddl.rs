@@ -61,13 +61,14 @@ use tidb_model::schema_state::SchemaState;
 use tidb_model::table_info::TableInfo;
 use tidb_model::{
     get_job_ver_in_use, AddCheckConstraintArgs, CheckConstraintArgs, GoField, GoShared,
-    HistoryInfo, Job, JobState, TraceInfo,
+    HistoryInfo, Job, JobArgsValue, JobState, TraceInfo,
 };
 use tidb_txnkv::transaction::{MutationSetError, OptimisticMutation};
 
 use crate::cluster_catalog::{
     load_cluster_catalog, ClusterCatalog, ClusterCatalogError, MetaSnapshot,
 };
+use crate::ddl_job_submit::GlobalIdAllocator;
 use crate::table_info_build::{
     build_table_info_with_context, default_ddl_statement_context, resolve_charset_collation,
     ClusteredIndexDefMode,
@@ -2529,19 +2530,6 @@ pub enum DdlPlan {
     Write(Box<DdlWrite>),
 }
 
-/// One pinned-Go DDL submission transaction.
-///
-/// Submission allocates only the job ID and inserts the full envelope into
-/// `mysql.tidb_ddl_job`; it does not publish a table change or spend a schema
-/// version. The elected worker owns every later metadata transition.
-#[derive(Debug)]
-pub struct DdlJobSubmission {
-    /// The exact job envelope inserted into `job_meta`.
-    pub job: Job,
-    /// The global-ID update and active-job row insert committed together.
-    pub mutations: Vec<OptimisticMutation>,
-}
-
 /// One worker transaction decoded from a persisted active DDL job.
 #[derive(Clone, Debug)]
 pub struct PersistedDdlJobStep {
@@ -2557,13 +2545,13 @@ pub struct PersistedDdlJobStep {
 /// returned write set deliberately contains no table, schema-version, schema
 /// diff, notifier, or MDL mutation: Go's `GenGIDAndInsertJobsWithRetry`
 /// commits before the DDL owner executes the first step.
-pub fn plan_check_constraint_job_submission<S: MetaSnapshot>(
+pub fn prepare_check_constraint_job_submission<S: MetaSnapshot>(
     snapshot: &mut S,
     statement: &DdlStatement,
     start_ts: u64,
-) -> Result<Option<DdlJobSubmission>, DdlPlanError> {
+) -> Result<Option<crate::ddl_job_submit::JobSpec>, DdlPlanError> {
     let catalog = load_cluster_catalog(snapshot)?;
-    let (mut job, schema_ids, table_ids) = match statement {
+    let (job, args) = match statement {
         DdlStatement::AddCheckConstraint {
             schema,
             table,
@@ -2610,18 +2598,17 @@ pub fn plan_check_constraint_job_submission<S: MetaSnapshot>(
             // allocates the durable constraint ID.
             constraint.id = 0;
             constraint.state = SchemaState::NONE;
-            let mut job = new_check_constraint_job(
+            let job = new_check_constraint_job(
                 schema_id,
                 schema,
                 stored,
                 ActionType::ACTION_ADD_CHECK_CONSTRAINT,
                 &context.0,
-                start_ts,
             );
-            job.fill_args(Some(GoShared::new(AddCheckConstraintArgs {
+            let args = GoShared::new(AddCheckConstraintArgs {
                 constraint: GoField::new(Some(GoShared::new(constraint))),
-            })));
-            (job, schema_id.to_string(), stored.id.to_string())
+            });
+            (job, JobArgsValue::AddCheckConstraint(Some(args)))
         }
         DdlStatement::DropCheckConstraint {
             schema,
@@ -2640,19 +2627,18 @@ pub fn plan_check_constraint_job_submission<S: MetaSnapshot>(
                         format!("Constraint '{name}' does not exist."),
                     ))
                 })?;
-            let mut job = new_check_constraint_job(
+            let job = new_check_constraint_job(
                 schema_id,
                 schema,
                 stored,
                 ActionType::ACTION_DROP_CHECK_CONSTRAINT,
                 &context.0,
-                start_ts,
             );
-            job.fill_args(Some(GoShared::new(CheckConstraintArgs {
+            let args = GoShared::new(CheckConstraintArgs {
                 constraint_name: GoField::new(constraint.read().name.clone()),
                 enforced: GoField::new(false),
-            })));
-            (job, schema_id.to_string(), stored.id.to_string())
+            });
+            (job, JobArgsValue::CheckConstraint(Some(args)))
         }
         DdlStatement::AlterCheckConstraint {
             schema,
@@ -2672,47 +2658,30 @@ pub fn plan_check_constraint_job_submission<S: MetaSnapshot>(
                         format!("Constraint '{name}' does not exist."),
                     ))
                 })?;
-            let mut job = new_check_constraint_job(
+            let job = new_check_constraint_job(
                 schema_id,
                 schema,
                 stored,
                 ActionType::ACTION_ALTER_CHECK_CONSTRAINT,
                 &context.0,
-                start_ts,
             );
-            job.fill_args(Some(GoShared::new(CheckConstraintArgs {
+            let args = GoShared::new(CheckConstraintArgs {
                 constraint_name: GoField::new(constraint.read().name.clone()),
                 enforced: GoField::new(*enforced),
-            })));
-            (job, schema_id.to_string(), stored.id.to_string())
+            });
+            (job, JobArgsValue::CheckConstraint(Some(args)))
         }
         _ => return Ok(None),
     };
 
-    let mut allocator = GlobalIdAllocator::load(snapshot)?;
-    job.id = allocator
-        .allocate(1)?
-        .into_iter()
-        .next()
-        .expect("one requested global ID");
-    let job_table = crate::ddl_job_table::DdlJobTable::locate(&catalog)
-        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-    let mut mutations = Vec::new();
-    if let Some(global_id) = allocator.mutation()? {
-        mutations.push(global_id);
-    }
-    let reorg = job.may_need_reorg();
-    job_table
-        .append_insert(
-            &mut job,
-            reorg,
-            &schema_ids,
-            &table_ids,
-            false,
-            &mut mutations,
-        )
-        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-    Ok(Some(DdlJobSubmission { job, mutations }))
+    let mut specs = [crate::ddl_job_submit::JobSpec {
+        job,
+        args,
+        id_allocated: true,
+    }];
+    crate::ddl_job_submit::prepare_submit_batch(snapshot, &catalog, &mut specs, start_ts, false)?;
+    let [spec] = specs;
+    Ok(Some(spec))
 }
 
 fn new_check_constraint_job(
@@ -2721,7 +2690,6 @@ fn new_check_constraint_job(
     table: &TableInfo,
     action: ActionType,
     context: &tidb_executor::StmtContext,
-    start_ts: u64,
 ) -> Job {
     let mut job = Job::default();
     job.version = get_job_ver_in_use();
@@ -2742,8 +2710,6 @@ fn new_check_constraint_job(
         trace_id: context.ddl_trace_id().to_vec().into(),
         connection_id: context.ddl_connection_id(),
     }));
-    job.start_ts = start_ts;
-    job.state = JobState::QUEUEING;
     job
 }
 
@@ -7056,61 +7022,6 @@ fn find_index(table: &TableInfo, name: &str) -> Option<GoShared<IndexInfo>> {
         .indices
         .iter_deref()
         .find(|index| index.read().name.original().eq_ignore_ascii_case(name))
-}
-
-/// Go `GenGlobalIDs(n)`: `Inc(NextGlobalID, n)` answers the new maximum, and
-/// the allocated IDs are the `n` values ending there.
-///
-/// The key holds the max USED id, never a next-free one, so the increment IS
-/// the allocation. The new maximum is written from the value this snapshot
-/// read, which is what makes a competing allocation a write conflict rather
-/// than a duplicate ID.
-struct GlobalIdAllocator {
-    original: i64,
-    current: i64,
-}
-
-impl GlobalIdAllocator {
-    fn load<S: MetaSnapshot>(snapshot: &mut S) -> Result<Self, DdlPlanError> {
-        let current = match snapshot.get(&key::next_global_id_kv_key())? {
-            Some(stored) => value::parse_int_value(&stored)
-                .map_err(|error| DdlPlanError::Encode(format!("NextGlobalID: {error}")))?,
-            // Go's `Inc` treats a missing key as zero.
-            None => 0,
-        };
-        Ok(Self {
-            original: current,
-            current,
-        })
-    }
-
-    fn allocate(&mut self, count: i64) -> Result<Vec<i64>, DdlPlanError> {
-        let first = self
-            .current
-            .checked_add(1)
-            .ok_or(DdlPlanError::GlobalIdExhausted { wanted: i64::MAX })?;
-        let new_max = self
-            .current
-            .checked_add(count)
-            .ok_or(DdlPlanError::GlobalIdExhausted { wanted: i64::MAX })?;
-        if new_max > MAX_USER_GLOBAL_ID {
-            return Err(DdlPlanError::GlobalIdExhausted { wanted: new_max });
-        }
-        self.current = new_max;
-        Ok((first..=new_max).collect())
-    }
-
-    fn mutation(&self) -> Result<Option<OptimisticMutation>, DdlPlanError> {
-        (self.current != self.original)
-            .then(|| {
-                OptimisticMutation::meta_put(
-                    key::next_global_id_kv_key(),
-                    value::encode_int_value(self.current),
-                )
-            })
-            .transpose()
-            .map_err(Into::into)
-    }
 }
 
 fn append_schema_change_mutations<S: MetaSnapshot>(

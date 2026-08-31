@@ -12,10 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Port ledger for `pkg/ddl/jobsubmit/submit_test.go` (pkg/ddl.part7 items
-//! 416-419 of the local enumeration). All four drive
+//! Port ledger for the remaining `pkg/ddl/jobsubmit/submit_test.go` gaps
+//! (pkg/ddl.part7 items 416-418 of the local enumeration). These drive
 //! `jobsubmit.SubmitBatch` over an embedded-unistore store plus systable
-//! manager; no Rust carrier exists, so all are documentary gap ports.
+//! manager and remain documentary until those submission routes use the
+//! common Rust carrier.
 
 /// GO PORT of `pkg/ddl/jobsubmit/submit_test.go:132
 /// TestSubmitBatchEnqueuesTableModeJob`.
@@ -59,16 +60,3 @@ fn submit_batch_allocates_table_and_partition_ids_before_insert() {}
 #[test]
 #[ignore = "go-parity-gap: SubmitBatch's flashback/BDR/upgrade guards (pkg/ddl/jobsubmit/submit.go:66-140) are not transcreated"]
 fn submit_batch_guards_flashback_bdr_and_upgrade_state() {}
-
-/// GO PORT of `pkg/ddl/jobsubmit/submit_test.go:308
-/// TestSubmitBatchRetryCleanup`.
-///
-/// Re-derived contract: with `mockGenGIDRetryableError` failing the first
-/// global-ID generation, `BeforeInsertWithAssignedIDs` runs twice — the
-/// first attempt's assigned ID is recorded and its cleanup function invoked
-/// exactly once, and the successful second attempt assigns a NEW ID — so
-/// the assigned-IDs list has 2 entries while cleanupIDs has 1, matching the
-/// first ID.
-#[test]
-#[ignore = "go-parity-gap: needs the retry cleanup callback contract of SubmitBatch, not transcreated"]
-fn submit_batch_retry_cleans_up_previously_assigned_ids() {}

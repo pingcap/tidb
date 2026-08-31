@@ -14,7 +14,8 @@
 //! `CREATE`/`ALTER`/`RENAME`/`DROP TABLE` statements and their restore.
 
 use crate::util::{back_quote, escape_string_literal, push_name_path};
-use crate::{Expr, RestoreContext};
+use crate::{CiString, Expr, RestoreContext};
+use serde::{Deserialize, Serialize};
 
 mod alter;
 pub use alter::cache::AlterTableCacheMode;
@@ -42,6 +43,62 @@ pub use column::{
     AutoRandomOption, ColumnDef, ColumnFormat, ColumnOption, ColumnStorage, InlineKeyKind,
     InlineKeyOption,
 };
+
+/// Go `ast.ColumnName`, as persisted inside DDL job arguments.
+///
+/// The parser-facing AST uses lighter source nodes, but DDL job metadata must
+/// retain Go's three exported `CIStr` fields and their exact JSON names.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct ColumnName {
+    /// Optional schema qualifier.
+    pub schema: CiString,
+    /// Optional table qualifier.
+    pub table: CiString,
+    /// Column identifier.
+    pub name: CiString,
+}
+
+/// Go `ast.IndexPartSpecification`, as persisted in index job arguments.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct IndexPartSpecification {
+    /// Column reference for an ordinary index part.
+    pub column: Option<Box<ColumnName>>,
+    /// Prefix length; zero means no prefix.
+    pub length: i64,
+    /// Descending direction marker.
+    pub desc: bool,
+    /// Expression payload for functional or multi-valued index parts.
+    pub expr: Option<serde_json::Value>,
+}
+
+/// Go `ast.IndexOption`, as persisted in index job arguments.
+///
+/// `SplitOpt` and `Condition` are deliberately absent because pinned Go marks
+/// both fields `json:"-"` on this structure.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct IndexOption {
+    /// `KEY_BLOCK_SIZE`.
+    pub key_block_size: u64,
+    /// Go `IndexType` numeric value.
+    pub tp: i64,
+    /// Index comment.
+    pub comment: String,
+    /// Parser name.
+    pub parser_name: CiString,
+    /// Go `IndexVisibility` numeric value.
+    pub visibility: i64,
+    /// Go `PrimaryKeyType` numeric value.
+    pub primary_key_tp: i64,
+    /// Global-index marker.
+    pub global: bool,
+    /// Secondary engine attribute.
+    pub secondary_engine_attr: String,
+    /// On-demand columnar-replica marker.
+    pub add_columnar_replica_on_demand: i64,
+}
 
 // CHECK constraints cross CREATE TABLE, ALTER TABLE, and column options, so
 // their source-shaped payload and restore contract live at their own shared

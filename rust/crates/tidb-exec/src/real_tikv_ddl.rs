@@ -43,12 +43,13 @@ use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoa
 
 use crate::cluster_catalog::{load_cluster_catalog, MetaSnapshot};
 use crate::cluster_ddl::{
-    lower_ddl_with_context, plan_check_constraint_job_rollingback,
-    plan_check_constraint_job_submission, plan_ddl, plan_persisted_check_constraint_job_step,
+    lower_ddl_with_context, plan_check_constraint_job_rollingback, plan_ddl,
+    plan_persisted_check_constraint_job_step, prepare_check_constraint_job_submission,
     CheckConstraintValidation, DdlAdmissionError, DdlPlan, DdlPlanError, DdlStatement, DdlWrite,
     ExchangePartitionValidation, IndexBackfill, MdlInfoUpdate,
 };
-use crate::cluster_table_storage::SessionTransaction;
+use crate::cluster_table_storage::{LockKeysOutcome, SessionTransaction};
+use crate::ddl_job_submit::{finish_insert_attempt, plan_insert_attempt};
 use crate::pessimistic_lock_error::{transaction_cause_to_sql_error, LockSqlError};
 use crate::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
 use crate::table_info_build::default_ddl_statement_context;
@@ -807,6 +808,85 @@ pub fn run_persisted_check_constraint_job_to_completion<
     }
 }
 
+/// Pinned Go `GenGIDAndInsertJobsWithRetry`: lock the global-ID key, assign
+/// every action-owned ID, run the caller's registration callback, encode all
+/// rows, and commit the allocation and inserts atomically.
+pub fn gen_global_ids_and_insert_jobs_with_retry<C, L, P, F, Cleanup>(
+    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    specs: &mut [crate::ddl_job_submit::JobSpec],
+    timeout: Duration,
+    mut before_insert_with_assigned_ids: F,
+) -> Result<(), ClusterDdlError>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+    F: FnMut(&[crate::ddl_job_submit::JobSpec]) -> Option<Cleanup>,
+    Cleanup: FnOnce(),
+{
+    let mut attempt = 0_u32;
+    loop {
+        let transaction = SessionTransaction::begin_pessimistic(
+            Arc::clone(&opener),
+            timeout,
+            crate::session_commit_protocol::session_commit_protocol(),
+        )?;
+        let lock_outcome =
+            match transaction.lock_keys(vec![tidb_meta::key::next_global_id_kv_key()]) {
+                Ok(outcome) => outcome,
+                Err(error) => {
+                    let _ = transaction.rollback();
+                    return Err(ClusterDdlError::NotCommitted(error.to_string()));
+                }
+            };
+        let for_update_ts = match lock_outcome {
+            LockKeysOutcome::Locked { for_update_ts, .. }
+            | LockKeysOutcome::RetryStatement { for_update_ts, .. } => for_update_ts,
+            LockKeysOutcome::StatementError(error) | LockKeysOutcome::TransactionError(error) => {
+                let _ = transaction.rollback();
+                return Err(ClusterDdlError::NotCommitted(error.message));
+            }
+        };
+        let planned = (|| -> Result<_, ClusterDdlError> {
+            let mut snapshot = SnapshotMetaSnapshot::new(
+                transaction
+                    .snapshot_at_for(for_update_ts, true)
+                    .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
+            );
+            let catalog = load_cluster_catalog(&mut snapshot).map_err(DdlPlanError::from)?;
+            plan_insert_attempt(
+                &mut snapshot,
+                &catalog,
+                specs,
+                &mut before_insert_with_assigned_ids,
+            )
+            .map_err(Into::into)
+        })();
+        let (mutations, cleanup) = match planned {
+            Ok(planned) => planned,
+            Err(error) => {
+                let _ = transaction.rollback();
+                return Err(error);
+            }
+        };
+        let buffer = MutationBuffer::new();
+        match finish_insert_attempt(transaction.commit_with(&buffer, mutations), cleanup) {
+            Ok(_) => return Ok(()),
+            Err(error) => {
+                let cause = classify_session_ddl_commit_error(0, error);
+                if matches!(cause, ClusterDdlError::ConcurrentSchemaChange { .. })
+                    && attempt + 1 < tidb_txnkv::MAX_RETRY_COUNT
+                {
+                    std::thread::sleep(tidb_txnkv::retry_backoff_delay(attempt));
+                    attempt += 1;
+                    continue;
+                }
+                return Err(cause);
+            }
+        }
+    }
+}
+
 /// Submits one persisted CHECK DDL job without executing it.
 ///
 /// Go's submitter and owner scheduler are separate. Exposing the boundary is
@@ -821,52 +901,44 @@ pub fn submit_check_constraint_job_with_retry<
     statement: &DdlStatement,
     timeout: Duration,
 ) -> Result<i64, ClusterDdlError> {
-    let mut attempt = 0_u32;
-    loop {
-        let transaction = SessionTransaction::begin(
-            Arc::clone(&opener),
-            timeout,
-            crate::session_commit_protocol::session_commit_protocol(),
-        )?;
-        let start_ts = transaction.start_ts();
-        let submission = {
-            let mut snapshot = SnapshotMetaSnapshot::new(
-                transaction
-                    .snapshot()
-                    .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
-            );
-            plan_check_constraint_job_submission(&mut snapshot, statement, start_ts)
-        };
-        let submission = match submission {
-            Ok(Some(submission)) => submission,
-            Ok(None) => {
-                let _ = transaction.rollback();
-                return Err(ClusterDdlError::NotCommitted(
-                    "the statement is not a CHECK DDL job".to_owned(),
-                ));
-            }
-            Err(error) => {
-                let _ = transaction.rollback();
-                return Err(error.into());
-            }
-        };
-        let ddl_job_id = submission.job.id;
-        let buffer = MutationBuffer::new();
-        match transaction.commit_with(&buffer, submission.mutations) {
-            Ok(_) => return Ok(ddl_job_id),
-            Err(error) => {
-                let cause = classify_session_ddl_commit_error(0, error);
-                if matches!(cause, ClusterDdlError::ConcurrentSchemaChange { .. })
-                    && attempt + 1 < tidb_txnkv::MAX_RETRY_COUNT
-                {
-                    std::thread::sleep(tidb_txnkv::retry_backoff_delay(attempt));
-                    attempt += 1;
-                    continue;
-                }
-                return Err(cause);
-            }
+    let preparation = SessionTransaction::begin(
+        Arc::clone(&opener),
+        timeout,
+        crate::session_commit_protocol::session_commit_protocol(),
+    )?;
+    let start_ts = preparation.start_ts();
+    let prepared = {
+        let mut snapshot = SnapshotMetaSnapshot::new(
+            preparation
+                .snapshot()
+                .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
+        );
+        prepare_check_constraint_job_submission(&mut snapshot, statement, start_ts)
+    };
+    let mut spec = match prepared {
+        Ok(Some(spec)) => spec,
+        Ok(None) => {
+            let _ = preparation.rollback();
+            return Err(ClusterDdlError::NotCommitted(
+                "the statement is not a CHECK DDL job".to_owned(),
+            ));
         }
-    }
+        Err(error) => {
+            let _ = preparation.rollback();
+            return Err(error.into());
+        }
+    };
+    preparation
+        .rollback()
+        .map_err(ClusterDdlError::NotCommitted)?;
+
+    gen_global_ids_and_insert_jobs_with_retry(
+        opener,
+        std::slice::from_mut(&mut spec),
+        timeout,
+        |_| Option::<fn()>::None,
+    )?;
+    Ok(spec.job.id)
 }
 
 /// Loads the persisted active DDL queue from a fresh cluster snapshot.

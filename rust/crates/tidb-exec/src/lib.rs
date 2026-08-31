@@ -94,6 +94,7 @@ pub mod dag_request;
 pub mod ddl_history_table;
 pub mod ddl_job_comments;
 pub mod ddl_job_merge;
+pub mod ddl_job_submit;
 pub mod ddl_job_table;
 mod deadlock_recording;
 pub mod delete_rows_col_multiply;

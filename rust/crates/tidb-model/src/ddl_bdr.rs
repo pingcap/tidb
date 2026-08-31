@@ -29,19 +29,7 @@ use tidb_ast::{BdrRole, ColumnOption};
 use tidb_datatype::FieldType;
 
 use crate::bdr::{DDLBDRType, ACTION_BDR_MAP};
-use crate::ActionType;
-
-/// What Go `IsDenied` reads out of `model.JobArgs`.
-///
-/// Go receives the open `JobArgs` interface and type-asserts it to
-/// `*model.ModifyIndexArgs` to reach `IndexArgs[0].Unique`. That args type is
-/// not modeled in this crate yet, so the one fact the policy consumes is
-/// passed directly: `None` is Go's nil args, which skips the check entirely.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct BdrJobArgs {
-    /// Whether the first index in `ModifyIndexArgs.IndexArgs` is `UNIQUE`.
-    pub first_index_unique: bool,
-}
+use crate::{ActionType, JobArgsValue};
 
 /// Go `IsAddColumnDenied`.
 ///
@@ -128,7 +116,7 @@ pub fn is_modify_column_denied(
 /// safe and unmanaged DDL, and refuses to add a unique index; the secondary
 /// role allows only unmanaged DDL.
 #[must_use]
-pub fn is_denied(role: Option<BdrRole>, action: ActionType, args: Option<BdrJobArgs>) -> bool {
+pub fn is_denied(role: Option<BdrRole>, action: ActionType, args: Option<&JobArgsValue>) -> bool {
     let ddl_type = ACTION_BDR_MAP.read().get(&action).cloned();
 
     match role {
@@ -138,12 +126,16 @@ pub fn is_denied(role: Option<BdrRole>, action: ActionType, args: Option<BdrJobA
             };
 
             // A unique index cannot be added on the primary role.
-            if let Some(args) = args {
-                if (action == ActionType::ACTION_ADD_INDEX
-                    || action == ActionType::ACTION_ADD_PRIMARY_KEY)
-                    && args.first_index_unique
-                {
-                    return true;
+            if action == ActionType::ACTION_ADD_INDEX
+                || action == ActionType::ACTION_ADD_PRIMARY_KEY
+            {
+                if let Some(args) = args {
+                    let JobArgsValue::ModifyIndex(Some(args)) = args else {
+                        panic!("interface conversion: model.JobArgs is not *model.ModifyIndexArgs")
+                    };
+                    if args.read().first_index_unique() {
+                        return true;
+                    }
                 }
             }
 
@@ -349,26 +341,34 @@ mod tests {
     #[test]
     fn the_primary_role_refuses_a_unique_index() {
         let primary = Some(BdrRole::Primary);
-        let unique = Some(BdrJobArgs {
-            first_index_unique: true,
-        });
-        let non_unique = Some(BdrJobArgs {
-            first_index_unique: false,
-        });
+        let unique_args =
+            JobArgsValue::ModifyIndex(Some(crate::GoShared::new(crate::ModifyIndexArgs {
+                index_args: vec![crate::IndexArg {
+                    unique: true,
+                    ..Default::default()
+                }]
+                .into(),
+                ..Default::default()
+            })));
+        let non_unique_args =
+            JobArgsValue::ModifyIndex(Some(crate::GoShared::new(crate::ModifyIndexArgs {
+                index_args: vec![crate::IndexArg::default()].into(),
+                ..Default::default()
+            })));
 
         for action in [
             ActionType::ACTION_ADD_INDEX,
             ActionType::ACTION_ADD_PRIMARY_KEY,
         ] {
-            assert!(is_denied(primary, action, unique), "{action:?}");
+            assert!(is_denied(primary, action, Some(&unique_args)), "{action:?}");
             // Without the unique flag the action falls through to its class.
             let by_class = is_denied(primary, action, None);
-            assert_eq!(is_denied(primary, action, non_unique), by_class);
+            assert_eq!(is_denied(primary, action, Some(&non_unique_args)), by_class);
         }
 
         // The unique check is scoped to those two actions.
         assert_eq!(
-            is_denied(primary, ActionType::ACTION_ADD_COLUMN, unique),
+            is_denied(primary, ActionType::ACTION_ADD_COLUMN, Some(&unique_args)),
             is_denied(primary, ActionType::ACTION_ADD_COLUMN, None)
         );
     }

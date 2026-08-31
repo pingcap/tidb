@@ -32,7 +32,7 @@ use crate::{
     ActionType, ColumnDefaultValue, ColumnInfo, DBInfo, GoAny, GoAnyBytes, GoAnyJsonError,
     GoAnyValue, GoEqualityProjection, GoJsonProjection, GoJsonReference, GoJsonReferenceIdentity,
     GoJsonValue, GoShared, GoSharedPointerSlice, GoSharedSlice, GoTypeIdentity, GoTypeKind, Job,
-    JobState, JobVersion, PartitionInfo, PolicyRefInfo, TableInfo, TableMode,
+    JobState, JobVersion, PartitionInfo, PolicyRefInfo, ResourceGroupInfo, TableInfo, TableMode,
 };
 
 const MODEL_PACKAGE_PATH: &str = "github.com/pingcap/tidb/pkg/meta/model";
@@ -392,6 +392,12 @@ pub enum JobArgsValue {
     Empty(Option<GoShared<EmptyArgs>>),
     /// `*model.CreateSchemaArgs`, including a typed nil pointer.
     CreateSchema(Option<GoShared<CreateSchemaArgs>>),
+    /// `*model.RenameTableArgs`, including a typed nil pointer.
+    RenameTable(Option<GoShared<RenameTableArgs>>),
+    /// `*model.RenameTablesArgs`, including a typed nil pointer.
+    RenameTables(Option<GoShared<RenameTablesArgs>>),
+    /// `*model.ResourceGroupArgs`, including a typed nil pointer.
+    ResourceGroup(Option<GoShared<ResourceGroupArgs>>),
     /// `*model.DropSchemaArgs`, including a typed nil pointer.
     DropSchema(Option<GoShared<DropSchemaArgs>>),
     /// `*model.ModifySchemaArgs`, including a typed nil pointer.
@@ -414,6 +420,8 @@ pub enum JobArgsValue {
     ModifyTableComment(Option<GoShared<ModifyTableCommentArgs>>),
     /// `*model.ModifyTableCharsetAndCollateArgs`, including a typed nil pointer.
     ModifyTableCharsetAndCollate(Option<GoShared<ModifyTableCharsetAndCollateArgs>>),
+    /// `*model.ModifyIndexArgs`, including a typed nil pointer.
+    ModifyIndex(Option<GoShared<ModifyIndexArgs>>),
     /// `*model.AlterIndexVisibilityArgs`, including a typed nil pointer.
     AlterIndexVisibility(Option<GoShared<AlterIndexVisibilityArgs>>),
     /// `*model.DropForeignKeyArgs`, including a typed nil pointer.
@@ -437,10 +445,46 @@ pub enum JobArgsValue {
 }
 
 impl JobArgsValue {
+    /// Applies this source-typed private argument value through Go `Job.FillArgs`.
+    pub fn fill_job(&self, job: &mut Job) {
+        match self {
+            Self::Empty(value) => job.fill_args(value.clone()),
+            Self::CreateSchema(value) => job.fill_args(value.clone()),
+            Self::RenameTable(value) => job.fill_args(value.clone()),
+            Self::RenameTables(value) => job.fill_args(value.clone()),
+            Self::ResourceGroup(value) => job.fill_args(value.clone()),
+            Self::DropSchema(value) => job.fill_args(value.clone()),
+            Self::ModifySchema(value) => job.fill_args(value.clone()),
+            Self::CreateTable(value) => job.fill_args(value.clone()),
+            Self::BatchCreateTable(value) => job.fill_args(value.clone()),
+            Self::TruncateTable(value) => job.fill_args(value.clone()),
+            Self::TablePartition(value) => job.fill_args(value.clone()),
+            Self::ExchangeTablePartition(value) => job.fill_args(value.clone()),
+            Self::AlterTablePartition(value) => job.fill_args(value.clone()),
+            Self::RebaseAutoId(value) => job.fill_args(value.clone()),
+            Self::ModifyTableComment(value) => job.fill_args(value.clone()),
+            Self::ModifyTableCharsetAndCollate(value) => job.fill_args(value.clone()),
+            Self::ModifyIndex(value) => job.fill_args(value.clone()),
+            Self::AlterIndexVisibility(value) => job.fill_args(value.clone()),
+            Self::DropForeignKey(value) => job.fill_args(value.clone()),
+            Self::ModifyTableAutoIdCache(value) => job.fill_args(value.clone()),
+            Self::ShardRowId(value) => job.fill_args(value.clone()),
+            Self::SetDefaultValue(value) => job.fill_args(value.clone()),
+            Self::RefreshMeta(value) => job.fill_args(value.clone()),
+            Self::ModifyTableEngineAttribute(value) => job.fill_args(value.clone()),
+            Self::AlterTableMode(value) => job.fill_args(value.clone()),
+            Self::CheckConstraint(value) => job.fill_args(value.clone()),
+            Self::AddCheckConstraint(value) => job.fill_args(value.clone()),
+        }
+    }
+
     fn go_type_identity(&self) -> GoTypeIdentity {
         let name = match self {
             Self::Empty(_) => "EmptyArgs",
             Self::CreateSchema(_) => "CreateSchemaArgs",
+            Self::RenameTable(_) => "RenameTableArgs",
+            Self::RenameTables(_) => "RenameTablesArgs",
+            Self::ResourceGroup(_) => "ResourceGroupArgs",
             Self::DropSchema(_) => "DropSchemaArgs",
             Self::ModifySchema(_) => "ModifySchemaArgs",
             Self::CreateTable(_) => "CreateTableArgs",
@@ -452,6 +496,7 @@ impl JobArgsValue {
             Self::RebaseAutoId(_) => "RebaseAutoIDArgs",
             Self::ModifyTableComment(_) => "ModifyTableCommentArgs",
             Self::ModifyTableCharsetAndCollate(_) => "ModifyTableCharsetAndCollateArgs",
+            Self::ModifyIndex(_) => "ModifyIndexArgs",
             Self::AlterIndexVisibility(_) => "AlterIndexVisibilityArgs",
             Self::DropForeignKey(_) => "DropForeignKeyArgs",
             Self::ModifyTableAutoIdCache(_) => "ModifyTableAutoIDCacheArgs",
@@ -470,6 +515,9 @@ impl JobArgsValue {
         match self {
             Self::Empty(value) => value.as_ref().map(GoShared::identity_address),
             Self::CreateSchema(value) => value.as_ref().map(GoShared::identity_address),
+            Self::RenameTable(value) => value.as_ref().map(GoShared::identity_address),
+            Self::RenameTables(value) => value.as_ref().map(GoShared::identity_address),
+            Self::ResourceGroup(value) => value.as_ref().map(GoShared::identity_address),
             Self::DropSchema(value) => value.as_ref().map(GoShared::identity_address),
             Self::ModifySchema(value) => value.as_ref().map(GoShared::identity_address),
             Self::CreateTable(value) => value.as_ref().map(GoShared::identity_address),
@@ -483,6 +531,7 @@ impl JobArgsValue {
             Self::ModifyTableCharsetAndCollate(value) => {
                 value.as_ref().map(GoShared::identity_address)
             }
+            Self::ModifyIndex(value) => value.as_ref().map(GoShared::identity_address),
             Self::AlterIndexVisibility(value) => value.as_ref().map(GoShared::identity_address),
             Self::DropForeignKey(value) => value.as_ref().map(GoShared::identity_address),
             Self::ModifyTableAutoIdCache(value) => value.as_ref().map(GoShared::identity_address),
@@ -506,6 +555,21 @@ impl JobArgsValue {
             }
             Self::CreateSchema(value) => GoTypedPointer::new(
                 model_type("CreateSchemaArgs", GoTypeKind::Struct),
+                value.clone(),
+            )
+            .go_json_projection(),
+            Self::RenameTable(value) => GoTypedPointer::new(
+                model_type("RenameTableArgs", GoTypeKind::Struct),
+                value.clone(),
+            )
+            .go_json_projection(),
+            Self::RenameTables(value) => GoTypedPointer::new(
+                model_type("RenameTablesArgs", GoTypeKind::Struct),
+                value.clone(),
+            )
+            .go_json_projection(),
+            Self::ResourceGroup(value) => GoTypedPointer::new(
+                model_type("ResourceGroupArgs", GoTypeKind::Struct),
                 value.clone(),
             )
             .go_json_projection(),
@@ -561,6 +625,11 @@ impl JobArgsValue {
             .go_json_projection(),
             Self::ModifyTableCharsetAndCollate(value) => GoTypedPointer::new(
                 model_type("ModifyTableCharsetAndCollateArgs", GoTypeKind::Struct),
+                value.clone(),
+            )
+            .go_json_projection(),
+            Self::ModifyIndex(value) => GoTypedPointer::new(
+                model_type("ModifyIndexArgs", GoTypeKind::Struct),
                 value.clone(),
             )
             .go_json_projection(),
@@ -823,6 +892,266 @@ impl JobArgs for CreateSchemaArgs {
 pub fn get_create_schema_args(
     job: &mut Job,
 ) -> Result<Option<GoShared<CreateSchemaArgs>>, serde_json::Error> {
+    get_or_decode_args(job)
+}
+
+impl JobArgs for RenameTableArgs {
+    fn into_job_args_value(value: Option<GoShared<Self>>) -> JobArgsValue {
+        JobArgsValue::RenameTable(value)
+    }
+
+    fn from_job_args_value(value: &JobArgsValue) -> Option<Option<GoShared<Self>>> {
+        match value {
+            JobArgsValue::RenameTable(value) => Some(value.clone()),
+            _ => None,
+        }
+    }
+
+    fn get_args_v1(value: Option<&GoShared<Self>>, _job: &Job) -> GoSharedSlice<GoAny> {
+        let value = value.expect("nil *RenameTableArgs receiver").read();
+        GoSharedSlice::from_vec(vec![
+            ColumnDefaultValue::Int(value.old_schema_id).into(),
+            typed_value_any(
+                ast_type("CIStr", GoTypeKind::Struct),
+                value.new_table_name.clone(),
+            ),
+            typed_value_any(
+                ast_type("CIStr", GoTypeKind::Struct),
+                value.old_schema_name.clone(),
+            ),
+        ])
+    }
+
+    fn decode_v1(job: &mut Job) -> Result<Option<GoShared<Self>>, serde_json::Error> {
+        let old_schema_id = GoField::<i64>::default();
+        let new_table_name = GoField::<CiString>::default();
+        let old_schema_name = GoField::<CiString>::default();
+        let mut decoder = V1Decoder::new(job)?;
+        decoder.decode(&old_schema_id, builtin_type("int64", GoTypeKind::Int64))?;
+        decoder.decode(&new_table_name, ast_type("CIStr", GoTypeKind::Struct))?;
+        decoder.decode(&old_schema_name, ast_type("CIStr", GoTypeKind::Struct))?;
+        decoder.finish(job);
+        Ok(Some(GoShared::new(RenameTableArgs {
+            old_schema_id: old_schema_id.get(),
+            old_schema_name: old_schema_name.get(),
+            new_table_name: new_table_name.get(),
+            new_schema_id: job.schema_id,
+            ..Default::default()
+        })))
+    }
+}
+
+/// Go `GetRenameTableArgs`.
+pub fn get_rename_table_args(
+    job: &mut Job,
+) -> Result<Option<GoShared<RenameTableArgs>>, serde_json::Error> {
+    let args = get_or_decode_args::<RenameTableArgs>(job)?;
+    if let Some(args) = &args {
+        args.write().new_schema_id = job.schema_id;
+    }
+    Ok(args)
+}
+
+/// Go `RenameTablesArgs`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct RenameTablesArgs {
+    /// Rename entries in statement order.
+    #[serde(
+        rename = "rename_table_infos",
+        default,
+        skip_serializing_if = "field_shared_pointer_slice_is_empty"
+    )]
+    pub rename_table_infos: GoField<GoSharedPointerSlice<RenameTableArgs>>,
+}
+
+impl JobArgs for RenameTablesArgs {
+    fn into_job_args_value(value: Option<GoShared<Self>>) -> JobArgsValue {
+        JobArgsValue::RenameTables(value)
+    }
+
+    fn from_job_args_value(value: &JobArgsValue) -> Option<Option<GoShared<Self>>> {
+        match value {
+            JobArgsValue::RenameTables(value) => Some(value.clone()),
+            _ => None,
+        }
+    }
+
+    fn get_args_v1(value: Option<&GoShared<Self>>, _job: &Job) -> GoSharedSlice<GoAny> {
+        let infos = value
+            .expect("nil *RenameTablesArgs receiver")
+            .read()
+            .rename_table_infos
+            .get();
+        let mut old_schema_ids = Vec::with_capacity(infos.len());
+        let mut old_schema_names = Vec::with_capacity(infos.len());
+        let mut old_table_names = Vec::with_capacity(infos.len());
+        let mut new_schema_ids = Vec::with_capacity(infos.len());
+        let mut new_table_names = Vec::with_capacity(infos.len());
+        let mut table_ids = Vec::with_capacity(infos.len());
+        for info in infos.iter_deref() {
+            let info = info.read();
+            old_schema_ids.push(info.old_schema_id);
+            old_schema_names.push(info.old_schema_name.clone());
+            old_table_names.push(info.old_table_name.clone());
+            new_schema_ids.push(info.new_schema_id);
+            new_table_names.push(info.new_table_name.clone());
+            table_ids.push(info.table_id);
+        }
+        GoSharedSlice::from_vec(vec![
+            typed_value_any(
+                builtin_type("[]int64", GoTypeKind::Slice),
+                GoSharedSlice::from_vec(old_schema_ids),
+            ),
+            typed_value_any(
+                builtin_type("[]int64", GoTypeKind::Slice),
+                GoSharedSlice::from_vec(new_schema_ids),
+            ),
+            typed_value_any(
+                ast_type("[]CIStr", GoTypeKind::Slice),
+                GoSharedSlice::from_vec(new_table_names),
+            ),
+            typed_value_any(
+                builtin_type("[]int64", GoTypeKind::Slice),
+                GoSharedSlice::from_vec(table_ids),
+            ),
+            typed_value_any(
+                ast_type("[]CIStr", GoTypeKind::Slice),
+                GoSharedSlice::from_vec(old_schema_names),
+            ),
+            typed_value_any(
+                ast_type("[]CIStr", GoTypeKind::Slice),
+                GoSharedSlice::from_vec(old_table_names),
+            ),
+        ])
+    }
+
+    fn decode_v1(job: &mut Job) -> Result<Option<GoShared<Self>>, serde_json::Error> {
+        let old_schema_ids = GoField::<GoSharedSlice<i64>>::default();
+        let new_schema_ids = GoField::<GoSharedSlice<i64>>::default();
+        let new_table_names = GoField::<GoSharedSlice<CiString>>::default();
+        let table_ids = GoField::<GoSharedSlice<i64>>::default();
+        let old_schema_names = GoField::<GoSharedSlice<CiString>>::default();
+        let old_table_names = GoField::<GoSharedSlice<CiString>>::default();
+        let mut decoder = V1Decoder::new(job)?;
+        decoder.decode(&old_schema_ids, builtin_type("[]int64", GoTypeKind::Slice))?;
+        decoder.decode(&new_schema_ids, builtin_type("[]int64", GoTypeKind::Slice))?;
+        decoder.decode(&new_table_names, ast_type("[]CIStr", GoTypeKind::Slice))?;
+        decoder.decode(&table_ids, builtin_type("[]int64", GoTypeKind::Slice))?;
+        decoder.decode(&old_schema_names, ast_type("[]CIStr", GoTypeKind::Slice))?;
+        decoder.decode(&old_table_names, ast_type("[]CIStr", GoTypeKind::Slice))?;
+        decoder.finish(job);
+
+        let old_schema_ids = old_schema_ids.get();
+        let old_table_names = if old_table_names.read().is_empty() && !old_schema_ids.is_empty() {
+            GoSharedSlice::from_vec(vec![CiString::default(); old_schema_ids.len()])
+        } else {
+            old_table_names.get()
+        };
+        let infos = (0..old_schema_ids.len())
+            .map(|index| {
+                Some(GoShared::new(RenameTableArgs {
+                    old_schema_id: old_schema_ids.get(index),
+                    old_schema_name: old_schema_names.read().get(index),
+                    old_table_name: old_table_names.get(index),
+                    new_schema_id: new_schema_ids.read().get(index),
+                    new_table_name: new_table_names.read().get(index),
+                    table_id: table_ids.read().get(index),
+                    ..Default::default()
+                }))
+            })
+            .collect();
+        Ok(Some(GoShared::new(Self {
+            rename_table_infos: GoField::new(GoSharedPointerSlice::from_handles(infos)),
+        })))
+    }
+}
+
+/// Go `GetRenameTablesArgs`.
+pub fn get_rename_tables_args(
+    job: &mut Job,
+) -> Result<Option<GoShared<RenameTablesArgs>>, serde_json::Error> {
+    get_or_decode_args(job)
+}
+
+/// Go `ResourceGroupArgs`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ResourceGroupArgs {
+    /// Resource-group metadata pointer. DROP uses only its name.
+    #[serde(
+        rename = "rg_info",
+        default,
+        skip_serializing_if = "field_shared_pointer_is_none"
+    )]
+    pub resource_group_info: GoField<Option<GoShared<ResourceGroupInfo>>>,
+}
+
+impl JobArgs for ResourceGroupArgs {
+    fn into_job_args_value(value: Option<GoShared<Self>>) -> JobArgsValue {
+        JobArgsValue::ResourceGroup(value)
+    }
+
+    fn from_job_args_value(value: &JobArgsValue) -> Option<Option<GoShared<Self>>> {
+        match value {
+            JobArgsValue::ResourceGroup(value) => Some(value.clone()),
+            _ => None,
+        }
+    }
+
+    fn get_args_v1(value: Option<&GoShared<Self>>, job: &Job) -> GoSharedSlice<GoAny> {
+        let value = value.expect("nil *ResourceGroupArgs receiver").read();
+        let info = value.resource_group_info.get();
+        match job.type_ {
+            ActionType::ACTION_CREATE_RESOURCE_GROUP => GoSharedSlice::from_vec(vec![
+                typed_pointer_any(model_type("ResourceGroupInfo", GoTypeKind::Struct), info),
+                ColumnDefaultValue::Bool(false).into(),
+            ]),
+            ActionType::ACTION_ALTER_RESOURCE_GROUP => {
+                GoSharedSlice::from_vec(vec![typed_pointer_any(
+                    model_type("ResourceGroupInfo", GoTypeKind::Struct),
+                    info,
+                )])
+            }
+            ActionType::ACTION_DROP_RESOURCE_GROUP => {
+                GoSharedSlice::from_vec(vec![ColumnDefaultValue::Str(
+                    info.expect("nil ResourceGroupArgs.RGInfo")
+                        .read()
+                        .name
+                        .original()
+                        .into(),
+                )
+                .into()])
+            }
+            _ => GoSharedSlice::default(),
+        }
+    }
+
+    fn decode_v1(job: &mut Job) -> Result<Option<GoShared<Self>>, serde_json::Error> {
+        let info = GoShared::new(ResourceGroupInfo::default());
+        let value = GoShared::new(Self {
+            resource_group_info: GoField::new(Some(info.clone())),
+        });
+        let mut decoder = V1Decoder::new(job)?;
+        match job.type_ {
+            ActionType::ACTION_CREATE_RESOURCE_GROUP | ActionType::ACTION_ALTER_RESOURCE_GROUP => {
+                decoder
+                    .decode_pointee(&info, model_type("ResourceGroupInfo", GoTypeKind::Struct))?;
+            }
+            ActionType::ACTION_DROP_RESOURCE_GROUP => {
+                let name = GoField::<GoString>::default();
+                decoder.decode(&name, builtin_type("string", GoTypeKind::String))?;
+                info.write().name = CiString::new(name.get().to_utf8_lossy_go());
+            }
+            _ => {}
+        }
+        decoder.finish(job);
+        Ok(Some(value))
+    }
+}
+
+/// Go `GetResourceGroupArgs`.
+pub fn get_resource_group_args(
+    job: &mut Job,
+) -> Result<Option<GoShared<ResourceGroupArgs>>, serde_json::Error> {
     get_or_decode_args(job)
 }
 
@@ -1888,6 +2217,769 @@ pub fn get_modify_table_charset_and_collate_args(
     job: &mut Job,
 ) -> Result<Option<GoShared<ModifyTableCharsetAndCollateArgs>>, serde_json::Error> {
     get_or_decode_args(job)
+}
+
+fn shared_slice_is_empty<T>(value: &GoSharedSlice<T>) -> bool {
+    value.is_empty()
+}
+
+fn shared_pointer_slice_is_empty<T>(value: &GoSharedPointerSlice<T>) -> bool {
+    value.is_empty()
+}
+
+/// Go `IndexArgSplitOpt`, the V2-only index pre-split payload.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct IndexArgSplitOpt {
+    /// Lower bounds.
+    #[serde(default, skip_serializing_if = "shared_slice_is_empty")]
+    pub lower: GoSharedSlice<String>,
+    /// Upper bounds.
+    #[serde(default, skip_serializing_if = "shared_slice_is_empty")]
+    pub upper: GoSharedSlice<String>,
+    /// Region count.
+    #[serde(default, skip_serializing_if = "crate::serde_helpers::is_zero_i64")]
+    pub num: i64,
+    /// Explicit split values.
+    #[serde(default, skip_serializing_if = "shared_slice_is_empty")]
+    pub value_lists: GoSharedSlice<GoSharedSlice<String>>,
+}
+
+/// Go `IndexArg`, shared by add, drop, rename, primary-key and columnar-index
+/// jobs. Runtime-only fields retain Go's `json:"-"` behavior.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct IndexArg {
+    /// Deprecated runtime-only global marker used by V1 layouts.
+    #[serde(skip)]
+    pub global: bool,
+    /// Unique-index marker.
+    #[serde(default, skip_serializing_if = "crate::serde_helpers::is_false")]
+    pub unique: bool,
+    /// Index name. Go's struct-valued `CIStr` is not omitted at its zero value.
+    #[serde(default)]
+    pub index_name: CiString,
+    /// Ordered index parts. This field has no `omitempty` in Go.
+    #[serde(default)]
+    pub index_part_specifications: GoSharedPointerSlice<tidb_ast::IndexPartSpecification>,
+    /// Index options pointer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index_option: Option<GoShared<tidb_ast::IndexOption>>,
+    /// Hidden generated columns.
+    #[serde(default, skip_serializing_if = "shared_pointer_slice_is_empty")]
+    pub hidden_cols: GoSharedPointerSlice<ColumnInfo>,
+    /// Vector/columnar functional expression text.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub func_expr: String,
+    /// Columnar-index compatibility marker (`json:"is_vector"`).
+    #[serde(
+        rename = "is_vector",
+        default,
+        skip_serializing_if = "crate::serde_helpers::is_false"
+    )]
+    pub is_columnar: bool,
+    /// Columnar-index kind.
+    #[serde(default, skip_serializing_if = "columnar_index_type_is_na")]
+    pub columnar_index_type: crate::ColumnarIndexType,
+    /// Primary-key marker.
+    #[serde(default, skip_serializing_if = "crate::serde_helpers::is_false")]
+    pub is_pk: bool,
+    /// Numeric MySQL SQL mode.
+    #[serde(default, skip_serializing_if = "crate::serde_helpers::is_zero_u64")]
+    pub sql_mode: u64,
+    /// Index ID used by completed/drop jobs.
+    #[serde(default, skip_serializing_if = "crate::serde_helpers::is_zero_i64")]
+    pub index_id: i64,
+    /// `IF EXISTS` marker.
+    #[serde(default, skip_serializing_if = "crate::serde_helpers::is_false")]
+    pub if_exist: bool,
+    /// Finished-job global-index marker.
+    #[serde(default, skip_serializing_if = "crate::serde_helpers::is_false")]
+    pub is_global: bool,
+    /// V2-only pre-split payload.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub split_opt: Option<GoShared<IndexArgSplitOpt>>,
+    /// Partial-index condition string.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub condition_string: String,
+}
+
+fn columnar_index_type_is_na(value: &crate::ColumnarIndexType) -> bool {
+    *value == crate::ColumnarIndexType::NA
+}
+
+impl IndexArg {
+    /// Go `IndexArg.GetColumnarIndexType`.
+    #[must_use]
+    pub fn get_columnar_index_type(&self) -> crate::ColumnarIndexType {
+        crate::index_arg_columnar_index_type(self.columnar_index_type, self.is_columnar)
+    }
+}
+
+/// Go `ModifyIndexArgs`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ModifyIndexArgs {
+    /// One or more index operations.
+    #[serde(default, skip_serializing_if = "shared_pointer_slice_is_empty")]
+    pub index_args: GoSharedPointerSlice<IndexArg>,
+    /// Partition IDs stored by completed jobs.
+    #[serde(default, skip_serializing_if = "shared_slice_is_empty")]
+    pub partition_ids: GoSharedSlice<i64>,
+    /// V1 completed-argument discriminator; never persisted in V2 JSON.
+    #[serde(skip)]
+    pub op_type: crate::IndexOp,
+}
+
+impl ModifyIndexArgs {
+    /// The exact `IndexArgs[0].Unique` access used by Go BDR admission.
+    /// Missing input retains Go's index-out-of-range panic boundary.
+    #[must_use]
+    pub fn first_index_unique(&self) -> bool {
+        self.index_args
+            .get(0)
+            .expect("index out of range [0] with length 0")
+            .read()
+            .unique
+    }
+}
+
+impl JobArgs for ModifyIndexArgs {
+    job_args_identity_methods!(ModifyIndex);
+
+    fn get_args_v1(value: Option<&GoShared<Self>>, job: &Job) -> GoSharedSlice<GoAny> {
+        let args = value.expect("nil *ModifyIndexArgs receiver").read();
+        if job.type_ == ActionType::ACTION_RENAME_INDEX {
+            return GoSharedSlice::from_vec(vec![
+                typed_value_any(
+                    ast_type("CIStr", GoTypeKind::Struct),
+                    args.index_args
+                        .get(0)
+                        .expect("missing source index")
+                        .read()
+                        .index_name
+                        .clone(),
+                ),
+                typed_value_any(
+                    ast_type("CIStr", GoTypeKind::Struct),
+                    args.index_args
+                        .get(1)
+                        .expect("missing target index")
+                        .read()
+                        .index_name
+                        .clone(),
+                ),
+            ]);
+        }
+
+        if job.type_ == ActionType::ACTION_DROP_INDEX
+            || job.type_ == ActionType::ACTION_DROP_PRIMARY_KEY
+        {
+            if args.index_args.len() == 1 {
+                let index = args.index_args.get(0).unwrap();
+                let index = index.read();
+                return GoSharedSlice::from_vec(vec![
+                    typed_value_any(
+                        ast_type("CIStr", GoTypeKind::Struct),
+                        index.index_name.clone(),
+                    ),
+                    ColumnDefaultValue::Bool(index.if_exist).into(),
+                ]);
+            }
+            let mut names = Vec::with_capacity(args.index_args.len());
+            let mut if_exists = Vec::with_capacity(args.index_args.len());
+            for index in args.index_args.iter_deref() {
+                let index = index.read();
+                names.push(index.index_name.clone());
+                if_exists.push(index.if_exist);
+            }
+            return GoSharedSlice::from_vec(vec![
+                typed_value_any(ast_type("[]CIStr", GoTypeKind::Slice), names),
+                typed_value_any(builtin_type("[]bool", GoTypeKind::Slice), if_exists),
+            ]);
+        }
+
+        let index = args.index_args.get(0).expect("missing index argument");
+        let index = index.read();
+        if job.type_ == ActionType::ACTION_ADD_COLUMNAR_INDEX {
+            return GoSharedSlice::from_vec(vec![
+                typed_value_any(
+                    ast_type("CIStr", GoTypeKind::Struct),
+                    index.index_name.clone(),
+                ),
+                typed_pointer_any(
+                    ast_type("IndexPartSpecification", GoTypeKind::Struct),
+                    index.index_part_specifications.get(0),
+                ),
+                typed_pointer_any(
+                    ast_type("IndexOption", GoTypeKind::Struct),
+                    index.index_option.clone(),
+                ),
+                ColumnDefaultValue::str(&index.func_expr).into(),
+                typed_value_any(
+                    model_type("ColumnarIndexType", GoTypeKind::Byte),
+                    index.columnar_index_type,
+                ),
+            ]);
+        }
+
+        if job.type_ == ActionType::ACTION_ADD_PRIMARY_KEY {
+            return GoSharedSlice::from_vec(vec![
+                ColumnDefaultValue::Bool(index.unique).into(),
+                typed_value_any(
+                    ast_type("CIStr", GoTypeKind::Struct),
+                    index.index_name.clone(),
+                ),
+                typed_value_any(
+                    ast_type("[]*IndexPartSpecification", GoTypeKind::Slice),
+                    index.index_part_specifications.clone(),
+                ),
+                typed_pointer_any(
+                    ast_type("IndexOption", GoTypeKind::Struct),
+                    index.index_option.clone(),
+                ),
+                typed_value_any(
+                    GoTypeIdentity::defined(
+                        "github.com/pingcap/tidb/pkg/parser/mysql",
+                        "SQLMode",
+                        "mysql.SQLMode",
+                        GoTypeKind::Uint64,
+                    ),
+                    index.sql_mode,
+                ),
+                GoAny::nil(),
+                ColumnDefaultValue::Bool(index.global).into(),
+            ]);
+        }
+
+        let count = args.index_args.len();
+        if count == 1 {
+            return GoSharedSlice::from_vec(vec![
+                ColumnDefaultValue::Bool(index.unique).into(),
+                typed_value_any(
+                    ast_type("CIStr", GoTypeKind::Struct),
+                    index.index_name.clone(),
+                ),
+                typed_value_any(
+                    ast_type("[]*IndexPartSpecification", GoTypeKind::Slice),
+                    index.index_part_specifications.clone(),
+                ),
+                typed_pointer_any(
+                    ast_type("IndexOption", GoTypeKind::Struct),
+                    index.index_option.clone(),
+                ),
+                typed_value_any(
+                    builtin_type("[]*model.ColumnInfo", GoTypeKind::Slice),
+                    index.hidden_cols.clone(),
+                ),
+                ColumnDefaultValue::Bool(index.global).into(),
+            ]);
+        }
+
+        let mut unique = Vec::with_capacity(count);
+        let mut names = Vec::with_capacity(count);
+        let mut parts = Vec::with_capacity(count);
+        let mut options = Vec::with_capacity(count);
+        let mut hidden = Vec::with_capacity(count);
+        let mut global = Vec::with_capacity(count);
+        drop(index);
+        for index in args.index_args.iter_deref() {
+            let index = index.read();
+            unique.push(index.unique);
+            names.push(index.index_name.clone());
+            parts.push(index.index_part_specifications.clone());
+            options.push(index.index_option.clone());
+            hidden.push(index.hidden_cols.clone());
+            global.push(index.global);
+        }
+        GoSharedSlice::from_vec(vec![
+            typed_value_any(builtin_type("[]bool", GoTypeKind::Slice), unique),
+            typed_value_any(ast_type("[]CIStr", GoTypeKind::Slice), names),
+            typed_value_any(
+                ast_type("[][]*IndexPartSpecification", GoTypeKind::Slice),
+                parts,
+            ),
+            typed_value_any(ast_type("[]*IndexOption", GoTypeKind::Slice), options),
+            typed_value_any(
+                builtin_type("[][]*model.ColumnInfo", GoTypeKind::Slice),
+                hidden,
+            ),
+            typed_value_any(builtin_type("[]bool", GoTypeKind::Slice), global),
+        ])
+    }
+
+    fn decode_v1(job: &mut Job) -> Result<Option<GoShared<Self>>, serde_json::Error> {
+        match job.type_ {
+            ActionType::ACTION_RENAME_INDEX => decode_rename_index_v1(job),
+            ActionType::ACTION_ADD_INDEX => decode_add_index_v1(job),
+            ActionType::ACTION_ADD_COLUMNAR_INDEX => decode_add_columnar_index_v1(job),
+            ActionType::ACTION_ADD_PRIMARY_KEY => decode_add_primary_key_v1(job),
+            _ => Err(serde_json::Error::io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("Invalid job type for decoding {}", job.type_.0),
+            ))),
+        }
+    }
+}
+
+impl FinishedJobArgs for ModifyIndexArgs {
+    fn get_finished_args_v1(value: Option<&GoShared<Self>>, job: &Job) -> GoSharedSlice<GoAny> {
+        let args = value.expect("nil *ModifyIndexArgs receiver").read();
+        if args.op_type == crate::IndexOp::ADD_INDEX {
+            if job.type_ == ActionType::ACTION_ADD_COLUMNAR_INDEX {
+                let index = args.index_args.get(0).expect("missing index argument");
+                let index = index.read();
+                return GoSharedSlice::from_vec(vec![
+                    ColumnDefaultValue::Int(index.index_id).into(),
+                    ColumnDefaultValue::Bool(index.if_exist).into(),
+                    typed_value_any(
+                        builtin_type("[]int64", GoTypeKind::Slice),
+                        args.partition_ids.clone(),
+                    ),
+                    ColumnDefaultValue::Bool(index.is_global).into(),
+                ]);
+            }
+            let mut ids = Vec::with_capacity(args.index_args.len());
+            let mut if_exists = Vec::with_capacity(args.index_args.len());
+            let mut globals = Vec::with_capacity(args.index_args.len());
+            for index in args.index_args.iter_deref() {
+                let index = index.read();
+                ids.push(index.index_id);
+                if_exists.push(index.if_exist);
+                globals.push(index.global);
+            }
+            return GoSharedSlice::from_vec(vec![
+                typed_value_any(builtin_type("[]int64", GoTypeKind::Slice), ids),
+                typed_value_any(builtin_type("[]bool", GoTypeKind::Slice), if_exists),
+                typed_value_any(
+                    builtin_type("[]int64", GoTypeKind::Slice),
+                    args.partition_ids.clone(),
+                ),
+                typed_value_any(builtin_type("[]bool", GoTypeKind::Slice), globals),
+            ]);
+        }
+
+        if args.op_type == crate::IndexOp::ROLLBACK_ADD_INDEX {
+            let mut names = Vec::with_capacity(args.index_args.len());
+            let mut if_exists = Vec::with_capacity(args.index_args.len());
+            for index in args.index_args.iter_deref() {
+                let index = index.read();
+                names.push(index.index_name.clone());
+                if_exists.push(index.if_exist);
+            }
+            return GoSharedSlice::from_vec(vec![
+                typed_value_any(ast_type("[]CIStr", GoTypeKind::Slice), names),
+                typed_value_any(builtin_type("[]bool", GoTypeKind::Slice), if_exists),
+                typed_value_any(
+                    builtin_type("[]int64", GoTypeKind::Slice),
+                    args.partition_ids.clone(),
+                ),
+            ]);
+        }
+
+        let index = args.index_args.get(0).expect("missing index argument");
+        let index = index.read();
+        GoSharedSlice::from_vec(vec![
+            typed_value_any(
+                ast_type("CIStr", GoTypeKind::Struct),
+                index.index_name.clone(),
+            ),
+            ColumnDefaultValue::Bool(index.if_exist).into(),
+            ColumnDefaultValue::Int(index.index_id).into(),
+            typed_value_any(
+                builtin_type("[]int64", GoTypeKind::Slice),
+                args.partition_ids.clone(),
+            ),
+            ColumnDefaultValue::Bool(index.is_columnar).into(),
+        ])
+    }
+}
+
+fn decode_rename_index_v1(
+    job: &mut Job,
+) -> Result<Option<GoShared<ModifyIndexArgs>>, serde_json::Error> {
+    let from = GoField::<CiString>::default();
+    let to = GoField::<CiString>::default();
+    let mut decoder = V1Decoder::new(job)?;
+    decoder.decode(&from, ast_type("CIStr", GoTypeKind::Struct))?;
+    decoder.decode(&to, ast_type("CIStr", GoTypeKind::Struct))?;
+    decoder.finish(job);
+    Ok(Some(GoShared::new(ModifyIndexArgs {
+        index_args: GoSharedPointerSlice::from_handles(vec![
+            Some(GoShared::new(IndexArg {
+                index_name: from.get(),
+                ..Default::default()
+            })),
+            Some(GoShared::new(IndexArg {
+                index_name: to.get(),
+                ..Default::default()
+            })),
+        ]),
+        ..Default::default()
+    })))
+}
+
+fn decode_add_index_v1(
+    job: &mut Job,
+) -> Result<Option<GoShared<ModifyIndexArgs>>, serde_json::Error> {
+    match decode_multi_add_index_v1(job) {
+        Ok(value) => Ok(Some(value)),
+        Err(_) => decode_single_add_index_v1(job).map(Some),
+    }
+}
+
+fn decode_multi_add_index_v1(
+    job: &mut Job,
+) -> Result<GoShared<ModifyIndexArgs>, serde_json::Error> {
+    let unique = GoField::<GoSharedSlice<bool>>::default();
+    let names = GoField::<GoSharedSlice<CiString>>::default();
+    let parts =
+        GoField::<GoSharedSlice<GoSharedPointerSlice<tidb_ast::IndexPartSpecification>>>::default();
+    let options = GoField::<GoSharedSlice<Option<GoShared<tidb_ast::IndexOption>>>>::default();
+    let hidden = GoField::<GoSharedSlice<GoSharedPointerSlice<ColumnInfo>>>::default();
+    let global = GoField::<GoSharedSlice<bool>>::default();
+    let mut decoder = V1Decoder::new(job)?;
+    decoder.decode(&unique, builtin_type("[]bool", GoTypeKind::Slice))?;
+    decoder.decode(&names, ast_type("[]CIStr", GoTypeKind::Slice))?;
+    decoder.decode(
+        &parts,
+        ast_type("[][]*IndexPartSpecification", GoTypeKind::Slice),
+    )?;
+    decoder.decode(&options, ast_type("[]*IndexOption", GoTypeKind::Slice))?;
+    decoder.decode(
+        &hidden,
+        builtin_type("[][]*model.ColumnInfo", GoTypeKind::Slice),
+    )?;
+    decoder.decode(&global, builtin_type("[]bool", GoTypeKind::Slice))?;
+    decoder.finish(job);
+
+    let values: Vec<IndexArg> = (0..unique.read().len())
+        .map(|index| IndexArg {
+            unique: unique.read().get(index),
+            index_name: names.read().get(index),
+            index_part_specifications: parts.read().get(index),
+            index_option: options.read().get(index),
+            hidden_cols: hidden.read().get(index),
+            global: global.read().get(index),
+            ..Default::default()
+        })
+        .collect();
+    Ok(GoShared::new(ModifyIndexArgs {
+        index_args: values.into(),
+        ..Default::default()
+    }))
+}
+
+fn decode_single_add_index_v1(
+    job: &mut Job,
+) -> Result<GoShared<ModifyIndexArgs>, serde_json::Error> {
+    let unique = GoField::<bool>::default();
+    let name = GoField::<CiString>::default();
+    let parts = GoField::<GoSharedPointerSlice<tidb_ast::IndexPartSpecification>>::default();
+    let option = GoField::<Option<GoShared<tidb_ast::IndexOption>>>::default();
+    let hidden = GoField::<GoSharedPointerSlice<ColumnInfo>>::default();
+    let global = GoField::<bool>::default();
+    let mut decoder = V1Decoder::new(job)?;
+    decoder.decode(&unique, builtin_type("bool", GoTypeKind::Bool))?;
+    decoder.decode(&name, ast_type("CIStr", GoTypeKind::Struct))?;
+    decoder.decode(
+        &parts,
+        ast_type("[]*IndexPartSpecification", GoTypeKind::Slice),
+    )?;
+    decoder.decode(
+        &option,
+        ast_type("IndexOption", GoTypeKind::Struct).pointer_to(),
+    )?;
+    decoder.decode(
+        &hidden,
+        builtin_type("[]*model.ColumnInfo", GoTypeKind::Slice),
+    )?;
+    decoder.decode(&global, builtin_type("bool", GoTypeKind::Bool))?;
+    decoder.finish(job);
+    Ok(GoShared::new(ModifyIndexArgs {
+        index_args: vec![IndexArg {
+            unique: unique.get(),
+            index_name: name.get(),
+            index_part_specifications: parts.get(),
+            index_option: option.get(),
+            hidden_cols: hidden.get(),
+            global: global.get(),
+            ..Default::default()
+        }]
+        .into(),
+        ..Default::default()
+    }))
+}
+
+fn decode_add_primary_key_v1(
+    job: &mut Job,
+) -> Result<Option<GoShared<ModifyIndexArgs>>, serde_json::Error> {
+    let unique = GoField::<bool>::default();
+    let name = GoField::<CiString>::default();
+    let parts = GoField::<GoSharedPointerSlice<tidb_ast::IndexPartSpecification>>::default();
+    let option = GoField::<Option<GoShared<tidb_ast::IndexOption>>>::default();
+    let sql_mode = GoField::<u64>::default();
+    let unused = GoField::<serde_json::Value>::default();
+    let global = GoField::<bool>::default();
+    let mut decoder = V1Decoder::new(job)?;
+    decoder.decode(&unique, builtin_type("bool", GoTypeKind::Bool))?;
+    decoder.decode(&name, ast_type("CIStr", GoTypeKind::Struct))?;
+    decoder.decode(
+        &parts,
+        ast_type("[]*IndexPartSpecification", GoTypeKind::Slice),
+    )?;
+    decoder.decode(
+        &option,
+        ast_type("IndexOption", GoTypeKind::Struct).pointer_to(),
+    )?;
+    decoder.decode(
+        &sql_mode,
+        GoTypeIdentity::defined(
+            "github.com/pingcap/tidb/pkg/parser/mysql",
+            "SQLMode",
+            "mysql.SQLMode",
+            GoTypeKind::Uint64,
+        ),
+    )?;
+    decoder.decode(&unused, builtin_type("interface {}", GoTypeKind::Other))?;
+    decoder.decode(&global, builtin_type("bool", GoTypeKind::Bool))?;
+    decoder.finish(job);
+    Ok(Some(GoShared::new(ModifyIndexArgs {
+        index_args: vec![IndexArg {
+            unique: unique.get(),
+            index_name: name.get(),
+            index_part_specifications: parts.get(),
+            index_option: option.get(),
+            is_pk: true,
+            sql_mode: sql_mode.get(),
+            global: global.get(),
+            ..Default::default()
+        }]
+        .into(),
+        ..Default::default()
+    })))
+}
+
+fn decode_add_columnar_index_v1(
+    job: &mut Job,
+) -> Result<Option<GoShared<ModifyIndexArgs>>, serde_json::Error> {
+    let name = GoField::<CiString>::default();
+    let part = GoField::<Option<GoShared<tidb_ast::IndexPartSpecification>>>::default();
+    let option = GoField::<Option<GoShared<tidb_ast::IndexOption>>>::default();
+    let func_expr = GoField::<String>::default();
+    let kind = GoField::<crate::ColumnarIndexType>::default();
+    let mut decoder = V1Decoder::new(job)?;
+    decoder.decode(&name, ast_type("CIStr", GoTypeKind::Struct))?;
+    decoder.decode(
+        &part,
+        ast_type("IndexPartSpecification", GoTypeKind::Struct).pointer_to(),
+    )?;
+    decoder.decode(
+        &option,
+        ast_type("IndexOption", GoTypeKind::Struct).pointer_to(),
+    )?;
+    decoder.decode(&func_expr, builtin_type("string", GoTypeKind::String))?;
+    decoder.decode(&kind, model_type("ColumnarIndexType", GoTypeKind::Byte))?;
+    decoder.finish(job);
+    Ok(Some(GoShared::new(ModifyIndexArgs {
+        index_args: vec![IndexArg {
+            index_name: name.get(),
+            index_part_specifications: GoSharedPointerSlice::from_handles(vec![part.get()]),
+            index_option: option.get(),
+            func_expr: func_expr.get(),
+            is_columnar: true,
+            columnar_index_type: kind.get(),
+            ..Default::default()
+        }]
+        .into(),
+        ..Default::default()
+    })))
+}
+
+/// Go `GetModifyIndexArgs`.
+pub fn get_modify_index_args(
+    job: &mut Job,
+) -> Result<Option<GoShared<ModifyIndexArgs>>, serde_json::Error> {
+    get_or_decode_args(job)
+}
+
+fn decode_drop_index_v1(
+    job: &mut Job,
+) -> Result<Option<GoShared<ModifyIndexArgs>>, serde_json::Error> {
+    let scalar_name = GoField::<CiString>::default();
+    let scalar_if_exists = GoField::<bool>::default();
+    let scalar = (|| {
+        let mut decoder = V1Decoder::new(job)?;
+        decoder.decode(&scalar_name, ast_type("CIStr", GoTypeKind::Struct))?;
+        decoder.decode(&scalar_if_exists, builtin_type("bool", GoTypeKind::Bool))?;
+        decoder.finish(job);
+        Ok::<_, serde_json::Error>(())
+    })();
+
+    let (names, if_exists) = if scalar.is_ok() {
+        (vec![scalar_name.get()], vec![scalar_if_exists.get()])
+    } else {
+        let names = GoField::<GoSharedSlice<CiString>>::default();
+        let if_exists = GoField::<GoSharedSlice<bool>>::default();
+        let mut decoder = V1Decoder::new(job)?;
+        decoder.decode(&names, ast_type("[]CIStr", GoTypeKind::Slice))?;
+        decoder.decode(&if_exists, builtin_type("[]bool", GoTypeKind::Slice))?;
+        decoder.finish(job);
+        (names.get().snapshot(), if_exists.get().snapshot())
+    };
+    Ok(Some(GoShared::new(ModifyIndexArgs {
+        index_args: names
+            .into_iter()
+            .enumerate()
+            .map(|(index, name)| IndexArg {
+                index_name: name,
+                if_exist: if_exists[index],
+                ..Default::default()
+            })
+            .collect::<Vec<_>>()
+            .into(),
+        ..Default::default()
+    })))
+}
+
+/// Go `GetDropIndexArgs`.
+pub fn get_drop_index_args(
+    job: &mut Job,
+) -> Result<Option<GoShared<ModifyIndexArgs>>, serde_json::Error> {
+    if job.version == JobVersion::V2 {
+        get_or_decode_args_v2(job)
+    } else {
+        decode_drop_index_v1(job)
+    }
+}
+
+/// Go `GetFinishedModifyIndexArgs`.
+pub fn get_finished_modify_index_args(
+    job: &mut Job,
+) -> Result<Option<GoShared<ModifyIndexArgs>>, serde_json::Error> {
+    if job.version == JobVersion::V2 {
+        return get_or_decode_args_v2(job);
+    }
+
+    if job.is_rollingback()
+        || job.type_ == ActionType::ACTION_DROP_INDEX
+        || job.type_ == ActionType::ACTION_DROP_PRIMARY_KEY
+    {
+        if job.is_rollingback() {
+            let names = GoField::<GoSharedSlice<CiString>>::default();
+            let if_exists = GoField::<GoSharedSlice<bool>>::default();
+            let partition_ids = GoField::<GoSharedSlice<i64>>::default();
+            let is_columnar = GoField::<bool>::default();
+            let mut decoder = V1Decoder::new(job)?;
+            decoder.decode(&names, ast_type("[]CIStr", GoTypeKind::Slice))?;
+            decoder.decode(&if_exists, builtin_type("[]bool", GoTypeKind::Slice))?;
+            decoder.decode(&partition_ids, builtin_type("[]int64", GoTypeKind::Slice))?;
+            decoder.decode(&is_columnar, builtin_type("bool", GoTypeKind::Bool))?;
+            decoder.finish(job);
+            let values = names
+                .get()
+                .snapshot()
+                .into_iter()
+                .enumerate()
+                .map(|(index, name)| IndexArg {
+                    index_name: name,
+                    if_exist: if_exists.read().get(index),
+                    is_columnar: is_columnar.get(),
+                    ..Default::default()
+                })
+                .collect::<Vec<_>>();
+            return Ok(Some(GoShared::new(ModifyIndexArgs {
+                index_args: values.into(),
+                partition_ids: partition_ids.get(),
+                ..Default::default()
+            })));
+        } else {
+            let name = GoField::<CiString>::default();
+            let if_exists = GoField::<bool>::default();
+            let index_id = GoField::<i64>::default();
+            let partition_ids = GoField::<GoSharedSlice<i64>>::default();
+            let is_columnar = GoField::<bool>::default();
+            let mut decoder = V1Decoder::new(job)?;
+            decoder.decode(&name, ast_type("CIStr", GoTypeKind::Struct))?;
+            decoder.decode(&if_exists, builtin_type("bool", GoTypeKind::Bool))?;
+            decoder.decode(&index_id, builtin_type("int64", GoTypeKind::Int64))?;
+            decoder.decode(&partition_ids, builtin_type("[]int64", GoTypeKind::Slice))?;
+            decoder.decode(&is_columnar, builtin_type("bool", GoTypeKind::Bool))?;
+            decoder.finish(job);
+            return Ok(Some(GoShared::new(ModifyIndexArgs {
+                index_args: vec![IndexArg {
+                    index_name: name.get(),
+                    if_exist: if_exists.get(),
+                    index_id: index_id.get(),
+                    is_columnar: is_columnar.get(),
+                    ..Default::default()
+                }]
+                .into(),
+                partition_ids: partition_ids.get(),
+                ..Default::default()
+            })));
+        }
+    }
+
+    match decode_finished_add_index_scalar_v1(job) {
+        Ok(value) => Ok(Some(value)),
+        Err(_) => decode_finished_add_index_slice_v1(job).map(Some),
+    }
+}
+
+fn decode_finished_add_index_scalar_v1(
+    job: &mut Job,
+) -> Result<GoShared<ModifyIndexArgs>, serde_json::Error> {
+    let id = GoField::<i64>::default();
+    let if_exists = GoField::<bool>::default();
+    let partition_ids = GoField::<GoSharedSlice<i64>>::default();
+    let is_global = GoField::<bool>::default();
+    let mut decoder = V1Decoder::new(job)?;
+    decoder.decode(&id, builtin_type("int64", GoTypeKind::Int64))?;
+    decoder.decode(&if_exists, builtin_type("bool", GoTypeKind::Bool))?;
+    decoder.decode(&partition_ids, builtin_type("[]int64", GoTypeKind::Slice))?;
+    decoder.decode(&is_global, builtin_type("bool", GoTypeKind::Bool))?;
+    decoder.finish(job);
+    Ok(GoShared::new(ModifyIndexArgs {
+        index_args: vec![IndexArg {
+            index_id: id.get(),
+            if_exist: if_exists.get(),
+            is_global: is_global.get(),
+            ..Default::default()
+        }]
+        .into(),
+        partition_ids: partition_ids.get(),
+        ..Default::default()
+    }))
+}
+
+fn decode_finished_add_index_slice_v1(
+    job: &mut Job,
+) -> Result<GoShared<ModifyIndexArgs>, serde_json::Error> {
+    let ids = GoField::<GoSharedSlice<i64>>::default();
+    let if_exists = GoField::<GoSharedSlice<bool>>::default();
+    let partition_ids = GoField::<GoSharedSlice<i64>>::default();
+    let globals = GoField::<GoSharedSlice<bool>>::default();
+    let mut decoder = V1Decoder::new(job)?;
+    decoder.decode(&ids, builtin_type("[]int64", GoTypeKind::Slice))?;
+    decoder.decode(&if_exists, builtin_type("[]bool", GoTypeKind::Slice))?;
+    decoder.decode(&partition_ids, builtin_type("[]int64", GoTypeKind::Slice))?;
+    decoder.decode(&globals, builtin_type("[]bool", GoTypeKind::Slice))?;
+    decoder.finish(job);
+    let values = ids
+        .get()
+        .snapshot()
+        .into_iter()
+        .enumerate()
+        .map(|(index, id)| IndexArg {
+            index_id: id,
+            if_exist: if_exists.read().get(index),
+            is_global: globals.read().get(index),
+            ..Default::default()
+        })
+        .collect::<Vec<_>>();
+    Ok(GoShared::new(ModifyIndexArgs {
+        index_args: values.into(),
+        partition_ids: partition_ids.get(),
+        ..Default::default()
+    }))
 }
 
 /// Go `AlterIndexVisibilityArgs`.

@@ -67,6 +67,7 @@ pub trait ClusterDdl: Send + Sync {
 }
 
 const DDL_OWNER_KEY: &str = "/tidb/ddl/fg/owner";
+const ADDING_DDL_JOB_NOTIFY_KEY: &[u8] = b"/tidb/ddl/add_ddl_job_general";
 const DDL_SCHEDULER_INTERVAL: Duration = Duration::from_secs(1);
 
 struct ClusterSchemaSync<C, L, P>
@@ -86,6 +87,7 @@ where
 struct SchedulerWorker {
     stop: Arc<AtomicBool>,
     handle: JoinHandle<()>,
+    _adding_job_watcher: Option<tidb_pd_client::EtcdWatcher>,
 }
 
 struct PersistedDdlScheduler<C, L, P>
@@ -220,6 +222,27 @@ where
             return;
         }
         let stop = Arc::new(AtomicBool::new(false));
+        let adding_job_watcher = self.notifier.as_ref().and_then(|etcd| {
+            let wake = Arc::clone(&self.wake);
+            match etcd.watch_key(ADDING_DDL_JOB_NOTIFY_KEY, 0, move |_| {
+                let (generation, condvar) = &*wake;
+                let mut generation = generation
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                *generation = generation.wrapping_add(1);
+                condvar.notify_all();
+            }) {
+                Ok(watcher) => Some(watcher),
+                Err(error) => {
+                    eprintln!(
+                        "{{\"level\":\"warning\",\"event\":\"ddl_job_notify_watch_failed\",\"error\":{}}}",
+                        serde_json::to_string(&error.to_string())
+                            .unwrap_or_else(|_| "\"unprintable\"".to_owned())
+                    );
+                    None
+                }
+            }
+        });
         let handle = std::thread::Builder::new()
             .name("ddl-job-scheduler".to_owned())
             .spawn({
@@ -232,7 +255,11 @@ where
                 move || Self::run_loop(opener, timeout, notifier, schema_sync, wake, stop)
             })
             .expect("spawning the DDL owner scheduler");
-        *worker = Some(SchedulerWorker { stop, handle });
+        *worker = Some(SchedulerWorker {
+            stop,
+            handle,
+            _adding_job_watcher: adding_job_watcher,
+        });
     }
 
     fn on_retire_owner(&self) {
@@ -344,6 +371,23 @@ where
                 "{{\"event\":\"catalog_reload_after_ddl_failed\",\"schema_version\":{},\"error\":{:?}}}",
                 self.catalog.load().schema_version,
                 error
+            );
+        }
+    }
+
+    fn notify_new_job_submitted(&self) {
+        if self.owner.is_owner() {
+            self.scheduler.notify();
+            return;
+        }
+        let Some(etcd) = self.notifier.as_ref() else {
+            return;
+        };
+        if let Err(error) = etcd.put(ADDING_DDL_JOB_NOTIFY_KEY, b"0") {
+            eprintln!(
+                "{{\"level\":\"info\",\"event\":\"notify_new_ddl_job_failed\",\"error\":{}}}",
+                serde_json::to_string(&error.to_string())
+                    .unwrap_or_else(|_| "\"unprintable\"".to_owned())
             );
         }
     }
@@ -543,7 +587,7 @@ where
                 self.timeout,
             )
             .map_err(cluster_ddl_error)?;
-            self.scheduler.notify();
+            self.notify_new_job_submitted();
             let report = self.wait_persisted_job(ddl_job_id)?;
             self.refresh_catalog();
             return Ok(report);
