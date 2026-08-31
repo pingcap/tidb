@@ -674,4 +674,18 @@ partition by range (a) (
 	}
 	require.True(t, ignoreWarningFound)
 	optsFor(tableInfo.ID).Check(testkit.Rows("0 1"))
+
+	// A whole-table DEFAULT in dynamic mode must clear old partition overrides
+	// too. Otherwise they become effective again after switching back to static
+	// pruning.
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
+	tk.MustExec("analyze table t partition p0 with 3 buckets")
+	optsFor(p0ID).Check(testkit.Rows("3 1"))
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("analyze table t with default buckets")
+	optsFor(tableInfo.ID).Check(testkit.Rows("0 1"))
+	optsFor(p0ID).Check(testkit.Rows("0 1"))
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
+	tk.MustExec("analyze table t partition p0")
+	require.Greater(t, p0Buckets(), 3)
 }

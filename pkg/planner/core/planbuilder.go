@@ -2861,9 +2861,15 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 	tblOpts := tblSavedOpts
 	tblColChoice := tblSavedColChoice
 	tblColList := tblSavedColList
+	resetOpts := make(map[ast.AnalyzeOptionType]struct{})
 	if isAnalyzeTable {
 		tblOpts = mergeAnalyzeOptions(astOpts, tblSavedOpts)
 		tblColChoice, tblColList = pickColumnList(astColChoice, astColList, tblSavedColChoice, tblSavedColList)
+		for optType, val := range astOpts {
+			if val == nil {
+				resetOpts[optType] = struct{}{}
+			}
+		}
 	}
 
 	tblFilledOpts := fillAnalyzeOptions(tblOpts)
@@ -2877,6 +2883,7 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 		PhyTableID:  tbl.TableInfo.ID,
 		RawOpts:     tblOpts,
 		FilledOpts:  tblFilledOpts,
+		ResetOpts:   resetOpts,
 		ColChoice:   tblColChoice,
 		ColumnList:  tblColList,
 		IsPartition: false,

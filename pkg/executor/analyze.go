@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tiancaiamao/gp"
@@ -607,7 +608,16 @@ func (e *AnalyzeExec) saveAnalyzeOptions() error {
 	// only to save table options if dynamic prune mode
 	dynamicPrune := variable.PartitionPruneMode(e.Ctx().GetSessionVars().PartitionPruneMode.Load()) == variable.Dynamic
 	toSaveMap := make(map[int64]core.V2AnalyzeOptions)
+	resetOpts := make(map[ast.AnalyzeOptionType]struct{})
+	partitionIDs := make([]int64, 0)
 	for id, opts := range e.OptionsMap {
+		if dynamicPrune && opts.IsPartition {
+			partitionIDs = append(partitionIDs, id)
+			continue
+		}
+		for optType := range opts.ResetOpts {
+			resetOpts[optType] = struct{}{}
+		}
 		if !opts.IsPartition || !dynamicPrune {
 			toSaveMap[id] = opts
 		}
@@ -642,7 +652,55 @@ func (e *AnalyzeExec) saveAnalyzeOptions() error {
 	if err != nil {
 		return err
 	}
+	if dynamicPrune && len(resetOpts) > 0 && len(partitionIDs) > 0 {
+		if err := resetAnalyzeOptionsForPartitions(ctx, exec, resetOpts, partitionIDs); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// resetAnalyzeOptionsForPartitions clears only the options explicitly reset by
+// a whole-table ANALYZE in dynamic prune mode. Dynamic mode normally saves only
+// the table row, but old partition rows must not retain overrides that would
+// become effective again after switching back to static pruning.
+func resetAnalyzeOptionsForPartitions(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, resetOpts map[ast.AnalyzeOptionType]struct{}, partitionIDs []int64) error {
+	columns := []struct {
+		optType ast.AnalyzeOptionType
+		name    string
+	}{
+		{ast.AnalyzeOptNumSamples, "sample_num"},
+		{ast.AnalyzeOptSampleRate, "sample_rate"},
+		{ast.AnalyzeOptNumBuckets, "buckets"},
+		{ast.AnalyzeOptNumTopN, "topn"},
+	}
+	sql := new(strings.Builder)
+	sql.WriteString("UPDATE mysql.analyze_options SET ")
+	updated := 0
+	for _, column := range columns {
+		if _, ok := resetOpts[column.optType]; !ok {
+			continue
+		}
+		if updated > 0 {
+			sql.WriteString(",")
+		}
+		sql.WriteString(column.name)
+		sql.WriteString("=DEFAULT")
+		updated++
+	}
+	if updated == 0 {
+		return nil
+	}
+	sql.WriteString(" WHERE table_id IN (")
+	for i, partitionID := range partitionIDs {
+		if i > 0 {
+			sql.WriteString(",")
+		}
+		sqlescape.MustFormatSQL(sql, "%?", partitionID)
+	}
+	sql.WriteString(")")
+	_, _, err := exec.ExecRestrictedSQL(ctx, nil, sql.String())
+	return err
 }
 
 func recordHistoricalStats(sctx sessionctx.Context, tableID int64) error {
