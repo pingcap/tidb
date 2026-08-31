@@ -1258,11 +1258,8 @@ func (e *executor) CreateTableWithInfo(
 			scatterScope = val
 		}
 
-		preSplitAndScatterTable(ctx, e.store, tbInfo, scatterScope)
-		if e.startMode == BR {
-			if err := handleAutoIncID(e.getAutoIDRequirement(), jobW.Job, tbInfo); err != nil {
-				return errors.Trace(err)
-			}
+		if err := e.createTableWithInfoPost(ctx, tbInfo, jobW.SchemaID, scatterScope); err != nil {
+			return errors.Trace(err)
 		}
 	}
 	return errors.Trace(err)
@@ -1374,11 +1371,8 @@ func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
 		scatterScope = val
 	}
 	for _, tblArgs := range args.Tables {
-		preSplitAndScatterTable(ctx, e.store, tblArgs.TableInfo, scatterScope)
-		if e.startMode == BR {
-			if err := handleAutoIncID(e.getAutoIDRequirement(), jobW.Job, tblArgs.TableInfo); err != nil {
-				return errors.Trace(err)
-			}
+		if err = e.createTableWithInfoPost(ctx, tblArgs.TableInfo, jobW.SchemaID, scatterScope); err != nil {
+			return errors.Trace(err)
 		}
 	}
 
