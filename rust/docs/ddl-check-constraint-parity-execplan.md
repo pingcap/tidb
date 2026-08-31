@@ -35,6 +35,7 @@ After this work, Rust accepts, stores, displays, and enforces CHECK constraints 
 - [x] (2026-08-31) Completed all seven pinned `pkg/ddl/label` artifacts: strict YAML flow parsing, complete PD rule wire shape, Go clone/nil semantics, and both classic and NextGen codec behavior.
 - [x] (2026-08-31) Completed both pinned `pkg/ddl/logutil` artifacts as a dedicated four-constructor crate and removed serverstate's duplicate DDL logger policy.
 - [x] (2026-08-31) Re-audited all three pinned `pkg/ddl/bdr` artifacts, verified the existing policy and shared action map, and removed its stale missing-test marker.
+- [x] (2026-08-31) Completed all three pinned `pkg/ddl/copr` artifacts as one crate, including single/multi-index contexts, generated dependencies, handle/index/virtual offsets, and on-demand condition construction.
 - [ ] Add concurrent-writer regressions corresponding to every scenario in pinned `pkg/ddl/constraint_test.go`.
 - [ ] Inventory every remaining pinned production/test/support/build artifact before making a package-level claim.
 
@@ -251,3 +252,5 @@ Revision note (2026-08-31): audited all seven pinned `pkg/ddl/label` artifacts a
 Revision note (2026-08-31): audited the complete two-artifact `pkg/ddl/logutil` package and added its four exact category/sampling constructors over the existing shared logger implementation. Serverstate now consumes that package instead of carrying a private `category=ddl` clone; the pinned package has no tests or other artifacts.
 
 Revision note (2026-08-31): re-read the complete three-artifact `pkg/ddl/bdr` package and verified its existing Rust carrier against all add/modify/general admission branches and the full shared action-class map. The common job submitter already consumes the typed policy for jobs and subjobs; the obsolete documentary missing-test marker was removed.
+
+Revision note (2026-08-31): read and transcreated the complete three-artifact `pkg/ddl/copr` package. The new crate uses the existing metadata pointer carriers and expression construction owner, retains the build context for source-timed `GetCondition` calls, and implements the exact table-order dependency expansion, clustered/extra handle selection, single/multi index lookup, virtual-column pushdown rejection, and balanced DNF composition. All three pinned tests are carried without additional Rust-only cases.

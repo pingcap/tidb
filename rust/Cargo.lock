@@ -3339,6 +3339,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-ddl-copr"
+version = "0.0.0"
+dependencies = [
+ "tidb-ast",
+ "tidb-datatype",
+ "tidb-expr",
+ "tidb-model",
+ "tidb-mysql",
+]
+
+[[package]]
 name = "tidb-ddl-logutil"
 version = "0.0.0"
 dependencies = [
