@@ -213,6 +213,20 @@ pub(crate) fn run_cluster_session_node_with_spill(
             CONTROL_PLANE_TIMEOUT,
         )
     });
+    let cluster_ddl = Arc::new(
+        RealClusterDdl::new(
+            authority.transaction_opener(),
+            Arc::clone(&catalog),
+            CONTROL_PLANE_TIMEOUT,
+            crate::real_tikv_node::connect_schema_notifier(&config),
+            Arc::clone(&server_info),
+        )
+        .map_err(|error| {
+            RunConfiguredNodeError::Engine(SqlQueryError::unknown(format!(
+                "campaign DDL owner failed: {error}"
+            )))
+        })?,
+    );
     let factory = ClusterSessionFactory::new(
         // Row reads and writes are DATA-plane traffic: a statement's snapshot
         // gets queue behind concurrent coprocessor scans on the same store,
@@ -224,13 +238,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
             authority.transaction_opener(),
             TRANSACTION_RPC_TIMEOUT,
         )),
-        Arc::new(RealClusterDdl::new(
-            authority.transaction_opener(),
-            Arc::clone(&catalog),
-            CONTROL_PLANE_TIMEOUT,
-            crate::real_tikv_node::connect_schema_notifier(&config),
-            Arc::clone(&server_info),
-        )),
+        cluster_ddl,
         Arc::new(RealClusterAccountWriter::new(
             Arc::new(authority.transaction_opener()),
             users.accounts(),

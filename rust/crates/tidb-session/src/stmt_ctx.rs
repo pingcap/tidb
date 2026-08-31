@@ -90,6 +90,9 @@ pub(crate) struct StatementVarSnapshot {
     hashagg_partial_concurrency: usize,
     hashagg_final_concurrency: usize,
     block_encryption_mode: tidb_executor::BlockEncryptionMode,
+    ddl_cdc_write_source: u64,
+    ddl_reorg_priority: i64,
+    ddl_session_alias: String,
     arbitrator_wait_averse: Option<bool>,
     arbitrator_reserved: i64,
 }
@@ -784,6 +787,25 @@ impl Session {
                 .ok()
                 .and_then(|value| tidb_executor::BlockEncryptionMode::parse(&value))
                 .unwrap_or_default(),
+            ddl_cdc_write_source: self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_CDC_WRITE_SOURCE)
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(0),
+            ddl_reorg_priority: match self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_DDL_REORG_PRIORITY)
+                .as_deref()
+            {
+                Ok("PRIORITY_NORMAL") => 0,
+                Ok("PRIORITY_HIGH") => 2,
+                _ => 1,
+            },
+            ddl_session_alias: self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_SESSION_ALIAS)
+                .unwrap_or_default(),
             arbitrator_wait_averse: match self
                 .vars
                 .get_system(tidb_vardef::tidb_vars::TIDB_MEM_ARBITRATOR_WAIT_AVERSE)
@@ -964,6 +986,12 @@ impl Session {
                 .with_tidb_decode_key_snapshot(self.tidb_decode_key_snapshot())
                 .with_sql_mode(snapshot.scanner_sql_mode)
                 .with_ddl_sql_mode(sql_mode.0)
+                .with_ddl_job_context(
+                    snapshot.ddl_cdc_write_source,
+                    snapshot.ddl_reorg_priority,
+                    snapshot.ddl_session_alias.clone(),
+                    Vec::new(),
+                )
                 .with_no_unsigned_subtraction(sql_mode.has_no_unsigned_subtraction_mode())
                 .with_like_default_escape(like_default_escape)
                 .with_default_string_match_selectivity(default_string_match_selectivity)
@@ -984,6 +1012,7 @@ impl Session {
                 .with_enable_semi_join_rewrite(enable_semi_join_rewrite)
                 .with_enable_no_decorrelate_in_select(enable_no_decorrelate_in_select)
                 .with_enable_skew_distinct_agg(enable_skew_distinct_agg)
+                .with_enable_check_constraint(self.enable_check_constraint())
                 .with_sysdate_is_now(sysdate_is_now)
                 .with_resource_group_name(self.active_resource_group.clone())
                 .with_lazy_clock(snapshot.timestamp, zone);
@@ -1036,6 +1065,12 @@ impl Session {
         .with_lazy_clock(snapshot.timestamp, zone)
         .with_sql_mode(snapshot.scanner_sql_mode)
         .with_ddl_sql_mode(sql_mode.0)
+        .with_ddl_job_context(
+            snapshot.ddl_cdc_write_source,
+            snapshot.ddl_reorg_priority,
+            snapshot.ddl_session_alias.clone(),
+            Vec::new(),
+        )
         .with_no_unsigned_subtraction(sql_mode.has_no_unsigned_subtraction_mode())
         .with_like_default_escape(like_default_escape)
         .with_default_string_match_selectivity(default_string_match_selectivity)
@@ -1442,5 +1477,22 @@ mod tests {
 
         session.run("SET tidb_opt_skew_distinct_agg = ON").unwrap();
         assert!(session.statement_context(false).enable_skew_distinct_agg());
+    }
+
+    #[test]
+    fn ddl_job_metadata_uses_the_session_snapshot() {
+        let mut session = Session::new();
+        session.set_connection_id(77);
+        session.run("SET tidb_cdc_write_source = 9").unwrap();
+        session
+            .run("SET tidb_ddl_reorg_priority = 'PRIORITY_HIGH'")
+            .unwrap();
+        session.run("SET tidb_session_alias = 'ddl-owner'").unwrap();
+
+        let context = session.ddl_statement_context();
+        assert_eq!(context.ddl_connection_id(), 77);
+        assert_eq!(context.ddl_cdc_write_source(), 9);
+        assert_eq!(context.ddl_reorg_priority(), 2);
+        assert_eq!(context.ddl_session_alias(), "ddl-owner");
     }
 }

@@ -563,6 +563,14 @@ pub struct StmtContext {
     ddl_sql_mode: i64,
     /// Original DDL text persisted in Go `model.Job.Query` before submission.
     ddl_query: String,
+    /// Go `SessionVars.CDCWriteSource`, persisted in every user DDL job.
+    ddl_cdc_write_source: u64,
+    /// Go `SessionVars.DDLReorgPriority`, used by ADD CHECK validation reads.
+    ddl_reorg_priority: i64,
+    /// Go `TraceInfo.SessionAlias`, captured when the DDL job is submitted.
+    ddl_session_alias: String,
+    /// Go `TraceInfo.TraceID`, captured when the DDL job is submitted.
+    ddl_trace_id: Vec<u8>,
     /// `NO_UNSIGNED_SUBTRACTION` changes expression typing and evaluation,
     /// not scanning, so it is kept beside the lexer's compact mode.
     no_unsigned_subtraction: bool,
@@ -831,6 +839,11 @@ impl StmtContext {
             ddl_sql_mode: tidb_mysql::get_sql_mode(tidb_mysql::DefaultSQLMode)
                 .map_or(0, |mode| mode.0),
             ddl_query: String::new(),
+            ddl_cdc_write_source: 0,
+            // Go initializes `DDLReorgPriority` to `kv.PriorityLow`.
+            ddl_reorg_priority: 1,
+            ddl_session_alias: String::new(),
+            ddl_trace_id: Vec::new(),
             no_unsigned_subtraction: false,
             like_default_escape: b'\\',
             default_string_match_selectivity: 0.0,
@@ -1072,6 +1085,22 @@ impl StmtContext {
         self
     }
 
+    /// Captures the remaining session fields Go persists with a DDL job.
+    #[must_use]
+    pub fn with_ddl_job_context(
+        mut self,
+        cdc_write_source: u64,
+        reorg_priority: i64,
+        session_alias: impl Into<String>,
+        trace_id: Vec<u8>,
+    ) -> Self {
+        self.ddl_cdc_write_source = cdc_write_source;
+        self.ddl_reorg_priority = reorg_priority;
+        self.ddl_session_alias = session_alias.into();
+        self.ddl_trace_id = trace_id;
+        self
+    }
+
     /// Attaches `NO_UNSIGNED_SUBTRACTION` for expression build and runtime.
     #[must_use]
     pub fn with_no_unsigned_subtraction(mut self, enabled: bool) -> Self {
@@ -1187,6 +1216,36 @@ impl StmtContext {
     #[must_use]
     pub fn ddl_query(&self) -> &str {
         &self.ddl_query
+    }
+
+    /// CDC write-source identifier captured for a persisted DDL job.
+    #[must_use]
+    pub const fn ddl_cdc_write_source(&self) -> u64 {
+        self.ddl_cdc_write_source
+    }
+
+    /// Reorganization priority captured for ADD CHECK.
+    #[must_use]
+    pub const fn ddl_reorg_priority(&self) -> i64 {
+        self.ddl_reorg_priority
+    }
+
+    /// Connection identifier captured in Go `TraceInfo`.
+    #[must_use]
+    pub fn ddl_connection_id(&self) -> u64 {
+        self.connection_id.unwrap_or(0)
+    }
+
+    /// Session alias captured in Go `TraceInfo`.
+    #[must_use]
+    pub fn ddl_session_alias(&self) -> &str {
+        &self.ddl_session_alias
+    }
+
+    /// Trace identifier captured in Go `TraceInfo`.
+    #[must_use]
+    pub fn ddl_trace_id(&self) -> &[u8] {
+        &self.ddl_trace_id
     }
 
     /// Whether subtraction must use a signed result domain.

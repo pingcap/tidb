@@ -519,13 +519,8 @@ pub(crate) fn unistore_cluster_session_stack(
     ));
     let cop_scans: Arc<dyn tidb_executor::remote_scan::PushdownScanner> =
         Arc::new(tidb_exec::cop_scan::CopScanSource::new(transport_factory));
-
-    let factory = ClusterSessionFactory::new(
-        Arc::new(RealClusterTransactions::new(
-            opener.clone(),
-            IN_PROCESS_TIMEOUT,
-        )),
-        Arc::new(RealClusterDdl::new(
+    let cluster_ddl = Arc::new(
+        RealClusterDdl::new(
             opener.clone(),
             Arc::clone(&catalog),
             IN_PROCESS_TIMEOUT,
@@ -533,7 +528,20 @@ pub(crate) fn unistore_cluster_session_stack(
             // reload tick above is the only follower -- correct for one node.
             None,
             Arc::clone(&server_info),
+        )
+        .map_err(|error| {
+            crate::real_tikv_node::RunConfiguredNodeError::Engine(SqlQueryError::unknown(format!(
+                "campaign DDL owner failed: {error}"
+            )))
+        })?,
+    );
+
+    let factory = ClusterSessionFactory::new(
+        Arc::new(RealClusterTransactions::new(
+            opener.clone(),
+            IN_PROCESS_TIMEOUT,
         )),
+        cluster_ddl,
         Arc::new(crate::cluster_account_seam::RealClusterAccountWriter::new(
             Arc::new(opener.clone()),
             users.accounts(),

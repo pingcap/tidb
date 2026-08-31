@@ -184,6 +184,56 @@ fn exchange_partition_validates_and_swaps_real_rows_atomically() {
     );
 }
 
+/// Pinned Go `pkg/ddl/constraint_test.go`: CHECK DDL is submitted to the
+/// durable queue, completed by the DDL owner, removed from the active table,
+/// and enforced by subsequent writes.
+#[test]
+fn check_constraint_runs_through_the_owner_job_queue() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack
+        .factory
+        .open_session(session_context(153))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "SET @@global.tidb_enable_check_constraint = ON",
+    );
+    assert!(
+        session
+            .session
+            .ddl_statement_context()
+            .enable_check_constraint(),
+        "the query-shaped DDL context must read the enabled global variable"
+    );
+    rows(&mut session, "CREATE TABLE queued_check (a INT)");
+    rows(&mut session, "INSERT INTO queued_check VALUES (1)");
+    rows(
+        &mut session,
+        "ALTER TABLE queued_check ADD CONSTRAINT positive CHECK (a > 0)",
+    );
+
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT COUNT(*) FROM mysql.tidb_ddl_job",
+        )),
+        [["0"]],
+        "a completed owner job is no longer active"
+    );
+    let shown = displayed(rows(&mut session, "SHOW CREATE TABLE queued_check"));
+    assert!(
+        shown[0][1].contains("CONSTRAINT `positive` CHECK ((`a` > 0))"),
+        "the terminal owner phase must publish the CHECK: {shown:?}"
+    );
+    let error = match session.execute("INSERT INTO queued_check VALUES (-1)") {
+        Err(error) => error,
+        Ok(_) => panic!("the owner-published CHECK must be enforced"),
+    };
+    assert_eq!(error.code, 3819);
+    assert_eq!(error.message, "Check constraint 'positive' is violated.");
+}
+
 /// Pinned `pkg/ddl/notifier.TestPublishToTableStore`, `TestBasicPubSub`, and
 /// `TestDeliverOrderAndCleanup` over the real bootstrapped notifier table.
 #[test]

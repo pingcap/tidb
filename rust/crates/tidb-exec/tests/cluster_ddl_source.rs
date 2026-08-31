@@ -287,6 +287,8 @@ fn check_job_submission_precedes_every_schema_transition() {
     let context = tidb_executor::StmtContext::for_query()
         .with_enable_check_constraint(true)
         .with_ddl_sql_mode(sql_mode)
+        .with_connection_id(Some(77))
+        .with_ddl_job_context(9, 2, "ddl-alias", vec![1, 2, 3])
         .with_ddl_query(
             "ALTER TABLE queued_check ADD CONSTRAINT c_positive CHECK (a > 0)",
         );
@@ -317,6 +319,17 @@ fn check_job_submission_precedes_every_schema_transition() {
     assert_eq!(submission.job.schema_state, SchemaState::NONE);
     assert_eq!(submission.job.type_, ActionType::ACTION_ADD_CHECK_CONSTRAINT);
     assert_eq!(submission.job.sql_mode, sql_mode);
+    assert_eq!(submission.job.cdc_write_source, 9);
+    assert_eq!(submission.job.priority, 2);
+    let trace = submission
+        .job
+        .trace_info
+        .as_ref()
+        .expect("Go submission captures trace identity")
+        .read();
+    assert_eq!(trace.connection_id, 77);
+    assert_eq!(trace.session_alias.to_utf8_lossy_go(), "ddl-alias");
+    assert_eq!(trace.trace_id.snapshot(), vec![1, 2, 3]);
     assert_eq!(
         submission.job.query.to_utf8_lossy_go(),
         "ALTER TABLE queued_check ADD CONSTRAINT c_positive CHECK (a > 0)"

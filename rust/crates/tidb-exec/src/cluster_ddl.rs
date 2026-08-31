@@ -2731,9 +2731,17 @@ fn new_check_constraint_job(
     job.table_name = table.name.lowercase().to_owned().into();
     job.type_ = action;
     job.binlog_info = Some(GoShared::new(HistoryInfo::default()));
-    job.trace_info = Some(GoShared::new(TraceInfo::default()));
     job.query = context.ddl_query().into();
     job.sql_mode = context.ddl_sql_mode();
+    job.cdc_write_source = context.ddl_cdc_write_source();
+    if action == ActionType::ACTION_ADD_CHECK_CONSTRAINT {
+        job.priority = context.ddl_reorg_priority();
+    }
+    job.trace_info = Some(GoShared::new(TraceInfo {
+        session_alias: context.ddl_session_alias().into(),
+        trace_id: context.ddl_trace_id().to_vec().into(),
+        connection_id: context.ddl_connection_id(),
+    }));
     job.start_ts = start_ts;
     job.state = JobState::QUEUEING;
     job

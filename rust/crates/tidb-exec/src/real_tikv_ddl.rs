@@ -33,6 +33,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tidb_executor::cluster_storage::{ClusterSnapshot, MutationBuffer, SwappableSnapshot};
+use tidb_model::Job;
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{
     OptimisticCommitOutcome, OptimisticCoordinatorError, RealOptimisticTransactionOpener,
@@ -40,6 +41,7 @@ use tidb_txnkv::transaction::{
 };
 use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
 
+use crate::cluster_catalog::{load_cluster_catalog, MetaSnapshot};
 use crate::cluster_ddl::{
     lower_ddl_with_context, plan_check_constraint_job_rollingback,
     plan_check_constraint_job_submission, plan_ddl, plan_persisted_check_constraint_job_step,
@@ -258,6 +260,8 @@ pub enum ClusterDdlError {
     CheckConstraintValidation(LockSqlError),
     /// The change needs CHECK validation and this path cannot read rows.
     CheckConstraintValidationUnavailable,
+    /// A persisted DDL statement was sent to the non-scheduler execution path.
+    PersistedJobRequired,
     /// A CHECK schema phase is durable but not yet acknowledged by every
     /// registered node, so advancing would violate the two-version invariant.
     SchemaSync(String),
@@ -306,6 +310,9 @@ impl fmt::Display for ClusterDdlError {
                 formatter,
                 "this path cannot validate existing rows before enabling a CHECK constraint"
             ),
+            Self::PersistedJobRequired => {
+                formatter.write_str("this DDL must be submitted to the persisted DDL job queue")
+            }
             Self::SchemaSync(detail) => write!(
                 formatter,
                 "CHECK schema phase is committed but not synchronized: {detail}"
@@ -329,6 +336,7 @@ impl std::error::Error for ClusterDdlError {
             | Self::ExchangeValidationUnavailable
             | Self::CheckConstraintValidation(_)
             | Self::CheckConstraintValidationUnavailable
+            | Self::PersistedJobRequired
             | Self::SchemaSync(_) => None,
         }
     }
@@ -693,16 +701,7 @@ pub fn commit_cluster_ddl_with_backfill<
             | DdlStatement::DropCheckConstraint { .. }
             | DdlStatement::AlterCheckConstraint { .. }
     ) {
-        return commit_persisted_check_constraint_job(
-            opener,
-            statement,
-            timeout,
-            notifier,
-            backfiller,
-            exchange_validator,
-            check_constraint_validator,
-            schema_sync,
-        );
+        return Err(ClusterDdlError::PersistedJobRequired);
     }
 
     match commit_cluster_ddl_phase_with_retry(
@@ -720,14 +719,19 @@ pub fn commit_cluster_ddl_with_backfill<
     }
 }
 
+/// Runs one already-submitted persisted CHECK DDL job until it reaches history.
+///
+/// This is the worker half of Go's scheduler contract. It accepts a job ID,
+/// reloads the active row before every step, and therefore resumes jobs
+/// submitted by another server or abandoned by a former owner.
 #[allow(clippy::too_many_arguments)]
-fn commit_persisted_check_constraint_job<
+pub fn run_persisted_check_constraint_job_to_completion<
     C: StoreWriteClient,
     L: StoreWriteLoader,
     P: StorePdCapability,
 >(
     opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
-    statement: &DdlStatement,
+    ddl_job_id: i64,
     timeout: Duration,
     notifier: Option<&dyn SchemaVersionNotifier>,
     backfiller: &dyn IndexBackfiller,
@@ -735,9 +739,6 @@ fn commit_persisted_check_constraint_job<
     check_constraint_validator: &dyn CheckConstraintValidator,
     schema_sync: &dyn CheckConstraintSchemaSync,
 ) -> Result<ClusterDdlReport, ClusterDdlError> {
-    let ddl_job_id =
-        submit_check_constraint_job_with_retry(Arc::clone(&opener), statement, timeout)?;
-
     loop {
         let outcome = match commit_cluster_ddl_phase_with_retry(
             Arc::clone(&opener),
@@ -806,7 +807,12 @@ fn commit_persisted_check_constraint_job<
     }
 }
 
-fn submit_check_constraint_job_with_retry<
+/// Submits one persisted CHECK DDL job without executing it.
+///
+/// Go's submitter and owner scheduler are separate. Exposing the boundary is
+/// what lets a non-owner connection enqueue work and wait while the elected
+/// owner (possibly another server) executes it.
+pub fn submit_check_constraint_job_with_retry<
     C: StoreWriteClient,
     L: StoreWriteLoader,
     P: StorePdCapability,
@@ -861,6 +867,84 @@ fn submit_check_constraint_job_with_retry<
             }
         }
     }
+}
+
+/// Loads the persisted active DDL queue from a fresh cluster snapshot.
+///
+/// The returned order is the job table's primary-key order, matching Go's
+/// scheduler query `ORDER BY job_id`. The read transaction is always rolled
+/// back because queue inspection publishes no state.
+pub fn load_active_persisted_ddl_jobs<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+>(
+    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    timeout: Duration,
+) -> Result<Vec<Job>, ClusterDdlError> {
+    let transaction = SessionTransaction::begin(
+        opener,
+        timeout,
+        crate::session_commit_protocol::session_commit_protocol(),
+    )?;
+    let jobs = {
+        let mut snapshot = SnapshotMetaSnapshot::new(
+            transaction
+                .snapshot()
+                .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
+        );
+        let catalog = load_cluster_catalog(&mut snapshot).map_err(DdlPlanError::Catalog)?;
+        let table = crate::ddl_job_table::DdlJobTable::locate(&catalog)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+        table
+            .load(&mut snapshot)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+            .into_iter()
+            .map(|active| active.job)
+            .collect()
+    };
+    transaction
+        .rollback()
+        .map_err(ClusterDdlError::NotCommitted)?;
+    Ok(jobs)
+}
+
+/// Reads one terminal DDL job from Go's authoritative meta history.
+pub fn load_history_persisted_ddl_job<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+>(
+    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    ddl_job_id: i64,
+    timeout: Duration,
+) -> Result<Option<Job>, ClusterDdlError> {
+    let transaction = SessionTransaction::begin(
+        opener,
+        timeout,
+        crate::session_commit_protocol::session_commit_protocol(),
+    )?;
+    let history = {
+        let mut snapshot = SnapshotMetaSnapshot::new(
+            transaction
+                .snapshot()
+                .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
+        );
+        snapshot
+            .get(&tidb_meta::key::ddl_job_history_kv_key(ddl_job_id))
+            .map_err(DdlPlanError::Catalog)?
+            .map(|encoded| {
+                let mut job = Job::default();
+                job.decode(&encoded)
+                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+                Ok::<Job, DdlPlanError>(job)
+            })
+            .transpose()?
+    };
+    transaction
+        .rollback()
+        .map_err(ClusterDdlError::NotCommitted)?;
+    Ok(history)
 }
 
 fn mark_check_constraint_job_rollingback_with_retry<

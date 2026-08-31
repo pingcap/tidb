@@ -19,7 +19,9 @@
 //! catalog afterwards.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 use tidb_pd_client::PdClient;
 use tidb_txnkv::rpc::TonicCoprocessorClient;
@@ -34,7 +36,9 @@ use tidb_exec::cluster_ddl::{
 use tidb_exec::pessimistic_lock_error::LockSqlError;
 use tidb_exec::real_tikv_catalog::reload_catalog_from_cluster;
 use tidb_exec::real_tikv_ddl::{
-    commit_cluster_ddl_with_backfill, CheckConstraintSchemaSync, CheckConstraintValidator,
+    commit_cluster_ddl_with_backfill, load_active_persisted_ddl_jobs,
+    load_history_persisted_ddl_job, run_persisted_check_constraint_job_to_completion,
+    submit_check_constraint_job_with_retry, CheckConstraintSchemaSync, CheckConstraintValidator,
     ClusterDdlReport, ExchangePartitionValidator, IndexBackfiller, SchemaVersionNotifier,
 };
 use tidb_exec::real_tikv_read::RealOptimisticTransactionOpener;
@@ -62,6 +66,180 @@ pub trait ClusterDdl: Send + Sync {
     fn execute(&self, statement: &DdlStatement) -> Result<ClusterDdlReport, SqlQueryError>;
 }
 
+const DDL_OWNER_KEY: &str = "/tidb/ddl/fg/owner";
+const DDL_SCHEDULER_INTERVAL: Duration = Duration::from_secs(1);
+
+struct ClusterSchemaSync<C, L, P>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
+    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    catalog: Arc<SharedClusterCatalog>,
+    timeout: Duration,
+    notifier: Option<Arc<EtcdClient>>,
+    server_info: Arc<tidb_domain::serverinfo_syncer::Syncer>,
+    owner_id: String,
+}
+
+struct SchedulerWorker {
+    stop: Arc<AtomicBool>,
+    handle: JoinHandle<()>,
+}
+
+struct PersistedDdlScheduler<C, L, P>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
+    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    timeout: Duration,
+    notifier: Option<Arc<EtcdClient>>,
+    schema_sync: Arc<ClusterSchemaSync<C, L, P>>,
+    wake: Arc<(Mutex<u64>, Condvar)>,
+    worker: Mutex<Option<SchedulerWorker>>,
+}
+
+impl<C, L, P> PersistedDdlScheduler<C, L, P>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
+    fn notify(&self) {
+        let (generation, condvar) = &*self.wake;
+        let mut generation = generation
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *generation = generation.wrapping_add(1);
+        condvar.notify_all();
+    }
+
+    fn stop(&self) {
+        let worker = self
+            .worker
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        if let Some(worker) = worker {
+            worker.stop.store(true, Ordering::Release);
+            self.notify();
+            let _ = worker.handle.join();
+        }
+    }
+
+    fn run_loop(
+        opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+        timeout: Duration,
+        notifier: Option<Arc<EtcdClient>>,
+        schema_sync: Arc<ClusterSchemaSync<C, L, P>>,
+        wake: Arc<(Mutex<u64>, Condvar)>,
+        stop: Arc<AtomicBool>,
+    ) {
+        while !stop.load(Ordering::Acquire) {
+            match load_active_persisted_ddl_jobs(Arc::clone(&opener), timeout) {
+                Ok(jobs) => {
+                    for job in jobs {
+                        if stop.load(Ordering::Acquire) {
+                            return;
+                        }
+                        if !matches!(
+                            job.type_,
+                            tidb_model::ActionType::ACTION_ADD_CHECK_CONSTRAINT
+                                | tidb_model::ActionType::ACTION_DROP_CHECK_CONSTRAINT
+                                | tidb_model::ActionType::ACTION_ALTER_CHECK_CONSTRAINT
+                        ) {
+                            eprintln!(
+                                "{{\"level\":\"warning\",\"event\":\"ddl_scheduler_unsupported_job\",\"job_id\":{},\"job_type\":{}}}",
+                                job.id, job.type_.0
+                            );
+                            continue;
+                        }
+                        let notifier_ref = notifier
+                            .as_ref()
+                            .map(|client| Arc::as_ref(client) as &dyn SchemaVersionNotifier);
+                        if let Err(error) = run_persisted_check_constraint_job_to_completion(
+                            Arc::clone(&opener),
+                            job.id,
+                            timeout,
+                            notifier_ref,
+                            &KvTableIndexBackfiller,
+                            &KvTableIndexBackfiller,
+                            &KvTableIndexBackfiller,
+                            schema_sync.as_ref(),
+                        ) {
+                            // A validation error is terminal and retained in history; every
+                            // other error leaves the active row for the next scheduler pass.
+                            eprintln!(
+                                "{{\"level\":\"warning\",\"event\":\"ddl_job_step_failed\",\"job_id\":{},\"error\":{}}}",
+                                job.id,
+                                serde_json::to_string(&error.to_string())
+                                    .unwrap_or_else(|_| "\"unprintable\"".to_owned())
+                            );
+                        }
+                        let (_, condvar) = &*wake;
+                        condvar.notify_all();
+                    }
+                }
+                Err(error) => eprintln!(
+                    "{{\"level\":\"warning\",\"event\":\"ddl_job_scan_failed\",\"error\":{}}}",
+                    serde_json::to_string(&error.to_string())
+                        .unwrap_or_else(|_| "\"unprintable\"".to_owned())
+                ),
+            }
+
+            let (generation, condvar) = &*wake;
+            let guard = generation
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let observed = *guard;
+            let (guard, _) = condvar
+                .wait_timeout_while(guard, DDL_SCHEDULER_INTERVAL, |generation| {
+                    !stop.load(Ordering::Acquire) && *generation == observed
+                })
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            drop(guard);
+        }
+    }
+}
+
+impl<C, L, P> tidb_owner::Listener for PersistedDdlScheduler<C, L, P>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
+    fn on_become_owner(&self) {
+        let mut worker = self
+            .worker
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if worker.is_some() {
+            return;
+        }
+        let stop = Arc::new(AtomicBool::new(false));
+        let handle = std::thread::Builder::new()
+            .name("ddl-job-scheduler".to_owned())
+            .spawn({
+                let opener = Arc::clone(&self.opener);
+                let notifier = self.notifier.clone();
+                let schema_sync = Arc::clone(&self.schema_sync);
+                let wake = Arc::clone(&self.wake);
+                let stop = Arc::clone(&stop);
+                let timeout = self.timeout;
+                move || Self::run_loop(opener, timeout, notifier, schema_sync, wake, stop)
+            })
+            .expect("spawning the DDL owner scheduler");
+        *worker = Some(SchedulerWorker { stop, handle });
+    }
+
+    fn on_retire_owner(&self) {
+        self.stop();
+    }
+}
+
 /// The production catalog writer: the optimistic 2PC over the node's one
 /// process authority, followed by an inline reload of the node's own catalog.
 pub struct RealClusterDdl<C = TonicCoprocessorClient, L = PdRegionLoader, P = PdClient>
@@ -77,8 +255,9 @@ where
     /// peers' watches fire promptly. `None` leaves them to their lease tick;
     /// a failed announcement is a warning, never a failed DDL.
     notifier: Option<Arc<EtcdClient>>,
-    server_info: Arc<tidb_domain::serverinfo_syncer::Syncer>,
-    owner_id: String,
+    schema_sync: Arc<ClusterSchemaSync<C, L, P>>,
+    scheduler: Arc<PersistedDdlScheduler<C, L, P>>,
+    owner: Arc<dyn tidb_owner::Manager>,
 }
 
 impl<C, L, P> RealClusterDdl<C, L, P>
@@ -89,36 +268,61 @@ where
 {
     /// Binds the writer to an already-connected authority and the catalog slot
     /// the reload thread publishes into.
-    #[must_use]
     pub fn new(
         opener: RealOptimisticTransactionOpener<C, L, P>,
         catalog: Arc<SharedClusterCatalog>,
         timeout: Duration,
         notifier: Option<Arc<EtcdClient>>,
         server_info: Arc<tidb_domain::serverinfo_syncer::Syncer>,
-    ) -> Self {
+    ) -> Result<Self, String> {
         let owner_id = server_info.local_server_info().static_info.id;
-        Self {
-            opener: Arc::new(opener),
+        let opener = Arc::new(opener);
+        let schema_sync = Arc::new(ClusterSchemaSync {
+            opener: Arc::clone(&opener),
+            catalog: Arc::clone(&catalog),
+            timeout,
+            notifier: notifier.clone(),
+            server_info,
+            owner_id: owner_id.clone(),
+        });
+        let scheduler = Arc::new(PersistedDdlScheduler {
+            opener: Arc::clone(&opener),
+            timeout,
+            notifier: notifier.clone(),
+            schema_sync: Arc::clone(&schema_sync),
+            wake: Arc::new((Mutex::new(0), Condvar::new())),
+            worker: Mutex::new(None),
+        });
+        let owner: Arc<dyn tidb_owner::Manager> = match notifier.as_ref() {
+            Some(etcd) => Arc::new(tidb_owner::OwnerManager::new(
+                tidb_owner::Context::background(),
+                Arc::clone(etcd) as Arc<dyn tidb_owner::OwnerStore>,
+                "ddl",
+                owner_id.clone(),
+                DDL_OWNER_KEY,
+            )),
+            None => Arc::new(tidb_owner::MockManager::new(
+                tidb_owner::Context::background(),
+                owner_id,
+                None,
+                DDL_OWNER_KEY,
+            )),
+        };
+        owner.set_listener(Arc::clone(&scheduler) as Arc<dyn tidb_owner::Listener>);
+        owner.campaign_owner(&[])?;
+        Ok(Self {
+            opener,
             catalog,
             timeout,
             notifier,
-            server_info,
-            owner_id,
-        }
+            schema_sync,
+            scheduler,
+            owner,
+        })
     }
 
     fn reload_catalog(&self) -> Result<(), String> {
-        let current = self.catalog.load();
-        match reload_catalog_from_cluster(&self.opener, self.timeout, &current)
-            .map_err(|error| error.to_string())?
-        {
-            ReloadedCatalog::Unchanged { .. } => {}
-            ReloadedCatalog::Diffs { catalog, .. } | ReloadedCatalog::Full { catalog, .. } => {
-                self.catalog.store(catalog);
-            }
-        }
-        Ok(())
+        self.schema_sync.reload_catalog()
     }
 
     /// Runs one reload pass inline, on the statement's own thread.
@@ -141,6 +345,51 @@ where
                 self.catalog.load().schema_version,
                 error
             );
+        }
+    }
+
+    fn wait_persisted_job(&self, ddl_job_id: i64) -> Result<ClusterDdlReport, SqlQueryError> {
+        loop {
+            if let Some(job) =
+                load_history_persisted_ddl_job(Arc::clone(&self.opener), ddl_job_id, self.timeout)
+                    .map_err(cluster_ddl_error)?
+            {
+                if let Some(error) = job.error.as_ref() {
+                    let error = error.read();
+                    let code = u16::try_from(error.code().value()).unwrap_or(1105);
+                    return Err(crate::sql_node::lock_sql_error(&LockSqlError {
+                        code,
+                        state: *b"HY000",
+                        message: error.message().to_owned(),
+                    }));
+                }
+                if job.state.is_done() || job.state.is_synced() {
+                    return Ok(ClusterDdlReport::Applied {
+                        schema_version: job.last_schema_version,
+                        created_id: None,
+                        warning: job
+                            .warning
+                            .as_ref()
+                            .map(|warning| warning.read().message().to_owned()),
+                    });
+                }
+                return Err(SqlQueryError::unknown(format!(
+                    "DDL job {ddl_job_id} reached terminal state {} without an error",
+                    job.state
+                )));
+            }
+
+            let (generation, condvar) = &*self.scheduler.wake;
+            let guard = generation
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let observed = *guard;
+            let (guard, _) = condvar
+                .wait_timeout_while(guard, Duration::from_millis(100), |generation| {
+                    *generation == observed
+                })
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            drop(guard);
         }
     }
 }
@@ -197,7 +446,27 @@ mod schema_sync_tests {
     }
 }
 
-impl<C, L, P> CheckConstraintSchemaSync for RealClusterDdl<C, L, P>
+impl<C, L, P> ClusterSchemaSync<C, L, P>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
+    fn reload_catalog(&self) -> Result<(), String> {
+        let current = self.catalog.load();
+        match reload_catalog_from_cluster(&self.opener, self.timeout, &current)
+            .map_err(|error| error.to_string())?
+        {
+            ReloadedCatalog::Unchanged { .. } => {}
+            ReloadedCatalog::Diffs { catalog, .. } | ReloadedCatalog::Full { catalog, .. } => {
+                self.catalog.store(catalog);
+            }
+        }
+        Ok(())
+    }
+}
+
+impl<C, L, P> CheckConstraintSchemaSync for ClusterSchemaSync<C, L, P>
 where
     C: StoreWriteClient,
     L: StoreWriteLoader,
@@ -262,6 +531,23 @@ where
     P: StorePdCapability,
 {
     fn execute(&self, statement: &DdlStatement) -> Result<ClusterDdlReport, SqlQueryError> {
+        if matches!(
+            statement,
+            DdlStatement::AddCheckConstraint { .. }
+                | DdlStatement::DropCheckConstraint { .. }
+                | DdlStatement::AlterCheckConstraint { .. }
+        ) {
+            let ddl_job_id = submit_check_constraint_job_with_retry(
+                Arc::clone(&self.opener),
+                statement,
+                self.timeout,
+            )
+            .map_err(cluster_ddl_error)?;
+            self.scheduler.notify();
+            let report = self.wait_persisted_job(ddl_job_id)?;
+            self.refresh_catalog();
+            return Ok(report);
+        }
         let notifier = self
             .notifier
             .as_ref()
@@ -274,11 +560,23 @@ where
             &KvTableIndexBackfiller,
             &KvTableIndexBackfiller,
             &KvTableIndexBackfiller,
-            self,
+            self.schema_sync.as_ref(),
         )
         .map_err(cluster_ddl_error)?;
         self.refresh_catalog();
         Ok(report)
+    }
+}
+
+impl<C, L, P> Drop for RealClusterDdl<C, L, P>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
+    fn drop(&mut self) {
+        self.owner.close();
+        self.scheduler.stop();
     }
 }
 
