@@ -91,7 +91,6 @@ type OrderedWindowExec struct {
 
 // Close implements the Executor Close interface.
 func (e *PipelinedWindowExec) Close() error {
-	e.memTracker.resetAllPartialResults(e.windowFuncs, e.partialResults)
 	e.childResult = nil
 	e.data = nil
 	e.rows = nil
@@ -120,7 +119,6 @@ func (e *PipelinedWindowExec) OpenSelf() error {
 	e.rowsMemUsage, e.dataMemUsage = 0, 0
 	e.childResult = nil
 	e.groupChecker.Reset()
-	e.memTracker.resetAllPartialResults(e.windowFuncs, e.partialResults)
 	return nil
 }
 
@@ -419,7 +417,7 @@ func (e *PipelinedWindowExec) produce(ctx sessionctx.Context, chk *chunk.Chunk, 
 		if start >= end {
 			for i, wf := range e.windowFuncs {
 				if !e.emptyFrame {
-					e.memTracker.resetPartialResult(i, wf, e.partialResults[i])
+					resetPartialResultAndReleaseMemory(e.memTracker, i, wf, e.partialResults[i])
 				}
 				err = wf.AppendFinalResult2Chunk(ctx.GetExprCtx().GetEvalCtx(), e.partialResults[i], chk)
 				if err != nil {
@@ -444,8 +442,8 @@ func (e *PipelinedWindowExec) produce(ctx sessionctx.Context, chk *chunk.Chunk, 
 							// Store start inside MaxMinSlidingWindowAggFunc.windowInfo
 							minMaxSlidingWindowAggFunc.SetWindowStart(start)
 						}
-						e.memTracker.resetPartialResult(i, wf, e.partialResults[i])
-						err = e.memTracker.updatePartialResult(i, wf, ctx, e.getRows(start, end), e.partialResults[i])
+						resetPartialResultAndReleaseMemory(e.memTracker, i, wf, e.partialResults[i])
+						err = updatePartialResultAndTrackMemory(e.memTracker, i, wf, ctx, e.getRows(start, end), e.partialResults[i])
 					}
 				}
 				if err != nil {
@@ -507,5 +505,5 @@ func (e *PipelinedWindowExec) reset() {
 	e.rowStart = 0
 	e.rowCnt = 0
 	e.initializedSlidingWindow = false
-	e.memTracker.resetAllPartialResults(e.windowFuncs, e.partialResults)
+	resetPartialResultsAndReleaseMemory(e.memTracker, e.windowFuncs, e.partialResults)
 }

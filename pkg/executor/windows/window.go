@@ -66,7 +66,18 @@ func (t *windowMemoryTracker) consume(bytes int64) {
 	t.tracker.Consume(bytes)
 }
 
-func (t *windowMemoryTracker) updatePartialResult(
+func (t *windowMemoryTracker) consumePartialResultMemDelta(idx int, memDelta int64) {
+	t.partialResultMemUsage[idx] += memDelta
+	t.consume(memDelta)
+}
+
+func (t *windowMemoryTracker) releasePartialResultMemUsage(idx int) {
+	t.consume(-t.partialResultMemUsage[idx])
+	t.partialResultMemUsage[idx] = 0
+}
+
+func updatePartialResultAndTrackMemory(
+	t *windowMemoryTracker,
 	idx int,
 	windowFunc aggfuncs.AggFunc,
 	ctx sessionctx.Context,
@@ -74,20 +85,19 @@ func (t *windowMemoryTracker) updatePartialResult(
 	partialResult aggfuncs.PartialResult,
 ) error {
 	memDelta, err := windowFunc.UpdatePartialResult(ctx.GetExprCtx().GetEvalCtx(), rows, partialResult)
-	t.partialResultMemUsage[idx] += memDelta
-	t.consume(memDelta)
+	t.consumePartialResultMemDelta(idx, memDelta)
 	return err
 }
 
-func (t *windowMemoryTracker) resetPartialResult(idx int, windowFunc aggfuncs.AggFunc, partialResult aggfuncs.PartialResult) {
+func resetPartialResultAndReleaseMemory(t *windowMemoryTracker, idx int, windowFunc aggfuncs.AggFunc, partialResult aggfuncs.PartialResult) {
 	windowFunc.ResetPartialResult(partialResult)
-	t.consume(-t.partialResultMemUsage[idx])
-	t.partialResultMemUsage[idx] = 0
+	t.releasePartialResultMemUsage(idx)
 }
 
-func (t *windowMemoryTracker) resetAllPartialResults(windowFuncs []aggfuncs.AggFunc, partialResults []aggfuncs.PartialResult) {
+// resetPartialResultsAndReleaseMemory resets each window function's corresponding partial result and releases its tracked memory.
+func resetPartialResultsAndReleaseMemory(t *windowMemoryTracker, windowFuncs []aggfuncs.AggFunc, partialResults []aggfuncs.PartialResult) {
 	for i, windowFunc := range windowFuncs {
-		t.resetPartialResult(i, windowFunc, partialResults[i])
+		resetPartialResultAndReleaseMemory(t, i, windowFunc, partialResults[i])
 	}
 }
 
@@ -132,13 +142,11 @@ func (e *WindowExec) Open(ctx context.Context) error {
 	e.remainingRowsMemUsage = 0
 	e.groupChecker.Reset()
 	e.memTracker.open(e.ID(), e.Ctx().GetSessionVars().StmtCtx.MemTracker)
-	e.processor.resetPartialResult()
 	return nil
 }
 
 // Close implements the Executor Close interface.
 func (e *WindowExec) Close() error {
-	e.processor.resetPartialResult()
 	e.childResult = nil
 	e.resultChunks = nil
 	e.remainingRowsInChunk = nil
@@ -343,7 +351,7 @@ type aggWindowProcessor struct {
 
 func (p *aggWindowProcessor) consumeGroupRows(ctx sessionctx.Context, rows []chunk.Row) ([]chunk.Row, error) {
 	for i, windowFunc := range p.windowFuncs {
-		if err := p.memTracker.updatePartialResult(i, windowFunc, ctx, rows, p.partialResults[i]); err != nil {
+		if err := updatePartialResultAndTrackMemory(p.memTracker, i, windowFunc, ctx, rows, p.partialResults[i]); err != nil {
 			return nil, err
 		}
 	}
@@ -366,7 +374,7 @@ func (p *aggWindowProcessor) appendResult2Chunk(ctx sessionctx.Context, rows []c
 }
 
 func (p *aggWindowProcessor) resetPartialResult() {
-	p.memTracker.resetAllPartialResults(p.windowFuncs, p.partialResults)
+	resetPartialResultsAndReleaseMemory(p.memTracker, p.windowFuncs, p.partialResults)
 }
 
 type rowFrameWindowProcessor struct {
@@ -485,7 +493,7 @@ func (p *rowFrameWindowProcessor) appendResult2Chunk(ctx sessionctx.Context, row
 					// Store start inside MaxMinSlidingWindowAggFunc.windowInfo
 					minMaxSlidingWindowAggFunc.SetWindowStart(start)
 				}
-				err = p.memTracker.updatePartialResult(i, windowFunc, ctx, rows[start:end], p.partialResults[i])
+				err = updatePartialResultAndTrackMemory(p.memTracker, i, windowFunc, ctx, rows[start:end], p.partialResults[i])
 			}
 			if err != nil {
 				return nil, err
@@ -495,7 +503,7 @@ func (p *rowFrameWindowProcessor) appendResult2Chunk(ctx sessionctx.Context, row
 				return nil, err
 			}
 			if slidingWindowAggFunc == nil {
-				p.memTracker.resetPartialResult(i, windowFunc, p.partialResults[i])
+				resetPartialResultAndReleaseMemory(p.memTracker, i, windowFunc, p.partialResults[i])
 			}
 		}
 		if !initializedSlidingWindow {
@@ -504,7 +512,7 @@ func (p *rowFrameWindowProcessor) appendResult2Chunk(ctx sessionctx.Context, row
 	}
 	for i, slidingWindowAggFunc := range slidingWindowAggFuncs {
 		if slidingWindowAggFunc != nil {
-			p.memTracker.resetPartialResult(i, p.windowFuncs[i], p.partialResults[i])
+			resetPartialResultAndReleaseMemory(p.memTracker, i, p.windowFuncs[i], p.partialResults[i])
 		}
 	}
 	return rows, nil
@@ -512,7 +520,7 @@ func (p *rowFrameWindowProcessor) appendResult2Chunk(ctx sessionctx.Context, row
 
 func (p *rowFrameWindowProcessor) resetPartialResult() {
 	p.curRowIdx = 0
-	p.memTracker.resetAllPartialResults(p.windowFuncs, p.partialResults)
+	resetPartialResultsAndReleaseMemory(p.memTracker, p.windowFuncs, p.partialResults)
 }
 
 type rangeFrameWindowProcessor struct {
@@ -640,7 +648,7 @@ func (p *rangeFrameWindowProcessor) appendResult2Chunk(ctx sessionctx.Context, r
 				if minMaxSlidingWindowAggFunc, ok := windowFunc.(aggfuncs.MaxMinSlidingWindowAggFunc); ok {
 					minMaxSlidingWindowAggFunc.SetWindowStart(start)
 				}
-				err = p.memTracker.updatePartialResult(i, windowFunc, ctx, rows[start:end], p.partialResults[i])
+				err = updatePartialResultAndTrackMemory(p.memTracker, i, windowFunc, ctx, rows[start:end], p.partialResults[i])
 			}
 			if err != nil {
 				return nil, err
@@ -650,7 +658,7 @@ func (p *rangeFrameWindowProcessor) appendResult2Chunk(ctx sessionctx.Context, r
 				return nil, err
 			}
 			if slidingWindowAggFunc == nil {
-				p.memTracker.resetPartialResult(i, windowFunc, p.partialResults[i])
+				resetPartialResultAndReleaseMemory(p.memTracker, i, windowFunc, p.partialResults[i])
 			}
 		}
 		if !initializedSlidingWindow {
@@ -659,7 +667,7 @@ func (p *rangeFrameWindowProcessor) appendResult2Chunk(ctx sessionctx.Context, r
 	}
 	for i, slidingWindowAggFunc := range slidingWindowAggFuncs {
 		if slidingWindowAggFunc != nil {
-			p.memTracker.resetPartialResult(i, p.windowFuncs[i], p.partialResults[i])
+			resetPartialResultAndReleaseMemory(p.memTracker, i, p.windowFuncs[i], p.partialResults[i])
 		}
 	}
 	return rows, nil
@@ -673,5 +681,5 @@ func (p *rangeFrameWindowProcessor) resetPartialResult() {
 	p.curRowIdx = 0
 	p.lastStartOffset = 0
 	p.lastEndOffset = 0
-	p.memTracker.resetAllPartialResults(p.windowFuncs, p.partialResults)
+	resetPartialResultsAndReleaseMemory(p.memTracker, p.windowFuncs, p.partialResults)
 }
