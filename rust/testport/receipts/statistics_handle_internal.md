@@ -4,12 +4,10 @@ Pinned Go source: `e2788410d8d696605e8cb002585877a063ccc909`.
 
 ## Complete inventory
 
-The package has exactly two artifacts, both read in full and byte-compared
-against the pin:
-
-- `BUILD.bazel` — one internal Go library over `testutil.go`, visible only to
-  statistics-handle subpackages;
-- `testutil.go` — `AssertTableEqual` over real `statistics.Table` values.
+| Artifact | Lines | Git blob | SHA-256 | Disposition |
+| --- | ---: | --- | --- | --- |
+| `BUILD.bazel` | 12 | `60ab59d4a6312c6eaccb51277ecdc82d841a1fd5` | `0f7f5e706a9e7d5f5a16309908dd8339df7e2c1ff5a65851b28f1bc9cf558fce` | internal-library visibility and dependencies inventoried |
+| `testutil.go` | 56 | `dfbc67eb07ce895f49e2e188eb1f16717b67bd40` | `e494eb866d5de5fc4b3583b27ff32e166d0d4fccae065d8aab2649913696c78f` | `AssertTableEqual` mapped below |
 
 There is no `doc.go`, package test, fixture, benchmark, generated source/input,
 or build/platform variant.
