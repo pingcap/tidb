@@ -323,6 +323,7 @@ pub(crate) fn run_unistore_cluster_session(
         _reloader: reloader,
         _sysvar_reloader: sysvar_reloader,
         _stats_reloader: stats_reloader,
+        _async_stats_loader,
         _read_authority: read_authority,
     } = stack;
     let factory = factory.with_spill_storage(spill_storage);
@@ -419,6 +420,7 @@ pub(crate) struct UnistoreClusterStack {
     pub(crate) _reloader: tidb_exec::catalog_watch::CatalogReloader,
     pub(crate) _sysvar_reloader: crate::cluster_sysvar_seam::SysvarReloader,
     pub(crate) _stats_reloader: tidb_exec::stats_watch::StatsReloader,
+    pub(crate) _async_stats_loader: tidb_exec::stats_watch::AsyncStatsLoader,
     pub(crate) _read_authority: SharedReadAuthority<InProcessClient, InProcessRegionLoader>,
 }
 
@@ -476,7 +478,7 @@ pub(crate) fn unistore_cluster_session_stack(
     let (catalog, reloader) =
         crate::real_tikv_node::spawn_catalog_reloader(startup, opener.clone(), config.schema_lease)
             .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
-    let (stats, stats_reloader) = crate::real_tikv_node::spawn_node_stats(
+    let (stats, stats_reloader, async_stats_loader) = crate::real_tikv_node::spawn_node_stats(
         Arc::clone(&catalog),
         opener.clone(),
         config.stats_lease,
@@ -572,6 +574,7 @@ pub(crate) fn unistore_cluster_session_stack(
         _reloader: reloader,
         _sysvar_reloader: sysvar_reloader,
         _stats_reloader: stats_reloader,
+        _async_stats_loader: async_stats_loader,
         _read_authority: read_authority,
     })
 }

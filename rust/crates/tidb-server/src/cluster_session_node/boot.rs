@@ -117,7 +117,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
     // Statistics always resolve targets from this published catalog, so the
     // reload loop follows DDL-added tables and changed column types instead of
     // freezing the boot image.
-    let (stats, stats_reloader) = crate::real_tikv_node::spawn_node_stats(
+    let (stats, stats_reloader, async_stats_loader) = crate::real_tikv_node::spawn_node_stats(
         Arc::clone(&catalog),
         authority.transaction_opener(),
         config.stats_lease,
@@ -379,6 +379,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
             sysvar_watcher,
             sysvar_reloader,
             stats_reloader,
+            async_stats_loader,
         ),
         authority,
         move |(
@@ -393,6 +394,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
             sysvar_watcher,
             sysvar_reloader,
             stats_reloader,
+            async_stats_loader,
         )| {
             let node =
                 ConcurrentSqlNode::bind(&config, factory, Arc::clone(&users)).map_err(|error| {
@@ -428,6 +430,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
             drop(sysvar_watcher);
             drop(sysvar_reloader);
             drop(stats_reloader);
+            drop(async_stats_loader);
             outcome
         },
     )

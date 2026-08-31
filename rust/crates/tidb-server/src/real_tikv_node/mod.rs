@@ -58,7 +58,8 @@ use tidb_exec::real_tikv_stats::{
     load_stats_snapshot_and_loader, update_stats_cache_from_cluster, InitialStatsLoad,
 };
 use tidb_exec::stats_watch::{
-    SharedStats, StatsReloadError, StatsReloadReadResult, StatsReloadStats, StatsReloader,
+    AsyncStatsLoader, SharedStats, StatsReloadError, StatsReloadReadResult, StatsReloadStats,
+    StatsReloader,
 };
 use tidb_pd_client::{
     EtcdClient, EtcdWatchStats, EtcdWatcher, PdClient, DDL_GLOBAL_SCHEMA_VERSION_KEY,
@@ -281,6 +282,8 @@ pub struct RealTiKvSessionFactory<
     /// The lease-cadence stats reload thread, stopped and joined when this
     /// factory is dropped.
     stats_reloader: Option<StatsReloader>,
+    /// Go Domain's independent asynchronous histogram loader.
+    _async_stats_loader: Option<AsyncStatsLoader>,
     /// Startup-validated temporary-storage authority shared by every cursor
     /// opened by this process. `None` exists only for direct unit factories;
     /// the production runner installs it before accepting connections.
@@ -315,7 +318,7 @@ impl RealTiKvSessionFactory {
         )
         .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
         let schema_notifier = connect_schema_notifier(config);
-        let (catalog, watcher, reloader, stats, stats_reloader) = match loaded {
+        let (catalog, watcher, reloader, stats, stats_reloader, async_stats_loader) = match loaded {
             Some(catalog) => {
                 let (catalog, reloader) = spawn_catalog_reloader(
                     catalog,
@@ -323,7 +326,7 @@ impl RealTiKvSessionFactory {
                     config.schema_lease,
                 )
                 .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-                let (stats, stats_reloader) = spawn_node_stats(
+                let (stats, stats_reloader, async_stats_loader) = spawn_node_stats(
                     Arc::clone(&catalog),
                     authority.transaction_opener(),
                     config.stats_lease,
@@ -337,9 +340,10 @@ impl RealTiKvSessionFactory {
                     Some(reloader),
                     Some(stats),
                     Some(stats_reloader),
+                    Some(async_stats_loader),
                 )
             }
-            None => (None, None, None, None, None),
+            None => (None, None, None, None, None, None),
         };
         let factory = Self::from_authority_with_catalog(
             &authority,
@@ -350,6 +354,7 @@ impl RealTiKvSessionFactory {
             schema_notifier,
             stats,
             stats_reloader,
+            async_stats_loader,
         );
         Ok((factory, authority))
     }
@@ -371,6 +376,7 @@ impl RealTiKvSessionFactory {
         schema_notifier: Option<Arc<EtcdClient>>,
         stats: Option<Arc<SharedStats>>,
         stats_reloader: Option<StatsReloader>,
+        async_stats_loader: Option<AsyncStatsLoader>,
     ) -> Self {
         Self {
             opener: authority.opener(),
@@ -383,6 +389,7 @@ impl RealTiKvSessionFactory {
             schema_notifier,
             stats,
             stats_reloader,
+            _async_stats_loader: async_stats_loader,
             spill_storage: None,
             mem_arbitrator: None,
             processes: ProcessRegistry::default(),
@@ -421,6 +428,7 @@ where
             schema_notifier: None,
             stats: None,
             stats_reloader: None,
+            _async_stats_loader: None,
             spill_storage: None,
             mem_arbitrator: None,
             processes: ProcessRegistry::default(),
@@ -1854,32 +1862,34 @@ pub(crate) fn connect_loaded_catalog_authority(
             // cluster's schema instead of running forever on its startup
             // read. `loaded` is `None` only when every table came from
             // `--read-table` (no `--load-table` was given at all).
-            let (catalog, watcher, reloader, stats, stats_reloader) = match loaded {
-                Some(catalog) => {
-                    let (catalog, reloader) = spawn_catalog_reloader(
-                        catalog,
-                        authority.transaction_opener(),
-                        config.schema_lease,
-                    )
-                    .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-                    let (stats, stats_reloader) = spawn_node_stats(
-                        Arc::clone(&catalog),
-                        authority.transaction_opener(),
-                        config.stats_lease,
-                        PRODUCTION_CONTROL_PLANE_TIMEOUT,
-                    )
-                    .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-                    let watcher = spawn_schema_version_watch(config, &reloader);
-                    (
-                        Some(catalog),
-                        watcher,
-                        Some(reloader),
-                        Some(stats),
-                        Some(stats_reloader),
-                    )
-                }
-                None => (None, None, None, None, None),
-            };
+            let (catalog, watcher, reloader, stats, stats_reloader, async_stats_loader) =
+                match loaded {
+                    Some(catalog) => {
+                        let (catalog, reloader) = spawn_catalog_reloader(
+                            catalog,
+                            authority.transaction_opener(),
+                            config.schema_lease,
+                        )
+                        .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+                        let (stats, stats_reloader, async_stats_loader) = spawn_node_stats(
+                            Arc::clone(&catalog),
+                            authority.transaction_opener(),
+                            config.stats_lease,
+                            PRODUCTION_CONTROL_PLANE_TIMEOUT,
+                        )
+                        .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+                        let watcher = spawn_schema_version_watch(config, &reloader);
+                        (
+                            Some(catalog),
+                            watcher,
+                            Some(reloader),
+                            Some(stats),
+                            Some(stats_reloader),
+                            Some(async_stats_loader),
+                        )
+                    }
+                    None => (None, None, None, None, None, None),
+                };
             Ok(LoadedCatalogAuthority::Single(
                 Box::new(RealTiKvSessionFactory::from_authority_with_catalog(
                     &authority,
@@ -1890,6 +1900,7 @@ pub(crate) fn connect_loaded_catalog_authority(
                     schema_notifier,
                     stats,
                     stats_reloader,
+                    async_stats_loader,
                 )),
                 authority,
             ))

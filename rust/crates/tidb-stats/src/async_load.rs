@@ -31,16 +31,8 @@ pub struct NeededStatsMap {
     shards: [RwLock<HashMap<TableItemID, bool>>; SHARD_COUNT],
 }
 
-impl Default for NeededStatsMap {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl NeededStatsMap {
-    /// Go `newNeededStatsMap`.
-    #[must_use]
-    pub fn new() -> Self {
+    fn new() -> Self {
         Self {
             shards: std::array::from_fn(|_| RwLock::new(HashMap::new())),
         }
@@ -49,7 +41,7 @@ impl NeededStatsMap {
     /// Go `AllItems`: returns one snapshot across all 128 shards.
     #[must_use]
     pub fn all_items(&self) -> Vec<StatsLoadItem> {
-        let mut result = Vec::new();
+        let mut result = Vec::with_capacity(SHARD_COUNT);
         for shard in &self.shards {
             result.extend(
                 shard
@@ -96,12 +88,6 @@ impl NeededStatsMap {
                     .len()
             })
             .sum()
-    }
-
-    /// Whether the set has no entries.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
     }
 }
 

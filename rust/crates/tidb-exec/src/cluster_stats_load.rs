@@ -1046,6 +1046,77 @@ impl ClusterStatsLoader {
         column_type: Option<&FieldType>,
         full_load: bool,
     ) -> Result<Option<ClusterStatsItem>, SystemTableError> {
+        let Some(mut item) = self.load_item_meta_row(snapshot, table_id, is_index, id)? else {
+            return Ok(None);
+        };
+        if full_load {
+            self.load_item_payload(snapshot, table_id, &mut item, column_type)?;
+        }
+        Ok(Some(item))
+    }
+
+    /// Go asynchronous item loading's payload phase after
+    /// `HistMetaFromStorageWithHighPriority` has succeeded and current schema
+    /// metadata has been revalidated.
+    pub fn load_item_payload<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        table_id: i64,
+        item: &mut ClusterStatsItem,
+        column_type: Option<&FieldType>,
+    ) -> Result<(), SystemTableError> {
+        let prefix = [
+            Datum::Int(table_id),
+            Datum::Int(i64::from(item.is_index)),
+            Datum::Int(item.id),
+        ];
+        let column_types = column_type
+            .map(|field_type| BTreeMap::from([(item.id, field_type.clone())]))
+            .unwrap_or_default();
+        item.histogram.buckets = self
+            .load_buckets_prefixed(snapshot, &prefix, &column_types)?
+            .remove(&(item.is_index, item.id))
+            .unwrap_or_default();
+        let topn = self.load_topn_prefixed(snapshot, &prefix)?;
+        let cms_bytes = if item.stats_ver <= 1 {
+            let row = scan_system_table_prefixed(snapshot, &self.histograms, &prefix)?
+                .into_iter()
+                .next()
+                .map(|(key, value)| SystemRow::parse(&self.histograms, &key, &value))
+                .transpose()?;
+            row.map(|row| row.bytes("cm_sketch")).transpose()?.flatten()
+        } else {
+            None
+        };
+        let (cms, topn) = decode_cmsketch_and_topn(
+            cms_bytes.as_deref(),
+            topn.get(&(item.is_index, item.id))
+                .map_or(&[][..], Vec::as_slice),
+        )
+        .map_err(|error| SystemTableError::Decode {
+            name: self.histograms.name().to_owned(),
+            detail: error.to_string(),
+        })?;
+        item.cms = cms;
+        item.topn = topn;
+        let initialized = if item.is_index {
+            item.stats_ver != 0
+        } else {
+            item.stats_ver != 0 || item.histogram.ndv > 0 || item.histogram.null_count > 0
+        };
+        if initialized {
+            item.load_status = StatsLoadedStatus::full_load();
+        }
+        Ok(())
+    }
+
+    fn load_item_meta_row<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        table_id: i64,
+        is_index: bool,
+        id: i64,
+    ) -> Result<Option<ClusterStatsItem>, SystemTableError> {
         let prefix = [
             Datum::Int(table_id),
             Datum::Int(i64::from(is_index)),
@@ -1078,41 +1149,15 @@ impl ClusterStatsLoader {
             histogram.tot_col_size = 0;
             histogram.correlation = 0.0;
         }
-        let (cms, topn) = if full_load {
-            let column_types = column_type
-                .map(|field_type| BTreeMap::from([(id, field_type.clone())]))
-                .unwrap_or_default();
-            histogram.buckets = self
-                .load_buckets_prefixed(snapshot, &prefix, &column_types)?
-                .remove(&(is_index, id))
-                .unwrap_or_default();
-            let topn = self.load_topn_prefixed(snapshot, &prefix)?;
-            let cms_bytes = (stats_ver <= 1)
-                .then(|| row.bytes("cm_sketch"))
-                .transpose()?
-                .flatten();
-            decode_cmsketch_and_topn(
-                cms_bytes.as_deref(),
-                topn.get(&(is_index, id)).map_or(&[][..], Vec::as_slice),
-            )
-            .map_err(|error| SystemTableError::Decode {
-                name: self.histograms.name().to_owned(),
-                detail: error.to_string(),
-            })?
-        } else {
-            (None, None)
-        };
         let initialized = if is_index {
             stats_ver != 0
         } else {
             stats_ver != 0 || histogram.ndv > 0 || histogram.null_count > 0
         };
-        let load_status = if !initialized {
-            StatsLoadedStatus::default()
-        } else if full_load {
-            StatsLoadedStatus::full_load()
-        } else {
+        let load_status = if initialized {
             StatsLoadedStatus::all_evicted()
+        } else {
+            StatsLoadedStatus::default()
         };
         Ok(Some(ClusterStatsItem {
             id,
@@ -1121,8 +1166,8 @@ impl ClusterStatsLoader {
             flag: row.i64("flag")?.unwrap_or_default(),
             load_status,
             histogram,
-            topn,
-            cms,
+            topn: None,
+            cms: None,
             fm_sketch: None,
         }))
     }
@@ -1508,6 +1553,18 @@ mod tests {
         // Read as a datum-codec value instead, `0x31 0x31` would be a
         // nonsense flag byte — which is exactly the silent misread this
         // fixture exists to rule out.
+    }
+
+    #[test]
+    fn a_corrupted_integer_bound_uses_go_conversion_flags() {
+        let bound = decode_bound(
+            b"who knows what it is".to_vec(),
+            false,
+            Some(&field_type(FieldTypeCode::LongLong)),
+            "stats_buckets",
+        )
+        .expect("Go converts the corrupt bound with its statement flags");
+        assert_eq!(bound, Datum::Int(0));
     }
 
     #[test]

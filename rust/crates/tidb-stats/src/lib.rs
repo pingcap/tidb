@@ -79,7 +79,7 @@ pub use analyze_jobs::{
 pub use analyze_results::{AnalyzeError, AnalyzeHistogramLifecycle, AnalyzeResult, AnalyzeResults};
 pub use analyze_table_id::{AnalyzeTableId, NON_PARTITION_TABLE_ID};
 pub use analyze_version_policy::analyze_version_matches;
-pub use async_load::{NeededStatsMap, ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS};
+pub use async_load::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS;
 pub use average_count::avg_count_per_not_null_value;
 pub use builder::{
     build_column, build_column_histogram, build_hist_and_topn, try_build_column_histogram,

@@ -59,7 +59,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::cluster_stats_load::ClusterStatsItem;
 use tidb_stats::{Column, CopyIntent, Index, Table};
@@ -615,6 +615,148 @@ impl Drop for StatsReloader {
     }
 }
 
+/// Lifecycle guard for Go Domain's independent asynchronous histogram loader.
+#[derive(Debug)]
+pub struct AsyncStatsLoader {
+    signal: Arc<(Mutex<AsyncStatsLoadSignal>, Condvar)>,
+    worker: Option<JoinHandle<()>>,
+}
+
+#[derive(Debug, Default)]
+struct AsyncStatsLoadSignal {
+    shutdown: bool,
+    initialized: bool,
+}
+
+/// The completion side of Go's `InitStatsDone` boundary.
+#[derive(Clone, Debug)]
+pub struct AsyncStatsLoaderInit {
+    signal: Arc<(Mutex<AsyncStatsLoadSignal>, Condvar)>,
+}
+
+impl AsyncStatsLoaderInit {
+    /// Releases the asynchronous histogram worker after the initial statistics
+    /// pass finishes, fails, or is skipped.
+    pub fn finish(&self) {
+        let (lock, condvar) = &*self.signal;
+        {
+            let mut state = match lock.lock() {
+                Ok(state) => state,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            state.initialized = true;
+        }
+        condvar.notify_all();
+    }
+}
+
+impl AsyncStatsLoader {
+    /// A disabled guard when Go does not start this worker (a non-positive
+    /// statistics lease).
+    #[must_use]
+    pub fn disabled() -> Self {
+        Self {
+            signal: Arc::new((Mutex::new(AsyncStatsLoadSignal::default()), Condvar::new())),
+            worker: None,
+        }
+    }
+
+    /// Starts Go `Domain.asyncLoadHistogram`'s independent lease ticker before
+    /// waiting for `InitStatsDone`.
+    ///
+    /// `time.Ticker` retains one expired tick while Go waits for initialization,
+    /// so the worker runs immediately after [`AsyncStatsLoaderInit::finish`] if
+    /// an interval has already elapsed.
+    pub fn spawn_waiting_for_init(
+        interval: Duration,
+        mut load: Box<dyn FnMut() + Send + 'static>,
+    ) -> Result<(Self, AsyncStatsLoaderInit), StatsReloadError> {
+        if interval.is_zero() {
+            return Err(StatsReloadError::ZeroInterval);
+        }
+        let signal = Arc::new((Mutex::new(AsyncStatsLoadSignal::default()), Condvar::new()));
+        let worker_signal = Arc::clone(&signal);
+        let worker = std::thread::Builder::new()
+            .name("async-stats-loader".to_owned())
+            .spawn(move || {
+                let (lock, condvar) = &*worker_signal;
+                let mut next_tick = Instant::now() + interval;
+                let mut tick_pending = false;
+                loop {
+                    let mut state = match lock.lock() {
+                        Ok(state) => state,
+                        Err(poisoned) => poisoned.into_inner(),
+                    };
+                    while !state.shutdown {
+                        let now = Instant::now();
+                        if now >= next_tick {
+                            tick_pending = true;
+                            while next_tick <= now {
+                                next_tick += interval;
+                            }
+                        }
+                        if state.initialized && tick_pending {
+                            break;
+                        }
+                        state = if tick_pending {
+                            match condvar.wait(state) {
+                                Ok(state) => state,
+                                Err(poisoned) => poisoned.into_inner(),
+                            }
+                        } else {
+                            let wait = next_tick.saturating_duration_since(Instant::now());
+                            match condvar.wait_timeout(state, wait) {
+                                Ok((state, _)) => state,
+                                Err(poisoned) => poisoned.into_inner().0,
+                            }
+                        };
+                    }
+                    let stopping = state.shutdown;
+                    drop(state);
+                    if stopping {
+                        return;
+                    }
+                    tick_pending = false;
+                    load();
+                }
+            })
+            .map_err(StatsReloadError::Spawn)?;
+        let init = AsyncStatsLoaderInit {
+            signal: Arc::clone(&signal),
+        };
+        Ok((
+            Self {
+                signal,
+                worker: Some(worker),
+            },
+            init,
+        ))
+    }
+
+    /// Stops and joins the asynchronous loader.
+    pub fn shutdown(&mut self) -> Result<(), StatsReloadError> {
+        let (lock, condvar) = &*self.signal;
+        {
+            let mut state = match lock.lock() {
+                Ok(state) => state,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            state.shutdown = true;
+        }
+        condvar.notify_all();
+        match self.worker.take() {
+            Some(worker) => worker.join().map_err(|_| StatsReloadError::WorkerPanicked),
+            None => Ok(()),
+        }
+    }
+}
+
+impl Drop for AsyncStatsLoader {
+    fn drop(&mut self) {
+        let _ = self.shutdown();
+    }
+}
+
 /// Whether two snapshots' loaded versions differ, table by table.
 ///
 /// A table whose presence/absence or `Pseudo`/`Loaded` state itself changed
@@ -1120,6 +1262,48 @@ mod tests {
         assert_eq!(reloader.stats(), StatsReloadStats::default());
         reloader.shutdown().unwrap();
         assert_eq!(reloader.stats(), StatsReloadStats::default());
+    }
+
+    #[test]
+    fn async_histogram_loading_has_an_independent_ticker_and_shutdown() {
+        let (sender, receiver) = mpsc::channel();
+        let (mut loader, init) = AsyncStatsLoader::spawn_waiting_for_init(
+            Duration::from_millis(5),
+            Box::new(move || {
+                let _ = sender.send(());
+            }),
+        )
+        .unwrap();
+
+        init.finish();
+        receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+        loader.shutdown().unwrap();
+        while receiver.try_recv().is_ok() {}
+        assert!(matches!(
+            receiver.recv_timeout(Duration::from_millis(20)),
+            Err(mpsc::RecvTimeoutError::Disconnected)
+        ));
+    }
+
+    #[test]
+    fn async_histogram_ticker_retains_one_tick_while_init_is_running() {
+        let (sender, receiver) = mpsc::channel();
+        let (mut loader, init) = AsyncStatsLoader::spawn_waiting_for_init(
+            Duration::from_millis(5),
+            Box::new(move || {
+                let _ = sender.send(());
+            }),
+        )
+        .unwrap();
+
+        std::thread::sleep(Duration::from_millis(20));
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+        init.finish();
+        receiver.recv_timeout(Duration::from_millis(20)).unwrap();
+        loader.shutdown().unwrap();
     }
 
     #[test]

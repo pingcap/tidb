@@ -1498,13 +1498,17 @@ impl Catalog {
                     if item.is_index {
                         statistics.index_is_load_needed(item.id)
                     } else {
-                        statistics.column_is_load_needed(item.id, requested.full_load)
+                        statistics.column_is_load_needed(item.id, true)
                     }
                 });
             if !valid_metadata || !load_needed {
                 needed.delete(item);
                 continue;
             }
+            let requested = tidb_model::StatsLoadItem {
+                table_item_id: item,
+                full_load: item.is_index || requested.full_load,
+            };
             let loaded = loader.load_items(std::slice::from_ref(&requested), resource_group);
             needed.delete(item);
             let tables = loaded?;
@@ -2685,7 +2689,84 @@ mod statistics_request_tests {
     }
 
     #[test]
-    fn failed_async_load_removes_the_corrupted_item() {
+    fn asynchronous_column_metadata_request_uses_full_load_eligibility() {
+        let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
+        clear_async_statistics_items();
+        let (mut catalog, table_id, column_id) = analyzed_lite_catalog();
+        let loader = Arc::new(RecordingLoader::default());
+        catalog.set_statistics_item_loader(loader.clone());
+        let requested = tidb_model::TableItemID {
+            table_id,
+            id: column_id,
+            is_index: false,
+            is_sync_load_failed: false,
+        };
+        tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(requested, false);
+
+        catalog
+            .load_needed_histograms("")
+            .expect("metadata-only asynchronous load");
+        assert_eq!(
+            loader
+                .requests
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .as_slice(),
+            &[tidb_model::StatsLoadItem {
+                table_item_id: requested,
+                full_load: false,
+            }]
+        );
+    }
+
+    #[test]
+    fn asynchronous_index_request_is_always_full_load() {
+        let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
+        clear_async_statistics_items();
+        let (mut catalog, table_id, _) = analyzed_lite_catalog();
+        let index_id = catalog
+            .kv_table_by_id(table_id)
+            .and_then(|table| table.indexes().first())
+            .expect("fixture index ia")
+            .id;
+        let mut statistics = catalog
+            .table_statistics(table_id)
+            .expect("fixture statistics")
+            .as_ref()
+            .clone();
+        statistics
+            .index_load_status
+            .insert(index_id, tidb_stats::StatsLoadedStatus::all_evicted());
+        statistics.index_stats_existence.insert(index_id, true);
+        catalog.set_table_statistics(table_id, Arc::new(statistics));
+        let loader = Arc::new(RecordingLoader::default());
+        catalog.set_statistics_item_loader(loader.clone());
+        let requested = tidb_model::TableItemID {
+            table_id,
+            id: index_id,
+            is_index: true,
+            is_sync_load_failed: false,
+        };
+        tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(requested, false);
+
+        catalog
+            .load_needed_histograms("")
+            .expect("asynchronous index load");
+        assert_eq!(
+            loader
+                .requests
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .as_slice(),
+            &[tidb_model::StatsLoadItem {
+                table_item_id: requested,
+                full_load: true,
+            }]
+        );
+    }
+
+    #[test]
+    fn failed_async_load_removes_the_item_and_returns_the_storage_error() {
         let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
         let (mut catalog, table_id, column_id) = analyzed_lite_catalog();
         let loader = Arc::new(RecordingLoader {
@@ -2727,27 +2808,140 @@ mod statistics_request_tests {
     }
 
     #[test]
-    fn async_domain_tick_drops_stale_column_metadata_without_storage_read() {
+    fn load_column_statistics_after_table_drop() {
         let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
-        let (mut catalog, table_id, _column_id) = analyzed_lite_catalog();
+        clear_async_statistics_items();
+        let (mut catalog, table_id, column_id) = analyzed_lite_catalog();
         let loader = Arc::new(RecordingLoader::default());
-        catalog.set_statistics_item_loader(loader.clone());
+        catalog.set_statistics_item_loader(loader);
         let dropped = tidb_model::TableItemID {
             table_id,
-            id: 99_999,
+            id: column_id,
             is_index: false,
             is_sync_load_failed: false,
         };
         tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(dropped, true);
+        crate::run_drop_table_in(
+            "DROP TABLE t",
+            &mut catalog,
+            "test",
+            tidb_parser::SqlMode::default(),
+            true,
+        )
+        .expect("drop the table after queueing the column");
 
         catalog
             .load_needed_histograms("")
-            .expect("stale metadata is a successful skip");
-        assert!(loader
-            .requests
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .is_empty());
+            .expect("a dropped table is a successful skip");
+        assert!(!tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
+            .all_items()
+            .iter()
+            .any(|item| item.table_item_id == dropped));
+    }
+
+    #[test]
+    fn load_statistics_after_column_drop() {
+        let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
+        clear_async_statistics_items();
+        let (mut catalog, table_id, _) = analyzed_lite_catalog();
+        let column_id = catalog
+            .kv_table_by_id(table_id)
+            .and_then(|table| table.columns.iter().find(|column| column.name == "b"))
+            .expect("fixture column b")
+            .id;
+        let loader = Arc::new(RecordingLoader::default());
+        catalog.set_statistics_item_loader(loader);
+        let dropped = tidb_model::TableItemID {
+            table_id,
+            id: column_id,
+            is_index: false,
+            is_sync_load_failed: false,
+        };
+        tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(dropped, true);
+        crate::run_alter_table_in(
+            "ALTER TABLE t DROP COLUMN b",
+            &mut catalog,
+            "test",
+            &crate::StmtContext::for_query(),
+        )
+        .expect("drop the column after queueing it");
+
+        catalog
+            .load_needed_histograms("")
+            .expect("a dropped column is a successful skip");
+        assert!(!tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
+            .all_items()
+            .iter()
+            .any(|item| item.table_item_id == dropped));
+    }
+
+    #[test]
+    fn load_index_statistics_after_table_drop() {
+        let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
+        clear_async_statistics_items();
+        let (mut catalog, table_id, _) = analyzed_lite_catalog();
+        let index_id = catalog
+            .kv_table_by_id(table_id)
+            .and_then(|table| table.indexes().first())
+            .expect("fixture index ia")
+            .id;
+        let loader = Arc::new(RecordingLoader::default());
+        catalog.set_statistics_item_loader(loader);
+        let dropped = tidb_model::TableItemID {
+            table_id,
+            id: index_id,
+            is_index: true,
+            is_sync_load_failed: false,
+        };
+        tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(dropped, true);
+        crate::run_drop_table_in(
+            "DROP TABLE t",
+            &mut catalog,
+            "test",
+            tidb_parser::SqlMode::default(),
+            true,
+        )
+        .expect("drop the table after queueing the index");
+
+        catalog
+            .load_needed_histograms("")
+            .expect("a dropped table is a successful skip");
+        assert!(!tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
+            .all_items()
+            .iter()
+            .any(|item| item.table_item_id == dropped));
+    }
+
+    #[test]
+    fn load_statistics_after_index_drop() {
+        let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
+        clear_async_statistics_items();
+        let (mut catalog, table_id, _) = analyzed_lite_catalog();
+        let index_id = catalog
+            .kv_table_by_id(table_id)
+            .and_then(|table| table.indexes().first())
+            .expect("fixture index ia")
+            .id;
+        let loader = Arc::new(RecordingLoader::default());
+        catalog.set_statistics_item_loader(loader);
+        let dropped = tidb_model::TableItemID {
+            table_id,
+            id: index_id,
+            is_index: true,
+            is_sync_load_failed: false,
+        };
+        tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(dropped, true);
+        crate::run_alter_table_in(
+            "ALTER TABLE t DROP INDEX ia",
+            &mut catalog,
+            "test",
+            &crate::StmtContext::for_query(),
+        )
+        .expect("drop the index after queueing it");
+
+        catalog
+            .load_needed_histograms("")
+            .expect("a dropped index is a successful skip");
         assert!(!tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
             .all_items()
             .iter()

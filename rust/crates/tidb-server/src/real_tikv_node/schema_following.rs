@@ -161,18 +161,14 @@ fn current_stats_targets(catalog: &SharedCatalog) -> Vec<tidb_exec::real_tikv_st
     stats_targets(&current)
 }
 
-fn next_initial_stats_load(
-    first_pass: &mut bool,
-    skip_initial: bool,
-    configured: InitialStatsLoad,
-) -> Option<InitialStatsLoad> {
-    if *first_pass {
-        *first_pass = false;
-        return (!skip_initial).then_some(configured);
+/// Go starts `loadStatsWorker` for a zero lease using its three-second
+/// fallback, but returns from `UpdateTableStatsLoop` before starting
+/// `asyncLoadHistogram`. Only a positive lease owns that second ticker.
+fn async_stats_load_interval(stats_lease: crate::node_config::StatsLease) -> Option<Duration> {
+    match stats_lease {
+        crate::node_config::StatsLease::Positive(interval) => Some(interval),
+        crate::node_config::StatsLease::Disabled | crate::node_config::StatsLease::Zero => None,
     }
-    // After a skipped bootstrap, Go's ordinary leased updater is still live
-    // and may populate metadata on its first tick.
-    Some(InitialStatsLoad::Lite)
 }
 
 /// Boot-loads the statistics startup shape selected by Go's performance
@@ -183,16 +179,17 @@ fn next_initial_stats_load(
 /// skips only the immediate pass, so the ordinary periodic updater remains
 /// able to populate the cache. Reloads use Go `StatsCacheImpl.Update`.
 ///
-/// Uses Go's independent `Performance.StatsLease`: negative disables both
-/// initialization and reload, zero falls back to three seconds, and a
-/// positive value is the exact tick. Stats have no schema-watch nudge; Go's
-/// own refresh is tick-only too.
+/// Uses Go's independent `Performance.StatsLease`: negative disables all
+/// loading, zero gives only the ordinary loader its three-second fallback,
+/// and a positive value is the exact tick for both ordinary and asynchronous
+/// loading. Stats have no schema-watch nudge; Go's own refresh is tick-only
+/// too.
 pub(crate) fn spawn_node_stats<C, L, P>(
     catalog: Arc<SharedCatalog>,
     opener: tidb_txnkv::transaction::RealOptimisticTransactionOpener<C, L, P>,
     stats_lease: crate::node_config::StatsLease,
     timeout: Duration,
-) -> Result<(Arc<SharedStats>, StatsReloader), StatsReloadError>
+) -> Result<(Arc<SharedStats>, StatsReloader, AsyncStatsLoader), StatsReloadError>
 where
     C: tidb_txnkv::transaction::StoreWriteClient,
     L: tidb_txnkv::transaction::StoreWriteLoader,
@@ -203,7 +200,11 @@ where
             SharedStats::new(Default::default())
                 .map_err(|error| StatsReloadError::Spawn(std::io::Error::other(error)))?,
         );
-        return Ok((shared, StatsReloader::disabled()));
+        return Ok((
+            shared,
+            StatsReloader::disabled(),
+            AsyncStatsLoader::disabled(),
+        ));
     };
     let shared = Arc::new(
         SharedStats::new(Default::default())
@@ -220,36 +221,109 @@ where
     };
     let mut first_pass = true;
     let skip_initial = performance.skip_init_stats;
-    let mut loader = None;
+    // Resolving a system-table view is not a startup gate in Go. Keep a view
+    // when the boot catalog has one, and let ordinary leased passes retry the
+    // lookup after bootstrap or a transient catalog failure.
+    let loader = Arc::new(std::sync::RwLock::new(
+        tidb_exec::cluster_stats_load::ClusterStatsLoader::locate(&catalog.load()).ok(),
+    ));
+    let (async_loader, async_init) = if let Some(async_interval) =
+        async_stats_load_interval(stats_lease)
+    {
+        let async_shared = Arc::clone(&shared);
+        let async_catalog = Arc::clone(&catalog);
+        let async_opener = opener.clone();
+        let async_item_loader = Arc::clone(&loader);
+        let (loader, init) = AsyncStatsLoader::spawn_waiting_for_init(
+            async_interval,
+            Box::new(move || {
+                let Some(loader) = async_item_loader
+                    .read()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone()
+                else {
+                    return;
+                };
+                let targets = current_stats_targets(&async_catalog);
+                if let Err(error) = tidb_exec::real_tikv_stats::load_needed_histograms_from_cluster(
+                    &async_opener,
+                    timeout,
+                    &targets,
+                    &async_shared,
+                    &loader,
+                ) {
+                    emit_warning("async_stats_load_failed", &error.to_string());
+                }
+            }),
+        )?;
+        (loader, Some(init))
+    } else {
+        (AsyncStatsLoader::disabled(), None)
+    };
+    let update_async_init = async_init;
+    let update_loader = Arc::clone(&loader);
+    let update_opener = opener.clone();
+    let update_catalog = Arc::clone(&catalog);
     let reloader = StatsReloader::spawn_with_initial_pass(
         Arc::clone(&shared),
         reload_interval,
         Box::new(move || {
             let shared = &published;
-            let targets = current_stats_targets(&catalog);
-            if loader.is_none() {
-                let Some(mode) =
-                    next_initial_stats_load(&mut first_pass, skip_initial, initial_mode)
-                else {
-                    return Ok(StatsReloadReadResult::Unchanged);
+            let targets = current_stats_targets(&update_catalog);
+            if first_pass {
+                first_pass = false;
+                let result = if skip_initial {
+                    Ok(StatsReloadReadResult::Unchanged)
+                } else {
+                    match load_stats_snapshot_and_loader(
+                        &update_opener,
+                        timeout,
+                        &targets,
+                        &[],
+                        initial_mode,
+                    ) {
+                        Ok((snapshot, located)) => {
+                            *update_loader
+                                .write()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(located);
+                            let receipt = tidb_exec::stats_watch::receipt_of(&snapshot);
+                            eprintln!(
+                                "{{\"event\":\"stats_loaded\",\"loaded\":{},\"pseudo\":{}}}",
+                                receipt.loaded, receipt.pseudo
+                            );
+                            Ok(StatsReloadReadResult::Publish(snapshot))
+                        }
+                        Err(error) => Err(error.to_string()),
+                    }
                 };
-                let (snapshot, located) =
-                    load_stats_snapshot_and_loader(&opener, timeout, &targets, &[], mode)
-                        .map_err(|error| error.to_string())?;
-                loader = Some(located);
-                let receipt = tidb_exec::stats_watch::receipt_of(&snapshot);
-                eprintln!(
-                    "{{\"event\":\"stats_loaded\",\"loaded\":{},\"pseudo\":{}}}",
-                    receipt.loaded, receipt.pseudo
-                );
-                return Ok(StatsReloadReadResult::Publish(snapshot));
+                // Go closes InitStatsDone when initialization succeeds, is
+                // skipped, or returns an error, so the async ticker can
+                // consume a tick that became pending during initialization.
+                if let Some(init) = &update_async_init {
+                    init.finish();
+                }
+                return result;
             }
+            let located = update_loader
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone()
+                .map(Ok)
+                .unwrap_or_else(|| {
+                    tidb_exec::cluster_stats_load::ClusterStatsLoader::locate(
+                        &update_catalog.load(),
+                    )
+                    .map_err(|error| error.to_string())
+                })?;
+            *update_loader
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(located.clone());
             match update_stats_cache_from_cluster(
-                &opener,
+                &update_opener,
                 timeout,
                 &targets,
                 shared,
-                loader.as_ref().expect("initial pass located stats tables"),
+                &located,
                 stats_lease.slow_save_interval(),
                 stats_lease == crate::node_config::StatsLease::Zero,
                 Vec::new(),
@@ -260,7 +334,7 @@ where
             }
         }),
     )?;
-    Ok((shared, reloader))
+    Ok((shared, reloader, async_loader))
 }
 
 /// Publishes the startup catalog and starts following the cluster's schema.
@@ -369,21 +443,20 @@ mod tests {
     }
 
     #[test]
-    fn skip_init_stats_skips_only_bootstrap_and_preserves_the_periodic_loader() {
-        let mut first_pass = true;
+    fn asynchronous_statistics_loading_requires_a_positive_lease() {
         assert_eq!(
-            next_initial_stats_load(&mut first_pass, true, InitialStatsLoad::IndexFull),
+            async_stats_load_interval(crate::node_config::StatsLease::Disabled),
             None
         );
         assert_eq!(
-            next_initial_stats_load(&mut first_pass, true, InitialStatsLoad::IndexFull),
-            Some(InitialStatsLoad::Lite)
+            async_stats_load_interval(crate::node_config::StatsLease::Zero),
+            None
         );
-
-        let mut first_pass = true;
         assert_eq!(
-            next_initial_stats_load(&mut first_pass, false, InitialStatsLoad::IndexFull),
-            Some(InitialStatsLoad::IndexFull)
+            async_stats_load_interval(crate::node_config::StatsLease::Positive(
+                Duration::from_secs(7)
+            )),
+            Some(Duration::from_secs(7))
         );
     }
 }

@@ -173,6 +173,164 @@ pub fn load_stats_item_from_cluster<
     loaded
 }
 
+fn load_stats_item_payload_from_cluster<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+>(
+    opener: &RealOptimisticTransactionOpener<C, L, P>,
+    timeout: Duration,
+    loader: &ClusterStatsLoader,
+    table_id: i64,
+    mut item: ClusterStatsItem,
+    column_type: Option<&FieldType>,
+) -> Result<ClusterStatsItem, SystemTableError> {
+    let mut transaction = opener
+        .begin_read_only()
+        .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
+    let loaded = {
+        let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
+        loader.load_item_payload(&mut snapshot, table_id, &mut item, column_type)
+    };
+    transaction
+        .finish_without_writes()
+        .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
+    loaded?;
+    Ok(item)
+}
+
+/// Go `storage.LoadNeededHistograms`: drain the process-wide asynchronous
+/// statistics demand against the latest schema and shared statistics cache.
+/// Every item is removed after its one attempt, including storage failures.
+pub fn load_needed_histograms_from_cluster<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+>(
+    opener: &RealOptimisticTransactionOpener<C, L, P>,
+    timeout: Duration,
+    tables: &[StatsTarget],
+    shared: &SharedStats,
+    loader: &ClusterStatsLoader,
+) -> Result<(), SystemTableError> {
+    let needed = &tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS;
+    for requested in needed.all_items() {
+        let item = requested.table_item_id;
+        let result: Result<(), SystemTableError> = (|| {
+            if !item.is_index && item.id <= 0 {
+                return Ok(());
+            }
+            let current = shared.load();
+            let Some(current) = current
+                .get(&item.table_id)
+                .and_then(TableStatsState::loaded)
+            else {
+                return Ok(());
+            };
+            if item.is_index {
+                if !current.index_load_needed(item.id).1 {
+                    return Ok(());
+                }
+                let Some(metadata) = load_stats_item_from_cluster(
+                    opener,
+                    timeout,
+                    loader,
+                    item.table_id,
+                    true,
+                    item.id,
+                    None,
+                    false,
+                )?
+                else {
+                    return Ok(());
+                };
+                let Some(target) = tables
+                    .iter()
+                    .find(|target| target.physical_id == item.table_id)
+                else {
+                    return Ok(());
+                };
+                if !target
+                    .table
+                    .indices
+                    .iter_deref()
+                    .any(|index| index.read().id == item.id)
+                {
+                    return Ok(());
+                }
+                let loaded = load_stats_item_payload_from_cluster(
+                    opener,
+                    timeout,
+                    loader,
+                    item.table_id,
+                    metadata,
+                    None,
+                )?;
+                shared.update_item(item.table_id, loaded, &target.table);
+                return Ok(());
+            }
+
+            let Some(target) = tables
+                .iter()
+                .find(|target| target.physical_id == item.table_id)
+            else {
+                return Ok(());
+            };
+            let Some(column_type) = target.column_types.get(&item.id) else {
+                return Ok(());
+            };
+            let (_, load_needed, analyzed) = current.column_load_needed(item.id, true);
+            if !load_needed {
+                return Ok(());
+            }
+            if !analyzed {
+                let empty = ClusterStatsItem {
+                    id: item.id,
+                    is_index: false,
+                    stats_ver: 0,
+                    flag: 0,
+                    load_status: tidb_stats::StatsLoadedStatus::default(),
+                    histogram: tidb_stats::Histogram {
+                        id: item.id,
+                        ..tidb_stats::Histogram::default()
+                    },
+                    topn: None,
+                    cms: None,
+                    fm_sketch: None,
+                };
+                shared.update_item(item.table_id, empty, &target.table);
+                return Ok(());
+            }
+            if let Some(mut loaded) = load_stats_item_from_cluster(
+                opener,
+                timeout,
+                loader,
+                item.table_id,
+                false,
+                item.id,
+                Some(column_type),
+                false,
+            )? {
+                if requested.full_load {
+                    loaded = load_stats_item_payload_from_cluster(
+                        opener,
+                        timeout,
+                        loader,
+                        item.table_id,
+                        loaded,
+                        Some(column_type),
+                    )?;
+                }
+                shared.update_item(item.table_id, loaded, &target.table);
+            }
+            Ok(())
+        })();
+        needed.delete(item);
+        result?;
+    }
+    Ok(())
+}
+
 /// Reads every one of `tables`' lite statistics through one fresh read-only
 /// transaction and returns the located `mysql.stats_*` views for later cache
 /// updates.
