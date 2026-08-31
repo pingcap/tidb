@@ -179,6 +179,13 @@ fn referring(
     database: &str,
     table: &str,
 ) -> Vec<(String, String, KvForeignKey)> {
+    // Sysbench and the normal TiDB bootstrap have no foreign-key declarations.
+    // Avoid rebuilding and sorting the complete catalog path list for every
+    // UPDATE/DELETE in that case; catalogs that do declare one retain the
+    // deterministic scan below.
+    if !catalog.has_foreign_keys() {
+        return Vec::new();
+    }
     let mut found = Vec::new();
     for (child_db, child_table) in catalog.table_paths() {
         let (keys, _) = declared(catalog, &child_db, &child_table);

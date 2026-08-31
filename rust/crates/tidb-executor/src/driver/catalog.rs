@@ -164,6 +164,12 @@ pub struct Catalog {
     next_policy_id: i64,
     next_database_id: i64,
     next_table_id: i64,
+    /// Sticky indication that a table with a foreign key has existed in
+    /// this catalog. DML asks this on every write; keeping the bit avoids
+    /// walking and inspecting every table in the common no-FK case. It is
+    /// intentionally monotonic: stale `true` only makes the uncommon full
+    /// referring-table scan run, while stale `false` would be incorrect.
+    foreign_keys_present: bool,
     /// Bumped by every mutation that actually CHANGED something, so a
     /// transaction can detect that the shared catalog moved under it (Go
     /// detects the same at commit through TiKV's optimistic conflict check on
@@ -389,6 +395,7 @@ impl Default for Catalog {
             analyze_options: Arc::default(),
             commit_history: Arc::new(std::sync::Mutex::new(CommitHistory::default())),
             temporary_sweep: None,
+            foreign_keys_present: false,
         };
         // Go's bootstrap builds the `information_schema` tables into the
         // infoschema itself, so they are ordinary objects to every name
@@ -590,6 +597,10 @@ impl Catalog {
         name: &str,
         mut table: TableEntry,
     ) -> Result<(), DriverError> {
+        let table_has_foreign_keys = matches!(
+            &table,
+            TableEntry::Kv(table) if !table.foreign_keys().is_empty()
+        );
         let schema = self
             .databases
             .get_mut(&database.to_lowercase())
@@ -606,6 +617,7 @@ impl Catalog {
         schema
             .tables
             .insert(name.to_lowercase(), std::sync::Arc::new(table));
+        self.foreign_keys_present |= table_has_foreign_keys;
         self.version += 1;
         Ok(())
     }
@@ -976,6 +988,26 @@ impl Catalog {
         // for a cascade to visit dependents deterministically.
         paths.sort();
         paths
+    }
+
+    /// Whether any stored table declares a foreign key.
+    ///
+    /// The DML executor checks parent-side referential actions for every
+    /// mutation. Most OLTP catalogs have no foreign keys, so keep this as a
+    /// sticky bit instead of inspecting every table on every write. Once a
+    /// foreign key has existed, retaining `true` is safe: it may perform one
+    /// extra table-path scan after the constraint is dropped, but never skips
+    /// a required referential check.
+    pub(crate) fn has_foreign_keys(&self) -> bool {
+        self.foreign_keys_present
+    }
+
+    /// Marks this catalog as having seen a foreign key. The flag is
+    /// intentionally monotonic; dropping or replacing a table must not make
+    /// an already-published snapshot report `false` while a DML check is in
+    /// flight.
+    pub(crate) fn mark_has_foreign_keys(&mut self) {
+        self.foreign_keys_present = true;
     }
 
     /// Materializes the narrow `infoschema` view consumed by the ported Go

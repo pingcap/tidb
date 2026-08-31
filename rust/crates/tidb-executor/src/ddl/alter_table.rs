@@ -1027,6 +1027,7 @@ fn add_foreign_key_action(
         );
     }
     table.add_foreign_key(foreign_key);
+    catalog.mark_has_foreign_keys();
     Ok(())
 }
 
