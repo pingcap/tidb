@@ -328,12 +328,24 @@ impl Session {
         &mut self,
         stmt: &Stmt,
     ) -> Result<Option<StmtOutput>, DriverError> {
-        if matches!(stmt, Stmt::Ddl(_)) {
-            // Go commits the open transaction before running any DDL
+        let local_temporary_create = matches!(
+            stmt,
+            Stmt::Ddl(ddl)
+                if matches!(
+                    ddl.as_ref(),
+                    tidb_ast::DdlStmt::CreateTable(create)
+                        if create.temporary == tidb_ast::CreateTableTemporary::Local
+                )
+        );
+        if matches!(stmt, Stmt::Ddl(_)) && !local_temporary_create {
+            // Go commits the open transaction before ordinary DDL
             // (`session.ExecuteStmt`, which calls `sessiontxn`'s
-            // `OnStmtStart` -> `checkBeforeNewTxn` for a DDL node), so the
-            // DDL and everything staged before it are already durable when
-            // it starts. Captured from TiDB: after
+            // `OnStmtStart` -> `checkBeforeNewTxn` for a DDL node). LOCAL
+            // `CREATE TEMPORARY TABLE` is the exception: `DDLExec.Next`
+            // returns through `createSessionTemporaryTable` before
+            // `NewTxnInStmt`, retaining the user's transaction. For ordinary
+            // DDL, everything staged before it is already durable when it
+            // starts. Captured from TiDB: after
             // `INSERT; BEGIN; INSERT; TRUNCATE TABLE d; ROLLBACK` the table
             // is EMPTY -- the ROLLBACK takes nothing back, because the
             // TRUNCATE committed the insert that preceded it -- and the same

@@ -225,6 +225,45 @@ impl TemporaryTableOverlay {
     }
 }
 
+/// Runs a statement for a session that does not yet own a temporary-table
+/// overlay, returning one when the shared catalog already contains GLOBAL
+/// temporary metadata or the statement creates its first temporary table.
+///
+/// The metadata-version check keeps the ordinary OLTP path at one memoized
+/// GLOBAL-table check: row statements cannot create temporary metadata, so
+/// they do not need the post-statement catalog sweep.
+fn run_discovering_temporary_overlay<T>(
+    catalog: &mut Catalog,
+    body: impl FnOnce(&mut Catalog) -> Result<T, DriverError>,
+) -> (Result<T, DriverError>, Option<TemporaryTableOverlay>) {
+    if !catalog.global_temporary_table_ids_memo().is_empty() {
+        let mut overlay = TemporaryTableOverlay {
+            local: Vec::new(),
+            global: std::collections::HashMap::new(),
+        };
+        let value = overlay.run(catalog, body);
+        return (value, Some(overlay));
+    }
+
+    let metadata_version = catalog.metadata_version();
+    let value = body(catalog);
+    if catalog.metadata_version() == metadata_version {
+        return (value, None);
+    }
+
+    // A metadata-changing statement may have created the session's first
+    // LOCAL or GLOBAL temporary table. Detach it exactly as the ordinary
+    // overlay path would have done around the statement.
+    let mut overlay = TemporaryTableOverlay {
+        local: Vec::new(),
+        global: std::collections::HashMap::new(),
+    };
+    overlay.swap_global_storage(catalog);
+    overlay.local = catalog.take_local_temporary_tables();
+    let discovered = (!overlay.local.is_empty() || !overlay.global.is_empty()).then_some(overlay);
+    (value, discovered)
+}
+
 /// The image of the catalog a statement started from, restored on ANY exit
 /// that is not an explicit disarm -- an `Err` returned by the statement, and
 /// a panic unwinding out of it (see [`Session::with_staged_catalog`]).
@@ -718,21 +757,32 @@ impl Session {
         &mut self,
         body: impl FnOnce(&mut Catalog) -> Result<T, DriverError>,
     ) -> Result<T, DriverError> {
-        // The normal cluster session has no LOCAL/GLOBAL temporary tables.
-        // Avoid constructing and swapping an empty overlay on every
-        // statement; temporary-table sessions retain the attach/detach path
-        // below.
+        // A session that already owns temporary state always takes the full
+        // attach/detach path. This is the uncommon branch.
+        //
+        // An empty session still has to ask the catalog whether GLOBAL
+        // temporary metadata exists: another session may have created it,
+        // and its rows must never use the shared table storage. The memoized
+        // lookup is an epoch comparison in the common no-temporary-table
+        // case. `run_discovering_temporary_overlay` also captures a LOCAL or
+        // GLOBAL table created by this very statement, closing the gap where
+        // the old early return left the first temporary table shared.
         if self.local_temporary_tables.is_empty() && self.global_temporary_data.is_empty() {
-            return match &mut self.txn {
-                Some(txn) => body(&mut txn.working),
+            let (value, discovered) = match &mut self.txn {
+                Some(txn) => run_discovering_temporary_overlay(&mut txn.working, body),
                 None => {
                     let mut catalog = self
                         .catalog
                         .lock()
                         .map_err(|_| DriverError::CatalogPoisoned)?;
-                    body(&mut catalog)
+                    run_discovering_temporary_overlay(&mut catalog, body)
                 }
             };
+            if let Some(discovered) = discovered {
+                self.local_temporary_tables = discovered.local;
+                self.global_temporary_data = discovered.global;
+            }
+            return value;
         }
         // Go wraps every statement's infoschema in a
         // `SessionExtendedInfoSchema` (`temptable.AttachLocalTemporaryTable

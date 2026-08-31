@@ -294,9 +294,8 @@ pub fn build_table_info_with_context(
             "CREATE TABLE {what} is not supported by this node"
         )))
     };
-    if create.temporary != tidb_ast::CreateTableTemporary::None {
-        return refuse("TEMPORARY");
-    }
+    let temporary = tidb_executor::ddl::validate_temporary_table_create(create)
+        .map_err(default_admission_error)?;
     if create.like_table.is_some() {
         return refuse("... LIKE");
     }
@@ -440,6 +439,7 @@ pub fn build_table_info_with_context(
         table_collate,
         clustered_mode,
     )?;
+    table.temp_table_type = temporary;
     let handle_offsets = if table.pk_is_handle {
         table
             .columns
@@ -493,6 +493,11 @@ pub fn build_table_info_with_context(
     // (`ddl/jobsubmit/submit.go` `assignIDsForTable`) -- so a builder that
     // invented them would hand out ids the cluster's allocator never issued.
     if create.partitioning.is_some() {
+        if temporary != tidb_model::TempTableType::NONE {
+            return Err(default_admission_error(
+                tidb_executor::DriverError::PartitionNoTemporary,
+            ));
+        }
         let names = table
             .columns
             .iter_deref()

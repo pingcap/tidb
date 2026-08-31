@@ -1946,6 +1946,14 @@ fn lower_create_table(
     default_schema: &str,
     context: &tidb_executor::StmtContext,
 ) -> Result<DdlStatement, DdlAdmissionError> {
+    // LOCAL temporary metadata belongs to the issuing session and must never
+    // be persisted by a cluster DDL job. The server routes it through the
+    // session executor before lowering; retain this guard for direct callers.
+    if create.temporary == tidb_ast::CreateTableTemporary::Local {
+        return Err(DdlAdmissionError::new(
+            "LOCAL temporary-table DDL belongs to the session catalog",
+        ));
+    }
     let (schema, table) = split_name(&create.name, default_schema, "table")?;
     // Go `BuildTableInfoWithLike` copies a table that already exists, so the
     // statement carries no column list to build from and the source has to be

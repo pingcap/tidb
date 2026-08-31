@@ -177,6 +177,121 @@ impl LoadStatsTableSchema {
     }
 }
 
+/// Reconstitutes Go's canonical cache object from the planner view produced
+/// by the in-process analyzer.
+///
+/// Temporary-table ANALYZE is the production caller: its rows are held by
+/// the session rather than TiKV, but Go still publishes the resulting
+/// `statistics.Table` into the process-wide statistics cache. Keeping this
+/// translation beside the inverse one below prevents the cluster route from
+/// inventing a second statistics representation.
+#[must_use]
+pub fn statistics_table_from_planner_statistics(
+    table: &KvTable,
+    physical_id: i64,
+    statistics: &TableStatistics,
+) -> Table {
+    let schema = LoadStatsTableSchema::from_kv_table(table);
+    let mut hist_coll = HistColl::new(
+        physical_id,
+        statistics.row_count,
+        statistics.modify_count,
+        statistics.columns.len(),
+        statistics.indexes.len(),
+    );
+    hist_coll.pseudo = statistics.cache_pseudo;
+    let mut existence = ColAndIdxExistenceMap::new(schema.columns.len(), schema.indexes.len());
+
+    for column in &schema.columns {
+        let Some(item) = statistics.columns.get(&column.id) else {
+            continue;
+        };
+        hist_coll.stats_version = hist_coll
+            .stats_version
+            .max(i32::try_from(item.stats_ver).unwrap_or(i32::MAX));
+        hist_coll.set_column(
+            column.id,
+            Column {
+                cmsketch: item.cms.clone(),
+                top_n: item.topn.clone(),
+                fm_sketch: None,
+                info: Some(ColumnInfo {
+                    id: column.id,
+                    name: column.name.clone(),
+                    primary_key: column.primary_key,
+                }),
+                histogram: item.histogram.clone(),
+                stats_loaded_status: statistics
+                    .column_load_status
+                    .get(&column.id)
+                    .copied()
+                    .unwrap_or_else(StatsLoadedStatus::full_load),
+                physical_id,
+                stats_version: item.stats_ver,
+                is_handle: table
+                    .pk_handle_offset()
+                    .is_some_and(|offset| table.columns()[offset].id == column.id),
+            },
+        );
+        existence.insert_column(
+            column.id,
+            statistics
+                .column_stats_existence
+                .get(&column.id)
+                .copied()
+                .unwrap_or(true),
+        );
+    }
+    for index in &schema.indexes {
+        let Some(item) = statistics.indexes.get(&index.id) else {
+            continue;
+        };
+        hist_coll.stats_version = hist_coll
+            .stats_version
+            .max(i32::try_from(item.stats_ver).unwrap_or(i32::MAX));
+        hist_coll.set_index(
+            index.id,
+            Index {
+                cmsketch: item.cms.clone(),
+                top_n: item.topn.clone(),
+                fm_sketch: None,
+                info: Some(IndexInfo {
+                    id: index.id,
+                    name: index.name.clone(),
+                    columns: index.columns.clone(),
+                    mv_index: index.mv_index,
+                }),
+                histogram: item.histogram.clone(),
+                stats_loaded_status: statistics
+                    .index_load_status
+                    .get(&index.id)
+                    .copied()
+                    .unwrap_or_else(StatsLoadedStatus::full_load),
+                stats_version: item.stats_ver,
+                physical_id,
+            },
+        );
+        existence.insert_index(
+            index.id,
+            statistics
+                .index_stats_existence
+                .get(&index.id)
+                .copied()
+                .unwrap_or(true),
+        );
+    }
+
+    Table {
+        existence_map: Some(Arc::new(RwLock::new(existence))),
+        hist_coll,
+        version: statistics.version,
+        last_analyze_version: statistics.last_analyze_version,
+        last_stats_hist_version: statistics.last_analyze_version,
+        table_info_update_ts: 0,
+        is_pk_handle: table.pk_handle_offset().is_some(),
+    }
+}
+
 /// Why a dump could not be loaded. Go surfaces each of these as the
 /// statement's error, so the text names what the caller can act on.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -879,7 +994,12 @@ pub fn table_statistics_from_table_schema(
     // table has no initialized column or index statistics. Do not infer this
     // from the reduced maps above: unloaded placeholder items can still have
     // histogram metadata and therefore survive that conversion.
-    statistics.pseudo = stats.hist_coll.pseudo || !stats.is_initialized();
+    // Pinned `GetStatsTable` rule 2 returns a query-time pseudo table whenever
+    // the canonical cache object's realtime count is zero, including an
+    // initialized, explicitly analyzed empty table. Keep the cache identity
+    // (`cache_pseudo`) separate from that planner decision.
+    statistics.pseudo =
+        stats.hist_coll.pseudo || stats.hist_coll.realtime_count == 0 || !stats.is_initialized();
     statistics.cache_pseudo = stats.hist_coll.pseudo;
     statistics
 }

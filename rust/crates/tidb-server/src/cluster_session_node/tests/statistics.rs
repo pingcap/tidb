@@ -14,6 +14,7 @@ use crate::configured_user_store::ConfiguredUserStore;
 use crate::sql_node::{ConnectionCancellation, ConnectionClose};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use tidb_datatype::Datum;
 use tidb_session::privilege::GlobalPriv;
 use tidb_txnkv::region::RegionBackoffKind;
 use tidb_txnkv::transaction::{
@@ -363,6 +364,54 @@ fn analyze_table_routes_to_the_statistics_seam() {
     assert!(
         refusal.contains("`t`"),
         "the refusal must name the table: {refusal}"
+    );
+}
+
+/// Temporary tables are the one `ANALYZE` storage class that must not reach
+/// the shared cluster seam. The mock seam rejects every call, so success here
+/// proves the production route sampled the connection's temporary rows.
+#[test]
+fn analyze_temporary_table_uses_the_session_storage_overlay() {
+    let (mut session, _node) = open_session();
+    session.execute_write("BEGIN").expect("begin");
+    session
+        .execute_write("CREATE TEMPORARY TABLE temp_stats (a INT)")
+        .unwrap();
+    let driver_in_transaction = session.session.in_transaction();
+    assert!(
+        driver_in_transaction,
+        "Go returns from LOCAL CREATE before opening a DDL transaction, so it must not commit"
+    );
+    session
+        .execute_write("INSERT INTO temp_stats VALUES (1), (2), (3)")
+        .unwrap();
+
+    session
+        .execute_write("ANALYZE TABLE temp_stats")
+        .expect("temporary ANALYZE bypasses the rejecting cluster seam");
+
+    let explain = rows(&mut session, "EXPLAIN SELECT * FROM temp_stats");
+    assert!(
+        explain.iter().all(|row| !row.iter().any(|datum| {
+            matches!(datum, Datum::Bytes(value) if String::from_utf8_lossy(value).contains("stats:pseudo"))
+        })),
+        "explicit ANALYZE must publish real temporary-table statistics: {explain:?}"
+    );
+
+    // A stats publication replaces the node's shared snapshot and forces the
+    // next statement to rebuild its catalog. LOCAL metadata is not part of
+    // that shared image, but Go's process-wide statistics cache retains the
+    // explicit ANALYZE result and the rebuilt session must do the same.
+    session
+        .stats
+        .store_after_analyze((*session.stats.load()).clone());
+    session.rebuild_catalog_now();
+    let explain = rows(&mut session, "EXPLAIN SELECT * FROM temp_stats");
+    assert!(
+        explain.iter().all(|row| !row.iter().any(|datum| {
+            matches!(datum, Datum::Bytes(value) if String::from_utf8_lossy(value).contains("stats:pseudo"))
+        })),
+        "catalog rebuild must retain cached LOCAL temporary statistics: {explain:?}"
     );
 }
 

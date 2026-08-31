@@ -287,6 +287,24 @@ impl Session {
         }
     }
 
+    /// Whether this is Go's session-owned LOCAL temporary-table create.
+    ///
+    /// `DDLExec.Next` gives this one statement an early return before opening
+    /// a DDL transaction. Other DDL shapes, including mixed `DROP TABLE`,
+    /// have their own splitting and transaction rules and must not be swept
+    /// into this route merely because one resolved name is temporary.
+    pub fn is_local_temporary_create(&mut self, sql: &str) -> Result<bool, DriverError> {
+        let stmt = self.parse(sql)?;
+        let Stmt::Ddl(ddl) = &stmt else {
+            return Ok(false);
+        };
+        Ok(matches!(
+            ddl.as_ref(),
+            tidb_ast::DdlStmt::CreateTable(create)
+                if create.temporary == tidb_ast::CreateTableTemporary::Local
+        ))
+    }
+
     /// Which persistent state `sql` would change: the stored schema (Go's
     /// `ast.DDLNode`), the stored accounts (the privilege and role statements
     /// TiDB's parser builds as administrative rather than DDL, plus `SET

@@ -460,6 +460,88 @@ impl Session {
         Ok(Some(StmtOutput::Affected(0)))
     }
 
+    /// Runs one `ANALYZE` through the session catalog when its resolved table
+    /// is temporary.
+    ///
+    /// A cluster session normally delegates `ANALYZE` to the TiKV-backed
+    /// executor. Temporary rows are the exception: LOCAL table metadata and
+    /// both kinds' row storage live in this session's catalog overlay, so the
+    /// shared cluster catalog cannot resolve or sample them. Go still builds
+    /// an ordinary analyze task for these tables; this narrow entry point lets
+    /// the cluster route preserve that behavior without creating a second
+    /// temporary-table analyzer.
+    pub fn analyze_temporary_table(
+        &mut self,
+        statement: &AnalyzeStatement,
+    ) -> Result<Option<(i64, Arc<tidb_stats::Table>)>, DriverError> {
+        let temporary = self.with_catalog_mut(|catalog| {
+            Ok(
+                match catalog.table_in(&statement.schema, &statement.table) {
+                    Some(TableEntry::Kv(table)) if table.is_temporary() => Some(table.clone()),
+                    _ => None,
+                },
+            )
+        })?;
+        let Some(table) = temporary else {
+            return Ok(None);
+        };
+        self.analyze_one_table(statement)?;
+        let table_id = table.table_id;
+        let statistics = self.with_catalog_mut(|catalog| {
+            catalog
+                .table_statistics(table_id)
+                .ok_or_else(|| DriverError::unsupported("temporary ANALYZE produced no statistics"))
+        })?;
+        Ok(Some((
+            table_id,
+            Arc::new(
+                tidb_executor::load_stats::statistics_table_from_planner_statistics(
+                    &table,
+                    table_id,
+                    &statistics,
+                ),
+            ),
+        )))
+    }
+
+    /// Reinstalls analyzed LOCAL temporary-table statistics after the shared
+    /// catalog image has been rebuilt.
+    ///
+    /// LOCAL metadata is owned by this session and therefore is absent while
+    /// the server rebuilds the shared catalog. Go's statistics cache is not:
+    /// an explicit temporary-table `ANALYZE` remains cached across an
+    /// unrelated infoschema or statistics refresh. Recreate only the planner
+    /// views for cache entries that still exist; ordinary temporary-table
+    /// reads never create one.
+    pub fn reinstall_local_temporary_statistics(
+        &self,
+        mut cached: impl FnMut(i64) -> Option<Arc<tidb_stats::Table>>,
+    ) {
+        let planner = self
+            .local_temporary_tables
+            .iter()
+            .filter_map(|(_, _, table)| {
+                let canonical = cached(table.table_id)?;
+                Some((
+                    table.table_id,
+                    Arc::new(tidb_executor::load_stats::table_statistics_from_table(
+                        &canonical, table,
+                    )),
+                ))
+            })
+            .collect::<Vec<_>>();
+        if planner.is_empty() {
+            return;
+        }
+        let mut catalog = self
+            .catalog
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for (table_id, statistics) in planner {
+            catalog.set_table_statistics(table_id, statistics);
+        }
+    }
+
     /// Analyzes one named table and publishes its statistics.
     fn analyze_one_table(&mut self, statement: &AnalyzeStatement) -> Result<(), DriverError> {
         let schema = statement.schema.clone();

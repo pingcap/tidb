@@ -97,6 +97,72 @@ fn displayed(rows: Vec<Vec<Datum>>) -> Vec<Vec<String>> {
         .collect()
 }
 
+/// Pinned Go `TestStatsCacheShouldNotCacheTemporaryTable`: GLOBAL temporary
+/// metadata is published by an ordinary DDL job, its rows remain
+/// connection-local and are deleted at commit, and only explicit `ANALYZE`
+/// replaces pseudo statistics for that session.
+#[test]
+fn global_temporary_analyze_uses_session_rows_and_statistics() {
+    let (stack, _users) = cop_backed_stack();
+    let existing_stats_ids = stack
+        .factory
+        .stats()
+        .load()
+        .keys()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut session = stack
+        .factory
+        .open_session(session_context(139))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "CREATE GLOBAL TEMPORARY TABLE global_stats (a INT) ON COMMIT DELETE ROWS",
+    );
+    let temporary_id = *stack
+        .factory
+        .stats()
+        .load()
+        .keys()
+        .find(|table_id| !existing_stats_ids.contains(table_id))
+        .expect("GLOBAL temporary DDL publishes its statistics metadata row");
+    rows(
+        &mut session,
+        "INSERT INTO global_stats VALUES (1), (2), (3)",
+    );
+    assert!(
+        rows(&mut session, "SELECT * FROM global_stats").is_empty(),
+        "GLOBAL temporary rows are deleted when the autocommit transaction ends"
+    );
+    let before = displayed(rows(&mut session, "EXPLAIN SELECT * FROM global_stats"));
+    assert!(
+        before
+            .iter()
+            .flatten()
+            .any(|value| value.contains("stats:pseudo")),
+        "ordinary access must not publish temporary statistics: {before:?}"
+    );
+
+    rows(&mut session, "ANALYZE TABLE global_stats");
+    let snapshot = stack.factory.stats().load();
+    let analyzed = snapshot
+        .get(&temporary_id)
+        .and_then(tidb_exec::stats_watch::TableStatsState::loaded)
+        .expect("explicit ANALYZE publishes a real GLOBAL temporary cache object");
+    assert_eq!(analyzed.hist_coll.column_count(), 1);
+    assert!(!analyzed.hist_coll.pseudo);
+
+    let after = displayed(rows(&mut session, "EXPLAIN SELECT * FROM global_stats"));
+    assert!(
+        after
+            .iter()
+            .flatten()
+            .any(|value| value.contains("stats:pseudo")),
+        "an analyzed empty table retains Go's query-time pseudo policy: {after:?}"
+    );
+}
+
 #[test]
 fn auto_analyze_priority_queue_uses_shared_stats_ddl_and_ordinary_analyze_path() {
     let (stack, _users) =

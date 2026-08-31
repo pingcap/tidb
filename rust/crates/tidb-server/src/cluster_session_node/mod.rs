@@ -351,6 +351,8 @@ enum StatementRoute {
     Ordinary,
     /// One catalog change this node can express.
     Ddl(DdlStatement),
+    /// DDL owned by this connection's LOCAL temporary-table namespace.
+    LocalTemporaryDdl,
     /// One `mysql.*` account change.
     Accounts,
     /// One `SET GLOBAL` change to `mysql.global_variables`.
@@ -4833,6 +4835,13 @@ impl ClusterServerSession {
         let mut catalog = shared.lock().unwrap_or_else(|poison| poison.into_inner());
         *catalog = built.catalog;
         drop(catalog);
+        self.session
+            .reinstall_local_temporary_statistics(|table_id| {
+                statistics
+                    .get(&table_id)
+                    .and_then(tidb_exec::stats_watch::TableStatsState::loaded)
+                    .cloned()
+            });
         self.schema_version = loaded.schema_version;
         self.statistics = statistics;
         self.skipped = built.skipped;
@@ -4958,6 +4967,13 @@ impl ClusterServerSession {
                 }
             }
             StoredStateChange::Schema => {
+                if self
+                    .session
+                    .is_local_temporary_create(sql)
+                    .map_err(map_error)?
+                {
+                    return Ok(StatementRoute::LocalTemporaryDdl);
+                }
                 // A CREATE VIEW resolves its body against this node's own
                 // catalog FIRST — a bad body fails here, at CREATE time,
                 // exactly where Go's `executeCreateView` preprocess fails —
@@ -5960,6 +5976,28 @@ impl ClusterServerSession {
             last_insert_id: 0,
         })
     }
+
+    /// Executes DDL whose metadata belongs to this connection rather than to
+    /// the cluster catalog.
+    fn run_local_temporary_ddl(&mut self, sql: &str) -> Result<WriteOutcome, SqlQueryError> {
+        let parsed = self.session.parse_statement(sql).map_err(map_error)?;
+        self.session
+            .require_statement_table_privileges(&parsed)
+            .map_err(map_error)?;
+        match self.session.run(sql).map_err(map_error)? {
+            tidb_session::StmtResult::Affected(affected_rows) => Ok(WriteOutcome {
+                affected_rows,
+                last_insert_id: self.session.statement_insert_id(),
+            }),
+            tidb_session::StmtResult::Done(_) => Ok(WriteOutcome {
+                affected_rows: 0,
+                last_insert_id: 0,
+            }),
+            tidb_session::StmtResult::Rows(_) => Err(SqlQueryError::unknown(
+                "LOCAL temporary-table DDL unexpectedly returned rows",
+            )),
+        }
+    }
 }
 
 impl QuerySession for ClusterServerSession {
@@ -6144,6 +6182,9 @@ impl QuerySession for ClusterServerSession {
         // must not depend on which answer shape it would otherwise have taken.
         match self.schema_route(sql)? {
             StatementRoute::Ddl(statement) => return self.run_ddl(sql, &statement).map(Some),
+            StatementRoute::LocalTemporaryDdl => {
+                return self.run_local_temporary_ddl(sql).map(Some);
+            }
             StatementRoute::Accounts => return self.run_account_statement(sql).map(Some),
             StatementRoute::GlobalVars => return self.run_global_var_statement(sql).map(Some),
             StatementRoute::Analyze(tables) => return self.run_analyze(&tables).map(Some),
@@ -6355,6 +6396,11 @@ impl QuerySession for ClusterServerSession {
             StatementRoute::Ddl(ddl) => {
                 return self
                     .run_ddl(statement.sql(), &ddl)
+                    .map(GeneralExecuteOutcome::Write)
+            }
+            StatementRoute::LocalTemporaryDdl => {
+                return self
+                    .run_local_temporary_ddl(statement.sql())
                     .map(GeneralExecuteOutcome::Write)
             }
             StatementRoute::Accounts => {
@@ -6644,6 +6690,12 @@ impl QuerySession for ClusterServerSession {
         match self.schema_route(sql)? {
             StatementRoute::Ddl(statement) => {
                 self.run_ddl(sql, &statement)?;
+                return Ok(QueryResult::new(Box::new(
+                    crate::pipeline_session::affected_rows_source(0),
+                )));
+            }
+            StatementRoute::LocalTemporaryDdl => {
+                self.run_local_temporary_ddl(sql)?;
                 return Ok(QueryResult::new(Box::new(
                     crate::pipeline_session::affected_rows_source(0),
                 )));

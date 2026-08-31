@@ -349,6 +349,25 @@ impl ClusterServerSession {
             statement.time_zone = self.session.session_time_zone();
             statement.options.memory_quota = memory_quota;
             let statement = &statement;
+            // Go resolves and samples temporary tables through the session's
+            // temporary-table infoschema/storage overlay. The cluster
+            // analyzer sees only shared metadata and TiKV rows, so it cannot
+            // analyze LOCAL tables at all and would sample the wrong storage
+            // for GLOBAL tables. Reuse the ordinary session analyzer for this
+            // one storage class, then return to the common loop.
+            if let Some((table_id, statistics)) = self
+                .session
+                .analyze_temporary_table(statement)
+                .map_err(super::map_error)?
+            {
+                let mut published = (*self.stats.load()).clone();
+                published.insert(
+                    table_id,
+                    tidb_exec::stats_watch::TableStatsState::Loaded(statistics),
+                );
+                self.stats.store_after_analyze(published);
+                continue;
+            }
             let historical_stats_enabled = || {
                 self.session
                     .vars()

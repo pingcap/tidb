@@ -784,9 +784,36 @@ pub(crate) fn refuse_temporary_table_alter_options(
 /// Nothing records `on_commit_delete` past this point, and Go does not
 /// either: `TableInfo` has no such field, so `SHOW CREATE TABLE` prints
 /// ` ON COMMIT DELETE ROWS` for every global temporary table unconditionally.
-fn temp_table_type_of(
+pub fn validate_temporary_table_create(
     create: &tidb_ast::CreateTableStmt,
 ) -> Result<tidb_model::TempTableType, DriverError> {
+    // Go `preprocessor.checkCreateTableGrammar` (`preprocess.go:946`): two
+    // table options are refused on a temporary table before anything else is
+    // built, because neither has a meaning for a relation that never reaches
+    // TiKV. `AUTO_RANDOM` is rejected by the column-option pass at the same
+    // preprocessing boundary.
+    if create.temporary != tidb_ast::CreateTableTemporary::None {
+        for option in &create.table_options {
+            match option {
+                tidb_ast::TableOption::ShardRowIdBits(_) => {
+                    return Err(DriverError::OptOnTemporaryTable("shard_row_id_bits"));
+                }
+                tidb_ast::TableOption::PlacementPolicy(_) => {
+                    return Err(DriverError::OptOnTemporaryTable("PLACEMENT"));
+                }
+                _ => {}
+            }
+        }
+        if create.columns.iter().any(|column| {
+            column
+                .options
+                .iter()
+                .any(|option| matches!(option, tidb_ast::ColumnOption::AutoRandom(_)))
+        }) {
+            return Err(DriverError::OptOnTemporaryTable("auto_random"));
+        }
+    }
+
     match create.temporary {
         tidb_ast::CreateTableTemporary::None => Ok(tidb_model::TempTableType::NONE),
         tidb_ast::CreateTableTemporary::Global => {
@@ -864,43 +891,11 @@ pub fn run_create_table_in(
         ));
     }
 
-    // Go `preprocessor.checkCreateTableGrammar` (`preprocess.go:946`): two
-    // table options are refused on a temporary table before anything else is
-    // built, because neither has a meaning for a relation that never reaches
-    // TiKV -- `SHARD_ROW_ID_BITS` spreads a table's record keys over regions
-    // and `PLACEMENT` pins them to stores. The argument spellings are Go's
-    // and differ in CASE from the ones `checkReferInfoForTemporaryTable`
-    // passes for the same settings inherited through `LIKE`, so they are
-    // written out rather than derived.
-    if create.temporary != tidb_ast::CreateTableTemporary::None {
-        for option in &create.table_options {
-            match option {
-                tidb_ast::TableOption::ShardRowIdBits(_) => {
-                    return Err(DriverError::OptOnTemporaryTable("shard_row_id_bits"))
-                }
-                tidb_ast::TableOption::PlacementPolicy(_) => {
-                    return Err(DriverError::OptOnTemporaryTable("PLACEMENT"))
-                }
-                _ => {}
-            }
-        }
-        // Go `checkColumnOptions` (`preprocess.go:1197`): `AUTO_RANDOM` needs
-        // a persisted allocator and a sharded handle domain, so a temporary
-        // table cannot carry one.
-        if create.columns.iter().any(|column| {
-            column
-                .options
-                .iter()
-                .any(|option| matches!(option, tidb_ast::ColumnOption::AutoRandom(_)))
-        }) {
-            return Err(DriverError::OptOnTemporaryTable("auto_random"));
-        }
-    }
     // Go `setTemporaryType`, which the DDL builder reaches only after the
     // preprocessor checks above have passed. The order is observable:
     // `create global temporary table t (a int) shard_row_id_bits = 4
     //  on commit preserve rows` is 8006, not 8200.
-    let temporary = temp_table_type_of(create)?;
+    let temporary = validate_temporary_table_create(create)?;
     validate_table_options(&create.table_options)?;
     // Go refuses CTAS outright and has never implemented it:
     // `preprocess.go` -> `checkCreateTableGrammar` does

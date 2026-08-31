@@ -140,7 +140,7 @@ pub fn analyze_kv_table_columns(
         );
     }
 
-    Ok(TableStatistics::new(
+    let mut statistics = TableStatistics::new(
         analyzed.scanned_rows,
         // A fresh `ANALYZE` describes exactly the rows it just read, so
         // nothing has been modified since. `tidb_exec::cluster_analyze` stores
@@ -149,13 +149,18 @@ pub fn analyze_kv_table_columns(
         0,
         columns,
         indexes,
-    )
-    // Go stamps the writing transaction's start TS into both
-    // `mysql.stats_meta` columns (`save.go:200`). This tier has no cluster
-    // TSO, so the stamp is this process's clock in Go's TSO shape -- the
-    // physical half in the high bits, exactly what
-    // `show_stats::version_to_time` decodes back for `SHOW STATS_META`.
-    .with_stat_versions(now_tso_shaped(), now_tso_shaped()))
+    );
+    // Go stores an analyzed empty table as a real cache object and only marks
+    // the planner's per-query copy pseudo because its realtime count is zero.
+    // This function knows zero came from an actual ANALYZE scan.
+    statistics.cache_pseudo = false;
+    Ok(statistics
+        // Go stamps the writing transaction's start TS into both
+        // `mysql.stats_meta` columns (`save.go:200`). This tier has no cluster
+        // TSO, so the stamp is this process's clock in Go's TSO shape -- the
+        // physical half in the high bits, exactly what
+        // `show_stats::version_to_time` decodes back for `SHOW STATS_META`.
+        .with_stat_versions(now_tso_shaped(), now_tso_shaped()))
 }
 
 /// Runs Go's independent stats-v2 task for one special global index.
