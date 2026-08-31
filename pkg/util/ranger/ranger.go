@@ -122,14 +122,56 @@ func estimateMemUsageForPoints2Ranges(rangePoints []*point) int64 {
 	return (EmptyRangeSize+16)*int64(len(rangePoints))/2 + getPointsTotalDatumSize(rangePoints)
 }
 
+// rangeCountExceedsLimit checks a product without overflowing. A non-positive limit disables the check.
+func rangeCountExceedsLimit(limit int64, left, right int) bool {
+	if limit <= 0 || left == 0 || right == 0 {
+		return false
+	}
+	return uint64(left) > uint64(limit)/uint64(right)
+}
+
+// rangeCountSumExceedsLimit checks a sum without overflowing. A non-positive limit disables the check.
+func rangeCountSumExceedsLimit(limit int64, left, right int) bool {
+	if limit <= 0 {
+		return false
+	}
+	maxCount := uint64(limit)
+	return uint64(left) > maxCount || uint64(right) > maxCount-uint64(left)
+}
+
+// rangeCountProductAndSumExceedsLimit checks left*right+addend without overflowing.
+func rangeCountProductAndSumExceedsLimit(limit int64, left, right, addend int) bool {
+	if limit <= 0 {
+		return false
+	}
+	maxCount := uint64(limit)
+	if uint64(addend) > maxCount {
+		return true
+	}
+	if left == 0 || right == 0 {
+		return false
+	}
+	return uint64(left) > (maxCount-uint64(addend))/uint64(right)
+}
+
 // points2Ranges build index ranges from range points.
 // Only one column is built there. If there're multiple columns, use appendPoints2Ranges.
-// rangeMaxSize is the max memory limit for ranges. O indicates no memory limit.
-// If the second return value is true, it means that the estimated memory usage of ranges exceeds rangeMaxSize and it falls back to full range.
-func points2Ranges(sctx *rangerctx.RangerContext, rangePoints []*point, newTp *types.FieldType, rangeMaxSize int64) (Ranges, bool, error) {
+// rangeMaxSize and rangeMaxCount limit range memory and count respectively. 0 disables the corresponding limit.
+// If the second return value is true, a limit was exceeded and the function falls back to full range.
+func points2Ranges(sctx *rangerctx.RangerContext, rangePoints []*point, newTp *types.FieldType, rangeMaxSize, rangeMaxCount int64) (Ranges, bool, error) {
 	rangePoints, err := convertPointsInPlace(sctx, rangePoints, newTp, mysql.HasNotNullFlag(newTp.GetFlag()), false)
 	if err != nil {
 		return nil, false, errors.Trace(err)
+	}
+	if rangeCountExceedsLimit(rangeMaxCount, 1, len(rangePoints)/2) {
+		sctx.RecordRangeFallbackByCount(rangeMaxCount)
+		var fullRange Ranges
+		if mysql.HasNotNullFlag(newTp.GetFlag()) {
+			fullRange = FullNotNullRange()
+		} else {
+			fullRange = FullRange()
+		}
+		return fullRange, true, nil
 	}
 	// Estimate whether rangeMaxSize will be exceeded first before converting points to ranges.
 	if rangeMaxSize > 0 && estimateMemUsageForPoints2Ranges(rangePoints) > rangeMaxSize {
@@ -287,14 +329,25 @@ func estimateMemUsageForAppendPoints2Ranges(origin Ranges, rangePoints []*point)
 // appendPoints2Ranges appends additional column ranges for multi-column index. The additional column ranges can only be
 // appended to point ranges. For example, we have an index (a, b), if the condition is (a > 1 and b = 2), then we can not
 // build a conjunctive ranges for this index.
-// rangeMaxSize is the max memory limit for ranges. O indicates no memory limit.
-// If the second return value is true, it means that the estimated memory usage of ranges after appending points exceeds
-// rangeMaxSize and the function rejects appending points to ranges.
+// rangeMaxSize and rangeMaxCount limit range memory and count respectively. 0 disables the corresponding limit.
+// If the second return value is true, a limit was exceeded and the function rejects appending points to ranges.
 func appendPoints2Ranges(sctx *rangerctx.RangerContext, origin Ranges, rangePoints []*point,
-	newTp *types.FieldType, rangeMaxSize int64) (Ranges, bool, error) {
+	newTp *types.FieldType, rangeMaxSize, rangeMaxCount int64) (Ranges, bool, error) {
 	rangePoints, err := convertPointsInPlace(sctx, rangePoints, newTp, false, false)
 	if err != nil {
 		return nil, false, errors.Trace(err)
+	}
+	pointRangeCount := 0
+	for _, originRange := range origin {
+		if originRange.IsPoint(sctx) {
+			pointRangeCount++
+		}
+	}
+	nonPointRangeCount := len(origin) - pointRangeCount
+	newPointCount := len(rangePoints) / 2
+	if rangeCountProductAndSumExceedsLimit(rangeMaxCount, pointRangeCount, newPointCount, nonPointRangeCount) {
+		sctx.RecordRangeFallbackByCount(rangeMaxCount)
+		return origin, true, nil
 	}
 	// Estimate whether rangeMaxSize will be exceeded first before appending points to ranges.
 	if rangeMaxSize > 0 && estimateMemUsageForAppendPoints2Ranges(origin, rangePoints) > rangeMaxSize {
@@ -375,12 +428,15 @@ func estimateMemUsageForAppendRanges2PointRanges(pointRanges Ranges, ranges Rang
 }
 
 // AppendRanges2PointRanges appends additional ranges to point ranges.
-// rangeMaxSize is the max memory limit for ranges. O indicates no memory limit.
-// If the second return value is true, it means that the estimated memory after appending additional ranges to point ranges
-// exceeds rangeMaxSize and the function rejects appending additional ranges to point ranges.
-func AppendRanges2PointRanges(pointRanges Ranges, ranges Ranges, rangeMaxSize int64) (Ranges, bool) {
+// rangeMaxSize and rangeMaxCount limit range memory and count respectively. 0 disables the corresponding limit.
+// If the second return value is true, a limit was exceeded and the function rejects appending additional ranges.
+func AppendRanges2PointRanges(sctx *rangerctx.RangerContext, pointRanges Ranges, ranges Ranges, rangeMaxSize, rangeMaxCount int64) (Ranges, bool) {
 	if len(ranges) == 0 {
 		return pointRanges, false
+	}
+	if rangeCountExceedsLimit(rangeMaxCount, len(pointRanges), len(ranges)) {
+		sctx.RecordRangeFallbackByCount(rangeMaxCount)
+		return pointRanges, true
 	}
 	// Estimate whether rangeMaxSize will be exceeded first before appending ranges to point ranges.
 	if rangeMaxSize > 0 && estimateMemUsageForAppendRanges2PointRanges(pointRanges, ranges) > rangeMaxSize {
@@ -460,12 +516,16 @@ func AppendRanges2PointRanges(pointRanges Ranges, ranges Ranges, rangeMaxSize in
 
 // points2TableRanges build ranges for table scan from range points.
 // It will remove the nil and convert MinNotNull and MaxValue to MinInt64 or MinUint64 and MaxInt64 or MaxUint64.
-// rangeMaxSize is the max memory limit for ranges. O indicates no memory limit.
-// If the second return value is true, it means that the estimated memory usage of ranges exceeds rangeMaxSize and it falls back to full range.
-func points2TableRanges(sctx *rangerctx.RangerContext, rangePoints []*point, newTp *types.FieldType, rangeMaxSize int64) (Ranges, bool, error) {
+// rangeMaxSize and rangeMaxCount limit range memory and count respectively. 0 disables the corresponding limit.
+// If the second return value is true, a limit was exceeded and the function falls back to full range.
+func points2TableRanges(sctx *rangerctx.RangerContext, rangePoints []*point, newTp *types.FieldType, rangeMaxSize, rangeMaxCount int64) (Ranges, bool, error) {
 	rangePoints, err := convertPointsInPlace(sctx, rangePoints, newTp, true, true)
 	if err != nil {
 		return nil, false, errors.Trace(err)
+	}
+	if rangeCountExceedsLimit(rangeMaxCount, 1, len(rangePoints)/2) {
+		sctx.RecordRangeFallbackByCount(rangeMaxCount)
+		return FullIntRange(mysql.HasUnsignedFlag(newTp.GetFlag())), true, nil
 	}
 	if rangeMaxSize > 0 && estimateMemUsageForPoints2Ranges(rangePoints) > rangeMaxSize {
 		return FullIntRange(mysql.HasUnsignedFlag(newTp.GetFlag())), true, nil
@@ -486,10 +546,10 @@ func points2TableRanges(sctx *rangerctx.RangerContext, rangePoints []*point, new
 }
 
 // buildColumnRange builds range from CNF conditions.
-// rangeMaxSize is the max memory limit for ranges. O indicates no memory limit.
+// rangeMaxSize and rangeMaxCount limit range memory and count respectively. 0 disables the corresponding limit.
 // The second return value is the conditions used to build ranges and the third return value is the remained conditions.
 func buildColumnRange(accessConditions []expression.Expression, sctx *rangerctx.RangerContext, tp *types.FieldType, tableRange bool,
-	colLen int, rangeMaxSize int64) (ranges Ranges, _, _ []expression.Expression, err error) {
+	colLen int, rangeMaxSize, rangeMaxCount int64) (ranges Ranges, _, _ []expression.Expression, err error) {
 	rb := builder{sctx: sctx}
 	newTp := newFieldType(tp)
 	rangePoints := getFullRange()
@@ -505,9 +565,9 @@ func buildColumnRange(accessConditions []expression.Expression, sctx *rangerctx.
 	)
 	newTp = convertStringFTToBinaryCollate(newTp)
 	if tableRange {
-		ranges, rangeFallback, err = points2TableRanges(sctx, rangePoints, newTp, rangeMaxSize)
+		ranges, rangeFallback, err = points2TableRanges(sctx, rangePoints, newTp, rangeMaxSize, rangeMaxCount)
 	} else {
-		ranges, rangeFallback, err = points2Ranges(sctx, rangePoints, newTp, rangeMaxSize)
+		ranges, rangeFallback, err = points2Ranges(sctx, rangePoints, newTp, rangeMaxSize, rangeMaxCount)
 	}
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
@@ -526,28 +586,28 @@ func buildColumnRange(accessConditions []expression.Expression, sctx *rangerctx.
 }
 
 // BuildTableRange builds range of PK column for PhysicalTableScan.
-// rangeMaxSize is the max memory limit for ranges. O indicates no memory limit. If you ask that all conds must be used
-// for building ranges, set rangeMemQuota to 0 to avoid range fallback.
+// rangeMaxSize and rangeMaxCount limit range memory and count respectively. 0 disables the corresponding limit. If you
+// ask that all conds must be used for building ranges, set both limits to 0 to avoid range fallback.
 // The second return value is the conditions used to build ranges and the third return value is the remained conditions.
 // If you use the function to build ranges for some access path, you need to update the path's access conditions and filter
 // conditions by the second and third return values respectively.
 func BuildTableRange(accessConditions []expression.Expression, sctx *rangerctx.RangerContext, tp *types.FieldType,
-	rangeMaxSize int64) (_ Ranges, _, _ []expression.Expression, _ error) {
-	return buildColumnRange(accessConditions, sctx, tp, true, types.UnspecifiedLength, rangeMaxSize)
+	rangeMaxSize, rangeMaxCount int64) (_ Ranges, _, _ []expression.Expression, _ error) {
+	return buildColumnRange(accessConditions, sctx, tp, true, types.UnspecifiedLength, rangeMaxSize, rangeMaxCount)
 }
 
 // BuildColumnRange builds range from access conditions for general columns.
-// rangeMaxSize is the max memory limit for ranges. O indicates no memory limit. If you ask that all conds must be used
-// for building ranges, set rangeMemQuota to 0 to avoid range fallback.
+// rangeMemQuota and rangeMaxCount limit range memory and count respectively. 0 disables the corresponding limit. If you
+// ask that all conds must be used for building ranges, set both limits to 0 to avoid range fallback.
 // The second return value is the conditions used to build ranges and the third return value is the remained conditions.
 // If you use the function to build ranges for some access path, you need to update the path's access conditions and filter
 // conditions by the second and third return values respectively.
 func BuildColumnRange(conds []expression.Expression, sctx *rangerctx.RangerContext, tp *types.FieldType, colLen int,
-	rangeMemQuota int64) (_ Ranges, _, _ []expression.Expression, _ error) {
+	rangeMemQuota, rangeMaxCount int64) (_ Ranges, _, _ []expression.Expression, _ error) {
 	if len(conds) == 0 {
 		return FullRange(), nil, nil, nil
 	}
-	return buildColumnRange(conds, sctx, tp, false, colLen, rangeMemQuota)
+	return buildColumnRange(conds, sctx, tp, false, colLen, rangeMemQuota, rangeMaxCount)
 }
 
 func (d *rangeDetacher) buildRangeOnColsByCNFCond(eqAndInCount int, accessConds []expression.Expression) (ranges Ranges, _, _ []expression.Expression, err error) {
@@ -566,9 +626,9 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(eqAndInCount int, accessConds 
 			tmpNewTp = convertStringFTToBinaryCollate(tmpNewTp)
 		}
 		if i == 0 {
-			ranges, rangeFallback, err = points2Ranges(d.sctx, point, tmpNewTp, d.rangeMaxSize)
+			ranges, rangeFallback, err = points2Ranges(d.sctx, point, tmpNewTp, d.rangeMaxSize, d.rangeMaxCount)
 		} else {
-			ranges, rangeFallback, err = appendPoints2Ranges(d.sctx, ranges, point, tmpNewTp, d.rangeMaxSize)
+			ranges, rangeFallback, err = appendPoints2Ranges(d.sctx, ranges, point, tmpNewTp, d.rangeMaxSize, d.rangeMaxCount)
 		}
 		if err != nil {
 			return nil, nil, nil, errors.Trace(err)
@@ -599,9 +659,9 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(eqAndInCount int, accessConds 
 		}
 	}
 	if eqAndInCount == 0 {
-		ranges, rangeFallback, err = points2Ranges(d.sctx, rangePoints, tmpNewTp, d.rangeMaxSize)
+		ranges, rangeFallback, err = points2Ranges(d.sctx, rangePoints, tmpNewTp, d.rangeMaxSize, d.rangeMaxCount)
 	} else if eqAndInCount < len(accessConds) {
-		ranges, rangeFallback, err = appendPoints2Ranges(d.sctx, ranges, rangePoints, tmpNewTp, d.rangeMaxSize)
+		ranges, rangeFallback, err = appendPoints2Ranges(d.sctx, ranges, rangePoints, tmpNewTp, d.rangeMaxSize, d.rangeMaxCount)
 	}
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
