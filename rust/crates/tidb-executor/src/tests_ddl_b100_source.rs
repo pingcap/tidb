@@ -152,8 +152,6 @@ fn drop_column_in_column_test() {
 
 // backfilling_txn_executor_test.go
 
-// bdr/bdr_test.go
-
 // cancel_test.go
 
 // cluster.go / cluster_test.go

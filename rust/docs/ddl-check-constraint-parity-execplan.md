@@ -33,6 +33,8 @@ After this work, Rust accepts, stores, displays, and enforces CHECK constraints 
 - [x] (2026-08-31) Re-audited all six pinned `pkg/ddl/jobsubmit` artifacts, removed the obsolete ignored missing-carrier tests, and made flashback admission use only Go's `job_id`/`type` query columns instead of decoding unrelated `job_meta` values.
 - [x] (2026-08-31) Completed pinned `pkg/ddl/systable` as one package: independent job/MDL reads, exact `JobW` bytes, bounded minimum/flashback queries, the monotonic ten-second refresher and cancellation lifecycle, and shared lower-bound consumption by submission and scheduling.
 - [x] (2026-08-31) Completed all seven pinned `pkg/ddl/label` artifacts: strict YAML flow parsing, complete PD rule wire shape, Go clone/nil semantics, and both classic and NextGen codec behavior.
+- [x] (2026-08-31) Completed both pinned `pkg/ddl/logutil` artifacts as a dedicated four-constructor crate and removed serverstate's duplicate DDL logger policy.
+- [x] (2026-08-31) Re-audited all three pinned `pkg/ddl/bdr` artifacts, verified the existing policy and shared action map, and removed its stale missing-test marker.
 - [ ] Add concurrent-writer regressions corresponding to every scenario in pinned `pkg/ddl/constraint_test.go`.
 - [ ] Inventory every remaining pinned production/test/support/build artifact before making a package-level claim.
 
@@ -245,3 +247,7 @@ Revision note (2026-08-31): re-read the complete pinned `pkg/ddl/jobsubmit` pack
 Revision note (2026-08-31): audited and mapped all five pinned `pkg/ddl/systable` artifacts, removed the documentary missing-package test, and wired one shared monotonic minimum-job-ID refresher into both jobsubmit flashback admission and the owner scheduler's active-job lower bound. The live TiKV reads now seek from the encoded minimum job handle, preserving the performance purpose stated by Go issue 52905 instead of filtering after a full scan. Manager construction defers table lookup exactly like Go, so an absent MDL table cannot break unrelated DDL-job reads.
 
 Revision note (2026-08-31): audited all seven pinned `pkg/ddl/label` artifacts and removed the legacy hand-parsed/narrow PD-rule behavior. The package now uses YAML sequence decoding, preserves expiry and arbitrary data, models Go's shallow slice/interface clone and nil/allocated-empty distinction, and validates the real API-v2 codec under the NextGen feature. The downstream infosync keyspace filter remains a separate package gap.
+
+Revision note (2026-08-31): audited the complete two-artifact `pkg/ddl/logutil` package and added its four exact category/sampling constructors over the existing shared logger implementation. Serverstate now consumes that package instead of carrying a private `category=ddl` clone; the pinned package has no tests or other artifacts.
+
+Revision note (2026-08-31): re-read the complete three-artifact `pkg/ddl/bdr` package and verified its existing Rust carrier against all add/modify/general admission branches and the full shared action-class map. The common job submitter already consumes the typed policy for jobs and subjobs; the obsolete documentary missing-test marker was removed.

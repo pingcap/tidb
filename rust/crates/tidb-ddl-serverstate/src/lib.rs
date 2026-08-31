@@ -25,7 +25,6 @@ use serde::de::{DeserializeSeed, Error as _, IgnoredAny, MapAccess, Visitor};
 use serde::{Deserializer, Serialize};
 use tidb_log::{Field, Value};
 use tidb_pd_client::{EtcdClient, EtcdError, EtcdLeaseSession, EtcdWatcher};
-use tidb_util::logutil::{bg_logger, LOG_FIELD_CATEGORY};
 pub use tidb_util::timeutil::SleepContext as Context;
 use tidb_util::timeutil::{sleep, SleepError};
 
@@ -113,10 +112,6 @@ fn result_label<T, E>(result: &Result<T, E>) -> &'static str {
     } else {
         "err"
     }
-}
-
-fn ddl_logger() -> tidb_util::logutil::Logger {
-    bg_logger().with_fields(&[Field::new(LOG_FIELD_CATEGORY, Value::Str("ddl".to_owned()))])
 }
 
 fn child_timeout(context: &Context, maximum: Duration) -> Result<Duration, Error> {
@@ -369,7 +364,7 @@ fn create_session(
             Ok(session) => return Ok(session),
             Err(error) => {
                 if failed_count % 15 == 0 {
-                    ddl_logger().warn(
+                    tidb_ddl_logutil::ddl_logger().warn(
                         "failed to establish new session to etcd",
                         &[
                             Field::new("ownerInfo", Value::Str(log_prefix.to_owned())),
@@ -460,7 +455,7 @@ impl EtcdSyncer {
             match self.client.get_with_timeout(&self.path, timeout) {
                 Ok(value) => return Ok(value),
                 Err(error) => {
-                    ddl_logger().info(
+                    tidb_ddl_logutil::ddl_logger().info(
                         "get key failed",
                         &[
                             Field::new(
@@ -496,7 +491,7 @@ impl EtcdSyncer {
                     RETRYABLE_ERROR_COUNT
                         .with_label_values(&[&error.to_string()])
                         .inc();
-                    ddl_logger().warn(
+                    tidb_ddl_logutil::ddl_logger().warn(
                         "etcd-cli put kv failed",
                         &[
                             Field::new(
@@ -575,7 +570,7 @@ impl Syncer for EtcdSyncer {
             return Ok(state);
         };
         if let Err(error) = state.unmarshal(&value) {
-            ddl_logger().warn(
+            tidb_ddl_logutil::ddl_logger().warn(
                 "get global state failed",
                 &[
                     Field::new(
@@ -642,7 +637,7 @@ impl Syncer for EtcdSyncer {
                 DEPLOY_SYNCER_HISTOGRAM
                     .with_label_values(&["rewatch", "ok"])
                     .observe(started.elapsed().as_secs_f64());
-                ddl_logger().info("syncer rewatch global info finished", &[]);
+                tidb_ddl_logutil::ddl_logger().info("syncer rewatch global info finished", &[]);
             });
     }
 }

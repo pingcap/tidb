@@ -3339,6 +3339,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-ddl-logutil"
+version = "0.0.0"
+dependencies = [
+ "tidb-log",
+ "tidb-util",
+]
+
+[[package]]
 name = "tidb-ddl-notifier"
 version = "0.0.0"
 dependencies = [
@@ -3357,6 +3365,7 @@ dependencies = [
  "prometheus 0.14.0",
  "serde",
  "serde_json",
+ "tidb-ddl-logutil",
  "tidb-log",
  "tidb-model",
  "tidb-pd-client",
