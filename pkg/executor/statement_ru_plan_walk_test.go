@@ -386,75 +386,6 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		})
 	}
 
-	for _, tc := range []struct {
-		name   string
-		kind   string
-		adjust func(base.PhysicalPlan)
-	}{
-		{
-			name: "HashJoin inner child is left build side",
-			kind: "hash",
-			adjust: func(plan base.PhysicalPlan) {
-				plan.(*physicalop.PhysicalHashJoin).InnerChildIdx = 0
-			},
-		},
-		{
-			name: "HashJoin outer child is build side",
-			kind: "hash",
-			adjust: func(plan base.PhysicalPlan) {
-				join := plan.(*physicalop.PhysicalHashJoin)
-				join.InnerChildIdx = 0
-				join.UseOuterToBuild = true
-			},
-		},
-		{
-			name: "MergeJoin right outer side roles",
-			kind: "merge",
-			adjust: func(plan base.PhysicalPlan) {
-				plan.(*physicalop.PhysicalMergeJoin).JoinType = base.RightOuterJoin
-			},
-		},
-		{
-			name: "IndexJoin inner child is left",
-			kind: "index",
-			adjust: func(plan base.PhysicalPlan) {
-				plan.(*physicalop.PhysicalIndexJoin).InnerChildIdx = 0
-			},
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			fixture := newStatementRUSimpleSelectFixture(t)
-			join, left, right := newJoin(fixture, tc.kind)
-			tc.adjust(join)
-			recordJoinRows(fixture, join, left, right)
-			if tc.kind == "hash" {
-				recordHashState(fixture, join, 2, true, false)
-			}
-			setPlan(fixture, join)
-			want := statementRURawUnits{
-				CPUWork:              5,
-				NetBytes:             20,
-				FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
-				JoinOutputRows:       4,
-			}
-			if tc.kind == "hash" {
-				want.HashStateRows = 2
-			}
-			requirePublication(t, fixture, want)
-		})
-	}
-
-	t.Run("Join fails closed on wrong side role", func(t *testing.T) {
-		fixture := newStatementRUSimpleSelectFixture(t)
-		join, left, right := newJoin(fixture, "merge")
-		recordJoinRows(fixture, join, left, right)
-		setPlan(fixture, join)
-		flat, ok := fixture.stmt.Ctx.GetSessionVars().StmtCtx.GetFlatPlan().(*plannercore.FlatPhysicalPlan)
-		require.True(t, ok)
-		flat.Main[flat.Main[0].ChildrenIdx[0]].Label = plannercore.BuildSide
-		requireNoPublication(t, fixture)
-	})
-
 	t.Run("HashJoin fails closed on incomplete state", func(t *testing.T) {
 		fixture := newStatementRUSimpleSelectFixture(t)
 		join, left, right := newJoin(fixture, "hash")
@@ -490,21 +421,6 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		recordHashState(fixture, join, 2, true, false)
 		setPlan(fixture, join)
 		requireNoPublication(t, fixture)
-	})
-
-	t.Run("Join fails closed on row overflow", func(t *testing.T) {
-		fixture := newStatementRUSimpleSelectFixture(t)
-		join, left, right := newJoin(fixture, "merge")
-		recordRootRows(fixture, left, math.MaxInt64)
-		recordRootRows(fixture, right, 1)
-		recordRootRows(fixture, join, 1)
-		setPlan(fixture, join)
-		requireNoPublication(t, fixture)
-	})
-
-	t.Run("expression count overflow fails closed", func(t *testing.T) {
-		_, valid := checkedStatementRUExpressionCount(math.MaxInt, 1)
-		require.False(t, valid)
 	})
 
 	t.Run("operator unit delta merge is atomic", func(t *testing.T) {

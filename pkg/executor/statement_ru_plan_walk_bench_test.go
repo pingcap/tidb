@@ -73,13 +73,12 @@ func BenchmarkStatementRUOperatorCalculation(b *testing.B) {
 
 func BenchmarkStatementRUJoinAggOperatorCalculation(b *testing.B) {
 	b.Run("join", func(b *testing.B) {
-		// This timer contains the Join occurrence's checked input sum and typed
-		// CPU/output/state accumulation. It excludes evidence lookup and traversal.
+		// This timer contains the Join occurrence's typed CPU/output/state
+		// accumulation. It excludes evidence lookup and traversal.
 		b.ReportAllocs()
 		for b.Loop() {
 			calculator := statementRUCalculator{}
-			inputRows, valid := checkedStatementRURowSum(100, 50)
-			valid = valid && addStatementRUCPUWork(&calculator, float64(inputRows)*3)
+			valid := addStatementRUCPUWork(&calculator, (100+50)*3)
 			valid = valid && addStatementRUJoinOutputRows(&calculator, 40)
 			valid = valid && addStatementRUHashStateRows(&calculator, 50)
 			statementRUCalculatorSink = calculator
