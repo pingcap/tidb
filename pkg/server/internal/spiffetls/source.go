@@ -47,22 +47,19 @@ type workloadAPIClient interface {
 // Source owns a Workload API watch and publishes its latest valid TLS
 // configuration through a stable dispatcher.
 type Source struct {
+	closeErr          error
+	watchCtx          context.Context
 	client            workloadAPIClient
+	dispatcher        *tls.Config
 	baseTLSConfig     *tls.Config
+	cancelWatch       context.CancelFunc
+	watchDone         chan error
+	current           atomic.Pointer[tls.Config]
+	ready             chan struct{}
+	watchWG           sync.WaitGroup
+	readyOnce         sync.Once
+	closeOnce         sync.Once
 	requireClientCert bool
-
-	watchCtx    context.Context
-	cancelWatch context.CancelFunc
-	watchDone   chan error
-	watchWG     sync.WaitGroup
-
-	current    atomic.Pointer[tls.Config]
-	ready      chan struct{}
-	readyOnce  sync.Once
-	dispatcher *tls.Config
-
-	closeOnce sync.Once
-	closeErr  error
 }
 
 // New starts watching addr and waits up to timeout for the first valid X.509
