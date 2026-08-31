@@ -868,13 +868,10 @@ fn uninitialized_expr_index_stats_finish_loading() {}
 /// [51,100] repeat 5, NDV 100, 200 rows), value 50 must estimate the uniform
 /// average 200/100 = 2.0 while observed upper 100 stays exactly 5.0.
 ///
-/// This workspace's `equal_row_count_on_column` lacks the `histCnt > 0`
-/// condition, so a zero-repeat matched upper returns its bare repeat (clamped
-/// to the range floor) instead of falling through. Kept compiling and ignored
-/// until the transcreation takes the source fix; deleting the `#[ignore]` then
-/// yields Go's own regression test.
+/// `equal_row_count_on_column` now applies the same `histCnt > 0` condition, so
+/// this executable regression verifies the zero-repeat upper falls through to
+/// the uniform estimate while observed repeats remain exact.
 #[test]
-#[ignore = "go-parity-gap: equal_row_count_on_column misses Go's 'matched && histCnt > 0' guard (row_count_column.go:116); zero-repeat uppers skip the uniform fallback"]
 fn equal_estimate_on_zero_repeat_bucket_upper_falls_back_to_uniform() {
     let mut histogram = Histogram::new(1, 100, 0, 0, 2, 0);
     histogram.append_bucket(Datum::Int(1), Datum::Int(50), 100, 0);

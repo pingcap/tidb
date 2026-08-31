@@ -67,6 +67,7 @@ pub(crate) fn eval_cast(
         CastType::Signed => Ok(Datum::Int(to_i64_signed_with_warnings(&v, ctx)?)),
         CastType::Unsigned => {
             report_int_truncation(&v, ctx)?;
+            report_negative_string_unsigned(&v, ctx);
             Ok(Datum::UInt(to_u64_unsigned(&v, ctx)))
         }
         CastType::Char { len, .. } => {
@@ -118,6 +119,7 @@ pub(crate) fn eval_cast(
             }))
         }
         CastType::Decimal { flen, scale } => {
+            report_decimal_input_truncation(&v, ctx);
             let source = to_decimal_for_cast(&v);
             let produced = source.cast_to_precision(*flen, *scale);
             report_decimal_production(ctx, &source, &produced, *flen, *scale);
@@ -683,6 +685,64 @@ pub(crate) fn report_int_truncation(v: &Datum, ctx: &dyn crate::Columns) -> Resu
     }
 }
 
+/// Reports Go's `ErrCastNegIntAsUnsigned` for a negative integer string.
+///
+/// `builtinCastStringAsIntSig` emits this advisory only after `StrToInt`
+/// succeeds. A malformed or out-of-range prefix therefore keeps the normal
+/// truncation/overflow warning and does not add a second 8031 event.
+fn report_negative_string_unsigned(v: &Datum, ctx: &dyn crate::Columns) {
+    let text = match v {
+        Datum::String(value) => value.as_utf8().ok(),
+        Datum::Bytes(value) => std::str::from_utf8(value).ok(),
+        _ => None,
+    };
+    let Some(text) = text else {
+        return;
+    };
+    let trimmed = text.trim();
+    if trimmed.len() <= 1
+        || !trimmed.starts_with('-')
+        || !int_prefix_consumed_all(trimmed)
+        || trimmed.parse::<i64>().is_err()
+    {
+        return;
+    }
+    ctx.append_warning(
+        8031,
+        "Cast to unsigned converted negative integer to it's positive complement",
+    );
+}
+
+/// Maps `MyDecimal.FromString`'s non-overflow parse dispositions to the
+/// warning emitted by Go's string-to-decimal cast signature. The parsed value
+/// is still retained (including a valid prefix); only a completely invalid or
+/// truncated suffix contributes this statement warning.
+fn report_decimal_input_truncation(v: &Datum, ctx: &dyn crate::Columns) {
+    let text = match v {
+        Datum::String(value) => value.as_utf8().ok(),
+        Datum::Bytes(value) => std::str::from_utf8(value).ok(),
+        _ => None,
+    };
+    let Some(text) = text else {
+        return;
+    };
+    let trimmed = text.trim();
+    let (_, parse_error) = Decimal::parse_mysql(trimmed);
+    if matches!(
+        parse_error,
+        Some(
+            tidb_datatype::DecimalParseError::Truncated
+                | tidb_datatype::DecimalParseError::BadNumber
+                | tidb_datatype::DecimalParseError::TruncatedWrongValue
+        )
+    ) {
+        ctx.append_warning(
+            1292,
+            &format!("Truncated incorrect DECIMAL value: '{trimmed}'"),
+        );
+    }
+}
+
 fn signed_string_integer_parse_overflows(text: &str) -> bool {
     if !int_prefix_consumed_all(text) {
         return false;
@@ -739,17 +799,16 @@ fn to_decimal_for_cast(v: &Datum) -> Decimal {
         Datum::Decimal(d) => d.clone(),
         Datum::Int(i) => Decimal::from_int(*i),
         Datum::UInt(i) => Decimal::from_uint(*i),
-        // `f64`'s own `Display` never uses scientific notation (confirmed
-        // directly against `1e300`/`1e-300`), so this always lands on
-        // `decimal_prefix`'s exact, no-exponent path — never its lossy
-        // `f64`-round-trip fallback.
+        // `f64`'s own `Display` is accepted by the decimal prefix parser;
+        // scientific notation remains exact through the same parser used for
+        // string operands.
         Datum::Real(f) => decimal_prefix(&f.to_string()),
         Datum::String(s) => s
             .as_utf8()
-            .map(decimal_prefix)
+            .map(|text| Decimal::parse_mysql(text).0)
             .unwrap_or_else(|_| Decimal::from_int(0)),
         Datum::Bytes(s) => std::str::from_utf8(s)
-            .map(decimal_prefix)
+            .map(|text| Decimal::parse_mysql(text).0)
             .unwrap_or_else(|_| Decimal::from_int(0)),
         Datum::Null | Datum::MinNotNull | Datum::MaxValue => unreachable!("guarded by caller"),
         other => other
@@ -758,18 +817,14 @@ fn to_decimal_for_cast(v: &Datum) -> Decimal {
     }
 }
 
-/// `to_f64_for_cast`/`to_decimal_for_cast`'s shared string scan: a FULLER
-/// numeric prefix than [`str_int_prefix`]'s own digit-run-only scan —
+/// `to_f64_for_cast`'s numeric prefix scan: a FULLER prefix than
+/// [`str_int_prefix`]'s own digit-run-only scan —
 /// optional whitespace, sign, digits, optional `.` + digits, optional
 /// exponent (confirmed via `goeval`: `CAST('3.5abc' AS DECIMAL)` sees
 /// `3.5abc`'s leading `3.5`, and `CAST('1e2' AS DECIMAL)` is `100`, both
 /// stopping at the first character that doesn't extend the number). Exact
-/// digit-string arithmetic when there's no exponent (the common case,
-/// covering every value this crate's `Decimal` itself can ever produce);
-/// an exponent suffix falls back to an `f64` round-trip — a narrow,
-/// accepted precision-loss divergence for that one sub-case (real MySQL's
-/// own decimal parser handles an exponent exactly; this crate's does
-/// not).
+/// digit-string arithmetic when there's no exponent (the common case);
+/// an exponent suffix falls back to an `f64` round-trip for REAL sources.
 fn decimal_prefix(s: &str) -> Decimal {
     let s = s.trim_start();
     let (negative, rest) = match s.strip_prefix('-') {

@@ -604,12 +604,31 @@ impl Expression {
         ctx: &impl crate::context::Columns,
         row: tidb_chunk::row::Row<'_>,
     ) -> Result<tidb_datatype::Datum, crate::context::EvalError> {
-        match self {
+        let value = match self {
             Expression::Column(c) => c.eval(row),
             Expression::Constant(c) => c.eval(),
             Expression::CorrelatedColumn(c) => Ok(c.eval()),
             Expression::ScalarFunction(c) => c.eval(ctx, row),
+        }?;
+        // `WrapWithCastAsInt` follows Go's hybrid ENUM path by setting
+        // `EnumSetAsIntFlag` on the source expression and returning it without
+        // building another cast node. The row/constant seam still materializes
+        // the native ENUM/SET datum, so honor that flag here just as Go's
+        // `EvalInt` does.
+        if let Some(field_type) = self.static_type() {
+            if field_type.has_flag(tidb_datatype::FieldTypeFlags::ENUM_SET_AS_INT) {
+                return Ok(match (field_type.code(), value) {
+                    (tidb_datatype::FieldTypeCode::Enum, tidb_datatype::Datum::Enum(value, _)) => {
+                        tidb_datatype::Datum::UInt(value.value())
+                    }
+                    (tidb_datatype::FieldTypeCode::Set, tidb_datatype::Datum::Set(value, _)) => {
+                        tidb_datatype::Datum::UInt(value.value())
+                    }
+                    (_, value) => value,
+                });
+            }
         }
+        Ok(value)
     }
 
     /// Go `Expression.GetType` without an `EvalContext`: the expression's static

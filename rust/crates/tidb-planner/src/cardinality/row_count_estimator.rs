@@ -399,6 +399,7 @@ pub fn equal_row_count_on_column(
     let (hist_count, matched) = histogram.equal_row_count(value, true, collation);
     let hist_ndv = (histogram.ndv - topn_num(column.topn.as_ref()) as i64) as f64;
     if matched
+        && hist_count > 0.0
         && !is_last_bucket_end_value_underrepresented(
             histogram,
             value,

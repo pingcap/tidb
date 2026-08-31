@@ -222,17 +222,13 @@ fn cacheable() {
     assert!(explain(true, select_stmt(None)).is_read_only(true));
     assert!(show_stmt().is_read_only(true));
     assert!(show_stmt().is_read_only(true));
-    // Go: TraceStmt{Stmt: Select} is read-only. Rust currently treats every
-    // Trace as non-read-only; see `cacheable_trace_select_is_read_only`.
+    assert!(trace(select_stmt(None)).is_read_only(true));
     assert!(!trace(delete_stmt()).is_read_only(true));
 }
 
-/// `pkg/parser/ast/util_test.go::TestCacheable` gap: Go's `IsReadOnly` for
-/// `TraceStmt` delegates to the inner statement. Rust's `AdminStmt::is_read_only`
-/// currently treats every `Trace` as non-read-only via the default arm.
-// go-parity-gap: TraceStmt read-only classification does not delegate to its inner statement.
+/// `TraceStmt` delegates to the inner statement, matching Go's `IsReadOnly`
+/// visitor rather than treating the tracing wrapper as a write by itself.
 #[test]
-#[ignore = "go-parity-gap: TraceStmt is_read_only does not delegate to the inner statement"]
 fn cacheable_trace_select_is_read_only() {
     assert!(
         trace(select_stmt(None)).is_read_only(true),

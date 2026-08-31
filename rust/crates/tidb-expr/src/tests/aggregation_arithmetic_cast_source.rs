@@ -648,9 +648,8 @@ fn test_cast_functions_char_and_binary() {
 #[test]
 fn test_cast_functions_string_to_unsigned_and_signed() {
     // Every row runs under Go's TruncateAsWarning: truncated reads succeed
-    // and append a warning keyed by errno only. Warnings Rust DOES emit are
-    // asserted exactly; the missing ErrCastNegIntAsUnsigned (8031) event is
-    // split into its own gap test below.
+    // and append a warning keyed by errno only. Warnings Rust emits are
+    // asserted exactly, including ErrCastNegIntAsUnsigned (8031).
     let long = "18446744073709551616";
     let near = "18446744073709551614";
 
@@ -679,7 +678,13 @@ fn test_cast_functions_string_to_unsigned_and_signed() {
     )
     .unwrap();
     assert_eq!(out, Datum::UInt(u64::MAX));
-    assert!((*ctx.0.borrow()).is_empty());
+    assert_eq!(
+        *ctx.0.borrow(),
+        vec![(
+            8031,
+            "Cast to unsigned converted negative integer to it's positive complement".to_owned()
+        )]
+    );
 
     // '-18446744073709551616' as unsigned → low 64 bits of i64::MIN + warn.
     let negative_low = "-18446744073709551616";
@@ -792,9 +797,23 @@ fn int_binary_target(unsigned: bool) -> FieldType {
 }
 
 #[test]
-#[ignore = "go-parity-gap: the string→unsigned cast path emits no ErrCastNegIntAsUnsigned (8031) event; Go appends it whenever a negative integer string meets an UNSIGNED target (builtin_cast.go:1818)"]
 fn test_cast_functions_neg_int_as_unsigned_warns_8031() {
-    // Go: cast('-1' as unsigned) warns types.ErrCastNegAsUnsigned...
+    let ctx = WarningCtx::default();
+    let out = cast_eval(
+        "cast_unsigned",
+        string_const("-1"),
+        int_binary_target(true),
+        &ctx,
+    )
+    .unwrap();
+    assert_eq!(out, Datum::UInt(u64::MAX));
+    assert_eq!(
+        *ctx.0.borrow(),
+        vec![(
+            8031,
+            "Cast to unsigned converted negative integer to it's positive complement".to_owned()
+        )]
+    );
 }
 
 #[test]
@@ -856,7 +875,8 @@ fn test_cast_functions_uint_to_wide_decimal() {
 #[test]
 fn test_cast_functions_bad_string_as_decimal_reads_zero_silently() {
     // cast(bad_string as decimal) must not fail the statement: under
-    // TruncateAsWarning both inputs answer a zero-valued decimal.
+    // TruncateAsWarning both inputs answer a zero-valued decimal and append
+    // Go's ErrTruncatedWrongVal warning.
     for s in ["hello", ""] {
         let ctx = WarningCtx::default();
         let out = cast_eval("cast_decimal", string_const(s), dec_ft(), &ctx);
@@ -865,9 +885,17 @@ fn test_cast_functions_bad_string_as_decimal_reads_zero_silently() {
 }
 
 #[test]
-#[ignore = "go-parity-gap: the string→decimal cast path reports no ErrTruncatedWrongVal event for garbage strings ('hello'), where Go warns 1292 before reading zero"]
 fn test_cast_functions_bad_string_as_decimal_warns_1292() {
-    // Go: require.NoError plus a truncation warning per row.
+    for s in ["hello", ""] {
+        let ctx = WarningCtx::default();
+        let out = cast_eval("cast_decimal", string_const(s), dec_ft(), &ctx)
+            .expect("truncated decimal conversion remains a warning");
+        assert_eq!(out, Datum::Decimal(Decimal::from_int(0)), "{s}");
+        assert_eq!(
+            *ctx.0.borrow(),
+            vec![(1292, format!("Truncated incorrect DECIMAL value: '{s}'"))]
+        );
+    }
 }
 #[test]
 fn test_cast_functions_int_as_char_zero_width() {
@@ -1526,9 +1554,21 @@ fn test_wrap_with_cast_as_types_classes_real_to_decimal_keeps_fraction() {
 }
 
 #[test]
-#[ignore = "go-parity-gap: WrapWithCastAsInt flags ENUM constants with EnumSetAsIntFlag but the evaluator never reads that flag, so a wrapped enum evaluates to itself instead of its numeric value (Go intRes == 123)"]
 fn test_wrap_with_cast_as_types_classes_enum_row() {
-    // Go: enum{Name:"a", Value:123} wraps to numeric reads across targets.
+    use crate::aggregation::wrap_cast::wrap_with_cast_as_int;
+
+    let enum_type = FieldType::new(C::Enum);
+    let enum_value = const_typed(
+        Datum::Enum(MysqlEnum::new("a", 123), Collation::Utf8Mb4Bin),
+        enum_type,
+    );
+    let wrapped = wrap_with_cast_as_int(enum_value, None).unwrap();
+    assert_eq!(
+        wrapped
+            .eval(&WarningCtx::default(), tidb_chunk::row::Row::empty())
+            .unwrap(),
+        Datum::UInt(123)
+    );
 }
 
 #[test]
