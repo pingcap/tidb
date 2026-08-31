@@ -226,6 +226,17 @@ func calculateStatementRUWithOperators(
 	return finalized, operatorRUs, true
 }
 
+// calculateStatementRUInternal shares one forest traversal between formal
+// statement-RU reporting and synchronous RU EXPLAIN.
+//
+// operatorRUs is nil on the formal path: that path constructs no
+// ExplainRUResult and skips the per-operator RU projection and writes.
+//
+// The recursion still threads the optional output slice and snapshots
+// calculator units before each subtree and operator, so ResultOnly's
+// zero-allocation contract covers only the EXPLAIN result shapes; it does
+// not mean that RU EXPLAIN instrumentation adds zero CPU work to formal
+// reporting.
 func calculateStatementRUInternal(
 	flat *plannercore.FlatPhysicalPlan,
 	runtimeStatsColl *execdetails.RuntimeStatsColl,
