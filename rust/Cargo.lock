@@ -3369,6 +3369,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-ddl-resourcegroup"
+version = "0.0.0"
+dependencies = [
+ "tidb-model",
+ "tikv-client",
+]
+
+[[package]]
 name = "tidb-ddl-serverstate"
 version = "0.0.0"
 dependencies = [
@@ -3382,6 +3390,10 @@ dependencies = [
  "tidb-pd-client",
  "tidb-util",
 ]
+
+[[package]]
+name = "tidb-ddl-testargsv1"
+version = "0.0.0"
 
 [[package]]
 name = "tidb-distsql"

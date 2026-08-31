@@ -1,0 +1,15 @@
+[package]
+name = "tidb-ddl-resourcegroup"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/ddl/resourcegroup settings-to-kvproto conversion."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-model = { path = "../tidb-model" }
+tikv-client.workspace = true

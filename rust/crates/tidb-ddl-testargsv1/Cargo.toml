@@ -1,0 +1,15 @@
+[package]
+name = "tidb-ddl-testargsv1"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/ddl/testargsv1 build-tag flag."
+
+[lints]
+workspace = true
+
+[features]
+default = []
+ddlargsv1 = []
