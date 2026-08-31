@@ -52,6 +52,34 @@ func writeDatum(restoreCtx *format.RestoreCtx, d types.Datum, ft *types.FieldTyp
 	return expr.Restore(restoreCtx)
 }
 
+// writeCursorDatum writes a datum used by a pagination or task-range predicate.
+// ENUM and SET are physically ordered by their numeric values rather than their
+// display strings, so their cursors must use the ordinal/bitmask form as well.
+// DELETE key predicates intentionally keep using writeDatum: their equality
+// comparisons do not depend on the physical ordering.
+func writeCursorDatum(restoreCtx *format.RestoreCtx, d types.Datum, ft *types.FieldType) error {
+	if d.IsNull() {
+		restoreCtx.WriteKeyWord("NULL")
+		return nil
+	}
+	switch ft.GetType() {
+	case mysql.TypeEnum:
+		if d.Kind() != types.KindMysqlEnum {
+			return errors.Errorf("invalid ENUM cursor datum kind: %d", d.Kind())
+		}
+		restoreCtx.WritePlain(strconv.FormatUint(d.GetMysqlEnum().Value, 10))
+		return nil
+	case mysql.TypeSet:
+		if d.Kind() != types.KindMysqlSet {
+			return errors.Errorf("invalid SET cursor datum kind: %d", d.Kind())
+		}
+		restoreCtx.WritePlain(strconv.FormatUint(d.GetMysqlSet().Value, 10))
+		return nil
+	default:
+		return writeDatum(restoreCtx, d, ft)
+	}
+}
+
 // FormatSQLDatum formats the datum to a value string in sql
 func FormatSQLDatum(d types.Datum, ft *types.FieldType) (string, error) {
 	var sb strings.Builder
@@ -150,6 +178,19 @@ func (b *SQLBuilder) WriteDelete() error {
 
 // WriteCommonCondition writes a new condition
 func (b *SQLBuilder) WriteCommonCondition(cols []*model.ColumnInfo, op string, dp []types.Datum) error {
+	return b.writeCondition(cols, op, dp, writeDatum)
+}
+
+func (b *SQLBuilder) writeCursorCondition(cols []*model.ColumnInfo, op string, dp []types.Datum) error {
+	return b.writeCondition(cols, op, dp, writeCursorDatum)
+}
+
+func (b *SQLBuilder) writeCondition(
+	cols []*model.ColumnInfo,
+	op string,
+	dp []types.Datum,
+	datumWriter func(*format.RestoreCtx, types.Datum, *types.FieldType) error,
+) error {
 	switch b.state {
 	case writeSelOrDel:
 		b.restoreCtx.WritePlain(" WHERE ")
@@ -164,7 +205,7 @@ func (b *SQLBuilder) WriteCommonCondition(cols []*model.ColumnInfo, op string, d
 	b.restoreCtx.WritePlain(" ")
 	b.restoreCtx.WritePlain(op)
 	b.restoreCtx.WritePlain(" ")
-	return b.writeDataPoint(cols, dp)
+	return b.writeDataPointWith(cols, dp, datumWriter)
 }
 
 // WriteExpireCondition writes a condition with the time column
@@ -275,6 +316,14 @@ func (b *SQLBuilder) writeColNames(cols []*model.ColumnInfo, writeBrackets bool)
 }
 
 func (b *SQLBuilder) writeDataPoint(cols []*model.ColumnInfo, dp []types.Datum) error {
+	return b.writeDataPointWith(cols, dp, writeDatum)
+}
+
+func (b *SQLBuilder) writeDataPointWith(
+	cols []*model.ColumnInfo,
+	dp []types.Datum,
+	datumWriter func(*format.RestoreCtx, types.Datum, *types.FieldType) error,
+) error {
 	writeBrackets := len(cols) > 1
 	if len(cols) != len(dp) {
 		return errors.Errorf("col count not match %d != %d", len(cols), len(dp))
@@ -291,7 +340,7 @@ func (b *SQLBuilder) writeDataPoint(cols []*model.ColumnInfo, dp []types.Datum) 
 		} else {
 			b.restoreCtx.WritePlain(", ")
 		}
-		if err := writeDatum(b.restoreCtx, d, &cols[i].FieldType); err != nil {
+		if err := datumWriter(b.restoreCtx, d, &cols[i].FieldType); err != nil {
 			return err
 		}
 	}
@@ -418,15 +467,15 @@ func (g *ScanQueryGenerator) buildSQL() (string, error) {
 			val := []types.Datum{d}
 			var err error
 			if i < len(g.stack)-1 {
-				err = b.WriteCommonCondition(col, "=", val)
+				err = b.writeCursorCondition(col, "=", val)
 			} else if g.firstBuild {
 				// When `g.firstBuild == true`, that means we are querying rows after range start, because range is defined
 				// as [start, end), we should use ">=" to find the rows including start key.
-				err = b.WriteCommonCondition(col, ">=", val)
+				err = b.writeCursorCondition(col, ">=", val)
 			} else {
 				// Otherwise when `g.firstBuild != true`, that means we are continuing with the previous result, we should use
 				// ">" to exclude the previous row.
-				err = b.WriteCommonCondition(col, ">", val)
+				err = b.writeCursorCondition(col, ">", val)
 			}
 			if err != nil {
 				return "", err
@@ -435,7 +484,7 @@ func (g *ScanQueryGenerator) buildSQL() (string, error) {
 	}
 
 	if len(g.keyRangeEnd) > 0 {
-		if err := b.WriteCommonCondition(g.tbl.KeyColumns[0:len(g.keyRangeEnd)], "<", g.keyRangeEnd); err != nil {
+		if err := b.writeCursorCondition(g.tbl.KeyColumns[0:len(g.keyRangeEnd)], "<", g.keyRangeEnd); err != nil {
 			return "", err
 		}
 	}
