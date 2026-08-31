@@ -31,6 +31,7 @@ go_library(
         "//pkg/parser/mysql",
         "//pkg/planner/core",
         "//pkg/table/tables",
+        "//pkg/util/table-filter",
         "@com_github_pingcap_errors//:errors",
         "@org_uber_go_zap//:zap",
     ],
@@ -51,7 +52,7 @@ go_test(
     ],
     embed = [":importsdk"],
     flaky = True,
-    shard_count = 21,
+    shard_count = 35,
     deps = [
         "//pkg/lightning/config",
         "//pkg/lightning/log",
