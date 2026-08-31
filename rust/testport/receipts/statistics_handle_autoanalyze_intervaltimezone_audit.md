@@ -14,7 +14,7 @@ Reference: TiDB Go commit
 All 137 lines were read. The package has one assertion test, one shared
 leak-checking `TestMain`, and no benchmark.
 
-## Behavior and Rust decision
+## Behavior and Rust mapping
 
 The sole test intentionally contaminates both TiDB's system timezone and
 Go's `time.Local` before bootstrap, creates a mock store/domain, sets a
@@ -23,11 +23,36 @@ the real statistics handle, then queries the duration through the handle's
 session pool. A small positive result proves pooled sessions reset to the
 global timezone.
 
-Rust has no corresponding package or test. The old `b043` empty ignored marker
-was removed with the false parent runtime; it executed none of this behavior.
-This package remains unclaimed until the ordinary statistics handle, analyze
-job persistence, session pool timezone reset, and parent interval query exist
-together. A timestamp arithmetic helper would not be equivalent.
+Rust now exercises that complete behavior through
+`cluster_session_node::tests::unistore_cop::failed_analysis_duration_resets_the_pooled_session_timezone`:
 
-No Rust source changed solely for this audit. This is a WIP inventory, not a
-package parity or repository-wide Ready claim.
+- `ClusterSessionFactory` owns one capacity-200 advanced system-session pool,
+  matching Go Domain ownership and `MaxSessionPoolSize`.
+- every checkout runs the already-transcreated `UpdateSCtxVarsForStats`, so a
+  reused session replaces its stale `time_zone` with the live global value;
+- analyze-job insert/start/finish rows use the production TiKV persistence
+  plans, and the duration is read through the ordinary restricted SQL path;
+- the Unistore coprocessor response encoder now passes the request timezone to
+  Go-shaped `EncodeValue`. This is required because scan decode has already
+  converted a `TIMESTAMP` from UTC to the session location; flattening without
+  that location made the root decoder apply the offset twice.
+
+Rust does not mutate process-global timezone state in this shared 380-test
+binary. Instead, the test deterministically contaminates the same pooled
+session with `America/New_York`, publishes `Europe/Berlin`, and proves the
+reused session, pushed scan, and `TIMESTAMPDIFF` produce a small positive
+duration. That preserves the Go test's observable contract without adding a
+Rust-only production branch.
+
+`main_test.go` contributes only Go's test leak checker; Rust's test harness has
+no package-level leak-check hook to transcreate. `BUILD.bazel` is represented
+by the existing Cargo targets and no generated input is omitted. The package
+is complete at the pinned commit.
+
+## Validation
+
+- `cargo test -p tidb-server failed_analysis_duration_resets_the_pooled_session_timezone -- --nocapture`
+- `cargo test -p tidb-session time_zone_uses_go_parser_and_error`
+- `cargo check -p tidb-server`
+- `cargo fmt --all -- --check`
+- `git diff --check`

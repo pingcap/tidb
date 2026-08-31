@@ -482,11 +482,16 @@ impl SysVarDef {
         // entry): `SYSTEM` in any spelling canonicalizes to upper case, and
         // every other name is stored exactly as typed -- `SET time_zone='utc'`
         // reads back `utc`, not `UTC`.
-        if self.name == "time_zone" && validated.value.eq_ignore_ascii_case("SYSTEM") {
-            return Ok(Validated {
-                value: "SYSTEM".to_owned(),
-                truncated: validated.truncated,
-            });
+        if self.name == "time_zone" {
+            if validated.value.eq_ignore_ascii_case("SYSTEM") {
+                return Ok(Validated {
+                    value: "SYSTEM".to_owned(),
+                    truncated: validated.truncated,
+                });
+            }
+            tidb_util::timeutil::parse_time_zone(&validated.value)
+                .map_err(|error| ValidationError::SqlError(error.to_sql_error()))?;
+            return Ok(validated);
         }
         // Go keeps this compatibility variable in the integer range [1, 2],
         // then its variable-specific validation closure rejects 1 because the
@@ -1164,6 +1169,38 @@ mod tests {
                     .to_owned(),
             ))
         );
+    }
+
+    /// Pinned Go `TestTimeZone` plus the boundary cases in
+    /// `varsutil_test.go`: names are case-sensitive, offsets are bounded, and
+    /// only `SYSTEM` is case-folded before storage.
+    #[test]
+    fn time_zone_uses_go_parser_and_error() {
+        let sv = get_sys_var("time_zone").unwrap();
+        for value in [
+            "America/Edmonton",
+            "Europe/Helsinki",
+            "America/New_York",
+            "+10:00",
+            "-6:00",
+            "+14:00",
+            "-12:59",
+            "UTC",
+            "+00:00",
+        ] {
+            assert_eq!(sv.validate(value).unwrap().value, value);
+        }
+        assert_eq!(sv.validate("system").unwrap().value, "SYSTEM");
+        for invalid in ["America/EDMONTON", "+14:01", "-13:00", "6:00"] {
+            let Err(ValidationError::SqlError(error)) = sv.validate(invalid) else {
+                panic!("{invalid} must be ErrUnknownTimeZone");
+            };
+            assert_eq!(error.code, 1298, "{invalid}");
+            assert_eq!(
+                error.message,
+                format!("Unknown or incorrect time zone: '{invalid}'")
+            );
+        }
     }
 
     /// A ScopeNone entry is read-only, which Go reports rather than storing.

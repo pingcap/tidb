@@ -243,10 +243,9 @@ impl Session {
     /// comes from the zone database, and a `+HH:MM`/`-HH:MM` string is a
     /// fixed offset bounded to `[-12:59, +14:00]`.
     ///
-    /// An unparseable value falls back to the host zone rather than failing
-    /// the statement, because this tier accepts the variable without
-    /// validating it at SET time -- Go validates there instead, and that
-    /// check is the deferred half of this port.
+    /// Runtime `SET` validates the value before it reaches this resolver.
+    /// An unparseable value can therefore only come from a foreign persisted
+    /// global-variable row; in that case the host zone is the safe fallback.
     pub fn session_time_zone(&self) -> tidb_executor::SessionTimeZone {
         self.statement_var_snapshot().time_zone.clone()
     }
@@ -534,11 +533,11 @@ impl Session {
     /// The cached [`StatementVarSnapshot`], re-derived only when a `SET`
     /// moved the variable table; see the struct's own doc for why the
     /// GLOBAL-scope reads are NOT in it.
-    fn statement_var_snapshot(&self) -> std::rc::Rc<StatementVarSnapshot> {
+    fn statement_var_snapshot(&self) -> Arc<StatementVarSnapshot> {
         let generation = self.vars.generation();
         if let Some(cached) = self.statement_var_cache.borrow().as_ref() {
             if cached.generation == generation {
-                return std::rc::Rc::clone(cached);
+                return Arc::clone(cached);
             }
         }
         let sql_mode = self.vars.sql_mode();
@@ -609,7 +608,7 @@ impl Session {
                     .unwrap_or(0),
                 policy: index_lookup_push_down_policy,
             };
-        let snapshot = std::rc::Rc::new(StatementVarSnapshot {
+        let snapshot = Arc::new(StatementVarSnapshot {
             generation,
             version: self.vars.get_system("version").ok(),
             time_zone: self.resolve_session_time_zone(),
@@ -804,7 +803,7 @@ impl Session {
             sql_mode,
             scanner_sql_mode: scanner_sql_mode_of(sql_mode),
         });
-        *self.statement_var_cache.borrow_mut() = Some(std::rc::Rc::clone(&snapshot));
+        *self.statement_var_cache.borrow_mut() = Some(Arc::clone(&snapshot));
         snapshot
     }
 

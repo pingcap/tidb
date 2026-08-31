@@ -218,12 +218,6 @@ fn collation_server_unported() {}
 #[ignore]
 fn default_collation_for_utf8mb4_unported() {}
 
-/// Go `pkg/sessionctx/variable/sysvar_test.go::TestTimeZone`.
-// go-parity-gap: timezone parsing/validation + timeutil.ParseTimeZone comparison not ported
-#[test]
-#[ignore]
-fn time_zone_unported() {}
-
 /// Go `pkg/sessionctx/variable/sysvar_test.go::TestTxnIsolation`.
 // go-parity-gap: isolation-level validation + skip-isolation-check interaction not ported
 #[test]

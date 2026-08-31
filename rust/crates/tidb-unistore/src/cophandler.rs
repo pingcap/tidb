@@ -264,7 +264,7 @@ fn exec_index_scan(
     let mut rows = Vec::new();
     let mut emitted = 0_usize;
     if aggregation.is_none() && limit == 0 {
-        return encode_default_rows(rows);
+        return encode_default_rows(rows, &timezone);
     }
     let descending = idx_scan.desc();
     let mut ranges = context.key_ranges.iter().collect::<Vec<_>>();
@@ -376,15 +376,25 @@ fn exec_index_scan(
             rows.push(projected);
         }
     }
-    encode_default_rows(rows)
+    encode_default_rows(rows, &timezone)
 }
 
-fn encode_default_rows(rows: Vec<Vec<tidb_datatype::Datum>>) -> coprocessor::Response {
+fn encode_default_rows(
+    rows: Vec<Vec<tidb_datatype::Datum>>,
+    timezone: &tidb_datatype::SessionTimeZone,
+) -> coprocessor::Response {
     let mut chunks = Vec::new();
     let mut current = Vec::new();
     let mut current_rows = 0_usize;
     for row in rows {
-        let encoded = match tidb_codec::encode_value(&row) {
+        // Go `chunkToOldChunk` calls `codec.EncodeValue(sc.TimeZone(), ...)`.
+        // A table/index decoder has already converted TIMESTAMP from UTC into
+        // the request location, so the response encoder must flatten it back
+        // to UTC before the TiDB-side default-row decoder applies that same
+        // location. Encoding without the request zone converts through UTC as
+        // if the localized wall clock were UTC and shifts every pushed scan a
+        // second time.
+        let encoded = match tidb_codec::encode_value_in_timezone(timezone, &row) {
             Ok(encoded) => encoded,
             Err(error) => return other_error(&format!("encode row failed: {error:?}")),
         };
@@ -594,7 +604,7 @@ fn exec_table_scan(
                 }
                 projected
             };
-            let encoded = match tidb_codec::encode_value(&projected) {
+            let encoded = match tidb_codec::encode_value_in_timezone(&timezone, &projected) {
                 Ok(encoded) => encoded,
                 Err(err) => return other_error(&format!("encode row failed: {err:?}")),
             };
@@ -634,7 +644,7 @@ fn exec_table_scan(
                 }
                 projected
             };
-            let encoded = match tidb_codec::encode_value(&projected) {
+            let encoded = match tidb_codec::encode_value_in_timezone(&timezone, &projected) {
                 Ok(encoded) => encoded,
                 Err(err) => return other_error(&format!("encode row failed: {err:?}")),
             };

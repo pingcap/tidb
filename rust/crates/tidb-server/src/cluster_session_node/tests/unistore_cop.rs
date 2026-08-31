@@ -25,7 +25,9 @@ use std::time::Duration;
 
 use tidb_datatype::{Datum, MySqlDuration};
 
-use super::super::{ClusterHistoricalStatsHandle, ClusterServerSession};
+use super::super::{
+    ClusterHistoricalStatsHandle, ClusterPriorityQueueSource, ClusterServerSession,
+};
 use super::node_fixture::{rows, session_context, ABC_HASH};
 use crate::configured_user_store::ConfiguredUserStore;
 use crate::sql_node::QuerySession;
@@ -1125,6 +1127,111 @@ fn show_analyze_status_reads_persisted_jobs_like_go() {
     assert_eq!(running[0][11], "0s");
     assert_eq!(running[0][12], "100");
     assert_eq!(running[0][13], "0");
+}
+
+/// Pinned
+/// `pkg/statistics/handle/autoanalyze/priorityqueue/intervaltimezone::TestGetLastFailedAnalysisDuration`:
+/// a reused statistics session must replace its stale timezone with the live
+/// global value before evaluating the failed-job interval.
+#[test]
+fn failed_analysis_duration_resets_the_pooled_session_timezone() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let factory = Arc::new(stack.factory);
+    let mut client = factory
+        .open_session(session_context(80))
+        .expect("client session opens");
+    rows(&mut client, "SET GLOBAL time_zone = 'America/New_York'");
+    let session_pool = factory.advanced_sys_session_pool();
+    let source = ClusterPriorityQueueSource {
+        factory: Arc::downgrade(&factory),
+        stats_lease: Duration::ZERO,
+        session_pool,
+    };
+    assert_eq!(
+        source.scalar("SELECT @@time_zone").unwrap(),
+        Some(Datum::String(tidb_datatype::StringDatum::new(
+            b"America/New_York".to_vec(),
+            tidb_datatype::Collation::Utf8Mb4Bin,
+        )))
+    );
+    assert_eq!(source.session_pool.size(), 1);
+
+    rows(&mut client, "SET GLOBAL time_zone = 'Europe/Berlin'");
+    let now = tidb_exec::mysql_bootstrap::utc_now_timestamp();
+    let started_at = now
+        .add_duration(MySqlDuration::from_nanoseconds(-2_000_000_000, 0).unwrap())
+        .unwrap();
+    let handle = ClusterHistoricalStatsHandle {
+        transactions: Arc::clone(&factory.transactions),
+        catalog: Arc::clone(&factory.catalog),
+        global_vars: factory.global_vars.clone(),
+    };
+    let mut job_id = 0;
+    handle
+        .commit_stats_plan(|snapshot, _| {
+            let (created_job_id, plan) = tidb_exec::cluster_stats_write::plan_insert_analyze_job(
+                snapshot,
+                &factory.catalog.load(),
+                "test",
+                "t",
+                "",
+                b"analyze table `test`.`t`",
+                "127.0.0.1:4000",
+                1,
+                started_at,
+            )
+            .map_err(|error| error.to_string())?;
+            job_id = created_job_id;
+            Ok(plan)
+        })
+        .expect("pending job commits");
+    handle
+        .commit_stats_plan(|snapshot, _| {
+            tidb_exec::cluster_stats_write::plan_start_analyze_job(
+                snapshot,
+                &factory.catalog.load(),
+                job_id,
+                started_at,
+            )
+            .map_err(|error| error.to_string())
+        })
+        .expect("running job commits");
+    handle
+        .commit_stats_plan(|snapshot, _| {
+            tidb_exec::cluster_stats_write::plan_finish_analyze_job(
+                snapshot,
+                &factory.catalog.load(),
+                job_id,
+                0,
+                Some("simulated failure"),
+                now,
+            )
+            .map_err(|error| error.to_string())
+        })
+        .expect("failed job commits");
+
+    assert_eq!(
+        source.scalar("SELECT @@time_zone").unwrap(),
+        Some(Datum::String(tidb_datatype::StringDatum::new(
+            b"Europe/Berlin".to_vec(),
+            tidb_datatype::Collation::Utf8Mb4Bin,
+        )))
+    );
+    let duration =
+        tidb_stats_handle_autoanalyze_priorityqueue::AnalysisJobContext::last_failed_analysis_duration(
+            &source,
+            "test",
+            "t",
+            &[],
+        )
+        .expect("duration query");
+    assert!(duration > 0, "duration must be positive: {duration}");
+    assert!(
+        duration < 60_000_000_000,
+        "duration must be below one minute: {duration}"
+    );
+    assert_eq!(source.session_pool.size(), 1);
 }
 
 /// Pinned `TestCleanupCorruptedAnalyzeJobsOnCurrentInstance` and

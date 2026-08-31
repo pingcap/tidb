@@ -28,6 +28,7 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - [x] (2026-08-29) Completed pinned `pkg/statistics/util` and removed the executor's duplicate partial JSON statistics model; dump/load now shares the complete Go object shape, ordering, global marker, and memory accounting from `tidb-stats`.
 - [x] (2026-08-29) Completed pinned `pkg/statistics/handle/metrics` as its own Rust crate, preserving every health-bucket index, exclusive bound, compatibility label, shared gauge child, and historical-dump result counter.
 - [x] (2026-08-30) Completed pinned `pkg/domain/metrics` as a distinct package-shaped module: all seven historical-generation and plan-replayer handles share the process collectors, rebind together, and are wired at their production consumer points.
+- [x] (2026-08-30) Completed pinned `pkg/statistics/handle/autoanalyze/priorityqueue/intervaltimezone`: the cluster domain now owns and reuses one capacity-200 advanced statistics-session pool, refreshes its session variables on every checkout, and verifies the persisted analyze-job duration through the ordinary restricted SQL and coprocessor paths.
 - [x] (2026-08-29) Audited and completed pinned `pkg/statistics/handle/logutil`; the existing crate already matched all four logger routes, category fields, shared sampler state, and 5/10-minute sampling policies.
 - [x] (2026-08-29) Completed pinned `pkg/statistics/handle/usage/collector` and `pkg/statistics/handle/usage/indexusage`, including close-aware synchronous delivery and the complete node/session/statement aggregation behavior.
 - [x] (2026-08-29) Removed obsolete ignored predicate-collection gap carriers after wiring the real logical rule, retaining the pinned system-schema exclusion as an executable production-unit regression.
@@ -116,6 +117,15 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - [ ] Run the Ready validation profile, including `make lint`, only after the complete package inventory is closed.
 
 ## Surprises & Discoveries
+
+- Observation: Unistore's default-row response encoded a scan-decoded
+  `TIMESTAMP` without the request timezone. The scan had already converted UTC
+  to the session location, so the TiDB-side schema-aware decoder applied the
+  offset a second time whenever a selection forced coprocessor execution.
+  Evidence: the interval-timezone regression returned `-7198` seconds for the
+  pushed query while the same row read locally returned `2`; using Go's
+  `codec.EncodeValue(sc.TimeZone(), ...)` shape makes both paths return the
+  same small positive duration.
 
 - Observation: pinned `InsertTableStats2KV` is not a metadata-only insert. It emits one `INSERT IGNORE` for `stats_meta`, then one independent `INSERT IGNORE` per column and index into `stats_histograms`; later subscriber statements can observe every earlier insert because the notifier wraps the complete handler in one pessimistic transaction.
   Evidence: pinned `pkg/statistics/handle/storage/save.go::InsertTableStats2KV`, `pkg/statistics/handle/ddl/subscriber.go::insertStats4PhysicalID`, and `pkg/ddl/notifier/subscribe.go::processEventForHandler`; the Rust statement-order/placeholder regression and end-to-end truncate receipt pass through the shared staged overlay.

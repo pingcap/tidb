@@ -591,7 +591,7 @@ pub struct Session {
     /// without a hook per variable. Measured before the cache: the two were
     /// the hottest user-code frames under sysbench, ahead of the parser.
     statement_var_cache:
-        std::cell::RefCell<Option<std::rc::Rc<crate::stmt_ctx::StatementVarSnapshot>>>,
+        std::cell::RefCell<Option<std::sync::Arc<crate::stmt_ctx::StatementVarSnapshot>>>,
     cost_env_cache:
         std::cell::RefCell<Option<(u64, tidb_planner::find_best_task::coster::CostEnv)>>,
     prepared_plan_cache_environment_cache:
@@ -1343,6 +1343,21 @@ impl Session {
     #[must_use]
     pub fn vars(&self) -> &SessionVars {
         &self.vars
+    }
+
+    /// Applies one already-validated internal-session variable update.
+    ///
+    /// Go's statistics session reset writes the typed `SessionVars` fields
+    /// directly before handing a pooled session to its caller. Keeping this
+    /// narrow entry point on the session preserves that ownership boundary:
+    /// server-side system sessions do not manufacture a client `SET`
+    /// statement merely to synchronize their state.
+    pub fn set_internal_system_var(
+        &mut self,
+        name: &str,
+        value: impl Into<String>,
+    ) -> Result<(), VarError> {
+        self.vars.set_system(name, value.into()).map(|_| ())
     }
 
     /// Installs the hosting server's start timestamp (Go

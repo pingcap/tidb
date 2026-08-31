@@ -834,6 +834,11 @@ pub struct ClusterSessionFactory {
     /// Go Domain's statistics owner, used by analyze-job history GC and
     /// dead-instance cleanup.
     stats_owner: Option<Arc<dyn tidb_owner::Manager>>,
+    /// Go Domain's capacity-200 advanced system-session pool. It is installed
+    /// after stable `Arc` ownership because its factory retains only a weak
+    /// reference back to the domain-shaped session factory.
+    advanced_sys_session_pool:
+        std::sync::OnceLock<Arc<tidb_syssession::AdvancedSessionPool<ClusterStatsSessionContext>>>,
     /// Go `analyzeJobsCleanupWorker`, installed after stable `Arc` ownership.
     analyze_jobs_cleanup_worker: std::sync::OnceLock<AnalyzeJobsCleanupWorker>,
     /// Go `autoAnalyzeWorker`, installed after stable `Arc` ownership.
@@ -919,6 +924,7 @@ impl ClusterSessionFactory {
             stats_usage,
             stats_usage_workers: std::sync::OnceLock::new(),
             stats_owner: None,
+            advanced_sys_session_pool: std::sync::OnceLock::new(),
             analyze_jobs_cleanup_worker: std::sync::OnceLock::new(),
             auto_analyze_worker: std::sync::OnceLock::new(),
             historical_stats_worker,
@@ -939,9 +945,43 @@ impl ClusterSessionFactory {
                 Arc::new(ClusterPriorityQueueSource {
                     factory: Arc::downgrade(self),
                     stats_lease,
-                    next_connection_id: std::sync::atomic::AtomicU64::new(1_u64 << 61),
+                    session_pool: self.advanced_sys_session_pool(),
                 });
             tidb_stats_handle_autoanalyze_priorityqueue::AnalysisPriorityQueue::new(source)
+        }))
+    }
+
+    /// Returns Go Domain's single advanced internal-session pool.
+    fn advanced_sys_session_pool(
+        self: &Arc<Self>,
+    ) -> Arc<tidb_syssession::AdvancedSessionPool<ClusterStatsSessionContext>> {
+        Arc::clone(self.advanced_sys_session_pool.get_or_init(|| {
+            let session_factory = Arc::downgrade(self);
+            let next_connection_id = Arc::new(std::sync::atomic::AtomicU64::new(1_u64 << 61));
+            Arc::new(tidb_syssession::AdvancedSessionPool::new(200, move || {
+                use std::sync::atomic::Ordering;
+
+                let factory = session_factory.upgrade().ok_or_else(|| {
+                    tidb_syssession::SysSessionError::new("cluster session factory is stopped")
+                })?;
+                let connection_id = next_connection_id.fetch_add(1, Ordering::Relaxed);
+                let global_vars = factory.global_vars.clone();
+                let session = factory
+                    .open_session(SessionContext {
+                        connection_id,
+                        peer_addr: "127.0.0.1:0".parse().expect("loopback socket address"),
+                        identity: crate::configured_user_store::AuthenticatedIdentity::internal(),
+                        secure_transport: false,
+                        tls_status: None,
+                        cancellation: crate::sql_node::ConnectionCancellation::default(),
+                        close: crate::sql_node::ConnectionClose::default(),
+                    })
+                    .map_err(|error| tidb_syssession::SysSessionError::new(error.message))?;
+                Ok(Arc::new(ClusterStatsSessionContext::new(
+                    session,
+                    global_vars,
+                )))
+            }))
         }))
     }
 
@@ -2854,10 +2894,425 @@ impl QuerySessionFactory for ClusterSessionFactory {
     }
 }
 
+fn stats_session_error(message: impl Into<String>) -> tidb_sqlexec::SqlExecError {
+    Box::new(std::io::Error::other(message.into()))
+}
+
+struct ClusterStatsSessionState {
+    session: Mutex<Option<ClusterServerSession>>,
+    global_vars: GlobalSysvars,
+    registered: std::sync::atomic::AtomicBool,
+}
+
+impl ClusterStatsSessionState {
+    fn with_session<T>(
+        &self,
+        callback: impl FnOnce(&mut ClusterServerSession) -> Result<T, tidb_sqlexec::SqlExecError>,
+    ) -> Result<T, tidb_sqlexec::SqlExecError> {
+        let mut slot = self
+            .session
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let session = slot
+            .as_mut()
+            .ok_or_else(|| stats_session_error("system session is closed"))?;
+        callback(session)
+    }
+
+    fn materialize(
+        &self,
+        sql: &str,
+    ) -> Result<
+        (
+            Vec<Vec<tidb_datatype::Datum>>,
+            Vec<tidb_resolve::ResultFieldRef>,
+        ),
+        tidb_sqlexec::SqlExecError,
+    > {
+        self.with_session(|session| {
+            let mut result = session
+                .execute(sql)
+                .map_err(|error| stats_session_error(error.message))?;
+            let source = result.source();
+            let columns = source.columns().map_err(stats_session_error)?;
+            let mut rows = Vec::new();
+            loop {
+                let batch = source.next_batch(1024).map_err(stats_session_error)?;
+                if batch.is_empty() {
+                    break;
+                }
+                rows.extend(batch);
+            }
+            source.finish().map_err(stats_session_error)?;
+            source.close().map_err(stats_session_error)?;
+            Ok((rows, stats_result_fields(columns)))
+        })
+    }
+}
+
+fn stats_result_fields(
+    columns: Vec<tidb_protocol::ColumnInfo>,
+) -> Vec<tidb_resolve::ResultFieldRef> {
+    columns
+        .into_iter()
+        .map(|column| {
+            let mut field_type = tidb_datatype::FieldType::new(
+                tidb_datatype::FieldTypeCode::from_mysql_type(column.type_code),
+            );
+            field_type.set_flags(u32::from(column.flag));
+            field_type.set_flen(i64::from(column.column_length));
+            field_type.set_decimal(i64::from(column.decimal));
+            field_type.set_collation_name(tidb_datatype::collation_id_to_name(i32::from(
+                column.charset,
+            )));
+            let model_column = tidb_model::GoShared::new(tidb_model::ColumnInfo {
+                name: tidb_ast::CiString::new(column.org_name.clone()),
+                field_type,
+                ..tidb_model::ColumnInfo::default()
+            });
+            tidb_model::GoShared::new(tidb_resolve::ResultField {
+                column: Some(model_column),
+                column_as_name: tidb_ast::CiString::new(column.name),
+                empty_org_name: column.org_name.is_empty(),
+                table_as_name: tidb_ast::CiString::new(column.table),
+                db_name: tidb_ast::CiString::new(column.schema),
+                ..tidb_resolve::ResultField::default()
+            })
+        })
+        .collect()
+}
+
+struct ClusterStatsSqlExecutor {
+    state: Arc<ClusterStatsSessionState>,
+}
+
+impl ClusterStatsSqlExecutor {
+    fn materialized_record_set(
+        &self,
+        sql: &str,
+    ) -> Result<Option<Box<dyn tidb_sqlexec::RecordSet>>, tidb_sqlexec::SqlExecError> {
+        let (rows, fields) = self.state.materialize(sql)?;
+        Ok((!fields.is_empty()).then(|| {
+            Box::new(tidb_sqlexec::SimpleRecordSet::new(fields, rows, 1024))
+                as Box<dyn tidb_sqlexec::RecordSet>
+        }))
+    }
+}
+
+impl tidb_sqlexec::SqlExecutor for ClusterStatsSqlExecutor {
+    fn execute(
+        &self,
+        _context: &dyn tidb_sqlexec::ExecutionContext,
+        sql: &str,
+    ) -> Result<Vec<Box<dyn tidb_sqlexec::RecordSet>>, tidb_sqlexec::SqlExecError> {
+        Ok(self.materialized_record_set(sql)?.into_iter().collect())
+    }
+
+    fn execute_internal(
+        &self,
+        _context: &dyn tidb_sqlexec::ExecutionContext,
+        sql: &str,
+        arguments: &[tidb_util::sqlescape::SqlArg<'_>],
+    ) -> Result<Option<Box<dyn tidb_sqlexec::RecordSet>>, tidb_sqlexec::SqlExecError> {
+        let escaped = tidb_util::sqlescape::escape_sql(sql, arguments)?;
+        let escaped = String::from_utf8(escaped)?;
+        self.materialized_record_set(&escaped)
+    }
+
+    fn execute_stmt(
+        &self,
+        _context: &dyn tidb_sqlexec::ExecutionContext,
+        statement: &tidb_ast::Stmt,
+    ) -> Result<Option<Box<dyn tidb_sqlexec::RecordSet>>, tidb_sqlexec::SqlExecError> {
+        let sql = String::from_utf8(statement.text().to_vec())?;
+        self.materialized_record_set(&sql)
+    }
+}
+
+impl tidb_sqlexec::RestrictedSqlExecutor for ClusterStatsSqlExecutor {
+    fn parse_with_params(
+        &self,
+        _context: &dyn tidb_sqlexec::ExecutionContext,
+        sql: &str,
+        arguments: &[tidb_util::sqlescape::SqlArg<'_>],
+    ) -> Result<tidb_ast::Stmt, tidb_sqlexec::SqlExecError> {
+        let escaped = tidb_util::sqlescape::escape_sql(sql, arguments)?;
+        let escaped = String::from_utf8(escaped)?;
+        tidb_parser::parse(&escaped).map_err(|error| stats_session_error(format!("{error:?}")))
+    }
+
+    fn exec_restricted_stmt(
+        &self,
+        _context: &dyn tidb_sqlexec::ExecutionContext,
+        statement: &tidb_ast::Stmt,
+        _options: &[tidb_sqlexec::OptionFuncAlias],
+    ) -> Result<
+        (
+            Vec<Vec<tidb_datatype::Datum>>,
+            Vec<tidb_resolve::ResultFieldRef>,
+        ),
+        tidb_sqlexec::SqlExecError,
+    > {
+        let sql = String::from_utf8(statement.text().to_vec())?;
+        self.state.materialize(&sql)
+    }
+
+    fn exec_restricted_sql(
+        &self,
+        _context: &dyn tidb_sqlexec::ExecutionContext,
+        _options: &[tidb_sqlexec::OptionFuncAlias],
+        sql: &str,
+        arguments: &[tidb_util::sqlescape::SqlArg<'_>],
+    ) -> Result<
+        (
+            Vec<Vec<tidb_datatype::Datum>>,
+            Vec<tidb_resolve::ResultFieldRef>,
+        ),
+        tidb_sqlexec::SqlExecError,
+    > {
+        let escaped = tidb_util::sqlescape::escape_sql(sql, arguments)?;
+        let escaped = String::from_utf8(escaped)?;
+        self.state.materialize(&escaped)
+    }
+}
+
+struct ClusterStatsSessionContext {
+    state: Arc<ClusterStatsSessionState>,
+}
+
+impl ClusterStatsSessionContext {
+    fn new(session: ClusterServerSession, global_vars: GlobalSysvars) -> Self {
+        Self {
+            state: Arc::new(ClusterStatsSessionState {
+                session: Mutex::new(Some(session)),
+                global_vars,
+                registered: std::sync::atomic::AtomicBool::new(false),
+            }),
+        }
+    }
+
+    fn with_session<T>(
+        &self,
+        callback: impl FnOnce(&mut ClusterServerSession) -> Result<T, tidb_sqlexec::SqlExecError>,
+    ) -> Result<T, tidb_sqlexec::SqlExecError> {
+        self.state.with_session(callback)
+    }
+
+    fn set_var(&self, name: &str, value: impl Into<String>) {
+        let value = value.into();
+        self.with_session(
+            |session| match session.session.set_internal_system_var(name, value) {
+                Ok(()) | Err(tidb_session::VarError::GlobalOnlyVariable(_)) => Ok(()),
+                Err(error) => Err(stats_session_error(format!("{error:?}"))),
+            },
+        )
+        .expect("validated global variable must be valid in an internal session");
+    }
+
+    fn scalar(&self, sql: &str) -> Result<Option<tidb_datatype::Datum>, String> {
+        let (rows, _) = self
+            .state
+            .materialize(sql)
+            .map_err(|error| error.to_string())?;
+        Ok(rows
+            .into_iter()
+            .next()
+            .and_then(|mut row| (!row.is_empty()).then(|| row.remove(0))))
+    }
+}
+
+impl tidb_syssession::SessionContext for ClusterStatsSessionContext {
+    fn close(&self) {
+        self.state
+            .session
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+    }
+
+    fn rollback_txn(&self, _context: &dyn tidb_sqlexec::ExecutionContext) {
+        let _ = self.with_session(|session| {
+            session
+                .execute_write("ROLLBACK")
+                .map_err(|error| stats_session_error(error.message))?;
+            Ok(())
+        });
+    }
+
+    fn has_prepared_txn_future(&self) -> bool {
+        false
+    }
+
+    fn txn_valid(&self) -> Result<bool, tidb_sqlexec::SqlExecError> {
+        self.with_session(|session| Ok(session.explicit.is_some()))
+    }
+
+    fn sql_executor(&self) -> Arc<dyn tidb_sqlexec::SqlExecutor> {
+        Arc::new(ClusterStatsSqlExecutor {
+            state: Arc::clone(&self.state),
+        })
+    }
+
+    fn restricted_sql_executor(&self) -> Arc<dyn tidb_sqlexec::RestrictedSqlExecutor> {
+        Arc::new(ClusterStatsSqlExecutor {
+            state: Arc::clone(&self.state),
+        })
+    }
+
+    fn register_internal_session(&self) {
+        self.state
+            .registered
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn unregister_internal_session(&self) {
+        self.state
+            .registered
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn contains_internal_session(&self) -> bool {
+        self.state
+            .registered
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn store_internal_session(&self) -> bool {
+        self.register_internal_session();
+        true
+    }
+}
+
+impl tidb_stats_handle_util::StatsSessionContext for ClusterStatsSessionContext {
+    fn global_system_var(&self, name: &str) -> Result<String, tidb_sqlexec::SqlExecError> {
+        self.state
+            .global_vars
+            .get(name)
+            .map_err(|error| stats_session_error(format!("{error:?}")))
+    }
+
+    fn set_enable_async_merge_global_stats(&self, enabled: bool) {
+        self.set_var(
+            tidb_vardef::tidb_vars::TIDB_ENABLE_ASYNC_MERGE_GLOBAL_STATS,
+            if enabled { "ON" } else { "OFF" },
+        );
+    }
+
+    fn set_analyze_partition_concurrency(&self, concurrency: i64) {
+        self.set_var(
+            tidb_vardef::tidb_vars::TIDB_ANALYZE_PARTITION_CONCURRENCY,
+            concurrency.to_string(),
+        );
+    }
+
+    fn set_analyze_version(&self, version: i64) {
+        self.set_var(
+            tidb_vardef::tidb_vars::TIDB_ANALYZE_VERSION,
+            version.to_string(),
+        );
+    }
+
+    fn set_enable_historical_stats(&self, enabled: bool) {
+        self.set_var(
+            tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS,
+            if enabled { "ON" } else { "OFF" },
+        );
+    }
+
+    fn set_partition_prune_mode(&self, mode: &str) {
+        self.set_var(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE, mode);
+    }
+
+    fn partition_prune_mode(&self) -> String {
+        self.with_session(|session| {
+            session
+                .session
+                .vars()
+                .get_system(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
+                .map_err(|error| stats_session_error(format!("{error:?}")))
+        })
+        .unwrap_or_default()
+    }
+
+    fn set_enable_analyze_snapshot(&self, enabled: bool) {
+        self.set_var(
+            tidb_vardef::tidb_vars::TIDB_ENABLE_ANALYZE_SNAPSHOT,
+            if enabled { "ON" } else { "OFF" },
+        );
+    }
+
+    fn set_analyze_skip_column_types(&self, value: std::collections::BTreeSet<String>) {
+        self.set_var(
+            tidb_vardef::tidb_vars::TIDB_ANALYZE_SKIP_COLUMN_TYPES,
+            value.into_iter().collect::<Vec<_>>().join(","),
+        );
+    }
+
+    fn set_skip_missing_partition_stats(&self, enabled: bool) {
+        self.set_var(
+            tidb_vardef::tidb_vars::TIDB_SKIP_MISSING_PARTITION_STATS,
+            if enabled { "ON" } else { "OFF" },
+        );
+    }
+
+    fn set_analyze_partition_merge_concurrency(&self, concurrency: i64) {
+        self.set_var(
+            tidb_vardef::tidb_vars::TIDB_MERGE_PARTITION_STATS_CONCURRENCY,
+            concurrency.to_string(),
+        );
+    }
+
+    fn set_lock_wait_timeout(&self, milliseconds: i64) {
+        self.set_var(
+            "innodb_lock_wait_timeout",
+            (milliseconds / 1_000).to_string(),
+        );
+    }
+
+    fn set_time_zone(&self, value: &str) -> Result<(), tidb_sqlexec::SqlExecError> {
+        self.with_session(|session| {
+            session
+                .session
+                .set_internal_system_var("time_zone", value)
+                .map_err(|error| stats_session_error(format!("{error:?}")))
+        })
+    }
+
+    fn location(&self) -> String {
+        self.with_session(|session| {
+            session
+                .session
+                .vars()
+                .get_system("time_zone")
+                .map_err(|error| stats_session_error(format!("{error:?}")))
+        })
+        .unwrap_or_else(|_| "SYSTEM".to_owned())
+    }
+
+    fn set_statement_time_zone(&self, _value: &str) {
+        // Rust constructs its statement context from SessionVars at every
+        // statement boundary, so set_time_zone above updates both authorities.
+    }
+
+    fn transaction_start_ts(&self, active: bool) -> Result<u64, tidb_sqlexec::SqlExecError> {
+        self.with_session(|session| {
+            if let Some(transaction) = session.explicit.as_ref() {
+                return Ok(transaction.start_ts());
+            }
+            if active {
+                return Err(stats_session_error(
+                    "system-session transaction has not been activated",
+                ));
+            }
+            Ok(0)
+        })
+    }
+}
+
 struct ClusterPriorityQueueSource {
     factory: Weak<ClusterSessionFactory>,
     stats_lease: Duration,
-    next_connection_id: std::sync::atomic::AtomicU64,
+    session_pool: Arc<tidb_syssession::AdvancedSessionPool<ClusterStatsSessionContext>>,
 }
 
 impl ClusterPriorityQueueSource {
@@ -2867,34 +3322,19 @@ impl ClusterPriorityQueueSource {
             .ok_or_else(|| "cluster session factory is stopped".to_owned())
     }
 
-    fn open_session(&self) -> Result<ClusterServerSession, String> {
-        use std::sync::atomic::Ordering;
-
-        let factory = self.factory()?;
-        let connection_id = self.next_connection_id.fetch_add(1, Ordering::Relaxed);
-        factory
-            .open_session(SessionContext {
-                connection_id,
-                peer_addr: "127.0.0.1:0".parse().expect("loopback socket address"),
-                identity: crate::configured_user_store::AuthenticatedIdentity::internal(),
-                secure_transport: false,
-                tls_status: None,
-                cancellation: crate::sql_node::ConnectionCancellation::default(),
-                close: crate::sql_node::ConnectionClose::default(),
-            })
-            .map_err(|error| error.message)
-    }
-
     fn scalar(&self, sql: &str) -> Result<Option<tidb_datatype::Datum>, String> {
-        let mut session = self.open_session()?;
-        let mut result = session.execute(sql).map_err(|error| error.message)?;
-        let source = result.source();
-        let mut batch = source.next_batch(1)?;
-        let value = batch
-            .pop()
-            .and_then(|mut row| (!row.is_empty()).then(|| row.remove(0)));
-        source.finish()?;
-        source.close()?;
+        let mut value = None;
+        tidb_stats_handle_util::call_with_sctx(
+            self.session_pool.as_ref(),
+            |context| {
+                value = context
+                    .scalar(sql)
+                    .map_err(|error| stats_session_error(error))?;
+                Ok(())
+            },
+            &[],
+        )
+        .map_err(|error| error.to_string())?;
         Ok(value)
     }
 }
@@ -3098,14 +3538,22 @@ impl tidb_stats_handle_autoanalyze_priorityqueue::AnalysisJobContext
             need_version_rewrite_warning,
             &sql,
         );
-        self.open_session()
-            .and_then(|mut session| {
-                session
-                    .run_auto_analyze_sql(&sql)
-                    .map_err(|error| error.message)
-                    .map(|_| ())
-            })
-            .is_ok()
+        let mut analyzed = false;
+        tidb_stats_handle_util::call_with_sctx(
+            self.session_pool.as_ref(),
+            |context| {
+                context.with_session(|session| {
+                    session
+                        .run_auto_analyze_sql(&sql)
+                        .map_err(|error| stats_session_error(error.message))?;
+                    analyzed = true;
+                    Ok(())
+                })
+            },
+            &[],
+        )
+        .is_ok()
+            && analyzed
     }
 
     fn auto_analyze_partition_batch_size(&self) -> usize {

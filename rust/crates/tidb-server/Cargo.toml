@@ -55,6 +55,7 @@ tidb-stats-handle-autoanalyze-exec = { path = "../tidb-stats-handle-autoanalyze-
 tidb-stats-handle-autoanalyze-priorityqueue = { path = "../tidb-stats-handle-autoanalyze-priorityqueue" }
 tidb-stats-handle-autoanalyze-refresher = { path = "../tidb-stats-handle-autoanalyze-refresher" }
 tidb-stats-handle-initstats = { path = "../tidb-stats-handle-initstats" }
+tidb-stats-handle-util = { path = "../tidb-stats-handle-util" }
 tidb-stats-handle-usage = { path = "../tidb-stats-handle-usage" }
 tidb-stats-handle-usage-indexusage = { path = "../tidb-stats-handle-usage-indexusage" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
@@ -62,6 +63,9 @@ tidb-txnkv = { path = "../tidb-txnkv" }
 tikv-client.workspace = true
 tidb-util = { path = "../tidb-util" }
 tidb-vardef = { path = "../tidb-vardef" }
+tidb-sqlexec = { path = "../tidb-sqlexec" }
+tidb-syssession = { path = "../tidb-syssession" }
+tidb-resolve = { path = "../tidb-resolve" }
 serde_json = { workspace = true }
 tidb-config = { path = "../tidb-config" }
 toml.workspace = true
