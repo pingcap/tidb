@@ -1767,6 +1767,136 @@ fn system_table_ddl_does_not_publish_statistics_events_like_go() {
     assert_no_stats(&mut session, &[logical_id, p0_id, p1_id, replacement_p1_id]);
 }
 
+/// Pinned `pkg/statistics/handle/handletest/handle_test.go::
+/// TestStatsCacheShouldNotCacheSystemTable`. The SHOW scans may enumerate
+/// every schema, but they must not publish system-table objects into the
+/// canonical statistics cache.
+#[test]
+fn show_stats_does_not_cache_system_table_statistics() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(147))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "CREATE TABLE system_cache_guard (a INT)");
+    rows(
+        &mut session,
+        "INSERT INTO system_cache_guard VALUES (1),(2),(3)",
+    );
+    rows(&mut session, "ANALYZE TABLE system_cache_guard");
+
+    let before = stack.factory.stats().receipt();
+    assert_eq!(before.loaded, 1);
+    rows(&mut session, "SHOW STATS_META");
+    rows(&mut session, "SHOW STATS_HEALTHY");
+    assert_eq!(stack.factory.stats().receipt(), before);
+}
+
+/// Pinned `pkg/statistics/handle/handletest/handle_test.go::
+/// TestUninitializedStatsStatus`. DDL placeholders and delta-only metadata
+/// are not initialized histograms, and both settings of the outdated-stats
+/// switch retain the planner's pseudo fallback.
+#[test]
+fn uninitialized_statistics_remain_hidden_and_pseudo() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(148))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "CREATE TABLE uninitialized_stats (a INT, b INT, c INT, INDEX idx_a(a))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO uninitialized_stats VALUES (1,2,2), (3,4,4), (5,6,6), (7,8,8), (9,10,10)",
+    );
+    rows(&mut session, "FLUSH STATS_DELTA *.*");
+
+    assert!(rows(
+        &mut session,
+        "SHOW STATS_HISTOGRAMS WHERE db_name = 'test' AND table_name = 'uninitialized_stats'",
+    )
+    .is_empty());
+    for enabled in ["ON", "OFF"] {
+        rows(
+            &mut session,
+            &format!("SET @@tidb_enable_pseudo_for_outdated_stats = {enabled}"),
+        );
+        let explain = displayed(rows(
+            &mut session,
+            "EXPLAIN SELECT * FROM uninitialized_stats",
+        ));
+        assert!(
+            explain
+                .iter()
+                .flatten()
+                .any(|value| value.contains("stats:pseudo")),
+            "uninitialized statistics must stay pseudo with the switch {enabled}: {explain:?}"
+        );
+    }
+}
+
+/// Pinned `pkg/statistics/handle/handletest/handle_test.go::
+/// TestSkipMissingPartitionStats`. Dynamic global merge keeps the logical
+/// row count, accounts for the unanalyzed partition as modifications, and
+/// publishes every merged column/index when missing partition statistics are
+/// explicitly skipped.
+#[test]
+fn global_statistics_skip_missing_partition_like_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(149))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "SET SESSION tidb_partition_prune_mode = 'dynamic'",
+    );
+    rows(
+        &mut session,
+        "SET SESSION tidb_skip_missing_partition_stats = ON",
+    );
+    rows(
+        &mut session,
+        "CREATE TABLE skip_missing_stats (a INT, b INT, c INT, INDEX idx_b(b)) \
+         PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (100), \
+         PARTITION p1 VALUES LESS THAN (200), PARTITION p2 VALUES LESS THAN (300))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO skip_missing_stats VALUES (1,1,1), (2,2,2), \
+         (101,101,101), (102,102,102), (201,201,201), (202,202,202)",
+    );
+    rows(&mut session, "FLUSH STATS_DELTA *.*");
+    rows(
+        &mut session,
+        "ANALYZE TABLE skip_missing_stats PARTITION p0, p1",
+    );
+
+    let global = displayed(rows(
+        &mut session,
+        "SHOW STATS_META WHERE table_name = 'skip_missing_stats' AND partition_name = 'global'",
+    ));
+    assert_eq!(global.len(), 1, "missing global statistics row: {global:?}");
+    assert_eq!((global[0][4].as_str(), global[0][5].as_str()), ("2", "6"));
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SHOW STATS_HISTOGRAMS WHERE table_name = 'skip_missing_stats' AND partition_name = 'global'",
+        ))
+        .len(),
+        4,
+        "all three columns and idx_b must be initialized"
+    );
+}
+
 /// Pinned DDL subscriber `ActionModifyColumn`: `InsertColStats2KV` is an
 /// `INSERT IGNORE`, but if the histogram is absent it recreates it before
 /// refreshing meta. An original CREATE TABLE column has no origin default,

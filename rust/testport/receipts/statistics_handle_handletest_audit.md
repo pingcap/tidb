@@ -61,6 +61,16 @@ from its zero realtime count. A later shared-catalog rebuild reinstalls the
 cached LOCAL planner view rather than losing it with the session-owned
 metadata.
 
+Pinned `TestStatsCacheShouldNotCacheSystemTable` is covered through the
+ordinary Unistore session path. After ANALYZE publishes the source test's one
+user-table object, `SHOW STATS_META` and `SHOW STATS_HEALTHY` leave the
+canonical loaded-statistics cache receipt unchanged at one. Rust's separate
+statement-facing snapshot records pseudo load attempts for system tables, but
+`SharedStats` inserts only `TableStatsState::Loaded` objects into its canonical
+cache and the planner synthesizes pseudo statistics on a cache miss. Those
+attempt states therefore are not cached system-table statistics and removing
+them would not match the Go cache contract.
+
 Pinned `TestPrunedIndexesNoAsyncStatsLoad`,
 `TestPrunedIndexesNoAsyncStatsLoadPartitioned`, and
 `TestPrunedIndexesNoAsyncStatsLoadPartitionedStatic` now have one executable
@@ -90,6 +100,44 @@ analyzes both partitions with zero TopN, merges the global column statistics,
 and exposes exactly one matching `SHOW ANALYZE STATUS` row in `finished`
 state.
 
+Pinned `TestLoadHistogramWithCollate` maps directly to
+`cluster_stats_load::decode_bound` and
+`a_string_column_bound_stays_raw_bytes_because_it_may_be_a_collation_key`.
+The production loader follows Go's `HistogramFromStorageWithPriority` string
+branch: a non-ENUM/SET string column is read back as blob bytes because a new
+collation's stored weight string may exceed the declared `flen` or be invalid
+text. The exact ten-byte `VARCHAR` shape therefore loads without applying a
+second character conversion.
+
+Pinned `TestStatsCacheUpdateSkip` maps to the production metadata-version
+probe plus `an_unchanged_read_publishes_nothing`. Equal table versions and an
+unchanged tracked set skip the full statistics read, retain the exact
+published `Arc<StatsSnapshot>`, and do not increment the reload count. This is
+stronger executable evidence for the source test's equal cached table before
+and after `Handle.Update`.
+
+Pinned `TestStatsCacheUpdateTimeout` maps to the same production reload pass
+and `a_failed_pass_keeps_the_previous_snapshot_published`. A failed system-row
+read increments the failure counter but publishes nothing, so the prior table
+version, realtime count, and modify count stay in force. Rust's background
+worker reports that failure through its observable counter/log rather than a
+direct test call to Go's exported `Handle.Update`; no cache mutation occurs in
+either path.
+
+Pinned `TestUninitializedStatsStatus` now has an exact ordinary-session
+regression. CREATE plus delta flush leaves DDL placeholder columns/indexes
+uninitialized, `SHOW STATS_HISTOGRAMS` exposes no rows, and EXPLAIN retains
+`stats:pseudo` with `tidb_enable_pseudo_for_outdated_stats` both enabled and
+disabled. The lower-level planner receipt also proves that reduced histogram
+metadata retains the realtime row count while the table remains pseudo.
+
+Pinned `TestSkipMissingPartitionStats` now has an exact Unistore
+production-path regression. Dynamic partition ANALYZE over p0 and p1 with p2
+missing publishes the logical/global count as six, modify count as two, and
+all three columns plus `idx_b` as initialized statistics. This exercises the
+ordinary session variables, storage merge, canonical cache, and SHOW surfaces
+rather than a standalone merge carrier.
+
 The package is still not claimed: this receipt has not yet reconciled all 30
 original tests one by one against executable Rust owners and the complete
 package validation gate. The temporary-table blocker is closed evidence, not
@@ -113,6 +161,19 @@ a substitute for that atomic inventory.
 - `cargo test -p tidb-server partition_global_analyze_finishes_with_zero_in_datetime_values -- --nocapture`
   passed outside the sandbox after the in-sandbox run stopped at the known
   macOS `sysctl hw.memsize` restriction.
+- `cargo test -p tidb-server show_stats_does_not_cache_system_table_statistics -- --nocapture`
+  passed outside the sandbox; the canonical loaded cache remained unchanged
+  across both SHOW scans.
+- `cargo test -p tidb-exec a_string_column_bound_stays_raw_bytes_because_it_may_be_a_collation_key -- --nocapture`
+  passed: 1 passed.
+- `cargo test -p tidb-exec an_unchanged_read_publishes_nothing -- --nocapture`
+  passed: 1 passed.
+- `cargo test -p tidb-exec a_failed_pass_keeps_the_previous_snapshot_published -- --nocapture`
+  passed: 1 passed.
+- `cargo test -p tidb-server uninitialized_statistics_remain_hidden_and_pseudo -- --nocapture`
+  passed outside the sandbox: 1 passed.
+- `cargo test -p tidb-server global_statistics_skip_missing_partition_like_go -- --nocapture`
+  passed outside the sandbox: 1 passed.
 - `cargo fmt --all -- --check` passed.
 - `make lint` passed for this batch's Ready gate.
 
