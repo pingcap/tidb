@@ -306,7 +306,7 @@ func (t *mockScanTask) selectSQL(i int) string {
 	if i == 0 {
 		op = ">="
 	}
-	return fmt.Sprintf("SELECT LOW_PRIORITY SQL_NO_CACHE `_tidb_rowid` FROM `test`.`t1` WHERE `_tidb_rowid` %s %d AND `time` < FROM_UNIXTIME(0) ORDER BY `_tidb_rowid` ASC LIMIT 3", op, i*100)
+	return fmt.Sprintf("SELECT LOW_PRIORITY SQL_NO_CACHE `_tidb_rowid` FROM `test`.`t1` WHERE `_tidb_rowid` %s %d AND `time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `_tidb_rowid` ASC LIMIT 3", op, i*100)
 }
 
 func (t *mockScanTask) runDoScanForTest(delTaskCnt int, errString string) *ttlScanTaskExecResult {
