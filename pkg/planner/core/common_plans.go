@@ -624,43 +624,35 @@ type ExplainInfoForEncode struct {
 	SubOperators        []*ExplainInfoForEncode `json:"subOperators,omitempty"`
 }
 
-// ExplainRUOperatorResult is the finalized RU projection and structural
-// signature for one flat-plan occurrence. PlanID remains an evidence lookup key,
-// not the occurrence identity. The containing slice index identifies the
-// occurrence, while the remaining value-only fields verify that a separately
-// flattened display tree has the same operator, site, role, and child routing.
+// ExplainRUOperatorResult is the finalized RU projection for one flat-plan
+// occurrence. Operator belongs to the exact forest used by the calculator, so
+// it preserves occurrence identity even when different operators share a plan
+// ID. The result is used only by synchronous RU EXPLAIN rendering; formal
+// statement-RU publication uses the value-only aggregate result instead.
 type ExplainRUOperatorResult struct {
-	PlanID                int
-	ExplainID             string
-	ChildrenIdx           []int
-	ChildrenEndIdx        int
-	Depth                 uint32
-	Label                 OperatorLabel
-	IsRoot                bool
-	StoreType             kv.StoreType
-	ReqType               physicalop.ReadReqType
-	NeedReverseDriverSide bool
-	IsINLProbeChild       bool
-	IsPhysicalPlan        bool
-	SelfRU                float64
-	CumRU                 float64
+	Operator *FlatOperator
+	SelfRU   float64
+	CumRU    float64
 }
 
-// ExplainRUResult is a value-only, forest-aligned snapshot produced by the
-// statement-RU calculator. Each tree is indexed exactly like the corresponding
-// FlatPhysicalPlan tree. TotalRU is the whole-statement denominator and is not
+// ExplainRUResult is an occurrence-preserving RU EXPLAIN result produced by the
+// statement-RU calculator. Its trees are the single source of truth for later
+// rendering: each entry owns the exact flat-plan occurrence together with its
+// finalized RU values. TotalRU is the whole-statement denominator and is not
 // reconstructed from operator cumulative values.
 type ExplainRUResult struct {
+	inExplain        bool
 	TotalRU          float64
 	Main             []ExplainRUOperatorResult
 	CTEs             [][]ExplainRUOperatorResult
 	ScalarSubQueries [][]ExplainRUOperatorResult
 }
 
-// NewExplainRUResult creates an occurrence-aligned, value-only result shape
-// from flat. Keeping shape construction beside shape validation makes the
-// structural contract a planner/core responsibility; callers only fill RU
-// values at the returned coordinates.
+// NewExplainRUResult creates an occurrence-aligned RU result from flat. It
+// copies the forest containers but retains their operators, so the caller may
+// discard or mutate the original slices but must not mutate the referenced
+// operators. Callers only fill RU values at the returned coordinates before
+// transferring the result to Explain.SetRUResult.
 func NewExplainRUResult(flat *FlatPhysicalPlan) *ExplainRUResult {
 	if flat == nil {
 		return nil
@@ -668,27 +660,12 @@ func NewExplainRUResult(flat *FlatPhysicalPlan) *ExplainRUResult {
 	newTree := func(tree FlatPlanTree) []ExplainRUOperatorResult {
 		result := make([]ExplainRUOperatorResult, len(tree))
 		for i, operator := range tree {
-			if operator == nil || operator.Origin == nil {
-				continue
-			}
-			result[i] = ExplainRUOperatorResult{
-				PlanID:                operator.Origin.ID(),
-				ExplainID:             operator.ExplainID().String(),
-				ChildrenIdx:           append([]int(nil), operator.ChildrenIdx...),
-				ChildrenEndIdx:        operator.ChildrenEndIdx,
-				Depth:                 operator.Depth,
-				Label:                 operator.Label,
-				IsRoot:                operator.IsRoot,
-				StoreType:             operator.StoreType,
-				ReqType:               operator.ReqType,
-				NeedReverseDriverSide: operator.NeedReverseDriverSide,
-				IsINLProbeChild:       operator.IsINLProbeChild,
-				IsPhysicalPlan:        operator.IsPhysicalPlan,
-			}
+			result[i].Operator = operator
 		}
 		return result
 	}
 	result := &ExplainRUResult{
+		inExplain:        flat.InExplain,
 		Main:             newTree(flat.Main),
 		CTEs:             make([][]ExplainRUOperatorResult, len(flat.CTEs)),
 		ScalarSubQueries: make([][]ExplainRUOperatorResult, len(flat.ScalarSubQueries)),
@@ -735,40 +712,17 @@ type Explain struct {
 	ruResultSet     bool
 }
 
-// SetRUResult freezes one calculator result for later RU-format rendering.
-// Copying every slice prevents later mutation by a caller from changing the
-// already finalized EXPLAIN output. A nil result marks the attempted
-// calculation unavailable, so rendering fails closed instead of consulting
-// legacy plan-ID-keyed RU stats that cannot represent forest occurrences.
+// SetRUResult transfers one calculator result to Explain for later RU-format
+// rendering. The caller must not mutate result or its owned flat operators
+// after this call. A nil result marks the attempted calculation unavailable, so
+// rendering fails closed instead of consulting legacy plan-ID-keyed RU stats
+// that cannot represent forest occurrences.
 func (e *Explain) SetRUResult(result *ExplainRUResult) {
 	if e == nil {
 		return
 	}
 	e.ruResultSet = true
-	e.ruResult = nil
-	if result == nil {
-		return
-	}
-	cloneTree := func(tree []ExplainRUOperatorResult) []ExplainRUOperatorResult {
-		cloned := append([]ExplainRUOperatorResult(nil), tree...)
-		for i := range cloned {
-			cloned[i].ChildrenIdx = append([]int(nil), tree[i].ChildrenIdx...)
-		}
-		return cloned
-	}
-	cloned := &ExplainRUResult{
-		TotalRU:          result.TotalRU,
-		Main:             cloneTree(result.Main),
-		CTEs:             make([][]ExplainRUOperatorResult, len(result.CTEs)),
-		ScalarSubQueries: make([][]ExplainRUOperatorResult, len(result.ScalarSubQueries)),
-	}
-	for i := range result.CTEs {
-		cloned.CTEs[i] = cloneTree(result.CTEs[i])
-	}
-	for i := range result.ScalarSubQueries {
-		cloned.ScalarSubQueries[i] = cloneTree(result.ScalarSubQueries[i])
-	}
-	e.ruResult = cloned
+	e.ruResult = result
 }
 
 // GetBriefBinaryPlan returns the binary plan of the plan for explainfor.
@@ -1052,11 +1006,16 @@ func (e *Explain) RenderResult() error {
 		}
 		e.Rows = append(e.Rows, []string{str})
 	case types.ExplainFormatRU:
-		flat := FlattenPhysicalPlan(e.TargetPlan, true)
-		if e.ruResultSet && e.ruResult == nil {
-			e.Rows = explainFlatPlanInRUFormatUnavailable(flat, e.RuntimeStatsColl)
+		if e.ruResultSet {
+			var ok bool
+			e.Rows, ok = explainRUResultInRUFormat(e.RuntimeStatsColl, e.ruResult)
+			if !ok {
+				flat := FlattenPhysicalPlan(e.TargetPlan, true)
+				e.Rows = explainFlatPlanInRUFormatUnavailable(flat, e.RuntimeStatsColl)
+			}
 		} else {
-			e.Rows = explainFlatPlanInRUFormat(flat, e.RuntimeStatsColl, e.ruResult)
+			flat := FlattenPhysicalPlan(e.TargetPlan, true)
+			e.Rows = explainFlatPlanInRUFormatLegacy(flat, e.RuntimeStatsColl)
 		}
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
@@ -1234,39 +1193,63 @@ func prepareOperatorInfo(flatOp *FlatOperator, format string, analyze bool,
 
 // ExplainFlatPlanInRUFormat returns the explain analyze result with RU columns.
 func ExplainFlatPlanInRUFormat(flat *FlatPhysicalPlan, runtimeStatsColl *execdetails.RuntimeStatsColl) (rows [][]string) {
-	return explainFlatPlanInRUFormat(flat, runtimeStatsColl, nil)
+	return explainFlatPlanInRUFormatLegacy(flat, runtimeStatsColl)
 }
 
-func explainFlatPlanInRUFormat(
-	flat *FlatPhysicalPlan,
+func explainRUResultInRUFormat(
 	runtimeStatsColl *execdetails.RuntimeStatsColl,
 	result *ExplainRUResult,
-) (rows [][]string) {
-	if flat == nil || len(flat.Main) == 0 || flat.InExplain {
-		return
+) (rows [][]string, ok bool) {
+	if result == nil {
+		return nil, false
 	}
-	if result != nil {
-		if !explainRUResultMatchesFlatPlan(flat, result) {
-			return explainFlatPlanInRUFormatUnavailable(flat, runtimeStatsColl)
+	if len(result.Main) == 0 || result.inExplain {
+		return nil, true
+	}
+	validTree := func(tree []ExplainRUOperatorResult) bool {
+		for _, operatorResult := range tree {
+			if operatorResult.Operator == nil || operatorResult.Operator.Origin == nil {
+				return false
+			}
 		}
-		return explainFlatPlanInRUFormatWithProvider(
-			flat,
-			runtimeStatsColl,
-			func(kind explainRUForestKind, treeOrdinal, operatorIndex int, _ *FlatOperator) explainRUFields {
-				operatorResult := explainRUResultAt(result, kind, treeOrdinal, operatorIndex)
-				cumRUPct := "0.00%"
-				if result.TotalRU > 0 {
-					cumRUPct = fmt.Sprintf("%.2f%%", operatorResult.CumRU/result.TotalRU*100)
-				}
-				return explainRUFields{
-					selfRU:   strconv.FormatFloat(operatorResult.SelfRU, 'f', 2, 64),
-					cumRU:    strconv.FormatFloat(operatorResult.CumRU, 'f', 2, 64),
-					cumRUPct: cumRUPct,
-				}
-			},
-		)
+		return true
 	}
-	return explainFlatPlanInRUFormatLegacy(flat, runtimeStatsColl)
+	if !validTree(result.Main) {
+		return nil, false
+	}
+	for _, tree := range result.CTEs {
+		if !validTree(tree) {
+			return nil, false
+		}
+	}
+	for _, tree := range result.ScalarSubQueries {
+		if !validTree(tree) {
+			return nil, false
+		}
+	}
+
+	visitTree := func(tree []ExplainRUOperatorResult) {
+		for _, operatorResult := range tree {
+			cumRUPct := "0.00%"
+			if result.TotalRU > 0 {
+				cumRUPct = fmt.Sprintf("%.2f%%", operatorResult.CumRU/result.TotalRU*100)
+			}
+			fields := explainRUFields{
+				selfRU:   strconv.FormatFloat(operatorResult.SelfRU, 'f', 2, 64),
+				cumRU:    strconv.FormatFloat(operatorResult.CumRU, 'f', 2, 64),
+				cumRUPct: cumRUPct,
+			}
+			rows = prepareRUOperatorInfoWithFields(operatorResult.Operator, runtimeStatsColl, fields, rows)
+		}
+	}
+	visitTree(result.Main)
+	for _, tree := range result.CTEs {
+		visitTree(tree)
+	}
+	for _, tree := range result.ScalarSubQueries {
+		visitTree(tree)
+	}
+	return rows, true
 }
 
 func explainFlatPlanInRUFormatUnavailable(
@@ -1276,7 +1259,7 @@ func explainFlatPlanInRUFormatUnavailable(
 	return explainFlatPlanInRUFormatWithProvider(
 		flat,
 		runtimeStatsColl,
-		func(explainRUForestKind, int, int, *FlatOperator) explainRUFields {
+		func(*FlatOperator) explainRUFields {
 			return explainRUFields{}
 		},
 	)
@@ -1290,7 +1273,7 @@ func explainFlatPlanInRUFormatLegacy(
 	return explainFlatPlanInRUFormatWithProvider(
 		flat,
 		runtimeStatsColl,
-		func(_ explainRUForestKind, _, _ int, flatOp *FlatOperator) explainRUFields {
+		func(flatOp *FlatOperator) explainRUFields {
 			ruStats := getExplainRURuntimeStats(runtimeStatsColl, flatOp.Origin)
 			if ruStats == nil {
 				return explainRUFields{}
@@ -1308,14 +1291,6 @@ func explainFlatPlanInRUFormatLegacy(
 	)
 }
 
-type explainRUForestKind uint8
-
-const (
-	explainRUForestMain explainRUForestKind = iota
-	explainRUForestCTE
-	explainRUForestScalarSubQuery
-)
-
 type explainRUFields struct {
 	selfRU   string
 	cumRU    string
@@ -1325,93 +1300,25 @@ type explainRUFields struct {
 func explainFlatPlanInRUFormatWithProvider(
 	flat *FlatPhysicalPlan,
 	runtimeStatsColl *execdetails.RuntimeStatsColl,
-	provider func(explainRUForestKind, int, int, *FlatOperator) explainRUFields,
+	provider func(*FlatOperator) explainRUFields,
 ) (rows [][]string) {
 	if flat == nil || len(flat.Main) == 0 || flat.InExplain {
 		return
 	}
-	visitTree := func(kind explainRUForestKind, treeOrdinal int, tree FlatPlanTree) {
-		for operatorIndex, flatOp := range tree {
-			fields := provider(kind, treeOrdinal, operatorIndex, flatOp)
+	visitTree := func(tree FlatPlanTree) {
+		for _, flatOp := range tree {
+			fields := provider(flatOp)
 			rows = prepareRUOperatorInfoWithFields(flatOp, runtimeStatsColl, fields, rows)
 		}
 	}
-	visitTree(explainRUForestMain, 0, flat.Main)
-	for treeOrdinal, tree := range flat.CTEs {
-		visitTree(explainRUForestCTE, treeOrdinal, tree)
+	visitTree(flat.Main)
+	for _, tree := range flat.CTEs {
+		visitTree(tree)
 	}
-	for treeOrdinal, tree := range flat.ScalarSubQueries {
-		visitTree(explainRUForestScalarSubQuery, treeOrdinal, tree)
+	for _, tree := range flat.ScalarSubQueries {
+		visitTree(tree)
 	}
 	return rows
-}
-
-func explainRUResultAt(
-	result *ExplainRUResult,
-	kind explainRUForestKind,
-	treeOrdinal int,
-	operatorIndex int,
-) ExplainRUOperatorResult {
-	switch kind {
-	case explainRUForestMain:
-		return result.Main[operatorIndex]
-	case explainRUForestCTE:
-		return result.CTEs[treeOrdinal][operatorIndex]
-	case explainRUForestScalarSubQuery:
-		return result.ScalarSubQueries[treeOrdinal][operatorIndex]
-	default:
-		return ExplainRUOperatorResult{}
-	}
-}
-
-func explainRUResultMatchesFlatPlan(flat *FlatPhysicalPlan, result *ExplainRUResult) bool {
-	if flat == nil || result == nil || len(flat.Main) != len(result.Main) ||
-		len(flat.CTEs) != len(result.CTEs) || len(flat.ScalarSubQueries) != len(result.ScalarSubQueries) {
-		return false
-	}
-	matchTree := func(tree FlatPlanTree, treeResult []ExplainRUOperatorResult) bool {
-		if len(tree) != len(treeResult) {
-			return false
-		}
-		for i, operator := range tree {
-			if !explainRUOperatorResultMatches(operator, treeResult[i]) {
-				return false
-			}
-		}
-		return true
-	}
-	if !matchTree(flat.Main, result.Main) {
-		return false
-	}
-	for i, tree := range flat.CTEs {
-		if !matchTree(tree, result.CTEs[i]) {
-			return false
-		}
-	}
-	for i, tree := range flat.ScalarSubQueries {
-		if !matchTree(tree, result.ScalarSubQueries[i]) {
-			return false
-		}
-	}
-	return true
-}
-
-func explainRUOperatorResultMatches(operator *FlatOperator, result ExplainRUOperatorResult) bool {
-	if operator == nil || operator.Origin == nil || operator.Origin.ID() != result.PlanID ||
-		operator.ExplainID().String() != result.ExplainID || operator.ChildrenEndIdx != result.ChildrenEndIdx ||
-		operator.Depth != result.Depth || operator.Label != result.Label || operator.IsRoot != result.IsRoot ||
-		operator.StoreType != result.StoreType || operator.ReqType != result.ReqType ||
-		operator.NeedReverseDriverSide != result.NeedReverseDriverSide ||
-		operator.IsINLProbeChild != result.IsINLProbeChild || operator.IsPhysicalPlan != result.IsPhysicalPlan ||
-		len(operator.ChildrenIdx) != len(result.ChildrenIdx) {
-		return false
-	}
-	for i, childIndex := range operator.ChildrenIdx {
-		if childIndex != result.ChildrenIdx[i] {
-			return false
-		}
-	}
-	return true
 }
 
 func prepareRUOperatorInfoWithFields(

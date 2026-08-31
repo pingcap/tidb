@@ -33,9 +33,8 @@ func newExplainRUForestFixture(cteCount, scalarCount int) (*FlatPhysicalPlan, *E
 	ctx := mock.NewContext()
 	dual := physicalop.PhysicalTableDual{RowCount: 1}.Init(ctx, &property.StatsInfo{RowCount: 1}, 0)
 	dual.SetID(101)
-	newTree := func(size int) (FlatPlanTree, []ExplainRUOperatorResult) {
+	newTree := func(size int) FlatPlanTree {
 		tree := make(FlatPlanTree, size)
-		result := make([]ExplainRUOperatorResult, size)
 		for i := range tree {
 			tree[i] = &FlatOperator{
 				Origin:         dual,
@@ -48,39 +47,35 @@ func newExplainRUForestFixture(cteCount, scalarCount int) (*FlatPhysicalPlan, *E
 			if i+1 < size {
 				tree[i].ChildrenIdx = []int{i + 1}
 			}
-			result[i] = ExplainRUOperatorResult{
-				PlanID:         dual.ID(),
-				ExplainID:      tree[i].ExplainID().String(),
-				ChildrenIdx:    append([]int(nil), tree[i].ChildrenIdx...),
-				ChildrenEndIdx: tree[i].ChildrenEndIdx,
-				Depth:          tree[i].Depth,
-				IsRoot:         tree[i].IsRoot,
-				StoreType:      tree[i].StoreType,
-				IsPhysicalPlan: tree[i].IsPhysicalPlan,
-				SelfRU:         1,
-				CumRU:          float64(size - i),
-			}
 		}
-		return tree, result
+		return tree
 	}
-	main, mainResult := newTree(3)
 	flat := &FlatPhysicalPlan{
-		Main:             main,
+		Main:             newTree(3),
 		CTEs:             make([]FlatPlanTree, cteCount),
 		ScalarSubQueries: make([]FlatPlanTree, scalarCount),
 	}
-	result := &ExplainRUResult{
-		TotalRU:          float64(3 + 3*cteCount + 3*scalarCount),
-		Main:             mainResult,
-		CTEs:             make([][]ExplainRUOperatorResult, cteCount),
-		ScalarSubQueries: make([][]ExplainRUOperatorResult, scalarCount),
-	}
 	for i := range flat.CTEs {
-		flat.CTEs[i], result.CTEs[i] = newTree(3)
+		flat.CTEs[i] = newTree(3)
 	}
 	for i := range flat.ScalarSubQueries {
-		flat.ScalarSubQueries[i], result.ScalarSubQueries[i] = newTree(3)
+		flat.ScalarSubQueries[i] = newTree(3)
 	}
+	result := NewExplainRUResult(flat)
+	fillTree := func(tree []ExplainRUOperatorResult) {
+		for i := range tree {
+			tree[i].SelfRU = 1
+			tree[i].CumRU = float64(len(tree) - i)
+		}
+	}
+	fillTree(result.Main)
+	for i := range result.CTEs {
+		fillTree(result.CTEs[i])
+	}
+	for i := range result.ScalarSubQueries {
+		fillTree(result.ScalarSubQueries[i])
+	}
+	result.TotalRU = float64(3 + 3*cteCount + 3*scalarCount)
 	return flat, result
 }
 
@@ -177,57 +172,50 @@ func TestNewLineFieldsInfo(t *testing.T) {
 	}
 }
 
-func TestExplainRUResultSnapshotContract(t *testing.T) {
-	flat, result := newExplainRUForestFixture(1, 1)
-
-	t.Run("setter deep copies and clears", func(t *testing.T) {
+func TestExplainRUResultOwnershipContract(t *testing.T) {
+	t.Run("setter owns exact forest and clears", func(t *testing.T) {
+		flat, result := newExplainRUForestFixture(1, 1)
 		explain := &Explain{}
+		require.Same(t, flat.Main[0], result.Main[0].Operator)
 		explain.SetRUResult(result)
-		result.Main[0].SelfRU = 999
-		result.Main[0].ChildrenIdx[0] = 999
-		result.CTEs[0][0].CumRU = 999
-		require.Equal(t, float64(1), explain.ruResult.Main[0].SelfRU)
-		require.Equal(t, 1, explain.ruResult.Main[0].ChildrenIdx[0])
-		require.Equal(t, float64(3), explain.ruResult.CTEs[0][0].CumRU)
-		result.Main[0].ChildrenIdx[0] = 1
+		require.Same(t, result, explain.ruResult)
+		require.Same(t, flat.CTEs[0][0], explain.ruResult.CTEs[0][0].Operator)
 
 		explain.SetRUResult(nil)
 		require.Nil(t, explain.ruResult)
 		require.True(t, explain.ruResultSet)
 	})
 
-	t.Run("shape mismatch fails closed", func(t *testing.T) {
+	t.Run("owned result forest renders without target reflatten", func(t *testing.T) {
+		flat, result := newExplainRUForestFixture(1, 1)
 		coll := execdetails.NewRuntimeStatsColl(nil)
 		coll.RegisterStats(101, &execdetails.ExplainRURuntimeStats{SelfRU: 99, CumRU: 99})
-		mismatch := *result
-		mismatch.Main = append([]ExplainRUOperatorResult(nil), result.Main...)
-		mismatch.Main[0].PlanID++
-
-		rows := explainFlatPlanInRUFormat(flat, coll, &mismatch)
-		require.NotEmpty(t, rows)
-		for _, row := range rows {
-			require.Empty(t, row[3])
-			require.Empty(t, row[4])
-			require.Empty(t, row[5])
-		}
+		result.Main[1].SelfRU = 2
+		explain := &Explain{TargetPlan: flat.Main[0].Origin, Format: "ru", RuntimeStatsColl: coll}
+		explain.SetRUResult(result)
+		require.NoError(t, explain.RenderResult())
+		require.Len(t, explain.Rows, 9)
+		require.Equal(t, []string{"1.00", "3.00", "33.33%"}, explain.Rows[0][3:6])
+		require.Equal(t, []string{"2.00", "2.00", "22.22%"}, explain.Rows[1][3:6])
 	})
 
-	t.Run("aliased plan IDs still require matching occurrence metadata", func(t *testing.T) {
-		mismatch := *result
-		mismatch.Main = append([]ExplainRUOperatorResult(nil), result.Main...)
-		mismatch.Main[1].Label = BuildSide
+	t.Run("invalid operator makes the whole result unavailable", func(t *testing.T) {
+		flat, result := newExplainRUForestFixture(1, 1)
+		result.Main[0].Operator = nil
+		coll := execdetails.NewRuntimeStatsColl(nil)
+		coll.RegisterStats(101, &execdetails.ExplainRURuntimeStats{SelfRU: 99, CumRU: 99})
+		explain := &Explain{TargetPlan: flat.Main[0].Origin, Format: "ru", RuntimeStatsColl: coll}
+		explain.SetRUResult(result)
 
-		rows := explainFlatPlanInRUFormat(flat, nil, &mismatch)
-		require.NotEmpty(t, rows)
-		for _, row := range rows {
-			require.Empty(t, row[3])
-			require.Empty(t, row[4])
-			require.Empty(t, row[5])
-		}
+		require.NoError(t, explain.RenderResult())
+		require.Len(t, explain.Rows, 1)
+		require.Empty(t, explain.Rows[0][3])
+		require.Empty(t, explain.Rows[0][4])
+		require.Empty(t, explain.Rows[0][5])
 	})
 }
 
-func BenchmarkExplainRUForestProjection(b *testing.B) {
+func BenchmarkExplainRUForestRendering(b *testing.B) {
 	for _, scenario := range []struct {
 		name        string
 		cteCount    int
@@ -240,14 +228,16 @@ func BenchmarkExplainRUForestProjection(b *testing.B) {
 		{name: "large-forest", cteCount: 8, scalarCount: 8},
 	} {
 		b.Run(scenario.name, func(b *testing.B) {
-			flat, result := newExplainRUForestFixture(scenario.cteCount, scenario.scalarCount)
-			require.NotEmpty(b, explainFlatPlanInRUFormat(flat, nil, result))
+			_, result := newExplainRUForestFixture(scenario.cteCount, scenario.scalarCount)
+			rows, ok := explainRUResultInRUFormat(nil, result)
+			require.True(b, ok)
+			require.NotEmpty(b, rows)
 			b.ResetTimer()
-			// This timer covers occurrence-coordinate validation and EXPLAIN RU
-			// row formatting only. It excludes calculation and SQL execution.
+			// This timer covers owned-result EXPLAIN RU row formatting only.
+			// It excludes calculation and SQL execution.
 			b.ReportAllocs()
 			for b.Loop() {
-				explainRUForestRowsSink = explainFlatPlanInRUFormat(flat, nil, result)
+				explainRUForestRowsSink, _ = explainRUResultInRUFormat(nil, result)
 			}
 		})
 	}
