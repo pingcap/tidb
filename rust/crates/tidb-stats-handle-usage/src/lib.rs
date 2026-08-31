@@ -778,6 +778,28 @@ mod tests {
                 is_locked: true,
             }]
         );
+
+        // A partition added after LOCK STATS has no lock row yet. Go treats
+        // the parent's logical lock as authoritative, so its first delta
+        // creates the physical partition lock row instead of updating global
+        // stats_meta. This is how a newly added partition inherits the lock.
+        let parent_locked = prepare_delta_updates(
+            vec![DeltaUpdate {
+                table_id: 12,
+                delta,
+                is_locked: false,
+            }],
+            |id| (id == 12).then_some(10),
+            &HashSet::from([10]),
+        );
+        assert_eq!(
+            parent_locked,
+            vec![DeltaUpdate {
+                table_id: 12,
+                delta,
+                is_locked: true,
+            }]
+        );
     }
 
     #[test]

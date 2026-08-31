@@ -26,11 +26,16 @@ use tidb_exec::cluster_catalog::{
 use tidb_exec::cluster_stats_lock::{
     plan_cluster_stats_lock, ClusterStatsLockStatement, StatsLockTarget,
 };
+use tidb_exec::cluster_stats_load::ClusterStatsLoader;
+use tidb_exec::cluster_stats_write::{
+    plan_loaded_stats_meta_write, plan_stats_delta_statement, stats_delta_statements,
+};
 use tidb_exec::mysql_bootstrap::{plan_mysql_bootstrap, BootstrapEnvironment};
 use tidb_model::db::DBInfo;
 use tidb_model::go_runtime::GoShared;
 use tidb_model::partition::{PartitionDefinition, PartitionInfo};
 use tidb_model::table_info::TableInfo;
+use tidb_stats_handle_usage::{DeltaUpdate, TableDelta};
 use tidb_txnkv::transaction::{OptimisticMutation, OptimisticMutationKind};
 
 #[derive(Default)]
@@ -189,6 +194,75 @@ fn table_lock_round_trips_through_the_persisted_cluster_rows() {
     let duplicate =
         plan_cluster_stats_lock(&mut store, &catalog, &statement(false), 103, timestamp())
             .expect("duplicate unlock plans");
+    assert!(duplicate.mutations.is_empty());
+    assert_eq!(duplicate.warning, "skip unlocking unlocked table: app.t");
+}
+
+#[test]
+fn table_unlock_merges_negative_partition_delta_into_partition_and_global_meta() {
+    let mut store = bootstrapped();
+    let mut catalog = load_cluster_catalog(&mut store).expect("bootstrap catalog");
+    add_partitioned_table(&mut catalog);
+
+    for table_id in [4242, 4243, 4244] {
+        let initial = plan_loaded_stats_meta_write(
+            &mut store,
+            &catalog,
+            table_id,
+            2,
+            0,
+            90,
+            timestamp(),
+        )
+        .expect("initial stats meta plans");
+        store.apply(&initial.mutations);
+    }
+
+    let lock = plan_cluster_stats_lock(&mut store, &catalog, &statement(true), 100, timestamp())
+        .expect("whole table lock plans");
+    store.apply(&lock.mutations);
+    for statement in stats_delta_statements(&[DeltaUpdate {
+        table_id: 4243,
+        delta: TableDelta {
+            delta: -2,
+            count: 2,
+            init_time: None,
+        },
+        is_locked: true,
+    }]) {
+        let plan = plan_stats_delta_statement(
+            &mut store,
+            &catalog,
+            &statement,
+            101,
+            timestamp(),
+        )
+        .expect("locked negative delta plans");
+        store.apply(&plan.mutations);
+    }
+
+    let unlock = plan_cluster_stats_lock(&mut store, &catalog, &statement(false), 102, timestamp())
+        .expect("whole table unlock plans");
+    store.apply(&unlock.mutations);
+    assert!(!unlock.mutations.is_empty());
+
+    let loader = ClusterStatsLoader::locate(&catalog).expect("statistics tables locate");
+    assert_eq!(
+        loader.load_meta(&mut store, 4242).expect("global meta loads"),
+        Some((102, 0, 2, 0, 90))
+    );
+    assert_eq!(
+        loader.load_meta(&mut store, 4243).expect("partition meta loads"),
+        Some((102, 0, 2, 0, 90))
+    );
+    assert_eq!(
+        loader.load_meta(&mut store, 4244).expect("sibling meta loads"),
+        Some((102, 0, 0, 2, 90))
+    );
+
+    let duplicate =
+        plan_cluster_stats_lock(&mut store, &catalog, &statement(false), 103, timestamp())
+            .expect("all lock rows were deleted");
     assert!(duplicate.mutations.is_empty());
     assert_eq!(duplicate.warning, "skip unlocking unlocked table: app.t");
 }

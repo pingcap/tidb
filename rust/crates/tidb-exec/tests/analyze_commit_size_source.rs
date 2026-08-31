@@ -59,7 +59,7 @@ use tidb_exec::cluster_stats_write::{
     plan_update_analyze_job_progress,
     plan_stats_delta_statement, plan_stats_gc_timestamp_write, plan_stats_item_delete,
     plan_stats_meta_version_refresh, plan_stats_write,
-    stats_delta_statements, InsertTableStatsStatement, LoadedStatsItemStatement,
+    load_stats_locked_table_ids, stats_delta_statements, InsertTableStatsStatement, LoadedStatsItemStatement,
     StatsDeltaStatement, StatsWriteError,
 };
 use tidb_exec::mysql_bootstrap::{plan_mysql_bootstrap, BootstrapEnvironment, BootstrapWrite};
@@ -1284,6 +1284,28 @@ fn table_stats_delete_preserves_go_soft_and_hard_phases() {
     assert!(histogram.histogram.buckets.is_empty());
     assert!(histogram.topn.is_none());
 
+    apply_stats_delta_statements(
+        &mut store,
+        &catalog,
+        &[DeltaUpdate {
+            table_id,
+            delta: TableDelta {
+                delta: 0,
+                count: 0,
+                init_time: None,
+            },
+            is_locked: true,
+        }],
+        soft_version + 1,
+        now(),
+    )
+    .expect("table lock row plans");
+    assert!(
+        load_stats_locked_table_ids(&mut store, &catalog)
+            .expect("locked table IDs load")
+            .contains(&table_id)
+    );
+
     let hard_version = soft_version + 10;
     let plan = plan_delete_table_stats(&mut store, &catalog, &[table_id], false, hard_version)
         .expect("hard table GC plans");
@@ -1294,6 +1316,12 @@ fn table_stats_delete_preserves_go_soft_and_hard_phases() {
         .expect("stats_meta remains for phase two");
     assert_eq!(hard.version, hard_version);
     assert!(hard.column(1).is_none());
+    assert!(
+        !load_stats_locked_table_ids(&mut store, &catalog)
+            .expect("locked table IDs reload")
+            .contains(&table_id),
+        "hard GC removes the same stale lock rows as pinned Go"
+    );
 }
 
 /// Pinned `GCStats` scans a half-open metadata-version window and persists
