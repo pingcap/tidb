@@ -27,8 +27,8 @@ import (
 	"sync"
 	"time"
 
-	jwtRepo "github.com/lestrrat-go/jwx/v2/jwt"
-	"github.com/lestrrat-go/jwx/v2/jwt/openid"
+	jwtRepo "github.com/lestrrat-go/jwx/v3/jwt"
+	"github.com/lestrrat-go/jwx/v3/jwt/openid"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
