@@ -30,11 +30,20 @@ use tidb_model::table_info::TableInfo;
 use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
 use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
 
-use crate::cluster_catalog::load_cluster_catalog;
+use crate::cluster_catalog::{load_cluster_catalog, MetaSnapshot};
 use crate::cluster_stats_load::{ClusterStatsItem, ClusterStatsLoader, ClusterTableStats};
 use crate::mysql_system_tables::SystemTableError;
 use crate::real_tikv_catalog::TransactionMetaSnapshot;
 use crate::stats_watch::{StatsSnapshot, TableStatsState};
+
+/// The two startup shapes selected by Go `Domain.initStats`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InitialStatsLoad {
+    /// Go `Handle.InitStatsLite`: metadata only for columns and indexes.
+    Lite,
+    /// Go `Handle.InitStats`: metadata-only columns and fully loaded indexes.
+    IndexFull,
+}
 
 /// One cache-refresh target: the complete schema object Go passes through
 /// `TableStatsFromStorage`, plus the derived bound-decoding map.
@@ -163,11 +172,10 @@ pub fn load_stats_item_from_cluster<
 /// transaction and returns the located `mysql.stats_*` views for later cache
 /// updates.
 ///
-/// With a positive stats lease this is pinned Go `InitStatsLite`: table meta
-/// plus column/index existence and load-state metadata are resident, while
-/// buckets, TopN, and CMSketch stay evicted until planning requests them.
-/// `load_all` represents Go's zero-lease mode, where lazy loading is disabled
-/// and the same pass loads every item payload. A table with no
+/// `mode` selects pinned Go `InitStatsLite` or `InitStats`: the former keeps
+/// every payload evicted, while the latter fully loads indexes and retains
+/// metadata-only columns. It is selected by `performance.lite-init-stats`,
+/// independently of the statistics lease. A table with no
 /// `mysql.stats_meta` row becomes [`TableStatsState::Pseudo`].
 pub fn load_stats_snapshot_and_loader<
     C: StoreWriteClient,
@@ -177,7 +185,8 @@ pub fn load_stats_snapshot_and_loader<
     opener: &RealOptimisticTransactionOpener<C, L, P>,
     timeout: Duration,
     tables: &[StatsTarget],
-    load_all: bool,
+    table_ids: &[i64],
+    mode: InitialStatsLoad,
 ) -> Result<(StatsSnapshot, ClusterStatsLoader), SystemTableError> {
     let mut transaction = opener
         .begin_read_only()
@@ -186,32 +195,47 @@ pub fn load_stats_snapshot_and_loader<
         let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
         let catalog = load_cluster_catalog(&mut snapshot)?;
         let loader = ClusterStatsLoader::locate(&catalog)?;
-        let mut result = StatsSnapshot::new();
-        for target in tables {
-            let table_id = target.table.id;
-            let state = if load_all {
-                match loader.load_table(&mut snapshot, table_id, &target.column_types)? {
-                    Some(stats) => {
-                        TableStatsState::Loaded(stats.to_statistics_table(&target.table))
-                    }
-                    None => TableStatsState::Pseudo,
-                }
-            } else {
-                match loader.load_table_lite(&mut snapshot, table_id, &target.column_types)? {
-                    Some(stats) => {
-                        TableStatsState::Loaded(stats.to_statistics_table(&target.table))
-                    }
-                    None => TableStatsState::Pseudo,
-                }
-            };
-            result.insert(table_id, state);
-        }
+        let result = load_initial_stats_snapshot(&mut snapshot, &loader, tables, table_ids, mode)?;
         Ok((result, loader))
     };
     transaction
         .finish_without_writes()
         .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
     loaded
+}
+
+/// Go `Handle.InitStatsLite` / `Handle.InitStats` over one consistent
+/// metadata snapshot. An empty `table_ids` slice loads every current target;
+/// otherwise only the named physical IDs are admitted. Consequently stale
+/// statistics rows for dropped tables cannot enter the returned cache.
+pub fn load_initial_stats_snapshot<S: MetaSnapshot>(
+    snapshot: &mut S,
+    loader: &ClusterStatsLoader,
+    tables: &[StatsTarget],
+    table_ids: &[i64],
+    mode: InitialStatsLoad,
+) -> Result<StatsSnapshot, SystemTableError> {
+    let mut result = StatsSnapshot::new();
+    for target in tables {
+        let table_id = target.table.id;
+        if !table_ids.is_empty() && !table_ids.contains(&table_id) {
+            continue;
+        }
+        let loaded = match mode {
+            InitialStatsLoad::Lite => {
+                loader.load_table_lite(snapshot, table_id, &target.column_types)?
+            }
+            InitialStatsLoad::IndexFull => {
+                loader.load_table_for_init_stats(snapshot, table_id, &target.column_types)?
+            }
+        };
+        let state = match loaded {
+            Some(stats) => TableStatsState::Loaded(stats.to_statistics_table(&target.table)),
+            None => TableStatsState::Pseudo,
+        };
+        result.insert(table_id, state);
+    }
+    Ok(result)
 }
 
 /// Pinned Go `StatsCacheImpl.Update`: with a positive lease, refreshes the

@@ -161,14 +161,27 @@ fn current_stats_targets(catalog: &SharedCatalog) -> Vec<tidb_exec::real_tikv_st
     stats_targets(&current)
 }
 
-/// Boot-loads Go's lite statistics state for every table a loaded catalog
-/// holds and starts following the cluster's `mysql.stats_*` for them.
+fn next_initial_stats_load(
+    first_pass: &mut bool,
+    skip_initial: bool,
+    configured: InitialStatsLoad,
+) -> Option<InitialStatsLoad> {
+    if *first_pass {
+        *first_pass = false;
+        return (!skip_initial).then_some(configured);
+    }
+    // After a skipped bootstrap, Go's ordinary leased updater is still live
+    // and may populate metadata on its first tick.
+    Some(InitialStatsLoad::Lite)
+}
+
+/// Boot-loads the statistics startup shape selected by Go's performance
+/// configuration and starts following the cluster's `mysql.stats_*`.
 ///
-/// Like pinned Go `InitStatsLite`, startup loads `stats_meta` plus histogram
-/// existence/load-state metadata. Buckets, TopN, and CMSketch remain evicted
-/// and planning requests individual items through the shared sync/async load
-/// path. Reloads use the same lite shape as Go `StatsCacheImpl.Update` with
-/// `loadAll=false`.
+/// `lite-init-stats` selects metadata-only `InitStatsLite`; otherwise
+/// `InitStats` fully loads indexes and leaves columns evicted. `skip-init-stats`
+/// skips only the immediate pass, so the ordinary periodic updater remains
+/// able to populate the cache. Reloads use Go `StatsCacheImpl.Update`.
 ///
 /// Uses Go's independent `Performance.StatsLease`: negative disables both
 /// initialization and reload, zero falls back to three seconds, and a
@@ -199,6 +212,14 @@ where
     // The read closure needs its own handle to compare against what is
     // published; the caller keeps the original for queries.
     let published = Arc::clone(&shared);
+    let performance = tidb_config::config_tree::config::get_global_config().performance;
+    let initial_mode = if performance.lite_init_stats {
+        InitialStatsLoad::Lite
+    } else {
+        InitialStatsLoad::IndexFull
+    };
+    let mut first_pass = true;
+    let skip_initial = performance.skip_init_stats;
     let mut loader = None;
     let reloader = StatsReloader::spawn_with_initial_pass(
         Arc::clone(&shared),
@@ -207,13 +228,14 @@ where
             let shared = &published;
             let targets = current_stats_targets(&catalog);
             if loader.is_none() {
-                let (snapshot, located) = load_stats_snapshot_and_loader(
-                    &opener,
-                    timeout,
-                    &targets,
-                    stats_lease == crate::node_config::StatsLease::Zero,
-                )
-                .map_err(|error| error.to_string())?;
+                let Some(mode) =
+                    next_initial_stats_load(&mut first_pass, skip_initial, initial_mode)
+                else {
+                    return Ok(None);
+                };
+                let (snapshot, located) =
+                    load_stats_snapshot_and_loader(&opener, timeout, &targets, &[], mode)
+                        .map_err(|error| error.to_string())?;
                 loader = Some(located);
                 let receipt = tidb_exec::stats_watch::receipt_of(&snapshot);
                 eprintln!(
@@ -360,6 +382,25 @@ mod tests {
                 })
                 .collect::<Vec<_>>(),
             vec![(22, vec![202])]
+        );
+    }
+
+    #[test]
+    fn skip_init_stats_skips_only_bootstrap_and_preserves_the_periodic_loader() {
+        let mut first_pass = true;
+        assert_eq!(
+            next_initial_stats_load(&mut first_pass, true, InitialStatsLoad::IndexFull),
+            None
+        );
+        assert_eq!(
+            next_initial_stats_load(&mut first_pass, true, InitialStatsLoad::IndexFull),
+            Some(InitialStatsLoad::Lite)
+        );
+
+        let mut first_pass = true;
+        assert_eq!(
+            next_initial_stats_load(&mut first_pass, false, InitialStatsLoad::IndexFull),
+            Some(InitialStatsLoad::IndexFull)
         );
     }
 }

@@ -56,7 +56,7 @@ use tidb_exec::real_tikv_read::{
 };
 use tidb_exec::real_tikv_stats::{
     load_stats_meta_versions, load_stats_snapshot_and_loader, refresh_stats_snapshot_from_cluster,
-    stats_snapshot_unchanged_since,
+    stats_snapshot_unchanged_since, InitialStatsLoad,
 };
 use tidb_exec::stats_watch::{SharedStats, StatsReloadError, StatsReloadStats, StatsReloader};
 use tidb_pd_client::{

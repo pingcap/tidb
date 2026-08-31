@@ -430,7 +430,7 @@ impl ClusterStatsLoader {
         table_id: i64,
         column_types: &BTreeMap<i64, FieldType>,
     ) -> Result<Option<ClusterTableStats>, SystemTableError> {
-        self.load_table_with_payload(snapshot, table_id, column_types, true, false)
+        self.load_table_with_payload(snapshot, table_id, column_types, true, true, false)
     }
 
     /// Go `tableStatsFromStorage(..., loadAll=true)` for global-stat merging:
@@ -441,7 +441,7 @@ impl ClusterStatsLoader {
         table_id: i64,
         column_types: &BTreeMap<i64, FieldType>,
     ) -> Result<Option<ClusterTableStats>, SystemTableError> {
-        self.load_table_with_payload(snapshot, table_id, column_types, true, true)
+        self.load_table_with_payload(snapshot, table_id, column_types, true, true, true)
     }
 
     /// Go's leased `tableStatsFromStorage(..., loadAll=false)` initialization:
@@ -452,7 +452,19 @@ impl ClusterStatsLoader {
         table_id: i64,
         column_types: &BTreeMap<i64, FieldType>,
     ) -> Result<Option<ClusterTableStats>, SystemTableError> {
-        self.load_table_with_payload(snapshot, table_id, column_types, false, false)
+        self.load_table_with_payload(snapshot, table_id, column_types, false, false, false)
+    }
+
+    /// Go `Handle.InitStats`: fully load index statistics while retaining
+    /// column histogram metadata in the `allEvicted` state. Predicate-column
+    /// demand loads those column payloads after startup.
+    pub fn load_table_for_init_stats<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        table_id: i64,
+        column_types: &BTreeMap<i64, FieldType>,
+    ) -> Result<Option<ClusterTableStats>, SystemTableError> {
+        self.load_table_with_payload(snapshot, table_id, column_types, false, true, false)
     }
 
     /// Pinned async-global-stats `CheckSkipPartition`: whether this physical
@@ -729,7 +741,8 @@ impl ClusterStatsLoader {
         snapshot: &mut S,
         table_id: i64,
         column_types: &BTreeMap<i64, FieldType>,
-        full_load: bool,
+        load_columns: bool,
+        load_indexes: bool,
         load_fm: bool,
     ) -> Result<Option<ClusterTableStats>, SystemTableError> {
         let Some((version, snapshot_ts, modify_count, row_count, last_stats_hist_version)) =
@@ -737,15 +750,21 @@ impl ClusterStatsLoader {
         else {
             return Ok(None);
         };
-        let buckets = if full_load {
-            self.load_buckets(snapshot, table_id, column_types)?
-        } else {
-            BTreeMap::new()
+        let payload_prefix = match (load_columns, load_indexes) {
+            (true, true) => vec![Datum::Int(table_id)],
+            (true, false) => vec![Datum::Int(table_id), Datum::Int(0)],
+            (false, true) => vec![Datum::Int(table_id), Datum::Int(1)],
+            (false, false) => Vec::new(),
         };
-        let topn = if full_load {
-            self.load_topn(snapshot, table_id)?
-        } else {
+        let buckets = if payload_prefix.is_empty() {
             BTreeMap::new()
+        } else {
+            self.load_buckets_prefixed(snapshot, &payload_prefix, column_types)?
+        };
+        let topn = if payload_prefix.is_empty() {
+            BTreeMap::new()
+        } else {
+            self.load_topn_prefixed(snapshot, &payload_prefix)?
         };
         let fm_sketches = if load_fm {
             self.load_fm_sketches(snapshot, table_id)?
@@ -771,6 +790,7 @@ impl ClusterStatsLoader {
                 continue;
             }
             let is_index = row.i64("is_index")?.unwrap_or_default() != 0;
+            let full_load = if is_index { load_indexes } else { load_columns };
             let id = row.i64("hist_id")?.unwrap_or_default();
             let mut histogram = Histogram {
                 id,
@@ -991,17 +1011,6 @@ impl ClusterStatsLoader {
         Ok(None)
     }
 
-    /// Reads one table's buckets, grouped by `(is_index, hist_id)` and left in
-    /// `bucket_id` order with cumulative counts.
-    fn load_buckets<S: MetaSnapshot>(
-        &self,
-        snapshot: &mut S,
-        table_id: i64,
-        column_types: &BTreeMap<i64, FieldType>,
-    ) -> Result<BTreeMap<(bool, i64), Vec<Bucket>>, SystemTableError> {
-        self.load_buckets_prefixed(snapshot, &[Datum::Int(table_id)], column_types)
-    }
-
     fn load_buckets_prefixed<S: MetaSnapshot>(
         &self,
         snapshot: &mut S,
@@ -1070,15 +1079,6 @@ impl ClusterStatsLoader {
                 (histogram, buckets)
             })
             .collect())
-    }
-
-    /// Reads one table's TopN rows, grouped by `(is_index, hist_id)`.
-    fn load_topn<S: MetaSnapshot>(
-        &self,
-        snapshot: &mut S,
-        table_id: i64,
-    ) -> Result<TopNRowsByHistogram, SystemTableError> {
-        self.load_topn_prefixed(snapshot, &[Datum::Int(table_id)])
     }
 
     fn load_topn_prefixed<S: MetaSnapshot>(

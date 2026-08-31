@@ -32,29 +32,66 @@ prune-mode rebuilds, ratio zero, nil/pseudo/tiny filtering, ordered and
 concurrent real ANALYZE effects, deleted-table retry behavior, recent-failure
 backoff, worker admission/update/snapshots, and panic cleanup.
 
-## Rust comparison and decision
+## Rust mapping and completion decision
 
-Rust exposed two public scalar leaves: `should_rebuild_queue` copied the
-condition comparing ratio/prune mode, while `worker_capacity_available` and
-`worker_concurrency_changed` copied two mutex-guarded branch conditions. Six
-source-absent tests exercised only those values. Repository-wide tracing found
-no production caller.
+The obsolete scalar leaves described by the original audit remain removed.
+The package is now implemented by the dedicated
+`tidb-stats-handle-autoanalyze-refresher` crate and its production server
+integration:
 
-Go exposes none of these helpers as independent behavior. The leaves omitted
-the queue, sessions, DDL handler, worker, concrete jobs, concurrency state,
-background execution, panic cleanup, time window, stats effects, and every Go
-test. Both modules, their root exports, and all six synthetic tests were
-removed. The package remains unclaimed until its `exec`, `priorityqueue`,
-ordinary handle/types/session, and notifier dependencies are complete and all
-six artifacts can land atomically.
+| Go owner | Rust owner |
+| --- | --- |
+| `Refresher`, remembered ratio/prune mode, time window, queue lifecycle | `tidb_stats_handle_autoanalyze_refresher::Refresher` |
+| `worker`, concurrency updates, running-table snapshot, admission, wait, panic cleanup | `tidb_stats_handle_autoanalyze_refresher::Worker` |
+| concrete `AnalysisJob.Analyze` | `priorityqueue::RunningAnalysisJob` and the production `ClusterPriorityQueueSource` |
+| Domain construction and DDL notifier registration | `ClusterSessionFactory::{auto_analyze_refresher,notify_auto_analyze_priority_queue}` over the same queue instance |
+| owner/config tick and shutdown | `AutoAnalyzeWorker`, `handle_auto_analyze_tick`, and `ClusterSessionFactory::drop` |
+| latest statistics session variables | `RefreshParameters` plus the shared statistics-session reset used by concrete jobs |
 
-## WIP validation
+Rust serializes the non-thread-safe refresher with the factory mutex, just as
+Go's statistics handle owns one refresher. DDL delivery is synchronous at the
+cluster DDL commit boundary instead of passing through Go's durable notifier
+table; it calls the same queue event operation and preserves the observable
+initialization gate, deletion/recreation, and disabled-queue behavior. This is
+the server integration decision, not a second queue implementation.
 
-- `cargo check --locked -p tidb-stats` passed.
-- `cargo nextest run --locked -p tidb-stats -E 'not test(/bench/)' --no-fail-fast`
-  passed: 277 run, 277 passed, 105 skipped.
-- `rustfmt --edition 2021 --check crates/tidb-stats/src/lib.rs` passed.
-- `git diff --check` passed.
+## Original test mapping
 
-No Go or Bazel source changed, so `make bazel_prepare` was not required. This
-is a WIP package audit, not a repository-wide Ready parity claim.
+The package-local crate tests cover every `TestWorker` subtest (construction,
+concurrency update, capacity rejection, defensive running snapshot, one and
+multiple panics) plus `Stop`/wait. Refresher tests cover initialization before
+the time-window check, ratio/prune-mode rebuild, invalid window, close, and
+empty queue behavior.
+
+The original store-backed cases are consolidated across the owning queue and
+server boundaries:
+
+- `source_factory_matches_ratio_index_version_and_partition_rules`,
+  `source_queue_static_lock_and_system_view_filters`, and
+  `source_validation_reasons_and_retry_flags_match_go` cover ratio zero,
+  nil/pseudo/tiny statistics, static/dynamic pruning, deleted tables, and
+  recent-failure backoff;
+- priority-calculator/heap and worker tests cover ordered and concurrent
+  admission;
+- `auto_analyze_priority_queue_uses_shared_stats_ddl_and_ordinary_analyze_path`
+  executes the production queue, DDL mutation, disable/close/reinitialize
+  cycle, concrete ANALYZE, persisted job, and statistics publication;
+- `failed_analysis_duration_resets_the_pooled_session_timezone` exercises the
+  same persisted failed-analysis query through the reused statistics session.
+
+`main_test.go` contributes only Go's package-level goleak wrapper; Rust has no
+equivalent package test hook. `BUILD.bazel` maps to the crate and server Cargo
+targets. There are no fixtures, generated inputs, platform variants, or
+benchmarks. All six pinned artifacts are accounted for, so this package is
+complete at the pinned commit.
+
+## Validation
+
+- `cargo test -p tidb-stats-handle-autoanalyze-refresher`
+- `cargo test -p tidb-server auto_analyze_priority_queue_uses_shared_stats_ddl_and_ordinary_analyze_path -- --nocapture`
+- `cargo test -p tidb-server failed_analysis_duration_resets_the_pooled_session_timezone -- --nocapture`
+- `cargo check -p tidb-server`
+- `cargo fmt --all -- --check`
+- `git diff --check`
+
+No Go or Bazel source changed, so `make bazel_prepare` is not required.

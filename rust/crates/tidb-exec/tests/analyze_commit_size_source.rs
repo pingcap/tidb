@@ -65,6 +65,9 @@ use tidb_exec::cluster_stats_write::{
 use tidb_exec::mysql_bootstrap::{plan_mysql_bootstrap, BootstrapEnvironment, BootstrapWrite};
 use tidb_exec::mysql_system_tables::{scan_system_table, SystemRow, SystemTableView};
 use tidb_exec::real_tikv_analyze::ANALYZE_MAX_MUTATIONS;
+use tidb_exec::real_tikv_stats::{
+    load_initial_stats_snapshot, InitialStatsLoad, StatsTarget,
+};
 use tidb_executor::analyze::{AnalyzeColumnChoice, AnalyzeOptionOverrides};
 use tidb_model::column::ColumnInfo;
 use tidb_model::index::IndexInfo;
@@ -787,6 +790,121 @@ fn lite_load_keeps_metadata_and_evicts_the_histogram_payload() {
         assert!(item.topn.is_none());
         assert!(item.cms.is_none());
         assert_eq!(item.load_status.status_to_string(), "allEvicted");
+    }
+}
+
+/// Complete observable inventory of pinned
+/// `pkg/statistics/handle/handletest/initstats`: targeted/repeated/all-table
+/// loads, stale dropped-table filtering, physical partition IDs, lite versus
+/// non-lite payload shape, and completion through the highest physical ID.
+#[test]
+fn initial_stats_matches_go_table_scope_and_payload_shapes() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let version = 440_000_000_000_000_000;
+    let current_ids = [4242, 4243, 4250, 4251];
+    let dropped_id = 4999;
+
+    for table_id in current_ids.into_iter().chain([dropped_id]) {
+        let stats = ClusterTableStats {
+            table_id,
+            version,
+            snapshot: version,
+            last_analyze_version: version,
+            last_stats_hist_version: version,
+            modify_count: 0,
+            row_count: 5,
+            columns: vec![full_histogram(1, false)],
+            indexes: vec![full_histogram(2, true)],
+        };
+        let plan = plan_stats_write(&mut store, &catalog, &stats, now()).expect("analyze plans");
+        apply_mutations(&mut store, &plan.mutations);
+    }
+
+    let target = |table_id| {
+        let field_type =
+            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
+        StatsTarget {
+            table: TableInfo {
+                id: table_id,
+                columns: vec![ColumnInfo {
+                    id: 1,
+                    name: CiString::new("a"),
+                    field_type: field_type.clone(),
+                    state: SchemaState::PUBLIC,
+                    ..ColumnInfo::default()
+                }]
+                .into(),
+                indices: vec![IndexInfo {
+                    id: 2,
+                    name: CiString::new("idx_a"),
+                    state: SchemaState::PUBLIC,
+                    ..IndexInfo::default()
+                }]
+                .into(),
+                ..TableInfo::default()
+            },
+            column_types: BTreeMap::from([(1, field_type)]),
+        }
+    };
+    // 4250/4251 stand for the two physical partition definitions. The stale
+    // dropped table deliberately has persisted stats but no current target.
+    let targets = current_ids.map(target);
+    let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
+
+    let one = load_initial_stats_snapshot(
+        &mut store,
+        &loader,
+        &targets,
+        &[4242],
+        InitialStatsLoad::Lite,
+    )
+    .expect("one lite table loads");
+    assert_eq!(one.keys().copied().collect::<Vec<_>>(), [4242]);
+
+    let repeated = load_initial_stats_snapshot(
+        &mut store,
+        &loader,
+        &targets,
+        &[4242, 4243],
+        InitialStatsLoad::Lite,
+    )
+    .expect("an already loaded ID may be requested again");
+    assert_eq!(repeated.keys().copied().collect::<Vec<_>>(), [4242, 4243]);
+
+    let lite = load_initial_stats_snapshot(
+        &mut store,
+        &loader,
+        &targets,
+        &[],
+        InitialStatsLoad::Lite,
+    )
+    .expect("all current physical tables load");
+    assert_eq!(lite.keys().copied().collect::<Vec<_>>(), current_ids);
+    assert!(!lite.contains_key(&dropped_id));
+    for state in lite.values() {
+        let table = state.loaded().expect("analyzed table is loaded");
+        let column = table.hist_coll.get_column(1).expect("column metadata exists");
+        assert!(column.read().unwrap().is_all_evicted());
+        let index = table.hist_coll.get_index(2).expect("index metadata exists");
+        assert!(index.read().unwrap().is_all_evicted());
+    }
+
+    let non_lite = load_initial_stats_snapshot(
+        &mut store,
+        &loader,
+        &targets,
+        &[],
+        InitialStatsLoad::IndexFull,
+    )
+    .expect("non-lite initialization loads every current table");
+    assert_eq!(non_lite.keys().next_back().copied(), Some(4251));
+    for state in non_lite.values() {
+        let table = state.loaded().expect("analyzed table is loaded");
+        let column = table.hist_coll.get_column(1).expect("column metadata exists");
+        assert!(column.read().unwrap().is_all_evicted());
+        let index = table.hist_coll.get_index(2).expect("index exists");
+        assert!(index.read().unwrap().is_full_load());
     }
 }
 
