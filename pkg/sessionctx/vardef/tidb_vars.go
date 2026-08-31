@@ -143,6 +143,14 @@ const (
 
 	// TiDBMemQuotaQuery controls the memory quota of a query.
 	TiDBMemQuotaQuery = "tidb_mem_quota_query" // Bytes.
+	// TiDBMVMaintainMemQuota controls the memory quota used by MV maintenance sessions.
+	TiDBMVMaintainMemQuota = "tidb_mv_maintain_mem_quota"
+	// TiDBMVMaintainIsolationReadEngines controls the isolation read engines used by MV maintenance sessions.
+	TiDBMVMaintainIsolationReadEngines = "tidb_mv_maintain_isolation_read_engines"
+	// TiDBMViewMaintainImportThreads controls the thread count for MV initial build IMPORT INTO.
+	TiDBMViewMaintainImportThreads = "tidb_mview_maintain_import_threads"
+	// TiDBMViewMaintainImportDiskQuota controls the disk quota for MV initial build IMPORT INTO.
+	TiDBMViewMaintainImportDiskQuota = "tidb_mview_maintain_import_disk_quota"
 	// TiDBMemQuotaApplyCache controls the memory quota of a query.
 	TiDBMemQuotaApplyCache = "tidb_mem_quota_apply_cache"
 
@@ -1729,6 +1737,9 @@ const (
 	DefMaxAllowedPacket                        uint64 = config.DefMaxAllowedPacket
 	DefTiDBEnableBatchDML                             = false
 	DefTiDBMemQuotaQuery                              = memory.DefMemQuotaQuery // 1GB
+	DefTiDBMVMaintainMemQuota                         = int64(2 * size.GB)
+	DefTiDBMViewMaintainImportThreads                 = 0
+	DefTiDBMViewMaintainImportDiskQuota               = ""
 	DefTiDBStatsCacheMemQuota                         = 0
 	MaxTiDBStatsCacheMemQuota                         = 1024 * 1024 * 1024 * 1024 // 1TB
 	DefTiDBQueryLogMaxLen                             = 4096

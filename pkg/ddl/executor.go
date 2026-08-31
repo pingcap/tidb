@@ -113,6 +113,8 @@ type Executor interface {
 	AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) error
 	DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) error
 	CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt) error
+	CreateMaterializedView(ctx sessionctx.Context, stmt *ast.CreateMaterializedViewStmt) error
+	CreateMaterializedViewLog(ctx sessionctx.Context, stmt *ast.CreateMaterializedViewLogStmt) error
 	CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) error
 	DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error)
 	RecoverTable(ctx sessionctx.Context, recoverTableInfo *model.RecoverTableInfo) (err error)
@@ -1264,6 +1266,21 @@ func (e *executor) CreateTableWithInfo(
 		}
 	}
 	return errors.Trace(err)
+}
+
+func (e *executor) createTableWithInfoPost(
+	ctx sessionctx.Context,
+	tbInfo *model.TableInfo,
+	schemaID int64,
+	scatterScope string,
+) error {
+	preSplitAndScatterTable(ctx, e.store, tbInfo, scatterScope)
+	if e.startMode == BR {
+		if err := handleAutoIncID(e.getAutoIDRequirement(), &model.Job{SchemaID: schemaID}, tbInfo); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }
 
 func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
@@ -7693,6 +7710,8 @@ func getJobCheckInterval(action model.ActionType, i int) (time.Duration, bool) {
 		return getIntervalFromPolicy(slowDDLIntervalPolicy, i)
 	case model.ActionCreateTable, model.ActionCreateSchema:
 		return getIntervalFromPolicy(fastDDLIntervalPolicy, i)
+	case model.ActionCreateMaterializedView:
+		return getIntervalFromPolicy(slowDDLIntervalPolicy, i)
 	default:
 		return getIntervalFromPolicy(normalDDLIntervalPolicy, i)
 	}

@@ -18,7 +18,28 @@ import (
 	"context"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"go.uber.org/atomic"
+)
+
+// MV execution variables are kept as aliases here for compatibility with DDL code that
+// serializes job session variables through the variable package.
+const (
+	TiDBIsolationReadEngines                 = vardef.TiDBIsolationReadEngines
+	TiDBMVMaintainMemQuota                   = vardef.TiDBMVMaintainMemQuota
+	TiDBMVMaintainIsolationReadEngines       = vardef.TiDBMVMaintainIsolationReadEngines
+	TiDBMViewMaintainImportThreads           = vardef.TiDBMViewMaintainImportThreads
+	TiDBMViewMaintainImportDiskQuota         = vardef.TiDBMViewMaintainImportDiskQuota
+	TiDBMaxTiFlashThreads                    = vardef.TiDBMaxTiFlashThreads
+	TiDBMaxBytesBeforeTiFlashExternalJoin    = vardef.TiDBMaxBytesBeforeTiFlashExternalJoin
+	TiDBMaxBytesBeforeTiFlashExternalGroupBy = vardef.TiDBMaxBytesBeforeTiFlashExternalGroupBy
+	TiDBMaxBytesBeforeTiFlashExternalSort    = vardef.TiDBMaxBytesBeforeTiFlashExternalSort
+	TiDBMemQuotaQuery                        = vardef.TiDBMemQuotaQuery
+	TiDBScatterRegion                        = vardef.TiDBScatterRegion
+	TiFlashFineGrainedShuffleStreamCount     = vardef.TiFlashFineGrainedShuffleStreamCount
+	TiFlashFineGrainedShuffleBatchSize       = vardef.TiFlashFineGrainedShuffleBatchSize
+	TiFlashMemQuotaQueryPerNode              = vardef.TiFlashMemQuotaQueryPerNode
+	TiFlashQuerySpillRatio                   = vardef.TiFlashQuerySpillRatio
 )
 
 var (

@@ -816,9 +816,15 @@ type SessionVars struct {
 	QueryCopStoreLimit int
 	// DMLBatchSize indicates the number of rows batch-committed for a statement.
 	// It will be used when using LOAD DATA or BatchInsert or BatchDelete is on.
-	DMLBatchSize        int
-	RetryLimit          int64
-	DisableTxnAutoRetry bool
+	DMLBatchSize int
+	// MVMaintainIsolationReadEngines controls the isolation read engines used by MV maintenance internal sessions.
+	MVMaintainIsolationReadEngines string
+	// MViewMaintainImportThreads controls the thread count for MV initial build IMPORT INTO.
+	MViewMaintainImportThreads int
+	// MViewMaintainImportDiskQuota controls the disk quota for MV initial build IMPORT INTO.
+	MViewMaintainImportDiskQuota string
+	RetryLimit                   int64
+	DisableTxnAutoRetry          bool
 	*UserVars
 	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
 	systems map[string]string
@@ -1687,6 +1693,8 @@ type SessionVars struct {
 
 	// EnableTiFlashReadForWriteStmt indicates whether to enable TiFlash to read for write statements.
 	EnableTiFlashReadForWriteStmt bool
+	// InMaterializedViewMaintenance indicates the session is executing internal MV build/refresh statements.
+	InMaterializedViewMaintenance bool
 
 	// EnableUnsafeSubstitute indicates whether to enable generate column takes unsafe substitute.
 	EnableUnsafeSubstitute bool
@@ -2537,8 +2545,12 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	}
 	vars.MemQuota = MemQuota{
 		MemQuotaQuery:      vardef.DefTiDBMemQuotaQuery,
+		MVMaintainMemQuota: vardef.DefTiDBMVMaintainMemQuota,
 		MemQuotaApplyCache: vardef.DefTiDBMemQuotaApplyCache,
 	}
+	vars.MVMaintainIsolationReadEngines = defaultIsolationReadEnginesValue()
+	vars.MViewMaintainImportThreads = vardef.DefTiDBMViewMaintainImportThreads
+	vars.MViewMaintainImportDiskQuota = vardef.DefTiDBMViewMaintainImportDiskQuota
 	vars.BatchSize = BatchSize{
 		IndexJoinBatchSize: vardef.DefIndexJoinBatchSize,
 		IndexLookupSize:    vardef.DefIndexLookupSize,
@@ -3516,6 +3528,8 @@ func (c *Concurrency) UnionConcurrency() int {
 type MemQuota struct {
 	// MemQuotaQuery defines the memory quota for a query.
 	MemQuotaQuery int64
+	// MVMaintainMemQuota defines the memory quota used by MV maintenance internal sessions.
+	MVMaintainMemQuota int64
 	// MemQuotaApplyCache defines the memory capacity for apply cache.
 	MemQuotaApplyCache int64
 }

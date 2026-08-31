@@ -1338,6 +1338,9 @@ func BuildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo, s *a
 	tblInfo.Name = ident.Name
 	tblInfo.AutoIncID = 0
 	tblInfo.ForeignKeys = nil
+	tblInfo.MaterializedViewBase = nil
+	tblInfo.MaterializedView = nil
+	tblInfo.MaterializedViewLog = nil
 	tblInfo.TableCacheStatusType = model.TableCacheStatusDisable
 	// Ignore TiFlash replicas for temporary tables.
 	if s.TemporaryKeyword != ast.TemporaryNone {

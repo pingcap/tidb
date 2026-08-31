@@ -438,3 +438,34 @@ func TestImportIntoValidateColAssignmentsWithEncodeCtx(t *testing.T) {
 		})
 	}
 }
+
+func TestImportIntoChildSessionInheritsMaintenanceFlag(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table src (a int)")
+	tk.MustExec("insert into src values (1), (2)")
+	tk.MustExec("create table dst (a int)")
+
+	sessionVars := tk.Session().GetSessionVars()
+	origRestricted := sessionVars.InRestrictedSQL
+	origMaintenance := sessionVars.InMaterializedViewMaintenance
+	sessionVars.InRestrictedSQL = true
+	sessionVars.InMaterializedViewMaintenance = true
+	defer func() {
+		sessionVars.InRestrictedSQL = origRestricted
+		sessionVars.InMaterializedViewMaintenance = origMaintenance
+	}()
+
+	var invoked, childMaintenance bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/inheritMViewMaintenanceFlagApplied", func(maintenance bool) {
+		invoked = true
+		childMaintenance = maintenance
+	})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockImportFromSelectSetupErr", `return(true)`)
+
+	err := tk.ExecToErr("import into dst from select * from src with disable_precheck")
+	require.ErrorContains(t, err, "mock import from select setup error")
+	require.True(t, invoked)
+	require.True(t, childMaintenance)
+}

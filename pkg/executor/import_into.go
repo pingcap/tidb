@@ -79,6 +79,19 @@ func newImportIntoExec(b exec.BaseExecutor, selectExec exec.Executor, userSctx s
 	}, nil
 }
 
+func inheritMViewMaintenanceFlag(parent, child sessionctx.Context) {
+	if parent == nil || child == nil {
+		return
+	}
+	parentVars := parent.GetSessionVars()
+	childVars := child.GetSessionVars()
+	childVars.InMaterializedViewMaintenance = parentVars.InMaterializedViewMaintenance
+	failpoint.InjectCall(
+		"inheritMViewMaintenanceFlagApplied",
+		childVars.InMaterializedViewMaintenance,
+	)
+}
+
 // Next implements the Executor Next interface.
 func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	req.GrowAndReset(e.MaxChunkSize())
@@ -126,6 +139,7 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		return err2
 	}
 	defer CloseSession(newSCtx)
+	inheritMViewMaintenanceFlag(e.userSctx, newSCtx)
 	if useAsyncPrepare {
 		if err2 = e.controller.CheckRequirementsBeforeInitDataFiles(ctx, newSCtx); err2 != nil {
 			return err2
@@ -261,6 +275,7 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 		return err2
 	}
 	defer CloseSession(newSCtx)
+	inheritMViewMaintenanceFlag(e.userSctx, newSCtx)
 
 	if err2 = e.controller.CheckRequirements(ctx, newSCtx); err2 != nil {
 		return err2
@@ -268,6 +283,9 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 	if err := e.controller.InitTiKVConfigs(ctx, newSCtx); err != nil {
 		return err
 	}
+	failpoint.Inject("mockImportFromSelectSetupErr", func() {
+		failpoint.Return(errors.New("mock import from select setup error"))
+	})
 
 	importID := uuid.New().String()
 	logutil.Logger(ctx).Info("importing data from select statement",

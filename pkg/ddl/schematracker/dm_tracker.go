@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
+	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 )
 
 // SchemaTracker is used to track schema changes by DM. It implements
@@ -288,6 +290,146 @@ func (d *SchemaTracker) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt
 	}
 
 	return d.CreateTableWithInfo(ctx, s.ViewName.Schema, tbInfo, nil, ddl.WithOnExist(onExist))
+}
+
+// CreateMaterializedViewLog implements the DDL interface.
+func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.CreateMaterializedViewLogStmt) error {
+	schemaName := s.Table.Schema
+	if schemaName.O == "" {
+		if ctx == nil || ctx.GetSessionVars().CurrentDB == "" {
+			return errors.Trace(plannererrors.ErrNoDB)
+		}
+		schemaName = ast.NewCIStr(ctx.GetSessionVars().CurrentDB)
+	}
+	schema := d.SchemaByName(schemaName)
+	if schema == nil {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schemaName)
+	}
+
+	baseTable, err := d.TableClonedByName(schemaName, s.Table.Name)
+	if err != nil {
+		return err
+	}
+	if baseTable.IsView() || baseTable.IsSequence() || baseTable.TempTableType != model.TempTableNone ||
+		baseTable.MaterializedView != nil || baseTable.MaterializedViewLog != nil {
+		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, s.Table.Name, "BASE TABLE")
+	}
+	if baseTable.GetPartitionInfo() != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("CREATE MATERIALIZED VIEW LOG on partition table")
+	}
+
+	mlogName := model.MaterializedViewLogTableName(baseTable.Name)
+	if _, err := d.TableByName(context.Background(), schemaName, mlogName); err == nil {
+		return infoschema.ErrTableExists.GenWithStackByArgs(ast.Ident{Schema: schemaName, Name: mlogName})
+	} else if !infoschema.ErrTableNotExists.Equal(err) {
+		return err
+	}
+
+	colMap := make(map[string]*model.ColumnInfo, len(baseTable.Columns))
+	for _, col := range baseTable.Columns {
+		colMap[col.Name.L] = col
+	}
+	seenCols := make(map[string]struct{}, len(s.Cols))
+	colDefs := make([]*ast.ColumnDef, 0, len(s.Cols)+2)
+	for _, c := range s.Cols {
+		if _, exists := seenCols[c.L]; exists {
+			return infoschema.ErrColumnExists.GenWithStackByArgs(c.O)
+		}
+		seenCols[c.L] = struct{}{}
+		if c.L == strings.ToLower(model.MaterializedViewLogDMLTypeColumnName) || c.L == strings.ToLower(model.MaterializedViewLogOldNewColumnName) {
+			return infoschema.ErrColumnExists.GenWithStackByArgs(c.O)
+		}
+		baseCol := colMap[c.L]
+		if baseCol == nil {
+			return infoschema.ErrColumnNotExists.GenWithStackByArgs(c.O, s.Table.Name.O)
+		}
+		if err := ddl.CheckMaterializedViewLogColumnSupported(baseCol); err != nil {
+			return err
+		}
+		ft := ddl.FieldTypeForMaterializedViewLogColumn(baseCol)
+		colDefs = append(colDefs, &ast.ColumnDef{Name: &ast.ColumnName{Name: c}, Tp: &ft})
+	}
+	metaCols := []struct {
+		name string
+		tp   byte
+		flen int
+	}{
+		{name: model.MaterializedViewLogDMLTypeColumnName, tp: mysql.TypeVarchar, flen: 1},
+		{name: model.MaterializedViewLogOldNewColumnName, tp: mysql.TypeTiny, flen: 4},
+	}
+	for _, metaCol := range metaCols {
+		ft := field_types.NewFieldType(metaCol.tp)
+		ft.SetFlen(metaCol.flen)
+		ft.SetFlag(mysql.NotNullFlag)
+		colDefs = append(colDefs, &ast.ColumnDef{Name: &ast.ColumnName{Name: ast.NewCIStr(metaCol.name)}, Tp: ft})
+	}
+
+	createTableStmt := &ast.CreateTableStmt{
+		Table:   &ast.TableName{Schema: schemaName, Name: mlogName},
+		Cols:    colDefs,
+		Options: s.Options,
+	}
+	metaBuildCtx := ddl.NewMetaBuildContextWithSctx(ctx,
+		metabuild.WithSuppressTooLongIndexErr(true),
+		metabuild.WithClusteredIndexDefMode(vardef.ClusteredIndexDefModeOff),
+	)
+	mlogTableInfo, err := ddl.BuildTableInfoWithStmt(metaBuildCtx, createTableStmt, schema.Charset, schema.Collate, nil)
+	if err != nil {
+		return err
+	}
+
+	var purgeMethod, purgeStartWith, purgeNext string
+	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
+	logAccumulationAlertRows, err := ddl.BuildMLogAccumulationAlertRows(s.AccumulationAlert)
+	if err != nil {
+		return err
+	}
+	if s.Purge != nil {
+		if s.Purge.Immediate {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("PURGE IMMEDIATE is not supported for CREATE MATERIALIZED VIEW LOG")
+		}
+		purgeMethod = "DEFERRED"
+		if s.Purge.StartWith != nil {
+			purgeStartWith, err = ddl.BuildAndValidateMViewScheduleExpr(ctx, s.Purge.StartWith, "PURGE START WITH")
+			if err != nil {
+				return err
+			}
+		}
+		if s.Purge.Next == nil {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("PURGE NEXT is required for CREATE MATERIALIZED VIEW LOG")
+		}
+		purgeNext, err = ddl.BuildAndValidateMViewScheduleExpr(ctx, s.Purge.Next, "PURGE NEXT")
+		if err != nil {
+			return err
+		}
+	}
+	mlogTableInfo.MaterializedViewLog = &model.MaterializedViewLogInfo{
+		BaseTableID:              baseTable.ID,
+		Columns:                  s.Cols,
+		PurgeMethod:              purgeMethod,
+		PurgeStartWith:           purgeStartWith,
+		PurgeNext:                purgeNext,
+		LogAccumulationAlertRows: logAccumulationAlertRows,
+		DefinitionSQLMode:        ctx.GetSessionVars().SQLMode,
+		PurgeScheduleTimeZone:    model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
+	}
+	if err := d.CreateTableWithInfo(ctx, schemaName, mlogTableInfo, nil); err != nil {
+		return err
+	}
+	if baseTable.MaterializedViewBase == nil {
+		baseTable.MaterializedViewBase = &model.MaterializedViewBaseInfo{}
+	}
+	if mlogTableInfo.ID != 0 {
+		baseTable.MaterializedViewBase.MLogID = mlogTableInfo.ID
+	} else {
+		baseTable.MaterializedViewBase.MLogID = 1
+	}
+	return d.PutTable(schemaName, baseTable)
+}
+
+// CreateMaterializedView rejects MV creation because the schema tracker does not support MVs.
+func (*SchemaTracker) CreateMaterializedView(sessionctx.Context, *ast.CreateMaterializedViewStmt) error {
+	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW is not supported in schema tracker")
 }
 
 // DropTable implements the DDL interface.
