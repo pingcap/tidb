@@ -153,6 +153,22 @@ func (s *mockGCSSuite) TestImportFromSelectNonEmptyTableUKConflict() {
 	s.tk.MustQuery("select * from dst order by id").Check(testkit.Rows("1 10 100"))
 }
 
+func (s *mockGCSSuite) TestImportFromSelectNonEmptyTableChecksum() {
+	s.prepareAndUseDB("from_select")
+	s.tk.MustExec("create table src(id int)")
+	s.tk.MustExec("insert into src values (1), (2), (3)")
+	s.tk.MustExec("create table dst(id int)")
+	s.tk.MustExec("insert into dst values (0)")
+
+	// Deliver each row in a separate batch to exercise sorted-key buffer reuse.
+	oldMinDeliverBytes := importer.MinDeliverBytes
+	importer.MinDeliverBytes = 1
+	defer func() { importer.MinDeliverBytes = oldMinDeliverBytes }()
+
+	s.tk.MustExec("import into dst from select id from src with thread = 1")
+	s.tk.MustQuery("select count(*) from dst").Check(testkit.Rows("4"))
+}
+
 func (s *mockGCSSuite) TestImportFromSelectNonEmptyTableAutoRandom() {
 	s.prepareAndUseDB("from_select")
 	s.tk.MustExec("create table src(v int)")
