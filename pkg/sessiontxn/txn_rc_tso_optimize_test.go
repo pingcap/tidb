@@ -788,7 +788,7 @@ func TestConflictErrorsUseRcWriteCheckTs(t *testing.T) {
 
 func TestRcWaitTSInSlowLog(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	setOracleFutureDelay(t, store, time.Millisecond)
+	oracleWithDelay := setOracleFutureDelay(t, store, time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("set global transaction_isolation = 'READ-COMMITTED'")
@@ -807,11 +807,13 @@ func TestRcWaitTSInSlowLog(t *testing.T) {
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("update t1 set id3 = id3 + 10 where id1 = 1")
 	pointUpdateWaitTS := sctx.GetSessionVars().DurationWaitTS
+	secondDelay := pointUpdateWaitTS + time.Millisecond
+	oracleWithDelay.delay = secondDelay
 	tk.MustExec("update t1 set id3 = id3 + 10 where id1 > 3 and id1 < 6")
 	rangeUpdateWaitTS := sctx.GetSessionVars().DurationWaitTS
 	tk.MustExec("commit")
 	require.Greater(t, pointUpdateWaitTS, time.Duration(0))
-	require.Greater(t, rangeUpdateWaitTS, time.Duration(0))
+	require.GreaterOrEqual(t, rangeUpdateWaitTS, secondDelay)
 }
 
 type oracleSetter interface {
@@ -819,14 +821,16 @@ type oracleSetter interface {
 	SetOracle(oracle.Oracle)
 }
 
-func setOracleFutureDelay(t *testing.T, store any, delay time.Duration) {
+func setOracleFutureDelay(t *testing.T, store any, delay time.Duration) *delayedOracle {
 	storage, ok := store.(oracleSetter)
 	require.True(t, ok)
 	originalOracle := storage.GetOracle()
-	storage.SetOracle(delayedOracle{Oracle: originalOracle, delay: delay})
+	oracleWithDelay := &delayedOracle{Oracle: originalOracle, delay: delay}
+	storage.SetOracle(oracleWithDelay)
 	t.Cleanup(func() {
 		storage.SetOracle(originalOracle)
 	})
+	return oracleWithDelay
 }
 
 type delayedOracle struct {
