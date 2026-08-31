@@ -5,6 +5,8 @@ go_test(
     timeout = "short",
     srcs = [
         "main_test.go",
+        "pkdb_time_column_temporal_comparison_boundary_test.go",
+        "pkdb_time_comparison_test.go",
         "simple_test.go",
     ],
     flaky = True,

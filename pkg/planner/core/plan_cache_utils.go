@@ -315,6 +315,12 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	hash = codec.EncodeInt(hash, stmt.SchemaVersion)
 	hash = hashInt64Uint64Map(hash, stmt.RelateVersion)
 	hash = append(hash, pruneMode...)
+	// Fix70751 changes the temporal comparison expression built by the planner.
+	// Keep plans built with the two semantics in separate cache entries.
+	fix70751Enabled := fixcontrol.GetBoolWithDefault(
+		vars.GetOptimizerFixControlMap(), fixcontrol.Fix70751, true,
+	)
+	hash = append(hash, bool2Byte(fix70751Enabled))
 	// Only be set in rc or for update read and leave it default otherwise.
 	// In Rc or ForUpdateRead, we should check whether the information schema has been changed when using plan cache.
 	// If it changed, we should rebuild the plan. lastUpdatedSchemaVersion help us to decide whether we should rebuild

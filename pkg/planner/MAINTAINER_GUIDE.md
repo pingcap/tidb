@@ -260,6 +260,19 @@ Plan cache lookup matches by `(cacheKey, paramTypes)`:
   precision matches; expressions such as `COALESCE` can derive result precision
   from parameters, so reusing a plan across different FSP values can change
   result semantics.
+- comparisons between a qualified direct `TIME` column and a DATE, DATETIME, or
+  TIMESTAMP constant are rewritten with the constant cast to the column's TIME
+  type. This applies through join/selection wrappers, but deliberately excludes
+  derived columns, variables, subqueries, deferred functions, and invalid-zero
+  values whose date component cannot be discarded safely. Fix control 70751 is
+  ON by default and disables this rewrite when explicitly set to OFF. Its
+  effective value is part of the plan-cache key, so changing it naturally
+  selects a plan built with the matching comparison semantics.
+- while fix control 70751 is enabled, invalid-zero temporal parameters bypass
+  plan-cache reuse because a cached comparison rewrite could otherwise be
+  reused with a value whose conversion semantics differ from the value used to
+  build the plan. Setting the fix control to OFF restores the previous caching
+  behavior as well as the previous comparison rewrite behavior.
 
 Even on a hit, planner MUST rebuild param-dependent ranges for current values
 before executing:

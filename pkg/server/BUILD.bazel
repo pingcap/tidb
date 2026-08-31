@@ -153,6 +153,7 @@ go_test(
         "main_test.go",
         "mock_conn_test.go",
         "pkdb_login_history_test.go",
+        "pkdb_time_column_temporal_comparison_test.go",
         "pkdb_user_connections_test.go",
         "server_test.go",
         "stat_test.go",

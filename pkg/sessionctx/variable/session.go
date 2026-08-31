@@ -2136,8 +2136,9 @@ func (p PartitionPruneMode) Update() PartitionPruneMode {
 // PlanCacheParamList stores the parameters for plan cache.
 // Use attached methods to access or modify parameter values instead of accessing them directly.
 type PlanCacheParamList struct {
-	paramValues     []types.Datum
-	forNonPrepCache bool
+	paramValues            []types.Datum
+	forNonPrepCache        bool
+	hasInvalidZeroTemporal bool
 }
 
 // NewPlanCacheParamList creates a new PlanCacheParams.
@@ -2151,6 +2152,7 @@ func NewPlanCacheParamList() *PlanCacheParamList {
 func (p *PlanCacheParamList) Reset() {
 	p.paramValues = p.paramValues[:0]
 	p.forNonPrepCache = false
+	p.hasInvalidZeroTemporal = false
 }
 
 // String implements the fmt.Stringer interface.
@@ -2164,12 +2166,26 @@ func (p *PlanCacheParamList) String() string {
 
 // Append appends a parameter value to the PlanCacheParams.
 func (p *PlanCacheParamList) Append(vs ...types.Datum) {
-	p.paramValues = append(p.paramValues, vs...)
+	for _, v := range vs {
+		p.paramValues = append(p.paramValues, v)
+		if v.Kind() == types.KindMysqlTime {
+			tm := v.GetMysqlTime()
+			if types.IsTypeTime(tm.Type()) && tm.InvalidZero() {
+				p.hasInvalidZeroTemporal = true
+			}
+		}
+	}
 }
 
 // SetForNonPrepCache sets the flag forNonPrepCache.
 func (p *PlanCacheParamList) SetForNonPrepCache(flag bool) {
 	p.forNonPrepCache = flag
+}
+
+// HasInvalidZeroTemporal reports whether any parameter is an incomplete DATE,
+// DATETIME, or TIMESTAMP value.
+func (p *PlanCacheParamList) HasInvalidZeroTemporal() bool {
+	return p.hasInvalidZeroTemporal
 }
 
 // GetParamValue returns the value of the parameter at the specified index.

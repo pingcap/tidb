@@ -1463,7 +1463,7 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx 
 				er.err = err
 				return v, true
 			}
-			er.ctxStack = append(er.ctxStack, rowFunc)
+			er.ctxStackAppend(rowFunc, types.EmptyName)
 		}
 		return v, true
 	}
@@ -1946,8 +1946,11 @@ func (er *expressionRewriter) binaryOpToExpression(v *ast.BinaryOperationExpr) {
 	var function expression.Expression
 	switch v.Op {
 	case opcode.EQ, opcode.NE, opcode.NullEQ, opcode.GT, opcode.GE, opcode.LT, opcode.LE:
-		function, er.err = er.constructBinaryOpFunction(er.ctxStack[stkLen-2], er.ctxStack[stkLen-1],
-			v.Op.String())
+		lhs, rhs := er.castTemporalConstantForTimeColumnComparison(
+			timeComparisonOperand{expr: er.ctxStack[stkLen-2], node: v.L, name: er.ctxNameStk[stkLen-2]},
+			timeComparisonOperand{expr: er.ctxStack[stkLen-1], node: v.R, name: er.ctxNameStk[stkLen-1]},
+		)
+		function, er.err = er.constructBinaryOpFunction(lhs, rhs, v.Op.String())
 	default:
 		lLen := expression.GetRowLen(er.ctxStack[stkLen-2])
 		rLen := expression.GetRowLen(er.ctxStack[stkLen-1])

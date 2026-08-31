@@ -210,6 +210,7 @@ go_test(
         "grouping_sets_test.go",
         "helper_test.go",
         "main_test.go",
+        "pkdb_builtin_compare_temporal_regression_test.go",
         "pkdb_stored_function_test.go",
         "scalar_function_test.go",
         "schema_test.go",

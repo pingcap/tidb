@@ -104,6 +104,7 @@ go_test(
     srcs = [
         "main_test.go",
         "mock_globalaccessor_test.go",
+        "pkdb_plan_cache_param_test.go",
         "pkdb_procedure_session_test.go",
         "removed_test.go",
         "session_test.go",

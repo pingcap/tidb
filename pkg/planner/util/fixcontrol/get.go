@@ -76,6 +76,9 @@ const (
 	Fix52869 uint64 = 52869
 	// Fix54337 controls whether to apply or not range intersection for index access.
 	Fix54337 uint64 = 54337
+	// Fix70751 controls whether temporal constants and parameters compared with a direct TIME column
+	// are converted to the TIME column type. See #70751.
+	Fix70751 uint64 = 70751
 )
 
 // GetStr fetches the given key from the fix control map as a string type.

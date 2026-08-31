@@ -29,6 +29,7 @@ import (
 	core_metrics "github.com/pingcap/tidb/pkg/planner/core/metrics"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
+	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -227,7 +228,14 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 	}
 
 	if stmt.StmtCacheable && cacheEnabled {
-		stmtCtx.EnablePlanCache()
+		fix70751Enabled := fixcontrol.GetBoolWithDefault(
+			sessVars.GetOptimizerFixControlMap(), fixcontrol.Fix70751, true,
+		)
+		if fix70751Enabled && sessVars.PlanCacheParams.HasInvalidZeroTemporal() {
+			stmtCtx.WarnSkipPlanCache("invalid-zero temporal parameter")
+		} else {
+			stmtCtx.EnablePlanCache()
+		}
 	}
 	if stmt.UncacheableReason != "" {
 		stmtCtx.WarnSkipPlanCache(stmt.UncacheableReason)
