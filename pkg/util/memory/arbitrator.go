@@ -64,7 +64,7 @@ const (
 	defTaskTickDur                            = time.Millisecond * 10
 	defHeapReclaimCheckDuration               = time.Second * 1
 	defOOMRiskRatio                           = 0.95
-	defMemRiskRatio                           = 0.85
+	defMemRiskRatio                           = 0.9
 	defTickDurMilli                           = kilo * 1            // 1s
 	defStorePoolMediumCapDurMilli             = defTickDurMilli * 5 // 5s
 	defStoreTopNProfilesDurMilli              = defTickDurMilli * 5 // 5s
@@ -261,6 +261,10 @@ type rootPoolEntry struct {
 		memPriority     ArbitrationPriority
 		waitAverse      bool
 		preferPrivilege bool
+		finish          struct {
+			sync.Mutex
+			f func()
+		}
 	}
 	request struct {
 		// arbitrator will send result in `windup`
@@ -1201,6 +1205,7 @@ func (m *MemArbitrator) RemoveRootPoolByID(uid uint64) bool {
 	}
 
 	if m.removeRootPoolEntry(entry) {
+		entry.execFinish()
 		m.wake()
 		return true
 	}
@@ -1959,6 +1964,24 @@ func (m *MemArbitrator) asyncRun(duration time.Duration) bool {
 		close(m.controlMu.finishCh)
 	}()
 	return true
+}
+
+// SetFinish sets the finish function for the root pool entry.
+func (e *rootPoolEntry) SetFinish(f func()) {
+	e.ctx.finish.Lock()
+	defer e.ctx.finish.Unlock()
+
+	e.ctx.finish.f = f
+}
+
+func (e *rootPoolEntry) execFinish() {
+	e.ctx.finish.Lock()
+	defer e.ctx.finish.Unlock()
+
+	if e.ctx.finish.f != nil {
+		e.ctx.finish.f()
+		e.ctx.finish.f = nil
+	}
 }
 
 // RestartEntryByContext starts the root pool with the given context

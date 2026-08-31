@@ -985,7 +985,7 @@ type memArbitrator struct {
 	state       struct {
 		sync.Mutex
 		atomic.Int32 // states: the current state of memArbitrator
-		finish       func()
+		reset        func()
 	}
 	prevMaxMem int64
 
@@ -1120,18 +1120,23 @@ func (m *memArbitrator) intoBigBudget() bool {
 		return false
 	}
 
-	_, root, err := m.EmplaceRootPool(m.uid)
+	ok, root, err := m.EmplaceRootPool(m.uid)
 
 	if err != nil {
 		panic(err)
+	} else if ok && m.isInternal {
+		globalArbitrator.metrics.pools.internalSession.Add(1)
+		root.SetFinish(func() {
+			globalArbitrator.metrics.pools.internalSession.Add(-1)
+		})
 	}
 
 	smallUsed := max(0, m.smallBudgetUsed())
 
-	if ok, finish := m.RestartEntryByContext(root, m.ctx); !ok {
+	if ok, reset := m.RestartEntryByContext(root, m.ctx); !ok {
 		panic("failed to init mem pool")
 	} else {
-		m.state.finish = finish
+		m.state.reset = reset
 	}
 
 	m.state.Store(memArbitratorStateIntoBigBudget)
@@ -1260,9 +1265,9 @@ func (m *memArbitrator) reset(exception bool, maxConsumed int64) bool {
 		m.ResetRootPoolByID(m.uid, maxConsumed, !exception)
 	}
 
-	if m.state.finish != nil {
-		m.state.finish()
-		m.state.finish = nil
+	if m.state.reset != nil {
+		m.state.reset()
+		m.state.reset = nil
 	}
 	return true
 }
