@@ -165,11 +165,6 @@ type MDLoaderSetupConfig struct {
 	ReturnPartialResultOnError bool
 	// FileIter controls the file iteration policy when constructing a MDLoader.
 	FileIter FileIterator
-
-	// CollectScanReport specifies whether MDLoader retains the raw object
-	// inventory and scan completeness for callers that need source-layout
-	// detection after loading.
-	CollectScanReport bool
 }
 
 // DefaultMDLoaderSetupConfig generates a default MDLoaderSetupConfig.
@@ -226,14 +221,6 @@ func WithFileIterator(fileIter FileIterator) MDLoaderSetupOption {
 	}
 }
 
-// WithScanReport makes MDLoader retain the raw object inventory and whether the
-// source scan completed. It does not change file routing behavior.
-func WithScanReport() MDLoaderSetupOption {
-	return func(cfg *MDLoaderSetupConfig) {
-		cfg.CollectScanReport = true
-	}
-}
-
 // LoaderConfig is the configuration for constructing a MDLoader.
 type LoaderConfig struct {
 	// SourceID is the unique identifier for the data source, it's used in DM only.
@@ -257,10 +244,6 @@ type LoaderConfig struct {
 	// If it's true, the default file routing rules will be appended to the FileRouters.
 	// a little confusing, but it's true only when FileRouters is empty.
 	DefaultFileRules bool
-	// EnableAuroraSnapshotAutoRoute enables the Aurora/RDS snapshot-export
-	// structural router. It is intentionally opt-in so existing Lightning and
-	// Dumpling sources keep the default nested-path routing semantics.
-	EnableAuroraSnapshotAutoRoute bool
 }
 
 // NewLoaderCfg creates loader config from lightning config.
@@ -285,23 +268,12 @@ type MDLoader struct {
 	router     *regexprrouter.RouteTable
 	fileRouter FileRouter
 	charSet    string
-	scanReport *ScanReport
 }
 
 // RawFile store the path and size of a file.
 type RawFile struct {
 	Path string
 	Size int64
-}
-
-// ScanReport records the raw objects observed by MDLoader's existing source
-// listing. Files contains only the objects observed before a listing error.
-type ScanReport struct {
-	Files    []RawFile
-	Complete bool
-	// Err is the listing or file-construction error that made the report
-	// incomplete.
-	Err error
 }
 
 type parquetInfo struct {
@@ -383,12 +355,6 @@ func NewLoaderWithStore(ctx context.Context, cfg LoaderConfig,
 	fileRouter, err := NewFileRouter(fileRouteRules, log.Wrap(logutil.Logger(ctx)))
 	if err != nil {
 		return nil, common.ErrInvalidConfig.Wrap(err).GenWithStack("parse file routing rule failed")
-	}
-	if cfg.EnableAuroraSnapshotAutoRoute && cfg.DefaultFileRules {
-		// The structural router must run before the generic leaf-name rules.
-		// Unlike the old regexp rule it validates the whole path and rejects
-		// multiple schema.table directory candidates.
-		fileRouter = chainRouters{auroraSnapshotRouter{}, fileRouter}
 	}
 
 	mdl := &MDLoader{
@@ -498,31 +464,19 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 
 	// First collect all file paths
 	allFiles := make([]RawFile, 0, 128)
-	iterErr := fileIter.IterateFiles(ctx, func(_ context.Context, path string, size int64) error {
+	if err := fileIter.IterateFiles(ctx, func(_ context.Context, path string, size int64) error {
 		allFiles = append(allFiles, RawFile{path, size})
 		return nil
-	})
-	if s.setupCfg.CollectScanReport {
-		s.loader.scanReport = &ScanReport{
-			Files:    allFiles,
-			Complete: iterErr == nil,
-			Err:      iterErr,
-		}
-	}
-	if iterErr != nil {
+	}); err != nil {
 		if !s.setupCfg.ReturnPartialResultOnError {
-			return common.ErrStorageUnknown.Wrap(iterErr).GenWithStack("list file failed")
+			return common.ErrStorageUnknown.Wrap(err).GenWithStack("list file failed")
 		}
-		gerr = iterErr
+		gerr = err
 	}
 
 	// Parallel process all files
 	allInfos, err := ParallelProcess(ctx, allFiles, s.setupCfg.ScanFileConcurrency, s.constructFileInfo)
 	if err != nil {
-		if s.loader.scanReport != nil {
-			s.loader.scanReport.Complete = false
-			s.loader.scanReport.Err = err
-		}
 		if !s.setupCfg.ReturnPartialResultOnError {
 			return common.ErrStorageUnknown.Wrap(err).GenWithStack("list file failed")
 		}
@@ -950,12 +904,6 @@ func (l *MDLoader) GetAllFiles() map[string]FileInfo {
 		}
 	}
 	return allFiles
-}
-
-// GetScanReport returns the raw object inventory retained during setup. It
-// returns nil unless WithScanReport was supplied.
-func (l *MDLoader) GetScanReport() *ScanReport {
-	return l.scanReport
 }
 
 func calculateFileBytes(ctx context.Context,

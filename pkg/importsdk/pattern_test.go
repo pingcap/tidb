@@ -110,6 +110,10 @@ func TestGenerateMydumperPattern(t *testing.T) {
 	require.Equal(t, "", generateMydumperPattern(mydump.FileInfo{
 		TableName: filter.Table{},
 	}))
+	require.Equal(t, "", generateMydumperPattern(mydump.FileInfo{
+		TableName: filter.Table{Schema: "db", Name: "users"},
+		FileMeta:  mydump.SourceFileMeta{Path: "db/db.users/1/part-a.parquet"},
+	}))
 }
 
 func TestValidatePattern(t *testing.T) {
@@ -177,6 +181,18 @@ func TestGenerateWildcardPath(t *testing.T) {
 	path3, err := generateWildcardPath(files3, allFiles3)
 	require.NoError(t, err)
 	require.Equal(t, "db.tb.*.sql.gz", path3)
+
+	auroraFiles := generateFileMetas(t, []string{
+		"export-1/db/db.users/1/part-a.parquet",
+		"export-1/db/db.users/2/part-b.parquet",
+	})
+	auroraAllFiles := createAllFiles([]string{
+		"export-1/db/db.users/1/part-a.parquet",
+		"export-1/db/db.users/2/part-b.parquet",
+	})
+	auroraPath, err := generateWildcardPath(auroraFiles, auroraAllFiles)
+	require.NoError(t, err)
+	require.Equal(t, "export-1/db/db.users/*/part-*.parquet", auroraPath)
 
 	// Mydumper pattern fails, fallback to prefix/suffix succeeds
 	files4 := []mydump.FileInfo{

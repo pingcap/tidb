@@ -52,20 +52,18 @@ func TestCreateDataFileMeta(t *testing.T) {
 	df := createDataFileMeta(fi)
 	require.Equal(t, "s3://bucket/path/to/f", df.Path)
 	require.Equal(t, int64(456), df.Size)
-	require.Equal(t, int64(123), df.ObjectSize)
 	require.Equal(t, mydump.SourceTypeCSV, df.Format)
 	require.Equal(t, mydump.CompressionGZ, df.Compression)
 }
 
 func TestProcessDataFiles(t *testing.T) {
 	files := []mydump.FileInfo{
-		{FileMeta: mydump.SourceFileMeta{Path: "s3://bucket/a", FileSize: 4, RealSize: 10}},
-		{FileMeta: mydump.SourceFileMeta{Path: "s3://bucket/b", FileSize: 6, RealSize: 20}},
+		{FileMeta: mydump.SourceFileMeta{Path: "s3://bucket/a", RealSize: 10}},
+		{FileMeta: mydump.SourceFileMeta{Path: "s3://bucket/b", RealSize: 20}},
 	}
-	dfm, total, objectTotal := processDataFiles(files)
+	dfm, total := processDataFiles(files)
 	require.Len(t, dfm, 2)
 	require.Equal(t, int64(30), total)
-	require.Equal(t, int64(10), objectTotal)
 	require.Equal(t, "s3://bucket/a", dfm[0].Path)
 	require.Equal(t, "s3://bucket/b", dfm[1].Path)
 }
@@ -110,6 +108,35 @@ func TestFileScanner(t *testing.T) {
 		require.Equal(t, "t1", metas[0].Table)
 		require.Equal(t, int64(3), metas[0].TotalSize)
 		require.Len(t, metas[0].DataFiles, 1)
+	})
+
+	t.Run("GetAuroraSnapshotTableMetas", func(t *testing.T) {
+		auroraDir := t.TempDir()
+		for _, path := range []string{
+			"export-1/db/db.users/1/part-a.parquet",
+			"export-1/db/db.users/2/part-b.parquet",
+		} {
+			fullPath := filepath.Join(auroraDir, path)
+			require.NoError(t, os.MkdirAll(filepath.Dir(fullPath), 0o755))
+			require.NoError(t, os.WriteFile(fullPath, []byte("data"), 0o644))
+		}
+
+		auroraDB, _, err := sqlmock.New()
+		require.NoError(t, err)
+		defer auroraDB.Close()
+		auroraCfg := defaultSDKConfig()
+		WithEstimateRealSize(false)(auroraCfg)
+		auroraScanner, err := NewFileScanner(ctx, "file://"+auroraDir, auroraDB, auroraCfg)
+		require.NoError(t, err)
+		defer auroraScanner.Close()
+
+		metas, err := auroraScanner.GetTableMetas(ctx)
+		require.NoError(t, err)
+		require.Len(t, metas, 1)
+		require.Equal(t, "db", metas[0].Database)
+		require.Equal(t, "users", metas[0].Table)
+		require.Len(t, metas[0].DataFiles, 2)
+		require.Contains(t, metas[0].WildcardPath, "export-1/db/db.users/*/part-*.parquet")
 	})
 
 	t.Run("GetTableMetaByName", func(t *testing.T) {

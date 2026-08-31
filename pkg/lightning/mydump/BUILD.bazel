@@ -3,7 +3,6 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "mydump",
     srcs = [
-        "aurora.go",
         "bytes.go",
         "charset_convertor.go",
         "csv_parser.go",
@@ -62,7 +61,6 @@ go_test(
     name = "mydump_test",
     timeout = "short",
     srcs = [
-        "aurora_test.go",
         "charset_convertor_test.go",
         "csv_parser_test.go",
         "loader_test.go",
