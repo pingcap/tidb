@@ -1511,7 +1511,6 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	MViewTableOptionList                   "materialized view table option list"
 	MViewTableOption                       "materialized view table option"
 	MViewRefreshClause                     "materialized view refresh clause"
-	MViewRefreshOnClauseOpt                "materialized view refresh ON clause"
 	MViewStartWithOrNextOpt                "materialized view START WITH/NEXT option list"
 	MViewStartWithOrNext                   "materialized view START WITH/NEXT option"
 	MViewRefreshClauseOpt                  "optional materialized view refresh clause"
@@ -5726,21 +5725,14 @@ MViewAttributesOpt:
 	}
 
 MViewRefreshClause:
-	"REFRESH" "FAST" MViewRefreshOnClauseOpt
+	"REFRESH" "FAST" MViewStartWithOrNextOpt
 	{
-		x := $3.(*ast.MViewRefreshClause)
+		x := &ast.MViewRefreshClause{}
+		if $3 != nil {
+			x = $3.(*ast.MViewRefreshClause)
+		}
 		x.Method = ast.MViewRefreshMethodFast
 		$$ = x
-	}
-
-MViewRefreshOnClauseOpt:
-	/* EMPTY */
-	{
-		$$ = &ast.MViewRefreshClause{}
-	}
-|	MViewStartWithOrNext
-	{
-		$$ = $1
 	}
 
 MViewStartWithOrNextOpt:
