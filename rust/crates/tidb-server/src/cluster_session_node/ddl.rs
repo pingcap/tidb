@@ -20,6 +20,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -34,13 +35,15 @@ use tidb_exec::catalog_watch::SharedCatalog as SharedClusterCatalog;
 use tidb_exec::cluster_ddl::{
     CheckConstraintValidation, DdlStatement, ExchangePartitionValidation, IndexBackfill,
 };
+use tidb_exec::ddl_systable::MinJobIdRefresher;
 use tidb_exec::pessimistic_lock_error::LockSqlError;
 use tidb_exec::real_tikv_catalog::reload_catalog_from_cluster;
 use tidb_exec::real_tikv_ddl::{
     commit_cluster_ddl_with_backfill, load_active_persisted_ddl_jobs,
-    load_history_persisted_ddl_job, run_persisted_check_constraint_job_to_completion,
-    submit_check_constraint_job_with_retry, CheckConstraintSchemaSync, CheckConstraintValidator,
-    ClusterDdlReport, ExchangePartitionValidator, IndexBackfiller, SchemaVersionNotifier,
+    load_history_persisted_ddl_job, load_min_persisted_ddl_job_id,
+    run_persisted_check_constraint_job_to_completion, submit_check_constraint_job_with_retry,
+    CheckConstraintSchemaSync, CheckConstraintValidator, ClusterDdlReport,
+    ExchangePartitionValidator, IndexBackfiller, SchemaVersionNotifier,
 };
 use tidb_exec::real_tikv_read::RealOptimisticTransactionOpener;
 use tidb_executor::cluster_storage::{ClusterSnapshot, ClusterTableStorage, MutationBuffer};
@@ -118,6 +121,7 @@ where
     wake: Arc<(Mutex<u64>, Condvar)>,
     server_state: Arc<dyn Syncer>,
     server_state_context: ServerStateContext,
+    min_job_id_refresher: Arc<MinJobIdRefresher>,
     owner: Mutex<Option<Arc<dyn tidb_owner::Manager>>>,
     worker: Mutex<Option<SchedulerWorker>>,
 }
@@ -188,12 +192,17 @@ where
         wake: Arc<(Mutex<u64>, Condvar)>,
         server_state: Arc<dyn Syncer>,
         server_state_context: ServerStateContext,
+        min_job_id_refresher: Arc<MinJobIdRefresher>,
         owner: Arc<dyn tidb_owner::Manager>,
         stop: Arc<AtomicBool>,
     ) {
         Self::refresh_server_state(server_state.as_ref(), &server_state_context, owner.as_ref());
         while !stop.load(Ordering::Acquire) {
-            match load_active_persisted_ddl_jobs(Arc::clone(&opener), timeout) {
+            match load_active_persisted_ddl_jobs(
+                Arc::clone(&opener),
+                timeout,
+                min_job_id_refresher.current_min_job_id(),
+            ) {
                 Ok(jobs) => {
                     for job in jobs {
                         if stop.load(Ordering::Acquire) {
@@ -319,6 +328,7 @@ where
                 let timeout = self.timeout;
                 let server_state = Arc::clone(&self.server_state);
                 let server_state_context = self.server_state_context.clone();
+                let min_job_id_refresher = Arc::clone(&self.min_job_id_refresher);
                 let owner = self
                     .owner
                     .lock()
@@ -335,6 +345,7 @@ where
                         wake,
                         server_state,
                         server_state_context,
+                        min_job_id_refresher,
                         owner,
                         stop,
                     )
@@ -373,6 +384,9 @@ where
     owner: Arc<dyn tidb_owner::Manager>,
     server_state: Arc<dyn Syncer>,
     server_state_context: ServerStateContext,
+    min_job_id_refresher: Arc<MinJobIdRefresher>,
+    min_job_id_stop: Sender<()>,
+    min_job_id_worker: Option<JoinHandle<()>>,
 }
 
 impl<C, L, P> RealClusterDdl<C, L, P>
@@ -403,6 +417,21 @@ where
             .init(&server_state_context)
             .map_err(|error| error.to_string())?;
         let opener = Arc::new(opener);
+        let min_job_id_refresher = Arc::new(MinJobIdRefresher::new());
+        let (min_job_id_stop, min_job_id_stopped) = channel();
+        let min_job_id_worker = std::thread::Builder::new()
+            .name("ddl-min-job-id-refresher".to_owned())
+            .spawn({
+                let refresher = Arc::clone(&min_job_id_refresher);
+                let opener = Arc::clone(&opener);
+                move || {
+                    refresher.start(&min_job_id_stopped, |previous| {
+                        load_min_persisted_ddl_job_id(Arc::clone(&opener), timeout, previous)
+                            .map_err(|error| error.to_string())
+                    });
+                }
+            })
+            .map_err(|error| error.to_string())?;
         let schema_sync = Arc::new(ClusterSchemaSync {
             opener: Arc::clone(&opener),
             catalog: Arc::clone(&catalog),
@@ -419,6 +448,7 @@ where
             wake: Arc::new((Mutex::new(0), Condvar::new())),
             server_state: Arc::clone(&server_state),
             server_state_context: server_state_context.clone(),
+            min_job_id_refresher: Arc::clone(&min_job_id_refresher),
             owner: Mutex::new(None),
             worker: Mutex::new(None),
         });
@@ -453,6 +483,9 @@ where
             owner,
             server_state,
             server_state_context,
+            min_job_id_refresher,
+            min_job_id_stop,
+            min_job_id_worker: Some(min_job_id_worker),
         })
     }
 
@@ -709,6 +742,7 @@ where
                 statement,
                 self.timeout,
                 self.server_state.is_upgrading_state(),
+                self.min_job_id_refresher.current_min_job_id(),
             )
             .map_err(cluster_ddl_error)?;
             self.notify_new_job_submitted();
@@ -744,6 +778,10 @@ where
 {
     fn drop(&mut self) {
         self.server_state_context.cancel();
+        let _ = self.min_job_id_stop.send(());
+        if let Some(worker) = self.min_job_id_worker.take() {
+            let _ = worker.join();
+        }
         self.owner.close();
         self.scheduler.stop();
     }

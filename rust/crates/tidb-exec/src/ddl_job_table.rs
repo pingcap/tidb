@@ -34,7 +34,10 @@ use tidb_model::Job;
 use tidb_txnkv::transaction::OptimisticMutation;
 
 use crate::cluster_catalog::{ClusterCatalog, MetaSnapshot};
-use crate::mysql_system_tables::{scan_system_table, SystemRow, SystemTableError, SystemTableView};
+use crate::mysql_system_tables::{
+    scan_system_table_from_int_handle, scan_system_table_prefixed, SystemRow, SystemTableError,
+    SystemTableView,
+};
 use crate::system_row_write::{
     delete_clustered_row, store_clustered_row, RowEncodeError, RowValues,
 };
@@ -178,32 +181,81 @@ impl DdlJobTable {
         &self,
         snapshot: &mut S,
     ) -> Result<Vec<ActiveDdlJob>, DdlJobTableError> {
-        scan_system_table(snapshot, &self.view)?
-            .into_iter()
-            .map(|(key, value)| {
-                let row = SystemRow::parse(&self.view, &key, &value)?;
-                let reorg = row.i64("reorg")?.unwrap_or_default() != 0;
-                let schema_ids = row.text("schema_ids")?.unwrap_or_default();
-                let table_ids = row.text("table_ids")?.unwrap_or_default();
-                let job_meta = row
-                    .bytes("job_meta")?
-                    .ok_or(DdlJobTableError::MissingColumn("job_meta"))?;
-                let type_ = row.i64("type")?.unwrap_or_default();
-                let processing = row.i64("processing")?.unwrap_or_default() != 0;
-                let values = row.into_values();
-                let mut job = Job::default();
-                job.decode(&job_meta)?;
-                Ok(ActiveDdlJob {
-                    job,
-                    reorg,
-                    schema_ids,
-                    table_ids,
-                    type_,
-                    processing,
-                    values,
-                })
-            })
-            .collect()
+        self.load_from(snapshot, i64::MIN)
+    }
+
+    /// Go scheduler query's `job_id >= MinJobIDRefresher.GetCurrMinJobID()`
+    /// lower bound.
+    pub fn load_from<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        min_job_id: i64,
+    ) -> Result<Vec<ActiveDdlJob>, DdlJobTableError> {
+        let pairs = scan_system_table_from_int_handle(snapshot, &self.view, min_job_id)?;
+        let mut jobs = Vec::with_capacity(pairs.len());
+        for (key, value) in pairs {
+            let row = SystemRow::parse(&self.view, &key, &value)?;
+            if row.i64("job_id")?.unwrap_or_default() < min_job_id {
+                continue;
+            }
+            let reorg = row.i64("reorg")?.unwrap_or_default() != 0;
+            let schema_ids = row.text("schema_ids")?.unwrap_or_default();
+            let table_ids = row.text("table_ids")?.unwrap_or_default();
+            let job_meta = row
+                .bytes("job_meta")?
+                .ok_or(DdlJobTableError::MissingColumn("job_meta"))?;
+            let type_ = row.i64("type")?.unwrap_or_default();
+            let processing = row.i64("processing")?.unwrap_or_default() != 0;
+            let values = row.into_values();
+            let mut job = Job::default();
+            job.decode(&job_meta)?;
+            jobs.push(ActiveDdlJob {
+                job,
+                reorg,
+                schema_ids,
+                table_ids,
+                type_,
+                processing,
+                values,
+            });
+        }
+        Ok(jobs)
+    }
+
+    /// Pinned Go `systable.Manager.GetJobBytesByIDWithSe`.
+    pub fn job_bytes_by_id<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        job_id: i64,
+    ) -> Result<Option<Vec<u8>>, DdlJobTableError> {
+        for (key, value) in scan_system_table_prefixed(snapshot, &self.view, &[Datum::Int(job_id)])?
+        {
+            let row = SystemRow::parse(&self.view, &key, &value)?;
+            if row.i64("job_id")? == Some(job_id) {
+                // Go chunk.Row.GetBytes returns an empty slice for SQL NULL;
+                // GetJobBytesByIDWithSe itself still succeeds in that case.
+                return Ok(Some(row.bytes("job_meta")?.unwrap_or_default()));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Pinned Go `systable.Manager.GetMinJobID`.
+    pub fn min_job_id<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        previous_min_job_id: i64,
+    ) -> Result<Option<i64>, DdlJobTableError> {
+        let mut minimum = None;
+        for (key, value) in
+            scan_system_table_from_int_handle(snapshot, &self.view, previous_min_job_id)?
+        {
+            let row = SystemRow::parse(&self.view, &key, &value)?;
+            if let Some(job_id) = row.i64("job_id")?.filter(|id| *id >= previous_min_job_id) {
+                minimum = Some(minimum.map_or(job_id, |current: i64| current.min(job_id)));
+            }
+        }
+        Ok(minimum)
     }
 
     /// Pinned Go `systable.Manager.HasFlashbackClusterJob` query used by
@@ -217,16 +269,17 @@ impl DdlJobTable {
         snapshot: &mut S,
         min_job_id: i64,
     ) -> Result<bool, DdlJobTableError> {
-        for (key, value) in scan_system_table(snapshot, &self.view)? {
+        let mut found = false;
+        for (key, value) in scan_system_table_from_int_handle(snapshot, &self.view, min_job_id)? {
             let row = SystemRow::parse(&self.view, &key, &value)?;
             if row.i64("job_id")?.unwrap_or_default() >= min_job_id
                 && row.i64("type")?.unwrap_or_default()
                     == i64::from(tidb_model::ActionType::ACTION_FLASHBACK_CLUSTER.0)
             {
-                return Ok(true);
+                found = true;
             }
         }
-        Ok(false)
+        Ok(found)
     }
 
     /// Appends pinned Go `insertDDLJobs2Table` for one already-ID-assigned

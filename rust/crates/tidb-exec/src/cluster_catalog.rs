@@ -70,6 +70,24 @@ pub trait MetaSnapshot {
 
     /// Reads every key/value pair under `prefix`, in key order.
     fn scan_prefix(&mut self, prefix: &[u8]) -> Result<MetaPairs, ClusterCatalogError>;
+
+    /// Reads every key/value pair in `[start, end)`, in key order.
+    ///
+    /// Recorded in-memory snapshots can implement only [`Self::scan_prefix`]:
+    /// the default finds their shared prefix and trims the returned pairs.
+    /// Live snapshots override this method so TiKV seeks directly to `start`.
+    fn scan_range(&mut self, start: &[u8], end: &[u8]) -> Result<MetaPairs, ClusterCatalogError> {
+        let common_len = start
+            .iter()
+            .zip(end)
+            .take_while(|(left, right)| left == right)
+            .count();
+        Ok(self
+            .scan_prefix(&start[..common_len])?
+            .into_iter()
+            .filter(|(key, _)| key.as_slice() >= start && key.as_slice() < end)
+            .collect())
+    }
 }
 
 /// A [`MetaSnapshot`] that can also read one record range in bounded pages.

@@ -96,6 +96,7 @@ pub mod ddl_job_comments;
 pub mod ddl_job_merge;
 pub mod ddl_job_submit;
 pub mod ddl_job_table;
+pub mod ddl_systable;
 mod deadlock_recording;
 pub mod delete_rows_col_multiply;
 pub use deadlock_recording::configure_deadlock_history;

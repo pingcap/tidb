@@ -32,9 +32,11 @@ use tidb_exec::cluster_ddl::{
     lower_ddl, lower_ddl_with_context, plan_check_constraint_job_rollingback,
     plan_ddl, plan_ddl_with_collation, plan_persisted_check_constraint_job_step,
     prepare_check_constraint_job_submission, AlterColumnAction, DdlPlan, DdlPlanError, DdlStatement,
+    MdlInfoUpdate,
 };
 use tidb_exec::ddl_job_submit::{finish_insert_attempt, plan_insert_attempt};
 use tidb_exec::ddl_job_table::DdlJobTable;
+use tidb_exec::ddl_systable::{SystemTableManager, SystemTableManagerError};
 use tidb_exec::ddl_history_table::DdlHistoryTable;
 use tidb_exec::mysql_system_tables::{SystemRow, SystemTableView};
 use tidb_exec::system_row_write::store_clustered_row;
@@ -50,6 +52,7 @@ use tidb_txnkv::transaction::{OptimisticMutation, OptimisticMutationKind};
 #[derive(Clone, Default)]
 pub(crate) struct MetaStore {
     pub(crate) pairs: BTreeMap<Vec<u8>, Vec<u8>>,
+    last_range: Option<(Vec<u8>, Vec<u8>)>,
 }
 
 impl MetaStore {
@@ -68,6 +71,19 @@ impl MetaSnapshot for MetaStore {
         Ok(self
             .pairs
             .range(prefix.to_vec()..end)
+            .map(|(stored_key, stored_value)| (stored_key.clone(), stored_value.clone()))
+            .collect())
+    }
+
+    fn scan_range(
+        &mut self,
+        start: &[u8],
+        end: &[u8],
+    ) -> Result<MetaPairs, ClusterCatalogError> {
+        self.last_range = Some((start.to_vec(), end.to_vec()));
+        Ok(self
+            .pairs
+            .range(start.to_vec()..end.to_vec())
             .map(|(stored_key, stored_value)| (stored_key.clone(), stored_value.clone()))
             .collect())
     }
@@ -143,7 +159,7 @@ fn plan_check_constraint_job_submission(
     start_ts: u64,
 ) -> Result<Option<PlannedCheckSubmission>, DdlPlanError> {
     let Some(mut spec) =
-        prepare_check_constraint_job_submission(store, statement, start_ts, false)?
+        prepare_check_constraint_job_submission(store, statement, start_ts, false, 0)?
     else {
         return Ok(None);
     };
@@ -326,6 +342,92 @@ fn flashback_admission_reads_only_the_go_query_columns() {
     assert!(!table
         .has_flashback_cluster_job(&mut store, 119)
         .expect("the source-shaped query honors its minimum job ID"));
+    let jobs = table
+        .load_from(&mut store, 118)
+        .expect("the scheduler lower bound skips older malformed metadata");
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs[0].job.id, 118);
+    let view = SystemTableView::project("mysql.tidb_ddl_job", table.table(), &["job_id"]);
+    let expected_start = view
+        .record_prefix(&[Datum::Int(118)])
+        .expect("the integer clustered handle encodes");
+    let expected_end = prefix_scan_end(&view.record_prefix(&[]).unwrap()).unwrap();
+    assert_eq!(store.last_range, Some((expected_start, expected_end)));
+}
+
+#[test]
+fn ddl_systable_manager_matches_go_queries() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrap catalog loads");
+    let manager = SystemTableManager::new(&catalog);
+    assert!(matches!(
+        manager.get_job_by_id(&mut store, 9_999),
+        Err(SystemTableManagerError::NotFound)
+    ));
+    assert_eq!(manager.get_min_job_id(&mut store, 0).unwrap(), 0);
+    assert!(!manager
+        .has_flashback_cluster_job(&mut store, 0)
+        .unwrap());
+
+    let table = DdlJobTable::locate(&catalog).expect("the active-job table exists");
+    let mut job = Job::default();
+    job.id = 9_999;
+    job.type_ = ActionType::ACTION_CREATE_SCHEMA;
+    let mut mutations = Vec::new();
+    table
+        .append_insert(&mut job, false, "1", "1", false, &mut mutations)
+        .expect("the job row encodes");
+    let expected_bytes = job.encode(true).expect("the exact job bytes encode");
+    apply_mutations(&mut store, &mutations);
+    let loaded = manager
+        .get_job_by_id(&mut store, 9_999)
+        .expect("the inserted job is found");
+    assert_eq!(loaded.bytes.snapshot(), expected_bytes);
+    assert_eq!(loaded.job.unwrap().read().id, 9_999);
+
+    assert!(matches!(
+        manager.get_mdl_version(&mut store, 9_999),
+        Err(SystemTableManagerError::NotFound)
+    ));
+    let (_, mdl_table) = catalog
+        .find_table("mysql", "tidb_mdl_info")
+        .expect("the MDL table exists");
+    let mdl = MdlInfoUpdate {
+        table: Box::new(mdl_table.clone_like_go()),
+        table_ids: vec![1],
+    };
+    let mut mutations = Vec::new();
+    mdl.append_mutations(9_999, 123, "owner", &mut mutations)
+        .expect("the MDL row encodes");
+    apply_mutations(&mut store, &mutations);
+    assert_eq!(
+        manager
+            .get_mdl_version(&mut store, 9_999)
+            .expect("the MDL version is found"),
+        123
+    );
+
+    assert_eq!(manager.get_min_job_id(&mut store, 0).unwrap(), 9_999);
+    assert_eq!(manager.get_min_job_id(&mut store, 9_999).unwrap(), 9_999);
+    assert_eq!(manager.get_min_job_id(&mut store, 10_000).unwrap(), 0);
+    assert!(!manager
+        .has_flashback_cluster_job(&mut store, 0)
+        .unwrap());
+
+    let mut flashback = Job::default();
+    flashback.id = 10_000;
+    flashback.type_ = ActionType::ACTION_FLASHBACK_CLUSTER;
+    let mut mutations = Vec::new();
+    table
+        .append_insert(&mut flashback, false, "0", "0", false, &mut mutations)
+        .expect("the flashback row encodes");
+    apply_mutations(&mut store, &mutations);
+    assert!(manager
+        .has_flashback_cluster_job(&mut store, 10_000)
+        .unwrap());
+    assert!(!manager
+        .has_flashback_cluster_job(&mut store, 10_001)
+        .unwrap());
 }
 
 #[test]
@@ -577,7 +679,7 @@ fn failed_job_insert_attempt_cleans_up_assigned_id_registration_before_retry() {
     let statement = lower_ddl_with_context(&parsed, "u6", &context)
         .expect("CHECK DDL is admitted")
         .expect("CHECK DDL owns a catalog route");
-    let mut spec = prepare_check_constraint_job_submission(&mut store, &statement, 2_101, false)
+    let mut spec = prepare_check_constraint_job_submission(&mut store, &statement, 2_101, false, 0)
         .expect("Go submission preflight succeeds")
         .expect("ADD CHECK creates a job spec");
     let catalog = load_cluster_catalog(&mut store).expect("catalog loads");
@@ -639,7 +741,7 @@ fn check_job_submission_observes_the_global_upgrading_state() {
         .expect("CHECK DDL is admitted")
         .expect("CHECK DDL owns a catalog route");
 
-    let spec = prepare_check_constraint_job_submission(&mut store, &statement, 2_201, true)
+    let spec = prepare_check_constraint_job_submission(&mut store, &statement, 2_201, true, 0)
         .expect("Go submission preflight succeeds")
         .expect("ADD CHECK creates a job spec");
     assert_eq!(spec.job.state, tidb_model::JobState::PAUSING);

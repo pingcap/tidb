@@ -90,6 +90,13 @@ where
             .snapshot_scan(prefix, &end, None, &call)
             .map_err(|error| ClusterCatalogError::Snapshot(error.to_string()))
     }
+
+    fn scan_range(&mut self, start: &[u8], end: &[u8]) -> Result<MetaPairs, ClusterCatalogError> {
+        let call = UnaryCallContext::with_timeout(self.timeout);
+        self.transaction
+            .snapshot_scan(start, end, None, &call)
+            .map_err(|error| ClusterCatalogError::Snapshot(error.to_string()))
+    }
 }
 
 impl<C, L, T> PagedMetaSnapshot for TransactionMetaSnapshot<'_, C, L, T>
@@ -184,6 +191,21 @@ impl<PdC: tikv_client::pd::PdClient> MetaSnapshot for TikvMetaSnapshot<'_, PdC> 
             .map(|(key, value)| (key.as_bytes().to_vec(), value))
             .collect())
     }
+
+    fn scan_range(&mut self, start: &[u8], end: &[u8]) -> Result<MetaPairs, ClusterCatalogError> {
+        let _ = self.timeout;
+        Ok(self
+            .transaction
+            .scan(
+                &Key::from_bytes(start.to_vec()),
+                &Key::from_bytes(end.to_vec()),
+                u32::MAX,
+            )
+            .map_err(|error| ClusterCatalogError::Snapshot(error.to_string()))?
+            .into_iter()
+            .map(|(key, value)| (key.as_bytes().to_vec(), value))
+            .collect())
+    }
 }
 
 /// One open transaction's read handle seen as a meta-key snapshot.
@@ -225,6 +247,16 @@ impl MetaSnapshot for SnapshotMetaSnapshot {
             .scan(
                 &Key::from_bytes(prefix.to_vec()),
                 &Key::from_bytes(end),
+                None,
+            )
+            .map_err(|error| ClusterCatalogError::Snapshot(error.to_string()))
+    }
+
+    fn scan_range(&mut self, start: &[u8], end: &[u8]) -> Result<MetaPairs, ClusterCatalogError> {
+        self.snapshot
+            .scan(
+                &Key::from_bytes(start.to_vec()),
+                &Key::from_bytes(end.to_vec()),
                 None,
             )
             .map_err(|error| ClusterCatalogError::Snapshot(error.to_string()))

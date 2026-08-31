@@ -595,17 +595,14 @@ pub fn prepare_submit_batch<S: MetaSnapshot>(
     specs: &mut [JobSpec],
     start_ts: u64,
     upgrading: bool,
+    min_job_id: i64,
 ) -> Result<(), DdlPlanError> {
     if specs.is_empty() {
         return Ok(());
     }
-    let job_table =
-        DdlJobTable::locate(catalog).map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-    // Go supplies the refresher's monotonic lower bound. Zero is the same
-    // initial bound and preserves admission semantics; unlike a scheduler
-    // load, this query intentionally does not decode job metadata.
-    if job_table
-        .has_flashback_cluster_job(snapshot, 0)
+    let system_tables = crate::ddl_systable::SystemTableManager::new(catalog);
+    if system_tables
+        .has_flashback_cluster_job(snapshot, min_job_id)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?
     {
         return Err(submit_error(JobSubmitError::FlashbackClusterJob));

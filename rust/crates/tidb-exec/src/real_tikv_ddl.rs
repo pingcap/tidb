@@ -901,6 +901,7 @@ pub fn submit_check_constraint_job_with_retry<
     statement: &DdlStatement,
     timeout: Duration,
     upgrading: bool,
+    min_job_id: i64,
 ) -> Result<i64, ClusterDdlError> {
     let preparation = SessionTransaction::begin(
         Arc::clone(&opener),
@@ -914,7 +915,13 @@ pub fn submit_check_constraint_job_with_retry<
                 .snapshot()
                 .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
         );
-        prepare_check_constraint_job_submission(&mut snapshot, statement, start_ts, upgrading)
+        prepare_check_constraint_job_submission(
+            &mut snapshot,
+            statement,
+            start_ts,
+            upgrading,
+            min_job_id,
+        )
     };
     let mut spec = match prepared {
         Ok(Some(spec)) => spec,
@@ -954,6 +961,7 @@ pub fn load_active_persisted_ddl_jobs<
 >(
     opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
     timeout: Duration,
+    min_job_id: i64,
 ) -> Result<Vec<Job>, ClusterDdlError> {
     let transaction = SessionTransaction::begin(
         opener,
@@ -970,7 +978,7 @@ pub fn load_active_persisted_ddl_jobs<
         let table = crate::ddl_job_table::DdlJobTable::locate(&catalog)
             .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
         table
-            .load(&mut snapshot)
+            .load_from(&mut snapshot, min_job_id)
             .map_err(|error| DdlPlanError::Encode(error.to_string()))?
             .into_iter()
             .map(|active| active.job)
@@ -980,6 +988,39 @@ pub fn load_active_persisted_ddl_jobs<
         .rollback()
         .map_err(ClusterDdlError::NotCommitted)?;
     Ok(jobs)
+}
+
+/// Reads pinned Go `systable.Manager.GetMinJobID` in a fresh read-only
+/// transaction for `MinJobIDRefresher`.
+pub fn load_min_persisted_ddl_job_id<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+>(
+    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    timeout: Duration,
+    previous_min_job_id: i64,
+) -> Result<i64, ClusterDdlError> {
+    let transaction = SessionTransaction::begin(
+        opener,
+        timeout,
+        crate::session_commit_protocol::session_commit_protocol(),
+    )?;
+    let minimum = {
+        let mut snapshot = SnapshotMetaSnapshot::new(
+            transaction
+                .snapshot()
+                .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
+        );
+        let catalog = load_cluster_catalog(&mut snapshot).map_err(DdlPlanError::Catalog)?;
+        crate::ddl_systable::SystemTableManager::new(&catalog)
+            .get_min_job_id(&mut snapshot, previous_min_job_id)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+    };
+    transaction
+        .rollback()
+        .map_err(ClusterDdlError::NotCommitted)?;
+    Ok(minimum)
 }
 
 /// Reads one terminal DDL job from Go's authoritative meta history.

@@ -67,7 +67,9 @@ use tidb_model::table_info::TableInfo;
 use tidb_tablecodec::{decode_index_handle, decode_table_row_to_map};
 use tidb_txnkv::Handle;
 
-use crate::cluster_catalog::{ClusterCatalog, ClusterCatalogError, MetaPairs, MetaSnapshot};
+use crate::cluster_catalog::{
+    prefix_scan_end, ClusterCatalog, ClusterCatalogError, MetaPairs, MetaSnapshot,
+};
 
 /// Go `mysql.SystemDB`: the schema every table in this module lives in.
 pub const SYSTEM_DB: &str = "mysql";
@@ -405,6 +407,27 @@ pub fn scan_system_table_prefixed<S: MetaSnapshot>(
 ) -> Result<MetaPairs, SystemTableError> {
     let key_prefix = view.record_prefix(prefix)?;
     Ok(snapshot.scan_prefix(&key_prefix)?)
+}
+
+/// Reads the record range beginning at one integer clustered handle.
+///
+/// This is the storage shape of SQL `WHERE handle_column >= value`: tables
+/// without an integer clustered handle fall back to their full record range,
+/// and the caller still applies the SQL predicate to decoded rows.
+pub fn scan_system_table_from_int_handle<S: MetaSnapshot>(
+    snapshot: &mut S,
+    view: &SystemTableView,
+    minimum: i64,
+) -> Result<MetaPairs, SystemTableError> {
+    let table_prefix = view.record_prefix(&[])?;
+    let start = match view.handle() {
+        HandleLayout::Int(_) => view.record_prefix(&[Datum::Int(minimum)])?,
+        HandleLayout::RowId | HandleLayout::Common(_) => table_prefix.clone(),
+    };
+    let end = prefix_scan_end(&table_prefix).ok_or_else(|| {
+        SystemTableError::Snapshot("system-table record prefix has no finite scan end".to_owned())
+    })?;
+    Ok(snapshot.scan_range(&start, &end)?)
 }
 
 /// Reads rows through one named secondary index whose leading indexed values

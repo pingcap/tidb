@@ -2550,6 +2550,7 @@ pub fn prepare_check_constraint_job_submission<S: MetaSnapshot>(
     statement: &DdlStatement,
     start_ts: u64,
     upgrading: bool,
+    min_job_id: i64,
 ) -> Result<Option<crate::ddl_job_submit::JobSpec>, DdlPlanError> {
     let catalog = load_cluster_catalog(snapshot)?;
     let (job, args) = match statement {
@@ -2681,7 +2682,7 @@ pub fn prepare_check_constraint_job_submission<S: MetaSnapshot>(
         id_allocated: true,
     }];
     crate::ddl_job_submit::prepare_submit_batch(
-        snapshot, &catalog, &mut specs, start_ts, upgrading,
+        snapshot, &catalog, &mut specs, start_ts, upgrading, min_job_id,
     )?;
     let [spec] = specs;
     Ok(Some(spec))
