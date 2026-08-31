@@ -103,6 +103,87 @@ fn displayed(rows: Vec<Vec<Datum>>) -> Vec<Vec<String>> {
         .collect()
 }
 
+/// Pinned Go `checkExchangePartitionRecordValidation` and
+/// `onExchangeTablePartition`: the default `WITH VALIDATION` reads the
+/// standalone rows before publication, rejects 1737 atomically when one does
+/// not route to the named partition, and otherwise makes the two old physical
+/// record sets visible under their exchanged metadata IDs.
+#[test]
+fn exchange_partition_validates_and_swaps_real_rows_atomically() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack
+        .factory
+        .open_session(session_context(152))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "CREATE TABLE exchange_pt (id BIGINT PRIMARY KEY CLUSTERED) \
+         PARTITION BY RANGE (id) (\
+           PARTITION p0 VALUES LESS THAN (10),\
+           PARTITION p1 VALUES LESS THAN (MAXVALUE))",
+    );
+    rows(
+        &mut session,
+        "CREATE TABLE exchange_nt (id BIGINT PRIMARY KEY CLUSTERED)",
+    );
+    rows(&mut session, "INSERT INTO exchange_pt VALUES (1)");
+    rows(&mut session, "INSERT INTO exchange_nt VALUES (5)");
+    rows(
+        &mut session,
+        "ALTER TABLE exchange_pt EXCHANGE PARTITION p0 WITH TABLE exchange_nt",
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT id FROM exchange_pt ORDER BY id")),
+        [["5"]]
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT id FROM exchange_nt ORDER BY id")),
+        [["1"]]
+    );
+
+    rows(
+        &mut session,
+        "CREATE TABLE exchange_bad_pt (id BIGINT PRIMARY KEY CLUSTERED) \
+         PARTITION BY RANGE (id) (\
+           PARTITION p0 VALUES LESS THAN (10),\
+           PARTITION p1 VALUES LESS THAN (MAXVALUE))",
+    );
+    rows(
+        &mut session,
+        "CREATE TABLE exchange_bad_nt (id BIGINT PRIMARY KEY CLUSTERED)",
+    );
+    rows(&mut session, "INSERT INTO exchange_bad_pt VALUES (2)");
+    rows(&mut session, "INSERT INTO exchange_bad_nt VALUES (15)");
+    let error = match session
+        .execute("ALTER TABLE exchange_bad_pt EXCHANGE PARTITION p0 WITH TABLE exchange_bad_nt")
+    {
+        Err(error) => error,
+        Ok(_) => panic!("a row for p1 cannot be exchanged into p0"),
+    };
+    assert_eq!(error.code, 1737);
+    assert_eq!(error.state, *b"HY000");
+    assert_eq!(
+        error.message,
+        "Found a row that does not match the partition"
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT id FROM exchange_bad_pt ORDER BY id"
+        )),
+        [["2"]],
+        "the failed DDL leaves partition metadata and physical rows unchanged"
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT id FROM exchange_bad_nt ORDER BY id"
+        )),
+        [["15"]]
+    );
+}
+
 /// Pinned `pkg/ddl/notifier.TestPublishToTableStore`, `TestBasicPubSub`, and
 /// `TestDeliverOrderAndCleanup` over the real bootstrapped notifier table.
 #[test]

@@ -821,6 +821,11 @@ impl DriverError {
             *b"HY000",
             format!("Constraint '{name}' does not exist."),
         ),
+        DriverError::CheckConstraintViolated(name) => MysqlError::new(
+            tidb_error::tidb::errcode::ErrCheckConstraintViolated,
+            *b"HY000",
+            format!("Check constraint '{name}' is violated."),
+        ),
         // Go's own wording, including the colon with no following space.
         DriverError::BindingHintedSqlMismatch { origin, hinted } => MysqlError::new(
             1105,

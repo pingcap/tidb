@@ -1192,6 +1192,374 @@ fn workload_repository_partition_changes_use_cluster_ddl() {
     assert_eq!(names, ["p20260831", "p20260901"]);
 }
 
+/// Pinned Go `onExchangeTablePartition` swaps the standalone table's physical
+/// ID with the named partition, preserves the logical partitioned-table ID,
+/// raises all three allocators on both results to their pairwise maximum, and
+/// publishes the original physical objects to the notifier in the same DDL
+/// transaction. `WITHOUT VALIDATION` isolates those metadata obligations from
+/// the row-routing check covered by the real-store execution regression.
+#[test]
+fn exchange_partition_swaps_ids_auto_ids_and_notifier_payload() {
+    let mut store = bootstrapped();
+    let partitioned = plan(
+        &mut store,
+        "CREATE TABLE u6.pt (id BIGINT PRIMARY KEY CLUSTERED) \
+         PARTITION BY RANGE (id) (\
+           PARTITION p0 VALUES LESS THAN (10),\
+           PARTITION p1 VALUES LESS THAN (MAXVALUE))",
+        470_100_010,
+    );
+    let partitioned_id = partitioned.created_id.expect("partitioned table id");
+    let old_partition_id = stored_table(&partitioned, partitioned_id)["partition"]
+        ["definitions"][0]["id"]
+        .as_i64()
+        .expect("partition id");
+    apply(&mut store, &partitioned);
+
+    let standalone = plan(
+        &mut store,
+        "CREATE TABLE u6.nt (id BIGINT PRIMARY KEY CLUSTERED)",
+        470_100_011,
+    );
+    let old_standalone_id = standalone.created_id.expect("standalone table id");
+    apply(&mut store, &standalone);
+
+    store.put(
+        key::auto_table_id_kv_key(112, partitioned_id),
+        b"11".to_vec(),
+    );
+    store.put(
+        key::auto_table_id_kv_key(112, old_standalone_id),
+        b"22".to_vec(),
+    );
+    store.put(
+        key::auto_increment_id_kv_key(112, partitioned_id),
+        b"33".to_vec(),
+    );
+    store.put(
+        key::auto_increment_id_kv_key(112, old_standalone_id),
+        b"44".to_vec(),
+    );
+    store.put(
+        key::auto_random_table_id_kv_key(112, partitioned_id),
+        b"55".to_vec(),
+    );
+    store.put(
+        key::auto_random_table_id_kv_key(112, old_standalone_id),
+        b"66".to_vec(),
+    );
+
+    let exchanged = plan(
+        &mut store,
+        "ALTER TABLE u6.pt EXCHANGE PARTITION p0 WITH TABLE u6.nt WITHOUT VALIDATION",
+        470_100_012,
+    );
+    assert_eq!(
+        exchanged.diff.action_type,
+        tidb_model::ActionType::ACTION_EXCHANGE_TABLE_PARTITION
+    );
+    let new_partitioned = stored_table(&exchanged, partitioned_id);
+    assert_eq!(
+        new_partitioned["partition"]["definitions"][0]["id"],
+        old_standalone_id
+    );
+    let new_standalone: serde_json::Value = serde_json::from_slice(stored_value(
+        &exchanged,
+        &key::table_kv_key(112, old_partition_id),
+    ))
+    .expect("new standalone metadata");
+    assert_eq!(new_standalone["name"]["L"], "nt");
+    assert_eq!(new_standalone["id"], old_partition_id);
+    assert!(exchanged.mutations.iter().any(|mutation| {
+        mutation.kind() == OptimisticMutationKind::MetaDelete
+            && mutation.key() == key::table_kv_key(112, old_standalone_id)
+    }));
+    for (key, expected) in [
+        (key::auto_table_id_kv_key(112, partitioned_id), b"22".as_slice()),
+        (key::auto_table_id_kv_key(112, old_partition_id), b"22".as_slice()),
+        (
+            key::auto_increment_id_kv_key(112, partitioned_id),
+            b"44".as_slice(),
+        ),
+        (
+            key::auto_increment_id_kv_key(112, old_partition_id),
+            b"44".as_slice(),
+        ),
+        (
+            key::auto_random_table_id_kv_key(112, partitioned_id),
+            b"66".as_slice(),
+        ),
+        (
+            key::auto_random_table_id_kv_key(112, old_partition_id),
+            b"66".as_slice(),
+        ),
+    ] {
+        assert_eq!(stored_value(&exchanged, &key), expected, "counter {key:?}");
+    }
+
+    let events = notifier_events(&mut store, &exchanged);
+    assert_eq!(events.len(), 1);
+    let (_, event) = &events[0];
+    let (event_table, event_partition, event_standalone) =
+        event.exchange_partition_info();
+    assert_eq!(event_table.id, partitioned_id);
+    assert_eq!(event_partition.definitions.get(0).id, old_partition_id);
+    assert_eq!(event_standalone.id, old_standalone_id);
+}
+
+/// Pinned Go performs the `checkExchangePartition` and
+/// `checkTableDefCompatible` admission checks before it creates the job, and
+/// DEFAULT is `WITH VALIDATION`. Keep the errno/message distinctions here:
+/// they are separate public contracts in Go, not interchangeable generic DDL
+/// failures.
+#[test]
+fn exchange_partition_validation_default_and_admission_errors_match_go() {
+    fn admission(error: DdlPlanError) -> (u16, String) {
+        let DdlPlanError::Admission(error) = error else {
+            panic!("expected a source DDL admission error, got {error:?}");
+        };
+        (error.code, error.reason)
+    }
+
+    let mut store = bootstrapped();
+    for (sql, ts) in [
+        (
+            "CREATE TABLE u6.pt (id BIGINT PRIMARY KEY CLUSTERED) \
+             PARTITION BY RANGE (id) (PARTITION p0 VALUES LESS THAN (10), \
+             PARTITION p1 VALUES LESS THAN (MAXVALUE))",
+            470_100_020,
+        ),
+        (
+            "CREATE TABLE u6.nt (id BIGINT PRIMARY KEY CLUSTERED)",
+            470_100_021,
+        ),
+        (
+            "CREATE TABLE u6.mismatch (id INT PRIMARY KEY CLUSTERED)",
+            470_100_022,
+        ),
+        (
+            "CREATE TABLE u6.other_pt (id BIGINT PRIMARY KEY CLUSTERED) \
+             PARTITION BY HASH (id) PARTITIONS 2",
+            470_100_023,
+        ),
+    ] {
+        let write = plan(&mut store, sql, ts);
+        apply(&mut store, &write);
+    }
+
+    let validated = plan(
+        &mut store,
+        "ALTER TABLE u6.pt EXCHANGE PARTITION p0 WITH TABLE u6.nt",
+        470_100_024,
+    );
+    assert!(
+        validated.exchange_partition_validation.is_some(),
+        "the grammar's DEFAULT is Go WITH VALIDATION"
+    );
+    assert_eq!(
+        validated.warning.as_deref(),
+        Some(
+            "after the exchange, please analyze related table of the exchange to update statistics"
+        )
+    );
+
+    let unvalidated = plan(
+        &mut store,
+        "ALTER TABLE u6.pt EXCHANGE PARTITION p0 WITH TABLE u6.nt WITHOUT VALIDATION",
+        470_100_025,
+    );
+    assert!(unvalidated.exchange_partition_validation.is_none());
+
+    let (code, message) = admission(
+        plan_ddl(
+            &mut store,
+            &statement("ALTER TABLE u6.nt EXCHANGE PARTITION p0 WITH TABLE u6.mismatch"),
+            470_100_026,
+        )
+        .expect_err("partition management on a normal table refuses"),
+    );
+    assert_eq!(code, 1505);
+    assert_eq!(
+        message,
+        "Partition management on a not partitioned table is not possible"
+    );
+
+    let (code, message) = admission(
+        plan_ddl(
+            &mut store,
+            &statement("ALTER TABLE u6.pt EXCHANGE PARTITION p0 WITH TABLE u6.other_pt"),
+            470_100_027,
+        )
+        .expect_err("a partitioned exchange table refuses"),
+    );
+    assert_eq!(code, 1732);
+    assert_eq!(
+        message,
+        "Table 'other_pt' is partitioned. It cannot be used in EXCHANGE PARTITION"
+    );
+
+    let (code, message) = admission(
+        plan_ddl(
+            &mut store,
+            &statement("ALTER TABLE u6.pt EXCHANGE PARTITION absent WITH TABLE u6.nt"),
+            470_100_028,
+        )
+        .expect_err("an unknown partition refuses"),
+    );
+    assert_eq!(code, 1735);
+    assert_eq!(message, "Unknown partition 'absent' in table 'pt'");
+
+    let (code, message) = admission(
+        plan_ddl(
+            &mut store,
+            &statement("ALTER TABLE u6.pt EXCHANGE PARTITION p0 WITH TABLE u6.mismatch"),
+            470_100_029,
+        )
+        .expect_err("different definitions refuse"),
+    );
+    assert_eq!(code, 1736);
+    assert_eq!(message, "Tables have different definitions");
+
+    let view = match plan_ddl(&mut store, &view_statement("u6", "exchange_view", false), 470_100_030)
+        .expect("the view plans")
+    {
+        DdlPlan::Write(write) => *write,
+        DdlPlan::AlreadySatisfied { detail, .. } => panic!("expected a write: {detail}"),
+    };
+    apply(&mut store, &view);
+    let (code, message) = admission(
+        plan_ddl(
+            &mut store,
+            &statement(
+                "ALTER TABLE u6.pt EXCHANGE PARTITION p0 WITH TABLE u6.exchange_view",
+            ),
+            470_100_031,
+        )
+        .expect_err("a view is Go ErrCheckNoSuchTable"),
+    );
+    assert_eq!(code, 1177);
+    assert_eq!(message, "Can't open table");
+}
+
+#[test]
+fn exchange_partition_builds_gos_four_way_label_rule_patch() {
+    use tidb_executor::ddl_label::{CodecV1, Rule};
+
+    let swap = tidb_exec::cluster_ddl::ExchangePartitionLabelSwap {
+        partitioned_schema: "dbp".to_owned(),
+        partitioned_table: "pt".to_owned(),
+        partition: "p0".to_owned(),
+        standalone_schema: "dbn".to_owned(),
+        standalone_table: "nt".to_owned(),
+        partition_id: 21,
+        standalone_id: 11,
+    };
+    let codec = CodecV1;
+    let [standalone_id, partition_id] = swap.rule_ids(&codec);
+    let make_rule = |id: &str| Rule {
+        id: id.to_owned(),
+        labels: vec![tidb_executor::ddl_label::RegionLabel {
+            key: "zone".to_owned(),
+            value: "z1".to_owned(),
+        }],
+        ..Rule::default()
+    };
+
+    let patch = swap.patch(
+        &codec,
+        &[make_rule(&standalone_id), make_rule(&partition_id)],
+    );
+    assert_eq!(patch.set_rules.len(), 2);
+    assert!(patch.delete_rules.is_empty());
+    let partition_rule = patch
+        .set_rules
+        .iter()
+        .find(|rule| rule.id == partition_id)
+        .expect("the standalone rule moved to the partition");
+    assert_eq!(partition_rule.labels[1].value, "dbp");
+    assert_eq!(partition_rule.labels[2].value, "pt");
+    assert_eq!(partition_rule.labels[3].value, "p0");
+    let standalone_rule = patch
+        .set_rules
+        .iter()
+        .find(|rule| rule.id == standalone_id)
+        .expect("the partition rule moved to the standalone table");
+    assert_eq!(standalone_rule.labels[1].value, "dbn");
+    assert_eq!(standalone_rule.labels[2].value, "nt");
+
+    let only_partition = swap.patch(&codec, &[make_rule(&partition_id)]);
+    assert_eq!(only_partition.set_rules[0].id, standalone_id);
+    assert_eq!(only_partition.delete_rules, [partition_id.clone()]);
+
+    let only_standalone = swap.patch(&codec, &[make_rule(&standalone_id)]);
+    assert_eq!(only_standalone.set_rules[0].id, partition_id);
+    assert_eq!(only_standalone.delete_rules, [standalone_id]);
+
+    let neither = swap.patch(&codec, &[]);
+    assert!(neither.set_rules.is_empty());
+    assert!(neither.delete_rules.is_empty());
+}
+
+#[test]
+fn exchange_partition_precomputes_inverse_placement_bundles_without_pd_reads() {
+    let mut store = bootstrapped();
+    for (sql, ts) in [
+        (
+            "CREATE PLACEMENT POLICY p PRIMARY_REGION='r1' REGIONS='r1'",
+            470_100_032,
+        ),
+        (
+            "CREATE TABLE u6.pt (id BIGINT PRIMARY KEY CLUSTERED) \
+             PLACEMENT POLICY=p PARTITION BY RANGE (id) \
+             (PARTITION p0 VALUES LESS THAN (10), \
+              PARTITION p1 VALUES LESS THAN (MAXVALUE))",
+            470_100_033,
+        ),
+        (
+            "CREATE TABLE u6.nt (id BIGINT PRIMARY KEY CLUSTERED) PLACEMENT POLICY=p",
+            470_100_034,
+        ),
+    ] {
+        let write = plan(&mut store, sql, ts);
+        apply(&mut store, &write);
+    }
+
+    let exchanged = plan(
+        &mut store,
+        "ALTER TABLE u6.pt EXCHANGE PARTITION p0 WITH TABLE u6.nt WITHOUT VALIDATION",
+        470_100_035,
+    );
+    assert_eq!(exchanged.placement_bundles.len(), 3);
+    assert_eq!(exchanged.placement_rollback_bundles.len(), 3);
+
+    // With an inherited partition policy, Go writes an empty group for the
+    // physical ID that stopped being a standalone table. The inverse set must
+    // empty the opposite ID and restore the old table-level key ranges.
+    let forward_empty = exchanged
+        .placement_bundles
+        .iter()
+        .find(|bundle| bundle.rules.is_empty())
+        .expect("the forward exchange clears the old standalone group");
+    let rollback_empty = exchanged
+        .placement_rollback_bundles
+        .iter()
+        .find(|bundle| bundle.rules.is_empty())
+        .expect("rollback clears the old partition group");
+    assert_ne!(forward_empty.id, rollback_empty.id);
+
+    let forward_table = exchanged
+        .placement_bundles
+        .iter()
+        .max_by_key(|bundle| bundle.rules.len())
+        .expect("the forward table bundle exists");
+    let rollback_table = exchanged
+        .placement_rollback_bundles
+        .iter()
+        .find(|bundle| bundle.id == forward_table.id)
+        .expect("rollback restores the same table group");
+    assert_ne!(forward_table, rollback_table);
+}
+
 /// Go routes the single-action ALTER spelling through the same add/drop-index
 /// job as standalone `CREATE INDEX`/`DROP INDEX`. The cluster catalog does the
 /// same, so both spellings publish the metadata mutation and row backfill.

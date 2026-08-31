@@ -27,14 +27,16 @@ use tidb_txnkv::PdRegionLoader;
 
 use tidb_exec::catalog_reload::ReloadedCatalog;
 use tidb_exec::catalog_watch::SharedCatalog as SharedClusterCatalog;
-use tidb_exec::cluster_ddl::{DdlStatement, IndexBackfill};
+use tidb_exec::cluster_ddl::{DdlStatement, ExchangePartitionValidation, IndexBackfill};
+use tidb_exec::pessimistic_lock_error::LockSqlError;
 use tidb_exec::real_tikv_catalog::reload_catalog_from_cluster;
 use tidb_exec::real_tikv_ddl::{
-    commit_cluster_ddl_with_backfill, ClusterDdlReport, IndexBackfiller, SchemaVersionNotifier,
+    commit_cluster_ddl_with_backfill, ClusterDdlReport, ExchangePartitionValidator,
+    IndexBackfiller, SchemaVersionNotifier,
 };
 use tidb_exec::real_tikv_read::RealOptimisticTransactionOpener;
 use tidb_executor::cluster_storage::{ClusterSnapshot, ClusterTableStorage, MutationBuffer};
-use tidb_executor::StmtContext;
+use tidb_executor::{RowDecodeContext, StmtContext};
 use tidb_pd_client::EtcdClient;
 
 use crate::cluster_session::{cluster_table, kv_index, AutoIdSource};
@@ -143,6 +145,7 @@ where
             self.timeout,
             notifier,
             &KvTableIndexBackfiller,
+            &KvTableIndexBackfiller,
         )
         .map_err(cluster_ddl_error)?;
         self.refresh_catalog();
@@ -210,6 +213,80 @@ impl IndexBackfiller for KvTableIndexBackfiller {
             ));
         }
         Ok(())
+    }
+}
+
+impl ExchangePartitionValidator for KvTableIndexBackfiller {
+    fn validate(
+        &self,
+        plan: &ExchangePartitionValidation,
+        snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
+        buffer: &MutationBuffer,
+    ) -> Result<(), LockSqlError> {
+        let storage = ClusterTableStorage::new(buffer.clone(), snapshot);
+        let mut standalone = cluster_table(&plan.standalone, &storage, &AutoIdSource::Unavailable)
+            .map_err(exchange_validation_internal)?;
+        let mut partitioned =
+            cluster_table(&plan.partitioned, &storage, &AutoIdSource::Unavailable)
+                .map_err(exchange_validation_internal)?;
+        let context = StmtContext::for_query();
+        let rows = standalone
+            .scan_rows_with_context(&RowDecodeContext::for_query(&context))
+            .map_err(exchange_validation_table_error)?;
+        for row in rows {
+            partitioned
+                .validate_insert_partitions(&row, &[plan.partition_id], &context)
+                .map_err(exchange_validation_table_error)?;
+            partitioned
+                .validate_check_constraints(&row, &context)
+                .map_err(exchange_validation_table_error)?;
+        }
+
+        // Go's second restricted query reads the target partition and applies
+        // the standalone table's writable constraints. Both scans share the
+        // same transaction snapshot so neither direction can race the swap.
+        partitioned.restrict_read_to_partitions(&[plan.partition_id]);
+        let rows = partitioned
+            .scan_rows_with_context(&RowDecodeContext::for_query(&context))
+            .map_err(exchange_validation_table_error)?;
+        for row in rows {
+            standalone
+                .validate_check_constraints(&row, &context)
+                .map_err(exchange_validation_table_error)?;
+        }
+        Ok(())
+    }
+}
+
+fn exchange_validation_internal(message: String) -> LockSqlError {
+    LockSqlError {
+        code: 1105,
+        state: *b"HY000",
+        message,
+    }
+}
+
+fn exchange_validation_table_error(error: tidb_executor::kv_table::KvTableError) -> LockSqlError {
+    match error {
+        tidb_executor::kv_table::KvTableError::RowDoesNotMatchGivenPartitionSet
+        | tidb_executor::kv_table::KvTableError::NoPartitionForValue(_)
+        | tidb_executor::kv_table::KvTableError::CheckConstraintViolated(_) => LockSqlError {
+            code: tidb_error::tidb::errcode::ErrRowDoesNotMatchPartition,
+            state: *b"HY000",
+            message: "Found a row that does not match the partition".to_owned(),
+        },
+        tidb_executor::kv_table::KvTableError::CheckConstraint {
+            eval: Some(eval), ..
+        } => {
+            let error = tidb_executor::DriverError::Exec(tidb_executor::ExecError::Eval(eval))
+                .to_mysql_error();
+            LockSqlError {
+                code: error.code,
+                state: error.state,
+                message: error.message,
+            }
+        }
+        other => exchange_validation_internal(format!("{other:?}")),
     }
 }
 

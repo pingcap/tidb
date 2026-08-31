@@ -710,6 +710,34 @@ pub(crate) fn cluster_table(
     }
     let mut kv_table = KvTable::with_storage(table.id, kv_columns, storage.clone_box());
     kv_table.set_name(table.name.original());
+    for constraint in table.constraints.iter_deref() {
+        let constraint = constraint.read();
+        if !constraint.enforced
+            || constraint.state == SchemaState::DELETE_ONLY
+            || constraint.state == SchemaState::DELETE_REORGANIZATION
+        {
+            continue;
+        }
+        let expression = tidb_model::generated_expr::parse_expression(&constraint.expr_string)
+            .map_err(|error| {
+                format!(
+                    "its check constraint {} has an invalid expression: {error:?}",
+                    constraint.name
+                )
+            })?;
+        kv_table
+            .add_check_constraint(
+                constraint.name.original(),
+                &expression,
+                &tidb_datatype::SessionTimeZone::utc(),
+            )
+            .map_err(|error| {
+                format!(
+                    "its check constraint {} cannot be built: {error:?}",
+                    constraint.name
+                )
+            })?;
+    }
     // Go `TableInfo.Comment` reaches every reader of the loaded table:
     // `SHOW CREATE TABLE` prints it and
     // `information_schema.tables.table_comment` reports it. Dropping it

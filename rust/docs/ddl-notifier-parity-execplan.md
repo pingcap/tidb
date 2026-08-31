@@ -20,6 +20,9 @@ After this work, a successful non-system DDL in the Rust server durably records 
 - [x] (2026-08-31 19:10Z) Made the priority-queue subscriber read the live `tidb_enable_auto_analyze` global for every event, matching Go instead of retaining Rust's startup snapshot.
 - [x] (2026-08-31 19:20Z) Produced the complete eight-file package inventory and test-scenario receipt below.
 - [ ] Complete the DDL producer integration required by pinned `TestPubSub`: exchange partition, add/remove partitioning, and reorganize partition do not yet have cluster-planner owners. Flashback-cluster publication is a separate production-integration gap outside that test.
+- [x] (2026-08-31 21:05Z) Implemented the `EXCHANGE PARTITION` producer family: exact admission/compatibility errors, default same-snapshot validation in both CHECK-constraint directions, physical-ID/allocator/TiFlash swaps, placement and label publication, schema diff, and atomic notifier event.
+- [x] (2026-08-31 21:05Z) Routed persisted writable CHECK constraints through the ordinary `KvTable` INSERT/UPDATE evaluator, so exchange validation reuses the same expression engine instead of a cache- or DDL-specific evaluator.
+- [x] (2026-08-31 21:05Z) Matched PD's placement/region-label HTTP contracts and retained pre-attempt rules for determinate rollback; undetermined commits keep external state because the catalog may have committed.
 - [ ] Run completion-level Ready validation, including `make lint`, only after the dependent DDL producer gaps are closed.
 
 ## Surprises & Discoveries
@@ -49,6 +52,9 @@ After this work, a successful non-system DDL in the Rust server durably records 
 - Observation: event constructors and subscribers are not sufficient evidence for pinned `TestPubSub`. The cluster DDL planner currently publishes create/drop/truncate table, add/modify column, add index, add/drop/truncate partition, and drop schema, but it has no production publication site for exchange partition, add/remove partitioning, or reorganize partition. Flashback-cluster publication is also absent from production integration, although that action is not part of `TestPubSub`.
   Evidence: the only production `SchemaChangeEvent::exchange_partition`, `add_partitioning`, `remove_partitioning`, `reorganize_partitions`, and `flashback_cluster` references are consumers or constructors, not `cluster_ddl` publication arms.
 
+- Observation: pinned `onExchangeTablePartition` only PUTs placement bundles; its only PD read is the label-rule GET. Rust therefore derives inverse placement bundles from the same pre-exchange metadata snapshot for optimistic-commit compensation instead of adding a placement GET that Go does not perform.
+  Evidence: the first Rust wire test failed on the missing field. Applying serde's Go-shaped zero-value defaults and then assigning the requested group ID made the exact GET/POST round trip pass.
+
 ## Decision Log
 
 - Decision: do not implement post-commit event insertion as an intermediate production path.
@@ -61,6 +67,18 @@ After this work, a successful non-system DDL in the Rust server durably records 
 
 - Decision: remove the synchronous Rust statistics DDL path only after notifier publication and both handlers are proven end to end.
   Rationale: this prevents a temporary correctness hole while ensuring the final implementation has one Go-shaped path rather than duplicate behavior.
+  Date/Author: 2026-08-31 / Codex
+
+- Decision: represent exchange-partition row validation as a data obligation on `DdlWrite`, evaluated by the ordinary `KvTable` decoder and partition router against the same `SessionTransaction` snapshot before metadata commit.
+  Rationale: pinned Go refuses `WITH VALIDATION` when any standalone-table row routes outside the named partition. A metadata-only swap, a second post-commit query, or a duplicate partition evaluator would respectively corrupt semantics, lose atomicity, or drift from ordinary row routing. The existing index-backfill field is intentionally not overloaded because its public shape is an index-entry operation and exchange validation writes no index entry.
+  Date/Author: 2026-08-31 / Codex
+
+- Decision: do not claim exchange-partition parity until placement-rule and label-rule effects have an explicit integration result.
+  Rationale: pinned `onExchangeTablePartition` swaps physical IDs, takes the maximum of all three auto-ID counters, updates placement bundles, patches label rules, then publishes the event. Omitting the external rule effects while emitting the notifier row would be another partial producer rather than Go behavior.
+  Date/Author: 2026-08-31 / Codex
+
+- Decision: snapshot the exact placement and label rules touched by exchange before delivery and restore them only after a determinate catalog-commit failure.
+  Rationale: replacing prior groups with empty bundles would erase valid pre-exchange policy. Withdrawing after an undetermined commit would be worse: it could strip policy from metadata that did commit.
   Date/Author: 2026-08-31 / Codex
 
 ## Outcomes & Retrospective
@@ -146,6 +164,10 @@ Pass-after evidence:
     cargo check --locked --offline -p tidb-exec --tests
     four focused cluster_ddl_source notifier/backfill parity tests
     test ... ok. 1 passed; 0 failed (each)
+    cargo test --locked --offline -p tidb-executor --lib kv_table::tests::writable_check_constraints_guard_insert_and_update -- --exact
+    cargo test --locked --offline -p tidb-exec --lib delivery::tests:: -- --nocapture
+    cargo test --locked --offline -p tidb-server --lib cluster_session_node::tests::unistore_cop::exchange_partition_validates_and_swaps_real_rows_atomically -- --exact
+    all focused checks above passed
 
 ## Interfaces and Dependencies
 
@@ -156,3 +178,7 @@ Revision note (2026-08-31): initial plan created after the notifier table-store 
 Revision note (2026-08-31): atomic production publication is implemented and focused tests pass. Production stats handlers and statistics-owner lifecycle wiring remain before the synchronous projection can be removed.
 
 Revision note (2026-08-31): production subscribers now run in the notifier transaction, the statistics owner drives the notifier lifecycle, exchange-partition statistics match Go's locked/unlocked branches, and the former synchronous DDL statistics/queue path is removed.
+
+Revision note (2026-08-31): exchange partition now owns its complete metadata, validation, PD-rule, schema-diff, and notifier path. The remaining `TestPubSub` producer gaps are add/remove partitioning and reorganize partition.
+
+Revision note (2026-08-31): removed the draft placement-bundle GET after checking pinned `onExchangeTablePartition` and `bundlesForExchangeTablePartition`. Forward and inverse bundle sets are now both planned from the catalog snapshot, and the focused regression proves inherited-policy exchanges clear opposite physical IDs in the forward and compensation directions.

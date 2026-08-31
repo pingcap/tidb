@@ -901,6 +901,9 @@ pub enum DriverError {
     /// Measured: `ALTER TABLE c DROP CONSTRAINT fk1` where `fk1` IS a foreign
     /// key answers this error and leaves the key in place.
     CheckConstraintNotExists(String),
+    /// Go `table.ErrCheckConstraintViolated` (3819): a writable CHECK
+    /// constraint evaluated to false for an inserted or updated row.
+    CheckConstraintViolated(String),
     /// Go's `preprocessor`'s `CREATE BINDING` check (`preprocess.go`), a plain
     /// error and so 1105: the origin and hinted statements do not normalize to
     /// the same text once their hints are erased. Both normalized texts are

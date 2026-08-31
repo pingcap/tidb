@@ -444,6 +444,7 @@ impl ClusterDdl for MockDdl {
             | DdlStatement::AddPartitions { .. }
             | DdlStatement::DropPartitions { .. }
             | DdlStatement::TruncatePartitions { .. }
+            | DdlStatement::ExchangePartition { .. }
             | DdlStatement::TruncateTable { .. } => {
                 return Err(SqlQueryError::unknown(
                     "the mock catalog writer does not model column or truncate changes; \

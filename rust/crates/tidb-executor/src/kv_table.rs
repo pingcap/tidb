@@ -79,6 +79,7 @@ use std::collections::HashSet;
 pub(crate) use table_meta::NOT_NULL_FLAG;
 use tidb_codec::table_key::{encode_row_key_with_handle, get_table_handle_key_range};
 use tidb_datatype::{new_collation_enabled, Datum, FieldType, SessionTimeZone};
+use tidb_expr::expression::Expression;
 
 use index_entries::duplicate_value_text;
 pub(in crate::kv_table) use index_entries::index_entry_handle;
@@ -400,6 +401,19 @@ impl CreateIndexOptions {
     }
 }
 
+/// One enforced CHECK constraint compiled from persisted table metadata.
+#[derive(Clone, Debug)]
+struct KvCheckConstraint {
+    name: String,
+    expr: Expression,
+    dependencies: Vec<String>,
+    source: tidb_ast::Expr,
+    build_zone: tidb_datatype::SessionTimeZone,
+    build_like_default_escape: u8,
+    zone_sensitive: bool,
+    like_default_escape_sensitive: bool,
+}
+
 /// A table whose rows live as TiKV-format bytes in a sorted key/value map.
 #[derive(Clone, Debug)]
 pub struct KvTable {
@@ -530,6 +544,9 @@ pub struct KvTable {
     /// the tables whose foreign keys name this one, as Go's
     /// `ReferredFKInfo` index does.
     foreign_keys: Vec<KvForeignKey>,
+    /// Go `TableCommon.writableConstraints`: enforced CHECK constraints not
+    /// in delete-only/delete-reorganization state.
+    check_constraints: std::sync::Arc<Vec<KvCheckConstraint>>,
     /// Go `TableInfo.MaxForeignKeyID`: the counter an UNNAMED constraint is
     /// named after (`fk_1`, `fk_2`, ...). It only ever rises, so dropping
     /// `fk_1` and adding another unnamed constraint yields `fk_2` rather than
@@ -623,6 +640,18 @@ pub enum KvTableError {
         /// The evaluation failure itself, when it carries a MySQL code the
         /// statement has to report (1365 for a zero divisor under
         /// `ERROR_FOR_DIVISION_BY_ZERO`).
+        eval: Option<tidb_expr::EvalError>,
+    },
+    /// Go `table.ErrCheckConstraintViolated` (3819).
+    CheckConstraintViolated(String),
+    /// A persisted CHECK expression could not be built or evaluated.
+    CheckConstraint {
+        /// Constraint name.
+        name: String,
+        /// Build/evaluation detail.
+        detail: String,
+        /// The evaluation error when evaluation, rather than metadata build,
+        /// failed.
         eval: Option<tidb_expr::EvalError>,
     },
     /// Go `ErrDupEntry` (1062): a row with this primary key already exists.
@@ -810,6 +839,7 @@ impl KvTable {
             temp_table_type: tidb_model::TempTableType::NONE,
             use_new_collation,
             foreign_keys: Vec::new(),
+            check_constraints: std::sync::Arc::new(Vec::new()),
             max_foreign_key_id: 0,
             partition: None,
             placement_policy: None,
@@ -1604,6 +1634,137 @@ impl KvTable {
         }
         crate::generated_column::materialize(&self.columns, row, false, ctx)
             .map_err(generation_error)
+    }
+
+    /// Builds one enforced, writable CHECK constraint from persisted metadata.
+    pub fn add_check_constraint(
+        &mut self,
+        name: impl Into<String>,
+        expression: &tidb_ast::Expr,
+        zone: &tidb_datatype::SessionTimeZone,
+    ) -> Result<(), KvTableError> {
+        self.add_check_constraint_with_like_default_escape(name, expression, zone, b'\\')
+    }
+
+    /// Statement-aware form of [`Self::add_check_constraint`].
+    pub fn add_check_constraint_with_like_default_escape(
+        &mut self,
+        name: impl Into<String>,
+        expression: &tidb_ast::Expr,
+        zone: &tidb_datatype::SessionTimeZone,
+        like_default_escape: u8,
+    ) -> Result<(), KvTableError> {
+        let name = name.into();
+        let names = self
+            .columns
+            .iter()
+            .map(|column| column.name.clone())
+            .collect::<Vec<_>>();
+        let types = self
+            .columns
+            .iter()
+            .map(|column| column.field_type.clone())
+            .collect::<Vec<_>>();
+        let resolver = crate::generated_column::TableColumnResolver::with_like_default_escape(
+            &names,
+            &types,
+            zone.clone(),
+            like_default_escape,
+        );
+        let expr =
+            tidb_expr::rewriter::rewrite_expr_resolved(expression, &resolver).map_err(|error| {
+                KvTableError::CheckConstraint {
+                    name: name.clone(),
+                    detail: format!("{error:?}"),
+                    eval: None,
+                }
+            })?;
+        if let Some(missing) = resolver.missing_name() {
+            return Err(KvTableError::CheckConstraint {
+                name,
+                detail: format!("unknown column '{missing}'"),
+                eval: None,
+            });
+        }
+        std::sync::Arc::make_mut(&mut self.check_constraints).push(KvCheckConstraint {
+            name,
+            expr,
+            dependencies: resolver.dependency_names(),
+            source: expression.clone(),
+            build_zone: zone.clone(),
+            build_like_default_escape: like_default_escape,
+            zone_sensitive: resolver.zone_was_read(),
+            like_default_escape_sensitive: resolver.like_default_escape_was_read(),
+        });
+        Ok(())
+    }
+
+    /// Go `CheckRowConstraintWithDatum` over this table's writable constraints.
+    pub fn validate_check_constraints(
+        &self,
+        row: &[Datum],
+        ctx: &impl tidb_expr::Columns,
+    ) -> Result<(), KvTableError> {
+        for constraint in self.check_constraints.iter() {
+            let rebuilt;
+            let expression = if (constraint.zone_sensitive
+                && constraint.build_zone != ctx.time_zone())
+                || (constraint.like_default_escape_sensitive
+                    && constraint.build_like_default_escape != ctx.like_default_escape())
+            {
+                let names = self
+                    .columns
+                    .iter()
+                    .map(|column| column.name.clone())
+                    .collect::<Vec<_>>();
+                let types = self
+                    .columns
+                    .iter()
+                    .map(|column| column.field_type.clone())
+                    .collect::<Vec<_>>();
+                let resolver =
+                    crate::generated_column::TableColumnResolver::with_like_default_escape(
+                        &names,
+                        &types,
+                        ctx.time_zone(),
+                        ctx.like_default_escape(),
+                    );
+                rebuilt = tidb_expr::rewriter::rewrite_expr_resolved(&constraint.source, &resolver)
+                    .map_err(|error| KvTableError::CheckConstraint {
+                        name: constraint.name.clone(),
+                        detail: format!("{error:?}"),
+                        eval: None,
+                    })?;
+                &rebuilt
+            } else {
+                &constraint.expr
+            };
+            let value = crate::generated_column::eval_over_dependencies(
+                expression,
+                &constraint.dependencies,
+                &*self.columns,
+                row,
+                ctx,
+            )
+            .map_err(|error| KvTableError::CheckConstraint {
+                name: constraint.name.clone(),
+                detail: format!("{error:?}"),
+                eval: Some(error),
+            })?;
+            match tidb_expr::truthy_of(&value).map_err(|error| KvTableError::CheckConstraint {
+                name: constraint.name.clone(),
+                detail: format!("{error:?}"),
+                eval: Some(error),
+            })? {
+                Some(false) => {
+                    return Err(KvTableError::CheckConstraintViolated(
+                        constraint.name.clone(),
+                    ));
+                }
+                Some(true) | None => {}
+            }
+        }
+        Ok(())
     }
 
     /// The handle a row's values produce.
@@ -2561,6 +2722,7 @@ impl KvTable {
         } else {
             row
         };
+        self.validate_check_constraints(row, ctx)?;
         let value = self.encode_row_value(row, &zone)?;
         // Go `addRecord`: every record key is unique. A clustered key derives
         // it from visible columns; a heap table derives it from `_tidb_rowid`,
@@ -2921,6 +3083,7 @@ impl KvTable {
         } else {
             row
         };
+        self.validate_check_constraints(row, ctx)?;
         // Go `updateRecord`: assigning to the AUTO_INCREMENT column REBASES the
         // allocator, exactly as an explicit value on INSERT does, so later rows
         // land past the value the UPDATE named. Without this an `UPDATE t SET
@@ -3289,6 +3452,55 @@ mod tests {
                 },
             ],
         )
+    }
+
+    #[test]
+    fn writable_check_constraints_guard_insert_and_update() {
+        let mut table = test_table();
+        let expression = tidb_model::generated_expr::parse_expression("a > 0")
+            .expect("persisted CHECK expression parses");
+        table
+            .add_check_constraint(
+                "positive_a",
+                &expression,
+                &tidb_datatype::SessionTimeZone::utc(),
+            )
+            .expect("persisted CHECK expression builds");
+
+        let handle = table
+            .insert_row(&[Datum::Int(1), Datum::Null], &tidb_expr::NoColumns)
+            .expect("TRUE passes CHECK");
+        table
+            .insert_row(&[Datum::Null, Datum::Null], &tidb_expr::NoColumns)
+            .expect("UNKNOWN passes CHECK");
+        assert!(matches!(
+            table.insert_row(&[Datum::Int(-1), Datum::Null], &tidb_expr::NoColumns),
+            Err(KvTableError::CheckConstraintViolated(name)) if name == "positive_a"
+        ));
+        assert!(matches!(
+            table.update_row(
+                &handle,
+                &[Datum::Int(-1), Datum::Null],
+                &tidb_expr::NoColumns,
+            ),
+            Err(KvTableError::CheckConstraintViolated(name)) if name == "positive_a"
+        ));
+        assert_eq!(
+            table
+                .scan_rows_with_context(&RowDecodeContext::for_test_query_utc())
+                .expect("scan preserved rows")[0][0],
+            Datum::Int(1),
+            "failed UPDATE must leave the original row"
+        );
+
+        let wire =
+            crate::DriverError::CheckConstraintViolated("positive_a".to_owned()).to_mysql_error();
+        assert_eq!(
+            wire.code,
+            tidb_error::tidb::errcode::ErrCheckConstraintViolated
+        );
+        assert_eq!(wire.state, *b"HY000");
+        assert_eq!(wire.message, "Check constraint 'positive_a' is violated.");
     }
 
     #[test]

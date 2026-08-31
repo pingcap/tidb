@@ -123,6 +123,7 @@ pub mod join_table_meta;
 pub mod json_arrayagg;
 pub mod json_objectagg;
 pub mod keydecoder;
+pub mod label_delivery;
 pub mod lack_handles;
 pub mod lazy_txn_state;
 pub mod lead_lag;

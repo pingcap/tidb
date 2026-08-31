@@ -332,6 +332,22 @@ pub enum DdlStatement {
         /// Canonical SQL for the shared partition DDL implementation.
         sql: String,
     },
+    /// `ALTER TABLE ... EXCHANGE PARTITION ... WITH TABLE ...`, Go
+    /// `ActionExchangeTablePartition`.
+    ExchangePartition {
+        /// Database containing the partitioned table.
+        schema: String,
+        /// Partitioned table.
+        table: String,
+        /// Named partition to exchange.
+        partition: String,
+        /// Database containing the standalone table.
+        standalone_schema: String,
+        /// Standalone table whose records and physical ID are exchanged.
+        standalone_table: String,
+        /// Whether rows must be proven to belong to the named partition.
+        with_validation: bool,
+    },
     /// The single-action `ALTER TABLE ... DROP COLUMN` this node serves.
     ///
     /// Go `onDropColumn` + `isDroppableColumn`: the last column of the table,
@@ -1525,6 +1541,23 @@ fn lower_alter_table_catalog(
                 .restore(),
             }))
         }
+        tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::Exchange {
+            partition,
+            table: standalone,
+            with_validation,
+        }) => {
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            let (standalone_schema, standalone_table) =
+                split_name(standalone, default_schema, "exchange table")?;
+            Ok(Some(DdlStatement::ExchangePartition {
+                schema,
+                table,
+                partition: partition.clone(),
+                standalone_schema,
+                standalone_table,
+                with_validation: *with_validation,
+            }))
+        }
         _ => Ok(None),
     }
 }
@@ -2345,6 +2378,12 @@ pub struct DdlWrite {
     /// index and its contents become visible at one commit timestamp and no
     /// reader can see one without the other.
     pub backfill: Vec<IndexBackfill>,
+    /// The row-routing proof owed by `EXCHANGE PARTITION ... WITH
+    /// VALIDATION`, evaluated from the same snapshot before this write set is
+    /// committed. `None` is Go's `WITHOUT VALIDATION` path.
+    pub exchange_partition_validation: Option<ExchangePartitionValidation>,
+    /// The PD region-label rule swap owed by `EXCHANGE PARTITION`.
+    pub exchange_partition_label_swap: Option<ExchangePartitionLabelSwap>,
     /// The warning the change raises, if any.
     ///
     /// Go carries this as `job.Warning` (and, for the same adjustment made at
@@ -2362,6 +2401,108 @@ pub struct DdlWrite {
     /// catalog that claims placement PD never accepted is a table whose rows
     /// live somewhere other than where it says they do.
     pub placement_bundles: Vec<tidb_placement::Bundle>,
+    /// The pre-change placement bundles for an exchange-partition attempt.
+    ///
+    /// Rust publishes the catalog change with an optimistic transaction, so
+    /// it must undo the already-delivered PD change if that transaction loses
+    /// its commit race. These bundles come from the same metadata snapshot as
+    /// the forward bundles; deriving them here avoids a PD read that Go's
+    /// exchange path never performs.
+    pub placement_rollback_bundles: Vec<tidb_placement::Bundle>,
+}
+
+/// Go `checkExchangePartitionRecordValidation` expressed as a data obligation
+/// on the final metadata write.
+#[derive(Clone, Debug)]
+pub struct ExchangePartitionValidation {
+    /// Partitioned table before the physical-ID swap.
+    pub partitioned: Box<TableInfo>,
+    /// Standalone table whose existing rows must all route to `partition_id`.
+    pub standalone: Box<TableInfo>,
+    /// Physical ID of the named partition before the swap.
+    pub partition_id: i64,
+}
+
+/// The names and post-exchange physical IDs Go uses to swap the standalone
+/// table and partition label rules in PD.
+#[derive(Clone, Debug)]
+pub struct ExchangePartitionLabelSwap {
+    /// Partitioned-table database name.
+    pub partitioned_schema: String,
+    /// Partitioned-table name.
+    pub partitioned_table: String,
+    /// Exchanged partition name.
+    pub partition: String,
+    /// Standalone-table database name.
+    pub standalone_schema: String,
+    /// Standalone-table name.
+    pub standalone_table: String,
+    /// Physical ID now owned by the named partition.
+    pub partition_id: i64,
+    /// Physical ID now owned by the standalone table.
+    pub standalone_id: i64,
+}
+
+impl ExchangePartitionLabelSwap {
+    /// The two existing rule IDs Go fetches before constructing its patch.
+    pub fn rule_ids(&self, codec: &dyn tidb_executor::ddl_label::LabelCodec) -> [String; 2] {
+        [
+            tidb_executor::ddl_label::new_rule_id(
+                codec,
+                &self.standalone_schema,
+                &self.standalone_table,
+                "",
+            ),
+            tidb_executor::ddl_label::new_rule_id(
+                codec,
+                &self.partitioned_schema,
+                &self.partitioned_table,
+                &self.partition,
+            ),
+        ]
+    }
+
+    /// Pinned Go `onExchangeTablePartition`'s four-way label-rule patch.
+    pub fn patch(
+        &self,
+        codec: &dyn tidb_executor::ddl_label::LabelCodec,
+        rules: &[tidb_executor::ddl_label::Rule],
+    ) -> tidb_executor::ddl_label::LabelRulePatch {
+        let [standalone_rule_id, partition_rule_id] = self.rule_ids(codec);
+        let standalone_rule = rules.iter().find(|rule| rule.id == standalone_rule_id);
+        let partition_rule = rules.iter().find(|rule| rule.id == partition_rule_id);
+        let mut set_rules = Vec::with_capacity(2);
+        let mut delete_rules = Vec::with_capacity(1);
+        if let Some(rule) = standalone_rule {
+            let mut rule = rule.clone_rule();
+            rule.reset(
+                codec,
+                &self.partitioned_schema,
+                &self.partitioned_table,
+                &self.partition,
+                &[self.partition_id],
+            );
+            set_rules.push(rule);
+            if partition_rule.is_none() {
+                delete_rules.push(standalone_rule_id);
+            }
+        }
+        if let Some(rule) = partition_rule {
+            let mut rule = rule.clone_rule();
+            rule.reset(
+                codec,
+                &self.standalone_schema,
+                &self.standalone_table,
+                "",
+                &[self.standalone_id],
+            );
+            set_rules.push(rule);
+            if standalone_rule.is_none() {
+                delete_rules.push(partition_rule_id);
+            }
+        }
+        tidb_executor::ddl_label::new_rule_patch(set_rules, delete_rules)
+    }
 }
 
 /// The data half of an index change: which table's rows to walk, and what to
@@ -2592,6 +2733,195 @@ fn apply_partition_change(
         .clone())
 }
 
+fn exchange_refusal(code: u16, message: impl Into<String>) -> DdlPlanError {
+    DdlPlanError::Admission(DdlAdmissionError::with_code(code, message.into()))
+}
+
+/// Pinned Go `checkFieldTypeCompatible`.
+fn exchange_field_type_compatible(left: &FieldType, right: &FieldType) -> bool {
+    const COMPARED_FLAGS: u32 = FieldTypeFlags::UNSIGNED
+        | FieldTypeFlags::AUTO_INCREMENT
+        | FieldTypeFlags::NOT_NULL
+        | FieldTypeFlags::ZEROFILL
+        | FieldTypeFlags::BINARY
+        | FieldTypeFlags::PRI_KEY;
+    left.code() == right.code()
+        && left.decimal() == right.decimal()
+        && left.charset_name() == right.charset_name()
+        && left.collation_name() == right.collation_name()
+        && (left.flen() == right.flen() || left.storage_length() != tidb_datatype::VAR_STORAGE_LEN)
+        && left.flags() & COMPARED_FLAGS == right.flags() & COMPARED_FLAGS
+        && left.elems_snapshot() == right.elems_snapshot()
+}
+
+fn exchange_tiflash_compatible(left: &TableInfo, right: &TableInfo) -> bool {
+    match (&left.tiflash_replica, &right.tiflash_replica) {
+        (None, None) => true,
+        (Some(left), Some(right)) => {
+            let left = left.read();
+            let right = right.read();
+            left.count == right.count
+                && left.available == right.available
+                && left.location_labels == right.location_labels
+        }
+        _ => false,
+    }
+}
+
+/// Pinned Go `checkExchangePartition` plus `checkTableDefCompatible`.
+fn check_exchange_tables(
+    partitioned: &TableInfo,
+    standalone: &TableInfo,
+) -> Result<(), DdlPlanError> {
+    if standalone.is_view() || standalone.is_sequence() {
+        return Err(exchange_refusal(1177, "Can't open table"));
+    }
+    if partitioned.partition.is_none() {
+        return Err(exchange_refusal(
+            1505,
+            "Partition management on a not partitioned table is not possible",
+        ));
+    }
+    if standalone.partition.is_some() {
+        return Err(exchange_refusal(
+            1732,
+            format!(
+                "Table '{}' is partitioned. It cannot be used in EXCHANGE PARTITION",
+                standalone.name
+            ),
+        ));
+    }
+    if standalone.affinity.is_some() || partitioned.affinity.is_some() {
+        return Err(exchange_refusal(
+            8200,
+            "Unsupported DDL operation: EXCHANGE PARTITION of a table with AFFINITY option",
+        ));
+    }
+    if !standalone.foreign_keys.is_empty() {
+        return Err(exchange_refusal(
+            1740,
+            format!(
+                "Table '{}' has foreign key constraint. It cannot be used in EXCHANGE PARTITION",
+                standalone.name
+            ),
+        ));
+    }
+    if standalone.temp_table_type != tidb_model::TempTableType::NONE {
+        return Err(exchange_refusal(
+            1733,
+            format!(
+                "Table to exchange with partition is temporary: '{}'",
+                standalone.name
+            ),
+        ));
+    }
+    let different_metadata = || exchange_refusal(1736, "Tables have different definitions");
+    if partitioned.auto_random_bits != standalone.auto_random_bits
+        || partitioned.auto_random_range_bits != standalone.auto_random_range_bits
+        || partitioned.charset != standalone.charset
+        || partitioned.collate != standalone.collate
+        || partitioned.shard_row_id_bits != standalone.shard_row_id_bits
+        || partitioned.max_shard_row_id_bits != standalone.max_shard_row_id_bits
+        || partitioned.pk_is_handle != standalone.pk_is_handle
+        || partitioned.is_common_handle != standalone.is_common_handle
+        || !exchange_tiflash_compatible(partitioned, standalone)
+        || partitioned.cols().len() != standalone.cols().len()
+    {
+        return Err(different_metadata());
+    }
+    for (source, target) in partitioned
+        .cols()
+        .iter_deref()
+        .zip(standalone.cols().iter_deref())
+    {
+        let source = source.read();
+        let target = target.read();
+        if source.is_virtual_generated() != target.is_virtual_generated() {
+            return Err(exchange_refusal(
+                3106,
+                "'Exchanging partitions for non-generated columns' is not supported for generated columns.",
+            ));
+        }
+        if source.name.lowercase() != target.name.lowercase()
+            || source.hidden != target.hidden
+            || !exchange_field_type_compatible(&source.field_type, &target.field_type)
+            || source.generated_expr_string != target.generated_expr_string
+            || source.state != SchemaState::PUBLIC
+            || target.state != SchemaState::PUBLIC
+        {
+            return Err(different_metadata());
+        }
+        if source.id != target.id {
+            return Err(exchange_refusal(
+                1731,
+                format!(
+                    "Non matching attribute 'column: {}' between partition and table",
+                    source.name
+                ),
+            ));
+        }
+    }
+    if partitioned.indices.len() != standalone.indices.len() {
+        return Err(different_metadata());
+    }
+    for source in partitioned.indices.iter_deref() {
+        let source = source.read();
+        if source.global {
+            return Err(exchange_refusal(
+                1731,
+                format!(
+                    "Non matching attribute 'global index: {}' between partition and table",
+                    source.name
+                ),
+            ));
+        }
+        let Some(target) = standalone
+            .indices
+            .iter_deref()
+            .find(|candidate| candidate.read().name.lowercase() == source.name.lowercase())
+        else {
+            return Err(different_metadata());
+        };
+        let target = target.read();
+        if source.tp != target.tp
+            || source.unique != target.unique
+            || source.primary != target.primary
+            || source.columns.len() != target.columns.len()
+        {
+            return Err(different_metadata());
+        }
+        for (source_column, target_column) in
+            source.columns.iter_deref().zip(target.columns.iter_deref())
+        {
+            let source_column = source_column.read();
+            let target_column = target_column.read();
+            if source_column.length != target_column.length
+                || source_column.name.lowercase() != target_column.name.lowercase()
+            {
+                return Err(different_metadata());
+            }
+        }
+        if source.id != target.id {
+            return Err(exchange_refusal(
+                1731,
+                format!(
+                    "Non matching attribute 'index: {}' between partition and table",
+                    source.name
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn read_auto_id<S: MetaSnapshot>(snapshot: &mut S, key: &[u8]) -> Result<i64, DdlPlanError> {
+    match snapshot.get(key)? {
+        Some(encoded) => value::parse_int_value(&encoded)
+            .map_err(|error| DdlPlanError::Encode(error.to_string())),
+        None => Ok(0),
+    }
+}
+
 /// [`plan_ddl`] with an already captured persisted collation mode.
 ///
 /// This is the source-shaped equivalent of Go carrying
@@ -2608,11 +2938,14 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
     // placement; empty for every other statement, and an empty list is never
     // sent.
     let mut placement_bundles: Vec<tidb_placement::Bundle> = Vec::new();
+    let mut placement_rollback_bundles: Vec<tidb_placement::Bundle> = Vec::new();
     let schema_version = catalog.schema_version + 1;
     let mut writes = Vec::new();
     let mut global_ids = GlobalIdAllocator::load(snapshot)?;
     let mut created_id = None;
     let mut backfill = Vec::new();
+    let mut exchange_partition_validation = None;
+    let mut exchange_partition_label_swap = None;
     let mut warning = None;
     let mut schema_change_events: Vec<(i64, SchemaChangeEvent)> = Vec::new();
     let mut diff = SchemaDiff {
@@ -3612,6 +3945,238 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                         ),
                     ));
                 }
+            }
+        }
+        DdlStatement::ExchangePartition {
+            schema,
+            table,
+            partition,
+            standalone_schema,
+            standalone_table,
+            with_validation,
+        } => {
+            let (partitioned_db_id, stored_partitioned) = locate_table(&catalog, schema, table)?;
+            let (standalone_db_id, stored_standalone) =
+                locate_table(&catalog, standalone_schema, standalone_table)?;
+            check_exchange_tables(stored_partitioned, stored_standalone)?;
+            if stored_partitioned.state != SchemaState::PUBLIC {
+                return Err(exchange_refusal(
+                    8200,
+                    format!("Table '{}' is not in public state", stored_partitioned.name),
+                ));
+            }
+            let original_definition = stored_partitioned
+                .partition
+                .as_ref()
+                .expect("exchange compatibility requires partitioning")
+                .read()
+                .definitions
+                .snapshot()
+                .into_iter()
+                .find(|definition| definition.name.original().eq_ignore_ascii_case(partition))
+                .ok_or_else(|| {
+                    exchange_refusal(
+                        1735,
+                        format!("Unknown partition '{partition}' in table '{table}'"),
+                    )
+                })?;
+
+            // Pinned Go compares the standalone policy with the effective
+            // partition policy (partition override, otherwise table policy)
+            // after resolving both references through the same meta snapshot.
+            let partition_policy = original_definition
+                .placement_policy_ref
+                .as_ref()
+                .or(stored_partitioned.placement_policy_ref.as_ref());
+            let standalone_policy = stored_standalone.placement_policy_ref.as_ref();
+            let policies = load_policies(snapshot)?;
+            let resolve_policy = |reference: &GoShared<tidb_model::PolicyRefInfo>| {
+                let id = reference.read().id;
+                policies.policies.iter().find(|policy| policy.id == id)
+            };
+            match (partition_policy, standalone_policy) {
+                (None, None) => {}
+                (Some(_), None) | (None, Some(_)) => {
+                    return Err(exchange_refusal(1736, "Tables have different definitions"));
+                }
+                (Some(partition_policy), Some(standalone_policy)) => {
+                    match (
+                        resolve_policy(partition_policy),
+                        resolve_policy(standalone_policy),
+                    ) {
+                        (None, None) => {}
+                        (Some(left), Some(right))
+                            if left.name.lowercase() == right.name.lowercase() => {}
+                        _ => {
+                            return Err(exchange_refusal(
+                                1736,
+                                "Tables have different definitions",
+                            ));
+                        }
+                    }
+                }
+            }
+
+            let original_partition_id = original_definition.id;
+            let original_standalone_id = stored_standalone.id;
+
+            // The forward exchange bundles below are Go's exact
+            // `bundlesForExchangeTablePartition` result after the ID swap.
+            // Preserve that same result for the pre-swap objects so an
+            // optimistic commit failure can restore PD without introducing a
+            // non-Go placement GET request.
+            let original_table_bundle =
+                tidb_placement::new_table_bundle(&policies, &stored_partitioned)
+                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            let original_partition_bundle =
+                tidb_placement::new_partition_bundle(&policies, &original_definition)
+                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            let original_standalone_bundle =
+                tidb_placement::new_table_bundle(&policies, &stored_standalone)
+                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            placement_rollback_bundles.extend(original_table_bundle);
+            placement_rollback_bundles.extend(original_partition_bundle.clone());
+            placement_rollback_bundles.extend(original_standalone_bundle.clone());
+            if original_partition_bundle.is_none() && original_standalone_bundle.is_some() {
+                placement_rollback_bundles.push(tidb_placement::new_bundle(original_partition_id));
+            }
+            if original_partition_bundle.is_some() && original_standalone_bundle.is_none() {
+                placement_rollback_bundles.push(tidb_placement::new_bundle(original_standalone_id));
+            }
+            if *with_validation {
+                exchange_partition_validation = Some(ExchangePartitionValidation {
+                    partitioned: Box::new(stored_partitioned.clone_like_go()),
+                    standalone: Box::new(stored_standalone.clone_like_go()),
+                    partition_id: original_partition_id,
+                });
+            }
+            exchange_partition_label_swap = Some(ExchangePartitionLabelSwap {
+                partitioned_schema: schema.to_lowercase(),
+                partitioned_table: stored_partitioned.name.lowercase().to_owned(),
+                partition: original_definition.name.lowercase().to_owned(),
+                standalone_schema: standalone_schema.to_lowercase(),
+                standalone_table: stored_standalone.name.lowercase().to_owned(),
+                partition_id: original_standalone_id,
+                standalone_id: original_partition_id,
+            });
+
+            let mut partitioned_info = stored_partitioned.clone_like_go();
+            let mut definitions = partitioned_info
+                .partition
+                .as_ref()
+                .expect("the exchanged table remains partitioned")
+                .read()
+                .definitions
+                .snapshot();
+            let exchanged_definition = {
+                let definition = definitions
+                    .iter_mut()
+                    .find(|definition| definition.id == original_partition_id)
+                    .expect("the original definition is still present");
+                definition.id = original_standalone_id;
+                definition.clone_like_go()
+            };
+            partitioned_info
+                .partition
+                .as_ref()
+                .expect("the exchanged table remains partitioned")
+                .write()
+                .definitions = definitions.into();
+            if let Some(replica) = &partitioned_info.tiflash_replica {
+                for id in replica.write().available_partition_ids.iter_mut() {
+                    if *id == original_partition_id {
+                        *id = original_standalone_id;
+                        break;
+                    }
+                }
+            }
+            partitioned_info.update_ts = start_ts;
+
+            let mut standalone_info = stored_standalone.clone_like_go();
+            standalone_info.id = original_partition_id;
+            standalone_info.exchange_partition_info = None;
+            standalone_info.update_ts = start_ts;
+
+            writes.push(OptimisticMutation::meta_delete(key::table_kv_key(
+                standalone_db_id,
+                original_standalone_id,
+            ))?);
+            writes.push(OptimisticMutation::meta_put(
+                key::table_kv_key(partitioned_db_id, partitioned_info.id),
+                value::serialize_table_info(&partitioned_info)
+                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+            )?);
+            writes.push(OptimisticMutation::meta_put(
+                key::table_kv_key(standalone_db_id, standalone_info.id),
+                value::serialize_table_info(&standalone_info)
+                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+            )?);
+
+            for key_for in [
+                key::auto_table_id_kv_key as fn(i64, i64) -> Vec<u8>,
+                key::auto_increment_id_kv_key,
+                key::auto_random_table_id_kv_key,
+            ] {
+                let partitioned_key = key_for(partitioned_db_id, stored_partitioned.id);
+                let standalone_key = key_for(standalone_db_id, original_standalone_id);
+                let maximum = std::cmp::max(
+                    read_auto_id(snapshot, &partitioned_key)?,
+                    read_auto_id(snapshot, &standalone_key)?,
+                );
+                writes.push(OptimisticMutation::meta_put(
+                    partitioned_key,
+                    value::encode_int_value(maximum),
+                )?);
+                writes.push(OptimisticMutation::meta_put(
+                    key_for(standalone_db_id, original_partition_id),
+                    value::encode_int_value(maximum),
+                )?);
+            }
+
+            // Pinned `bundlesForExchangeTablePartition`: rebuild the table,
+            // exchanged partition and standalone bundles under their new IDs;
+            // explicitly clear the side that lost a policy.
+            let table_bundle = tidb_placement::new_table_bundle(&policies, &partitioned_info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            let partition_bundle =
+                tidb_placement::new_partition_bundle(&policies, &exchanged_definition)
+                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            let standalone_bundle = tidb_placement::new_table_bundle(&policies, &standalone_info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            placement_bundles.extend(table_bundle);
+            placement_bundles.extend(partition_bundle.clone());
+            placement_bundles.extend(standalone_bundle.clone());
+            if partition_bundle.is_none() && standalone_bundle.is_some() {
+                placement_bundles.push(tidb_placement::new_bundle(exchanged_definition.id));
+            }
+            if partition_bundle.is_some() && standalone_bundle.is_none() {
+                placement_bundles.push(tidb_placement::new_bundle(standalone_info.id));
+            }
+
+            diff.action_type = ActionType::ACTION_EXCHANGE_TABLE_PARTITION;
+            diff.schema_id = standalone_db_id;
+            diff.table_id = original_partition_id;
+            diff.old_schema_id = standalone_db_id;
+            diff.old_table_id = original_standalone_id;
+            diff.affected_options = vec![AffectedOption {
+                schema_id: partitioned_db_id,
+                table_id: stored_partitioned.id,
+                ..AffectedOption::default()
+            }]
+            .into();
+            warning = Some(
+                "after the exchange, please analyze related table of the exchange to update statistics"
+                    .to_owned(),
+            );
+            if !tidb_metadef::is_mem_or_sys_db(&standalone_schema.to_lowercase()) {
+                schema_change_events.push((
+                    -1,
+                    SchemaChangeEvent::exchange_partition(
+                        partitioned_info,
+                        event_partition_info(vec![original_definition]),
+                        stored_standalone.clone_like_go(),
+                    ),
+                ));
             }
         }
         DdlStatement::TruncatePartitions { schema, table, sql } => {
@@ -4989,8 +5554,11 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
         diff,
         created_id,
         backfill,
+        exchange_partition_validation,
+        exchange_partition_label_swap,
         warning,
         placement_bundles,
+        placement_rollback_bundles,
     })))
 }
 

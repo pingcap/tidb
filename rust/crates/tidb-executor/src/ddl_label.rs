@@ -34,6 +34,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
+use serde::{Deserialize, Serialize};
 use tidb_codec::table_key::gen_table_prefix;
 use tidb_codec::{encode_bytes, encoded_bytes_len};
 
@@ -63,7 +64,7 @@ pub const RULE_INDEX_TABLE: i64 = 2;
 pub const RULE_INDEX_PARTITION: i64 = 3;
 
 /// Go `pd.RegionLabel`, narrowed to the fields this package touches.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
 pub struct RegionLabel {
     /// The label key.
     pub key: String,
@@ -308,7 +309,7 @@ pub fn restore_rule_id(rule_id: &str) -> String {
 }
 
 /// Go `label.Rule` (`pd.LabelRule`): labels bound to a key range.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
 pub struct Rule {
     /// Go `ID`.
     pub id: String,
@@ -317,6 +318,7 @@ pub struct Rule {
     /// Go `Labels`.
     pub labels: Vec<RegionLabel>,
     /// Go `RuleType`.
+    #[serde(rename = "rule_type")]
     pub rule_type: String,
     /// Go `Data`: one `{start_key, end_key}` map per table ID, hex-encoded.
     pub data: Vec<BTreeMap<String, String>>,
@@ -463,11 +465,13 @@ fn hex_lower(bytes: &[u8]) -> String {
 }
 
 /// Go `pd.LabelRulePatch`: rules to set and rule IDs to delete.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
 pub struct LabelRulePatch {
     /// Go `SetRules`.
+    #[serde(rename = "sets")]
     pub set_rules: Vec<Rule>,
     /// Go `DeleteRules`.
+    #[serde(rename = "deletes")]
     pub delete_rules: Vec<String>,
 }
 
@@ -726,5 +730,16 @@ mod tests {
         let patch = new_rule_patch(vec![rule.clone()], vec!["schema/db/gone".to_owned()]);
         assert_eq!(patch.set_rules, vec![rule]);
         assert_eq!(patch.delete_rules, vec!["schema/db/gone".to_owned()]);
+
+        let wire = serde_json::to_value(&patch).expect("PD patch JSON");
+        assert_eq!(wire["sets"][0]["id"], "schema/db/t");
+        assert_eq!(wire["sets"][0]["rule_type"], "key-range");
+        assert_eq!(wire["deletes"][0], "schema/db/gone");
+        assert!(wire.get("set_rules").is_none());
+        assert!(wire.get("delete_rules").is_none());
+        assert_eq!(
+            serde_json::from_value::<LabelRulePatch>(wire).expect("PD patch decodes"),
+            patch
+        );
     }
 }

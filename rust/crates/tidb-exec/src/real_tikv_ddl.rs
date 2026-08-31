@@ -42,12 +42,130 @@ use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoa
 
 use crate::cluster_ddl::{
     lower_ddl_with_context, plan_ddl, DdlAdmissionError, DdlPlan, DdlPlanError, DdlStatement,
-    IndexBackfill,
+    DdlWrite, ExchangePartitionValidation, IndexBackfill,
 };
 use crate::cluster_table_storage::SessionTransaction;
 use crate::pessimistic_lock_error::{transaction_cause_to_sql_error, LockSqlError};
 use crate::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
 use crate::table_info_build::default_ddl_statement_context;
+
+struct LabelDeliveryReceipt {
+    endpoint: String,
+    original: Vec<tidb_executor::ddl_label::Rule>,
+    rule_ids: [String; 2],
+}
+
+struct PlacementDeliveryReceipt {
+    endpoint: String,
+    rollback: Vec<tidb_placement::Bundle>,
+}
+
+fn deliver_placement_bundles(
+    endpoint: &str,
+    bundles: &[tidb_placement::Bundle],
+    rollback_bundles: &[tidb_placement::Bundle],
+    timeout: Duration,
+) -> Result<Option<PlacementDeliveryReceipt>, ClusterDdlError> {
+    if bundles.is_empty() {
+        return Ok(None);
+    }
+    crate::placement_delivery::put_rule_bundles(endpoint, bundles, timeout).map_err(|error| {
+        ClusterDdlError::NotCommitted(format!("failed to notify PD the placement rules: {error}"))
+    })?;
+    let rollback = if rollback_bundles.is_empty() {
+        // Non-exchange DDL keeps the existing retry behavior: IDs allocated
+        // by an optimistic attempt are withdrawn if the catalog transaction
+        // loses its race. Exchange supplies exact pre-change bundles because
+        // its groups already existed under the swapped physical IDs.
+        bundles
+            .iter()
+            .map(|bundle| tidb_placement::Bundle {
+                id: bundle.id.clone(),
+                ..tidb_placement::Bundle::default()
+            })
+            .collect()
+    } else {
+        rollback_bundles.to_vec()
+    };
+    Ok(Some(PlacementDeliveryReceipt {
+        endpoint: endpoint.to_owned(),
+        rollback,
+    }))
+}
+
+fn deliver_exchange_label_rules(
+    endpoint: &str,
+    write: &DdlWrite,
+    timeout: Duration,
+) -> Result<Option<LabelDeliveryReceipt>, ClusterDdlError> {
+    let Some(swap) = &write.exchange_partition_label_swap else {
+        return Ok(None);
+    };
+    let codec = tidb_executor::ddl_label::CodecV1;
+    let rule_ids = swap.rule_ids(&codec);
+    let original =
+        crate::label_delivery::get_label_rules(endpoint, &rule_ids, timeout).map_err(|error| {
+            ClusterDdlError::NotCommitted(format!("failed to get PD the label rules: {error}"))
+        })?;
+    let patch = swap.patch(&codec, &original);
+    crate::label_delivery::patch_label_rules(endpoint, &patch, timeout).map_err(|error| {
+        ClusterDdlError::NotCommitted(format!("failed to notify PD the label rules: {error}"))
+    })?;
+    Ok(Some(LabelDeliveryReceipt {
+        endpoint: endpoint.to_owned(),
+        original,
+        rule_ids,
+    }))
+}
+
+fn restore_exchange_label_rules(
+    receipt: &LabelDeliveryReceipt,
+    timeout: Duration,
+) -> Result<(), crate::label_delivery::LabelDeliveryError> {
+    let present = receipt
+        .original
+        .iter()
+        .map(|rule| rule.id.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    let delete_rules = receipt
+        .rule_ids
+        .iter()
+        .filter(|id| !present.contains(id.as_str()))
+        .cloned()
+        .collect();
+    let patch = tidb_executor::ddl_label::new_rule_patch(receipt.original.clone(), delete_rules);
+    crate::label_delivery::patch_label_rules(&receipt.endpoint, &patch, timeout)
+}
+
+fn restore_placement(
+    receipt: &PlacementDeliveryReceipt,
+    timeout: Duration,
+) -> Result<(), crate::placement_delivery::PlacementDeliveryError> {
+    crate::placement_delivery::put_rule_bundles(&receipt.endpoint, &receipt.rollback, timeout)
+}
+
+fn compensate_external_delivery(
+    mut cause: ClusterDdlError,
+    placement_receipt: Option<&PlacementDeliveryReceipt>,
+    label_receipt: Option<&LabelDeliveryReceipt>,
+    timeout: Duration,
+) -> ClusterDdlError {
+    if let Some(receipt) = label_receipt {
+        if let Err(error) = restore_exchange_label_rules(receipt, timeout) {
+            cause = ClusterDdlError::NotCommitted(format!(
+                "{cause}; and restoring the attempt's label rules failed: {error}"
+            ));
+        }
+    }
+    if let Some(receipt) = placement_receipt {
+        if let Err(error) = restore_placement(receipt, timeout) {
+            cause = ClusterDdlError::NotCommitted(format!(
+                "{cause}; and restoring the attempt's placement bundles failed: {error}"
+            ));
+        }
+    }
+    cause
+}
 
 /// Parses and admits one text-protocol statement as a catalog change.
 ///
@@ -128,6 +246,11 @@ pub enum ClusterDdlError {
     /// whose entries were never written. The refusal is what keeps that
     /// unreachable on a path that cannot walk the table.
     BackfillUnavailable,
+    /// `EXCHANGE PARTITION ... WITH VALIDATION` rejected a row or failed
+    /// while reading/evaluating the validation scan.
+    ExchangeValidation(LockSqlError),
+    /// The change needs exchange validation and this path cannot read rows.
+    ExchangeValidationUnavailable,
 }
 
 impl fmt::Display for ClusterDdlError {
@@ -163,6 +286,11 @@ impl fmt::Display for ClusterDdlError {
                 "this path cannot perform an index change: it would publish an index \
                  that exists but holds no entry for any row the table already has"
             ),
+            Self::ExchangeValidation(error) => formatter.write_str(&error.message),
+            Self::ExchangeValidationUnavailable => write!(
+                formatter,
+                "this path cannot validate EXCHANGE PARTITION rows before publishing the ID swap"
+            ),
         }
     }
 }
@@ -177,7 +305,9 @@ impl std::error::Error for ClusterDdlError {
             | Self::NotCommitted(_)
             | Self::Undetermined(_)
             | Self::Backfill(_)
-            | Self::BackfillUnavailable => None,
+            | Self::BackfillUnavailable
+            | Self::ExchangeValidation(_)
+            | Self::ExchangeValidationUnavailable => None,
         }
     }
 }
@@ -312,6 +442,10 @@ fn commit_cluster_ddl_once<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
         transaction.finish_without_writes()?;
         return Err(ClusterDdlError::BackfillUnavailable);
     }
+    if write.exchange_partition_validation.is_some() {
+        transaction.finish_without_writes()?;
+        return Err(ClusterDdlError::ExchangeValidationUnavailable);
+    }
     // Go sends the placement bundles INSIDE the DDL job, before the schema
     // version is published, and fails the job when PD refuses
     // (`PutRuleBundlesWithDefaultRetry`). Delivering before the commit is the
@@ -322,20 +456,38 @@ fn commit_cluster_ddl_once<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
     // An embedded store answers `None` for the endpoint and has no PD to tell,
     // so delivery is skipped rather than attempted against an address that
     // does not exist.
-    let mut delivered_endpoint = None;
-    if !write.placement_bundles.is_empty() {
-        if let Some(endpoint) = opener.pd().http_endpoint() {
-            if let Err(error) = crate::placement_delivery::put_rule_bundles(
-                &endpoint,
-                &write.placement_bundles,
-                timeout,
-            ) {
+    let placement_receipt = if let Some(endpoint) = opener.pd().http_endpoint() {
+        match deliver_placement_bundles(
+            &endpoint,
+            &write.placement_bundles,
+            &write.placement_rollback_bundles,
+            timeout,
+        ) {
+            Ok(receipt) => receipt,
+            Err(error) => {
                 transaction.finish_without_writes()?;
-                return Err(ClusterDdlError::NotCommitted(error.to_string()));
+                return Err(error);
             }
-            delivered_endpoint = Some(endpoint);
         }
-    }
+    } else {
+        None
+    };
+    let label_receipt = if let Some(endpoint) = opener.pd().http_endpoint() {
+        match deliver_exchange_label_rules(&endpoint, &write, timeout) {
+            Ok(receipt) => receipt,
+            Err(error) => {
+                transaction.finish_without_writes()?;
+                return Err(compensate_external_delivery(
+                    error,
+                    placement_receipt.as_ref(),
+                    None,
+                    timeout,
+                ));
+            }
+        }
+    } else {
+        None
+    };
     let planned_version = write.schema_version;
     // The bundles above are keyed by ids THIS attempt allocated. In Go the ids
     // a bundle carries are already durable when the job worker delivers it --
@@ -345,31 +497,18 @@ fn commit_cluster_ddl_once<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
     // re-plans with fresh ones; the delivered bundles must go back too, or PD
     // keeps rules for ids the catalog never published and some later object
     // inherits them.
-    let withdraw_bundles = |cause: ClusterDdlError| -> ClusterDdlError {
-        let Some(endpoint) = delivered_endpoint.as_ref() else {
-            return cause;
-        };
-        // Go deletes a group the same way it sets one: an empty bundle under
-        // `partial=true` replaces the group with nothing (`placement.NewBundle`
-        // in the drop paths).
-        let empty: Vec<tidb_placement::Bundle> = write
-            .placement_bundles
-            .iter()
-            .map(|bundle| tidb_placement::Bundle {
-                id: bundle.id.clone(),
-                ..tidb_placement::Bundle::default()
-            })
-            .collect();
-        match crate::placement_delivery::put_rule_bundles(endpoint, &empty, timeout) {
-            Ok(()) => cause,
-            // A retry after a failed withdrawal would leave the stale groups
-            // behind, so the conflict stops being retryable.
-            Err(error) => ClusterDdlError::NotCommitted(format!(
-                "{cause}; and withdrawing the attempt's placement bundles failed: {error}"
-            )),
+    let outcome = match transaction.commit(write.mutations, &call) {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            return Err(compensate_external_delivery(
+                ClusterDdlError::Transaction(error),
+                placement_receipt.as_ref(),
+                label_receipt.as_ref(),
+                timeout,
+            ));
         }
     };
-    match transaction.commit(write.mutations, &call)? {
+    match outcome {
         OptimisticCommitOutcome::Committed(_) => {
             notify_schema_version(notifier, planned_version);
             Ok(ClusterDdlReport::Applied {
@@ -378,14 +517,20 @@ fn commit_cluster_ddl_once<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
                 warning: write.warning,
             })
         }
-        OptimisticCommitOutcome::RolledBack(rolled_back) => Err(withdraw_bundles(classify(
-            planned_version,
-            &rolled_back.cause,
-        ))),
-        OptimisticCommitOutcome::CleanupFailed(cleanup_failed) => Err(withdraw_bundles(classify(
-            planned_version,
-            &cleanup_failed.cause,
-        ))),
+        OptimisticCommitOutcome::RolledBack(rolled_back) => Err(compensate_external_delivery(
+            classify(planned_version, &rolled_back.cause),
+            placement_receipt.as_ref(),
+            label_receipt.as_ref(),
+            timeout,
+        )),
+        OptimisticCommitOutcome::CleanupFailed(cleanup_failed) => {
+            Err(compensate_external_delivery(
+                classify(planned_version, &cleanup_failed.cause),
+                placement_receipt.as_ref(),
+                label_receipt.as_ref(),
+                timeout,
+            ))
+        }
         // An undetermined commit may have PUBLISHED the catalog that claims
         // these bundles; withdrawing them here could strip a live table's
         // placement, so they stay.
@@ -421,6 +566,18 @@ pub trait IndexBackfiller {
     ) -> Result<(), String>;
 }
 
+/// Executes Go's `checkExchangePartitionRecordValidation` from the DDL
+/// transaction's own row snapshot.
+pub trait ExchangePartitionValidator {
+    /// Proves every standalone-table row routes to the named partition.
+    fn validate(
+        &self,
+        plan: &ExchangePartitionValidation,
+        snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
+        buffer: &MutationBuffer,
+    ) -> Result<(), LockSqlError>;
+}
+
 /// Publishes one catalog change together with the index entries it owes.
 ///
 /// One `SessionTransaction` serves all three halves at one `start_ts`: the
@@ -451,6 +608,7 @@ pub fn commit_cluster_ddl_with_backfill<
     timeout: Duration,
     notifier: Option<&dyn SchemaVersionNotifier>,
     backfiller: &dyn IndexBackfiller,
+    exchange_validator: &dyn ExchangePartitionValidator,
 ) -> Result<ClusterDdlReport, ClusterDdlError> {
     // The same `kv.RunInNewTxn(retryable=true)` loop as [`commit_cluster_ddl`]
     // -- see its doc. A retried attempt re-stages the backfill from the fresh
@@ -463,6 +621,7 @@ pub fn commit_cluster_ddl_with_backfill<
             timeout,
             notifier,
             backfiller,
+            exchange_validator,
         ) {
             Err(ClusterDdlError::ConcurrentSchemaChange { .. })
                 if attempt + 1 < tidb_txnkv::MAX_RETRY_COUNT =>
@@ -485,9 +644,10 @@ fn commit_cluster_ddl_with_backfill_once<
     timeout: Duration,
     notifier: Option<&dyn SchemaVersionNotifier>,
     backfiller: &dyn IndexBackfiller,
+    exchange_validator: &dyn ExchangePartitionValidator,
 ) -> Result<ClusterDdlReport, ClusterDdlError> {
     let transaction = SessionTransaction::begin(
-        opener,
+        Arc::clone(&opener),
         timeout,
         crate::session_commit_protocol::session_commit_protocol(),
     )?;
@@ -517,7 +677,7 @@ fn commit_cluster_ddl_with_backfill_once<
         DdlPlan::Write(write) => write,
     };
     let buffer = MutationBuffer::new();
-    if !write.backfill.is_empty() {
+    if !write.backfill.is_empty() || write.exchange_partition_validation.is_some() {
         let staged = transaction
             .snapshot()
             .map_err(|error| ClusterDdlError::Backfill(error.to_string()))
@@ -532,6 +692,11 @@ fn commit_cluster_ddl_with_backfill_once<
                         .stage(backfill, Arc::clone(&handle), &buffer)
                         .map_err(ClusterDdlError::Backfill)?;
                 }
+                if let Some(validation) = &write.exchange_partition_validation {
+                    exchange_validator
+                        .validate(validation, Arc::clone(&handle), &buffer)
+                        .map_err(ClusterDdlError::ExchangeValidation)?;
+                }
                 Ok(())
             });
         if let Err(error) = staged {
@@ -542,6 +707,38 @@ fn commit_cluster_ddl_with_backfill_once<
             return Err(error);
         }
     }
+    let placement_receipt = if let Some(endpoint) = opener.pd().http_endpoint() {
+        match deliver_placement_bundles(
+            &endpoint,
+            &write.placement_bundles,
+            &write.placement_rollback_bundles,
+            timeout,
+        ) {
+            Ok(receipt) => receipt,
+            Err(error) => {
+                let _ = transaction.rollback();
+                return Err(error);
+            }
+        }
+    } else {
+        None
+    };
+    let label_receipt = if let Some(endpoint) = opener.pd().http_endpoint() {
+        match deliver_exchange_label_rules(&endpoint, &write, timeout) {
+            Ok(receipt) => receipt,
+            Err(error) => {
+                let _ = transaction.rollback();
+                return Err(compensate_external_delivery(
+                    error,
+                    placement_receipt.as_ref(),
+                    None,
+                    timeout,
+                ));
+            }
+        }
+    } else {
+        None
+    };
     let planned_version = write.schema_version;
     match transaction.commit_with(&buffer, write.mutations) {
         Ok(_) => {
@@ -552,7 +749,19 @@ fn commit_cluster_ddl_with_backfill_once<
                 warning: write.warning,
             })
         }
-        Err(error) => Err(classify_session_ddl_commit_error(planned_version, error)),
+        Err(error) => {
+            let cause = classify_session_ddl_commit_error(planned_version, error);
+            if matches!(cause, ClusterDdlError::Undetermined(_)) {
+                Err(cause)
+            } else {
+                Err(compensate_external_delivery(
+                    cause,
+                    placement_receipt.as_ref(),
+                    label_receipt.as_ref(),
+                    timeout,
+                ))
+            }
+        }
     }
 }
 
