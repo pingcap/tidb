@@ -55,6 +55,10 @@ pub(super) struct MockCluster {
     pub(super) begun: AtomicUsize,
     /// Explicit transactions opened specifically in pessimistic mode.
     pub(super) pessimistic_begun: AtomicUsize,
+    /// One-shot failure for the next explicit transaction open. DDL subscriber
+    /// tests use it after catalog publication to model a restricted-session
+    /// statistics failure.
+    pub(super) fail_next_begin: AtomicBool,
     /// Makes the next pessimistic statement lock report a newer read timestamp.
     pub(super) retry_next_pessimistic_lock: AtomicBool,
     /// Read handles still bound. A statement that leaks one leaves this
@@ -436,6 +440,9 @@ impl ClusterTransactions for MockTransactions {
     ) -> Result<Box<dyn OpenClusterTransaction>, String> {
         self.0.record_resource_group(resource_group);
         self.0.begun.fetch_add(1, Ordering::AcqRel);
+        if self.0.fail_next_begin.swap(false, Ordering::AcqRel) {
+            return Err("mock transaction begin failed".to_owned());
+        }
         if pessimistic {
             self.0.pessimistic_begun.fetch_add(1, Ordering::AcqRel);
         }

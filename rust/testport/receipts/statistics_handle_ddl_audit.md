@@ -6,60 +6,101 @@ Pinned source: `e2788410d8d696605e8cb002585877a063ccc909`.
 
 | Artifact | Lines | Git blob | Disposition |
 | --- | ---: | --- | --- |
-| `BUILD.bazel` | 48 | `34f701e7488bb6e0843b6609856a46e4c393d443` | build metadata inventoried |
-| `ddl.go` | 171 | `520486c48817d5327b7df52f5c02e93c20dd7e30` | unclaimed: ordinary handle owner absent |
-| `ddl_test.go` | 1621 | `dd3a930a2807b630d73be0e9490ad80ff9812863` | 24 integration tests inventoried; not ported |
-| `subscriber.go` | 682 | `d2d3406ff3358b45d2863950e99bfffd71f86523` | unclaimed: runtime dependencies absent |
+| `BUILD.bazel` | 48 | `34f701e7488bb6e0843b6609856a46e4c393d443` | build/test metadata inventoried |
+| `ddl.go` | 171 | `520486c48817d5327b7df52f5c02e93c20dd7e30` | live behavior mapped into the cluster DDL/session owner |
+| `ddl_test.go` | 1621 | `dd3a930a2807b630d73be0e9490ad80ff9812863` | all 24 tests inventoried below |
+| `subscriber.go` | 682 | `d2d3406ff3358b45d2863950e99bfffd71f86523` | implemented actions and missing action owners inventoried below |
+| `testutil/BUILD.bazel` | 16 | `cc82e4b4088bd98a4e9f786a5719414233b26629` | build metadata inventoried |
+| `testutil/util.go` | 70 | `de5ee871e48ff017af80264fa3b12484663aeb6a` | transactional test-event support inventoried |
 
-The package has no generated, platform-specific, benchmark, fixture, or other
-support artifacts.
+The package has no generated, platform-specific, benchmark, or fixture
+artifacts beyond this inventory.
 
-## Package behavior and blockers
+## Production behavior matrix
 
-The package owns a buffered notifier-event channel and a subscriber connected
-to the ordinary statistics handle. It decodes every supported schema-change
-event, reads global prune and historical-stats variables, resolves schemas,
-and performs ordered writes against the real statistics storage. Table and
-column creation initializes statistics and conditionally records historical
-metadata. Truncate, drop, partition reorganization, partition exchange,
-partitioning conversion, flashback, and schema drop update versions, counts,
-modify counts, global IDs, lock-aware deltas, and delayed deletion with the
-source error and best-effort semantics. The handler also suppresses subscriber
-errors after the source's test-only classification.
+| Go behavior | Rust owner | Status |
+| --- | --- | --- |
+| capacity-1000 DDL event channel and notifier subscriber | cluster DDL completion path | architecture differs; no equivalent event channel exists |
+| `HandleDDLEvent` logs and ignores subscriber errors | `cluster_session_node::run_ddl` + `handle_stats_ddl_result` | implemented; a post-commit stats error cannot replace DDL success |
+| create-table physical-ID initialization | `update_table_ddl_stats` | implemented |
+| truncate-table initialize-new then delayed-delete-old | `update_table_ddl_stats` | implemented |
+| drop-table delayed deletion | `update_table_ddl_stats` | implemented |
+| add-column initialization | `update_column_ddl_stats` | implemented |
+| modify-column initialization unless DDL already analyzed | `update_column_ddl_stats` | initialization implemented; analyzed DDL branch has no Rust DDL producer |
+| add partition | `update_partition_ddl_stats` | implemented |
+| truncate partition: initialize, global count delta, retire | `update_partition_ddl_stats` | implemented |
+| drop partition: global count delta, retire | `update_partition_ddl_stats` | implemented |
+| exchange partition global count/modify deltas | none | missing with cluster exchange-partition DDL |
+| reorganize partition initialize/retire without global delta | none | missing with cluster reorganize-partition DDL |
+| alter table partitioning initialize and change global stats ID | none | missing with cluster add-partitioning DDL |
+| remove partitioning change global ID and retire partitions | none | missing with cluster remove-partitioning DDL |
+| flashback cluster table-wide stats-version update | storage helper exists; no cluster flashback DDL producer | missing event integration |
+| add index no-op | cluster DDL path performs no stats write | implemented |
+| drop schema best-effort delayed deletion | `update_drop_schema_stats` | implemented |
+| global/static physical-ID selection | `stats_physical_ids` | implemented from the global prune-mode value |
+| conditional historical metadata | `record_schema_change_history` | implemented |
+| locked/unlocked delta writes | `cluster_stats_write` plans used by partition updates | implemented |
+| post-event cache visibility | DDL path reloads affected physical IDs into the shared cache | required to reproduce Go handle-visible results after synchronous test-event handling |
 
-The 24 Go tests drive these paths through a mock TiDB domain, DDL notifier,
-transactional system sessions, infoschema, statistics cache, storage tables,
-ANALYZE, partition pruning, historical metadata, and lock-aware updates. Rust
-does not yet have the dependency-closed ordinary statistics-handle owner, and
-the required `handle/types`, `storage`, `history`, and `lockstats` packages are
-not complete. A decoded event enum plus caller-implemented traits cannot
-provide this package's observable integration behavior.
+## Complete Go test matrix
+
+| Go test | Covered Rust behavior | Status |
+| --- | --- | --- |
+| `TestDDLAfterLoad` | DDL after initialized cache; historical-meta eligibility | partial |
+| `TestDDLTable` | create/drop table and add-column stats | covered by integrated lifecycle/column tests |
+| `TestSystemTableDDLHasNoEvent` | mem/system schema suppression | covered |
+| `TestTruncateTable` | nonpartitioned table ID replacement | covered |
+| `TestTruncateAPartitionedTable` | physical/global IDs under both prune modes | partial |
+| `TestDDLHistogram` | add-column histogram default/null shapes | covered |
+| `TestDDLPartition` | create/add/drop partition stats | covered for supported actions |
+| `TestReorgPartitions` | reorganize partition | missing DDL owner |
+| `TestIncreasePartitionCountOfHashPartitionTable` | hash partition reorganization | missing DDL owner |
+| `TestDecreasePartitionCountOfHashPartitionTable` | hash partition reorganization | missing DDL owner |
+| `TestTruncateAPartition` | one partition replacement and global count | covered |
+| `TestTruncateAPartitionAndDropTableImmediately` | truncate/drop ordering | partial |
+| `TestTruncateAHashPartition` | hash partition truncate | covered by generic truncate implementation; exact test not yet ported |
+| `TestTruncatePartitions` | multi-partition replacement and global count | covered |
+| `TestDropAPartition` | one partition global count/removal | covered |
+| `TestDropPartitions` | multi-partition global count/removal | covered |
+| `TestExchangeAPartition` | exchange global count/modify and lock behavior | missing DDL owner |
+| `TestExchangeAPartitionAndDropTableImmediately` | exchange/drop ordering | missing DDL owner |
+| `TestRemovePartitioning` | global stats ID move and partition retirement | missing DDL owner |
+| `TestAddPartitioning` | partition initialization and global stats ID move | missing DDL owner |
+| `TestDropSchema` | best-effort physical/global retirement | covered |
+| `TestExchangePartition` | concurrent exchange delta updates | storage delta primitive covered; exchange integration missing |
+| `TestDumpStatsDeltaBeforeHandleDDLEvent` | pre-event stats-delta flush ordering | missing notifier/handle ordering |
+| `TestDumpStatsDeltaBeforeHandleAddColumnEvent` | add-column pre-event delta flush ordering | missing notifier/handle ordering |
 
 ## Removed non-parity carriers
 
-The `ddl_subscriber` module replaced Go's notifier, sessions, storage,
-infoschema, cache, and logging with recording ports and mock-effect tests. Its
-`ddl_physical_ids` and `ddl_stats_delta` siblings exposed two extracted helper
-APIs rather than the atomic package. They had no production consumer. All
-three modules and their tests were removed, together with an ignored empty
-handletest function that referred to the delta leaf.
+The disconnected `ddl_subscriber`, `ddl_physical_ids`, `ddl_stats_delta`, and
+`ddl_queue_gate` compatibility modules and their mock-effect tests were removed
+in earlier batches. The live implementation now sits on the real catalog,
+transaction, `mysql.stats_*`, lock, historical-meta, and shared-cache owners.
+The live DDL path retains its affected-ID cache reload because removing it
+leaves Rust's immediately observable global statistics stale after partition
+DDL, unlike the pinned handle behavior.
 
-The source-absent `ddl_queue_gate` compatibility module and its duplicate tests
-were also removed. A later whole-package audit established that the
-caller-injected `auto_analyze_runtime` was itself not the live Go
-`priorityqueue` owner and removed it too. The integrated auto-analyze DDL
-behavior remains unclaimed pending the ordinary handle/session dependencies.
+## Claim state
 
-The root DDL package remains explicitly unclaimed until it can be wired through
-the ordinary dependency-complete handle path and validated with the complete
-source test surface.
+This package remains **in progress and unclaimed**. The inventory is complete,
+but exact package parity still requires the cluster DDL owners for exchange,
+reorganize, add/remove partitioning, and flashback, plus the notifier ordering
+covered by the final two Go tests. No subset above is a package-completion
+claim.
 
 ## Validation
 
-WIP profile: removal of disconnected carriers is checked through the affected
-statistics crate.
+WIP profile for the current live-path correction:
 
-- `cargo check --locked -p tidb-stats`
-- `cargo nextest run --locked -p tidb-stats -E 'not test(/bench/)' --no-fail-fast`
-- changed-file `rustfmt --edition 2021 --check`
+- fail-before and pass-after:
+  `cargo test --locked -p tidb-server --lib ddl_success_is_not_replaced_by_a_statistics_subscriber_error -- --nocapture`
+- `cargo test --locked -p tidb-server --lib table_lifecycle_ddl_updates_statistics_like_go -- --nocapture`
+- `cargo test --locked -p tidb-server --lib add_column_ddl_initializes_statistics_like_go -- --nocapture`
+- `cargo test --locked -p tidb-server --lib drop_schema_ddl_retires_all_statistics_like_go -- --nocapture`
+- `cargo test --locked -p tidb-server --lib system_table_ddl_does_not_publish_statistics_events_like_go -- --nocapture`
+- `cargo test --locked -p tidb-server --lib modify_column_ddl_recreates_missing_default_statistics_like_go -- --nocapture`
+- `cargo test --locked -p tidb-server --lib truncate_partitions_refreshes_global_stats_meta_like_go -- --nocapture`
+- `cargo check --locked -p tidb-server`
+- `cargo fmt --all -- --check`
 - `git diff --check`

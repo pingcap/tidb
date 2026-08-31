@@ -219,6 +219,29 @@ fn create_table_runs_and_the_same_connection_uses_the_new_table() {
     assert!(rows(&mut session, "SELECT id FROM t").is_empty());
 }
 
+/// Pinned `ddlHandlerImpl.HandleDDLEvent` logs a subscriber failure and
+/// returns nil. A statistics restricted-session failure after the catalog
+/// commit therefore cannot turn a successfully published DDL into an error.
+#[test]
+fn ddl_success_is_not_replaced_by_a_statistics_subscriber_error() {
+    let (mut session, node) = open_session();
+    node.fail_next_begin.store(true, Ordering::Release);
+
+    let outcome = session
+        .execute_write("CREATE TABLE stats_subscriber_failure (id BIGINT)")
+        .expect("subscriber errors are ignored after the DDL commit")
+        .expect("DDL returns an OK packet");
+
+    assert_eq!(outcome.affected_rows, 0);
+    assert!(
+        node.catalog
+            .load()
+            .find_table("app", "stats_subscriber_failure")
+            .is_some(),
+        "the catalog change remains published"
+    );
+}
+
 #[test]
 fn modify_auto_random_bits_rebuilds_the_connections_cluster_table() {
     let (mut session, node) = open_session();

@@ -2837,6 +2837,16 @@ fn stats_physical_ids(table: &tidb_model::table_info::TableInfo, dynamic: bool) 
     ids
 }
 
+fn handle_stats_ddl_result(event: &str, result: Result<(), SqlQueryError>) {
+    if let Err(error) = result {
+        eprintln!(
+            "{{\"event\":\"stats_ddl_event_failed\",\"ddl_event\":{},\"error\":{}}}",
+            serde_json::to_string(event).unwrap_or_else(|_| "\"unknown\"".to_owned()),
+            serde_json::to_string(&error.message).unwrap_or_else(|_| "\"unknown\"".to_owned())
+        );
+    }
+}
+
 impl QuerySessionFactory for ClusterSessionFactory {
     type Session = ClusterServerSession;
 
@@ -6029,14 +6039,33 @@ impl ClusterServerSession {
         let report = self.ddl.execute(statement)?;
         if matches!(report, ClusterDdlReport::Applied { .. }) {
             if let Some(change) = table_stats_change {
-                self.update_table_ddl_stats(change)?;
+                handle_stats_ddl_result("table", self.update_table_ddl_stats(change));
             }
             for (schema, table, column) in column_stats_changes {
-                self.update_column_ddl_stats(&schema, &table, column.as_str())?;
+                handle_stats_ddl_result(
+                    "column",
+                    self.update_column_ddl_stats(&schema, &table, column.as_str()),
+                );
             }
             if let Some((schema, table, logical_id, old_ids, kind)) = partition_before {
-                let retired_ids =
-                    self.update_partition_ddl_stats(&schema, &table, logical_id, &old_ids, kind)?;
+                let retired_ids = partition_id_map(&self.catalog.load(), &schema, &table)
+                    .map(|(_, new_ids)| {
+                        let new_by_name = new_ids
+                            .into_iter()
+                            .collect::<std::collections::HashMap<_, _>>();
+                        old_ids
+                            .iter()
+                            .filter_map(|(name, old_id)| {
+                                (new_by_name.get(name) != Some(old_id)).then_some(*old_id)
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                handle_stats_ddl_result(
+                    "partition",
+                    self.update_partition_ddl_stats(&schema, &table, logical_id, &old_ids, kind)
+                        .map(|_| ()),
+                );
                 use tidb_stats_handle_autoanalyze_priorityqueue::PriorityQueueDdlEvent;
                 match kind {
                     PartitionStatsDdlKind::Drop => self.notify_auto_analyze_priority_queue(
