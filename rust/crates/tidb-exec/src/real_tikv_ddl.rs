@@ -900,6 +900,7 @@ pub fn submit_check_constraint_job_with_retry<
     opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
     statement: &DdlStatement,
     timeout: Duration,
+    upgrading: bool,
 ) -> Result<i64, ClusterDdlError> {
     let preparation = SessionTransaction::begin(
         Arc::clone(&opener),
@@ -913,7 +914,7 @@ pub fn submit_check_constraint_job_with_retry<
                 .snapshot()
                 .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
         );
-        prepare_check_constraint_job_submission(&mut snapshot, statement, start_ts)
+        prepare_check_constraint_job_submission(&mut snapshot, statement, start_ts, upgrading)
     };
     let mut spec = match prepared {
         Ok(Some(spec)) => spec,

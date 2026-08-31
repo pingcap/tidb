@@ -3337,6 +3337,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-ddl-serverstate"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tidb-pd-client",
+ "tidb-util",
+]
+
+[[package]]
 name = "tidb-distsql"
 version = "0.0.0"
 dependencies = [
@@ -3764,6 +3774,7 @@ dependencies = [
  "tidb-config",
  "tidb-datatype",
  "tidb-ddl-notifier",
+ "tidb-ddl-serverstate",
  "tidb-distsql",
  "tidb-domain",
  "tidb-errmsg",

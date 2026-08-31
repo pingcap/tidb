@@ -141,7 +141,7 @@ fn plan_check_constraint_job_submission(
     start_ts: u64,
 ) -> Result<Option<PlannedCheckSubmission>, DdlPlanError> {
     let Some(mut spec) =
-        prepare_check_constraint_job_submission(store, statement, start_ts)?
+        prepare_check_constraint_job_submission(store, statement, start_ts, false)?
     else {
         return Ok(None);
     };
@@ -506,7 +506,7 @@ fn failed_job_insert_attempt_cleans_up_assigned_id_registration_before_retry() {
     let statement = lower_ddl_with_context(&parsed, "u6", &context)
         .expect("CHECK DDL is admitted")
         .expect("CHECK DDL owns a catalog route");
-    let mut spec = prepare_check_constraint_job_submission(&mut store, &statement, 2_101)
+    let mut spec = prepare_check_constraint_job_submission(&mut store, &statement, 2_101, false)
         .expect("Go submission preflight succeeds")
         .expect("ADD CHECK creates a job spec");
     let catalog = load_cluster_catalog(&mut store).expect("catalog loads");
@@ -552,6 +552,30 @@ fn failed_job_insert_attempt_cleans_up_assigned_id_registration_before_retry() {
     assert_eq!(assigned_ids.len(), 2);
     assert_eq!(cleanup_ids.as_slice(), &assigned_ids[..1]);
     assert_eq!(assigned_ids[1], spec.job.id);
+}
+
+#[test]
+fn check_job_submission_observes_the_global_upgrading_state() {
+    let mut store = bootstrapped();
+    let create = plan(&mut store, "CREATE TABLE upgrading_submit (a INT)", 2_200);
+    apply(&mut store, &create);
+    let parsed = tidb_parser::parse(
+        "ALTER TABLE upgrading_submit ADD CONSTRAINT c_positive CHECK (a > 0)",
+    )
+    .expect("CHECK DDL parses");
+    let context = tidb_executor::StmtContext::for_query().with_enable_check_constraint(true);
+    let statement = lower_ddl_with_context(&parsed, "u6", &context)
+        .expect("CHECK DDL is admitted")
+        .expect("CHECK DDL owns a catalog route");
+
+    let spec = prepare_check_constraint_job_submission(&mut store, &statement, 2_201, true)
+        .expect("Go submission preflight succeeds")
+        .expect("ADD CHECK creates a job spec");
+    assert_eq!(spec.job.state, tidb_model::JobState::PAUSING);
+    assert_eq!(
+        spec.job.admin_operator,
+        tidb_model::AdminCommandOperator::BY_SYSTEM
+    );
 }
 
 #[test]

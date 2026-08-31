@@ -30,6 +30,7 @@ tidb-chunk = { path = "../tidb-chunk" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-ddl-notifier = { path = "../tidb-ddl-notifier" }
+tidb-ddl-serverstate = { path = "../tidb-ddl-serverstate" }
 tidb-distsql = { path = "../tidb-distsql" }
 tidb-exec = { path = "../tidb-exec" }
 tidb-planner = { path = "../tidb-planner" }

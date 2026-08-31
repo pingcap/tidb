@@ -28,6 +28,7 @@ use tidb_txnkv::rpc::TonicCoprocessorClient;
 use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
 use tidb_txnkv::PdRegionLoader;
 
+use tidb_ddl_serverstate::{Context as ServerStateContext, EtcdSyncer, MemSyncer, Syncer};
 use tidb_exec::catalog_reload::ReloadedCatalog;
 use tidb_exec::catalog_watch::SharedCatalog as SharedClusterCatalog;
 use tidb_exec::cluster_ddl::{
@@ -101,6 +102,9 @@ where
     notifier: Option<Arc<EtcdClient>>,
     schema_sync: Arc<ClusterSchemaSync<C, L, P>>,
     wake: Arc<(Mutex<u64>, Condvar)>,
+    server_state: Arc<dyn Syncer>,
+    server_state_context: ServerStateContext,
+    owner: Mutex<Option<Arc<dyn tidb_owner::Manager>>>,
     worker: Mutex<Option<SchedulerWorker>>,
 }
 
@@ -132,14 +136,48 @@ where
         }
     }
 
+    fn refresh_server_state(
+        server_state: &dyn Syncer,
+        context: &ServerStateContext,
+        owner: &dyn tidb_owner::Manager,
+    ) {
+        match server_state.get_global_state(context) {
+            Ok(state) => {
+                let op = if state.state == tidb_ddl_serverstate::STATE_UPGRADING {
+                    tidb_owner::OpType::SYNC_UPGRADING_STATE
+                } else {
+                    tidb_owner::OpType::NONE
+                };
+                if let Err(error) =
+                    owner.set_owner_op_value(&tidb_owner::Context::background(), op)
+                {
+                    eprintln!(
+                        "{{\"level\":\"warning\",\"event\":\"ddl_owner_state_update_failed\",\"error\":{}}}",
+                        serde_json::to_string(&error)
+                            .unwrap_or_else(|_| "\"unprintable\"".to_owned())
+                    );
+                }
+            }
+            Err(error) => eprintln!(
+                "{{\"level\":\"warning\",\"event\":\"ddl_global_state_reload_failed\",\"error\":{}}}",
+                serde_json::to_string(&error.to_string())
+                    .unwrap_or_else(|_| "\"unprintable\"".to_owned())
+            ),
+        }
+    }
+
     fn run_loop(
         opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
         timeout: Duration,
         notifier: Option<Arc<EtcdClient>>,
         schema_sync: Arc<ClusterSchemaSync<C, L, P>>,
         wake: Arc<(Mutex<u64>, Condvar)>,
+        server_state: Arc<dyn Syncer>,
+        server_state_context: ServerStateContext,
+        owner: Arc<dyn tidb_owner::Manager>,
         stop: Arc<AtomicBool>,
     ) {
+        Self::refresh_server_state(server_state.as_ref(), &server_state_context, owner.as_ref());
         while !stop.load(Ordering::Acquire) {
             match load_active_persisted_ddl_jobs(Arc::clone(&opener), timeout) {
                 Ok(jobs) => {
@@ -203,6 +241,17 @@ where
                 })
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             drop(guard);
+
+            if server_state
+                .watch_chan()
+                .is_some_and(|watch| watch.try_recv().is_ok())
+            {
+                Self::refresh_server_state(
+                    server_state.as_ref(),
+                    &server_state_context,
+                    owner.as_ref(),
+                );
+            }
         }
     }
 }
@@ -252,7 +301,28 @@ where
                 let wake = Arc::clone(&self.wake);
                 let stop = Arc::clone(&stop);
                 let timeout = self.timeout;
-                move || Self::run_loop(opener, timeout, notifier, schema_sync, wake, stop)
+                let server_state = Arc::clone(&self.server_state);
+                let server_state_context = self.server_state_context.clone();
+                let owner = self
+                    .owner
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .as_ref()
+                    .cloned()
+                    .expect("DDL owner is bound before campaigning");
+                move || {
+                    Self::run_loop(
+                        opener,
+                        timeout,
+                        notifier,
+                        schema_sync,
+                        wake,
+                        server_state,
+                        server_state_context,
+                        owner,
+                        stop,
+                    )
+                }
             })
             .expect("spawning the DDL owner scheduler");
         *worker = Some(SchedulerWorker {
@@ -285,6 +355,8 @@ where
     schema_sync: Arc<ClusterSchemaSync<C, L, P>>,
     scheduler: Arc<PersistedDdlScheduler<C, L, P>>,
     owner: Arc<dyn tidb_owner::Manager>,
+    server_state: Arc<dyn Syncer>,
+    server_state_context: ServerStateContext,
 }
 
 impl<C, L, P> RealClusterDdl<C, L, P>
@@ -303,6 +375,17 @@ where
         server_info: Arc<tidb_domain::serverinfo_syncer::Syncer>,
     ) -> Result<Self, String> {
         let owner_id = server_info.local_server_info().static_info.id;
+        let server_state_context = ServerStateContext::background();
+        let server_state: Arc<dyn Syncer> = match notifier.as_ref() {
+            Some(etcd) => Arc::new(EtcdSyncer::new(
+                Arc::clone(etcd),
+                tidb_ddl_serverstate::SERVER_GLOBAL_STATE,
+            )),
+            None => Arc::new(MemSyncer::new()),
+        };
+        server_state
+            .init(&server_state_context)
+            .map_err(|error| error.to_string())?;
         let opener = Arc::new(opener);
         let schema_sync = Arc::new(ClusterSchemaSync {
             opener: Arc::clone(&opener),
@@ -318,6 +401,9 @@ where
             notifier: notifier.clone(),
             schema_sync: Arc::clone(&schema_sync),
             wake: Arc::new((Mutex::new(0), Condvar::new())),
+            server_state: Arc::clone(&server_state),
+            server_state_context: server_state_context.clone(),
+            owner: Mutex::new(None),
             worker: Mutex::new(None),
         });
         let owner: Arc<dyn tidb_owner::Manager> = match notifier.as_ref() {
@@ -335,6 +421,10 @@ where
                 DDL_OWNER_KEY,
             )),
         };
+        *scheduler
+            .owner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Arc::clone(&owner));
         owner.set_listener(Arc::clone(&scheduler) as Arc<dyn tidb_owner::Listener>);
         owner.campaign_owner(&[])?;
         Ok(Self {
@@ -345,6 +435,8 @@ where
             schema_sync,
             scheduler,
             owner,
+            server_state,
+            server_state_context,
         })
     }
 
@@ -585,6 +677,7 @@ where
                 Arc::clone(&self.opener),
                 statement,
                 self.timeout,
+                self.server_state.is_upgrading_state(),
             )
             .map_err(cluster_ddl_error)?;
             self.notify_new_job_submitted();
@@ -619,6 +712,7 @@ where
     P: StorePdCapability,
 {
     fn drop(&mut self) {
+        self.server_state_context.cancel();
         self.owner.close();
         self.scheduler.stop();
     }

@@ -29,6 +29,7 @@ After this work, Rust accepts, stores, displays, and enforces CHECK constraints 
 - [x] (2026-08-31) Replaced CHECK's private insertion wrapper with pinned `pkg/ddl/jobsubmit`'s common prepared-`JobSpec` transaction: pessimistic global-ID locking, source-shaped typed arguments, post-ID callback ordering, failed-attempt cleanup, and atomic ID/job-row commit.
 - [x] (2026-08-31) Ported `ModifyIndexArgs` V1/V2 and finished-job wire layouts and made BDR admission inspect the same typed job/subjob arguments as Go instead of Rust's reduced unique-index surrogate.
 - [x] (2026-08-31) Matched owner notification after enqueue: the local owner wakes directly, a non-owner writes `/tidb/ddl/add_ddl_job_general`, and the elected Rust scheduler watches that key.
+- [x] (2026-08-31) Ported pinned `pkg/ddl/serverstate` as one crate, including exact state JSON, process-global memory behavior, etcd session/get/put/watch lifecycle, context-aware retries, scheduler owner-operation refresh, and upgrading-state admission for queued jobs.
 - [ ] Add concurrent-writer regressions corresponding to every scenario in pinned `pkg/ddl/constraint_test.go`.
 - [ ] Inventory every remaining pinned production/test/support/build artifact before making a package-level claim.
 
@@ -64,6 +65,9 @@ After this work, Rust accepts, stores, displays, and enforces CHECK constraints 
 
 - Observation: Go serializes all job allocations by pessimistically locking the meta `NextGlobalID` key and reads the allocation snapshot at the resulting `forUpdateTS`. An optimistic read-plus-write retry is not equivalent because job insertion order is part of scheduler correctness.
   Evidence: pinned `lockGlobalIDKey`; Rust submission now uses `SessionTransaction::begin_pessimistic`, locks `next_global_id_kv_key`, and binds catalog reads to the returned statement timestamp.
+
+- Observation: `serverstate.WatchChan` is nil before `Init`, and `memSyncer.Init` recreates a capacity-one channel while retaining process-global state. Constructing a permanently available Rust channel changed lifecycle and backpressure behavior.
+  Evidence: pinned `mem_syncer.go` and `syncer.go`; the Rust trait now returns `None` before initialization and the memory implementation installs a fresh bounded channel in `init`.
 
 ## Decision Log
 
@@ -220,3 +224,5 @@ Revision note (2026-08-31): persisted CHECK jobs and terminal history, removed t
 Revision note (2026-08-31): added the owner-elected active-job scanner, separated submission from execution, completed the available common job envelope, fixed the query-shaped DDL context's missing CHECK enablement, and pushed commit `3a67a86b7c`.
 
 Revision note (2026-08-31): transcreated the common jobsubmit allocation/insertion retry contract, source-shaped modify-index arguments and BDR admission, removed the CHECK-only submission carrier, and added cross-node owner notification. Package completion remains withheld while ordinary Rust DDL actions still bypass the persisted common submit route and the pinned server-state dependency is not yet transcreated.
+
+Revision note (2026-08-31): transcreated pinned `pkg/ddl/serverstate`, removed its documentary missing-carrier test, wired the ordinary DDL constructor/scheduler/submitter to the shared state syncer, and added a live-PD form of the upstream etcd integration test. Broader DDL package completion remains withheld.

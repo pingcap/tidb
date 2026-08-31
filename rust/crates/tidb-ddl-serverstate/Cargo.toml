@@ -1,0 +1,17 @@
+[package]
+name = "tidb-ddl-serverstate"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/ddl/serverstate: etcd and in-memory smooth-upgrade state syncers."
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+tidb-pd-client = { path = "../tidb-pd-client" }
+tidb-util = { path = "../tidb-util" }
