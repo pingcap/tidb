@@ -65,7 +65,8 @@ Example:
 
 This script runs external starter-mode tests against a real `tidb-server`
 process. It first reuses `bootstrap-test-with-cluster.sh` to start PD, TiKV,
-TiKV-Worker, and MinIO. Then it starts `bin/tidb-server` with
+TiKV-Worker, MinIO, and a TiFlash compute/read node in `tiflash_compute` mode;
+it never starts a TiFlash write node. Then it starts `bin/tidb-server` with
 `deploy-mode = "starter"` and runs Go tests through the MySQL protocol and
 status HTTP APIs. The standard `startertest` Makefile target runs against a
 non-`SYSTEM` keyspace. For a non-`SYSTEM` target keyspace, the script first
@@ -93,7 +94,10 @@ current checkout before starting the external server. The script exports
 next-gen code paths.
 
 Because the script reuses `bootstrap-test-with-cluster.sh`, `bin/pd-server`,
-`bin/tikv-server`, and `bin/tikv-worker` must also be available.
+`bin/tikv-server`, `bin/tikv-worker`, and `bin/tiflash` (or
+`TIFLASH_BIN_PATH`) must also be available. The standard `startertest` runner
+enables `disaggregated-tiflash` with `cse.columnar-store-type = "columnar"` on
+the external starter server.
 
 For a focused, one-command Docker Compose run of the two starter txn-file SQL
 cases, see the
@@ -169,13 +173,27 @@ Useful environment variables:
   for the SQL and status listeners (defaults: `4000` / `10080`; the script
   advances to the next available port if needed)
 
+- `STARTER_COLUMNAR_AP`: Enables the Starter native-columnar AP topology when
+  using a lower-level runner. TiKV builds columnar and FTS indexes, the worker
+  runs Schema Manager, and bootstrap starts one TiFlash compute/read node. The
+  standard `run-tests.sh startertest` command enables it automatically. For
+  example:
+
+  ```bash
+  tests/realtikvtest/scripts/next-gen/run-tests.sh startertest
+  ```
+- `TIFLASH_BIN_PATH`: TiFlash executable used by Starter tests (default:
+  `bin/tiflash`)
+
 ## Configuration Files
 
 The test cluster uses configuration files from `tests/realtikvtest/configs/next-gen/`:
 
 - `pd.toml`: Configuration for PD servers with keyspace settings
-- `tikv.toml`: Configuration for TiKV servers with storage, DFS and IA settings
-- `tikv-worker.toml`: Configuration for TiKV-Worker with DFS and IA settings
+- `tikv.toml`: Configuration for TiKV servers with storage, DFS, IA, and
+  native columnar/FTS index construction settings
+- `tikv-worker.toml`: Configuration for TiKV-Worker with DFS, IA, and Schema
+  Manager settings
 
 ## Required Ports
 
@@ -185,6 +203,7 @@ The test cluster requires the following TCP ports to be available:
 - TiKV: 20160, 20161, 20162, 20180, 20181, 20182
 - TiKV-Worker: 19000
 - MinIO: 9000 (configurable via MINIO_PORT environment variable)
+- TiFlash compute when `STARTER_COLUMNAR_AP=1`: 3930, 9001, 20170, 20292
 
 ## Environment Variables
 

@@ -22,6 +22,9 @@ function main() {
     local make_test_task="$1"
 
     local self_dir=$(realpath $(dirname "${BASH_SOURCE[0]}"))
+    if [[ "${make_test_task}" == "startertest" ]]; then
+        export STARTER_COLUMNAR_AP=1
+    fi
     "${self_dir}/bootstrap-test-with-cluster.sh" make ${make_test_task}
 }
 
