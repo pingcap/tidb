@@ -113,8 +113,11 @@ func TestFileScanner(t *testing.T) {
 	t.Run("GetAuroraSnapshotTableMetas", func(t *testing.T) {
 		auroraDir := t.TempDir()
 		for _, path := range []string{
-			"export-1/db/db.users/1/part-a.parquet",
-			"export-1/db/db.users/2/part-b.parquet",
+			"export-1/db1/db1.users/1/part-a.parquet",
+			"export-1/db1/db1.users/2/part-b.parquet",
+			"export-1/db1/db1.orders/part-a.parquet",
+			"export-1/db2/db2.users/7/part-a.parquet",
+			"export-1/db2/db2.users/8/part-b.parquet",
 		} {
 			fullPath := filepath.Join(auroraDir, path)
 			require.NoError(t, os.MkdirAll(filepath.Dir(fullPath), 0o755))
@@ -132,11 +135,26 @@ func TestFileScanner(t *testing.T) {
 
 		metas, err := auroraScanner.GetTableMetas(ctx)
 		require.NoError(t, err)
-		require.Len(t, metas, 1)
-		require.Equal(t, "db", metas[0].Database)
-		require.Equal(t, "users", metas[0].Table)
-		require.Len(t, metas[0].DataFiles, 2)
-		require.Contains(t, metas[0].WildcardPath, "export-1/db/db.users/*/part-*.parquet")
+		require.Len(t, metas, 3)
+		metaByName := make(map[string]*TableMeta, len(metas))
+		for _, meta := range metas {
+			metaByName[meta.Database+"."+meta.Table] = meta
+		}
+
+		db1Users := metaByName["db1.users"]
+		require.NotNil(t, db1Users)
+		require.Len(t, db1Users.DataFiles, 2)
+		require.Contains(t, db1Users.WildcardPath, "export-1/db1/db1.users/*/part-*.parquet")
+
+		db1Orders := metaByName["db1.orders"]
+		require.NotNil(t, db1Orders)
+		require.Len(t, db1Orders.DataFiles, 1)
+		require.Contains(t, db1Orders.WildcardPath, "export-1/db1/db1.orders/part-a.parquet")
+
+		db2Users := metaByName["db2.users"]
+		require.NotNil(t, db2Users)
+		require.Len(t, db2Users.DataFiles, 2)
+		require.Contains(t, db2Users.WildcardPath, "export-1/db2/db2.users/*/part-*.parquet")
 	})
 
 	t.Run("GetTableMetaByName", func(t *testing.T) {

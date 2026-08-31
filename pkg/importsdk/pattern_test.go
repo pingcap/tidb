@@ -189,6 +189,8 @@ func TestGenerateWildcardPath(t *testing.T) {
 	auroraAllFiles := createAllFiles([]string{
 		"export-1/db/db.users/1/part-a.parquet",
 		"export-1/db/db.users/2/part-b.parquet",
+		"export-1/db/db.orders/1/part-a.parquet",
+		"export-1/db2/db2.users/1/part-a.parquet",
 	})
 	auroraPath, err := generateWildcardPath(auroraFiles, auroraAllFiles)
 	require.NoError(t, err)
