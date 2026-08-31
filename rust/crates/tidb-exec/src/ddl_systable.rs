@@ -29,6 +29,69 @@ use crate::mysql_system_tables::{
     scan_system_table_prefixed, SystemRow, SystemTableError, SystemTableView,
 };
 
+/// Pinned Go `systable.Manager` at Rust's storage-snapshot boundary.
+pub trait Manager: Send + Sync {
+    /// Go `GetJobByID`.
+    fn get_job_by_id(
+        &self,
+        snapshot: &mut dyn MetaSnapshot,
+        job_id: i64,
+    ) -> Result<JobW, SystemTableManagerError>;
+    /// Go `GetJobBytesByIDWithSe`; the borrowed Rust snapshot is the supplied
+    /// session transaction.
+    fn get_job_bytes_by_id_with_session(
+        &self,
+        snapshot: &mut dyn MetaSnapshot,
+        job_id: i64,
+    ) -> Result<Vec<u8>, SystemTableManagerError>;
+    /// Go `GetMDLVer`.
+    fn get_mdl_version(
+        &self,
+        snapshot: &mut dyn MetaSnapshot,
+        job_id: i64,
+    ) -> Result<i64, SystemTableManagerError>;
+    /// Go `GetMinJobID`.
+    fn get_min_job_id(
+        &self,
+        snapshot: &mut dyn MetaSnapshot,
+        previous_min_job_id: i64,
+    ) -> Result<i64, SystemTableManagerError>;
+    /// Go `HasFlashbackClusterJob`.
+    fn has_flashback_cluster_job(
+        &self,
+        snapshot: &mut dyn MetaSnapshot,
+        min_job_id: i64,
+    ) -> Result<bool, SystemTableManagerError>;
+}
+
+struct SnapshotRef<'a>(&'a mut dyn MetaSnapshot);
+
+impl MetaSnapshot for SnapshotRef<'_> {
+    fn get(
+        &mut self,
+        key: &[u8],
+    ) -> Result<Option<Vec<u8>>, crate::cluster_catalog::ClusterCatalogError> {
+        self.0.get(key)
+    }
+
+    fn scan_prefix(
+        &mut self,
+        prefix: &[u8],
+    ) -> Result<crate::cluster_catalog::MetaPairs, crate::cluster_catalog::ClusterCatalogError>
+    {
+        self.0.scan_prefix(prefix)
+    }
+
+    fn scan_range(
+        &mut self,
+        start: &[u8],
+        end: &[u8],
+    ) -> Result<crate::cluster_catalog::MetaPairs, crate::cluster_catalog::ClusterCatalogError>
+    {
+        self.0.scan_range(start, end)
+    }
+}
+
 const REFRESH_INTERVAL: Duration = Duration::from_secs(10);
 
 /// Pinned Go `systable.ErrNotFound` and storage/decode failures.
@@ -172,6 +235,48 @@ impl SystemTableManager {
         self.jobs()?
             .has_flashback_cluster_job(snapshot, min_job_id)
             .map_err(Into::into)
+    }
+}
+
+impl Manager for SystemTableManager {
+    fn get_job_by_id(
+        &self,
+        snapshot: &mut dyn MetaSnapshot,
+        job_id: i64,
+    ) -> Result<JobW, SystemTableManagerError> {
+        Self::get_job_by_id(self, &mut SnapshotRef(snapshot), job_id)
+    }
+
+    fn get_job_bytes_by_id_with_session(
+        &self,
+        snapshot: &mut dyn MetaSnapshot,
+        job_id: i64,
+    ) -> Result<Vec<u8>, SystemTableManagerError> {
+        self.get_job_bytes_by_id(&mut SnapshotRef(snapshot), job_id)
+    }
+
+    fn get_mdl_version(
+        &self,
+        snapshot: &mut dyn MetaSnapshot,
+        job_id: i64,
+    ) -> Result<i64, SystemTableManagerError> {
+        Self::get_mdl_version(self, &mut SnapshotRef(snapshot), job_id)
+    }
+
+    fn get_min_job_id(
+        &self,
+        snapshot: &mut dyn MetaSnapshot,
+        previous_min_job_id: i64,
+    ) -> Result<i64, SystemTableManagerError> {
+        Self::get_min_job_id(self, &mut SnapshotRef(snapshot), previous_min_job_id)
+    }
+
+    fn has_flashback_cluster_job(
+        &self,
+        snapshot: &mut dyn MetaSnapshot,
+        min_job_id: i64,
+    ) -> Result<bool, SystemTableManagerError> {
+        Self::has_flashback_cluster_job(self, &mut SnapshotRef(snapshot), min_job_id)
     }
 }
 

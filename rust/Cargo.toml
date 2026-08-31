@@ -76,6 +76,7 @@ members = [
     "crates/tidb-session",
     "crates/tidb-domain",
     "crates/tidb-ddl-copr",
+    "crates/tidb-ddl-mock",
     "crates/tidb-ddl-notifier",
     "crates/tidb-ddl-resourcegroup",
     "crates/tidb-ddl-session",

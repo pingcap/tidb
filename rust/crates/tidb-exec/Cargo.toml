@@ -17,9 +17,11 @@ tidb-ast = { path = "../tidb-ast" }
 tidb-chunk = { path = "../tidb-chunk" }
 tidb-codec = { path = "../tidb-codec" }
 tidb-datatype = { path = "../tidb-datatype" }
+tidb-ddl-logutil = { path = "../tidb-ddl-logutil" }
 tidb-ddl-notifier = { path = "../tidb-ddl-notifier" }
 tidb-distsql = { path = "../tidb-distsql" }
 tidb-expr = { path = "../tidb-expr" }
+tidb-log = { path = "../tidb-log" }
 tidb-meta = { path = "../tidb-meta" }
 tidb-metadef = { path = "../tidb-metadef" }
 tidb-model = { path = "../tidb-model" }

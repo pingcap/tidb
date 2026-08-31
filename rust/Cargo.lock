@@ -3358,6 +3358,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-ddl-mock"
+version = "0.0.0"
+dependencies = [
+ "tidb-exec",
+ "tidb-model",
+]
+
+[[package]]
 name = "tidb-ddl-notifier"
 version = "0.0.0"
 dependencies = [
@@ -3485,11 +3493,13 @@ dependencies = [
  "tidb-chunk",
  "tidb-codec",
  "tidb-datatype",
+ "tidb-ddl-logutil",
  "tidb-ddl-notifier",
  "tidb-distsql",
  "tidb-error",
  "tidb-executor",
  "tidb-expr",
+ "tidb-log",
  "tidb-meta",
  "tidb-metadef",
  "tidb-model",

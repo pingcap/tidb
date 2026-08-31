@@ -20,7 +20,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{channel, Sender};
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -35,6 +35,7 @@ use tidb_exec::catalog_watch::SharedCatalog as SharedClusterCatalog;
 use tidb_exec::cluster_ddl::{
     CheckConstraintValidation, DdlStatement, ExchangePartitionValidation, IndexBackfill,
 };
+use tidb_exec::ddl_job_scheduler::{must_reload_schemas, SchemaLoader};
 use tidb_exec::ddl_systable::MinJobIdRefresher;
 use tidb_exec::pessimistic_lock_error::LockSqlError;
 use tidb_exec::real_tikv_catalog::reload_catalog_from_cluster;
@@ -104,6 +105,7 @@ where
 
 struct SchedulerWorker {
     stop: Arc<AtomicBool>,
+    stop_tx: Sender<()>,
     handle: JoinHandle<()>,
     _adding_job_watcher: Option<tidb_pd_client::EtcdWatcher>,
 }
@@ -149,6 +151,7 @@ where
             .take();
         if let Some(worker) = worker {
             worker.stop.store(true, Ordering::Release);
+            let _ = worker.stop_tx.send(());
             self.notify();
             let _ = worker.handle.join();
         }
@@ -195,7 +198,12 @@ where
         min_job_id_refresher: Arc<MinJobIdRefresher>,
         owner: Arc<dyn tidb_owner::Manager>,
         stop: Arc<AtomicBool>,
+        stopped: Receiver<()>,
     ) {
+        must_reload_schemas(schema_sync.as_ref(), &stopped, DDL_SCHEDULER_INTERVAL);
+        if stop.load(Ordering::Acquire) {
+            return;
+        }
         Self::refresh_server_state(server_state.as_ref(), &server_state_context, owner.as_ref());
         while !stop.load(Ordering::Acquire) {
             match load_active_persisted_ddl_jobs(
@@ -296,6 +304,7 @@ where
             return;
         }
         let stop = Arc::new(AtomicBool::new(false));
+        let (stop_tx, stopped) = channel();
         let adding_job_watcher = self.notifier.as_ref().and_then(|etcd| {
             let wake = Arc::clone(&self.wake);
             match etcd.watch_key(ADDING_DDL_JOB_NOTIFY_KEY, 0, move |_| {
@@ -348,12 +357,14 @@ where
                         min_job_id_refresher,
                         owner,
                         stop,
+                        stopped,
                     )
                 }
             })
             .expect("spawning the DDL owner scheduler");
         *worker = Some(SchedulerWorker {
             stop,
+            stop_tx,
             handle,
             _adding_job_watcher: adding_job_watcher,
         });
@@ -663,6 +674,17 @@ where
             }
         }
         Ok(())
+    }
+}
+
+impl<C, L, P> SchemaLoader for ClusterSchemaSync<C, L, P>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
+    fn reload(&self) -> Result<(), String> {
+        self.reload_catalog()
     }
 }
 
