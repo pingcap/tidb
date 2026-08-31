@@ -334,6 +334,11 @@ type selectResult struct {
 	fieldTypes              []*types.FieldType
 	intermediateOutputTypes [][]*types.FieldType
 	ctx                     *dcontext.DistSQLContext
+	isAnalyze               bool // Selects the Analyze close path even when execution-info collection is disabled.
+	// collectExecDetailsForRaw enables statistics collection for raw responses,
+	// which bypass the SelectResponse decoding and statistics path in fetchResp.
+	// Only Analyze currently opts in, using the execution-info setting captured at request creation.
+	collectExecDetailsForRaw bool
 
 	selectResp       *tipb.SelectResponse
 	selectRespSize   int64 // record the selectResp.Size() when it is initialized.
@@ -355,6 +360,10 @@ type selectResult struct {
 	memTracker       *memory.Tracker
 
 	stats *selectResultRuntimeStats
+
+	// scanDetailForRaw accumulates raw-response scan details for this request.
+	// Analyze uses these request totals to estimate scan bytes before combining requests.
+	scanDetailForRaw clientutil.ScanDetail
 	// distSQLConcurrency and paging are only for collecting information, and they don't affect the process of execution.
 	distSQLConcurrency int
 	paging             bool
@@ -546,6 +555,11 @@ func (r *selectResult) NextRaw(ctx context.Context) (data []byte, err error) {
 
 	resultSubset, err := r.resp.Next(ctx)
 	r.partialCount++
+	if r.collectExecDetailsForRaw && resultSubset != nil {
+		if withStats, ok := resultSubset.(CopRuntimeStats); ok {
+			r.recordCopRuntimeStatsForRaw(withStats.GetCopRuntimeStats(), resultSubset.RespTime())
+		}
+	}
 	if resultSubset != nil && err == nil {
 		data = resultSubset.GetData()
 	}
@@ -809,7 +823,76 @@ func (r *selectResult) Close() error {
 	if r.iter != nil {
 		return errors.New("selectResult is invalid after IntoIter()")
 	}
+	if r.isAnalyze {
+		return r.closeAnalyze()
+	}
 	return r.close()
+}
+
+// recordCopRuntimeStatsForRaw records coprocessor statistics without decoding a
+// SelectResponse or relying on per-executor summaries. Callers must honor
+// collectExecDetailsForRaw; plan-level statistics are attributed to rootPlanID.
+// respTime is the response duration, or zero for unconsumed statistics.
+func (r *selectResult) recordCopRuntimeStatsForRaw(copStats *copr.CopRuntimeStats, respTime time.Duration) {
+	if copStats == nil || r.ctx == nil {
+		return
+	}
+	if r.ctx.ExecDetails != nil {
+		// The raw path does not measure local fetch time for statement Cop_time.
+		r.ctx.ExecDetails.MergeCopExecDetails(&copStats.CopExecDetails, 0)
+		r.ctx.ExecDetails.MergeReadPoolTaskDetails(copStats.ReadPoolTaskDetails)
+	}
+	if r.ctx.RuntimeStatsColl != nil && r.rootPlanID > 0 {
+		if r.stats == nil {
+			r.stats = &selectResultRuntimeStats{distSQLConcurrency: r.distSQLConcurrency}
+			if ci, ok := r.resp.(copr.CopInfo); ok {
+				r.stats.distSQLConcurrency, r.stats.extraConcurrency = ci.GetConcurrency()
+			}
+		}
+		r.stats.mergeCopRuntimeStats(copStats, respTime)
+		r.ctx.RuntimeStatsColl.RecordCopStats(
+			r.rootPlanID,
+			r.storeType,
+			copStats.ScanDetail,
+			copStats.TimeDetail,
+			copStats.ReadPoolTaskDetails,
+			nil,
+		)
+	}
+	if copStats.ScanDetail != nil {
+		r.scanDetailForRaw.Merge(copStats.ScanDetail)
+	}
+}
+
+func (r *selectResult) closeAnalyze() error {
+	metrics.DistSQLPartialCountHistogram.Observe(float64(r.partialCount))
+	respSize := atomic.SwapInt64(&r.selectRespSize, 0)
+	if respSize > 0 {
+		r.memConsume(-respSize)
+	}
+
+	closeErr := r.resp.Close()
+	if !r.collectExecDetailsForRaw || r.ctx == nil {
+		return closeErr
+	}
+	if unconsumed, ok := r.resp.(copr.HasUnconsumedCopRuntimeStats); ok && unconsumed != nil {
+		for _, copStats := range unconsumed.CollectUnconsumedCopRuntimeStats() {
+			r.recordCopRuntimeStatsForRaw(copStats, 0)
+		}
+	}
+	if r.ctx.RuntimeStatsColl != nil && r.rootPlanID > 0 {
+		if r.stats != nil {
+			r.ctx.RuntimeStatsColl.RegisterStats(r.rootPlanID, r.stats)
+		}
+		if scanBytes, ok := execdetails.EstimateScanBytes(
+			r.scanDetailForRaw.TotalKeys,
+			r.scanDetailForRaw.ProcessedKeys,
+			r.scanDetailForRaw.ProcessedKeysSize,
+		); ok {
+			r.ctx.RuntimeStatsColl.RecordAnalyzeScanBytes(r.rootPlanID, scanBytes)
+		}
+	}
+	return closeErr
 }
 
 func (r *selectResult) close() error {

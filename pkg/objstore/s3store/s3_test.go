@@ -596,6 +596,95 @@ func TestMultiUploadErrorNotOverwritten(t *testing.T) {
 	CheckAccessStats(t, accessRec, 0, 0, 0, 5*1024*1024+6716)
 }
 
+func TestKS3CreateHonorsPartSize(t *testing.T) {
+	const (
+		partSize = 6 * 1024 * 1024
+		uploadID = "test-upload-id"
+	)
+
+	var (
+		mu                sync.Mutex
+		uploadedPartSizes = make(map[string]int)
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query()
+		switch {
+		case r.Method == http.MethodPost && query.Has("uploads"):
+			w.Header().Set("Content-Type", "application/xml")
+			_, err := fmt.Fprintf(w, `<?xml version="1.0" encoding="UTF-8"?>
+<InitiateMultipartUploadResult>
+  <Bucket>bucket</Bucket>
+  <Key>prefix/file</Key>
+  <UploadId>%s</UploadId>
+</InitiateMultipartUploadResult>`, uploadID)
+			if err != nil {
+				t.Errorf("write initiate multipart upload response: %v", err)
+			}
+		case r.Method == http.MethodPut && query.Get("uploadId") == uploadID:
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Errorf("read upload part request: %v", err)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			partNumber := query.Get("partNumber")
+			mu.Lock()
+			uploadedPartSizes[partNumber] = len(body)
+			mu.Unlock()
+			w.Header().Set("ETag", fmt.Sprintf(`"etag-%s"`, partNumber))
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPost && query.Get("uploadId") == uploadID:
+			w.Header().Set("Content-Type", "application/xml")
+			_, err := fmt.Fprint(w, `<?xml version="1.0" encoding="UTF-8"?>
+<CompleteMultipartUploadResult>
+  <Location>http://example.com/bucket/prefix/file</Location>
+  <Bucket>bucket</Bucket>
+  <Key>prefix/file</Key>
+  <ETag>"etag"</ETag>
+</CompleteMultipartUploadResult>`)
+			if err != nil {
+				t.Errorf("write complete multipart upload response: %v", err)
+			}
+		default:
+			t.Errorf("unexpected KS3 request: %s %s", r.Method, r.URL.String())
+			http.Error(w, "unexpected request", http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+
+	ctx := context.Background()
+	storage, err := NewKS3Storage(ctx, &backuppb.S3{
+		Region:          "test-region",
+		Endpoint:        server.URL,
+		Bucket:          "bucket",
+		Prefix:          "prefix",
+		AccessKey:       "access-key",
+		SecretAccessKey: "secret-access-key",
+		ForcePathStyle:  true,
+	}, &storeapi.Options{})
+	require.NoError(t, err)
+
+	writer, err := storage.Create(ctx, "file", &storeapi.WriterOption{
+		Concurrency: 2,
+		PartSize:    partSize,
+	})
+	require.NoError(t, err)
+
+	data := make([]byte, 2*partSize+1024)
+	n, err := writer.Write(ctx, data)
+	require.NoError(t, err)
+	require.Equal(t, len(data), n)
+	require.NoError(t, writer.Close(ctx))
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Equal(t, map[string]int{
+		"1": partSize,
+		"2": partSize,
+		"3": 1024,
+	}, uploadedPartSizes)
+}
+
 func mockGetObject(t *testing.T, s3api *mock.MockS3API, times int) {
 	t.Helper()
 	s3api.EXPECT().

@@ -43,8 +43,11 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
+	tikvutil "github.com/tikv/client-go/v2/util"
 )
 
 func TestAnalyzeBuildSucc(t *testing.T) {
@@ -85,9 +88,38 @@ func TestAnalyzeBuildSucc(t *testing.T) {
 		nodeW := resolve.NewNodeW(stmt)
 		err = core.Preprocess(context.Background(), tk.Session(), nodeW, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err)
-		_, _, err = planner.Optimize(context.Background(), tk.Session(), nodeW, is)
+		optimizedPlan, _, err := planner.Optimize(context.Background(), tk.Session(), nodeW, is)
 		if tt.succ {
 			require.NoError(t, err, comment)
+			analyzePlan, ok := optimizedPlan.(*core.Analyze)
+			require.True(t, ok, comment)
+			require.Positive(t, analyzePlan.ID(), comment)
+			require.Equal(t, plancodec.TypeAnalyze, analyzePlan.TP(), comment)
+			require.Same(t, tk.Session().GetPlanCtx(), analyzePlan.SCtx(), comment)
+
+			flat := core.FlattenPhysicalPlan(analyzePlan, false)
+			require.Len(t, flat.Main, 1, comment)
+			require.Same(t, analyzePlan, flat.Main[0].Origin, comment)
+			if i == 0 {
+				runtimeStats := execdetails.NewRuntimeStatsColl(nil)
+				tk.Session().GetSessionVars().StmtCtx.RuntimeStatsColl = runtimeStats
+				runtimeStats.RecordCopStats(
+					analyzePlan.ID(),
+					kv.TiKV,
+					&tikvutil.ScanDetail{ProcessedKeys: 13, TotalKeys: 17, ProcessedKeysSize: 19},
+					tikvutil.TimeDetail{},
+					nil,
+					nil,
+				)
+				binaryPlan := core.BinaryPlanStrFromFlatPlan(analyzePlan.SCtx(), flat, false)
+				require.NotEmpty(t, binaryPlan)
+				decoded, err := plancodec.DecodeBinaryPlan(binaryPlan)
+				require.NoError(t, err)
+				require.Contains(t, decoded, "Analyze")
+				require.Contains(t, decoded, "total_process_keys: 13")
+				require.Contains(t, decoded, "total_process_keys_size: 19")
+				require.Contains(t, decoded, "total_keys: 17")
+			}
 		} else {
 			require.Error(t, err, comment)
 		}

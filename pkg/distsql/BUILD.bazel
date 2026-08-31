@@ -70,6 +70,7 @@ go_test(
     race = "on",
     shard_count = 35,
     deps = [
+        "//pkg/config",
         "//pkg/distsql/context",
         "//pkg/errctx",
         "//pkg/kv",

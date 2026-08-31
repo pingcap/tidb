@@ -467,6 +467,23 @@ func TestCopRuntimeStats(t *testing.T) {
 		require.Equal(t, int64(7), snapshot.Rows)
 		require.Equal(t, uint64(3), snapshot.ObservedSummaries)
 	})
+
+	firstEstimate, ok := EstimateScanBytes(10, 1, 100)
+	require.True(t, ok)
+	secondEstimate, ok := EstimateScanBytes(9, 9, 9)
+	require.True(t, ok)
+	zeroEstimate, ok := EstimateScanBytes(10, 0, 0)
+	require.True(t, ok)
+	require.Zero(t, zeroEstimate)
+	_, ok = EstimateScanBytes(10, 0, 1)
+	require.False(t, ok)
+	stats.RecordAnalyzeScanBytes(tableReaderID, firstEstimate)
+	stats.RecordAnalyzeScanBytes(tableReaderID, secondEstimate)
+	totalEstimate, ok := stats.GetAnalyzeScanBytes(tableReaderID)
+	require.True(t, ok)
+	require.InDelta(t, 1009, totalEstimate, 1e-9)
+	_, ok = stats.GetAnalyzeScanBytes(999)
+	require.False(t, ok)
 }
 
 func TestRUV2MetricsSnapshotCalculateRUValues(t *testing.T) {
