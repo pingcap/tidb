@@ -279,10 +279,22 @@ func (i *mergeIter[T, R]) next() (closeReaderIdx int, ok bool) {
 						(*i.elemFromHotspot).cloneInnerFields()
 						i.elemFromHotspot = nil
 					}
+					// Release the old reader's buffers before the new hotspot starts
+					// allocating from their shared memory budget.
+					if oldHotspotIdx >= 0 && i.readers[oldHotspotIdx] != nil {
+						err := (*i.readers[oldHotspotIdx]).switchConcurrentMode(false)
+						if err != nil {
+							i.err = err
+							return closeReaderIdx, false
+						}
+					}
 				}
 
 				for idx, rp := range i.readers {
 					if rp == nil {
+						continue
+					}
+					if oldHotspotIdx != i.lastHotspotIdx && idx == oldHotspotIdx {
 						continue
 					}
 					isHotspot := i.lastHotspotIdx == idx
@@ -495,13 +507,15 @@ func (p kvReaderProxy) close() error {
 
 // MergeKVIter is an iterator that merges multiple sorted KV pairs from different files.
 type MergeKVIter struct {
-	iter    *mergeIter[*KVPair, kvReaderProxy]
-	memPool *membuf.Pool
+	iter      *mergeIter[*KVPair, kvReaderProxy]
+	memPool   *membuf.Pool
+	inputSize int64
 }
 
 // NewMergeKVIter creates a new MergeKVIter. The KV can be accessed by calling
 // Next() then Key() or Values(). readBufferSize is the buffer size for each file
 // reader, which means the total memory usage is readBufferSize * len(paths).
+// readerMemorySize bounds the memory used to read a hotspot file concurrently.
 func NewMergeKVIter(
 	ctx context.Context,
 	paths []string,
@@ -509,20 +523,15 @@ func NewMergeKVIter(
 	exStorage storeapi.Storage,
 	readBufferSize int,
 	checkHotspot bool,
-	outerConcurrency int,
+	readerMemorySize int64,
 ) (*MergeKVIter, error) {
 	readerOpeners := make([]readerOpenerFn[*KVPair, kvReaderProxy], 0, len(paths))
-	if outerConcurrency <= 0 {
-		return nil, errors.New("outerConcurrency must be positive, caller must ensure that the correct value is passed in")
-	}
-	concurrentReaderConcurrency := max(concurrentReaderTotalConcurrency/outerConcurrency, 8)
-	// TODO: merge-sort step passes outerConcurrency=0, so this bufSize might be
-	// too large when checkHotspot = true(add-index).
-	largeBufSize := ConcurrentReaderBufferSizePerConc * concurrentReaderConcurrency
+	concurrentReaderConcurrency := int(readerMemorySize / int64(ConcurrentReaderBufferSizePerConc))
 	memPool := membuf.NewPool(
-		membuf.WithBlockNum(1), // currently only one reader will become hotspot
-		membuf.WithBlockSize(largeBufSize),
+		membuf.WithBlockNum(concurrentReaderConcurrency), // currently only one reader will become hotspot
+		membuf.WithBlockSize(ConcurrentReaderBufferSizePerConc),
 	)
+	fileSizes := make([]int64, len(paths))
 
 	for i := range paths {
 		readerOpeners = append(readerOpeners, func() (*kvReaderProxy, error) {
@@ -530,20 +539,41 @@ func NewMergeKVIter(
 			if err != nil {
 				return nil, err
 			}
+			fileSize, err := rd.getFileSize()
+			if err != nil {
+				_ = rd.Close()
+				return nil, err
+			}
+			fileSizes[i] = fileSize - int64(pathsStartOffset[i])
 			rd.byteReader.mergeSortReadCounter = metrics.MergeSortReadBytes
-			rd.byteReader.enableConcurrentRead(
-				exStorage,
-				paths[i],
-				concurrentReaderConcurrency,
-				ConcurrentReaderBufferSizePerConc,
-				memPool.NewBuffer(),
-			)
+			if concurrentReaderConcurrency > 0 {
+				rd.byteReader.enableConcurrentRead(
+					exStorage,
+					paths[i],
+					concurrentReaderConcurrency,
+					ConcurrentReaderBufferSizePerConc,
+					memPool.NewBuffer(),
+				)
+			}
 			return &kvReaderProxy{p: paths[i], r: rd}, nil
 		})
 	}
 
-	it, err := newMergeIter[*KVPair, kvReaderProxy](ctx, readerOpeners, checkHotspot)
-	return &MergeKVIter{iter: it, memPool: memPool}, err
+	it, err := newMergeIter[*KVPair, kvReaderProxy](ctx, readerOpeners, checkHotspot && concurrentReaderConcurrency > 0)
+	if err != nil {
+		memPool.Destroy()
+		return nil, err
+	}
+	inputSize := int64(0)
+	for _, size := range fileSizes {
+		inputSize += size
+	}
+	return &MergeKVIter{iter: it, memPool: memPool, inputSize: inputSize}, nil
+}
+
+// InputSize returns the total unread size of input files when the iterator was created.
+func (i *MergeKVIter) InputSize() int64 {
+	return i.inputSize
 }
 
 // Error returns the error of the iterator.

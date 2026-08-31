@@ -107,14 +107,12 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 
 	prefix := path.Join(strconv.Itoa(int(subtask.TaskID)), strconv.Itoa(int(subtask.ID)))
 	res := m.GetResource()
-	memSizePerCon := res.MemoryPerCore()
-	partSize := max(simplesst.MinUploadPartSize, memSizePerCon*int64(globalsort.MaxMergingFilesPerThread)/simplesst.MaxUploadPartCount)
 
 	wctx := workerpool.NewContext(ctx)
 	op := globalsort.NewMergeOperator(
 		wctx,
 		objStore,
-		partSize,
+		res.MemoryPerCore(),
 		prefix,
 		simplesst.DefaultBlockSize,
 		onWriterClose,
