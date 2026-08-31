@@ -124,7 +124,16 @@ func (m *MemArbitrator) getAllEntryForTest() mapUIDEntry {
 	cnt := len(res)
 	{
 		require.True(t, m.RootPoolNum() == int64(cnt))
-		require.True(t, m.entryMap.contextCache.num.Load() == int64(cnt))
+		cacheCnt := int64(0)
+		m.entryMap.contextCache.Range(func(key, value any) bool {
+			entry, ok := res[key.(uint64)]
+			require.True(t, ok)
+			require.Same(t, entry, value.(*rootPoolEntry))
+			cacheCnt++
+			return true
+		})
+		require.Equal(t, cacheCnt, m.entryMap.contextCache.num.Load())
+		require.LessOrEqual(t, cacheCnt, int64(cnt))
 	}
 
 	for prio := minArbitrationPriority; prio < maxArbitrationPriority; prio++ {
@@ -1469,6 +1478,44 @@ func TestMemArbitrator(t *testing.T) {
 
 	mockNow = func() time.Time {
 		return debugTime
+	}
+
+	{ // context cache evicts entries only after they have remained idle for the timeout
+		cacheM := newMemArbitratorForTest(1, -1)
+		cacheM.setUnixTimeSec(100)
+		_, entry, err := cacheM.EmplaceRootPool(1)
+		require.NoError(t, err)
+		ok, clearCtx := cacheM.RestartEntryByContext(entry, newDefCtxForTest(ArbitrationPriorityMedium))
+		require.True(t, ok)
+		require.Equal(t, int64(1), cacheM.entryMap.contextCache.num.Load())
+
+		cacheM.ResetRootPoolByID(entry.pool.uid, 0, false)
+		clearCtx()
+		cacheM.setUnixTimeSec(100 + defContextCacheIdleTimeoutSec - 1)
+		cacheM.updateTrackedHeapStats()
+		_, cached := cacheM.entryMap.contextCache.Load(entry.pool.uid)
+		require.True(t, cached)
+
+		// Reactivating an entry resets its idle timer. A nil context is valid and must not panic.
+		ok, clearCtx = cacheM.RestartEntryByContext(entry, nil)
+		require.True(t, ok)
+		cacheM.setUnixTimeSec(100 + defContextCacheIdleTimeoutSec)
+		cacheM.updateTrackedHeapStats()
+		_, cached = cacheM.entryMap.contextCache.Load(entry.pool.uid)
+		require.True(t, cached)
+
+		cacheM.ResetRootPoolByID(entry.pool.uid, 0, false)
+		clearCtx()
+		cacheM.setUnixTimeSec(100 + 2*defContextCacheIdleTimeoutSec - 1)
+		cacheM.updateTrackedHeapStats()
+		_, cached = cacheM.entryMap.contextCache.Load(entry.pool.uid)
+		require.True(t, cached)
+
+		cacheM.setUnixTimeSec(100 + 2*defContextCacheIdleTimeoutSec)
+		cacheM.updateTrackedHeapStats()
+		_, cached = cacheM.entryMap.contextCache.Load(entry.pool.uid)
+		require.False(t, cached)
+		require.Zero(t, cacheM.entryMap.contextCache.num.Load())
 	}
 
 	{ // Standard mode

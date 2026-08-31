@@ -86,6 +86,7 @@ const (
 	prime64                            uint64 = 1099511628211
 	initHashKey                        uint64 = 14695981039346656037
 	defKillCancelCheckTimeout                 = time.Second * 20
+	defContextCacheIdleTimeoutSec             = 10 * 60          // 10 minutes
 	defDigestProfileSmallMemTimeoutSec        = 60 * 60 * 24     // 1 day
 	defDigestProfileMemTimeoutSec             = 60 * 60 * 24 * 7 // 1 week
 	baseQuotaUnit                             = 4 * byteSizeKB   // 4KB
@@ -254,8 +255,9 @@ type rootPoolEntry struct {
 	// mutable when entry is idle and the mutex of root pool is locked
 	ctx struct {
 		atomic.Pointer[ArbitrationContext]
-		cancelCh <-chan struct{}
-		canceled atomic.Bool
+		cancelCh     <-chan struct{}
+		canceled     atomic.Bool
+		idleUtimeSec atomic.Int64
 
 		// properties hint of the entry; data race is acceptable;
 		memPriority     ArbitrationPriority
@@ -1160,6 +1162,7 @@ func (m *MemArbitrator) resetRootPoolEntry(entry *rootPoolEntry) bool {
 			return false
 		}
 		entry.setExecState(execStateIdle)
+		entry.ctx.idleUtimeSec.Store(m.approxUnixTimeSec())
 
 		entry.stateMu.Unlock()
 	}
@@ -2006,6 +2009,7 @@ func (m *MemArbitrator) RestartEntryByContext(entry rootPoolWrap, ctx *Arbitrati
 		return nil
 	})
 	entry.pool.mu.stopped = false
+	entry.ctx.idleUtimeSec.Store(0)
 	entry.setExecState(execStateRunning)
 
 	return true, func() { entry.ctx.Store(nil) }
@@ -2669,13 +2673,20 @@ func (t *top3DigestDataGroup) update(digestID uint64, size int64, utimeSec int64
 func (m *MemArbitrator) updateTrackedHeapStats() (top3 top3DigestDataGroup) {
 	totalTrackedHeap := int64(0)
 	maxHeapUsed := int64(0)
+	idleDeadline := m.approxUnixTimeSec() - defContextCacheIdleTimeoutSec
 	if m.entryMap.contextCache.num.Load() != 0 {
 		m.entryMap.contextCache.Range(func(_, value any) bool {
 			e := value.(*rootPoolEntry)
+			if t := e.ctx.idleUtimeSec.Load(); t != 0 && t <= idleDeadline {
+				if _, loaded := m.entryMap.contextCache.LoadAndDelete(e.pool.uid); loaded {
+					m.entryMap.contextCache.num.Add(-1)
+				}
+			}
 			if e.notRunning() {
 				return true
 			}
-			if ctx := e.ctx.Load(); ctx != nil && ctx.arbitrateHelper != nil {
+			ctx := e.ctx.Load()
+			if ctx != nil && ctx.arbitrateHelper != nil {
 				inuse := ctx.arbitrateHelper.MemUsage()
 				totalTrackedHeap += inuse.RootPoolUsed
 				top3.update(ctx.id, inuse.HeapInuse, m.approxUnixTimeSec())
