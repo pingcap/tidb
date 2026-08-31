@@ -15,14 +15,7 @@
 package stmtsummary
 
 import (
-<<<<<<< HEAD
-=======
-	"bytes"
-	"encoding/json"
-	"path/filepath"
-	"strings"
 	"sync"
->>>>>>> 655769534b4 (executor, util/stmtsummary: fix panics and data races in stmt summary reads (#70163))
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -101,20 +94,6 @@ func TestStmtSummaryFlush(t *testing.T) {
 	require.Equal(t, 3, len(storage.windows))
 	storage.Unlock()
 }
-<<<<<<< HEAD
-=======
-
-func TestDefaultConfig(t *testing.T) {
-	cfg := &Config{
-		Filename: filepath.Join(t.TempDir(), "test.log"),
-	}
-	ss, err := NewStmtSummary(cfg)
-	require.NoError(t, err)
-	defer ss.Close()
-
-	// Verify RefreshInterval (should be 1800 = 30 min)
-	require.Equal(t, uint32(1800), ss.RefreshInterval())
-}
 
 // TestEvictedConcurrentWithRotate verifies that Evicted() is safe to call
 // concurrently with rotate (V2-25 data race fix).
@@ -151,4 +130,3 @@ func TestEvictedConcurrentWithRotate(t *testing.T) {
 
 	wg.Wait()
 }
->>>>>>> 655769534b4 (executor, util/stmtsummary: fix panics and data races in stmt summary reads (#70163))

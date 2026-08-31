@@ -25,11 +25,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/util"
-=======
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
->>>>>>> 655769534b4 (executor, util/stmtsummary: fix panics and data races in stmt summary reads (#70163))
 	"github.com/pingcap/tidb/pkg/util/mock"
 	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
 	"github.com/stretchr/testify/require"
@@ -220,12 +217,11 @@ func verifyCumulativeTableUnsupported(t *testing.T, tableName string) {
 	t.Helper()
 
 	data := infoschema.NewData()
-	schemaCacheSize := vardef.SchemaCacheSize.Load()
-	infoSchemaBuilder := infoschema.NewBuilder(nil, schemaCacheSize, nil, data, schemaCacheSize > 0)
-	err := infoSchemaBuilder.InitWithDBInfos(nil, nil, nil, nil, 0)
+	infoSchemaBuilder := infoschema.NewBuilder(nil, nil, data, variable.SchemaCacheSize.Load() > 0)
+	err := infoSchemaBuilder.InitWithDBInfos(nil, nil, nil, 0)
 	require.NoError(t, err)
 	infoSchema := infoSchemaBuilder.Build(math.MaxUint64)
-	table, err := infoSchema.TableByName(context.Background(), metadef.InformationSchemaName, ast.NewCIStr(tableName))
+	table, err := infoSchema.TableByName(context.Background(), util.InformationSchemaName, model.NewCIStr(tableName))
 	require.NoError(t, err)
 	columns := table.Meta().Columns
 
