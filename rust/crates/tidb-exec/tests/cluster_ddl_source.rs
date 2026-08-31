@@ -34,7 +34,7 @@ use tidb_exec::cluster_ddl::{
 };
 use tidb_exec::table_info_build::{build_table_info, ClusteredIndexDefMode};
 use tidb_meta::{key, value};
-use tidb_model::{DBInfo, GoAnyView, SchemaState};
+use tidb_model::{DBInfo, GoAnyView, GoShared, SchemaState};
 use tidb_txnkv::transaction::OptimisticMutationKind;
 
 /// A mutable snapshot of stored meta bytes: reads observe it, and a test may
@@ -3276,6 +3276,151 @@ fn check_constraints_follow_go_for_column_dependencies_and_create_like() {
     };
     assert_eq!(drop_multi.code, 3959);
 
+    let source_id = create.created_id.expect("CREATE allocated a table id");
+    let source_key = key::table_kv_key(112, source_id);
+    let mut source: tidb_model::TableInfo = serde_json::from_slice(
+        store
+            .pairs
+            .get(&source_key)
+            .expect("the committed source table exists"),
+    )
+    .expect("the source table decodes");
+    source.tiflash_replica = Some(GoShared::new(tidb_model::TiFlashReplicaInfo {
+        count: 2,
+        location_labels: vec!["zone".to_owned()].into(),
+        available: true,
+        available_partition_ids: vec![source_id].into(),
+    }));
+    source.ttl_info = Some(GoShared::new(tidb_model::TTLInfo {
+        column_name: tidb_ast::CiString::new("a"),
+        interval_expr_str: "1".to_owned(),
+        interval_time_unit: 5,
+        enable: true,
+        job_interval: "1h".to_owned(),
+    }));
+    source.affinity = Some(GoShared::new(tidb_model::TableAffinityInfo {
+        level: "table".to_owned(),
+    }));
+    source.auto_rand_id = 77;
+    source.max_foreign_key_id = 9;
+    store.put(
+        source_key.clone(),
+        value::serialize_table_info(&source).expect("the augmented source encodes"),
+    );
+
+    let clean_source = source.clone_like_go();
+    let missing_source = plan_ddl(
+        &mut store,
+        &lower("CREATE TABLE missing_target.ck_missing LIKE missing_source.ck_dep"),
+        1_102_0,
+    )
+    .expect_err("Go resolves a missing LIKE source before the target database");
+    assert!(
+        matches!(
+            missing_source,
+            DdlPlanError::TableNotExists { ref schema, ref table }
+                if schema == "missing_source" && table == "ck_dep"
+        ),
+        "{missing_source:?}"
+    );
+    let expect_temporary_like_refusal =
+        |store: &mut MetaStore,
+         source: &tidb_model::TableInfo,
+         target: &str,
+         start_ts: u64,
+         code: u16,
+         reason: &str| {
+            store.put(
+                source_key.clone(),
+                value::serialize_table_info(source).expect("the test source encodes"),
+            );
+            let error = plan_ddl(
+                store,
+                &lower(&format!(
+                    "CREATE GLOBAL TEMPORARY TABLE {target} LIKE ck_dep \
+                     ON COMMIT DELETE ROWS"
+                )),
+                start_ts,
+            )
+            .expect_err("Go refuses this inherited temporary-table setting");
+            let DdlPlanError::Admission(error) = error else {
+                panic!("expected a coded DDL refusal, got {error:?}")
+            };
+            assert_eq!(error.code, code, "{target}");
+            assert_eq!(error.reason, reason, "{target}");
+        };
+
+    let mut invalid_source = clean_source.clone_like_go();
+    invalid_source.temp_table_type = tidb_model::TempTableType::GLOBAL;
+    invalid_source.auto_random_bits = 3;
+    expect_temporary_like_refusal(
+        &mut store,
+        &invalid_source,
+        "missing_schema.ck_from_temp",
+        1_102_1,
+        8006,
+        "`create table like` is unsupported on temporary tables.",
+    );
+
+    let mut invalid_source = clean_source.clone_like_go();
+    invalid_source.auto_random_bits = 3;
+    expect_temporary_like_refusal(
+        &mut store,
+        &invalid_source,
+        "ck_auto_random",
+        1_102_2,
+        8006,
+        "`auto_random` is unsupported on temporary tables.",
+    );
+
+    let mut invalid_source = clean_source.clone_like_go();
+    invalid_source.pre_split_regions = 2;
+    expect_temporary_like_refusal(
+        &mut store,
+        &invalid_source,
+        "ck_pre_split",
+        1_102_3,
+        8006,
+        "`pre split regions` is unsupported on temporary tables.",
+    );
+
+    let mut invalid_source = clean_source.clone_like_go();
+    invalid_source.partition = Some(GoShared::new(tidb_model::PartitionInfo::default()));
+    expect_temporary_like_refusal(
+        &mut store,
+        &invalid_source,
+        "ck_partitioned",
+        1_102_4,
+        1562,
+        "Cannot create temporary table with partitions",
+    );
+
+    let mut invalid_source = clean_source.clone_like_go();
+    invalid_source.shard_row_id_bits = 4;
+    expect_temporary_like_refusal(
+        &mut store,
+        &invalid_source,
+        "ck_sharded",
+        1_102_5,
+        8006,
+        "`shard_row_id_bits` is unsupported on temporary tables.",
+    );
+
+    let mut invalid_source = clean_source.clone_like_go();
+    invalid_source.placement_policy_ref = Some(GoShared::new(tidb_model::PolicyRefInfo::default()));
+    expect_temporary_like_refusal(
+        &mut store,
+        &invalid_source,
+        "ck_placed",
+        1_102_6,
+        8006,
+        "`placement` is unsupported on temporary tables.",
+    );
+    store.put(
+        source_key.clone(),
+        value::serialize_table_info(&clean_source).expect("the clean source encodes"),
+    );
+
     let create_like = plan_ddl(
         &mut store,
         &lower("CREATE TABLE ck_copy LIKE ck_dep"),
@@ -3291,6 +3436,30 @@ fn check_constraints_follow_go_for_column_dependencies_and_create_like() {
         &key::table_kv_key(112, copy_id),
     ))
     .expect("copied table decodes");
+    let replica = copied
+        .tiflash_replica
+        .as_ref()
+        .expect("ordinary CREATE LIKE preserves the TiFlash setting")
+        .read();
+    assert_eq!(replica.count, 2);
+    assert_eq!(
+        replica.location_labels.iter().cloned().collect::<Vec<_>>(),
+        vec!["zone".to_owned()]
+    );
+    assert!(!replica.available);
+    assert!(replica.available_partition_ids.is_empty());
+    assert!(
+        !replica.available_partition_ids.is_allocated(),
+        "Go clears AvailablePartitionIDs to nil rather than an allocated empty slice"
+    );
+    assert!(copied.ttl_info.is_some());
+    assert!(copied.affinity.is_some());
+    assert_eq!(copied.temp_table_type, tidb_model::TempTableType::NONE);
+    assert_eq!(copied.auto_rand_id, 77, "Go resets only AutoIncID");
+    assert_eq!(
+        copied.max_foreign_key_id, 9,
+        "Go clears ForeignKeys without rewinding MaxForeignKeyID"
+    );
     assert_eq!(copied.max_constraint_id, 2);
     let copied_constraints = copied
         .constraints
@@ -3312,10 +3481,54 @@ fn check_constraints_follow_go_for_column_dependencies_and_create_like() {
         ]
     );
 
+    let temporary_like = plan_ddl(
+        &mut store,
+        &lower(
+            "CREATE GLOBAL TEMPORARY TABLE ck_temp LIKE ck_dep ON COMMIT DELETE ROWS",
+        ),
+        1_104,
+    )
+    .expect("temporary CREATE LIKE plans");
+    let DdlPlan::Write(temporary_like) = temporary_like else {
+        panic!("temporary CREATE LIKE writes metadata")
+    };
+    let temporary_id = temporary_like
+        .created_id
+        .expect("temporary CREATE LIKE allocates a table id");
+    let temporary: tidb_model::TableInfo = serde_json::from_slice(stored_value(
+        &temporary_like,
+        &key::table_kv_key(112, temporary_id),
+    ))
+    .expect("temporary copied table decodes");
+    assert_eq!(temporary.temp_table_type, tidb_model::TempTableType::GLOBAL);
+    assert!(temporary.tiflash_replica.is_none());
+    assert!(temporary.ttl_info.is_none());
+    assert!(temporary.affinity.is_none());
+    assert_eq!(temporary.auto_rand_id, 77);
+    assert_eq!(temporary.max_foreign_key_id, 9);
+
+    let preserve = plan_ddl(
+        &mut store,
+        &lower(
+            "CREATE GLOBAL TEMPORARY TABLE ck_preserve LIKE ck_dep \
+             ON COMMIT PRESERVE ROWS",
+        ),
+        1_105,
+    )
+    .expect_err("Go refuses ON COMMIT PRESERVE ROWS after validating the LIKE source");
+    let DdlPlanError::Admission(preserve) = preserve else {
+        panic!("expected a coded DDL refusal, got {preserve:?}")
+    };
+    assert_eq!(preserve.code, 8200);
+    assert_eq!(
+        preserve.reason,
+        "TiDB doesn't support ON COMMIT PRESERVE ROWS for now"
+    );
+
     let drop_pair = plan_ddl(
         &mut store,
         &lower("ALTER TABLE ck_dep DROP CONSTRAINT c_pair"),
-        1_104,
+        1_106,
     )
     .expect("DROP CHECK plans");
     let DdlPlan::Write(drop_pair) = drop_pair else {
@@ -3326,13 +3539,12 @@ fn check_constraints_follow_go_for_column_dependencies_and_create_like() {
     let drop_single = plan_ddl(
         &mut store,
         &lower("ALTER TABLE ck_dep DROP COLUMN b"),
-        1_105,
+        1_107,
     )
     .expect("a single-column CHECK does not block DROP COLUMN");
     let DdlPlan::Write(drop_single) = drop_single else {
         panic!("DROP COLUMN writes metadata")
     };
-    let source_id = create.created_id.expect("CREATE allocated a table id");
     let dropped: tidb_model::TableInfo = serde_json::from_slice(stored_value(
         &drop_single,
         &key::table_kv_key(112, source_id),

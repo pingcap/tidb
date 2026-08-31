@@ -617,6 +617,10 @@ pub enum DdlStatement {
         source_schema: String,
         /// The source table's name as written.
         source_table: String,
+        /// The target's requested temporary-table kind.
+        temporary: tidb_ast::CreateTableTemporary,
+        /// Whether the global temporary target discards rows at commit.
+        on_commit_delete: bool,
         /// `IF NOT EXISTS`.
         if_not_exists: bool,
     },
@@ -2171,6 +2175,8 @@ fn lower_create_table(
             table,
             source_schema,
             source_table,
+            temporary: create.temporary,
+            on_commit_delete: create.on_commit_delete,
             if_not_exists: create.if_not_exists,
         });
     }
@@ -3401,11 +3407,72 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             table,
             source_schema,
             source_table,
+            temporary,
+            on_commit_delete,
             if_not_exists,
         } => {
+            // Go's preprocessor resolves and validates the LIKE source
+            // before the DDL executor checks the target database. A missing
+            // source database is consequently reported as a missing table.
+            let (_, source) = match locate_table(&catalog, source_schema, source_table) {
+                Err(DdlPlanError::UnknownDatabase(_)) => {
+                    return Err(DdlPlanError::TableNotExists {
+                        schema: source_schema.clone(),
+                        table: source_table.clone(),
+                    });
+                }
+                result => result?,
+            };
+            if source.temp_table_type != tidb_model::TempTableType::NONE {
+                return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                    8006,
+                    "`create table like` is unsupported on temporary tables.",
+                )));
+            }
+            if *temporary != tidb_ast::CreateTableTemporary::None {
+                // Go `checkReferInfoForTemporaryTable`, in observable order.
+                let temporary_option = |operation: &str| {
+                    DdlPlanError::Admission(DdlAdmissionError::with_code(
+                        8006,
+                        format!("`{operation}` is unsupported on temporary tables."),
+                    ))
+                };
+                if source.auto_random_bits != 0 {
+                    return Err(temporary_option("auto_random"));
+                }
+                if source.pre_split_regions != 0 {
+                    return Err(temporary_option("pre split regions"));
+                }
+                if source.partition.is_some() {
+                    return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                        1562,
+                        "Cannot create temporary table with partitions",
+                    )));
+                }
+                if source.shard_row_id_bits != 0 {
+                    return Err(temporary_option("shard_row_id_bits"));
+                }
+                if source.placement_policy_ref.is_some() {
+                    return Err(temporary_option("placement"));
+                }
+            }
             let Some(database) = find_database(&catalog, schema) else {
                 return Err(DdlPlanError::UnknownDatabase(schema.clone()));
             };
+            // Go `BuildTableInfoWithLike` runs after the executor has found
+            // the target database, but before target-name collision handling.
+            if source.view.is_some() || source.sequence.is_some() {
+                return Err(DdlPlanError::Unsupported(format!(
+                    "'{source_schema}.{source_table}' is not BASE TABLE"
+                )));
+            }
+            // Go reaches `setTemporaryType` only after the source checks.
+            if *temporary == tidb_ast::CreateTableTemporary::Global && !*on_commit_delete {
+                return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                    8200,
+                    "TiDB doesn't support ON COMMIT PRESERVE ROWS for now",
+                )));
+            }
             if let Some(existing) = find_table(database, table) {
                 if *if_not_exists {
                     return Ok(already(format!(
@@ -3417,15 +3484,6 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                     schema: schema.clone(),
                     table: table.clone(),
                 });
-            }
-            let (_, source) = locate_table(&catalog, source_schema, source_table)?;
-            // Go `ErrWrongObject`: the source must be a real table. A view
-            // has no rows to describe, and copying its definition under a
-            // table's name would produce something neither statement means.
-            if source.view.is_some() || source.sequence.is_some() {
-                return Err(DdlPlanError::Unsupported(format!(
-                    "'{source_schema}.{source_table}' is not BASE TABLE"
-                )));
             }
             let db_id = database.info.id;
             let table_id = global_ids.allocate(1)?[0];
@@ -3454,9 +3512,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             // source's handles, and an inherited foreign key would name a
             // constraint that already exists.
             info.auto_inc_id = 0;
-            info.auto_rand_id = 0;
             info.foreign_keys = tidb_model::GoSharedPointerSlice::from_handles(Vec::new());
-            info.max_foreign_key_id = 0;
             // Go `renameCheckConstraint` clears every copied name, points the
             // metadata at the target table, then assigns target-local names
             // from `<table>_chk_1` in declaration order. IDs and the allocator
@@ -3468,7 +3524,29 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 constraint.table = CiString::new(table.clone());
             }
             info.table_cache_status_type = tidb_model::TableCacheStatusType::DISABLE;
-            info.tiflash_replica = None;
+            match temporary {
+                tidb_ast::CreateTableTemporary::None => {
+                    info.temp_table_type = tidb_model::TempTableType::NONE;
+                    if let Some(replica) = &info.tiflash_replica {
+                        // Go copies the pointed-to replica struct before it
+                        // clears availability; mutating the shared pointer
+                        // would also mutate the source's catalog metadata.
+                        let mut replica = replica.read().clone();
+                        replica.available = false;
+                        replica.available_partition_ids = Default::default();
+                        info.tiflash_replica = Some(GoShared::new(replica));
+                    }
+                }
+                tidb_ast::CreateTableTemporary::Global => {
+                    info.temp_table_type = tidb_model::TempTableType::GLOBAL;
+                    info.tiflash_replica = None;
+                    info.ttl_info = None;
+                    info.affinity = None;
+                }
+                tidb_ast::CreateTableTemporary::Local => {
+                    unreachable!("LOCAL temporary CREATE LIKE is rejected during lowering")
+                }
+            }
             info.update_ts = start_ts;
             let encoded = value::serialize_table_info(&info)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
