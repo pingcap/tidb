@@ -464,7 +464,7 @@ func TestSQLBuilder(t *testing.T) {
 	shLoc, err := time.LoadLocation("Asia/Shanghai")
 	require.NoError(t, err)
 	must(b.WriteExpireCondition(time.UnixMilli(0).In(shLoc)))
-	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `time` < FROM_UNIXTIME(0)")
+	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `time` < CAST('1970-01-01 08:00:00' AS DATETIME)")
 
 	b = sqlbuilder.NewSQLBuilder(t1)
 	must(b.WriteSelect())
@@ -575,6 +575,42 @@ func TestSQLBuilder(t *testing.T) {
 	must(b.WriteInCondition(tp.KeyColumns, d("a"), d("b")))
 	must(b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
 	mustBuild(b, "DELETE LOW_PRIORITY FROM `testp`.`tp` PARTITION(`p1`) WHERE `id` IN ('a', 'b') AND `time` < FROM_UNIXTIME(0)")
+}
+
+func TestExpireConditionPreservesTemporalSemanticsInUTCSession(t *testing.T) {
+	ny, err := time.LoadLocation("America/New_York")
+	require.NoError(t, err)
+	// This instant is the second 01:15 during the New York DST fold.
+	expire := time.Date(2024, 11, 3, 6, 15, 0, 0, time.UTC).In(ny)
+	for _, tc := range []struct {
+		name     string
+		typeCode byte
+		expect   string
+	}{
+		{"timestamp", mysql.TypeTimestamp, fmt.Sprintf("FROM_UNIXTIME(%d)", expire.Unix())},
+		{"datetime", mysql.TypeDatetime, "CAST('2024-11-03 01:15:00' AS DATETIME)"},
+		{"date", mysql.TypeDate, "CAST('2024-11-03 01:15:00' AS DATETIME)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			timeColumn := &model.ColumnInfo{Name: ast.NewCIStr("expired_at"), FieldType: *types.NewFieldType(tc.typeCode)}
+			tbl := &cache.PhysicalTable{
+				Schema: ast.NewCIStr("test"),
+				TableInfo: &model.TableInfo{
+					Name: ast.NewCIStr("t"),
+				},
+				KeyColumns: []*model.ColumnInfo{{Name: ast.NewCIStr("id"), FieldType: *types.NewFieldType(mysql.TypeLong)}},
+				TimeColumn: timeColumn,
+			}
+			b := sqlbuilder.NewSQLBuilder(tbl)
+			require.NoError(t, b.WriteSelect())
+			require.NoError(t, b.WriteExpireCondition(expire))
+			sql, err := b.Build()
+			require.NoError(t, err)
+			require.Contains(t, sql, "`expired_at` < "+tc.expect)
+			_, _, err = parser.New().Parse(sql, "", "")
+			require.NoError(t, err)
+		})
+	}
 }
 
 func TestScanQueryGenerator(t *testing.T) {

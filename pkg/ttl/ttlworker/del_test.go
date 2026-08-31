@@ -261,7 +261,7 @@ func TestTTLDeleteTaskDoDelete(t *testing.T) {
 	}
 
 	delTask := func(batchCnt int) *ttlDeleteTask {
-		return newMockDeleteTask(t1, nRows(batchCnt*delBatch), time.UnixMilli(0))
+		return newMockDeleteTask(t1, nRows(batchCnt*delBatch), time.UnixMilli(0).UTC())
 	}
 
 	cases := []struct {

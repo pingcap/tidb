@@ -250,10 +250,6 @@ func (s *ttlTableSession) ExecuteSQLWithCheck(ctx context.Context, sql string) (
 		return nil, false, errors.New("global TTL job is disabled")
 	}
 
-	if err := s.ResetWithGlobalTimeZone(ctx); err != nil {
-		return nil, false, err
-	}
-
 	var result []chunk.Row
 	shouldRetry := true
 	err := s.RunInTxn(ctx, func() error {
