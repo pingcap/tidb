@@ -1828,6 +1828,32 @@ impl Catalog {
         self.get_in(database, name)
     }
 
+    /// Replaces the statement-time `information_schema` storage estimates
+    /// without moving either catalog epoch. Go keeps these values in the
+    /// independent process-wide `StatsTableRowCache`, not in `InfoSchema`.
+    pub fn set_table_storage_statistics(
+        &mut self,
+        table_id: i64,
+        table_statistics: (u64, u64, u64, u64),
+        partition_statistics: &[(i64, (u64, u64, u64, u64))],
+    ) {
+        for database in self.databases.values_mut() {
+            for entry in database.tables.values_mut() {
+                let TableEntry::Kv(table) = Arc::make_mut(entry) else {
+                    continue;
+                };
+                if table.table_id != table_id {
+                    continue;
+                }
+                table.set_storage_statistics(table_statistics);
+                for (physical_id, statistics) in partition_statistics {
+                    table.set_partition_storage_statistics(*physical_id, *statistics);
+                }
+                return;
+            }
+        }
+    }
+
     /// The base table selected by a retained physical access node.
     ///
     /// Go's executor builder resolves a `PhysicalTableScan.Table.ID` through

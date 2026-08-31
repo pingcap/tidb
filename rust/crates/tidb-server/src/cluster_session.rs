@@ -49,9 +49,6 @@ use tidb_executor::kv_table::{KvColumn, KvIndex, KvTable, TableAutoId};
 use tidb_executor::storage::TableStorage;
 use tidb_model::{GoShared, SchemaState, TableInfo};
 use tidb_session::{Session, SharedCatalog};
-use tidb_stats_handle_cache::{
-    ColumnLength, StatsTableRowSource, TableRowCount, TABLE_ROW_STATS_CACHE,
-};
 
 /// Go `mysql.PriKeyFlag`: what marks the column `PKIsHandle` points at.
 const PRI_KEY_FLAG: u32 = 1 << 1;
@@ -376,48 +373,6 @@ impl KvTableTemplates {
     }
 }
 
-struct SnapshotTableRowSource<'a> {
-    stats: &'a StatsSnapshot,
-}
-
-impl StatsTableRowSource for SnapshotTableRowSource<'_> {
-    type Error = std::convert::Infallible;
-
-    fn table_row_counts(&self, table_ids: &[i64]) -> Result<Vec<TableRowCount>, Self::Error> {
-        Ok(table_ids
-            .iter()
-            .filter_map(|table_id| {
-                self.stats
-                    .get(table_id)
-                    .and_then(TableStatsState::loaded)
-                    .map(|stats| TableRowCount {
-                        table_id: *table_id,
-                        count: u64::try_from(stats.hist_coll.realtime_count).unwrap_or_default(),
-                    })
-            })
-            .collect())
-    }
-
-    fn column_lengths(&self, table_ids: &[i64]) -> Result<Vec<ColumnLength>, Self::Error> {
-        Ok(table_ids
-            .iter()
-            .filter_map(|table_id| self.stats.get(table_id).and_then(TableStatsState::loaded))
-            .flat_map(|stats| {
-                stats.hist_coll.stable_columns().into_iter().map(|column| {
-                    let column = column
-                        .read()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    ColumnLength {
-                        table_id: stats.hist_coll.physical_id,
-                        histogram_id: column.item_id(),
-                        total_size: column.histogram.tot_col_size,
-                    }
-                })
-            })
-            .collect())
-    }
-}
-
 #[must_use]
 #[allow(clippy::too_many_arguments)]
 pub fn cluster_session_catalog_with_templates(
@@ -431,30 +386,6 @@ pub fn cluster_session_catalog_with_templates(
     template_storage: &ClusterTableStorage,
     mut kv_templates: Option<&mut KvTableTemplates>,
 ) -> ClusterSessionCatalog {
-    let table_ids = loaded
-        .databases
-        .iter()
-        .flat_map(|database| &database.tables)
-        .flat_map(|table| {
-            let mut ids = table
-                .get_partition_info()
-                .map(|partition| {
-                    partition
-                        .read()
-                        .definitions
-                        .snapshot()
-                        .into_iter()
-                        .map(|definition| definition.id)
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            ids.push(table.id);
-            ids
-        })
-        .collect::<Vec<_>>();
-    TABLE_ROW_STATS_CACHE
-        .update_by_id(&SnapshotTableRowSource { stats }, &table_ids)
-        .expect("snapshot-backed statistics reads are infallible");
     let mut catalog = Catalog::default();
     let mut skipped = Vec::new();
     for database in &loaded.databases {
@@ -523,8 +454,6 @@ pub fn cluster_session_catalog_with_templates(
             match built {
                 Ok(mut kv_table) => {
                     kv_table.replace_storage(storage.clone_box());
-                    kv_table
-                        .set_storage_statistics(TABLE_ROW_STATS_CACHE.estimate_data_length(table));
                     // A table the cluster reports as never analyzed
                     // (`TableStatsState::Pseudo`) or one this node has not
                     // loaded yet is left OUT of the map, which is exactly what
@@ -1284,6 +1213,21 @@ mod tests {
 
     #[test]
     fn loaded_column_ndv_reaches_grouped_cluster_plans() {
+        struct FixedStorageStatistics {
+            calls: Arc<std::sync::atomic::AtomicUsize>,
+            values: tidb_session::TableStorageStatistics,
+        }
+
+        impl tidb_session::TableStorageStatsProvider for FixedStorageStatistics {
+            fn load_table_storage_statistics(
+                &self,
+                _resource_group: &str,
+            ) -> Result<Vec<tidb_session::TableStorageStatistics>, String> {
+                self.calls.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+                Ok(vec![self.values.clone()])
+            }
+        }
+
         let table = TableInfo {
             id: 130,
             name: CiString::new("order_line"),
@@ -1333,6 +1277,7 @@ mod tests {
             indexes: Vec::new(),
         };
         let loaded_stats = loaded_stats.to_statistics_table(&table);
+        let table_id = table.id;
         let translated = planner_statistics(loaded_stats.as_ref(), &table);
         assert!(!translated.pseudo);
         assert_eq!(
@@ -1347,6 +1292,15 @@ mod tests {
             &snapshot,
             &LocalTableAutoIds::default(),
         );
+        let storage_stats_reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        session.set_table_storage_stats_provider(Arc::new(FixedStorageStatistics {
+            calls: Arc::clone(&storage_stats_reads),
+            values: tidb_session::TableStorageStatistics {
+                table_id,
+                table: (3_000_065, 24, 72_001_560, 0),
+                partitions: Vec::new(),
+            },
+        }));
         assert!(skipped.is_empty(), "{skipped:?}");
         {
             let catalog = session.shared_catalog();
@@ -1358,6 +1312,17 @@ mod tests {
             assert_eq!(statistics.columns.get(&2).unwrap().histogram.ndv, 10);
         }
         session.run("USE app").unwrap();
+        session
+            .run(
+                "SELECT TABLE_NAME FROM information_schema.tables \
+                 WHERE TABLE_SCHEMA = 'app' AND TABLE_NAME = 'order_line'",
+            )
+            .unwrap();
+        assert_eq!(
+            storage_stats_reads.load(std::sync::atomic::Ordering::Acquire),
+            0,
+            "Go skips the two restricted reads when no size column is requested"
+        );
         let StmtResult::Rows(rows) = session
             .run(
                 "SELECT TABLE_ROWS, AVG_ROW_LENGTH, DATA_LENGTH, INDEX_LENGTH \
@@ -1376,6 +1341,37 @@ mod tests {
                 Datum::Int(72_001_560),
                 Datum::Int(0),
             ]]
+        );
+        assert_eq!(
+            storage_stats_reads.load(std::sync::atomic::Ordering::Acquire),
+            1
+        );
+        let StmtResult::Rows(rows) = session
+            .run(
+                "WITH s AS (SELECT TABLE_ROWS FROM information_schema.tables \
+                 WHERE TABLE_SCHEMA = 'app' AND TABLE_NAME = 'order_line') \
+                 SELECT TABLE_ROWS FROM s",
+            )
+            .unwrap()
+        else {
+            panic!("CTE statistics query must return rows")
+        };
+        assert_eq!(rows, vec![vec![Datum::Int(3_000_065)]]);
+        assert_eq!(
+            storage_stats_reads.load(std::sync::atomic::Ordering::Acquire),
+            2,
+            "the resolved memory-table scan inside a CTE must refresh"
+        );
+        session
+            .run(
+                "SELECT TABLE_NAME FROM information_schema.partitions \
+                 WHERE TABLE_SCHEMA = 'app' AND TABLE_NAME = 'order_line'",
+            )
+            .unwrap();
+        assert_eq!(
+            storage_stats_reads.load(std::sync::atomic::Ordering::Acquire),
+            3,
+            "Go does not column-prune PARTITIONS, so its full scan refreshes the cache"
         );
         let StmtResult::Rows(rows) = session
             .run(

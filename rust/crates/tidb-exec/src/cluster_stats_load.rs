@@ -55,7 +55,7 @@
 //! * **`BIT`**: converting `BIT` to a blob formats it as a decimal integer,
 //!   so the blob is parsed back as one.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, RwLock};
 
 use tidb_datatype::{
@@ -69,7 +69,7 @@ use tidb_stats::histogram::{Bucket, Histogram};
 use tidb_stats::{
     ColAndIdxExistenceMap, Column, ColumnInfo, HistColl, Index, IndexInfo, StatsLoadedStatus, Table,
 };
-use tidb_stats_handle_cache::StatsMetaRow;
+use tidb_stats_handle_cache::{ColumnLength, StatsMetaRow, TableRowCount};
 
 use crate::cluster_catalog::{ClusterCatalog, MetaSnapshot};
 use crate::mysql_system_tables::{
@@ -415,6 +415,78 @@ impl ClusterStatsLoader {
                 latest_histogram_version: row
                     .u64("last_stats_histograms_version")?
                     .unwrap_or_default(),
+            });
+        }
+        Ok(result)
+    }
+
+    /// Pinned `getRowCountTables`: reads unsigned row counts for all IDs, or
+    /// for the requested physical IDs when the slice is non-empty.
+    pub fn load_table_row_counts<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        physical_ids: &[i64],
+    ) -> Result<Vec<TableRowCount>, SystemTableError> {
+        let mut result = Vec::new();
+        let rows = if physical_ids.is_empty() {
+            scan_system_table(snapshot, &self.meta)?
+        } else {
+            let mut rows = Vec::new();
+            for physical_id in physical_ids.iter().copied().collect::<BTreeSet<_>>() {
+                rows.extend(scan_system_table_prefixed(
+                    snapshot,
+                    &self.meta,
+                    &[Datum::Int(physical_id)],
+                )?);
+            }
+            rows
+        };
+        for (key, value) in rows {
+            let row = SystemRow::parse(&self.meta, &key, &value)?;
+            let Some(table_id) = row.i64("table_id")? else {
+                continue;
+            };
+            result.push(TableRowCount {
+                table_id,
+                count: row.u64("count")?.unwrap_or_default(),
+            });
+        }
+        Ok(result)
+    }
+
+    /// Pinned `getColLengthTables`: reads non-index histogram sizes for all
+    /// IDs, or for the requested physical IDs when the slice is non-empty.
+    pub fn load_column_lengths<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        physical_ids: &[i64],
+    ) -> Result<Vec<ColumnLength>, SystemTableError> {
+        let mut result = Vec::new();
+        let rows = if physical_ids.is_empty() {
+            scan_system_table(snapshot, &self.histograms)?
+        } else {
+            let mut rows = Vec::new();
+            for physical_id in physical_ids.iter().copied().collect::<BTreeSet<_>>() {
+                rows.extend(scan_system_table_prefixed(
+                    snapshot,
+                    &self.histograms,
+                    &[Datum::Int(physical_id), Datum::Int(0)],
+                )?);
+            }
+            rows
+        };
+        for (key, value) in rows {
+            let row = SystemRow::parse(&self.histograms, &key, &value)?;
+            if row.i64("is_index")?.unwrap_or_default() != 0 {
+                continue;
+            }
+            let Some(table_id) = row.i64("table_id")? else {
+                continue;
+            };
+            result.push(ColumnLength {
+                table_id,
+                histogram_id: row.i64("hist_id")?.unwrap_or_default(),
+                total_size: row.i64("tot_col_size")?.unwrap_or_default(),
             });
         }
         Ok(result)

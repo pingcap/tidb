@@ -196,7 +196,9 @@ impl LogicalMemTable {
     /// (`logical_mem_table.go:80`); see [`PRUNABLE_MEM_TABLES`].
     #[must_use]
     pub fn is_prunable(&self) -> bool {
-        PRUNABLE_MEM_TABLES.contains(&self.table_name.as_str())
+        PRUNABLE_MEM_TABLES
+            .iter()
+            .any(|name| self.table_name.eq_ignore_ascii_case(name))
     }
 
     /// The rest of `LogicalMemTable.PruneColumns` (`logical_mem_table.go:98`):

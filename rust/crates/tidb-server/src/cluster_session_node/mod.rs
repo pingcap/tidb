@@ -199,7 +199,11 @@ use tidb_executor::remote_scan::PushdownScanner;
 use tidb_planner::transaction_control::{classify_transaction_control, TransactionControl};
 use tidb_session::privilege::PrivilegeRegistry;
 use tidb_session::process::ProcessRegistry;
-use tidb_session::{GlobalSysvars, Session, StmtKind, StmtOutput, StmtResult, StoredStateChange};
+use tidb_session::{
+    GlobalSysvars, Session, StmtKind, StmtOutput, StmtResult, StoredStateChange,
+    TableStorageStatistics, TableStorageStatsProvider,
+};
+use tidb_stats_handle_cache::{StatsTableRowSource, TABLE_ROW_STATS_CACHE};
 
 use tidb_exec::cluster_table_storage::LockKeysOutcome;
 
@@ -411,6 +415,108 @@ struct ClusterStatisticsItemLoader {
 struct ClusterColumnStatsUsageProvider {
     transactions: Arc<dyn ClusterTransactions>,
     catalog: Arc<SharedClusterCatalog>,
+}
+
+struct ClusterTableStorageStatsProvider {
+    transactions: Arc<dyn ClusterTransactions>,
+    catalog: Arc<SharedClusterCatalog>,
+}
+
+struct ClusterTableRowSource<'a> {
+    transactions: &'a Arc<dyn ClusterTransactions>,
+    catalog: &'a Arc<SharedClusterCatalog>,
+    resource_group: &'a str,
+}
+
+impl StatsTableRowSource for ClusterTableRowSource<'_> {
+    type Error = String;
+
+    fn table_row_counts(
+        &self,
+        table_ids: &[i64],
+    ) -> Result<Vec<tidb_stats_handle_cache::TableRowCount>, Self::Error> {
+        let snapshot = self.transactions.open_snapshot(self.resource_group)?;
+        let catalog = self.catalog.load();
+        let loader = ClusterStatsLoader::locate(&catalog).map_err(|error| error.to_string())?;
+        loader
+            .load_table_row_counts(&mut SnapshotMetaSnapshot::new(snapshot), table_ids)
+            .map_err(|error| error.to_string())
+    }
+
+    fn column_lengths(
+        &self,
+        table_ids: &[i64],
+    ) -> Result<Vec<tidb_stats_handle_cache::ColumnLength>, Self::Error> {
+        let snapshot = self.transactions.open_snapshot(self.resource_group)?;
+        let catalog = self.catalog.load();
+        let loader = ClusterStatsLoader::locate(&catalog).map_err(|error| error.to_string())?;
+        loader
+            .load_column_lengths(&mut SnapshotMetaSnapshot::new(snapshot), table_ids)
+            .map_err(|error| error.to_string())
+    }
+}
+
+impl TableStorageStatsProvider for ClusterTableStorageStatsProvider {
+    fn load_table_storage_statistics(
+        &self,
+        resource_group: &str,
+    ) -> Result<Vec<TableStorageStatistics>, String> {
+        let catalog = self.catalog.load();
+        let physical_ids = catalog
+            .databases
+            .iter()
+            .flat_map(|database| &database.tables)
+            .flat_map(|table| {
+                std::iter::once(table.id).chain(
+                    table
+                        .get_partition_info()
+                        .into_iter()
+                        .flat_map(|partition| partition.read().definitions.snapshot())
+                        .map(|definition| definition.id),
+                )
+            })
+            .collect::<Vec<_>>();
+        TABLE_ROW_STATS_CACHE.update_by_id(
+            &ClusterTableRowSource {
+                transactions: &self.transactions,
+                catalog: &self.catalog,
+                resource_group,
+            },
+            &physical_ids,
+        )?;
+
+        Ok(catalog
+            .databases
+            .iter()
+            .flat_map(|database| &database.tables)
+            .map(|table| {
+                let partitions = table
+                    .get_partition_info()
+                    .into_iter()
+                    .flat_map(|partition| partition.read().definitions.snapshot())
+                    .map(|definition| {
+                        let row_count = TABLE_ROW_STATS_CACHE.get_table_rows(definition.id);
+                        let (data_length, index_length) = TABLE_ROW_STATS_CACHE
+                            .get_data_and_index_length(table, definition.id, row_count);
+                        let average_row_length = if row_count == 0 {
+                            0
+                        } else {
+                            data_length / row_count
+                        };
+                        (
+                            definition.id,
+                            (row_count, average_row_length, data_length, index_length),
+                        )
+                    })
+                    .collect();
+                TableStorageStatistics {
+                    table_id: table.id,
+                    table: TABLE_ROW_STATS_CACHE.estimate_data_length(table),
+                    partitions,
+                }
+            })
+            .collect())
+    }
 }
 
 struct ClusterApproximateTableCountProvider {
@@ -2797,6 +2903,10 @@ impl QuerySessionFactory for ClusterSessionFactory {
             transactions: Arc::clone(&self.transactions),
             catalog: Arc::clone(&self.catalog),
             approximate_counts: Arc::clone(&self.approximate_table_counts),
+        }));
+        session.set_table_storage_stats_provider(Arc::new(ClusterTableStorageStatsProvider {
+            transactions: Arc::clone(&self.transactions),
+            catalog: Arc::clone(&self.catalog),
         }));
         session.set_advisory_lock_service(Arc::new(transactions::ClusterAdvisoryLockService::new(
             Arc::clone(&self.transactions),

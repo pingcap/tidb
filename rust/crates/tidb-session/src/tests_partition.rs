@@ -3457,6 +3457,57 @@ fn information_schema_partitions_reports_gos_rows() {
         "the ordinal is ONE-based and the description is the stored bound"
     );
 
+    // Go refreshes the process-wide row/length cache immediately before the
+    // PARTITIONS retriever when any of these four columns is requested. Feed
+    // the resulting catalog image directly here; the cluster provider path
+    // has its own storage-boundary regression.
+    {
+        let shared = session.shared_catalog();
+        let mut catalog = shared.lock().unwrap();
+        let (table_id, partition_ids) = {
+            let tidb_executor::TableEntry::Kv(table) = catalog.table_in("test", "ip").unwrap()
+            else {
+                panic!("ip is a base table")
+            };
+            (
+                table.table_id,
+                table
+                    .partition()
+                    .unwrap()
+                    .definitions
+                    .iter()
+                    .map(|definition| definition.id)
+                    .collect::<Vec<_>>(),
+            )
+        };
+        catalog.set_table_storage_statistics(
+            table_id,
+            (12, 4, 48, 24),
+            &[
+                (partition_ids[0], (5, 4, 20, 10)),
+                (partition_ids[1], (7, 4, 28, 14)),
+            ],
+        );
+
+        let plain_id = match catalog.table_in("test", "plainp").unwrap() {
+            tidb_executor::TableEntry::Kv(table) => table.table_id,
+            _ => panic!("plainp is a base table"),
+        };
+        catalog.set_table_storage_statistics(plain_id, (3, 8, 24, 0), &[]);
+    }
+    assert_eq!(
+        tests_support::row_text(session.run(
+            "SELECT partition_name, table_rows, avg_row_length, data_length, index_length \
+             FROM information_schema.partitions WHERE table_name = 'ip' \
+             ORDER BY partition_ordinal_position",
+        )),
+        vec![
+            vec!["p0", "5", "4", "20", "10"],
+            vec!["p1", "7", "4", "28", "14"],
+        ],
+        "each partition reports its own physical statistics"
+    );
+
     // An unpartitioned table is present with NULL partition columns.
     let rows = tests_support::row_text(session.run(
         "SELECT partition_name, partition_method FROM information_schema.partitions \
@@ -3466,6 +3517,13 @@ fn information_schema_partitions_reports_gos_rows() {
         rows,
         vec![vec!["NULL".to_owned(), "NULL".to_owned()]],
         "an unpartitioned table is one NULL row, not zero rows"
+    );
+    assert_eq!(
+        tests_support::row_text(session.run(
+            "SELECT table_rows, avg_row_length, data_length, index_length \
+             FROM information_schema.partitions WHERE table_name = 'plainp'",
+        )),
+        vec![vec!["3", "8", "24", "0"]]
     );
 }
 

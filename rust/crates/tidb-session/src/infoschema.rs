@@ -683,6 +683,8 @@ fn partitions_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<
         };
         let catalog_value = || Datum::Bytes(b"def".to_vec());
         let Some(partition) = table.partition() else {
+            let (row_count, average_row_length, data_length, index_length) =
+                table.storage_statistics();
             rows.push(vec![
                 catalog_value(),
                 Datum::Bytes(schema.clone().into_bytes()),
@@ -697,11 +699,11 @@ fn partitions_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<
                 Datum::Null,
                 Datum::Null,
                 Datum::Null,
-                Datum::Int(0),
-                Datum::Int(0),
-                Datum::Int(0),
+                Datum::UInt(row_count),
+                Datum::UInt(average_row_length),
+                Datum::UInt(data_length),
                 Datum::Null,
-                Datum::Int(0),
+                Datum::UInt(index_length),
                 Datum::Null,
                 Datum::Null,
                 Datum::Null,
@@ -731,6 +733,8 @@ fn partitions_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<
             other => (other.sql().to_owned(), partition.expr_text.clone()),
         };
         for (ordinal, definition) in partition.definitions.iter().enumerate() {
+            let (row_count, average_row_length, data_length, index_length) =
+                table.partition_storage_statistics(definition.id);
             // Go's `PARTITION_DESCRIPTION`: the RANGE bounds joined by commas,
             // or the LIST tuples with multi-column ones parenthesised.
             let description = match &partition.kind {
@@ -783,11 +787,11 @@ fn partitions_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<
                 Datum::Bytes(expression.clone().into_bytes()),
                 Datum::Null,
                 description,
-                Datum::Int(0),
-                Datum::Int(0),
-                Datum::Int(0),
+                Datum::UInt(row_count),
+                Datum::UInt(average_row_length),
+                Datum::UInt(data_length),
                 Datum::Null,
-                Datum::Int(0),
+                Datum::UInt(index_length),
                 Datum::Null,
                 Datum::Null,
                 Datum::Null,

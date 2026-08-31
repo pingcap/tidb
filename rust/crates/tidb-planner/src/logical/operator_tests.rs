@@ -3552,6 +3552,7 @@ fn mem_table(table_name: &str) -> LogicalMemTable {
 fn mem_table_prunes_only_the_listed_tables_and_keeps_one_column() {
     let mut other = mem_table("COLUMNS");
     assert!(!other.is_prunable());
+    assert!(mem_table("tables").is_prunable());
     let mut mem_schema = schema(&[1, 2, 3]);
     assert!(other
         .prune_columns(&mut mem_schema, &[column(1)])

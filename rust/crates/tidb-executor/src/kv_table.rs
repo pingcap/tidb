@@ -408,6 +408,11 @@ pub struct KvTable {
     /// `(row count, average row length, data length, index length)` from Go
     /// `StatsTableRowCache.EstimateDataLength` for this catalog image.
     storage_statistics: (u64, u64, u64, u64),
+    /// Per-physical-partition values used by Go
+    /// `information_schema.PARTITIONS`. The logical table's aggregate stays
+    /// in `storage_statistics`; these entries retain each partition's own
+    /// row count and lengths.
+    partition_storage_statistics: std::collections::BTreeMap<i64, (u64, u64, u64, u64)>,
     /// The table's name, which a duplicate-key error qualifies its index with
     /// (`Duplicate entry 'a' for key 'm.code'`).
     pub name: String,
@@ -784,6 +789,7 @@ impl KvTable {
             pre_split_regions: 0,
             table_id,
             storage_statistics: (0, 0, 0, 0),
+            partition_storage_statistics: std::collections::BTreeMap::new(),
             name: String::new(),
             columns: std::sync::Arc::new(columns),
             hidden_columns: 0,
@@ -821,6 +827,26 @@ impl KvTable {
     #[must_use]
     pub const fn storage_statistics(&self) -> (u64, u64, u64, u64) {
         self.storage_statistics
+    }
+
+    /// Publishes one physical partition's Go row/length estimates.
+    pub fn set_partition_storage_statistics(
+        &mut self,
+        physical_id: i64,
+        statistics: (u64, u64, u64, u64),
+    ) {
+        self.partition_storage_statistics
+            .insert(physical_id, statistics);
+    }
+
+    /// Go `StatsTableRowCache.GetTableRows` plus
+    /// `GetDataAndIndexLength` for one physical partition.
+    #[must_use]
+    pub fn partition_storage_statistics(&self, physical_id: i64) -> (u64, u64, u64, u64) {
+        self.partition_storage_statistics
+            .get(&physical_id)
+            .copied()
+            .unwrap_or_default()
     }
 
     /// Rebinds a freshly loaded table to a collation mode its outer plan

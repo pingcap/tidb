@@ -486,10 +486,13 @@ impl Session {
                 return Ok(None);
             }
             let ctx = self.statement_context(false);
-            let scratch = self.materialize_information_schema_catalog(table_names, &ctx)?;
             let current_db = self.current_db.clone();
-            let (columns, rows) =
-                tidb_executor::run_select_meta_stmt(select, &scratch, &current_db, &ctx)?;
+            let (columns, rows) = self.run_information_schema_query(
+                &tidb_ast::QueryStmt::Select(Box::new(select.clone())),
+                table_names,
+                &current_db,
+                &ctx,
+            )?;
             self.drain_eval_warnings(&ctx);
             return Ok(Some(StmtOutput::Rows { columns, rows }));
         };
@@ -507,12 +510,75 @@ impl Session {
             return Ok(None);
         }
         let ctx = self.statement_context(false);
-        let scratch = self.materialize_information_schema_catalog(table_names, &ctx)?;
         let current_db = self.current_db.clone();
-        let (columns, rows) =
-            tidb_executor::run_select_meta_stmt(select, &scratch, &current_db, &ctx)?;
+        let (columns, rows) = self.run_information_schema_query(
+            &tidb_ast::QueryStmt::Select(Box::new(select.clone())),
+            table_names,
+            &current_db,
+            &ctx,
+        )?;
         self.drain_eval_warnings(&ctx);
         Ok(Some(StmtOutput::Rows { columns, rows }))
+    }
+
+    fn run_information_schema_query(
+        &mut self,
+        query: &tidb_ast::QueryStmt,
+        mut table_names: Vec<String>,
+        current_db: &str,
+        ctx: &tidb_executor::StmtContext,
+    ) -> Result<tidb_executor::SelectMeta, DriverError> {
+        table_names.sort_unstable_by_key(|name| name.to_ascii_lowercase());
+        table_names.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
+
+        // Go resolves and prunes the memory-table scan before its executor
+        // performs the restricted statistics reads. Plan against schema-only
+        // virtual tables so the real rows are generated exactly once below.
+        let planning_catalog = self.information_schema_planning_catalog(&table_names)?;
+        let mut physical =
+            tidb_executor::plan_query_meta_stmt(query, &planning_catalog, current_db, ctx)?;
+        let needs_storage_stats =
+            tidb_executor::physical_plan_needs_table_storage_statistics(&physical);
+        let scratch =
+            self.materialize_information_schema_catalog(table_names, ctx, needs_storage_stats)?;
+        tidb_executor::run_query_meta_stmt_with_physical(
+            query,
+            Some(&mut physical),
+            &scratch,
+            current_db,
+            ctx,
+        )
+    }
+
+    fn information_schema_planning_catalog(
+        &mut self,
+        table_names: &[String],
+    ) -> Result<Catalog, DriverError> {
+        let mut schemas = Vec::with_capacity(table_names.len());
+        for table_name in table_names {
+            let Some(columns) = infoschema::table_schema(table_name) else {
+                return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
+                    "{}.{}",
+                    infoschema::INFORMATION_SCHEMA,
+                    table_name
+                ))));
+            };
+            schemas.push((table_name.clone(), columns));
+        }
+        self.with_catalog_mut(|catalog| {
+            let mut scratch = catalog.clone();
+            for (table_name, columns) in schemas {
+                scratch.register_mem_in(
+                    infoschema::INFORMATION_SCHEMA,
+                    &table_name,
+                    tidb_executor::MemTable {
+                        columns,
+                        rows: Vec::new(),
+                    },
+                );
+            }
+            Ok(scratch)
+        })
     }
 
     /// Clones this statement's real catalog and overlays each referenced
@@ -523,9 +589,37 @@ impl Session {
         &mut self,
         mut table_names: Vec<String>,
         ctx: &tidb_executor::StmtContext,
+        needs_storage_stats: bool,
     ) -> Result<Catalog, DriverError> {
         table_names.sort_unstable_by_key(|name| name.to_ascii_lowercase());
         table_names.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
+        if needs_storage_stats
+            && table_names.iter().any(|name| {
+                name.eq_ignore_ascii_case("TABLES") || name.eq_ignore_ascii_case("PARTITIONS")
+            })
+        {
+            if let Some(provider) = &self.table_storage_stats {
+                match provider.load_table_storage_statistics(&self.active_resource_group) {
+                    Ok(statistics) => self.with_catalog_mut(|catalog| {
+                        for table in statistics {
+                            catalog.set_table_storage_statistics(
+                                table.table_id,
+                                table.table,
+                                &table.partitions,
+                            );
+                        }
+                        Ok(())
+                    })?,
+                    // Pinned `updateStatsCacheIfNeed` logs the restricted-read
+                    // error and serves the previously cached estimates.
+                    Err(error) => eprintln!(
+                        "{{\"event\":\"information_schema_stats_refresh_failed\",\"error\":{}}}",
+                        serde_json::to_string(&error)
+                            .unwrap_or_else(|_| "\"unprintable\"".to_owned())
+                    ),
+                }
+            }
+        }
         let mut materialized = Vec::with_capacity(table_names.len());
         for table_name in table_names {
             let Some(columns) = infoschema::table_schema(&table_name) else {
@@ -1593,15 +1687,7 @@ impl Session {
                             )
                         })?
                     } else {
-                        let scratch =
-                            self.materialize_information_schema_catalog(table_names, &ctx)?;
-                        tidb_executor::run_query_meta_stmt_with_physical(
-                            query,
-                            None,
-                            &scratch,
-                            &current_db,
-                            &ctx,
-                        )?
+                        self.run_information_schema_query(query, table_names, &current_db, &ctx)?
                     };
                     self.drain_eval_warnings(&ctx);
                     return Ok(StmtOutput::Rows { columns, rows });

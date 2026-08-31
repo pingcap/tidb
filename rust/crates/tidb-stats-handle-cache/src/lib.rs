@@ -271,17 +271,6 @@ impl StatsTableRowCache {
     }
 }
 
-/// Go `buildInTableIDsString`.
-#[must_use]
-pub fn build_in_table_ids_string(table_ids: &[i64]) -> String {
-    let ids = table_ids
-        .iter()
-        .map(i64::to_string)
-        .collect::<Vec<_>>()
-        .join(",");
-    format!("table_id in ({ids})")
-}
-
 /// Go `StatsCache`: the full-table cache and its lifecycle maximum version.
 pub struct StatsCache {
     inner: Box<dyn StatsCacheInner>,
@@ -703,8 +692,15 @@ impl StatsCache {
         }
         if !skip_move_forward {
             for table in tables {
-                self.max_table_stats_version
-                    .fetch_max(table.version, Ordering::AcqRel);
+                let old_version = self.max_table_stats_version.load(Ordering::Acquire);
+                if table.version > old_version {
+                    let _ = self.max_table_stats_version.compare_exchange(
+                        old_version,
+                        table.version,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    );
+                }
             }
         }
     }
@@ -1083,10 +1079,6 @@ mod tests {
             Err("histogram read failed")
         );
         assert_eq!(cache.get_table_rows(1), 7);
-        assert_eq!(
-            build_in_table_ids_string(&[3, -2, 9]),
-            "table_id in (3,-2,9)"
-        );
     }
 
     #[test]

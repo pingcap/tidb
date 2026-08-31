@@ -292,6 +292,29 @@ pub trait AnalyzeStatusProvider: Send + Sync {
     ) -> i64;
 }
 
+/// Go `StatsTableRowCache` values consumed by one logical table's
+/// `information_schema.TABLES` and `information_schema.PARTITIONS` rows.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct TableStorageStatistics {
+    /// Logical table ID.
+    pub table_id: i64,
+    /// Logical/aggregate `(rows, average row length, data length, index length)`.
+    pub table: (u64, u64, u64, u64),
+    /// The same tuple for each physical partition ID.
+    pub partitions: Vec<(i64, (u64, u64, u64, u64))>,
+}
+
+/// Fresh restricted-storage boundary used by Go's information-schema row
+/// and column-length cache.
+pub trait TableStorageStatsProvider: Send + Sync {
+    /// Runs the two pinned restricted reads and returns estimates for the
+    /// current schema image. A read failure is warning-only at the caller.
+    fn load_table_storage_statistics(
+        &self,
+        resource_group: &str,
+    ) -> Result<Vec<TableStorageStatistics>, String>;
+}
+
 /// The statement-owned policy a server needs to retain an eager result set.
 ///
 /// It is captured before `SET_VAR` overlays are restored, so a prepared
@@ -578,6 +601,8 @@ pub struct Session {
     column_stats_usage: Option<std::sync::Arc<dyn ColumnStatsUsageProvider>>,
     /// The persisted analyze-job reader shared by SHOW and ANALYZE_STATUS.
     analyze_status: Option<std::sync::Arc<dyn AnalyzeStatusProvider>>,
+    /// Pinned Go's fresh information-schema table-size reader.
+    table_storage_stats: Option<std::sync::Arc<dyn TableStorageStatsProvider>>,
     /// Go's session-local `SessionStatsItem`, swept into the statistics
     /// handle independently of statement execution.
     stats_collector: Option<std::sync::Arc<tidb_stats_handle_usage::SessionStatsItem>>,
@@ -768,6 +793,7 @@ impl Session {
             data_lock_waits: None,
             column_stats_usage: None,
             analyze_status: None,
+            table_storage_stats: None,
             stats_collector: None,
             transaction_table_delta: std::sync::Arc::new(
                 tidb_stats_handle_usage::TableDeltaMap::new(),
@@ -1103,6 +1129,15 @@ impl Session {
         provider: std::sync::Arc<dyn AnalyzeStatusProvider>,
     ) {
         self.analyze_status = Some(provider);
+    }
+
+    /// Installs the node-global restricted reader used by
+    /// `information_schema.TABLES` and `PARTITIONS`.
+    pub fn set_table_storage_stats_provider(
+        &mut self,
+        provider: std::sync::Arc<dyn TableStorageStatsProvider>,
+    ) {
+        self.table_storage_stats = Some(provider);
     }
 
     /// Go `ShowDDLExec.Next` (`executor/show_ddl.go`): one row describing the

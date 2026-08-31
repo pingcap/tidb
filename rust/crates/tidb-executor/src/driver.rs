@@ -493,6 +493,56 @@ pub fn run_query_meta_stmt_with_physical(
     }
 }
 
+/// Builds the ordinary physical query tree without opening an executor.
+///
+/// Information-schema execution uses this to inspect the resolved, pruned
+/// `PhysicalMemTable.Columns` before Go's retriever decides whether its
+/// process-wide table-size cache needs a fresh restricted read.
+pub fn plan_query_meta_stmt(
+    query: &QueryStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<tidb_planner::physical::PhysicalPlan, DriverError> {
+    planner_bridge::physical_query_plan(query, catalog, current_db, ctx)
+        .map_err(planner_error_to_driver)
+}
+
+/// Answers Go `memtableRetriever.updateStatsCacheIfNeed` from the physical
+/// memory-table columns left after logical column pruning.
+#[must_use]
+pub fn physical_plan_needs_table_storage_statistics(
+    plan: &tidb_planner::physical::PhysicalPlan,
+) -> bool {
+    if let tidb_planner::physical::PhysicalPlan::CTE(cte) = plan {
+        if physical_plan_needs_table_storage_statistics(&cte.seed_plan)
+            || cte
+                .recursive_plan
+                .as_deref()
+                .is_some_and(physical_plan_needs_table_storage_statistics)
+        {
+            return true;
+        }
+    }
+    if let tidb_planner::physical::PhysicalPlan::MemTable(scan) = plan {
+        let table_uses_cache = scan.table_name.eq_ignore_ascii_case("TABLES")
+            || scan.table_name.eq_ignore_ascii_case("PARTITIONS");
+        if table_uses_cache
+            && scan.columns.iter().any(|column| {
+                matches!(
+                    column.name.to_ascii_uppercase().as_str(),
+                    "TABLE_ROWS" | "AVG_ROW_LENGTH" | "DATA_LENGTH" | "INDEX_LENGTH"
+                )
+            })
+        {
+            return true;
+        }
+    }
+    plan.children()
+        .iter()
+        .any(|child| physical_plan_needs_table_storage_statistics(child))
+}
+
 /// Resolves every column named by one `MATCH` expression against the SELECT's
 /// complete FROM scope and returns whether Go's LIKE fallback may treat them
 /// as strings. This is the same resolved-type question

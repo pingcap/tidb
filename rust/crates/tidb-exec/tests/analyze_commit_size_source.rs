@@ -572,6 +572,73 @@ fn the_analyze_version_round_trips_through_the_stored_row() {
     );
 }
 
+/// Go `StatsTableRowCache.UpdateByID` issues one restricted read against
+/// `stats_meta` and one against non-index `stats_histograms`. The cluster
+/// adapter must read those durable rows directly, deduplicate its `IN` IDs,
+/// and never substitute the separately loaded planner-statistics snapshot.
+#[test]
+fn table_row_cache_source_reads_requested_storage_rows() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    for (table_id, row_count, column_id) in [(4242, 10, 11), (5151, 20, 12)] {
+        let stats = ClusterTableStats {
+            table_id,
+            version: 440_000_000_000_000_000 + table_id as u64,
+            snapshot: 440_000_000_000_000_000,
+            last_analyze_version: 440_000_000_000_000_000,
+            last_stats_hist_version: 440_000_000_000_000_000,
+            modify_count: 0,
+            row_count,
+            columns: vec![full_histogram(column_id, false)],
+            indexes: vec![full_histogram(21, true)],
+        };
+        let plan = plan_stats_write(&mut store, &catalog, &stats, now())
+            .expect("statistics rows plan");
+        apply_mutations(&mut store, &plan.mutations);
+    }
+
+    let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
+    store.scans.clear();
+    assert_eq!(
+        loader
+            .load_table_row_counts(&mut store, &[5151, 4242, 5151])
+            .expect("row counts load"),
+        vec![
+            tidb_stats_handle_cache::TableRowCount {
+                table_id: 4242,
+                count: 10,
+            },
+            tidb_stats_handle_cache::TableRowCount {
+                table_id: 5151,
+                count: 20,
+            },
+        ]
+    );
+    assert_eq!(
+        loader
+            .load_column_lengths(&mut store, &[5151, 4242, 5151])
+            .expect("column lengths load"),
+        vec![
+            tidb_stats_handle_cache::ColumnLength {
+                table_id: 4242,
+                histogram_id: 11,
+                total_size: 40_000,
+            },
+            tidb_stats_handle_cache::ColumnLength {
+                table_id: 5151,
+                histogram_id: 12,
+                total_size: 40_000,
+            },
+        ],
+        "index histogram rows are excluded"
+    );
+    assert_eq!(
+        store.scans.len(),
+        4,
+        "two unique IDs produce two keyed scans for each restricted read"
+    );
+}
+
 /// Pinned `handletest.TestIncrementalModifyCountUpdate`: ANALYZE samples from
 /// one snapshot and saves later. A delta that lands between those points must
 /// remain in `modify_count`; snapshot mode also preserves its row-count
