@@ -35,6 +35,10 @@ import (
 	"golang.org/x/exp/rand"
 )
 
+func readerMemoryForConcurrency(concurrency int) int64 {
+	return int64(concurrency * ConcurrentReaderBufferSizePerConc)
+}
+
 func TestMergeKVIter(t *testing.T) {
 	ctx := context.Background()
 	memStore := objstore.NewMemStorage()
@@ -63,7 +67,15 @@ func TestMergeKVIter(t *testing.T) {
 	}
 
 	trackStore := &testutils.TrackOpenMemStorage{MemStorage: memStore}
-	iter, err := NewMergeKVIter(ctx, filenames, []uint64{0, 0, 0}, trackStore, 5, true, 1)
+	iter, err := NewMergeKVIter(
+		ctx,
+		filenames,
+		[]uint64{0, 0, 0},
+		trackStore,
+		5,
+		true,
+		readerMemoryForConcurrency(256),
+	)
 	require.NoError(t, err)
 	// close one empty file immediately in NewMergeKVIter
 	require.EqualValues(t, 2, trackStore.Opened.Load())
@@ -115,7 +127,15 @@ func TestOneUpstream(t *testing.T) {
 	}
 
 	trackStore := &testutils.TrackOpenMemStorage{MemStorage: memStore}
-	iter, err := NewMergeKVIter(ctx, filenames, []uint64{0, 0, 0}, trackStore, 5, true, 1)
+	iter, err := NewMergeKVIter(
+		ctx,
+		filenames,
+		[]uint64{0, 0, 0},
+		trackStore,
+		5,
+		true,
+		readerMemoryForConcurrency(256),
+	)
 	require.NoError(t, err)
 	require.EqualValues(t, 1, trackStore.Opened.Load())
 
@@ -152,14 +172,30 @@ func TestAllEmpty(t *testing.T) {
 	}
 
 	trackStore := &testutils.TrackOpenMemStorage{MemStorage: memStore}
-	iter, err := NewMergeKVIter(ctx, []string{filenames[0]}, []uint64{0}, trackStore, 5, false, 1)
+	iter, err := NewMergeKVIter(
+		ctx,
+		[]string{filenames[0]},
+		[]uint64{0},
+		trackStore,
+		5,
+		false,
+		readerMemoryForConcurrency(256),
+	)
 	require.NoError(t, err)
 	require.EqualValues(t, 0, trackStore.Opened.Load())
 	require.False(t, iter.Next())
 	require.NoError(t, iter.Error())
 	require.NoError(t, iter.Close())
 
-	iter, err = NewMergeKVIter(ctx, filenames, []uint64{0, 0}, trackStore, 5, false, 1)
+	iter, err = NewMergeKVIter(
+		ctx,
+		filenames,
+		[]uint64{0, 0},
+		trackStore,
+		5,
+		false,
+		readerMemoryForConcurrency(256),
+	)
 	require.NoError(t, err)
 	require.EqualValues(t, 0, trackStore.Opened.Load())
 	require.False(t, iter.Next())
@@ -197,7 +233,15 @@ func TestCorruptContent(t *testing.T) {
 	}
 
 	trackStore := &testutils.TrackOpenMemStorage{MemStorage: memStore}
-	iter, err := NewMergeKVIter(ctx, filenames, []uint64{0, 0, 0}, trackStore, 5, true, 1)
+	iter, err := NewMergeKVIter(
+		ctx,
+		filenames,
+		[]uint64{0, 0, 0},
+		trackStore,
+		5,
+		true,
+		readerMemoryForConcurrency(256),
+	)
 	require.NoError(t, err)
 	require.EqualValues(t, 2, trackStore.Opened.Load())
 
@@ -285,7 +329,15 @@ func testMergeIterSwitchMode(t *testing.T, f func([]byte, int) []byte) {
 
 	offsets := make([]uint64, len(dataNames))
 
-	iter, err := NewMergeKVIter(context.Background(), dataNames, offsets, st, 2048, true, 1)
+	iter, err := NewMergeKVIter(
+		context.Background(),
+		dataNames,
+		offsets,
+		st,
+		2048,
+		true,
+		readerMemoryForConcurrency(256),
+	)
 	require.NoError(t, err)
 
 	for iter.Next() {
@@ -332,6 +384,12 @@ func TestReadAfterCloseConnReader(t *testing.T) {
 }
 
 func TestHotspot(t *testing.T) {
+	oldConcurrentReaderBufferSize := ConcurrentReaderBufferSizePerConc
+	ConcurrentReaderBufferSizePerConc = 26
+	t.Cleanup(func() {
+		ConcurrentReaderBufferSizePerConc = oldConcurrentReaderBufferSize
+	})
+
 	ctx := context.Background()
 	store := objstore.NewMemStorage()
 
@@ -361,7 +419,15 @@ func TestHotspot(t *testing.T) {
 	}
 
 	// readerBufSize = 8+5+8+5, every KV will cause reload
-	iter, err := NewMergeKVIter(ctx, filenames, make([]uint64, len(filenames)), store, 26, true, 1)
+	iter, err := NewMergeKVIter(
+		ctx,
+		filenames,
+		make([]uint64, len(filenames)),
+		store,
+		26,
+		true,
+		readerMemoryForConcurrency(4),
+	)
 	require.NoError(t, err)
 	iter.iter.checkHotspotPeriod = 2
 	// after read key00 and key01 from reader_0, it becomes hotspot
@@ -373,6 +439,7 @@ func TestHotspot(t *testing.T) {
 	r0 := &iter.iter.readers[0].r.byteReader.concurrentReader
 	require.True(t, r0.expected)
 	require.True(t, r0.now)
+	require.Equal(t, int64(4*ConcurrentReaderBufferSizePerConc), r0.largeBufferPool.TotalSize())
 	r1 := &iter.iter.readers[1].r.byteReader.concurrentReader
 	require.False(t, r1.expected)
 	require.False(t, r1.now)
@@ -464,7 +531,15 @@ func TestMemoryUsageWhenHotspotChange(t *testing.T) {
 
 	beforeMem := getMemoryInUse()
 
-	iter, err := NewMergeKVIter(ctx, filenames, make([]uint64, len(filenames)), store, 1024, true, 16)
+	iter, err := NewMergeKVIter(
+		ctx,
+		filenames,
+		make([]uint64, len(filenames)),
+		store,
+		1024,
+		true,
+		readerMemoryForConcurrency(16),
+	)
 	require.NoError(t, err)
 	iter.iter.checkHotspotPeriod = 10
 	i := 0
@@ -738,10 +813,4 @@ func TestCloseLimitSizeMergeIterHalfway(t *testing.T) {
 	err = iter.close()
 	require.NoError(t, err)
 	require.EqualValues(t, 0, store.Opened.Load())
-}
-
-func TestMergeKVIterPassWrongParam(t *testing.T) {
-	// Caller must ensure the outerConcurrency is set
-	_, err := NewMergeKVIter(nil, nil, nil, nil, 0, true, 1)
-	require.Error(t, err, "outerConcurrency must be positive, caller must ensure that the correct value is passed in")
 }

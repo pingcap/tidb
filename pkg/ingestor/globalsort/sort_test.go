@@ -184,7 +184,7 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 		op := NewMergeOperator(
 			wctx,
 			memStore,
-			int64(5*size.MB),
+			5*maxMergeReaderMemoryPerCore,
 			"/test2",
 			mergeMemSize,
 			onWriterClose,
