@@ -114,11 +114,15 @@ func (o *RangeController) onError(_ context.Context, result RPCResult, region *s
 }
 
 func (o *RangeController) tryFindLeader(ctx context.Context, region *split.RegionInfo) (*metapb.Peer, error) {
-	backoffStrategy := utils.NewBackoffRetryAllErrorStrategy(4, 2*time.Second, 10*time.Second)
+	backoffStrategy := utils.NewBackoffRetryAllExceptStrategy(
+		4, 2*time.Second, 10*time.Second, isNonRetryErrForFindLeader)
 	return utils.WithRetryV2(ctx, backoffStrategy, func(ctx context.Context) (*metapb.Peer, error) {
 		r, err := o.metaClient.GetRegionByID(ctx, region.Region.Id)
 		if err != nil {
 			return nil, err
+		}
+		if r == nil || r.Region == nil {
+			return nil, errors.Annotatef(berrors.ErrKVEpochNotMatch, "region %d is not found", region.Region.Id)
 		}
 		if !split.CheckRegionEpoch(r, region) {
 			return nil, errors.Annotatef(berrors.ErrKVEpochNotMatch, "the current epoch of %s has changed", region)
@@ -128,6 +132,10 @@ func (o *RangeController) tryFindLeader(ctx context.Context, region *split.Regio
 		}
 		return nil, errors.Annotatef(berrors.ErrPDLeaderNotFound, "there is no leader for region %d", region.Region.Id)
 	})
+}
+
+func isNonRetryErrForFindLeader(err error) bool {
+	return berrors.ErrKVEpochNotMatch.Equal(err)
 }
 
 // handleRegionError handles the error happens internal in the region. Update the region info, and perform a suitable backoff.
