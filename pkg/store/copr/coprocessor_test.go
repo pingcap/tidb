@@ -1367,9 +1367,8 @@ func testHandleBatchCopResponseResolvesAPIV2ChildLock(t *testing.T) {
 		map[uint64]*batchedCopTask{child.taskID: {task: child}},
 	)
 	require.NoError(t, err)
-	// Record the current behavior: response decoding leaves the API V2 prefix,
-	// so lock resolution applies it a second time.
-	require.Equal(t, codec.EncodeKey(codec.EncodeKey(primaryKey)), rawClient.checkTxnStatusPrimaryKey)
+	// Lock resolution must encode the decoded primary exactly once.
+	require.Equal(t, codec.EncodeKey(primaryKey), rawClient.checkTxnStatusPrimaryKey)
 }
 
 func TestHandleBatchCopResponse(t *testing.T) {
