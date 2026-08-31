@@ -725,6 +725,17 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 			return nil
 		}
 	}
+	if r.storeType != kv.TiKV && !hasExecutor &&
+		len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
+		// TiFlash streaming responses carry positional execution summaries only
+		// in the last response, so an empty summary slice is expected.
+		if !(r.storeType == kv.TiFlash && len(r.selectResp.GetExecutionSummaries()) == 0) {
+			logutil.Logger(ctx).Warn("invalid cop task execution summaries length",
+				zap.Int("expected", len(r.copPlanIDs)),
+				zap.Int("received", len(r.selectResp.GetExecutionSummaries())))
+		}
+		return nil
+	}
 	if hasExecutor {
 		if len(r.copPlanIDs) > 0 {
 			r.ctx.RuntimeStatsColl.RecordCopStats(
@@ -748,19 +759,6 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 			}
 		}
 	} else {
-		// TiKV summary cardinality is validated before this branch. Other cop
-		// paths still need protection before indexing plan IDs by summary offset.
-		if r.storeType != kv.TiKV && len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
-			// for TiFlash streaming call(BatchCop and MPP), it is by design that only the last response will
-			// carry the execution summaries, so it is ok if some responses have no execution summaries, should
-			// not trigger an error log in this case.
-			if !(r.storeType == kv.TiFlash && len(r.selectResp.GetExecutionSummaries()) == 0) {
-				logutil.Logger(ctx).Warn("invalid cop task execution summaries length",
-					zap.Int("expected", len(r.copPlanIDs)),
-					zap.Int("received", len(r.selectResp.GetExecutionSummaries())))
-			}
-			return
-		}
 		for i, detail := range r.selectResp.GetExecutionSummaries() {
 			var summary *tipb.ExecutorExecutionSummary
 			if detail != nil && detail.TimeProcessedNs != nil &&
