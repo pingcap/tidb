@@ -1108,6 +1108,10 @@ func TestRootRuntimeStats(t *testing.T) {
 		merged.Merge(partial)
 		require.False(t, merged.HashStateRowsSnapshot().Complete())
 		require.False(t, merged.HashStateRowsSnapshot().Invalid())
+		invalid := NewHashStateRuntimeStats()
+		invalid.Invalidate()
+		merged.Merge(invalid)
+		require.True(t, merged.HashStateRowsSnapshot().Invalid())
 
 		concurrent := NewHashStateRuntimeStats()
 		var wg sync.WaitGroup

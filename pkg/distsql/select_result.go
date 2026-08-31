@@ -748,12 +748,13 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 			}
 		}
 	} else {
-		// For cop task cases, we still need this protection.
-		if len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
+		// TiKV summary cardinality is validated before this branch. Other cop
+		// paths still need protection before indexing plan IDs by summary offset.
+		if r.storeType != kv.TiKV && len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
 			// for TiFlash streaming call(BatchCop and MPP), it is by design that only the last response will
 			// carry the execution summaries, so it is ok if some responses have no execution summaries, should
 			// not trigger an error log in this case.
-			if !forUnconsumedStats && !(r.storeType == kv.TiFlash && len(r.selectResp.GetExecutionSummaries()) == 0) {
+			if !(r.storeType == kv.TiFlash && len(r.selectResp.GetExecutionSummaries()) == 0) {
 				logutil.Logger(ctx).Warn("invalid cop task execution summaries length",
 					zap.Int("expected", len(r.copPlanIDs)),
 					zap.Int("received", len(r.selectResp.GetExecutionSummaries())))

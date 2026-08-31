@@ -176,27 +176,24 @@ func (s *HashStateRuntimeStats) Merge(other RuntimeStats) {
 }
 
 func (s *HashStateRuntimeStats) merge(snapshot HashStateRowsSnapshot) {
+	// RuntimeStatsColl serializes merges after each producer has stopped
+	// mutating its stat, so the incoming snapshot and the target state are stable.
+	current := hashStateRowsState(s.state.Load())
+	if current == hashStateRowsInvalid {
+		return
+	}
+	merged := snapshot.state
+	switch {
+	case snapshot.state >= hashStateRowsInvalid:
+		merged = hashStateRowsInvalid
+	case current == hashStateRowsIncomplete || snapshot.state == hashStateRowsIncomplete:
+		merged = hashStateRowsIncomplete
+	}
+	// Publish rows before state so a final-state snapshot cannot observe stale rows.
 	if snapshot.Rows >= 0 {
 		s.AddRows(uint64(snapshot.Rows))
 	}
-	for {
-		current := hashStateRowsState(s.state.Load())
-		if current == hashStateRowsInvalid {
-			return
-		}
-		merged := snapshot.state
-		switch {
-		case snapshot.state > hashStateRowsInvalid:
-			merged = hashStateRowsInvalid
-		case current == hashStateRowsIncomplete || snapshot.state == hashStateRowsIncomplete:
-			merged = hashStateRowsIncomplete
-		case current == hashStateRowsComplete && snapshot.state == hashStateRowsComplete:
-			return
-		}
-		if s.state.CompareAndSwap(uint32(current), uint32(merged)) {
-			return
-		}
-	}
+	s.state.Store(uint32(merged))
 }
 
 type basicCopRuntimeStats struct {
@@ -342,9 +339,8 @@ type CopRuntimeStats struct {
 	// summaryRows and summaryCount are a checked evidence path for consumers
 	// that must distinguish missing execution summaries from an observed zero.
 	// The legacy basic stats above remain unchanged for EXPLAIN formatting.
-	summaryRows    int64
-	summaryCount   uint64
-	summaryInvalid bool
+	summaryRows  int64
+	summaryCount uint64
 }
 
 // GetActRows return total rows of CopRuntimeStats.
@@ -358,10 +354,8 @@ func (crs *CopRuntimeStats) GetTasks() int32 {
 }
 
 func (crs *CopRuntimeStats) recordSummaryEvidence(summary *tipb.ExecutorExecutionSummary) {
-	if summary == nil || summary.NumProducedRows == nil {
-		crs.summaryInvalid = true
-		return
-	}
+	// The response owner validates all required summary fields before recording
+	// any plan in the response; mergeExecSummary relies on the same contract.
 	crs.summaryRows += int64(summary.GetNumProducedRows())
 	crs.summaryCount++
 }
@@ -812,8 +806,7 @@ func (e *RuntimeStatsColl) GetCopRowsSnapshot(planID int) CopRowsSnapshot {
 	if stats, ok := e.copStats[planID]; ok && stats != nil {
 		snapshot.Rows = stats.summaryRows
 		snapshot.ObservedSummaries = stats.summaryCount
-		snapshot.Invalid = snapshot.Invalid || stats.summaryInvalid ||
-			snapshot.ObservedSummaries > snapshot.ExpectedSummaries
+		snapshot.Invalid = snapshot.Invalid || snapshot.ObservedSummaries > snapshot.ExpectedSummaries
 	}
 	return snapshot
 }
