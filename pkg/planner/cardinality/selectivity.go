@@ -838,7 +838,7 @@ func getMaskAndRanges(ctx planctx.PlanContext, exprs []expression.Expression, ra
 	case ranger.ColumnRangeType:
 		accessConds = ranger.ExtractAccessConditionsForColumn(ctx.GetRangerCtx(), exprs, cols[0])
 		ranges, accessConds, _, err = ranger.BuildColumnRange(accessConds, ctx.GetRangerCtx(), cols[0].RetType,
-			types.UnspecifiedLength, ctx.GetSessionVars().RangeMaxSize)
+			types.UnspecifiedLength, ctx.GetSessionVars().RangeMaxSize, ctx.GetSessionVars().RangeMaxCount)
 	case ranger.IndexRangeType:
 		if cachedPath != nil {
 			ranges = cachedPath.Ranges
@@ -849,7 +849,7 @@ func getMaskAndRanges(ctx planctx.PlanContext, exprs []expression.Expression, ra
 			break
 		}
 		var res *ranger.DetachRangeResult
-		res, err = ranger.DetachCondAndBuildRangeForIndex(ctx.GetRangerCtx(), exprs, cols, lengths, ctx.GetSessionVars().RangeMaxSize)
+		res, err = ranger.DetachCondAndBuildRangeForIndex(ctx.GetRangerCtx(), exprs, cols, lengths, ctx.GetSessionVars().RangeMaxSize, ctx.GetSessionVars().RangeMaxCount)
 		if err != nil {
 			return 0, nil, false, 0, err
 		}

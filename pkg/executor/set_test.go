@@ -986,6 +986,16 @@ func TestSetVar(t *testing.T) {
 	tk.MustExec("set session tidb_opt_range_max_size = 2097152")
 	tk.MustQuery("select @@session.tidb_opt_range_max_size").Check(testkit.Rows("2097152"))
 
+	// test tidb_opt_range_max_count
+	tk.MustQuery("select @@tidb_opt_range_max_count").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_opt_range_max_count = -1")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_opt_range_max_count value: '-1'"))
+	tk.MustQuery("select @@global.tidb_opt_range_max_count").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_opt_range_max_count = 1024")
+	tk.MustQuery("select @@global.tidb_opt_range_max_count").Check(testkit.Rows("1024"))
+	tk.MustExec("set session tidb_opt_range_max_count = 2048")
+	tk.MustQuery("select @@session.tidb_opt_range_max_count").Check(testkit.Rows("2048"))
+
 	// test for password validation
 	tk.MustQuery("SELECT @@GLOBAL.validate_password.enable").Check(testkit.Rows("0"))
 	tk.MustQuery("SELECT @@GLOBAL.validate_password.length").Check(testkit.Rows("8"))

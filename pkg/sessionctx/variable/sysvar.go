@@ -3243,6 +3243,10 @@ var defaultSysVars = []*SysVar{
 		s.RangeMaxSize = TidbOptInt64(val, vardef.DefTiDBOptRangeMaxSize)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptRangeMaxCount, Value: strconv.FormatInt(vardef.DefTiDBOptRangeMaxCount, 10), Type: vardef.TypeInt, MinValue: 0, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
+		s.RangeMaxCount = TidbOptInt64(val, vardef.DefTiDBOptRangeMaxCount)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptAdvancedJoinHint, Value: BoolToOnOff(vardef.DefTiDBOptAdvancedJoinHint), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableAdvancedJoinHint = TiDBOptOn(val)
 		return nil

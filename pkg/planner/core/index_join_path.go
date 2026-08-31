@@ -194,9 +194,11 @@ func indexJoinPathBuild(sctx planctx.PlanContext,
 		return nil, false, nil
 	}
 	rangeMaxSize := sctx.GetSessionVars().RangeMaxSize
+	rangeMaxCount := sctx.GetSessionVars().RangeMaxCount
 	if rebuildMode {
-		// When rebuilding ranges for plan cache, we don't restrict range mem limit.
+		// When rebuilding ranges for plan cache, we don't restrict range limits.
 		rangeMaxSize = 0
+		rangeMaxCount = 0
 	}
 	// If all the index columns are covered by eq/in conditions, we don't need to consider other conditions anymore.
 	if lastColPos == len(path.IdxCols) {
@@ -207,7 +209,7 @@ func indexJoinPathBuild(sctx planctx.PlanContext,
 			return nil, false, nil
 		}
 		remained = append(remained, rangeFilterCandidates...)
-		tempRangeRes := indexJoinPathBuildTmpRange(sctx, buildTmp, matchedKeyCnt, notKeyEqAndIn, nil, false, rangeMaxSize)
+		tempRangeRes := indexJoinPathBuildTmpRange(sctx, buildTmp, matchedKeyCnt, notKeyEqAndIn, nil, false, rangeMaxSize, rangeMaxCount)
 		if tempRangeRes.err != nil || tempRangeRes.emptyRange || tempRangeRes.keyCntInRange <= 0 {
 			return nil, tempRangeRes.emptyRange, tempRangeRes.err
 		}
@@ -236,7 +238,7 @@ func indexJoinPathBuild(sctx planctx.PlanContext,
 		var err error
 		if len(colAccesses) > 0 {
 			var colRemained2 []expression.Expression
-			nextColRange, colAccesses, colRemained2, err = ranger.BuildColumnRange(colAccesses, sctx.GetRangerCtx(), lastPossibleCol.RetType, path.IdxColLens[lastColPos], rangeMaxSize)
+			nextColRange, colAccesses, colRemained2, err = ranger.BuildColumnRange(colAccesses, sctx.GetRangerCtx(), lastPossibleCol.RetType, path.IdxColLens[lastColPos], rangeMaxSize, rangeMaxCount)
 			if err != nil {
 				return nil, false, err
 			}
@@ -245,7 +247,7 @@ func indexJoinPathBuild(sctx planctx.PlanContext,
 				nextColRange = nil
 			}
 		}
-		tempRangeRes := indexJoinPathBuildTmpRange(sctx, buildTmp, matchedKeyCnt, notKeyEqAndIn, nextColRange, false, rangeMaxSize)
+		tempRangeRes := indexJoinPathBuildTmpRange(sctx, buildTmp, matchedKeyCnt, notKeyEqAndIn, nextColRange, false, rangeMaxSize, rangeMaxCount)
 		if tempRangeRes.err != nil || tempRangeRes.emptyRange || tempRangeRes.keyCntInRange <= 0 {
 			return nil, tempRangeRes.emptyRange, tempRangeRes.err
 		}
@@ -267,7 +269,7 @@ func indexJoinPathBuild(sctx planctx.PlanContext,
 		ret := indexJoinPathConstructResult(sctx, indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, nil, lastColIsRange, lastColPos)
 		return ret, false, nil
 	}
-	tempRangeRes := indexJoinPathBuildTmpRange(sctx, buildTmp, matchedKeyCnt, notKeyEqAndIn, nil, true, rangeMaxSize)
+	tempRangeRes := indexJoinPathBuildTmpRange(sctx, buildTmp, matchedKeyCnt, notKeyEqAndIn, nil, true, rangeMaxSize, rangeMaxCount)
 	if tempRangeRes.err != nil || tempRangeRes.emptyRange {
 		return nil, tempRangeRes.emptyRange, tempRangeRes.err
 	}
@@ -444,7 +446,7 @@ func indexJoinPathBuildTmpRange(
 	eqAndInFuncs []expression.Expression,
 	nextColRange []*ranger.Range,
 	haveExtraCol bool,
-	rangeMaxSize int64) (res *indexJoinTmpRange) {
+	rangeMaxSize, rangeMaxCount int64) (res *indexJoinTmpRange) {
 	res = &indexJoinTmpRange{}
 	sc := sctx.GetSessionVars().StmtCtx
 	defer func() {
@@ -469,7 +471,7 @@ func indexJoinPathBuildTmpRange(
 			i++
 		} else {
 			exprs := []expression.Expression{eqAndInFuncs[j]}
-			oneColumnRan, _, remained, err := ranger.BuildColumnRange(exprs, sctx.GetRangerCtx(), buildTmp.curNotUsedIndexCols[j].RetType, buildTmp.curNotUsedColLens[j], rangeMaxSize)
+			oneColumnRan, _, remained, err := ranger.BuildColumnRange(exprs, sctx.GetRangerCtx(), buildTmp.curNotUsedIndexCols[j].RetType, buildTmp.curNotUsedColLens[j], rangeMaxSize, rangeMaxCount)
 			if err != nil {
 				return &indexJoinTmpRange{err: err}
 			}
@@ -486,7 +488,7 @@ func indexJoinPathBuildTmpRange(
 				return
 			}
 			var fallback bool
-			ranges, fallback = ranger.AppendRanges2PointRanges(ranges, oneColumnRan, rangeMaxSize)
+			ranges, fallback = ranger.AppendRanges2PointRanges(sctx.GetRangerCtx(), ranges, oneColumnRan, rangeMaxSize, rangeMaxCount)
 			if fallback {
 				sctx.GetSessionVars().StmtCtx.RecordRangeFallback(rangeMaxSize)
 				res.ranges = ranges
@@ -499,7 +501,7 @@ func indexJoinPathBuildTmpRange(
 	}
 	if len(nextColRange) > 0 {
 		var fallback bool
-		ranges, fallback = ranger.AppendRanges2PointRanges(ranges, nextColRange, rangeMaxSize)
+		ranges, fallback = ranger.AppendRanges2PointRanges(sctx.GetRangerCtx(), ranges, nextColRange, rangeMaxSize, rangeMaxCount)
 		if fallback {
 			sctx.GetSessionVars().StmtCtx.RecordRangeFallback(rangeMaxSize)
 		}
