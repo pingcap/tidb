@@ -142,6 +142,24 @@ impl AnalyzeJobLifecycle for PersistedAnalyzeJobs {
 }
 
 impl ClusterServerSession {
+    /// Runs Go `AutoAnalyze` through the same routed physical ANALYZE path as
+    /// a client statement while retaining its analyze-job identity.
+    pub(super) fn run_auto_analyze_sql(
+        &mut self,
+        sql: &str,
+    ) -> Result<WriteOutcome, SqlQueryError> {
+        self.rebuild_catalog_if_stale();
+        let super::StatementRoute::Analyze(mut tables) = self.schema_route(sql)? else {
+            return Err(SqlQueryError::unknown(
+                "auto analyze generated a non-ANALYZE statement",
+            ));
+        };
+        for statement in &mut tables {
+            statement.auto_analyze = true;
+        }
+        self.run_analyze(&tables)
+    }
+
     /// Applies client-transferred LOAD STATS bytes through the cluster handle.
     pub(super) fn run_load_stats(&mut self, data: &[u8]) -> Result<WriteOutcome, SqlQueryError> {
         if data.is_empty() {
@@ -295,6 +313,12 @@ impl ClusterServerSession {
             } else {
                 tidb_exec::cluster_analyze::AnalyzeColumnChoice::All
             };
+            statement.skip_column_types = self
+                .session
+                .vars()
+                .get_system(tidb_vardef::tidb_vars::TIDB_ANALYZE_SKIP_COLUMN_TYPES)
+                .map(|value| tidb_session::varsutil::parse_analyze_skip_column_types(&value))
+                .unwrap_or_default();
             statement.dynamic_partition_prune = !self
                 .session
                 .vars()

@@ -290,6 +290,26 @@ fn unary_schema(plan: &PhysicalPlan, child: &dyn Executor) -> Schema {
         .unwrap_or_else(|| child.schema().clone())
 }
 
+/// Go `retrieveColumnIdxsUsedByChild`: returns the child-column projection
+/// needed when a physical schema producer has pruned or reordered its output.
+/// A missing column cancels inline projection, matching Go's executor builder.
+fn inline_projection_offsets(output: &Schema, child: &Schema) -> Option<Vec<usize>> {
+    let mut offsets = Vec::with_capacity(output.len());
+    for column in &output.columns {
+        let offset = child.column_index(column);
+        if offset < 0 {
+            return None;
+        }
+        offsets.push(offset as usize);
+    }
+    (offsets.len() != child.len()
+        || offsets
+            .iter()
+            .enumerate()
+            .any(|(output, child)| output != *child))
+    .then_some(offsets)
+}
+
 fn meta(plan: &PhysicalPlan, schema: Schema) -> ExecutorMeta {
     ExecutorMeta::new(
         schema,
@@ -2779,6 +2799,7 @@ fn build_with_state(
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             let schema = unary_schema(plan, child.as_ref());
+            let output_offsets = inline_projection_offsets(&schema, child.schema());
             Ok(Box::new(
                 TopNExec::new(
                     meta(plan, schema),
@@ -2789,6 +2810,7 @@ fn build_with_state(
                     topn.count,
                     ctx.statement_memory(),
                 )
+                .with_output_offsets(output_offsets)
                 .with_parallelism(ctx.executor_concurrency()),
             ) as Box<dyn Executor>)
         }

@@ -120,20 +120,30 @@ fn auto_analyze_priority_queue_uses_shared_stats_ddl_and_ordinary_analyze_path()
         .open_session(session_context(140))
         .expect("session opens");
     rows(&mut session, "USE test");
-    rows(&mut session, "CREATE TABLE queue_analyze (a INT)");
+    rows(&mut session, "CREATE TABLE queue_analyze (a INT, b INT)");
     rows(&mut session, "CREATE TABLE queue_drop (a INT)");
+    rows(&mut session, "CREATE TABLE queue_locked (a INT)");
     let values = (0..1_000)
         .map(|_| "(1)".to_owned())
         .collect::<Vec<_>>()
         .join(",");
+    let pairs = (0..1_000)
+        .map(|_| "(1,1)".to_owned())
+        .collect::<Vec<_>>()
+        .join(",");
     rows(
         &mut session,
-        &format!("INSERT INTO queue_analyze VALUES {values}"),
+        &format!("INSERT INTO queue_analyze VALUES {pairs}"),
     );
     rows(
         &mut session,
         &format!("INSERT INTO queue_drop VALUES {values}"),
     );
+    rows(
+        &mut session,
+        &format!("INSERT INTO queue_locked VALUES {values}"),
+    );
+    rows(&mut session, "LOCK STATS queue_locked");
     let reloads = stack._stats_reloader.stats().reloads;
     rows(&mut session, "FLUSH STATS_DELTA *.*");
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
@@ -156,7 +166,23 @@ fn auto_analyze_priority_queue_uses_shared_stats_ddl_and_ordinary_analyze_path()
         .expect("drop table exists")
         .1
         .id;
+    let locked_id = catalog
+        .find_table("test", "queue_locked")
+        .expect("locked table exists")
+        .1
+        .id;
     drop(catalog);
+    rows(
+        &mut session,
+        &format!(
+            "INSERT INTO mysql.column_stats_usage(table_id,column_id,last_used_at) \
+             VALUES ({analyze_id},1,CURRENT_TIMESTAMP)"
+        ),
+    );
+    rows(
+        &mut session,
+        "SET GLOBAL tidb_analyze_column_options = 'PREDICATE'",
+    );
 
     let refresher = factory.auto_analyze_refresher(Duration::ZERO);
     let queue = factory.auto_analyze_priority_queue(Duration::ZERO);
@@ -176,11 +202,218 @@ fn auto_analyze_priority_queue_uses_shared_stats_ddl_and_ordinary_analyze_path()
     assert!(refresher.running_jobs().is_empty());
     assert_eq!(refresher.len(), 0);
     drop(refresher);
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT job_info, state FROM mysql.analyze_jobs \
+             WHERE table_name = 'queue_analyze' ORDER BY id",
+        )),
+        [[
+            "auto analyze table column a with 256 buckets, 100 topn, 1 samplerate",
+            "finished",
+        ]]
+    );
 
     factory.handle_auto_analyze_tick(false, Duration::ZERO);
     assert!(!queue.is_initialized());
+    rows(&mut session, "UNLOCK STATS queue_locked");
+    let reloads = stack._stats_reloader.stats().reloads;
+    rows(&mut session, "FLUSH STATS_DELTA *.*");
+    let reload_deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while stack._stats_reloader.stats().reloads == reloads {
+        assert!(
+            std::time::Instant::now() < reload_deadline,
+            "statistics update did not run after unlocking the table"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    rows(
+        &mut session,
+        "SET GLOBAL tidb_analyze_column_options = 'ALL'",
+    );
     factory.handle_auto_analyze_tick(true, Duration::ZERO);
     assert!(queue.is_initialized());
+    let refresher = factory.auto_analyze_refresher(Duration::ZERO);
+    refresher
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .wait_auto_analyze_finished();
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT job_info, state FROM mysql.analyze_jobs \
+             WHERE table_name = 'queue_locked' ORDER BY id",
+        )),
+        [[
+            "auto analyze table all columns with 256 buckets, 100 topn, 1 samplerate",
+            "finished",
+        ]]
+    );
+    assert_ne!(locked_id, analyze_id);
+}
+
+/// Pinned root `TestAutoAnalyzeSkipColumnTypes`: auto analyze reads the live
+/// GLOBAL skip list, retains index-mandatory columns, and records the same
+/// selected-column job shape as ordinary ANALYZE planning.
+#[test]
+fn auto_analyze_skips_configured_column_types_like_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let factory = Arc::new(stack.factory);
+    factory
+        .campaign_stats_owner()
+        .expect("stats owner campaigns");
+    let owner_deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while !factory
+        .stats_owner
+        .as_ref()
+        .expect("stats owner")
+        .is_owner()
+    {
+        assert!(std::time::Instant::now() < owner_deadline);
+        std::thread::yield_now();
+    }
+    let mut session = factory
+        .open_session(session_context(142))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "CREATE TABLE queue_skip_types (a INT, c JSON, d VARCHAR(32), INDEX idx_d(d))",
+    );
+    let values = (0..1_000)
+        .map(|_| "(1,NULL,'value')".to_owned())
+        .collect::<Vec<_>>()
+        .join(",");
+    rows(
+        &mut session,
+        &format!("INSERT INTO queue_skip_types VALUES {values}"),
+    );
+    let reloads = stack._stats_reloader.stats().reloads;
+    rows(&mut session, "FLUSH STATS_DELTA *.*");
+    let reload_deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while stack._stats_reloader.stats().reloads == reloads {
+        assert!(std::time::Instant::now() < reload_deadline);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    rows(
+        &mut session,
+        "SET GLOBAL tidb_analyze_skip_column_types = 'json'",
+    );
+
+    factory.handle_auto_analyze_tick(true, Duration::ZERO);
+    factory
+        .auto_analyze_refresher(Duration::ZERO)
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .wait_auto_analyze_finished();
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT job_info, state FROM mysql.analyze_jobs \
+             WHERE table_name = 'queue_skip_types' ORDER BY id",
+        )),
+        [[
+            "auto analyze table all indexes, columns a, d with 256 buckets, 100 topn, 1 samplerate",
+            "finished",
+        ]]
+    );
+}
+
+/// Pinned planner `TestAutoAnalyzeForMissingPartition`: under dynamic pruning
+/// and `tidb_skip_missing_partition_stats`, auto analyze fills the physical
+/// partitions that ordinary partition ANALYZE intentionally left missing.
+#[test]
+fn auto_analyze_fills_missing_partition_statistics_like_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let factory = Arc::new(stack.factory);
+    factory
+        .campaign_stats_owner()
+        .expect("stats owner campaigns");
+    let owner_deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while !factory
+        .stats_owner
+        .as_ref()
+        .expect("stats owner")
+        .is_owner()
+    {
+        assert!(
+            std::time::Instant::now() < owner_deadline,
+            "statistics ownership was not acquired"
+        );
+        std::thread::yield_now();
+    }
+    let mut session = factory
+        .open_session(session_context(141))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "SET GLOBAL tidb_skip_missing_partition_stats = ON",
+    );
+    rows(
+        &mut session,
+        "SET GLOBAL tidb_partition_prune_mode = 'dynamic'",
+    );
+    rows(&mut session, "SET GLOBAL tidb_auto_analyze_ratio = 0.01");
+    rows(
+        &mut session,
+        "CREATE TABLE missing_partition_stats (a INT, b INT, c INT, INDEX idx_b(b)) \
+         PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (100), \
+         PARTITION p1 VALUES LESS THAN (200), PARTITION p2 VALUES LESS THAN (300))",
+    );
+    let values = [1, 101, 201]
+        .into_iter()
+        .flat_map(|value| std::iter::repeat_n(format!("({value},{value},{value})"), 1_000))
+        .collect::<Vec<_>>()
+        .join(",");
+    rows(
+        &mut session,
+        &format!("INSERT INTO missing_partition_stats VALUES {values}"),
+    );
+    let reloads = stack._stats_reloader.stats().reloads;
+    rows(&mut session, "FLUSH STATS_DELTA *.*");
+    let reload_deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while stack._stats_reloader.stats().reloads == reloads {
+        assert!(
+            std::time::Instant::now() < reload_deadline,
+            "statistics update did not run after FLUSH STATS_DELTA"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    rows(
+        &mut session,
+        "ANALYZE TABLE missing_partition_stats PARTITION p1",
+    );
+
+    factory.handle_auto_analyze_tick(true, Duration::ZERO);
+    let refresher = factory.auto_analyze_refresher(Duration::ZERO);
+    refresher
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .wait_auto_analyze_finished();
+
+    let meta = displayed(rows(
+        &mut session,
+        "SHOW STATS_META WHERE table_name = 'missing_partition_stats'",
+    ));
+    for partition in ["p0", "p2"] {
+        assert!(
+            meta.iter()
+                .any(|row| row[2] == partition && row[5] == "1000"),
+            "auto analyze did not publish {partition}: {meta:?}"
+        );
+    }
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT COUNT(*) FROM mysql.analyze_jobs WHERE \
+             table_name = 'missing_partition_stats' AND state = 'finished' AND \
+             job_info LIKE 'auto analyze table%'",
+        )),
+        [["2"]]
+    );
 }
 
 /// Pinned DDL subscriber `ActionCreateTable`, `ActionTruncateTable`, and

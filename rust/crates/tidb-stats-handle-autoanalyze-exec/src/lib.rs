@@ -94,17 +94,17 @@ fn exec_options<C: AutoAnalyzeSessionContext + ?Sized>(
     sql: &str,
     arguments: &[SqlArg<'_>],
 ) -> (u64, Vec<OptionFuncAlias>) {
-    if need_version_rewrite_warn {
-        let escaped = tidb_util::sqlescape::escape_sql(sql, arguments)
+    let escaped = need_version_rewrite_warn.then(|| {
+        tidb_util::sqlescape::escape_sql(sql, arguments)
             .ok()
             .and_then(|sql| String::from_utf8(sql).ok())
-            .unwrap_or_else(|| sql.to_owned());
-        tidb_stats_handle_logutil::stats_logger().warn(
-            "auto analyze rewrites legacy statistics version 1 to version 2",
-            &[Field::new("sql", Value::Str(escaped))],
-        );
-    }
-    debug_assert_eq!(stats_version, 2, "auto analyze should use stats version 2");
+            .unwrap_or_else(|| sql.to_owned())
+    });
+    record_auto_analyze_version(
+        stats_version,
+        need_version_rewrite_warn,
+        escaped.as_deref().unwrap_or(sql),
+    );
     let process_id = generator.auto_analyze_proc_id();
     let tracker = Arc::new(AutoAnalyzeTracker::new(track, untrack));
     let track = {
@@ -122,6 +122,21 @@ fn exec_options<C: AutoAnalyzeSessionContext + ?Sized>(
             sys_proc_track_option(process_id, track, untrack),
         ],
     )
+}
+
+/// Applies Go `execOptionForAnalyzeVersion` to an already rendered statement.
+pub fn record_auto_analyze_version(
+    stats_version: i32,
+    need_version_rewrite_warn: bool,
+    rendered_sql: &str,
+) {
+    if need_version_rewrite_warn {
+        tidb_stats_handle_logutil::stats_logger().warn(
+            "auto analyze rewrites legacy statistics version 1 to version 2",
+            &[Field::new("sql", Value::Str(rendered_sql.to_owned()))],
+        );
+    }
+    debug_assert_eq!(stats_version, 2, "auto analyze should use stats version 2");
 }
 
 /// Go `RunAnalyzeStmt`.

@@ -357,7 +357,11 @@ impl ResolvedClusterAnalyze {
                 .then(|| index.name.original().to_owned())
             })
             .collect::<Vec<_>>();
-        let mut job_info = "analyze table".to_owned();
+        let mut job_info = if self.statement.auto_analyze {
+            "auto analyze table".to_owned()
+        } else {
+            "analyze table".to_owned()
+        };
         if !indexes.is_empty() {
             let public_count = self
                 .table
@@ -441,7 +445,11 @@ impl ResolvedClusterAnalyze {
             schema: self.statement.schema.clone(),
             table: self.statement.table.clone(),
             partition: String::new(),
-            job_info: format!("analyze index {name}"),
+            job_info: if self.statement.auto_analyze {
+                format!("auto analyze index {name}")
+            } else {
+                format!("analyze index {name}")
+            },
         }
     }
 
@@ -594,6 +602,8 @@ pub fn resolve_cluster_analyze_statement<
             if let Some(selected) = selected.as_mut() {
                 add_mandatory_columns(&table, selected);
             }
+            selected =
+                filter_skipped_column_types(&table, selected, &target_statement.skip_column_types);
             selections.insert(options.physical_id, selected);
             predicate_columns_empty.insert(options.physical_id, empty);
         }
@@ -2378,6 +2388,8 @@ fn selected_columns_for_choice<S: crate::cluster_catalog::MetaSnapshot>(
     let statement = AnalyzeStatement {
         schema: String::new(),
         table: String::new(),
+        auto_analyze: false,
+        skip_column_types: std::collections::BTreeSet::new(),
         partitions: Vec::new(),
         index_names: None,
         columns: choice.clone(),
@@ -2442,6 +2454,53 @@ fn add_mandatory_columns(table: &tidb_model::table_info::TableInfo, selected: &m
     }
 }
 
+/// Go `PlanBuilder.filterSkipColumnTypes`: skipped scalar types are omitted
+/// unless an ordinary index or handle requires them; vector columns are
+/// always omitted, and virtual generated columns depending on an omitted
+/// base column are omitted as well.
+fn filter_skipped_column_types(
+    table: &tidb_model::table_info::TableInfo,
+    selected: Option<HashSet<i64>>,
+    skip_types: &std::collections::BTreeSet<String>,
+) -> Option<HashSet<i64>> {
+    let columns = table.cols().iter_deref().collect::<Vec<_>>();
+    let mut selected = selected.unwrap_or_else(|| {
+        columns
+            .iter()
+            .map(|column| column.read().id)
+            .collect::<HashSet<_>>()
+    });
+    let mut mandatory = HashSet::new();
+    add_mandatory_columns(table, &mut mandatory);
+    let mut skipped_names = HashSet::new();
+    for column in &columns {
+        let column = column.read();
+        let vector = column.field_type.code() == tidb_datatype::FieldTypeCode::VectorFloat32;
+        let skipped = skip_types.contains(tidb_datatype::type_to_str(
+            column.field_type.code(),
+            column.field_type.charset_name(),
+        ));
+        if vector || (skipped && !mandatory.contains(&column.id)) {
+            selected.remove(&column.id);
+            skipped_names.insert(column.name.lowercase().to_owned());
+        }
+    }
+    for column in &columns {
+        let column = column.read();
+        if !column.is_generated() || (column.generated_stored && mandatory.contains(&column.id)) {
+            continue;
+        }
+        if column.dependences.snapshot().iter().any(|dependency| {
+            dependency
+                .as_utf8()
+                .is_ok_and(|dependency| skipped_names.contains(&dependency.to_ascii_lowercase()))
+        }) {
+            selected.remove(&column.id);
+        }
+    }
+    (selected.len() != columns.len()).then_some(selected)
+}
+
 fn classify_commit_outcome(outcome: &OptimisticCommitOutcome) -> Result<(), ClusterAnalyzeError> {
     match commit_outcome_to_sql_error(outcome) {
         Ok(()) => Ok(()),
@@ -2456,12 +2515,13 @@ fn classify_commit_outcome(outcome: &OptimisticCommitOutcome) -> Result<(), Clus
 mod tests {
     use super::{
         analyze_partition_ids, automatic_sample_rate, classify_commit_outcome, fail_analyze_jobs,
-        final_column_choice, merge_global_items, realtime_count_of, record_global_history_enabled,
-        select_index_tasks, slow_stats_save_needs_version_refresh, write_global_stats_items,
-        AnalyzeJobHandle, AnalyzeJobKind, AnalyzeJobLifecycle, AnalyzeJobProgress, AnalyzeJobSpec,
-        ApproximateTableCountProvider, ClusterAnalyzeError, ANALYZE_JOB_MAX_DELTA,
+        filter_skipped_column_types, final_column_choice, merge_global_items, realtime_count_of,
+        record_global_history_enabled, select_index_tasks, slow_stats_save_needs_version_refresh,
+        write_global_stats_items, AnalyzeJobHandle, AnalyzeJobKind, AnalyzeJobLifecycle,
+        AnalyzeJobProgress, AnalyzeJobSpec, ApproximateTableCountProvider, ClusterAnalyzeError,
+        ANALYZE_JOB_MAX_DELTA,
     };
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet, HashSet};
     use std::thread;
     use std::time::Duration;
     use tidb_ast::CiString;
@@ -2664,6 +2724,8 @@ mod tests {
         AnalyzeStatement {
             schema: "test".to_owned(),
             table: "t".to_owned(),
+            auto_analyze: false,
+            skip_column_types: std::collections::BTreeSet::new(),
             partitions: Vec::new(),
             index_names: None,
             columns: AnalyzeColumnChoice::All,
@@ -2736,6 +2798,48 @@ mod tests {
         let tasks = select_index_tasks(&table, &statement).unwrap();
         assert!(tasks.run_full_sampling);
         assert_eq!(tasks.independent_index_ids, vec![7]);
+    }
+
+    #[test]
+    fn skipped_analyze_types_keep_index_columns_and_always_drop_vectors() {
+        let mut plain = ColumnInfo::new(1, "plain", FieldType::new(FieldTypeCode::Long));
+        plain.offset = 0;
+        let mut json = ColumnInfo::new(2, "json_col", FieldType::new(FieldTypeCode::Json));
+        json.offset = 1;
+        let mut indexed_blob =
+            ColumnInfo::new(3, "indexed_blob", FieldType::new(FieldTypeCode::Blob));
+        indexed_blob.offset = 2;
+        let mut vector = ColumnInfo::new(
+            4,
+            "vector_col",
+            FieldType::new(FieldTypeCode::VectorFloat32),
+        );
+        vector.offset = 3;
+        let table = TableInfo {
+            columns: vec![plain, json, indexed_blob, vector].into(),
+            indices: vec![IndexInfo {
+                id: 7,
+                state: tidb_model::SchemaState::PUBLIC,
+                columns: vec![IndexColumn {
+                    name: CiString::new("indexed_blob"),
+                    offset: 2,
+                    ..IndexColumn::default()
+                }]
+                .into(),
+                ..IndexInfo::default()
+            }]
+            .into(),
+            ..TableInfo::default()
+        };
+
+        assert_eq!(
+            filter_skipped_column_types(
+                &table,
+                None,
+                &BTreeSet::from(["json".to_owned(), "blob".to_owned()]),
+            ),
+            Some(HashSet::from([1, 3]))
+        );
     }
 
     #[test]

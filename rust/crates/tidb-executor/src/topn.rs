@@ -97,6 +97,9 @@ pub struct TopNExec<C: Columns> {
     /// Go `ByItems`.
     by_items: Vec<SortByItem>,
     child: Box<dyn Executor>,
+    /// Go `ColumnIdxsUsedByChild`: inline projection applied only while
+    /// emitting retained child rows, after all ordering comparisons finish.
+    column_idxs_used_by_child: Option<Vec<usize>>,
     ctx: C,
     /// Go `Limit.Offset`: how many of the ordered rows to drop.
     offset: u64,
@@ -260,6 +263,7 @@ where
             meta,
             by_items,
             child,
+            column_idxs_used_by_child: None,
             ctx,
             offset,
             total_limit: offset + count,
@@ -287,6 +291,14 @@ where
     #[must_use]
     pub fn with_parallelism(mut self, parallelism: usize) -> Self {
         self.parallelism = parallelism.max(1);
+        self
+    }
+
+    /// Installs Go's inline projection from child columns to this TopN's
+    /// output schema. `None` means both schemas have identical column order.
+    #[must_use]
+    pub fn with_output_offsets(mut self, offsets: Option<Vec<usize>>) -> Self {
+        self.column_idxs_used_by_child = offsets;
         self
     }
 
@@ -640,7 +652,7 @@ where
                 };
                 let run_id = head.run_id;
                 if self.merged >= self.offset {
-                    runs[run_id].take_head_into(req);
+                    runs[run_id].take_head_into(req, self.column_idxs_used_by_child.as_deref());
                 } else {
                     runs[run_id].drop_head();
                 }
@@ -752,7 +764,10 @@ where
         let remaining = self.heap.len().saturating_sub(self.heap.idx());
         let batch = req.required_rows().min(remaining);
         for _ in 0..batch {
-            req.append_row(self.heap.row_at(self.heap.idx()));
+            req.append_row_by_col_idxs(
+                self.heap.row_at(self.heap.idx()),
+                self.column_idxs_used_by_child.as_deref(),
+            );
             self.heap.advance_idx();
         }
         Ok(())
@@ -1041,6 +1056,37 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Go `TopNExec.ColumnIdxsUsedByChild`: ordering uses the complete child
+    /// row, while output applies the physical TopN's pruned/reordered schema.
+    #[test]
+    fn topn_applies_inline_projection_only_when_emitting_rows() {
+        let rows = vec![
+            vec![Some(10), Some(3), Some(100)],
+            vec![Some(20), Some(1), Some(200)],
+            vec![Some(30), Some(2), Some(300)],
+        ];
+        let child_schema = schema_of(3);
+        let output_schema = Schema::new(vec![
+            child_schema.columns[2].clone(),
+            child_schema.columns[0].clone(),
+        ]);
+        let mut exec = TopNExec::new(
+            ExecutorMeta::new(output_schema, 1, 4, 32),
+            by(&[(1, false)]),
+            source(&rows, 3, 2),
+            NoColumns,
+            0,
+            2,
+            StatementMemory::default(),
+        )
+        .with_output_offsets(Some(vec![2, 0]));
+
+        assert_eq!(
+            drain(&mut exec),
+            vec![vec![Some(200), Some(20)], vec![Some(300), Some(30)]]
+        );
     }
 
     #[test]

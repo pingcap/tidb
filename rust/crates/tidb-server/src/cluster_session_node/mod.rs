@@ -3084,24 +3084,25 @@ impl tidb_stats_handle_autoanalyze_priorityqueue::AnalysisJobContext
 
     fn auto_analyze(
         &self,
-        _stats_version: i32,
-        _need_version_rewrite_warning: bool,
+        stats_version: i32,
+        need_version_rewrite_warning: bool,
         sql: &str,
         arguments: &[String],
     ) -> bool {
         let Ok(sql) = bind_identifier_sql(sql, arguments) else {
             return false;
         };
+        tidb_stats_handle_autoanalyze_exec::record_auto_analyze_version(
+            stats_version,
+            need_version_rewrite_warning,
+            &sql,
+        );
         self.open_session()
             .and_then(|mut session| {
                 session
-                    .execute_write(&sql)
+                    .run_auto_analyze_sql(&sql)
                     .map_err(|error| error.message)
-                    .and_then(|outcome| {
-                        outcome
-                            .map(|_| ())
-                            .ok_or_else(|| "ANALYZE did not use the write route".to_owned())
-                    })
+                    .map(|_| ())
             })
             .is_ok()
     }

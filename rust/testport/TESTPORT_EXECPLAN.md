@@ -906,12 +906,15 @@ For each bounded behavior cluster:
       parameters, DDL registration, worker concurrency, ANALYZE execution,
       panic recovery, and stats effects. Inventory is in
       `receipts/statistics_handle_autoanalyze_refresher_audit.md`.
-- [x] Audit the complete pinned root `pkg/statistics/handle/autoanalyze`
-      package. Remove the unconsumed five-scalar `NeedAnalyzeTable` extraction
-      and its six source-absent tests. Go owns the composed stats-handle,
-      priority-queue/refresher, legacy randomized scheduler, analyze-job SQL
-      lifecycle, locks, time windows, server cleanup, and cache effects.
-      Inventory is in `receipts/statistics_handle_autoanalyze_root_audit.md`.
+- [x] Complete the pinned root `pkg/statistics/handle/autoanalyze` package as
+      one composition unit. Its complete production/test/build inventory maps
+      to the live priority queue/refresher, statistics owner, system sessions,
+      ordinary physical ANALYZE path, job cleanup, locks, windows, skipped
+      types, and cache publication. Queue SQL now keeps Go's automatic job
+      identity, and the stale planner missing-partition gap is executable in
+      the server owner. The package decision and all 14 original test
+      dispositions are in
+      `receipts/statistics_handle_autoanalyze_root_audit.md`.
 - [x] Audit the complete pinned external test packages
       `pkg/statistics/handle/handletest` and its `analyze`, `initstats`,
       `lockstats`, and `statstest` children. Remove two origin/master batch

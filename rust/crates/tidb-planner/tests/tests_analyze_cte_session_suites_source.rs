@@ -23,7 +23,6 @@
 //! | Go function | Rust test |
 //! | --- | --- |
 //! | `tests/analyze/analyze_test.go:28 TestAnalyzeVirtualColumns` | [`analyze_virtual_columns_all_columns_succeeds`] |
-//! | `tests/analyze/analyze_test.go:45 TestAutoAnalyzeForMissingPartition` | [`auto_analyze_missing_partition_fills_skipped_stats`] |
 //! | `tests/analyze/main_test.go:25 TestMain` | — skipped-reason |
 //! | `tests/cte/cte_test.go:23 TestCTEWithDifferentSchema` | [`cte_with_different_schema_view_plans_to_cte_full_scan`] |
 //! | `tests/cte/main_test.go:25 TestMain` | — skipped-reason |
@@ -39,20 +38,6 @@
 #[test]
 #[ignore = "go-parity-gap: ANALYZE execution lives far outside tidb-planner's ported surface"]
 fn analyze_virtual_columns_all_columns_succeeds() {}
-
-/// GO PORT of `pkg/planner/core/tests/analyze/analyze_test.go:45
-/// TestAutoAnalyzeForMissingPartition`.
-///
-/// Re-derived contract with `tidb_skip_missing_partition_stats=1`,
-/// dynamic pruning and `AutoAnalyzeMinCnt=0` (:51-60): a range-partitioned
-/// table gets ONLY p1 analyzed while p0/p2 stay unanalyzed; then
-/// `StatsHandle.HandleAutoAnalyze()` must run auto-analyze WITHOUT missing
-/// partition stats errors, filling pseudo/absent partitions' statistics as
-/// observed via `GetPhysicalTableStats(...).Pseudo` flags afterwards
-/// (:61-103+). Pins that skipped-partition stats never block auto-analyze.
-#[test]
-#[ignore = "go-parity-gap: needs domain StatsHandle/auto-analyze worker absent from this crate"]
-fn auto_analyze_missing_partition_fills_skipped_stats() {}
 
 /// GO PORT of `pkg/planner/core/tests/cte/cte_test.go:23
 /// TestCTEWithDifferentSchema`.

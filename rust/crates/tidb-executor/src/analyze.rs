@@ -198,6 +198,13 @@ pub struct AnalyzeStatement {
     pub schema: String,
     /// The table's name.
     pub table: String,
+    /// Whether Go's restricted auto-analyze wrapper submitted this statement.
+    /// The ordinary executor path is shared; this marker only affects the
+    /// analyze-job identity exposed through `mysql.analyze_jobs`.
+    pub auto_analyze: bool,
+    /// Go `SessionVars.AnalyzeSkipColumnTypes`, refreshed from the GLOBAL
+    /// value for auto analyze before physical plan construction.
+    pub skip_column_types: std::collections::BTreeSet<String>,
     /// Explicit partition names. Empty means every partition.
     pub partitions: Vec<String>,
     /// `Some` for `ANALYZE TABLE ... INDEX`, including an empty vector for
@@ -528,6 +535,8 @@ pub fn lower_analyze_admin(
         tables.push(AnalyzeStatement {
             schema,
             table,
+            auto_analyze: false,
+            skip_column_types: std::collections::BTreeSet::new(),
             partitions: analyze.partitions.clone(),
             index_names: index_names.clone(),
             columns: columns.clone(),
