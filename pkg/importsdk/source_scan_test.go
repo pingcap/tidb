@@ -145,13 +145,13 @@ func TestScanAuroraSnapshotRejectsMultipleExportRoots(t *testing.T) {
 	require.Equal(t, int64(2), scanErr.Count)
 }
 
-func TestScanAuroraSnapshotRejectsAmbiguousLayout(t *testing.T) {
+func TestScanAuroraSnapshotRejectsUnsupportedPath(t *testing.T) {
 	root := t.TempDir()
-	writeSourceObject(t, root, "database/schema.valid/part.parquet", "b")
+	writeSourceObject(t, root, "database/database.valid/part-a.parquet", "b")
 	writeSourceObject(
 		t,
 		root,
-		"parent/first.table/database/schema.table/part.parquet",
+		"parent/first.table/database/schema.table/part-b.parquet",
 		"a",
 	)
 
@@ -159,7 +159,36 @@ func TestScanAuroraSnapshotRejectsAmbiguousLayout(t *testing.T) {
 	_, err := scanner.ScanSource(context.Background())
 	var scanErr *SourceScanError
 	require.ErrorAs(t, err, &scanErr)
-	require.Equal(t, SourceScanErrorAmbiguousLayout, scanErr.Code)
+	require.Equal(t, SourceScanErrorUnsupportedPath, scanErr.Code)
+	require.Equal(t, int64(1), scanErr.Count)
+}
+
+func TestScanAuroraSnapshotSupportsDottedPrefixAndIdentifiers(t *testing.T) {
+	root := t.TempDir()
+	writeSourceObject(
+		t,
+		root,
+		"prefix/customer.v1/export-123/db.with.dot/db.with.dot.users/1/part-00000-a.parquet",
+		"a",
+	)
+
+	result, err := newTestFileScanner(t, root).ScanSource(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, SourceLayoutAuroraRDSSnapshot, result.Layout)
+	require.Equal(t, "prefix/customer.v1/export-123", result.Evidence.ExportRoot)
+	require.Len(t, result.Tables, 1)
+	require.Equal(t, "db.with.dot", result.Tables[0].Database)
+	require.Equal(t, "users", result.Tables[0].Table)
+}
+
+func TestScanAuroraSnapshotRejectsParseFailureWithoutSuccessfulObject(t *testing.T) {
+	root := t.TempDir()
+	writeSourceObject(t, root, "db%zz/db.users/1/part-00000-a.parquet", "a")
+
+	_, err := newTestFileScanner(t, root).ScanSource(context.Background())
+	var scanErr *SourceScanError
+	require.ErrorAs(t, err, &scanErr)
+	require.Equal(t, SourceScanErrorUnsupportedPath, scanErr.Code)
 	require.Equal(t, int64(1), scanErr.Count)
 }
 

@@ -52,11 +52,30 @@ func TestParseAuroraSnapshotFilePath(t *testing.T) {
 		},
 		{
 			name:     "escaped identifiers",
-			path:     "my%20db/my%20db.order%2Eitems/1/part.parquet",
+			path:     "my%20db/my%20db.order%2Eitems/1/part-a.parquet",
 			matched:  true,
 			database: "my db",
 			schema:   "my db",
 			table:    "order.items",
+			form:     AuroraSnapshotPathFormBatched,
+		},
+		{
+			name:       "dotted export prefix",
+			path:       "prefix/customer.v1/export-123/db/db.users/1/part-00000-a.parquet",
+			matched:    true,
+			exportRoot: "prefix/customer.v1/export-123",
+			database:   "db",
+			schema:     "db",
+			table:      "users",
+			form:       AuroraSnapshotPathFormBatched,
+		},
+		{
+			name:     "dotted identifiers",
+			path:     "db.with.dot/db.with.dot.users/1/part-00000-a.parquet",
+			matched:  true,
+			database: "db.with.dot",
+			schema:   "db.with.dot",
+			table:    "users",
 			form:     AuroraSnapshotPathFormBatched,
 		},
 		{
@@ -89,16 +108,16 @@ func TestParseAuroraSnapshotFilePath(t *testing.T) {
 	}
 
 	result, matched, err := ParseAuroraSnapshotFilePath(
-		"parent/first.table/database/schema.table/part.parquet",
+		"db%zz/db.users/1/part-00000-a.parquet",
 	)
-	require.ErrorIs(t, err, ErrAmbiguousAuroraSnapshotPath)
+	require.Error(t, err)
 	require.True(t, matched)
 	require.Nil(t, result)
 
 	result, matched, err = ParseAuroraSnapshotFilePath(
 		"backup/v1.0/db1.t1.0000.parquet",
 	)
-	require.ErrorIs(t, err, ErrAmbiguousAuroraSnapshotPath)
-	require.True(t, matched)
+	require.NoError(t, err)
+	require.False(t, matched)
 	require.Nil(t, result)
 }

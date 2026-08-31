@@ -291,16 +291,15 @@ func (s *fileScanner) detectAuroraSource(
 		pathForms[parsed.Form] = struct{}{}
 	}
 
-	if len(result.files) == 0 {
-		return result, nil
-	}
-	result.matched = true
-
 	if parseFailures.count > 0 {
 		return nil, newSourceScanErrorWithCount(
 			parseFailureCode, parseFailures.count, parseFailures.samples, parseFailureCause,
 		)
 	}
+	if len(result.files) == 0 {
+		return result, nil
+	}
+	result.matched = true
 	if unmatched.count > 0 {
 		return nil, newSourceScanErrorWithCount(
 			SourceScanErrorMixedLayout, unmatched.count, unmatched.samples, nil,

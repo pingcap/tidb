@@ -16,7 +16,6 @@ package mydump
 
 import (
 	"net/url"
-	"regexp"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -39,27 +38,13 @@ func (auroraSnapshotRouter) Route(path string) (*RouteResult, error) {
 	}, nil
 }
 
-// AuroraSnapshotFilePattern matches the table layout documented for Amazon
-// Aurora and RDS snapshot exports. The source path may point at the export-task
-// root (the first capture is empty) or at one of its ancestors.
-//
-// Captures:
-//  1. path before the database directory
-//  2. database directory
-//  3. schema name
-//  4. table name
-//  5. directories below the table directory
-//  6. parquet file name
-const AuroraSnapshotFilePattern = `(?i)^/?((?:[^/]+/)*)([^/]+)/([^/.]+)\.([^/]+)/((?:[^/]+/)*)([^/]+\.parquet)$`
-
-var auroraSnapshotFileRegexp = regexp.MustCompile(AuroraSnapshotFilePattern)
-var genericParquetLeafRegexp = regexp.MustCompile(
-	`(?i)^[^/.]+\..+(?:\.[0-9]+)?(?:\.(?:snappy|gzip|gz|zstd|zst))?\.parquet$`,
-)
-
 // ErrAmbiguousAuroraSnapshotPath indicates that more than one directory
 // component could be interpreted as the schema.table base directory.
 var ErrAmbiguousAuroraSnapshotPath = errors.New("ambiguous Aurora/RDS snapshot-export path")
+
+// ErrUnsupportedAuroraSnapshotPath indicates that a path resembles an AWS
+// snapshot-export object but its database/schema.table hierarchy is invalid.
+var ErrUnsupportedAuroraSnapshotPath = errors.New("unsupported Aurora/RDS snapshot-export path")
 
 // AuroraSnapshotPathForm describes which AWS snapshot-export leaf layout was
 // observed.
@@ -104,30 +89,19 @@ func ParseAuroraSnapshotFilePath(path string) (*AuroraSnapshotFilePath, bool, er
 	}
 
 	components := strings.Split(normalizedPath, "/")
-	candidateCount := 0
-	// A table base component needs a database component immediately before it
-	// and at least the parquet leaf after it.
-	for i := 1; i < len(components)-1; i++ {
-		schema, table, found := strings.Cut(components[i], ".")
-		if found && schema != "" && table != "" {
-			candidateCount++
-		}
-	}
-	if candidateCount > 1 {
-		return nil, true, ErrAmbiguousAuroraSnapshotPath
-	}
-
-	matches := auroraSnapshotFileRegexp.FindStringSubmatch(normalizedPath)
-	if len(matches) == 0 {
+	if len(components) < 3 || !strings.HasPrefix(strings.ToLower(components[len(components)-1]), "part-") {
 		return nil, false, nil
 	}
-	// A direct-layout path whose leaf is also a complete generic
-	// schema.table parquet name has two valid interpretations. Do not let an
-	// unrelated dotted ancestor silently win merely because the Aurora router
-	// runs first (for example backup/v1.0/db1.t1.0000.parquet).
-	if matches[5] == "" && genericParquetLeafRegexp.MatchString(matches[6]) &&
-		!strings.HasPrefix(strings.ToLower(matches[6]), "part-") {
-		return nil, true, ErrAmbiguousAuroraSnapshotPath
+
+	form := AuroraSnapshotPathFormDirect
+	tableComponentIndex := len(components) - 2
+	if len(components) >= 4 && isDecimal(components[len(components)-2]) {
+		form = AuroraSnapshotPathFormBatched
+		tableComponentIndex--
+	}
+	databaseComponentIndex := tableComponentIndex - 1
+	if databaseComponentIndex < 0 {
+		return nil, true, ErrUnsupportedAuroraSnapshotPath
 	}
 
 	unescape := func(value string) (string, error) {
@@ -138,28 +112,58 @@ func ParseAuroraSnapshotFilePath(path string) (*AuroraSnapshotFilePath, bool, er
 		return result, nil
 	}
 
-	database, err := unescape(matches[2])
+	database, err := unescape(components[databaseComponentIndex])
 	if err != nil {
 		return nil, true, errors.Annotate(err, "invalid escaped database name")
 	}
-	schema, err := unescape(matches[3])
-	if err != nil {
-		return nil, true, errors.Annotate(err, "invalid escaped schema name")
+
+	// Aurora MySQL uses the database name as the schema name. Match the decoded
+	// database against every possible separator so dots inside an identifier do
+	// not make us split schema.table at the wrong position.
+	tableComponent := components[tableComponentIndex]
+	var schema, table string
+	for separator := strings.IndexByte(tableComponent, '.'); separator >= 0; {
+		decodedSchema, schemaErr := unescape(tableComponent[:separator])
+		decodedTable, tableErr := unescape(tableComponent[separator+1:])
+		if schemaErr != nil {
+			return nil, true, errors.Annotate(schemaErr, "invalid escaped schema name")
+		}
+		if tableErr != nil {
+			return nil, true, errors.Annotate(tableErr, "invalid escaped table name")
+		}
+		if decodedSchema == database && decodedTable != "" {
+			if schema != "" {
+				return nil, true, ErrAmbiguousAuroraSnapshotPath
+			}
+			schema, table = decodedSchema, decodedTable
+		}
+		next := strings.IndexByte(tableComponent[separator+1:], '.')
+		if next < 0 {
+			break
+		}
+		separator += next + 1
 	}
-	table, err := unescape(matches[4])
-	if err != nil {
-		return nil, true, errors.Annotate(err, "invalid escaped table name")
+	if schema == "" {
+		return nil, true, ErrUnsupportedAuroraSnapshotPath
 	}
 
-	form := AuroraSnapshotPathFormDirect
-	if matches[5] != "" {
-		form = AuroraSnapshotPathFormBatched
-	}
 	return &AuroraSnapshotFilePath{
-		ExportRoot: strings.TrimSuffix(matches[1], "/"),
+		ExportRoot: strings.Join(components[:databaseComponentIndex], "/"),
 		Database:   database,
 		Schema:     schema,
 		Table:      table,
 		Form:       form,
 	}, true, nil
+}
+
+func isDecimal(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	return true
 }
