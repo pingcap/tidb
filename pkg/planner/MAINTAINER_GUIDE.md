@@ -236,6 +236,9 @@ High-signal groups that are intentionally part of the key (non-exhaustive):
   checks, and other knobs that can alter plan selection/semantics
 - runtime semantics state: "dirty table" markers (union scan) and transaction
   flags that change locking/reads
+- `tidb_enable_plan_cache_dml_param_type_match` for point UPDATE plans whose
+  assignment conversion model changes with the feature. The switch currently
+  supports only prepared plan cache; non-prepared plan cache support is planned.
 - optional freshness invalidation: when enabled, a stats-version hash is
   included so fresh stats naturally force a miss
 

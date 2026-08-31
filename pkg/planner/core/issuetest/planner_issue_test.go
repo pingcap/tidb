@@ -424,3 +424,169 @@ func TestIssue67534PointUpdateAssignmentCasting(t *testing.T) {
 		))
 	}
 }
+
+func TestFix69990PointUpdateExecutorConversion(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_plan_cache_dml_param_type_match = ON")
+	tk.MustExec("create table t (id int primary key, uk int unique, i bigint, d decimal(10,2))")
+	tk.MustExec("insert into t values (1, 11, 0, 0), (2, 22, 0, 0)")
+
+	// PointGet by primary key: the marker keeps its current raw Datum and the
+	// executor performs the target-column conversion.
+	tk.MustExec("prepare p from 'update t set i = ?, d = ? where id = ?'")
+	tk.MustExec("set @i = 12, @d = 12.34, @id = 1")
+	tk.MustExec("execute p using @i, @d, @id")
+	tk.MustExec("set @i = 34, @d = 56.78")
+	tk.MustExec("execute p using @i, @d, @id")
+	tk.MustQuery("select i, d from t where id = 1").Check(testkit.Rows("34 56.78"))
+
+	// Unique-index PointGet and BatchPointGet share buildOrderedList and must
+	// therefore retain the same constant fast path.
+	tk.MustExec("prepare u from 'update t set i = ? where uk = ?'")
+	tk.MustExec("set @i = 45, @uk = 11")
+	tk.MustExec("execute u using @i, @uk")
+	tk.MustExec("prepare b from 'update t set i = ? where id in (?, ?)'")
+	tk.MustExec("set @i = 67, @id1 = 1, @id2 = 2")
+	tk.MustExec("execute b using @i, @id1, @id2")
+	tk.MustQuery("select id, i from t order by id").Check(testkit.Rows("1 67", "2 67"))
+
+	// Turning the feature off preserves the legacy source-specific cast path.
+	tk.MustExec("set tidb_enable_plan_cache_dml_param_type_match = OFF")
+	tk.MustExec("set @i = 89")
+	tk.MustExec("execute p using @i, @d, @id")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select i from t where id = 1").Check(testkit.Rows("89"))
+	tk.MustExec("set tidb_enable_plan_cache_dml_param_type_match = ON")
+	tk.MustExec("execute p using @i, @d, @id")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
+func TestFix69990PointUpdateCacheConversionOracle(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_plan_cache_dml_param_type_match = ON")
+	tk.MustExec("create table conversion_oracle (id int primary key, i tinyint, b bigint, d decimal(10,2))")
+	tk.MustExec("insert into conversion_oracle values (1, 0, 0, 0)")
+
+	type outcome struct {
+		err      string
+		warnings [][]any
+		row      [][]any
+	}
+	run := func(cacheEnabled bool, sqlMode, assignment, warmValue, testValue string) (outcome, bool) {
+		if cacheEnabled {
+			tk.MustExec("set tidb_enable_prepared_plan_cache = 1")
+		} else {
+			tk.MustExec("set tidb_enable_prepared_plan_cache = 0")
+		}
+		tk.MustExec("set @@sql_mode = ?", sqlMode)
+		tk.MustExec("prepare conversion_stmt from 'update conversion_oracle set " + assignment + " where id=1'")
+		if cacheEnabled {
+			tk.MustExec("set @v = ?", warmValue)
+			tk.MustExec("execute conversion_stmt using @v")
+			tk.MustExec("update conversion_oracle set i=0, b=0, d=0 where id=1")
+		}
+		if testValue == "<null>" {
+			tk.MustExec("set @v = null")
+		} else {
+			tk.MustExec("set @v = ?", testValue)
+		}
+		err := tk.ExecToErr("execute conversion_stmt using @v")
+		foundInPlanCache := tk.Session().GetSessionVars().FoundInPlanCache
+		warnings := tk.MustQuery("show warnings").Rows()
+		filteredWarnings := warnings[:0]
+		for _, warning := range warnings {
+			if len(warning) == 3 && warning[1] == "1105" && warning[2] == "skip prepared plan-cache: plan cache is disabled" {
+				continue
+			}
+			filteredWarnings = append(filteredWarnings, warning)
+		}
+		result := outcome{
+			warnings: filteredWarnings,
+			row:      tk.MustQuery("select i, b, d from conversion_oracle where id=1").Rows(),
+		}
+		if err != nil {
+			result.err = err.Error()
+		}
+		tk.MustExec("deallocate prepare conversion_stmt")
+		return result, foundInPlanCache
+	}
+
+	cases := []struct {
+		name       string
+		sqlMode    string
+		assignment string
+		warmValue  string
+		testValue  string
+		expectHit  bool
+	}{
+		{name: "strict invalid tinyint", sqlMode: "STRICT_TRANS_TABLES", assignment: "i=?", warmValue: "1", testValue: "x", expectHit: true},
+		{name: "strict tinyint overflow", sqlMode: "STRICT_TRANS_TABLES", assignment: "i=?", warmValue: "1", testValue: "999", expectHit: true},
+		{name: "non-strict tinyint overflow", sqlMode: "", assignment: "i=?", warmValue: "1", testValue: "999", expectHit: true},
+		{name: "non-strict bigint overflow", sqlMode: "", assignment: "b=?", warmValue: "1", testValue: "9223372036854775808", expectHit: true},
+		{name: "non-strict decimal rounding", sqlMode: "", assignment: "d=?", warmValue: "1.00", testValue: "1.239", expectHit: true},
+		{name: "sql null", sqlMode: "STRICT_TRANS_TABLES", assignment: "i=?", warmValue: "1", testValue: "<null>", expectHit: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tk.MustExec("update conversion_oracle set i=0, b=0, d=0 where id=1")
+			replan, _ := run(false, tc.sqlMode, tc.assignment, tc.warmValue, tc.testValue)
+			tk.MustExec("update conversion_oracle set i=0, b=0, d=0 where id=1")
+			cached, foundInPlanCache := run(true, tc.sqlMode, tc.assignment, tc.warmValue, tc.testValue)
+			require.Equal(t, tc.expectHit, foundInPlanCache)
+			require.Equal(t, replan, cached)
+		})
+	}
+}
+
+func TestFix69990PointUpdateUnifiedAssignmentConversion(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_plan_cache_dml_param_type_match = ON")
+	tk.MustExec("create table unified_conversion (id int primary key, u int unsigned, d decimal(10,2), e enum('a','b'), s set('a','b'), v varchar(8))")
+	tk.MustExec("insert into unified_conversion values (1, 0, 0, 'a', 'a', ''), (2, 0, 0, 'a', 'a', '')")
+
+	type outcome struct {
+		err      string
+		warnings [][]any
+		row      [][]any
+	}
+	run := func(sqlMode, assignment, predicate, id string) outcome {
+		tk.MustExec("set @@sql_mode = ?", sqlMode)
+		tk.MustExec("update unified_conversion set u=0, d=0, e='a', s='a', v='' where id in (1, 2)")
+		err := tk.ExecToErr("update unified_conversion set " + assignment + " where " + predicate)
+		result := outcome{
+			warnings: tk.MustQuery("show warnings").Rows(),
+			row:      tk.MustQuery("select u, d, e+0, s+0, v from unified_conversion where id=" + id).Rows(),
+		}
+		if err != nil {
+			result.err = err.Error()
+		}
+		return result
+	}
+
+	testCases := []struct {
+		name       string
+		sqlMode    string
+		assignment string
+	}{
+		{name: "unsigned negative", sqlMode: "", assignment: "u=-1"},
+		{name: "decimal expression", sqlMode: "", assignment: "d=1.239+0"},
+		{name: "explicit cast", sqlMode: "", assignment: "d=cast('2.345' as decimal(10,3))"},
+		{name: "enum integer", sqlMode: "STRICT_TRANS_TABLES", assignment: "e=2"},
+		{name: "set integer", sqlMode: "STRICT_TRANS_TABLES", assignment: "s=3"},
+		{name: "string conversion", sqlMode: "STRICT_TRANS_TABLES", assignment: "v=123"},
+		{name: "null", sqlMode: "", assignment: "d=null"},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			point := run(tc.sqlMode, tc.assignment, "id=1", "1")
+			logical := run(tc.sqlMode, tc.assignment, "id>1", "2")
+			require.Equal(t, logical, point)
+		})
+	}
+}

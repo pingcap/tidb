@@ -2295,27 +2295,29 @@ func buildOrderedList(ctx base.PlanContext, pointPlan base.Plan, list []*ast.Ass
 			return nil, nil, true
 		}
 		visitInfos = append(visitInfos, vs...)
-		castToTP := col.GetStaticType()
-		if (castToTP.GetType() == mysql.TypeEnum || castToTP.GetType() == mysql.TypeSet) &&
-			assign.Expr.GetType().EvalType() == types.ETInt {
-			castToTP.AddFlag(mysql.EnumSetAsIntFlag)
-		}
-		// Point-update builds assignment expressions directly in the planner.
-		// Keep the implicit CAST for most target column types so the fast path stays
-		// aligned with normal UPDATE typing, but do not CAST unsigned numeric targets:
-		// CAST(-1 AS UNSIGNED) wraps to MAX_UINT64, while UPDATE assignment conversion
-		// must be decided by executor-side table.CastValue under the current statement
-		// context and sql_mode.
-		//
-		// This applies to more than integer columns. Unsigned decimal/real also uses the
-		// CAST path which treats negative inputs as uint64 (e.g. -1 -> 1844...),
-		// diverging from assignment semantics.
-		isUnsignedNumericTarget := mysql.HasUnsignedFlag(castToTP.GetFlag()) &&
-			(castToTP.EvalType() == types.ETInt ||
-				castToTP.EvalType() == types.ETDecimal ||
-				castToTP.EvalType() == types.ETReal)
-		if !isUnsignedNumericTarget {
-			expr = expression.BuildCastFunction(ctx.GetExprCtx(), expr, castToTP)
+		if !ctx.GetSessionVars().EnablePlanCacheDMLParamTypeMatch {
+			castToTP := col.GetStaticType()
+			if (castToTP.GetType() == mysql.TypeEnum || castToTP.GetType() == mysql.TypeSet) &&
+				assign.Expr.GetType().EvalType() == types.ETInt {
+				castToTP.AddFlag(mysql.EnumSetAsIntFlag)
+			}
+			// Preserve the legacy PointGet assignment conversion model while the feature
+			// is disabled. It keeps an implicit CAST for most target column types, but
+			// does not CAST unsigned numeric targets:
+			// CAST(-1 AS UNSIGNED) wraps to MAX_UINT64, while UPDATE assignment conversion
+			// must be decided by executor-side table.CastValue under the current statement
+			// context and sql_mode.
+			//
+			// This applies to more than integer columns. Unsigned decimal/real also uses the
+			// CAST path which treats negative inputs as uint64 (e.g. -1 -> 1844...),
+			// diverging from assignment semantics.
+			isUnsignedNumericTarget := mysql.HasUnsignedFlag(castToTP.GetFlag()) &&
+				(castToTP.EvalType() == types.ETInt ||
+					castToTP.EvalType() == types.ETDecimal ||
+					castToTP.EvalType() == types.ETReal)
+			if !isUnsignedNumericTarget {
+				expr = expression.BuildCastFunction(ctx.GetExprCtx(), expr, castToTP)
+			}
 		}
 		if allAssignmentsAreConstant {
 			_, isConst := expr.(*expression.Constant)

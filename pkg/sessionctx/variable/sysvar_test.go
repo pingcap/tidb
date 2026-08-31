@@ -667,6 +667,38 @@ func TestNetBufferLength(t *testing.T) {
 	require.Equal(t, "524288", val) // unchanged
 }
 
+func TestPlanCacheDMLParamTypeMatchSysVar(t *testing.T) {
+	sv := GetSysVar(TiDBEnablePlanCacheDMLParamTypeMatch)
+	require.NotNil(t, sv)
+	require.True(t, sv.HasGlobalScope())
+	require.True(t, sv.HasSessionScope())
+	require.Equal(t, TypeBool, sv.Type)
+	require.Equal(t, Off, sv.Value)
+	require.False(t, sv.ReadOnly)
+
+	vars := NewSessionVars(nil)
+	for _, scope := range []ScopeFlag{ScopeGlobal, ScopeSession} {
+		for _, input := range []string{"ON", "on", "1"} {
+			value, err := sv.Validate(vars, input, scope)
+			require.NoError(t, err)
+			require.Equal(t, On, value)
+		}
+		for _, input := range []string{"OFF", "off", "0"} {
+			value, err := sv.Validate(vars, input, scope)
+			require.NoError(t, err)
+			require.Equal(t, Off, value)
+		}
+		for _, input := range []string{"2", "invalid", ""} {
+			_, err := sv.Validate(vars, input, scope)
+			require.Error(t, err)
+		}
+	}
+	require.NoError(t, sv.SetSessionFromHook(vars, On))
+	require.True(t, vars.EnablePlanCacheDMLParamTypeMatch)
+	require.NoError(t, sv.SetSessionFromHook(vars, Off))
+	require.False(t, vars.EnablePlanCacheDMLParamTypeMatch)
+}
+
 func TestTiDBBatchPendingTiFlashCount(t *testing.T) {
 	sv := GetSysVar(TiDBBatchPendingTiFlashCount)
 	vars := NewSessionVars(nil)

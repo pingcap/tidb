@@ -415,6 +415,15 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	hash = append(hash, bool2Byte(vars.StmtCtx.ForShareLockEnabledByNoop))
 	hash = append(hash, bool2Byte(vars.SharedLockPromotion))
 
+	// The PointGet UPDATE assignment-conversion feature changes the assignment
+	// expression shape. Keep ON and OFF plans isolated so
+	// toggling the feature cannot reuse an assignment built under the opposite
+	// conversion contract.
+	if _, ok := stmt.PreparedAst.Stmt.(*ast.UpdateStmt); ok {
+		hash = append(hash, '|')
+		hash = append(hash, bool2Byte(vars.EnablePlanCacheDMLParamTypeMatch))
+	}
+
 	return string(hash), binding, true, "", nil
 }
 

@@ -1419,6 +1419,10 @@ var defaultSysVars = []*SysVar{
 		s.EnablePreparedPlanCache = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanCacheDMLParamTypeMatch, Value: Off, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnablePlanCacheDMLParamTypeMatch = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPrepPlanCacheSize, Aliases: []string{TiDBSessionPlanCacheSize}, Value: strconv.FormatUint(uint64(DefTiDBPrepPlanCacheSize), 10), Type: TypeUnsigned, MinValue: 1, MaxValue: 100000, SetSession: func(s *SessionVars, val string) error {
 		uVal, err := strconv.ParseUint(val, 10, 64)
 		if err == nil {

@@ -906,6 +906,9 @@ const (
 
 	// TiDBEnablePrepPlanCache indicates whether to enable prepared plan cache
 	TiDBEnablePrepPlanCache = "tidb_enable_prepared_plan_cache"
+	// TiDBEnablePlanCacheDMLParamTypeMatch selects executor-side target-column
+	// conversion for point UPDATE assignments instead of the legacy planner cast.
+	TiDBEnablePlanCacheDMLParamTypeMatch = "tidb_enable_plan_cache_dml_param_type_match"
 	// TiDBPrepPlanCacheSize indicates the number of cached statements.
 	// This variable is deprecated, use tidb_session_plan_cache_size instead.
 	TiDBPrepPlanCacheSize = "tidb_prepared_plan_cache_size"
