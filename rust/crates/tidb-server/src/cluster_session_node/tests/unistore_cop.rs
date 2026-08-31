@@ -1577,6 +1577,59 @@ fn partition_analyze_jobs_match_go_task_shapes() {
     );
 }
 
+/// Pinned `pkg/statistics/handle/handletest/handle_test.go::TestIssue39336`:
+/// permissive zero-in DATETIME values must not make the dynamic partition
+/// global-statistics merge job fail.
+#[test]
+fn partition_global_analyze_finishes_with_zero_in_datetime_values() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(146))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "CREATE TABLE issue39336 (a DATETIME(3) DEFAULT NULL, b INT) \
+         PARTITION BY RANGE (b) (\
+         PARTITION p0 VALUES LESS THAN (1000),\
+         PARTITION p1 VALUES LESS THAN MAXVALUE)",
+    );
+    rows(&mut session, "SET @@sql_mode = ''");
+    rows(&mut session, "SET @@tidb_analyze_version = 2");
+    rows(&mut session, "SET @@tidb_partition_prune_mode = 'dynamic'");
+    rows(
+        &mut session,
+        "INSERT INTO issue39336 VALUES \
+         ('1000-00-09 00:00:00.000',1),\
+         ('1000-00-06 00:00:00.000',1),\
+         ('1000-00-06 00:00:00.000',1),\
+         ('2022-11-23 14:24:30.000',1),\
+         ('2022-11-23 14:24:32.000',1),\
+         ('2022-11-23 14:24:33.000',1),\
+         ('2022-11-23 14:24:35.000',1),\
+         ('2022-11-23 14:25:08.000',1001),\
+         ('2022-11-23 14:25:09.000',1001)",
+    );
+    rows(&mut session, "ANALYZE TABLE issue39336 WITH 0 TOPN");
+
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SHOW ANALYZE STATUS WHERE job_info LIKE 'merge global stats%' \
+             AND table_name = 'issue39336'",
+        ))
+        .into_iter()
+        .map(|row| (row[3].clone(), row[7].clone()))
+        .collect::<Vec<_>>(),
+        [(
+            "merge global stats for test.issue39336 columns".to_owned(),
+            "finished".to_owned(),
+        )]
+    );
+}
+
 /// Pinned `TestSystemTableDDLHasNoEvent`: `asyncNotifyEvent` suppresses every
 /// stats subscriber event for `metadef.IsMemOrSysDB`, so system-table DDL
 /// changes schema metadata but never creates or refreshes stats rows.

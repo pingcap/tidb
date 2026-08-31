@@ -2443,6 +2443,115 @@ mod statistics_request_tests {
         (catalog, table_id, column_id)
     }
 
+    fn index_pruning_catalog(partitioned: bool) -> (Catalog, i64, Vec<i64>, Vec<(String, i64)>) {
+        let mut catalog = Catalog::default();
+        let partition_clause = if partitioned {
+            " PARTITION BY HASH(a) PARTITIONS 4"
+        } else {
+            ""
+        };
+        crate::run_create_table_on(
+            &format!(
+                "CREATE TABLE t(\
+                    a INT, b INT, c INT, d INT, e INT, f INT, g INT, h INT,\
+                    i INT, j INT, k INT, l INT, m INT,\
+                    KEY ia(a), KEY iab(a,b), KEY iac(a,c), KEY iad(a,d),\
+                    KEY iae(a,e), KEY iaf(a,f), KEY iag(a,g), KEY iah(a,h),\
+                    KEY iai(a,i), KEY iaj(a,j), KEY iak(a,k), KEY ial(a,l),\
+                    KEY iam(a,m), KEY ib(b), KEY ibc(b,c), KEY ibd(b,d),\
+                    KEY ibe(b,e), KEY ic(c), KEY icd(c,d), KEY ice(c,e),\
+                    KEY icf(c,f), KEY id(d), KEY ide(d,e), KEY idf(d,f),\
+                    KEY ie(e), KEY ief(e,f), KEY if_idx(f)\
+                ){partition_clause}"
+            ),
+            &mut catalog,
+        )
+        .expect("index-pruning fixture DDL");
+        let TableEntry::Kv(table) = catalog.get_in("test", "t").expect("fixture table") else {
+            panic!("fixture is not a KV table")
+        };
+        let table_id = table.table_id;
+        let partition_ids = table
+            .partition()
+            .map(|partition| {
+                partition
+                    .definitions
+                    .iter()
+                    .map(|definition| definition.id)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let column_ids = table
+            .columns
+            .iter()
+            .map(|column| column.id)
+            .collect::<Vec<_>>();
+        let indexes = table
+            .indexes()
+            .iter()
+            .map(|index| (index.name.clone(), index.id))
+            .collect::<Vec<_>>();
+        let statistics = crate::access_cost::TableStatistics {
+            pseudo: false,
+            row_count: 4,
+            column_load_status: column_ids
+                .iter()
+                .copied()
+                .map(|id| (id, tidb_stats::StatsLoadedStatus::all_evicted()))
+                .collect(),
+            index_load_status: indexes
+                .iter()
+                .map(|(_, id)| (*id, tidb_stats::StatsLoadedStatus::all_evicted()))
+                .collect(),
+            column_stats_existence: column_ids.iter().copied().map(|id| (id, true)).collect(),
+            index_stats_existence: indexes.iter().map(|(_, id)| (*id, true)).collect(),
+            ..crate::access_cost::TableStatistics::default()
+        };
+        for physical_id in std::iter::once(table_id).chain(partition_ids.iter().copied()) {
+            catalog.set_table_statistics(physical_id, Arc::new(statistics.clone()));
+        }
+        (catalog, table_id, partition_ids, indexes)
+    }
+
+    fn clear_async_statistics_items() {
+        for item in tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.all_items() {
+            tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.delete(item.table_item_id);
+        }
+    }
+
+    fn requested_index_ids(table_id: i64) -> std::collections::HashSet<i64> {
+        tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
+            .all_items()
+            .into_iter()
+            .filter_map(|item| {
+                (item.table_item_id.table_id == table_id && item.table_item_id.is_index)
+                    .then_some(item.table_item_id.id)
+            })
+            .collect()
+    }
+
+    fn assert_only_indexes_starting_with_a_are_requested(
+        requested: &std::collections::HashSet<i64>,
+        indexes: &[(String, i64)],
+        capped: bool,
+    ) {
+        let starting_with_a = indexes
+            .iter()
+            .filter_map(|(name, id)| name.starts_with("ia").then_some(*id))
+            .collect::<std::collections::HashSet<_>>();
+        let unrelated = indexes
+            .iter()
+            .filter_map(|(name, id)| (!name.starts_with("ia")).then_some(*id))
+            .collect::<std::collections::HashSet<_>>();
+        assert!(!requested.is_empty());
+        assert!(requested.is_disjoint(&unrelated));
+        assert!(requested.is_subset(&starting_with_a));
+        if capped {
+            assert!(requested.len() < starting_with_a.len());
+            assert!(requested.len() <= 10);
+        }
+    }
+
     #[test]
     fn determinate_load_requests_one_analyzed_column_per_visited_table() {
         let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
@@ -2659,6 +2768,46 @@ mod statistics_request_tests {
         let items = catalog.statistics_load_items(&usage, true);
         assert!(items.iter().any(|item| item.table_item_id == column));
         assert!(!items.iter().any(|item| item.table_item_id.is_index));
+    }
+
+    /// Go `pkg/statistics/handle/handletest/handle_test.go`:
+    /// `TestPrunedIndexesNoAsyncStatsLoad` and its dynamic/static partition
+    /// variants. Drive the ordinary planner rule and inspect the same global
+    /// asynchronous demand boundary that Go drains with
+    /// `LoadNeededHistograms`.
+    #[test]
+    fn pruned_indexes_do_not_enter_async_statistics_demand() {
+        let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
+        clear_async_statistics_items();
+
+        for (partitioned, static_prune) in [(false, false), (true, false), (true, true)] {
+            let (catalog, table_id, partition_ids, indexes) = index_pruning_catalog(partitioned);
+            let context = crate::StmtContext::for_query()
+                .with_stats_load_policy(0, true, 0)
+                .with_opt_index_prune_threshold(1)
+                .with_static_partition_prune(static_prune);
+
+            crate::run_select_on("SELECT * FROM t WHERE a > 1", &catalog, &context)
+                .expect("ordinary planning and execution");
+
+            if static_prune {
+                assert!(!partition_ids.is_empty());
+                for partition_id in partition_ids {
+                    assert_only_indexes_starting_with_a_are_requested(
+                        &requested_index_ids(partition_id),
+                        &indexes,
+                        false,
+                    );
+                }
+            } else {
+                assert_only_indexes_starting_with_a_are_requested(
+                    &requested_index_ids(table_id),
+                    &indexes,
+                    true,
+                );
+            }
+            clear_async_statistics_items();
+        }
     }
 
     #[test]

@@ -1445,6 +1445,31 @@ mod tests {
         assert_eq!(bound.sql_string().unwrap(), "2024-05-05 05:05:05");
     }
 
+    /// Go `pkg/statistics/handle/handletest/handle_test.go::
+    /// TestLoadStatsForBitColumn`. ANALYZE stores a BIT bound as the decimal
+    /// text of its value; quoted input contributes its byte value before that
+    /// conversion (`"0"` is 48 and `"a"` is 97).
+    #[test]
+    fn bit_column_bounds_load_from_the_four_go_decimal_storage_cases() {
+        let cases = [
+            (1, b"0".as_slice(), 0_u8, b"1".as_slice(), 1_u8),
+            (2, b"2".as_slice(), 2_u8, b"3".as_slice(), 3_u8),
+            (6, b"48".as_slice(), 48_u8, b"49".as_slice(), 49_u8),
+            (7, b"97".as_slice(), 97_u8, b"98".as_slice(), 98_u8),
+        ];
+
+        for (flen, lower, expected_lower, upper, expected_upper) in cases {
+            let mut bit = field_type(FieldTypeCode::Bit);
+            bit.set_flen(flen);
+            let lower = decode_bound(lower.to_vec(), false, Some(&bit), "stats_buckets")
+                .expect("lower BIT bound converts");
+            let upper = decode_bound(upper.to_vec(), false, Some(&bit), "stats_buckets")
+                .expect("upper BIT bound converts");
+            assert_eq!(lower, Datum::Bit(BinaryLiteral::from(vec![expected_lower])));
+            assert_eq!(upper, Datum::Bit(BinaryLiteral::from(vec![expected_upper])));
+        }
+    }
+
     #[test]
     fn a_string_column_bound_stays_raw_bytes_because_it_may_be_a_collation_key() {
         // `b VARCHAR(32)`: the cluster stored "charlie". Under a new

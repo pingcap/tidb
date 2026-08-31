@@ -61,6 +61,35 @@ from its zero realtime count. A later shared-catalog rebuild reinstalls the
 cached LOCAL planner view rather than losing it with the session-owned
 metadata.
 
+Pinned `TestPrunedIndexesNoAsyncStatsLoad`,
+`TestPrunedIndexesNoAsyncStatsLoadPartitioned`, and
+`TestPrunedIndexesNoAsyncStatsLoadPartitionedStatic` now have one executable
+production-path Rust regression in
+`tidb-executor::driver::catalog::statistics_request_tests`. It constructs the
+same 13 `a`-prefixed and 14 unrelated indexes, invokes ordinary planning with
+zero synchronous wait and threshold one, and inspects the process-wide async
+demand map. Non-partitioned and dynamic pruning request a nonempty subset of
+at most ten `a` indexes and no unrelated index. Static pruning expands demand
+to every physical partition and, matching the pinned Go test's deliberately
+weaker contract, requires a nonempty `a` set and no unrelated index without
+asserting the ten-index cap. The test reads the production planner rule,
+retained-index filter, static partition expansion, and async publication
+boundary rather than a disconnected carrier.
+
+Pinned `TestLoadStatsForBitColumn` maps to the production
+`tidb-exec::cluster_stats_load::decode_bound` BIT branch and its executable
+four-case regression. It preserves Go's decimal storage form and reconstructs
+the exact values for `BIT(1)` 0/1, `BIT(2)` 2/3, quoted-byte `BIT(6)` 48/49,
+and quoted-byte `BIT(7)` 97/98. The string/collation-key and index-key byte
+branches remain separate, as they are in Go.
+
+Pinned `TestIssue39336` now has an exact Unistore production-path regression.
+With empty SQL mode, Analyze v2, and dynamic partition pruning, Rust accepts
+the source test's nine DATETIME(3) rows (including the zero-in month values),
+analyzes both partitions with zero TopN, merges the global column statistics,
+and exposes exactly one matching `SHOW ANALYZE STATUS` row in `finished`
+state.
+
 The package is still not claimed: this receipt has not yet reconciled all 30
 original tests one by one against executable Rust owners and the complete
 package validation gate. The temporary-table blocker is closed evidence, not
@@ -77,6 +106,15 @@ a substitute for that atomic inventory.
   passed outside the sandbox (the statistics cache probes macOS memory size).
 - `cargo test -p tidb-server global_temporary_analyze_uses_session_rows_and_statistics`
   passed outside the sandbox.
+- `cargo test -p tidb-executor pruned_indexes_do_not_enter_async_statistics_demand -- --nocapture`
+  passed: 1 passed.
+- `cargo test -p tidb-exec bit_column_bounds_load_from_the_four_go_decimal_storage_cases -- --nocapture`
+  passed: 1 passed.
+- `cargo test -p tidb-server partition_global_analyze_finishes_with_zero_in_datetime_values -- --nocapture`
+  passed outside the sandbox after the in-sandbox run stopped at the known
+  macOS `sysctl hw.memsize` restriction.
+- `cargo fmt --all -- --check` passed.
+- `make lint` passed for this batch's Ready gate.
 
 The prior gate had 271 passing and 105 skipped tests; removing one duplicate
 utility assertion and 72 ignored empty functions accounts for the exact new
