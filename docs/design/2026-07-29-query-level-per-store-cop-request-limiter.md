@@ -3,7 +3,7 @@
 - Author(s): [Zhigao Tong](https://github.com/solotzg)
 - Discussion PR: <https://github.com/pingcap/tidb/pull/69360>
 - Tracking Issue: <https://github.com/pingcap/tidb/issues/69359>
-- Related client-go PR: <https://github.com/tikv/client-go/pull/2026>
+- Related merged client-go PR: <https://github.com/tikv/client-go/pull/2026>
 
 ## Table of Contents
 
@@ -36,7 +36,7 @@
 
 ## Introduction
 
-This document proposes a statement-scoped, per-store concurrency limit for TiKV coprocessor request attempts. The limit applies after client-go selects the actual target TiKV store, so synchronous requests, asynchronous requests, and retries are all limited against the correct store.
+This document describes a statement-scoped, per-store concurrency limit for TiKV coprocessor request attempts. The limit applies after client-go selects the actual target TiKV store, so synchronous requests, asynchronous requests, and retries are all limited against the correct store.
 
 The feature adds the `tidb_query_cop_store_limit` system variable. Its value is the maximum number of request attempts from one statement that may be in flight to one TiKV store. The default is `15`; `0` disables the statement-level per-store limit.
 
@@ -191,7 +191,7 @@ The channel implementation does not promise strict FIFO ordering among waiting g
 
 TiDB cannot reliably acquire the per-store token before calling client-go. Region cache changes, replica selection, forwarding, retry, or leader changes can make the final target store differ from TiDB's earlier expectation.
 
-The associated client-go change adds:
+The merged client-go change introduced:
 
 ```go
 type RequestAttemptLimiterFunc func(
@@ -233,6 +233,8 @@ If the request context is canceled, the limiter callback returns the context err
 Cancellation before limiter acquisition does not consume a token. Cancellation after acquisition is handled by client-go's normal attempt cleanup and releases the token exactly once.
 
 A limiter error terminates the client-go request without sending an RPC. The existing TiDB send-error path converts and propagates non-shutdown errors.
+
+The per-attempt `tikv_client_read_timeout` remains independent from `max_execution_time`. Limiter wait is excluded from the per-attempt RPC timeout but is included in the outer statement lifetime. If the coprocessor path returns `context.DeadlineExceeded` after `max_execution_time` has elapsed, the SQL layer reports `ErrMaxExecTimeExceeded` (error 3024). If only the per-attempt read timeout expires before `max_execution_time`, TiDB preserves the read-timeout error instead of classifying it as a statement timeout.
 
 ### Interaction with the Request-Local Limiter
 
@@ -316,7 +318,8 @@ TiDB limiter tests:
 - default, global/session assignment, and `SET_VAR` behavior;
 - propagation to TiKV requests and exclusion from TiFlash attempts;
 - statement-level limiter precedence and request-local fallback;
-- runtime-stat merge, clone, string formatting, and response-close ordering.
+- runtime-stat merge, clone, string formatting, and response-close ordering;
+- `tikv_client_read_timeout` and `max_execution_time` preserve the correct SQL-level timeout classification when limiter admission is enabled.
 
 client-go tests:
 
@@ -337,6 +340,7 @@ Tests that assert blocking should use deterministic synchronization or `testing/
 - Multiple DistSQL requests from one statement share the same per-store limit.
 - A store change during retry releases the old store and acquires the new store.
 - Query cancellation while limiter acquisition is blocked returns promptly and leaks no tokens.
+- A statement timeout that expires during coprocessor retries is reported as error 3024, while an earlier per-attempt read timeout is not misclassified as a statement timeout.
 - Merge-sort index lookup behaves correctly with the statement-level limiter enabled and with it disabled.
 - TiFlash queries remain unaffected.
 
@@ -422,8 +426,7 @@ An instance-level limiter would protect a store from aggregate traffic across st
 
 ## Unresolved Questions
 
-- Is `15` a safe default for OLTP, analytical, and mixed workloads across common TiKV deployment sizes, or should the feature initially default to `0`?
-- Should the merge-sort request-local aggregate limit remain active together with the per-store statement limit?
+- Should the default value of `15` be adjusted based on production evidence and benchmarks across OLTP, analytical, and mixed workloads?
 - Should limiter wait be added to statement summary, slow logs, or Prometheus metrics?
 - Is an instance-level per-store ceiling needed in addition to the statement-level limit?
 - Is non-FIFO limiter acquisition sufficient, or do observed workloads require stronger fairness?
