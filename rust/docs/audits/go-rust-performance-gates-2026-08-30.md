@@ -329,6 +329,43 @@ but this single sample did not materially close the explicit write gap. Round
 1 remains unaccepted; the next work should target transaction/lock and bulk
 insert paths rather than removing rollback safeguards.
 
+### Sysbench repeat after sticky foreign-key fast path (2026-08-31)
+
+`Catalog::has_foreign_keys()` now uses a monotonic flag populated when a
+foreign-key table is registered or an FK is added by `ALTER TABLE`. This keeps
+the referential-action path fail-closed while avoiding a full catalog walk for
+the FK-free Sysbench catalog. The change was compiled on the TiUP Pod NVMe
+volume and deployed to all three Rust listeners with `TIKV_TRANSPORT_SHARDS=1`;
+the release binary SHA-256 was
+`557ce9c77fdde9d2292010f1725a00a0b699e97d28378a0fe0b74d017e3f812a`.
+The 14 executor foreign-key tests passed. Git 1.8.3.1 and GitHub SSH access
+were configured inside the TiUP Pod; Go listeners and restored data were not
+restarted or restored.
+
+A serial sweep covered all ten Sysbench subtypes with one 10-thread sample per
+engine in a 197-second benchmark window. Insert and bulk-insert used the new
+`fkfast2` engine-specific empty tables, leaving restored `test.sbtest*`
+untouched. Receipt: `/tmp/tc8228803-new.MMk3QB/sysbench-r1-fkfast2-full-0831`.
+
+| Subtype | Go QPS | Rust QPS | Rust/Go | Gate |
+|---|---:|---:|---:|---|
+| `oltp_read_write.lua` | 553.73 | 155.97 | 0.2817 | FAIL |
+| `oltp_read_only.lua` | 744.05 | 672.07 | 0.9033 | PASS |
+| `oltp_write_only.lua` | 2179.46 | 426.56 | 0.1957 | FAIL |
+| `oltp_point_select.lua` | 18826.21 | 23931.92 | 1.2712 | PASS |
+| `select_random_points.lua` | 7925.54 | 9340.49 | 1.1785 | PASS |
+| `select_random_ranges.lua` | 8227.73 | 8600.13 | 1.0453 | PASS |
+| `oltp_insert.lua` (isolated empty tables) | 8009.19 | 7474.02 | 0.9332 | PASS |
+| `oltp_update_index.lua` | 4418.04 | 3652.77 | 0.8268 | PASS |
+| `oltp_update_non_index.lua` | 6315.97 | 4758.54 | 0.7534 | FAIL |
+| `bulk_insert.lua` (isolated empty tables) | 295504.34 | 179223.64 | 0.6065 | FAIL |
+
+The FK fast path is correctness-tested and removes repeated no-FK catalog
+inspection, but the write-heavy ratios remain below the round-1 threshold. A
+focused write-only run after deployment measured 426.98 Rust QPS versus
+1954.52 Go QPS (0.2185), so the dominant gap is still explicit transaction and
+lock/transport handling rather than the FK scan. Round 1 remains unaccepted.
+
 ## Acceptance status
 
 - Round 1 (0.80): **not passed** because Sysbench and BenchmarkSQL still fail;
