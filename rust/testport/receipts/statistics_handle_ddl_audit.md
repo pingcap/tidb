@@ -46,11 +46,11 @@ artifacts beyond this inventory.
 
 | Go test | Covered Rust behavior | Status |
 | --- | --- | --- |
-| `TestDDLAfterLoad` | DDL after initialized cache; historical-meta eligibility | partial |
+| `TestDDLAfterLoad` | DDL after initialized 1,000-row cache | covered |
 | `TestDDLTable` | create/drop table and add-column stats | covered by integrated lifecycle/column tests |
 | `TestSystemTableDDLHasNoEvent` | mem/system schema suppression | covered |
 | `TestTruncateTable` | nonpartitioned table ID replacement | covered |
-| `TestTruncateAPartitionedTable` | physical/global IDs under both prune modes | partial |
+| `TestTruncateAPartitionedTable` | fresh physical IDs and retired versions for whole-table truncate | covered |
 | `TestDDLHistogram` | add-column histogram default/null shapes | covered |
 | `TestDDLPartition` | create/add/drop partition stats | covered for supported actions |
 | `TestReorgPartitions` | reorganize partition | missing DDL owner |
@@ -58,7 +58,7 @@ artifacts beyond this inventory.
 | `TestDecreasePartitionCountOfHashPartitionTable` | hash partition reorganization | missing DDL owner |
 | `TestTruncateAPartition` | one partition replacement and global count | covered |
 | `TestTruncateAPartitionAndDropTableImmediately` | truncate/drop ordering | partial |
-| `TestTruncateAHashPartition` | hash partition truncate | covered by generic truncate implementation; exact test not yet ported |
+| `TestTruncateAHashPartition` | hash partition count/modify delta, new ID, retired version | covered |
 | `TestTruncatePartitions` | multi-partition replacement and global count | covered |
 | `TestDropAPartition` | one partition global count/removal | covered |
 | `TestDropPartitions` | multi-partition global count/removal | covered |
@@ -101,6 +101,9 @@ WIP profile for the current live-path correction:
 - `cargo test --locked -p tidb-server --lib system_table_ddl_does_not_publish_statistics_events_like_go -- --nocapture`
 - `cargo test --locked -p tidb-server --lib modify_column_ddl_recreates_missing_default_statistics_like_go -- --nocapture`
 - `cargo test --locked -p tidb-server --lib truncate_partitions_refreshes_global_stats_meta_like_go -- --nocapture`
+- `cargo test --locked -p tidb-server --lib ddl_after_loaded_statistics_matches_go -- --nocapture`
+- `cargo test --locked -p tidb-server --lib truncate_partitioned_table_statistics_match_go -- --nocapture`
+- `cargo test --locked -p tidb-server --lib truncate_hash_partition_statistics_match_go -- --nocapture`
 - `cargo check --locked -p tidb-server`
 - `cargo fmt --all -- --check`
 - `git diff --check`

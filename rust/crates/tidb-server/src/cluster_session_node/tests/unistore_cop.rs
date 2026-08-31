@@ -26,7 +26,8 @@ use std::time::Duration;
 use tidb_datatype::{Datum, MySqlDuration};
 
 use super::super::{
-    ClusterHistoricalStatsHandle, ClusterPriorityQueueSource, ClusterServerSession,
+    partition_id_map, ClusterHistoricalStatsHandle, ClusterPriorityQueueSource,
+    ClusterServerSession,
 };
 use super::node_fixture::{rows, session_context, ABC_HASH};
 use crate::configured_user_store::ConfiguredUserStore;
@@ -590,6 +591,217 @@ fn table_lifecycle_ddl_updates_statistics_like_go() {
         .parse::<u64>()
         .expect("dropped stats version is an unsigned integer");
     assert!(dropped_version > new_version);
+}
+
+/// Pinned `pkg/statistics/handle/ddl.TestDDLAfterLoad`: ADD COLUMN remains
+/// valid after the table has been analyzed, populated, analyzed again, and is
+/// therefore backed by an initialized statistics-cache entry.
+#[test]
+fn ddl_after_loaded_statistics_matches_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(75))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "CREATE TABLE stats_ddl_after_load (c1 INT, c2 INT, INDEX idx(c1, c2))",
+    );
+    rows(&mut session, "ANALYZE TABLE stats_ddl_after_load");
+    let table_id = stack
+        .factory
+        .catalog
+        .load()
+        .find_table("test", "stats_ddl_after_load")
+        .expect("created table is published")
+        .1
+        .id;
+    assert!(stack
+        .factory
+        .stats()
+        .load()
+        .get(&table_id)
+        .and_then(tidb_exec::stats_watch::TableStatsState::loaded)
+        .is_some_and(|stats| !stats.hist_coll.pseudo));
+
+    let values = (0..1000)
+        .map(|value| format!("({value},{})", value + 1))
+        .collect::<Vec<_>>()
+        .join(",");
+    rows(
+        &mut session,
+        &format!("INSERT INTO stats_ddl_after_load VALUES {values}"),
+    );
+    rows(&mut session, "ANALYZE TABLE stats_ddl_after_load");
+    assert!(stack
+        .factory
+        .stats()
+        .load()
+        .get(&table_id)
+        .and_then(tidb_exec::stats_watch::TableStatsState::loaded)
+        .is_some_and(|stats| !stats.hist_coll.pseudo));
+
+    rows(
+        &mut session,
+        "ALTER TABLE stats_ddl_after_load ADD COLUMN c10 INT",
+    );
+    assert!(stack
+        .factory
+        .catalog
+        .load()
+        .find_table("test", "stats_ddl_after_load")
+        .is_some_and(|(_, table)| table.columns.iter_deref().any(|column| column
+            .read()
+            .name
+            .lowercase()
+            == "c10")));
+}
+
+/// Pinned `pkg/statistics/handle/ddl.TestTruncateAPartitionedTable`: whole
+/// table truncation gives every partition a fresh physical ID, initializes
+/// each replacement stats row, and advances every retired partition version.
+#[test]
+fn truncate_partitioned_table_statistics_match_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(76))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "CREATE TABLE stats_truncate_partitioned (a INT PRIMARY KEY, b INT, INDEX idx(b)) \
+         PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6), \
+         PARTITION p1 VALUES LESS THAN (11))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO stats_truncate_partitioned VALUES (1,2),(2,2),(6,2)",
+    );
+    rows(&mut session, "ANALYZE TABLE stats_truncate_partitioned");
+    let old_ids = partition_id_map(
+        &stack.factory.catalog.load(),
+        "test",
+        "stats_truncate_partitioned",
+    )
+    .expect("table is partitioned")
+    .1
+    .into_iter()
+    .map(|(_, id)| id)
+    .collect::<Vec<_>>();
+    let old_versions = old_ids
+        .iter()
+        .map(|id| {
+            displayed(rows(
+                &mut session,
+                &format!("SELECT version FROM mysql.stats_meta WHERE table_id = {id}"),
+            ))[0][0]
+                .parse::<u64>()
+                .expect("stats version is unsigned")
+        })
+        .collect::<Vec<_>>();
+
+    rows(&mut session, "TRUNCATE TABLE stats_truncate_partitioned");
+    let new_ids = partition_id_map(
+        &stack.factory.catalog.load(),
+        "test",
+        "stats_truncate_partitioned",
+    )
+    .expect("truncated table remains partitioned")
+    .1
+    .into_iter()
+    .map(|(_, id)| id)
+    .collect::<Vec<_>>();
+    assert_eq!(new_ids.len(), 2);
+    assert!(new_ids.iter().all(|id| !old_ids.contains(id)));
+    for new_id in new_ids {
+        assert_eq!(
+            displayed(rows(
+                &mut session,
+                &format!("SELECT count(*) FROM mysql.stats_meta WHERE table_id = {new_id}"),
+            )),
+            [["1"]]
+        );
+    }
+    for (old_id, old_version) in old_ids.into_iter().zip(old_versions) {
+        let retired_version = displayed(rows(
+            &mut session,
+            &format!("SELECT version FROM mysql.stats_meta WHERE table_id = {old_id}"),
+        ))[0][0]
+            .parse::<u64>()
+            .expect("stats version is unsigned");
+        assert!(retired_version > old_version);
+    }
+}
+
+/// Pinned `pkg/statistics/handle/ddl.TestTruncateAHashPartition`: truncating
+/// p0 removes its one persisted row from global count, keeps that removal as
+/// one modification, replaces p0's physical ID, and retires the old stats row.
+#[test]
+fn truncate_hash_partition_statistics_match_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(77))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "CREATE TABLE stats_truncate_hash (a BIGINT PRIMARY KEY, b INT, INDEX idx(b)) \
+         PARTITION BY HASH(a) PARTITIONS 4",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO stats_truncate_hash VALUES (1,2),(2,2),(6,2),(11,2),(16,2)",
+    );
+    rows(&mut session, "ANALYZE TABLE stats_truncate_hash");
+    let (logical_id, partitions) =
+        partition_id_map(&stack.factory.catalog.load(), "test", "stats_truncate_hash")
+            .expect("table is hash partitioned");
+    let old_p0 = partitions
+        .iter()
+        .find(|(name, _)| name == "p0")
+        .expect("p0 exists")
+        .1;
+    let old_version = displayed(rows(
+        &mut session,
+        &format!("SELECT version FROM mysql.stats_meta WHERE table_id = {old_p0}"),
+    ))[0][0]
+        .parse::<u64>()
+        .expect("stats version is unsigned");
+
+    rows(
+        &mut session,
+        "ALTER TABLE stats_truncate_hash TRUNCATE PARTITION p0",
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT count, modify_count FROM mysql.stats_meta WHERE table_id = {logical_id}"
+            ),
+        )),
+        [["4", "1"]]
+    );
+    let new_p0 = partition_id_map(&stack.factory.catalog.load(), "test", "stats_truncate_hash")
+        .expect("table remains hash partitioned")
+        .1
+        .into_iter()
+        .find(|(name, _)| name == "p0")
+        .expect("replacement p0 exists")
+        .1;
+    assert_ne!(new_p0, old_p0);
+    let retired_version = displayed(rows(
+        &mut session,
+        &format!("SELECT version FROM mysql.stats_meta WHERE table_id = {old_p0}"),
+    ))[0][0]
+        .parse::<u64>()
+        .expect("stats version is unsigned");
+    assert!(retired_version > old_version);
 }
 
 /// Pinned DDL subscriber `ActionDropSchema` visits every table's partition
