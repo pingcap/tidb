@@ -1273,7 +1273,7 @@ func (e *executor) createTableWithInfoPost(
 ) error {
 	preSplitAndScatterTable(ctx, e.store, tbInfo, scatterScope)
 	if e.startMode == BR {
-		if err := handleAutoIncID(e.getAutoIDRequirement(), &model.Job{SchemaID: schemaID}, tbInfo); err != nil {
+		if err := handleAutoIncID(e.getAutoIDRequirement(), schemaID, tbInfo); err != nil {
 			return errors.Trace(err)
 		}
 	}
