@@ -329,6 +329,11 @@ impl ClusterServerSession {
                 .vars()
                 .get_system(tidb_vardef::tidb_vars::TIDB_SKIP_MISSING_PARTITION_STATS)
                 .is_ok_and(|value| tidb_exec::option_values::tidb_opt_on(&value));
+            statement.analyze_snapshot = self
+                .session
+                .vars()
+                .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_ANALYZE_SNAPSHOT)
+                .is_ok_and(|value| tidb_exec::option_values::tidb_opt_on(&value));
             statement.enable_async_merge_global_stats = self
                 .session
                 .vars()

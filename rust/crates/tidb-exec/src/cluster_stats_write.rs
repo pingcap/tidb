@@ -153,6 +153,34 @@ pub struct StatsWritePlan {
     pub bucket_count: usize,
     /// How many TopN entries, across every histogram.
     pub topn_count: usize,
+    /// A newer Analyze v2 snapshot already won the table. Pinned Go treats
+    /// this as a successful no-op and does not replace any histogram rows.
+    pub skipped_newer_snapshot: bool,
+}
+
+/// The `AnalyzeResults` metadata Go carries from sampling into its later
+/// statistics-save transaction.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AnalyzeStatsMeta {
+    /// `AnalyzeResults.BaseCount`.
+    pub base_count: i64,
+    /// `AnalyzeResults.BaseModifyCnt`.
+    pub base_modify_count: i64,
+    /// Session `tidb_enable_analyze_snapshot` at execution time.
+    pub analyze_snapshot: bool,
+}
+
+/// Which ordinary Analyze v2 payload replacement Go is saving.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AnalyzeStatsWriteScope {
+    /// A complete non-partitioned table result.
+    FullTable,
+    /// A complete physical-partition result, including FM sketches.
+    FullPartition,
+    /// Selected histogram items for a non-partitioned table.
+    PartialTable,
+    /// Selected histogram items for a physical partition, including FM sketches.
+    PartialPartition,
 }
 
 /// One row read from pinned Go's `mysql.analyze_options`.
@@ -729,7 +757,7 @@ pub fn plan_stats_write<S: MetaSnapshot>(
     stats: &ClusterTableStats,
     now: Time,
 ) -> Result<StatsWritePlan, StatsWriteError> {
-    plan_stats_write_impl(snapshot, catalog, stats, now, true, false)
+    plan_stats_write_impl(snapshot, catalog, stats, now, true, false, None)
 }
 
 /// Plans a full physical-partition ANALYZE write, including FM sketches.
@@ -739,7 +767,7 @@ pub fn plan_partition_stats_write<S: MetaSnapshot>(
     stats: &ClusterTableStats,
     now: Time,
 ) -> Result<StatsWritePlan, StatsWriteError> {
-    plan_stats_write_impl(snapshot, catalog, stats, now, true, true)
+    plan_stats_write_impl(snapshot, catalog, stats, now, true, true, None)
 }
 
 /// Plans an ANALYZE write that replaces only the histogram items present in
@@ -750,7 +778,7 @@ pub fn plan_partial_stats_write<S: MetaSnapshot>(
     stats: &ClusterTableStats,
     now: Time,
 ) -> Result<StatsWritePlan, StatsWriteError> {
-    plan_stats_write_impl(snapshot, catalog, stats, now, false, false)
+    plan_stats_write_impl(snapshot, catalog, stats, now, false, false, None)
 }
 
 /// Plans a partial physical-partition ANALYZE write, including FM sketches.
@@ -760,7 +788,37 @@ pub fn plan_partial_partition_stats_write<S: MetaSnapshot>(
     stats: &ClusterTableStats,
     now: Time,
 ) -> Result<StatsWritePlan, StatsWriteError> {
-    plan_stats_write_impl(snapshot, catalog, stats, now, false, true)
+    plan_stats_write_impl(snapshot, catalog, stats, now, false, true, None)
+}
+
+/// Plans pinned Go `SaveAnalyzeResultToStorage` after sampling has completed.
+///
+/// Unlike the raw storage helpers above, this reads the `stats_meta` row as it
+/// exists in the later save transaction and reconciles modifications that
+/// committed after the sampling snapshot.
+pub fn plan_analyze_stats_write<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    stats: &ClusterTableStats,
+    meta: AnalyzeStatsMeta,
+    scope: AnalyzeStatsWriteScope,
+    now: Time,
+) -> Result<StatsWritePlan, StatsWriteError> {
+    let (replace_all, dump_fm) = match scope {
+        AnalyzeStatsWriteScope::FullTable => (true, false),
+        AnalyzeStatsWriteScope::FullPartition => (true, true),
+        AnalyzeStatsWriteScope::PartialTable => (false, false),
+        AnalyzeStatsWriteScope::PartialPartition => (false, true),
+    };
+    plan_stats_write_impl(
+        snapshot,
+        catalog,
+        stats,
+        now,
+        replace_all,
+        dump_fm,
+        Some(meta),
+    )
 }
 
 /// Plans pinned Go's `ForMVIndexOrGlobalIndex` ANALYZE write.
@@ -791,9 +849,13 @@ fn plan_stats_write_impl<S: MetaSnapshot>(
     now: Time,
     replace_all: bool,
     dump_fm: bool,
+    analyze_meta: Option<AnalyzeStatsMeta>,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let mut plan = StatsWritePlan::default();
-    plan_meta(snapshot, catalog, stats, now, &mut plan)?;
+    if !plan_meta(snapshot, catalog, stats, analyze_meta, now, &mut plan)? {
+        plan.skipped_newer_snapshot = true;
+        return Ok(plan);
+    }
     plan_histograms(snapshot, catalog, stats, now, replace_all, &mut plan)?;
     plan_buckets(snapshot, catalog, stats, now, replace_all, &mut plan)?;
     plan_topn(snapshot, catalog, stats, now, replace_all, &mut plan)?;
@@ -2507,11 +2569,48 @@ fn plan_meta<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
     stats: &ClusterTableStats,
+    analyze_meta: Option<AnalyzeStatsMeta>,
     now: Time,
     plan: &mut StatsWritePlan,
-) -> Result<(), StatsWriteError> {
+) -> Result<bool, StatsWriteError> {
     let table = locate(catalog, "stats_meta")?;
     let mut rows = StatsRows::open(snapshot, table, &["table_id"], stats.table_id)?;
+    let identity = vec![format!("{:?}", Datum::Int(stats.table_id))];
+    if let (Some(meta), Some(existing)) = (analyze_meta, rows.existing_values(&identity)) {
+        let current_snapshot = row_u64(table, existing, "snapshot").unwrap_or_default();
+        if current_snapshot >= stats.snapshot {
+            return Ok(false);
+        }
+        let current_count = row_i64(table, existing, "count").unwrap_or_default();
+        let current_modify_count = row_i64(table, existing, "modify_count").unwrap_or_default();
+        let result_count = i64::try_from(stats.row_count).unwrap_or(i64::MAX);
+        let count = if meta.analyze_snapshot {
+            current_count
+                .wrapping_add(result_count)
+                .wrapping_sub(meta.base_count)
+                .max(0)
+        } else {
+            result_count.max(0)
+        };
+        let modify_count = current_modify_count
+            .wrapping_sub(meta.base_modify_count)
+            .max(0);
+        let mut values = existing.clone();
+        set(table, &mut values, "version", Datum::UInt(stats.version));
+        set(table, &mut values, "modify_count", Datum::Int(modify_count));
+        set(table, &mut values, "count", Datum::Int(count));
+        set(table, &mut values, "snapshot", Datum::UInt(stats.snapshot));
+        set(
+            table,
+            &mut values,
+            "last_stats_histograms_version",
+            Datum::UInt(stats.version),
+        );
+        rows.store(snapshot, catalog, &values, plan)?;
+        rows.publish_watermark(catalog, plan)?;
+        return Ok(true);
+    }
+
     let mut values = defaults_row(table, now)?;
     set(table, &mut values, "table_id", Datum::Int(stats.table_id));
     set(table, &mut values, "version", Datum::UInt(stats.version));
@@ -2538,7 +2637,8 @@ fn plan_meta<S: MetaSnapshot>(
     // Deliberately no retraction: `mysql.stats_meta` holds one row per table
     // and the identity IS the table, so there is never a leftover. Retracting
     // here would only be a way to delete a row this `ANALYZE` did not write.
-    rows.publish_watermark(catalog, plan)
+    rows.publish_watermark(catalog, plan)?;
+    Ok(true)
 }
 
 fn plan_independent_index_meta<S: MetaSnapshot>(
@@ -3065,6 +3165,24 @@ fn column_id(table: &TableInfo, name: &str) -> Result<i64, StatsWriteError> {
         .ok_or_else(|| {
             StatsWriteError::MissingTable(format!("{SYSTEM_DB}.{}.{name}", table.name.original()))
         })
+}
+
+fn row_i64(table: &TableInfo, values: &RowValues, name: &str) -> Option<i64> {
+    let id = column_id(table, name).ok()?;
+    match values.get(&id)? {
+        Datum::Int(value) => Some(*value),
+        Datum::UInt(value) => i64::try_from(*value).ok(),
+        _ => None,
+    }
+}
+
+fn row_u64(table: &TableInfo, values: &RowValues, name: &str) -> Option<u64> {
+    let id = column_id(table, name).ok()?;
+    match values.get(&id)? {
+        Datum::UInt(value) => Some(*value),
+        Datum::Int(value) => u64::try_from(*value).ok(),
+        _ => None,
+    }
 }
 
 /// Sets one column, if the cluster's table has it.

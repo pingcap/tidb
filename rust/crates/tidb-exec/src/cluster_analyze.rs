@@ -170,10 +170,10 @@ pub struct AnalyzeReport {
 /// sees it -- what Go's `getAdjustedSampleRate` calls `RealtimeCount` -- and
 /// `None` means the table has no row there at all.
 ///
-/// `version` is the TSO the statistics are stamped with, and must be the
-/// `start_ts` of the transaction that will store them: that is what makes a
-/// concurrent `ANALYZE` on a Go node either lose the write conflict or be
-/// ordered after this one, rather than interleave with it.
+/// `version` is the sampling snapshot TSO stored in `AnalyzeResults.Snapshot`.
+/// Pinned Go stamps the histogram rows with the later statistics-save
+/// transaction version; the real cluster boundary performs that replacement
+/// after this snapshot-only sampler returns.
 /// Rows one paged read of the analyzed table returns.
 ///
 /// Go's analyze consumes coprocessor batches as they land and never holds

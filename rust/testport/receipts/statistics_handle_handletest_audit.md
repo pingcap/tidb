@@ -35,6 +35,26 @@ The parent entries and the mixed carrier were removed. The package remains
 unclaimed until the ordinary handle/session/domain/storage integration surface
 can support all three artifacts and 30 tests atomically.
 
+## Implemented root-package gap
+
+Pinned `TestIncrementalModifyCountUpdate` exposed a production mismatch rather
+than a missing test carrier. Go samples at `AnalyzeResults.Snapshot`, records
+`BaseCount` and `BaseModifyCnt`, and saves through a later statistics-handle
+transaction. Rust previously sampled and wrote in one transaction and always
+stored `modify_count = 0`.
+
+The wired cluster path now uses separate sampling and save transactions. The
+save reads the current `stats_meta` row, keeps modifications committed after
+sampling, applies both branches of `tidb_enable_analyze_snapshot`, and treats a
+newer stored snapshot as Go's successful no-op. Executable storage regressions
+cover both count branches and stale-result suppression.
+
+The package is still not claimed. In particular, pinned
+`TestStatsCacheShouldNotCacheTemporaryTable` analyzes a LOCAL temporary table,
+whose metadata and rows belong to the session. Rust's routed cluster ANALYZE
+currently resolves only the shared cluster catalog, so that behavior must be
+implemented before the complete 30-test package can close.
+
 ## WIP validation
 
 - `cargo check --locked -p tidb-stats` passed.

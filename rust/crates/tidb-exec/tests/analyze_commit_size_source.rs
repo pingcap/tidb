@@ -58,9 +58,9 @@ use tidb_exec::cluster_stats_write::{
     plan_start_analyze_job, plan_finish_analyze_job, plan_delete_analyze_jobs,
     plan_update_analyze_job_progress,
     plan_stats_delta_statement, plan_stats_gc_timestamp_write, plan_stats_item_delete,
-    plan_stats_meta_version_refresh, plan_stats_write,
+    plan_analyze_stats_write, plan_stats_meta_version_refresh, plan_stats_write,
     load_stats_locked_table_ids, stats_delta_statements, InsertTableStatsStatement, LoadedStatsItemStatement,
-    StatsDeltaStatement, StatsWriteError,
+    AnalyzeStatsMeta, AnalyzeStatsWriteScope, StatsDeltaStatement, StatsWriteError,
 };
 use tidb_exec::mysql_bootstrap::{plan_mysql_bootstrap, BootstrapEnvironment, BootstrapWrite};
 use tidb_exec::mysql_system_tables::{scan_system_table, SystemRow, SystemTableView};
@@ -569,6 +569,119 @@ fn the_analyze_version_round_trips_through_the_stored_row() {
             440_000_000_000_000_000
         )),
         "version, snapshot, modify_count, count, last_analyze_version"
+    );
+}
+
+/// Pinned `handletest.TestIncrementalModifyCountUpdate`: ANALYZE samples from
+/// one snapshot and saves later. A delta that lands between those points must
+/// remain in `modify_count`; snapshot mode also preserves its row-count
+/// change, while the default max-TS mode replaces count with the sampled row
+/// count.
+#[test]
+fn analyze_save_reconciles_deltas_committed_after_sampling() {
+    for (analyze_snapshot, expected_count) in [(true, 6), (false, 3)] {
+        let mut store = bootstrapped();
+        let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+        let current = ClusterTableStats {
+            table_id: 4242,
+            version: 90,
+            snapshot: 10,
+            last_analyze_version: 90,
+            last_stats_hist_version: 90,
+            modify_count: 3,
+            row_count: 6,
+            columns: vec![],
+            indexes: vec![],
+        };
+        let initial = plan_stats_write(&mut store, &catalog, &current, now())
+            .expect("current metadata plans");
+        apply_mutations(&mut store, &initial.mutations);
+
+        let sampled = ClusterTableStats {
+            table_id: 4242,
+            version: 110,
+            snapshot: 100,
+            last_analyze_version: 110,
+            last_stats_hist_version: 110,
+            modify_count: 0,
+            row_count: 3,
+            columns: vec![],
+            indexes: vec![],
+        };
+        let save = plan_analyze_stats_write(
+            &mut store,
+            &catalog,
+            &sampled,
+            AnalyzeStatsMeta {
+                base_count: 3,
+                base_modify_count: 0,
+                analyze_snapshot,
+            },
+            AnalyzeStatsWriteScope::FullTable,
+            now(),
+        )
+        .expect("the later save plans");
+        assert!(!save.skipped_newer_snapshot);
+        apply_mutations(&mut store, &save.mutations);
+
+        let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
+        assert_eq!(
+            loader.load_meta(&mut store, 4242).expect("meta loads"),
+            Some((110, 100, 3, expected_count, 110))
+        );
+    }
+}
+
+#[test]
+fn analyze_save_does_not_replace_a_newer_snapshot() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let current = ClusterTableStats {
+        table_id: 4242,
+        version: 120,
+        snapshot: 110,
+        last_analyze_version: 120,
+        last_stats_hist_version: 120,
+        modify_count: 4,
+        row_count: 8,
+        columns: vec![],
+        indexes: vec![],
+    };
+    let initial =
+        plan_stats_write(&mut store, &catalog, &current, now()).expect("current metadata plans");
+    apply_mutations(&mut store, &initial.mutations);
+
+    let stale = ClusterTableStats {
+        table_id: 4242,
+        version: 130,
+        snapshot: 100,
+        last_analyze_version: 130,
+        last_stats_hist_version: 130,
+        modify_count: 0,
+        row_count: 3,
+        columns: vec![],
+        indexes: vec![],
+    };
+    let save = plan_analyze_stats_write(
+        &mut store,
+        &catalog,
+        &stale,
+        AnalyzeStatsMeta {
+            base_count: 3,
+            base_modify_count: 0,
+            analyze_snapshot: true,
+        },
+        AnalyzeStatsWriteScope::FullTable,
+        now(),
+    )
+    .expect("the stale result is classified");
+    assert!(save.skipped_newer_snapshot);
+    assert!(save.mutations.is_empty());
+
+    let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
+    assert_eq!(
+        loader.load_meta(&mut store, 4242).expect("meta loads"),
+        Some((120, 110, 4, 8, 120))
     );
 }
 

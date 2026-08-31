@@ -62,11 +62,11 @@ use crate::cluster_stats_load::{
     column_types_of, ClusterStatsItem, ClusterStatsLoader, ClusterTableStats,
 };
 use crate::cluster_stats_write::{
-    load_analyze_options, plan_analyze_options_write, plan_get_predicate_columns,
-    plan_historical_stats_meta_lock, plan_historical_stats_meta_replace,
-    plan_independent_index_stats_write, plan_partial_partition_stats_write,
-    plan_partial_stats_write, plan_partition_stats_write, plan_stats_meta_version_refresh,
-    plan_stats_write, StatsWritePlan,
+    load_analyze_options, plan_analyze_options_write, plan_analyze_stats_write,
+    plan_get_predicate_columns, plan_historical_stats_meta_lock,
+    plan_historical_stats_meta_replace, plan_independent_index_stats_write,
+    plan_partial_stats_write, plan_stats_meta_version_refresh, AnalyzeStatsMeta,
+    AnalyzeStatsWriteScope, StatsWritePlan,
 };
 use crate::cluster_table_storage::{
     commit_pessimistic_statement, lock_pessimistic_statement, PessimisticStatementTransactionError,
@@ -2104,19 +2104,18 @@ fn commit_cluster_analyze_target<C: StoreWriteClient, L: StoreWriteLoader, P: St
     selected_columns_for_task: Option<&HashSet<i64>>,
     predicate_columns_empty_for_task: bool,
 ) -> Result<ClusterAnalyzeReport, ClusterAnalyzeError> {
-    let started = Instant::now();
-    let mut transaction = opener
+    let mut sample_transaction = opener
         .begin(ANALYZE_MAX_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-    let start_ts = transaction.start_ts();
-    let planned = {
-        let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
+    let sample_ts = sample_transaction.start_ts();
+    let sampled = {
+        let mut snapshot = TransactionMetaSnapshot::new(&mut sample_transaction, timeout);
         let catalog = load_cluster_catalog(&mut snapshot)
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         let table = find_statement_table(&catalog, statement)?.clone();
         // The sample rate Go derives from `RealtimeCount`: what the table's
         // previous `ANALYZE` (or delta flush) said it holds.
-        let realtime_count = ClusterStatsLoader::locate(&catalog)
+        let base_stats = ClusterStatsLoader::locate(&catalog)
             .ok()
             .and_then(|loader| {
                 loader
@@ -2127,8 +2126,14 @@ fn commit_cluster_analyze_target<C: StoreWriteClient, L: StoreWriteLoader, P: St
                     )
                     .ok()
                     .flatten()
-            })
+            });
+        let realtime_count = base_stats
+            .as_ref()
             .map(|stats| realtime_count_of(stats.row_count));
+        let base_count = base_stats.as_ref().map_or(0, |stats| {
+            i64::try_from(stats.row_count).unwrap_or(i64::MAX)
+        });
+        let base_modify_count = base_stats.as_ref().map_or(0, |stats| stats.modify_count);
         let mut target_statement = statement.clone();
         target_statement.columns = options.columns.clone();
         target_statement.raw_options = options.raw;
@@ -2142,42 +2147,97 @@ fn commit_cluster_analyze_target<C: StoreWriteClient, L: StoreWriteLoader, P: St
             options.physical_id,
             &target_statement.options,
             realtime_count,
-            start_ts,
+            sample_ts,
             selected_columns_for_task,
             progress,
         )
         .map_err(|error: AnalyzeError| ClusterAnalyzeError::Other(error.to_string()))?;
-        let mut write = if options.is_partition && selected_columns_for_task.is_some() {
-            plan_partial_partition_stats_write(
-                &mut snapshot,
-                &catalog,
-                &report.stats,
-                utc_now_timestamp(),
-            )
-        } else if options.is_partition {
-            plan_partition_stats_write(&mut snapshot, &catalog, &report.stats, utc_now_timestamp())
-        } else if selected_columns_for_task.is_some() {
-            plan_partial_stats_write(&mut snapshot, &catalog, &report.stats, utc_now_timestamp())
-        } else {
-            plan_stats_write(&mut snapshot, &catalog, &report.stats, utc_now_timestamp())
-        }
-        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-        write.mutations.splice(0..0, cleanup.mutations);
-        (report, write)
+        (report, cleanup, base_count, base_modify_count)
     };
-    let (report, write) = planned;
+    let (mut report, cleanup, base_count, base_modify_count) = sampled;
 
-    if write.is_empty() {
-        transaction
+    if cleanup.is_empty() {
+        sample_transaction
             .finish_without_writes()
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+    } else {
+        let outcome = sample_transaction
+            .commit(cleanup.mutations, &UnaryCallContext::with_timeout(timeout))
+            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+        classify_commit_outcome(&outcome)?;
+    }
+
+    // Go samples at `AnalyzeResults.Snapshot`, then saves through the
+    // statistics handle's later restricted transaction. That second
+    // transaction must see deltas committed after sampling and reconcile them
+    // against BaseCount/BaseModifyCnt instead of silently resetting them.
+    let save_started = Instant::now();
+    let mut save_transaction = opener
+        .begin(ANALYZE_MAX_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)
+        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+    let save_version = save_transaction.start_ts();
+    report.stats.version = save_version;
+    report.stats.last_analyze_version = save_version;
+    report.stats.last_stats_hist_version = save_version;
+    let write = {
+        let mut snapshot = TransactionMetaSnapshot::new(&mut save_transaction, timeout);
+        let catalog = load_cluster_catalog(&mut snapshot)
+            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+        let scope = if options.is_partition && selected_columns_for_task.is_some() {
+            AnalyzeStatsWriteScope::PartialPartition
+        } else if options.is_partition {
+            AnalyzeStatsWriteScope::FullPartition
+        } else if selected_columns_for_task.is_some() {
+            AnalyzeStatsWriteScope::PartialTable
+        } else {
+            AnalyzeStatsWriteScope::FullTable
+        };
+        plan_analyze_stats_write(
+            &mut snapshot,
+            &catalog,
+            &report.stats,
+            AnalyzeStatsMeta {
+                base_count,
+                base_modify_count,
+                analyze_snapshot: statement.analyze_snapshot,
+            },
+            scope,
+            utc_now_timestamp(),
+        )
+        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?
+    };
+
+    if write.is_empty() {
+        save_transaction
+            .finish_without_writes()
+            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+        if write.skipped_newer_snapshot {
+            return Ok(ClusterAnalyzeReport {
+                table_id: report.stats.table_id,
+                version: save_version,
+                scanned_rows: report.scanned_rows,
+                sampled_rows: report.sampled_rows,
+                sample_rate: report.sample_rate,
+                histogram_count: 0,
+                bucket_count: 0,
+                topn_count: 0,
+                predicate_columns_empty: predicate_columns_empty_for_task,
+                option_save_warning: None,
+                global_stats_warnings: Vec::new(),
+                ignored_partition_overrides: false,
+                collected_all_for_index_target: statement.index_names.is_some(),
+                analyzed_column_ids: report.stats.columns.iter().map(|item| item.id).collect(),
+                analyzed_index_ids: report.stats.indexes.iter().map(|item| item.id).collect(),
+                historical_stats_table_ids: Vec::new(),
+            });
+        }
         return Err(ClusterAnalyzeError::Other(
             "this ANALYZE produced no statistics to store".to_owned(),
         ));
     }
     let mut receipt = ClusterAnalyzeReport {
         table_id: report.stats.table_id,
-        version: start_ts,
+        version: save_version,
         scanned_rows: report.scanned_rows,
         sampled_rows: report.sampled_rows,
         sample_rate: report.sample_rate,
@@ -2205,7 +2265,7 @@ fn commit_cluster_analyze_target<C: StoreWriteClient, L: StoreWriteLoader, P: St
     // committer, whose every action builds its context when it runs
     // (`twoPhaseCommitter.execute`, pkg/store/tikv/2pc.go), not when
     // the statement began.
-    let outcome = transaction
+    let outcome = save_transaction
         .commit(write.mutations, &UnaryCallContext::with_timeout(timeout))
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
     classify_commit_outcome(&outcome)?;
@@ -2213,7 +2273,7 @@ fn commit_cluster_analyze_target<C: StoreWriteClient, L: StoreWriteLoader, P: St
         opener,
         receipt.table_id,
         receipt.version,
-        started,
+        save_started,
         timeout,
         stats_lease,
         record_history,
@@ -2398,6 +2458,7 @@ fn selected_columns_for_choice<S: crate::cluster_catalog::MetaSnapshot>(
         default_columns: AnalyzeColumnChoice::All,
         dynamic_partition_prune: true,
         skip_missing_partition_stats: true,
+        analyze_snapshot: false,
         enable_async_merge_global_stats: true,
         partition_merge_concurrency: 1,
         time_zone: tidb_datatype::SessionTimeZone::utc(),
@@ -2734,6 +2795,7 @@ mod tests {
             default_columns: AnalyzeColumnChoice::All,
             dynamic_partition_prune: true,
             skip_missing_partition_stats: skip_missing,
+            analyze_snapshot: false,
             enable_async_merge_global_stats: true,
             partition_merge_concurrency: 1,
             time_zone: tidb_datatype::SessionTimeZone::utc(),
