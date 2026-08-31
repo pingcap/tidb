@@ -2428,7 +2428,7 @@ func TestMemArbitrator(t *testing.T) {
 			}
 			m.prepareAlloc(e2, 1000)
 			debugTime = debugTime.Add(defHeapReclaimCheckDuration)
-			mockHeap = MockHeap{multiRatio(newLimit, 900), multiRatio(newLimit, heapInuseRateMilli) - 233, multiRatio(newLimit, 900) + 500 + 4 + 1, 233}
+			mockHeap = MockHeap{multiRatio(newLimit, heapInuseRateMilli), newLimit - 233, multiRatio(newLimit, heapInuseRateMilli) + 500 + 4 + 1, 233}
 			require.True(t, m.runOneRound() == -2)
 			require.Equal(t, int64(6100), m.memMagnif())
 			require.True(t, *m.lastMemState() == lastRiskMemState)

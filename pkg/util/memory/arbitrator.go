@@ -261,10 +261,6 @@ type rootPoolEntry struct {
 		memPriority     ArbitrationPriority
 		waitAverse      bool
 		preferPrivilege bool
-		finish          struct {
-			sync.Mutex
-			f func()
-		}
 	}
 	request struct {
 		// arbitrator will send result in `windup`
@@ -1205,7 +1201,6 @@ func (m *MemArbitrator) RemoveRootPoolByID(uid uint64) bool {
 	}
 
 	if m.removeRootPoolEntry(entry) {
-		entry.execFinish()
 		m.wake()
 		return true
 	}
@@ -1254,10 +1249,7 @@ type rootPoolWrap = *rootPoolEntry
 
 // FindRootPool finds the root pool by ID
 func (m *MemArbitrator) FindRootPool(uid uint64) rootPoolWrap {
-	if e := m.getRootPoolEntry(uid); e != nil {
-		return e
-	}
-	return nil
+	return m.getRootPoolEntry(uid)
 }
 
 // EmplaceRootPool emplaces a new root pool with the given uid (uid < 0 means the internal pool)
@@ -1287,12 +1279,12 @@ func (m *MemArbitrator) addRootPool(pool *ResourcePool) (bool, *rootPoolEntry, e
 		return false, nil, fmt.Errorf("%s: has %d reserved budget left", pool.name, pool.reserved)
 	}
 
-	if entry, ok := m.entryMap.emplace(pool); !ok {
+	entry, ok := m.entryMap.emplace(pool)
+	if !ok {
 		return false, nil, fmt.Errorf("%s: already exists", pool.name)
-	} else {
-		m.rootPoolNum.Add(1)
-		return true, entry, nil
 	}
+	m.rootPoolNum.Add(1)
+	return true, entry, nil
 }
 
 func (m *MemArbitrator) doAdjustSoftLimit() {
@@ -1964,24 +1956,6 @@ func (m *MemArbitrator) asyncRun(duration time.Duration) bool {
 		close(m.controlMu.finishCh)
 	}()
 	return true
-}
-
-// SetFinish sets the finish function for the root pool entry.
-func (e *rootPoolEntry) SetFinish(f func()) {
-	e.ctx.finish.Lock()
-	defer e.ctx.finish.Unlock()
-
-	e.ctx.finish.f = f
-}
-
-func (e *rootPoolEntry) execFinish() {
-	e.ctx.finish.Lock()
-	defer e.ctx.finish.Unlock()
-
-	if e.ctx.finish.f != nil {
-		e.ctx.finish.f()
-		e.ctx.finish.f = nil
-	}
 }
 
 // RestartEntryByContext starts the root pool with the given context

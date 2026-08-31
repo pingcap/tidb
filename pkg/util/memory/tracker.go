@@ -1120,15 +1120,10 @@ func (m *memArbitrator) intoBigBudget() bool {
 		return false
 	}
 
-	ok, root, err := m.EmplaceRootPool(m.uid)
+	_, root, err := m.EmplaceRootPool(m.uid)
 
 	if err != nil {
 		panic(err)
-	} else if ok && m.isInternal {
-		globalArbitrator.metrics.pools.internalSession.Add(1)
-		root.SetFinish(func() {
-			globalArbitrator.metrics.pools.internalSession.Add(-1)
-		})
 	}
 
 	smallUsed := max(0, m.smallBudgetUsed())
