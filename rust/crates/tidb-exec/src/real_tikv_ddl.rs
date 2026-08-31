@@ -308,7 +308,7 @@ fn commit_cluster_ddl_once<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
     // entries has to go through `commit_cluster_ddl_with_backfill`, which
     // reads the table's rows on the SAME transaction; committing the meta half
     // here would leave an index that answers queries with nothing.
-    if write.backfill.is_some() {
+    if !write.backfill.is_empty() {
         transaction.finish_without_writes()?;
         return Err(ClusterDdlError::BackfillUnavailable);
     }
@@ -517,7 +517,7 @@ fn commit_cluster_ddl_with_backfill_once<
         DdlPlan::Write(write) => write,
     };
     let buffer = MutationBuffer::new();
-    if let Some(backfill) = &write.backfill {
+    if !write.backfill.is_empty() {
         let staged = transaction
             .snapshot()
             .map_err(|error| ClusterDdlError::Backfill(error.to_string()))
@@ -527,9 +527,12 @@ fn commit_cluster_ddl_with_backfill_once<
                     .map_err(|_| ClusterDdlError::Backfill("snapshot slot poisoned".to_owned()))?
                     .bind(snapshot);
                 let handle: Arc<Mutex<dyn ClusterSnapshot>> = slot;
-                backfiller
-                    .stage(backfill, handle, &buffer)
-                    .map_err(ClusterDdlError::Backfill)
+                for backfill in &write.backfill {
+                    backfiller
+                        .stage(backfill, Arc::clone(&handle), &buffer)
+                        .map_err(ClusterDdlError::Backfill)?;
+                }
+                Ok(())
             });
         if let Err(error) = staged {
             // Nothing has been published: the entries only ever existed in this

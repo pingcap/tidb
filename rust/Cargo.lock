@@ -3411,6 +3411,7 @@ dependencies = [
  "tidb-chunk",
  "tidb-codec",
  "tidb-datatype",
+ "tidb-ddl-notifier",
  "tidb-distsql",
  "tidb-error",
  "tidb-executor",

@@ -23,13 +23,18 @@
 
 use std::collections::BTreeMap;
 
-use tidb_exec::cluster_catalog::{prefix_scan_end, ClusterCatalogError, MetaPairs, MetaSnapshot};
+use tidb_datatype::Datum;
+use tidb_ddl_notifier::SchemaChangeEvent;
+use tidb_exec::cluster_catalog::{
+    load_cluster_catalog, prefix_scan_end, ClusterCatalogError, MetaPairs, MetaSnapshot,
+};
 use tidb_exec::cluster_ddl::{
     lower_ddl, lower_ddl_with_context, plan_ddl, plan_ddl_with_collation, DdlPlan, DdlPlanError,
     DdlStatement,
 };
+use tidb_exec::table_info_build::{build_table_info, ClusteredIndexDefMode};
 use tidb_meta::{key, value};
-use tidb_model::GoAnyView;
+use tidb_model::{DBInfo, GoAnyView, SchemaState};
 use tidb_txnkv::transaction::OptimisticMutationKind;
 
 /// A mutable snapshot of stored meta bytes: reads observe it, and a test may
@@ -69,6 +74,43 @@ pub(crate) fn bootstrapped() -> MetaStore {
     store.put(
         key::database_kv_key(112),
         br#"{"id":112,"db_name":{"O":"u6","L":"u6"},"charset":"utf8mb4","collate":"utf8mb4_bin","Deprecated":{},"state":5,"policy_ref_info":null}"#.to_vec(),
+    );
+    let mysql_id = tidb_metadef::system::SYSTEM_DATABASE_ID;
+    let mysql = DBInfo {
+        id: mysql_id,
+        name: tidb_ast::CiString::new("mysql"),
+        charset: "utf8mb4".to_owned(),
+        collate: "utf8mb4_bin".to_owned(),
+        state: SchemaState::PUBLIC,
+        ..DBInfo::default()
+    };
+    store.put(
+        key::database_kv_key(mysql_id),
+        value::serialize_db_info(&mysql).expect("the mysql database encodes"),
+    );
+    let notifier = tidb_metadef::DDL_TABLE_VERSION_TABLES
+        .iter()
+        .flat_map(|version| version.tables)
+        .find(|table| table.name == tidb_metadef::system_tables_def::NOTIFIER_TABLE_NAME)
+        .expect("the pinned bootstrap defines the notifier table");
+    let parsed = tidb_parser::parse(notifier.create_sql).expect("the notifier DDL parses");
+    let tidb_ast::Stmt::Ddl(ddl) = parsed else {
+        panic!("the notifier definition is DDL")
+    };
+    let tidb_ast::DdlStmt::CreateTable(create) = ddl.as_ref() else {
+        panic!("the notifier definition creates a table")
+    };
+    let mut notifier_info = build_table_info(
+        create,
+        "utf8mb4",
+        "utf8mb4_bin",
+        ClusteredIndexDefMode::IntOnly,
+    )
+    .expect("the notifier TableInfo builds");
+    notifier_info.id = notifier.id;
+    store.put(
+        key::table_kv_key(mysql_id, notifier.id),
+        value::serialize_table_info(&notifier_info).expect("the notifier TableInfo encodes"),
     );
     store
 }
@@ -124,15 +166,21 @@ pub(crate) fn plan(
 pub(crate) fn apply(store: &mut MetaStore, write: &tidb_exec::cluster_ddl::DdlWrite) {
     for mutation in &write.mutations {
         match mutation.kind() {
-            OptimisticMutationKind::MetaPut => {
+            OptimisticMutationKind::MetaPut
+            | OptimisticMutationKind::Insert
+            | OptimisticMutationKind::PutExisting
+            | OptimisticMutationKind::IndexPut
+            | OptimisticMutationKind::UniqueIndexInsert => {
                 store
                     .pairs
                     .insert(mutation.key().to_vec(), mutation.value().to_vec());
             }
-            OptimisticMutationKind::MetaDelete => {
+            OptimisticMutationKind::MetaDelete
+            | OptimisticMutationKind::Delete
+            | OptimisticMutationKind::IndexDelete => {
                 store.pairs.remove(mutation.key());
             }
-            other => panic!("a catalog change publishes only meta mutations, got {other:?}"),
+            OptimisticMutationKind::LockOnly => {}
         }
     }
 }
@@ -380,10 +428,148 @@ fn the_allocated_id_advances_the_global_counter_by_exactly_what_it_took() {
         "CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v BIGINT NOT NULL)",
         7,
     );
-    // Go `GenGlobalIDs(1)`: the key holds the max USED id, so one table moves
-    // it from 116 to 117 and the table's own id is 117.
+    // Go `getRequiredGIDCount` reserves one ID for the table and one for its
+    // DDL job. `assignGIDsForJobs` consumes the object ID first and the job ID
+    // last, so the one allocation batch moves the max used ID from 116 to 118.
     assert_eq!(write.created_id, Some(117));
-    assert_eq!(stored_value(&write, &key::next_global_id_kv_key()), b"117");
+    assert_eq!(write.ddl_job_id, 118);
+    assert_eq!(stored_value(&write, &key::next_global_id_kv_key()), b"118");
+}
+
+#[test]
+fn create_table_stages_the_go_notifier_row_in_the_catalog_transaction() {
+    let mut store = bootstrapped();
+    let write = plan(
+        &mut store,
+        "CREATE TABLE u6.notified (id BIGINT PRIMARY KEY)",
+        7,
+    );
+    let catalog = load_cluster_catalog(&mut store).expect("the fixture catalog loads");
+    let (_, notifier) = catalog
+        .find_table("mysql", tidb_metadef::system_tables_def::NOTIFIER_TABLE_NAME)
+        .expect("the notifier table is bootstrapped");
+    let record_prefix = tidb_codec::gen_table_record_prefix(notifier.id);
+    let record = write
+        .mutations
+        .iter()
+        .find(|mutation| {
+            mutation.kind() == OptimisticMutationKind::Insert
+                && mutation.key().starts_with(&record_prefix)
+        })
+        .expect("the DDL transaction inserts one notifier record");
+    let field_types = notifier
+        .cols()
+        .iter_deref()
+        .map(|column| {
+            let column = column.read();
+            (column.id, column.field_type.clone())
+        })
+        .collect();
+    let values = tidb_tablecodec::decode_table_row_to_map(record.value(), &field_types, None)
+        .expect("the ordinary TiDB row decoder reads the notifier record");
+    let value = |name: &str| {
+        let id = notifier
+            .cols()
+            .iter_deref()
+            .find(|column| column.read().name.lowercase() == name)
+            .expect("the named notifier column exists")
+            .read()
+            .id;
+        values.get(&id).expect("the notifier row stores the column")
+    };
+    assert_eq!(value("ddl_job_id"), &Datum::Int(write.ddl_job_id));
+    assert_eq!(value("sub_job_id"), &Datum::Int(-1));
+    assert_eq!(value("processed_by_flag"), &Datum::UInt(0));
+    let encoded_event = match value("schema_change") {
+        Datum::Bytes(bytes) => bytes.as_slice(),
+        Datum::String(text) => text.bytes(),
+        other => panic!("schema_change is stored as bytes, got {other:?}"),
+    };
+    let event: SchemaChangeEvent =
+        serde_json::from_slice(encoded_event).expect("the Go-shaped event JSON decodes");
+    assert_eq!(event.create_table_info().id, write.created_id.unwrap());
+    assert_eq!(event.create_table_info().name.original(), "notified");
+    assert!(write.mutations.iter().any(|mutation| {
+        mutation.key()
+            == key::auto_table_id_kv_key(
+                tidb_metadef::system::SYSTEM_DATABASE_ID,
+                notifier.id,
+            )
+    }));
+}
+
+#[test]
+fn system_database_ddl_stages_no_notifier_event() {
+    let mut store = bootstrapped();
+    let write = plan(
+        &mut store,
+        "CREATE TABLE mysql.not_notified (id BIGINT PRIMARY KEY)",
+        7,
+    );
+    let notifier_prefix = tidb_codec::table_key::gen_table_prefix(
+        tidb_metadef::system::TI_DBDDLNOTIFIER_TABLE_ID,
+    );
+    assert!(write
+        .mutations
+        .iter()
+        .all(|mutation| !mutation.key().starts_with(&notifier_prefix)));
+}
+
+fn notifier_events(store: &mut MetaStore, write: &tidb_exec::cluster_ddl::DdlWrite) -> Vec<(i64, SchemaChangeEvent)> {
+    let catalog = load_cluster_catalog(store).expect("the fixture catalog loads");
+    let (_, notifier) = catalog
+        .find_table("mysql", tidb_metadef::system_tables_def::NOTIFIER_TABLE_NAME)
+        .expect("the notifier table is bootstrapped");
+    let record_prefix = tidb_codec::gen_table_record_prefix(notifier.id);
+    let field_types: BTreeMap<_, _> = notifier
+        .cols()
+        .iter_deref()
+        .map(|column| {
+            let column = column.read();
+            (column.id, column.field_type.clone())
+        })
+        .collect();
+    let column_id = |name: &str| {
+        notifier
+            .cols()
+            .iter_deref()
+            .find(|column| column.read().name.lowercase() == name)
+            .expect("the named notifier column exists")
+            .read()
+            .id
+    };
+    let sub_job_id = column_id("sub_job_id");
+    let schema_change = column_id("schema_change");
+    let mut records: Vec<_> = write
+        .mutations
+        .iter()
+        .filter(|mutation| {
+            mutation.kind() == OptimisticMutationKind::Insert
+                && mutation.key().starts_with(&record_prefix)
+        })
+        .collect();
+    records.sort_by_key(|mutation| mutation.key());
+    records
+        .into_iter()
+        .map(|record| {
+            let values = tidb_tablecodec::decode_table_row_to_map(
+                record.value(),
+                &field_types,
+                None,
+            )
+            .expect("the ordinary TiDB row decoder reads the notifier record");
+            let Datum::Int(sub_job_id) = values[&sub_job_id] else {
+                panic!("sub_job_id is an integer")
+            };
+            let encoded = match &values[&schema_change] {
+                Datum::Bytes(bytes) => bytes.as_slice(),
+                Datum::String(text) => text.bytes(),
+                other => panic!("schema_change is stored as bytes, got {other:?}"),
+            };
+            let event = serde_json::from_slice(encoded).expect("the Go-shaped event JSON decodes");
+            (sub_job_id, event)
+        })
+        .collect()
 }
 
 #[test]
@@ -1020,7 +1206,7 @@ fn alter_table_index_actions_share_the_catalog_backfill_path() {
         470_000_000,
     );
     assert_eq!(added.diff.action_type.0, 7, "ActionAddIndex");
-    let backfill = added.backfill.as_ref().expect("the index owes entries");
+    let backfill = added.backfill.first().expect("the index owes entries");
     assert!(backfill.add);
     assert!(backfill.index.read().unique);
     assert_eq!(
@@ -1035,21 +1221,24 @@ fn alter_table_index_actions_share_the_catalog_backfill_path() {
         470_000_001,
     );
     assert_eq!(dropped.diff.action_type.0, 8, "ActionDropIndex");
-    assert!(!dropped.backfill.as_ref().expect("entries are removed").add);
+    assert!(!dropped.backfill.first().expect("entries are removed").add);
 
-    // A bundle of TWO index actions now reaches the plan, where the single
-    // backfill slot refuses it by name -- still before any partial change.
-    let multiple = plan_ddl(
+    // Go merges multiple add-index sub-jobs. Both entry walks remain ordered
+    // in the one catalog transaction.
+    let multiple = plan(
         &mut store,
-        &statement("ALTER TABLE u6.minimal ADD INDEX i1 (v), ADD INDEX i2 (v)"),
+        "ALTER TABLE u6.minimal ADD INDEX i1 (v), ADD INDEX i2 (v)",
         470_000_002,
-    )
-    .expect_err("two index changes refuse")
-    .to_string();
-    assert!(
-        multiple.contains("at most one index change"),
-        "multi-index ALTER must fail before a partial catalog change: {multiple}"
     );
+    assert_eq!(multiple.backfill.len(), 2);
+    assert_eq!(multiple.backfill[0].index.read().name.original(), "i1");
+    assert_eq!(multiple.backfill[1].index.read().name.original(), "i2");
+    let events = notifier_events(&mut store, &multiple);
+    assert_eq!(events.len(), 1, "Go merges both indexes into one sub-job");
+    assert_eq!(events[0].0, 0);
+    let (_, indexes, analyzed) = events[0].1.add_index_info();
+    assert_eq!(indexes.len(), 2);
+    assert!(!analyzed);
 }
 
 /// Go's single-table rename job keeps the table ID and its auto-ID authority,
@@ -1378,6 +1567,14 @@ fn modify_auto_random_bits_updates_table_info_and_the_tarid_counter_together() {
         alter.diff.action_type,
         tidb_model::ActionType::ACTION_MODIFY_COLUMN
     );
+    let events = notifier_events(&mut store, &alter);
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].0, -1);
+    let (event_table, columns, analyzed) = events[0].1.modify_column_info();
+    assert_eq!(event_table.auto_random_bits, 8);
+    assert_eq!(columns.len(), 1);
+    assert_eq!(columns[0].name.original(), "id");
+    assert!(!analyzed);
 
     apply(&mut store, &alter);
     store.put(key::schema_version_kv_key(), b"62".to_vec());
@@ -1577,7 +1774,7 @@ fn create_index_stores_the_index_and_owes_a_backfill() {
     // The half that keeps the index from being EMPTY. Losing it is the silent
     // wrong answer this whole path exists to avoid, which is why the publisher
     // that cannot perform it refuses outright rather than writing the meta half.
-    let backfill = write.backfill.as_ref().expect("entries are owed");
+    let backfill = write.backfill.first().expect("entries are owed");
     assert!(backfill.add);
     {
         let index = backfill.index.read();
@@ -1614,7 +1811,7 @@ fn index_backfill_carries_the_planned_collation_mode() {
         assert_eq!(
             write
                 .backfill
-                .as_ref()
+                .first()
                 .expect("CREATE INDEX owes a backfill")
                 .use_new_collation,
             use_new_collation
@@ -1707,7 +1904,7 @@ fn drop_index_removes_it_and_owes_the_entry_removal() {
     );
     // `ActionDropIndex`.
     assert_eq!(write.diff.action_type.0, 8);
-    let backfill = write.backfill.as_ref().expect("entries are owed");
+    let backfill = write.backfill.first().expect("entries are owed");
     assert!(!backfill.add);
     {
         let index = backfill.index.read();
@@ -2076,11 +2273,10 @@ fn a_multi_action_alter_folds_over_one_evolving_table() {
     }
 }
 
-/// A bundle mixing a column change with ONE index change folds over the same
+/// A bundle mixing column and index changes folds over the same
 /// evolving table: the index resolves against the bundle-added column, the
-/// backfill walks existing rows against the evolved columns, and a second
-/// index action in one bundle is refused by name (one backfill per catalog
-/// transaction).
+/// backfill walks existing rows against the evolved columns, and multiple
+/// index actions retain their SQL order in one catalog transaction.
 #[test]
 fn a_column_and_index_bundle_folds_and_backfills_together() {
     let mut store = bootstrapped();
@@ -2097,12 +2293,24 @@ fn a_column_and_index_bundle_folds_and_backfills_together() {
         "ALTER TABLE u6.t ADD COLUMN c BIGINT DEFAULT 5, ADD INDEX idx_c (c)",
         200,
     );
+    let events = notifier_events(&mut store, &write);
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0].0, 0);
+    assert_eq!(
+        events[0].1.action_type(),
+        tidb_model::ActionType::ACTION_ADD_COLUMN
+    );
+    assert_eq!(events[1].0, 1);
+    assert_eq!(
+        events[1].1.action_type(),
+        tidb_model::ActionType::ACTION_ADD_INDEX
+    );
     apply(&mut store, &write);
     assert_eq!(
         write.diff.action_type,
         tidb_model::ActionType::ACTION_MULTI_SCHEMA_CHANGE
     );
-    let backfill = write.backfill.as_ref().expect("the index change backfills");
+    let backfill = write.backfill.first().expect("the index change backfills");
     assert!(backfill.add);
     assert_eq!(backfill.index.read().name.original(), "idx_c");
     assert_eq!(
@@ -2131,7 +2339,7 @@ fn a_column_and_index_bundle_folds_and_backfills_together() {
         300,
     );
     apply(&mut store, &write);
-    let backfill = write.backfill.as_ref().expect("the removal walks");
+    let backfill = write.backfill.first().expect("the removal walks");
     assert!(!backfill.add);
     assert!(
         backfill
@@ -2146,15 +2354,16 @@ fn a_column_and_index_bundle_folds_and_backfills_together() {
             .expect("stored");
     assert_eq!(stored["index_info"].as_array().unwrap().len(), 0);
 
-    // Two index actions cannot share one backfill slot.
-    let error = plan_ddl(
+    // Go merges multiple add-index sub-jobs and executes their reorganization
+    // together. The Rust transaction carries both ordered entry walks.
+    let write = plan(
         &mut store,
-        &statement("ALTER TABLE u6.t ADD INDEX i1 (v), ADD INDEX i2 (c)"),
+        "ALTER TABLE u6.t ADD INDEX i1 (v), ADD INDEX i2 (c)",
         400,
-    )
-    .expect_err("two index changes refuse")
-    .to_string();
-    assert!(error.contains("at most one index change"), "{error}");
+    );
+    assert_eq!(write.backfill.len(), 2);
+    assert_eq!(write.backfill[0].index.read().name.original(), "i1");
+    assert_eq!(write.backfill[1].index.read().name.original(), "i2");
 }
 
 /// Go `types.CheckModifyTypeCompatible` + `needReorgToChange`
@@ -2337,6 +2546,10 @@ fn a_create_view_publishes_a_view_table_info() {
         DdlPlan::Write(write) => *write,
         DdlPlan::AlreadySatisfied { detail, .. } => panic!("expected a write: {detail}"),
     };
+    assert!(
+        notifier_events(&mut store, &write).is_empty(),
+        "Go onCreateView publishes no schema-change event"
+    );
     assert_eq!(
         write.diff.action_type,
         tidb_model::ActionType::ACTION_CREATE_VIEW

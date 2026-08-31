@@ -61,12 +61,15 @@ use tidb_ast::{
     DropTableStmt, IndexConstraintDefinition, IndexConstraintKind, RenameTableStmt, Stmt,
 };
 use tidb_datatype::new_collation_enabled;
-use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags};
+use tidb_datatype::{Datum, FieldType, FieldTypeCode, FieldTypeFlags};
+use tidb_ddl_notifier::SchemaChangeEvent;
 use tidb_meta::{key, value};
+use tidb_metadef::system_tables_def::NOTIFIER_TABLE_NAME;
 use tidb_metadef::MAX_USER_GLOBAL_ID;
 use tidb_model::action_type::ActionType;
 use tidb_model::db::DBInfo;
 use tidb_model::index::{IndexColumn, IndexInfo};
+use tidb_model::partition::{PartitionDefinition, PartitionInfo};
 use tidb_model::schema_diff::{AffectedOption, SchemaDiff};
 use tidb_model::schema_state::SchemaState;
 use tidb_model::table_info::TableInfo;
@@ -848,13 +851,11 @@ pub fn lower_ddl_with_context(
     }
 }
 
-/// Admits the single-action `ALTER TABLE` spelling of an index change.
+/// Admits the `ALTER TABLE` spelling of an index change.
 ///
-/// Go lowers these actions to the same add/drop-index jobs as their standalone
-/// statements.  Reusing the existing lowered statement keeps catalog changes
-/// and backfill ownership in one place.  Multi-action ALTERs stay refused: the
-/// catalog transaction has no representation for their atomic job bundle, so
-/// accepting only its index action would silently half-apply the SQL.
+/// Go lowers these actions to add/drop-index jobs and folds multi-action ALTER
+/// sub-jobs over one evolving table. Reusing the same lowered representation
+/// keeps catalog changes and ordered backfills in one transaction.
 /// Go `SetDirectPlacementOpt` (`ddl/placement_policy.go:530`): folds the
 /// source-ordered options into one settings record, a later option of the
 /// same kind overwriting an earlier one.
@@ -2323,6 +2324,8 @@ pub enum DdlPlan {
 /// One catalog change's complete write set.
 #[derive(Clone, Debug)]
 pub struct DdlWrite {
+    /// Go `model.Job.ID`, allocated after IDs owned by the job.
+    pub ddl_job_id: i64,
     /// Every meta-key mutation, in a deterministic order.
     pub mutations: Vec<OptimisticMutation>,
     /// The schema version this change produces.
@@ -2341,7 +2344,7 @@ pub struct DdlWrite {
     /// (see [`crate::real_tikv_ddl::commit_cluster_ddl_with_backfill`]), so the
     /// index and its contents become visible at one commit timestamp and no
     /// reader can see one without the other.
-    pub backfill: Option<IndexBackfill>,
+    pub backfill: Vec<IndexBackfill>,
     /// The warning the change raises, if any.
     ///
     /// Go carries this as `job.Warning` (and, for the same adjustment made at
@@ -2607,9 +2610,11 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
     let mut placement_bundles: Vec<tidb_placement::Bundle> = Vec::new();
     let schema_version = catalog.schema_version + 1;
     let mut writes = Vec::new();
+    let mut global_ids = GlobalIdAllocator::load(snapshot)?;
     let mut created_id = None;
-    let mut backfill = None;
+    let mut backfill = Vec::new();
     let mut warning = None;
+    let mut schema_change_events: Vec<(i64, SchemaChangeEvent)> = Vec::new();
     let mut diff = SchemaDiff {
         version: schema_version,
         ..SchemaDiff::default()
@@ -2659,7 +2664,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                     )));
                 }
                 (None, _, _) => {
-                    let policy_id = allocate(snapshot, &mut writes, 1)?[0];
+                    let policy_id = global_ids.allocate(1)?[0];
                     created_id = Some(policy_id);
                     let policy = tidb_model::PolicyInfo {
                         placement_settings: Some(tidb_model::GoShared::new(settings.clone())),
@@ -2757,7 +2762,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 }
                 return Err(DdlPlanError::DatabaseExists(name.clone()));
             }
-            let db_id = allocate(snapshot, &mut writes, 1)?[0];
+            let db_id = global_ids.allocate(1)?[0];
             created_id = Some(db_id);
             let info = DBInfo {
                 id: db_id,
@@ -2796,6 +2801,19 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             ))?);
             diff.action_type = ActionType::ACTION_DROP_SCHEMA;
             diff.schema_id = db_id;
+            if !tidb_metadef::is_mem_or_sys_db(&name.to_lowercase()) {
+                let tables_per_event = if database.tables.len() > 100_000 {
+                    500
+                } else {
+                    100
+                };
+                for (sub_job_id, tables) in database.tables.chunks(tables_per_event).enumerate() {
+                    schema_change_events.push((
+                        i64::try_from(sub_job_id).expect("drop-schema event count fits in i64"),
+                        SchemaChangeEvent::drop_schema(&database.info, tables),
+                    ));
+                }
+            }
         }
         DdlStatement::DropPrimaryKey { schema, table } => {
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
@@ -2848,7 +2866,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             // `DROP INDEX` does: an index whose rows survive its `TableInfo`
             // is invisible garbage that a later index of the same id would
             // read as its own.
-            backfill = Some(IndexBackfill {
+            backfill.push(IndexBackfill {
                 table: Box::new(stored.clone_like_go()),
                 index: GoShared::new(dropped),
                 use_new_collation,
@@ -2890,7 +2908,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 )));
             }
             let db_id = database.info.id;
-            let table_id = allocate(snapshot, &mut writes, 1)?[0];
+            let table_id = global_ids.allocate(1)?[0];
             created_id = Some(table_id);
             let mut info = source.clone_like_go();
             // Go keeps only the PUBLIC columns and indices: a column or index
@@ -2931,6 +2949,9 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             diff.action_type = ActionType::ACTION_CREATE_TABLE;
             diff.schema_id = db_id;
             diff.table_id = table_id;
+            if !tidb_metadef::is_mem_or_sys_db(&schema.to_lowercase()) {
+                schema_change_events.push((-1, SchemaChangeEvent::create_table(info)));
+            }
         }
         DdlStatement::CreateTable {
             schema,
@@ -2972,7 +2993,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             let partition_count = info.partition.as_ref().map_or(0, |partition| {
                 partition.read().definitions.with_visible(<[_]>::len)
             }) as i64;
-            let ids = allocate(snapshot, &mut writes, 1 + partition_count)?;
+            let ids = global_ids.allocate(1 + partition_count)?;
             let table_id = ids[0];
             created_id = Some(table_id);
             info.id = table_id;
@@ -3071,6 +3092,9 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             diff.action_type = ActionType::ACTION_CREATE_TABLE;
             diff.schema_id = db_id;
             diff.table_id = table_id;
+            if !tidb_metadef::is_mem_or_sys_db(&schema.to_lowercase()) {
+                schema_change_events.push((-1, SchemaChangeEvent::create_table(info)));
+            }
         }
         DdlStatement::CreateView {
             schema,
@@ -3098,7 +3122,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                     db_id, old_id,
                 ))?);
             }
-            let table_id = allocate(snapshot, &mut writes, 1)?[0];
+            let table_id = global_ids.allocate(1)?[0];
             created_id = Some(table_id);
             let mut info = (**info).clone();
             info.id = table_id;
@@ -3433,6 +3457,16 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             diff.action_type = ActionType::ACTION_MODIFY_COLUMN;
             diff.schema_id = db_id;
             diff.table_id = table_id;
+            if !tidb_metadef::is_mem_or_sys_db(&schema.to_lowercase()) {
+                let modified = tidb_model::column::find_column_info(&info.columns, column)
+                    .expect("the altered auto-random column is present")
+                    .read()
+                    .clone_like_go();
+                schema_change_events.push((
+                    -1,
+                    SchemaChangeEvent::modify_columns(info, vec![modified], false),
+                ));
+            }
         }
         DdlStatement::AddPartitions { schema, table, sql }
         | DdlStatement::DropPartitions { schema, table, sql } => {
@@ -3466,12 +3500,9 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             let mut allocated = if added_count == 0 {
                 Vec::new().into_iter()
             } else {
-                allocate(
-                    snapshot,
-                    &mut writes,
-                    i64::try_from(added_count).expect("partition count fits in i64"),
-                )?
-                .into_iter()
+                global_ids
+                    .allocate(i64::try_from(added_count).expect("partition count fits in i64"))?
+                    .into_iter()
             };
             let old_ids = stored
                 .partition
@@ -3533,6 +3564,55 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             };
             diff.schema_id = db_id;
             diff.table_id = table_id;
+            if !tidb_metadef::is_mem_or_sys_db(&schema.to_lowercase()) {
+                if adding {
+                    let added = info
+                        .partition
+                        .as_ref()
+                        .expect("the changed table remains partitioned")
+                        .read()
+                        .definitions
+                        .snapshot()
+                        .into_iter()
+                        .filter(|definition| !old_ids.values().any(|id| *id == definition.id))
+                        .collect();
+                    schema_change_events.push((
+                        -1,
+                        SchemaChangeEvent::add_partitions(
+                            info.clone_like_go(),
+                            event_partition_info(added),
+                        ),
+                    ));
+                } else {
+                    let remaining = info
+                        .partition
+                        .as_ref()
+                        .expect("the changed table remains partitioned")
+                        .read()
+                        .definitions
+                        .snapshot()
+                        .into_iter()
+                        .map(|definition| definition.id)
+                        .collect::<std::collections::HashSet<_>>();
+                    let dropped = stored
+                        .partition
+                        .as_ref()
+                        .expect("the old table is partitioned")
+                        .read()
+                        .definitions
+                        .snapshot()
+                        .into_iter()
+                        .filter(|definition| !remaining.contains(&definition.id))
+                        .collect();
+                    schema_change_events.push((
+                        -1,
+                        SchemaChangeEvent::drop_partitions(
+                            info.clone_like_go(),
+                            event_partition_info(dropped),
+                        ),
+                    ));
+                }
+            }
         }
         DdlStatement::TruncatePartitions { schema, table, sql } => {
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
@@ -3561,12 +3641,9 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                     "partition truncate on `{schema}`.`{table}` changes no partition"
                 )));
             }
-            let mut allocated = allocate(
-                snapshot,
-                &mut writes,
-                i64::try_from(replaced).expect("partition count fits in i64"),
-            )?
-            .into_iter();
+            let mut allocated = global_ids
+                .allocate(i64::try_from(replaced).expect("partition count fits in i64"))?
+                .into_iter();
             let definitions = transformed
                 .definitions
                 .into_iter()
@@ -3614,6 +3691,51 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             diff.action_type = ActionType::ACTION_TRUNCATE_TABLE_PARTITION;
             diff.schema_id = db_id;
             diff.table_id = table_id;
+            if !tidb_metadef::is_mem_or_sys_db(&schema.to_lowercase()) {
+                let new_by_name = info
+                    .partition
+                    .as_ref()
+                    .expect("the changed table remains partitioned")
+                    .read()
+                    .definitions
+                    .snapshot()
+                    .into_iter()
+                    .map(|definition| (definition.name.lowercase().to_owned(), definition))
+                    .collect::<BTreeMap<_, _>>();
+                let old_definitions = stored
+                    .partition
+                    .as_ref()
+                    .expect("the old table is partitioned")
+                    .read()
+                    .definitions
+                    .snapshot();
+                let dropped = old_definitions
+                    .iter()
+                    .filter(|definition| {
+                        new_by_name
+                            .get(definition.name.lowercase())
+                            .is_some_and(|new| new.id != definition.id)
+                    })
+                    .cloned()
+                    .collect();
+                let added = new_by_name
+                    .values()
+                    .filter(|definition| {
+                        old_ids
+                            .get(definition.name.lowercase())
+                            .is_some_and(|old| *old != definition.id)
+                    })
+                    .cloned()
+                    .collect();
+                schema_change_events.push((
+                    -1,
+                    SchemaChangeEvent::truncate_partitions(
+                        info.clone_like_go(),
+                        event_partition_info(added),
+                        event_partition_info(dropped),
+                    ),
+                ));
+            }
         }
         DdlStatement::AddColumn {
             schema,
@@ -3648,6 +3770,21 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             diff.action_type = ActionType::ACTION_ADD_COLUMN;
             diff.schema_id = db_id;
             diff.table_id = table_id;
+            if !tidb_metadef::is_mem_or_sys_db(&schema.to_lowercase()) {
+                let added = info
+                    .columns
+                    .iter_deref()
+                    .find(|candidate| {
+                        candidate.read().name.lowercase() == column.name.to_lowercase()
+                    })
+                    .expect("the applied column is present")
+                    .read()
+                    .clone_like_go();
+                schema_change_events.push((
+                    -1,
+                    SchemaChangeEvent::add_columns(info.clone_like_go(), vec![added]),
+                ));
+            }
         }
         DdlStatement::DropColumn {
             schema,
@@ -3728,6 +3865,19 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             diff.action_type = ActionType::ACTION_MODIFY_COLUMN;
             diff.schema_id = db_id;
             diff.table_id = table_id;
+            if !tidb_metadef::is_mem_or_sys_db(&schema.to_lowercase()) {
+                let modified = info
+                    .columns
+                    .iter_deref()
+                    .find(|candidate| candidate.read().name.lowercase() == to.to_lowercase())
+                    .expect("the renamed column is present")
+                    .read()
+                    .clone_like_go();
+                schema_change_events.push((
+                    -1,
+                    SchemaChangeEvent::modify_columns(info.clone_like_go(), vec![modified], false),
+                ));
+            }
         }
         DdlStatement::ModifyColumn {
             schema,
@@ -3860,6 +4010,19 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             diff.action_type = ActionType::ACTION_MODIFY_COLUMN;
             diff.schema_id = db_id;
             diff.table_id = table_id;
+            if !tidb_metadef::is_mem_or_sys_db(&schema.to_lowercase()) {
+                let modified = info
+                    .columns
+                    .iter_deref()
+                    .find(|candidate| candidate.read().name.lowercase() == new_name)
+                    .expect("the modified column is present")
+                    .read()
+                    .clone_like_go();
+                schema_change_events.push((
+                    -1,
+                    SchemaChangeEvent::modify_columns(info.clone_like_go(), vec![modified], false),
+                ));
+            }
         }
         DdlStatement::MultiSchemaChange {
             schema,
@@ -3870,22 +4033,59 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             let mut info = stored.clone_like_go();
             let mut applied = 0usize;
             let mut satisfied = Vec::new();
-            for action in actions {
+            // Go `mergeAddIndex` gathers multiple ADD INDEX sub-jobs into one
+            // merged sub-job at the end, preserving every other sub-job's
+            // relative order. Execute the equivalent order here so later
+            // metadata, backfill snapshots, and notifier sequence IDs agree.
+            let add_index_count = actions
+                .iter()
+                .filter(|action| matches!(action, AlterColumnAction::AddIndex { .. }))
+                .count();
+            let mut action_order: Vec<_> = (0..actions.len()).collect();
+            if add_index_count > 1 {
+                action_order.sort_by_key(|offset| {
+                    usize::from(matches!(
+                        actions[*offset],
+                        AlterColumnAction::AddIndex { .. }
+                    ))
+                });
+            }
+            let mut merged_added_indexes = Vec::new();
+            for (sequence, action_offset) in action_order.into_iter().enumerate() {
+                let action = &actions[action_offset];
                 let outcome = match action {
                     AlterColumnAction::Add {
                         if_not_exists,
                         column,
                         position,
                         context,
-                    } => apply_add_column(
-                        &mut info,
-                        schema,
-                        table,
-                        column,
-                        position,
-                        *if_not_exists,
-                        &context.0,
-                    )?,
+                    } => {
+                        let outcome = apply_add_column(
+                            &mut info,
+                            schema,
+                            table,
+                            column,
+                            position,
+                            *if_not_exists,
+                            &context.0,
+                        )?;
+                        if matches!(outcome, AlterColumnOutcome::Applied)
+                            && !tidb_metadef::is_mem_or_sys_db(&schema.to_lowercase())
+                        {
+                            let added = tidb_model::column::find_column_info(
+                                &info.columns,
+                                column.name.as_str(),
+                            )
+                            .expect("the bundle-added column is present")
+                            .read()
+                            .clone_like_go();
+                            schema_change_events.push((
+                                sequence as i64,
+                                SchemaChangeEvent::add_columns(info.clone_like_go(), vec![added]),
+                            ));
+                        }
+                        outcome
+                    }
                     AlterColumnAction::Drop { if_exists, column } => {
                         apply_drop_column(&mut info, schema, table, column, *if_exists)?
                     }
@@ -3893,16 +4093,6 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                         if_not_exists,
                         index,
                     } => {
-                        // One backfill per catalog transaction: the write set
-                        // carries a single entry walk, so a second index
-                        // action must arrive as its own statement.
-                        if backfill.is_some() {
-                            return Err(DdlPlanError::Unsupported(
-                                "one ALTER TABLE bundle carries at most one index change; \
-                                 run the second as its own statement"
-                                    .to_owned(),
-                            ));
-                        }
                         if let Some(existing) = find_index(&info, index.name.original()) {
                             let existing = existing.read();
                             if *if_not_exists {
@@ -3943,23 +4133,28 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                         added.table = info.name.clone();
                         let added = GoShared::new(added);
                         info.indices.push_handle_go(Some(added.clone()));
-                        backfill = Some(IndexBackfill {
+                        backfill.push(IndexBackfill {
                             table: backfill_table,
-                            index: added,
+                            index: added.clone(),
                             use_new_collation,
                             add: true,
                         });
+                        if add_index_count > 1 {
+                            merged_added_indexes.push(added.read().clone_like_go());
+                        } else if !tidb_metadef::is_mem_or_sys_db(&schema.to_lowercase()) {
+                            schema_change_events.push((
+                                sequence as i64,
+                                SchemaChangeEvent::add_indexes(
+                                    info.clone_like_go(),
+                                    vec![added.read().clone_like_go()],
+                                    false,
+                                ),
+                            ));
+                        }
                         applied += 1;
                         continue;
                     }
                     AlterColumnAction::DropIndex { if_exists, name } => {
-                        if backfill.is_some() {
-                            return Err(DdlPlanError::Unsupported(
-                                "one ALTER TABLE bundle carries at most one index change; \
-                                 run the second as its own statement"
-                                    .to_owned(),
-                            ));
-                        }
                         let Some(dropped) = find_index(&info, name) else {
                             if *if_exists {
                                 satisfied.push(format!(
@@ -3984,7 +4179,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                         }) {
                             info.indices.delete_go(offset, offset + 1);
                         }
-                        backfill = Some(IndexBackfill {
+                        backfill.push(IndexBackfill {
                             table: backfill_table,
                             index: GoShared::new(dropped),
                             use_new_collation,
@@ -3998,6 +4193,19 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                     AlterColumnOutcome::Applied => applied += 1,
                     AlterColumnOutcome::AlreadySatisfied(detail) => satisfied.push(detail),
                 }
+            }
+            if !merged_added_indexes.is_empty()
+                && !tidb_metadef::is_mem_or_sys_db(&schema.to_lowercase())
+            {
+                let sequence = actions.len() - add_index_count;
+                schema_change_events.push((
+                    sequence as i64,
+                    SchemaChangeEvent::add_indexes(
+                        info.clone_like_go(),
+                        merged_added_indexes,
+                        false,
+                    ),
+                ));
             }
             if applied == 0 {
                 return Ok(already(satisfied.join("; ")));
@@ -4032,7 +4240,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             let partition_count = stored.partition.as_ref().map_or(0, |partition| {
                 partition.read().definitions.with_visible(<[_]>::len)
             }) as i64;
-            let ids = allocate(snapshot, &mut writes, 1 + partition_count)?;
+            let ids = global_ids.allocate(1 + partition_count)?;
             let new_table_id = ids[0];
             let mut info = stored.clone_like_go();
             info.id = new_table_id;
@@ -4094,6 +4302,12 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             diff.schema_id = db_id;
             diff.table_id = new_table_id;
             diff.old_table_id = old_table_id;
+            if !tidb_metadef::is_mem_or_sys_db(&schema.to_lowercase()) {
+                schema_change_events.push((
+                    -1,
+                    SchemaChangeEvent::truncate_table(info, stored.clone_like_go()),
+                ));
+            }
         }
         DdlStatement::DropTable {
             schema,
@@ -4139,6 +4353,10 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             diff.action_type = ActionType::ACTION_DROP_TABLE;
             diff.schema_id = db_id;
             diff.table_id = table_id;
+            if !tidb_metadef::is_mem_or_sys_db(&schema.to_lowercase()) {
+                schema_change_events
+                    .push((-1, SchemaChangeEvent::drop_table(stored.clone_like_go())));
+            }
         }
         DdlStatement::RenameTable {
             from_schema,
@@ -4217,15 +4435,25 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 key::table_kv_key(db_id, table_id),
                 encoded,
             )?);
-            backfill = Some(IndexBackfill {
+            backfill.push(IndexBackfill {
                 table: Box::new(stored.clone_like_go()),
-                index: added,
+                index: added.clone(),
                 use_new_collation,
                 add: true,
             });
             diff.action_type = ActionType::ACTION_ADD_INDEX;
             diff.schema_id = db_id;
             diff.table_id = table_id;
+            if !tidb_metadef::is_mem_or_sys_db(&schema.to_lowercase()) {
+                schema_change_events.push((
+                    -1,
+                    SchemaChangeEvent::add_indexes(
+                        info.clone_like_go(),
+                        vec![added.read().clone_like_go()],
+                        false,
+                    ),
+                ));
+            }
         }
         DdlStatement::ModifyTableComment {
             schema,
@@ -4343,7 +4571,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             // the same rows, and a stale entry under a REUSED id — which a
             // restored or rebuilt table can produce — reads as a row that is
             // not there.
-            backfill = Some(IndexBackfill {
+            backfill.push(IndexBackfill {
                 table: Box::new(stored.clone_like_go()),
                 index: GoShared::new(dropped),
                 use_new_collation,
@@ -4724,6 +4952,22 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
         }
     }
 
+    // Go `assignGIDsForJobs` consumes every schema-object and partition ID
+    // first, then assigns `Job.ID` from the final ID in the one
+    // `GenGlobalIDs` batch. The notifier uses that job ID as its ordered
+    // primary-key prefix.
+    let ddl_job_id = global_ids.allocate(1)?[0];
+    if let Some(global_id_mutation) = global_ids.mutation()? {
+        writes.push(global_id_mutation);
+    }
+    append_schema_change_mutations(
+        snapshot,
+        &catalog,
+        ddl_job_id,
+        &schema_change_events,
+        &mut writes,
+    )?;
+
     // The version bump comes last so the write set always ends with the two
     // keys that make the change observable — and the version key is what a
     // concurrent DDL collides with.
@@ -4739,6 +4983,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
     )?);
 
     Ok(DdlPlan::Write(Box::new(DdlWrite {
+        ddl_job_id,
         mutations: writes,
         schema_version,
         diff,
@@ -5133,28 +5378,125 @@ fn find_index(table: &TableInfo, name: &str) -> Option<GoShared<IndexInfo>> {
 /// the allocation. The new maximum is written from the value this snapshot
 /// read, which is what makes a competing allocation a write conflict rather
 /// than a duplicate ID.
-fn allocate<S: MetaSnapshot>(
+struct GlobalIdAllocator {
+    original: i64,
+    current: i64,
+}
+
+impl GlobalIdAllocator {
+    fn load<S: MetaSnapshot>(snapshot: &mut S) -> Result<Self, DdlPlanError> {
+        let current = match snapshot.get(&key::next_global_id_kv_key())? {
+            Some(stored) => value::parse_int_value(&stored)
+                .map_err(|error| DdlPlanError::Encode(format!("NextGlobalID: {error}")))?,
+            // Go's `Inc` treats a missing key as zero.
+            None => 0,
+        };
+        Ok(Self {
+            original: current,
+            current,
+        })
+    }
+
+    fn allocate(&mut self, count: i64) -> Result<Vec<i64>, DdlPlanError> {
+        let first = self
+            .current
+            .checked_add(1)
+            .ok_or(DdlPlanError::GlobalIdExhausted { wanted: i64::MAX })?;
+        let new_max = self
+            .current
+            .checked_add(count)
+            .ok_or(DdlPlanError::GlobalIdExhausted { wanted: i64::MAX })?;
+        if new_max > MAX_USER_GLOBAL_ID {
+            return Err(DdlPlanError::GlobalIdExhausted { wanted: new_max });
+        }
+        self.current = new_max;
+        Ok((first..=new_max).collect())
+    }
+
+    fn mutation(&self) -> Result<Option<OptimisticMutation>, DdlPlanError> {
+        (self.current != self.original)
+            .then(|| {
+                OptimisticMutation::meta_put(
+                    key::next_global_id_kv_key(),
+                    value::encode_int_value(self.current),
+                )
+            })
+            .transpose()
+            .map_err(Into::into)
+    }
+}
+
+fn append_schema_change_mutations<S: MetaSnapshot>(
     snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    ddl_job_id: i64,
+    events: &[(i64, SchemaChangeEvent)],
     writes: &mut Vec<OptimisticMutation>,
-    count: i64,
-) -> Result<Vec<i64>, DdlPlanError> {
-    let current = match snapshot.get(&key::next_global_id_kv_key())? {
-        Some(stored) => value::parse_int_value(&stored)
-            .map_err(|error| DdlPlanError::Encode(format!("NextGlobalID: {error}")))?,
-        // Go's `Inc` treats a missing key as zero.
-        None => 0,
+) -> Result<(), DdlPlanError> {
+    if events.is_empty() {
+        return Ok(());
+    }
+    let (_, table) = catalog
+        .find_table("mysql", NOTIFIER_TABLE_NAME)
+        .ok_or_else(|| {
+            DdlPlanError::Encode(format!("mysql.{} does not exist", NOTIFIER_TABLE_NAME))
+        })?;
+    let column_id = |name: &str| {
+        table
+            .cols()
+            .iter_deref()
+            .find(|column| column.read().name.lowercase() == name)
+            .map(|column| column.read().id)
+            .ok_or_else(|| {
+                DdlPlanError::Encode(format!(
+                    "mysql.{} has no column `{name}`",
+                    NOTIFIER_TABLE_NAME
+                ))
+            })
     };
-    let new_max = current
-        .checked_add(count)
-        .ok_or(DdlPlanError::GlobalIdExhausted { wanted: i64::MAX })?;
-    if new_max > MAX_USER_GLOBAL_ID {
-        return Err(DdlPlanError::GlobalIdExhausted { wanted: new_max });
+    let ddl_job_id_column = column_id("ddl_job_id")?;
+    let sub_job_id_column = column_id("sub_job_id")?;
+    let schema_change_column = column_id("schema_change")?;
+    let processed_by_column = column_id("processed_by_flag")?;
+    let row_id_key = key::auto_table_id_kv_key(tidb_metadef::system::SYSTEM_DATABASE_ID, table.id);
+    let mut row_id = snapshot
+        .get(&row_id_key)?
+        .map(|stored| value::parse_int_value(&stored))
+        .transpose()
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+        .unwrap_or(0);
+    for (sub_job_id, event) in events {
+        row_id = row_id
+            .checked_add(1)
+            .ok_or(DdlPlanError::GlobalIdExhausted { wanted: i64::MAX })?;
+        let mut values = crate::system_row_write::RowValues::new();
+        values.insert(ddl_job_id_column, Datum::Int(ddl_job_id));
+        values.insert(sub_job_id_column, Datum::Int(*sub_job_id));
+        values.insert(
+            schema_change_column,
+            Datum::Bytes(
+                serde_json::to_vec(event)
+                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+            ),
+        );
+        values.insert(processed_by_column, Datum::UInt(0));
+        writes.extend(
+            crate::system_row_write::insert_row(table, row_id, &values)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+        );
     }
     writes.push(OptimisticMutation::meta_put(
-        key::next_global_id_kv_key(),
-        value::encode_int_value(new_max),
+        row_id_key,
+        value::encode_int_value(row_id),
     )?);
-    Ok(((current + 1)..=new_max).collect())
+    Ok(())
+}
+
+fn event_partition_info(definitions: Vec<PartitionDefinition>) -> PartitionInfo {
+    PartitionInfo {
+        definitions: definitions.into(),
+        ..PartitionInfo::default()
+    }
 }
 
 fn find_database<'catalog>(

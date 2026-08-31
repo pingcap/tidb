@@ -686,7 +686,7 @@ fn drop_primary_key_refuses_a_clustered_one_and_drops_a_nonclustered_one() {
     let table_id = write.created_id.expect("CREATE TABLE allocates an id");
     let write = plan(&mut store, "ALTER TABLE u6.plain DROP PRIMARY KEY", 600);
     assert!(
-        write.backfill.is_some(),
+        !write.backfill.is_empty(),
         "the entries go with the definition"
     );
     apply(&mut store, &write);

@@ -13,7 +13,7 @@ After this work, a successful non-system DDL in the Rust server durably records 
 - [x] (2026-08-31 16:16Z) Inventoried every production, test, support, and build file in pinned Go `pkg/ddl/notifier`.
 - [x] (2026-08-31 16:16Z) Added the Rust event model, durable store interfaces, ordered subscriber, owner listener, bootstrap table version 4, SQL table-store adapter, and focused unit/integration tests.
 - [x] (2026-08-31 16:16Z) Fixed remote residual-filter and composite unique-prefix PointGet bugs exposed by the notifier's paginated list and processed-bit CAS.
-- [ ] Stage the notifier row in the same optimistic transaction as the DDL catalog mutations, using a positive cluster-global DDL job ID and Go's sub-job IDs.
+- [x] (2026-08-31 17:05Z) Stage notifier rows in the same optimistic transaction as DDL catalog mutations, using the final ID in Go's one global-ID batch for the DDL job and Go's sub-job IDs.
 - [ ] Replace synchronous post-DDL statistics mutation with notifier handlers for stats-meta and auto-analyze priority queue behavior.
 - [ ] Attach the notifier listener to the statistics owner before campaigning and stop it on retirement/process shutdown.
 - [ ] Port or map every pinned package test scenario: publish, basic pub/sub, delivery order, concurrent owners, pagination, pessimistic transaction failure, commit failure, event formatting, and decode reuse/forward compatibility.
@@ -30,6 +30,12 @@ After this work, a successful non-system DDL in the Rust server durably records 
 - Observation: starting a production notifier with no handlers is destructive by design because pinned Go production deletes rows when the registered-handler bitmap is zero. Rust must register real handlers before the statistics-owner campaign.
 
 - Observation: Rust currently applies statistics DDL effects synchronously after `ClusterDdl::execute`. Pinned Go publishes an event inside the DDL transaction and lets the stats owner process it later. Keeping both paths would duplicate mutations; merely publishing after commit would lose atomicity.
+
+- Observation: pinned Go's `mergeAddIndex` moves multiple ADD INDEX sub-jobs into one merged sub-job at the end of a multi-schema job. The former Rust one-backfill restriction was not parity, and emitting one event per written ADD INDEX would also assign the wrong sequence IDs.
+  Evidence: Rust now carries ordered backfills, executes multiple add-index actions after the other sub-actions, and publishes one combined add-index event at the merged sub-job sequence.
+
+- Observation: `onCreateView` creates metadata through the table machinery but does not call `asyncNotifyEvent`; treating a view as a create-table event would create statistics for a shape Go never notifies.
+  Evidence: the new view regression failed until the residual create-table event was removed from only the CreateView arm.
 
 ## Decision Log
 
@@ -59,9 +65,9 @@ Pinned Go production publication is `pkg/ddl/ddl.go:asyncNotifyEvent`; construct
 
 ## Plan of Work
 
-First extend `DdlWrite` with the positive DDL job ID, sub-job identity, notifier-table metadata needed to encode the row, and the optional `SchemaChangeEvent`. Construct events only at the same source points represented by pinned Go constructors. Allocate the job ID from the same global metadata allocator before object IDs, but do not spend it for an `AlreadySatisfied` plan because the rolled-back attempt publishes nothing.
+First extend `DdlWrite` with the positive DDL job ID and construct events only at the same source points represented by pinned Go constructors. Allocate object and partition IDs first and the job ID last from one global metadata allocator snapshot, exactly as `assignGIDsForJobs` does. Do not spend any ID for an `AlreadySatisfied` plan because the rolled-back attempt publishes nothing.
 
-Next add a transaction-staging helper in `real_tikv_ddl.rs`. It must build the bootstrapped notifier table through the ordinary `KvTable` row writer over the DDL transaction's snapshot and `MutationBuffer`, insert `(job_id, sub_job_id, JSON event, 0)`, and commit it with schema metadata and backfill entries. System/memory schemas must skip publication exactly as pinned Go does. Duplicate notifier keys must fail the DDL transaction rather than be ignored.
+Next stage notifier table record/index/row-ID mutations through the ordinary system-row writer while planning the DDL write set, then commit them with schema metadata and every ordered index backfill in the same optimistic transaction. Insert `(job_id, sub_job_id, JSON event, 0)`. System/memory schemas skip publication exactly as pinned Go does. Duplicate notifier keys fail the DDL transaction rather than being ignored.
 
 Then expose stats-meta and priority-queue handler adapters over the notifier session. Translate each event with the same getter/action switch as pinned Go. Reuse the existing statistics write implementations, but execute their SQL mutations through the handler's already-open pessimistic transaction so the processed bit and stats changes commit together. Return `NotReadyRetryLater` from the priority handler while its queue is not initialized.
 
@@ -99,14 +105,22 @@ Fail-before evidence captured on 2026-08-31:
 
     second notifier page: left [(2, -1), (3, -1)], expected [(3, -1)]
     processed-bit CAS: a retained point-get key has the wrong unique-index width
+    notifier fixture: mysql.tidb_ddl_notifier does not exist
+    notifier row writer: tidb_ddl_notifier has no clustered handle
+    create view: Go onCreateView publishes no schema-change event
 
 Pass-after evidence:
 
     cargo test --locked --offline -p tidb-server --lib ddl_notifier_table_store_delivers_in_order_and_cleans_up
     test ... ok. 1 passed; 0 failed
+    cargo check --locked --offline -p tidb-exec --tests
+    four focused cluster_ddl_source notifier/backfill parity tests
+    test ... ok. 1 passed; 0 failed (each)
 
 ## Interfaces and Dependencies
 
 `tidb-ddl-notifier` remains the owner of event JSON, store/subscriber contracts, handler IDs, and owner-listener behavior. `tidb-exec` may depend on it to carry and serialize DDL events, but the notifier crate must not depend on executor/server crates. `tidb-server` owns SQL-session and statistics-handler adapters. `tidb-owner::ListenersWrapper` broadcasts the one statistics election lifecycle. The final path must contain no cache-only runner, synchronous stats-DDL fallback, or post-commit event insertion.
 
 Revision note (2026-08-31): initial plan created after the notifier table-store integration exposed two executor/planner correctness gaps and before production DDL publication work began.
+
+Revision note (2026-08-31): atomic production publication is implemented and focused tests pass. Production stats handlers and statistics-owner lifecycle wiring remain before the synchronous projection can be removed.
