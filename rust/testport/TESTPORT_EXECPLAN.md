@@ -60,13 +60,18 @@ For each bounded behavior cluster:
   real `tidb_stats::Table` values with Go's count, textual-histogram,
   CMSketch, nil-aware TopN, and existence-map semantics. Inventory and WIP
   gates are in `receipts/statistics_handle_internal.md`.
-- 2026-08-29: audited the complete pinned Go
-  `pkg/statistics/handle/metrics` package and found its runtime identity depends
-  on real gauge/counter vectors owned by the 60-artifact `pkg/metrics`
-  package. Removed Rust's unused metadata-only `healthy_metrics` module and
-  three supplemental tests rather than claiming constants as the package.
-  Full implementation is deferred to the atomic `pkg/metrics` dependency.
-  Inventory is in `receipts/statistics_handle_metrics_audit.md`.
+- 2026-08-30: completed the pinned Go `pkg/statistics/handle/metrics` package
+  against the shared gauge/counter collectors. The ten ordered health buckets,
+  historical dump children, and rebinding behavior are live; handle and domain
+  package initializers remain separate so one Go package cannot rebind another
+  package's handles.
+- 2026-08-30: completed the pinned two-artifact `pkg/domain/metrics` package.
+  All seven historical-stat and plan-replayer handles bind their shared
+  collectors together, and the live domain/server consumers increment or set
+  them at Go's generation, dump, channel, and collection points. Inventory is
+  in `receipts/domain_metrics.md`.
+  The handle package inventory is in
+  `receipts/statistics_handle_metrics_audit.md`.
 - 2026-08-29: completed the pinned Go `pkg/statistics/handle/logutil`
   package in `tidb-stats-handle-logutil`. Its four exported constructors now
   compose the completed shared background/error-verbose and sampled logger
@@ -880,19 +885,16 @@ For each bounded behavior cluster:
       aliases. Go owns integrated session ANALYZE execution, process tracking,
       metrics, warnings, cache effects, and interruption. Inventory is in
       `receipts/statistics_handle_autoanalyze_exec_audit.md`.
-- [x] Audit the complete pinned
-      `pkg/statistics/handle/autoanalyze/priorityqueue` package. Remove the
-      caller-fed queue, injected-port job runtime, compatibility leaves, 92
-      runnable slice tests, 49 ignored gap tests, and the stale origin/master
-      batch receipt. Go owns one live session/statistics/InfoSchema scheduler
-      with background maintenance, DDL integration, retries, and ANALYZE
-      effects. Inventory is in
+- [x] Complete the pinned
+      `pkg/statistics/handle/autoanalyze/priorityqueue` package. Its complete
+      production/test/build inventory maps to one live keyed queue, three job
+      forms, source-owned lifecycle, DML/retry refresh, DDL mutation, validation,
+      and ordinary ANALYZE/cache effects. Inventory is in
       `receipts/statistics_handle_autoanalyze_priorityqueue_audit.md`.
-- [x] Audit the complete pinned
+- [x] Complete the pinned
       `pkg/statistics/handle/autoanalyze/priorityqueue/calculatoranalysis`
-      package. Rust has no remaining generator, golden fixture, or test after
-      removal of the false parent runtime; leave the package unclaimed rather
-      than recreate its private calculator independently. Inventory is in
+      package. The production parent calculator now runs all 690 source matrix
+      cases and byte-compares the exact pinned golden CSV. Inventory is in
       `receipts/statistics_handle_autoanalyze_calculatoranalysis_audit.md`.
 - [x] Audit the complete pinned
       `pkg/statistics/handle/autoanalyze/priorityqueue/intervaltimezone`
@@ -1021,11 +1023,17 @@ For each bounded behavior cluster:
   `pkg/util/logutil` owner. It must not introduce another sink, sampler, or
   logging policy; cloned sampled handles retain the one shared per-factory
   state required by Go. Date/Author: 2026-08-29, Codex.
-- Decision: `pkg/statistics/handle/metrics` cannot be represented by bucket
-  metadata alone. Its initialized gauges and historical-stat counters are the
-  package behavior and must bind the future complete `pkg/metrics` owner; the
-  disconnected Rust constants/tests are removed until that dependency lands.
-  Date/Author: 2026-08-29, Codex.
+- Decision: `pkg/statistics/handle/metrics` binds the shared collector families
+  and owns only its ten health gauge children plus two historical-dump counter
+  children. Generate-result children used by the server belong to Go's
+  separate `pkg/domain/metrics` initializer; keeping separate binding cells
+  preserves both packages' observable reinitialization behavior.
+  Date/Author: 2026-08-30, Codex.
+- Decision: the complete `pkg/domain/metrics` package shares collector identity
+  with the statistics metrics owner while retaining its own seven-handle
+  initializer. Its consumers use those handles directly; comments describing
+  omitted metric boundaries are not behavioral parity.
+  Date/Author: 2026-08-30, Codex.
 - Decision: `pkg/statistics/handle/internal` must compare the real statistics
   graph. Caller-provided canonical byte encodings bypass the imported
   `HistogramEqual`, `CMSketch.Equal`, `TopN.Equal`, and existence-map behavior

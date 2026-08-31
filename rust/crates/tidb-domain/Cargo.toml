@@ -25,6 +25,7 @@ serde.workspace = true
 serde_json.workspace = true
 tracing = "0.1"
 tidb-vardef = { path = "../tidb-vardef" }
+tidb-stats-handle-metrics = { path = "../tidb-stats-handle-metrics" }
 # `ru_stats.go` computes interval buckets from local midnight and documents
 # DST as load-bearing; chrono replaces Go's time.Time/time.Location.
 chrono.workspace = true

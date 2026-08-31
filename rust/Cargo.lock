@@ -3353,6 +3353,7 @@ dependencies = [
  "tidb-error",
  "tidb-model",
  "tidb-mysql",
+ "tidb-stats-handle-metrics",
  "tidb-vardef",
  "tracing",
 ]

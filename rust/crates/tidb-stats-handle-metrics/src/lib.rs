@@ -112,8 +112,6 @@ struct MetricsVars {
     stats_healthy_gauges: Vec<Gauge>,
     dump_historical_stats_success_counter: Counter,
     dump_historical_stats_failed_counter: Counter,
-    generate_historical_stats_success_counter: Counter,
-    generate_historical_stats_failed_counter: Counter,
 }
 
 static STATS_HEALTHY_GAUGE: LazyLock<GaugeVec> = LazyLock::new(|| {
@@ -147,6 +145,33 @@ static HISTORICAL_STATS_COUNTER: LazyLock<CounterVec> = LazyLock::new(|| {
     metric
 });
 
+static PLAN_REPLAYER_TASK_COUNTER: LazyLock<CounterVec> = LazyLock::new(|| {
+    let metric = CounterVec::new(
+        Opts::new("task", "counter of plan replayer captured task")
+            .namespace("tidb")
+            .subsystem("plan_replayer"),
+        &["type", "result"],
+    )
+    .expect("valid plan replayer task metric");
+    prometheus::default_registry()
+        .register(Box::new(metric.clone()))
+        .expect("plan replayer task metric is registered once");
+    metric
+});
+
+static PLAN_REPLAYER_REGISTER_TASK_GAUGE: LazyLock<Gauge> = LazyLock::new(|| {
+    let metric = Gauge::with_opts(
+        Opts::new("register_task", "gauge of plan replayer registered task")
+            .namespace("tidb")
+            .subsystem("plan_replayer"),
+    )
+    .expect("valid plan replayer register-task metric");
+    prometheus::default_registry()
+        .register(Box::new(metric.clone()))
+        .expect("plan replayer register-task metric is registered once");
+    metric
+});
+
 fn bind_metrics_vars() -> MetricsVars {
     assert_eq!(
         HEALTHY_BUCKET_CONFIGS.len(),
@@ -162,10 +187,6 @@ fn bind_metrics_vars() -> MetricsVars {
             .with_label_values(&["dump", "success"]),
         dump_historical_stats_failed_counter: HISTORICAL_STATS_COUNTER
             .with_label_values(&["dump", "fail"]),
-        generate_historical_stats_success_counter: HISTORICAL_STATS_COUNTER
-            .with_label_values(&["generate", "success"]),
-        generate_historical_stats_failed_counter: HISTORICAL_STATS_COUNTER
-            .with_label_values(&["generate", "fail"]),
     }
 }
 
@@ -209,24 +230,108 @@ pub fn dump_historical_stats_failed_counter() -> Counter {
         .clone()
 }
 
-/// Go `domain_metrics.GenerateHistoricalStatsSuccessCounter`.
-#[must_use]
-pub fn generate_historical_stats_success_counter() -> Counter {
-    METRICS_VARS
-        .read()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .generate_historical_stats_success_counter
-        .clone()
-}
+/// Complete Go `pkg/domain/metrics`, kept as a distinct package-shaped module
+/// while sharing the process-global collectors owned by Go `pkg/metrics`.
+pub mod domain_metrics {
+    use super::{
+        Counter, Gauge, HISTORICAL_STATS_COUNTER, PLAN_REPLAYER_REGISTER_TASK_GAUGE,
+        PLAN_REPLAYER_TASK_COUNTER,
+    };
+    use std::sync::{LazyLock, RwLock};
 
-/// Go `domain_metrics.GenerateHistoricalStatsFailedCounter`.
-#[must_use]
-pub fn generate_historical_stats_failed_counter() -> Counter {
-    METRICS_VARS
-        .read()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .generate_historical_stats_failed_counter
-        .clone()
+    #[derive(Clone)]
+    struct MetricsVars {
+        generate_historical_stats_success_counter: Counter,
+        generate_historical_stats_failed_counter: Counter,
+        plan_replayer_dump_task_success: Counter,
+        plan_replayer_dump_task_failed: Counter,
+        plan_replayer_capture_task_send_counter: Counter,
+        plan_replayer_capture_task_discard_counter: Counter,
+        plan_replayer_register_task_gauge: Gauge,
+    }
+
+    fn bind_metrics_vars() -> MetricsVars {
+        MetricsVars {
+            generate_historical_stats_success_counter: HISTORICAL_STATS_COUNTER
+                .with_label_values(&["generate", "success"]),
+            generate_historical_stats_failed_counter: HISTORICAL_STATS_COUNTER
+                .with_label_values(&["generate", "fail"]),
+            plan_replayer_dump_task_success: PLAN_REPLAYER_TASK_COUNTER
+                .with_label_values(&["dump", "success"]),
+            plan_replayer_dump_task_failed: PLAN_REPLAYER_TASK_COUNTER
+                .with_label_values(&["dump", "fail"]),
+            plan_replayer_capture_task_send_counter: PLAN_REPLAYER_TASK_COUNTER
+                .with_label_values(&["capture", "send"]),
+            plan_replayer_capture_task_discard_counter: PLAN_REPLAYER_TASK_COUNTER
+                .with_label_values(&["capture", "discard"]),
+            plan_replayer_register_task_gauge: PLAN_REPLAYER_REGISTER_TASK_GAUGE.clone(),
+        }
+    }
+
+    static METRICS_VARS: LazyLock<RwLock<MetricsVars>> =
+        LazyLock::new(|| RwLock::new(bind_metrics_vars()));
+
+    /// Go `InitMetricsVars`.
+    pub fn init_metrics_vars() {
+        *METRICS_VARS
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = bind_metrics_vars();
+    }
+
+    macro_rules! counter_accessor {
+        ($doc:literal, $name:ident, $field:ident) => {
+            #[doc = $doc]
+            #[must_use]
+            pub fn $name() -> Counter {
+                METRICS_VARS
+                    .read()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .$field
+                    .clone()
+            }
+        };
+    }
+
+    counter_accessor!(
+        "Go `GenerateHistoricalStatsSuccessCounter`.",
+        generate_historical_stats_success_counter,
+        generate_historical_stats_success_counter
+    );
+    counter_accessor!(
+        "Go `GenerateHistoricalStatsFailedCounter`.",
+        generate_historical_stats_failed_counter,
+        generate_historical_stats_failed_counter
+    );
+    counter_accessor!(
+        "Go `PlanReplayerDumpTaskSuccess`.",
+        plan_replayer_dump_task_success,
+        plan_replayer_dump_task_success
+    );
+    counter_accessor!(
+        "Go `PlanReplayerDumpTaskFailed`.",
+        plan_replayer_dump_task_failed,
+        plan_replayer_dump_task_failed
+    );
+    counter_accessor!(
+        "Go `PlanReplayerCaptureTaskSendCounter`.",
+        plan_replayer_capture_task_send_counter,
+        plan_replayer_capture_task_send_counter
+    );
+    counter_accessor!(
+        "Go `PlanReplayerCaptureTaskDiscardCounter`.",
+        plan_replayer_capture_task_discard_counter,
+        plan_replayer_capture_task_discard_counter
+    );
+
+    /// Go `PlanReplayerRegisterTaskGauge`.
+    #[must_use]
+    pub fn plan_replayer_register_task_gauge() -> Gauge {
+        METRICS_VARS
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .plan_replayer_register_task_gauge
+            .clone()
+    }
 }
 
 #[cfg(test)]
@@ -274,16 +379,30 @@ mod tests {
         failed.inc();
         assert_eq!(success.get(), success_before + 1.0);
         assert_eq!(failed.get(), failed_before + 1.0);
+    }
 
-        let generated = generate_historical_stats_success_counter();
-        let generate_failed = generate_historical_stats_failed_counter();
+    #[test]
+    fn domain_source_init_binds_all_seven_handles_separately() {
+        domain_metrics::init_metrics_vars();
+        let generated = domain_metrics::generate_historical_stats_success_counter();
+        let generate_failed = domain_metrics::generate_historical_stats_failed_counter();
         let generated_before = generated.get();
         let generate_failed_before = generate_failed.get();
         generated.inc();
         generate_failed.inc();
         assert_eq!(generated.get(), generated_before + 1.0);
         assert_eq!(generate_failed.get(), generate_failed_before + 1.0);
-        assert_eq!(success.get(), success_before + 1.0);
-        assert_eq!(failed.get(), failed_before + 1.0);
+
+        let dump_success = domain_metrics::plan_replayer_dump_task_success();
+        let dump_failed = domain_metrics::plan_replayer_dump_task_failed();
+        let capture_send = domain_metrics::plan_replayer_capture_task_send_counter();
+        let capture_discard = domain_metrics::plan_replayer_capture_task_discard_counter();
+        let registered = domain_metrics::plan_replayer_register_task_gauge();
+        dump_success.inc();
+        dump_failed.inc();
+        capture_send.inc();
+        capture_discard.inc();
+        registered.set(7.0);
+        assert_eq!(registered.get(), 7.0);
     }
 }

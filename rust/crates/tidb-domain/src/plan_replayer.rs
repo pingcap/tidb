@@ -160,6 +160,7 @@ use std::sync::mpsc::{Receiver, SyncSender, TrySendError};
 use std::sync::{Mutex, RwLock};
 
 use chrono::{DateTime, Utc};
+use tidb_stats_handle_metrics::domain_metrics;
 
 use crate::replayer::PlanReplayerTaskKey;
 
@@ -821,8 +822,9 @@ impl<E: InternalSqlExecutor> PlanReplayerTaskCollectorHandle<E> {
                 tasks.push(key);
             }
         }
-        // boundary: Go `domain_metrics.PlanReplayerRegisterTaskGauge.Set(len(tasks))`.
+        let task_count = tasks.len();
         self.setup_tasks(tasks);
+        domain_metrics::plan_replayer_register_task_gauge().set(task_count as f64);
         Ok(())
     }
 
@@ -983,8 +985,15 @@ impl<E: InternalSqlExecutor, D: PlanReplayerDumper> PlanReplayerTaskDumpWorker<E
         // Go assigns `task.Zf` and `task.FileName` before dumping.
         let mut dumped = task.clone();
         dumped.file_name = Some(file_name);
-        // boundary: Go logs "dump task result failed".
-        self.dumper.dump_plan_replayer_info(&dumped).is_ok()
+        // Go's dump routine increments exactly one result counter after the
+        // dump attempt; failures before this call do not affect either child.
+        let success = self.dumper.dump_plan_replayer_info(&dumped).is_ok();
+        if success {
+            domain_metrics::plan_replayer_dump_task_success().inc();
+        } else {
+            domain_metrics::plan_replayer_dump_task_failed().inc();
+        }
+        success
     }
 
     /// boundary: Go `vardef.EnableHistoricalStatsForCapture.Load()`. There is
@@ -1101,12 +1110,12 @@ impl<E: InternalSqlExecutor> PlanReplayerHandle<E> {
                 if !task.is_continues_capture {
                     self.collector.remove_task(&task.key);
                 }
-                // boundary: Go `domain_metrics.PlanReplayerCaptureTaskSendCounter.Inc()`.
+                domain_metrics::plan_replayer_capture_task_send_counter().inc();
                 true
             }
             Err(TrySendError::Full(_)) => {
-                // boundary: Go `PlanReplayerCaptureTaskDiscardCounter.Inc()`
-                // and a "discard one plan replayer dump task" warning.
+                domain_metrics::plan_replayer_capture_task_discard_counter().inc();
+                // Go also logs a "discard one plan replayer dump task" warning.
                 false
             }
             Err(TrySendError::Disconnected(_)) => {

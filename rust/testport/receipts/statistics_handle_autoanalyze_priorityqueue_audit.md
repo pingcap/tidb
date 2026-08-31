@@ -1,4 +1,4 @@
-# `pkg/statistics/handle/autoanalyze/priorityqueue` package audit
+# `pkg/statistics/handle/autoanalyze/priorityqueue` parity receipt
 
 Reference: TiDB Go commit
 `e2788410d8d696605e8cb002585877a063ccc909`.
@@ -54,43 +54,38 @@ session, statistics handle, DDL notifier, failpoints, concurrency, lifecycle,
 and post-ANALYZE cache/storage effects. The heap arithmetic and SQL templates
 are private pieces of that package, not independent public APIs.
 
-## Rust comparison and decision
+## Rust integration
 
-Rust exposed an alternate runtime assembled from caller-implemented
-`SessionPort`, `InfoSchemaPort`, `StatisticsPort`, `SqlPort`, clock, hook, and
-queue traits. Its queue accepted already-materialized jobs, locks, and DML
-versions; it did not scan tables, own sessions, run background tickers, receive
-the real notifier, recreate jobs from the current stats cache, or execute via
-the ordinary auto-analyze path. Additional public modules exposed heap,
-priority, interval, SQL-template, gate, and job-metadata slices. Repository-wide
-symbol tracing found no production consumer outside this crate.
+`tidb-stats-handle-autoanalyze-priorityqueue` owns the keyed heap, all three
+concrete job forms, priority calculator, job factory, interval and retry
+policy, running identities, DML watermark, queue lifecycle, and DDL mutations.
+The production server source scans the shared catalog/statistics/lock/global
+variable state, receives DDL events after publication, recreates jobs from
+current state, and executes generated ANALYZE through the ordinary session
+executor. The refresher and root auto-analyze packages consume that same live
+queue instead of reconstructing caller-supplied snapshots.
 
-This was behaviorally different as well as incomplete: it invented a scalar
-`PriorityHeapItem`, exposed source-private helpers, delegated recovery to a
-caller closure, used an adapter that reconstructed queue state from snapshots,
-and carried acknowledged SQL/error-string and integration gaps. Adding more
-ports would preserve the wrong owner boundary rather than implement Go.
+Source comparison corrected four observable divergences during integration:
+the DML watermark is captured before the cache scan, static retry recreates the
+whole logical table, concurrent close callers wait for the single worker reset,
+and duration strings use Go's nanosecond/microsecond/millisecond units. The
+unchanged validation query also drove the ordinary index-reader execution fix;
+no queue-only SQL workaround remains.
 
-Therefore 20 production carrier files (2,412 lines), their compatibility
-exports, and 19 test files (2,627 lines) were removed. The tests comprised 92
-runnable slice tests and 49 ignored gap tests. The old `b043` receipt was also
-removed because it used `origin/master`, mixed three Go packages, and reported
-partial functions as ports despite the atomic package rule.
+The 78 original assertion tests are mapped across the crate and its production
+server receipts by behavior: job construction/validation and SQL, keyed heap
+ordering, retry and duration rules, rebuild/refresh/close lifecycle, running
+identity, DML and lock changes, DDL mutation, concurrent access, and ordinary
+ANALYZE/cache effects. Go's package-level `TestMain` only installs the standard
+leak checker. The separately inventoried `calculatoranalysis` child is now
+complete with its exact golden matrix; `intervaltimezone` remains a distinct
+open package and is not claimed by this receipt.
 
-The package remains explicitly unclaimed. It can land only after the ordinary
-statistics handle/types/storage, session ANALYZE execution, InfoSchema, lock,
-and notifier owners are dependency-complete, together with all 22 artifacts
-and the full integrated test surface. Unrelated `statistics/table.go`, root
-`autoanalyze`, and `refresher` Rust carriers are not claimed or removed by this
-package audit.
+## Validation
 
-## WIP validation
+- `cargo test -p tidb-stats-handle-autoanalyze-priorityqueue`
+- `cargo check -p tidb-server --tests`
+- `cargo fmt --all -- --check`
+- `git diff --check`
 
-- `cargo check --locked -p tidb-stats` passed.
-- `cargo nextest run --locked -p tidb-stats -E 'not test(/bench/)' --no-fail-fast`
-  passed: 283 run, 283 passed, 105 skipped.
-- `rustfmt --edition 2021 --check crates/tidb-stats/src/lib.rs` passed.
-- `git diff --check` passed.
-
-No Go or Bazel source changed, so `make bazel_prepare` was not required. This
-is a WIP package audit, not a repository-wide Ready parity claim.
+No Go or Bazel source changed, so `make bazel_prepare` was not required.

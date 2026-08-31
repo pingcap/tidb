@@ -2515,11 +2515,12 @@ struct ClusterHistoricalStatsMetrics;
 
 impl HistoricalStatsMetrics for ClusterHistoricalStatsMetrics {
     fn inc_generate_failed(&self) {
-        tidb_stats_handle_metrics::generate_historical_stats_failed_counter().inc();
+        tidb_stats_handle_metrics::domain_metrics::generate_historical_stats_failed_counter().inc();
     }
 
     fn inc_generate_success(&self) {
-        tidb_stats_handle_metrics::generate_historical_stats_success_counter().inc();
+        tidb_stats_handle_metrics::domain_metrics::generate_historical_stats_success_counter()
+            .inc();
     }
 }
 

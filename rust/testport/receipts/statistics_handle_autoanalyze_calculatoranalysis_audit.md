@@ -1,4 +1,4 @@
-# `pkg/statistics/handle/autoanalyze/priorityqueue/calculatoranalysis` audit
+# `pkg/statistics/handle/autoanalyze/priorityqueue/calculatoranalysis` parity receipt
 
 Reference: TiDB Go commit
 `e2788410d8d696605e8cb002585877a063ccc909`.
@@ -16,7 +16,7 @@ Reference: TiDB Go commit
 All 1,098 lines were read. The package has one assertion test, one shared
 leak-checking `TestMain`, and no benchmark.
 
-## Behavior and Rust decision
+## Behavior and Rust integration
 
 The test generates 690 realistic table-size/change/elapsed-time jobs, invokes
 the parent package's real `PriorityCalculator` through the full `AnalysisJob`
@@ -24,12 +24,19 @@ interface, stable-sorts the results, and byte-compares all rows with the CSV
 fixture. Its update flag, README, fixture, build target, and harness are part of
 the package unit.
 
-Rust has no remaining calculator-analysis generator, fixture, or package test.
-Repository-wide tracing found no corresponding artifact after the false parent
-priority-queue runtime was removed. Reintroducing the formula or a reduced
-fixture would not satisfy this package and would recreate a partial parent
-claim. The package remains unclaimed until the real priority queue can land
-with this complete golden test.
+The package is test-only. Rust maps it to the completed parent priority-queue
+crate and exercises the production `AnalysisJob` and `PriorityCalculator`
+implementations. The test reproduces all 11 table sizes, 13 elapsed durations,
+and six change factors, uses the same stable descending ordering and CSV
+format, and byte-compares all 690 rows against the pinned Go fixture consumed
+directly with `include_str!`.
 
-No Rust source changed solely for this audit. This is a WIP inventory, not a
-package parity or repository-wide Ready claim.
+Go's package-level `TestMain` only installs the standard leak checker; the Rust
+test runner supplies the harness and no production behavior is omitted.
+
+## Validation
+
+- `cargo fmt --all`
+- `cargo test -p tidb-stats-handle-autoanalyze-priorityqueue source_priority_calculator_matches_complete_golden_matrix -- --nocapture`
+
+No Go or Bazel source changed, so `make bazel_prepare` was not required.

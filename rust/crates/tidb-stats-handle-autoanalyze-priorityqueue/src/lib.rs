@@ -2365,6 +2365,7 @@ fn format_go_duration(duration: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fmt::Write as _;
     use std::sync::RwLock;
     use tidb_ast::CiString;
     use tidb_model::go_runtime::{GoShared, GoSharedPointerSlice, GoSharedSlice};
@@ -2568,6 +2569,97 @@ mod tests {
         assert!(weight(0.6, 1_000.0, hour) < weight(1.0, 1_000.0, hour));
         assert!(weight(0.6, 100_000.0, hour) < weight(0.6, 1_000.0, hour));
         assert!(weight(0.6, 1_000.0, hour) < weight(0.6, 1_000.0, 24 * hour));
+    }
+
+    /// Pinned `calculatoranalysis.TestPriorityCalculatorWithGeneratedData`:
+    /// all 690 realistic size/change/elapsed-time combinations are stable
+    /// sorted and byte-compared with the original package fixture.
+    #[test]
+    fn source_priority_calculator_matches_complete_golden_matrix() {
+        const BASE_CHANGE_RATE: f64 = 0.001;
+        const CHANGE_RATE_DECAY_LOG: f64 = 3.0;
+        const SMALL_TABLE_THRESHOLD: i64 = 100_000;
+        const MAX_CHANGE_PERCENTAGE: f64 = 3.0;
+
+        let table_sizes = [
+            1_000_i64,
+            5_000,
+            10_000,
+            50_000,
+            100_000,
+            500_000,
+            1_000_000,
+            5_000_000,
+            10_000_000,
+            50_000_000,
+            100_000_000,
+        ];
+        let analyze_times = [
+            10_i64, 60, 300, 900, 1_800, 3_600, 7_200, 14_400, 28_800, 43_200, 86_400, 172_800,
+            259_200,
+        ];
+        let mut rows = Vec::new();
+        let mut id = 1_i64;
+        for table_size in table_sizes {
+            for elapsed_seconds in analyze_times {
+                let change_rate = if table_size < SMALL_TABLE_THRESHOLD {
+                    BASE_CHANGE_RATE
+                } else {
+                    BASE_CHANGE_RATE
+                        * 0.5_f64.powf((table_size as f64).log10() / CHANGE_RATE_DECAY_LOG)
+                };
+                let max_change = ((table_size as f64) * change_rate * (elapsed_seconds as f64))
+                    .min((table_size as f64) * MAX_CHANGE_PERCENTAGE)
+                    as i64;
+                for changes in [
+                    max_change / 10,
+                    max_change / 5,
+                    max_change / 2,
+                    max_change,
+                    max_change * 2,
+                    max_change * 3,
+                ] {
+                    if changes <= 0 || changes > table_size * 3 {
+                        continue;
+                    }
+                    let mut analysis_job = job(id, 0.0);
+                    analysis_job.set_indicators(Indicators {
+                        change_percentage: (changes as f64) / (table_size as f64),
+                        table_size: table_size as f64,
+                        last_analysis_duration: elapsed_seconds * 1_000_000_000,
+                    });
+                    rows.push((
+                        id,
+                        PriorityCalculator.calculate_weight(&analysis_job),
+                        table_size,
+                        changes,
+                        elapsed_seconds,
+                    ));
+                    id += 1;
+                }
+            }
+        }
+        rows.sort_by(|left, right| right.1.total_cmp(&left.1));
+
+        let mut actual = String::from(
+            "ID,CalculatedPriority,TableSize,Changes,TimeSinceLastAnalyze,ChangeRatio\n",
+        );
+        for (id, priority, table_size, changes, elapsed_seconds) in rows {
+            writeln!(
+                actual,
+                "{id},{priority:.4},{table_size},{changes},{elapsed_seconds},{:.4}",
+                (changes as f64) / (table_size as f64)
+            )
+            .expect("writing to a String cannot fail");
+        }
+        assert_eq!(
+            actual,
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../../pkg/statistics/handle/autoanalyze/priorityqueue/",
+                "calculatoranalysis/testdata/calculated_priorities.golden.csv"
+            ))
+        );
     }
 
     #[test]
