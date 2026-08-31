@@ -302,7 +302,7 @@ func TestTableRange(t *testing.T) {
 			conds, filter = ranger.DetachCondsForColumn(rctx, conds, col)
 			require.Equal(t, tt.accessConds, expression.StringifyExpressionsWithCtx(ectx, conds))
 			require.Equal(t, tt.filterConds, expression.StringifyExpressionsWithCtx(ectx, filter))
-			result, _, _, err := ranger.BuildTableRange(conds, rctx, col.RetType, 0)
+			result, _, _, err := ranger.BuildTableRange(conds, rctx, col.RetType, 0, 0)
 			require.NoError(t, err)
 			got := fmt.Sprintf("%v", result)
 			require.Equal(t, tt.resultStr, got)
@@ -499,7 +499,7 @@ create table t(
 			}
 			cols, lengths := plannerutil.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
 			require.NotNil(t, cols)
-			res, err := ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0)
+			res, err := ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0, 0)
 			require.NoError(t, err)
 			require.Equal(t, tt.accessConds, expression.StringifyExpressionsWithCtx(ectx, res.AccessConds))
 			require.Equal(t, tt.filterConds, expression.StringifyExpressionsWithCtx(ectx, res.RemainedConds))
@@ -865,7 +865,7 @@ func TestColumnRange(t *testing.T) {
 			require.NotNil(t, col)
 			conds = ranger.ExtractAccessConditionsForColumn(rctx, conds, col)
 			require.Equal(t, tt.accessConds, expression.StringifyExpressionsWithCtx(ectx, conds))
-			result, _, _, err := ranger.BuildColumnRange(conds, rctx, col.RetType, tt.length, 0)
+			result, _, _, err := ranger.BuildColumnRange(conds, rctx, col.RetType, tt.length, 0, 0)
 			require.NoError(t, err)
 			got := fmt.Sprintf("%v", result)
 			require.Equal(t, tt.resultStr, got)
@@ -1023,7 +1023,7 @@ func TestIndexRangeForYear(t *testing.T) {
 			}
 			cols, lengths := plannerutil.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
 			require.NotNil(t, cols)
-			res, err := ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0)
+			res, err := ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0, 0)
 			require.NoError(t, err)
 			require.Equal(t, tt.accessConds, expression.StringifyExpressionsWithCtx(ectx, res.AccessConds))
 			require.Equal(t, tt.filterConds, expression.StringifyExpressionsWithCtx(ectx, res.RemainedConds))
@@ -1094,7 +1094,7 @@ func TestPrefixIndexRangeScan(t *testing.T) {
 			}
 			cols, lengths := plannerutil.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
 			require.NotNil(t, cols)
-			res, err := ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0)
+			res, err := ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0, 0)
 			require.NoError(t, err)
 			require.Equal(t, tt.accessConds, expression.StringifyExpressionsWithCtx(ectx, res.AccessConds))
 			require.Equal(t, tt.filterConds, expression.StringifyExpressionsWithCtx(ectx, res.RemainedConds))
@@ -1459,7 +1459,7 @@ create table t(
 			}
 			cols, lengths := plannerutil.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
 			require.NotNil(t, cols)
-			res, err := ranger.DetachCondAndBuildRangeForIndex(sctx.GetRangerCtx(), conds, cols, lengths, 0)
+			res, err := ranger.DetachCondAndBuildRangeForIndex(sctx.GetRangerCtx(), conds, cols, lengths, 0, 0)
 			require.NoError(t, err)
 			require.Equal(t, tt.accessConds, expression.StringifyExpressionsWithCtx(ectx, res.AccessConds))
 			require.Equal(t, tt.filterConds, expression.StringifyExpressionsWithCtx(ectx, res.RemainedConds))
@@ -1932,12 +1932,41 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 	conds := selection.Conditions
 	require.Equal(t, 4, len(conds))
 	cols, lengths := plannerutil.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
-	res, err := ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0)
+	res, err := ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0, 0)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[in(test.t1.a, 10, 20, 30) in(test.t1.b, 40, 50, 60) ge(test.t1.c, 70) le(test.t1.c, 80)]",
 		"[]",
 		"[[10 40 70,10 40 80] [10 50 70,10 50 80] [10 60 70,10 60 80] [20 40 70,20 40 80] [20 50 70,20 50 80] [20 60 70,20 60 80] [30 40 70,30 40 80] [30 50 70,30 50 80] [30 60 70,30 60 80]]")
+	fullRangeMemUsage := res.Ranges.MemUsage()
+	checkRangeFallbackAndReset(t, sctx, false)
+	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0, 9)
+	require.NoError(t, err)
+	require.Len(t, res.Ranges, 9)
+	require.Empty(t, res.RemainedConds)
+	checkRangeFallbackAndReset(t, sctx, false)
+
+	// The count guardrail is checked before expanding the next index column.
+	// 3 ranges on a times 3 points on b would produce 9 ranges, so keep the
+	// ranges on a and retain the remaining predicates as filters.
+	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0, 8)
+	require.NoError(t, err)
+	checkDetachRangeResult(t, res,
+		"[in(test.t1.a, 10, 20, 30)]",
+		"[in(test.t1.b, 40, 50, 60) ge(test.t1.c, 70) le(test.t1.c, 80)]",
+		"[[10,10] [20,20] [30,30]]")
+	warnings := sctx.GetSessionVars().StmtCtx.GetWarnings()
+	require.Len(t, warnings, 1)
+	require.Contains(t, warnings[0].Err.Error(), "'tidb_opt_range_max_count' exceeded when building ranges")
+	checkRangeFallbackAndReset(t, sctx, false)
+
+	res, err = ranger.DetachCondAndBuildRangeForPartition(rctx, conds, cols, lengths, 0, 8)
+	require.NoError(t, err)
+	checkDetachRangeResult(t, res,
+		"[in(test.t1.a, 10, 20, 30)]",
+		"[in(test.t1.b, 40, 50, 60) ge(test.t1.c, 70) le(test.t1.c, 80)]",
+		"[[10,10] [20,20] [30,30]]")
+	require.Contains(t, sctx.GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), "'tidb_opt_range_max_count' exceeded when building ranges")
 	checkRangeFallbackAndReset(t, sctx, false)
 
 	t.Run("appending to one emitted range does not corrupt peer ranges", func(t *testing.T) {
@@ -1949,7 +1978,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		selection := getSelectionFromQuery(t, appendSctx, sql)
 		conds := selection.Conditions
 		cols, lengths := plannerutil.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
-		res, err := ranger.DetachCondAndBuildRangeForIndex(appendRctx, conds, cols, lengths, 0)
+		res, err := ranger.DetachCondAndBuildRangeForIndex(appendRctx, conds, cols, lengths, 0, 0)
 		require.NoError(t, err)
 		require.Len(t, res.Ranges, 9)
 		peer := res.Ranges[1].Clone()
@@ -2002,7 +2031,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 			},
 		}
 
-		appended, rangeFallback := ranger.AppendRanges2PointRanges(pointRanges, tailRanges, 0)
+		appended, rangeFallback := ranger.AppendRanges2PointRanges(rctx, pointRanges, tailRanges, 0, 0)
 		require.False(t, rangeFallback)
 		require.Len(t, appended, 4)
 		require.Equal(t, "[[10 40 70,10 40 80] [10 50 70,10 50 80] [20 40 70,20 40 80] [20 50 70,20 50 80]]", fmt.Sprintf("%v", appended))
@@ -2025,8 +2054,8 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		require.NotNil(t, appended[2].Collators[2])
 	})
 
-	quota := res.Ranges.MemUsage() - 1
-	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, quota)
+	quota := fullRangeMemUsage - 1
+	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, quota, 0)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[in(test.t1.a, 10, 20, 30) in(test.t1.b, 40, 50, 60)]",
@@ -2034,7 +2063,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[[10 40,10 40] [10 50,10 50] [10 60,10 60] [20 40,20 40] [20 50,20 50] [20 60,20 60] [30 40,30 40] [30 50,30 50] [30 60,30 60]]")
 	checkRangeFallbackAndReset(t, sctx, true)
 	quota = res.Ranges.MemUsage() - 1
-	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, quota)
+	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, quota, 0)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[in(test.t1.a, 10, 20, 30)]",
@@ -2042,7 +2071,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[[10,10] [20,20] [30,30]]")
 	checkRangeFallbackAndReset(t, sctx, true)
 	quota = res.Ranges.MemUsage() - 1
-	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, quota)
+	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, quota, 0)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[]",
@@ -2056,7 +2085,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 	conds = selection.Conditions
 	require.Equal(t, 1, len(conds))
 	cols, lengths = plannerutil.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
-	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0)
+	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0, 0)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[or(eq(test.t1.a, 10), or(eq(test.t1.a, 20), eq(test.t1.a, 30)))]",
@@ -2064,7 +2093,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[[10,10] [20,20] [30,30]]")
 	checkRangeFallbackAndReset(t, sctx, false)
 	quota = res.Ranges.MemUsage() - 1
-	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, quota)
+	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, quota, 0)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[]",
@@ -2077,15 +2106,23 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 	conds = selection.Conditions
 	require.Equal(t, 1, len(conds))
 	cols, lengths = plannerutil.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
-	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0)
+	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0, 0)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[or(and(eq(test.t1.a, 10), eq(test.t1.b, 40)), or(and(eq(test.t1.a, 20), eq(test.t1.b, 50)), and(eq(test.t1.a, 30), eq(test.t1.b, 60))))]",
 		"[]",
 		"[[10 40,10 40] [20 50,20 50] [30 60,30 60]]")
-	checkRangeFallbackAndReset(t, sctx, false)
 	quota = res.Ranges.MemUsage() - 1
-	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, quota)
+	checkRangeFallbackAndReset(t, sctx, false)
+	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0, 2)
+	require.NoError(t, err)
+	checkDetachRangeResult(t, res,
+		"[]",
+		"[or(or(and(eq(test.t1.a, 10), eq(test.t1.b, 40)), and(eq(test.t1.a, 20), eq(test.t1.b, 50))), and(eq(test.t1.a, 30), eq(test.t1.b, 60)))]",
+		"[[NULL,+inf]]")
+	require.Contains(t, sctx.GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), "'tidb_opt_range_max_count' exceeded when building ranges")
+	checkRangeFallbackAndReset(t, sctx, false)
+	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, quota, 0)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[]",
@@ -2099,7 +2136,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 	conds = selection.Conditions
 	require.Equal(t, 2, len(conds))
 	cols, lengths = plannerutil.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
-	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0)
+	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0, 0)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[or(and(eq(test.t1.a, 10), eq(test.t1.b, 20)), and(eq(test.t1.a, 30), eq(test.t1.b, 40))) eq(test.t1.c, 50)]",
@@ -2107,7 +2144,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[[10 20 50,10 20 50] [30 40 50,30 40 50]]")
 	checkRangeFallbackAndReset(t, sctx, false)
 	quota = res.Ranges.MemUsage() - 1
-	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, quota)
+	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, quota, 0)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[or(and(eq(test.t1.a, 10), eq(test.t1.b, 20)), and(eq(test.t1.a, 30), eq(test.t1.b, 40)))]",
@@ -2115,7 +2152,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[[10 20,10 20] [30 40,30 40]]")
 	checkRangeFallbackAndReset(t, sctx, true)
 	quota = res.Ranges.MemUsage() - 1
-	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, quota)
+	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, quota, 0)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[or(eq(test.t1.a, 10), eq(test.t1.a, 30))]",
@@ -2123,7 +2160,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[[10,10] [30,30]]")
 	checkRangeFallbackAndReset(t, sctx, true)
 	quota = res.Ranges.MemUsage() - 1
-	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, quota)
+	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, quota, 0)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[]",
@@ -2145,7 +2182,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 	conds = selection.Conditions
 	require.Equal(t, 4, len(conds))
 	cols, lengths = plannerutil.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
-	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0)
+	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0, 0)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[in(test.t2.a, aaa, bbb, ccc) in(test.t2.b, ddd, eee, fff) ge(test.t2.c, ggg) le(test.t2.c, iii)]",
@@ -2153,7 +2190,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[[\"aa\" \"dd\" \"gg\",\"aa\" \"dd\" \"ii\"] [\"aa\" \"ee\" \"gg\",\"aa\" \"ee\" \"ii\"] [\"aa\" \"ff\" \"gg\",\"aa\" \"ff\" \"ii\"] [\"bb\" \"dd\" \"gg\",\"bb\" \"dd\" \"ii\"] [\"bb\" \"ee\" \"gg\",\"bb\" \"ee\" \"ii\"] [\"bb\" \"ff\" \"gg\",\"bb\" \"ff\" \"ii\"] [\"cc\" \"dd\" \"gg\",\"cc\" \"dd\" \"ii\"] [\"cc\" \"ee\" \"gg\",\"cc\" \"ee\" \"ii\"] [\"cc\" \"ff\" \"gg\",\"cc\" \"ff\" \"ii\"]]")
 	checkRangeFallbackAndReset(t, sctx, false)
 	quota = res.Ranges.MemUsage() - 1
-	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, quota)
+	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, quota, 0)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[in(test.t2.a, aaa, bbb, ccc) in(test.t2.b, ddd, eee, fff)]",
@@ -2161,7 +2198,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[[\"aa\" \"dd\",\"aa\" \"dd\"] [\"aa\" \"ee\",\"aa\" \"ee\"] [\"aa\" \"ff\",\"aa\" \"ff\"] [\"bb\" \"dd\",\"bb\" \"dd\"] [\"bb\" \"ee\",\"bb\" \"ee\"] [\"bb\" \"ff\",\"bb\" \"ff\"] [\"cc\" \"dd\",\"cc\" \"dd\"] [\"cc\" \"ee\",\"cc\" \"ee\"] [\"cc\" \"ff\",\"cc\" \"ff\"]]")
 	checkRangeFallbackAndReset(t, sctx, true)
 	quota = res.Ranges.MemUsage() - 1
-	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, quota)
+	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, quota, 0)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[in(test.t2.a, aaa, bbb, ccc)]",
@@ -2169,7 +2206,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[[\"aa\",\"aa\"] [\"bb\",\"bb\"] [\"cc\",\"cc\"]]")
 	checkRangeFallbackAndReset(t, sctx, true)
 	quota = res.Ranges.MemUsage() - 1
-	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, quota)
+	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, quota, 0)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[]",
@@ -2183,7 +2220,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 	conds = selection.Conditions
 	require.Equal(t, 1, len(conds))
 	cols, lengths = plannerutil.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
-	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0)
+	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0, 0)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[or(eq(test.t2.a, aaa), or(eq(test.t2.a, bbb), eq(test.t2.a, ccc)))]",
@@ -2191,7 +2228,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[[\"aa\",\"aa\"] [\"bb\",\"bb\"] [\"cc\",\"cc\"]]")
 	checkRangeFallbackAndReset(t, sctx, false)
 	quota = res.Ranges.MemUsage() - 1
-	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, quota)
+	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, quota, 0)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[]",
@@ -2204,7 +2241,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 	conds = selection.Conditions
 	require.Equal(t, 1, len(conds))
 	cols, lengths = plannerutil.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
-	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0)
+	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0, 0)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[or(and(eq(test.t2.a, aaa), eq(test.t2.b, ddd)), or(and(eq(test.t2.a, bbb), eq(test.t2.b, eee)), and(eq(test.t2.a, ccc), eq(test.t2.b, fff))))]",
@@ -2212,7 +2249,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[[\"aa\" \"dd\",\"aa\" \"dd\"] [\"bb\" \"ee\",\"bb\" \"ee\"] [\"cc\" \"ff\",\"cc\" \"ff\"]]")
 	checkRangeFallbackAndReset(t, sctx, false)
 	quota = res.Ranges.MemUsage() - 1
-	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, quota)
+	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, quota, 0)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[]",
@@ -2226,7 +2263,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 	conds = selection.Conditions
 	require.Equal(t, 2, len(conds))
 	cols, lengths = plannerutil.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
-	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0)
+	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0, 0)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[or(and(eq(test.t2.a, aaa), eq(test.t2.b, bbb)), and(eq(test.t2.a, ccc), eq(test.t2.b, ddd))) eq(test.t2.c, eee)]",
@@ -2234,7 +2271,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		`[["aa" "bb" "ee","aa" "bb" "ee"] ["cc" "dd" "ee","cc" "dd" "ee"]]`)
 	checkRangeFallbackAndReset(t, sctx, false)
 	quota = res.Ranges.MemUsage() - 1
-	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, quota)
+	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, quota, 0)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[or(and(eq(test.t2.a, aaa), eq(test.t2.b, bbb)), and(eq(test.t2.a, ccc), eq(test.t2.b, ddd)))]",
@@ -2264,14 +2301,21 @@ func TestRangeFallbackForBuildTableRange(t *testing.T) {
 	conds, filters = ranger.DetachCondsForColumn(rctx, conds, col)
 	require.Equal(t, 1, len(conds))
 	require.Equal(t, 0, len(filters))
-	ranges, access, remained, err := ranger.BuildTableRange(conds, rctx, col.RetType, 0)
+	ranges, access, remained, err := ranger.BuildTableRange(conds, rctx, col.RetType, 0, 0)
 	require.NoError(t, err)
 	require.Equal(t, "[[10,10] [20,20] [30,30] [40,40] [50,50]]", fmt.Sprintf("%v", ranges))
 	require.Equal(t, "[in(test.t.a, 10, 20, 30, 40, 50)]", expression.StringifyExpressionsWithCtx(ectx, access))
 	require.Equal(t, "[]", expression.StringifyExpressionsWithCtx(ectx, remained))
-	checkRangeFallbackAndReset(t, sctx, false)
 	quota := ranges.MemUsage() - 1
-	ranges, access, remained, err = ranger.BuildTableRange(conds, rctx, col.RetType, quota)
+	checkRangeFallbackAndReset(t, sctx, false)
+	ranges, access, remained, err = ranger.BuildTableRange(conds, rctx, col.RetType, 0, 4)
+	require.NoError(t, err)
+	require.Equal(t, "[[-inf,+inf]]", fmt.Sprintf("%v", ranges))
+	require.Equal(t, "[]", expression.StringifyExpressionsWithCtx(ectx, access))
+	require.Equal(t, "[in(test.t.a, 10, 20, 30, 40, 50)]", expression.StringifyExpressionsWithCtx(ectx, remained))
+	require.Contains(t, sctx.GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), "'tidb_opt_range_max_count' exceeded when building ranges")
+	checkRangeFallbackAndReset(t, sctx, false)
+	ranges, access, remained, err = ranger.BuildTableRange(conds, rctx, col.RetType, quota, 0)
 	require.NoError(t, err)
 	require.Equal(t, "[[-inf,+inf]]", fmt.Sprintf("%v", ranges))
 	require.Equal(t, "[]", expression.StringifyExpressionsWithCtx(ectx, access))
@@ -2300,13 +2344,22 @@ func TestRangeFallbackForBuildColumnRange(t *testing.T) {
 	conds, filters = ranger.DetachCondsForColumn(rctx, conds, cola)
 	require.Equal(t, 1, len(conds))
 	require.Equal(t, 0, len(filters))
-	ranges, access, remained, err := ranger.BuildColumnRange(conds, rctx, cola.RetType, types.UnspecifiedLength, 0)
+	ranges, access, remained, err := ranger.BuildColumnRange(conds, rctx, cola.RetType, types.UnspecifiedLength, 0, 0)
 	require.NoError(t, err)
 	require.Equal(t, "[[\"aaa\",\"aaa\"] [\"bbb\",\"bbb\"] [\"ccc\",\"ccc\"] [\"ddd\",\"ddd\"] [\"eee\",\"eee\"]]", fmt.Sprintf("%v", ranges))
 	require.Equal(t, "[in(test.t.a, aaa, bbb, ccc, ddd, eee)]", expression.StringifyExpressionsWithCtx(ectx, access))
 	require.Equal(t, "[]", expression.StringifyExpressionsWithCtx(ectx, remained))
-	checkRangeFallbackAndReset(t, sctx, false)
+	preciseRanges := ranges
 	quota := ranges.MemUsage() - 1
+	checkRangeFallbackAndReset(t, sctx, false)
+	ranges, access, remained, err = ranger.BuildColumnRange(conds, rctx, cola.RetType, types.UnspecifiedLength, 0, 4)
+	require.NoError(t, err)
+	require.Equal(t, "[[NULL,+inf]]", fmt.Sprintf("%v", ranges))
+	require.Equal(t, "[]", expression.StringifyExpressionsWithCtx(ectx, access))
+	require.Equal(t, "[in(test.t.a, aaa, bbb, ccc, ddd, eee)]", expression.StringifyExpressionsWithCtx(ectx, remained))
+	require.Contains(t, sctx.GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), "'tidb_opt_range_max_count' exceeded when building ranges")
+	checkRangeFallbackAndReset(t, sctx, false)
+	ranges = preciseRanges
 	peer := ranges[1].Clone()
 	anotherPeer := ranges[3].Clone()
 	ranges[0].LowVal = append(ranges[0].LowVal, types.NewStringDatum("tail-low"))
@@ -2318,7 +2371,7 @@ func TestRangeFallbackForBuildColumnRange(t *testing.T) {
 	require.Equal(t, anotherPeer.LowVal, ranges[3].LowVal)
 	require.Equal(t, anotherPeer.HighVal, ranges[3].HighVal)
 	require.NotNil(t, ranges[3].Collators[0])
-	ranges, access, remained, err = ranger.BuildColumnRange(conds, rctx, cola.RetType, types.UnspecifiedLength, quota)
+	ranges, access, remained, err = ranger.BuildColumnRange(conds, rctx, cola.RetType, types.UnspecifiedLength, quota, 0)
 	require.NoError(t, err)
 	require.Equal(t, "[[NULL,+inf]]", fmt.Sprintf("%v", ranges))
 	require.Equal(t, "[]", expression.StringifyExpressionsWithCtx(ectx, access))
@@ -2332,7 +2385,7 @@ func TestRangeFallbackForBuildColumnRange(t *testing.T) {
 	conds, filters = ranger.DetachCondsForColumn(rctx, conds, colb)
 	require.Equal(t, 1, len(conds))
 	require.Equal(t, 0, len(filters))
-	ranges, access, remained, err = ranger.BuildColumnRange(conds, rctx, colb.RetType, types.UnspecifiedLength, 1)
+	ranges, access, remained, err = ranger.BuildColumnRange(conds, rctx, colb.RetType, types.UnspecifiedLength, 1, 0)
 	require.NoError(t, err)
 	require.Equal(t, "[[-inf,+inf]]", fmt.Sprintf("%v", ranges))
 	require.Equal(t, "[]", expression.StringifyExpressionsWithCtx(ectx, access))
@@ -2461,7 +2514,7 @@ create table t(
 		}
 		cols, lengths := plannerutil.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
 		require.NotNil(t, cols)
-		res, err := ranger.DetachCondAndBuildRangeForIndex(sctx.GetRangerCtx(), conds, cols, lengths, 0)
+		res, err := ranger.DetachCondAndBuildRangeForIndex(sctx.GetRangerCtx(), conds, cols, lengths, 0, 0)
 		require.NoError(t, err)
 		require.Equal(t, tt.accessConds, expression.StringifyExpressionsWithCtx(ectx, res.AccessConds), fmt.Sprintf("wrong access conditions for expr: %s", tt.exprStr))
 		require.Equal(t, tt.filterConds, expression.StringifyExpressionsWithCtx(ectx, res.RemainedConds), fmt.Sprintf("wrong filter conditions for expr: %s", tt.exprStr))
@@ -2625,7 +2678,7 @@ func TestMinAccessCondsForDNFCond(t *testing.T) {
 			}
 			cols, lengths := plannerutil.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
 			require.NotNil(t, cols)
-			res, err := ranger.DetachCondAndBuildRangeForIndex(sctx.GetRangerCtx(), conds, cols, lengths, 0)
+			res, err := ranger.DetachCondAndBuildRangeForIndex(sctx.GetRangerCtx(), conds, cols, lengths, 0, 0)
 			require.NoError(t, err)
 			require.Equal(t, tt.accessConds, expression.StringifyExpressionsWithCtx(ectx, res.AccessConds))
 			require.Equal(t, tt.minAccessCondsForDNFCond, res.MinAccessCondsForDNFCond)
@@ -2655,7 +2708,7 @@ func TestBinCollationRangeForIndex(t *testing.T) {
 	cols, lengths := plannerutil.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
 	require.NotNil(t, cols)
 
-	ranges, accessConds, remainedConds, err := ranger.DetachSimpleCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0)
+	ranges, accessConds, remainedConds, err := ranger.DetachSimpleCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0, 0)
 	require.NoError(t, err)
 	require.Equal(t, "[eq(test.t.f, abc)]", expression.StringifyExpressionsWithCtx(ectx, accessConds))
 	require.Equal(t, "[eq(test.t.f, abc)]", expression.StringifyExpressionsWithCtx(ectx, remainedConds))

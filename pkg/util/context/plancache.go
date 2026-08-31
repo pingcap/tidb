@@ -185,6 +185,14 @@ func (h *RangeFallbackHandler) RecordRangeFallback(rangeMaxSize int64) {
 	})
 }
 
+// RecordRangeFallbackByCount records a range fallback caused by exceeding the range count limit.
+func (h *RangeFallbackHandler) RecordRangeFallbackByCount(rangeMaxCount int64) {
+	h.planCacheTracker.SetSkipPlanCache("range count exceeds limit")
+	h.reportRangeFallbackWarning.Do(func() {
+		h.warnHandler.AppendWarning(errors.NewNoStackErrorf("Range count limit of %v for 'tidb_opt_range_max_count' exceeded when building ranges. Less accurate ranges such as full range are chosen", rangeMaxCount))
+	})
+}
+
 // NewRangeFallbackHandler creates a new RangeFallbackHandler.
 func NewRangeFallbackHandler(planCacheTracker *PlanCacheTracker, warnHandler WarnAppender) RangeFallbackHandler {
 	return RangeFallbackHandler{

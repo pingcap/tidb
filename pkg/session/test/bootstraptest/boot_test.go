@@ -115,6 +115,37 @@ func TestBootstrapOperateViewPrivilege(t *testing.T) {
 	checkOperateViewPrivilegeBootstrapSchema(t, testkit.NewTestKit(t, store))
 }
 
+func TestTiDBOptRangeMaxCountWhenUpgrading(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	se := session.CreateSessionAndSetID(t, store)
+	previousVersion := session.CurrentBootstrapVersion - 1
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	require.NoError(t, m.FinishBootstrap(previousVersion))
+	require.NoError(t, txn.Commit(context.Background()))
+	session.RevertVersionAndVariables(t, se, int(previousVersion))
+	session.MustExec(t, se, fmt.Sprintf("delete from mysql.GLOBAL_VARIABLES where variable_name='%s'", vardef.TiDBOptRangeMaxCount))
+	session.MustExec(t, se, "commit")
+	store.SetOption(session.StoreBootstrappedKey, nil)
+	dom.Close()
+
+	upgradedDomain, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer upgradedDomain.Close()
+	upgradedSession := session.CreateSessionAndSetID(t, store)
+	rows := session.MustExecToRecodeSet(t, upgradedSession, fmt.Sprintf("select variable_value from mysql.GLOBAL_VARIABLES where variable_name='%s'", vardef.TiDBOptRangeMaxCount))
+	chunk := rows.NewChunk(nil)
+	require.NoError(t, rows.Next(context.Background(), chunk))
+	require.Equal(t, 1, chunk.NumRows())
+	require.Equal(t, "0", chunk.GetRow(0).GetString(0))
+}
+
 func checkOperateViewPrivilegeBootstrapSchema(t *testing.T, tk *testkit.TestKit) {
 	tk.MustQuery("SELECT column_name FROM information_schema.columns WHERE table_schema='mysql' AND table_name='user' AND column_name='Operate_view_priv'").
 		Check(testkit.Rows("Operate_view_priv"))
