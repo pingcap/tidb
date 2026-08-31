@@ -248,9 +248,17 @@ func dumpBuildFileGenerationArgsForRepo(repoName string) {
 // load label when it updates a build file in place, and go_repository applies
 // patch commands after build file generation, so the labels have to be fixed
 // here rather than by regeneration.
+//
+// The rewrite passes a backup suffix to `sed -i` because BSD sed, which macOS
+// ships, requires that operand and would otherwise consume the following `-e`.
+// The backups are deleted by a second command.
 func dumpPatchCmdsForRepo(repoName string) {
 	if repoName == "com_github_lestrrat_go_jwx_v3" {
-		fmt.Printf("        patch_cmds = [\"find . -name 'BUILD*' -exec sed -i -e 's|@rules_go//|@io_bazel_rules_go//|g' -e 's|@gazelle//|@bazel_gazelle//|g' {} +\"],\n")
+		fmt.Printf(`        patch_cmds = [
+            "find . -name 'BUILD*' -exec sed -i.bak -e 's|@rules_go//|@io_bazel_rules_go//|g' -e 's|@gazelle//|@bazel_gazelle//|g' {} +",
+            "find . -name 'BUILD*.bak' -delete",
+        ],
+`)
 	}
 }
 

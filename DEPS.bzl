@@ -3141,7 +3141,10 @@ def go_deps():
         build_file_generation = "on",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/lestrrat-go/jwx/v3",
-        patch_cmds = ["find . -name 'BUILD*' -exec sed -i -e 's|@rules_go//|@io_bazel_rules_go//|g' -e 's|@gazelle//|@bazel_gazelle//|g' {} +"],
+        patch_cmds = [
+            "find . -name 'BUILD*' -exec sed -i.bak -e 's|@rules_go//|@io_bazel_rules_go//|g' -e 's|@gazelle//|@bazel_gazelle//|g' {} +",
+            "find . -name 'BUILD*.bak' -delete",
+        ],
         sum = "h1:Jb3zBASTSZXz7gzzSAfYqxXF8KejvKC4xWoePLQqXCA=",
         version = "v3.2.0",
     )
