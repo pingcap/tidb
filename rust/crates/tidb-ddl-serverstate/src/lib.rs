@@ -23,7 +23,8 @@ use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use serde::{Deserialize, Serialize};
+use serde::de::{IgnoredAny, MapAccess, Visitor};
+use serde::{Deserialize, Deserializer, Serialize};
 use tidb_pd_client::{EtcdClient, EtcdError, EtcdWatchEvent, EtcdWatcher};
 pub use tidb_util::timeutil::SleepContext as Context;
 use tidb_util::timeutil::{sleep, SleepError};
@@ -36,13 +37,24 @@ pub const STATE_UPGRADING: &str = "upgrading";
 pub const STATE_NORMAL_RUNNING: &str = "";
 
 const KEY_OP_DEFAULT_RETRY_COUNT: usize = 3;
+const GET_KEY_TIMEOUT: Duration = Duration::from_secs(1);
+const PUT_KEY_TIMEOUT: Duration = Duration::from_secs(2);
 const GET_KEY_RETRY_INTERVAL: Duration = Duration::from_millis(200);
 const PUT_KEY_RETRY_INTERVAL: Duration = Duration::from_millis(30);
 const NEW_SESSION_RETRY_INTERVAL: Duration = Duration::from_millis(200);
 const SESSION_TTL_SECONDS: i64 = 90;
 
+fn child_timeout(context: &Context, maximum: Duration) -> Result<Duration, Error> {
+    if context.is_cancelled() {
+        return Err(sleep(context, Duration::ZERO).unwrap_err().into());
+    }
+    Ok(context
+        .remaining()
+        .map_or(maximum, |remaining| remaining.min(maximum)))
+}
+
 /// Go `StateInfo`'s exact JSON payload.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct StateInfo {
     /// Empty means normal running; `upgrading` means smooth upgrade.
     pub state: String,
@@ -59,12 +71,68 @@ impl StateInfo {
 
     /// Go `StateInfo.Marshal`.
     pub fn marshal(&self) -> Result<Vec<u8>, serde_json::Error> {
-        serde_json::to_vec(self)
+        tidb_model::serde_helpers::to_go_json(self)
     }
 
     /// Go `StateInfo.Unmarshal`.
-    pub fn unmarshal(bytes: &[u8]) -> Result<Self, serde_json::Error> {
-        serde_json::from_slice(bytes)
+    pub fn unmarshal(&mut self, bytes: &[u8]) -> Result<(), serde_json::Error> {
+        if let Some(state) = serde_json::from_slice::<StateInfoUpdate>(bytes)?.0 {
+            self.state = state;
+        }
+        Ok(())
+    }
+}
+
+struct StateInfoUpdate(Option<String>);
+
+impl<'de> Deserialize<'de> for StateInfoUpdate {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct StateInfoVisitor;
+
+        impl<'de> Visitor<'de> for StateInfoVisitor {
+            type Value = StateInfoUpdate;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a server state object or null")
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                Ok(StateInfoUpdate(None))
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E> {
+                Ok(StateInfoUpdate(None))
+            }
+
+            fn visit_map<A>(self, mut fields: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut state = None;
+                while let Some(key) = fields.next_key::<String>()? {
+                    // encoding/json prefers an exact tag match, then accepts a
+                    // Unicode-folded match. For the ASCII tag `state`, long-s
+                    // is the only additional Unicode simple-fold spelling.
+                    let matches_state = key.eq_ignore_ascii_case("state")
+                        || key
+                            .strip_prefix('\u{17f}')
+                            .is_some_and(|suffix| suffix.eq_ignore_ascii_case("tate"));
+                    if matches_state {
+                        if let Some(value) = fields.next_value::<Option<String>>()? {
+                            state = Some(value);
+                        }
+                    } else {
+                        fields.next_value::<IgnoredAny>()?;
+                    }
+                }
+                Ok(StateInfoUpdate(state))
+            }
+        }
+
+        deserializer.deserialize_any(StateInfoVisitor)
     }
 }
 
@@ -178,11 +246,15 @@ struct EtcdSession {
 impl EtcdSession {
     fn create(client: Arc<EtcdClient>, context: &Context) -> Result<Self, Error> {
         let mut last = None;
-        for attempt in 0..KEY_OP_DEFAULT_RETRY_COUNT {
+        for _ in 0..KEY_OP_DEFAULT_RETRY_COUNT {
             if context.is_cancelled() {
                 return Err(sleep(context, Duration::ZERO).unwrap_err().into());
             }
-            match client.lease_grant(SESSION_TTL_SECONDS) {
+            let result = context.remaining().map_or_else(
+                || client.lease_grant(SESSION_TTL_SECONDS),
+                |timeout| client.lease_grant_with_timeout(SESSION_TTL_SECONDS, timeout),
+            );
+            match result {
                 Ok((lease, _)) => {
                     let (stop, keeper_stop) = mpsc::channel();
                     let keeper_client = Arc::clone(&client);
@@ -210,10 +282,10 @@ impl EtcdSession {
                         keeper: Some(keeper),
                     });
                 }
-                Err(error) => last = Some(error),
-            }
-            if attempt + 1 != KEY_OP_DEFAULT_RETRY_COUNT {
-                sleep(context, NEW_SESSION_RETRY_INTERVAL)?;
+                Err(error) => {
+                    last = Some(error);
+                    std::thread::sleep(NEW_SESSION_RETRY_INTERVAL);
+                }
             }
         }
         Err(last
@@ -239,7 +311,7 @@ pub struct EtcdSyncer {
     cluster_state: RwLock<StateInfo>,
     watch_sender: Sender<WatchEvent>,
     watch_receiver: WatchChannel,
-    watcher: Mutex<Option<EtcdWatcher>>,
+    watcher: Arc<Mutex<Option<EtcdWatcher>>>,
     session: Mutex<Option<EtcdSession>>,
 }
 
@@ -254,7 +326,7 @@ impl EtcdSyncer {
             cluster_state: RwLock::new(StateInfo::new(STATE_NORMAL_RUNNING)),
             watch_sender,
             watch_receiver: WatchChannel(Arc::new(Mutex::new(watch_receiver))),
-            watcher: Mutex::new(None),
+            watcher: Arc::new(Mutex::new(None)),
             session: Mutex::new(None),
         }
     }
@@ -276,16 +348,14 @@ impl EtcdSyncer {
 
     fn get_with_retry(&self, context: &Context) -> Result<Option<Vec<u8>>, Error> {
         let mut last = None;
-        for attempt in 0..KEY_OP_DEFAULT_RETRY_COUNT {
-            if context.is_cancelled() {
-                return Err(sleep(context, Duration::ZERO).unwrap_err().into());
-            }
-            match self.client.get(&self.path) {
+        for _ in 0..KEY_OP_DEFAULT_RETRY_COUNT {
+            let timeout = child_timeout(context, GET_KEY_TIMEOUT)?;
+            match self.client.get_with_timeout(&self.path, timeout) {
                 Ok(value) => return Ok(value),
-                Err(error) => last = Some(error),
-            }
-            if attempt + 1 != KEY_OP_DEFAULT_RETRY_COUNT {
-                sleep(context, GET_KEY_RETRY_INTERVAL)?;
+                Err(error) => {
+                    last = Some(error);
+                    std::thread::sleep(GET_KEY_RETRY_INTERVAL);
+                }
             }
         }
         Err(last
@@ -295,16 +365,14 @@ impl EtcdSyncer {
 
     fn put_with_retry(&self, context: &Context, value: &[u8]) -> Result<(), Error> {
         let mut last = None;
-        for attempt in 0..KEY_OP_DEFAULT_RETRY_COUNT {
-            if context.is_cancelled() {
-                return Err(sleep(context, Duration::ZERO).unwrap_err().into());
-            }
-            match self.client.put(&self.path, value) {
+        for _ in 0..KEY_OP_DEFAULT_RETRY_COUNT {
+            let timeout = child_timeout(context, PUT_KEY_TIMEOUT)?;
+            match self.client.put_with_timeout(&self.path, value, timeout) {
                 Ok(()) => return Ok(()),
-                Err(error) => last = Some(error),
-            }
-            if attempt + 1 != KEY_OP_DEFAULT_RETRY_COUNT {
-                sleep(context, PUT_KEY_RETRY_INTERVAL)?;
+                Err(error) => {
+                    last = Some(error);
+                    std::thread::sleep(PUT_KEY_RETRY_INTERVAL);
+                }
             }
         }
         Err(last
@@ -321,7 +389,12 @@ impl Syncer for EtcdSyncer {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(session);
         self.get_global_state(context)?;
-        self.rewatch(context);
+        if let Ok(watcher) = self.start_watch() {
+            *self
+                .watcher
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(watcher);
+        }
         Ok(())
     }
 
@@ -331,11 +404,10 @@ impl Syncer for EtcdSyncer {
     }
 
     fn get_global_state(&self, context: &Context) -> Result<StateInfo, Error> {
-        let state = self
-            .get_with_retry(context)?
-            .map(|value| StateInfo::unmarshal(&value))
-            .transpose()?
-            .unwrap_or_default();
+        let mut state = StateInfo::default();
+        if let Some(value) = self.get_with_retry(context)? {
+            state.unmarshal(&value)?;
+        }
         *self
             .cluster_state
             .write()
@@ -359,17 +431,34 @@ impl Syncer for EtcdSyncer {
             .map(|_| self.watch_receiver.clone())
     }
 
-    fn rewatch(&self, _context: &Context) {
+    fn rewatch(&self, context: &Context) {
         *self
             .watcher
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
-        if let Ok(watcher) = self.start_watch() {
-            *self
-                .watcher
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(watcher);
-        }
+        let _ = context;
+        let client = Arc::clone(&self.client);
+        let path = self.path.clone();
+        let event_key = path.clone();
+        let sender = self.watch_sender.clone();
+        let watcher_slot = Arc::clone(&self.watcher);
+        let _ = std::thread::Builder::new()
+            .name("ddl-state-rewatch".to_owned())
+            .spawn(move || {
+                let watcher = client.watch_key(path, 0, move |event: &EtcdWatchEvent| {
+                    let _ = sender.send(WatchEvent {
+                        key: event_key.clone(),
+                        value: event.value.clone(),
+                        deleted: event.deleted,
+                        mod_revision: event.mod_revision,
+                    });
+                });
+                if let Ok(watcher) = watcher {
+                    *watcher_slot
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(watcher);
+                }
+            });
     }
 }
 
@@ -412,6 +501,17 @@ impl Syncer for MemSyncer {
     }
 
     fn update_global_state(&self, _context: &Context, state: &StateInfo) -> Result<(), Error> {
+        #[cfg(feature = "failpoints")]
+        if fail::eval("mockUpgradingState", |value| {
+            value.as_deref() == Some("true")
+        })
+        .unwrap_or(false)
+        {
+            *memory_cluster_state()
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = state.clone();
+            return Ok(());
+        }
         let sender = self
             .watch
             .lock()
@@ -461,19 +561,85 @@ impl Syncer for MemSyncer {
 mod tests {
     use super::*;
 
+    fn memory_test_guard() -> std::sync::MutexGuard<'static, ()> {
+        static GUARD: Mutex<()> = Mutex::new(());
+        GUARD
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     #[test]
     fn state_info_uses_go_json() {
         let state = StateInfo::new(STATE_UPGRADING);
         assert_eq!(state.marshal().unwrap(), br#"{"state":"upgrading"}"#);
-        assert_eq!(
-            StateInfo::unmarshal(&state.marshal().unwrap()).unwrap(),
-            state
-        );
+        let mut decoded = StateInfo::default();
+        decoded.unmarshal(&state.marshal().unwrap()).unwrap();
+        assert_eq!(decoded, state);
         assert_eq!(StateInfo::default().marshal().unwrap(), br#"{"state":""}"#);
+        assert_eq!(
+            StateInfo::new("<>&\u{2028}\u{2029}").marshal().unwrap(),
+            br#"{"state":"\u003c\u003e\u0026\u2028\u2029"}"#
+        );
+
+        decoded.unmarshal(br#"{"ignored":1}"#).unwrap();
+        assert_eq!(
+            decoded, state,
+            "unknown and absent fields preserve Go state"
+        );
+        decoded.unmarshal(br#"{"state":null}"#).unwrap();
+        assert_eq!(decoded, state, "JSON null has no effect on a Go string");
+        decoded
+            .unmarshal(br#"{"STATE":"first","state":null,"\u017ftate":"last"}"#)
+            .unwrap();
+        assert_eq!(decoded.state, "last");
+        decoded.unmarshal(b"null").unwrap();
+        assert_eq!(
+            decoded.state, "last",
+            "JSON null has no effect on a Go struct"
+        );
+        assert!(decoded.unmarshal(br#"{"state":1}"#).is_err());
+    }
+
+    #[test]
+    fn child_operations_use_the_earlier_context_deadline() {
+        assert_eq!(
+            child_timeout(&Context::background(), GET_KEY_TIMEOUT).unwrap(),
+            GET_KEY_TIMEOUT
+        );
+        let context = Context::with_timeout(Duration::from_millis(100));
+        assert!(child_timeout(&context, GET_KEY_TIMEOUT).unwrap() <= Duration::from_millis(100));
+        context.cancel();
+        assert!(matches!(
+            child_timeout(&context, GET_KEY_TIMEOUT),
+            Err(Error::Context(SleepError::Cancelled))
+        ));
+    }
+
+    #[test]
+    fn failed_key_operations_keep_go_final_retry_delay() {
+        let client =
+            Arc::new(EtcdClient::connect(["127.0.0.1:1"], Duration::from_millis(20)).unwrap());
+        let syncer = EtcdSyncer::new(client, SERVER_GLOBAL_STATE);
+        let context = Context::background();
+
+        let get_started = std::time::Instant::now();
+        assert!(syncer.get_with_retry(&context).is_err());
+        assert!(
+            get_started.elapsed() >= GET_KEY_RETRY_INTERVAL * 3,
+            "Go sleeps 200ms after every failed get, including the last"
+        );
+
+        let put_started = std::time::Instant::now();
+        assert!(syncer.put_with_retry(&context, b"{}").is_err());
+        assert!(
+            put_started.elapsed() >= PUT_KEY_RETRY_INTERVAL * 3,
+            "PutKVToEtcd sleeps 30ms after every failed put, including the last"
+        );
     }
 
     #[test]
     fn memory_syncer_keeps_process_global_state_and_delivers_update_notification() {
+        let _guard = memory_test_guard();
         let first = MemSyncer::new();
         let context = Context::background();
         assert!(first.watch_chan().is_none());
@@ -493,6 +659,25 @@ mod tests {
         assert_eq!(
             second.get_global_state(&context).unwrap(),
             StateInfo::new(STATE_UPGRADING)
+        );
+    }
+
+    #[cfg(feature = "failpoints")]
+    #[test]
+    fn mock_upgrading_state_stores_without_notifying() {
+        let _guard = memory_test_guard();
+        let context = Context::background();
+        let syncer = MemSyncer::new();
+        syncer.init(&context).unwrap();
+        fail::cfg("mockUpgradingState", "return(true)").unwrap();
+        syncer
+            .update_global_state(&context, &StateInfo::new(STATE_UPGRADING))
+            .unwrap();
+        fail::remove("mockUpgradingState");
+        assert!(syncer.is_upgrading_state());
+        assert_eq!(
+            syncer.watch_chan().unwrap().try_recv(),
+            Err(TryRecvError::Empty)
         );
     }
 
@@ -517,7 +702,10 @@ mod tests {
             syncer.get_global_state(&context).unwrap(),
             original
                 .as_deref()
-                .map(StateInfo::unmarshal)
+                .map(|bytes| {
+                    let mut state = StateInfo::default();
+                    state.unmarshal(bytes).map(|()| state)
+                })
                 .transpose()
                 .unwrap()
                 .unwrap_or_default()

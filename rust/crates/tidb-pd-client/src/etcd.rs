@@ -218,6 +218,7 @@ enum EtcdCommand {
     /// `Lease.LeaseGrant`: `(lease id, server-chosen TTL seconds)`.
     LeaseGrant {
         ttl_seconds: i64,
+        timeout: Duration,
         reply: mpsc::Sender<Result<(i64, i64), EtcdError>>,
     },
     /// `Lease.LeaseRevoke`: every key under the lease expires now.
@@ -234,10 +235,12 @@ enum EtcdCommand {
     Put {
         key: Vec<u8>,
         value: Vec<u8>,
+        timeout: Duration,
         reply: mpsc::Sender<Result<(), EtcdError>>,
     },
     Get {
         key: Vec<u8>,
+        timeout: Duration,
         reply: mpsc::Sender<Result<Option<Vec<u8>>, EtcdError>>,
     },
     Close {
@@ -383,12 +386,27 @@ impl EtcdClient {
     /// Puts one key with no lease attached, exactly as
     /// `OwnerUpdateGlobalVersion` does.
     pub fn put(&self, key: &[u8], value: &[u8]) -> Result<(), EtcdError> {
+        self.put_with_timeout(key, value, self.shared.timeout)
+    }
+
+    /// Puts one key with the caller's exact per-operation deadline.
+    ///
+    /// Go derives this deadline with `context.WithTimeout` at the call site;
+    /// the ordinary [`Self::put`] retains the timeout configured on the
+    /// client.
+    pub fn put_with_timeout(
+        &self,
+        key: &[u8],
+        value: &[u8],
+        timeout: Duration,
+    ) -> Result<(), EtcdError> {
         let (reply, response) = mpsc::channel();
         self.shared
             .commands
             .send(EtcdCommand::Put {
                 key: key.to_vec(),
                 value: value.to_vec(),
+                timeout,
                 reply,
             })
             .map_err(|_| EtcdError::Closed)?;
@@ -414,10 +432,23 @@ impl EtcdClient {
     /// Grants a lease of `ttl_seconds`; answers `(lease id, the TTL the
     /// server actually chose)`.
     pub fn lease_grant(&self, ttl_seconds: i64) -> Result<(i64, i64), EtcdError> {
+        self.lease_grant_with_timeout(ttl_seconds, self.shared.timeout)
+    }
+
+    /// Grants a lease with the caller's exact per-operation deadline.
+    pub fn lease_grant_with_timeout(
+        &self,
+        ttl_seconds: i64,
+        timeout: Duration,
+    ) -> Result<(i64, i64), EtcdError> {
         let (reply, response) = mpsc::channel();
         self.shared
             .commands
-            .send(EtcdCommand::LeaseGrant { ttl_seconds, reply })
+            .send(EtcdCommand::LeaseGrant {
+                ttl_seconds,
+                timeout,
+                reply,
+            })
             .map_err(|_| EtcdError::Closed)?;
         response.recv().unwrap_or(Err(EtcdError::Closed))
     }
@@ -599,11 +630,26 @@ impl EtcdClient {
 
     /// Reads one key. `None` means the key is absent.
     pub fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, EtcdError> {
+        self.get_with_timeout(key, self.shared.timeout)
+    }
+
+    /// Reads one key with the caller's exact per-operation deadline.
+    ///
+    /// This is the synchronous equivalent of Go wrapping one `Get` in a
+    /// child context. The deadline participates in the cached-client key, so
+    /// a client configured for a broader control-plane timeout cannot leak
+    /// that broader deadline into this operation.
+    pub fn get_with_timeout(
+        &self,
+        key: &[u8],
+        timeout: Duration,
+    ) -> Result<Option<Vec<u8>>, EtcdError> {
         let (reply, response) = mpsc::channel();
         self.shared
             .commands
             .send(EtcdCommand::Get {
                 key: key.to_vec(),
+                timeout,
                 reply,
             })
             .map_err(|_| EtcdError::Closed)?;
@@ -692,7 +738,7 @@ fn run_kv_worker(
     receiver: &mpsc::Receiver<EtcdCommand>,
     shutdown: &watch::Receiver<bool>,
 ) {
-    let mut clients: HashMap<String, RawEtcdClient> = HashMap::new();
+    let mut clients: HashMap<(String, Duration), RawEtcdClient> = HashMap::new();
     while let Ok(command) = receiver.recv() {
         match command {
             EtcdCommand::Close { reply } => {
@@ -735,12 +781,17 @@ fn run_kv_worker(
                 }
                 EtcdCommand::Close { .. } => unreachable!("handled above"),
             },
-            EtcdCommand::Put { key, value, reply } => {
+            EtcdCommand::Put {
+                key,
+                value,
+                timeout: operation_timeout,
+                reply,
+            } => {
                 let result = across_endpoints(
                     runtime,
                     endpoints,
                     &mut clients,
-                    timeout,
+                    operation_timeout,
                     security,
                     |runtime, mut client| {
                         runtime
@@ -771,12 +822,16 @@ fn run_kv_worker(
                 );
                 let _ = reply.send(result);
             }
-            EtcdCommand::LeaseGrant { ttl_seconds, reply } => {
+            EtcdCommand::LeaseGrant {
+                ttl_seconds,
+                timeout: operation_timeout,
+                reply,
+            } => {
                 let result = across_endpoints(
                     runtime,
                     endpoints,
                     &mut clients,
-                    timeout,
+                    operation_timeout,
                     security,
                     |runtime, mut client| {
                         runtime
@@ -1050,12 +1105,16 @@ fn run_kv_worker(
                 );
                 let _ = reply.send(result);
             }
-            EtcdCommand::Get { key, reply } => {
+            EtcdCommand::Get {
+                key,
+                timeout: operation_timeout,
+                reply,
+            } => {
                 let result = across_endpoints(
                     runtime,
                     endpoints,
                     &mut clients,
-                    timeout,
+                    operation_timeout,
                     security,
                     |runtime, mut client| {
                         let options = GetOptions::new().with_limit(1);
@@ -1084,17 +1143,18 @@ fn run_kv_worker(
 fn across_endpoints<T>(
     runtime: &tokio::runtime::Runtime,
     endpoints: &[String],
-    clients: &mut HashMap<String, RawEtcdClient>,
+    clients: &mut HashMap<(String, Duration), RawEtcdClient>,
     timeout: Duration,
     security: &ClusterSecurity,
     mut call: impl FnMut(&tokio::runtime::Runtime, RawEtcdClient) -> Result<T, RawEtcdError>,
 ) -> Result<T, EtcdError> {
     let mut last = None;
     for endpoint in endpoints {
-        if !clients.contains_key(endpoint) {
+        let cache_key = (endpoint.clone(), timeout);
+        if !clients.contains_key(&cache_key) {
             match connect_etcd_client(runtime, endpoint, timeout, security) {
                 Ok(client) => {
-                    clients.insert(endpoint.clone(), client);
+                    clients.insert(cache_key.clone(), client);
                 }
                 Err(error) => {
                     last = Some(error);
@@ -1103,13 +1163,13 @@ fn across_endpoints<T>(
             }
         }
         let client = clients
-            .get(endpoint)
+            .get(&cache_key)
             .expect("the client was just inserted")
             .clone();
         match call(runtime, client) {
             Ok(value) => return Ok(value),
             Err(error) => {
-                clients.remove(endpoint);
+                clients.remove(&cache_key);
                 last = Some(classify_rpc_error(endpoint, error));
             }
         }
@@ -1541,6 +1601,29 @@ mod tests {
             client.put_global_schema_version(9),
             Err(EtcdError::Unreachable { .. })
         ));
+    }
+
+    #[test]
+    fn one_key_operations_honor_the_call_site_timeout() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = listener.local_addr().unwrap().to_string();
+        let (stop_sender, stop_receiver) = mpsc::channel();
+        let blocker = std::thread::spawn(move || {
+            let (_stream, _) = listener.accept().unwrap();
+            let _ = stop_receiver.recv_timeout(Duration::from_secs(3));
+        });
+        let client = EtcdClient::connect([endpoint], Duration::from_secs(5)).unwrap();
+        let started = std::time::Instant::now();
+        assert!(client
+            .get_with_timeout(b"/serverstate-timeout", Duration::from_millis(100))
+            .is_err());
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "the call-site timeout must override the client's five-second timeout"
+        );
+        let _ = stop_sender.send(());
+        drop(client);
+        blocker.join().unwrap();
     }
 
     #[test]

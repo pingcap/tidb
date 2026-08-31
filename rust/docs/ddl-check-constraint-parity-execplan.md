@@ -69,6 +69,9 @@ After this work, Rust accepts, stores, displays, and enforces CHECK constraints 
 - Observation: `serverstate.WatchChan` is nil before `Init`, and `memSyncer.Init` recreates a capacity-one channel while retaining process-global state. Constructing a permanently available Rust channel changed lifecycle and backpressure behavior.
   Evidence: pinned `mem_syncer.go` and `syncer.go`; the Rust trait now returns `None` before initialization and the memory implementation installs a fresh bounded channel in `init`.
 
+- Observation: the first serverstate batch inherited the etcd client's five-second timeout, skipped Go's final failed-attempt sleep, synchronously rewatched, omitted `mockUpgradingState`, and used serde's replacement/escaping rules for `StateInfo`.
+  Evidence: pinned `getKeyValue`, `PutKVToEtcd`, `util.Watcher.Rewatch`, `memSyncer.UpdateGlobalState`, and `encoding/json`; the corrective batch adds call-site etcd deadlines, every retry delay, asynchronous rewatch, the boolean failpoint, receiver-mutating decode, and Go HTML/JavaScript escaping.
+
 ## Decision Log
 
 - Decision: do not describe the current same-snapshot validator as CHECK DDL parity.
@@ -226,3 +229,5 @@ Revision note (2026-08-31): added the owner-elected active-job scanner, separate
 Revision note (2026-08-31): transcreated the common jobsubmit allocation/insertion retry contract, source-shaped modify-index arguments and BDR admission, removed the CHECK-only submission carrier, and added cross-node owner notification. Package completion remains withheld while ordinary Rust DDL actions still bypass the persisted common submit route and the pinned server-state dependency is not yet transcreated.
 
 Revision note (2026-08-31): transcreated pinned `pkg/ddl/serverstate`, removed its documentary missing-carrier test, wired the ordinary DDL constructor/scheduler/submitter to the shared state syncer, and added a live-PD form of the upstream etcd integration test. Broader DDL package completion remains withheld.
+
+Revision note (2026-08-31): post-commit package audit corrected serverstate's per-call deadlines, final retry sleeps, async rewatch lifecycle, memory failpoint, and exact `encoding/json` mutation/escaping behavior. The shared PD client now keys cached connections by operation timeout so a broad client timeout cannot leak into a narrower Go child context.

@@ -99,5 +99,9 @@ path = "tests/configured_user_store_source.rs"
 # (the global_allocator in src/bin/tidb-server.rs). The opt-out exists
 # for builds that must stay on the platform allocator.
 default = ["jemalloc"]
-failpoints = ["tidb-stats-handle-cache/failpoints", "tidb-util/failpoints"]
+failpoints = [
+    "tidb-ddl-serverstate/failpoints",
+    "tidb-stats-handle-cache/failpoints",
+    "tidb-util/failpoints",
+]
 jemalloc = ["dep:tikv-jemallocator", "dep:tikv-jemalloc-sys"]

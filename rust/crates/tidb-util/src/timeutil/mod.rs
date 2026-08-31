@@ -113,6 +113,14 @@ impl SleepContext {
                 .deadline
                 .is_some_and(|deadline| deadline <= Instant::now())
     }
+
+    /// Time remaining until this context's deadline, or `None` when it has
+    /// no deadline. An elapsed deadline returns zero.
+    #[must_use]
+    pub fn remaining(&self) -> Option<Duration> {
+        self.deadline
+            .map(|deadline| deadline.saturating_duration_since(Instant::now()))
+    }
 }
 
 /// Go `timeutil.Sleep`: blocks until `duration` elapses or `context` is
@@ -189,5 +197,16 @@ mod tests {
         let since = now.elapsed();
         assert!(since > context_timeout);
         assert!(since < sleep_time);
+    }
+
+    #[test]
+    fn context_remaining_tracks_the_deadline() {
+        assert_eq!(SleepContext::background().remaining(), None);
+        let context = SleepContext::with_timeout(Duration::from_millis(50));
+        assert!(context
+            .remaining()
+            .is_some_and(|left| left <= Duration::from_millis(50)));
+        std::thread::sleep(Duration::from_millis(60));
+        assert_eq!(context.remaining(), Some(Duration::ZERO));
     }
 }

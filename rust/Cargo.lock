@@ -3340,8 +3340,10 @@ dependencies = [
 name = "tidb-ddl-serverstate"
 version = "0.0.0"
 dependencies = [
+ "fail",
  "serde",
  "serde_json",
+ "tidb-model",
  "tidb-pd-client",
  "tidb-util",
 ]
