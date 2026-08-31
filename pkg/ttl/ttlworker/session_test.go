@@ -162,16 +162,15 @@ func newMockSessionPool(t *testing.T, tbl ...*cache.PhysicalTable) *mockSessionP
 type mockSession struct {
 	t *testing.T
 	sessionctx.Context
-	sessionVars        *variable.SessionVars
-	sessionInfoSchema  infoschema.InfoSchema
-	executeSQL         func(ctx context.Context, sql string, args ...any) ([]chunk.Row, error)
-	rows               []chunk.Row
-	execErr            error
-	resetTimeZoneCalls int
-	inPool             bool
-	closed             bool
-	commitErr          error
-	killed             chan struct{}
+	sessionVars       *variable.SessionVars
+	sessionInfoSchema infoschema.InfoSchema
+	executeSQL        func(ctx context.Context, sql string, args ...any) ([]chunk.Row, error)
+	rows              []chunk.Row
+	execErr           error
+	inPool            bool
+	closed            bool
+	commitErr         error
+	killed            chan struct{}
 }
 
 func newMockSession(t *testing.T, tbl ...*cache.PhysicalTable) *mockSession {
@@ -243,13 +242,6 @@ func (s *mockSession) RunInTxn(_ context.Context, fn func() error, _ session.Txn
 	return s.commitErr
 }
 
-func (s *mockSession) ResetWithGlobalTimeZone(_ context.Context) (err error) {
-	require.False(s.t, s.inPool)
-	require.False(s.t, s.closed)
-	s.resetTimeZoneCalls++
-	return nil
-}
-
 // GlobalTimeZone returns the global timezone
 func (s *mockSession) GlobalTimeZone(_ context.Context) (*time.Location, error) {
 	return time.Local, nil
@@ -287,14 +279,12 @@ func TestExecuteSQLWithCheck(t *testing.T) {
 	require.EqualError(t, err, "mockErr")
 	require.True(t, shouldRetry)
 	require.Nil(t, rows)
-	require.Equal(t, 1, s.resetTimeZoneCalls)
 
 	s.sessionInfoSchema = newMockInfoSchema()
 	rows, shouldRetry, err = tblSe.ExecuteSQLWithCheck(ctx, "select 1")
 	require.EqualError(t, err, "table 'test.t1' meta changed, should abort current job: [schema:1146]Table 'test.t1' doesn't exist")
 	require.False(t, shouldRetry)
 	require.Nil(t, rows)
-	require.Equal(t, 2, s.resetTimeZoneCalls)
 
 	s.sessionInfoSchema = newMockInfoSchema(tbl.TableInfo)
 	s.execErr = nil
@@ -303,14 +293,12 @@ func TestExecuteSQLWithCheck(t *testing.T) {
 	require.False(t, shouldRetry)
 	require.Equal(t, 1, len(rows))
 	require.Equal(t, int64(12), rows[0].GetInt64(0))
-	require.Equal(t, 3, s.resetTimeZoneCalls)
 
 	s.commitErr = errors.New("mockCommitErr")
 	rows, shouldRetry, err = tblSe.ExecuteSQLWithCheck(ctx, "select 1")
 	require.EqualError(t, err, "mockCommitErr")
 	require.True(t, shouldRetry)
 	require.Nil(t, rows)
-	require.Equal(t, 4, s.resetTimeZoneCalls)
 }
 
 func TestValidateTTLWork(t *testing.T) {

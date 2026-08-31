@@ -108,7 +108,8 @@ func (w *mockScanWorker) pollDelTask() *ttlDeleteTask {
 		require.NotNil(w.t, del)
 		require.NotNil(w.t, del.statistics)
 		require.Same(w.t, w.curTask.tbl, del.tbl)
-		require.Equal(w.t, w.curTask.ExpireTime, del.expire)
+		require.True(w.t, w.curTask.ExpireTime.Equal(del.expire))
+		require.Equal(w.t, time.UTC, del.expire.Location())
 		require.NotEqual(w.t, 0, len(del.rows))
 		return del
 	case <-time.After(10 * time.Second):
@@ -326,7 +327,6 @@ func (t *mockScanTask) runDoScanForTest(delTaskCnt int, errString string) *ttlSc
 	r := t.doScan(context.TODO(), t.delCh, t.sessPool)
 	require.NotNil(t.t, t.sessPool.lastSession)
 	require.True(t.t, t.sessPool.lastSession.inPool)
-	require.Greater(t.t, t.sessPool.lastSession.resetTimeZoneCalls, 0)
 	require.NotNil(t.t, r)
 	require.Same(t.t, t.ttlScanTask, r.task)
 	if errString == "" {
@@ -370,7 +370,8 @@ loop:
 		require.NotNil(t.t, del.statistics)
 		require.Same(t.t, t.statistics, del.statistics)
 		require.Same(t.t, t.tbl, del.tbl)
-		require.Equal(t.t, t.ExpireTime, del.expire)
+		require.True(t.t, t.ExpireTime.Equal(del.expire))
+		require.Equal(t.t, time.UTC, del.expire.Location())
 		if i < len(t.sqlRetry)-1 {
 			require.Equal(t.t, 3, len(del.rows))
 			require.Equal(t.t, 1, len(del.rows[2]))
