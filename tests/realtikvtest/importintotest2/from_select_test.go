@@ -179,3 +179,19 @@ func (s *mockGCSSuite) TestDiskFullOnIngestFailFast() {
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/diskFullOnIngest", `return(true)`)
 	s.ErrorContains(s.tk.ExecToErr("import into dt from select 1"), "tikv disk full")
 }
+
+func (s *mockGCSSuite) TestImportFromSelectNonEmptyTableChecksum() {
+	s.prepareAndUseDB("from_select")
+	s.tk.MustExec("create table src(id int)")
+	s.tk.MustExec("insert into src values (1), (2), (3)")
+	s.tk.MustExec("create table dst(id int)")
+	s.tk.MustExec("insert into dst values (0)")
+
+	// Deliver each row in a separate batch to exercise sorted-key buffer reuse.
+	oldMinDeliverBytes := importer.DefaultMinDeliverBytes
+	importer.DefaultMinDeliverBytes = 1
+	defer func() { importer.DefaultMinDeliverBytes = oldMinDeliverBytes }()
+
+	s.tk.MustExec("import into dst from select id from src with thread = 1")
+	s.tk.MustQuery("select count(*) from dst").Check(testkit.Rows("4"))
+}
