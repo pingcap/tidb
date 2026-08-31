@@ -654,7 +654,7 @@ func TestToEvictedCountDatumConcurrent(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 200; i++ {
+		for i := range 200 {
 			sei := generateAnyExecInfo()
 			sei.SchemaName = fmt.Sprintf("schema_%d", i)
 			ssMap.AddStatement(sei)
@@ -664,7 +664,7 @@ func TestToEvictedCountDatumConcurrent(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 200; i++ {
+		for range 200 {
 			_ = ssMap.ToEvictedCountDatum()
 		}
 	}()

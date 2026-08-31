@@ -110,7 +110,7 @@ func TestEvictedConcurrentWithRotate(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			_ = ss.Evicted()
 		}
 	}()
@@ -118,7 +118,7 @@ func TestEvictedConcurrentWithRotate(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 50; i++ {
+		for range 50 {
 			ss.windowLock.Lock()
 			ss.rotate(timeNow())
 			ss.windowLock.Unlock()
