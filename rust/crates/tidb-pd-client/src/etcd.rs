@@ -366,6 +366,12 @@ impl EtcdClient {
         &self.shared.endpoints
     }
 
+    /// The ordinary per-operation timeout configured for this client.
+    #[must_use]
+    pub fn timeout(&self) -> Duration {
+        self.shared.timeout
+    }
+
     /// Starts a reconnecting single-key watch from `start_revision`.
     pub fn watch_key(
         &self,
@@ -380,6 +386,27 @@ impl EtcdClient {
             key,
             start_revision,
             on_event,
+        )
+    }
+
+    /// Starts the same reconnecting watch while preserving each etcd watch
+    /// response as one callback and binding its lifetime to the caller's
+    /// cancellation predicate.
+    pub fn watch_key_responses(
+        &self,
+        key: impl Into<Vec<u8>>,
+        start_revision: i64,
+        is_cancelled: impl Fn() -> bool + Send + 'static,
+        on_response: impl Fn(&EtcdWatchResponse) + Send + 'static,
+    ) -> Result<EtcdWatcher, EtcdError> {
+        EtcdWatcher::spawn_responses_from_revision(
+            self.shared.endpoints.clone(),
+            self.shared.timeout,
+            Arc::clone(&self.shared.security),
+            key,
+            start_revision,
+            is_cancelled,
+            on_response,
         )
     }
 
@@ -451,6 +478,25 @@ impl EtcdClient {
             })
             .map_err(|_| EtcdError::Closed)?;
         response.recv().unwrap_or(Err(EtcdError::Closed))
+    }
+
+    /// Grants and continuously refreshes a lease until the supplied context
+    /// predicate fires or the lease can no longer be refreshed.
+    pub fn lease_session(
+        &self,
+        ttl_seconds: i64,
+        operation_timeout: Duration,
+        is_cancelled: impl Fn() -> bool + Send + 'static,
+    ) -> Result<EtcdLeaseSession, EtcdError> {
+        let (lease, granted_ttl) = self.lease_grant_with_timeout(ttl_seconds, operation_timeout)?;
+        EtcdLeaseSession::spawn(
+            self.shared.endpoints.clone(),
+            self.shared.timeout,
+            Arc::clone(&self.shared.security),
+            lease,
+            granted_ttl.max(1),
+            is_cancelled,
+        )
     }
 
     /// Revokes a lease; every key stored under it expires immediately --
@@ -1261,6 +1307,21 @@ pub struct EtcdWatchEvent {
     pub mod_revision: i64,
 }
 
+/// One Go `clientv3.WatchResponse` after client-side create-frame filtering.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct EtcdWatchResponse {
+    /// Store revision carried by the response header.
+    pub header_revision: i64,
+    /// Key changes delivered in this response.
+    pub events: Vec<EtcdWatchEvent>,
+    /// Whether etcd canceled this watch.
+    pub canceled: bool,
+    /// Minimum available revision when cancellation was caused by compaction.
+    pub compact_revision: i64,
+    /// Server-provided cancellation reason.
+    pub cancel_reason: String,
+}
+
 /// What the watch thread has observed, for tests and for operators.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct EtcdWatchStats {
@@ -1285,6 +1346,178 @@ impl WatchCounters {
             streams: self.streams.load(Ordering::Acquire),
             events: self.events.load(Ordering::Acquire),
             reconnects: self.reconnects.load(Ordering::Acquire),
+        }
+    }
+}
+
+/// A Go `concurrency.Session`-style lease refresher.
+///
+/// Dropping the handle or canceling its context stops refreshes and lets the
+/// lease expire. It deliberately does not revoke the lease: pinned
+/// `pkg/ddl/serverstate` retains a session but never calls `Session.Close`.
+#[derive(Debug)]
+pub struct EtcdLeaseSession {
+    shutdown: watch::Sender<bool>,
+    worker: Option<JoinHandle<()>>,
+}
+
+impl EtcdLeaseSession {
+    fn spawn<I, S>(
+        endpoints: I,
+        timeout: Duration,
+        security: Arc<ClusterSecurity>,
+        lease: i64,
+        ttl_seconds: i64,
+        is_cancelled: impl Fn() -> bool + Send + 'static,
+    ) -> Result<Self, EtcdError>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let endpoints = normalize_endpoints(endpoints, false)?;
+        if endpoints.is_empty() {
+            return Err(EtcdError::NoEndpoint);
+        }
+        let (shutdown, shutdown_rx) = watch::channel(false);
+        let worker = std::thread::Builder::new()
+            .name("etcd-lease-session".to_owned())
+            .spawn(move || {
+                let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                else {
+                    return;
+                };
+                runtime.block_on(keep_lease_alive(
+                    &endpoints,
+                    timeout,
+                    &security,
+                    lease,
+                    ttl_seconds,
+                    &is_cancelled,
+                    shutdown_rx,
+                ));
+            })
+            .map_err(|error| EtcdError::Runtime(error.to_string()))?;
+        Ok(Self {
+            shutdown,
+            worker: Some(worker),
+        })
+    }
+
+    /// Stops refreshing and waits for the session worker. The lease is left
+    /// to expire, matching a canceled Go session context.
+    pub fn shutdown(&mut self) {
+        let _ = self.shutdown.send(true);
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
+impl Drop for EtcdLeaseSession {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
+const LEASE_RECONNECT_DELAY: Duration = Duration::from_millis(500);
+
+async fn keep_lease_alive(
+    endpoints: &[String],
+    timeout: Duration,
+    security: &ClusterSecurity,
+    lease: i64,
+    ttl_seconds: i64,
+    is_cancelled: &(impl Fn() -> bool + Send + 'static),
+    mut shutdown: watch::Receiver<bool>,
+) {
+    let ttl = Duration::from_secs(u64::try_from(ttl_seconds).unwrap_or(1));
+    let first_response_timeout = timeout
+        .checked_add(Duration::from_secs(1))
+        .unwrap_or(Duration::MAX);
+    let mut deadline = std::time::Instant::now()
+        .checked_add(first_response_timeout)
+        .unwrap_or(std::time::Instant::now());
+
+    'reconnect: loop {
+        if *shutdown.borrow() || is_cancelled() || std::time::Instant::now() >= deadline {
+            return;
+        }
+        for endpoint in endpoints {
+            let Ok(options) = etcd_connect_options_with_tls(
+                endpoint,
+                security,
+                ConnectOptions::new().with_connect_timeout(timeout),
+            ) else {
+                continue;
+            };
+            let mut client = tokio::select! {
+                result = RawEtcdClient::connect([strip_scheme(endpoint)], Some(options)) => {
+                    let Ok(client) = result else { continue; };
+                    client
+                }
+                _ = shutdown.changed() => return,
+                () = wait_until_cancelled(is_cancelled) => return,
+                () = tokio::time::sleep(deadline.saturating_duration_since(std::time::Instant::now())) => return,
+            };
+            let (mut keeper, mut stream) = tokio::select! {
+                result = client.lease_keep_alive(lease) => {
+                    let Ok(session) = result else { continue; };
+                    session
+                }
+                _ = shutdown.changed() => return,
+                () = wait_until_cancelled(is_cancelled) => return,
+                () = tokio::time::sleep(deadline.saturating_duration_since(std::time::Instant::now())) => return,
+            };
+
+            // `lease_keep_alive` has already sent and validated the first
+            // response. Subsequent sends follow etcd/clientv3's TTL/3 cadence;
+            // while a response is overdue it retries every 500ms.
+            deadline = std::time::Instant::now()
+                .checked_add(ttl)
+                .unwrap_or(std::time::Instant::now());
+            let mut next_send = std::time::Instant::now()
+                .checked_add(ttl / 3)
+                .unwrap_or(std::time::Instant::now());
+            loop {
+                let now = std::time::Instant::now();
+                let message = tokio::select! {
+                    result = stream.message() => Some(result),
+                    () = tokio::time::sleep(next_send.saturating_duration_since(now)) => {
+                        if keeper.keep_alive().await.is_err() {
+                            break;
+                        }
+                        next_send = std::time::Instant::now()
+                            .checked_add(LEASE_RECONNECT_DELAY)
+                            .unwrap_or(std::time::Instant::now());
+                        None
+                    }
+                    _ = shutdown.changed() => return,
+                    () = wait_until_cancelled(is_cancelled) => return,
+                    () = tokio::time::sleep(deadline.saturating_duration_since(now)) => return,
+                };
+                let Some(message) = message else {
+                    continue;
+                };
+                let Ok(Some(response)) = message else {
+                    break;
+                };
+                if response.ttl() <= 0 {
+                    return;
+                }
+                let response_ttl = Duration::from_secs(u64::try_from(response.ttl()).unwrap_or(1));
+                let received = std::time::Instant::now();
+                deadline = received.checked_add(response_ttl).unwrap_or(received);
+                next_send = received.checked_add(response_ttl / 3).unwrap_or(received);
+            }
+        }
+
+        tokio::select! {
+            () = tokio::time::sleep(LEASE_RECONNECT_DELAY) => continue 'reconnect,
+            _ = shutdown.changed() => return,
+            () = wait_until_cancelled(is_cancelled) => return,
+            () = tokio::time::sleep(deadline.saturating_duration_since(std::time::Instant::now())) => return,
         }
     }
 }
@@ -1355,6 +1588,34 @@ impl EtcdWatcher {
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
     {
+        Self::spawn_responses_from_revision(
+            endpoints,
+            timeout,
+            security,
+            key,
+            start_revision,
+            || false,
+            move |response| {
+                for event in &response.events {
+                    on_event(event);
+                }
+            },
+        )
+    }
+
+    fn spawn_responses_from_revision<I, S>(
+        endpoints: I,
+        timeout: Duration,
+        security: Arc<ClusterSecurity>,
+        key: impl Into<Vec<u8>>,
+        start_revision: i64,
+        is_cancelled: impl Fn() -> bool + Send + 'static,
+        on_response: impl Fn(&EtcdWatchResponse) + Send + 'static,
+    ) -> Result<Self, EtcdError>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
         let endpoints = normalize_endpoints(endpoints, false)?;
         if endpoints.is_empty() {
             return Err(EtcdError::NoEndpoint);
@@ -1378,7 +1639,8 @@ impl EtcdWatcher {
                     &security,
                     &key,
                     start_revision,
-                    &on_event,
+                    &is_cancelled,
+                    &on_response,
                     &worker_stats,
                     shutdown_rx,
                 ));
@@ -1412,9 +1674,8 @@ impl Drop for EtcdWatcher {
     }
 }
 
-/// The reconnect delay: short enough that a PD restart is invisible next to
-/// the reload tick that backs this path up, long enough not to spin.
-const WATCH_RECONNECT_DELAY: Duration = Duration::from_secs(1);
+/// Pinned clientv3's maximum unavailable-stream backoff.
+const WATCH_RECONNECT_DELAY: Duration = Duration::from_millis(100);
 
 async fn watch_forever(
     endpoints: &[String],
@@ -1422,17 +1683,18 @@ async fn watch_forever(
     security: &ClusterSecurity,
     key: &[u8],
     mut next_revision: i64,
-    on_event: &(impl Fn(&EtcdWatchEvent) + Send + 'static),
+    is_cancelled: &(impl Fn() -> bool + Send + 'static),
+    on_response: &(impl Fn(&EtcdWatchResponse) + Send + 'static),
     stats: &WatchCounters,
     mut shutdown: watch::Receiver<bool>,
 ) {
     let mut established = false;
     loop {
-        if *shutdown.borrow() {
+        if *shutdown.borrow() || is_cancelled() {
             return;
         }
         for endpoint in endpoints {
-            if *shutdown.borrow() {
+            if *shutdown.borrow() || is_cancelled() {
                 return;
             }
             if established {
@@ -1445,13 +1707,14 @@ async fn watch_forever(
                 security,
                 key,
                 &mut next_revision,
-                on_event,
+                is_cancelled,
+                on_response,
                 stats,
                 &mut shutdown,
             )
             .await
             {
-                WatchEnd::Shutdown | WatchEnd::Canceled => return,
+                WatchEnd::Shutdown | WatchEnd::Canceled | WatchEnd::ContextCancelled => return,
                 WatchEnd::Disconnected => {
                     established = true;
                     break;
@@ -1465,6 +1728,7 @@ async fn watch_forever(
         tokio::select! {
             () = tokio::time::sleep(WATCH_RECONNECT_DELAY) => {}
             _ = shutdown.changed() => return,
+            () = wait_until_cancelled(is_cancelled) => return,
         }
     }
 }
@@ -1474,7 +1738,14 @@ enum WatchEnd {
     NotEstablished,
     Disconnected,
     Canceled,
+    ContextCancelled,
     Shutdown,
+}
+
+async fn wait_until_cancelled(is_cancelled: &(impl Fn() -> bool + Send + 'static)) {
+    while !is_cancelled() {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
 }
 
 /// Runs one watch stream to its end.
@@ -1484,7 +1755,8 @@ async fn watch_one_stream(
     security: &ClusterSecurity,
     key: &[u8],
     next_revision: &mut i64,
-    on_event: &(impl Fn(&EtcdWatchEvent) + Send + 'static),
+    is_cancelled: &(impl Fn() -> bool + Send + 'static),
+    on_response: &(impl Fn(&EtcdWatchResponse) + Send + 'static),
     stats: &WatchCounters,
     shutdown: &mut watch::Receiver<bool>,
 ) -> WatchEnd {
@@ -1495,34 +1767,51 @@ async fn watch_one_stream(
     ) else {
         return WatchEnd::NotEstablished;
     };
-    let Ok(mut client) = RawEtcdClient::connect([strip_scheme(endpoint)], Some(options)).await
-    else {
-        return WatchEnd::NotEstablished;
+    let mut client = tokio::select! {
+        result = RawEtcdClient::connect([strip_scheme(endpoint)], Some(options)) => {
+            let Ok(client) = result else {
+                return WatchEnd::NotEstablished;
+            };
+            client
+        }
+        _ = shutdown.changed() => return WatchEnd::Shutdown,
+        () = wait_until_cancelled(is_cancelled) => return WatchEnd::ContextCancelled,
     };
     let options = (*next_revision > 0)
         .then(|| etcd_client::WatchOptions::new().with_start_revision(*next_revision));
-    let Ok(mut stream) = client.watch(key.to_vec(), options).await else {
-        return WatchEnd::NotEstablished;
+    let mut stream = tokio::select! {
+        result = client.watch(key.to_vec(), options) => {
+            let Ok(stream) = result else {
+                return WatchEnd::NotEstablished;
+            };
+            stream
+        }
+        _ = shutdown.changed() => return WatchEnd::Shutdown,
+        () = wait_until_cancelled(is_cancelled) => return WatchEnd::ContextCancelled,
     };
     stats.streams.fetch_add(1, Ordering::AcqRel);
     loop {
         let message = tokio::select! {
             message = stream.message() => message,
             _ = shutdown.changed() => return WatchEnd::Shutdown,
+            () = wait_until_cancelled(is_cancelled) => return WatchEnd::ContextCancelled,
         };
         let Ok(Some(response)) = message else {
             return WatchEnd::Disconnected;
         };
-        if response.canceled() {
-            return WatchEnd::Canceled;
-        }
-        let events = response.events();
-        if events.is_empty() && *next_revision == 0 {
-            if let Some(header) = response.header() {
-                *next_revision = header.revision() + 1;
+        let header_revision = response.header().map_or(0, |header| header.revision());
+        if response.created() {
+            if *next_revision == 0 {
+                *next_revision = header_revision;
             }
+            continue;
         }
-        for event in events {
+        if header_revision != 0 {
+            *next_revision = header_revision + 1;
+        }
+        let raw_events = response.events();
+        let mut events = Vec::with_capacity(raw_events.len());
+        for event in raw_events {
             let deleted = event.event_type() == EventType::Delete;
             let (value, mod_revision) = event.kv().map_or_else(
                 || (Vec::new(), 0),
@@ -1530,11 +1819,22 @@ async fn watch_one_stream(
             );
             *next_revision = (*next_revision).max(mod_revision + 1);
             stats.events.fetch_add(1, Ordering::AcqRel);
-            on_event(&EtcdWatchEvent {
+            events.push(EtcdWatchEvent {
                 deleted,
                 value,
                 mod_revision,
             });
+        }
+        let canceled = response.canceled();
+        on_response(&EtcdWatchResponse {
+            header_revision,
+            events,
+            canceled,
+            compact_revision: response.compact_revision(),
+            cancel_reason: response.cancel_reason().to_owned(),
+        });
+        if canceled {
+            return WatchEnd::Canceled;
         }
     }
 }
@@ -1624,6 +1924,25 @@ mod tests {
         let _ = stop_sender.send(());
         drop(client);
         blocker.join().unwrap();
+    }
+
+    #[test]
+    fn lease_session_worker_stops_with_its_context() {
+        let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let worker_cancelled = Arc::clone(&cancelled);
+        let mut session = EtcdLeaseSession::spawn(
+            ["127.0.0.1:1"],
+            Duration::from_secs(5),
+            Arc::new(ClusterSecurity::plaintext()),
+            1,
+            90,
+            move || worker_cancelled.load(Ordering::Acquire),
+        )
+        .unwrap();
+        cancelled.store(true, Ordering::Release);
+        let started = std::time::Instant::now();
+        session.worker.take().unwrap().join().unwrap();
+        assert!(started.elapsed() < Duration::from_secs(1));
     }
 
     #[test]

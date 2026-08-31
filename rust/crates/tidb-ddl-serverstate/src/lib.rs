@@ -16,16 +16,16 @@
 //! smooth-upgrade state syncer and the process-global in-memory stand-in used
 //! by a single-node unistore deployment.
 
-use std::sync::mpsc::{
-    self, Receiver, RecvError, RecvTimeoutError, Sender, SyncSender, TryRecvError,
-};
-use std::sync::{Arc, Mutex, OnceLock, RwLock};
-use std::thread::JoinHandle;
-use std::time::Duration;
+use std::sync::mpsc::{self, Receiver, RecvError, RecvTimeoutError, SyncSender, TryRecvError};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock, RwLock};
+use std::time::{Duration, Instant};
 
-use serde::de::{IgnoredAny, MapAccess, Visitor};
-use serde::{Deserialize, Deserializer, Serialize};
-use tidb_pd_client::{EtcdClient, EtcdError, EtcdWatchEvent, EtcdWatcher};
+use prometheus::{exponential_buckets, CounterVec, HistogramOpts, HistogramVec, Opts};
+use serde::de::{DeserializeSeed, Error as _, IgnoredAny, MapAccess, Visitor};
+use serde::{Deserializer, Serialize};
+use tidb_log::{Field, Value};
+use tidb_pd_client::{EtcdClient, EtcdError, EtcdLeaseSession, EtcdWatcher};
+use tidb_util::logutil::{bg_logger, LOG_FIELD_CATEGORY};
 pub use tidb_util::timeutil::SleepContext as Context;
 use tidb_util::timeutil::{sleep, SleepError};
 
@@ -43,6 +43,81 @@ const GET_KEY_RETRY_INTERVAL: Duration = Duration::from_millis(200);
 const PUT_KEY_RETRY_INTERVAL: Duration = Duration::from_millis(30);
 const NEW_SESSION_RETRY_INTERVAL: Duration = Duration::from_millis(200);
 const SESSION_TTL_SECONDS: i64 = 90;
+const STATE_PROMPT: &str = "global-state-syncer";
+
+static DEPLOY_SYNCER_HISTOGRAM: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register_histogram(
+        "tidb_ddl_deploy_syncer_duration_seconds",
+        "Bucketed histogram of processing time (s) of deploy syncer",
+        0.001,
+        20,
+    )
+});
+
+static OWNER_HANDLE_SYNCER_HISTOGRAM: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register_histogram(
+        "tidb_ddl_owner_handle_syncer_duration_seconds",
+        "Bucketed histogram of processing time (s) of handle syncer",
+        0.001,
+        20,
+    )
+});
+
+static NEW_SESSION_HISTOGRAM: LazyLock<HistogramVec> = LazyLock::new(|| {
+    let histogram = HistogramVec::new(
+        HistogramOpts::new(
+            "tidb_owner_new_session_duration_seconds",
+            "Bucketed histogram of processing time (s) of new session.",
+        )
+        .buckets(exponential_buckets(0.0005, 2.0, 22).expect("valid session buckets")),
+        &["type", "result"],
+    )
+    .expect("valid new-session histogram");
+    prometheus::default_registry()
+        .register(Box::new(histogram.clone()))
+        .expect("register new-session histogram");
+    histogram
+});
+
+static RETRYABLE_ERROR_COUNT: LazyLock<CounterVec> = LazyLock::new(|| {
+    let counter = CounterVec::new(
+        Opts::new(
+            "tidb_ddl_retryable_error_total",
+            "Retryable error count during ddl.",
+        ),
+        &["type"],
+    )
+    .expect("valid retryable-error counter");
+    prometheus::default_registry()
+        .register(Box::new(counter.clone()))
+        .expect("register retryable-error counter");
+    counter
+});
+
+fn register_histogram(name: &str, help: &str, start: f64, count: usize) -> HistogramVec {
+    let histogram = HistogramVec::new(
+        HistogramOpts::new(name, help)
+            .buckets(exponential_buckets(start, 2.0, count).expect("valid syncer buckets")),
+        &["type", "result"],
+    )
+    .expect("valid syncer histogram");
+    prometheus::default_registry()
+        .register(Box::new(histogram.clone()))
+        .expect("register syncer histogram");
+    histogram
+}
+
+fn result_label<T, E>(result: &Result<T, E>) -> &'static str {
+    if result.is_ok() {
+        "ok"
+    } else {
+        "err"
+    }
+}
+
+fn ddl_logger() -> tidb_util::logutil::Logger {
+    bg_logger().with_fields(&[Field::new(LOG_FIELD_CATEGORY, Value::Str("ddl".to_owned()))])
+}
 
 fn child_timeout(context: &Context, maximum: Duration) -> Result<Duration, Error> {
     if context.is_cancelled() {
@@ -76,42 +151,54 @@ impl StateInfo {
 
     /// Go `StateInfo.Unmarshal`.
     pub fn unmarshal(&mut self, bytes: &[u8]) -> Result<(), serde_json::Error> {
-        if let Some(state) = serde_json::from_slice::<StateInfoUpdate>(bytes)?.0 {
-            self.state = state;
+        // encoding/json validates the complete input before touching the
+        // receiver, then applies valid fields in encounter order even when a
+        // different field has a type error.
+        serde_json::from_slice::<IgnoredAny>(bytes)?;
+        let mut deserializer = serde_json::Deserializer::from_slice(bytes);
+        StateInfoSeed {
+            state: &mut self.state,
         }
-        Ok(())
+        .deserialize(&mut deserializer)?;
+        deserializer.end()
     }
 }
 
-struct StateInfoUpdate(Option<String>);
+struct StateInfoSeed<'a> {
+    state: &'a mut String,
+}
 
-impl<'de> Deserialize<'de> for StateInfoUpdate {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+impl<'de> DeserializeSeed<'de> for StateInfoSeed<'_> {
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
     where
         D: Deserializer<'de>,
     {
-        struct StateInfoVisitor;
+        struct StateInfoVisitor<'a> {
+            state: &'a mut String,
+        }
 
-        impl<'de> Visitor<'de> for StateInfoVisitor {
-            type Value = StateInfoUpdate;
+        impl<'de> Visitor<'de> for StateInfoVisitor<'_> {
+            type Value = ();
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 formatter.write_str("a server state object or null")
             }
 
             fn visit_unit<E>(self) -> Result<Self::Value, E> {
-                Ok(StateInfoUpdate(None))
+                Ok(())
             }
 
             fn visit_none<E>(self) -> Result<Self::Value, E> {
-                Ok(StateInfoUpdate(None))
+                Ok(())
             }
 
             fn visit_map<A>(self, mut fields: A) -> Result<Self::Value, A::Error>
             where
                 A: MapAccess<'de>,
             {
-                let mut state = None;
+                let mut type_error = false;
                 while let Some(key) = fields.next_key::<String>()? {
                     // encoding/json prefers an exact tag match, then accepts a
                     // Unicode-folded match. For the ASCII tag `state`, long-s
@@ -121,18 +208,25 @@ impl<'de> Deserialize<'de> for StateInfoUpdate {
                             .strip_prefix('\u{17f}')
                             .is_some_and(|suffix| suffix.eq_ignore_ascii_case("tate"));
                     if matches_state {
-                        if let Some(value) = fields.next_value::<Option<String>>()? {
-                            state = Some(value);
+                        match fields.next_value::<serde_json::Value>()? {
+                            serde_json::Value::Null => {}
+                            serde_json::Value::String(value) => *self.state = value,
+                            _ => type_error = true,
                         }
                     } else {
                         fields.next_value::<IgnoredAny>()?;
                     }
                 }
-                Ok(StateInfoUpdate(state))
+                if type_error {
+                    return Err(A::Error::custom(
+                        "cannot unmarshal non-string JSON into StateInfo.state",
+                    ));
+                }
+                Ok(())
             }
         }
 
-        deserializer.deserialize_any(StateInfoVisitor)
+        deserializer.deserialize_any(StateInfoVisitor { state: self.state })
     }
 }
 
@@ -149,13 +243,29 @@ pub struct WatchEvent {
     pub mod_revision: i64,
 }
 
+/// One Go `clientv3.WatchResponse`, retaining its event batch.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct WatchResponse {
+    /// Store revision carried by the etcd response header.
+    pub header_revision: i64,
+    /// Events delivered together by etcd. The memory syncer deliberately
+    /// sends an empty response as a reload notification.
+    pub events: Vec<WatchEvent>,
+    /// Whether etcd canceled this watch.
+    pub canceled: bool,
+    /// Minimum available revision for a compacted watch.
+    pub compact_revision: i64,
+    /// Server-provided cancellation reason.
+    pub cancel_reason: String,
+}
+
 /// A clonable handle onto one Go-style watch channel.
 #[derive(Clone, Debug)]
-pub struct WatchChannel(Arc<Mutex<Receiver<WatchEvent>>>);
+pub struct WatchChannel(Arc<Mutex<Receiver<WatchResponse>>>);
 
 impl WatchChannel {
     /// Blocks for the next watch response.
-    pub fn recv(&self) -> Result<WatchEvent, RecvError> {
+    pub fn recv(&self) -> Result<WatchResponse, RecvError> {
         self.0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -163,7 +273,7 @@ impl WatchChannel {
     }
 
     /// Waits at most `timeout` for the next watch response.
-    pub fn recv_timeout(&self, timeout: Duration) -> Result<WatchEvent, RecvTimeoutError> {
+    pub fn recv_timeout(&self, timeout: Duration) -> Result<WatchResponse, RecvTimeoutError> {
         self.0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -171,7 +281,7 @@ impl WatchChannel {
     }
 
     /// Receives an already-buffered response without blocking.
-    pub fn try_recv(&self) -> Result<WatchEvent, TryRecvError> {
+    pub fn try_recv(&self) -> Result<WatchResponse, TryRecvError> {
         self.0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -236,72 +346,51 @@ pub trait Syncer: Send + Sync {
     fn rewatch(&self, context: &Context);
 }
 
-struct EtcdSession {
-    client: Arc<EtcdClient>,
-    lease: i64,
-    stop: Sender<()>,
-    keeper: Option<JoinHandle<()>>,
-}
-
-impl EtcdSession {
-    fn create(client: Arc<EtcdClient>, context: &Context) -> Result<Self, Error> {
-        let mut last = None;
-        for _ in 0..KEY_OP_DEFAULT_RETRY_COUNT {
-            if context.is_cancelled() {
-                return Err(sleep(context, Duration::ZERO).unwrap_err().into());
-            }
-            let result = context.remaining().map_or_else(
-                || client.lease_grant(SESSION_TTL_SECONDS),
-                |timeout| client.lease_grant_with_timeout(SESSION_TTL_SECONDS, timeout),
-            );
-            match result {
-                Ok((lease, _)) => {
-                    let (stop, keeper_stop) = mpsc::channel();
-                    let keeper_client = Arc::clone(&client);
-                    let keeper = std::thread::Builder::new()
-                        .name("ddl-state-session".to_owned())
-                        .spawn(move || {
-                            let cadence = Duration::from_secs(
-                                u64::try_from(SESSION_TTL_SECONDS).unwrap_or(1).div_ceil(3),
-                            );
-                            loop {
-                                match keeper_stop.recv_timeout(cadence) {
-                                    Ok(()) | Err(RecvTimeoutError::Disconnected) => return,
-                                    Err(RecvTimeoutError::Timeout) => {}
-                                }
-                                if keeper_client.lease_keep_alive_once(lease).is_err() {
-                                    return;
-                                }
-                            }
-                        })
-                        .map_err(|error| Error::Etcd(EtcdError::Runtime(error.to_string())))?;
-                    return Ok(Self {
-                        client,
-                        lease,
-                        stop,
-                        keeper: Some(keeper),
-                    });
+fn create_session(
+    client: &Arc<EtcdClient>,
+    context: &Context,
+    log_prefix: &str,
+) -> Result<EtcdLeaseSession, Error> {
+    let mut last = None;
+    for failed_count in 0..KEY_OP_DEFAULT_RETRY_COUNT {
+        if context.is_cancelled() {
+            return Err(sleep(context, Duration::ZERO).unwrap_err().into());
+        }
+        let timeout = context.remaining().unwrap_or_else(|| client.timeout());
+        let session_context = context.clone();
+        let started = Instant::now();
+        let result = client.lease_session(SESSION_TTL_SECONDS, timeout, move || {
+            session_context.is_cancelled()
+        });
+        NEW_SESSION_HISTOGRAM
+            .with_label_values(&[log_prefix, result_label(&result)])
+            .observe(started.elapsed().as_secs_f64());
+        match result {
+            Ok(session) => return Ok(session),
+            Err(error) => {
+                if failed_count % 15 == 0 {
+                    ddl_logger().warn(
+                        "failed to establish new session to etcd",
+                        &[
+                            Field::new("ownerInfo", Value::Str(log_prefix.to_owned())),
+                            Field::new(
+                                "error",
+                                Value::Error {
+                                    basic: error.to_string(),
+                                    verbose: None,
+                                },
+                            ),
+                        ],
+                    );
                 }
-                Err(error) => {
-                    last = Some(error);
-                    std::thread::sleep(NEW_SESSION_RETRY_INTERVAL);
-                }
+                last = Some(error);
+                std::thread::sleep(NEW_SESSION_RETRY_INTERVAL);
             }
         }
-        Err(last
-            .expect("the retry loop performs at least one lease grant")
-            .into())
     }
-}
-
-impl Drop for EtcdSession {
-    fn drop(&mut self) {
-        let _ = self.stop.send(());
-        if let Some(keeper) = self.keeper.take() {
-            let _ = keeper.join();
-        }
-        let _ = self.client.lease_revoke(self.lease);
-    }
+    Err(last
+        .expect("the retry loop performs at least one session attempt")
+        .into())
 }
 
 /// Go `etcdSyncer`.
@@ -309,41 +398,59 @@ pub struct EtcdSyncer {
     client: Arc<EtcdClient>,
     path: Vec<u8>,
     cluster_state: RwLock<StateInfo>,
-    watch_sender: Sender<WatchEvent>,
-    watch_receiver: WatchChannel,
-    watcher: Arc<Mutex<Option<EtcdWatcher>>>,
-    session: Mutex<Option<EtcdSession>>,
+    watcher: Arc<Mutex<Option<(EtcdWatcher, WatchChannel)>>>,
+    session: Mutex<Option<EtcdLeaseSession>>,
 }
 
 impl EtcdSyncer {
     /// Go `NewEtcdSyncer`.
     #[must_use]
     pub fn new(client: Arc<EtcdClient>, path: impl Into<Vec<u8>>) -> Self {
-        let (watch_sender, watch_receiver) = mpsc::channel();
         Self {
             client,
             path: path.into(),
             cluster_state: RwLock::new(StateInfo::new(STATE_NORMAL_RUNNING)),
-            watch_sender,
-            watch_receiver: WatchChannel(Arc::new(Mutex::new(watch_receiver))),
             watcher: Arc::new(Mutex::new(None)),
             session: Mutex::new(None),
         }
     }
 
-    fn start_watch(&self) -> Result<EtcdWatcher, EtcdError> {
-        let path = self.path.clone();
+    fn make_watch(
+        client: &EtcdClient,
+        path: Vec<u8>,
+        context: Context,
+    ) -> Result<(EtcdWatcher, WatchChannel), EtcdError> {
+        let (sender, receiver) = mpsc::channel();
         let event_key = path.clone();
-        let sender = self.watch_sender.clone();
-        self.client
-            .watch_key(path, 0, move |event: &EtcdWatchEvent| {
-                let _ = sender.send(WatchEvent {
-                    key: event_key.clone(),
-                    value: event.value.clone(),
-                    deleted: event.deleted,
-                    mod_revision: event.mod_revision,
+        let cancel_context = context.clone();
+        let watcher = client.watch_key_responses(
+            path,
+            0,
+            move || cancel_context.is_cancelled(),
+            move |response| {
+                let _ = sender.send(WatchResponse {
+                    header_revision: response.header_revision,
+                    events: response
+                        .events
+                        .iter()
+                        .map(|event| WatchEvent {
+                            key: event_key.clone(),
+                            value: event.value.clone(),
+                            deleted: event.deleted,
+                            mod_revision: event.mod_revision,
+                        })
+                        .collect(),
+                    canceled: response.canceled,
+                    compact_revision: response.compact_revision,
+                    cancel_reason: response.cancel_reason.clone(),
                 });
-            })
+            },
+        )?;
+        Ok((watcher, WatchChannel(Arc::new(Mutex::new(receiver)))))
+    }
+
+    fn start_watch(&self, context: &Context) -> Result<(EtcdWatcher, WatchChannel), EtcdError> {
+        Self::make_watch(&self.client, self.path.clone(), context.clone())
     }
 
     fn get_with_retry(&self, context: &Context) -> Result<Option<Vec<u8>>, Error> {
@@ -353,6 +460,22 @@ impl EtcdSyncer {
             match self.client.get_with_timeout(&self.path, timeout) {
                 Ok(value) => return Ok(value),
                 Err(error) => {
+                    ddl_logger().info(
+                        "get key failed",
+                        &[
+                            Field::new(
+                                "key",
+                                Value::Str(String::from_utf8_lossy(&self.path).into_owned()),
+                            ),
+                            Field::new(
+                                "error",
+                                Value::Error {
+                                    basic: error.to_string(),
+                                    verbose: None,
+                                },
+                            ),
+                        ],
+                    );
                     last = Some(error);
                     std::thread::sleep(GET_KEY_RETRY_INTERVAL);
                 }
@@ -365,11 +488,35 @@ impl EtcdSyncer {
 
     fn put_with_retry(&self, context: &Context, value: &[u8]) -> Result<(), Error> {
         let mut last = None;
-        for _ in 0..KEY_OP_DEFAULT_RETRY_COUNT {
+        for retry_count in 0..KEY_OP_DEFAULT_RETRY_COUNT {
             let timeout = child_timeout(context, PUT_KEY_TIMEOUT)?;
             match self.client.put_with_timeout(&self.path, value, timeout) {
                 Ok(()) => return Ok(()),
                 Err(error) => {
+                    RETRYABLE_ERROR_COUNT
+                        .with_label_values(&[&error.to_string()])
+                        .inc();
+                    ddl_logger().warn(
+                        "etcd-cli put kv failed",
+                        &[
+                            Field::new(
+                                "key",
+                                Value::Str(String::from_utf8_lossy(&self.path).into_owned()),
+                            ),
+                            Field::new(
+                                "value",
+                                Value::Str(String::from_utf8_lossy(value).into_owned()),
+                            ),
+                            Field::new(
+                                "error",
+                                Value::Error {
+                                    basic: error.to_string(),
+                                    verbose: None,
+                                },
+                            ),
+                            Field::new("retryCnt", Value::I64(retry_count as i64)),
+                        ],
+                    );
                     last = Some(error);
                     std::thread::sleep(PUT_KEY_RETRY_INTERVAL);
                 }
@@ -383,35 +530,77 @@ impl EtcdSyncer {
 
 impl Syncer for EtcdSyncer {
     fn init(&self, context: &Context) -> Result<(), Error> {
-        let session = EtcdSession::create(Arc::clone(&self.client), context)?;
-        *self
-            .session
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(session);
-        self.get_global_state(context)?;
-        if let Ok(watcher) = self.start_watch() {
+        let started = Instant::now();
+        let result = (|| {
+            let path = String::from_utf8_lossy(&self.path);
+            let session =
+                create_session(&self.client, context, &format!("[{STATE_PROMPT}] {path}"))?;
             *self
-                .watcher
+                .session
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(watcher);
-        }
-        Ok(())
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(session);
+            self.get_global_state(context)?;
+            if let Ok(watcher) = self.start_watch(context) {
+                *self
+                    .watcher
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(watcher);
+            }
+            Ok(())
+        })();
+        DEPLOY_SYNCER_HISTOGRAM
+            .with_label_values(&["init_global_state", result_label(&result)])
+            .observe(started.elapsed().as_secs_f64());
+        result
     }
 
     fn update_global_state(&self, context: &Context, state: &StateInfo) -> Result<(), Error> {
-        self.put_with_retry(context, &state.marshal()?)?;
-        Ok(())
+        let started = Instant::now();
+        let value = state.marshal()?;
+        let result = self.put_with_retry(context, &value);
+        OWNER_HANDLE_SYNCER_HISTOGRAM
+            .with_label_values(&["update_global_state", result_label(&result)])
+            .observe(started.elapsed().as_secs_f64());
+        result
     }
 
     fn get_global_state(&self, context: &Context) -> Result<StateInfo, Error> {
+        let started = Instant::now();
         let mut state = StateInfo::default();
-        if let Some(value) = self.get_with_retry(context)? {
-            state.unmarshal(&value)?;
+        let Some(value) = self.get_with_retry(context)? else {
+            *self
+                .cluster_state
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = state.clone();
+            return Ok(state);
+        };
+        if let Err(error) = state.unmarshal(&value) {
+            ddl_logger().warn(
+                "get global state failed",
+                &[
+                    Field::new(
+                        "key",
+                        Value::Str(String::from_utf8_lossy(&self.path).into_owned()),
+                    ),
+                    Field::new("value", Value::ByteString(value)),
+                    Field::new(
+                        "error",
+                        Value::Error {
+                            basic: error.to_string(),
+                            verbose: None,
+                        },
+                    ),
+                ],
+            );
+            return Err(error.into());
         }
         *self
             .cluster_state
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = state.clone();
+        OWNER_HANDLE_SYNCER_HISTOGRAM
+            .with_label_values(&["update_global_state", "ok"])
+            .observe(started.elapsed().as_secs_f64());
         Ok(state)
     }
 
@@ -428,48 +617,44 @@ impl Syncer for EtcdSyncer {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .as_ref()
-            .map(|_| self.watch_receiver.clone())
+            .map(|(_, receiver)| receiver.clone())
     }
 
     fn rewatch(&self, context: &Context) {
+        let started = Instant::now();
         *self
             .watcher
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
-        let _ = context;
         let client = Arc::clone(&self.client);
         let path = self.path.clone();
-        let event_key = path.clone();
-        let sender = self.watch_sender.clone();
+        let context = context.clone();
         let watcher_slot = Arc::clone(&self.watcher);
         let _ = std::thread::Builder::new()
             .name("ddl-state-rewatch".to_owned())
             .spawn(move || {
-                let watcher = client.watch_key(path, 0, move |event: &EtcdWatchEvent| {
-                    let _ = sender.send(WatchEvent {
-                        key: event_key.clone(),
-                        value: event.value.clone(),
-                        deleted: event.deleted,
-                        mod_revision: event.mod_revision,
-                    });
-                });
+                let watcher = Self::make_watch(&client, path, context);
                 if let Ok(watcher) = watcher {
                     *watcher_slot
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(watcher);
                 }
+                DEPLOY_SYNCER_HISTOGRAM
+                    .with_label_values(&["rewatch", "ok"])
+                    .observe(started.elapsed().as_secs_f64());
+                ddl_logger().info("syncer rewatch global info finished", &[]);
             });
     }
 }
 
-fn memory_cluster_state() -> &'static RwLock<StateInfo> {
-    static STATE: OnceLock<RwLock<StateInfo>> = OnceLock::new();
-    STATE.get_or_init(|| RwLock::new(StateInfo::new(STATE_NORMAL_RUNNING)))
+fn memory_cluster_state() -> &'static RwLock<Option<StateInfo>> {
+    static STATE: OnceLock<RwLock<Option<StateInfo>>> = OnceLock::new();
+    STATE.get_or_init(|| RwLock::new(None))
 }
 
 /// Go `memSyncer`.
 pub struct MemSyncer {
-    watch: Mutex<Option<(SyncSender<WatchEvent>, WatchChannel)>>,
+    watch: Mutex<Option<(SyncSender<WatchResponse>, WatchChannel)>>,
 }
 
 impl MemSyncer {
@@ -496,7 +681,12 @@ impl Syncer for MemSyncer {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) =
             Some((sender, WatchChannel(Arc::new(Mutex::new(receiver)))));
-        let _ = memory_cluster_state();
+        let mut state = memory_cluster_state()
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if state.is_none() {
+            *state = Some(StateInfo::new(STATE_NORMAL_RUNNING));
+        }
         Ok(())
     }
 
@@ -509,7 +699,7 @@ impl Syncer for MemSyncer {
         {
             *memory_cluster_state()
                 .write()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = state.clone();
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(state.clone());
             return Ok(());
         }
         let sender = self
@@ -519,15 +709,10 @@ impl Syncer for MemSyncer {
             .as_ref()
             .map(|(sender, _)| sender.clone())
             .expect("memSyncer.UpdateGlobalState requires Init");
-        let _ = sender.send(WatchEvent {
-            key: Vec::new(),
-            value: Vec::new(),
-            deleted: false,
-            mod_revision: 0,
-        });
+        let _ = sender.send(WatchResponse::default());
         *memory_cluster_state()
             .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = state.clone();
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(state.clone());
         Ok(())
     }
 
@@ -535,6 +720,8 @@ impl Syncer for MemSyncer {
         Ok(memory_cluster_state()
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .expect("memSyncer.GetGlobalState requires Init")
             .clone())
     }
 
@@ -542,6 +729,8 @@ impl Syncer for MemSyncer {
         memory_cluster_state()
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .expect("memSyncer.IsUpgradingState requires Init")
             .state
             == STATE_UPGRADING
     }
@@ -560,12 +749,38 @@ impl Syncer for MemSyncer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use prometheus::core::Collector;
 
     fn memory_test_guard() -> std::sync::MutexGuard<'static, ()> {
         static GUARD: Mutex<()> = Mutex::new(());
         GUARD
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn metric_test_guard() -> std::sync::MutexGuard<'static, ()> {
+        static GUARD: Mutex<()> = Mutex::new(());
+        GUARD
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn counter_total(counter: &CounterVec) -> f64 {
+        counter
+            .collect()
+            .iter()
+            .flat_map(|family| family.get_metric())
+            .map(|metric| metric.get_counter().get_value())
+            .sum()
+    }
+
+    fn histogram_count(histogram: &HistogramVec) -> u64 {
+        histogram
+            .collect()
+            .iter()
+            .flat_map(|family| family.get_metric())
+            .map(|metric| metric.get_histogram().get_sample_count())
+            .sum()
     }
 
     #[test]
@@ -597,7 +812,17 @@ mod tests {
             decoded.state, "last",
             "JSON null has no effect on a Go struct"
         );
-        assert!(decoded.unmarshal(br#"{"state":1}"#).is_err());
+        assert!(decoded.unmarshal(br#"{"state":"kept","state":1}"#).is_err());
+        assert_eq!(decoded.state, "kept");
+        assert!(decoded
+            .unmarshal(br#"{"state":1,"state":"later"}"#)
+            .is_err());
+        assert_eq!(decoded.state, "later");
+        assert!(decoded.unmarshal(br#"{"state":"invalid"#).is_err());
+        assert_eq!(
+            decoded.state, "later",
+            "Go validates malformed JSON before mutating the receiver"
+        );
     }
 
     #[test]
@@ -617,24 +842,42 @@ mod tests {
 
     #[test]
     fn failed_key_operations_keep_go_final_retry_delay() {
+        let _guard = metric_test_guard();
         let client =
             Arc::new(EtcdClient::connect(["127.0.0.1:1"], Duration::from_millis(20)).unwrap());
         let syncer = EtcdSyncer::new(client, SERVER_GLOBAL_STATE);
         let context = Context::background();
 
         let get_started = std::time::Instant::now();
+        let retries_before_get = counter_total(&RETRYABLE_ERROR_COUNT);
         assert!(syncer.get_with_retry(&context).is_err());
+        assert_eq!(counter_total(&RETRYABLE_ERROR_COUNT), retries_before_get);
         assert!(
             get_started.elapsed() >= GET_KEY_RETRY_INTERVAL * 3,
             "Go sleeps 200ms after every failed get, including the last"
         );
 
         let put_started = std::time::Instant::now();
+        let retries_before_put = counter_total(&RETRYABLE_ERROR_COUNT);
         assert!(syncer.put_with_retry(&context, b"{}").is_err());
+        assert_eq!(
+            counter_total(&RETRYABLE_ERROR_COUNT),
+            retries_before_put + 3.0
+        );
         assert!(
             put_started.elapsed() >= PUT_KEY_RETRY_INTERVAL * 3,
             "PutKVToEtcd sleeps 30ms after every failed put, including the last"
         );
+    }
+
+    #[test]
+    fn new_session_metric_records_each_go_retry_attempt() {
+        let _guard = metric_test_guard();
+        let client =
+            Arc::new(EtcdClient::connect(["127.0.0.1:1"], Duration::from_millis(20)).unwrap());
+        let before = histogram_count(&NEW_SESSION_HISTOGRAM);
+        assert!(create_session(&client, &Context::background(), "[test] /state").is_err());
+        assert_eq!(histogram_count(&NEW_SESSION_HISTOGRAM), before + 3);
     }
 
     #[test]
@@ -647,11 +890,12 @@ mod tests {
         first
             .update_global_state(&context, &StateInfo::new(STATE_UPGRADING))
             .unwrap();
-        first
+        let response = first
             .watch_chan()
             .unwrap()
             .recv_timeout(Duration::from_secs(1))
             .unwrap();
+        assert!(response.events.is_empty());
         assert!(first.is_upgrading_state());
 
         let second = MemSyncer::new();
@@ -660,6 +904,21 @@ mod tests {
             second.get_global_state(&context).unwrap(),
             StateInfo::new(STATE_UPGRADING)
         );
+    }
+
+    #[test]
+    fn etcd_watch_channel_closes_with_its_context() {
+        let client =
+            Arc::new(EtcdClient::connect(["127.0.0.1:1"], Duration::from_secs(1)).unwrap());
+        let syncer = EtcdSyncer::new(client, SERVER_GLOBAL_STATE);
+        let context = Context::background();
+        let (watcher, channel) = syncer.start_watch(&context).unwrap();
+        context.cancel();
+        assert_eq!(
+            channel.recv_timeout(Duration::from_secs(1)),
+            Err(RecvTimeoutError::Disconnected)
+        );
+        drop(watcher);
     }
 
     #[cfg(feature = "failpoints")]
@@ -717,11 +976,13 @@ mod tests {
         syncer
             .update_global_state(&context, &StateInfo::new(STATE_UPGRADING))
             .unwrap();
-        let event = syncer
+        let response = syncer
             .watch_chan()
             .unwrap()
             .recv_timeout(Duration::from_secs(10))
             .expect("the state PUT reaches the watch");
+        assert_eq!(response.events.len(), 1);
+        let event = &response.events[0];
         assert_eq!(event.key, SERVER_GLOBAL_STATE.as_bytes());
         assert_eq!(event.value, br#"{"state":"upgrading"}"#);
         assert!(!syncer.is_upgrading_state());

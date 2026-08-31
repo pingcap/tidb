@@ -16,8 +16,10 @@ failpoints = ["dep:fail", "fail/failpoints"]
 
 [dependencies]
 fail = { version = "0.4", optional = true }
+prometheus = { version = "0.14", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
+tidb-log = { path = "../tidb-log" }
 tidb-pd-client = { path = "../tidb-pd-client" }
 tidb-model = { path = "../tidb-model" }
 tidb-util = { path = "../tidb-util" }

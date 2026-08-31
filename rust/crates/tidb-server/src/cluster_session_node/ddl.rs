@@ -71,6 +71,20 @@ const DDL_OWNER_KEY: &str = "/tidb/ddl/fg/owner";
 const ADDING_DDL_JOB_NOTIFY_KEY: &[u8] = b"/tidb/ddl/add_ddl_job_general";
 const DDL_SCHEDULER_INTERVAL: Duration = Duration::from_secs(1);
 
+fn handle_server_state_watch<T>(
+    poll: Result<T, std::sync::mpsc::TryRecvError>,
+    rewatch: impl FnOnce(),
+) -> bool {
+    match poll {
+        Ok(_) => true,
+        Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+            rewatch();
+            true
+        }
+        Err(std::sync::mpsc::TryRecvError::Empty) => false,
+    }
+}
+
 struct ClusterSchemaSync<C, L, P>
 where
     C: StoreWriteClient,
@@ -242,10 +256,12 @@ where
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             drop(guard);
 
-            if server_state
-                .watch_chan()
-                .is_some_and(|watch| watch.try_recv().is_ok())
-            {
+            let state_changed = server_state.watch_chan().is_some_and(|watch| {
+                handle_server_state_watch(watch.try_recv(), || {
+                    server_state.rewatch(&server_state_context);
+                })
+            });
+            if state_changed {
                 Self::refresh_server_state(
                     server_state.as_ref(),
                     &server_state_context,
@@ -579,6 +595,21 @@ mod schema_sync_tests {
             newest_server_ids_by_instance(&servers),
             HashSet::from(["new".to_owned(), "peer".to_owned()])
         );
+    }
+
+    #[test]
+    fn closed_server_state_watch_rewatches_and_reloads() {
+        let rewatched = std::sync::atomic::AtomicBool::new(false);
+        assert!(handle_server_state_watch::<()>(
+            Err(std::sync::mpsc::TryRecvError::Disconnected),
+            || rewatched.store(true, Ordering::Release),
+        ));
+        assert!(rewatched.load(Ordering::Acquire));
+
+        assert!(!handle_server_state_watch::<()>(
+            Err(std::sync::mpsc::TryRecvError::Empty),
+            || panic!("an open idle watch must not be replaced"),
+        ));
     }
 }
 

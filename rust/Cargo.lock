@@ -3341,8 +3341,10 @@ name = "tidb-ddl-serverstate"
 version = "0.0.0"
 dependencies = [
  "fail",
+ "prometheus 0.14.0",
  "serde",
  "serde_json",
+ "tidb-log",
  "tidb-model",
  "tidb-pd-client",
  "tidb-util",

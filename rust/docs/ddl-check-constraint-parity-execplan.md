@@ -29,7 +29,7 @@ After this work, Rust accepts, stores, displays, and enforces CHECK constraints 
 - [x] (2026-08-31) Replaced CHECK's private insertion wrapper with pinned `pkg/ddl/jobsubmit`'s common prepared-`JobSpec` transaction: pessimistic global-ID locking, source-shaped typed arguments, post-ID callback ordering, failed-attempt cleanup, and atomic ID/job-row commit.
 - [x] (2026-08-31) Ported `ModifyIndexArgs` V1/V2 and finished-job wire layouts and made BDR admission inspect the same typed job/subjob arguments as Go instead of Rust's reduced unique-index surrogate.
 - [x] (2026-08-31) Matched owner notification after enqueue: the local owner wakes directly, a non-owner writes `/tidb/ddl/add_ddl_job_general`, and the elected Rust scheduler watches that key.
-- [x] (2026-08-31) Ported pinned `pkg/ddl/serverstate` as one crate, including exact state JSON, process-global memory behavior, etcd session/get/put/watch lifecycle, context-aware retries, scheduler owner-operation refresh, and upgrading-state admission for queued jobs.
+- [x] (2026-08-31) Completed and proved pinned `pkg/ddl/serverstate` as one package: state JSON, process-global memory behavior, etcd session/get/put/watch lifecycle, metrics/logging, scheduler close/rewatch behavior, upgrading-state admission, and the live-PD counterpart of upstream `TestStateSyncerSimple`.
 - [ ] Add concurrent-writer regressions corresponding to every scenario in pinned `pkg/ddl/constraint_test.go`.
 - [ ] Inventory every remaining pinned production/test/support/build artifact before making a package-level claim.
 
@@ -71,6 +71,9 @@ After this work, Rust accepts, stores, displays, and enforces CHECK constraints 
 
 - Observation: the first serverstate batch inherited the etcd client's five-second timeout, skipped Go's final failed-attempt sleep, synchronously rewatched, omitted `mockUpgradingState`, and used serde's replacement/escaping rules for `StateInfo`.
   Evidence: pinned `getKeyValue`, `PutKVToEtcd`, `util.Watcher.Rewatch`, `memSyncer.UpdateGlobalState`, and `encoding/json`; the corrective batch adds call-site etcd deadlines, every retry delay, asynchronous rewatch, the boolean failpoint, receiver-mutating decode, and Go HTML/JavaScript escaping.
+
+- Observation: a second package-and-caller audit found that Rust flattened watch responses, retained one permanent channel, ignored closed channels in the scheduler, delayed the first lease keepalive, revoked the lease on drop, forwarded etcd's suppressed creation frame, and omitted every metric side effect.
+  Evidence: pinned `clientv3/watch.go`, `concurrency/session.go`, `pkg/ddl/util/watcher.go`, `job_scheduler.go`, and `pkg/metrics/{ddl,owner}.go`; Rust now preserves response batches/cancellation, replaces and closes channels with context, re-watches on disconnect, uses a reconnecting TTL/3 session without teardown revoke, filters creation frames, and records the source metric families and labels.
 
 ## Decision Log
 
@@ -231,3 +234,5 @@ Revision note (2026-08-31): transcreated the common jobsubmit allocation/inserti
 Revision note (2026-08-31): transcreated pinned `pkg/ddl/serverstate`, removed its documentary missing-carrier test, wired the ordinary DDL constructor/scheduler/submitter to the shared state syncer, and added a live-PD form of the upstream etcd integration test. Broader DDL package completion remains withheld.
 
 Revision note (2026-08-31): post-commit package audit corrected serverstate's per-call deadlines, final retry sleeps, async rewatch lifecycle, memory failpoint, and exact `encoding/json` mutation/escaping behavior. The shared PD client now keys cached connections by operation timeout so a broad client timeout cannot leak into a narrower Go child context.
+
+Revision note (2026-08-31): reopened the premature serverstate completion mark after a full source/test/caller/dependency audit. The follow-up batch preserves Go watch-response/channel closure semantics, restores scheduler rewatch on closure, replaces the one-shot/revoke lease approximation with the pinned session lifecycle, adds exact syncer/session/retry metrics and DDL logs, and matches `encoding/json` ordered partial mutation. A fresh isolated PD then passed the Rust counterpart of upstream `TestStateSyncerSimple`, closing this package unit; broader DDL completion remains withheld.
