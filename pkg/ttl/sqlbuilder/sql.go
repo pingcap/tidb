@@ -181,12 +181,9 @@ func (b *SQLBuilder) WriteExpireCondition(expire time.Time) error {
 
 	b.writeColNames([]*model.ColumnInfo{b.tbl.TimeColumn}, false)
 	b.restoreCtx.WritePlain(" < ")
-	_, expireOffset := expire.Zone()
-	if b.tbl.TimeColumn.GetType() == mysql.TypeTimestamp || expireOffset == 0 {
+	if b.tbl.TimeColumn.GetType() == mysql.TypeTimestamp {
 		// TTL worker sessions execute in UTC. For TIMESTAMP, the expiration
 		// frontier is an instant, so FROM_UNIXTIME preserves that exact instant.
-		// It is also equivalent to the DATE/DATETIME wall clock when the captured
-		// global time zone has a zero offset at the expiration time.
 		b.restoreCtx.WritePlain("FROM_UNIXTIME(")
 		b.restoreCtx.WritePlain(strconv.FormatInt(expire.Unix(), 10))
 		b.restoreCtx.WritePlain(")")

@@ -364,7 +364,7 @@ func TestTTLDeleteTaskDoDelete(t *testing.T) {
 				idList = append(idList, strconv.FormatInt(row[0].GetInt64(), 10))
 			}
 			sql := fmt.Sprintf("DELETE LOW_PRIORITY FROM `test`.`t1` "+
-				"WHERE `_tidb_rowid` IN (%s) AND `time` < FROM_UNIXTIME(0) LIMIT %d",
+				"WHERE `_tidb_rowid` IN (%s) AND `time` < CAST('1970-01-01 00:00:00' AS DATETIME) LIMIT %d",
 				strings.Join(idList, ", "),
 				delBatch,
 			)
