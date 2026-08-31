@@ -17,6 +17,8 @@ package ttlworker
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -163,6 +165,7 @@ type mockSession struct {
 	t *testing.T
 	sessionctx.Context
 	sessionVars       *variable.SessionVars
+	globalTimeZone    *time.Location
 	sessionInfoSchema infoschema.InfoSchema
 	executeSQL        func(ctx context.Context, sql string, args ...any) ([]chunk.Row, error)
 	rows              []chunk.Row
@@ -171,6 +174,127 @@ type mockSession struct {
 	closed            bool
 	commitErr         error
 	killed            chan struct{}
+}
+
+type failAfterExecuteSession struct {
+	session.Session
+	failSQL  string
+	failAt   int
+	seen     int
+	avoided  bool
+	executed []string
+}
+
+func (s *failAfterExecuteSession) ExecuteSQL(ctx context.Context, sql string, args ...any) ([]chunk.Row, error) {
+	rows, err := s.Session.ExecuteSQL(ctx, sql, args...)
+	s.executed = append(s.executed, sql)
+	if err != nil || !strings.EqualFold(sql, s.failSQL) {
+		return rows, err
+	}
+	s.seen++
+	if s.seen == s.failAt {
+		return nil, errors.New("injected session error")
+	}
+	return rows, nil
+}
+
+func (s *failAfterExecuteSession) AvoidReuse() {
+	s.avoided = true
+}
+
+type prepareSessionMock struct {
+	*mockSession
+	timeZone             string
+	isolationReadEngines string
+	avoided              bool
+}
+
+func newPrepareSessionMock(t *testing.T, timeZone string) *prepareSessionMock {
+	s := &prepareSessionMock{
+		mockSession:          newMockSession(t),
+		timeZone:             timeZone,
+		isolationReadEngines: "tikv",
+	}
+	s.sessionVars.RetryLimit = 7
+	s.sessionVars.Enable1PC = false
+	s.sessionVars.EnableAsyncCommit = false
+	s.setTimeZone(timeZone)
+	s.setIsolationReadEngines("tikv")
+	return s
+}
+
+func (s *prepareSessionMock) setTimeZone(timeZone string) {
+	s.timeZone = timeZone
+	switch timeZone {
+	case "UTC":
+		s.sessionVars.TimeZone = time.UTC
+	case "SYSTEM":
+		s.sessionVars.TimeZone = time.Local
+	case "+08:00":
+		s.sessionVars.TimeZone = time.FixedZone("+08:00", 8*60*60)
+	default:
+		loc, err := time.LoadLocation(timeZone)
+		require.NoError(s.t, err)
+		s.sessionVars.TimeZone = loc
+	}
+}
+
+func (s *prepareSessionMock) setIsolationReadEngines(value string) {
+	s.isolationReadEngines = value
+	s.sessionVars.IsolationReadEngines = make(map[kv.StoreType]struct{})
+	for _, engine := range strings.Split(value, ",") {
+		switch strings.TrimSpace(engine) {
+		case "tidb":
+			s.sessionVars.IsolationReadEngines[kv.TiDB] = struct{}{}
+		case "tikv":
+			s.sessionVars.IsolationReadEngines[kv.TiKV] = struct{}{}
+		case "tiflash":
+			s.sessionVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
+		}
+	}
+}
+
+func (s *prepareSessionMock) ExecuteSQL(_ context.Context, sql string, args ...any) ([]chunk.Row, error) {
+	lowerSQL := strings.ToLower(sql)
+	switch lowerSQL {
+	case "select @@time_zone":
+		return newMockRows(s.t, types.NewFieldType(mysql.TypeString)).Append(s.timeZone).Rows(), nil
+	case "select @@tidb_isolation_read_engines":
+		return newMockRows(s.t, types.NewFieldType(mysql.TypeString)).Append(s.isolationReadEngines).Rows(), nil
+	case "set tidb_enable_1pc=on":
+		s.sessionVars.Enable1PC = true
+	case "set tidb_enable_1pc=off":
+		s.sessionVars.Enable1PC = false
+	case "set tidb_enable_async_commit=on":
+		s.sessionVars.EnableAsyncCommit = true
+	case "set tidb_enable_async_commit=off":
+		s.sessionVars.EnableAsyncCommit = false
+	case "set @@time_zone='utc'":
+		s.setTimeZone("UTC")
+	case "set @@time_zone=%?":
+		s.setTimeZone(args[0].(string))
+	case "set tidb_isolation_read_engines='tikv,tiflash,tidb'":
+		s.setIsolationReadEngines("tikv,tiflash,tidb")
+	case "set tidb_isolation_read_engines=%?":
+		s.setIsolationReadEngines(args[0].(string))
+	case "rollback":
+		return nil, nil
+	default:
+		const retryPrefix = "set tidb_retry_limit="
+		if !strings.HasPrefix(lowerSQL, retryPrefix) {
+			return nil, errors.New("unexpected SQL: " + sql)
+		}
+		value, err := strconv.ParseInt(strings.TrimPrefix(lowerSQL, retryPrefix), 10, 64)
+		if err != nil {
+			return nil, err
+		}
+		s.sessionVars.RetryLimit = value
+	}
+	return nil, nil
+}
+
+func (s *prepareSessionMock) AvoidReuse() {
+	s.avoided = true
 }
 
 func newMockSession(t *testing.T, tbl ...*cache.PhysicalTable) *mockSession {
@@ -184,6 +308,7 @@ func newMockSession(t *testing.T, tbl ...*cache.PhysicalTable) *mockSession {
 		t:                 t,
 		sessionInfoSchema: newMockInfoSchema(tbls...),
 		sessionVars:       sessVars,
+		globalTimeZone:    time.UTC,
 		killed:            make(chan struct{}),
 	}
 }
@@ -244,7 +369,7 @@ func (s *mockSession) RunInTxn(_ context.Context, fn func() error, _ session.Txn
 
 // GlobalTimeZone returns the global timezone
 func (s *mockSession) GlobalTimeZone(_ context.Context) (*time.Location, error) {
-	return time.Local, nil
+	return s.globalTimeZone, nil
 }
 
 // KillStmt kills the current statement execution
@@ -299,6 +424,142 @@ func TestExecuteSQLWithCheck(t *testing.T) {
 	require.EqualError(t, err, "mockCommitErr")
 	require.True(t, shouldRetry)
 	require.Nil(t, rows)
+}
+
+func TestPrepareSessionUsesUTCAndRestoresState(t *testing.T) {
+	for _, timeZone := range []string{"SYSTEM", "+08:00", "Asia/Shanghai"} {
+		t.Run(timeZone, func(t *testing.T) {
+			se := newPrepareSessionMock(t, timeZone)
+
+			restore, err := prepareSession(se)
+			require.NoError(t, err)
+			require.Equal(t, "UTC", se.timeZone)
+			require.Equal(t, int64(0), se.sessionVars.RetryLimit)
+			require.True(t, se.sessionVars.Enable1PC)
+			require.True(t, se.sessionVars.EnableAsyncCommit)
+			require.Contains(t, se.GetSessionVars().IsolationReadEngines, kv.TiDB)
+			require.Contains(t, se.GetSessionVars().IsolationReadEngines, kv.TiKV)
+			require.Contains(t, se.GetSessionVars().IsolationReadEngines, kv.TiFlash)
+
+			require.NoError(t, restore())
+			require.Equal(t, timeZone, se.timeZone)
+			require.Equal(t, int64(7), se.sessionVars.RetryLimit)
+			require.False(t, se.sessionVars.Enable1PC)
+			require.False(t, se.sessionVars.EnableAsyncCommit)
+			require.Len(t, se.GetSessionVars().IsolationReadEngines, 1)
+			require.Contains(t, se.GetSessionVars().IsolationReadEngines, kv.TiKV)
+			require.False(t, se.avoided)
+		})
+	}
+}
+
+func TestPrepareSessionFailureCannotPollutePool(t *testing.T) {
+	setupSQLs := []string{
+		"set tidb_retry_limit=0",
+		"set tidb_enable_1pc=ON",
+		"set tidb_enable_async_commit=ON",
+		"ROLLBACK",
+		"select @@time_zone",
+		"set @@time_zone='UTC'",
+		"select @@tidb_isolation_read_engines",
+		"set tidb_isolation_read_engines='tikv,tiflash,tidb'",
+	}
+	for _, failSQL := range setupSQLs {
+		t.Run(failSQL, func(t *testing.T) {
+			base := newPrepareSessionMock(t, "Asia/Shanghai")
+			se := &failAfterExecuteSession{Session: base, failSQL: failSQL, failAt: 1}
+
+			restore, err := prepareSession(se)
+			require.Nil(t, restore)
+			require.ErrorContains(t, err, "injected session error")
+			require.True(t, se.avoided)
+			// The failing statement is applied before its injected error. Cleanup
+			// still restores every variable whose setup may have taken effect.
+			require.Equal(t, "Asia/Shanghai", base.timeZone)
+			require.Equal(t, int64(7), base.sessionVars.RetryLimit)
+			require.False(t, base.sessionVars.Enable1PC)
+			require.False(t, base.sessionVars.EnableAsyncCommit)
+			require.Len(t, base.GetSessionVars().IsolationReadEngines, 1)
+			require.Contains(t, base.GetSessionVars().IsolationReadEngines, kv.TiKV)
+		})
+	}
+}
+
+func TestPrepareSessionRestoreFailureContinuesCleanup(t *testing.T) {
+	restoreSQLs := []string{
+		"set tidb_retry_limit=7",
+		"set tidb_enable_1pc=OFF",
+		"set tidb_enable_async_commit=OFF",
+		"set @@time_zone=%?",
+		"set tidb_isolation_read_engines=%?",
+	}
+	for _, failSQL := range restoreSQLs {
+		t.Run(failSQL, func(t *testing.T) {
+			base := newPrepareSessionMock(t, "Asia/Shanghai")
+			se := &failAfterExecuteSession{Session: base}
+			restore, err := prepareSession(se)
+			require.NoError(t, err)
+			se.failSQL = failSQL
+			se.failAt = 1
+			err = restore()
+			require.Error(t, err)
+			require.True(t, se.avoided)
+			// Restoration never returns early: all five restore statements run.
+			for _, sql := range restoreSQLs {
+				require.Contains(t, se.executed, sql)
+			}
+			require.Equal(t, "Asia/Shanghai", base.timeZone)
+			require.Equal(t, int64(7), base.sessionVars.RetryLimit)
+			require.False(t, base.sessionVars.Enable1PC)
+			require.False(t, base.sessionVars.EnableAsyncCommit)
+			require.Len(t, base.GetSessionVars().IsolationReadEngines, 1)
+			require.Contains(t, base.GetSessionVars().IsolationReadEngines, kv.TiKV)
+		})
+	}
+}
+
+func TestNewScanSessionRestoresStateAndDiscardsPartialSetup(t *testing.T) {
+	for _, original := range []bool{false, true} {
+		t.Run(fmt.Sprintf("restore internal scan flag %t", original), func(t *testing.T) {
+			se := newMockSession(t)
+			se.sessionVars.InternalSQLScanUserTable = original
+			_, restore, err := NewScanSession(context.Background(), se, nil, time.Time{})
+			require.NoError(t, err)
+			require.True(t, se.sessionVars.InternalSQLScanUserTable)
+			require.NoError(t, restore())
+			require.Equal(t, original, se.sessionVars.InternalSQLScanUserTable)
+		})
+	}
+
+	for _, failSQL := range []string{
+		"set @@tidb_distsql_scan_concurrency=1",
+		"set @@tidb_enable_paging=OFF",
+	} {
+		t.Run("setup failure "+failSQL, func(t *testing.T) {
+			se := &failAfterExecuteSession{
+				Session: newMockSession(t),
+				failSQL: failSQL,
+				failAt:  1,
+			}
+			_, restore, err := NewScanSession(context.Background(), se, nil, time.Time{})
+			require.Nil(t, restore)
+			require.ErrorContains(t, err, "injected session error")
+			require.True(t, se.avoided)
+		})
+	}
+
+	t.Run("restore failure continues cleanup", func(t *testing.T) {
+		se := &failAfterExecuteSession{
+			Session: newMockSession(t),
+			failSQL: "set @@tidb_distsql_scan_concurrency=%?",
+			failAt:  1,
+		}
+		_, restore, err := NewScanSession(context.Background(), se, nil, time.Time{})
+		require.NoError(t, err)
+		require.ErrorContains(t, restore(), "injected session error")
+		require.True(t, se.avoided)
+		require.Contains(t, se.executed, "set @@tidb_enable_paging=%?")
+	})
 }
 
 func TestValidateTTLWork(t *testing.T) {
