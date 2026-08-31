@@ -1547,7 +1547,7 @@ func TestAddStatementPlanEncodeError(t *testing.T) {
 	})
 
 	key := &StmtDigestKey{}
-	key.Init(sei.SchemaName, sei.Digest, "", sei.PlanDigest, sei.ResourceGroupName, "")
+	key.Init(sei.SchemaName, sei.Digest, sei.PrevSQLDigest, sei.PlanDigest, sei.ResourceGroupName)
 	value, ok := ssMap.summaryMap.Get(key)
 	require.True(t, ok)
 	ssbd := value.(*stmtSummaryByDigest)
