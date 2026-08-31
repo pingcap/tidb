@@ -248,13 +248,14 @@ func BenchmarkStatementRUForestCalculation(b *testing.B) {
 				}
 			})
 
-			b.Run("explain-snapshot-construction", func(b *testing.B) {
+			b.Run("explain-result-construction", func(b *testing.B) {
 				if result := plannercore.NewExplainRUResult(flat); result == nil {
-					b.Fatal("benchmark fixture must produce an EXPLAIN snapshot")
+					b.Fatal("benchmark fixture must produce an EXPLAIN result")
 				}
 				b.ResetTimer()
-				// This isolates allocation of the occurrence-aligned value shape;
-				// it excludes traversal, formulas, rendering, and SQL execution.
+				// This isolates the linear forest copy that constructs the
+				// occurrence-aligned result shape; it excludes RU calculation,
+				// tree-edge traversal, formulas, rendering, and SQL execution.
 				b.ReportAllocs()
 				for b.Loop() {
 					statementRUExplainSink = plannercore.NewExplainRUResult(flat)
@@ -266,7 +267,7 @@ func BenchmarkStatementRUForestCalculation(b *testing.B) {
 					b.Fatal("benchmark fixture must complete EXPLAIN calculation")
 				}
 				b.ResetTimer()
-				// This adds the occurrence snapshot to the ResultOnly calculation.
+				// This adds the occurrence result to the ResultOnly calculation.
 				// It excludes EXPLAIN row formatting and SQL execution.
 				b.ReportAllocs()
 				for b.Loop() {
