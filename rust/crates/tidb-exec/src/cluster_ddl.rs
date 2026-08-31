@@ -15,8 +15,8 @@
 //! Writing the catalog: `CREATE`/`DROP` for databases, tables and indexes,
 //! planned as one set of meta-key mutations over one snapshot.
 //!
-//! Go source of truth is the *final meta mutation* of a DDL job, not the job
-//! queue around it:
+//! Go source of truth for every published schema is the DDL worker's meta
+//! mutation:
 //!
 //! * `pkg/meta/meta.go` `GenGlobalIDs` — `Inc(NextGlobalID, n)` returns the new
 //!   maximum, and the allocated IDs are `old+1 ..= new`. The key holds the max
@@ -28,32 +28,18 @@
 //!   (`Inc(SchemaVersionKey, 1)`) then `SetSchemaDiff` writes `Diff:<version>`
 //!   describing exactly what that version changed.
 //!
-//! Two deliberate differences from Go, both stated rather than hidden:
+//! CHECK actions follow Go's durable path: submission first inserts the full
+//! job envelope in `mysql.tidb_ddl_job`, each owner transaction reloads that
+//! envelope and publishes one state transition, and terminal handling moves
+//! the job to both Go history stores. Other actions still use the ordinary
+//! one-write planner below and must not borrow CHECK-specific recovery state.
 //!
-//! * **Single owner.** There is no job queue and no owner election. Go moves a
-//!   `DROP TABLE` through write-only and delete-only before it deletes the meta
-//!   key, because other TiDB nodes may still be reading the table at an older
-//!   schema version; this node performs the whole change in one version. That
-//!   is only safe while this node is the only writer of the catalog, so a
-//!   concurrent DDL must FAIL rather than interleave — see
-//!   [`plan_ddl`] on the `SchemaVersionKey` write.
-//!
-//!   `CREATE INDEX` widens that assumption, and this is the one place it is
-//!   written down: Go's `delete only` -> `write only` -> `reorg` -> `public`
-//!   ladder exists so a concurrent `INSERT` maintains the half-built index
-//!   while the reorg scans. This node has no such states — the index and every
-//!   entry the existing rows owe it become visible at ONE commit — so a row
-//!   another writer commits between this transaction's `start_ts` and its
-//!   commit is indexed by neither the scan nor the writer. The assumption is
-//!   therefore no longer "no concurrent DDL" but "no concurrent WRITE to the
-//!   table being indexed", and unlike the DDL half it is NOT enforced by a
-//!   write conflict.
-//! * **Bounded surface.** Only the column shapes this node can also serve are
-//!   admitted, and every refusal happens in [`lower_ddl`], before a timestamp is
-//!   spent or a single byte is written.
+//! Only shapes this node can also serve are admitted, and every refusal
+//! happens in [`lower_ddl`], before a timestamp is spent or a byte is written.
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use tidb_ast::CiString;
 use tidb_ast::{
@@ -73,7 +59,10 @@ use tidb_model::partition::{PartitionDefinition, PartitionInfo};
 use tidb_model::schema_diff::{AffectedOption, SchemaDiff};
 use tidb_model::schema_state::SchemaState;
 use tidb_model::table_info::TableInfo;
-use tidb_model::GoShared;
+use tidb_model::{
+    get_job_ver_in_use, AddCheckConstraintArgs, CheckConstraintArgs, GoField, GoShared,
+    HistoryInfo, Job, JobState, TraceInfo,
+};
 use tidb_txnkv::transaction::{MutationSetError, OptimisticMutation};
 
 use crate::cluster_catalog::{
@@ -95,6 +84,11 @@ pub use crate::table_info_build::DdlAdmissionError;
 const CATALOG_CHARSET: &str = "utf8mb4";
 /// The catalog collation paired with [`CATALOG_CHARSET`].
 const CATALOG_COLLATION: &str = "utf8mb4_bin";
+
+// Go's job scheduler owns one process-local atomic sequence allocator shared
+// by all workers. It is intentionally not reconstructed from history after a
+// restart.
+static DDL_HISTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// A validated `CREATE TABLE` recipe whose final metadata waits for `DBInfo`.
 #[derive(Clone)]
@@ -328,6 +322,8 @@ pub enum DdlStatement {
         table: String,
         /// Constraint name as written.
         name: String,
+        /// Session context whose complete SQL mode Go persists in the job.
+        context: DdlStatementContext,
     },
     /// `ALTER TABLE ... ALTER CONSTRAINT name [NOT] ENFORCED`.
     AlterCheckConstraint {
@@ -1637,6 +1633,7 @@ fn lower_alter_table_catalog(
                 schema,
                 table,
                 name: drop.name.clone(),
+                context: DdlStatementContext(context.clone()),
             }))
         }
         tidb_ast::AlterTableAction::AlterCheck(action) => {
@@ -2532,6 +2529,671 @@ pub enum DdlPlan {
     Write(Box<DdlWrite>),
 }
 
+/// One pinned-Go DDL submission transaction.
+///
+/// Submission allocates only the job ID and inserts the full envelope into
+/// `mysql.tidb_ddl_job`; it does not publish a table change or spend a schema
+/// version. The elected worker owns every later metadata transition.
+#[derive(Debug)]
+pub struct DdlJobSubmission {
+    /// The exact job envelope inserted into `job_meta`.
+    pub job: Job,
+    /// The global-ID update and active-job row insert committed together.
+    pub mutations: Vec<OptimisticMutation>,
+}
+
+/// One worker transaction decoded from a persisted active DDL job.
+#[derive(Clone, Debug)]
+pub struct PersistedDdlJobStep {
+    /// Catalog and active-job mutations committed atomically by the worker.
+    pub write: DdlWrite,
+    /// Whether this transaction removes the job from the active table.
+    pub terminal: bool,
+}
+
+/// Plans pinned Go CHECK-job admission and queue insertion.
+///
+/// `None` means the statement is not one of the three CHECK job actions. The
+/// returned write set deliberately contains no table, schema-version, schema
+/// diff, notifier, or MDL mutation: Go's `GenGIDAndInsertJobsWithRetry`
+/// commits before the DDL owner executes the first step.
+pub fn plan_check_constraint_job_submission<S: MetaSnapshot>(
+    snapshot: &mut S,
+    statement: &DdlStatement,
+    start_ts: u64,
+) -> Result<Option<DdlJobSubmission>, DdlPlanError> {
+    let catalog = load_cluster_catalog(snapshot)?;
+    let (mut job, schema_ids, table_ids) = match statement {
+        DdlStatement::AddCheckConstraint {
+            schema,
+            table,
+            definition,
+            context,
+        } => {
+            let (schema_id, stored) = locate_table(&catalog, schema, table)?;
+            let mut candidate = stored.clone_like_go();
+            let prior_len = candidate.constraints.len();
+            crate::table_info_build::append_check_constraints(
+                &mut candidate,
+                &[tidb_executor::ddl::check_constraint::CheckConstraintInput {
+                    definition: (**definition).clone(),
+                    in_column: None,
+                }],
+                &context.0,
+            )
+            .map_err(DdlPlanError::Admission)?;
+            let mut constraint = candidate
+                .constraints
+                .iter_deref()
+                .nth(prior_len)
+                .expect("one ADD CHECK input appends one constraint")
+                .read()
+                .clone();
+            if catalog
+                .databases
+                .iter()
+                .find(|database| database.info.id == schema_id)
+                .is_some_and(|database| {
+                    database.tables.iter().any(|candidate| {
+                        candidate.constraints.iter_deref().any(|existing| {
+                            existing.read().name.lowercase() == constraint.name.lowercase()
+                        })
+                    })
+                })
+            {
+                return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                    tidb_error::tidb::errcode::ErrCheckConstraintDupName,
+                    format!("Duplicate check constraint name '{}'.", constraint.name),
+                )));
+            }
+            // Go's executor submits StateNone/ID zero. The first owner step
+            // allocates the durable constraint ID.
+            constraint.id = 0;
+            constraint.state = SchemaState::NONE;
+            let mut job = new_check_constraint_job(
+                schema_id,
+                schema,
+                stored,
+                ActionType::ACTION_ADD_CHECK_CONSTRAINT,
+                &context.0,
+                start_ts,
+            );
+            job.fill_args(Some(GoShared::new(AddCheckConstraintArgs {
+                constraint: GoField::new(Some(GoShared::new(constraint))),
+            })));
+            (job, schema_id.to_string(), stored.id.to_string())
+        }
+        DdlStatement::DropCheckConstraint {
+            schema,
+            table,
+            name,
+            context,
+        } => {
+            let (schema_id, stored) = locate_table(&catalog, schema, table)?;
+            let constraint = stored
+                .constraints
+                .iter_deref()
+                .find(|constraint| constraint.read().name.lowercase() == name.to_lowercase())
+                .ok_or_else(|| {
+                    DdlPlanError::Admission(DdlAdmissionError::with_code(
+                        tidb_error::tidb::errcode::ErrConstraintNotFound,
+                        format!("Constraint '{name}' does not exist."),
+                    ))
+                })?;
+            let mut job = new_check_constraint_job(
+                schema_id,
+                schema,
+                stored,
+                ActionType::ACTION_DROP_CHECK_CONSTRAINT,
+                &context.0,
+                start_ts,
+            );
+            job.fill_args(Some(GoShared::new(CheckConstraintArgs {
+                constraint_name: GoField::new(constraint.read().name.clone()),
+                enforced: GoField::new(false),
+            })));
+            (job, schema_id.to_string(), stored.id.to_string())
+        }
+        DdlStatement::AlterCheckConstraint {
+            schema,
+            table,
+            name,
+            enforced,
+            context,
+        } => {
+            let (schema_id, stored) = locate_table(&catalog, schema, table)?;
+            let constraint = stored
+                .constraints
+                .iter_deref()
+                .find(|constraint| constraint.read().name.lowercase() == name.to_lowercase())
+                .ok_or_else(|| {
+                    DdlPlanError::Admission(DdlAdmissionError::with_code(
+                        tidb_error::tidb::errcode::ErrConstraintNotFound,
+                        format!("Constraint '{name}' does not exist."),
+                    ))
+                })?;
+            let mut job = new_check_constraint_job(
+                schema_id,
+                schema,
+                stored,
+                ActionType::ACTION_ALTER_CHECK_CONSTRAINT,
+                &context.0,
+                start_ts,
+            );
+            job.fill_args(Some(GoShared::new(CheckConstraintArgs {
+                constraint_name: GoField::new(constraint.read().name.clone()),
+                enforced: GoField::new(*enforced),
+            })));
+            (job, schema_id.to_string(), stored.id.to_string())
+        }
+        _ => return Ok(None),
+    };
+
+    let mut allocator = GlobalIdAllocator::load(snapshot)?;
+    job.id = allocator
+        .allocate(1)?
+        .into_iter()
+        .next()
+        .expect("one requested global ID");
+    let job_table = crate::ddl_job_table::DdlJobTable::locate(&catalog)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    let mut mutations = Vec::new();
+    if let Some(global_id) = allocator.mutation()? {
+        mutations.push(global_id);
+    }
+    let reorg = job.may_need_reorg();
+    job_table
+        .append_insert(
+            &mut job,
+            reorg,
+            &schema_ids,
+            &table_ids,
+            false,
+            &mut mutations,
+        )
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    Ok(Some(DdlJobSubmission { job, mutations }))
+}
+
+fn new_check_constraint_job(
+    schema_id: i64,
+    schema: &str,
+    table: &TableInfo,
+    action: ActionType,
+    context: &tidb_executor::StmtContext,
+    start_ts: u64,
+) -> Job {
+    let mut job = Job::default();
+    job.version = get_job_ver_in_use();
+    job.schema_id = schema_id;
+    job.table_id = table.id;
+    job.schema_name = schema.to_lowercase().into();
+    job.table_name = table.name.lowercase().to_owned().into();
+    job.type_ = action;
+    job.binlog_info = Some(GoShared::new(HistoryInfo::default()));
+    job.trace_info = Some(GoShared::new(TraceInfo::default()));
+    job.query = context.ddl_query().into();
+    job.sql_mode = context.ddl_sql_mode();
+    job.start_ts = start_ts;
+    job.state = JobState::QUEUEING;
+    job
+}
+
+/// Plans one CHECK worker step from `mysql.tidb_ddl_job` and current table
+/// metadata, matching pinned Go `runOneJobStep` plus the three CHECK action
+/// handlers.
+///
+/// The active row is the operation authority; no statement-local continuation
+/// is accepted. A process may therefore disappear after any committed phase
+/// and a later owner can call this function with the same job ID.
+pub fn plan_persisted_check_constraint_job_step<S: MetaSnapshot>(
+    snapshot: &mut S,
+    ddl_job_id: i64,
+    start_ts: u64,
+) -> Result<PersistedDdlJobStep, DdlPlanError> {
+    let catalog = load_cluster_catalog(snapshot)?;
+    let job_table = crate::ddl_job_table::DdlJobTable::locate(&catalog)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    let mut active = job_table
+        .load(snapshot)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+        .into_iter()
+        .find(|active| active.job.id == ddl_job_id)
+        .ok_or_else(|| DdlPlanError::Encode(format!("DDL job {ddl_job_id} does not exist")))?;
+
+    if !matches!(
+        active.job.type_,
+        ActionType::ACTION_ADD_CHECK_CONSTRAINT
+            | ActionType::ACTION_DROP_CHECK_CONSTRAINT
+            | ActionType::ACTION_ALTER_CHECK_CONSTRAINT
+    ) {
+        return Err(DdlPlanError::Encode(format!(
+            "DDL job {ddl_job_id} has unsupported action {}",
+            active.job.type_
+        )));
+    }
+    if active.job.real_start_ts == 0 {
+        active.job.real_start_ts = start_ts;
+    }
+    if active.job.state != JobState::ROLLINGBACK {
+        active.job.state = JobState::RUNNING;
+    }
+
+    let database = catalog
+        .databases
+        .iter()
+        .find(|database| database.info.id == active.job.schema_id)
+        .ok_or_else(|| DdlPlanError::UnknownDatabase(active.job.schema_name.to_string()))?;
+    let stored = database
+        .tables
+        .iter()
+        .find(|table| table.id == active.job.table_id)
+        .ok_or_else(|| DdlPlanError::TableNotExists {
+            schema: database.info.name.original().to_owned(),
+            table: active.job.table_name.to_string(),
+        })?;
+    let mut info = stored.clone_like_go();
+    let mut validation = None;
+    let mut terminal = false;
+    let mut schema_changed = true;
+    let mut update_raw_args = true;
+
+    match active.job.type_ {
+        ActionType::ACTION_ADD_CHECK_CONSTRAINT => {
+            let args = tidb_model::get_add_check_constraint_args(&mut active.job)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+                .ok_or_else(|| DdlPlanError::Encode("ADD CHECK job has nil args".to_owned()))?;
+            let constraint_handle = args.read().constraint.get().ok_or_else(|| {
+                DdlPlanError::Encode("ADD CHECK job has nil constraint".to_owned())
+            })?;
+            let mut wanted = constraint_handle.read().name.lowercase().to_owned();
+            let mut position = info
+                .constraints
+                .iter_deref()
+                .position(|constraint| constraint.read().name.lowercase() == wanted);
+
+            if active.job.state == JobState::ROLLINGBACK {
+                if let Some(position) = position {
+                    info.constraints = info
+                        .constraints
+                        .iter_deref()
+                        .enumerate()
+                        .filter_map(|(offset, constraint)| {
+                            (offset != position).then(|| constraint.read().clone())
+                        })
+                        .collect::<Vec<_>>()
+                        .into();
+                    active.job.state = JobState::ROLLBACK_DONE;
+                    terminal = true;
+                } else {
+                    active.job.state = JobState::CANCELLED;
+                    terminal = true;
+                    schema_changed = false;
+                }
+            } else {
+                if position.is_none() {
+                    let mut constraint = constraint_handle.read().clone();
+                    info.max_constraint_id += 1;
+                    constraint.id = info.max_constraint_id;
+                    if constraint.name.original().is_empty() {
+                        let names = info
+                            .constraints
+                            .iter_deref()
+                            .map(|constraint| constraint.read().name.lowercase().to_owned())
+                            .collect::<std::collections::HashSet<_>>();
+                        let mut suffix = 1_i64;
+                        loop {
+                            let generated = format!("{}_chk_{suffix}", info.name.lowercase());
+                            if !names.contains(&generated) {
+                                constraint.name = CiString::new(generated);
+                                break;
+                            }
+                            suffix += 1;
+                        }
+                    }
+                    wanted = constraint.name.lowercase().to_owned();
+                    if database.tables.iter().any(|table| {
+                        table
+                            .constraints
+                            .iter_deref()
+                            .any(|existing| existing.read().name.lowercase() == wanted)
+                    }) {
+                        return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                            tidb_error::tidb::errcode::ErrCheckConstraintDupName,
+                            format!("Duplicate check constraint name '{}'.", constraint.name),
+                        )));
+                    }
+                    for dependency in &constraint.constraint_cols {
+                        if !info.columns.iter_deref().any(|column| {
+                            let column = column.read();
+                            column.state == SchemaState::PUBLIC
+                                && column.name.lowercase() == dependency.lowercase()
+                        }) {
+                            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                                tidb_error::tidb::errcode::ErrTableCheckConstraintReferUnknown,
+                                format!(
+                                    "Check constraint '{}' refers to non-existing column '{}'.",
+                                    constraint.name, dependency
+                                ),
+                            )));
+                        }
+                    }
+                    *constraint_handle.write() = constraint.clone();
+                    info.constraints.push_go(constraint);
+                    position = Some(info.constraints.len() - 1);
+                }
+                let position = position.expect("ADD created or found its constraint");
+                let handle = info
+                    .constraints
+                    .get(position)
+                    .expect("ADD constraint position exists");
+                let mut constraint = handle.write();
+                if !constraint.enforced {
+                    constraint.state = SchemaState::PUBLIC;
+                    terminal = true;
+                } else {
+                    match constraint.state {
+                        SchemaState::NONE => {
+                            constraint.state = SchemaState::WRITE_ONLY;
+                            active.job.schema_state = SchemaState::WRITE_ONLY;
+                        }
+                        SchemaState::WRITE_ONLY => {
+                            constraint.state = SchemaState::WRITE_REORGANIZATION;
+                            active.job.schema_state = SchemaState::WRITE_REORGANIZATION;
+                        }
+                        SchemaState::WRITE_REORGANIZATION => {
+                            constraint.state = SchemaState::PUBLIC;
+                            let constraint_name = constraint.name.original().to_owned();
+                            drop(constraint);
+                            validation = Some(CheckConstraintValidation {
+                                table: Box::new(info.clone_like_go()),
+                                constraint_name,
+                                context: DdlStatementContext(default_ddl_statement_context()),
+                            });
+                            terminal = true;
+                        }
+                        state => {
+                            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                                tidb_error::tidb::errcode::ErrInvalidDDLState,
+                                format!("invalid CHECK constraint state {state:?}"),
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+        ActionType::ACTION_DROP_CHECK_CONSTRAINT => {
+            let args = tidb_model::get_check_constraint_args(&mut active.job)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+                .ok_or_else(|| DdlPlanError::Encode("DROP CHECK job has nil args".to_owned()))?;
+            let wanted = args.read().constraint_name.get().lowercase().to_owned();
+            let position = info
+                .constraints
+                .iter_deref()
+                .position(|constraint| constraint.read().name.lowercase() == wanted)
+                .ok_or_else(|| {
+                    DdlPlanError::Admission(DdlAdmissionError::with_code(
+                        tidb_error::tidb::errcode::ErrConstraintNotFound,
+                        format!("Constraint '{wanted}' does not exist."),
+                    ))
+                })?;
+            let state = info
+                .constraints
+                .get(position)
+                .expect("DROP constraint position exists")
+                .read()
+                .state;
+            if active.job.state == JobState::ROLLINGBACK && state == SchemaState::PUBLIC {
+                active.job.state = JobState::CANCELLED;
+                terminal = true;
+                schema_changed = false;
+            } else {
+                active.job.state = JobState::RUNNING;
+                match state {
+                    SchemaState::PUBLIC => {
+                        info.constraints
+                            .get(position)
+                            .expect("DROP constraint position exists")
+                            .write()
+                            .state = SchemaState::WRITE_ONLY;
+                        active.job.schema_state = SchemaState::WRITE_ONLY;
+                    }
+                    SchemaState::WRITE_ONLY => {
+                        info.constraints = info
+                            .constraints
+                            .iter_deref()
+                            .enumerate()
+                            .filter_map(|(offset, constraint)| {
+                                (offset != position).then(|| constraint.read().clone())
+                            })
+                            .collect::<Vec<_>>()
+                            .into();
+                        terminal = true;
+                    }
+                    state => {
+                        return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                            tidb_error::tidb::errcode::ErrInvalidDDLState,
+                            format!("invalid CHECK constraint state {state:?}"),
+                        )));
+                    }
+                }
+            }
+        }
+        ActionType::ACTION_ALTER_CHECK_CONSTRAINT => {
+            let args = tidb_model::get_check_constraint_args(&mut active.job)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+                .ok_or_else(|| DdlPlanError::Encode("ALTER CHECK job has nil args".to_owned()))?;
+            let args = args.read();
+            let wanted = args.constraint_name.get().lowercase().to_owned();
+            let enforced = args.enforced.get();
+            let position = info
+                .constraints
+                .iter_deref()
+                .position(|constraint| constraint.read().name.lowercase() == wanted)
+                .ok_or_else(|| {
+                    DdlPlanError::Admission(DdlAdmissionError::with_code(
+                        tidb_error::tidb::errcode::ErrConstraintNotFound,
+                        format!("Constraint '{wanted}' does not exist."),
+                    ))
+                })?;
+            let handle = info
+                .constraints
+                .get(position)
+                .expect("ALTER constraint position exists");
+            let mut constraint = handle.write();
+            if active.job.state == JobState::ROLLINGBACK {
+                if constraint.state == SchemaState::PUBLIC {
+                    active.job.state = JobState::CANCELLED;
+                    terminal = true;
+                    schema_changed = false;
+                } else {
+                    constraint.enforced = !enforced;
+                    constraint.state = SchemaState::PUBLIC;
+                    active.job.state = JobState::ROLLBACK_DONE;
+                    terminal = true;
+                }
+            } else if constraint.state == SchemaState::PUBLIC && constraint.enforced == enforced {
+                terminal = true;
+                schema_changed = false;
+            } else if !enforced {
+                constraint.enforced = false;
+                terminal = true;
+            } else {
+                match constraint.state {
+                    SchemaState::PUBLIC => {
+                        constraint.state = SchemaState::WRITE_REORGANIZATION;
+                        constraint.enforced = true;
+                        active.job.schema_state = SchemaState::WRITE_REORGANIZATION;
+                    }
+                    SchemaState::WRITE_REORGANIZATION => {
+                        constraint.state = SchemaState::WRITE_ONLY;
+                        active.job.schema_state = SchemaState::WRITE_ONLY;
+                    }
+                    SchemaState::WRITE_ONLY => {
+                        constraint.state = SchemaState::PUBLIC;
+                        let constraint_name = constraint.name.original().to_owned();
+                        drop(constraint);
+                        validation = Some(CheckConstraintValidation {
+                            table: Box::new(info.clone_like_go()),
+                            constraint_name,
+                            context: DdlStatementContext(default_ddl_statement_context()),
+                        });
+                        terminal = true;
+                    }
+                    state => {
+                        return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                            tidb_error::tidb::errcode::ErrInvalidDDLState,
+                            format!("invalid CHECK constraint state {state:?}"),
+                        )));
+                    }
+                }
+            }
+        }
+        _ => unreachable!("the action was checked above"),
+    }
+
+    let schema_version = if schema_changed {
+        catalog.schema_version + 1
+    } else {
+        0
+    };
+    let mut mutations = Vec::new();
+    let diff = if schema_changed {
+        info.update_ts = start_ts;
+        mutations.push(OptimisticMutation::meta_put(
+            key::table_kv_key(database.info.id, info.id),
+            value::serialize_table_info(&info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+        )?);
+        let diff = SchemaDiff {
+            version: schema_version,
+            action_type: active.job.type_,
+            schema_id: database.info.id,
+            table_id: info.id,
+            ..SchemaDiff::default()
+        };
+        mutations.push(OptimisticMutation::meta_put(
+            key::schema_version_kv_key(),
+            value::encode_int_value(schema_version),
+        )?);
+        mutations.push(OptimisticMutation::meta_put(
+            key::schema_diff_kv_key(schema_version),
+            value::serialize_schema_diff(&diff)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+        )?);
+        active.job.last_schema_version = schema_version;
+        diff
+    } else {
+        update_raw_args = false;
+        SchemaDiff::default()
+    };
+
+    if terminal {
+        if !matches!(
+            active.job.state,
+            JobState::ROLLBACK_DONE | JobState::CANCELLED
+        ) {
+            active.job.finish_table_job(
+                JobState::DONE,
+                if active.job.type_ == ActionType::ACTION_DROP_CHECK_CONSTRAINT {
+                    SchemaState::NONE
+                } else {
+                    SchemaState::PUBLIC
+                },
+                schema_version,
+                Some(GoShared::new(info.clone_like_go())),
+            );
+        }
+        active
+            .job
+            .binlog_info
+            .as_ref()
+            .expect("CHECK jobs always carry BinlogInfo")
+            .write()
+            .finished_ts = start_ts;
+        active.job.sequence_number = DDL_HISTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
+        let encoded = active
+            .job
+            .encode(true)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+        if let Ok(history_table) = crate::ddl_history_table::DdlHistoryTable::locate(&catalog) {
+            let _ =
+                history_table.append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
+        }
+        mutations.push(OptimisticMutation::meta_put(
+            key::ddl_job_history_kv_key(active.job.id),
+            encoded,
+        )?);
+        job_table
+            .append_delete(&active, &mut mutations)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    } else {
+        job_table
+            .append_update(&mut active, update_raw_args, &mut mutations)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    }
+
+    Ok(PersistedDdlJobStep {
+        write: DdlWrite {
+            ddl_job_id,
+            mutations,
+            schema_version,
+            diff,
+            created_id: None,
+            backfill: Vec::new(),
+            exchange_partition_validation: None,
+            check_constraint_validation: validation,
+            mdl_info_update: schema_changed
+                .then(|| mdl_info_update(&catalog, info.id))
+                .transpose()?,
+            exchange_partition_label_swap: None,
+            warning: None,
+            placement_bundles: Vec::new(),
+            placement_rollback_bundles: Vec::new(),
+        },
+        terminal,
+    })
+}
+
+/// Persists Go's `Running -> Rollingback` transition after CHECK validation
+/// returns 3819. No schema metadata changes in this transaction; the next
+/// ordinary worker step reads this state and performs the action-specific
+/// rollback.
+pub fn plan_check_constraint_job_rollingback<S: MetaSnapshot>(
+    snapshot: &mut S,
+    ddl_job_id: i64,
+    error_code: u16,
+    error_message: &str,
+) -> Result<Vec<OptimisticMutation>, DdlPlanError> {
+    let catalog = load_cluster_catalog(snapshot)?;
+    let job_table = crate::ddl_job_table::DdlJobTable::locate(&catalog)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    let mut active = job_table
+        .load(snapshot)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+        .into_iter()
+        .find(|active| active.job.id == ddl_job_id)
+        .ok_or_else(|| DdlPlanError::Encode(format!("DDL job {ddl_job_id} does not exist")))?;
+    active.job.state = JobState::ROLLINGBACK;
+    active.job.error = Some(GoShared::new(tidb_error::terror::TerrorError::compatible(
+        tidb_error::terror::TerrorCode::new(
+            isize::try_from(error_code).expect("u16 error code fits isize"),
+        ),
+        error_message,
+    )));
+    active.job.error_count += 1;
+    let mut mutations = Vec::new();
+    job_table
+        // This is a separate transaction after the validation step. The job
+        // was freshly decoded from `job_meta`, so its private decoded-args
+        // cache is intentionally empty; refreshing raw args here would erase
+        // the durable action arguments. Go's `countForError` retains the raw
+        // arguments when it persists this envelope-only state transition.
+        .append_update(&mut active, false, &mut mutations)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    Ok(mutations)
+}
+
 /// One catalog change's complete write set.
 #[derive(Clone, Debug)]
 pub struct DdlWrite {
@@ -2562,6 +3224,9 @@ pub struct DdlWrite {
     pub exchange_partition_validation: Option<ExchangePartitionValidation>,
     /// Existing-row validation owed before an enforced CHECK becomes public.
     pub check_constraint_validation: Option<CheckConstraintValidation>,
+    /// The `mysql.tidb_mdl_info` row that must be replaced atomically with
+    /// this schema phase before the owner waits for acknowledgements.
+    pub mdl_info_update: Option<MdlInfoUpdate>,
     /// The PD region-label rule swap owed by `EXCHANGE PARTITION`.
     pub exchange_partition_label_swap: Option<ExchangePartitionLabelSwap>,
     /// The warning the change raises, if any.
@@ -2601,6 +3266,93 @@ pub struct ExchangePartitionValidation {
     pub standalone: Box<TableInfo>,
     /// Physical ID of the named partition before the swap.
     pub partition_id: i64,
+}
+
+/// One Go `registerMDLInfo` replacement associated with a committed CHECK
+/// schema phase.
+#[derive(Clone, Debug)]
+pub struct MdlInfoUpdate {
+    /// Stored `mysql.tidb_mdl_info` table definition used by the ordinary
+    /// clustered-row encoder.
+    pub table: Box<TableInfo>,
+    /// Tables touched by the job, stored as Go's comma-separated ID list.
+    pub table_ids: Vec<i64>,
+}
+
+impl MdlInfoUpdate {
+    fn row_values(
+        &self,
+        ddl_job_id: i64,
+        schema_version: i64,
+        owner_id: &str,
+    ) -> Result<crate::system_row_write::RowValues, DdlPlanError> {
+        let column_id = |name: &str| {
+            self.table
+                .cols()
+                .iter_deref()
+                .find(|column| column.read().name.lowercase() == name)
+                .map(|column| column.read().id)
+                .ok_or_else(|| {
+                    DdlPlanError::Encode(format!("mysql.tidb_mdl_info has no column `{name}`"))
+                })
+        };
+        let mut values = crate::system_row_write::RowValues::new();
+        values.insert(column_id("job_id")?, Datum::Int(ddl_job_id));
+        values.insert(column_id("version")?, Datum::Int(schema_version));
+        values.insert(
+            column_id("table_ids")?,
+            Datum::Bytes(
+                self.table_ids
+                    .iter()
+                    .map(i64::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",")
+                    .into_bytes(),
+            ),
+        );
+        values.insert(
+            column_id("owner_id")?,
+            Datum::Bytes(owner_id.as_bytes().to_vec()),
+        );
+        Ok(values)
+    }
+
+    /// Appends the clustered system-row mutations for this phase.
+    ///
+    /// Go deletes the row after every successful schema-sync wait, so each
+    /// following phase inserts a fresh row rather than updating the preceding
+    /// phase's value.
+    pub fn append_mutations(
+        &self,
+        ddl_job_id: i64,
+        schema_version: i64,
+        owner_id: &str,
+        mutations: &mut Vec<OptimisticMutation>,
+    ) -> Result<(), DdlPlanError> {
+        let values = self.row_values(ddl_job_id, schema_version, owner_id)?;
+        mutations.extend(
+            crate::system_row_write::replace_unindexed_clustered_row(&self.table, &values)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+        );
+        Ok(())
+    }
+
+    /// Appends Go `cleanMDLInfo`'s clustered-row deletion after a successful
+    /// schema-sync wait.
+    pub fn append_delete_mutations(
+        &self,
+        ddl_job_id: i64,
+        schema_version: i64,
+        owner_id: &str,
+        mutations: &mut Vec<OptimisticMutation>,
+    ) -> Result<(), DdlPlanError> {
+        let values = self.row_values(ddl_job_id, schema_version, owner_id)?;
+        mutations.extend(
+            crate::system_row_write::delete_unindexed_clustered_row(&self.table, &values)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+        );
+        Ok(())
+    }
 }
 
 /// The names and post-exchange physical IDs Go uses to swap the standalone
@@ -4577,165 +5329,12 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 ));
             }
         }
-        DdlStatement::AddCheckConstraint {
-            schema,
-            table,
-            definition,
-            context,
-        } => {
-            let (db_id, stored) = locate_table(&catalog, schema, table)?;
-            let mut info = stored.clone_like_go();
-            let prior_len = info.constraints.len();
-            crate::table_info_build::append_check_constraints(
-                &mut info,
-                &[tidb_executor::ddl::check_constraint::CheckConstraintInput {
-                    definition: (**definition).clone(),
-                    in_column: None,
-                }],
-                &context.0,
-            )
-            .map_err(DdlPlanError::Admission)?;
-            let added = info
-                .constraints
-                .iter_deref()
-                .nth(prior_len)
-                .expect("one ADD CHECK input appends one constraint")
-                .read()
-                .clone();
-            let duplicate_in_schema = catalog
-                .databases
-                .iter()
-                .find(|database| database.info.id == db_id)
-                .is_some_and(|database| {
-                    database.tables.iter().any(|candidate| {
-                        candidate.constraints.iter_deref().any(|constraint| {
-                            constraint.read().name.lowercase() == added.name.lowercase()
-                        })
-                    })
-                });
-            if duplicate_in_schema {
-                return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
-                    tidb_error::tidb::errcode::ErrCheckConstraintDupName,
-                    format!("Duplicate check constraint name '{}'.", added.name),
-                )));
-            }
-            if added.enforced {
-                check_constraint_validation = Some(CheckConstraintValidation {
-                    table: Box::new(info.clone_like_go()),
-                    constraint_name: added.name.original().to_owned(),
-                    context: context.clone(),
-                });
-            }
-            info.update_ts = start_ts;
-            let table_id = info.id;
-            let encoded = value::serialize_table_info(&info)
-                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-            writes.push(OptimisticMutation::meta_put(
-                key::table_kv_key(db_id, table_id),
-                encoded,
-            )?);
-            diff.action_type = ActionType::ACTION_ADD_CHECK_CONSTRAINT;
-            diff.schema_id = db_id;
-            diff.table_id = table_id;
-        }
-        DdlStatement::DropCheckConstraint {
-            schema,
-            table,
-            name,
-        } => {
-            let (db_id, stored) = locate_table(&catalog, schema, table)?;
-            let wanted = name.to_lowercase();
-            if !stored
-                .constraints
-                .iter_deref()
-                .any(|constraint| constraint.read().name.lowercase() == wanted)
-            {
-                return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
-                    tidb_error::tidb::errcode::ErrConstraintNotFound,
-                    format!("Constraint '{name}' does not exist."),
-                )));
-            }
-            let mut info = stored.clone_like_go();
-            info.constraints = info
-                .constraints
-                .iter_deref()
-                .filter_map(|constraint| {
-                    let constraint = constraint.read();
-                    (constraint.name.lowercase() != wanted).then(|| constraint.clone())
-                })
-                .collect::<Vec<_>>()
-                .into();
-            info.update_ts = start_ts;
-            let table_id = info.id;
-            let encoded = value::serialize_table_info(&info)
-                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-            writes.push(OptimisticMutation::meta_put(
-                key::table_kv_key(db_id, table_id),
-                encoded,
-            )?);
-            diff.action_type = ActionType::ACTION_DROP_CHECK_CONSTRAINT;
-            diff.schema_id = db_id;
-            diff.table_id = table_id;
-        }
-        DdlStatement::AlterCheckConstraint {
-            schema,
-            table,
-            name,
-            enforced,
-            context,
-        } => {
-            let (db_id, stored) = locate_table(&catalog, schema, table)?;
-            let wanted = name.to_lowercase();
-            let Some(position) = stored
-                .constraints
-                .iter_deref()
-                .position(|constraint| constraint.read().name.lowercase() == wanted)
-            else {
-                return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
-                    tidb_error::tidb::errcode::ErrConstraintNotFound,
-                    format!("Constraint '{name}' does not exist."),
-                )));
-            };
-            if stored
-                .constraints
-                .get(position)
-                .expect("the position was just found")
-                .read()
-                .enforced
-                == *enforced
-            {
-                return Ok(already(format!(
-                    "CHECK constraint `{name}` on `{schema}`.`{table}` already has the requested enforcement"
-                )));
-            }
-            let mut info = stored.clone_like_go();
-            {
-                let constraint_handle = info
-                    .constraints
-                    .get(position)
-                    .expect("the position was just found");
-                let mut constraint = constraint_handle.write();
-                constraint.enforced = *enforced;
-                constraint.state = SchemaState::PUBLIC;
-            }
-            if *enforced {
-                check_constraint_validation = Some(CheckConstraintValidation {
-                    table: Box::new(info.clone_like_go()),
-                    constraint_name: name.clone(),
-                    context: context.clone(),
-                });
-            }
-            info.update_ts = start_ts;
-            let table_id = info.id;
-            let encoded = value::serialize_table_info(&info)
-                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-            writes.push(OptimisticMutation::meta_put(
-                key::table_kv_key(db_id, table_id),
-                encoded,
-            )?);
-            diff.action_type = ActionType::ACTION_ALTER_CHECK_CONSTRAINT;
-            diff.schema_id = db_id;
-            diff.table_id = table_id;
+        DdlStatement::AddCheckConstraint { .. }
+        | DdlStatement::DropCheckConstraint { .. }
+        | DdlStatement::AlterCheckConstraint { .. } => {
+            return Err(DdlPlanError::Encode(
+                "CHECK constraint DDL must execute through mysql.tidb_ddl_job".to_owned(),
+            ));
         }
         DdlStatement::IgnoredCheckConstraint { schema, table } => {
             locate_table(&catalog, schema, table)?;
@@ -6031,6 +6630,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
     // `GenGlobalIDs` batch. The notifier uses that job ID as its ordered
     // primary-key prefix.
     let ddl_job_id = global_ids.allocate(1)?[0];
+    let mdl_info_update = None;
     if let Some(global_id_mutation) = global_ids.mutation()? {
         writes.push(global_id_mutation);
     }
@@ -6065,6 +6665,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
         backfill,
         exchange_partition_validation,
         check_constraint_validation,
+        mdl_info_update,
         exchange_partition_label_swap,
         warning,
         placement_bundles,
@@ -6568,6 +7169,16 @@ fn append_schema_change_mutations<S: MetaSnapshot>(
         value::encode_int_value(row_id),
     )?);
     Ok(())
+}
+
+fn mdl_info_update(catalog: &ClusterCatalog, table_id: i64) -> Result<MdlInfoUpdate, DdlPlanError> {
+    let (_, table) = catalog
+        .find_table("mysql", "tidb_mdl_info")
+        .ok_or_else(|| DdlPlanError::Encode("mysql.tidb_mdl_info does not exist".to_owned()))?;
+    Ok(MdlInfoUpdate {
+        table: Box::new(table.clone_like_go()),
+        table_ids: vec![table_id],
+    })
 }
 
 fn event_partition_info(definitions: Vec<PartitionDefinition>) -> PartitionInfo {

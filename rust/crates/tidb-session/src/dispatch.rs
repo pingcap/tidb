@@ -2014,7 +2014,7 @@ impl Session {
                     };
                     let current_db = self.current_db.clone();
                     // `ADD INDEX` backfills, so the same write level applies.
-                    let ctx = self.statement_context(true);
+                    let ctx = self.statement_context(true).with_ddl_query(sql);
                     let result = self.with_catalog_mut(|catalog| {
                         tidb_executor::run_alter_table_in(sql, catalog, &current_db, &ctx)?;
                         Ok(StmtOutput::Affected(0))

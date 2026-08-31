@@ -627,13 +627,15 @@ fn staged_or_snapshot<S: WritePlanningSnapshot>(
     match mutation.kind() {
         OptimisticMutationKind::Delete
         | OptimisticMutationKind::IndexDelete
-        | OptimisticMutationKind::MetaDelete => Ok(None),
+        | OptimisticMutationKind::MetaDelete
+        | OptimisticMutationKind::SystemRowDelete => Ok(None),
         OptimisticMutationKind::LockOnly => snapshot.read_at_snapshot(key, call),
         OptimisticMutationKind::Insert
         | OptimisticMutationKind::PutExisting
         | OptimisticMutationKind::IndexPut
         | OptimisticMutationKind::UniqueIndexInsert
-        | OptimisticMutationKind::MetaPut => Ok(Some(mutation.value().to_vec())),
+        | OptimisticMutationKind::MetaPut
+        | OptimisticMutationKind::SystemRowPut => Ok(Some(mutation.value().to_vec())),
     }
 }
 

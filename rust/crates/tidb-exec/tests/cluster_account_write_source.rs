@@ -96,12 +96,15 @@ impl MetaStore {
                     assert!(present, "a Delete named a row that is not stored");
                     self.pairs.remove(mutation.key());
                 }
-                OptimisticMutationKind::IndexDelete | OptimisticMutationKind::MetaDelete => {
+                OptimisticMutationKind::IndexDelete
+                | OptimisticMutationKind::MetaDelete
+                | OptimisticMutationKind::SystemRowDelete => {
                     self.pairs.remove(mutation.key());
                 }
                 OptimisticMutationKind::IndexPut
                 | OptimisticMutationKind::UniqueIndexInsert
-                | OptimisticMutationKind::MetaPut => {
+                | OptimisticMutationKind::MetaPut
+                | OptimisticMutationKind::SystemRowPut => {
                     self.pairs
                         .insert(mutation.key().to_vec(), mutation.value().to_vec());
                 }

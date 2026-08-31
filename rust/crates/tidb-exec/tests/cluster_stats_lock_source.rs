@@ -77,12 +77,15 @@ impl MetaStore {
                     assert!(present, "delete named a missing persisted lock row");
                     self.pairs.remove(mutation.key());
                 }
-                OptimisticMutationKind::IndexDelete | OptimisticMutationKind::MetaDelete => {
+                OptimisticMutationKind::IndexDelete
+                | OptimisticMutationKind::MetaDelete
+                | OptimisticMutationKind::SystemRowDelete => {
                     self.pairs.remove(mutation.key());
                 }
                 OptimisticMutationKind::IndexPut
                 | OptimisticMutationKind::UniqueIndexInsert
-                | OptimisticMutationKind::MetaPut => {
+                | OptimisticMutationKind::MetaPut
+                | OptimisticMutationKind::SystemRowPut => {
                     self.pairs
                         .insert(mutation.key().to_vec(), mutation.value().to_vec());
                 }

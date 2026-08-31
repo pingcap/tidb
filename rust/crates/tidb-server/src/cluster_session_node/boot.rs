@@ -229,6 +229,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
             Arc::clone(&catalog),
             CONTROL_PLANE_TIMEOUT,
             crate::real_tikv_node::connect_schema_notifier(&config),
+            Arc::clone(&server_info),
         )),
         Arc::new(RealClusterAccountWriter::new(
             Arc::new(authority.transaction_opener()),

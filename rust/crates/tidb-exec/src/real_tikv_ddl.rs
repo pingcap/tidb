@@ -41,8 +41,10 @@ use tidb_txnkv::transaction::{
 use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
 
 use crate::cluster_ddl::{
-    lower_ddl_with_context, plan_ddl, CheckConstraintValidation, DdlAdmissionError, DdlPlan,
-    DdlPlanError, DdlStatement, DdlWrite, ExchangePartitionValidation, IndexBackfill,
+    lower_ddl_with_context, plan_check_constraint_job_rollingback,
+    plan_check_constraint_job_submission, plan_ddl, plan_persisted_check_constraint_job_step,
+    CheckConstraintValidation, DdlAdmissionError, DdlPlan, DdlPlanError, DdlStatement, DdlWrite,
+    ExchangePartitionValidation, IndexBackfill, MdlInfoUpdate,
 };
 use crate::cluster_table_storage::SessionTransaction;
 use crate::pessimistic_lock_error::{transaction_cause_to_sql_error, LockSqlError};
@@ -256,6 +258,9 @@ pub enum ClusterDdlError {
     CheckConstraintValidation(LockSqlError),
     /// The change needs CHECK validation and this path cannot read rows.
     CheckConstraintValidationUnavailable,
+    /// A CHECK schema phase is durable but not yet acknowledged by every
+    /// registered node, so advancing would violate the two-version invariant.
+    SchemaSync(String),
 }
 
 impl fmt::Display for ClusterDdlError {
@@ -301,6 +306,10 @@ impl fmt::Display for ClusterDdlError {
                 formatter,
                 "this path cannot validate existing rows before enabling a CHECK constraint"
             ),
+            Self::SchemaSync(detail) => write!(
+                formatter,
+                "CHECK schema phase is committed but not synchronized: {detail}"
+            ),
         }
     }
 }
@@ -319,7 +328,8 @@ impl std::error::Error for ClusterDdlError {
             | Self::ExchangeValidation(_)
             | Self::ExchangeValidationUnavailable
             | Self::CheckConstraintValidation(_)
-            | Self::CheckConstraintValidationUnavailable => None,
+            | Self::CheckConstraintValidationUnavailable
+            | Self::SchemaSync(_) => None,
         }
     }
 }
@@ -606,6 +616,43 @@ pub trait CheckConstraintValidator {
     ) -> Result<(), LockSqlError>;
 }
 
+/// Owner-side synchronization between committed CHECK schema phases.
+///
+/// The implementation reloads the owner's own catalog and then waits for the
+/// existing per-job acknowledgements from every registered TiDB node. There
+/// is intentionally no lease-delay fallback here: a phase may advance only
+/// after the nodes that can serve writes have loaded its writable metadata.
+pub trait CheckConstraintSchemaSync {
+    /// Stable owner id stored in `mysql.tidb_mdl_info.owner_id`.
+    fn owner_id(&self) -> &str;
+
+    /// Waits until every registered node has acknowledged `version` for
+    /// `ddl_job_id`.
+    fn wait_version_synced(&self, ddl_job_id: i64, version: i64) -> Result<(), String>;
+
+    /// Removes the per-job acknowledgement keys after the final phase.
+    fn clean_job_versions(&self, ddl_job_id: i64) -> Result<(), String>;
+}
+
+#[derive(Clone, Copy)]
+enum DdlPhase<'statement> {
+    Initial(&'statement DdlStatement),
+    PersistedCheckConstraint { ddl_job_id: i64 },
+}
+
+struct CommittedDdlPhase {
+    report: ClusterDdlReport,
+    ddl_job_id: i64,
+    schema_version: i64,
+    persisted_job_terminal: bool,
+    mdl_info: Option<MdlInfoUpdate>,
+}
+
+enum DdlPhaseOutcome {
+    AlreadySatisfied(ClusterDdlReport),
+    Committed(CommittedDdlPhase),
+}
+
 /// Publishes one catalog change together with the index entries it owes.
 ///
 /// One `SessionTransaction` serves all three halves at one `start_ts`: the
@@ -638,20 +685,299 @@ pub fn commit_cluster_ddl_with_backfill<
     backfiller: &dyn IndexBackfiller,
     exchange_validator: &dyn ExchangePartitionValidator,
     check_constraint_validator: &dyn CheckConstraintValidator,
+    schema_sync: &dyn CheckConstraintSchemaSync,
 ) -> Result<ClusterDdlReport, ClusterDdlError> {
-    // The same `kv.RunInNewTxn(retryable=true)` loop as [`commit_cluster_ddl`]
-    // -- see its doc. A retried attempt re-stages the backfill from the fresh
-    // snapshot too, exactly as Go re-runs the whole job.
-    let mut attempt: u32 = 0;
-    loop {
-        match commit_cluster_ddl_with_backfill_once(
-            Arc::clone(&opener),
+    if matches!(
+        statement,
+        DdlStatement::AddCheckConstraint { .. }
+            | DdlStatement::DropCheckConstraint { .. }
+            | DdlStatement::AlterCheckConstraint { .. }
+    ) {
+        return commit_persisted_check_constraint_job(
+            opener,
             statement,
             timeout,
             notifier,
             backfiller,
             exchange_validator,
             check_constraint_validator,
+            schema_sync,
+        );
+    }
+
+    match commit_cluster_ddl_phase_with_retry(
+        opener,
+        DdlPhase::Initial(statement),
+        timeout,
+        notifier,
+        backfiller,
+        exchange_validator,
+        check_constraint_validator,
+        schema_sync.owner_id(),
+    )? {
+        DdlPhaseOutcome::AlreadySatisfied(report) => Ok(report),
+        DdlPhaseOutcome::Committed(committed) => Ok(committed.report),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn commit_persisted_check_constraint_job<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+>(
+    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    statement: &DdlStatement,
+    timeout: Duration,
+    notifier: Option<&dyn SchemaVersionNotifier>,
+    backfiller: &dyn IndexBackfiller,
+    exchange_validator: &dyn ExchangePartitionValidator,
+    check_constraint_validator: &dyn CheckConstraintValidator,
+    schema_sync: &dyn CheckConstraintSchemaSync,
+) -> Result<ClusterDdlReport, ClusterDdlError> {
+    let ddl_job_id =
+        submit_check_constraint_job_with_retry(Arc::clone(&opener), statement, timeout)?;
+
+    loop {
+        let outcome = match commit_cluster_ddl_phase_with_retry(
+            Arc::clone(&opener),
+            DdlPhase::PersistedCheckConstraint { ddl_job_id },
+            timeout,
+            notifier,
+            backfiller,
+            exchange_validator,
+            check_constraint_validator,
+            schema_sync.owner_id(),
+        ) {
+            Err(ClusterDdlError::CheckConstraintValidation(validation_error))
+                if validation_error.code
+                    == tidb_error::tidb::errcode::ErrCheckConstraintViolated =>
+            {
+                mark_check_constraint_job_rollingback_with_retry(
+                    Arc::clone(&opener),
+                    ddl_job_id,
+                    &validation_error,
+                    timeout,
+                )?;
+                let rollback = commit_cluster_ddl_phase_with_retry(
+                    Arc::clone(&opener),
+                    DdlPhase::PersistedCheckConstraint { ddl_job_id },
+                    timeout,
+                    notifier,
+                    backfiller,
+                    exchange_validator,
+                    check_constraint_validator,
+                    schema_sync.owner_id(),
+                )?;
+                let DdlPhaseOutcome::Committed(rollback) = rollback else {
+                    unreachable!("a persisted CHECK rollback is a worker write")
+                };
+                synchronize_committed_check_phase(
+                    Arc::clone(&opener),
+                    timeout,
+                    &rollback,
+                    schema_sync,
+                )?;
+                if let Err(error) = schema_sync.clean_job_versions(ddl_job_id) {
+                    eprintln!(
+                        "{{\"level\":\"warning\",\"event\":\"ddl_job_versions_cleanup_failed\",\"job_id\":{ddl_job_id},\"error\":{}}}",
+                        serde_json::to_string(&error)
+                            .unwrap_or_else(|_| "\"unprintable\"".to_owned())
+                    );
+                }
+                return Err(ClusterDdlError::CheckConstraintValidation(validation_error));
+            }
+            outcome => outcome?,
+        };
+        let DdlPhaseOutcome::Committed(committed) = outcome else {
+            unreachable!("a queued CHECK action is always a worker write")
+        };
+        synchronize_committed_check_phase(Arc::clone(&opener), timeout, &committed, schema_sync)?;
+        if committed.persisted_job_terminal {
+            if let Err(error) = schema_sync.clean_job_versions(ddl_job_id) {
+                eprintln!(
+                    "{{\"level\":\"warning\",\"event\":\"ddl_job_versions_cleanup_failed\",\"job_id\":{ddl_job_id},\"error\":{}}}",
+                    serde_json::to_string(&error)
+                        .unwrap_or_else(|_| "\"unprintable\"".to_owned())
+                );
+            }
+            return Ok(committed.report);
+        }
+    }
+}
+
+fn submit_check_constraint_job_with_retry<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+>(
+    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    statement: &DdlStatement,
+    timeout: Duration,
+) -> Result<i64, ClusterDdlError> {
+    let mut attempt = 0_u32;
+    loop {
+        let transaction = SessionTransaction::begin(
+            Arc::clone(&opener),
+            timeout,
+            crate::session_commit_protocol::session_commit_protocol(),
+        )?;
+        let start_ts = transaction.start_ts();
+        let submission = {
+            let mut snapshot = SnapshotMetaSnapshot::new(
+                transaction
+                    .snapshot()
+                    .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
+            );
+            plan_check_constraint_job_submission(&mut snapshot, statement, start_ts)
+        };
+        let submission = match submission {
+            Ok(Some(submission)) => submission,
+            Ok(None) => {
+                let _ = transaction.rollback();
+                return Err(ClusterDdlError::NotCommitted(
+                    "the statement is not a CHECK DDL job".to_owned(),
+                ));
+            }
+            Err(error) => {
+                let _ = transaction.rollback();
+                return Err(error.into());
+            }
+        };
+        let ddl_job_id = submission.job.id;
+        let buffer = MutationBuffer::new();
+        match transaction.commit_with(&buffer, submission.mutations) {
+            Ok(_) => return Ok(ddl_job_id),
+            Err(error) => {
+                let cause = classify_session_ddl_commit_error(0, error);
+                if matches!(cause, ClusterDdlError::ConcurrentSchemaChange { .. })
+                    && attempt + 1 < tidb_txnkv::MAX_RETRY_COUNT
+                {
+                    std::thread::sleep(tidb_txnkv::retry_backoff_delay(attempt));
+                    attempt += 1;
+                    continue;
+                }
+                return Err(cause);
+            }
+        }
+    }
+}
+
+fn mark_check_constraint_job_rollingback_with_retry<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+>(
+    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    ddl_job_id: i64,
+    validation_error: &LockSqlError,
+    timeout: Duration,
+) -> Result<(), ClusterDdlError> {
+    let mut attempt = 0_u32;
+    loop {
+        let transaction = SessionTransaction::begin(
+            Arc::clone(&opener),
+            timeout,
+            crate::session_commit_protocol::session_commit_protocol(),
+        )?;
+        let mutations = {
+            let mut snapshot = SnapshotMetaSnapshot::new(
+                transaction
+                    .snapshot()
+                    .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
+            );
+            plan_check_constraint_job_rollingback(
+                &mut snapshot,
+                ddl_job_id,
+                validation_error.code,
+                &validation_error.message,
+            )
+        };
+        let mutations = match mutations {
+            Ok(mutations) => mutations,
+            Err(error) => {
+                let _ = transaction.rollback();
+                return Err(error.into());
+            }
+        };
+        let buffer = MutationBuffer::new();
+        match transaction.commit_with(&buffer, mutations) {
+            Ok(_) => return Ok(()),
+            Err(error) => {
+                let cause = classify_session_ddl_commit_error(0, error);
+                if matches!(cause, ClusterDdlError::ConcurrentSchemaChange { .. })
+                    && attempt + 1 < tidb_txnkv::MAX_RETRY_COUNT
+                {
+                    std::thread::sleep(tidb_txnkv::retry_backoff_delay(attempt));
+                    attempt += 1;
+                    continue;
+                }
+                return Err(cause);
+            }
+        }
+    }
+}
+
+fn synchronize_committed_check_phase<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+>(
+    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    timeout: Duration,
+    committed: &CommittedDdlPhase,
+    schema_sync: &dyn CheckConstraintSchemaSync,
+) -> Result<(), ClusterDdlError> {
+    let Some(mdl_info) = &committed.mdl_info else {
+        return Ok(());
+    };
+    schema_sync
+        .wait_version_synced(committed.ddl_job_id, committed.schema_version)
+        .map_err(ClusterDdlError::SchemaSync)?;
+    if let Err(error) = clean_mdl_info_with_retry(
+        opener,
+        timeout,
+        mdl_info,
+        committed.ddl_job_id,
+        committed.schema_version,
+        schema_sync.owner_id(),
+    ) {
+        eprintln!(
+            "{{\"level\":\"warning\",\"event\":\"ddl_mdl_info_cleanup_failed\",\"job_id\":{},\"error\":{}}}",
+            committed.ddl_job_id,
+            serde_json::to_string(&error.to_string())
+                .unwrap_or_else(|_| "\"unprintable\"".to_owned())
+        );
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn commit_cluster_ddl_phase_with_retry<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+>(
+    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    phase: DdlPhase<'_>,
+    timeout: Duration,
+    notifier: Option<&dyn SchemaVersionNotifier>,
+    backfiller: &dyn IndexBackfiller,
+    exchange_validator: &dyn ExchangePartitionValidator,
+    check_constraint_validator: &dyn CheckConstraintValidator,
+    owner_id: &str,
+) -> Result<DdlPhaseOutcome, ClusterDdlError> {
+    let mut attempt: u32 = 0;
+    loop {
+        match commit_cluster_ddl_with_backfill_once(
+            Arc::clone(&opener),
+            phase,
+            timeout,
+            notifier,
+            backfiller,
+            exchange_validator,
+            check_constraint_validator,
+            owner_id,
         ) {
             Err(ClusterDdlError::ConcurrentSchemaChange { .. })
                 if attempt + 1 < tidb_txnkv::MAX_RETRY_COUNT =>
@@ -670,13 +996,14 @@ fn commit_cluster_ddl_with_backfill_once<
     P: StorePdCapability,
 >(
     opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
-    statement: &DdlStatement,
+    phase: DdlPhase<'_>,
     timeout: Duration,
     notifier: Option<&dyn SchemaVersionNotifier>,
     backfiller: &dyn IndexBackfiller,
     exchange_validator: &dyn ExchangePartitionValidator,
     check_constraint_validator: &dyn CheckConstraintValidator,
-) -> Result<ClusterDdlReport, ClusterDdlError> {
+    owner_id: &str,
+) -> Result<DdlPhaseOutcome, ClusterDdlError> {
     let transaction = SessionTransaction::begin(
         Arc::clone(&opener),
         timeout,
@@ -689,9 +1016,17 @@ fn commit_cluster_ddl_with_backfill_once<
                 .snapshot()
                 .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
         );
-        plan_ddl(&mut snapshot, statement, start_ts)
+        match phase {
+            DdlPhase::Initial(statement) => {
+                plan_ddl(&mut snapshot, statement, start_ts).map(|plan| (plan, false))
+            }
+            DdlPhase::PersistedCheckConstraint { ddl_job_id } => {
+                plan_persisted_check_constraint_job_step(&mut snapshot, ddl_job_id, start_ts)
+                    .map(|step| (DdlPlan::Write(Box::new(step.write)), step.terminal))
+            }
+        }
     };
-    let plan = match plan {
+    let (plan, persisted_job_terminal) = match plan {
         Ok(plan) => plan,
         Err(error) => {
             let _ = transaction.rollback();
@@ -703,9 +1038,11 @@ fn commit_cluster_ddl_with_backfill_once<
             transaction
                 .rollback()
                 .map_err(ClusterDdlError::NotCommitted)?;
-            return Ok(ClusterDdlReport::AlreadySatisfied { detail, warning });
+            return Ok(DdlPhaseOutcome::AlreadySatisfied(
+                ClusterDdlReport::AlreadySatisfied { detail, warning },
+            ));
         }
-        DdlPlan::Write(write) => write,
+        DdlPlan::Write(write) => *write,
     };
     let buffer = MutationBuffer::new();
     if !write.backfill.is_empty()
@@ -778,15 +1115,33 @@ fn commit_cluster_ddl_with_backfill_once<
     } else {
         None
     };
+    let mut write = write;
+    if let Some(mdl_info) = &write.mdl_info_update {
+        if let Err(error) = mdl_info.append_mutations(
+            write.ddl_job_id,
+            write.schema_version,
+            owner_id,
+            &mut write.mutations,
+        ) {
+            let _ = transaction.rollback();
+            return Err(error.into());
+        }
+    }
     let planned_version = write.schema_version;
     match transaction.commit_with(&buffer, write.mutations) {
         Ok(_) => {
             notify_schema_version(notifier, planned_version);
-            Ok(ClusterDdlReport::Applied {
+            Ok(DdlPhaseOutcome::Committed(CommittedDdlPhase {
+                report: ClusterDdlReport::Applied {
+                    schema_version: planned_version,
+                    created_id: write.created_id,
+                    warning: write.warning,
+                },
+                ddl_job_id: write.ddl_job_id,
                 schema_version: planned_version,
-                created_id: write.created_id,
-                warning: write.warning,
-            })
+                persisted_job_terminal,
+                mdl_info: write.mdl_info_update,
+            }))
         }
         Err(error) => {
             let cause = classify_session_ddl_commit_error(planned_version, error);
@@ -799,6 +1154,41 @@ fn commit_cluster_ddl_with_backfill_once<
                     label_receipt.as_ref(),
                     timeout,
                 ))
+            }
+        }
+    }
+}
+
+fn clean_mdl_info_with_retry<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
+    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    timeout: Duration,
+    mdl_info: &MdlInfoUpdate,
+    ddl_job_id: i64,
+    schema_version: i64,
+    owner_id: &str,
+) -> Result<(), ClusterDdlError> {
+    let mut attempt: u32 = 0;
+    loop {
+        let transaction = SessionTransaction::begin(
+            Arc::clone(&opener),
+            timeout,
+            crate::session_commit_protocol::session_commit_protocol(),
+        )?;
+        let mut mutations = Vec::new();
+        mdl_info.append_delete_mutations(ddl_job_id, schema_version, owner_id, &mut mutations)?;
+        let buffer = MutationBuffer::new();
+        match transaction.commit_with(&buffer, mutations) {
+            Ok(_) => return Ok(()),
+            Err(error) => {
+                let cause = classify_session_ddl_commit_error(schema_version, error);
+                if matches!(cause, ClusterDdlError::ConcurrentSchemaChange { .. })
+                    && attempt + 1 < tidb_txnkv::MAX_RETRY_COUNT
+                {
+                    std::thread::sleep(tidb_txnkv::retry_backoff_delay(attempt));
+                    attempt += 1;
+                    continue;
+                }
+                return Err(cause);
             }
         }
     }
@@ -840,6 +1230,9 @@ pub fn classify_session_ddl_commit_error(
 /// second attempt from this path would only delay a statement whose result is
 /// already durable.
 pub fn notify_schema_version(notifier: Option<&dyn SchemaVersionNotifier>, version: i64) {
+    if version == 0 {
+        return;
+    }
     let Some(notifier) = notifier else {
         return;
     };

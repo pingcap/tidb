@@ -396,10 +396,10 @@ where
         let key = encode_row_key_with_handle(self.table.table_id(), &RecordHandle::Int(handle));
         let staged = self.buffer.staged(&key)?;
         match staged.kind() {
-            OptimisticMutationKind::Delete => Some(None),
-            OptimisticMutationKind::Insert | OptimisticMutationKind::PutExisting => {
-                Some(Some(staged.value()))
-            }
+            OptimisticMutationKind::Delete | OptimisticMutationKind::SystemRowDelete => Some(None),
+            OptimisticMutationKind::Insert
+            | OptimisticMutationKind::PutExisting
+            | OptimisticMutationKind::SystemRowPut => Some(Some(staged.value())),
             // Index keys are never record keys, and a meta key lives in the `m`
             // namespace, so neither can carry one.
             OptimisticMutationKind::IndexPut
@@ -445,8 +445,10 @@ where
                 continue;
             }
             let row = match staged.kind() {
-                OptimisticMutationKind::Delete => None,
-                OptimisticMutationKind::Insert | OptimisticMutationKind::PutExisting => Some(
+                OptimisticMutationKind::Delete | OptimisticMutationKind::SystemRowDelete => None,
+                OptimisticMutationKind::Insert
+                | OptimisticMutationKind::PutExisting
+                | OptimisticMutationKind::SystemRowPut => Some(
                     decode_staged_projection(projection, handle, staged.value())
                         .map_err(|error| TransactionStatementError::write(&error))?,
                 ),
@@ -494,8 +496,10 @@ where
                 continue;
             }
             let row = match staged.kind() {
-                OptimisticMutationKind::Delete => None,
-                OptimisticMutationKind::Insert | OptimisticMutationKind::PutExisting => {
+                OptimisticMutationKind::Delete | OptimisticMutationKind::SystemRowDelete => None,
+                OptimisticMutationKind::Insert
+                | OptimisticMutationKind::PutExisting
+                | OptimisticMutationKind::SystemRowPut => {
                     if let Some(selection) = selection {
                         let scan_row = decode_staged_scan_columns(
                             &self.table,
@@ -1001,12 +1005,14 @@ where
             return Ok(match staged.kind() {
                 OptimisticMutationKind::Delete
                 | OptimisticMutationKind::IndexDelete
-                | OptimisticMutationKind::MetaDelete => None,
+                | OptimisticMutationKind::MetaDelete
+                | OptimisticMutationKind::SystemRowDelete => None,
                 OptimisticMutationKind::Insert
                 | OptimisticMutationKind::PutExisting
                 | OptimisticMutationKind::IndexPut
                 | OptimisticMutationKind::UniqueIndexInsert
-                | OptimisticMutationKind::MetaPut => Some(staged.value().to_vec()),
+                | OptimisticMutationKind::MetaPut
+                | OptimisticMutationKind::SystemRowPut => Some(staged.value().to_vec()),
                 OptimisticMutationKind::LockOnly => unreachable!("filtered above"),
             });
         }

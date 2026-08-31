@@ -27,6 +27,7 @@ use serde_json::value::RawValue;
 use tidb_ast::CiString;
 use tidb_datatype::GoString;
 
+use crate::table::ConstraintInfo;
 use crate::{
     ActionType, ColumnDefaultValue, ColumnInfo, DBInfo, GoAny, GoAnyBytes, GoAnyJsonError,
     GoAnyValue, GoEqualityProjection, GoJsonProjection, GoJsonReference, GoJsonReferenceIdentity,
@@ -429,6 +430,10 @@ pub enum JobArgsValue {
     ModifyTableEngineAttribute(Option<GoShared<ModifyTableEngineAttributeArgs>>),
     /// `*model.AlterTableModeArgs`, including a typed nil pointer.
     AlterTableMode(Option<GoShared<AlterTableModeArgs>>),
+    /// `*model.CheckConstraintArgs`, including a typed nil pointer.
+    CheckConstraint(Option<GoShared<CheckConstraintArgs>>),
+    /// `*model.AddCheckConstraintArgs`, including a typed nil pointer.
+    AddCheckConstraint(Option<GoShared<AddCheckConstraintArgs>>),
 }
 
 impl JobArgsValue {
@@ -455,6 +460,8 @@ impl JobArgsValue {
             Self::RefreshMeta(_) => "RefreshMetaArgs",
             Self::ModifyTableEngineAttribute(_) => "ModifyTableEngineAttributeArgs",
             Self::AlterTableMode(_) => "AlterTableModeArgs",
+            Self::CheckConstraint(_) => "CheckConstraintArgs",
+            Self::AddCheckConstraint(_) => "AddCheckConstraintArgs",
         };
         model_type(name, GoTypeKind::Struct).pointer_to()
     }
@@ -486,6 +493,8 @@ impl JobArgsValue {
                 value.as_ref().map(GoShared::identity_address)
             }
             Self::AlterTableMode(value) => value.as_ref().map(GoShared::identity_address),
+            Self::CheckConstraint(value) => value.as_ref().map(GoShared::identity_address),
+            Self::AddCheckConstraint(value) => value.as_ref().map(GoShared::identity_address),
         }
     }
 
@@ -592,6 +601,16 @@ impl JobArgsValue {
             .go_json_projection(),
             Self::AlterTableMode(value) => GoTypedPointer::new(
                 model_type("AlterTableModeArgs", GoTypeKind::Struct),
+                value.clone(),
+            )
+            .go_json_projection(),
+            Self::CheckConstraint(value) => GoTypedPointer::new(
+                model_type("CheckConstraintArgs", GoTypeKind::Struct),
+                value.clone(),
+            )
+            .go_json_projection(),
+            Self::AddCheckConstraint(value) => GoTypedPointer::new(
+                model_type("AddCheckConstraintArgs", GoTypeKind::Struct),
                 value.clone(),
             )
             .go_json_projection(),
@@ -1960,6 +1979,95 @@ impl JobArgs for DropForeignKeyArgs {
 pub fn get_drop_foreign_key_args(
     job: &mut Job,
 ) -> Result<Option<GoShared<DropForeignKeyArgs>>, serde_json::Error> {
+    get_or_decode_args(job)
+}
+
+/// Go `CheckConstraintArgs`, shared by ALTER and DROP CHECK jobs.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct CheckConstraintArgs {
+    /// Constraint name. Go's struct-valued `CIStr` is never omitted.
+    #[serde(rename = "constraint_name", default)]
+    pub constraint_name: GoField<CiString>,
+    /// Requested enforcement state; DROP leaves the zero value.
+    #[serde(rename = "enforced", default, skip_serializing_if = "field_is_default")]
+    pub enforced: GoField<bool>,
+}
+
+impl JobArgs for CheckConstraintArgs {
+    job_args_identity_methods!(CheckConstraint);
+
+    fn get_args_v1(value: Option<&GoShared<Self>>, _job: &Job) -> GoSharedSlice<GoAny> {
+        let value = value.expect("nil *CheckConstraintArgs receiver").read();
+        GoSharedSlice::from_vec(vec![
+            typed_value_any(
+                ast_type("CIStr", GoTypeKind::Struct),
+                value.constraint_name.get(),
+            ),
+            ColumnDefaultValue::Bool(value.enforced.get()).into(),
+        ])
+    }
+
+    fn decode_v1(job: &mut Job) -> Result<Option<GoShared<Self>>, serde_json::Error> {
+        let value = GoShared::new(Self::default());
+        let mut decoder = V1Decoder::new(job)?;
+        decoder.decode(
+            &value.read().constraint_name,
+            ast_type("CIStr", GoTypeKind::Struct),
+        )?;
+        decoder.decode(
+            &value.read().enforced,
+            builtin_type("bool", GoTypeKind::Bool),
+        )?;
+        decoder.finish(job);
+        Ok(Some(value))
+    }
+}
+
+/// Go `GetCheckConstraintArgs`.
+pub fn get_check_constraint_args(
+    job: &mut Job,
+) -> Result<Option<GoShared<CheckConstraintArgs>>, serde_json::Error> {
+    get_or_decode_args(job)
+}
+
+/// Go `AddCheckConstraintArgs`.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct AddCheckConstraintArgs {
+    /// Constraint metadata submitted with the job.
+    #[serde(rename = "constraint_info", default)]
+    pub constraint: GoField<Option<GoShared<ConstraintInfo>>>,
+}
+
+impl JobArgs for AddCheckConstraintArgs {
+    job_args_identity_methods!(AddCheckConstraint);
+
+    fn get_args_v1(value: Option<&GoShared<Self>>, _job: &Job) -> GoSharedSlice<GoAny> {
+        let value = value.expect("nil *AddCheckConstraintArgs receiver").read();
+        GoSharedSlice::from_vec(vec![typed_pointer_any(
+            model_type("ConstraintInfo", GoTypeKind::Struct),
+            value.constraint.get(),
+        )])
+    }
+
+    fn decode_v1(job: &mut Job) -> Result<Option<GoShared<Self>>, serde_json::Error> {
+        let constraint = GoShared::new(ConstraintInfo::default());
+        let value = GoShared::new(Self {
+            constraint: GoField::new(Some(constraint.clone())),
+        });
+        let mut decoder = V1Decoder::new(job)?;
+        decoder.decode_pointee(
+            &constraint,
+            model_type("ConstraintInfo", GoTypeKind::Struct),
+        )?;
+        decoder.finish(job);
+        Ok(Some(value))
+    }
+}
+
+/// Go `GetAddCheckConstraintArgs`.
+pub fn get_add_check_constraint_args(
+    job: &mut Job,
+) -> Result<Option<GoShared<AddCheckConstraintArgs>>, serde_json::Error> {
     get_or_decode_args(job)
 }
 

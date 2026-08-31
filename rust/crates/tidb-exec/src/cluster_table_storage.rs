@@ -196,14 +196,16 @@ pub fn stage_mutations(buffer: &MutationBuffer, mutations: Vec<OptimisticMutatio
         match mutation.kind() {
             OptimisticMutationKind::Delete
             | OptimisticMutationKind::IndexDelete
-            | OptimisticMutationKind::MetaDelete => buffer.delete(key),
+            | OptimisticMutationKind::MetaDelete
+            | OptimisticMutationKind::SystemRowDelete => buffer.delete(key),
             OptimisticMutationKind::Insert | OptimisticMutationKind::UniqueIndexInsert => {
                 buffer.set(key.clone(), mutation.value().to_vec());
                 buffer.mark_presume_key_not_exists(&key);
             }
             OptimisticMutationKind::PutExisting
             | OptimisticMutationKind::IndexPut
-            | OptimisticMutationKind::MetaPut => {
+            | OptimisticMutationKind::MetaPut
+            | OptimisticMutationKind::SystemRowPut => {
                 buffer.set(key, mutation.value().to_vec());
             }
             OptimisticMutationKind::LockOnly => {}

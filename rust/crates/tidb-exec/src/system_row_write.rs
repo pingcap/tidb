@@ -390,6 +390,49 @@ pub fn delete_clustered_row(
     delete_clustered_row_with_collation(table, values, new_collation_enabled())
 }
 
+/// Go SQL `REPLACE` for a clustered system table with no secondary indexes.
+///
+/// The unasserted put is essential for `mysql.tidb_mdl_info`: the first phase
+/// normally creates the row, while a later phase may overwrite the stale row
+/// left by Go's warning-only cleanup. Refusing indexed tables avoids leaving
+/// an old secondary entry when the previous row is not available to retract.
+pub fn replace_unindexed_clustered_row(
+    table: &TableInfo,
+    values: &RowValues,
+) -> Result<Vec<OptimisticMutation>, RowEncodeError> {
+    if !table.indices.is_empty() {
+        return Err(encode_error(format!(
+            "{} is indexed and cannot be replaced without its previous row",
+            table_name(table)
+        )));
+    }
+    let (key, _) = clustered_record_key(table, values)?;
+    Ok(vec![OptimisticMutation::system_row_put(
+        key,
+        encode_row(table, values)?,
+    )
+    .map_err(|error| encode_error(error.to_string()))?])
+}
+
+/// Go SQL `DELETE` for an unindexed clustered system-table row.
+///
+/// Missing rows are successful, so this uses an unasserted delete rather
+/// than ordinary DML's `AssertExist` mutation.
+pub fn delete_unindexed_clustered_row(
+    table: &TableInfo,
+    values: &RowValues,
+) -> Result<Vec<OptimisticMutation>, RowEncodeError> {
+    if !table.indices.is_empty() {
+        return Err(encode_error(format!(
+            "{} is indexed and cannot be deleted without its previous row",
+            table_name(table)
+        )));
+    }
+    let (key, _) = clustered_record_key(table, values)?;
+    Ok(vec![OptimisticMutation::system_row_delete(key)
+        .map_err(|error| encode_error(error.to_string()))?])
+}
+
 fn delete_clustered_row_with_collation(
     table: &TableInfo,
     values: &RowValues,

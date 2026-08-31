@@ -555,6 +555,14 @@ pub struct StmtContext {
     /// The all-false default is TiDB's default `sql_mode` for these flags, so
     /// a context with no session behind it lexes exactly as before.
     sql_mode: tidb_parser::SqlMode,
+    /// The complete numeric `SessionVars.SQLMode` captured for DDL jobs.
+    ///
+    /// The lexer projection above intentionally contains only six scanning
+    /// flags. Go persists the complete bitset in `model.Job.SQLMode`, so the
+    /// submission path must not reconstruct it from that lossy projection.
+    ddl_sql_mode: i64,
+    /// Original DDL text persisted in Go `model.Job.Query` before submission.
+    ddl_query: String,
     /// `NO_UNSIGNED_SUBTRACTION` changes expression typing and evaluation,
     /// not scanning, so it is kept beside the lexer's compact mode.
     no_unsigned_subtraction: bool,
@@ -820,6 +828,9 @@ impl StmtContext {
             sequences: Arc::default(),
             memory: StatementMemory::default(),
             sql_mode: tidb_parser::SqlMode::default(),
+            ddl_sql_mode: tidb_mysql::get_sql_mode(tidb_mysql::DefaultSQLMode)
+                .map_or(0, |mode| mode.0),
+            ddl_query: String::new(),
             no_unsigned_subtraction: false,
             like_default_escape: b'\\',
             default_string_match_selectivity: 0.0,
@@ -1047,6 +1058,20 @@ impl StmtContext {
         self
     }
 
+    /// Attaches the complete session SQL mode that Go persists in DDL jobs.
+    #[must_use]
+    pub const fn with_ddl_sql_mode(mut self, sql_mode: i64) -> Self {
+        self.ddl_sql_mode = sql_mode;
+        self
+    }
+
+    /// Captures the original DDL text that Go stores in `model.Job.Query`.
+    #[must_use]
+    pub fn with_ddl_query(mut self, query: impl Into<String>) -> Self {
+        self.ddl_query = query.into();
+        self
+    }
+
     /// Attaches `NO_UNSIGNED_SUBTRACTION` for expression build and runtime.
     #[must_use]
     pub fn with_no_unsigned_subtraction(mut self, enabled: bool) -> Self {
@@ -1150,6 +1175,18 @@ impl StmtContext {
     #[must_use]
     pub fn sql_mode(&self) -> tidb_parser::SqlMode {
         self.sql_mode
+    }
+
+    /// The complete numeric SQL mode captured for a persisted DDL job.
+    #[must_use]
+    pub const fn ddl_sql_mode(&self) -> i64 {
+        self.ddl_sql_mode
+    }
+
+    /// Original DDL text for the persisted job envelope.
+    #[must_use]
+    pub fn ddl_query(&self) -> &str {
+        &self.ddl_query
     }
 
     /// Whether subtraction must use a signed result domain.

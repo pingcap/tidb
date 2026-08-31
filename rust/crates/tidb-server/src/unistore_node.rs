@@ -532,6 +532,7 @@ pub(crate) fn unistore_cluster_session_stack(
             // No etcd: schema changes announce themselves to nobody, and the
             // reload tick above is the only follower -- correct for one node.
             None,
+            Arc::clone(&server_info),
         )),
         Arc::new(crate::cluster_account_seam::RealClusterAccountWriter::new(
             Arc::new(opener.clone()),

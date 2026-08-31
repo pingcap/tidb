@@ -21,18 +21,40 @@ use crate::serde_helpers::{
 };
 use crate::serde_shared_slices::{SharedObjectSliceSeed, SharedScalarSliceSeed};
 use crate::{
-    AlterIndexVisibilityArgs, AlterTableModeArgs, AlterTablePartitionArgs, BatchCreateTableArgs,
-    CreateSchemaArgs, CreateTableArgs, DropForeignKeyArgs, DropSchemaArgs, EmptyArgs,
-    ExchangeTablePartitionArgs, ModifySchemaArgs, ModifyTableAutoIDCacheArgs,
-    ModifyTableCharsetAndCollateArgs, ModifyTableCommentArgs, ModifyTableEngineAttributeArgs,
-    RebaseAutoIDArgs, RefreshMetaArgs, SetDefaultValueArgs, ShardRowIDArgs, TableIDIndexID,
-    TablePartitionArgs, TruncateTableArgs,
+    AddCheckConstraintArgs, AlterIndexVisibilityArgs, AlterTableModeArgs, AlterTablePartitionArgs,
+    BatchCreateTableArgs, CheckConstraintArgs, CreateSchemaArgs, CreateTableArgs,
+    DropForeignKeyArgs, DropSchemaArgs, EmptyArgs, ExchangeTablePartitionArgs, ModifySchemaArgs,
+    ModifyTableAutoIDCacheArgs, ModifyTableCharsetAndCollateArgs, ModifyTableCommentArgs,
+    ModifyTableEngineAttributeArgs, RebaseAutoIDArgs, RefreshMetaArgs, SetDefaultValueArgs,
+    ShardRowIDArgs, TableIDIndexID, TablePartitionArgs, TruncateTableArgs,
 };
 
 impl_go_json_merge_object!(EmptyArgs, _destination, map, _key, {
     ignore_unknown(&mut map)?;
 });
 impl_go_json_deserialize!(EmptyArgs);
+
+impl_go_json_merge_object!(CheckConstraintArgs, destination, map, key, {
+    if go_json_field_matches(&key, "constraint_name") {
+        map.next_value_seed(crate::serde_helpers::ValueMergeSeed(
+            &mut *destination.constraint_name.write(),
+        ))?;
+    } else if go_json_field_matches(&key, "enforced") {
+        map.next_value_seed(NullNoopSeed(&mut *destination.enforced.write()))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+impl_go_json_deserialize!(CheckConstraintArgs);
+
+impl_go_json_merge_object!(AddCheckConstraintArgs, destination, map, key, {
+    if go_json_field_matches(&key, "constraint_info") {
+        map.next_value_seed(OptionSharedMergeSeed(&mut *destination.constraint.write()))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+impl_go_json_deserialize!(AddCheckConstraintArgs);
 
 impl_go_json_merge_object!(CreateSchemaArgs, destination, map, key, {
     if go_json_field_matches(&key, "db_info") {

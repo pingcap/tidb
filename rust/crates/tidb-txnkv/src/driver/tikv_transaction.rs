@@ -394,8 +394,10 @@ impl<PdC: PdClient> TikvTransactionDriver<PdC> {
                     self.delete(key.clone())?;
                     self.update_assertion_flags(&key, AssertionOp::AssertExist);
                 }
-                Kind::IndexPut | Kind::MetaPut => self.set(key, value)?,
-                Kind::IndexDelete | Kind::MetaDelete => self.delete(key)?,
+                Kind::IndexPut | Kind::MetaPut | Kind::SystemRowPut => self.set(key, value)?,
+                Kind::IndexDelete | Kind::MetaDelete | Kind::SystemRowDelete => {
+                    self.delete(key)?;
+                }
                 Kind::LockOnly => {
                     // A key this transaction locked but never wrote still has
                     // to be prewritten, so the primary lock exists after

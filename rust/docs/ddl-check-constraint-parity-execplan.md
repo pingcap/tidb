@@ -16,8 +16,14 @@ After this work, Rust accepts, stores, displays, and enforces CHECK constraints 
 - [x] (2026-08-31) Matched Go's deliberate discard of inline `ALTER TABLE ADD COLUMN ... CHECK` and its grouped table-level CHECK split.
 - [x] (2026-08-31) Pushed the coherent metadata/execution batch as `091801605a` to `origin/hparser-integration`.
 - [x] (2026-08-31) Matched `BuildTableInfoWithLike` for ordinary versus global-temporary targets: source admission and ordering, TiFlash settings/availability, TTL, affinity, target temporary type, preserved allocator high-waters, and `ON COMMIT` handling.
-- [ ] Replace the cluster one-transaction ADD/ENFORCE validator with Go's schema-state transitions, schema-version synchronization, and rollback.
-- [ ] Match DROP's `Public -> WriteOnly -> removed` transition and its non-rollback rule.
+- [x] (2026-08-31) Replaced the cluster one-transaction ADD/ENFORCE validator with durable Go state transitions, per-phase MDL registration/ack waits, and schema-versioned validation rollback.
+- [x] (2026-08-31) Matched DROP's `Public -> WriteOnly -> removed` transition and its non-rollback rule.
+- [x] (2026-08-31) Matched Go scheduler cleanup semantics: `tidb_mdl_info` uses assertion-free `REPLACE`, MDL deletion and final per-job etcd deletion are warning-only, and a stale cleanup row cannot block the next phase.
+- [x] (2026-08-31) Persisted the complete CHECK argument envelope in `mysql.tidb_ddl_job`; every phase and rollback reloads it from a fresh snapshot, updates `job_meta`, and removes the active row only at a terminal state.
+- [x] (2026-08-31) Matched terminal history behavior: `FinishedTS`, process-local sequence allocation, best-effort SQL `INSERT IGNORE`, authoritative meta history, error count/error retention, and DONE/ROLLBACK_DONE states.
+- [x] (2026-08-31) Removed the superseded statement-local CHECK continuation/carrier and direct one-transaction ADD/DROP/ALTER planners.
+- [ ] Start a general Go-parity DDL owner/scheduler that scans active jobs independently of the submitting request; do not add a CHECK-only owner loop.
+- [ ] Capture the remaining common job metadata supplied by Go's executor (`CDCWriteSource`, ADD priority, and non-default trace/session fields).
 - [ ] Add concurrent-writer regressions corresponding to every scenario in pinned `pkg/ddl/constraint_test.go`.
 - [ ] Inventory every remaining pinned production/test/support/build artifact before making a package-level claim.
 
@@ -30,6 +36,12 @@ After this work, Rust accepts, stores, displays, and enforces CHECK constraints 
   Evidence: pinned `onAddCheckConstraint` advances `None -> WriteOnly -> WriteReorganization -> Public`; pinned tests insert at each transition.
 
 - Observation: the Rust non-owner half of the synchronization contract already exists. `rust/crates/tidb-server/src/cluster_session_node/schema_sync.rs` loads `mysql.tidb_mdl_info`, respects live old-schema pins, and writes `/tidb/ddl/all_schema_by_job_versions/<job>/<server>` acknowledgments. The Rust DDL path does not yet write the MDL row or wait for those acknowledgments.
+
+- Observation: re-encoding a freshly decoded Go job with `updateRawArgs=true` erases its raw arguments because the private decoded-argument cache is empty. Worker-only state/error updates must use `false`; action steps decode and refill arguments before terminal `true` encoding.
+
+- Observation: Go's SQL history insertion is `INSERT IGNORE` and any error is logged, while the meta history HSet is authoritative and required. An assertion-bearing Rust insert made harmless duplicate history fatal; the adapter now detects an existing job ID, preserves that SQL row, and still writes meta history.
+
+- Observation: Go `registerMDLInfo` is SQL `REPLACE`, while `cleanMDLInfo` and final per-job etcd cleanup only warn on failure. Assertion-bearing Rust INSERT/DELETE mutations would make a harmless stale row fatal, so the transaction vocabulary now includes assertion-free system-row PUT/DELETE operations matching those SQL statements.
 
 - Observation: Rust's CREATE LIKE path always removed TiFlash metadata and retained the source temporary/TTL/affinity shape. Pinned `BuildTableInfoWithLike` instead preserves ordinary-table TiFlash count and labels while clearing availability, and strips TiFlash, TTL, and affinity only for a requested temporary target.
 
@@ -53,13 +65,17 @@ After this work, Rust accepts, stores, displays, and enforces CHECK constraints 
   Rationale: the local catalog has one writer and one immediately replaced schema; the distributed race exists only where multiple servers load persisted `TableInfo` independently.
   Date/Author: 2026-08-31 / Codex
 
+- Decision: do not commit the distributed transition batch until `mysql.tidb_ddl_job` recovery is present.
+  Rationale: a durable intermediate state without durable immutable job arguments cannot be resumed after process/owner loss, whereas pinned Go resumes it from the job table. A passing straight-line transition test is insufficient evidence for the package contract.
+  Date/Author: 2026-08-31 / Codex
+
 ## Outcomes & Retrospective
 
-The first batch established one shared CHECK metadata and row-enforcement implementation and removed the previous unsupported/duplicate paths. Package completion remains blocked on distributed state transitions, rollback, and the complete pinned package inventory.
+The current batch establishes one persisted CHECK execution route from submission through synchronized intermediate states, validation, rollback, and both history stores. The old in-memory continuation route is gone. Package completion is not yet claimed: Rust still needs the general owner/scheduler, remaining common job-envelope fields, concurrent cluster regressions, and the complete pinned package inventory.
 
 ## Context and Orientation
 
-`rust/crates/tidb-executor/src/ddl/check_constraint.rs` owns shared CHECK metadata construction. `rust/crates/tidb-executor/src/kv_table.rs` compiles persisted enforced constraints in writable states and evaluates them on writes. `rust/crates/tidb-exec/src/cluster_ddl.rs` lowers and plans persisted DDL; today its ADD/ALTER CHECK arms write a final public `TableInfo` and attach one existing-row validation obligation. `rust/crates/tidb-exec/src/real_tikv_ddl.rs` executes that obligation against the same transaction snapshot and commits metadata.
+`rust/crates/tidb-executor/src/ddl/check_constraint.rs` owns shared CHECK metadata construction. `rust/crates/tidb-executor/src/kv_table.rs` compiles persisted enforced constraints in writable states and evaluates them on writes. `rust/crates/tidb-exec/src/ddl_job_table.rs` owns the active queue representation, `ddl_history_table.rs` owns Go's best-effort SQL-history insertion, `cluster_ddl.rs` plans one persisted worker step, and `real_tikv_ddl.rs` commits and synchronizes those steps.
 
 In Go, a schema state is a persisted visibility/writeability phase. `WriteOnly` and `WriteReorganization` constraints are enforced by writers but not shown as public schema. Between phases the DDL owner publishes a schema version and waits until every registered server has loaded it. The wait is coordinated by one `mysql.tidb_mdl_info` row and per-server etcd acknowledgments.
 
@@ -67,11 +83,13 @@ The Rust acknowledgment consumer is `rust/crates/tidb-server/src/cluster_session
 
 ## Plan of Work
 
-First introduce an owner-side schema synchronization interface in the cluster DDL execution boundary. It must publish the global schema version, expose the registered server set from `/tidb/server/info`, wait for the exact per-job acknowledgment keys, and time out with an explicit DDL error. Its etcd implementation belongs in `tidb-server`; `tidb-exec` retains only a trait so it does not acquire server/domain dependencies.
+First introduce an owner-side schema synchronization interface in the cluster DDL execution boundary. It must publish the global schema version, expose the registered server set from `/tidb/server/info`, and wait for the exact per-job acknowledgment keys. Its etcd implementation belongs in `tidb-server`; `tidb-exec` retains only a trait so it does not acquire server/domain dependencies.
 
 Next add ordinary system-row mutations for `mysql.tidb_mdl_info`. Each CHECK phase transaction must replace `(job_id, version, table_ids, owner_id)` atomically with the phase's table metadata and schema diff. After commit, notify the version and wait. When the job finishes or rolls back, delete its MDL row. The same DDL job ID must be retained across every phase; retries re-read the current persisted constraint state.
 
 Then change cluster CHECK planning into a state-driven step. Enforced ADD follows `None -> WriteOnly -> WriteReorganization`, validates, then publishes `Public`. ADD NOT ENFORCED publishes `Public` directly. Enabling follows `Public/not-enforced -> WriteReorganization -> WriteOnly`, validates, then publishes `Public/enforced`. Disabling updates enforcement directly. DROP follows `Public -> WriteOnly -> removed` and continues removal if cancellation is requested after the first phase.
+
+The full pinned-Go CHECK argument envelope is persisted in `mysql.tidb_ddl_job` before the first state transition and updated atomically with every phase. The remaining scheduler work is to make startup/owner acquisition scan runnable jobs independently of a submitting request. Completion and rollback already remove the active row and write both history stores.
 
 On validation failure, ADD removes the intermediate constraint while preserving `MaxConstraintID`; ALTER restores `Public` and the old enforcement flag. Every rollback publication must also synchronize before returning the original 3819 error.
 
@@ -131,6 +149,28 @@ Current CREATE LIKE fail-before/pass-after evidence:
     second fail-before: returned UnknownDatabase(target) before Go's temporary-source refusal
     after: test result: ok. 1 passed
 
+Current distributed CHECK evidence:
+
+    cargo test --locked --offline -p tidb-exec --test all enabled_alter_check_constraints_use_the_catalog_path_and_keep_ids_monotonic -- --nocapture
+    test result: ok. 1 passed
+
+    cargo test --locked --offline -p tidb-txnkv --lib system_row_replace_and_delete_have_no_existence_assertion -- --nocapture
+    test result: ok. 1 passed
+
+    cargo test --locked --offline -p tidb-server --lib schema_wait_uses_only_the_newest_server_id_for_each_instance -- --nocapture
+    test result: ok. 1 passed
+
+Current durable-job evidence:
+
+    cargo test --locked --offline -p tidb-exec --test all check_job_submission_precedes_every_schema_transition -- --nocapture
+    cargo test --locked --offline -p tidb-exec --test all persisted_add_check_rolls_back_after_owner_restart -- --nocapture
+    cargo test --locked --offline -p tidb-exec --test all persisted_drop_and_alter_check_jobs_resume_and_finish_like_go -- --nocapture
+    cargo test --locked --offline -p tidb-exec --test all persisted_alter_check_validation_rolls_back_to_not_enforced -- --nocapture
+    cargo test --locked --offline -p tidb-exec --test all ddl_sql_history_uses_go_insert_ignore_semantics -- --nocapture
+    test result: all passed
+
+The broader `cargo test -p tidb-txnkv` command was not a valid scoped check because pre-existing unrelated integration targets do not compile (`lock_resolver_source`, `batch_scheduler_source`, and `batch_wire_source`); rerunning the new unit regression with `--lib` passed.
+
 ## Interfaces and Dependencies
 
 `tidb-exec` must define the protocol traits and state-driven DDL execution without depending on `tidb-server`. `tidb-server` may implement the schema synchronization trait using `tidb_pd_client::EtcdClient`. `tidb-executor` remains the only row-level CHECK evaluator. `tidb-model::SchemaState` is the persisted state vocabulary. `mysql.tidb_mdl_info` and the existing etcd key paths are the only synchronization protocol; no feature flag, fixed sleep, cache-only runner, or alternate validator is permitted.
@@ -140,3 +180,7 @@ Revision note (2026-08-31): created after the metadata/execution batch was pushe
 Revision note (2026-08-31): recorded and closed the adjacent pinned `BuildTableInfoWithLike` target-shape mismatch while designing the distributed state machine.
 
 Revision note (2026-08-31): completed the CREATE LIKE source-admission/error-order audit and corrected Go's exact counter and nil-slice metadata semantics.
+
+Revision note (2026-08-31): implemented and tested the straight-line distributed CHECK state machine, rollback, MDL wait, and cleanup semantics; recorded the remaining durable job/restart gap and withheld the batch from commit.
+
+Revision note (2026-08-31): persisted CHECK jobs and terminal history, removed the in-memory continuation path, added fresh-owner ADD/DROP/ALTER/rollback regressions, and narrowed the remaining gap to the general DDL scheduler and common envelope fields.

@@ -1351,6 +1351,48 @@ pub(crate) fn go_test_drop_schema_args() {
 }
 
 #[test]
+pub(crate) fn go_test_add_check_constraint_args() {
+    for version in [JobVersion::V1, JobVersion::V2] {
+        let args = GoShared::new(AddCheckConstraintArgs {
+            constraint: GoField::new(Some(GoShared::new(ConstraintInfo {
+                name: CiString::new("t3_c1"),
+                table: CiString::new("t3"),
+                expr_string: "id<10".to_owned(),
+                state: crate::SchemaState::DELETE_ONLY,
+                ..Default::default()
+            }))),
+        });
+        let mut job = encoded_job(version, ActionType::ACTION_ADD_CHECK_CONSTRAINT, args);
+        let decoded = get_add_check_constraint_args(&mut job)
+            .unwrap()
+            .unwrap()
+            .read()
+            .constraint
+            .get()
+            .unwrap();
+        let decoded = decoded.read();
+        assert_eq!(decoded.name.original(), "t3_c1");
+        assert_eq!(decoded.table.original(), "t3");
+        assert_eq!(decoded.expr_string, "id<10");
+        assert_eq!(decoded.state, crate::SchemaState::DELETE_ONLY);
+    }
+}
+
+#[test]
+pub(crate) fn go_test_check_constraint_args() {
+    for version in [JobVersion::V1, JobVersion::V2] {
+        let args = GoShared::new(CheckConstraintArgs {
+            constraint_name: GoField::new(CiString::new("c1")),
+            enforced: GoField::new(true),
+        });
+        let mut job = encoded_job(version, ActionType::ACTION_DROP_CHECK_CONSTRAINT, args);
+        let decoded = get_check_constraint_args(&mut job).unwrap().unwrap();
+        assert_eq!(decoded.read().constraint_name.get().original(), "c1");
+        assert!(decoded.read().enforced.get());
+    }
+}
+
+#[test]
 pub(crate) fn go_test_modify_schema_args() {
     // Go: ToCharset "aa" / ToCollate "bb" over ActionModifySchemaCharsetAndCollate.
     for version in [JobVersion::V1, JobVersion::V2] {
