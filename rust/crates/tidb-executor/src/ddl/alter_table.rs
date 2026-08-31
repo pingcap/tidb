@@ -125,7 +125,13 @@ pub fn run_alter_table_in(
             }
             tidb_ast::AlterTableAction::AddColumn {
                 column, position, ..
-            } => add_column_action(catalog, &database, &name, column, position, ctx)?,
+            } => {
+                add_column_action(catalog, &database, &name, column, position, ctx)?;
+                // Pinned Go `CreateNewColumn` retains only the column returned
+                // by `buildColumnAndConstraint` and discards its constraint
+                // slice. `add_column_action` mirrors that builder, including
+                // the OFF warning, so an inline CHECK is not installed here.
+            }
             tidb_ast::AlterTableAction::AddColumns {
                 columns,
                 constraints,
@@ -153,9 +159,20 @@ pub fn run_alter_table_in(
                         tidb_ast::TableConstraint::ForeignKey(definition) => {
                             add_foreign_key_action(catalog, &database, &name, definition, ctx)?;
                         }
-                        // The session has already accounted for the warning
-                        // or refusal dictated by tidb_enable_check_constraint.
-                        tidb_ast::TableConstraint::Check(_) => {}
+                        tidb_ast::TableConstraint::Check(definition) => {
+                            if ctx.enable_check_constraint() {
+                                add_check_constraint_action(
+                                    catalog,
+                                    &database,
+                                    &name,
+                                    super::check_constraint::CheckConstraintInput {
+                                        definition: definition.clone(),
+                                        in_column: None,
+                                    },
+                                    ctx,
+                                )?;
+                            }
+                        }
                     }
                 }
             }
@@ -302,29 +319,34 @@ pub fn run_alter_table_in(
                     ctx,
                 )?;
             }
-            // `CHECK` constraints, under the `tidb_enable_check_constraint =
-            // OFF` model this engine implements (see `crate::ddl`'s doc and
-            // `run_create_table_in`). The variable is read by the SESSION,
-            // which refuses `ADD CHECK` outright when it is ON and files the
-            // per-action `tidb_enable_check_constraint is off` warning when it
-            // is OFF; what is left here is what the DDL itself does.
-            //
-            // Captured from real TiDB with the variable OFF:
-            //   alter table t3 add constraint cc check (a > 0)
-            //     -> OK, Warning 1105, and SHOW CREATE TABLE is UNCHANGED
-            //   insert into t3 values (-1)          -> OK (nothing enforces)
-            //   alter table e alter constraint nope not enforced
-            //     -> OK, Warning 1105 -- the name is NOT looked up
-            //   alter table e drop constraint nope  -> ERROR 3940
-            // The asymmetry in the last two is Go's, and is ported as
-            // measured: DROP resolves the name and ALTER does not.
-            tidb_ast::AlterTableAction::AddCheck(_) | tidb_ast::AlterTableAction::AlterCheck(_) => {
+            tidb_ast::AlterTableAction::AddCheck(definition) => {
+                if ctx.enable_check_constraint() {
+                    add_check_constraint_action(
+                        catalog,
+                        &database,
+                        &name,
+                        super::check_constraint::CheckConstraintInput {
+                            definition: definition.clone(),
+                            in_column: None,
+                        },
+                        ctx,
+                    )?;
+                }
             }
-            // No table in this engine can hold a CHECK constraint, so the
-            // name never resolves -- which is the same answer Go gives with
-            // the variable ON for a name that is not there (captured: 3940).
+            tidb_ast::AlterTableAction::AlterCheck(alter) => {
+                if ctx.enable_check_constraint() {
+                    alter_check_constraint_action(
+                        catalog,
+                        &database,
+                        &name,
+                        &alter.name,
+                        alter.enforced,
+                        ctx,
+                    )?;
+                }
+            }
             tidb_ast::AlterTableAction::DropCheck(drop) => {
-                return Err(DriverError::CheckConstraintNotExists(drop.name.clone()));
+                drop_check_constraint_action(catalog, &database, &name, &drop.name, ctx)?;
             }
             // Go removes LOCK specs before dispatch and treats ENABLE/DISABLE
             // KEYS as MyISAM-only compatibility syntax with no TiDB action.
@@ -362,6 +384,209 @@ pub fn run_alter_table_in(
         }
     }
     Ok(())
+}
+
+fn check_constraint_columns(table: &crate::KvTable) -> Vec<tidb_model::ColumnInfo> {
+    table
+        .visible_columns()
+        .iter()
+        .enumerate()
+        .map(|(offset, column)| {
+            let mut info =
+                tidb_model::ColumnInfo::new(column.id, &column.name, column.field_type.clone());
+            info.offset = offset as i64;
+            info.version = column.column_info_version;
+            info
+        })
+        .collect()
+}
+
+fn check_constraint_foreign_keys(
+    table: &crate::KvTable,
+) -> Vec<super::check_constraint::CheckConstraintForeignKey> {
+    table
+        .foreign_keys()
+        .iter()
+        .map(
+            |foreign_key| super::check_constraint::CheckConstraintForeignKey {
+                columns: foreign_key.cols.clone(),
+                has_referential_action: foreign_key.on_delete != crate::FkAction::NoOption
+                    || foreign_key.on_update != crate::FkAction::NoOption,
+            },
+        )
+        .collect()
+}
+
+fn check_table_clone(
+    catalog: &Catalog,
+    database: &str,
+    table_name: &str,
+) -> Result<crate::KvTable, DriverError> {
+    match catalog.table_in(database, table_name) {
+        Some(crate::TableEntry::Kv(table)) => Ok(table.clone()),
+        _ => Err(DriverError::unsupported(
+            "CHECK constraints need a storage-backed table",
+        )),
+    }
+}
+
+fn install_check_constraint_infos(
+    catalog: &mut Catalog,
+    database: &str,
+    table_name: &str,
+    mut table: crate::KvTable,
+    infos: Vec<tidb_model::table::ConstraintInfo>,
+    validate_rows: bool,
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    table
+        .set_check_constraint_infos(infos, &ctx.session_zone(), ctx.like_default_escape())
+        .map_err(check_constraint_table_error)?;
+    if validate_rows {
+        let mut cursor = table
+            .row_cursor_with_context(&crate::RowDecodeContext::for_write(ctx))
+            .map_err(check_constraint_table_error)?;
+        while let Some((_, row)) = cursor.next_row().map_err(check_constraint_table_error)? {
+            table
+                .validate_check_constraints(&row, ctx)
+                .map_err(check_constraint_table_error)?;
+        }
+    }
+    match catalog.table_mut_in(database, table_name) {
+        Some(crate::TableEntry::Kv(stored)) => {
+            *stored = table;
+            Ok(())
+        }
+        _ => Err(DriverError::unsupported(
+            "CHECK constraints need a storage-backed table",
+        )),
+    }
+}
+
+fn check_constraint_table_error(error: crate::kv_table::KvTableError) -> DriverError {
+    match error {
+        crate::kv_table::KvTableError::CheckConstraintViolated(name) => {
+            DriverError::CheckConstraintViolated(name)
+        }
+        error => DriverError::DdlCoded {
+            errno: 1105,
+            message: format!("{error:?}"),
+        },
+    }
+}
+
+fn add_check_constraint_action(
+    catalog: &mut Catalog,
+    database: &str,
+    table_name: &str,
+    input: super::check_constraint::CheckConstraintInput,
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    let table = check_table_clone(catalog, database, table_name)?;
+    let columns = check_constraint_columns(&table);
+    let foreign_keys = check_constraint_foreign_keys(&table);
+    let mut max_constraint_id = table.max_constraint_id();
+    let names = table
+        .indexes()
+        .iter()
+        .map(|index| index.name.clone())
+        .chain(
+            table
+                .check_constraint_infos()
+                .iter()
+                .map(|info| info.name.original().to_owned()),
+        )
+        .collect::<Vec<_>>();
+    let built = super::check_constraint::build_constraint_infos(
+        &tidb_ast::CiString::new(table_name),
+        &columns,
+        names,
+        &foreign_keys,
+        std::slice::from_ref(&input),
+        &mut max_constraint_id,
+        tidb_model::SchemaState::PUBLIC,
+        ctx,
+    )
+    .map_err(|error| DriverError::DdlCoded {
+        errno: error.code,
+        message: error.message,
+    })?;
+    let added = built
+        .first()
+        .expect("one CHECK input builds one metadata record");
+    if super::check_constraint_name_exists_in_schema(
+        catalog,
+        database,
+        Some(table_name),
+        added.name.original(),
+    ) {
+        return Err(DriverError::DdlCoded {
+            errno: tidb_error::tidb::errcode::ErrCheckConstraintDupName,
+            message: format!(
+                "Duplicate check constraint name '{}'.",
+                added.name.original()
+            ),
+        });
+    }
+    let validate_rows = added.enforced;
+    let mut infos = table.check_constraint_infos().to_vec();
+    infos.extend(built);
+    install_check_constraint_infos(
+        catalog,
+        database,
+        table_name,
+        table,
+        infos,
+        validate_rows,
+        ctx,
+    )
+}
+
+fn drop_check_constraint_action(
+    catalog: &mut Catalog,
+    database: &str,
+    table_name: &str,
+    constraint_name: &str,
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    let table = check_table_clone(catalog, database, table_name)?;
+    let mut infos = table.check_constraint_infos().to_vec();
+    let Some(offset) = infos
+        .iter()
+        .position(|info| info.name.original().eq_ignore_ascii_case(constraint_name))
+    else {
+        return Err(DriverError::CheckConstraintNotExists(
+            constraint_name.to_owned(),
+        ));
+    };
+    infos.remove(offset);
+    install_check_constraint_infos(catalog, database, table_name, table, infos, false, ctx)
+}
+
+fn alter_check_constraint_action(
+    catalog: &mut Catalog,
+    database: &str,
+    table_name: &str,
+    constraint_name: &str,
+    enforced: bool,
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    let table = check_table_clone(catalog, database, table_name)?;
+    let mut infos = table.check_constraint_infos().to_vec();
+    let Some(info) = infos
+        .iter_mut()
+        .find(|info| info.name.original().eq_ignore_ascii_case(constraint_name))
+    else {
+        return Err(DriverError::CheckConstraintNotExists(
+            constraint_name.to_owned(),
+        ));
+    };
+    if info.enforced == enforced {
+        return Ok(());
+    }
+    info.enforced = enforced;
+    info.state = tidb_model::SchemaState::PUBLIC;
+    install_check_constraint_infos(catalog, database, table_name, table, infos, enforced, ctx)
 }
 
 fn truncate_partition_action(
@@ -2675,6 +2900,14 @@ fn add_column_action(
                 ))
             }
             tidb_ast::ColumnOption::Generated { stored: false, .. } => {}
+            tidb_ast::ColumnOption::Check(_) => {
+                // Pinned Go `buildColumnAndConstraint` emits this warning
+                // while disabled, then `CreateNewColumn` discards the
+                // returned inline constraint in both modes.
+                if !ctx.enable_check_constraint() {
+                    ctx.append_warning_parts(1105, "tidb_enable_check_constraint is off");
+                }
+            }
             _ => {
                 return Err(DriverError::unsupported(
                     "this column option is not supported in ALTER TABLE ADD COLUMN",
@@ -2863,6 +3096,25 @@ fn drop_column_action(
             column_name.to_owned(),
         ));
     }
+    // Go `IsColumnDroppableWithCheckConstraint`: a CHECK that also
+    // references another column blocks the drop. A CHECK whose sole
+    // dependency is this column is allowed and becomes invalid; Go removes
+    // it lazily in `table.LoadCheckConstraint` when the new schema is loaded.
+    let mut invalid_constraint_ids = Vec::new();
+    for info in table.check_constraint_infos() {
+        if !super::check_constraint::uses_column(info, column_name) {
+            continue;
+        }
+        if info.constraint_cols.len() > 1 {
+            let error =
+                super::check_constraint::column_dependency_error(info.name.original(), column_name);
+            return Err(DriverError::DdlCoded {
+                errno: error.code,
+                message: error.message,
+            });
+        }
+        invalid_constraint_ids.push(info.id);
+    }
     let covering: Vec<String> = table
         .indexes()
         .iter()
@@ -2875,6 +3127,17 @@ fn drop_column_action(
             .map_err(|e| DriverError::Parse(format!("index drop failed: {e:?}")))?;
     }
     table.drop_column(offset);
+    if !invalid_constraint_ids.is_empty() {
+        let infos = table
+            .check_constraint_infos()
+            .iter()
+            .filter(|info| !invalid_constraint_ids.contains(&info.id))
+            .cloned()
+            .collect();
+        table
+            .set_check_constraint_infos(infos, &ctx.session_zone(), ctx.like_default_escape())
+            .map_err(check_constraint_table_error)?;
+    }
     Ok(())
 }
 

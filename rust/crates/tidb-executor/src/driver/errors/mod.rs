@@ -137,6 +137,7 @@ impl DriverError {
         DriverError::ParseCoded { errno, message } => {
             MysqlError::new(errno, *b"HY000", message)
         }
+        DriverError::DdlCoded { errno, message } => MysqlError::coded(errno, message),
         DriverError::Unsupported(message) => MysqlError::unknown(message),
         DriverError::NotSupportedWithSem(statement) => MysqlError::coded(
             tidb_error::tidb::errcode::ErrNotSupportedWithSem,

@@ -220,6 +220,7 @@ mod alter_metadata;
 mod alter_table;
 /// AUTO_RANDOM declaration validation shared by local and cluster DDL.
 pub mod auto_random;
+pub mod check_constraint;
 pub mod column_field_type;
 mod column_types;
 pub mod index_prefix;
@@ -590,32 +591,50 @@ pub fn discarded_check_constraint_actions(alter: &tidb_ast::AlterTableStmt) -> u
             tidb_ast::AlterTableAction::AddCheck(_) | tidb_ast::AlterTableAction::AlterCheck(_) => {
                 1
             }
-            tidb_ast::AlterTableAction::AddColumns { constraints, .. } => constraints
+            tidb_ast::AlterTableAction::AddColumn { column, .. } => column
+                .options
                 .iter()
-                .filter(|constraint| matches!(constraint, tidb_ast::TableConstraint::Check(_)))
+                .filter(|option| matches!(option, tidb_ast::ColumnOption::Check(_)))
                 .count(),
+            tidb_ast::AlterTableAction::AddColumns {
+                columns,
+                constraints,
+                ..
+            } => {
+                constraints
+                    .iter()
+                    .filter(|constraint| matches!(constraint, tidb_ast::TableConstraint::Check(_)))
+                    .count()
+                    + columns
+                        .iter()
+                        .flat_map(|column| &column.options)
+                        .filter(|option| matches!(option, tidb_ast::ColumnOption::Check(_)))
+                        .count()
+            }
             _ => 0,
         })
         .sum()
 }
 
-/// How many of an `ALTER TABLE`'s actions ADD a `CHECK` constraint, which is
-/// what the `tidb_enable_check_constraint = ON` refusal is gated on: with the
-/// variable ON, Go would STORE and enforce these.
-#[must_use]
-pub fn added_check_constraint_actions(alter: &tidb_ast::AlterTableStmt) -> usize {
-    alter
-        .actions
-        .iter()
-        .map(|action| match action {
-            tidb_ast::AlterTableAction::AddCheck(_) => 1,
-            tidb_ast::AlterTableAction::AddColumns { constraints, .. } => constraints
+fn check_constraint_name_exists_in_schema(
+    catalog: &Catalog,
+    database: &str,
+    excluding_table: Option<&str>,
+    constraint_name: &str,
+) -> bool {
+    catalog
+        .table_names(database)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|name| !excluding_table.is_some_and(|excluded| name.eq_ignore_ascii_case(excluded)))
+        .filter_map(|name| catalog.table_in(database, &name))
+        .any(|entry| match entry {
+            crate::TableEntry::Kv(table) => table
+                .check_constraint_infos()
                 .iter()
-                .filter(|constraint| matches!(constraint, tidb_ast::TableConstraint::Check(_)))
-                .count(),
-            _ => 0,
+                .any(|info| info.name.original().eq_ignore_ascii_case(constraint_name)),
+            _ => false,
         })
-        .sum()
 }
 
 /// How many `CHECK` constraints a `CREATE TABLE` writes, counting both the
@@ -885,12 +904,6 @@ pub fn run_create_table_in(
         }
     };
 
-    if enable_check_constraint && check_constraint_count(create) > 0 {
-        return Err(DriverError::unsupported(
-            "CHECK constraints are only modelled with tidb_enable_check_constraint off",
-        ));
-    }
-
     // Go `setTemporaryType`, which the DDL builder reaches only after the
     // preprocessor checks above have passed. The order is observable:
     // `create global temporary table t (a int) shard_row_id_bits = 4
@@ -988,9 +1001,11 @@ pub fn run_create_table_in(
             .map(|_| catalog.allocate_table_id())
             .collect::<Vec<_>>()
             .into_iter();
-        let mut copy = create_like_source(&source_db, &source_name, catalog)?
-            .create_like(id, &mut || ids.next().expect("one id per copied partition"));
-        copy.name = name.to_owned();
+        let mut copy = create_like_source(&source_db, &source_name, catalog)?.create_like(
+            id,
+            name,
+            &mut || ids.next().expect("one id per copied partition"),
+        );
         // Go `BuildTableInfoWithLike` (`create_table.go:1300`) strips the TTL
         // from a temporary copy rather than refusing it, because the source's
         // TTL is not something this statement asked for.
@@ -1510,8 +1525,52 @@ pub fn run_create_table_in(
         let clustered_primary = index.clustered_primary;
         table.add_index(index, clustered_primary);
     }
-    for foreign_key in table_foreign_keys(create, &columns, catalog, &database, foreign_key_checks)?
-    {
+    let foreign_keys =
+        table_foreign_keys(create, &columns, catalog, &database, foreign_key_checks)?;
+    if enable_check_constraint {
+        let checks = check_constraint::create_inputs(create);
+        let check_foreign_keys = foreign_keys
+            .iter()
+            .map(|foreign_key| check_constraint::CheckConstraintForeignKey {
+                columns: foreign_key.cols.clone(),
+                has_referential_action: foreign_key.on_delete != FkAction::NoOption
+                    || foreign_key.on_update != FkAction::NoOption,
+            })
+            .collect::<Vec<_>>();
+        let mut max_constraint_id = table.max_constraint_id();
+        let infos = check_constraint::build_constraint_infos(
+            &tidb_ast::CiString::new(name),
+            &columns,
+            table.indexes().iter().map(|index| index.name.clone()),
+            &check_foreign_keys,
+            &checks,
+            &mut max_constraint_id,
+            tidb_model::SchemaState::PUBLIC,
+            ctx,
+        )
+        .map_err(|error| DriverError::DdlCoded {
+            errno: error.code,
+            message: error.message,
+        })?;
+        if let Some(info) = infos.iter().find(|info| {
+            check_constraint_name_exists_in_schema(catalog, &database, None, info.name.original())
+        }) {
+            return Err(DriverError::DdlCoded {
+                errno: tidb_error::tidb::errcode::ErrCheckConstraintDupName,
+                message: format!(
+                    "Duplicate check constraint name '{}'.",
+                    info.name.original()
+                ),
+            });
+        }
+        table
+            .set_check_constraint_infos(infos, &ctx.session_zone(), ctx.like_default_escape())
+            .map_err(|error| DriverError::DdlCoded {
+                errno: 1105,
+                message: format!("{error:?}"),
+            })?;
+    }
+    for foreign_key in foreign_keys {
         // Go `addForeignKeyIndex`: a foreign key needs an index on its
         // referencing columns, and TiDB adds one named after the constraint
         // UNLESS an existing key -- the clustered primary key included --

@@ -91,43 +91,101 @@ fn a_check_constraint_is_accepted_discarded_and_warned_about() {
     );
 }
 
-/// Turning `tidb_enable_check_constraint` ON changes what a `CHECK`
-/// constraint MEANS -- TiDB then stores it (auto-named `<table>_chk_<N>`),
-/// prints it in `SHOW CREATE TABLE`, and enforces it with error 3819
-/// (captured: "Check constraint 'ck3_chk_1' is violated."). None of that is
-/// modelled, so the DDL is refused outright rather than silently discarding a
-/// constraint the session just asked to have honoured.
+/// Turning `tidb_enable_check_constraint` ON stores, prints, and enforces the
+/// constraint through the ordinary table write path, matching Go.
 #[test]
-fn a_check_constraint_is_refused_when_the_variable_is_on() {
+fn a_check_constraint_is_stored_and_enforced_when_the_variable_is_on() {
     let mut session = Session::new();
     session
         .run("set @@global.tidb_enable_check_constraint = 1")
         .unwrap();
-    assert!(matches!(
-        session.run("create table ck (a int, check (a > 0))"),
-        Err(DriverError::Unsupported(reason)) if reason == "CHECK constraints are only modelled with tidb_enable_check_constraint off"
-    ));
-    // A table with no CHECK constraint is unaffected by the variable.
-    session.run("create table plain (a int)").unwrap();
-    // ALTER TABLE reaches the same gate rather than the generic "this ALTER
-    // TABLE action is not supported yet" it used to answer -- what Go would
-    // do here is STORE the constraint and validate the existing rows against
-    // it, so a silent no-op would be the accept-then-discard shape.
-    assert!(matches!(
-        session.run("alter table plain add constraint cc check (a > 0)"),
-        Err(DriverError::Unsupported(reason)) if reason == "CHECK constraints are only modelled with tidb_enable_check_constraint off"
-    ));
-    // `ALTER CONSTRAINT` is NOT in that gate. Captured with the variable ON:
-    // `alter table d alter constraint nope enforced` -> `Error|3940|Constraint
-    // 'nope' does not exist.` -- which this tier can always say, because no
-    // table it holds can carry a CHECK constraint.
+    session
+        .run("create table ck (a int, check (a > 0), constraint loose check (a < 10) not enforced)")
+        .unwrap();
+    let shown = show_create(&mut session, "ck");
+    assert_eq!(
+        shown,
+        "CREATE TABLE `ck` (\n  \
+             `a` int DEFAULT NULL,\n  \
+             CONSTRAINT `ck_chk_1` CHECK ((`a` > 0)),\n  \
+             CONSTRAINT `loose` CHECK ((`a` < 10)) /*!80016 NOT ENFORCED */\n\
+         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+    );
+    session.run("insert into ck values (1)").unwrap();
+    let violation = session
+        .run("insert into ck values (-1)")
+        .expect_err("the enforced CHECK rejects false")
+        .to_mysql_error();
+    assert_eq!(
+        (violation.code, violation.message.as_str()),
+        (3819, "Check constraint 'ck_chk_1' is violated.")
+    );
+    // NULL satisfies a CHECK and NOT ENFORCED metadata never enters the
+    // writable-constraint list.
+    session.run("insert into ck values (null)").unwrap();
+}
+
+/// Go `pkg/ddl/constraint_test.go` covers ADD rollback on existing-row
+/// violation, enforcement changes, and DROP. A failed validation must leave
+/// the previously public metadata untouched.
+#[test]
+fn alter_check_constraint_validates_atomically_and_changes_enforcement() {
+    let mut session = Session::new();
+    session
+        .run("set @@global.tidb_enable_check_constraint = 1")
+        .unwrap();
+    session.run("create table ac (a int)").unwrap();
+    session.run("insert into ac values (12), (1)").unwrap();
+
+    let add_error = session
+        .run("alter table ac add constraint c1 check (a > 10)")
+        .expect_err("the existing value 1 violates c1")
+        .to_mysql_error();
+    assert_eq!(
+        (add_error.code, add_error.message.as_str()),
+        (3819, "Check constraint 'c1' is violated.")
+    );
+    assert!(!show_create(&mut session, "ac").contains("CONSTRAINT"));
+
+    session.run("delete from ac where a = 1").unwrap();
+    session
+        .run("alter table ac add constraint c1 check (a > 10)")
+        .unwrap();
+    assert!(show_create(&mut session, "ac").contains("CONSTRAINT `c1` CHECK ((`a` > 10))"));
+    let write_error = session
+        .run("insert into ac values (1)")
+        .expect_err("a public enforced CHECK guards writes")
+        .to_mysql_error();
+    assert_eq!(write_error.code, 3819);
+
+    session
+        .run("alter table ac alter constraint c1 not enforced")
+        .unwrap();
+    assert!(show_create(&mut session, "ac").contains("/*!80016 NOT ENFORCED */"));
+    session.run("insert into ac values (1)").unwrap();
+    let enforce_error = session
+        .run("alter table ac alter constraint c1 enforced")
+        .expect_err("the row inserted while disabled prevents enforcement")
+        .to_mysql_error();
+    assert_eq!(enforce_error.code, 3819);
+    assert!(show_create(&mut session, "ac").contains("/*!80016 NOT ENFORCED */"));
+
+    session.run("delete from ac where a = 1").unwrap();
+    session
+        .run("alter table ac alter constraint c1 enforced")
+        .unwrap();
+    assert!(!show_create(&mut session, "ac").contains("NOT ENFORCED"));
+    session.run("alter table ac drop constraint c1").unwrap();
+    assert!(!show_create(&mut session, "ac").contains("CONSTRAINT"));
+    session.run("insert into ac values (1)").unwrap();
+
     let missing = session
-        .run("alter table plain alter constraint nope enforced")
-        .expect_err("3940")
+        .run("alter table ac drop constraint c1")
+        .expect_err("a dropped CHECK no longer resolves")
         .to_mysql_error();
     assert_eq!(
         (missing.code, missing.message.as_str()),
-        (3940, "Constraint 'nope' does not exist.")
+        (3940, "Constraint 'c1' does not exist.")
     );
 }
 
@@ -223,6 +281,26 @@ fn a_grouped_add_column_check_is_discarded_and_warned_about() {
     session
         .run("INSERT INTO grouped_check VALUES (1, -1)")
         .unwrap();
+}
+
+/// Pinned Go `CreateNewColumn` calls `buildColumnAndConstraint` but keeps only
+/// the column and discards the returned inline constraints. This differs from
+/// both CREATE TABLE column checks and grouped table-level ADD CHECK actions.
+#[test]
+fn an_inline_add_column_check_is_discarded_even_while_enabled() {
+    let mut session = Session::new();
+    session
+        .run("set @@global.tidb_enable_check_constraint = 1")
+        .unwrap();
+    session.run("create table add_inline (a int)").unwrap();
+    session
+        .run("alter table add_inline add column b int check (b > 0)")
+        .unwrap();
+
+    assert!(!show_create(&mut session, "add_inline").contains("CONSTRAINT"));
+    session
+        .run("insert into add_inline values (1, -1)")
+        .expect("the discarded inline CHECK cannot guard writes");
 }
 
 /// A system variable whose assignment Go CLAMPS rather than refuses reports

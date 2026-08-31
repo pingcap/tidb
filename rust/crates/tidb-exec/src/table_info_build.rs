@@ -248,7 +248,7 @@ fn key_length_sum<'a>(
 
 /// The MySQL error number for a refusal that has no Go code of its own.
 const GENERIC_ERROR_CODE: u16 = 1105;
-
+/// Go `mysql.MaxConstraintIdentifierLen`.
 impl fmt::Display for DdlAdmissionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.reason)
@@ -381,12 +381,19 @@ pub fn build_table_info_with_context(
     // Go `buildColumnsAndConstraints`: the table-level PRIMARY KEY is located
     // first because every column needs to know whether it is one of its keys.
     let mut constraints = Vec::new();
+    let check_constraints = if context.enable_check_constraint() {
+        tidb_executor::ddl::check_constraint::create_inputs(create)
+    } else {
+        Vec::new()
+    };
     for constraint in &create.table_constraints {
         // Go `ast.ConstraintCheck` with the flag off — the DEFAULT — warns
         // and skips (`ddl/create_table.go:1470`), exactly like the
         // column-level spelling.
-        if matches!(constraint, TableConstraint::Check(_)) {
-            context.append_warning_parts(1105, "tidb_enable_check_constraint is off");
+        if let TableConstraint::Check(_) = constraint {
+            if !context.enable_check_constraint() {
+                context.append_warning_parts(1105, "tidb_enable_check_constraint is off");
+            }
             continue;
         }
         constraints.push(lower_table_constraint(constraint)?);
@@ -439,6 +446,7 @@ pub fn build_table_info_with_context(
         table_collate,
         clustered_mode,
     )?;
+    append_check_constraints(&mut table, &check_constraints, context)?;
     table.temp_table_type = temporary;
     let handle_offsets = if table.pk_is_handle {
         table
@@ -554,6 +562,60 @@ pub fn build_table_info_with_context(
         }
     }
     Ok(table)
+}
+
+pub(crate) fn append_check_constraints(
+    table: &mut TableInfo,
+    checks: &[tidb_executor::ddl::check_constraint::CheckConstraintInput],
+    context: &tidb_executor::StmtContext,
+) -> Refusal<()> {
+    let names = table
+        .indices
+        .iter_deref()
+        .map(|index| index.read().name.lowercase().to_owned())
+        .chain(
+            table
+                .constraints
+                .iter_deref()
+                .map(|constraint| constraint.read().name.lowercase().to_owned()),
+        )
+        .collect::<Vec<_>>();
+    let columns = table
+        .columns
+        .iter_deref()
+        .map(|column| column.read().clone())
+        .collect::<Vec<_>>();
+    let foreign_keys = table
+        .foreign_keys
+        .iter_deref()
+        .map(|foreign_key| {
+            let foreign_key = foreign_key.read();
+            tidb_executor::ddl::check_constraint::CheckConstraintForeignKey {
+                columns: foreign_key
+                    .cols
+                    .snapshot()
+                    .into_iter()
+                    .map(|column| column.original().to_owned())
+                    .collect(),
+                has_referential_action: foreign_key.on_delete != 0 || foreign_key.on_update != 0,
+            }
+        })
+        .collect::<Vec<_>>();
+    let infos = tidb_executor::ddl::check_constraint::build_constraint_infos(
+        &table.name,
+        &columns,
+        names,
+        &foreign_keys,
+        checks,
+        &mut table.max_constraint_id,
+        SchemaState::PUBLIC,
+        context,
+    )
+    .map_err(|error| DdlAdmissionError::with_code(error.code, error.message))?;
+    for info in infos {
+        table.constraints.push_go(info);
+    }
+    Ok(())
 }
 
 /// Renders a partition refusal in the words the driver tier raised it with,
@@ -772,6 +834,9 @@ pub fn build_added_column(
             | ColumnOption::Comment(_)
             | ColumnOption::NotNull
             | ColumnOption::Default(_) => {}
+            // `build_column` below owns Go's single OFF warning and returns
+            // the inline constraint that `CreateNewColumn` discards.
+            ColumnOption::Check(_) => {}
             ColumnOption::Generated { stored: false, .. } if generated_preceding.is_some() => {}
             ColumnOption::Generated { stored: true, .. } if generated_preceding.is_some() => {
                 return Err(DdlAdmissionError::with_code(
@@ -788,7 +853,7 @@ pub fn build_added_column(
             }
         }
     }
-    let (mut info, constraints) = build_column(
+    let (mut info, _constraints) = build_column(
         0,
         column,
         None,
@@ -797,11 +862,9 @@ pub fn build_added_column(
         context,
         generated_preceding,
     )?;
-    if !constraints.is_empty() {
-        return Err(DdlAdmissionError::unsupported(
-            "ADD COLUMN must not introduce constraints on this node",
-        ));
-    }
+    // Go ignores every constraint returned here. Unsupported key/FK options
+    // were refused above; the only possible result is the inline CHECK that
+    // pinned `ALTER TABLE ... ADD COLUMN` does not persist.
     // Go `generateOriginDefaultValue`: the value a row written BEFORE this
     // column reports. The declared default when there is one; the type's
     // zero value for NOT NULL without one; nothing for a nullable
@@ -1148,17 +1211,14 @@ fn build_column(
                     field_type.set_collation_name(collate.clone());
                 }
             }
-            // Go `ast.ColumnOptionCheck` with the flag off — the DEFAULT —
-            // warns `tidb_enable_check_constraint is off`
-            // (`ddl/add_column.go:577`, `errCheckConstraintIsOff`) and
-            // IGNORES the option. The flag-on constraint machinery is
-            // unported; a node that refused here diverged from every
-            // default-configured Go server (probe 24). The cluster DDL
-            // route drains this context's warnings into the connection's
-            // buffer at admission (Session::drain_context_warnings), so
-            // SHOW WARNINGS carries them as Go's does.
+            // Go discards this declaration with one warning while the global
+            // switch is OFF. With it ON the outer table builder owns the
+            // declaration after every column exists, so it can resolve the
+            // expression against the complete table just as Go does.
             ColumnOption::Check(_) => {
-                context.append_warning_parts(1105, "tidb_enable_check_constraint is off");
+                if !context.enable_check_constraint() {
+                    context.append_warning_parts(1105, "tidb_enable_check_constraint is off");
+                }
             }
             other => {
                 return Err(DdlAdmissionError::new(format!(

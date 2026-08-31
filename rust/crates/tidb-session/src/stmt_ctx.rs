@@ -1057,6 +1057,7 @@ impl Session {
         .with_auto_increment_step(increment, offset)
         .with_auto_increment_zero_explicit(sql_mode.has_no_auto_value_on_zero_mode())
         .with_foreign_key_checks(self.foreign_key_checks())
+        .with_enable_check_constraint(self.enable_check_constraint())
         .with_constraint_check_in_place(constraint_check_in_place)
         // Go `optimizeDupKeyCheckForNormalInsert` + `getPessimisticLazyCheckMode`
         // (`pkg/executor/insert.go:331-337,347-350`): normal INSERT uses
@@ -1118,8 +1119,7 @@ impl Session {
     /// `SetGlobal` writes: the variable is GLOBAL-scope only, so the value a
     /// statement sees is the global one, not a session copy. The registry
     /// defaults it to OFF, and unlike `foreign_key_checks` the safe fallback
-    /// for an unreadable value is OFF -- that is what a stock TiDB does and
-    /// the only mode this engine models.
+    /// for an unreadable value is OFF -- that is what a stock TiDB does.
     pub(crate) fn enable_check_constraint(&self) -> bool {
         matches!(
             self.vars

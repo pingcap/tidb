@@ -436,6 +436,10 @@ impl ClusterDdl for MockDdl {
             | DdlStatement::CreateTableLike { .. }
             | DdlStatement::DropPrimaryKey { .. }
             | DdlStatement::AlterIndexVisibility { .. }
+            | DdlStatement::AddCheckConstraint { .. }
+            | DdlStatement::DropCheckConstraint { .. }
+            | DdlStatement::AlterCheckConstraint { .. }
+            | DdlStatement::IgnoredCheckConstraint { .. }
             | DdlStatement::AddColumn { .. }
             | DdlStatement::ModifyColumn { .. }
             | DdlStatement::RenameColumn { .. }

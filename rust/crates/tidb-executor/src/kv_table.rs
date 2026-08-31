@@ -547,6 +547,11 @@ pub struct KvTable {
     /// Go `TableCommon.writableConstraints`: enforced CHECK constraints not
     /// in delete-only/delete-reorganization state.
     check_constraints: std::sync::Arc<Vec<KvCheckConstraint>>,
+    /// Go `TableInfo.Constraints`: the persisted CHECK metadata used by DDL,
+    /// SHOW, CREATE LIKE, and dependency checks.
+    check_constraint_infos: std::sync::Arc<Vec<tidb_model::table::ConstraintInfo>>,
+    /// Go `TableInfo.MaxConstraintID`.
+    max_constraint_id: i64,
     /// Go `TableInfo.MaxForeignKeyID`: the counter an UNNAMED constraint is
     /// named after (`fk_1`, `fk_2`, ...). It only ever rises, so dropping
     /// `fk_1` and adding another unnamed constraint yields `fk_2` rather than
@@ -840,6 +845,8 @@ impl KvTable {
             use_new_collation,
             foreign_keys: Vec::new(),
             check_constraints: std::sync::Arc::new(Vec::new()),
+            check_constraint_infos: std::sync::Arc::new(Vec::new()),
+            max_constraint_id: 0,
             max_foreign_key_id: 0,
             partition: None,
             placement_policy: None,
@@ -944,6 +951,7 @@ impl KvTable {
     pub fn create_like(
         &self,
         table_id: i64,
+        table_name: &str,
         allocate_partition_id: &mut dyn FnMut() -> i64,
     ) -> Self {
         let mut copy = KvTable::with_storage_and_collation(
@@ -953,6 +961,7 @@ impl KvTable {
             self.use_new_collation,
         );
         copy.hidden_columns = self.hidden_columns;
+        copy.name = table_name.to_owned();
         copy.mv_key_part_sources = self.mv_key_part_sources.clone();
         copy.pk_handle_offset = self.pk_handle_offset;
         copy.indexes = self.indexes.clone();
@@ -966,6 +975,24 @@ impl KvTable {
         }
         copy.charset = self.charset;
         copy.comment = self.comment.clone();
+        let mut renamed = self.check_constraint_infos.as_ref().clone();
+        let mut names = std::collections::HashMap::with_capacity(renamed.len());
+        for (offset, info) in renamed.iter_mut().enumerate() {
+            let old = info.name.lowercase().to_owned();
+            let new = format!("{}_chk_{}", table_name.to_lowercase(), offset + 1);
+            info.name = tidb_ast::CiString::new(new.clone());
+            info.table = tidb_ast::CiString::new(table_name);
+            names.insert(old, new);
+        }
+        let mut compiled = self.check_constraints.as_ref().clone();
+        for constraint in &mut compiled {
+            if let Some(name) = names.get(&constraint.name.to_lowercase()) {
+                constraint.name.clone_from(name);
+            }
+        }
+        copy.check_constraint_infos = std::sync::Arc::new(renamed);
+        copy.check_constraints = std::sync::Arc::new(compiled);
+        copy.max_constraint_id = self.max_constraint_id;
         if let Some(partition) = self.partition() {
             let mut partition = partition.clone();
             for definition in &mut partition.definitions {
@@ -1655,6 +1682,77 @@ impl KvTable {
         like_default_escape: u8,
     ) -> Result<(), KvTableError> {
         let name = name.into();
+        let compiled =
+            self.compile_check_constraint(&name, expression, zone, like_default_escape)?;
+        std::sync::Arc::make_mut(&mut self.check_constraints).push(compiled);
+        Ok(())
+    }
+
+    /// Replaces Go `TableInfo.Constraints` and rebuilds the ordinary writable
+    /// constraint list from that metadata.
+    pub fn set_check_constraint_infos(
+        &mut self,
+        infos: Vec<tidb_model::table::ConstraintInfo>,
+        zone: &tidb_datatype::SessionTimeZone,
+        like_default_escape: u8,
+    ) -> Result<(), KvTableError> {
+        let mut compiled = Vec::new();
+        for info in &infos {
+            if !info.enforced
+                || info.state == tidb_model::SchemaState::DELETE_ONLY
+                || info.state == tidb_model::SchemaState::DELETE_REORGANIZATION
+            {
+                continue;
+            }
+            let expression = tidb_model::generated_expr::parse_expression(&info.expr_string)
+                .map_err(|error| KvTableError::CheckConstraint {
+                    name: info.name.original().to_owned(),
+                    detail: format!("{error:?}"),
+                    eval: None,
+                })?;
+            compiled.push(self.compile_check_constraint(
+                info.name.original(),
+                &expression,
+                zone,
+                like_default_escape,
+            )?);
+        }
+        // Go's `TableInfo.MaxConstraintID` is an allocator high-water mark,
+        // not the largest ID still present.  In particular, dropping the
+        // newest constraint must not make its ID reusable.
+        self.max_constraint_id = self
+            .max_constraint_id
+            .max(infos.iter().map(|info| info.id).max().unwrap_or(0));
+        self.check_constraint_infos = std::sync::Arc::new(infos);
+        self.check_constraints = std::sync::Arc::new(compiled);
+        Ok(())
+    }
+
+    /// Restores Go `TableInfo.MaxConstraintID` while loading persisted table
+    /// metadata. The value may be greater than every surviving constraint ID.
+    pub fn set_max_constraint_id(&mut self, max_constraint_id: i64) {
+        self.max_constraint_id = max_constraint_id;
+    }
+
+    /// Go `TableInfo.Constraints`.
+    #[must_use]
+    pub fn check_constraint_infos(&self) -> &[tidb_model::table::ConstraintInfo] {
+        &self.check_constraint_infos
+    }
+
+    /// Go `TableInfo.MaxConstraintID`.
+    #[must_use]
+    pub const fn max_constraint_id(&self) -> i64 {
+        self.max_constraint_id
+    }
+
+    fn compile_check_constraint(
+        &self,
+        name: &str,
+        expression: &tidb_ast::Expr,
+        zone: &tidb_datatype::SessionTimeZone,
+        like_default_escape: u8,
+    ) -> Result<KvCheckConstraint, KvTableError> {
         let names = self
             .columns
             .iter()
@@ -1674,20 +1772,20 @@ impl KvTable {
         let expr =
             tidb_expr::rewriter::rewrite_expr_resolved(expression, &resolver).map_err(|error| {
                 KvTableError::CheckConstraint {
-                    name: name.clone(),
+                    name: name.to_owned(),
                     detail: format!("{error:?}"),
                     eval: None,
                 }
             })?;
         if let Some(missing) = resolver.missing_name() {
             return Err(KvTableError::CheckConstraint {
-                name,
+                name: name.to_owned(),
                 detail: format!("unknown column '{missing}'"),
                 eval: None,
             });
         }
-        std::sync::Arc::make_mut(&mut self.check_constraints).push(KvCheckConstraint {
-            name,
+        Ok(KvCheckConstraint {
+            name: name.to_owned(),
             expr,
             dependencies: resolver.dependency_names(),
             source: expression.clone(),
@@ -1695,8 +1793,7 @@ impl KvTable {
             build_like_default_escape: like_default_escape,
             zone_sensitive: resolver.zone_was_read(),
             like_default_escape_sensitive: resolver.like_default_escape_was_read(),
-        });
-        Ok(())
+        })
     }
 
     /// Go `CheckRowConstraintWithDatum` over this table's writable constraints.

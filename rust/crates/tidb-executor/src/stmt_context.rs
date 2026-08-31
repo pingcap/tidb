@@ -411,6 +411,11 @@ pub struct StmtContext {
     /// default): whether referential integrity is enforced at all. A context
     /// with no session behind it enforces, as a stock session does.
     foreign_key_checks: bool,
+    /// Go's process-wide `vardef.EnableCheckConstraint`, updated by the
+    /// GLOBAL-only `@@tidb_enable_check_constraint` variable. DDL builders
+    /// read this value when deciding whether CHECK declarations are discarded
+    /// with a warning or persisted and enforced.
+    enable_check_constraint: bool,
     /// Go `txn.IsPessimistic()` half of `optimizeDupKeyCheckForNormalInsert`
     /// (`pkg/executor/insert.go:331-337`), resolved for the current or
     /// implicit statement transaction. On a user connection this transaction
@@ -774,6 +779,7 @@ impl StmtContext {
             new_only_full_group_by_check: false,
             default_week_format: 0,
             foreign_key_checks: true,
+            enable_check_constraint: false,
             pessimistic_lazy_dup_check: false,
             constraint_check_in_place: false,
             allow_remove_auto_inc: false,
@@ -1888,6 +1894,19 @@ impl StmtContext {
     #[must_use]
     pub fn foreign_key_checks(&self) -> bool {
         self.foreign_key_checks
+    }
+
+    /// Sets Go's process-wide CHECK-constraint DDL switch for this statement.
+    #[must_use]
+    pub fn with_enable_check_constraint(mut self, enabled: bool) -> Self {
+        self.enable_check_constraint = enabled;
+        self
+    }
+
+    /// Whether CHECK declarations are persisted and enforced.
+    #[must_use]
+    pub fn enable_check_constraint(&self) -> bool {
+        self.enable_check_constraint
     }
 
     /// Marks this statement's INSERT a lazy duplicate check (Go

@@ -31,6 +31,14 @@ pub enum DriverError {
         /// Go's message, verbatim.
         message: String,
     },
+    /// A DDL validation error whose Go error number and text were produced by
+    /// a shared metadata builder.
+    DdlCoded {
+        /// MySQL/TiDB error number.
+        errno: u16,
+        /// Client-visible message.
+        message: String,
+    },
     /// The general refusal: this tier does not implement what the statement
     /// asked for, and the carried text says which part.
     ///

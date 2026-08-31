@@ -473,6 +473,25 @@ fn show_create_table_text(
         clauses.push(clause);
     }
 
+    // Go emits public CHECK constraints after every foreign key. The stored
+    // expression is already normalized by DDL; SHOW adds one parenthesis
+    // pair for CHECK and another around the expression itself.
+    for constraint in table
+        .check_constraint_infos()
+        .iter()
+        .filter(|constraint| constraint.state == tidb_model::SchemaState::PUBLIC)
+    {
+        let mut clause = format!(
+            "  CONSTRAINT {} CHECK (({}))",
+            escape_name(constraint.name.original()),
+            constraint.expr_string
+        );
+        if !constraint.enforced {
+            clause.push_str(" /*!80016 NOT ENFORCED */");
+        }
+        clauses.push(clause);
+    }
+
     out.push_str(&clauses.join(",\n"));
     out.push_str(&format!(
         "\n) ENGINE=InnoDB DEFAULT CHARSET={} COLLATE={}",

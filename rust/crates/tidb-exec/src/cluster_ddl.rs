@@ -197,6 +197,14 @@ pub enum AlterColumnAction {
         /// The index name as written.
         name: String,
     },
+    /// A table-level CHECK split out of grouped `ADD COLUMN (...)` by Go's
+    /// `resolveAlterTableAddColumns`.
+    AddCheck {
+        /// The parsed CHECK declaration.
+        definition: Box<tidb_ast::CheckConstraintDefinition>,
+        /// The statement context used to resolve and validate it.
+        context: DdlStatementContext,
+    },
 }
 
 /// A `StmtContext` wrapper carrying the Debug the statement enum derives.
@@ -300,6 +308,47 @@ pub enum DdlStatement {
         /// (`CreateTableBuild`) hides it the same way.
         #[allow(missing_docs)]
         context: DdlStatementContext,
+    },
+    /// `ALTER TABLE ... ADD [CONSTRAINT name] CHECK (...)`.
+    AddCheckConstraint {
+        /// Database containing the table.
+        schema: String,
+        /// Table receiving the constraint.
+        table: String,
+        /// The parsed CHECK declaration.
+        definition: Box<tidb_ast::CheckConstraintDefinition>,
+        /// The statement context used to resolve and type-check the expression.
+        context: DdlStatementContext,
+    },
+    /// `ALTER TABLE ... DROP CONSTRAINT name` for a CHECK constraint.
+    DropCheckConstraint {
+        /// Database containing the table.
+        schema: String,
+        /// Table losing the constraint.
+        table: String,
+        /// Constraint name as written.
+        name: String,
+    },
+    /// `ALTER TABLE ... ALTER CONSTRAINT name [NOT] ENFORCED`.
+    AlterCheckConstraint {
+        /// Database containing the table.
+        schema: String,
+        /// Table owning the constraint.
+        table: String,
+        /// Constraint name as written.
+        name: String,
+        /// Desired enforcement state.
+        enforced: bool,
+        /// Evaluation context used when enabling the constraint.
+        context: DdlStatementContext,
+    },
+    /// An ADD/ALTER CHECK discarded while
+    /// `tidb_enable_check_constraint=OFF`.
+    IgnoredCheckConstraint {
+        /// Database containing the table, which Go still resolves.
+        schema: String,
+        /// Table named by the statement.
+        table: String,
     },
     /// `ALTER TABLE ... ADD PARTITION`, validated and applied by the same
     /// partition implementation used by the ordinary local executor.
@@ -857,7 +906,7 @@ pub fn lower_ddl_with_context(
             name: drop.name.clone(),
             if_exists: drop.if_exists,
         })),
-        DdlStmt::AlterTable(alter) => lower_alter_table_catalog(alter, default_schema),
+        DdlStmt::AlterTable(alter) => lower_alter_table_catalog(alter, default_schema, context),
         DdlStmt::RenameTable(rename) => lower_rename_table_stmt(rename, default_schema),
         DdlStmt::TruncateTable(name) => {
             let (schema, table) = split_name(name, default_schema, "table")?;
@@ -1072,6 +1121,7 @@ fn placement_settings_from_options(
 fn lower_alter_table_catalog(
     alter: &AlterTableStmt,
     default_schema: &str,
+    context: &tidb_executor::StmtContext,
 ) -> Result<Option<DdlStatement>, DdlAdmissionError> {
     let [action] = alter.actions.as_slice() else {
         // Go's one ActionMultiSchemaChange job: expressible here exactly when
@@ -1088,7 +1138,7 @@ fn lower_alter_table_catalog(
                         if_not_exists: *if_not_exists,
                         column: Box::new(column.clone()),
                         position: position.clone(),
-                        context: DdlStatementContext(tidb_executor::StmtContext::for_query()),
+                        context: DdlStatementContext(context.clone()),
                     });
                 }
                 tidb_ast::AlterTableAction::ChangeColumn {
@@ -1121,7 +1171,7 @@ fn lower_alter_table_catalog(
                         table,
                         column: Box::new(column.clone()),
                         position: position.clone(),
-                        context: DdlStatementContext(tidb_executor::StmtContext::for_query()),
+                        context: DdlStatementContext(context.clone()),
                         rename_from: Some(old.clone()),
                     }));
                 }
@@ -1362,7 +1412,7 @@ fn lower_alter_table_catalog(
                     table,
                     column: Box::new(column.clone()),
                     position: position.clone(),
-                    context: DdlStatementContext(tidb_executor::StmtContext::for_query()),
+                    context: DdlStatementContext(context.clone()),
                     rename_from: None,
                 }));
             };
@@ -1414,7 +1464,7 @@ fn lower_alter_table_catalog(
                 table,
                 column: Box::new(column.clone()),
                 position: position.clone(),
-                context: DdlStatementContext(tidb_executor::StmtContext::for_query()),
+                context: DdlStatementContext(context.clone()),
                 rename_from: Some(old.clone()),
             }));
         }
@@ -1472,10 +1522,7 @@ fn lower_alter_table_catalog(
                 table,
                 column: column.clone(),
                 default_value: action.default_value.clone().map(Box::new),
-                // The surrounding lowering does not carry the session's
-                // context, so this matches the sibling ADD COLUMN arm: the
-                // strict-mode default under which Go admits a DDL.
-                context: DdlStatementContext(tidb_executor::StmtContext::for_query()),
+                context: DdlStatementContext(context.clone()),
             }))
         }
         tidb_ast::AlterTableAction::OrderByColumns { .. } => {
@@ -1491,6 +1538,67 @@ fn lower_alter_table_catalog(
                 invisible: action.visibility == tidb_ast::IndexVisibility::Invisible,
             }))
         }
+        tidb_ast::AlterTableAction::AddColumns {
+            if_not_exists,
+            columns,
+            constraints,
+        } => {
+            // Go `resolveAlterTableAddColumns`: every column first, followed
+            // by every table constraint, all inside one multi-schema job.
+            let mut actions = Vec::with_capacity(columns.len() + constraints.len());
+            for column in columns {
+                actions.push(AlterColumnAction::Add {
+                    if_not_exists: *if_not_exists,
+                    column: Box::new(column.clone()),
+                    position: tidb_ast::ColumnPosition::Default,
+                    context: DdlStatementContext(context.clone()),
+                });
+            }
+            for constraint in constraints {
+                match constraint {
+                    tidb_ast::TableConstraint::Check(definition) => {
+                        if context.enable_check_constraint() {
+                            actions.push(AlterColumnAction::AddCheck {
+                                definition: Box::new(definition.clone()),
+                                context: DdlStatementContext(context.clone()),
+                            });
+                        } else {
+                            context
+                                .append_warning_parts(1105, "tidb_enable_check_constraint is off");
+                        }
+                    }
+                    tidb_ast::TableConstraint::Index(index) => {
+                        match lower_alter_add_index(alter, index, default_schema)? {
+                            DdlStatement::CreateIndex {
+                                if_not_exists,
+                                index,
+                                ..
+                            } => actions.push(AlterColumnAction::AddIndex {
+                                if_not_exists,
+                                index,
+                            }),
+                            other => unreachable!(
+                                "lower_alter_add_index lowers to CreateIndex, got {other:?}"
+                            ),
+                        }
+                    }
+                    tidb_ast::TableConstraint::ForeignKey(_) => {
+                        return Err(DdlAdmissionError::unsupported(
+                            "grouped ADD COLUMN with a FOREIGN KEY is not supported by this node",
+                        ));
+                    }
+                }
+            }
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            if actions.is_empty() {
+                return Ok(Some(DdlStatement::IgnoredCheckConstraint { schema, table }));
+            }
+            Ok(Some(DdlStatement::MultiSchemaChange {
+                schema,
+                table,
+                actions,
+            }))
+        }
         tidb_ast::AlterTableAction::AddColumn {
             if_not_exists,
             column,
@@ -1503,7 +1611,42 @@ fn lower_alter_table_catalog(
                 if_not_exists: *if_not_exists,
                 column: Box::new(column.clone()),
                 position: position.clone(),
-                context: DdlStatementContext(tidb_executor::StmtContext::for_query()),
+                context: DdlStatementContext(context.clone()),
+            }))
+        }
+        tidb_ast::AlterTableAction::AddCheck(definition) => {
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            if !context.enable_check_constraint() {
+                context.append_warning_parts(1105, "tidb_enable_check_constraint is off");
+                return Ok(Some(DdlStatement::IgnoredCheckConstraint { schema, table }));
+            }
+            Ok(Some(DdlStatement::AddCheckConstraint {
+                schema,
+                table,
+                definition: Box::new(definition.clone()),
+                context: DdlStatementContext(context.clone()),
+            }))
+        }
+        tidb_ast::AlterTableAction::DropCheck(drop) => {
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            Ok(Some(DdlStatement::DropCheckConstraint {
+                schema,
+                table,
+                name: drop.name.clone(),
+            }))
+        }
+        tidb_ast::AlterTableAction::AlterCheck(action) => {
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            if !context.enable_check_constraint() {
+                context.append_warning_parts(1105, "tidb_enable_check_constraint is off");
+                return Ok(Some(DdlStatement::IgnoredCheckConstraint { schema, table }));
+            }
+            Ok(Some(DdlStatement::AlterCheckConstraint {
+                schema,
+                table,
+                name: action.name.clone(),
+                enforced: action.enforced,
+                context: DdlStatementContext(context.clone()),
             }))
         }
         tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::Add { .. }) => {
@@ -1879,6 +2022,25 @@ fn apply_drop_column(
             )));
         }
     }
+    // Go `IsColumnDroppableWithCheckConstraint`: a CHECK that also names
+    // another column cannot survive this DROP, so refuse it with 3959. A
+    // single-column CHECK is allowed; `table.LoadCheckConstraint` removes
+    // that now-invalid metadata lazily when the post-DDL table is loaded.
+    if let Some(constraint) = info.constraints.iter_deref().find(|constraint| {
+        let constraint = constraint.read();
+        constraint.constraint_cols.len() > 1
+            && tidb_executor::ddl::check_constraint::uses_column(&constraint, column)
+    }) {
+        let constraint = constraint.read();
+        let error = tidb_executor::ddl::check_constraint::column_dependency_error(
+            constraint.name.original(),
+            column,
+        );
+        return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+            error.code,
+            error.message,
+        )));
+    }
     // Go `listIndicesWithColumn`: a single-column secondary index on the
     // dropped column goes with it.
     let surviving: Vec<_> = (0..info.indices.len())
@@ -1898,6 +2060,16 @@ fn apply_drop_column(
         .collect();
     info.indices = tidb_model::GoSharedPointerSlice::from_handles(surviving);
     info.columns.delete_go(dropped_offset, dropped_offset + 1);
+    info.constraints = tidb_model::GoSharedPointerSlice::from_handles(
+        info.constraints
+            .iter_deref()
+            .filter_map(|constraint| {
+                let constraint = constraint.read();
+                (!tidb_executor::ddl::check_constraint::uses_column(&constraint, column))
+                    .then(|| Some(GoShared::new(constraint.clone())))
+            })
+            .collect(),
+    );
     // Every later column shifts down one offset, and every index column
     // referring to one follows it.
     for column in info.columns.iter_deref() {
@@ -2382,6 +2554,8 @@ pub struct DdlWrite {
     /// VALIDATION`, evaluated from the same snapshot before this write set is
     /// committed. `None` is Go's `WITHOUT VALIDATION` path.
     pub exchange_partition_validation: Option<ExchangePartitionValidation>,
+    /// Existing-row validation owed before an enforced CHECK becomes public.
+    pub check_constraint_validation: Option<CheckConstraintValidation>,
     /// The PD region-label rule swap owed by `EXCHANGE PARTITION`.
     pub exchange_partition_label_swap: Option<ExchangePartitionLabelSwap>,
     /// The warning the change raises, if any.
@@ -2531,6 +2705,18 @@ pub struct IndexBackfill {
     /// Whether the entries are being written (`CREATE INDEX`) or removed
     /// (`DROP INDEX`).
     pub add: bool,
+}
+
+/// The candidate table shape whose enforced CHECK must hold for every
+/// existing row before its metadata can be published.
+#[derive(Clone, Debug)]
+pub struct CheckConstraintValidation {
+    /// Candidate metadata, including the newly enforced constraint.
+    pub table: Box<TableInfo>,
+    /// The constraint whose violation Go reports as 3819.
+    pub constraint_name: String,
+    /// Evaluation context captured from the DDL statement.
+    pub context: DdlStatementContext,
 }
 
 /// Plans one catalog change against one snapshot.
@@ -2945,6 +3131,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
     let mut created_id = None;
     let mut backfill = Vec::new();
     let mut exchange_partition_validation = None;
+    let mut check_constraint_validation = None;
     let mut exchange_partition_label_swap = None;
     let mut warning = None;
     let mut schema_change_events: Vec<(i64, SchemaChangeEvent)> = Vec::new();
@@ -3270,6 +3457,16 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             info.auto_rand_id = 0;
             info.foreign_keys = tidb_model::GoSharedPointerSlice::from_handles(Vec::new());
             info.max_foreign_key_id = 0;
+            // Go `renameCheckConstraint` clears every copied name, points the
+            // metadata at the target table, then assigns target-local names
+            // from `<table>_chk_1` in declaration order. IDs and the allocator
+            // high-water remain copied from the source.
+            for (offset, constraint) in info.constraints.iter_deref().enumerate() {
+                let mut constraint = constraint.write();
+                constraint.name =
+                    CiString::new(format!("{}_chk_{}", table.to_lowercase(), offset + 1));
+                constraint.table = CiString::new(table.clone());
+            }
             info.table_cache_status_type = tidb_model::TableCacheStatusType::DISABLE;
             info.tiflash_replica = None;
             info.update_ts = start_ts;
@@ -4302,6 +4499,172 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 ));
             }
         }
+        DdlStatement::AddCheckConstraint {
+            schema,
+            table,
+            definition,
+            context,
+        } => {
+            let (db_id, stored) = locate_table(&catalog, schema, table)?;
+            let mut info = stored.clone_like_go();
+            let prior_len = info.constraints.len();
+            crate::table_info_build::append_check_constraints(
+                &mut info,
+                &[tidb_executor::ddl::check_constraint::CheckConstraintInput {
+                    definition: (**definition).clone(),
+                    in_column: None,
+                }],
+                &context.0,
+            )
+            .map_err(DdlPlanError::Admission)?;
+            let added = info
+                .constraints
+                .iter_deref()
+                .nth(prior_len)
+                .expect("one ADD CHECK input appends one constraint")
+                .read()
+                .clone();
+            let duplicate_in_schema = catalog
+                .databases
+                .iter()
+                .find(|database| database.info.id == db_id)
+                .is_some_and(|database| {
+                    database.tables.iter().any(|candidate| {
+                        candidate.constraints.iter_deref().any(|constraint| {
+                            constraint.read().name.lowercase() == added.name.lowercase()
+                        })
+                    })
+                });
+            if duplicate_in_schema {
+                return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                    tidb_error::tidb::errcode::ErrCheckConstraintDupName,
+                    format!("Duplicate check constraint name '{}'.", added.name),
+                )));
+            }
+            if added.enforced {
+                check_constraint_validation = Some(CheckConstraintValidation {
+                    table: Box::new(info.clone_like_go()),
+                    constraint_name: added.name.original().to_owned(),
+                    context: context.clone(),
+                });
+            }
+            info.update_ts = start_ts;
+            let table_id = info.id;
+            let encoded = value::serialize_table_info(&info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            writes.push(OptimisticMutation::meta_put(
+                key::table_kv_key(db_id, table_id),
+                encoded,
+            )?);
+            diff.action_type = ActionType::ACTION_ADD_CHECK_CONSTRAINT;
+            diff.schema_id = db_id;
+            diff.table_id = table_id;
+        }
+        DdlStatement::DropCheckConstraint {
+            schema,
+            table,
+            name,
+        } => {
+            let (db_id, stored) = locate_table(&catalog, schema, table)?;
+            let wanted = name.to_lowercase();
+            if !stored
+                .constraints
+                .iter_deref()
+                .any(|constraint| constraint.read().name.lowercase() == wanted)
+            {
+                return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                    tidb_error::tidb::errcode::ErrConstraintNotFound,
+                    format!("Constraint '{name}' does not exist."),
+                )));
+            }
+            let mut info = stored.clone_like_go();
+            info.constraints = info
+                .constraints
+                .iter_deref()
+                .filter_map(|constraint| {
+                    let constraint = constraint.read();
+                    (constraint.name.lowercase() != wanted).then(|| constraint.clone())
+                })
+                .collect::<Vec<_>>()
+                .into();
+            info.update_ts = start_ts;
+            let table_id = info.id;
+            let encoded = value::serialize_table_info(&info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            writes.push(OptimisticMutation::meta_put(
+                key::table_kv_key(db_id, table_id),
+                encoded,
+            )?);
+            diff.action_type = ActionType::ACTION_DROP_CHECK_CONSTRAINT;
+            diff.schema_id = db_id;
+            diff.table_id = table_id;
+        }
+        DdlStatement::AlterCheckConstraint {
+            schema,
+            table,
+            name,
+            enforced,
+            context,
+        } => {
+            let (db_id, stored) = locate_table(&catalog, schema, table)?;
+            let wanted = name.to_lowercase();
+            let Some(position) = stored
+                .constraints
+                .iter_deref()
+                .position(|constraint| constraint.read().name.lowercase() == wanted)
+            else {
+                return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                    tidb_error::tidb::errcode::ErrConstraintNotFound,
+                    format!("Constraint '{name}' does not exist."),
+                )));
+            };
+            if stored
+                .constraints
+                .get(position)
+                .expect("the position was just found")
+                .read()
+                .enforced
+                == *enforced
+            {
+                return Ok(already(format!(
+                    "CHECK constraint `{name}` on `{schema}`.`{table}` already has the requested enforcement"
+                )));
+            }
+            let mut info = stored.clone_like_go();
+            {
+                let constraint_handle = info
+                    .constraints
+                    .get(position)
+                    .expect("the position was just found");
+                let mut constraint = constraint_handle.write();
+                constraint.enforced = *enforced;
+                constraint.state = SchemaState::PUBLIC;
+            }
+            if *enforced {
+                check_constraint_validation = Some(CheckConstraintValidation {
+                    table: Box::new(info.clone_like_go()),
+                    constraint_name: name.clone(),
+                    context: context.clone(),
+                });
+            }
+            info.update_ts = start_ts;
+            let table_id = info.id;
+            let encoded = value::serialize_table_info(&info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            writes.push(OptimisticMutation::meta_put(
+                key::table_kv_key(db_id, table_id),
+                encoded,
+            )?);
+            diff.action_type = ActionType::ACTION_ALTER_CHECK_CONSTRAINT;
+            diff.schema_id = db_id;
+            diff.table_id = table_id;
+        }
+        DdlStatement::IgnoredCheckConstraint { schema, table } => {
+            locate_table(&catalog, schema, table)?;
+            return Ok(already(format!(
+                "CHECK constraint on `{schema}`.`{table}` is discarded while tidb_enable_check_constraint is off"
+            )));
+        }
         DdlStatement::AddColumn {
             schema,
             table,
@@ -4393,6 +4756,21 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                     table: table.clone(),
                 });
             };
+            // Go asks `IsColumnRenameableWithCheckConstraint` before the
+            // same-name early return and before the duplicate-name check.
+            if let Some(constraint) = stored.constraints.iter_deref().find(|constraint| {
+                tidb_executor::ddl::check_constraint::uses_column(&constraint.read(), from)
+            }) {
+                let constraint = constraint.read();
+                let error = tidb_executor::ddl::check_constraint::column_dependency_error(
+                    constraint.name.original(),
+                    from,
+                );
+                return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                    error.code,
+                    error.message,
+                )));
+            }
             let new_name = to.to_lowercase();
             if new_name != wanted
                 && stored
@@ -4598,6 +4976,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             let mut info = stored.clone_like_go();
             let mut applied = 0usize;
             let mut satisfied = Vec::new();
+            let mut enforced_check = None;
             // Go `mergeAddIndex` gathers multiple ADD INDEX sub-jobs into one
             // merged sub-job at the end, preserving every other sub-job's
             // relative order. Execute the equivalent order here so later
@@ -4753,6 +5132,51 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                         applied += 1;
                         continue;
                     }
+                    AlterColumnAction::AddCheck {
+                        definition,
+                        context,
+                    } => {
+                        let prior_len = info.constraints.len();
+                        crate::table_info_build::append_check_constraints(
+                            &mut info,
+                            &[tidb_executor::ddl::check_constraint::CheckConstraintInput {
+                                definition: (**definition).clone(),
+                                in_column: None,
+                            }],
+                            &context.0,
+                        )
+                        .map_err(DdlPlanError::Admission)?;
+                        let added = info
+                            .constraints
+                            .iter_deref()
+                            .nth(prior_len)
+                            .expect("one grouped ADD CHECK appends one constraint")
+                            .read()
+                            .clone();
+                        let duplicate_in_schema = catalog
+                            .databases
+                            .iter()
+                            .find(|database| database.info.id == db_id)
+                            .is_some_and(|database| {
+                                database.tables.iter().any(|candidate| {
+                                    candidate.constraints.iter_deref().any(|constraint| {
+                                        constraint.read().name.lowercase() == added.name.lowercase()
+                                    })
+                                })
+                            });
+                        if duplicate_in_schema {
+                            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                                tidb_error::tidb::errcode::ErrCheckConstraintDupName,
+                                format!("Duplicate check constraint name '{}'.", added.name),
+                            )));
+                        }
+                        if added.enforced && enforced_check.is_none() {
+                            enforced_check =
+                                Some((added.name.original().to_owned(), context.clone()));
+                        }
+                        applied += 1;
+                        continue;
+                    }
                 };
                 match outcome {
                     AlterColumnOutcome::Applied => applied += 1,
@@ -4774,6 +5198,13 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             }
             if applied == 0 {
                 return Ok(already(satisfied.join("; ")));
+            }
+            if let Some((constraint_name, context)) = enforced_check {
+                check_constraint_validation = Some(CheckConstraintValidation {
+                    table: Box::new(info.clone_like_go()),
+                    constraint_name,
+                    context,
+                });
             }
             info.update_ts = start_ts;
             let table_id = info.id;
@@ -5555,6 +5986,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
         created_id,
         backfill,
         exchange_partition_validation,
+        check_constraint_validation,
         exchange_partition_label_swap,
         warning,
         placement_bundles,

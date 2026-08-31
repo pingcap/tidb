@@ -41,8 +41,8 @@ use tidb_txnkv::transaction::{
 use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
 
 use crate::cluster_ddl::{
-    lower_ddl_with_context, plan_ddl, DdlAdmissionError, DdlPlan, DdlPlanError, DdlStatement,
-    DdlWrite, ExchangePartitionValidation, IndexBackfill,
+    lower_ddl_with_context, plan_ddl, CheckConstraintValidation, DdlAdmissionError, DdlPlan,
+    DdlPlanError, DdlStatement, DdlWrite, ExchangePartitionValidation, IndexBackfill,
 };
 use crate::cluster_table_storage::SessionTransaction;
 use crate::pessimistic_lock_error::{transaction_cause_to_sql_error, LockSqlError};
@@ -251,6 +251,11 @@ pub enum ClusterDdlError {
     ExchangeValidation(LockSqlError),
     /// The change needs exchange validation and this path cannot read rows.
     ExchangeValidationUnavailable,
+    /// Enabling an enforced CHECK rejected an existing row or failed while
+    /// reading/evaluating the validation scan.
+    CheckConstraintValidation(LockSqlError),
+    /// The change needs CHECK validation and this path cannot read rows.
+    CheckConstraintValidationUnavailable,
 }
 
 impl fmt::Display for ClusterDdlError {
@@ -291,6 +296,11 @@ impl fmt::Display for ClusterDdlError {
                 formatter,
                 "this path cannot validate EXCHANGE PARTITION rows before publishing the ID swap"
             ),
+            Self::CheckConstraintValidation(error) => formatter.write_str(&error.message),
+            Self::CheckConstraintValidationUnavailable => write!(
+                formatter,
+                "this path cannot validate existing rows before enabling a CHECK constraint"
+            ),
         }
     }
 }
@@ -307,7 +317,9 @@ impl std::error::Error for ClusterDdlError {
             | Self::Backfill(_)
             | Self::BackfillUnavailable
             | Self::ExchangeValidation(_)
-            | Self::ExchangeValidationUnavailable => None,
+            | Self::ExchangeValidationUnavailable
+            | Self::CheckConstraintValidation(_)
+            | Self::CheckConstraintValidationUnavailable => None,
         }
     }
 }
@@ -446,6 +458,10 @@ fn commit_cluster_ddl_once<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
         transaction.finish_without_writes()?;
         return Err(ClusterDdlError::ExchangeValidationUnavailable);
     }
+    if write.check_constraint_validation.is_some() {
+        transaction.finish_without_writes()?;
+        return Err(ClusterDdlError::CheckConstraintValidationUnavailable);
+    }
     // Go sends the placement bundles INSIDE the DDL job, before the schema
     // version is published, and fails the job when PD refuses
     // (`PutRuleBundlesWithDefaultRetry`). Delivering before the commit is the
@@ -578,6 +594,18 @@ pub trait ExchangePartitionValidator {
     ) -> Result<(), LockSqlError>;
 }
 
+/// Executes Go's existing-row CHECK validation from the DDL transaction's
+/// own row snapshot before the candidate metadata is published.
+pub trait CheckConstraintValidator {
+    /// Proves every stored row satisfies the candidate enforced constraint.
+    fn validate(
+        &self,
+        plan: &CheckConstraintValidation,
+        snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
+        buffer: &MutationBuffer,
+    ) -> Result<(), LockSqlError>;
+}
+
 /// Publishes one catalog change together with the index entries it owes.
 ///
 /// One `SessionTransaction` serves all three halves at one `start_ts`: the
@@ -609,6 +637,7 @@ pub fn commit_cluster_ddl_with_backfill<
     notifier: Option<&dyn SchemaVersionNotifier>,
     backfiller: &dyn IndexBackfiller,
     exchange_validator: &dyn ExchangePartitionValidator,
+    check_constraint_validator: &dyn CheckConstraintValidator,
 ) -> Result<ClusterDdlReport, ClusterDdlError> {
     // The same `kv.RunInNewTxn(retryable=true)` loop as [`commit_cluster_ddl`]
     // -- see its doc. A retried attempt re-stages the backfill from the fresh
@@ -622,6 +651,7 @@ pub fn commit_cluster_ddl_with_backfill<
             notifier,
             backfiller,
             exchange_validator,
+            check_constraint_validator,
         ) {
             Err(ClusterDdlError::ConcurrentSchemaChange { .. })
                 if attempt + 1 < tidb_txnkv::MAX_RETRY_COUNT =>
@@ -645,6 +675,7 @@ fn commit_cluster_ddl_with_backfill_once<
     notifier: Option<&dyn SchemaVersionNotifier>,
     backfiller: &dyn IndexBackfiller,
     exchange_validator: &dyn ExchangePartitionValidator,
+    check_constraint_validator: &dyn CheckConstraintValidator,
 ) -> Result<ClusterDdlReport, ClusterDdlError> {
     let transaction = SessionTransaction::begin(
         Arc::clone(&opener),
@@ -677,7 +708,10 @@ fn commit_cluster_ddl_with_backfill_once<
         DdlPlan::Write(write) => write,
     };
     let buffer = MutationBuffer::new();
-    if !write.backfill.is_empty() || write.exchange_partition_validation.is_some() {
+    if !write.backfill.is_empty()
+        || write.exchange_partition_validation.is_some()
+        || write.check_constraint_validation.is_some()
+    {
         let staged = transaction
             .snapshot()
             .map_err(|error| ClusterDdlError::Backfill(error.to_string()))
@@ -696,6 +730,11 @@ fn commit_cluster_ddl_with_backfill_once<
                     exchange_validator
                         .validate(validation, Arc::clone(&handle), &buffer)
                         .map_err(ClusterDdlError::ExchangeValidation)?;
+                }
+                if let Some(validation) = &write.check_constraint_validation {
+                    check_constraint_validator
+                        .validate(validation, Arc::clone(&handle), &buffer)
+                        .map_err(ClusterDdlError::CheckConstraintValidation)?;
                 }
                 Ok(())
             });

@@ -29,8 +29,8 @@ use tidb_exec::cluster_catalog::{
     load_cluster_catalog, prefix_scan_end, ClusterCatalogError, MetaPairs, MetaSnapshot,
 };
 use tidb_exec::cluster_ddl::{
-    lower_ddl, lower_ddl_with_context, plan_ddl, plan_ddl_with_collation, DdlPlan, DdlPlanError,
-    DdlStatement,
+    lower_ddl, lower_ddl_with_context, plan_ddl, plan_ddl_with_collation, AlterColumnAction,
+    DdlPlan, DdlPlanError, DdlStatement,
 };
 use tidb_exec::table_info_build::{build_table_info, ClusteredIndexDefMode};
 use tidb_meta::{key, value};
@@ -3036,6 +3036,440 @@ fn a_check_constraint_is_ignored_with_gos_warning() {
         2,
         "one warning per ignored CHECK spelling"
     );
+}
+
+#[test]
+fn enabled_create_check_constraints_persist_gos_metadata_and_errors() {
+    let context =
+        tidb_executor::StmtContext::for_query().with_enable_check_constraint(true);
+    let parsed = tidb_parser::parse(
+        "CREATE TABLE ck (v INT CHECK (v > 0), CONSTRAINT big CHECK (v < 100) NOT ENFORCED)",
+    )
+    .expect("parses");
+    let statement = lower_ddl_with_context(&parsed, "u6", &context)
+        .expect("enabled CHECK DDL is admitted")
+        .expect("a catalog change");
+    let DdlStatement::CreateTable { build, .. } = statement else {
+        panic!("a CreateTable");
+    };
+    let constraints = build
+        .template()
+        .constraints
+        .iter_deref()
+        .collect::<Vec<_>>();
+    assert_eq!(constraints.len(), 2);
+    let table_check = constraints[0].read();
+    assert_eq!(table_check.id, 1);
+    assert_eq!(table_check.name.original(), "big");
+    assert_eq!(table_check.constraint_cols[0].original(), "v");
+    assert_eq!(table_check.expr_string, "`v` < 100");
+    assert!(!table_check.enforced);
+    assert!(!table_check.in_column);
+    assert_eq!(table_check.state, tidb_model::SchemaState::PUBLIC);
+    drop(table_check);
+    let column_check = constraints[1].read();
+    assert_eq!(column_check.id, 2);
+    assert_eq!(column_check.name.original(), "ck_chk_1");
+    assert_eq!(column_check.expr_string, "`v` > 0");
+    assert!(column_check.enforced);
+    assert!(column_check.in_column);
+    assert_eq!(context.warning_count(), 0);
+
+    let refusal = |sql: &str| {
+        let parsed = tidb_parser::parse(sql).expect("error fixture parses");
+        lower_ddl_with_context(&parsed, "u6", &context)
+            .expect_err("enabled Go CHECK validation rejects the fixture")
+    };
+    let duplicate = refusal(
+        "CREATE TABLE ck (v INT, CONSTRAINT c CHECK(v > 0), CONSTRAINT c CHECK(v < 2))",
+    );
+    assert_eq!(duplicate.code, 3822);
+    assert_eq!(duplicate.reason, "Duplicate check constraint name 'c'.");
+    let missing = refusal("CREATE TABLE ck (v INT, CONSTRAINT c CHECK(absent > 0))");
+    assert_eq!(missing.code, 3820);
+    assert_eq!(
+        missing.reason,
+        "Check constraint 'c' refers to non-existing column 'absent'."
+    );
+    let cross_column = refusal("CREATE TABLE ck (v INT CHECK(v < other), other INT)");
+    assert_eq!(cross_column.code, 3813);
+    assert_eq!(
+        cross_column.reason,
+        "Column check constraint 'ck_chk_1' references other column."
+    );
+    let auto_increment =
+        refusal("CREATE TABLE ck (v INT AUTO_INCREMENT, CONSTRAINT c CHECK(v > 0))");
+    assert_eq!(auto_increment.code, 3818);
+    assert_eq!(
+        auto_increment.reason,
+        "Check constraint 'c' cannot refer to an auto-increment column."
+    );
+    let non_boolean = refusal("CREATE TABLE ck (v INT, CONSTRAINT c CHECK(v + 1))");
+    assert_eq!(non_boolean.code, 3812);
+    assert_eq!(
+        non_boolean.reason,
+        "An expression of non-boolean type specified to a check constraint 'c'."
+    );
+    let variable = refusal("CREATE TABLE ck (v INT, CONSTRAINT c CHECK(v > @limit))");
+    assert_eq!(variable.code, 3816);
+    assert_eq!(
+        variable.reason,
+        "An expression of a check constraint 'c' cannot refer to a user or system variable."
+    );
+    let function = refusal("CREATE TABLE ck (v INT, CONSTRAINT c CHECK(v < rand()))");
+    assert_eq!(function.code, 3814);
+    assert_eq!(
+        function.reason,
+        "An expression of a check constraint 'c' contains disallowed function: rand."
+    );
+}
+
+#[test]
+fn enabled_alter_check_constraints_use_the_catalog_path_and_keep_ids_monotonic() {
+    let context =
+        tidb_executor::StmtContext::for_query().with_enable_check_constraint(true);
+    let lower = |sql: &str| {
+        let parsed = tidb_parser::parse(sql).expect("CHECK DDL parses");
+        lower_ddl_with_context(&parsed, "u6", &context)
+            .expect("CHECK DDL is admitted")
+            .expect("CHECK DDL owns a catalog route")
+    };
+    let mut store = bootstrapped();
+
+    let create = plan_ddl(
+        &mut store,
+        &lower("CREATE TABLE ck_alter (a INT, CONSTRAINT first CHECK (a > 0) NOT ENFORCED)"),
+        1_000,
+    )
+    .expect("CREATE plans");
+    let DdlPlan::Write(create) = create else {
+        panic!("CREATE writes metadata")
+    };
+    let table_id = create.created_id.expect("CREATE allocates a table id");
+    apply(&mut store, &create);
+
+    let add = plan_ddl(
+        &mut store,
+        &lower("ALTER TABLE ck_alter ADD CONSTRAINT c_second CHECK (a < 10)"),
+        1_001,
+    )
+    .expect("ADD CHECK plans");
+    let DdlPlan::Write(add) = add else {
+        panic!("ADD CHECK writes metadata")
+    };
+    assert_eq!(add.diff.action_type, tidb_model::ActionType::ACTION_ADD_CHECK_CONSTRAINT);
+    assert_eq!(
+        add.check_constraint_validation
+            .as_ref()
+            .expect("an enforced ADD validates rows")
+            .constraint_name,
+        "c_second"
+    );
+    let added: tidb_model::TableInfo = serde_json::from_slice(stored_value(
+        &add,
+        &key::table_kv_key(112, table_id),
+    ))
+    .expect("candidate table decodes");
+    assert_eq!(added.max_constraint_id, 2);
+    assert_eq!(added.constraints.len(), 2);
+    apply(&mut store, &add);
+
+    let disable = plan_ddl(
+        &mut store,
+        &lower("ALTER TABLE ck_alter ALTER CONSTRAINT c_second NOT ENFORCED"),
+        1_002,
+    )
+    .expect("ALTER CHECK plans");
+    let DdlPlan::Write(disable) = disable else {
+        panic!("ALTER CHECK writes metadata")
+    };
+    assert!(disable.check_constraint_validation.is_none());
+    apply(&mut store, &disable);
+
+    let drop = plan_ddl(
+        &mut store,
+        &lower("ALTER TABLE ck_alter DROP CONSTRAINT c_second"),
+        1_003,
+    )
+    .expect("DROP CHECK plans");
+    let DdlPlan::Write(drop) = drop else {
+        panic!("DROP CHECK writes metadata")
+    };
+    let dropped: tidb_model::TableInfo = serde_json::from_slice(stored_value(
+        &drop,
+        &key::table_kv_key(112, table_id),
+    ))
+    .expect("candidate table decodes");
+    assert_eq!(dropped.max_constraint_id, 2, "DROP keeps the allocator high-water mark");
+    assert_eq!(dropped.constraints.len(), 1);
+    apply(&mut store, &drop);
+
+    let readd = plan_ddl(
+        &mut store,
+        &lower("ALTER TABLE ck_alter ADD CONSTRAINT c_third CHECK (a < 20) NOT ENFORCED"),
+        1_004,
+    )
+    .expect("second ADD plans");
+    let DdlPlan::Write(readd) = readd else {
+        panic!("second ADD writes metadata")
+    };
+    let readded: tidb_model::TableInfo = serde_json::from_slice(stored_value(
+        &readd,
+        &key::table_kv_key(112, table_id),
+    ))
+    .expect("candidate table decodes");
+    assert_eq!(readded.max_constraint_id, 3);
+    assert_eq!(readded.constraints.iter_deref().last().unwrap().read().id, 3);
+    assert!(readd.check_constraint_validation.is_none());
+}
+
+#[test]
+fn check_constraints_follow_go_for_column_dependencies_and_create_like() {
+    let context =
+        tidb_executor::StmtContext::for_query().with_enable_check_constraint(true);
+    let lower = |sql: &str| {
+        let parsed = tidb_parser::parse(sql).expect("CHECK DDL parses");
+        lower_ddl_with_context(&parsed, "u6", &context)
+            .expect("CHECK DDL is admitted")
+            .expect("CHECK DDL owns a catalog route")
+    };
+    let mut store = bootstrapped();
+
+    let create = plan_ddl(
+        &mut store,
+        &lower(
+            "CREATE TABLE ck_dep (a INT, b INT, \
+             CONSTRAINT c_pair CHECK (a < b) NOT ENFORCED, \
+             CONSTRAINT c_one CHECK (b > 0) NOT ENFORCED)",
+        ),
+        1_100,
+    )
+    .expect("CREATE plans");
+    let DdlPlan::Write(create) = create else {
+        panic!("CREATE writes metadata")
+    };
+    apply(&mut store, &create);
+
+    let rename = plan_ddl(
+        &mut store,
+        &lower("ALTER TABLE ck_dep RENAME COLUMN a TO a"),
+        1_101,
+    )
+    .expect_err("Go checks CHECK dependencies before its same-name no-op");
+    let DdlPlanError::Admission(rename) = rename else {
+        panic!("expected a coded DDL refusal, got {rename:?}")
+    };
+    assert_eq!(rename.code, 3959);
+    assert_eq!(
+        rename.reason,
+        "Check constraint 'c_pair' uses column 'a', hence column cannot be dropped or renamed."
+    );
+
+    let drop_multi = plan_ddl(
+        &mut store,
+        &lower("ALTER TABLE ck_dep DROP COLUMN a"),
+        1_102,
+    )
+    .expect_err("a multi-column CHECK blocks DROP COLUMN");
+    let DdlPlanError::Admission(drop_multi) = drop_multi else {
+        panic!("expected a coded DDL refusal, got {drop_multi:?}")
+    };
+    assert_eq!(drop_multi.code, 3959);
+
+    let create_like = plan_ddl(
+        &mut store,
+        &lower("CREATE TABLE ck_copy LIKE ck_dep"),
+        1_103,
+    )
+    .expect("CREATE LIKE plans");
+    let DdlPlan::Write(create_like) = create_like else {
+        panic!("CREATE LIKE writes metadata")
+    };
+    let copy_id = create_like.created_id.expect("CREATE LIKE allocates a table id");
+    let copied: tidb_model::TableInfo = serde_json::from_slice(stored_value(
+        &create_like,
+        &key::table_kv_key(112, copy_id),
+    ))
+    .expect("copied table decodes");
+    assert_eq!(copied.max_constraint_id, 2);
+    let copied_constraints = copied
+        .constraints
+        .iter_deref()
+        .map(|constraint| {
+            let constraint = constraint.read();
+            (
+                constraint.id,
+                constraint.name.original().to_owned(),
+                constraint.table.original().to_owned(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        copied_constraints,
+        vec![
+            (1, "ck_copy_chk_1".to_owned(), "ck_copy".to_owned()),
+            (2, "ck_copy_chk_2".to_owned(), "ck_copy".to_owned()),
+        ]
+    );
+
+    let drop_pair = plan_ddl(
+        &mut store,
+        &lower("ALTER TABLE ck_dep DROP CONSTRAINT c_pair"),
+        1_104,
+    )
+    .expect("DROP CHECK plans");
+    let DdlPlan::Write(drop_pair) = drop_pair else {
+        panic!("DROP CHECK writes metadata")
+    };
+    apply(&mut store, &drop_pair);
+
+    let drop_single = plan_ddl(
+        &mut store,
+        &lower("ALTER TABLE ck_dep DROP COLUMN b"),
+        1_105,
+    )
+    .expect("a single-column CHECK does not block DROP COLUMN");
+    let DdlPlan::Write(drop_single) = drop_single else {
+        panic!("DROP COLUMN writes metadata")
+    };
+    let source_id = create.created_id.expect("CREATE allocated a table id");
+    let dropped: tidb_model::TableInfo = serde_json::from_slice(stored_value(
+        &drop_single,
+        &key::table_kv_key(112, source_id),
+    ))
+    .expect("post-DROP table decodes");
+    assert!(dropped.constraints.is_empty());
+    assert_eq!(
+        dropped.max_constraint_id, 2,
+        "lazy removal does not rewind Go's constraint allocator"
+    );
+}
+
+#[test]
+fn inline_add_column_check_matches_gos_discard_and_off_warning() {
+    let mut store = bootstrapped();
+    let enabled =
+        tidb_executor::StmtContext::for_query().with_enable_check_constraint(true);
+    let create = tidb_parser::parse("CREATE TABLE ck_inline (a INT)").expect("CREATE parses");
+    let create = lower_ddl_with_context(&create, "u6", &enabled)
+        .expect("CREATE is admitted")
+        .expect("CREATE owns a catalog route");
+    let create = plan_ddl(&mut store, &create, 1_200).expect("CREATE plans");
+    let DdlPlan::Write(create) = create else {
+        panic!("CREATE writes metadata")
+    };
+    let table_id = create.created_id.expect("CREATE allocates a table id");
+    apply(&mut store, &create);
+
+    let add = tidb_parser::parse(
+        "ALTER TABLE ck_inline ADD COLUMN b INT CONSTRAINT c_inline CHECK (b > 0)",
+    )
+    .expect("ADD COLUMN parses");
+    let add = lower_ddl_with_context(&add, "u6", &enabled)
+        .expect("Go admits an inline ADD COLUMN CHECK")
+        .expect("ADD COLUMN owns a catalog route");
+    let add = plan_ddl(&mut store, &add, 1_201).expect("ADD COLUMN plans");
+    let DdlPlan::Write(add) = add else {
+        panic!("ADD COLUMN writes metadata")
+    };
+    let added: tidb_model::TableInfo = serde_json::from_slice(stored_value(
+        &add,
+        &key::table_kv_key(112, table_id),
+    ))
+    .expect("post-ADD table decodes");
+    assert_eq!(added.columns.len(), 2);
+    assert!(added.constraints.is_empty());
+    assert_eq!(enabled.warning_count(), 0);
+
+    let off = tidb_executor::StmtContext::for_query();
+    let add_off = tidb_parser::parse(
+        "ALTER TABLE ck_inline ADD COLUMN c INT CONSTRAINT c_off CHECK (c > 0)",
+    )
+    .expect("second ADD COLUMN parses");
+    let add_off = lower_ddl_with_context(&add_off, "u6", &off)
+        .expect("Go admits the OFF form")
+        .expect("ADD COLUMN owns a catalog route");
+    let _ = plan_ddl(&mut store, &add_off, 1_202).expect("OFF ADD COLUMN plans");
+    assert_eq!(off.warning_count(), 1);
+    assert_eq!(
+        off.take_warnings()[0].2,
+        "tidb_enable_check_constraint is off"
+    );
+}
+
+#[test]
+fn grouped_add_columns_splits_table_check_into_one_multi_schema_change() {
+    let mut store = bootstrapped();
+    let context =
+        tidb_executor::StmtContext::for_query().with_enable_check_constraint(true);
+    let lower = |sql: &str, context: &tidb_executor::StmtContext| {
+        let parsed = tidb_parser::parse(sql).expect("grouped ADD parses");
+        lower_ddl_with_context(&parsed, "u6", context)
+            .expect("grouped ADD is admitted")
+            .expect("grouped ADD owns a catalog route")
+    };
+    let create = lower("CREATE TABLE ck_grouped (a INT)", &context);
+    let create = plan_ddl(&mut store, &create, 1_300).expect("CREATE plans");
+    let DdlPlan::Write(create) = create else {
+        panic!("CREATE writes metadata")
+    };
+    let table_id = create.created_id.expect("CREATE allocates a table id");
+    apply(&mut store, &create);
+
+    let grouped = lower(
+        "ALTER TABLE ck_grouped ADD COLUMN \
+         (b INT, CONSTRAINT c_grouped CHECK (b > 0))",
+        &context,
+    );
+    let DdlStatement::MultiSchemaChange { actions, .. } = &grouped else {
+        panic!("Go expands grouped ADD into one multi-schema job")
+    };
+    assert!(matches!(actions[0], AlterColumnAction::Add { .. }));
+    assert!(matches!(actions[1], AlterColumnAction::AddCheck { .. }));
+    let grouped = plan_ddl(&mut store, &grouped, 1_301).expect("grouped ADD plans");
+    let DdlPlan::Write(grouped) = grouped else {
+        panic!("grouped ADD writes metadata")
+    };
+    assert_eq!(
+        grouped.diff.action_type,
+        tidb_model::ActionType::ACTION_MULTI_SCHEMA_CHANGE
+    );
+    let validation = grouped
+        .check_constraint_validation
+        .as_ref()
+        .expect("an enforced grouped CHECK validates existing rows");
+    assert_eq!(validation.constraint_name, "c_grouped");
+    let changed: tidb_model::TableInfo = serde_json::from_slice(stored_value(
+        &grouped,
+        &key::table_kv_key(112, table_id),
+    ))
+    .expect("grouped candidate decodes");
+    assert_eq!(changed.columns.len(), 2);
+    assert_eq!(changed.constraints.len(), 1);
+    assert_eq!(
+        changed
+            .constraints
+            .iter_deref()
+            .next()
+            .unwrap()
+            .read()
+            .name
+            .original(),
+        "c_grouped"
+    );
+
+    let off = tidb_executor::StmtContext::for_query();
+    let grouped_off = lower(
+        "ALTER TABLE ck_grouped ADD COLUMN \
+         (c INT, CONSTRAINT c_off CHECK (c > 0))",
+        &off,
+    );
+    let DdlStatement::MultiSchemaChange { actions, .. } = &grouped_off else {
+        panic!("the surviving ADD COLUMN still owns a multi-schema job")
+    };
+    assert_eq!(actions.len(), 1);
+    assert!(matches!(actions[0], AlterColumnAction::Add { .. }));
+    assert_eq!(off.warning_count(), 1);
 }
 
 /// Go `onAddColumn`'s write-reorganization step: the column is appended,

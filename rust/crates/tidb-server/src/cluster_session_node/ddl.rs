@@ -27,12 +27,14 @@ use tidb_txnkv::PdRegionLoader;
 
 use tidb_exec::catalog_reload::ReloadedCatalog;
 use tidb_exec::catalog_watch::SharedCatalog as SharedClusterCatalog;
-use tidb_exec::cluster_ddl::{DdlStatement, ExchangePartitionValidation, IndexBackfill};
+use tidb_exec::cluster_ddl::{
+    CheckConstraintValidation, DdlStatement, ExchangePartitionValidation, IndexBackfill,
+};
 use tidb_exec::pessimistic_lock_error::LockSqlError;
 use tidb_exec::real_tikv_catalog::reload_catalog_from_cluster;
 use tidb_exec::real_tikv_ddl::{
-    commit_cluster_ddl_with_backfill, ClusterDdlReport, ExchangePartitionValidator,
-    IndexBackfiller, SchemaVersionNotifier,
+    commit_cluster_ddl_with_backfill, CheckConstraintValidator, ClusterDdlReport,
+    ExchangePartitionValidator, IndexBackfiller, SchemaVersionNotifier,
 };
 use tidb_exec::real_tikv_read::RealOptimisticTransactionOpener;
 use tidb_executor::cluster_storage::{ClusterSnapshot, ClusterTableStorage, MutationBuffer};
@@ -146,6 +148,7 @@ where
             notifier,
             &KvTableIndexBackfiller,
             &KvTableIndexBackfiller,
+            &KvTableIndexBackfiller,
         )
         .map_err(cluster_ddl_error)?;
         self.refresh_catalog();
@@ -255,6 +258,60 @@ impl ExchangePartitionValidator for KvTableIndexBackfiller {
                 .map_err(exchange_validation_table_error)?;
         }
         Ok(())
+    }
+}
+
+impl CheckConstraintValidator for KvTableIndexBackfiller {
+    fn validate(
+        &self,
+        plan: &CheckConstraintValidation,
+        snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
+        buffer: &MutationBuffer,
+    ) -> Result<(), LockSqlError> {
+        let storage = ClusterTableStorage::new(buffer.clone(), snapshot);
+        let mut table = cluster_table(&plan.table, &storage, &AutoIdSource::Unavailable)
+            .map_err(check_constraint_validation_internal)?;
+        let rows = table
+            .scan_rows_with_context(&RowDecodeContext::for_query(&plan.context.0))
+            .map_err(|error| {
+                check_constraint_validation_table_error(error, &plan.constraint_name)
+            })?;
+        for row in rows {
+            table
+                .validate_check_constraints(&row, &plan.context.0)
+                .map_err(|error| {
+                    check_constraint_validation_table_error(error, &plan.constraint_name)
+                })?;
+        }
+        Ok(())
+    }
+}
+
+fn check_constraint_validation_internal(message: String) -> LockSqlError {
+    LockSqlError {
+        code: 1105,
+        state: *b"HY000",
+        message,
+    }
+}
+
+fn check_constraint_validation_table_error(
+    error: tidb_executor::kv_table::KvTableError,
+    constraint_name: &str,
+) -> LockSqlError {
+    match error {
+        tidb_executor::kv_table::KvTableError::CheckConstraintViolated(name) => LockSqlError {
+            code: tidb_error::tidb::errcode::ErrCheckConstraintViolated,
+            state: *b"HY000",
+            message: format!("Check constraint '{name}' is violated."),
+        },
+        other => LockSqlError {
+            code: 1105,
+            state: *b"HY000",
+            message: format!(
+                "validation of check constraint '{constraint_name}' failed: {other:?}"
+            ),
+        },
     }
 }
 

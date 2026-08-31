@@ -2007,30 +2007,11 @@ impl Session {
                     result
                 }
                 DdlStmt::AlterTable(alter) => {
-                    // `CHECK` constraints reach ALTER TABLE through the same
-                    // `tidb_enable_check_constraint` model CREATE TABLE uses
-                    // (see `tidb_executor::run_create_table_in`): with the
-                    // variable ON, Go STORES and enforces an added
-                    // constraint, none of which is modelled, so it is refused
-                    // with the same reason rather than silently discarded.
-                    // `ALTER CONSTRAINT` is NOT in that gate: Go answers 3940
-                    // for it when the variable is on, which this tier can
-                    // always say honestly because no table here holds one.
-                    let discarded_checks = tidb_executor::discarded_check_constraint_actions(alter);
-                    if self.enable_check_constraint() {
-                        if tidb_executor::added_check_constraint_actions(alter) > 0 {
-                            return Err(DriverError::unsupported(
-                                "CHECK constraints are only modelled with \
-                                 tidb_enable_check_constraint off",
-                            ));
-                        }
-                        if let Some(name) = alter.actions.iter().find_map(|action| match action {
-                            tidb_ast::AlterTableAction::AlterCheck(alter) => Some(&alter.name),
-                            _ => None,
-                        }) {
-                            return Err(DriverError::CheckConstraintNotExists(name.clone()));
-                        }
-                    }
+                    let discarded_checks = if self.enable_check_constraint() {
+                        0
+                    } else {
+                        tidb_executor::discarded_check_constraint_actions(alter)
+                    };
                     let current_db = self.current_db.clone();
                     // `ADD INDEX` backfills, so the same write level applies.
                     let ctx = self.statement_context(true);
