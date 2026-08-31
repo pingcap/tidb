@@ -23,6 +23,7 @@
 //! add up. Everything below is read at a single `start_ts`.
 
 use std::collections::BTreeMap;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use tidb_datatype::FieldType;
@@ -215,20 +216,111 @@ pub fn load_initial_stats_snapshot<S: MetaSnapshot>(
     table_ids: &[i64],
     mode: InitialStatsLoad,
 ) -> Result<StatsSnapshot, SystemTableError> {
+    let total_memory = if mode == InitialStatsLoad::IndexFull {
+        tidb_util::cgroup::effective_memory_limit()
+            .map_err(|error| SystemTableError::Snapshot(error.to_string()))?
+    } else {
+        u64::MAX
+    };
+    let memory_quota = tidb_vardef::STATS_CACHE_MEM_QUOTA.load(Ordering::SeqCst);
+    load_initial_stats_snapshot_with_memory_limits(
+        snapshot,
+        loader,
+        tables,
+        table_ids,
+        mode,
+        total_memory,
+        memory_quota,
+    )
+}
+
+/// Go `Handle.InitStats` with its two cache-full inputs made explicit. This
+/// keeps the production system-memory probe and global quota outside the
+/// deterministic storage-stage policy.
+#[allow(clippy::too_many_arguments)]
+pub fn load_initial_stats_snapshot_with_memory_limits<S: MetaSnapshot>(
+    snapshot: &mut S,
+    loader: &ClusterStatsLoader,
+    tables: &[StatsTarget],
+    table_ids: &[i64],
+    mode: InitialStatsLoad,
+    total_memory: u64,
+    memory_quota: i64,
+) -> Result<StatsSnapshot, SystemTableError> {
+    if mode == InitialStatsLoad::Lite {
+        return load_initial_stats_phase(
+            snapshot,
+            loader,
+            tables,
+            table_ids,
+            |loader, snapshot, target| {
+                loader.load_table_lite(snapshot, target.table.id, &target.column_types)
+            },
+        );
+    }
+
+    let mut histograms = StatsSnapshot::new();
+    let mut consumed = 0u64;
+    for target in selected_stats_targets(tables, table_ids) {
+        let loaded = if initial_stats_cache_is_full(consumed, total_memory, memory_quota) {
+            loader.load_table_lite(snapshot, target.table.id, &target.column_types)?
+        } else {
+            loader.load_table_for_init_stats_histograms(
+                snapshot,
+                target.table.id,
+                &target.column_types,
+            )?
+        };
+        insert_initial_stats_state(&mut histograms, &mut consumed, target, loaded);
+    }
+
+    let mut topn = histograms;
+    for target in selected_stats_targets(tables, table_ids) {
+        if initial_stats_cache_is_full(consumed, total_memory, memory_quota) {
+            break;
+        }
+        let loaded = loader.load_table_for_init_stats_topn(
+            snapshot,
+            target.table.id,
+            &target.column_types,
+        )?;
+        insert_initial_stats_state(&mut topn, &mut consumed, target, loaded);
+    }
+
+    let mut buckets = topn;
+    for target in selected_stats_targets(tables, table_ids) {
+        if initial_stats_cache_is_full(consumed, total_memory, memory_quota) {
+            break;
+        }
+        let loaded =
+            loader.load_table_for_init_stats(snapshot, target.table.id, &target.column_types)?;
+        insert_initial_stats_state(&mut buckets, &mut consumed, target, loaded);
+    }
+    Ok(buckets)
+}
+
+fn load_initial_stats_phase<S, F>(
+    snapshot: &mut S,
+    loader: &ClusterStatsLoader,
+    tables: &[StatsTarget],
+    table_ids: &[i64],
+    mut load: F,
+) -> Result<StatsSnapshot, SystemTableError>
+where
+    S: MetaSnapshot,
+    F: FnMut(
+        &ClusterStatsLoader,
+        &mut S,
+        &StatsTarget,
+    ) -> Result<Option<ClusterTableStats>, SystemTableError>,
+{
     let mut result = StatsSnapshot::new();
     for target in tables {
         let table_id = target.table.id;
         if !table_ids.is_empty() && !table_ids.contains(&table_id) {
             continue;
         }
-        let loaded = match mode {
-            InitialStatsLoad::Lite => {
-                loader.load_table_lite(snapshot, table_id, &target.column_types)?
-            }
-            InitialStatsLoad::IndexFull => {
-                loader.load_table_for_init_stats(snapshot, table_id, &target.column_types)?
-            }
-        };
+        let loaded = load(loader, snapshot, target)?;
         let state = match loaded {
             Some(stats) => TableStatsState::Loaded(stats.to_statistics_table(&target.table)),
             None => TableStatsState::Pseudo,
@@ -236,6 +328,45 @@ pub fn load_initial_stats_snapshot<S: MetaSnapshot>(
         result.insert(table_id, state);
     }
     Ok(result)
+}
+
+fn selected_stats_targets<'a>(
+    tables: &'a [StatsTarget],
+    table_ids: &'a [i64],
+) -> impl Iterator<Item = &'a StatsTarget> {
+    tables
+        .iter()
+        .filter(|target| table_ids.is_empty() || table_ids.contains(&target.table.id))
+}
+
+fn insert_initial_stats_state(
+    result: &mut StatsSnapshot,
+    consumed: &mut u64,
+    target: &StatsTarget,
+    loaded: Option<ClusterTableStats>,
+) {
+    let state = match loaded {
+        Some(stats) => TableStatsState::Loaded(stats.to_statistics_table(&target.table)),
+        None => TableStatsState::Pseudo,
+    };
+    let new_memory = initial_stats_state_memory(&state);
+    let old_memory = result
+        .insert(target.table.id, state)
+        .as_ref()
+        .map_or(0, initial_stats_state_memory);
+    *consumed = consumed
+        .saturating_sub(old_memory)
+        .saturating_add(new_memory);
+}
+
+fn initial_stats_state_memory(state: &TableStatsState) -> u64 {
+    state.loaded().map_or(0, |table| {
+        table.memory_usage().total_mem_usage.max(0) as u64
+    })
+}
+
+fn initial_stats_cache_is_full(consumed: u64, total_memory: u64, memory_quota: i64) -> bool {
+    consumed >= total_memory / 4 || (memory_quota != 0 && consumed >= memory_quota.max(0) as u64)
 }
 
 /// Pinned Go `StatsCacheImpl.Update`: with a positive lease, refreshes the

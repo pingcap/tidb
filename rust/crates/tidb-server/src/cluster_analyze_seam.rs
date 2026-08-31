@@ -162,7 +162,7 @@ where
         ) {
             Ok(snapshot) => {
                 let receipt = tidb_exec::stats_watch::receipt_of(&snapshot);
-                self.stats.store(snapshot);
+                self.stats.store_after_analyze(snapshot);
                 eprintln!(
                     "{{\"event\":\"stats_reloaded_after_analyze\",\"loaded\":{},\"pseudo\":{}}}",
                     receipt.loaded, receipt.pseudo

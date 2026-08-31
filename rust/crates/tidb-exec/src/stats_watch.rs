@@ -192,6 +192,16 @@ impl SharedStats {
 
     /// Replaces the published snapshot atomically.
     pub fn store(&self, snapshot: StatsSnapshot) {
+        self.store_with_version_policy(snapshot, false);
+    }
+
+    /// Go ANALYZE's targeted cache publication: replace table objects without
+    /// advancing the cache lifecycle version in quota mode.
+    pub fn store_after_analyze(&self, snapshot: StatsSnapshot) {
+        self.store_with_version_policy(snapshot, true);
+    }
+
+    fn store_with_version_policy(&self, snapshot: StatsSnapshot, skip_move_forward: bool) {
         let mut guard = match self.published.write() {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
@@ -207,14 +217,20 @@ impl SharedStats {
             })
             .collect();
         let updated = snapshot
-            .values()
-            .filter_map(TableStatsState::loaded)
-            .cloned()
+            .iter()
+            .filter_map(|(table_id, state)| {
+                let next = state.loaded()?;
+                let unchanged = guard
+                    .get(table_id)
+                    .and_then(TableStatsState::loaded)
+                    .is_some_and(|current| Arc::ptr_eq(current, next));
+                (!unchanged).then(|| Arc::clone(next))
+            })
             .collect();
         self.cache.update_stats_cache(CacheUpdate {
             updated,
             deleted,
-            skip_move_forward: false,
+            skip_move_forward,
         });
         *guard = Arc::new(self.snapshot_with_cache_objects(snapshot));
     }
@@ -697,6 +713,15 @@ mod tests {
         // the new one -- the whole consistency contract of the swap.
         assert_eq!(held[&1].version(), Some(10));
         assert_eq!(shared.load()[&1].version(), Some(20));
+    }
+
+    #[test]
+    fn analyze_publication_does_not_advance_the_cache_lifecycle_version() {
+        let shared = shared_stats(StatsSnapshot::from([loaded_at(1, 10)]));
+        assert_eq!(shared.next_check_version_with_offset(Duration::ZERO), 10);
+        shared.store_after_analyze(StatsSnapshot::from([loaded_at(1, 20)]));
+        assert_eq!(shared.load()[&1].version(), Some(20));
+        assert_eq!(shared.next_check_version_with_offset(Duration::ZERO), 10);
     }
 
     #[test]

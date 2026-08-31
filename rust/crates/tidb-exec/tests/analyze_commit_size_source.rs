@@ -66,7 +66,8 @@ use tidb_exec::mysql_bootstrap::{plan_mysql_bootstrap, BootstrapEnvironment, Boo
 use tidb_exec::mysql_system_tables::{scan_system_table, SystemRow, SystemTableView};
 use tidb_exec::real_tikv_analyze::ANALYZE_MAX_MUTATIONS;
 use tidb_exec::real_tikv_stats::{
-    load_initial_stats_snapshot, InitialStatsLoad, StatsTarget,
+    load_initial_stats_snapshot, load_initial_stats_snapshot_with_memory_limits,
+    InitialStatsLoad, StatsTarget,
 };
 use tidb_executor::analyze::{AnalyzeColumnChoice, AnalyzeOptionOverrides};
 use tidb_model::column::ColumnInfo;
@@ -890,12 +891,14 @@ fn initial_stats_matches_go_table_scope_and_payload_shapes() {
         assert!(index.read().unwrap().is_all_evicted());
     }
 
-    let non_lite = load_initial_stats_snapshot(
+    let non_lite = load_initial_stats_snapshot_with_memory_limits(
         &mut store,
         &loader,
         &targets,
         &[],
         InitialStatsLoad::IndexFull,
+        u64::MAX,
+        0,
     )
     .expect("non-lite initialization loads every current table");
     assert_eq!(non_lite.keys().next_back().copied(), Some(4251));
@@ -906,6 +909,130 @@ fn initial_stats_matches_go_table_scope_and_payload_shapes() {
         let index = table.hist_coll.get_index(2).expect("index exists");
         assert!(index.read().unwrap().is_full_load());
     }
+
+    let histogram_stage = loader
+        .load_table_for_init_stats_histograms(
+            &mut store,
+            targets[0].table.id,
+            &targets[0].column_types,
+        )
+        .expect("histogram stage loads")
+        .expect("stats_meta exists")
+        .to_statistics_table(&targets[0].table);
+    let topn_stage = loader
+        .load_table_for_init_stats_topn(
+            &mut store,
+            targets[0].table.id,
+            &targets[0].column_types,
+        )
+        .expect("TopN stage loads")
+        .expect("stats_meta exists")
+        .to_statistics_table(&targets[0].table);
+    let histogram_memory = histogram_stage.memory_usage().total_mem_usage;
+    let topn_memory = topn_stage.memory_usage().total_mem_usage;
+    assert!(topn_memory > histogram_memory);
+
+    let memory_limited = load_initial_stats_snapshot_with_memory_limits(
+        &mut store,
+        &loader,
+        &targets[..1],
+        &[],
+        InitialStatsLoad::IndexFull,
+        u64::MAX,
+        topn_memory,
+    )
+    .expect("memory-limited initialization completes");
+    let table = memory_limited[&4242]
+        .loaded()
+        .expect("analyzed table is loaded");
+    let index = table.hist_coll.get_index(2).expect("index exists");
+    let index = index.read().unwrap();
+    assert!(
+        index
+            .top_n
+            .as_ref()
+            .is_some_and(|topn| topn.total_count() > 0)
+    );
+    assert!(index.histogram.buckets.is_empty());
+    assert!(!index.is_full_load());
+}
+
+#[test]
+fn initial_stats_handles_missing_histograms_and_topn_without_buckets() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let empty_id = 4260;
+    let topn_only_id = 4261;
+    let initial = plan_loaded_stats_meta_write(
+        &mut store,
+        &catalog,
+        empty_id,
+        6,
+        6,
+        100,
+        now(),
+    )
+    .expect("metadata-only table plans");
+    apply_mutations(&mut store, &initial.mutations);
+
+    let mut topn_only = full_histogram(2, true);
+    topn_only.histogram.buckets.clear();
+    let stats = ClusterTableStats {
+        table_id: topn_only_id,
+        version: 101,
+        snapshot: 101,
+        last_analyze_version: 101,
+        last_stats_hist_version: 101,
+        modify_count: 0,
+        row_count: 6,
+        columns: Vec::new(),
+        indexes: vec![topn_only],
+    };
+    let plan = plan_stats_write(&mut store, &catalog, &stats, now()).expect("TopN plans");
+    apply_mutations(&mut store, &plan.mutations);
+
+    let target = |table_id| StatsTarget {
+        table: TableInfo {
+            id: table_id,
+            indices: vec![IndexInfo {
+                id: 2,
+                name: CiString::new("idx_a"),
+                state: SchemaState::PUBLIC,
+                ..IndexInfo::default()
+            }]
+            .into(),
+            ..TableInfo::default()
+        },
+        column_types: BTreeMap::new(),
+    };
+    let targets = [target(empty_id), target(topn_only_id)];
+    let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
+    let loaded = load_initial_stats_snapshot_with_memory_limits(
+        &mut store,
+        &loader,
+        &targets,
+        &[],
+        InitialStatsLoad::IndexFull,
+        u64::MAX,
+        0,
+    )
+    .expect("initial statistics load");
+
+    let empty = loaded[&empty_id]
+        .loaded()
+        .expect("stats_meta makes the table non-pseudo");
+    assert_eq!(empty.hist_coll.realtime_count, 6);
+    assert_eq!(empty.hist_coll.index_count(), 0);
+    assert_eq!(empty.hist_coll.column_count(), 0);
+
+    let topn_only = loaded[&topn_only_id]
+        .loaded()
+        .expect("analyzed table loads");
+    let index = topn_only.hist_coll.get_index(2).expect("index loads");
+    let index = index.read().unwrap();
+    assert!(index.is_full_load());
+    assert!(index.histogram.buckets.is_empty());
+    assert_eq!(index.top_n.as_ref().expect("TopN loads").total_count(), 700);
 }
 
 /// Pinned Go `StatsCacheImpl.Update` does not evict an item merely because a
@@ -2164,6 +2291,31 @@ fn stats_delta_updates_match_go_positive_negative_and_locked_rows() {
     assert_eq!(row.u64("version").unwrap(), Some(103));
     assert_eq!(row.i64("modify_count").unwrap(), Some(3));
     assert_eq!(row.i64("count").unwrap(), Some(-2));
+}
+
+#[test]
+fn stats_delta_batch_assigns_one_transaction_version_to_every_table() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let updates = [4246, 4247].map(|table_id| DeltaUpdate {
+        table_id,
+        delta: TableDelta {
+            delta: 3,
+            count: 3,
+            init_time: None,
+        },
+        is_locked: false,
+    });
+    apply_stats_delta_statements(&mut store, &catalog, &updates, 101, now())
+        .expect("one dump batch plans");
+
+    let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
+    for table_id in [4246, 4247] {
+        assert_eq!(
+            loader.load_meta(&mut store, table_id).expect("meta loads"),
+            Some((101, 0, 3, 3, 0))
+        );
+    }
 }
 
 #[test]

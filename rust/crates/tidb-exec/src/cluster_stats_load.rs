@@ -464,7 +464,63 @@ impl ClusterStatsLoader {
         table_id: i64,
         column_types: &BTreeMap<i64, FieldType>,
     ) -> Result<Option<ClusterTableStats>, SystemTableError> {
-        self.load_table_with_payload(snapshot, table_id, column_types, false, true, false)
+        self.load_table_with_payload_parts(
+            snapshot,
+            table_id,
+            column_types,
+            false,
+            true,
+            true,
+            true,
+            true,
+            false,
+        )
+    }
+
+    /// Go `initStatsHistogramsConcurrently`: load index histogram metadata
+    /// and CMSketch while leaving TopN and buckets evicted.
+    pub fn load_table_for_init_stats_histograms<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        table_id: i64,
+        column_types: &BTreeMap<i64, FieldType>,
+    ) -> Result<Option<ClusterTableStats>, SystemTableError> {
+        self.load_table_with_payload_parts(
+            snapshot,
+            table_id,
+            column_types,
+            false,
+            true,
+            false,
+            false,
+            false,
+            false,
+        )
+    }
+
+    /// Go `initStatsTopNConcurrently`: add index TopN but do not load
+    /// buckets. An index is complete at this stage only when its table has no
+    /// stored index bucket rows.
+    pub fn load_table_for_init_stats_topn<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        table_id: i64,
+        column_types: &BTreeMap<i64, FieldType>,
+    ) -> Result<Option<ClusterTableStats>, SystemTableError> {
+        let prefix = [Datum::Int(table_id), Datum::Int(1)];
+        let has_index_buckets =
+            !scan_system_table_prefixed(snapshot, &self.buckets, &prefix)?.is_empty();
+        self.load_table_with_payload_parts(
+            snapshot,
+            table_id,
+            column_types,
+            false,
+            true,
+            true,
+            false,
+            !has_index_buckets,
+            false,
+        )
     }
 
     /// Pinned async-global-stats `CheckSkipPartition`: whether this physical
@@ -745,26 +801,58 @@ impl ClusterStatsLoader {
         load_indexes: bool,
         load_fm: bool,
     ) -> Result<Option<ClusterTableStats>, SystemTableError> {
+        self.load_table_with_payload_parts(
+            snapshot,
+            table_id,
+            column_types,
+            load_columns,
+            load_indexes,
+            load_indexes,
+            load_indexes,
+            load_indexes,
+            load_fm,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn load_table_with_payload_parts<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        table_id: i64,
+        column_types: &BTreeMap<i64, FieldType>,
+        load_columns: bool,
+        load_index_cms: bool,
+        load_index_topn: bool,
+        load_index_buckets: bool,
+        mark_index_full: bool,
+        load_fm: bool,
+    ) -> Result<Option<ClusterTableStats>, SystemTableError> {
         let Some((version, snapshot_ts, modify_count, row_count, last_stats_hist_version)) =
             self.load_meta(snapshot, table_id)?
         else {
             return Ok(None);
         };
-        let payload_prefix = match (load_columns, load_indexes) {
+        let bucket_prefix = match (load_columns, load_index_buckets) {
             (true, true) => vec![Datum::Int(table_id)],
             (true, false) => vec![Datum::Int(table_id), Datum::Int(0)],
             (false, true) => vec![Datum::Int(table_id), Datum::Int(1)],
             (false, false) => Vec::new(),
         };
-        let buckets = if payload_prefix.is_empty() {
+        let buckets = if bucket_prefix.is_empty() {
             BTreeMap::new()
         } else {
-            self.load_buckets_prefixed(snapshot, &payload_prefix, column_types)?
+            self.load_buckets_prefixed(snapshot, &bucket_prefix, column_types)?
         };
-        let topn = if payload_prefix.is_empty() {
+        let topn_prefix = match (load_columns, load_index_topn) {
+            (true, true) => vec![Datum::Int(table_id)],
+            (true, false) => vec![Datum::Int(table_id), Datum::Int(0)],
+            (false, true) => vec![Datum::Int(table_id), Datum::Int(1)],
+            (false, false) => Vec::new(),
+        };
+        let topn = if topn_prefix.is_empty() {
             BTreeMap::new()
         } else {
-            self.load_topn_prefixed(snapshot, &payload_prefix)?
+            self.load_topn_prefixed(snapshot, &topn_prefix)?
         };
         let fm_sketches = if load_fm {
             self.load_fm_sketches(snapshot, table_id)?
@@ -790,7 +878,16 @@ impl ClusterStatsLoader {
                 continue;
             }
             let is_index = row.i64("is_index")?.unwrap_or_default() != 0;
-            let full_load = if is_index { load_indexes } else { load_columns };
+            let full_load = if is_index {
+                mark_index_full
+            } else {
+                load_columns
+            };
+            let decode_payload = if is_index {
+                load_index_cms || load_index_topn
+            } else {
+                load_columns
+            };
             let id = row.i64("hist_id")?.unwrap_or_default();
             let mut histogram = Histogram {
                 id,
@@ -808,14 +905,18 @@ impl ClusterStatsLoader {
                 histogram.correlation = 0.0;
             }
             let stats_ver = row.i64("stats_ver")?.unwrap_or_default();
-            let (cms, top) = if full_load {
-                let cms_bytes = (stats_ver <= 1)
+            let (cms, top) = if decode_payload {
+                let cms_bytes = (stats_ver <= 1 && (!is_index || load_index_cms))
                     .then(|| row.bytes("cm_sketch"))
                     .transpose()?
                     .flatten();
                 decode_cmsketch_and_topn(
                     cms_bytes.as_deref(),
-                    topn.get(&(is_index, id)).map_or(&[][..], Vec::as_slice),
+                    if !is_index || load_index_topn {
+                        topn.get(&(is_index, id)).map_or(&[][..], Vec::as_slice)
+                    } else {
+                        &[]
+                    },
                 )
                 .map_err(|error| SystemTableError::Decode {
                     name: self.histograms.name().to_owned(),
