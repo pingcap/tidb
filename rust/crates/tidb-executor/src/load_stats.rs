@@ -28,9 +28,9 @@
 //! * `pkg/statistics/handle/storage/stats_read_writer.go`
 //!   (`LoadStatsFromJSONNoUpdate`) resolves WHICH physical tables the dump
 //!   feeds -- the table itself, or its partitions by name plus the `global`
-//!   entry. That routing needs the session's catalog, so it lives in the
-//!   session arm (`tidb_session`'s `load_stats_arm`), exactly as Go keeps it
-//!   outside `json.go`.
+//!   entry. That routing needs the cluster catalog, so it lives beside the
+//!   durable statistics writer in `tidb_exec::cluster_load_stats`, exactly as
+//!   Go keeps it outside `json.go`.
 //!
 //! # What the bytes in the dump are
 //!

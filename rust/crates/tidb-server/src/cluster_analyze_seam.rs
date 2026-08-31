@@ -266,6 +266,7 @@ where
                     .and_then(tidb_exec::stats_watch::TableStatsState::loaded)
                     .is_some()
             },
+            0,
         )
         .map_err(cluster_load_stats_error)?;
         // Unlike ANALYZE, pinned Go returns `StatsHandle.Update` failure from

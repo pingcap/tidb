@@ -39,43 +39,58 @@ history, observes infoschema and partition state, performs memory and SQL-kill
 accounting, and coordinates concurrent JSON loading. The small arithmetic and
 SQL-formatting expressions are private implementation details of those paths.
 
-## Rust comparison and decision
+## Rust ownership map and current decision
 
-Rust had six public, disconnected leaves:
+The former disconnected arithmetic/SQL-string leaves and ignored test carrier
+were removed. Production ownership now spans native boundaries rather than a
+single crate:
 
-- `gc_batch_count.rs`
-- `json_stats_version.rs`
-- `stats_meta.rs`
-- `stats_meta_save_sql.rs`
-- `stats_meta_update.rs`
-- `stats_read_writer.rs`
+- `tidb-executor::load_stats` owns JSON/protobuf conversion and gzip blocks.
+- `tidb-exec::cluster_stats_load`, `cluster_stats_dump`,
+  `real_tikv_stats_dump`, and `cluster_stats_write` own canonical storage
+  reads, snapshot transaction boundaries, dumps, and mutation plans.
+- `tidb-exec::real_tikv_stats`, `real_tikv_load_stats`, and
+  `real_tikv_analyze` own real transaction boundaries and cache refresh.
+- `tidb-server` owns the MySQL client-local transfer and cluster session
+  integration.
 
-They accepted pre-decoded caller values and returned arithmetic decisions or
-SQL strings. Repository-wide symbol tracing found no production consumers;
-only their own tests called them. They did not execute a session transaction,
-touch storage, reconstruct statistics, update the cache, record history, or
-provide the Go `StatsReadWriter` contract. Rust also carried 28 ignored empty
-functions for the actual Go tests. Together these 13 source/test files were
-1,065 lines: 19 runnable tests exercised the invented leaves, while 28 ignored
-tests exercised no behavior.
+The current package pass closed three source-proven orchestration gaps:
 
-Completing this package now is not dependency-closed: the ordinary root
-statistics handle, its interface family, cache/storage session owner, typed
-statistics conversion surface, and several child services are still
-unclaimed. Therefore the detached leaves, their tests, and the empty test
-carrier were removed. The package remains explicitly unclaimed until those
-dependencies can land with all 11 artifacts and all 28 tests atomically.
+- Partition LOAD STATS now converts and persists inside the same capped worker
+  boundary as Go, returns the first error, recovers worker panics as errors,
+  and retains Go's direct nonpartitioned path.
+- `PersistStatsBySnapshot` now invokes the callback for absent
+  nonpartitioned statistics, skips absent partition/global statistics, keeps
+  schema order, visits global last, and stops on the first error.
+- `UpdateStatsMetaVersionForGC` now refreshes both metadata versions in one
+  real transaction and performs gated historical-meta recording afterward in
+  a separate best-effort transaction.
 
-This removal does not delete the independent Rust statistics model or native
-executor/session statistics paths whose owners are other Go packages.
+The obsolete standalone `tidb-session` LOAD STATS implementation and its tests
+were removed: it read a server-local path and published only an in-memory
+planner cache, while pinned Go receives bytes through client-local transfer,
+persists `mysql.stats_*`, and refreshes through the ordinary cache path.
 
-## WIP validation
+This receipt is still an in-progress whole-package claim. In particular,
+`UpdateStatsVersion` and `ChangeGlobalStatsID` remain to be integrated with
+their owning flashback/partitioning DDL behaviors, and the 28-test behavioral
+matrix has not yet completed its final package-wide validation gate.
 
-- `cargo check --locked -p tidb-stats` passed.
-- `cargo nextest run --locked -p tidb-stats -E 'not test(/bench/)' --no-fail-fast`
-  passed: 381 run, 381 passed, 154 skipped.
-- `rustfmt --edition 2021 --check crates/tidb-stats/src/lib.rs` passed.
+## Current WIP validation
+
+- `cargo test --locked -p tidb-exec cluster_load_stats::tests:: -- --nocapture`
+  passed: 5 tests.
+- `cargo test --locked -p tidb-exec real_tikv_load_stats::tests:: -- --nocapture`
+  passed: 4 tests.
+- `cargo test --locked -p tidb-exec cluster_stats_dump::tests:: -- --nocapture`
+  passed: 3 tests.
+- `cargo test --locked -p tidb-server --test all load_stats -- --nocapture`
+  passed outside the filesystem/network sandbox: 2 tests.
+- `cargo check --locked -p tidb-exec -p tidb-session -p tidb-server` passed.
+- `cargo fmt --all -- --check` passed.
 - `git diff --check` passed.
+- `make lint` passed.
 
-No Go or Bazel source changed, so `make bazel_prepare` was not required. This
-is a WIP package audit, not a repository-wide Ready parity claim.
+No Go or Bazel source changed, so `make bazel_prepare` is not required. This is
+an in-progress package receipt, not a package-completion or repository-wide
+parity claim.

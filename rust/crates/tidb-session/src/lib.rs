@@ -888,7 +888,6 @@ mod dispatch;
 mod explain_arm;
 mod identity;
 pub mod infoschema;
-mod load_stats_arm;
 mod non_prepared_plan_cache;
 mod noop;
 mod prepared_ast;
@@ -1945,8 +1944,6 @@ mod tests_join_predicate_placement;
 mod tests_join_reorder_cost;
 #[cfg(test)]
 mod tests_json;
-#[cfg(test)]
-mod tests_load_stats;
 #[cfg(test)]
 mod tests_mem_quota;
 mod tests_merge_join_mixed_key_types;

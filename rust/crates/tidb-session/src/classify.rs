@@ -397,8 +397,8 @@ impl Session {
             // `LOAD STATS` writes the same `mysql.stats_*` tables an
             // `ANALYZE` does (Go's `loadStatsFromJSON` ends in
             // `SaveColOrIdxStatsToStorage` + `SaveMetaToStorage`), so it
-            // classifies with it: routed at a cluster node when the tables
-            // live in the cluster, run by `crate::load_stats_arm` in-process.
+            // classifies with it and is routed to the cluster statistics
+            // writer.
             Stmt::Admin(admin)
                 if matches!(
                     admin.as_ref(),

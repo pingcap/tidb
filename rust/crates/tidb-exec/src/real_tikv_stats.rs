@@ -28,15 +28,27 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tidb_datatype::FieldType;
+use tidb_executor::cluster_storage::MutationBuffer;
 use tidb_model::table_info::TableInfo;
 use tidb_stats_handle_cache::{StatsMetaRow, StatsRefreshSource, UpdateError};
-use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
-use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
+use tidb_txnkv::transaction::{
+    RealOptimisticTransactionOpener, StorePdCapability, StoreWriteClient, StoreWriteLoader,
+    MAX_OPTIMISTIC_TRANSACTION_BYTES,
+};
 
 use crate::cluster_catalog::{load_cluster_catalog, MetaSnapshot};
 use crate::cluster_stats_load::{ClusterStatsItem, ClusterStatsLoader, ClusterTableStats};
+use crate::cluster_stats_write::{
+    plan_historical_stats_meta_lock, plan_historical_stats_meta_replace,
+    plan_stats_meta_version_refresh,
+};
+use crate::cluster_table_storage::{
+    commit_pessimistic_statement, lock_pessimistic_statement, PessimisticStatementTransactionError,
+    SessionTransaction,
+};
+use crate::mysql_bootstrap::local_now_datetime6;
 use crate::mysql_system_tables::SystemTableError;
-use crate::real_tikv_catalog::TransactionMetaSnapshot;
+use crate::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
 use crate::stats_watch::{SharedStats, StatsSnapshot, TableStatsState};
 
 /// The two startup shapes selected by Go `Domain.initStats`.
@@ -665,6 +677,88 @@ pub fn update_stats_cache_from_cluster<
                 SystemTableError::Snapshot("statistics update was cancelled".to_owned())
             }
         })
+}
+
+/// Pinned Go `statsReadWriter.UpdateStatsMetaVersionForGC` over real TiKV.
+///
+/// The metadata refresh is the returned transaction result. Historical-meta
+/// recording runs afterward in its own best-effort transaction and therefore
+/// cannot turn a successful refresh into an error. `record_history` is the
+/// already-evaluated Go historical-stats/cache-initialization gate.
+pub fn update_stats_meta_version_for_gc<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+>(
+    opener: &RealOptimisticTransactionOpener<C, L, P>,
+    physical_id: i64,
+    timeout: Duration,
+    record_history: bool,
+) -> Result<u64, PessimisticStatementTransactionError> {
+    let version = commit_pessimistic_statement(opener, timeout, |snapshot, version| {
+        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+        let catalog = load_cluster_catalog(&mut snapshot).map_err(|error| error.to_string())?;
+        let plan = plan_stats_meta_version_refresh(&mut snapshot, &catalog, physical_id, version)
+            .map_err(|error| error.to_string())?;
+        Ok((version, plan.mutations))
+    })?;
+    if record_history {
+        let _ =
+            record_historical_stats_meta(opener, physical_id, version, "schema change", timeout);
+    }
+    Ok(version)
+}
+
+/// Pinned Go `RecordHistoricalStatsMeta` as its own pessimistic transaction.
+pub fn record_historical_stats_meta<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+>(
+    opener: &RealOptimisticTransactionOpener<C, L, P>,
+    table_id: i64,
+    version: u64,
+    source: &str,
+    timeout: Duration,
+) -> Result<(), PessimisticStatementTransactionError> {
+    let transaction = SessionTransaction::begin_pessimistic_with_budget(
+        Arc::new(opener.clone()),
+        timeout,
+        opener.commit_protocol(),
+        usize::MAX,
+        MAX_OPTIMISTIC_TRANSACTION_BYTES,
+    )
+    .map_err(|error| PessimisticStatementTransactionError::Build(error.to_string()))?;
+    let staged = MutationBuffer::new();
+    let (modify_count, count) =
+        lock_pessimistic_statement(&transaction, &staged, |snapshot, _start_ts| {
+            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+            let catalog = load_cluster_catalog(&mut snapshot).map_err(|error| error.to_string())?;
+            let (counts, plan) =
+                plan_historical_stats_meta_lock(&mut snapshot, &catalog, table_id, version)
+                    .map_err(|error| error.to_string())?;
+            Ok((counts, plan.mutations))
+        })?;
+    lock_pessimistic_statement(&transaction, &staged, |snapshot, _start_ts| {
+        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+        let catalog = load_cluster_catalog(&mut snapshot).map_err(|error| error.to_string())?;
+        let plan = plan_historical_stats_meta_replace(
+            &mut snapshot,
+            &catalog,
+            table_id,
+            modify_count,
+            count,
+            version,
+            source,
+            local_now_datetime6(),
+        )
+        .map_err(|error| error.to_string())?;
+        Ok(((), plan.mutations))
+    })?;
+    transaction
+        .commit(&staged)
+        .map(|_| ())
+        .map_err(PessimisticStatementTransactionError::Transaction)
 }
 
 #[cfg(test)]

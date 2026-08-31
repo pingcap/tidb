@@ -62,6 +62,27 @@ impl From<LoadStatsError> for StatsDumpError {
     }
 }
 
+/// A failure from Go `PersistStatsBySnapshot`, preserving whether dumping or
+/// the caller-provided persistence callback failed.
+#[derive(Debug)]
+pub enum PersistStatsBySnapshotError<E> {
+    /// Reading or converting statistics failed before the callback.
+    Dump(StatsDumpError),
+    /// The persistence callback failed and iteration stopped immediately.
+    Persist(E),
+}
+
+impl<E: fmt::Display> fmt::Display for PersistStatsBySnapshotError<E> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Dump(error) => error.fmt(formatter),
+            Self::Persist(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl<E: fmt::Debug + fmt::Display> std::error::Error for PersistStatsBySnapshotError<E> {}
+
 /// Go `statsReadWriter.TableStatsToJSON`: reloads one physical table with all
 /// payload, refreshes its metadata and predicate usage from the same snapshot,
 /// and converts it to the shared JSON object model.
@@ -182,6 +203,22 @@ pub fn dump_stats_to_json<S: MetaSnapshot>(
     }))
 }
 
+pub(crate) fn persist_stats_by_snapshot_impl<E>(
+    physical_ids: &[i64],
+    persist_absent: bool,
+    mut dump: impl FnMut(i64) -> Result<Option<JsonTable>, StatsDumpError>,
+    mut persist: impl FnMut(Option<JsonTable>, i64) -> Result<(), E>,
+) -> Result<(), PersistStatsBySnapshotError<E>> {
+    for &physical_id in physical_ids {
+        let table = dump(physical_id).map_err(PersistStatsBySnapshotError::Dump)?;
+        if table.is_none() && !persist_absent {
+            continue;
+        }
+        persist(table, physical_id).map_err(PersistStatsBySnapshotError::Persist)?;
+    }
+    Ok(())
+}
+
 /// Pinned Go `storage.TableHistoricalStatsToJSON`.
 ///
 /// Metadata and payload versions are deliberately selected independently:
@@ -270,4 +307,75 @@ pub fn table_historical_stats_to_json<S: MetaSnapshot>(
     table.modify_count = modify_count;
     table.is_historical_stats = true;
     Ok(Some(table))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn persist_nonpartitioned_invokes_callback_for_absent_stats() {
+        let mut persisted = Vec::new();
+        persist_stats_by_snapshot_impl(
+            &[10],
+            true,
+            |_| Ok(None),
+            |table, physical_id| {
+                persisted.push((physical_id, table.is_some()));
+                Ok::<_, &'static str>(())
+            },
+        )
+        .unwrap();
+        assert_eq!(persisted, vec![(10, false)]);
+    }
+
+    #[test]
+    fn persist_partitioned_skips_absent_stats_and_keeps_schema_order() {
+        let mut persisted = Vec::new();
+        persist_stats_by_snapshot_impl(
+            &[11, 12, 10],
+            false,
+            |physical_id| {
+                Ok((physical_id != 12).then(|| JsonTable {
+                    count: physical_id,
+                    ..JsonTable::default()
+                }))
+            },
+            |table, physical_id| {
+                persisted.push((physical_id, table.unwrap().count));
+                Ok::<_, &'static str>(())
+            },
+        )
+        .unwrap();
+        assert_eq!(persisted, vec![(11, 11), (10, 10)]);
+    }
+
+    #[test]
+    fn persist_partitioned_stops_on_first_callback_error() {
+        let mut persisted = Vec::new();
+        let error = persist_stats_by_snapshot_impl(
+            &[11, 12, 10],
+            false,
+            |physical_id| {
+                Ok(Some(JsonTable {
+                    count: physical_id,
+                    ..JsonTable::default()
+                }))
+            },
+            |_, physical_id| {
+                persisted.push(physical_id);
+                if physical_id == 12 {
+                    Err("persist failed")
+                } else {
+                    Ok(())
+                }
+            },
+        )
+        .expect_err("callback error stops iteration");
+        assert!(matches!(
+            error,
+            PersistStatsBySnapshotError::Persist("persist failed")
+        ));
+        assert_eq!(persisted, vec![11, 12]);
+    }
 }

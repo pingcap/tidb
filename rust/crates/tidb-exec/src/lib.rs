@@ -161,6 +161,7 @@ pub mod real_tikv_multi_read;
 pub mod real_tikv_privileges;
 pub mod real_tikv_read;
 pub mod real_tikv_stats;
+pub mod real_tikv_stats_dump;
 pub mod real_tikv_stats_lock;
 pub mod recordset_lifecycle;
 pub mod removed_sysvar;

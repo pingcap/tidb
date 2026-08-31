@@ -69,6 +69,20 @@ pub struct LoadedStatsTable {
     pub predicate_columns: Vec<Option<JsonPredicateColumn>>,
 }
 
+/// Schema and physical-table tasks selected by Go
+/// `LoadStatsFromJSONNoUpdate` before its partition workers start.
+pub(crate) struct ResolvedClusterLoadStats {
+    pub(crate) schema: LoadStatsTableSchema,
+    pub(crate) targets: Vec<ClusterLoadStatsTarget>,
+    pub(crate) concurrent: bool,
+}
+
+/// One task consumed by Go `LoadStatsFromJSONConcurrently`.
+pub(crate) struct ClusterLoadStatsTarget {
+    pub(crate) physical_id: i64,
+    json: Option<JsonTable>,
+}
+
 /// Why a statistics dump could not be resolved against the cluster catalog.
 #[derive(Debug)]
 pub enum ClusterLoadStatsError {
@@ -103,10 +117,23 @@ impl From<LoadStatsError> for ClusterLoadStatsError {
 }
 
 /// Resolves and converts every physical table named by one dump.
-pub fn lower_cluster_load_stats(
+#[cfg(test)]
+fn lower_cluster_load_stats(
     catalog: &ClusterCatalog,
     json: &JsonTable,
 ) -> Result<Vec<LoadedStatsTable>, ClusterLoadStatsError> {
+    let resolved = resolve_cluster_load_stats(catalog, json)?;
+    resolved
+        .targets
+        .iter()
+        .map(|target| load_cluster_stats_target(&resolved.schema, target))
+        .collect()
+}
+
+pub(crate) fn resolve_cluster_load_stats(
+    catalog: &ClusterCatalog,
+    json: &JsonTable,
+) -> Result<ResolvedClusterLoadStats, ClusterLoadStatsError> {
     let table = catalog
         .databases
         .iter()
@@ -126,24 +153,59 @@ pub fn lower_cluster_load_stats(
     let schema = load_stats_schema(table);
 
     let Some(partitions) = json.partitions.as_ref() else {
-        return Ok(vec![loaded_table(&schema, table.id, json)?]);
+        return Ok(ResolvedClusterLoadStats {
+            schema,
+            targets: vec![ClusterLoadStatsTarget {
+                physical_id: table.id,
+                json: Some(json.clone()),
+            }],
+            concurrent: false,
+        });
     };
     let Some(partition_info) = table.get_partition_info() else {
-        return Ok(vec![loaded_table(&schema, table.id, json)?]);
+        return Ok(ResolvedClusterLoadStats {
+            schema,
+            targets: vec![ClusterLoadStatsTarget {
+                physical_id: table.id,
+                json: Some(json.clone()),
+            }],
+            concurrent: false,
+        });
     };
 
     let definitions = partition_info.read().definitions.snapshot();
-    let mut loaded = Vec::new();
+    let mut targets = Vec::new();
     for definition in definitions {
         let Some(Some(json)) = partitions.get(definition.name.lowercase()) else {
             continue;
         };
-        loaded.push(loaded_table(&schema, definition.id, json)?);
+        targets.push(ClusterLoadStatsTarget {
+            physical_id: definition.id,
+            json: Some(json.clone()),
+        });
     }
-    if let Some(Some(global)) = partitions.get(TIDB_GLOBAL_STATS) {
-        loaded.push(loaded_table(&schema, table.id, global)?);
+    if let Some(global) = partitions.get(TIDB_GLOBAL_STATS) {
+        targets.push(ClusterLoadStatsTarget {
+            physical_id: table.id,
+            json: global.clone(),
+        });
     }
-    Ok(loaded)
+    Ok(ResolvedClusterLoadStats {
+        schema,
+        targets,
+        concurrent: true,
+    })
+}
+
+pub(crate) fn load_cluster_stats_target(
+    schema: &LoadStatsTableSchema,
+    target: &ClusterLoadStatsTarget,
+) -> Result<LoadedStatsTable, ClusterLoadStatsError> {
+    let json = target
+        .json
+        .as_ref()
+        .expect("global statistics JSON must not be null");
+    Ok(loaded_table(schema, target.physical_id, json)?)
 }
 
 fn load_stats_schema(table: &TableInfo) -> LoadStatsTableSchema {
@@ -374,5 +436,16 @@ mod tests {
         assert!(lower_cluster_load_stats(&catalog(), &root)
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn null_global_entry_is_retained_for_worker_panic_recovery() {
+        let mut root = json(100);
+        root.partitions = Some(BTreeMap::from([(TIDB_GLOBAL_STATS.to_owned(), None)]));
+        let resolved = resolve_cluster_load_stats(&catalog(), &root).unwrap();
+        assert!(resolved.concurrent);
+        assert_eq!(resolved.targets.len(), 1);
+        assert_eq!(resolved.targets[0].physical_id, 10);
+        assert!(resolved.targets[0].json.is_none());
     }
 }
