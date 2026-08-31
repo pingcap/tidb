@@ -163,6 +163,9 @@ func extractKeyErr(err error) error {
 	if e, ok := errors.Cause(err).(*tikverr.ErrWriteConflict); ok {
 		return newWriteConflictError(e.WriteConflict)
 	}
+	// Concurrent shared-lock upgraders keep their shared locks while waiting, so none can acquire the
+	// exclusive lock until one transaction is aborted. Return a non-retryable deadlock so TiDB aborts
+	// this transaction and releases its shared lock, allowing the already-waiting upgrader to proceed.
 	if e, ok := errors.Cause(err).(*tikverr.ErrLockUpgradeConflict); ok {
 		return errors.WithStack(&tikverr.ErrDeadlock{
 			Deadlock: &kvrpcpb.Deadlock{

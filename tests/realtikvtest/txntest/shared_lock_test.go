@@ -393,12 +393,20 @@ func TestSharedLockBlockExclusiveLock(t *testing.T) {
 	tk1.MustExec("commit")
 	tk1.MustExec("admin check table parent")
 	tk1.MustExec("admin check table child")
+}
+
+func TestSharedLockUpgrade(t *testing.T) {
+	if !*realtikvtest.WithRealTiKV {
+		t.Skip("requires real TiKV")
+	}
+	if !kerneltype.IsNextGen() {
+		t.Skip("shared lock upgrade rollout acceptance is only required on next-gen")
+	}
+	allowForeignKeyCheckInSharedLockForTest(t)
+
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	t.Run("shared_lock_upgrade_waits_for_last_holder", func(t *testing.T) {
-		if !kerneltype.IsNextGen() {
-			t.Skip("shared lock upgrade rollout acceptance is only required on next-gen")
-		}
-
 		tk1 := testkit.NewTestKit(t, store)
 		tk2 := testkit.NewTestKit(t, store)
 		tk1.MustExec("use test")
@@ -431,10 +439,6 @@ func TestSharedLockBlockExclusiveLock(t *testing.T) {
 	})
 
 	t.Run("shared_lock_lost_rolls_back_transaction", func(t *testing.T) {
-		if !kerneltype.IsNextGen() {
-			t.Skip("shared lock upgrade rollout acceptance is only required on next-gen")
-		}
-
 		tkU := testkit.NewTestKit(t, store)
 		tkH := testkit.NewTestKit(t, store)
 		tkVerify := testkit.NewTestKit(t, store)
@@ -499,10 +503,6 @@ func TestSharedLockBlockExclusiveLock(t *testing.T) {
 	})
 
 	t.Run("upgrade_error_keeps_explicit_transaction_usable", func(t *testing.T) {
-		if !kerneltype.IsNextGen() {
-			t.Skip("shared lock upgrade rollout acceptance is only required on next-gen")
-		}
-
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
 		tk.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
@@ -531,10 +531,6 @@ func TestSharedLockBlockExclusiveLock(t *testing.T) {
 	})
 
 	t.Run("applied_upgrade_with_missing_response_keeps_explicit_transaction_usable", func(t *testing.T) {
-		if !kerneltype.IsNextGen() {
-			t.Skip("shared lock upgrade rollout acceptance is only required on next-gen")
-		}
-
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
 		tk.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
@@ -580,10 +576,6 @@ func TestSharedLockBlockExclusiveLock(t *testing.T) {
 	})
 
 	t.Run("second_upgrader_returns_deadlock", func(t *testing.T) {
-		if !kerneltype.IsNextGen() {
-			t.Skip("shared lock upgrade rollout acceptance is only required on next-gen")
-		}
-
 		tk1 := testkit.NewTestKit(t, store)
 		tk2 := testkit.NewTestKit(t, store)
 		tk1.MustExec("use test")
