@@ -1620,7 +1620,7 @@ impl ClusterSessionFactory {
                                 count,
                                 read_ts,
                                 "flush stats",
-                                tidb_exec::mysql_bootstrap::utc_now_timestamp(),
+                                tidb_exec::mysql_bootstrap::local_now_datetime6(),
                             )
                                     .map_err(|error| error.to_string())?;
                                     Ok(((), plan.mutations))
@@ -2608,13 +2608,17 @@ impl HistoricalStatsHandle for ClusterHistoricalStatsHandle {
             is_partition,
         )?
         else {
+            eprintln!(
+                "{{\"event\":\"no stats data to record\",\"dbName\":{database_name:?},\"tableName\":{:?}}}",
+                table.name
+            );
             return Ok(0);
         };
         let transaction = self.transactions.begin(true, "default")?;
         let staged = MutationBuffer::new();
         let (version, blocks) = tidb_exec::cluster_stats_write::historical_stats_data_blocks(&json)
             .map_err(|error| error.to_string())?;
-        let create_time = tidb_exec::mysql_bootstrap::utc_now_timestamp();
+        let create_time = tidb_exec::mysql_bootstrap::local_now_datetime6();
         for (sequence, block) in blocks.iter().enumerate() {
             let ((), mutations) =
                 tidb_exec::cluster_table_storage::lock_pessimistic_statement_with(
@@ -5317,7 +5321,7 @@ impl ClusterServerSession {
                     .map_err(|error| error.to_string())?;
                 Ok((counts, plan.mutations))
             })?;
-        let now = system_time_timestamp(SystemTime::now())?;
+        let now = tidb_exec::mysql_bootstrap::local_now_datetime6();
         transactions::stage_pessimistic_statement(transaction, staged, |snapshot, _| {
             let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
             let plan = tidb_exec::cluster_stats_write::plan_historical_stats_meta_replace(

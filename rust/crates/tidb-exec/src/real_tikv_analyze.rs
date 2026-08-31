@@ -72,7 +72,7 @@ use crate::cluster_table_storage::{
     commit_pessimistic_statement, lock_pessimistic_statement, PessimisticStatementTransactionError,
     SessionTransaction,
 };
-use crate::mysql_bootstrap::utc_now_timestamp;
+use crate::mysql_bootstrap::{local_now_datetime6, utc_now_timestamp};
 use crate::mysql_system_tables::SystemTableError;
 use crate::pessimistic_lock_error::{commit_outcome_to_sql_error, LockSqlError};
 use crate::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
@@ -1535,7 +1535,7 @@ fn record_analyze_history<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCa
                 count,
                 version,
                 "analyze",
-                utc_now_timestamp(),
+                local_now_datetime6(),
             )
             .map_err(|error| error.to_string())?;
             Ok(((), plan.mutations))

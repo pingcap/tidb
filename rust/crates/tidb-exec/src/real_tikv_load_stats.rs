@@ -41,7 +41,7 @@ use crate::cluster_table_storage::{
     commit_pessimistic_statement, lock_pessimistic_statement, PessimisticStatementTransactionError,
     SessionTransaction,
 };
-use crate::mysql_bootstrap::utc_now_timestamp;
+use crate::mysql_bootstrap::{local_now_datetime6, utc_now_timestamp};
 use crate::pessimistic_lock_error::LockSqlError;
 use crate::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
 use tidb_executor::cluster_storage::MutationBuffer;
@@ -285,7 +285,7 @@ fn record_history<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability
                 count,
                 version,
                 LOAD_STATS_HISTORY_SOURCE,
-                utc_now_timestamp(),
+                local_now_datetime6(),
             )
             .map_err(|error| error.to_string())?;
             Ok(((), plan.mutations))

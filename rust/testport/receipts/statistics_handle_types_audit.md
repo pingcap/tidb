@@ -45,7 +45,7 @@ dependency-closed implementation.
 | --- | --- | --- |
 | `StatsGC` | statistics storage/GC paths | blocked on complete `pkg/statistics/handle/storage` |
 | `StatsUsage`, `IndexUsage` | usage collector, predicatecolumn, indexusage, and execution seams | complete root and child-package receipts own the behavior |
-| `StatsHistory` | `tidb-domain::historical_stats` and storage/execution seams | blocked on complete storage runtime |
+| `StatsHistory` | `tidb-domain::historical_stats` and storage/execution seams | complete `pkg/statistics/handle/history` receipt owns construction, enable checks, target filtering, metadata, and payload writes; historical read/GC methods belong `StatsReadWriter`/`StatsGC` |
 | `StatsAnalyze` | priorityqueue, analyze execution, and domain worker owners | complete root/exec/refresher/priorityqueue receipts own the interface behavior |
 | `StatsCache` | `tidb-stats-handle-cache` and shared `stats_watch` publication | complete root cache receipt; its separately pinned LFU dependency remains unclaimed |
 | `StatsLock` | `tidb-stats::lock_stats` and executor/session/server seams | exact operations are covered by the lockstats receipt |
