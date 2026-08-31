@@ -16,8 +16,11 @@ After this work, a successful non-system DDL in the Rust server durably records 
 - [x] (2026-08-31 17:05Z) Stage notifier rows in the same optimistic transaction as DDL catalog mutations, using the final ID in Go's one global-ID batch for the DDL job and Go's sub-job IDs.
 - [x] (2026-08-31 18:20Z) Replaced synchronous post-DDL statistics mutation with notifier handlers for stats-meta and auto-analyze priority queue behavior, including exchange-partition count/modify-count semantics.
 - [x] (2026-08-31 18:20Z) Attached the notifier listener to the statistics owner before campaigning; owner retirement and shutdown drive the listener lifecycle.
-- [ ] Port or map every pinned package test scenario: publish, basic pub/sub, delivery order, concurrent owners, pagination, pessimistic transaction failure, commit failure, event formatting, and decode reuse/forward compatibility.
-- [ ] Produce a package inventory receipt and run WIP then Ready validation, including `make lint` before a completion claim.
+- [x] (2026-08-31 19:10Z) Mapped every pinned package test scenario and added direct Rust regressions for constructor/getter payloads, ordered pagination, concurrent-owner CAS loss, handler transaction rollback, and commit failure.
+- [x] (2026-08-31 19:10Z) Made the priority-queue subscriber read the live `tidb_enable_auto_analyze` global for every event, matching Go instead of retaining Rust's startup snapshot.
+- [x] (2026-08-31 19:20Z) Produced the complete eight-file package inventory and test-scenario receipt below.
+- [ ] Complete the DDL producer integration required by pinned `TestPubSub`: exchange partition, add/remove partitioning, and reorganize partition do not yet have cluster-planner owners. Flashback-cluster publication is a separate production-integration gap outside that test.
+- [ ] Run completion-level Ready validation, including `make lint`, only after the dependent DDL producer gaps are closed.
 
 ## Surprises & Discoveries
 
@@ -39,6 +42,12 @@ After this work, a successful non-system DDL in the Rust server durably records 
 
 - Observation: exchange-partition statistics cannot use the ordinary table-delta writer because pinned Go independently adjusts count and modify count and clamps both only for unlocked `stats_meta`; locked rows may remain negative.
   Evidence: the dedicated storage regression covers both branches and the notifier subscriber uses the exact pinned formula.
+
+- Observation: pinned priority-queue `HandleDDLEvent` reads `vardef.RunAutoAnalyze` on every invocation. Rust originally captured the configuration value when constructing the notifier, so a later `SET GLOBAL tidb_enable_auto_analyze` could not change the not-initialized retry decision.
+  Evidence: `auto_analyze_gate_reads_each_global_change` changes the shared global table after construction and observes both OFF and ON values.
+
+- Observation: event constructors and subscribers are not sufficient evidence for pinned `TestPubSub`. The cluster DDL planner currently publishes create/drop/truncate table, add/modify column, add index, add/drop/truncate partition, and drop schema, but it has no production publication site for exchange partition, add/remove partitioning, or reorganize partition. Flashback-cluster publication is also absent from production integration, although that action is not part of `TestPubSub`.
+  Evidence: the only production `SchemaChangeEvent::exchange_partition`, `add_partitioning`, `remove_partitioning`, `reorganize_partitions`, and `flashback_cluster` references are consumers or constructors, not `cluster_ddl` publication arms.
 
 ## Decision Log
 
@@ -65,6 +74,24 @@ Atomic DDL publication, production stats and priority-queue subscribers, statist
 `rust/crates/tidb-exec/src/cluster_ddl.rs` plans one catalog change into `DdlWrite`. `rust/crates/tidb-exec/src/real_tikv_ddl.rs` commits that write and optional index backfill in one optimistic transaction. This is where the notifier row must be staged before commit. `rust/crates/tidb-server/src/cluster_session_node/ddl_notifier.rs` adapts internal SQL sessions to the notifier store. `rust/crates/tidb-server/src/cluster_session_node/boot.rs` creates and campaigns the statistics owner. `rust/crates/tidb-server/src/cluster_session_node/mod.rs` currently contains the synchronous stats DDL code that must be replaced by subscribers.
 
 Pinned Go production publication is `pkg/ddl/ddl.go:asyncNotifyEvent`; construction and owner wiring are in `pkg/domain/domain.go`; stats-meta registration is in `pkg/statistics/handle/handle.go`; priority-queue registration is in `pkg/statistics/handle/autoanalyze/refresher/refresher.go`.
+
+## Package Inventory and Test Mapping
+
+The pinned package is exactly eight files. `events.go`, `publish.go`, `store.go`, and `subscribe.go` map to `tidb-ddl-notifier::{event,subscribe}` plus the cluster SQL adapter. `events_test.go`, `store_test.go`, and `testkit_test.go` map to crate unit tests, the real cluster table-store test, and DDL publication tests. `BUILD.bazel` maps to `Cargo.toml` and the workspace lock/build graph; there is no platform or generated variant in the pinned package.
+
+| Pinned test | Rust evidence | Status |
+| --- | --- | --- |
+| `TestEventString` | `event_string_matches_go` | Direct |
+| `TestLeftoverWhenUnmarshal` | `ListResult::read` returns fresh owned events, so reused-slice leftover state is structurally impossible | Mapped |
+| `TestPublishToTableStore`, `TestBasicPubSub` | `ddl_notifier_table_store_delivers_in_order_and_cleans_up` | Direct real-store path |
+| `TestDeliverOrderAndCleanup` | `retries_in_order_and_cleans_up_after_every_handler` plus real-store test | Direct |
+| `TestPubSub` | constructor/getter payload regression plus `cluster_ddl_source` publication tests | Incomplete: four DDL producer families remain |
+| `TestPublishEventError` | atomic DDL/notifier mutations in `real_tikv_ddl` and commit-failure publication tests | Mapped; retain until complete DDL inventory audit |
+| `Test2OwnerForAShortTime` | `competing_owner_cas_loss_rolls_back_handler_write` | Direct |
+| `TestPaginatedList` | `list_pages_in_job_and_sub_job_order` plus real-store pagination | Direct |
+| `TestBeginTwice` | real-store delivery/cleanup begins list and handler transactions on separate pooled sessions | Direct integration path |
+| `TestHandlersSeePessimisticTxnError` | `one_failing_handler_does_not_lose_another_handlers_bit` | Direct |
+| `TestCommitFailed` | `commit_failure_keeps_the_processed_bit_and_handler_write_uncommitted` | Direct |
 
 ## Plan of Work
 

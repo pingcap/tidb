@@ -660,4 +660,181 @@ mod tests {
         assert_eq!(decoded.create_table_info().id, 1000);
         assert_eq!(decoded.create_table_info().name.original(), "t1");
     }
+
+    #[test]
+    fn every_go_event_constructor_round_trips_its_payload() {
+        let table = |id| TableInfo {
+            id,
+            name: CiString::new(format!("t{id}")),
+            ..TableInfo::default()
+        };
+        let partition = |id| PartitionInfo {
+            definitions: GoSharedSlice::from_vec(vec![PartitionDefinition {
+                id,
+                name: CiString::new(format!("p{id}")),
+                ..PartitionDefinition::default()
+            }]),
+            ..PartitionInfo::default()
+        };
+        let column = ColumnInfo {
+            id: 11,
+            name: CiString::new("c"),
+            ..ColumnInfo::default()
+        };
+        let index = IndexInfo {
+            id: 12,
+            name: CiString::new("i"),
+            ..IndexInfo::default()
+        };
+        let database = DBInfo {
+            id: 13,
+            name: CiString::new("db"),
+            ..DBInfo::default()
+        };
+        let round_trip = |event: SchemaChangeEvent| {
+            serde_json::from_slice::<SchemaChangeEvent>(
+                &serde_json::to_vec(&event).expect("event serializes"),
+            )
+            .expect("event deserializes")
+        };
+
+        let event = round_trip(SchemaChangeEvent::create_table(table(1)));
+        assert_eq!(event.create_table_info().id, 1);
+
+        let event = round_trip(SchemaChangeEvent::truncate_table(table(2), table(1)));
+        assert_eq!(
+            (
+                event.truncate_table_info().0.id,
+                event.truncate_table_info().1.id
+            ),
+            (2, 1)
+        );
+
+        let event = round_trip(SchemaChangeEvent::drop_table(table(2)));
+        assert_eq!(event.drop_table_info().id, 2);
+
+        let event = round_trip(SchemaChangeEvent::add_columns(
+            table(3),
+            vec![column.clone()],
+        ));
+        assert_eq!(
+            (
+                event.add_column_info().0.id,
+                event.add_column_info().1[0].id
+            ),
+            (3, 11)
+        );
+
+        let event = round_trip(SchemaChangeEvent::modify_columns(
+            table(3),
+            vec![column],
+            true,
+        ));
+        let (modified_table, columns, analyzed) = event.modify_column_info();
+        assert_eq!((modified_table.id, columns[0].id, analyzed), (3, 11, true));
+
+        let event = round_trip(SchemaChangeEvent::add_partitions(table(4), partition(41)));
+        assert_eq!(
+            (
+                event.add_partition_info().0.id,
+                event.add_partition_info().1.definitions.snapshot()[0].id,
+            ),
+            (4, 41)
+        );
+
+        let event = round_trip(SchemaChangeEvent::truncate_partitions(
+            table(4),
+            partition(42),
+            partition(41),
+        ));
+        let (partitioned, added, dropped) = event.truncate_partition_info();
+        assert_eq!(
+            (
+                partitioned.id,
+                added.definitions.snapshot()[0].id,
+                dropped.definitions.snapshot()[0].id,
+            ),
+            (4, 42, 41)
+        );
+
+        let event = round_trip(SchemaChangeEvent::drop_partitions(table(4), partition(42)));
+        assert_eq!(
+            (
+                event.drop_partition_info().0.id,
+                event.drop_partition_info().1.definitions.snapshot()[0].id,
+            ),
+            (4, 42)
+        );
+
+        let event = round_trip(SchemaChangeEvent::exchange_partition(
+            table(4),
+            partition(43),
+            table(5),
+        ));
+        let (partitioned, exchanged, standalone) = event.exchange_partition_info();
+        assert_eq!(
+            (
+                partitioned.id,
+                exchanged.definitions.snapshot()[0].id,
+                standalone.id,
+            ),
+            (4, 43, 5)
+        );
+
+        let event = round_trip(SchemaChangeEvent::reorganize_partitions(
+            table(4),
+            partition(44),
+            partition(43),
+        ));
+        let (partitioned, added, dropped) = event.reorganize_partition_info();
+        assert_eq!(
+            (
+                partitioned.id,
+                added.definitions.snapshot()[0].id,
+                dropped.definitions.snapshot()[0].id,
+            ),
+            (4, 44, 43)
+        );
+
+        let event = round_trip(SchemaChangeEvent::add_partitioning(
+            6,
+            table(7),
+            partition(71),
+        ));
+        let (old_table_id, partitioned, added) = event.add_partitioning_info();
+        assert_eq!(
+            (
+                old_table_id,
+                partitioned.id,
+                added.definitions.snapshot()[0].id
+            ),
+            (6, 7, 71)
+        );
+
+        let event = round_trip(SchemaChangeEvent::remove_partitioning(
+            7,
+            table(8),
+            partition(71),
+        ));
+        let (old_table_id, standalone, dropped) = event.remove_partitioning_info();
+        assert_eq!(
+            (
+                old_table_id,
+                standalone.id,
+                dropped.definitions.snapshot()[0].id,
+            ),
+            (7, 8, 71)
+        );
+
+        let event = round_trip(SchemaChangeEvent::add_indexes(table(9), vec![index], true));
+        let (indexed, indexes, analyzed) = event.add_index_info();
+        assert_eq!((indexed.id, indexes[0].id, analyzed), (9, 12, true));
+
+        let event = round_trip(SchemaChangeEvent::flashback_cluster());
+        assert_eq!(event.action_type(), ActionType::ACTION_FLASHBACK_CLUSTER);
+
+        let event = round_trip(SchemaChangeEvent::drop_schema(&database, &[table(10)]));
+        assert_eq!(event.drop_schema_info().id, 13);
+        assert_eq!(event.drop_schema_info().tables[0].id, 10);
+    }
 }

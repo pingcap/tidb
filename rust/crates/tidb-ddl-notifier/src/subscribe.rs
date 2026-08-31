@@ -375,7 +375,6 @@ fn process_event_for_handler(
         return Err(error);
     }
     if let Err(error) = session.commit() {
-        session.rollback();
         return Err(error);
     }
     change.processed_by_flag = new_flag;
@@ -392,6 +391,7 @@ mod tests {
     #[derive(Default)]
     struct MockSession {
         active: bool,
+        fail_commit: bool,
         staged: Vec<Box<dyn FnOnce() + Send>>,
     }
 
@@ -406,6 +406,11 @@ mod tests {
         }
 
         fn commit(&mut self) -> Result<(), NotifierError> {
+            if self.fail_commit {
+                self.active = false;
+                self.staged.clear();
+                return Err("mock commit failed".into());
+            }
             self.active = false;
             for mutation in std::mem::take(&mut self.staged) {
                 mutation();
@@ -586,5 +591,106 @@ mod tests {
         process_events(pool.as_ref(), store.as_ref(), &handlers).unwrap();
         let rows = store.rows.lock().unwrap();
         assert_eq!(rows[&(1, -1)].processed_by_flag, 1 << 2);
+    }
+
+    #[test]
+    fn commit_failure_keeps_the_processed_bit_and_handler_write_uncommitted() {
+        let store = MockStore::default();
+        let mut publish = MockSession::default();
+        publish_schema_change_to_store(&mut publish, 1, -1, event(1), &store).unwrap();
+        let handler_writes = Arc::new(AtomicUsize::new(0));
+        let handler: Handler = {
+            let handler_writes = Arc::clone(&handler_writes);
+            Arc::new(move |session, _| {
+                let session = session.as_any_mut().downcast_mut::<MockSession>().unwrap();
+                session.staged.push(Box::new({
+                    let handler_writes = Arc::clone(&handler_writes);
+                    move || {
+                        handler_writes.fetch_add(1, Ordering::SeqCst);
+                    }
+                }));
+                Ok(())
+            })
+        };
+        let mut change = store.rows.lock().unwrap()[&(1, -1)].clone();
+        let mut session = MockSession {
+            fail_commit: true,
+            ..MockSession::default()
+        };
+
+        assert_eq!(
+            process_event_for_handler(&store, &mut session, &mut change, TEST_HANDLER_ID, &handler),
+            Err(NotifierError::Message("mock commit failed".to_owned()))
+        );
+        assert_eq!(handler_writes.load(Ordering::SeqCst), 0);
+        assert_eq!(store.rows.lock().unwrap()[&(1, -1)].processed_by_flag, 0);
+        assert_eq!(change.processed_by_flag, 0);
+        assert!(!session.active);
+        assert!(session.staged.is_empty());
+    }
+
+    #[test]
+    fn competing_owner_cas_loss_rolls_back_handler_write() {
+        let store = MockStore::default();
+        let mut publish = MockSession::default();
+        publish_schema_change_to_store(&mut publish, 1, -1, event(1), &store).unwrap();
+        let handler_writes = Arc::new(AtomicUsize::new(0));
+        let rows = Arc::clone(&store.rows);
+        let handler: Handler = {
+            let handler_writes = Arc::clone(&handler_writes);
+            Arc::new(move |session, _| {
+                let session = session.as_any_mut().downcast_mut::<MockSession>().unwrap();
+                session.staged.push(Box::new({
+                    let handler_writes = Arc::clone(&handler_writes);
+                    move || {
+                        handler_writes.fetch_add(1, Ordering::SeqCst);
+                    }
+                }));
+                rows.lock().unwrap().remove(&(1, -1));
+                Ok(())
+            })
+        };
+        let mut change = store.rows.lock().unwrap()[&(1, -1)].clone();
+        let mut session = MockSession::default();
+
+        let error =
+            process_event_for_handler(&store, &mut session, &mut change, TEST_HANDLER_ID, &handler)
+                .expect_err("the losing owner must fail its processed-bit CAS");
+        assert!(error.to_string().contains("updated by other owner"));
+        assert_eq!(handler_writes.load(Ordering::SeqCst), 0);
+        assert_eq!(change.processed_by_flag, 0);
+        assert!(!session.active);
+        assert!(session.staged.is_empty());
+    }
+
+    #[test]
+    fn list_pages_in_job_and_sub_job_order() {
+        let store = MockStore::default();
+        let mut session = MockSession::default();
+        for (job_id, sub_job_id) in [(2, -1), (1, 2), (1, -1), (1, 1), (3, -1)] {
+            store
+                .insert(
+                    &mut session,
+                    &SchemaChange {
+                        ddl_job_id: job_id,
+                        sub_job_id,
+                        event: event(job_id),
+                        processed_by_flag: 0,
+                    },
+                )
+                .unwrap();
+        }
+        let mut list = store.list(&mut session).unwrap();
+        let first = list.read(&mut session, 3).unwrap();
+        let second = list.read(&mut session, 3).unwrap();
+        assert_eq!(
+            first
+                .iter()
+                .chain(&second)
+                .map(|change| (change.ddl_job_id, change.sub_job_id))
+                .collect::<Vec<_>>(),
+            [(1, -1), (1, 1), (1, 2), (2, -1), (3, -1)]
+        );
+        list.close(&mut session);
     }
 }

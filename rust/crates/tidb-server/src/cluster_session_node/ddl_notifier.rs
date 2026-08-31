@@ -164,6 +164,12 @@ fn bytes_literal(bytes: &[u8]) -> String {
     literal
 }
 
+fn run_auto_analyze(global_vars: &tidb_session::GlobalSysvars) -> bool {
+    global_vars
+        .get(tidb_vardef::tidb_vars::TIDB_ENABLE_AUTO_ANALYZE)
+        .map_or(true, |value| value.eq_ignore_ascii_case("ON"))
+}
+
 pub(super) fn build_notifier(
     factory: &Arc<ClusterSessionFactory>,
     stats_lease: Duration,
@@ -185,9 +191,7 @@ pub(super) fn build_notifier(
     notifier.register_handler(STATS_META_HANDLER_ID, stats_handler);
 
     let queue = factory.auto_analyze_priority_queue(stats_lease);
-    let run_auto_analyze = tidb_config::config_tree::config::get_global_config()
-        .performance
-        .run_auto_analyze;
+    let global_vars = factory.global_vars.clone();
     let priority_handler: Handler = Arc::new(move |_, event| {
         use tidb_model::ActionType;
         use tidb_stats_handle_autoanalyze_priorityqueue::{DdlHandleError, PriorityQueueDdlEvent};
@@ -291,13 +295,41 @@ pub(super) fn build_notifier(
             _ => PriorityQueueDdlEvent::Other,
         };
         queue
-            .handle_ddl_event(run_auto_analyze, &queue_event)
+            .handle_ddl_event(run_auto_analyze(&global_vars), &queue_event)
             .map_err(|error| match error {
                 DdlHandleError::NotReadyRetryLater => NotifierError::NotReadyRetryLater,
             })
     });
     notifier.register_handler(PRIORITY_QUEUE_HANDLER_ID, priority_handler);
     notifier
+}
+
+#[cfg(test)]
+mod tests {
+    use super::run_auto_analyze;
+    use tidb_session::GlobalSysvars;
+
+    #[test]
+    fn auto_analyze_gate_reads_each_global_change() {
+        let globals = GlobalSysvars::new();
+        assert!(run_auto_analyze(&globals));
+
+        globals
+            .set(
+                tidb_vardef::tidb_vars::TIDB_ENABLE_AUTO_ANALYZE,
+                "OFF".to_owned(),
+            )
+            .unwrap();
+        assert!(!run_auto_analyze(&globals));
+
+        globals
+            .set(
+                tidb_vardef::tidb_vars::TIDB_ENABLE_AUTO_ANALYZE,
+                "ON".to_owned(),
+            )
+            .unwrap();
+        assert!(run_auto_analyze(&globals));
+    }
 }
 
 impl Store for ClusterNotifierTableStore {
