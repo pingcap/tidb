@@ -1622,6 +1622,62 @@ pub fn plan_stats_delta_statement<S: MetaSnapshot>(
     Ok(plan)
 }
 
+/// Plans the count and modify-count adjustment used by pinned Go's exchange
+/// partition DDL subscriber.
+pub fn plan_exchange_partition_stats_update<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    table_id: i64,
+    count_delta: i64,
+    modify_count_delta: i64,
+    locked: bool,
+    version: u64,
+    now: Time,
+) -> Result<StatsWritePlan, StatsWriteError> {
+    let table = locate(
+        catalog,
+        if locked {
+            "stats_table_locked"
+        } else {
+            "stats_meta"
+        },
+    )?;
+    let mut rows = StatsRows::open(snapshot, table, &["table_id"], table_id)?;
+    let mut values = defaults_row(table, now)?;
+    set(table, &mut values, "table_id", Datum::Int(table_id));
+    let identity = identity_of(table, &["table_id"], &values)?;
+    if let Some(stored) = rows.existing_values(&identity) {
+        values = stored.clone();
+    }
+    let count = signed_value(values.get(&column_id(table, "count")?))
+        .unwrap_or_default()
+        .wrapping_add(count_delta);
+    let modify_count = signed_value(values.get(&column_id(table, "modify_count")?))
+        .unwrap_or_default()
+        .wrapping_add(modify_count_delta);
+    set(table, &mut values, "version", Datum::UInt(version));
+    set(
+        table,
+        &mut values,
+        "count",
+        Datum::Int(if locked { count } else { count.max(0) }),
+    );
+    set(
+        table,
+        &mut values,
+        "modify_count",
+        Datum::Int(if locked {
+            modify_count
+        } else {
+            modify_count.max(0)
+        }),
+    );
+    let mut plan = StatsWritePlan::default();
+    rows.store(snapshot, catalog, &values, &mut plan)?;
+    rows.publish_watermark(catalog, &mut plan)?;
+    Ok(plan)
+}
+
 /// Reads Go `GetLockedTables`' stored ID set from the dump transaction snapshot.
 pub fn load_stats_locked_table_ids<S: MetaSnapshot>(
     snapshot: &mut S,

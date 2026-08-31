@@ -57,7 +57,8 @@ use tidb_exec::cluster_stats_write::{
     plan_insert_analyze_job, plan_insert_column_stats, plan_insert_table_stats_statement,
     plan_start_analyze_job, plan_finish_analyze_job, plan_delete_analyze_jobs,
     plan_update_analyze_job_progress,
-    plan_stats_delta_statement, plan_stats_gc_timestamp_write, plan_stats_item_delete,
+    plan_exchange_partition_stats_update, plan_stats_delta_statement,
+    plan_stats_gc_timestamp_write, plan_stats_item_delete,
     plan_analyze_stats_write, plan_change_global_stats_id, plan_stats_meta_version_refresh,
     plan_stats_write, plan_update_stats_version,
     load_stats_locked_table_ids, stats_delta_statements, InsertTableStatsStatement, LoadedStatsItemStatement,
@@ -2492,6 +2493,80 @@ fn stats_delta_lock_statements_lock_only_selected_existing_rows() {
     .expect("locking SELECT plans");
     assert_eq!(plan.mutations.len(), 1);
     assert_eq!(plan.mutations[0].kind(), OptimisticMutationKind::LockOnly);
+}
+
+#[test]
+fn exchange_partition_stats_update_matches_go_clamping_and_locked_rows() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let table_id = 4242;
+    let initial = plan_loaded_stats_meta_write(
+        &mut store,
+        &catalog,
+        table_id,
+        8,
+        5,
+        100,
+        now(),
+    )
+    .expect("initial meta plans");
+    apply_mutations(&mut store, &initial.mutations);
+    let update = plan_exchange_partition_stats_update(
+        &mut store,
+        &catalog,
+        table_id,
+        -10,
+        -9,
+        false,
+        101,
+        now(),
+    )
+    .expect("unlocked exchange update plans");
+    apply_mutations(&mut store, &update.mutations);
+    let loader = ClusterStatsLoader::locate(&catalog).expect("stats loader locates");
+    assert_eq!(
+        loader.load_meta(&mut store, table_id).expect("meta loads"),
+        Some((101, 0, 0, 0, 100))
+    );
+
+    let locked_id = 4243;
+    let update = plan_exchange_partition_stats_update(
+        &mut store,
+        &catalog,
+        locked_id,
+        -10,
+        -9,
+        true,
+        102,
+        now(),
+    )
+    .expect("locked exchange update plans");
+    apply_mutations(&mut store, &update.mutations);
+    let locked_table = catalog
+        .databases
+        .iter()
+        .find(|database| database.info.name.lowercase() == "mysql")
+        .and_then(|database| {
+            database
+                .tables
+                .iter()
+                .find(|table| table.name.lowercase() == "stats_table_locked")
+        })
+        .expect("stats_table_locked exists");
+    let view = SystemTableView::project(
+        "mysql.stats_table_locked",
+        locked_table,
+        &["table_id", "version", "modify_count", "count"],
+    );
+    let row = scan_system_table(&mut store, &view)
+        .expect("locked rows scan")
+        .into_iter()
+        .map(|(key, value)| SystemRow::parse(&view, &key, &value).expect("lock row decodes"))
+        .find(|row| row.i64("table_id").unwrap() == Some(locked_id))
+        .expect("lock row exists");
+    assert_eq!(row.u64("version").unwrap(), Some(102));
+    assert_eq!(row.i64("modify_count").unwrap(), Some(-9));
+    assert_eq!(row.i64("count").unwrap(), Some(-10));
 }
 
 #[test]

@@ -14,8 +14,8 @@ After this work, a successful non-system DDL in the Rust server durably records 
 - [x] (2026-08-31 16:16Z) Added the Rust event model, durable store interfaces, ordered subscriber, owner listener, bootstrap table version 4, SQL table-store adapter, and focused unit/integration tests.
 - [x] (2026-08-31 16:16Z) Fixed remote residual-filter and composite unique-prefix PointGet bugs exposed by the notifier's paginated list and processed-bit CAS.
 - [x] (2026-08-31 17:05Z) Stage notifier rows in the same optimistic transaction as DDL catalog mutations, using the final ID in Go's one global-ID batch for the DDL job and Go's sub-job IDs.
-- [ ] Replace synchronous post-DDL statistics mutation with notifier handlers for stats-meta and auto-analyze priority queue behavior.
-- [ ] Attach the notifier listener to the statistics owner before campaigning and stop it on retirement/process shutdown.
+- [x] (2026-08-31 18:20Z) Replaced synchronous post-DDL statistics mutation with notifier handlers for stats-meta and auto-analyze priority queue behavior, including exchange-partition count/modify-count semantics.
+- [x] (2026-08-31 18:20Z) Attached the notifier listener to the statistics owner before campaigning; owner retirement and shutdown drive the listener lifecycle.
 - [ ] Port or map every pinned package test scenario: publish, basic pub/sub, delivery order, concurrent owners, pagination, pessimistic transaction failure, commit failure, event formatting, and decode reuse/forward compatibility.
 - [ ] Produce a package inventory receipt and run WIP then Ready validation, including `make lint` before a completion claim.
 
@@ -37,6 +37,9 @@ After this work, a successful non-system DDL in the Rust server durably records 
 - Observation: `onCreateView` creates metadata through the table machinery but does not call `asyncNotifyEvent`; treating a view as a create-table event would create statistics for a shape Go never notifies.
   Evidence: the new view regression failed until the residual create-table event was removed from only the CreateView arm.
 
+- Observation: exchange-partition statistics cannot use the ordinary table-delta writer because pinned Go independently adjusts count and modify count and clamps both only for unlocked `stats_meta`; locked rows may remain negative.
+  Evidence: the dedicated storage regression covers both branches and the notifier subscriber uses the exact pinned formula.
+
 ## Decision Log
 
 - Decision: do not implement post-commit event insertion as an intermediate production path.
@@ -53,7 +56,7 @@ After this work, a successful non-system DDL in the Rust server durably records 
 
 ## Outcomes & Retrospective
 
-The notifier package core and table adapter work in isolation, and their integration test now passes. Production DDL publication and production subscriber wiring remain incomplete, so no package-parity claim is valid yet.
+Atomic DDL publication, production stats and priority-queue subscribers, statistics-owner lifecycle wiring, and removal of the synchronous Rust-only projection are implemented. The complete package-test inventory and an unrestricted end-to-end owner/cleanup run remain before any package-parity claim is valid; the local macOS fixture currently stops during stack creation because sandboxed `sysctl hw.memsize` fails.
 
 ## Context and Orientation
 
@@ -124,3 +127,5 @@ Pass-after evidence:
 Revision note (2026-08-31): initial plan created after the notifier table-store integration exposed two executor/planner correctness gaps and before production DDL publication work began.
 
 Revision note (2026-08-31): atomic production publication is implemented and focused tests pass. Production stats handlers and statistics-owner lifecycle wiring remain before the synchronous projection can be removed.
+
+Revision note (2026-08-31): production subscribers now run in the notifier transaction, the statistics owner drives the notifier lifecycle, exchange-partition statistics match Go's locked/unlocked branches, and the former synchronous DDL statistics/queue path is removed.

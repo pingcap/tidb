@@ -337,11 +337,13 @@ pub(crate) fn run_unistore_cluster_session(
         .tidb_enable_stats_owner
         .load()
     {
-        factory.campaign_stats_owner().map_err(|error| {
-            RunConfiguredNodeError::Engine(SqlQueryError::unknown(format!(
-                "campaign stats owner failed: {error}"
-            )))
-        })?;
+        factory
+            .campaign_stats_owner(config.stats_lease)
+            .map_err(|error| {
+                RunConfiguredNodeError::Engine(SqlQueryError::unknown(format!(
+                    "campaign stats owner failed: {error}"
+                )))
+            })?;
     }
     factory.start_stats_usage_workers(config.stats_lease);
     factory.start_analyze_jobs_cleanup_worker(config.stats_lease);

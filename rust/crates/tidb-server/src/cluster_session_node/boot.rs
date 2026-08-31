@@ -286,11 +286,13 @@ pub(crate) fn run_cluster_session_node_with_spill(
         .tidb_enable_stats_owner
         .load()
     {
-        factory.campaign_stats_owner().map_err(|error| {
-            RunConfiguredNodeError::Engine(SqlQueryError::unknown(format!(
-                "campaign stats owner failed: {error}"
-            )))
-        })?;
+        factory
+            .campaign_stats_owner(config.stats_lease)
+            .map_err(|error| {
+                RunConfiguredNodeError::Engine(SqlQueryError::unknown(format!(
+                    "campaign stats owner failed: {error}"
+                )))
+            })?;
     }
     factory.start_stats_usage_workers(config.stats_lease);
     factory.start_auto_analyze_worker(

@@ -270,7 +270,7 @@ fn auto_analyze_priority_queue_uses_shared_stats_ddl_and_ordinary_analyze_path()
         cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
     let factory = Arc::new(stack.factory);
     factory
-        .campaign_stats_owner()
+        .campaign_stats_owner(crate::node_config::StatsLease::Zero)
         .expect("stats owner campaigns");
     let owner_deadline = std::time::Instant::now() + Duration::from_secs(2);
     while !factory
@@ -430,7 +430,7 @@ fn auto_analyze_skips_configured_column_types_like_go() {
         cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
     let factory = Arc::new(stack.factory);
     factory
-        .campaign_stats_owner()
+        .campaign_stats_owner(crate::node_config::StatsLease::Zero)
         .expect("stats owner campaigns");
     let owner_deadline = std::time::Instant::now() + Duration::from_secs(2);
     while !factory
@@ -498,7 +498,7 @@ fn auto_analyze_fills_missing_partition_statistics_like_go() {
         cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
     let factory = Arc::new(stack.factory);
     factory
-        .campaign_stats_owner()
+        .campaign_stats_owner(crate::node_config::StatsLease::Zero)
         .expect("stats owner campaigns");
     let owner_deadline = std::time::Instant::now() + Duration::from_secs(2);
     while !factory

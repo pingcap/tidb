@@ -16,13 +16,18 @@
 
 use std::any::Any;
 use std::sync::Arc;
+use std::time::Duration;
 
 use tidb_datatype::Datum;
 use tidb_ddl_notifier::{
-    ListResult, NotifierError, NotifierSession, SchemaChange, SessionPool, Store,
+    DdlNotifier, Handler, ListResult, NotifierError, NotifierSession, SchemaChange, SessionPool,
+    Store, PRIORITY_QUEUE_HANDLER_ID, STATS_META_HANDLER_ID,
 };
 
-use super::{ClusterServerSession, ClusterStatsSessionContext};
+use super::{
+    table_and_partition_ids, ClusterServerSession, ClusterSessionFactory,
+    ClusterStatsSessionContext,
+};
 use crate::sql_node::QuerySession;
 
 fn notifier_error(error: impl std::fmt::Display) -> NotifierError {
@@ -157,6 +162,142 @@ fn bytes_literal(bytes: &[u8]) -> String {
     }
     literal.push('\'');
     literal
+}
+
+pub(super) fn build_notifier(
+    factory: &Arc<ClusterSessionFactory>,
+    stats_lease: Duration,
+) -> Arc<DdlNotifier> {
+    let notifier = Arc::new(DdlNotifier::new(
+        Arc::new(ClusterNotifierSessionPool::new(
+            factory.advanced_sys_session_pool(),
+        )),
+        Arc::new(ClusterNotifierTableStore),
+        Duration::from_secs(1),
+    ));
+    let stats_handler: Handler = Arc::new(|session, event| {
+        cluster_session(session)?.with_server(|server| {
+            server
+                .stage_stats_notifier_event(event)
+                .map_err(|error| notifier_error(error.message))
+        })
+    });
+    notifier.register_handler(STATS_META_HANDLER_ID, stats_handler);
+
+    let queue = factory.auto_analyze_priority_queue(stats_lease);
+    let run_auto_analyze = tidb_config::config_tree::config::get_global_config()
+        .performance
+        .run_auto_analyze;
+    let priority_handler: Handler = Arc::new(move |_, event| {
+        use tidb_model::ActionType;
+        use tidb_stats_handle_autoanalyze_priorityqueue::{DdlHandleError, PriorityQueueDdlEvent};
+
+        let queue_event = match event.action_type() {
+            ActionType::ACTION_ADD_INDEX => {
+                let (table, _, analyzed) = event.add_index_info();
+                PriorityQueueDdlEvent::AddIndex {
+                    table_id: table.id,
+                    analyzed,
+                }
+            }
+            ActionType::ACTION_TRUNCATE_TABLE => {
+                let (_, dropped) = event.truncate_table_info();
+                PriorityQueueDdlEvent::TruncateTable {
+                    dropped_ids: table_and_partition_ids(dropped),
+                }
+            }
+            ActionType::ACTION_DROP_TABLE => PriorityQueueDdlEvent::DropTable {
+                dropped_ids: table_and_partition_ids(event.drop_table_info()),
+            },
+            ActionType::ACTION_TRUNCATE_TABLE_PARTITION => {
+                let (table, _, dropped) = event.truncate_partition_info();
+                PriorityQueueDdlEvent::TruncatePartition {
+                    table_id: table.id,
+                    dropped_partition_ids: dropped
+                        .definitions
+                        .snapshot()
+                        .into_iter()
+                        .map(|definition| definition.id)
+                        .collect(),
+                }
+            }
+            ActionType::ACTION_DROP_TABLE_PARTITION => {
+                let (table, dropped) = event.drop_partition_info();
+                PriorityQueueDdlEvent::DropPartition {
+                    table_id: table.id,
+                    dropped_partition_ids: dropped
+                        .definitions
+                        .snapshot()
+                        .into_iter()
+                        .map(|definition| definition.id)
+                        .collect(),
+                }
+            }
+            ActionType::ACTION_REORGANIZE_PARTITION => {
+                let (table, _, dropped) = event.reorganize_partition_info();
+                PriorityQueueDdlEvent::ReorganizePartition {
+                    table_id: table.id,
+                    dropped_partition_ids: dropped
+                        .definitions
+                        .snapshot()
+                        .into_iter()
+                        .map(|definition| definition.id)
+                        .collect(),
+                }
+            }
+            ActionType::ACTION_ALTER_TABLE_PARTITIONING => {
+                let (old_table_id, table, _) = event.add_partitioning_info();
+                PriorityQueueDdlEvent::AlterTablePartitioning {
+                    old_table_id,
+                    new_table_id: table.id,
+                }
+            }
+            ActionType::ACTION_REMOVE_PARTITIONING => {
+                let (old_table_id, table, dropped) = event.remove_partitioning_info();
+                PriorityQueueDdlEvent::RemovePartitioning {
+                    old_table_id,
+                    dropped_partition_ids: dropped
+                        .definitions
+                        .snapshot()
+                        .into_iter()
+                        .map(|definition| definition.id)
+                        .collect(),
+                    new_table_id: table.id,
+                }
+            }
+            ActionType::ACTION_EXCHANGE_TABLE_PARTITION => {
+                let (table, partition, standalone) = event.exchange_partition_info();
+                let old_partition_id = partition
+                    .definitions
+                    .snapshot()
+                    .first()
+                    .expect("exchange event has one partition")
+                    .id;
+                PriorityQueueDdlEvent::ExchangePartition {
+                    partitioned_table_id: table.id,
+                    old_partition_id,
+                    old_standalone_table_id: standalone.id,
+                    new_standalone_table_id: Some(old_partition_id),
+                }
+            }
+            ActionType::ACTION_DROP_SCHEMA => {
+                let mut dropped_ids = Vec::new();
+                for table in &event.drop_schema_info().tables {
+                    dropped_ids.extend(table.partitions.iter().map(|partition| partition.id));
+                    dropped_ids.push(table.id);
+                }
+                PriorityQueueDdlEvent::DropSchema { dropped_ids }
+            }
+            _ => PriorityQueueDdlEvent::Other,
+        };
+        queue
+            .handle_ddl_event(run_auto_analyze, &queue_event)
+            .map_err(|error| match error {
+                DdlHandleError::NotReadyRetryLater => NotifierError::NotReadyRetryLater,
+            })
+    });
+    notifier.register_handler(PRIORITY_QUEUE_HANDLER_ID, priority_handler);
+    notifier
 }
 
 impl Store for ClusterNotifierTableStore {

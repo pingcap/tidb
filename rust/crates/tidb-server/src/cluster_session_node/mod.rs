@@ -181,7 +181,7 @@ use tidb_domain::historical_stats::{
 use tidb_exec::catalog_watch::SharedCatalog as SharedClusterCatalog;
 use tidb_exec::cluster_analyze::AnalyzeStatement;
 use tidb_exec::cluster_catalog::ClusterCatalog;
-use tidb_exec::cluster_ddl::{AlterColumnAction, DdlStatement};
+use tidb_exec::cluster_ddl::DdlStatement;
 use tidb_exec::cluster_load_stats::prepare_cluster_load_stats;
 use tidb_exec::cluster_stats_load::ClusterStatsLoader;
 use tidb_exec::cluster_stats_lock::prepare_cluster_stats_lock;
@@ -370,31 +370,6 @@ enum StatementRoute {
     FlushStatsDelta(FlushStatsDeltaTargets),
     /// One persisted `LOCK STATS` or `UNLOCK STATS` operation.
     StatsLock(ClusterStatsLockStatement),
-}
-
-#[derive(Clone, Copy)]
-enum PartitionStatsDdlKind {
-    Add,
-    Drop,
-    Truncate,
-}
-
-enum TableStatsDdlChange {
-    DropSchema {
-        retired_ids: Vec<i64>,
-    },
-    Create {
-        schema: String,
-        table: String,
-    },
-    Truncate {
-        schema: String,
-        table: String,
-        old_table: Box<tidb_model::table_info::TableInfo>,
-    },
-    Drop {
-        old_table: Box<tidb_model::table_info::TableInfo>,
-    },
 }
 
 enum FlushStatsDeltaTargets {
@@ -948,6 +923,9 @@ pub struct ClusterSessionFactory {
     /// reference back to the domain-shaped session factory.
     advanced_sys_session_pool:
         std::sync::OnceLock<Arc<tidb_syssession::AdvancedSessionPool<ClusterStatsSessionContext>>>,
+    /// Pinned Go Domain's durable DDL notifier, registered before the stats
+    /// owner campaigns and driven by that owner's lifecycle.
+    ddl_notifier: std::sync::OnceLock<Arc<tidb_ddl_notifier::DdlNotifier>>,
     /// Go `analyzeJobsCleanupWorker`, installed after stable `Arc` ownership.
     analyze_jobs_cleanup_worker: std::sync::OnceLock<AnalyzeJobsCleanupWorker>,
     /// Go `autoAnalyzeWorker`, installed after stable `Arc` ownership.
@@ -1034,6 +1012,7 @@ impl ClusterSessionFactory {
             stats_usage_workers: std::sync::OnceLock::new(),
             stats_owner: None,
             advanced_sys_session_pool: std::sync::OnceLock::new(),
+            ddl_notifier: std::sync::OnceLock::new(),
             analyze_jobs_cleanup_worker: std::sync::OnceLock::new(),
             auto_analyze_worker: std::sync::OnceLock::new(),
             historical_stats_worker,
@@ -1730,11 +1709,24 @@ impl ClusterSessionFactory {
 
     /// Starts Go Domain's statistics-owner campaign after the factory has
     /// reached its stable process lifetime.
-    pub(crate) fn campaign_stats_owner(&self) -> Result<(), String> {
-        self.stats_owner
+    pub(crate) fn campaign_stats_owner(
+        self: &Arc<Self>,
+        stats_lease: crate::node_config::StatsLease,
+    ) -> Result<(), String> {
+        let owner = self
+            .stats_owner
             .as_ref()
-            .ok_or_else(|| "statistics owner is not initialized".to_owned())?
-            .campaign_owner(&[])
+            .ok_or_else(|| "statistics owner is not initialized".to_owned())?;
+        let notifier = Arc::clone(self.ddl_notifier.get_or_init(|| {
+            ddl_notifier::build_notifier(
+                self,
+                stats_lease.reload_interval().unwrap_or(Duration::ZERO),
+            )
+        }));
+        owner.set_listener(Arc::new(tidb_owner::ListenersWrapper::new(vec![
+            notifier as Arc<dyn tidb_owner::Listener>,
+        ])));
+        owner.campaign_owner(&[])
     }
 
     /// The boot catalog's tables this node cannot serve, with their reasons.
@@ -2788,6 +2780,7 @@ fn stats_delta_table(catalog: &ClusterCatalog, physical_id: i64) -> Option<(&str
     None
 }
 
+#[cfg(test)]
 fn partition_id_map(
     catalog: &ClusterCatalog,
     schema: &str,
@@ -2836,16 +2829,6 @@ fn stats_physical_ids(table: &tidb_model::table_info::TableInfo, dynamic: bool) 
         ids.push(table.id);
     }
     ids
-}
-
-fn handle_stats_ddl_result(event: &str, result: Result<(), SqlQueryError>) {
-    if let Err(error) = result {
-        eprintln!(
-            "{{\"event\":\"stats_ddl_event_failed\",\"ddl_event\":{},\"error\":{}}}",
-            serde_json::to_string(event).unwrap_or_else(|_| "\"unknown\"".to_owned()),
-            serde_json::to_string(&error.message).unwrap_or_else(|_| "\"unknown\"".to_owned())
-        );
-    }
 }
 
 impl QuerySessionFactory for ClusterSessionFactory {
@@ -3012,7 +2995,6 @@ impl QuerySessionFactory for ClusterSessionFactory {
             connection_id: context.connection_id,
             transaction_pin: None,
             historical_stats_worker: Arc::clone(&self.historical_stats_worker),
-            auto_analyze_priority_queue: Arc::clone(&self.auto_analyze_priority_queue),
         })
     }
 
@@ -3990,13 +3972,6 @@ pub struct ClusterServerSession {
     transaction_pin: Option<schema_sync::SchemaPinGuard>,
     /// The domain-global mailbox successful ANALYZE results enqueue into.
     historical_stats_worker: Arc<HistoricalStatsWorker<ClusterHistoricalInfoSchema>>,
-    /// The factory's lazily installed queue, observed by DDL sessions even
-    /// when they were opened before auto analyze acquired ownership.
-    auto_analyze_priority_queue: Arc<
-        std::sync::OnceLock<
-            Arc<tidb_stats_handle_autoanalyze_priorityqueue::AnalysisPriorityQueue>,
-        >,
-    >,
 }
 
 /// The session layer's next move after a pessimistic statement's lock step.
@@ -5238,63 +5213,530 @@ impl ClusterServerSession {
         })
     }
 
-    fn update_partition_ddl_stats(
-        &mut self,
-        schema: &str,
-        table_name: &str,
-        logical_table_id: i64,
-        old_ids: &[(String, i64)],
-        kind: PartitionStatsDdlKind,
-    ) -> Result<Vec<i64>, SqlQueryError> {
-        let catalog = self.catalog.load();
-        let (_, new_ids) = partition_id_map(&catalog, schema, table_name)
-            .ok_or_else(|| SqlQueryError::unknown("partitioned table disappeared from catalog"))?;
-        let (_, table) = catalog
-            .find_table(schema, table_name)
-            .ok_or_else(|| SqlQueryError::unknown("partitioned table disappeared from catalog"))?;
-        let old_by_name = old_ids
-            .iter()
-            .cloned()
-            .collect::<std::collections::HashMap<_, _>>();
-        let new_by_name = new_ids
-            .iter()
-            .cloned()
-            .collect::<std::collections::HashMap<_, _>>();
-        let inserted_ids = new_ids
-            .iter()
-            .filter_map(|(name, new_id)| (old_by_name.get(name) != Some(new_id)).then_some(*new_id))
-            .collect::<Vec<_>>();
-        let retired_ids = old_ids
-            .iter()
-            .filter_map(|(name, old_id)| (new_by_name.get(name) != Some(old_id)).then_some(*old_id))
-            .collect::<Vec<_>>();
-        let adjust_global = matches!(
-            kind,
-            PartitionStatsDdlKind::Drop | PartitionStatsDdlKind::Truncate
-        );
-        let mut current_ids = vec![logical_table_id];
-        current_ids.extend(new_ids.into_iter().map(|(_, physical_id)| physical_id));
-        self.apply_stats_ddl_change(
-            table,
-            Some(logical_table_id),
-            &inserted_ids,
-            &retired_ids,
-            adjust_global,
-            &current_ids,
-        )?;
-        Ok(retired_ids)
+    fn stage_stats_notifier_event(
+        &self,
+        event: &tidb_ddl_notifier::SchemaChangeEvent,
+    ) -> Result<(), SqlQueryError> {
+        use tidb_model::ActionType;
+
+        match event.action_type() {
+            ActionType::ACTION_CREATE_TABLE => {
+                let table = event.create_table_info();
+                let ids = stats_physical_ids(table, self.dynamic_partition_pruning()?);
+                self.stage_stats_table_change(table, None, &ids, &[], false)
+            }
+            ActionType::ACTION_TRUNCATE_TABLE => {
+                let (table, old_table) = event.truncate_table_info();
+                let new_ids = stats_physical_ids(table, self.dynamic_partition_pruning()?);
+                let old_ids = stats_physical_ids(old_table, self.dynamic_partition_pruning()?);
+                self.stage_stats_table_change(table, None, &new_ids, &old_ids, false)
+            }
+            ActionType::ACTION_DROP_TABLE => {
+                let table = event.drop_table_info();
+                let old_ids = stats_physical_ids(table, self.dynamic_partition_pruning()?);
+                self.stage_stats_table_change(table, None, &[], &old_ids, false)
+            }
+            ActionType::ACTION_ADD_COLUMN => {
+                let (table, columns) = event.add_column_info();
+                self.stage_stats_columns(table, columns)
+            }
+            ActionType::ACTION_MODIFY_COLUMN => {
+                let (table, columns, analyzed) = event.modify_column_info();
+                if analyzed {
+                    Ok(())
+                } else {
+                    self.stage_stats_columns(table, columns)
+                }
+            }
+            ActionType::ACTION_ADD_TABLE_PARTITION => {
+                let (table, added) = event.add_partition_info();
+                let ids = added
+                    .definitions
+                    .snapshot()
+                    .into_iter()
+                    .map(|definition| definition.id)
+                    .collect::<Vec<_>>();
+                self.stage_stats_table_change(table, Some(table.id), &ids, &[], false)
+            }
+            ActionType::ACTION_TRUNCATE_TABLE_PARTITION => {
+                let (table, added, dropped) = event.truncate_partition_info();
+                let inserted = added
+                    .definitions
+                    .snapshot()
+                    .into_iter()
+                    .map(|definition| definition.id)
+                    .collect::<Vec<_>>();
+                let retired = dropped
+                    .definitions
+                    .snapshot()
+                    .into_iter()
+                    .map(|definition| definition.id)
+                    .collect::<Vec<_>>();
+                self.stage_stats_table_change(table, Some(table.id), &inserted, &retired, true)
+            }
+            ActionType::ACTION_DROP_TABLE_PARTITION => {
+                let (table, dropped) = event.drop_partition_info();
+                let retired = dropped
+                    .definitions
+                    .snapshot()
+                    .into_iter()
+                    .map(|definition| definition.id)
+                    .collect::<Vec<_>>();
+                self.stage_stats_table_change(table, Some(table.id), &[], &retired, true)
+            }
+            ActionType::ACTION_EXCHANGE_TABLE_PARTITION => {
+                let (table, partition, standalone) = event.exchange_partition_info();
+                let partition_id = partition
+                    .definitions
+                    .snapshot()
+                    .first()
+                    .ok_or_else(|| {
+                        SqlQueryError::unknown("exchange event has no partition definition")
+                    })?
+                    .id;
+                self.stage_exchange_partition_stats(table.id, partition_id, standalone.id)
+            }
+            ActionType::ACTION_REORGANIZE_PARTITION => {
+                let (table, added, dropped) = event.reorganize_partition_info();
+                let inserted = added
+                    .definitions
+                    .snapshot()
+                    .into_iter()
+                    .map(|definition| definition.id)
+                    .collect::<Vec<_>>();
+                let retired = dropped
+                    .definitions
+                    .snapshot()
+                    .into_iter()
+                    .map(|definition| definition.id)
+                    .collect::<Vec<_>>();
+                self.stage_stats_table_change(table, Some(table.id), &inserted, &retired, false)
+            }
+            ActionType::ACTION_ALTER_TABLE_PARTITIONING => {
+                let (old_table_id, table, added) = event.add_partitioning_info();
+                let inserted = added
+                    .definitions
+                    .snapshot()
+                    .into_iter()
+                    .map(|definition| definition.id)
+                    .collect::<Vec<_>>();
+                self.stage_stats_table_change(table, Some(table.id), &inserted, &[], false)?;
+                self.stage_change_global_stats_id(old_table_id, table.id)
+            }
+            ActionType::ACTION_REMOVE_PARTITIONING => {
+                let (old_table_id, table, dropped) = event.remove_partitioning_info();
+                self.stage_change_global_stats_id(old_table_id, table.id)?;
+                let retired = dropped
+                    .definitions
+                    .snapshot()
+                    .into_iter()
+                    .map(|definition| definition.id)
+                    .collect::<Vec<_>>();
+                self.stage_stats_table_change(table, Some(table.id), &[], &retired, false)
+            }
+            ActionType::ACTION_DROP_SCHEMA => {
+                let mut ids = Vec::new();
+                for table in &event.drop_schema_info().tables {
+                    ids.extend(table.partitions.iter().map(|partition| partition.id));
+                    ids.push(table.id);
+                }
+                self.stage_stats_meta_refreshes(&ids, true)
+            }
+            ActionType::ACTION_FLASHBACK_CLUSTER => self.stage_stats_version_refresh(),
+            ActionType::ACTION_ADD_INDEX => Ok(()),
+            other => {
+                eprintln!(
+                    "{{\"event\":\"unhandled_stats_schema_change\",\"action\":{}}}",
+                    serde_json::to_string(&format!("{other:?}"))
+                        .unwrap_or_else(|_| "\"unknown\"".to_owned())
+                );
+                Ok(())
+            }
+        }
     }
 
-    fn notify_auto_analyze_priority_queue(
+    fn notifier_transaction(&self) -> Result<&dyn OpenClusterTransaction, SqlQueryError> {
+        self.explicit
+            .as_deref()
+            .ok_or_else(|| SqlQueryError::unknown("DDL notifier handler has no active transaction"))
+    }
+
+    fn stage_stats_table_change(
         &self,
-        event: tidb_stats_handle_autoanalyze_priorityqueue::PriorityQueueDdlEvent,
-    ) {
-        let Some(queue) = self.auto_analyze_priority_queue.get() else {
-            return;
-        };
-        if queue.is_initialized() {
-            let _ = queue.handle_ddl_event(true, &event);
+        table: &tidb_model::table_info::TableInfo,
+        logical_table_id: Option<i64>,
+        inserted_ids: &[i64],
+        retired_ids: &[i64],
+        adjust_global: bool,
+    ) -> Result<(), SqlQueryError> {
+        let transaction = self.notifier_transaction()?;
+        let catalog = self.catalog.load();
+        let version = transaction.start_ts();
+        let loader = ClusterStatsLoader::locate(&catalog)
+            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+        for &new_id in inserted_ids {
+            for statement in
+                tidb_exec::cluster_stats_write::insert_table_stats_statements(table, new_id)
+            {
+                let now =
+                    system_time_timestamp(SystemTime::now()).map_err(SqlQueryError::unknown)?;
+                transactions::stage_pessimistic_statement(
+                    transaction,
+                    &self.buffer,
+                    |snapshot, _| {
+                        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                        let plan =
+                            tidb_exec::cluster_stats_write::plan_insert_table_stats_statement(
+                                &mut snapshot,
+                                &catalog,
+                                &statement,
+                                version,
+                                now,
+                            )
+                            .map_err(|error| error.to_string())?;
+                        Ok(((), plan.mutations))
+                    },
+                )
+                .map_err(SqlQueryError::unknown)?;
+            }
+            self.record_schema_change_history(transaction, &self.buffer, &catalog, new_id, version)
+                .map_err(SqlQueryError::unknown)?;
         }
+
+        let mut count = 0i64;
+        if adjust_global {
+            for &old_id in retired_ids {
+                let snapshot = transaction
+                    .snapshot_for(false)
+                    .map_err(SqlQueryError::unknown)?;
+                let snapshot = tidb_exec::cluster_table_storage::overlay_staged_mutations(
+                    snapshot,
+                    &self.buffer,
+                );
+                let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                count = count.wrapping_add(
+                    loader
+                        .load_meta(&mut snapshot, old_id)
+                        .map_err(|error| SqlQueryError::unknown(error.to_string()))?
+                        .map_or(0, |(_, _, _, count, _)| count as i64),
+                );
+            }
+        }
+        if count != 0 {
+            let logical_table_id = logical_table_id.ok_or_else(|| {
+                SqlQueryError::unknown(
+                    "partition statistics update is missing its logical table id",
+                )
+            })?;
+            let snapshot = transaction
+                .snapshot_for(false)
+                .map_err(SqlQueryError::unknown)?;
+            let snapshot =
+                tidb_exec::cluster_table_storage::overlay_staged_mutations(snapshot, &self.buffer);
+            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+            let locked = tidb_exec::cluster_stats_write::load_stats_locked_table_ids(
+                &mut snapshot,
+                &catalog,
+            )
+            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+            let update = tidb_stats_handle_usage::DeltaUpdate {
+                table_id: logical_table_id,
+                delta: tidb_stats_handle_usage::TableDelta {
+                    delta: count.wrapping_neg(),
+                    count,
+                    init_time: None,
+                },
+                is_locked: locked.contains(&logical_table_id),
+            };
+            for statement in tidb_exec::cluster_stats_write::stats_delta_statements(&[update]) {
+                let now =
+                    system_time_timestamp(SystemTime::now()).map_err(SqlQueryError::unknown)?;
+                transactions::stage_pessimistic_statement(
+                    transaction,
+                    &self.buffer,
+                    |snapshot, _| {
+                        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                        let plan = tidb_exec::cluster_stats_write::plan_stats_delta_statement(
+                            &mut snapshot,
+                            &catalog,
+                            &statement,
+                            version,
+                            now,
+                        )
+                        .map_err(|error| error.to_string())?;
+                        Ok(((), plan.mutations))
+                    },
+                )
+                .map_err(SqlQueryError::unknown)?;
+            }
+        }
+        self.stage_stats_meta_refreshes(retired_ids, false)
+    }
+
+    fn stage_stats_meta_refreshes(
+        &self,
+        ids: &[i64],
+        best_effort: bool,
+    ) -> Result<(), SqlQueryError> {
+        let transaction = self.notifier_transaction()?;
+        let catalog = self.catalog.load();
+        let version = transaction.start_ts();
+        for &physical_id in ids {
+            let refreshed = transactions::stage_pessimistic_statement(
+                transaction,
+                &self.buffer,
+                |snapshot, _| {
+                    let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                    let plan = tidb_exec::cluster_stats_write::plan_stats_meta_version_refresh(
+                        &mut snapshot,
+                        &catalog,
+                        physical_id,
+                        version,
+                    )
+                    .map_err(|error| error.to_string())?;
+                    Ok(((), plan.mutations))
+                },
+            );
+            if let Err(error) = refreshed {
+                if !best_effort {
+                    return Err(SqlQueryError::unknown(error));
+                }
+                eprintln!(
+                    "{{\"event\":\"stats_schema_gc_version_failed\",\"physical_id\":{physical_id},\"error\":{}}}",
+                    serde_json::to_string(&error).unwrap_or_else(|_| "\"unknown\"".to_owned())
+                );
+                continue;
+            }
+            if let Err(error) = self.record_schema_change_history(
+                transaction,
+                &self.buffer,
+                &catalog,
+                physical_id,
+                version,
+            ) {
+                if !best_effort {
+                    return Err(SqlQueryError::unknown(error));
+                }
+                eprintln!(
+                    "{{\"event\":\"stats_schema_history_failed\",\"physical_id\":{physical_id},\"error\":{}}}",
+                    serde_json::to_string(&error).unwrap_or_else(|_| "\"unknown\"".to_owned())
+                );
+            }
+        }
+        Ok(())
+    }
+
+    fn stage_exchange_partition_stats(
+        &self,
+        global_table_id: i64,
+        partition_id: i64,
+        standalone_table_id: i64,
+    ) -> Result<(), SqlQueryError> {
+        let transaction = self.notifier_transaction()?;
+        let catalog = self.catalog.load();
+        let snapshot = transaction
+            .snapshot_for(false)
+            .map_err(SqlQueryError::unknown)?;
+        let snapshot =
+            tidb_exec::cluster_table_storage::overlay_staged_mutations(snapshot, &self.buffer);
+        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+        let loader = ClusterStatsLoader::locate(&catalog)
+            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+        let partition = loader
+            .load_meta(&mut snapshot, partition_id)
+            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+        let standalone = loader
+            .load_meta(&mut snapshot, standalone_table_id)
+            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+        let (partition_modify, partition_count) = partition
+            .map(|(_, _, modify, count, _)| (modify, count as i64))
+            .unwrap_or_default();
+        let (standalone_modify, standalone_count) = standalone
+            .map(|(_, _, modify, count, _)| (modify, count as i64))
+            .unwrap_or_default();
+        let count_delta = standalone_count.wrapping_sub(partition_count);
+        let modify_count_delta = standalone_count
+            .wrapping_add(partition_count)
+            .wrapping_sub(partition_modify)
+            .wrapping_add(standalone_modify);
+        if count_delta == 0 && modify_count_delta == 0 {
+            return Ok(());
+        }
+        let locked =
+            tidb_exec::cluster_stats_write::load_stats_locked_table_ids(&mut snapshot, &catalog)
+                .map_err(|error| SqlQueryError::unknown(error.to_string()))?
+                .contains(&global_table_id);
+        let version = transaction.start_ts();
+        transactions::stage_pessimistic_statement(transaction, &self.buffer, |snapshot, _| {
+            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+            let plan = tidb_exec::cluster_stats_write::plan_exchange_partition_stats_update(
+                &mut snapshot,
+                &catalog,
+                global_table_id,
+                count_delta,
+                modify_count_delta,
+                locked,
+                version,
+                system_time_timestamp(SystemTime::now())?,
+            )
+            .map_err(|error| error.to_string())?;
+            Ok(((), plan.mutations))
+        })
+        .map_err(SqlQueryError::unknown)
+    }
+
+    fn stage_stats_columns(
+        &self,
+        table: &tidb_model::table_info::TableInfo,
+        columns: &[tidb_model::ColumnInfo],
+    ) -> Result<(), SqlQueryError> {
+        let transaction = self.notifier_transaction()?;
+        let catalog = self.catalog.load();
+        let version = transaction.start_ts();
+        let loader = ClusterStatsLoader::locate(&catalog)
+            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+        let physical_ids = stats_physical_ids(table, self.dynamic_partition_pruning()?);
+        let defaults = columns
+            .iter()
+            .map(|column| {
+                let value = if column.is_virtual_generated() {
+                    None
+                } else {
+                    Some(
+                        tidb_exec::system_row_write::origin_default(column, table.name.original())
+                            .map_err(|error| SqlQueryError::unknown(error.to_string()))?,
+                    )
+                };
+                Ok((column, value))
+            })
+            .collect::<Result<Vec<_>, SqlQueryError>>()?;
+        for physical_id in physical_ids {
+            let snapshot = transaction
+                .snapshot_for(false)
+                .map_err(SqlQueryError::unknown)?;
+            let snapshot =
+                tidb_exec::cluster_table_storage::overlay_staged_mutations(snapshot, &self.buffer);
+            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+            let Some((_, _, _, count, _)) = loader
+                .load_meta(&mut snapshot, physical_id)
+                .map_err(|error| SqlQueryError::unknown(error.to_string()))?
+            else {
+                continue;
+            };
+            let mut inserted_any = false;
+            for (column, origin_default) in &defaults {
+                let inserted = transactions::stage_pessimistic_statement(
+                    transaction,
+                    &self.buffer,
+                    |snapshot, _| {
+                        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                        let (inserted, plan) =
+                            tidb_exec::cluster_stats_write::plan_insert_column_stats(
+                                &mut snapshot,
+                                &catalog,
+                                physical_id,
+                                column.id,
+                                count as i64,
+                                origin_default.as_ref(),
+                                version,
+                                system_time_timestamp(SystemTime::now())?,
+                            )
+                            .map_err(|error| error.to_string())?;
+                        Ok((inserted, plan.mutations))
+                    },
+                )
+                .map_err(SqlQueryError::unknown)?;
+                inserted_any |= inserted;
+                if inserted {
+                    if let Some(default) = origin_default.as_ref().filter(|value| !value.is_null())
+                    {
+                        transactions::stage_pessimistic_statement(
+                            transaction,
+                            &self.buffer,
+                            |snapshot, _| {
+                                let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                                let plan = tidb_exec::cluster_stats_write::plan_insert_column_default_bucket(
+                                    &mut snapshot,
+                                    &catalog,
+                                    physical_id,
+                                    column.id,
+                                    count as i64,
+                                    default,
+                                    system_time_timestamp(SystemTime::now())?,
+                                )
+                                .map_err(|error| error.to_string())?;
+                                Ok(((), plan.mutations))
+                            },
+                        )
+                        .map_err(SqlQueryError::unknown)?;
+                    }
+                }
+            }
+            if inserted_any {
+                transactions::stage_pessimistic_statement(
+                    transaction,
+                    &self.buffer,
+                    |snapshot, _| {
+                        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                        let plan = tidb_exec::cluster_stats_write::plan_stats_meta_version_refresh(
+                            &mut snapshot,
+                            &catalog,
+                            physical_id,
+                            version,
+                        )
+                        .map_err(|error| error.to_string())?;
+                        Ok(((), plan.mutations))
+                    },
+                )
+                .map_err(SqlQueryError::unknown)?;
+            }
+            self.record_schema_change_history(
+                transaction,
+                &self.buffer,
+                &catalog,
+                physical_id,
+                version,
+            )
+            .map_err(SqlQueryError::unknown)?;
+        }
+        Ok(())
+    }
+    fn stage_change_global_stats_id(
+        &self,
+        old_table_id: i64,
+        new_table_id: i64,
+    ) -> Result<(), SqlQueryError> {
+        let transaction = self.notifier_transaction()?;
+        let catalog = self.catalog.load();
+        transactions::stage_pessimistic_statement(transaction, &self.buffer, |snapshot, _| {
+            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+            let plan = tidb_exec::cluster_stats_write::plan_change_global_stats_id(
+                &mut snapshot,
+                &catalog,
+                old_table_id,
+                new_table_id,
+            )
+            .map_err(|error| error.to_string())?;
+            Ok(((), plan.mutations))
+        })
+        .map_err(SqlQueryError::unknown)
+    }
+
+    fn stage_stats_version_refresh(&self) -> Result<(), SqlQueryError> {
+        let transaction = self.notifier_transaction()?;
+        let catalog = self.catalog.load();
+        let version = transaction.start_ts();
+        transactions::stage_pessimistic_statement(transaction, &self.buffer, |snapshot, _| {
+            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+            let plan = tidb_exec::cluster_stats_write::plan_update_stats_version(
+                &mut snapshot,
+                &catalog,
+                version,
+            )
+            .map_err(|error| error.to_string())?;
+            Ok(((), plan.mutations))
+        })
+        .map_err(SqlQueryError::unknown)
     }
 
     fn record_schema_change_history(
@@ -5350,193 +5792,6 @@ impl ClusterServerSession {
         })
     }
 
-    fn apply_stats_ddl_change(
-        &mut self,
-        table: &tidb_model::table_info::TableInfo,
-        logical_table_id: Option<i64>,
-        inserted_ids: &[i64],
-        retired_ids: &[i64],
-        adjust_global: bool,
-        current_ids: &[i64],
-    ) -> Result<(), SqlQueryError> {
-        if inserted_ids.is_empty() && retired_ids.is_empty() {
-            return Ok(());
-        }
-        let catalog = self.catalog.load();
-        let resource_group = self.session.current_resource_group().to_owned();
-        let transaction = self
-            .transactions
-            .begin(true, &resource_group)
-            .map_err(SqlQueryError::unknown)?;
-        let version = transaction.start_ts();
-        let staged = MutationBuffer::new();
-        let prepared = (|| -> Result<(), String> {
-            let loader = ClusterStatsLoader::locate(&catalog).map_err(|error| error.to_string())?;
-
-            // Pinned Go create and truncate actions first call
-            // `InsertTableStats2KV` for every new physical table ID. That
-            // helper is one INSERT IGNORE for stats_meta followed by one for
-            // every column and index histogram placeholder.
-            for &new_id in inserted_ids {
-                for statement in
-                    tidb_exec::cluster_stats_write::insert_table_stats_statements(table, new_id)
-                {
-                    let now = system_time_timestamp(SystemTime::now())?;
-                    transactions::stage_pessimistic_statement(
-                        transaction.as_ref(),
-                        &staged,
-                        |snapshot, _| {
-                            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-                            let plan =
-                                tidb_exec::cluster_stats_write::plan_insert_table_stats_statement(
-                                    &mut snapshot,
-                                    &catalog,
-                                    &statement,
-                                    version,
-                                    now,
-                                )
-                                .map_err(|error| error.to_string())?;
-                            Ok(((), plan.mutations))
-                        },
-                    )?;
-                }
-                self.record_schema_change_history(
-                    transaction.as_ref(),
-                    &staged,
-                    &catalog,
-                    new_id,
-                    version,
-                )?;
-            }
-
-            // Go next reads each dropped partition with one
-            // `StatsMetaCountAndModifyCount` statement, then emits the usual
-            // `UpdateStatsMeta` statement sequence for the global table.
-            let mut count = 0i64;
-            if adjust_global {
-                for &old_id in retired_ids {
-                    let snapshot = transaction.snapshot_for(false)?;
-                    let snapshot = tidb_exec::cluster_table_storage::overlay_staged_mutations(
-                        snapshot, &staged,
-                    );
-                    let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-                    let partition_count = loader
-                        .load_meta(&mut snapshot, old_id)
-                        .map_err(|error| error.to_string())?
-                        .map_or(0, |(_, _, _, count, _)| count as i64);
-                    count = count.wrapping_add(partition_count);
-                }
-            }
-            if count != 0 {
-                let logical_table_id = logical_table_id.ok_or_else(|| {
-                    "partition statistics update is missing its logical table id".to_owned()
-                })?;
-                let snapshot = transaction.snapshot_for(false)?;
-                let snapshot =
-                    tidb_exec::cluster_table_storage::overlay_staged_mutations(snapshot, &staged);
-                let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-                let locked = tidb_exec::cluster_stats_write::load_stats_locked_table_ids(
-                    &mut snapshot,
-                    &catalog,
-                )
-                .map_err(|error| error.to_string())?;
-                let update = tidb_stats_handle_usage::DeltaUpdate {
-                    table_id: logical_table_id,
-                    delta: tidb_stats_handle_usage::TableDelta {
-                        delta: count.wrapping_neg(),
-                        count,
-                        init_time: None,
-                    },
-                    is_locked: locked.contains(&logical_table_id),
-                };
-                for statement in tidb_exec::cluster_stats_write::stats_delta_statements(&[update]) {
-                    let now = system_time_timestamp(SystemTime::now())?;
-                    transactions::stage_pessimistic_statement(
-                        transaction.as_ref(),
-                        &staged,
-                        |snapshot, _| {
-                            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-                            let plan = tidb_exec::cluster_stats_write::plan_stats_delta_statement(
-                                &mut snapshot,
-                                &catalog,
-                                &statement,
-                                version,
-                                now,
-                            )
-                            .map_err(|error| error.to_string())?;
-                            Ok(((), plan.mutations))
-                        },
-                    )?;
-                }
-            }
-
-            // Last, Go refreshes every dropped partition's stats_meta version
-            // and records schema-change history when that physical table has
-            // initialized cached statistics.
-            for &old_id in retired_ids {
-                transactions::stage_pessimistic_statement(
-                    transaction.as_ref(),
-                    &staged,
-                    |snapshot, _| {
-                        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-                        let plan = tidb_exec::cluster_stats_write::plan_stats_meta_version_refresh(
-                            &mut snapshot,
-                            &catalog,
-                            old_id,
-                            version,
-                        )
-                        .map_err(|error| error.to_string())?;
-                        Ok(((), plan.mutations))
-                    },
-                )?;
-                self.record_schema_change_history(
-                    transaction.as_ref(),
-                    &staged,
-                    &catalog,
-                    old_id,
-                    version,
-                )?;
-            }
-            Ok(())
-        })();
-        if let Err(error) = prepared {
-            let _ = transaction.rollback();
-            return Err(SqlQueryError::unknown(error));
-        }
-        transaction.commit(&staged)?;
-
-        let mut published = self.stats.load().as_ref().clone();
-        for old_id in retired_ids {
-            published.remove(old_id);
-        }
-        if current_ids.is_empty() {
-            self.stats.store(published);
-            return Ok(());
-        }
-
-        let column_types = tidb_exec::cluster_stats_load::column_types_of(table);
-        let snapshot = self
-            .transactions
-            .open_snapshot(&resource_group)
-            .map_err(SqlQueryError::unknown)?;
-        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-        let loader = ClusterStatsLoader::locate(&catalog)
-            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        for &physical_id in current_ids {
-            let state = loader
-                .load_table(&mut snapshot, physical_id, &column_types)
-                .map_err(|error| SqlQueryError::unknown(error.to_string()))?
-                .map_or(tidb_exec::stats_watch::TableStatsState::Pseudo, |stats| {
-                    tidb_exec::stats_watch::TableStatsState::Loaded(
-                        stats.to_statistics_table(table),
-                    )
-                });
-            published.insert(physical_id, state);
-        }
-        self.stats.store(published);
-        Ok(())
-    }
-
     fn dynamic_partition_pruning(&self) -> Result<bool, SqlQueryError> {
         self.global_vars
             .get(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
@@ -5544,274 +5799,6 @@ impl ClusterServerSession {
             .map_err(|error| SqlQueryError::unknown(format!("{error:?}")))
     }
 
-    fn update_table_ddl_stats(&mut self, change: TableStatsDdlChange) -> Result<(), SqlQueryError> {
-        match change {
-            TableStatsDdlChange::DropSchema { retired_ids } => {
-                self.update_drop_schema_stats(&retired_ids)
-            }
-            TableStatsDdlChange::Create { schema, table } => {
-                let table = self
-                    .catalog
-                    .load()
-                    .find_table(&schema, &table)
-                    .map(|(_, table)| table.clone())
-                    .ok_or_else(|| {
-                        SqlQueryError::unknown("created table disappeared from catalog")
-                    })?;
-                let ids = stats_physical_ids(&table, self.dynamic_partition_pruning()?);
-                self.apply_stats_ddl_change(&table, None, &ids, &[], false, &ids)
-            }
-            TableStatsDdlChange::Truncate {
-                schema,
-                table,
-                old_table,
-            } => {
-                let table = self
-                    .catalog
-                    .load()
-                    .find_table(&schema, &table)
-                    .map(|(_, table)| table.clone())
-                    .ok_or_else(|| {
-                        SqlQueryError::unknown("truncated table disappeared from catalog")
-                    })?;
-                // Pinned Go calls `getPhysicalIDs` independently for the new
-                // and dropped TableInfo, including its GLOBAL sysvar read.
-                let new_ids = stats_physical_ids(&table, self.dynamic_partition_pruning()?);
-                let old_ids = stats_physical_ids(&old_table, self.dynamic_partition_pruning()?);
-                self.apply_stats_ddl_change(&table, None, &new_ids, &old_ids, false, &new_ids)
-            }
-            TableStatsDdlChange::Drop { old_table } => {
-                let old_ids = stats_physical_ids(&old_table, self.dynamic_partition_pruning()?);
-                self.apply_stats_ddl_change(&old_table, None, &[], &old_ids, false, &[])
-            }
-        }
-    }
-
-    fn update_drop_schema_stats(&mut self, retired_ids: &[i64]) -> Result<(), SqlQueryError> {
-        if retired_ids.is_empty() {
-            return Ok(());
-        }
-        let catalog = self.catalog.load();
-        let resource_group = self.session.current_resource_group().to_owned();
-        let transaction = self
-            .transactions
-            .begin(true, &resource_group)
-            .map_err(SqlQueryError::unknown)?;
-        let version = transaction.start_ts();
-        let staged = MutationBuffer::new();
-        for &physical_id in retired_ids {
-            let refreshed = transactions::stage_pessimistic_statement(
-                transaction.as_ref(),
-                &staged,
-                |snapshot, _| {
-                    let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-                    let plan = tidb_exec::cluster_stats_write::plan_stats_meta_version_refresh(
-                        &mut snapshot,
-                        &catalog,
-                        physical_id,
-                        version,
-                    )
-                    .map_err(|error| error.to_string())?;
-                    Ok(((), plan.mutations))
-                },
-            );
-            if let Err(error) = refreshed {
-                eprintln!(
-                    "{{\"event\":\"stats_drop_schema_gc_version_failed\",\"physical_id\":{physical_id},\"error\":{}}}",
-                    serde_json::to_string(&error).unwrap_or_else(|_| "\"unknown\"".to_owned())
-                );
-                continue;
-            }
-            if let Err(error) = self.record_schema_change_history(
-                transaction.as_ref(),
-                &staged,
-                &catalog,
-                physical_id,
-                version,
-            ) {
-                eprintln!(
-                    "{{\"event\":\"stats_drop_schema_history_failed\",\"physical_id\":{physical_id},\"error\":{}}}",
-                    serde_json::to_string(&error).unwrap_or_else(|_| "\"unknown\"".to_owned())
-                );
-            }
-        }
-        transaction.commit(&staged)?;
-        let mut published = self.stats.load().as_ref().clone();
-        for physical_id in retired_ids {
-            published.remove(physical_id);
-        }
-        self.stats.store(published);
-        Ok(())
-    }
-
-    fn update_column_ddl_stats(
-        &mut self,
-        schema: &str,
-        table_name: &str,
-        column_name: &str,
-    ) -> Result<(), SqlQueryError> {
-        let catalog = self.catalog.load();
-        let (_, table) = catalog
-            .find_table(schema, table_name)
-            .ok_or_else(|| SqlQueryError::unknown("altered table disappeared from catalog"))?;
-        let column = table
-            .columns
-            .iter_deref()
-            .find(|column| column.read().name.lowercase() == column_name.to_lowercase())
-            .map(|column| column.read().clone())
-            .ok_or_else(|| SqlQueryError::unknown("changed column disappeared from catalog"))?;
-        let column_id = column.id;
-        let origin_default = if column.is_virtual_generated() {
-            None
-        } else {
-            Some(
-                tidb_exec::system_row_write::origin_default(&column, table.name.original())
-                    .map_err(|error| SqlQueryError::unknown(error.to_string()))?,
-            )
-        };
-        let physical_ids = stats_physical_ids(table, self.dynamic_partition_pruning()?);
-        let resource_group = self.session.current_resource_group().to_owned();
-        let transaction = self
-            .transactions
-            .begin(true, &resource_group)
-            .map_err(SqlQueryError::unknown)?;
-        let version = transaction.start_ts();
-        let staged = MutationBuffer::new();
-        let prepared = (|| -> Result<(), String> {
-            let loader = ClusterStatsLoader::locate(&catalog).map_err(|error| error.to_string())?;
-            for &physical_id in &physical_ids {
-                // Pinned `InsertColStats2KV` begins with an ordinary SELECT
-                // and returns without writes when the physical stats row does
-                // not exist.
-                let snapshot = transaction.snapshot_for(false)?;
-                let snapshot =
-                    tidb_exec::cluster_table_storage::overlay_staged_mutations(snapshot, &staged);
-                let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-                let Some((_, _, _, count, _)) = loader
-                    .load_meta(&mut snapshot, physical_id)
-                    .map_err(|error| error.to_string())?
-                else {
-                    self.record_schema_change_history(
-                        transaction.as_ref(),
-                        &staged,
-                        &catalog,
-                        physical_id,
-                        version,
-                    )?;
-                    continue;
-                };
-                let inserted = transactions::stage_pessimistic_statement(
-                    transaction.as_ref(),
-                    &staged,
-                    |snapshot, _| {
-                        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-                        let (inserted, plan) =
-                            tidb_exec::cluster_stats_write::plan_insert_column_stats(
-                                &mut snapshot,
-                                &catalog,
-                                physical_id,
-                                column_id,
-                                count as i64,
-                                origin_default.as_ref(),
-                                version,
-                                system_time_timestamp(SystemTime::now())?,
-                            )
-                            .map_err(|error| error.to_string())?;
-                        Ok((inserted, plan.mutations))
-                    },
-                )?;
-                if inserted {
-                    if let Some(default) =
-                        origin_default.as_ref().filter(|default| !default.is_null())
-                    {
-                        transactions::stage_pessimistic_statement(
-                            transaction.as_ref(),
-                            &staged,
-                            |snapshot, _| {
-                                let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-                                let plan = tidb_exec::cluster_stats_write::plan_insert_column_default_bucket(
-                                    &mut snapshot,
-                                    &catalog,
-                                    physical_id,
-                                    column_id,
-                                    count as i64,
-                                    default,
-                                    system_time_timestamp(SystemTime::now())?,
-                                )
-                                .map_err(|error| error.to_string())?;
-                                Ok(((), plan.mutations))
-                            },
-                        )?;
-                    }
-                }
-                if inserted {
-                    transactions::stage_pessimistic_statement(
-                        transaction.as_ref(),
-                        &staged,
-                        |snapshot, _| {
-                            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-                            let plan =
-                                tidb_exec::cluster_stats_write::plan_stats_meta_version_refresh(
-                                    &mut snapshot,
-                                    &catalog,
-                                    physical_id,
-                                    version,
-                                )
-                                .map_err(|error| error.to_string())?;
-                            Ok(((), plan.mutations))
-                        },
-                    )?;
-                }
-                self.record_schema_change_history(
-                    transaction.as_ref(),
-                    &staged,
-                    &catalog,
-                    physical_id,
-                    version,
-                )?;
-            }
-            Ok(())
-        })();
-        if let Err(error) = prepared {
-            let _ = transaction.rollback();
-            return Err(SqlQueryError::unknown(error));
-        }
-        transaction.commit(&staged)?;
-
-        let column_types = tidb_exec::cluster_stats_load::column_types_of(table);
-        let snapshot = self
-            .transactions
-            .open_snapshot(&resource_group)
-            .map_err(SqlQueryError::unknown)?;
-        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-        let loader = ClusterStatsLoader::locate(&catalog)
-            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        let mut published = self.stats.load().as_ref().clone();
-        for physical_id in physical_ids {
-            let state = loader
-                .load_table(&mut snapshot, physical_id, &column_types)
-                .map_err(|error| SqlQueryError::unknown(error.to_string()))?
-                .map_or(tidb_exec::stats_watch::TableStatsState::Pseudo, |stats| {
-                    tidb_exec::stats_watch::TableStatsState::Loaded(
-                        stats.to_statistics_table(table),
-                    )
-                });
-            published.insert(physical_id, state);
-        }
-        self.stats.store(published);
-        Ok(())
-    }
-
-    /// Performs one cluster catalog change.
-    ///
-    /// An open transaction is committed first: MySQL and Go both commit
-    /// implicitly before DDL, and leaving one open here would be worse than
-    /// untidy -- its later statements read at a timestamp older than the
-    /// change, so they would plan against a schema the cluster no longer has.
-    ///
-    /// The connection's own tables are not rebuilt here; its next statement
-    /// finds the node's catalog moved and rebuilds them, which is the one
-    /// place that decision lives.
     fn run_ddl(
         &mut self,
         sql: &str,
@@ -5828,276 +5815,7 @@ impl ClusterServerSession {
         if self.explicit.is_some() || self.session.in_transaction() {
             self.control_transaction("COMMIT")?;
         }
-        // Pinned `asyncNotifyEvent` suppresses every statistics event for
-        // `metadef.IsMemOrSysDB(job.SchemaName)`. Apply that once around all
-        // subscriber projections so table, column, and partition DDL cannot
-        // accidentally create `mysql.*` statistics rows.
-        let suppress_stats_event = match statement {
-            DdlStatement::DropDatabase { name, .. } => {
-                tidb_metadef::is_mem_or_sys_db(&name.to_lowercase())
-            }
-            DdlStatement::CreateTable { schema, .. }
-            | DdlStatement::CreateTableLike { schema, .. }
-            | DdlStatement::TruncateTable { schema, .. }
-            | DdlStatement::DropTable { schema, .. }
-            | DdlStatement::AddColumn { schema, .. }
-            | DdlStatement::ModifyColumn { schema, .. }
-            | DdlStatement::RenameColumn { schema, .. }
-            | DdlStatement::AlterAutoRandomBits { schema, .. }
-            | DdlStatement::MultiSchemaChange { schema, .. }
-            | DdlStatement::AddPartitions { schema, .. }
-            | DdlStatement::DropPartitions { schema, .. }
-            | DdlStatement::TruncatePartitions { schema, .. } => {
-                tidb_metadef::is_mem_or_sys_db(&schema.to_lowercase())
-            }
-            _ => false,
-        };
-        let table_stats_change = match statement {
-            DdlStatement::DropDatabase { name, .. } => self
-                .catalog
-                .load()
-                .databases
-                .iter()
-                .find(|database| database.info.name.lowercase() == name.to_lowercase())
-                .map(|database| {
-                    let mut retired_ids = Vec::new();
-                    for table in &database.tables {
-                        if let Some(partition) = &table.partition {
-                            retired_ids.extend(
-                                partition
-                                    .read()
-                                    .definitions
-                                    .snapshot()
-                                    .into_iter()
-                                    .map(|definition| definition.id),
-                            );
-                        }
-                        retired_ids.push(table.id);
-                    }
-                    TableStatsDdlChange::DropSchema { retired_ids }
-                }),
-            DdlStatement::CreateTable { schema, table, .. }
-            | DdlStatement::CreateTableLike { schema, table, .. } => {
-                Some(TableStatsDdlChange::Create {
-                    schema: schema.clone(),
-                    table: table.clone(),
-                })
-            }
-            DdlStatement::TruncateTable { schema, table } => self
-                .catalog
-                .load()
-                .find_table(schema, table)
-                .map(|(_, old_table)| TableStatsDdlChange::Truncate {
-                    schema: schema.clone(),
-                    table: table.clone(),
-                    old_table: Box::new(old_table.clone()),
-                }),
-            DdlStatement::DropTable { schema, table, .. } => self
-                .catalog
-                .load()
-                .find_table(schema, table)
-                .map(|(_, old_table)| TableStatsDdlChange::Drop {
-                    old_table: Box::new(old_table.clone()),
-                }),
-            _ => None,
-        };
-        let column_stats_changes = match statement {
-            DdlStatement::AddColumn {
-                schema,
-                table,
-                column,
-                ..
-            } => vec![(schema.clone(), table.clone(), column.name.clone())],
-            DdlStatement::ModifyColumn {
-                schema,
-                table,
-                column,
-                ..
-            } => vec![(schema.clone(), table.clone(), column.name.clone())],
-            DdlStatement::RenameColumn {
-                schema, table, to, ..
-            } => vec![(schema.clone(), table.clone(), to.clone())],
-            DdlStatement::AlterAutoRandomBits {
-                schema,
-                table,
-                column,
-                ..
-            } => vec![(schema.clone(), table.clone(), column.clone())],
-            DdlStatement::MultiSchemaChange {
-                schema,
-                table,
-                actions,
-            } => {
-                // Pinned Go runs each sub-job through the ordinary DDL
-                // worker. Every applied ADD COLUMN therefore publishes its
-                // own ActionAddColumn event with MultiSchemaInfo.Seq, while
-                // an IF NOT EXISTS no-op publishes none. The multi-schema
-                // admission rule rejects operating on the same column twice,
-                // so membership in the pre-DDL table identifies exactly the
-                // applied ADD sub-jobs and preserves their SQL order here.
-                let existing = self
-                    .catalog
-                    .load()
-                    .find_table(schema, table)
-                    .map(|(_, table)| {
-                        table
-                            .columns
-                            .iter_deref()
-                            .map(|column| column.read().name.lowercase().to_owned())
-                            .collect::<std::collections::HashSet<_>>()
-                    })
-                    .unwrap_or_default();
-                actions
-                    .iter()
-                    .filter_map(|action| match action {
-                        AlterColumnAction::Add { column, .. }
-                            if !existing.contains(&column.name.to_lowercase()) =>
-                        {
-                            Some((schema.clone(), table.clone(), column.name.clone()))
-                        }
-                        _ => None,
-                    })
-                    .collect()
-            }
-            _ => Vec::new(),
-        };
-        let partition_before = match statement {
-            DdlStatement::AddPartitions { schema, table, .. } => {
-                partition_id_map(&self.catalog.load(), schema, table).map(|(logical_id, ids)| {
-                    (
-                        schema.clone(),
-                        table.clone(),
-                        logical_id,
-                        ids,
-                        PartitionStatsDdlKind::Add,
-                    )
-                })
-            }
-            DdlStatement::DropPartitions { schema, table, .. } => {
-                partition_id_map(&self.catalog.load(), schema, table).map(|(logical_id, ids)| {
-                    (
-                        schema.clone(),
-                        table.clone(),
-                        logical_id,
-                        ids,
-                        PartitionStatsDdlKind::Drop,
-                    )
-                })
-            }
-            DdlStatement::TruncatePartitions { schema, table, .. } => {
-                partition_id_map(&self.catalog.load(), schema, table).map(|(logical_id, ids)| {
-                    (
-                        schema.clone(),
-                        table.clone(),
-                        logical_id,
-                        ids,
-                        PartitionStatsDdlKind::Truncate,
-                    )
-                })
-            }
-            _ => None,
-        };
-        let (table_stats_change, column_stats_changes, partition_before) = if suppress_stats_event {
-            (None, Vec::new(), None)
-        } else {
-            (table_stats_change, column_stats_changes, partition_before)
-        };
-        let table_queue_event = table_stats_change.as_ref().map(|change| {
-            use tidb_stats_handle_autoanalyze_priorityqueue::PriorityQueueDdlEvent;
-            match change {
-                TableStatsDdlChange::DropSchema { retired_ids } => {
-                    PriorityQueueDdlEvent::DropSchema {
-                        dropped_ids: retired_ids.clone(),
-                    }
-                }
-                TableStatsDdlChange::Truncate { old_table, .. } => {
-                    PriorityQueueDdlEvent::TruncateTable {
-                        dropped_ids: table_and_partition_ids(old_table),
-                    }
-                }
-                TableStatsDdlChange::Drop { old_table } => PriorityQueueDdlEvent::DropTable {
-                    dropped_ids: table_and_partition_ids(old_table),
-                },
-                TableStatsDdlChange::Create { .. } => PriorityQueueDdlEvent::Other,
-            }
-        });
-        let added_index_table = match statement {
-            DdlStatement::CreateIndex { schema, table, .. } => {
-                Some((schema.as_str(), table.as_str()))
-            }
-            DdlStatement::MultiSchemaChange {
-                schema,
-                table,
-                actions,
-            } if actions
-                .iter()
-                .any(|action| matches!(action, AlterColumnAction::AddIndex { .. })) =>
-            {
-                Some((schema.as_str(), table.as_str()))
-            }
-            _ => None,
-        };
         let report = self.ddl.execute(statement)?;
-        if matches!(report, ClusterDdlReport::Applied { .. }) {
-            if let Some(change) = table_stats_change {
-                handle_stats_ddl_result("table", self.update_table_ddl_stats(change));
-            }
-            for (schema, table, column) in column_stats_changes {
-                handle_stats_ddl_result(
-                    "column",
-                    self.update_column_ddl_stats(&schema, &table, column.as_str()),
-                );
-            }
-            if let Some((schema, table, logical_id, old_ids, kind)) = partition_before {
-                let retired_ids = partition_id_map(&self.catalog.load(), &schema, &table)
-                    .map(|(_, new_ids)| {
-                        let new_by_name = new_ids
-                            .into_iter()
-                            .collect::<std::collections::HashMap<_, _>>();
-                        old_ids
-                            .iter()
-                            .filter_map(|(name, old_id)| {
-                                (new_by_name.get(name) != Some(old_id)).then_some(*old_id)
-                            })
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
-                handle_stats_ddl_result(
-                    "partition",
-                    self.update_partition_ddl_stats(&schema, &table, logical_id, &old_ids, kind)
-                        .map(|_| ()),
-                );
-                use tidb_stats_handle_autoanalyze_priorityqueue::PriorityQueueDdlEvent;
-                match kind {
-                    PartitionStatsDdlKind::Drop => self.notify_auto_analyze_priority_queue(
-                        PriorityQueueDdlEvent::DropPartition {
-                            table_id: logical_id,
-                            dropped_partition_ids: retired_ids,
-                        },
-                    ),
-                    PartitionStatsDdlKind::Truncate => self.notify_auto_analyze_priority_queue(
-                        PriorityQueueDdlEvent::TruncatePartition {
-                            table_id: logical_id,
-                            dropped_partition_ids: retired_ids,
-                        },
-                    ),
-                    PartitionStatsDdlKind::Add => {}
-                }
-            }
-            if let Some(event) = table_queue_event {
-                self.notify_auto_analyze_priority_queue(event);
-            }
-            if let Some((schema, table)) = added_index_table {
-                if let Some((_, table)) = self.catalog.load().find_table(schema, table) {
-                    self.notify_auto_analyze_priority_queue(
-                        tidb_stats_handle_autoanalyze_priorityqueue::PriorityQueueDdlEvent::AddIndex {
-                            table_id: table.id,
-                            analyzed: false,
-                        },
-                    );
-                }
-            }
-        }
         // Go raises `job.Warning` on the session's own statement context, so
         // `SHOW WARNINGS` reports what the change did differently from what
         // was written. `toTError` gives a plain `fmt.Errorf` the generic
