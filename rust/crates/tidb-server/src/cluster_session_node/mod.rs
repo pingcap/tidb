@@ -331,6 +331,7 @@ fn jitter_below(upper: u32) -> u32 {
 
 mod boot;
 mod ddl;
+mod ddl_notifier;
 pub(crate) mod schema_sync;
 mod statistics;
 mod transactions;

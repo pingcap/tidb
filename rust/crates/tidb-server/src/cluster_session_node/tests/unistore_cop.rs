@@ -24,7 +24,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tidb_datatype::{Datum, MySqlDuration};
+use tidb_ddl_notifier::{
+    publish_schema_change_to_store, DdlNotifier, Handler, SchemaChangeEvent, SessionPool, Store,
+    TEST_HANDLER_ID,
+};
 
+use super::super::ddl_notifier::{ClusterNotifierSessionPool, ClusterNotifierTableStore};
 use super::super::{
     partition_id_map, ClusterHistoricalStatsHandle, ClusterPriorityQueueSource,
     ClusterServerSession,
@@ -96,6 +101,101 @@ fn displayed(rows: Vec<Vec<Datum>>) -> Vec<Vec<String>> {
                 .collect()
         })
         .collect()
+}
+
+/// Pinned `pkg/ddl/notifier.TestPublishToTableStore`, `TestBasicPubSub`, and
+/// `TestDeliverOrderAndCleanup` over the real bootstrapped notifier table.
+#[test]
+fn ddl_notifier_table_store_delivers_in_order_and_cleans_up() {
+    let (stack, _users) = cop_backed_stack();
+    let factory = Arc::new(stack.factory);
+    let mut client = factory
+        .open_session(session_context(151))
+        .expect("client session opens");
+    assert_eq!(
+        displayed(rows(
+            &mut client,
+            "SELECT variable_value FROM mysql.tidb \
+             WHERE variable_name = 'ddl_table_version'",
+        )),
+        [["4"]]
+    );
+    rows(&mut client, "DELETE FROM mysql.tidb_ddl_notifier");
+
+    let pool: Arc<dyn SessionPool> = Arc::new(ClusterNotifierSessionPool::new(
+        factory.advanced_sys_session_pool(),
+    ));
+    let store = Arc::new(ClusterNotifierTableStore);
+    let mut publisher = pool.get().expect("publisher session");
+    for (job_id, table_name) in [(1, "t1"), (2, "t2#special-char?in'name"), (3, "t3")] {
+        publish_schema_change_to_store(
+            publisher.as_mut(),
+            job_id,
+            -1,
+            SchemaChangeEvent::create_table(tidb_model::TableInfo {
+                id: 999 + job_id,
+                name: tidb_ast::CiString::new(table_name),
+                ..tidb_model::TableInfo::default()
+            }),
+            store.as_ref(),
+        )
+        .expect("event publishes");
+    }
+    pool.put(publisher);
+
+    let mut reader = pool.get().expect("list session");
+    let mut list = store.list(reader.as_mut()).expect("list starts");
+    let listed = list.read(reader.as_mut(), 2).expect("first page");
+    assert_eq!(listed.len(), 2);
+    assert_eq!(listed[0].event.create_table_info().name.original(), "t1");
+    assert_eq!(
+        listed[1].event.create_table_info().name.original(),
+        "t2#special-char?in'name"
+    );
+    let listed = list.read(reader.as_mut(), 2).expect("second page");
+    assert_eq!(
+        listed
+            .iter()
+            .map(|change| (change.ddl_job_id, change.sub_job_id))
+            .collect::<Vec<_>>(),
+        [(3, -1)]
+    );
+    assert_eq!(listed[0].event.create_table_info().name.original(), "t3");
+    list.close(reader.as_mut());
+    pool.put(reader);
+
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let handler: Handler = {
+        let seen = Arc::clone(&seen);
+        Arc::new(move |_, event| {
+            seen.lock().unwrap().push(event.create_table_info().id);
+            Ok(())
+        })
+    };
+    let notifier = DdlNotifier::new(
+        Arc::clone(&pool),
+        Arc::clone(&store) as Arc<dyn Store>,
+        Duration::from_millis(10),
+    );
+    notifier.register_handler(TEST_HANDLER_ID, handler);
+    tidb_owner::Listener::on_become_owner(&notifier);
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        let remaining = displayed(rows(
+            &mut client,
+            "SELECT count(*) FROM mysql.tidb_ddl_notifier",
+        ));
+        if remaining == [["0"]] {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "notifier did not process and clean up every event"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    tidb_owner::Listener::on_retire_owner(&notifier);
+    assert_eq!(*seen.lock().unwrap(), [1000, 1001, 1002]);
 }
 
 /// Pinned Go `TestStatsCacheShouldNotCacheTemporaryTable`: GLOBAL temporary

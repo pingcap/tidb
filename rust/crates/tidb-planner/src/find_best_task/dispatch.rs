@@ -1859,7 +1859,10 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     && source_index.unique
                     && declared_index_prefix_complete
                     && !ranges.is_empty()
-                    && ranges.iter().all(|range| range.is_point_non_nullable())
+                    && ranges.iter().all(|range| {
+                        range.is_point_non_nullable()
+                            && range.high_val.len() == source_index.columns.len()
+                    })
                 {
                     let mut point_base = crate::physical::BasePhysicalPlan::new(
                         ctx.allocator,

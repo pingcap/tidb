@@ -120,6 +120,121 @@ fn cached_physical_plan_rebuilds_and_executes_the_retained_tree() {
 }
 
 #[test]
+fn cached_composite_handle_range_rebuilds_every_tuple_bound() {
+    let mut catalog = Catalog::default();
+    let ctx = crate::StmtContext::for_query();
+    crate::run_create_table_on(
+        "CREATE TABLE cache_tuple_range (\
+            a BIGINT NOT NULL, b BIGINT NOT NULL, payload BIGINT NOT NULL, \
+            PRIMARY KEY (a, b) NONCLUSTERED)",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO cache_tuple_range VALUES (1,-1,10),(2,-1,20),(3,-1,30)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    assert_eq!(
+        run_select_on(
+            "SELECT a, b FROM cache_tuple_range \
+             WHERE (a, b) > (2, -1) ORDER BY a, b LIMIT 2",
+            &mut catalog,
+            &ctx,
+        )
+        .unwrap(),
+        [[Datum::Int(3), Datum::Int(-1)]]
+    );
+    let statement = tidb_parser::parse(
+        "SELECT a, b FROM cache_tuple_range \
+         WHERE (a, b) > (?, ?) ORDER BY a, b LIMIT 2",
+    )
+    .unwrap();
+    let plan = std::sync::Arc::new(
+        build_prepared_select_plan(&statement, 2, &catalog, DEFAULT_DATABASE, &ctx)
+            .expect("the tuple range is cacheable"),
+    );
+    let environment = PreparedPlanCacheEnvironment::default();
+    let first = plan
+        .bind(
+            &[Datum::Int(0), Datum::Int(0)],
+            &catalog,
+            DEFAULT_DATABASE,
+            &ctx,
+            &environment,
+        )
+        .expect("the first execution builds the cached tree");
+    assert!(!first.cache_hit());
+    assert_eq!(
+        run_prepared_select_for_test(&first, &catalog, DEFAULT_DATABASE, &ctx)
+            .unwrap()
+            .1,
+        [
+            [Datum::Int(1), Datum::Int(-1)],
+            [Datum::Int(2), Datum::Int(-1)]
+        ]
+    );
+    drop(first);
+
+    let second = plan
+        .bind(
+            &[Datum::Int(2), Datum::Int(-1)],
+            &catalog,
+            DEFAULT_DATABASE,
+            &ctx,
+            &environment,
+        )
+        .expect("the cache hit rebuilds the tuple range");
+    assert!(second.cache_hit());
+    assert_eq!(
+        run_prepared_select_for_test(&second, &catalog, DEFAULT_DATABASE, &ctx)
+            .unwrap()
+            .1,
+        [[Datum::Int(3), Datum::Int(-1)]]
+    );
+}
+
+#[test]
+fn composite_unique_prefix_is_not_a_point_get() {
+    let mut catalog = Catalog::default();
+    let ctx = crate::StmtContext::for_query();
+    crate::run_create_table_on(
+        "CREATE TABLE point_prefix (\
+            a BIGINT NOT NULL, b BIGINT NOT NULL, flag BIGINT UNSIGNED NOT NULL, \
+            PRIMARY KEY (a, b) NONCLUSTERED)",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO point_prefix VALUES (1,-1,0)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    assert_eq!(
+        run_update_on(
+            "UPDATE point_prefix SET flag = 1 \
+             WHERE a = 1 AND b = -1 AND flag = 0",
+            &mut catalog,
+            &ctx,
+        )
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        run_select_on(
+            "SELECT flag FROM point_prefix WHERE a = 1 AND b = -1",
+            &catalog,
+            &ctx,
+        )
+        .unwrap(),
+        [[Datum::UInt(1)]]
+    );
+}
+
+#[test]
 fn cached_physical_index_readers_build_without_legacy_planner() {
     let mut catalog = Catalog::default();
     let ctx = crate::StmtContext::for_query();

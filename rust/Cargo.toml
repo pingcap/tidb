@@ -75,6 +75,7 @@ members = [
     "crates/tidb-server",
     "crates/tidb-session",
     "crates/tidb-domain",
+    "crates/tidb-ddl-notifier",
     "crates/tidb-schemaver",
     "difftests",
     "difftests/parser-tests",

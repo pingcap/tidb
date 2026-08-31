@@ -34,7 +34,7 @@ use tidb_exec::mysql_bootstrap::{
     plan_mysql_bootstrap, BootstrapEnvironment, BootstrapError, BootstrapWrite,
 };
 use tidb_meta::key;
-use tidb_metadef::BOOTSTRAP_TABLES;
+use tidb_metadef::{BOOTSTRAP_TABLES, DDL_TABLE_VERSION_TABLES};
 use tidb_txnkv::transaction::OptimisticMutationKind;
 
 /// One fixed environment, so every plan here is byte-for-byte reproducible.
@@ -114,8 +114,12 @@ fn a_bootstrapped_keyspace_loads_back_as_a_catalog_with_every_mysql_table() {
         .iter()
         .find(|database| database.info.name.lowercase() == "mysql")
         .expect("the bootstrap created the mysql database");
-    assert_eq!(database.tables.len(), BOOTSTRAP_TABLES.len());
-    for table in BOOTSTRAP_TABLES {
+    let all_tables = DDL_TABLE_VERSION_TABLES
+        .iter()
+        .flat_map(|version| version.tables)
+        .chain(BOOTSTRAP_TABLES);
+    assert_eq!(database.tables.len(), all_tables.clone().count());
+    for table in all_tables {
         assert!(
             database
                 .tables
@@ -125,6 +129,30 @@ fn a_bootstrapped_keyspace_loads_back_as_a_catalog_with_every_mysql_table() {
             table.name
         );
     }
+}
+
+#[test]
+fn bootstrap_creates_all_ddl_tables_and_advances_their_version() {
+    let mut store = bootstrapped();
+    assert_eq!(
+        tidb_exec::mysql_bootstrap::read_ddl_table_version(&mut store)
+            .expect("DDL table version reads"),
+        4
+    );
+    let catalog = load_cluster_catalog(&mut store).expect("the catalog loads");
+    let state = read_bootstrap_state(&mut store, &catalog).expect("bootstrap state reads");
+    assert!(state.already_bootstrapped());
+    let mysql = catalog
+        .databases
+        .iter()
+        .find(|database| database.info.name.lowercase() == "mysql")
+        .expect("mysql database");
+    let notifier = mysql
+        .tables
+        .iter()
+        .find(|table| table.name.lowercase() == "tidb_ddl_notifier")
+        .expect("DDL notifier table");
+    assert_eq!(notifier.id, tidb_metadef::system::TI_DBDDLNOTIFIER_TABLE_ID);
 }
 
 #[test]

@@ -3326,6 +3326,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-ddl-notifier"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tidb-ast",
+ "tidb-model",
+ "tidb-owner",
+]
+
+[[package]]
 name = "tidb-distsql"
 version = "0.0.0"
 dependencies = [
@@ -3751,6 +3762,7 @@ dependencies = [
  "tidb-chunk",
  "tidb-config",
  "tidb-datatype",
+ "tidb-ddl-notifier",
  "tidb-distsql",
  "tidb-domain",
  "tidb-errmsg",

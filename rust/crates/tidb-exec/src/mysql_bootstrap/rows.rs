@@ -90,10 +90,9 @@ pub struct BootstrapEnvironment {
     /// Go's seed rows get theirs from the `INSERT` that writes them; this one
     /// is stated so a bootstrap plan stays a pure function of its inputs.
     pub current_timestamp: Time,
-    /// Go `Mutator.GetDDLTableVersion` as it stands *before* any TiDB has
-    /// created its DDL tables — this bootstrap creates none of them, so the
-    /// row states what the meta key says rather than what Go's own bootstrap
-    /// would have left behind.
+    /// Go `Mutator.GetDDLTableVersion` before `InitDDLTables` advances it.
+    /// The bootstrap planner creates every newer version group and records the
+    /// resulting version in both metadata and `mysql.tidb`, as Go does.
     pub ddl_table_version: i64,
 }
 

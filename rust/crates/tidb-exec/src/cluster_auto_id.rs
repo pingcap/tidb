@@ -502,10 +502,14 @@ where
         let mut conflicts = 0usize;
         loop {
             let call = UnaryCallContext::with_timeout(self.timeout);
+            // One meta key and one signed decimal value. Reserved system-table
+            // IDs make this hash key longer than 64 bytes, so the budget must
+            // be derived from the actual key just as the mutation is; a fixed
+            // estimate rejects Go's hidden-row-ID allocation for those tables.
+            let planned_bytes = self.counter_key.len().saturating_add(20);
             let mut transaction = self
                 .opener
-                // One key, whose value is a decimal integer.
-                .begin(1, 64)
+                .begin(1, planned_bytes)
                 .map_err(|error| store_error("open", &error))?;
             let stored = {
                 let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, self.timeout);

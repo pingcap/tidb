@@ -20,7 +20,9 @@ pub mod db;
 pub mod system;
 pub mod system_tables_def;
 
-pub use bootstrap_tables::{BootstrapTable, BOOTSTRAP_TABLES};
+pub use bootstrap_tables::{
+    BootstrapTable, VersionedDdlTables, BOOTSTRAP_TABLES, DDL_TABLE_VERSION_TABLES,
+};
 pub use db::{
     is_br_related_db, is_mem_db, is_mem_or_sys_db, is_system_db, is_system_related_db,
     CLUSTER_TABLE_INSTANCE_COLUMN_NAME, INFORMATION_SCHEMA_NAME, INFORMATION_SCHEMA_NAME_L,

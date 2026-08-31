@@ -1945,7 +1945,11 @@ impl IndexRangeSourceExec {
                 };
                 self.lookup_rows = rows;
                 self.lookup_handles = lookup_handles;
-                self.lookup_filter_complete = filter_complete;
+                self.lookup_filter_complete = filter_complete
+                    && self
+                        .filter
+                        .as_ref()
+                        .is_none_or(crate::predicate_pushdown::ScanFilterProbe::fully_described);
                 self.lookup_chunk = lookup_chunk;
                 self.lookup_chunk_row = 0;
                 if self.lookup_chunk.is_some() {
@@ -2201,6 +2205,10 @@ impl IndexRangeSourceExec {
     /// there. A response iterator never crosses an OS-thread boundary.
     fn build_lookup_job(&mut self, handles: Vec<TableHandle>) -> Result<LookupBatchJob, ExecError> {
         let handle_count = handles.len();
+        let allow_lookup_chunks = self
+            .filter
+            .as_ref()
+            .is_none_or(crate::predicate_pushdown::ScanFilterProbe::fully_described);
         if self.partial_aggregate.is_some() {
             // A partial aggregate owns the answer end to end; the plain
             // lookup never ran for this shape.
@@ -2278,8 +2286,11 @@ impl IndexRangeSourceExec {
                     ready: Some(Ok(LookupFetch::LocalFallback(handles))),
                 });
             };
-            let outcome = match crate::kv_table::KvTable::finish_lookup_by_handles(&handles, staged)
-            {
+            let outcome = match crate::kv_table::KvTable::finish_lookup_by_handles(
+                &handles,
+                staged,
+                allow_lookup_chunks,
+            ) {
                 Ok(Some(crate::kv_table::FinishedLookup::Rows(rows, applied, wire_rows))) => {
                     Ok(LookupFetch::Remote(rows, applied, wire_rows))
                 }
@@ -2305,6 +2316,7 @@ impl IndexRangeSourceExec {
         let worker_zone = self.decode_context.zone().clone();
         let worker_statement = self.statement.clone();
         let worker_required_rows = self.meta.max_chunk_size();
+        let worker_allow_chunks = allow_lookup_chunks;
         let worker = move || {
             let staged = match worker_table.stage_rows_by_handles_filtered(
                 &worker_handles,
@@ -2320,7 +2332,11 @@ impl IndexRangeSourceExec {
             let Some(staged) = staged else {
                 return Ok(LookupFetch::LocalFallback(worker_handles));
             };
-            match crate::kv_table::KvTable::finish_lookup_by_handles(&worker_handles, staged) {
+            match crate::kv_table::KvTable::finish_lookup_by_handles(
+                &worker_handles,
+                staged,
+                worker_allow_chunks,
+            ) {
                 Ok(Some(crate::kv_table::FinishedLookup::Rows(rows, applied, wire_rows))) => {
                     Ok(LookupFetch::Remote(rows, applied, wire_rows))
                 }
@@ -3115,7 +3131,11 @@ impl Executor for IndexRangeSourceExec {
             let remote_filter_complete = self
                 .remote_index
                 .as_ref()
-                .is_some_and(crate::kv_table::RemoteIndexHandleCursor::predicates_applied);
+                .is_some_and(crate::kv_table::RemoteIndexHandleCursor::predicates_applied)
+                && self
+                    .filter
+                    .as_ref()
+                    .is_none_or(crate::predicate_pushdown::ScanFilterProbe::fully_described);
             while req.num_rows() < cap {
                 if self.limit.is_some_and(|limit| self.produced.get() >= limit) {
                     self.retain_remote_index_stats();

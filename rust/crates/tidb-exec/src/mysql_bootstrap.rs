@@ -18,13 +18,13 @@
 //!
 //! Three deliberate differences from Go, each stated rather than hidden:
 //!
-//! * **No DDL jobs, no per-table schema version.** Go creates each `mysql.*`
-//!   table through the DDL job queue and spends a schema version on each. This
-//!   node is the only writer, so all 52 tables plus their seed rows land in one
-//!   transaction at one new schema version, described by a single
-//!   `ActionCreateTables` diff. Go's own next-gen path does the same thing
-//!   (`session.go` `createAndSplitTables` writes `CreateTableOrView` directly,
-//!   with no job at all), so this is a shape a real TiDB already produces.
+//! * **No DDL jobs, no per-table schema version.** Go creates the 7 DDL-owned
+//!   tables directly and creates the other 52 `mysql.*` tables through either
+//!   bootstrap DDL or its next-gen direct path. This node is the only writer,
+//!   so all 59 tables plus their seed rows land in one transaction at one new
+//!   schema version, described by a single `ActionCreateTables` diff. Go's
+//!   direct paths likewise build the same reserved-ID table metadata without
+//!   enqueuing DDL jobs.
 //! * **Reserved IDs, not allocated ones.** Every `mysql.*` table has a fixed ID
 //!   above [`tidb_metadef::MAX_USER_GLOBAL_ID`] (see
 //!   [`tidb_metadef::BOOTSTRAP_TABLES`]), so a bootstrap never touches
@@ -49,7 +49,7 @@ use tidb_codec::Encoder;
 use tidb_datatype::{new_collation_enabled, Datum};
 use tidb_meta::{key, value};
 use tidb_metadef::system::SYSTEM_DATABASE_ID;
-use tidb_metadef::{BootstrapTable, BOOTSTRAP_TABLES};
+use tidb_metadef::{BootstrapTable, BOOTSTRAP_TABLES, DDL_TABLE_VERSION_TABLES};
 use tidb_model::action_type::ActionType;
 use tidb_model::db::DBInfo;
 use tidb_model::schema_diff::{AffectedOption, SchemaDiff};
@@ -228,9 +228,20 @@ pub fn plan_mysql_bootstrap<S: MetaSnapshot>(
         value::serialize_db_info(&database).map_err(encode_error)?,
     )?);
 
-    let mut created_tables = Vec::with_capacity(BOOTSTRAP_TABLES.len());
-    let mut affected = Vec::with_capacity(BOOTSTRAP_TABLES.len());
-    for table in BOOTSTRAP_TABLES {
+    let ddl_tables = DDL_TABLE_VERSION_TABLES
+        .iter()
+        .filter(|version| environment.ddl_table_version < version.version)
+        .flat_map(|version| version.tables.iter());
+    let tables = ddl_tables.chain(BOOTSTRAP_TABLES.iter());
+    let table_count = DDL_TABLE_VERSION_TABLES
+        .iter()
+        .filter(|version| environment.ddl_table_version < version.version)
+        .map(|version| version.tables.len())
+        .sum::<usize>()
+        + BOOTSTRAP_TABLES.len();
+    let mut created_tables = Vec::with_capacity(table_count);
+    let mut affected = Vec::with_capacity(table_count);
+    for table in tables {
         let info = build_bootstrap_table(table, start_ts)?;
         mutations.push(OptimisticMutation::meta_put(
             key::table_kv_key(SYSTEM_DATABASE_ID, info.id),
@@ -244,7 +255,22 @@ pub fn plan_mysql_bootstrap<S: MetaSnapshot>(
         created_tables.push(info);
     }
 
-    rows::seed(&created_tables, environment, &mut mutations)?;
+    let ddl_table_version = DDL_TABLE_VERSION_TABLES
+        .last()
+        .map_or(environment.ddl_table_version, |version| {
+            environment.ddl_table_version.max(version.version)
+        });
+    if ddl_table_version > environment.ddl_table_version {
+        mutations.push(OptimisticMutation::meta_put(
+            key::ddl_table_version_kv_key(),
+            value::encode_int_value(ddl_table_version),
+        )?);
+    }
+    let seed_environment = BootstrapEnvironment {
+        ddl_table_version,
+        ..environment.clone()
+    };
+    rows::seed(&created_tables, &seed_environment, &mut mutations)?;
 
     // Go `bootstrap.go:418`: `CREATE DATABASE IF NOT EXISTS test`, run as
     // ordinary DDL inside the bootstrap session. Being ordinary DDL, its id
@@ -416,7 +442,11 @@ fn refuse_if_present<S: MetaSnapshot>(snapshot: &mut S) -> Result<(), BootstrapE
             object: format!("the `{SYSTEM_DB}` database"),
         });
     }
-    for table in BOOTSTRAP_TABLES {
+    for table in DDL_TABLE_VERSION_TABLES
+        .iter()
+        .flat_map(|version| version.tables)
+        .chain(BOOTSTRAP_TABLES)
+    {
         if snapshot
             .get(&key::table_kv_key(SYSTEM_DATABASE_ID, table.id))?
             .is_some()

@@ -1099,8 +1099,12 @@ impl KvTable {
     pub(crate) fn finish_lookup_by_handles(
         handles: &[TableHandle],
         staged: StagedHandlesLookup,
+        allow_chunks: bool,
     ) -> Result<Option<FinishedLookup>, KvTableError> {
-        if !staged.cursor.supports_lookup_chunks() || !staged.cursor.predicates_applied() {
+        if !allow_chunks
+            || !staged.cursor.supports_lookup_chunks()
+            || !staged.cursor.predicates_applied()
+        {
             return Self::finish_rows_by_handles(handles, staged).map(|answer| {
                 answer.map(|(rows, applied, wire_rows)| {
                     FinishedLookup::Rows(rows, applied, wire_rows)
@@ -5542,7 +5546,7 @@ mod remote_cursor_tests {
         };
         let handles = vec![TableHandle::Int(8), TableHandle::Int(7)];
         let Some(FinishedLookup::Chunk(finished)) =
-            KvTable::finish_lookup_by_handles(&handles, staged).unwrap()
+            KvTable::finish_lookup_by_handles(&handles, staged, true).unwrap()
         else {
             panic!("columnar handle lookup unexpectedly refused");
         };

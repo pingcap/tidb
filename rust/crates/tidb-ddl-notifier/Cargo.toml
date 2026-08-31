@@ -1,0 +1,18 @@
+[package]
+name = "tidb-ddl-notifier"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB durable DDL schema-change notification."
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+tidb-ast = { path = "../tidb-ast" }
+tidb-model = { path = "../tidb-model" }
+tidb-owner = { path = "../tidb-owner" }
