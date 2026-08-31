@@ -804,6 +804,164 @@ fn truncate_hash_partition_statistics_match_go() {
     assert!(retired_version > old_version);
 }
 
+/// Pinned `pkg/statistics/handle/ddl.TestDDLPartition`: ADD PARTITION creates
+/// the new physical statistics row in both prune modes, while only dynamic
+/// mode creates the logical/global row for the original table.
+#[test]
+fn add_partition_statistics_follow_global_prune_mode_like_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(78))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+
+    for mode in ["static", "dynamic"] {
+        rows(
+            &mut session,
+            &format!("SET GLOBAL tidb_partition_prune_mode = '{mode}'"),
+        );
+        rows(
+            &mut session,
+            &format!("SET SESSION tidb_partition_prune_mode = '{mode}'"),
+        );
+        let table_name = format!("stats_add_partition_{mode}");
+        rows(
+            &mut session,
+            &format!(
+                "CREATE TABLE {table_name} (a INT PRIMARY KEY, b INT, INDEX idx(b)) \
+                 PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6), \
+                 PARTITION p1 VALUES LESS THAN (11))"
+            ),
+        );
+        let (logical_id, original) =
+            partition_id_map(&stack.factory.catalog.load(), "test", &table_name)
+                .expect("table is partitioned");
+        for (_, physical_id) in original {
+            assert_eq!(
+                displayed(rows(
+                    &mut session,
+                    &format!(
+                        "SELECT count(*) FROM mysql.stats_meta WHERE table_id = {physical_id}"
+                    ),
+                )),
+                [["1"]]
+            );
+        }
+        assert_eq!(
+            displayed(rows(
+                &mut session,
+                &format!("SELECT count(*) FROM mysql.stats_meta WHERE table_id = {logical_id}"),
+            )),
+            [[if mode == "dynamic" { "1" } else { "0" }]]
+        );
+
+        rows(
+            &mut session,
+            &format!(
+                "ALTER TABLE {table_name} ADD PARTITION \
+                 (PARTITION p2 VALUES LESS THAN (16))"
+            ),
+        );
+        let new_id = partition_id_map(&stack.factory.catalog.load(), "test", &table_name)
+            .expect("table remains partitioned")
+            .1
+            .into_iter()
+            .find(|(name, _)| name == "p2")
+            .expect("added partition exists")
+            .1;
+        assert_eq!(
+            displayed(rows(
+                &mut session,
+                &format!("SELECT count(*) FROM mysql.stats_meta WHERE table_id = {new_id}"),
+            )),
+            [["1"]]
+        );
+        assert_eq!(
+            displayed(rows(
+                &mut session,
+                &format!("SELECT count(*) FROM mysql.stats_histograms WHERE table_id = {new_id}"),
+            )),
+            [["3"]]
+        );
+    }
+}
+
+/// Pinned `pkg/statistics/handle/ddl.TestDropPartitions`: dropping p0 and p1
+/// subtracts their three rows from global count, adds three modifications,
+/// and advances both retired physical statistics versions.
+#[test]
+fn drop_partitions_statistics_match_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(79))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "SET GLOBAL tidb_partition_prune_mode = 'dynamic'",
+    );
+    rows(
+        &mut session,
+        "CREATE TABLE stats_drop_partitions (a INT PRIMARY KEY, b INT, INDEX idx(b)) \
+         PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6), \
+         PARTITION p1 VALUES LESS THAN (11), PARTITION p2 VALUES LESS THAN (16), \
+         PARTITION p3 VALUES LESS THAN (21))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO stats_drop_partitions VALUES (1,2),(2,2),(6,2),(11,2),(16,2)",
+    );
+    rows(&mut session, "ANALYZE TABLE stats_drop_partitions");
+    let (logical_id, partitions) = partition_id_map(
+        &stack.factory.catalog.load(),
+        "test",
+        "stats_drop_partitions",
+    )
+    .expect("table is partitioned");
+    let retired_ids = partitions
+        .into_iter()
+        .filter_map(|(name, id)| matches!(name.as_str(), "p0" | "p1").then_some(id))
+        .collect::<Vec<_>>();
+    let versions = retired_ids
+        .iter()
+        .map(|id| {
+            displayed(rows(
+                &mut session,
+                &format!("SELECT version FROM mysql.stats_meta WHERE table_id = {id}"),
+            ))[0][0]
+                .parse::<u64>()
+                .expect("stats version is unsigned")
+        })
+        .collect::<Vec<_>>();
+
+    rows(
+        &mut session,
+        "ALTER TABLE stats_drop_partitions DROP PARTITION p0, p1",
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT count, modify_count FROM mysql.stats_meta WHERE table_id = {logical_id}"
+            ),
+        )),
+        [["2", "3"]]
+    );
+    for (retired_id, version) in retired_ids.into_iter().zip(versions) {
+        let retired_version = displayed(rows(
+            &mut session,
+            &format!("SELECT version FROM mysql.stats_meta WHERE table_id = {retired_id}"),
+        ))[0][0]
+            .parse::<u64>()
+            .expect("stats version is unsigned");
+        assert!(retired_version > version);
+    }
+}
+
 /// Pinned DDL subscriber `ActionDropSchema` visits every table's partition
 /// IDs in definition order and then its logical table ID, advancing each
 /// extant stats row for delayed GC without failing the DROP on stats errors.

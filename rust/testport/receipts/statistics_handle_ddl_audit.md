@@ -52,7 +52,7 @@ artifacts beyond this inventory.
 | `TestTruncateTable` | nonpartitioned table ID replacement | covered |
 | `TestTruncateAPartitionedTable` | fresh physical IDs and retired versions for whole-table truncate | covered |
 | `TestDDLHistogram` | add-column histogram default/null shapes | covered |
-| `TestDDLPartition` | create/add/drop partition stats | covered for supported actions |
+| `TestDDLPartition` | create/add/drop partition stats in static and dynamic prune modes | covered |
 | `TestReorgPartitions` | reorganize partition | missing DDL owner |
 | `TestIncreasePartitionCountOfHashPartitionTable` | hash partition reorganization | missing DDL owner |
 | `TestDecreasePartitionCountOfHashPartitionTable` | hash partition reorganization | missing DDL owner |
@@ -104,6 +104,8 @@ WIP profile for the current live-path correction:
 - `cargo test --locked -p tidb-server --lib ddl_after_loaded_statistics_matches_go -- --nocapture`
 - `cargo test --locked -p tidb-server --lib truncate_partitioned_table_statistics_match_go -- --nocapture`
 - `cargo test --locked -p tidb-server --lib truncate_hash_partition_statistics_match_go -- --nocapture`
+- `cargo test --locked -p tidb-server --lib add_partition_statistics_follow_global_prune_mode_like_go -- --nocapture`
+- `cargo test --locked -p tidb-server --lib drop_partitions_statistics_match_go -- --nocapture`
 - `cargo check --locked -p tidb-server`
 - `cargo fmt --all -- --check`
 - `git diff --check`
