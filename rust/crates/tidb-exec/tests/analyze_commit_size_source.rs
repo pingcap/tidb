@@ -939,6 +939,7 @@ fn initial_stats_matches_go_table_scope_and_payload_shapes() {
         let field_type =
             tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
         StatsTarget {
+            physical_id: table_id,
             table: TableInfo {
                 id: table_id,
                 columns: vec![ColumnInfo {
@@ -1105,6 +1106,7 @@ fn initial_stats_handles_missing_histograms_and_topn_without_buckets() {
     apply_mutations(&mut store, &plan.mutations);
 
     let target = |table_id| StatsTarget {
+        physical_id: table_id,
         table: TableInfo {
             id: table_id,
             indices: vec![IndexInfo {
@@ -1194,6 +1196,7 @@ fn cache_update_preserves_and_refreshes_resident_histogram_payload() {
     let unchanged = loader
         .load_statistics_table_for_update(
             &mut store,
+            table_info.id,
             &table_info,
             &column_types,
             Some(resident.as_ref()),
@@ -1224,6 +1227,7 @@ fn cache_update_preserves_and_refreshes_resident_histogram_payload() {
     let refreshed = loader
         .load_statistics_table_for_update(
             &mut store,
+            table_info.id,
             &table_info,
             &column_types,
             Some(resident.as_ref()),

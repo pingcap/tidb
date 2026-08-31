@@ -299,6 +299,7 @@ pub struct ClusterAnalyzeReport {
     analyzed_column_ids: Vec<i64>,
     analyzed_index_ids: Vec<i64>,
     historical_stats_table_ids: Vec<i64>,
+    cache_update_physical_ids: Vec<i64>,
 }
 
 impl ClusterAnalyzeReport {
@@ -307,6 +308,14 @@ impl ClusterAnalyzeReport {
     #[must_use]
     pub fn historical_stats_table_ids(&self) -> &[i64] {
         &self.historical_stats_table_ids
+    }
+
+    /// Physical IDs pinned Go passes to the targeted post-ANALYZE cache
+    /// update. This is task-derived and deliberately distinct from the IDs
+    /// queued for historical-statistics generation.
+    #[must_use]
+    pub fn cache_update_physical_ids(&self) -> &[i64] {
+        &self.cache_update_physical_ids
     }
 }
 
@@ -1006,6 +1015,16 @@ pub fn commit_cluster_analyze<C: StoreWriteClient, L: StoreWriteLoader, P: Store
     } else {
         resolved.physical_options.iter().take(1).collect::<Vec<_>>()
     };
+    let target_ids = targets
+        .iter()
+        .map(|options| options.physical_id)
+        .collect::<Vec<_>>();
+    let cache_update_physical_ids = collect_cache_update_physical_ids(
+        resolved.logical_table_id(),
+        resolved.partitioned,
+        &target_ids,
+        resolved.independent_index_ids.len(),
+    );
     let task_jobs = targets
         .iter()
         .map(|options| AnalyzeJobHandle::pending(jobs, &resolved.table_job_spec(options)))
@@ -1076,6 +1095,7 @@ pub fn commit_cluster_analyze<C: StoreWriteClient, L: StoreWriteLoader, P: Store
         analyzed_column_ids: Vec::new(),
         analyzed_index_ids: Vec::new(),
         historical_stats_table_ids: Vec::new(),
+        cache_update_physical_ids: Vec::new(),
     });
     for next in reports {
         merge_analyze_report(&mut report, next);
@@ -1187,7 +1207,30 @@ pub fn commit_cluster_analyze<C: StoreWriteClient, L: StoreWriteLoader, P: Store
         }
     }
     report.ignored_partition_overrides = resolved.ignored_partition_overrides;
+    report.cache_update_physical_ids = cache_update_physical_ids;
     Ok(report)
+}
+
+fn collect_cache_update_physical_ids(
+    logical_id: i64,
+    partitioned: bool,
+    physical_target_ids: &[i64],
+    independent_index_task_count: usize,
+) -> Vec<i64> {
+    let mut ids = Vec::with_capacity(
+        physical_target_ids.len() * if partitioned { 2 } else { 1 } + independent_index_task_count,
+    );
+    for physical_id in physical_target_ids {
+        if partitioned {
+            ids.push(logical_id);
+        }
+        ids.push(*physical_id);
+    }
+    ids.extend(std::iter::repeat_n(
+        logical_id,
+        independent_index_task_count,
+    ));
+    ids
 }
 
 fn record_global_stats_result(
@@ -2229,6 +2272,7 @@ fn commit_cluster_analyze_target<C: StoreWriteClient, L: StoreWriteLoader, P: St
                 analyzed_column_ids: report.stats.columns.iter().map(|item| item.id).collect(),
                 analyzed_index_ids: report.stats.indexes.iter().map(|item| item.id).collect(),
                 historical_stats_table_ids: Vec::new(),
+                cache_update_physical_ids: Vec::new(),
             });
         }
         return Err(ClusterAnalyzeError::Other(
@@ -2252,6 +2296,7 @@ fn commit_cluster_analyze_target<C: StoreWriteClient, L: StoreWriteLoader, P: St
         analyzed_column_ids: report.stats.columns.iter().map(|item| item.id).collect(),
         analyzed_index_ids: report.stats.indexes.iter().map(|item| item.id).collect(),
         historical_stats_table_ids: vec![report.stats.table_id],
+        cache_update_physical_ids: Vec::new(),
     };
     // The commit mints its own deadline here rather than inheriting one from
     // function entry: everything above it -- the catalog read, the previous
@@ -2354,6 +2399,7 @@ fn commit_cluster_independent_index<
         analyzed_column_ids: Vec::new(),
         analyzed_index_ids: vec![index_id],
         historical_stats_table_ids: vec![report.stats.table_id],
+        cache_update_physical_ids: Vec::new(),
     };
     let outcome = transaction
         .commit(write.mutations, &UnaryCallContext::with_timeout(timeout))
@@ -2575,12 +2621,12 @@ fn classify_commit_outcome(outcome: &OptimisticCommitOutcome) -> Result<(), Clus
 #[cfg(test)]
 mod tests {
     use super::{
-        analyze_partition_ids, automatic_sample_rate, classify_commit_outcome, fail_analyze_jobs,
-        filter_skipped_column_types, final_column_choice, merge_global_items, realtime_count_of,
-        record_global_history_enabled, select_index_tasks, slow_stats_save_needs_version_refresh,
-        write_global_stats_items, AnalyzeJobHandle, AnalyzeJobKind, AnalyzeJobLifecycle,
-        AnalyzeJobProgress, AnalyzeJobSpec, ApproximateTableCountProvider, ClusterAnalyzeError,
-        ANALYZE_JOB_MAX_DELTA,
+        analyze_partition_ids, automatic_sample_rate, classify_commit_outcome,
+        collect_cache_update_physical_ids, fail_analyze_jobs, filter_skipped_column_types,
+        final_column_choice, merge_global_items, realtime_count_of, record_global_history_enabled,
+        select_index_tasks, slow_stats_save_needs_version_refresh, write_global_stats_items,
+        AnalyzeJobHandle, AnalyzeJobKind, AnalyzeJobLifecycle, AnalyzeJobProgress, AnalyzeJobSpec,
+        ApproximateTableCountProvider, ClusterAnalyzeError, ANALYZE_JOB_MAX_DELTA,
     };
     use std::collections::{BTreeMap, BTreeSet, HashSet};
     use std::thread;
@@ -3152,6 +3198,27 @@ mod tests {
                 .unwrap_err()
                 .to_string(),
             "Partition management on a not partitioned table is not possible"
+        );
+    }
+
+    #[test]
+    fn post_analyze_cache_ids_come_from_tasks_not_history_targets() {
+        // Pinned AnalyzeExec appends the logical ID and partition ID for each
+        // partition task, including static mode where no global-history
+        // target is generated.
+        assert_eq!(
+            collect_cache_update_physical_ids(10, true, &[11, 12], 0),
+            vec![10, 11, 10, 12]
+        );
+        // Independent index tasks each carry the logical table ID. The cache
+        // update itself sorts and deduplicates this list like Go.
+        assert_eq!(
+            collect_cache_update_physical_ids(10, false, &[10], 2),
+            vec![10, 10, 10]
+        );
+        assert_eq!(
+            collect_cache_update_physical_ids(10, true, &[], 1),
+            vec![10]
         );
     }
 

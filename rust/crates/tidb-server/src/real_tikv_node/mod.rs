@@ -55,10 +55,11 @@ use tidb_exec::real_tikv_read::{
     RealTiKvReadSessionOpener,
 };
 use tidb_exec::real_tikv_stats::{
-    load_stats_meta_versions, load_stats_snapshot_and_loader, refresh_stats_snapshot_from_cluster,
-    stats_snapshot_unchanged_since, InitialStatsLoad,
+    load_stats_snapshot_and_loader, update_stats_cache_from_cluster, InitialStatsLoad,
 };
-use tidb_exec::stats_watch::{SharedStats, StatsReloadError, StatsReloadStats, StatsReloader};
+use tidb_exec::stats_watch::{
+    SharedStats, StatsReloadError, StatsReloadReadResult, StatsReloadStats, StatsReloader,
+};
 use tidb_pd_client::{
     EtcdClient, EtcdWatchStats, EtcdWatcher, PdClient, DDL_GLOBAL_SCHEMA_VERSION_KEY,
     PRIVILEGE_UPDATE_KEY, SYSVAR_UPDATE_KEY,

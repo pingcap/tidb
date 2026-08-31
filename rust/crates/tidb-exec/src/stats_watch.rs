@@ -55,7 +55,7 @@
 //! tick-only, matching Go's real mechanism rather than inventing a watch Go
 //! does not have.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::thread::JoinHandle;
@@ -63,7 +63,7 @@ use std::time::Duration;
 
 use crate::cluster_stats_load::ClusterStatsItem;
 use tidb_stats::{Column, CopyIntent, Index, Table};
-use tidb_stats_handle_cache::{CacheUpdate, StatsCacheImpl};
+use tidb_stats_handle_cache::{CacheUpdate, StatsCacheImpl, StatsRefreshSource, UpdateError};
 
 /// One table's statistics state, as this node currently knows it.
 ///
@@ -199,6 +199,47 @@ impl SharedStats {
     /// advancing the cache lifecycle version in quota mode.
     pub fn store_after_analyze(&self, snapshot: StatsSnapshot) {
         self.store_with_version_policy(snapshot, true);
+    }
+
+    /// Runs pinned Go `StatsCacheImpl.Update` and republishes its canonical
+    /// table objects into the statement-facing index.
+    ///
+    /// Loaded entries outside `tracked_ids` are retained because Go's cache
+    /// update is incremental (and explicit temporary-table ANALYZE may own
+    /// such an entry); obsolete pseudo attempts are removed. The DDL
+    /// subscriber remains responsible for deleting dropped loaded tables.
+    pub fn update_from_source<S>(
+        &self,
+        source: &S,
+        physical_ids: Vec<i64>,
+        tracked_ids: &[i64],
+        is_cancelled: impl Fn() -> bool,
+    ) -> Result<bool, UpdateError<S::Error>>
+    where
+        S: StatsRefreshSource,
+    {
+        self.cache
+            .update_from_source(source, physical_ids, is_cancelled)?;
+
+        let tracked = tracked_ids.iter().copied().collect::<BTreeSet<_>>();
+        let mut guard = self
+            .published
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut next = guard.as_ref().clone();
+        next.retain(|table_id, state| tracked.contains(table_id) || state.loaded().is_some());
+        for table_id in tracked_ids {
+            let state = self
+                .cache
+                .get(*table_id)
+                .map_or(TableStatsState::Pseudo, TableStatsState::Loaded);
+            next.insert(*table_id, state);
+        }
+        let changed = snapshots_differ_by_object(guard.as_ref(), &next);
+        if changed {
+            *guard = Arc::new(next);
+        }
+        Ok(changed)
     }
 
     fn store_with_version_policy(&self, snapshot: StatsSnapshot, skip_move_forward: bool) {
@@ -422,20 +463,24 @@ struct StatsReloadSignal {
     shutdown: bool,
 }
 
-/// One reload pass's read step: read every tracked table's statistics fresh
-/// and answer the new snapshot, or a reason it could not be read.
-///
-/// `Ok(None)` is a pass that PROVED nothing moved without re-reading the
-/// statistics themselves -- Go `Handle.Update`'s version gate
-/// (`pkg/statistics/handle/update.go`): one `mysql.stats_meta` scan, every
-/// version equal to the published cache, so the expensive per-table reads are
-/// skipped outright and what is published stays in force.
+/// The result of one statistics reload read/update pass.
+pub enum StatsReloadReadResult {
+    /// The source proved that no cache object moved.
+    Unchanged,
+    /// Startup produced a complete initial snapshot for publication.
+    Publish(StatsSnapshot),
+    /// Pinned `StatsCacheImpl.Update` already updated the shared canonical
+    /// cache and statement-facing index incrementally.
+    Updated,
+}
+
+/// One reload pass's source step.
 ///
 /// Kept as an injectable closure, the same way
 /// [`crate::catalog_watch::ReloadPass`] and `PrivilegeReloadRead` are, so the
 /// thread's condvar/shutdown machinery can be tested without PD or TiKV.
 pub type StatsReloadRead =
-    Box<dyn FnMut() -> Result<Option<StatsSnapshot>, String> + Send + 'static>;
+    Box<dyn FnMut() -> Result<StatsReloadReadResult, String> + Send + 'static>;
 
 /// Re-reads a node's tracked tables' statistics on a plain tick.
 ///
@@ -588,21 +633,38 @@ fn snapshots_differ(current: &StatsSnapshot, next: &StatsSnapshot) -> bool {
         })
 }
 
-/// Runs one pass: read every tracked table fresh, and publish only when at
-/// least one table's version actually moved -- exactly as Go re-reads
-/// `stats_meta` every tick but only replaces its cached `*statistics.Table`
-/// when the read version differs from the cached one.
+fn snapshots_differ_by_object(current: &StatsSnapshot, next: &StatsSnapshot) -> bool {
+    if current.len() != next.len() {
+        return true;
+    }
+    current.iter().any(|(table_id, state)| {
+        let Some(next_state) = next.get(table_id) else {
+            return true;
+        };
+        match (state, next_state) {
+            (TableStatsState::Pseudo, TableStatsState::Pseudo) => false,
+            (TableStatsState::Loaded(left), TableStatsState::Loaded(right)) => {
+                !Arc::ptr_eq(left, right)
+            }
+            _ => true,
+        }
+    })
+}
+
+/// Runs one Go-shaped load-worker pass. Startup may publish its initial
+/// snapshot; later passes have already applied `StatsCacheImpl.Update` and
+/// report only whether a canonical table object moved.
 fn run_one_stats_reload_pass(
     shared: &SharedStats,
-    read: &mut dyn FnMut() -> Result<Option<StatsSnapshot>, String>,
+    read: &mut dyn FnMut() -> Result<StatsReloadReadResult, String>,
     stats: &StatsReloadCounters,
 ) {
     stats.passes.fetch_add(1, Ordering::AcqRel);
     match read() {
-        // The version probe proved nothing moved: one stats_meta scan was the
-        // whole cost of this pass, and the published snapshot stays.
-        Ok(None) => {}
-        Ok(Some(next)) => {
+        // The ordered stats_meta read proved nothing moved, so the published
+        // index stays unchanged.
+        Ok(StatsReloadReadResult::Unchanged) => {}
+        Ok(StatsReloadReadResult::Publish(next)) => {
             let current = shared.load();
             if snapshots_differ(&current, &next) {
                 let receipt = receipt_of(&next);
@@ -613,6 +675,14 @@ fn run_one_stats_reload_pass(
                     receipt.loaded, receipt.pseudo
                 );
             }
+        }
+        Ok(StatsReloadReadResult::Updated) => {
+            let receipt = shared.receipt();
+            stats.reloads.fetch_add(1, Ordering::AcqRel);
+            eprintln!(
+                "{{\"event\":\"stats_reloaded\",\"loaded\":{},\"pseudo\":{}}}",
+                receipt.loaded, receipt.pseudo
+            );
         }
         Err(message) => {
             stats.failures.fetch_add(1, Ordering::AcqRel);
@@ -631,6 +701,7 @@ mod tests {
 
     use tidb_stats::histogram::Histogram;
     use tidb_stats::{ColAndIdxExistenceMap, HistColl, Table};
+    use tidb_stats_handle_cache::StatsMetaRow;
 
     use super::*;
 
@@ -671,6 +742,40 @@ mod tests {
     fn shared_stats(snapshot: StatsSnapshot) -> SharedStats {
         tidb_vardef::STATS_CACHE_MEM_QUOTA.store(1024 * 1024, std::sync::atomic::Ordering::SeqCst);
         SharedStats::new(snapshot).expect("statistics cache")
+    }
+
+    struct RefreshSource {
+        rows: Vec<StatsMetaRow>,
+        loaded: Arc<Table>,
+        loads: Mutex<usize>,
+    }
+
+    impl StatsRefreshSource for RefreshSource {
+        type Error = ();
+
+        fn lease(&self) -> Duration {
+            Duration::ZERO
+        }
+
+        fn stats_meta_rows(
+            &self,
+            _after_version: u64,
+            _physical_ids: &[i64],
+        ) -> Result<Vec<StatsMetaRow>, Self::Error> {
+            Ok(self.rows.clone())
+        }
+
+        fn table_info_update_ts(&self, physical_id: i64) -> Option<u64> {
+            (physical_id == 1).then_some(0)
+        }
+
+        fn table_stats_from_storage(
+            &self,
+            _physical_id: i64,
+        ) -> Result<Option<Arc<Table>>, Self::Error> {
+            *self.loads.lock().unwrap() += 1;
+            Ok(Some(Arc::clone(&self.loaded)))
+        }
     }
 
     fn table_info() -> tidb_model::table_info::TableInfo {
@@ -930,6 +1035,35 @@ mod tests {
         assert_eq!(receipt.total(), 2);
     }
 
+    /// Pinned root handletest `TestVersion`: once the cache watermark/table
+    /// is at version four, a manually regressed version-one row neither loads
+    /// payload nor replaces the previously published table.
+    #[test]
+    fn an_older_stats_version_cannot_move_the_shared_cache_backward() {
+        let shared = shared_stats(StatsSnapshot::from([loaded_at(1, 4)]));
+        let published = shared.load();
+        let source = RefreshSource {
+            rows: vec![StatsMetaRow {
+                version: 1,
+                physical_id: 1,
+                count: 2,
+                ..StatsMetaRow::default()
+            }],
+            loaded: match loaded_at(1, 1).1 {
+                TableStatsState::Loaded(table) => table,
+                TableStatsState::Pseudo => unreachable!(),
+            },
+            loads: Mutex::new(0),
+        };
+
+        assert!(!shared
+            .update_from_source(&source, Vec::new(), &[1], || false)
+            .unwrap());
+        assert!(Arc::ptr_eq(&published, &shared.load()));
+        assert_eq!(shared.load()[&1].version(), Some(4));
+        assert_eq!(*source.loads.lock().unwrap(), 0);
+    }
+
     #[test]
     fn a_histogram_carrying_table_still_reports_its_version() {
         // Guards against the receipt/version accessors only ever having been
@@ -974,7 +1108,7 @@ mod tests {
         let error = StatsReloader::spawn(
             Arc::new(shared_stats(StatsSnapshot::new())),
             Duration::ZERO,
-            Box::new(|| Ok(Some(StatsSnapshot::new()))),
+            Box::new(|| Ok(StatsReloadReadResult::Publish(StatsSnapshot::new()))),
         )
         .unwrap_err();
         assert!(matches!(error, StatsReloadError::ZeroInterval));
@@ -999,7 +1133,7 @@ mod tests {
             Duration::from_secs(60),
             Box::new(move || {
                 sender.send(()).unwrap();
-                Ok(None)
+                Ok(StatsReloadReadResult::Unchanged)
             }),
         )
         .unwrap();
@@ -1021,7 +1155,9 @@ mod tests {
             Box::new(move || {
                 version += 1;
                 sender.send(version).unwrap();
-                Ok(Some(StatsSnapshot::from([loaded_at(1, version)])))
+                Ok(StatsReloadReadResult::Publish(StatsSnapshot::from([
+                    loaded_at(1, version),
+                ])))
             }),
         )
         .unwrap();
@@ -1044,8 +1180,8 @@ mod tests {
         let stats = Arc::new(StatsReloadCounters::default());
         // The version probe answered "nothing moved" without re-reading any
         // statistics -- the whole cost of this pass was the probe itself.
-        let mut read: Box<dyn FnMut() -> Result<Option<StatsSnapshot>, String>> =
-            Box::new(|| Ok(None));
+        let mut read: Box<dyn FnMut() -> Result<StatsReloadReadResult, String>> =
+            Box::new(|| Ok(StatsReloadReadResult::Unchanged));
         run_one_stats_reload_pass(&shared, read.as_mut(), &stats);
         assert!(Arc::ptr_eq(&published, &shared.load()));
         assert_eq!(stats.passes.load(Ordering::Acquire), 1);
@@ -1057,8 +1193,11 @@ mod tests {
         let shared = Arc::new(shared_stats(StatsSnapshot::from([loaded_at(7, 3)])));
         let published = shared.load();
         let stats = Arc::new(StatsReloadCounters::default());
-        let mut read: Box<dyn FnMut() -> Result<Option<StatsSnapshot>, String>> =
-            Box::new(|| Ok(Some(StatsSnapshot::from([loaded_at(7, 3)]))));
+        let mut read: Box<dyn FnMut() -> Result<StatsReloadReadResult, String>> = Box::new(|| {
+            Ok(StatsReloadReadResult::Publish(StatsSnapshot::from([
+                loaded_at(7, 3),
+            ])))
+        });
         run_one_stats_reload_pass(&shared, read.as_mut(), &stats);
         assert!(Arc::ptr_eq(&published, &shared.load()));
         assert_eq!(stats.passes.load(Ordering::Acquire), 1);
@@ -1069,7 +1208,7 @@ mod tests {
     fn a_failed_pass_keeps_the_previous_snapshot_published() {
         let shared = Arc::new(shared_stats(StatsSnapshot::from([loaded_at(7, 3)])));
         let stats = Arc::new(StatsReloadCounters::default());
-        let mut read: Box<dyn FnMut() -> Result<Option<StatsSnapshot>, String>> =
+        let mut read: Box<dyn FnMut() -> Result<StatsReloadReadResult, String>> =
             Box::new(|| Err("snapshot read failed".to_owned()));
         run_one_stats_reload_pass(&shared, read.as_mut(), &stats);
         assert_eq!(shared.load()[&7].version(), Some(3));
@@ -1086,8 +1225,11 @@ mod tests {
             TableStatsState::Pseudo,
         )])));
         let stats = Arc::new(StatsReloadCounters::default());
-        let mut read: Box<dyn FnMut() -> Result<Option<StatsSnapshot>, String>> =
-            Box::new(|| Ok(Some(StatsSnapshot::from([loaded_at(1, 1)]))));
+        let mut read: Box<dyn FnMut() -> Result<StatsReloadReadResult, String>> = Box::new(|| {
+            Ok(StatsReloadReadResult::Publish(StatsSnapshot::from([
+                loaded_at(1, 1),
+            ])))
+        });
         run_one_stats_reload_pass(&shared, read.as_mut(), &stats);
         assert_eq!(shared.load()[&1].version(), Some(1));
         assert_eq!(stats.reloads.load(Ordering::Acquire), 1);
@@ -1102,7 +1244,7 @@ mod tests {
             Duration::from_millis(5),
             Box::new(move || {
                 let _ = sender.send(());
-                Ok(Some(StatsSnapshot::new()))
+                Ok(StatsReloadReadResult::Publish(StatsSnapshot::new()))
             }),
         )
         .unwrap();

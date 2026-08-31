@@ -59,6 +59,7 @@ use tidb_txnkv::PdRegionLoader;
 
 use tidb_exec::cluster_analyze::AnalyzeStatement;
 use tidb_exec::cluster_catalog::load_cluster_catalog;
+use tidb_exec::cluster_stats_load::ClusterStatsLoader;
 use tidb_exec::real_tikv_analyze::{
     commit_cluster_analyze, record_global_history_enabled, resolve_cluster_analyze_statement,
     save_cluster_analyze_options, AnalyzeJobLifecycle, ApproximateTableCountProvider,
@@ -68,7 +69,7 @@ use tidb_exec::real_tikv_catalog::TransactionMetaSnapshot;
 use tidb_exec::real_tikv_load_stats::{
     commit_cluster_load_stats, ClusterLoadStatsCommitError, ClusterLoadStatsReport,
 };
-use tidb_exec::real_tikv_stats::{refresh_stats_snapshot_from_cluster, StatsTarget};
+use tidb_exec::real_tikv_stats::{update_stats_cache_from_cluster, StatsTarget};
 use tidb_exec::stats_watch::SharedStats;
 use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
 use tidb_util::sqlkiller::SqlKiller;
@@ -143,26 +144,21 @@ where
         }
     }
 
-    /// Reloads every table's statistics into this node's live snapshot.
-    ///
-    /// Whole-snapshot rather than one-table, because that is the only shape
-    /// [`SharedStats`] publishes, and because a snapshot assembled from two
-    /// timestamps is exactly what
-    /// [`refresh_stats_snapshot_from_cluster`] exists to prevent. A failure is
-    /// a warning: the rows are durable and the reload tick will find them.
-    fn refresh_stats(&self) -> Result<(), String> {
-        let targets = self.stats_targets()?;
-        let current = self.stats.load();
-        match refresh_stats_snapshot_from_cluster(
+    /// Runs Go's targeted cache update after ANALYZE or LOAD STATS.
+    fn refresh_stats(&self, physical_ids: Vec<i64>) -> Result<(), String> {
+        let (targets, loader) = self.stats_targets()?;
+        match update_stats_cache_from_cluster(
             &self.opener,
             self.timeout,
             &targets,
-            current.as_ref(),
+            &self.stats,
+            &loader,
+            self.stats_lease,
             self.stats_lease.is_zero(),
+            physical_ids,
         ) {
-            Ok(snapshot) => {
-                let receipt = tidb_exec::stats_watch::receipt_of(&snapshot);
-                self.stats.store_after_analyze(snapshot);
+            Ok(_) => {
+                let receipt = self.stats.receipt();
                 eprintln!(
                     "{{\"event\":\"stats_reloaded_after_analyze\",\"loaded\":{},\"pseudo\":{}}}",
                     receipt.loaded, receipt.pseudo
@@ -175,25 +171,27 @@ where
 
     /// Every non-system table in the cluster, with the column types its
     /// stored bounds decode against.
-    fn stats_targets(&self) -> Result<Vec<StatsTarget>, String> {
+    fn stats_targets(&self) -> Result<(Vec<StatsTarget>, ClusterStatsLoader), String> {
         let mut transaction = self
             .opener
             .begin_read_only()
             .map_err(|error| error.to_string())?;
-        let targets = {
+        let result = {
             let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, self.timeout);
             let catalog = load_cluster_catalog(&mut snapshot).map_err(|error| error.to_string())?;
-            catalog
+            let loader = ClusterStatsLoader::locate(&catalog).map_err(|error| error.to_string())?;
+            let targets = catalog
                 .databases
                 .iter()
                 .flat_map(|database| database.tables.iter())
                 .flat_map(StatsTarget::for_table)
-                .collect()
+                .collect();
+            (targets, loader)
         };
         transaction
             .finish_without_writes()
             .map_err(|error| error.to_string())?;
-        Ok(targets)
+        Ok(result)
     }
 }
 
@@ -245,7 +243,7 @@ where
         if let Err(error) = save_cluster_analyze_options(&self.opener, &statement, self.timeout) {
             report.option_save_warning = Some(error.to_string());
         }
-        if let Err(error) = self.refresh_stats() {
+        if let Err(error) = self.refresh_stats(report.cache_update_physical_ids().to_vec()) {
             warn_reload_failed(&error);
         }
         Ok(report)
@@ -272,7 +270,8 @@ where
         .map_err(cluster_load_stats_error)?;
         // Unlike ANALYZE, pinned Go returns `StatsHandle.Update` failure from
         // `LoadStatsFromJSON`; durable writes do not turn this into a warning.
-        self.refresh_stats().map_err(SqlQueryError::unknown)?;
+        self.refresh_stats(report.physical_ids().to_vec())
+            .map_err(SqlQueryError::unknown)?;
         Ok(report)
     }
 }

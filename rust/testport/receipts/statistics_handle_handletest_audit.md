@@ -138,6 +138,31 @@ all three columns plus `idx_b` as initialized statistics. This exercises the
 ordinary session variables, storage merge, canonical cache, and SHOW surfaces
 rather than a standalone merge carrier.
 
+Pinned `TestVersion` exposed that Rust's live periodic and post-ANALYZE/LOAD
+refresh seam still bypassed the already ported parent cache update. It scanned
+all tracked metadata, compared a whole statement-facing snapshot, and rebuilt
+that snapshot on any difference. The live seam now calls the canonical
+`StatsCacheImpl.Update` equivalent for every refresh: the source reads the six
+ordered `stats_meta` fields, applies the five-lease watermark and optional
+target ID predicate, rejects an older row when the cached table has the same
+schema timestamp, reuses metadata-only payload when the histogram version
+allows it, and publishes ten-row batches with Go's targeted
+`SkipMoveForward`. The cache-specific whole-snapshot version probe and refresh
+helpers, along with their tests and documentation, were removed. The exact
+regression proves that a cached version four cannot be replaced or reloaded by
+a later version-one row, retains the same published table object, and keeps the
+cache maximum at four. Go source comparison also showed that the post-ANALYZE
+target list is task-derived rather than the historical-dump list: Rust now
+passes the logical ID plus every physical partition ID even in static mode,
+and keeps independent index task IDs in that cache-update receipt. The same
+row-boundary audit removed Rust's saturation of unsigned `stats_meta.count`:
+pinned Go reads that slot with `chunk.Row.GetInt64`, so values above
+`i64::MAX` retain their two's-complement signed result. Partition refresh
+targets now also retain Go's separate identities: the storage read uses the
+physical partition ID, while schema lookup and `TableStatsFromStorage` receive
+the unchanged parent `TableInfo` rather than a clone whose table ID was
+rewritten to the partition ID.
+
 The package is still not claimed: this receipt has not yet reconciled all 30
 original tests one by one against executable Rust owners and the complete
 package validation gate. The temporary-table blocker is closed evidence, not
@@ -174,6 +199,29 @@ a substitute for that atomic inventory.
   passed outside the sandbox: 1 passed.
 - `cargo test -p tidb-server global_statistics_skip_missing_partition_like_go -- --nocapture`
   passed outside the sandbox: 1 passed.
+- `cargo test -p tidb-exec an_older_stats_version_cannot_move_the_shared_cache_backward -- --nocapture`
+  passed: 1 passed.
+- `cargo test -p tidb-exec stats_watch::tests -- --nocapture` passed: 20 passed.
+- `cargo test -p tidb-stats-handle-cache` passed: 9 passed.
+- `cargo test -p tidb-exec post_analyze_cache_ids_come_from_tasks_not_history_targets -- --nocapture`
+  passed: 1 passed.
+- `cargo test -p tidb-server build_global_level_stats_matches_go -- --nocapture`
+  passed outside the sandbox: 1 passed.
+- `cargo test -p tidb-exec stats_meta_unsigned_count_uses_go_get_int64_bits -- --nocapture`
+  passed: 1 passed.
+- `cargo test -p tidb-exec partition_stats_target_keeps_parent_table_info_like_go -- --nocapture`
+  passed: 1 passed.
+- `cargo check -p tidb-exec -p tidb-server` passed.
+- `cargo test -p tidb-exec cache_update_preserves_and_refreshes_resident_histogram_payload -- --nocapture`
+  passed: 1 passed.
+- `cargo test -p tidb-exec initial_stats_matches_go_table_scope_and_payload_shapes -- --nocapture`
+  passed: 1 passed.
+- `cargo test -p tidb-exec initial_stats_handles_missing_histograms_and_topn_without_buckets -- --nocapture`
+  passed: 1 passed.
+- `cargo test -p tidb-exec cluster_stats_load::tests -- --nocapture` passed:
+  10 passed.
+- `cargo test -p tidb-exec real_tikv_stats::tests -- --nocapture` passed:
+  1 passed.
 - `cargo fmt --all -- --check` passed.
 - `make lint` passed for this batch's Ready gate.
 

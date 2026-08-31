@@ -231,7 +231,7 @@ where
                 let Some(mode) =
                     next_initial_stats_load(&mut first_pass, skip_initial, initial_mode)
                 else {
-                    return Ok(None);
+                    return Ok(StatsReloadReadResult::Unchanged);
                 };
                 let (snapshot, located) =
                     load_stats_snapshot_and_loader(&opener, timeout, &targets, &[], mode)
@@ -242,37 +242,20 @@ where
                     "{{\"event\":\"stats_loaded\",\"loaded\":{},\"pseudo\":{}}}",
                     receipt.loaded, receipt.pseudo
                 );
-                return Ok(Some(snapshot));
+                return Ok(StatsReloadReadResult::Publish(snapshot));
             }
-            // Go `Handle.Update`'s tick (`pkg/statistics/handle/update.go`):
-            // ONE scan of `mysql.stats_meta` decides. Every version equal to
-            // what is published -- and the tracked set unchanged -- means the
-            // expensive per-table reads (histograms, buckets, top-n, the
-            // catalog they are located through) stay untouched this pass; a
-            // moved or new version falls back to the lite snapshot load.
-            let ids: Vec<i64> = targets.iter().map(|target| target.table.id).collect();
-            match load_stats_meta_versions(
+            match update_stats_cache_from_cluster(
                 &opener,
                 timeout,
+                &targets,
+                shared,
                 loader.as_ref().expect("initial pass located stats tables"),
-                &ids,
+                stats_lease.slow_save_interval(),
+                stats_lease == crate::node_config::StatsLease::Zero,
+                Vec::new(),
             ) {
-                Ok(versions) => {
-                    if stats_snapshot_unchanged_since(shared.load().as_ref(), &versions, &targets) {
-                        Ok(None)
-                    } else {
-                        let current = shared.load();
-                        refresh_stats_snapshot_from_cluster(
-                            &opener,
-                            timeout,
-                            &targets,
-                            current.as_ref(),
-                            stats_lease == crate::node_config::StatsLease::Zero,
-                        )
-                        .map(Some)
-                        .map_err(|error| error.to_string())
-                    }
-                }
+                Ok(true) => Ok(StatsReloadReadResult::Updated),
+                Ok(false) => Ok(StatsReloadReadResult::Unchanged),
                 Err(error) => Err(error.to_string()),
             }
         }),
@@ -359,7 +342,7 @@ mod tests {
                 .into_iter()
                 .map(|target| {
                     (
-                        target.table.id,
+                        target.physical_id,
                         target.column_types.into_keys().collect::<Vec<_>>(),
                     )
                 })
@@ -376,7 +359,7 @@ mod tests {
                 .into_iter()
                 .map(|target| {
                     (
-                        target.table.id,
+                        target.physical_id,
                         target.column_types.into_keys().collect::<Vec<_>>(),
                     )
                 })

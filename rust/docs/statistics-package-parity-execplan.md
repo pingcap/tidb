@@ -123,12 +123,22 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - [x] (2026-08-30) Reconciled root handletest `TestStatsCacheShouldNotCacheSystemTable` through the ordinary Unistore SHOW path. The canonical loaded-statistics cache contains the one analyzed user table before the scan and remains byte-for-byte unchanged after `SHOW STATS_META` and `SHOW STATS_HEALTHY`; statement-facing pseudo load-attempt states are not canonical cache objects and were retained.
 - [x] (2026-08-30) Reconciled root handletest's collation-load and cache-refresh guards against their production owners. String histogram bounds remain raw collation-key bytes; an equal metadata-version pass retains the exact published snapshot without a reload; and a failed/timeout read preserves the prior cache while recording the failure.
 - [x] (2026-08-30) Reconciled root handletest's uninitialized and missing-partition statistics contracts through exact ordinary-session regressions. Delta-only DDL placeholders stay hidden and pseudo under both outdated-stat settings; dynamic analysis of two out of three partitions publishes the six-row/two-modification global meta and initializes all three columns plus the index.
+- [x] (2026-08-30) Reconciled root handletest `TestVersion` at the live cluster boundary. Periodic, ANALYZE, and LOAD STATS refreshes now use the canonical parent-cache ordered metadata update instead of Rust's whole-snapshot version probe/rebuild; older per-table versions cannot move cached objects backward, targeted refreshes preserve the global watermark, ANALYZE supplies Go's task-derived logical/partition/index ID list rather than its historical-dump IDs, and the legacy helpers/tests were removed.
 - [ ] Implement pinned `UpdateStatsVersion` and `ChangeGlobalStatsID` only with their owning flashback/add-partitioning/remove-partitioning DDL subscriber events and original per-statement transaction boundaries; the previous unreachable flattened planners and synthetic storage-image tests were removed.
 - [ ] Wire all pinned Go `SHOW STATS_*` surfaces to the shared cache and storage semantics.
 - [ ] Inventory every production file, platform/generated variant, original test/support artifact, fixture, and validation gate in pinned `pkg/statistics`; close or explicitly retain seed-only gaps until the whole package is complete.
 - [ ] Run the Ready validation profile, including `make lint`, only after the complete package inventory is closed.
 
 ## Surprises & Discoveries
+
+- Observation: the live Rust refresh seam still bypassed the completed parent-cache `Update` implementation. It performed a second all-table metadata scan/whole-snapshot comparison and rebuilt the statement-facing image, so an older metadata row and targeted ANALYZE/LOAD publication were governed by Rust-specific policy rather than the cache's Go rules.
+  Evidence: pinned `StatsCacheImpl.Update` queries ordered rows above the five-lease watermark and applies its old-table version/schema guard plus targeted `SkipMoveForward`; the removed Rust helpers instead compared `BTreeMap<table_id, version>` against an entire `StatsSnapshot` and called a separate snapshot loader.
+
+- Observation: Go's cache update reads unsigned `mysql.stats_meta.count` with `chunk.Row.GetInt64`, whose implementation reinterprets the eight-byte slot, while the first Rust adapter draft saturated the value at `i64::MAX`.
+  Evidence: pinned `chunk.Column.GetInt64` dereferences the row bytes as `int64`; the Rust boundary regression covers `i64::MAX`, `i64::MAX + 1`, and `u64::MAX` and now produces the same signed values.
+
+- Observation: `TableInfoByID` resolves a partition ID to its unchanged parent table and passes the physical ID separately to `TableStatsFromStorage`; Rust's prior target expansion cloned the parent and overwrote `TableInfo.id` with the partition ID.
+  Evidence: pinned `handle/util.TableInfoByID` returns `FindTableByPartitionID`'s parent and pinned cache `Update` passes both `tableInfo` and `physicalID`; Rust now carries separate `StatsTarget.table` and `StatsTarget.physical_id` values, with a regression proving parent ID/update-TS retention.
 
 - Observation: Unistore's default-row response encoded a scan-decoded
   `TIMESTAMP` without the request timezone. The scan had already converted UTC
@@ -357,6 +367,10 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - Decision: do not claim `pkg/statistics` complete from individual files or functions.
   Rationale: repository policy makes the whole pinned Go package the atomic completion unit.
   Date/Author: 2026-08-29 / Codex
+
+- Decision: make periodic, ANALYZE, and LOAD STATS refreshes consume the one canonical parent-cache update rather than preserving a cache-specific snapshot runner.
+  Rationale: pinned Go has one `StatsCacheImpl.Update` path for full and targeted refreshes; retaining a second Rust path would duplicate its watermark, version, payload-reuse, batching, and deletion behavior and allow them to drift.
+  Date/Author: 2026-08-30 / Codex
 
 - Decision: make histogram memory an owned histogram operation rather than carrying a manually supplied measurement beside it.
   Rationale: Go computes `Histogram.MemoryUsage` from the live object. Rust's bounds representation differs, so its method measures the equivalent live ownership—histogram value, reserved bucket storage, and variable bound payloads—while preserving Go's empty-histogram zero and component aggregation behavior.

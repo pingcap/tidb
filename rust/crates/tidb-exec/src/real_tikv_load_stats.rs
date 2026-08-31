@@ -56,6 +56,15 @@ pub struct ClusterLoadStatsReport {
     pub table_count: usize,
     /// Column and index histogram transactions committed.
     pub item_count: usize,
+    physical_ids: Vec<i64>,
+}
+
+impl ClusterLoadStatsReport {
+    /// Physical table IDs passed to Go's targeted post-LOAD cache update.
+    #[must_use]
+    pub fn physical_ids(&self) -> &[i64] {
+        &self.physical_ids
+    }
 }
 
 /// Why LOAD STATS storage did not complete.
@@ -100,6 +109,7 @@ pub fn commit_cluster_load_stats<C: StoreWriteClient, L: StoreWriteLoader, P: St
     let mut report = ClusterLoadStatsReport {
         table_count: tables.len(),
         item_count: 0,
+        physical_ids: tables.iter().map(|table| table.physical_id).collect(),
     };
     for table in &tables {
         for item in table.columns.iter().chain(&table.indexes) {

@@ -24,10 +24,12 @@
 
 use std::collections::BTreeMap;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::Duration;
 
 use tidb_datatype::FieldType;
 use tidb_model::table_info::TableInfo;
+use tidb_stats_handle_cache::{StatsMetaRow, StatsRefreshSource, UpdateError};
 use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
 use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
 
@@ -35,7 +37,7 @@ use crate::cluster_catalog::{load_cluster_catalog, MetaSnapshot};
 use crate::cluster_stats_load::{ClusterStatsItem, ClusterStatsLoader, ClusterTableStats};
 use crate::mysql_system_tables::SystemTableError;
 use crate::real_tikv_catalog::TransactionMetaSnapshot;
-use crate::stats_watch::{StatsSnapshot, TableStatsState};
+use crate::stats_watch::{SharedStats, StatsSnapshot, TableStatsState};
 
 /// The two startup shapes selected by Go `Domain.initStats`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -50,7 +52,9 @@ pub enum InitialStatsLoad {
 /// `TableStatsFromStorage`, plus the derived bound-decoding map.
 #[derive(Clone, Debug)]
 pub struct StatsTarget {
-    /// The current schema metadata for the physical table.
+    /// Logical table ID or physical partition ID whose statistics are read.
+    pub physical_id: i64,
+    /// The current parent-table schema metadata Go resolves for this physical ID.
     pub table: TableInfo,
     /// Declared column types used to decode stored histogram bounds.
     pub column_types: BTreeMap<i64, FieldType>,
@@ -69,15 +73,15 @@ impl StatsTarget {
                 .map_or(0, |partition| partition.read().definitions.len()),
         );
         targets.push(Self {
+            physical_id: table.id,
             table: table.clone(),
             column_types: column_types.clone(),
         });
         if let Some(partition) = &table.partition {
             for definition in partition.read().definitions.snapshot() {
-                let mut physical = table.clone();
-                physical.id = definition.id;
                 targets.push(Self {
-                    table: physical,
+                    physical_id: definition.id,
+                    table: table.clone(),
                     column_types: column_types.clone(),
                 });
             }
@@ -254,7 +258,7 @@ pub fn load_initial_stats_snapshot_with_memory_limits<S: MetaSnapshot>(
             tables,
             table_ids,
             |loader, snapshot, target| {
-                loader.load_table_lite(snapshot, target.table.id, &target.column_types)
+                loader.load_table_lite(snapshot, target.physical_id, &target.column_types)
             },
         );
     }
@@ -263,11 +267,11 @@ pub fn load_initial_stats_snapshot_with_memory_limits<S: MetaSnapshot>(
     let mut consumed = 0u64;
     for target in selected_stats_targets(tables, table_ids) {
         let loaded = if initial_stats_cache_is_full(consumed, total_memory, memory_quota) {
-            loader.load_table_lite(snapshot, target.table.id, &target.column_types)?
+            loader.load_table_lite(snapshot, target.physical_id, &target.column_types)?
         } else {
             loader.load_table_for_init_stats_histograms(
                 snapshot,
-                target.table.id,
+                target.physical_id,
                 &target.column_types,
             )?
         };
@@ -281,7 +285,7 @@ pub fn load_initial_stats_snapshot_with_memory_limits<S: MetaSnapshot>(
         }
         let loaded = loader.load_table_for_init_stats_topn(
             snapshot,
-            target.table.id,
+            target.physical_id,
             &target.column_types,
         )?;
         insert_initial_stats_state(&mut topn, &mut consumed, target, loaded);
@@ -293,7 +297,7 @@ pub fn load_initial_stats_snapshot_with_memory_limits<S: MetaSnapshot>(
             break;
         }
         let loaded =
-            loader.load_table_for_init_stats(snapshot, target.table.id, &target.column_types)?;
+            loader.load_table_for_init_stats(snapshot, target.physical_id, &target.column_types)?;
         insert_initial_stats_state(&mut buckets, &mut consumed, target, loaded);
     }
     Ok(buckets)
@@ -316,7 +320,7 @@ where
 {
     let mut result = StatsSnapshot::new();
     for target in tables {
-        let table_id = target.table.id;
+        let table_id = target.physical_id;
         if !table_ids.is_empty() && !table_ids.contains(&table_id) {
             continue;
         }
@@ -336,7 +340,7 @@ fn selected_stats_targets<'a>(
 ) -> impl Iterator<Item = &'a StatsTarget> {
     tables
         .iter()
-        .filter(|target| table_ids.is_empty() || table_ids.contains(&target.table.id))
+        .filter(|target| table_ids.is_empty() || table_ids.contains(&target.physical_id))
 }
 
 fn insert_initial_stats_state(
@@ -351,7 +355,7 @@ fn insert_initial_stats_state(
     };
     let new_memory = initial_stats_state_memory(&state);
     let old_memory = result
-        .insert(target.table.id, state)
+        .insert(target.physical_id, state)
         .as_ref()
         .map_or(0, initial_stats_state_memory);
     *consumed = consumed
@@ -369,11 +373,101 @@ fn initial_stats_cache_is_full(consumed: u64, total_memory: u64, memory_quota: i
     consumed >= total_memory / 4 || (memory_quota != 0 && consumed >= memory_quota.max(0) as u64)
 }
 
-/// Pinned Go `StatsCacheImpl.Update`: with a positive lease, refreshes the
-/// lite cache image while preserving already resident items whose histogram
-/// version did not move and eagerly refreshes only changed resident items.
-/// `load_all` selects Go's zero-lease behavior, where lazy loading is off.
-pub fn refresh_stats_snapshot_from_cluster<
+struct ClusterStatsRefreshSource<'a, C, L, P> {
+    opener: &'a RealOptimisticTransactionOpener<C, L, P>,
+    timeout: Duration,
+    loader: &'a ClusterStatsLoader,
+    targets: BTreeMap<i64, &'a StatsTarget>,
+    current: Arc<StatsSnapshot>,
+    lease: Duration,
+    load_all: bool,
+}
+
+impl<C, L, P> StatsRefreshSource for ClusterStatsRefreshSource<'_, C, L, P>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
+    type Error = SystemTableError;
+
+    fn lease(&self) -> Duration {
+        self.lease
+    }
+
+    fn stats_meta_rows(
+        &self,
+        after_version: u64,
+        physical_ids: &[i64],
+    ) -> Result<Vec<StatsMetaRow>, Self::Error> {
+        let mut transaction = self
+            .opener
+            .begin_read_only()
+            .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
+        let rows = {
+            let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, self.timeout);
+            let mut rows = self.loader.load_stats_meta_rows(&mut snapshot)?;
+            rows.retain(|row| {
+                row.version > after_version
+                    && (physical_ids.is_empty() || physical_ids.contains(&row.physical_id))
+            });
+            rows
+        };
+        transaction
+            .finish_without_writes()
+            .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
+        Ok(rows)
+    }
+
+    fn table_info_update_ts(&self, physical_id: i64) -> Option<u64> {
+        self.targets
+            .get(&physical_id)
+            .map(|target| target.table.update_ts)
+    }
+
+    fn table_stats_from_storage(
+        &self,
+        physical_id: i64,
+    ) -> Result<Option<Arc<tidb_stats::Table>>, Self::Error> {
+        let Some(target) = self.targets.get(&physical_id) else {
+            return Ok(None);
+        };
+        let mut transaction = self
+            .opener
+            .begin_read_only()
+            .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
+        let loaded = {
+            let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, self.timeout);
+            if self.load_all {
+                self.loader
+                    .load_table(&mut snapshot, physical_id, &target.column_types)?
+                    .map(|stats| stats.to_statistics_table(&target.table))
+            } else {
+                self.loader.load_statistics_table_for_update(
+                    &mut snapshot,
+                    physical_id,
+                    &target.table,
+                    &target.column_types,
+                    self.current
+                        .get(&physical_id)
+                        .and_then(TableStatsState::loaded)
+                        .map(Arc::as_ref),
+                )?
+            }
+        };
+        transaction
+            .finish_without_writes()
+            .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
+        Ok(loaded)
+    }
+}
+
+/// Pinned Go `StatsCacheImpl.Update` over the real cluster storage boundary.
+/// The cache's five-lease watermark, ordered rows, per-table version/schema
+/// skip, metadata-only reuse, and monotonic maximum all come from the shared
+/// `tidb-stats-handle-cache` implementation rather than a second snapshot
+/// refresh policy.
+pub fn update_stats_cache_from_cluster<
     C: StoreWriteClient,
     L: StoreWriteLoader,
     P: StorePdCapability,
@@ -381,165 +475,69 @@ pub fn refresh_stats_snapshot_from_cluster<
     opener: &RealOptimisticTransactionOpener<C, L, P>,
     timeout: Duration,
     tables: &[StatsTarget],
-    current: &StatsSnapshot,
-    load_all: bool,
-) -> Result<StatsSnapshot, SystemTableError> {
-    let mut transaction = opener
-        .begin_read_only()
-        .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
-    let loaded = {
-        let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
-        let catalog = load_cluster_catalog(&mut snapshot)?;
-        let loader = ClusterStatsLoader::locate(&catalog)?;
-        let mut result = StatsSnapshot::new();
-        for target in tables {
-            let table_id = target.table.id;
-            let state = if load_all {
-                match loader.load_table(&mut snapshot, table_id, &target.column_types)? {
-                    Some(stats) => {
-                        TableStatsState::Loaded(stats.to_statistics_table(&target.table))
-                    }
-                    None => TableStatsState::Pseudo,
-                }
-            } else {
-                let current = current.get(&table_id).and_then(TableStatsState::loaded);
-                match loader.load_statistics_table_for_update(
-                    &mut snapshot,
-                    &target.table,
-                    &target.column_types,
-                    current.map(|stats| stats.as_ref()),
-                )? {
-                    Some(stats) => TableStatsState::Loaded(stats),
-                    None => TableStatsState::Pseudo,
-                }
-            };
-            result.insert(table_id, state);
-        }
-        Ok(result)
-    };
-    transaction
-        .finish_without_writes()
-        .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
-    loaded
-}
-
-/// The per-tick version probe Go's `Handle.Update` runs before any reload
-/// (`pkg/statistics/handle/update.go`): ONE scan of `mysql.stats_meta`, and
-/// each tracked table's `version`, `None` for a table with no row (never
-/// analyzed). Everything else -- histograms, buckets, top-n, the catalog
-/// itself -- stays untouched unless some version moved.
-pub fn load_stats_meta_versions<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<C, L, P>,
-    timeout: Duration,
+    shared: &SharedStats,
     loader: &ClusterStatsLoader,
-    table_ids: &[i64],
-) -> Result<BTreeMap<i64, Option<u64>>, SystemTableError> {
-    let mut transaction = opener
-        .begin_read_only()
-        .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
-    let versions = {
-        let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
-        let all = loader.load_all_meta(&mut snapshot)?;
-        table_ids
-            .iter()
-            .map(|table_id| (*table_id, all.get(table_id).map(|(version, _, _)| *version)))
-            .collect()
+    lease: Duration,
+    load_all: bool,
+    physical_ids: Vec<i64>,
+) -> Result<bool, SystemTableError> {
+    let current = shared.load();
+    let targets = tables
+        .iter()
+        .map(|target| (target.physical_id, target))
+        .collect();
+    let tracked_ids = tables
+        .iter()
+        .map(|target| target.physical_id)
+        .collect::<Vec<_>>();
+    let source = ClusterStatsRefreshSource {
+        opener,
+        timeout,
+        loader,
+        targets,
+        current,
+        lease,
+        load_all,
     };
-    transaction
-        .finish_without_writes()
-        .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
-    Ok(versions)
-}
-
-/// Whether the published snapshot already reflects exactly these versions:
-/// same tracked set, and every table's state version (absent = pseudo/never
-/// analyzed) equal to what `mysql.stats_meta` reports now. This is Go
-/// `Handle.Update`'s publish gate (`pkg/statistics/handle/update.go`: a table
-/// whose meta version equals its cached one is skipped), lifted to whole-
-/// snapshot granularity so an unchanged cluster costs one scan and nothing
-/// else.
-pub fn stats_snapshot_unchanged_since(
-    current: &StatsSnapshot,
-    versions: &BTreeMap<i64, Option<u64>>,
-    targets: &[StatsTarget],
-) -> bool {
-    if current.len() != targets.len() {
-        return false;
-    }
-    for target in targets {
-        let table_id = target.table.id;
-        let version = versions.get(&table_id).copied().flatten();
-        match current.get(&table_id) {
-            Some(state) if state.version() == version => {}
-            _ => return false,
-        }
-    }
-    true
+    shared
+        .update_from_source(&source, physical_ids, &tracked_ids, || false)
+        .map_err(|error| match error {
+            UpdateError::Source(error) => error,
+            UpdateError::Cancelled => {
+                SystemTableError::Snapshot("statistics update was cancelled".to_owned())
+            }
+        })
 }
 
 #[cfg(test)]
-mod unchanged_tests {
+mod tests {
+    use tidb_model::go_runtime::GoShared;
+    use tidb_model::partition::{PartitionDefinition, PartitionInfo};
+
     use super::*;
-    use crate::stats_watch::TableStatsState;
-    use tidb_stats::{HistColl, Table};
-
-    fn loaded(table_id: i64, version: u64) -> TableStatsState {
-        TableStatsState::Loaded(std::sync::Arc::new(Table {
-            existence_map: None,
-            hist_coll: HistColl::new(table_id, 0, 0, 0, 0),
-            version,
-            last_analyze_version: 0,
-            last_stats_hist_version: 0,
-            table_info_update_ts: 0,
-            is_pk_handle: false,
-        }))
-    }
-
-    fn targets(ids: &[i64]) -> Vec<StatsTarget> {
-        ids.iter()
-            .map(|id| {
-                let mut table = TableInfo::default();
-                table.id = *id;
-                StatsTarget {
-                    table,
-                    column_types: BTreeMap::new(),
-                }
-            })
-            .collect()
-    }
 
     #[test]
-    fn equal_versions_and_set_mean_unchanged() {
-        let current = StatsSnapshot::from([(1, loaded(1, 5)), (2, TableStatsState::Pseudo)]);
-        let mut versions = BTreeMap::new();
-        versions.insert(1, Some(5));
-        versions.insert(2, None);
-        assert!(stats_snapshot_unchanged_since(
-            &current,
-            &versions,
-            &targets(&[1, 2])
-        ));
-    }
+    fn partition_stats_target_keeps_parent_table_info_like_go() {
+        let table = TableInfo {
+            id: 10,
+            update_ts: 99,
+            partition: Some(GoShared::new(PartitionInfo {
+                definitions: vec![PartitionDefinition {
+                    id: 11,
+                    ..PartitionDefinition::default()
+                }]
+                .into(),
+                ..PartitionInfo::default()
+            })),
+            ..TableInfo::default()
+        };
 
-    #[test]
-    fn a_moved_or_new_or_dropped_table_counts_as_changed() {
-        let moved = StatsSnapshot::from([(1, loaded(1, 5))]);
-        let mut versions = BTreeMap::new();
-        versions.insert(1, Some(9));
-        assert!(!stats_snapshot_unchanged_since(
-            &moved,
-            &versions,
-            &targets(&[1])
-        ));
-        // A target the published snapshot has never seen: a newly analyzed
-        // table must fall through to the full load.
-        let empty = StatsSnapshot::new();
-        let mut fresh = BTreeMap::new();
-        fresh.insert(5, Some(3));
-        assert!(!stats_snapshot_unchanged_since(
-            &empty,
-            &fresh,
-            &targets(&[5])
-        ));
+        let targets = StatsTarget::for_table(&table);
+        assert_eq!(targets.len(), 2);
+        assert_eq!(targets[0].physical_id, 10);
+        assert_eq!(targets[0].table.id, 10);
+        assert_eq!(targets[1].physical_id, 11);
+        assert_eq!(targets[1].table.id, 10);
+        assert_eq!(targets[1].table.update_ts, 99);
     }
 }

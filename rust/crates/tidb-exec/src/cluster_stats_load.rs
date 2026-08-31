@@ -69,6 +69,7 @@ use tidb_stats::histogram::{Bucket, Histogram};
 use tidb_stats::{
     ColAndIdxExistenceMap, Column, ColumnInfo, HistColl, Index, IndexInfo, StatsLoadedStatus, Table,
 };
+use tidb_stats_handle_cache::StatsMetaRow;
 
 use crate::cluster_catalog::{ClusterCatalog, MetaSnapshot};
 use crate::mysql_system_tables::{
@@ -175,7 +176,7 @@ impl ClusterTableStats {
     /// than cached independently.
     #[must_use]
     pub fn to_statistics_table(&self, table_info: &TableInfo) -> Arc<Table> {
-        let row_count = i64::try_from(self.row_count).unwrap_or(i64::MAX);
+        let row_count = stats_meta_count_as_go_int64(self.row_count);
         let stats_version = self
             .columns
             .iter()
@@ -388,32 +389,33 @@ impl ClusterStatsLoader {
         })
     }
 
-    /// Go `stats_meta`'s rows, ONE range scan: `(table_id, version, modify_count,
-    /// count)` for every table that has one.
+    /// Go `StatsCacheImpl.Update`'s one ordered `stats_meta` range scan.
     ///
     /// This is the cheap half of Go's `Handle.Update`
     /// (`pkg/statistics/handle/update.go`): a tick first reads only this table
     /// and compares versions against its cache, and touches histograms,
     /// buckets and top-n for a table ONLY when that table's version moved. A
     /// pass whose versions all match costs exactly this one scan.
-    pub fn load_all_meta<S: MetaSnapshot>(
+    pub fn load_stats_meta_rows<S: MetaSnapshot>(
         &self,
         snapshot: &mut S,
-    ) -> Result<BTreeMap<i64, (u64, i64, u64)>, SystemTableError> {
-        let mut result = BTreeMap::new();
+    ) -> Result<Vec<StatsMetaRow>, SystemTableError> {
+        let mut result = Vec::new();
         for (key, value) in scan_system_table(snapshot, &self.meta)? {
             let row = SystemRow::parse(&self.meta, &key, &value)?;
             let Some(table_id) = row.i64("table_id")? else {
                 continue;
             };
-            result.insert(
-                table_id,
-                (
-                    row.u64("version")?.unwrap_or_default(),
-                    row.i64("modify_count")?.unwrap_or_default(),
-                    row.u64("count")?.unwrap_or_default(),
-                ),
-            );
+            result.push(StatsMetaRow {
+                version: row.u64("version")?.unwrap_or_default(),
+                physical_id: table_id,
+                modify_count: row.i64("modify_count")?.unwrap_or_default(),
+                count: stats_meta_count_as_go_int64(row.u64("count")?.unwrap_or_default()),
+                snapshot: row.u64("snapshot")?.unwrap_or_default(),
+                latest_histogram_version: row
+                    .u64("last_stats_histograms_version")?
+                    .unwrap_or_default(),
+            });
         }
         Ok(result)
     }
@@ -665,11 +667,12 @@ impl ClusterStatsLoader {
     pub fn load_statistics_table_for_update<S: MetaSnapshot>(
         &self,
         snapshot: &mut S,
+        physical_id: i64,
         table_info: &TableInfo,
         column_types: &BTreeMap<i64, FieldType>,
         current: Option<&Table>,
     ) -> Result<Option<Arc<Table>>, SystemTableError> {
-        let table_id = table_info.id;
+        let table_id = physical_id;
         let Some(lite) = self.load_table_lite(snapshot, table_id, column_types)? else {
             return Ok(None);
         };
@@ -682,7 +685,7 @@ impl ClusterStatsLoader {
 
         let mut updated = current.copy_as(tidb_stats::CopyIntent::BothMapsWritable);
         updated.version = lite.version;
-        updated.hist_coll.realtime_count = i64::try_from(lite.row_count).unwrap_or(i64::MAX);
+        updated.hist_coll.realtime_count = stats_meta_count_as_go_int64(lite.row_count);
         updated.hist_coll.modify_count = lite.modify_count;
         updated.last_analyze_version =
             lite.refresh_last_analyze_version(current.last_analyze_version);
@@ -1085,7 +1088,7 @@ impl ClusterStatsLoader {
     /// One table's `(version, snapshot, modify_count, count,
     /// last_stats_histograms_version)`,
     /// or `None` for a table with no row -- the public single-table form of
-    /// [`Self::load_all_meta`], and the read behind
+    /// [`Self::load_stats_meta_rows`], and the read behind
     /// [`Self::load_table`]'s presence check.
     pub fn load_meta<S: MetaSnapshot>(
         &self,
@@ -1206,6 +1209,13 @@ impl ClusterStatsLoader {
         }
         Ok(collected)
     }
+}
+
+fn stats_meta_count_as_go_int64(count: u64) -> i64 {
+    // Go's chunk.Row.GetInt64 reads the same eight-byte slot that its unsigned
+    // SQL decoder populated. Preserve that two's-complement result rather
+    // than adding a Rust-only saturation policy.
+    count as i64
 }
 
 /// Go `read.go::convertBoundFromBlob`, plus the `is_index`/string-type
@@ -1403,6 +1413,13 @@ mod tests {
         no_histograms.columns.clear();
         assert_eq!(no_histograms.refresh_last_analyze_version(23), 23);
         assert_eq!(no_histograms.refresh_last_analyze_version(0), 50);
+    }
+
+    #[test]
+    fn stats_meta_unsigned_count_uses_go_get_int64_bits() {
+        assert_eq!(stats_meta_count_as_go_int64(i64::MAX as u64), i64::MAX);
+        assert_eq!(stats_meta_count_as_go_int64(i64::MAX as u64 + 1), i64::MIN);
+        assert_eq!(stats_meta_count_as_go_int64(u64::MAX), -1);
     }
 
     #[test]
