@@ -39,8 +39,8 @@ use tidb_txnkv::transaction::{
 use crate::cluster_catalog::{load_cluster_catalog, MetaSnapshot};
 use crate::cluster_stats_load::{ClusterStatsItem, ClusterStatsLoader, ClusterTableStats};
 use crate::cluster_stats_write::{
-    plan_historical_stats_meta_lock, plan_historical_stats_meta_replace,
-    plan_stats_meta_version_refresh,
+    plan_change_global_stats_id, plan_historical_stats_meta_lock,
+    plan_historical_stats_meta_replace, plan_stats_meta_version_refresh, plan_update_stats_version,
 };
 use crate::cluster_table_storage::{
     commit_pessimistic_statement, lock_pessimistic_statement, PessimisticStatementTransactionError,
@@ -229,7 +229,7 @@ pub fn load_needed_histograms_from_cluster<
     for requested in needed.all_items() {
         let item = requested.table_item_id;
         let result: Result<(), SystemTableError> = (|| {
-            if !item.is_index && item.id <= 0 {
+            if skips_internal_column(&item) {
                 return Ok(());
             }
             let current = shared.load();
@@ -341,6 +341,10 @@ pub fn load_needed_histograms_from_cluster<
         result?;
     }
     Ok(())
+}
+
+fn skips_internal_column(item: &tidb_model::TableItemID) -> bool {
+    !item.is_index && item.id <= 0
 }
 
 /// Reads every one of `tables`' lite statistics through one fresh read-only
@@ -709,6 +713,36 @@ pub fn update_stats_meta_version_for_gc<
     Ok(version)
 }
 
+/// Pinned Go `storage.UpdateStatsVersion` over real TiKV.
+pub fn update_stats_version<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
+    opener: &RealOptimisticTransactionOpener<C, L, P>,
+    timeout: Duration,
+) -> Result<u64, PessimisticStatementTransactionError> {
+    commit_pessimistic_statement(opener, timeout, |snapshot, version| {
+        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+        let catalog = load_cluster_catalog(&mut snapshot).map_err(|error| error.to_string())?;
+        let plan = plan_update_stats_version(&mut snapshot, &catalog, version)
+            .map_err(|error| error.to_string())?;
+        Ok((version, plan.mutations))
+    })
+}
+
+/// Pinned Go `storage.ChangeGlobalStatsID` over real TiKV.
+pub fn change_global_stats_id<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
+    opener: &RealOptimisticTransactionOpener<C, L, P>,
+    from: i64,
+    to: i64,
+    timeout: Duration,
+) -> Result<(), PessimisticStatementTransactionError> {
+    commit_pessimistic_statement(opener, timeout, |snapshot, _version| {
+        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+        let catalog = load_cluster_catalog(&mut snapshot).map_err(|error| error.to_string())?;
+        let plan = plan_change_global_stats_id(&mut snapshot, &catalog, from, to)
+            .map_err(|error| error.to_string())?;
+        Ok(((), plan.mutations))
+    })
+}
+
 /// Pinned Go `RecordHistoricalStatsMeta` as its own pessimistic transaction.
 pub fn record_historical_stats_meta<
     C: StoreWriteClient,
@@ -791,5 +825,19 @@ mod tests {
         assert_eq!(targets[1].physical_id, 11);
         assert_eq!(targets[1].table.id, 10);
         assert_eq!(targets[1].table.update_ts, 99);
+    }
+
+    #[test]
+    fn needed_histogram_loading_skips_only_internal_columns() {
+        let item = |id, is_index| tidb_model::TableItemID {
+            table_id: 10,
+            id,
+            is_index,
+            is_sync_load_failed: false,
+        };
+        assert!(skips_internal_column(&item(-1, false)));
+        assert!(skips_internal_column(&item(0, false)));
+        assert!(!skips_internal_column(&item(1, false)));
+        assert!(!skips_internal_column(&item(-1, true)));
     }
 }

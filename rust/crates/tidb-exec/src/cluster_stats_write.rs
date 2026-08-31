@@ -106,6 +106,8 @@ pub enum StatsWriteError {
     HistoricalMeta(String),
     /// A historical statistics JSON object could not be compressed.
     HistoricalData(String),
+    /// Updating a statistics row's table ID would collide with an existing row.
+    DuplicateIdentity(String),
 }
 
 impl std::fmt::Display for StatsWriteError {
@@ -124,6 +126,7 @@ impl std::fmt::Display for StatsWriteError {
             }
             Self::HistoricalMeta(detail) => formatter.write_str(detail),
             Self::HistoricalData(detail) => formatter.write_str(detail),
+            Self::DuplicateIdentity(detail) => formatter.write_str(detail),
         }
     }
 }
@@ -1231,6 +1234,110 @@ pub fn plan_stats_meta_version_refresh<S: MetaSnapshot>(
     rows.store(snapshot, catalog, &values, &mut plan)?;
     rows.publish_watermark(catalog, &mut plan)?;
     Ok(plan)
+}
+
+/// Plans pinned Go `UpdateStatsVersion` as its two table-wide UPDATEs.
+///
+/// Only the `version` column changes. In particular, Go does not refresh
+/// `stats_meta.last_stats_histograms_version` in this flashback-cluster path.
+pub fn plan_update_stats_version<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    version: u64,
+) -> Result<StatsWritePlan, StatsWriteError> {
+    let mut plan = StatsWritePlan::default();
+    for (table_name, identity) in [
+        ("stats_meta", &["table_id"][..]),
+        ("stats_histograms", &["table_id", "is_index", "hist_id"][..]),
+    ] {
+        let table = locate(catalog, table_name)?;
+        let mut rows = StatsRows::open_all(snapshot, table, identity)?;
+        let stored = rows
+            .existing
+            .values()
+            .map(|(_, values)| values.clone())
+            .collect::<Vec<_>>();
+        for mut values in stored {
+            set(table, &mut values, "version", Datum::UInt(version));
+            rows.store(snapshot, catalog, &values, &mut plan)?;
+        }
+    }
+    Ok(plan)
+}
+
+/// Plans pinned Go `ChangeGlobalStatsID` as six ordered table updates in one
+/// transaction.
+pub fn plan_change_global_stats_id<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    from: i64,
+    to: i64,
+) -> Result<StatsWritePlan, StatsWriteError> {
+    let mut plan = StatsWritePlan::default();
+    for (table_name, identity) in [
+        ("stats_meta", &["table_id"][..]),
+        (
+            "stats_top_n",
+            &["table_id", "is_index", "hist_id", "value"][..],
+        ),
+        ("stats_fm_sketch", &["table_id", "is_index", "hist_id"][..]),
+        (
+            "stats_buckets",
+            &["table_id", "is_index", "hist_id", "bucket_id"][..],
+        ),
+        ("stats_histograms", &["table_id", "is_index", "hist_id"][..]),
+        ("column_stats_usage", &["table_id", "column_id"][..]),
+    ] {
+        change_stats_table_id(snapshot, catalog, table_name, identity, from, to, &mut plan)?;
+    }
+    Ok(plan)
+}
+
+fn change_stats_table_id<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    table_name: &str,
+    identity: &'static [&'static str],
+    from: i64,
+    to: i64,
+    plan: &mut StatsWritePlan,
+) -> Result<(), StatsWriteError> {
+    if from == to {
+        return Ok(());
+    }
+    let table = locate(catalog, table_name)?;
+    let mut rows = StatsRows::open_all(snapshot, table, identity)?;
+    let table_id = column_id(table, "table_id")?;
+    let source_identities = rows
+        .existing
+        .iter()
+        .filter_map(|(identity, (_, values))| {
+            (values.get(&table_id) == Some(&Datum::Int(from))).then(|| identity.clone())
+        })
+        .collect::<Vec<_>>();
+    for source_identity in source_identities {
+        let (key, stored) = rows
+            .existing
+            .remove(&source_identity)
+            .expect("source identity came from the existing map");
+        let mut moved = stored.clone();
+        set(table, &mut moved, "table_id", Datum::Int(to));
+        let target_identity = identity_of(table, identity, &moved)?;
+        if rows.existing.contains_key(&target_identity) {
+            return Err(StatsWriteError::DuplicateIdentity(format!(
+                "updating mysql.{table_name} table_id from {from} to {to} conflicts with an existing row"
+            )));
+        }
+        if rows.clustered {
+            plan.mutations.extend(delete_clustered_row(table, &stored)?);
+            plan.mutations
+                .extend(store_clustered_row(table, None, &moved)?);
+        } else {
+            plan.mutations
+                .extend(rewrite_rowid_row(table, &key, &stored, &moved)?);
+        }
+    }
+    Ok(())
 }
 
 /// Plans Go `SaveColumnStatsUsageToStorage` for one physical table.

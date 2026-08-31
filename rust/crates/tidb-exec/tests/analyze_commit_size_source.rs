@@ -58,7 +58,8 @@ use tidb_exec::cluster_stats_write::{
     plan_start_analyze_job, plan_finish_analyze_job, plan_delete_analyze_jobs,
     plan_update_analyze_job_progress,
     plan_stats_delta_statement, plan_stats_gc_timestamp_write, plan_stats_item_delete,
-    plan_analyze_stats_write, plan_stats_meta_version_refresh, plan_stats_write,
+    plan_analyze_stats_write, plan_change_global_stats_id, plan_stats_meta_version_refresh,
+    plan_stats_write, plan_update_stats_version,
     load_stats_locked_table_ids, stats_delta_statements, InsertTableStatsStatement, LoadedStatsItemStatement,
     AnalyzeStatsMeta, AnalyzeStatsWriteScope, StatsDeltaStatement, StatsWriteError,
 };
@@ -2050,6 +2051,154 @@ fn slow_save_version_refresh_changes_only_the_two_go_columns() {
             refreshed,
         ))
     );
+}
+
+#[test]
+fn flashback_stats_version_updates_meta_and_histograms_only() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let table_id = 4242;
+    let initial = ClusterTableStats {
+        table_id,
+        version: 440_000_000_000_000_000,
+        snapshot: 439_000_000_000_000_000,
+        last_analyze_version: 438_000_000_000_000_000,
+        last_stats_hist_version: 437_000_000_000_000_000,
+        modify_count: 7,
+        row_count: 10_240,
+        columns: vec![full_histogram(1, false)],
+        indexes: Vec::new(),
+    };
+    let plan = plan_stats_write(&mut store, &catalog, &initial, now()).expect("analyze plans");
+    apply_mutations(&mut store, &plan.mutations);
+
+    let refreshed = initial.version + 1;
+    let plan = plan_update_stats_version(&mut store, &catalog, refreshed)
+        .expect("flashback version updates plan");
+    apply_mutations(&mut store, &plan.mutations);
+
+    let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
+    let stored = loader
+        .load_table_with_fm(
+            &mut store,
+            table_id,
+            &BTreeMap::from([(
+                1,
+                tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            )]),
+        )
+        .expect("statistics reload")
+        .expect("stats_meta remains");
+    assert_eq!(stored.version, refreshed);
+    assert_eq!(stored.snapshot, initial.snapshot);
+    assert_eq!(stored.last_stats_hist_version, initial.version);
+    assert_eq!(
+        stored
+            .column(1)
+            .expect("column remains")
+            .histogram
+            .last_update_version,
+        refreshed
+    );
+}
+
+#[test]
+fn global_stats_id_moves_all_six_go_tables() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let from = 4242;
+    let to = 5151;
+    let stats = ClusterTableStats {
+        table_id: from,
+        version: 440_000_000_000_000_000,
+        snapshot: 439_000_000_000_000_000,
+        last_analyze_version: 440_000_000_000_000_000,
+        last_stats_hist_version: 440_000_000_000_000_000,
+        modify_count: 7,
+        row_count: 10_240,
+        columns: vec![{
+            let mut item = full_histogram(1, false);
+            item.fm_sketch = Some(FmSketch::from_raw_parts(0, MAX_SKETCH_SIZE, [4, 8, 12]));
+            item
+        }],
+        indexes: Vec::new(),
+    };
+    let plan = plan_partition_stats_write(&mut store, &catalog, &stats, now())
+        .expect("partition analyze plans");
+    apply_mutations(&mut store, &plan.mutations);
+    let usage = HashMap::from([(
+        usage_item(from, 1),
+        ColumnStatsTimeInfo {
+            last_used_at: Some(now()),
+            last_analyzed_at: Some(now()),
+        },
+    )]);
+    let plan = plan_column_stats_usage_write(&mut store, &catalog, &usage, now())
+        .expect("predicate usage plans");
+    apply_mutations(&mut store, &plan.mutations);
+
+    let plan = plan_change_global_stats_id(&mut store, &catalog, from, to)
+        .expect("global statistics ID move plans");
+    apply_mutations(&mut store, &plan.mutations);
+
+    let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
+    let column_types = BTreeMap::from([(
+        1,
+        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+    )]);
+    assert!(loader
+        .load_table_with_fm(&mut store, from, &column_types)
+        .expect("old ID reads")
+        .is_none());
+    let moved = loader
+        .load_table_with_fm(&mut store, to, &column_types)
+        .expect("new ID reads")
+        .expect("all statistics moved");
+    let column = moved.column(1).expect("histogram moved");
+    assert!(!column.histogram.buckets.is_empty());
+    assert!(column.topn.as_ref().is_some_and(|topn| topn.num() > 0));
+    assert!(column.fm_sketch.is_some());
+    assert!(load_column_stats_usage_for_table(
+        &mut store,
+        &catalog,
+        &tidb_datatype::SessionTimeZone::utc(),
+        from,
+    )
+    .expect("old usage reads")
+    .is_empty());
+    assert!(load_column_stats_usage_for_table(
+        &mut store,
+        &catalog,
+        &tidb_datatype::SessionTimeZone::utc(),
+        to,
+    )
+    .expect("new usage reads")
+    .contains_key(&usage_item(to, 1)));
+}
+
+#[test]
+fn global_stats_id_move_rejects_target_identity_collisions() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    for table_id in [4242, 5151] {
+        let stats = ClusterTableStats {
+            table_id,
+            version: 440_000_000_000_000_000,
+            snapshot: 439_000_000_000_000_000,
+            last_analyze_version: 440_000_000_000_000_000,
+            last_stats_hist_version: 440_000_000_000_000_000,
+            modify_count: 0,
+            row_count: 1,
+            columns: Vec::new(),
+            indexes: Vec::new(),
+        };
+        let plan = plan_stats_write(&mut store, &catalog, &stats, now()).expect("analyze plans");
+        apply_mutations(&mut store, &plan.mutations);
+    }
+    assert!(matches!(
+        plan_change_global_stats_id(&mut store, &catalog, 4242, 5151),
+        Err(StatsWriteError::DuplicateIdentity(_))
+    ));
 }
 
 #[test]

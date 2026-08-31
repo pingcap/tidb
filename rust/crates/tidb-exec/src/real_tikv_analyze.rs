@@ -2095,18 +2095,30 @@ fn commit_global_stats_item<C: StoreWriteClient, L: StoreWriteLoader, P: StorePd
         .commit(write.mutations, &UnaryCallContext::with_timeout(timeout))
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
     classify_commit_outcome(&outcome)?;
-    if slow_stats_save_needs_version_refresh(stats_lease, started.elapsed()) {
-        version = refresh_stats_meta_version(opener, table_id, timeout).map_err(|_| {
-            ClusterAnalyzeError::Other(
-                "failed to update stats meta version during analyze result save. The system may be too busy. Please retry the operation later".to_owned(),
-            )
-        })?;
-    }
+    version = refresh_slow_stats_save_version(version, stats_lease, started.elapsed(), || {
+        refresh_stats_meta_version(opener, table_id, timeout)
+    })?;
     Ok((version, counts.0, counts.1, counts.2))
 }
 
 fn slow_stats_save_needs_version_refresh(stats_lease: Duration, elapsed: Duration) -> bool {
     stats_lease > Duration::ZERO && elapsed >= stats_lease.saturating_mul(5)
+}
+
+fn refresh_slow_stats_save_version(
+    current: u64,
+    stats_lease: Duration,
+    elapsed: Duration,
+    refresh: impl FnOnce() -> Result<u64, ClusterAnalyzeError>,
+) -> Result<u64, ClusterAnalyzeError> {
+    if !slow_stats_save_needs_version_refresh(stats_lease, elapsed) {
+        return Ok(current);
+    }
+    refresh().map_err(|_| {
+        ClusterAnalyzeError::Other(
+            "failed to update stats meta version during analyze result save. The system may be too busy. Please retry the operation later".to_owned(),
+        )
+    })
 }
 
 fn refresh_stats_meta_version<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
@@ -2428,13 +2440,9 @@ fn finish_analyze_save<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapab
     stats_lease: Duration,
     record_history: &dyn Fn() -> bool,
 ) -> Result<u64, ClusterAnalyzeError> {
-    if slow_stats_save_needs_version_refresh(stats_lease, started.elapsed()) {
-        version = refresh_stats_meta_version(opener, table_id, timeout).map_err(|_| {
-            ClusterAnalyzeError::Other(
-                "failed to update stats meta version during analyze result save. The system may be too busy. Please retry the operation later".to_owned(),
-            )
-        })?;
-    }
+    version = refresh_slow_stats_save_version(version, stats_lease, started.elapsed(), || {
+        refresh_stats_meta_version(opener, table_id, timeout)
+    })?;
     if record_history() {
         record_analyze_history(opener, table_id, version, timeout);
     }
@@ -2624,9 +2632,10 @@ mod tests {
         analyze_partition_ids, automatic_sample_rate, classify_commit_outcome,
         collect_cache_update_physical_ids, fail_analyze_jobs, filter_skipped_column_types,
         final_column_choice, merge_global_items, realtime_count_of, record_global_history_enabled,
-        select_index_tasks, slow_stats_save_needs_version_refresh, write_global_stats_items,
-        AnalyzeJobHandle, AnalyzeJobKind, AnalyzeJobLifecycle, AnalyzeJobProgress, AnalyzeJobSpec,
-        ApproximateTableCountProvider, ClusterAnalyzeError, ANALYZE_JOB_MAX_DELTA,
+        refresh_slow_stats_save_version, select_index_tasks, slow_stats_save_needs_version_refresh,
+        write_global_stats_items, AnalyzeJobHandle, AnalyzeJobKind, AnalyzeJobLifecycle,
+        AnalyzeJobProgress, AnalyzeJobSpec, ApproximateTableCountProvider, ClusterAnalyzeError,
+        ANALYZE_JOB_MAX_DELTA,
     };
     use std::collections::{BTreeMap, BTreeSet, HashSet};
     use std::thread;
@@ -3299,6 +3308,34 @@ mod tests {
             lease,
             Duration::from_secs(15)
         ));
+    }
+
+    #[test]
+    fn ordinary_and_global_slow_saves_share_go_refresh_and_error_policy() {
+        let lease = Duration::from_secs(3);
+        let skipped = std::cell::Cell::new(false);
+        assert_eq!(
+            refresh_slow_stats_save_version(11, lease, Duration::from_secs(14), || {
+                skipped.set(true);
+                Ok(12)
+            })
+            .unwrap(),
+            11
+        );
+        assert!(!skipped.get());
+
+        assert_eq!(
+            refresh_slow_stats_save_version(11, lease, Duration::from_secs(15), || Ok(12)).unwrap(),
+            12
+        );
+        assert_eq!(
+            refresh_slow_stats_save_version(11, lease, Duration::from_secs(15), || {
+                Err(ClusterAnalyzeError::Other("injected refresh failure".to_owned()))
+            })
+            .expect_err("a slow-save refresh failure is statement-visible")
+            .to_string(),
+            "failed to update stats meta version during analyze result save. The system may be too busy. Please retry the operation later"
+        );
     }
 
     #[test]
