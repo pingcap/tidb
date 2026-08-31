@@ -206,6 +206,29 @@ impl DdlJobTable {
             .collect()
     }
 
+    /// Pinned Go `systable.Manager.HasFlashbackClusterJob` query used by
+    /// `jobsubmit.SubmitBatch`.
+    ///
+    /// Admission depends only on the indexed job ID and action columns. It
+    /// must not decode unrelated `job_meta` values as the scheduler's full
+    /// active-job load does.
+    pub fn has_flashback_cluster_job<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        min_job_id: i64,
+    ) -> Result<bool, DdlJobTableError> {
+        for (key, value) in scan_system_table(snapshot, &self.view)? {
+            let row = SystemRow::parse(&self.view, &key, &value)?;
+            if row.i64("job_id")?.unwrap_or_default() >= min_job_id
+                && row.i64("type")?.unwrap_or_default()
+                    == i64::from(tidb_model::ActionType::ACTION_FLASHBACK_CLUSTER.0)
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// Appends pinned Go `insertDDLJobs2Table` for one already-ID-assigned
     /// job. The insert assertion prevents a duplicate job ID from replacing a
     /// different operation.

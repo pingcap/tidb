@@ -12,12 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Pinned Go `pkg/ddl/jobsubmit`: common job construction and submit preflight.
-//!
-//! ID allocation and row insertion remain one caller-owned transaction. This
-//! module owns the behavior that must be identical for every DDL action before
-//! that transaction is planned; action handlers must not reproduce a narrower
-//! version of it.
+//! Pinned Go `pkg/ddl/jobsubmit`: job construction, admission, ID allocation,
+//! active-table insertion, and retry-attempt cleanup.
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -605,11 +601,15 @@ pub fn prepare_submit_batch<S: MetaSnapshot>(
     }
     let job_table =
         DdlJobTable::locate(catalog).map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-    let active_jobs = job_table
-        .load(snapshot)
-        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-    ensure_no_flashback_cluster_job(active_jobs.iter().map(|active| &active.job))
-        .map_err(submit_error)?;
+    // Go supplies the refresher's monotonic lower bound. Zero is the same
+    // initial bound and preserves admission semantics; unlike a scheduler
+    // load, this query intentionally does not decode job metadata.
+    if job_table
+        .has_flashback_cluster_job(snapshot, 0)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+    {
+        return Err(submit_error(JobSubmitError::FlashbackClusterJob));
+    }
     let bdr_role = snapshot.get(&key::bdr_role_kv_key())?.unwrap_or_default();
     for spec in specs.iter_mut() {
         prepare_spec_for_submit(spec, start_ts, &bdr_role, upgrading).map_err(submit_error)?;

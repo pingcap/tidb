@@ -36,6 +36,8 @@ use tidb_exec::cluster_ddl::{
 use tidb_exec::ddl_job_submit::{finish_insert_attempt, plan_insert_attempt};
 use tidb_exec::ddl_job_table::DdlJobTable;
 use tidb_exec::ddl_history_table::DdlHistoryTable;
+use tidb_exec::mysql_system_tables::{SystemRow, SystemTableView};
+use tidb_exec::system_row_write::store_clustered_row;
 use tidb_exec::table_info_build::{build_table_info, ClusteredIndexDefMode};
 use tidb_meta::{key, value};
 use tidb_model::{
@@ -255,6 +257,75 @@ fn active_ddl_jobs_use_the_go_job_table_lifecycle() {
     assert_eq!(delete[0].kind(), OptimisticMutationKind::Delete);
     apply_mutations(&mut store, &delete);
     assert!(table.load(&mut store).unwrap().is_empty());
+}
+
+#[test]
+fn flashback_admission_reads_only_the_go_query_columns() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrap catalog loads");
+    let table = DdlJobTable::locate(&catalog).expect("the Go active-job table exists");
+
+    let mut ordinary = Job::default();
+    ordinary.id = 117;
+    ordinary.type_ = ActionType::ACTION_CREATE_TABLE;
+    let mut insert = Vec::new();
+    table
+        .append_insert(&mut ordinary, false, "112", "116", false, &mut insert)
+        .expect("the ordinary row encodes");
+    apply_mutations(&mut store, &insert);
+
+    let view = SystemTableView::project(
+        "mysql.tidb_ddl_job",
+        table.table(),
+        &[
+            "job_id",
+            "reorg",
+            "schema_ids",
+            "table_ids",
+            "job_meta",
+            "type",
+            "processing",
+        ],
+    );
+    let row = SystemRow::parse(&view, insert[0].key(), insert[0].value())
+        .expect("the inserted row decodes");
+    let mut corrupt = row.into_values();
+    let existing = corrupt.clone();
+    let job_meta_id = table
+        .table()
+        .cols()
+        .iter_deref()
+        .find(|column| column.read().name.lowercase() == "job_meta")
+        .expect("the job table has job_meta")
+        .read()
+        .id;
+    corrupt.insert(job_meta_id, Datum::Bytes(b"{".to_vec()));
+    let rewrite = store_clustered_row(table.table(), Some(&existing), &corrupt)
+        .expect("the malformed fixture row encodes");
+    apply_mutations(&mut store, &rewrite);
+
+    assert!(table.load(&mut store).is_err(), "the full scheduler load decodes job_meta");
+    assert!(
+        !table
+            .has_flashback_cluster_job(&mut store, 0)
+            .expect("Go's admission query does not read job_meta"),
+        "an unrelated malformed job is not a flashback job"
+    );
+
+    let mut flashback = Job::default();
+    flashback.id = 118;
+    flashback.type_ = ActionType::ACTION_FLASHBACK_CLUSTER;
+    let mut insert = Vec::new();
+    table
+        .append_insert(&mut flashback, false, "0", "0", false, &mut insert)
+        .expect("the flashback row encodes");
+    apply_mutations(&mut store, &insert);
+    assert!(table
+        .has_flashback_cluster_job(&mut store, 118)
+        .expect("the source-shaped query reads the action column"));
+    assert!(!table
+        .has_flashback_cluster_job(&mut store, 119)
+        .expect("the source-shaped query honors its minimum job ID"));
 }
 
 #[test]
