@@ -16,15 +16,8 @@
 //! `errors.go`): `ATTRIBUTES=...` parsing into PD region labels, and the
 //! label rules TiDB builds over table/partition key ranges.
 //!
-//! Two boundary adaptations, both named:
+//! One boundary adaptation is named:
 //!
-//! * Go parses the attribute string by wrapping it in brackets and handing it
-//!   to `yaml.UnmarshalStrict` as a flow sequence. The grammar TiDB actually
-//!   produces and consumes — bare scalars and single/double-quoted strings,
-//!   comma-separated, whitespace-trimmed, empty elements rejected — is parsed
-//!   directly here ([`parse_attributes_list`]); YAML's wider scalar grammar
-//!   (anchors, block forms) never appears in an `ATTRIBUTES` string TiDB
-//!   writes and is not reproduced.
 //! * Go reads keyspace facts from client-go's `tikv.Codec`. The
 //!   [`LabelCodec`] trait carries the three facts the source consumes —
 //!   whether keyspace meta exists, the keyspace ID, and region-range
@@ -37,6 +30,8 @@ use std::fmt::Write as _;
 use serde::{Deserialize, Serialize};
 use tidb_codec::table_key::gen_table_prefix;
 use tidb_codec::{encode_bytes, encoded_bytes_len};
+use tidb_datatype::go_runtime::{GoSharedSlice, GoSliceElementLayout};
+use tidb_model::go_runtime::GoShared;
 
 /// Go's private `keyspaceKey`.
 const KEYSPACE_KEY: &str = "keyspace";
@@ -63,13 +58,21 @@ pub const RULE_INDEX_TABLE: i64 = 2;
 /// Go `RuleIndexPartition`.
 pub const RULE_INDEX_PARTITION: i64 = 3;
 
-/// Go `pd.RegionLabel`, narrowed to the fields this package touches.
+/// Go `pd.RegionLabel`, including the optional expiry fields preserved by the
+/// package's `pd.LabelRule` alias boundary.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(default)]
 pub struct RegionLabel {
     /// The label key.
     pub key: String,
     /// The label value.
     pub value: String,
+    /// PD's optional expiry duration.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub ttl: String,
+    /// PD's optional expiry start time.
+    #[serde(default, rename = "start_at", skip_serializing_if = "String::is_empty")]
+    pub start_at: String,
 }
 
 /// The failures `pkg/ddl/label` reports.
@@ -131,6 +134,7 @@ pub fn new_label(attr: &str) -> Result<RegionLabel, LabelError> {
     Ok(RegionLabel {
         key: key.to_owned(),
         value: value.to_owned(),
+        ..RegionLabel::default()
     })
 }
 
@@ -209,29 +213,8 @@ pub fn add(labels: &mut Vec<RegionLabel>, label: RegionLabel) -> Result<(), Labe
 /// YAML. An empty element (`a,,b` or a trailing comma) is malformed, as
 /// YAML's flow grammar makes it.
 fn parse_attributes_list(attributes: &str) -> Result<Vec<String>, LabelError> {
-    if attributes.trim().is_empty() {
-        return Ok(Vec::new());
-    }
-    let mut items = Vec::new();
-    for raw in attributes.split(',') {
-        let trimmed = raw.trim();
-        if trimmed.is_empty() {
-            return Err(LabelError::MalformedList(format!(
-                "invalid attributes list: {attributes}"
-            )));
-        }
-        let unquoted = trimmed
-            .strip_prefix('"')
-            .and_then(|rest| rest.strip_suffix('"'))
-            .or_else(|| {
-                trimmed
-                    .strip_prefix('\'')
-                    .and_then(|rest| rest.strip_suffix('\''))
-            })
-            .unwrap_or(trimmed);
-        items.push(unquoted.to_owned());
-    }
-    Ok(items)
+    serde_yaml::from_str::<Vec<String>>(&format!("[{attributes}]"))
+        .map_err(|error| LabelError::MalformedList(error.to_string()))
 }
 
 /// The keyspace facts Go reads from client-go's `tikv.Codec`.
@@ -261,6 +244,20 @@ impl LabelCodec for CodecV1 {
 
     fn encode_region_range(&self, start: &[u8], end: &[u8]) -> (Vec<u8>, Vec<u8>) {
         (mem_comparable(start), mem_comparable(end))
+    }
+}
+
+impl LabelCodec for tikv_client::request::ApiV2Codec {
+    fn has_keyspace_meta(&self) -> bool {
+        true
+    }
+
+    fn keyspace_id(&self) -> u32 {
+        self.keyspace_id()
+    }
+
+    fn encode_region_range(&self, start: &[u8], end: &[u8]) -> (Vec<u8>, Vec<u8>) {
+        self.encode_region_range(start, end)
     }
 }
 
@@ -309,19 +306,21 @@ pub fn restore_rule_id(rule_id: &str) -> String {
 }
 
 /// Go `label.Rule` (`pd.LabelRule`): labels bound to a key range.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
 pub struct Rule {
     /// Go `ID`.
     pub id: String,
     /// Go `Index`.
     pub index: i64,
     /// Go `Labels`.
-    pub labels: Vec<RegionLabel>,
+    pub labels: GoSharedSlice<RegionLabel>,
     /// Go `RuleType`.
     #[serde(rename = "rule_type")]
     pub rule_type: String,
-    /// Go `Data`: one `{start_key, end_key}` map per table ID, hex-encoded.
-    pub data: Vec<BTreeMap<String, String>>,
+    /// Go `Data`: arbitrary PD JSON; [`Self::reset`] writes one key-range map
+    /// per table ID.
+    pub data: Option<GoShared<serde_json::Value>>,
 }
 
 impl Rule {
@@ -338,11 +337,11 @@ impl Rule {
         spec: &tidb_ast::AttributesSpec,
     ) -> Result<(), LabelError> {
         let Some(attributes) = &spec.attributes else {
-            self.labels = Vec::new();
+            self.labels = GoSharedSlice::from_vec(Vec::new());
             return Ok(());
         };
         let items = parse_attributes_list(attributes)?;
-        self.labels = new_labels(&items)?;
+        self.labels = GoSharedSlice::from_vec_with_capacity(new_labels(&items)?, items.len());
         Ok(())
     }
 
@@ -373,13 +372,14 @@ impl Rule {
         if self.labels.is_empty() {
             return self;
         }
+        let labels = &mut self.labels;
 
         let mut has_keyspace = false;
         let mut has_db = false;
         let mut has_table = false;
         let mut has_partition = false;
-        for label in &mut self.labels {
-            match label.key.as_str() {
+        for index in 0..labels.len() {
+            labels.update(index, |label| match label.key.as_str() {
                 KEYSPACE_KEY if use_keyspace => {
                     label.value = codec.keyspace_id().to_string();
                     has_keyspace = true;
@@ -397,62 +397,112 @@ impl Rule {
                     has_partition = true;
                 }
                 _ => {}
-            }
+            });
         }
         if use_keyspace && !has_keyspace {
-            self.labels.push(RegionLabel {
-                key: KEYSPACE_KEY.to_owned(),
-                value: codec.keyspace_id().to_string(),
-            });
+            labels.push_go(
+                RegionLabel {
+                    key: KEYSPACE_KEY.to_owned(),
+                    value: codec.keyspace_id().to_string(),
+                    ..RegionLabel::default()
+                },
+                64,
+                GoSliceElementLayout::PointerBearing,
+            );
         }
         if !has_db {
-            self.labels.push(RegionLabel {
-                key: DB_KEY.to_owned(),
-                value: db_name.to_owned(),
-            });
+            labels.push_go(
+                RegionLabel {
+                    key: DB_KEY.to_owned(),
+                    value: db_name.to_owned(),
+                    ..RegionLabel::default()
+                },
+                64,
+                GoSliceElementLayout::PointerBearing,
+            );
         }
         if !has_table {
-            self.labels.push(RegionLabel {
-                key: TABLE_KEY.to_owned(),
-                value: table_name.to_owned(),
-            });
+            labels.push_go(
+                RegionLabel {
+                    key: TABLE_KEY.to_owned(),
+                    value: table_name.to_owned(),
+                    ..RegionLabel::default()
+                },
+                64,
+                GoSliceElementLayout::PointerBearing,
+            );
         }
         if is_partition && !has_partition {
-            self.labels.push(RegionLabel {
-                key: PARTITION_KEY.to_owned(),
-                value: part_name.to_owned(),
-            });
+            labels.push_go(
+                RegionLabel {
+                    key: PARTITION_KEY.to_owned(),
+                    value: part_name.to_owned(),
+                    ..RegionLabel::default()
+                },
+                64,
+                GoSliceElementLayout::PointerBearing,
+            );
         }
 
         self.rule_type = RULE_TYPE.to_owned();
         let mut sorted_ids = ids.to_vec();
         sorted_ids.sort_unstable();
-        self.data = sorted_ids
-            .iter()
-            .map(|&id| {
-                let (start_key, end_key) = if use_keyspace {
-                    // Label rules are consumed as region boundary keys, so V2
-                    // encodes the whole outer key rather than prefixing a
-                    // mem-encoded table key.
-                    codec.encode_region_range(&gen_table_prefix(id), &gen_table_prefix(id + 1))
-                } else {
-                    (
-                        mem_comparable(&gen_table_prefix(id)),
-                        mem_comparable(&gen_table_prefix(id + 1)),
-                    )
-                };
-                let mut range = BTreeMap::new();
-                range.insert("start_key".to_owned(), hex_lower(&start_key));
-                range.insert("end_key".to_owned(), hex_lower(&end_key));
-                range
-            })
-            .collect();
+        self.data = Some(GoShared::new(
+            sorted_ids
+                .iter()
+                .map(|&id| {
+                    let (start_key, end_key) = if use_keyspace {
+                        // Label rules are consumed as region boundary keys, so V2
+                        // encodes the whole outer key rather than prefixing a
+                        // mem-encoded table key.
+                        codec.encode_region_range(
+                            &gen_table_prefix(id),
+                            &gen_table_prefix(id.wrapping_add(1)),
+                        )
+                    } else {
+                        (
+                            mem_comparable(&gen_table_prefix(id)),
+                            mem_comparable(&gen_table_prefix(id.wrapping_add(1))),
+                        )
+                    };
+                    let mut range = BTreeMap::new();
+                    range.insert("start_key".to_owned(), hex_lower(&start_key));
+                    range.insert("end_key".to_owned(), hex_lower(&end_key));
+                    range
+                })
+                .map(|range| serde_json::to_value(range).expect("string key-range maps serialize"))
+                .collect::<Vec<_>>()
+                .into(),
+        ));
         self.index = if is_partition {
             RULE_INDEX_PARTITION
         } else {
             RULE_INDEX_TABLE
         };
         self
+    }
+}
+
+impl PartialEq for Rule {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+            && self.index == other.index
+            && self.labels.is_allocated() == other.labels.is_allocated()
+            && self.labels.snapshot() == other.labels.snapshot()
+            && self.rule_type == other.rule_type
+            && match (&self.data, &other.data) {
+                (Some(left), Some(right)) => left.deep_value_eq(right),
+                (None, None) => true,
+                _ => false,
+            }
+    }
+}
+
+impl Eq for Rule {}
+
+impl std::fmt::Display for Rule {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&serde_json::to_string(self).unwrap_or_default())
     }
 }
 
@@ -465,22 +515,34 @@ fn hex_lower(bytes: &[u8]) -> String {
 }
 
 /// Go `pd.LabelRulePatch`: rules to set and rule IDs to delete.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
 pub struct LabelRulePatch {
     /// Go `SetRules`.
     #[serde(rename = "sets")]
-    pub set_rules: Vec<Rule>,
+    pub set_rules: GoSharedSlice<Rule>,
     /// Go `DeleteRules`.
     #[serde(rename = "deletes")]
-    pub delete_rules: Vec<String>,
+    pub delete_rules: GoSharedSlice<String>,
 }
+
+impl PartialEq for LabelRulePatch {
+    fn eq(&self, other: &Self) -> bool {
+        self.set_rules.is_allocated() == other.set_rules.is_allocated()
+            && self.set_rules.snapshot() == other.set_rules.snapshot()
+            && self.delete_rules.is_allocated() == other.delete_rules.is_allocated()
+            && self.delete_rules.snapshot() == other.delete_rules.snapshot()
+    }
+}
+
+impl Eq for LabelRulePatch {}
 
 /// Go `NewRulePatch`.
 #[must_use]
 pub fn new_rule_patch(set_rules: Vec<Rule>, delete_rules: Vec<String>) -> LabelRulePatch {
     LabelRulePatch {
-        set_rules,
-        delete_rules,
+        set_rules: set_rules.into(),
+        delete_rules: delete_rules.into(),
     }
 }
 
@@ -496,6 +558,20 @@ mod tests {
 
     fn default_spec() -> tidb_ast::AttributesSpec {
         tidb_ast::AttributesSpec { attributes: None }
+    }
+
+    fn labels(rule: &Rule) -> Vec<RegionLabel> {
+        rule.labels.snapshot()
+    }
+
+    fn ranges(rule: &Rule) -> Vec<serde_json::Value> {
+        rule.data
+            .as_ref()
+            .expect("Reset writes Data")
+            .read()
+            .as_array()
+            .expect("Reset writes an array")
+            .clone()
     }
 
     // Go `TestNewLabel`.
@@ -577,16 +653,25 @@ mod tests {
             restore_region_labels(&[merge.clone(), plain, db]),
             r#""merge_option=allow","key=value""#
         );
-        // This workspace builds the classic kernel: keyspace labels show.
-        assert!(!tidb_config::kerneltype::is_next_gen());
-        assert_eq!(
-            restore_region_labels(&[merge.clone(), keyspace.clone()]),
-            r#""merge_option=allow","keyspace=42""#
-        );
-        assert_eq!(
-            restore_region_labels(&[keyspace, merge]),
-            r#""keyspace=42","merge_option=allow""#
-        );
+        if tidb_config::kerneltype::is_next_gen() {
+            assert_eq!(
+                restore_region_labels(&[merge.clone(), keyspace.clone()]),
+                r#""merge_option=allow""#
+            );
+            assert_eq!(
+                restore_region_labels(&[keyspace, merge]),
+                r#""merge_option=allow""#
+            );
+        } else {
+            assert_eq!(
+                restore_region_labels(&[merge.clone(), keyspace.clone()]),
+                r#""merge_option=allow","keyspace=42""#
+            );
+            assert_eq!(
+                restore_region_labels(&[keyspace, merge]),
+                r#""keyspace=42","merge_option=allow""#
+            );
+        }
     }
 
     // Go `TestApplyAttributesSpec`.
@@ -595,11 +680,11 @@ mod tests {
         let mut rule = Rule::new();
         rule.apply_attributes_spec(&spec("key=value,key1=value1"))
             .unwrap();
-        assert_eq!(rule.labels.len(), 2);
-        assert_eq!(rule.labels[0].key, "key");
-        assert_eq!(rule.labels[0].value, "value");
-        assert_eq!(rule.labels[1].key, "key1");
-        assert_eq!(rule.labels[1].value, "value1");
+        assert_eq!(labels(&rule).len(), 2);
+        assert_eq!(labels(&rule)[0].key, "key");
+        assert_eq!(labels(&rule)[0].value, "value");
+        assert_eq!(labels(&rule)[1].key, "key1");
+        assert_eq!(labels(&rule)[1].value, "value1");
 
         for bad in [
             "key=value,,key1=value1",
@@ -614,7 +699,11 @@ mod tests {
         let mut rule = Rule::new();
         rule.apply_attributes_spec(&spec(r#""merge_option=allow","key=value""#))
             .unwrap();
-        assert_eq!(rule.labels.len(), 2);
+        assert_eq!(labels(&rule).len(), 2);
+        let mut rule = Rule::new();
+        rule.apply_attributes_spec(&spec(r#""key=a,b",other=value"#))
+            .unwrap();
+        assert_eq!(labels(&rule)[0], new_label("key=a,b").unwrap());
     }
 
     // Go `TestDefaultOrEmpty`.
@@ -624,7 +713,7 @@ mod tests {
             let mut rule = Rule::new();
             rule.apply_attributes_spec(&empty).unwrap();
             rule.reset(&CodecV1, "db", "t", "", &[1]);
-            assert!(rule.labels.is_empty());
+            assert!(labels(&rule).is_empty());
         }
     }
 
@@ -637,10 +726,10 @@ mod tests {
         rule.reset(&CodecV1, "db1", "t1", "", &[1, 2, 3]);
         assert_eq!(rule.id, "schema/db1/t1");
         assert_eq!(rule.rule_type, RULE_TYPE);
-        assert_eq!(rule.labels.len(), 3);
-        assert_eq!(rule.labels[0].value, "value");
-        assert_eq!(rule.labels[1].value, "db1");
-        assert_eq!(rule.labels[2].value, "t1");
+        assert_eq!(labels(&rule).len(), 3);
+        assert_eq!(labels(&rule)[0].value, "value");
+        assert_eq!(labels(&rule)[1].value, "db1");
+        assert_eq!(labels(&rule)[2].value, "t1");
         assert_eq!(rule.index, RULE_INDEX_TABLE);
 
         let expected = [
@@ -657,7 +746,7 @@ mod tests {
                 "7480000000000000ff0400000000000000f8",
             ),
         ];
-        for (range, (start, end)) in rule.data.iter().zip(expected) {
+        for (range, (start, end)) in ranges(&rule).iter().zip(expected) {
             assert_eq!(range["start_key"], start);
             assert_eq!(range["end_key"], end);
         }
@@ -667,18 +756,18 @@ mod tests {
 
         rule.reset(&CodecV1, "db2", "t2", "p2", &[2]);
         assert_eq!(rule.id, "schema/db2/t2/p2");
-        assert_eq!(rule.labels.len(), 4);
-        assert_eq!(rule.labels[0].value, "value");
-        assert_eq!(rule.labels[1].value, "db2");
-        assert_eq!(rule.labels[2].value, "t2");
-        assert_eq!(rule.labels[3].value, "p2");
+        assert_eq!(labels(&rule).len(), 4);
+        assert_eq!(labels(&rule)[0].value, "value");
+        assert_eq!(labels(&rule)[1].value, "db2");
+        assert_eq!(labels(&rule)[2].value, "t2");
+        assert_eq!(labels(&rule)[3].value, "p2");
         assert_eq!(rule.index, RULE_INDEX_PARTITION);
         assert_eq!(
-            rule.data[0]["start_key"],
+            ranges(&rule)[0]["start_key"],
             "7480000000000000ff0200000000000000f8"
         );
         assert_eq!(
-            rule.data[0]["end_key"],
+            ranges(&rule)[0]["end_key"],
             "7480000000000000ff0300000000000000f8"
         );
 
@@ -688,36 +777,37 @@ mod tests {
         rule.reset(&CodecV1, "db3", "t3", "p3", &[3]);
         let mut expected = Rule::new();
         expected.id = "schema/db3/t3/p3".to_owned();
+        expected.labels = Vec::new().into();
         assert_eq!(rule, expected);
     }
 
-    // Go `TestResetWithKeyspaceCodec`'s classic arm: a keyspace-bearing codec
-    // changes nothing while the kernel is classic.
+    // Go `TestResetWithKeyspaceCodec`, both build-tag arms.
     #[test]
-    fn keyspace_codecs_are_inert_on_the_classic_kernel() {
-        struct KeyspaceCodec;
-        impl LabelCodec for KeyspaceCodec {
-            fn has_keyspace_meta(&self) -> bool {
-                true
-            }
-            fn keyspace_id(&self) -> u32 {
-                42
-            }
-            fn encode_region_range(&self, start: &[u8], end: &[u8]) -> (Vec<u8>, Vec<u8>) {
-                (start.to_vec(), end.to_vec())
-            }
-        }
-
-        assert!(!tidb_config::kerneltype::is_next_gen());
+    fn keyspace_codec_matches_the_selected_kernel() {
+        let codec =
+            tikv_client::request::ApiV2Codec::new(tikv_client::request::KeyMode::Txn, 42).unwrap();
         let mut rule = Rule::new();
         rule.apply_attributes_spec(&spec("key=value")).unwrap();
-        rule.reset(&KeyspaceCodec, "db1", "t1", "", &[1]);
-        assert_eq!(rule.id, "schema/db1/t1");
-        assert_eq!(rule.labels.len(), 3);
-        assert_eq!(
-            rule.data[0]["start_key"],
-            "7480000000000000ff0100000000000000f8"
-        );
+        rule.reset(&codec, "db1", "t1", "", &[1]);
+        if tidb_config::kerneltype::is_next_gen() {
+            assert_eq!(rule.id, "keyspace/42/schema/db1/t1");
+            assert!(labels(&rule).contains(&RegionLabel {
+                key: KEYSPACE_KEY.to_owned(),
+                value: "42".to_owned(),
+                ..RegionLabel::default()
+            }));
+            let (start, end) =
+                codec.encode_region_range(&gen_table_prefix(1), &gen_table_prefix(2));
+            assert_eq!(ranges(&rule)[0]["start_key"], hex_lower(&start));
+            assert_eq!(ranges(&rule)[0]["end_key"], hex_lower(&end));
+        } else {
+            assert_eq!(rule.id, "schema/db1/t1");
+            assert_eq!(labels(&rule).len(), 3);
+            assert_eq!(
+                ranges(&rule)[0]["start_key"],
+                "7480000000000000ff0100000000000000f8"
+            );
+        }
         assert_eq!(restore_rule_id(&rule.id), "schema/db1/t1");
     }
 
@@ -728,8 +818,11 @@ mod tests {
         rule.apply_attributes_spec(&spec("key=value")).unwrap();
         rule.reset(&CodecV1, "db", "t", "", &[1]);
         let patch = new_rule_patch(vec![rule.clone()], vec!["schema/db/gone".to_owned()]);
-        assert_eq!(patch.set_rules, vec![rule]);
-        assert_eq!(patch.delete_rules, vec!["schema/db/gone".to_owned()]);
+        assert_eq!(patch.set_rules.snapshot(), vec![rule]);
+        assert_eq!(
+            patch.delete_rules.snapshot(),
+            vec!["schema/db/gone".to_owned()]
+        );
 
         let wire = serde_json::to_value(&patch).expect("PD patch JSON");
         assert_eq!(wire["sets"][0]["id"], "schema/db/t");
@@ -741,5 +834,57 @@ mod tests {
             serde_json::from_value::<LabelRulePatch>(wire).expect("PD patch decodes"),
             patch
         );
+
+        let zero = serde_json::to_value(LabelRulePatch::default()).unwrap();
+        assert_eq!(zero, serde_json::json!({"sets": null, "deletes": null}));
+        let allocated = serde_json::to_value(new_rule_patch(Vec::new(), Vec::new())).unwrap();
+        assert_eq!(allocated, serde_json::json!({"sets": [], "deletes": []}));
+    }
+
+    #[test]
+    fn rule_string_matches_go_zero_value_json() {
+        assert_eq!(
+            Rule::new().to_string(),
+            r#"{"id":"","index":0,"labels":null,"rule_type":"","data":null}"#
+        );
+    }
+
+    #[test]
+    fn clone_copies_the_go_slice_header_shallowly() {
+        let mut original = Rule::new();
+        original
+            .apply_attributes_spec(&spec("db=old,table=old"))
+            .unwrap();
+        let mut cloned = original.clone_rule();
+
+        cloned.reset(&CodecV1, "new_db", "new_table", "", &[1]);
+
+        assert_eq!(labels(&original)[0].value, "new_db");
+        assert_eq!(labels(&original)[1].value, "new_table");
+        assert!(original.labels.backing_ptr_eq(&cloned.labels));
+
+        let data_alias = cloned.clone_rule();
+        data_alias.data.as_ref().expect("Reset writes Data").write()[0]["start_key"] =
+            serde_json::Value::String("changed".to_owned());
+        assert_eq!(ranges(&cloned)[0]["start_key"], "changed");
+        assert_eq!(ranges(&data_alias)[0]["start_key"], "changed");
+    }
+
+    #[test]
+    fn pd_rule_wire_preserves_expiry_and_arbitrary_data() {
+        let wire = serde_json::json!({
+            "id": "external",
+            "index": 7,
+            "labels": [{
+                "key": "zone",
+                "value": "z1",
+                "ttl": "10m",
+                "start_at": "2026-08-31T00:00:00Z"
+            }],
+            "rule_type": "custom",
+            "data": {"opaque": [1, true, "x"]}
+        });
+        let rule: Rule = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(serde_json::to_value(rule).unwrap(), wire);
     }
 }

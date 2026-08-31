@@ -20,6 +20,8 @@ flate2 = { workspace = true }
 smallvec = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+tikv-client = { workspace = true }
 tidb-ast = { path = "../tidb-ast" }
 tidb-chunk = { path = "../tidb-chunk" }
 tidb-codec = { path = "../tidb-codec" }

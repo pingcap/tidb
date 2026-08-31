@@ -230,7 +230,9 @@ mod tests {
                 labels: vec![RegionLabel {
                     key: "zone".to_owned(),
                     value: "z1".to_owned(),
-                }],
+                    ..RegionLabel::default()
+                }]
+                .into(),
                 ..Rule::default()
             }],
             vec!["schema/db/gone".to_owned()],

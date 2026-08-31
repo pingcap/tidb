@@ -2454,7 +2454,9 @@ fn exchange_partition_builds_gos_four_way_label_rule_patch() {
         labels: vec![tidb_executor::ddl_label::RegionLabel {
             key: "zone".to_owned(),
             value: "z1".to_owned(),
-        }],
+            ..Default::default()
+        }]
+        .into(),
         ..Rule::default()
     };
 
@@ -2464,29 +2466,30 @@ fn exchange_partition_builds_gos_four_way_label_rule_patch() {
     );
     assert_eq!(patch.set_rules.len(), 2);
     assert!(patch.delete_rules.is_empty());
-    let partition_rule = patch
-        .set_rules
+    let set_rules = patch.set_rules.snapshot();
+    let partition_rule = set_rules
         .iter()
         .find(|rule| rule.id == partition_id)
         .expect("the standalone rule moved to the partition");
-    assert_eq!(partition_rule.labels[1].value, "dbp");
-    assert_eq!(partition_rule.labels[2].value, "pt");
-    assert_eq!(partition_rule.labels[3].value, "p0");
-    let standalone_rule = patch
-        .set_rules
+    let partition_labels = partition_rule.labels.snapshot();
+    assert_eq!(partition_labels[1].value, "dbp");
+    assert_eq!(partition_labels[2].value, "pt");
+    assert_eq!(partition_labels[3].value, "p0");
+    let standalone_rule = set_rules
         .iter()
         .find(|rule| rule.id == standalone_id)
         .expect("the partition rule moved to the standalone table");
-    assert_eq!(standalone_rule.labels[1].value, "dbn");
-    assert_eq!(standalone_rule.labels[2].value, "nt");
+    let standalone_labels = standalone_rule.labels.snapshot();
+    assert_eq!(standalone_labels[1].value, "dbn");
+    assert_eq!(standalone_labels[2].value, "nt");
 
     let only_partition = swap.patch(&codec, &[make_rule(&partition_id)]);
-    assert_eq!(only_partition.set_rules[0].id, standalone_id);
-    assert_eq!(only_partition.delete_rules, [partition_id.clone()]);
+    assert_eq!(only_partition.set_rules.get(0).id, standalone_id);
+    assert_eq!(only_partition.delete_rules.snapshot(), [partition_id.clone()]);
 
     let only_standalone = swap.patch(&codec, &[make_rule(&standalone_id)]);
-    assert_eq!(only_standalone.set_rules[0].id, partition_id);
-    assert_eq!(only_standalone.delete_rules, [standalone_id]);
+    assert_eq!(only_standalone.set_rules.get(0).id, partition_id);
+    assert_eq!(only_standalone.delete_rules.snapshot(), [standalone_id]);
 
     let neither = swap.patch(&codec, &[]);
     assert!(neither.set_rules.is_empty());
