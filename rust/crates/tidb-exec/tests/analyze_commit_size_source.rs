@@ -2761,7 +2761,7 @@ fn predicate_column_load_and_cleanup_match_the_pinned_storage_contract() {
         )
     );
 
-    let (columns, cleanup) = plan_get_predicate_columns(&mut store, &catalog, table_id, &[7])
+    let (columns, cleanup) = plan_get_predicate_columns(&mut store, &catalog, table_id, Some(&[7]))
         .expect("cleanup and predicate read plan");
     assert_eq!(columns, vec![7]);
     assert!(!cleanup.is_empty());
@@ -2775,6 +2775,95 @@ fn predicate_column_load_and_cleanup_match_the_pinned_storage_contract() {
     .expect("table usage reloads");
     assert!(remaining.contains_key(&item(7)));
     assert!(!remaining.contains_key(&item(8)));
+}
+
+/// Pinned `cleanupDroppedColumnStatsUsage` deliberately does nothing when the
+/// latest infoschema no longer contains the table. `GetPredicateColumns`
+/// still runs its SELECT afterward, so retained usage rows remain visible.
+#[test]
+fn predicate_column_missing_table_skips_cleanup_but_still_reads_usage() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let table_id = 4243;
+    let item = usage_item(table_id, 9);
+    let usage = HashMap::from([(
+        item,
+        ColumnStatsTimeInfo {
+            last_used_at: Some(now()),
+            last_analyzed_at: None,
+        },
+    )]);
+    let plan = plan_column_stats_usage_write(&mut store, &catalog, &usage, now())
+        .expect("predicate usage plans");
+    apply_mutations(&mut store, &plan.mutations);
+
+    let (columns, cleanup) = plan_get_predicate_columns(&mut store, &catalog, table_id, None)
+        .expect("missing-table predicate read plans");
+    assert_eq!(columns, vec![9]);
+    assert!(cleanup.is_empty());
+}
+
+/// Both predicatecolumn SELECTs wrap timestamps in `CONVERT_TZ`. Pinned Go's
+/// implementation returns SQL NULL for an incomplete date, so loading keeps
+/// a NULL timestamp and predicate selection skips that row.
+#[test]
+fn predicate_column_invalid_zero_timestamp_matches_convert_tz_null() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let table_id = 4244;
+    let item = usage_item(table_id, 10);
+    let zero = Time::from_date_checked(0, 0, 0, 0, 0, 0, 0, TimeType::Timestamp, 0)
+        .expect("zero timestamp");
+    let usage = HashMap::from([(
+        item,
+        ColumnStatsTimeInfo {
+            last_used_at: Some(zero),
+            last_analyzed_at: Some(zero),
+        },
+    )]);
+    let plan = plan_column_stats_usage_write(&mut store, &catalog, &usage, now())
+        .expect("predicate usage plans");
+    apply_mutations(&mut store, &plan.mutations);
+
+    let view = SystemTableView::locate(
+        &catalog,
+        "column_stats_usage",
+        &["table_id", "column_id", "last_used_at", "last_analyzed_at"],
+    )
+    .expect("usage table locates");
+    let stored = scan_system_table(&mut store, &view)
+        .expect("usage rows scan")
+        .into_iter()
+        .map(|(key, value)| {
+            let timezone = tidb_datatype::SessionTimeZone::utc();
+            SystemRow::parse_in_timezone(&view, &key, &value, Some(&timezone))
+                .expect("usage row decodes")
+        })
+        .find(|row| {
+            row.i64("table_id").unwrap() == Some(table_id)
+                && row.i64("column_id").unwrap() == Some(item.id)
+        })
+        .expect("usage row exists");
+    assert!(stored.stored_datum("last_used_at").unwrap().unwrap().is_null());
+    assert!(stored
+        .stored_datum("last_analyzed_at")
+        .unwrap()
+        .unwrap()
+        .is_null());
+
+    let loaded = load_column_stats_usage_for_table(
+        &mut store,
+        &catalog,
+        &tidb_datatype::SessionTimeZone::utc(),
+        table_id,
+    )
+    .expect("usage reloads");
+    assert_eq!(loaded[&item], ColumnStatsTimeInfo::default());
+    let (columns, cleanup) =
+        plan_get_predicate_columns(&mut store, &catalog, table_id, Some(&[item.id]))
+            .expect("predicate read plans");
+    assert!(columns.is_empty());
+    assert!(cleanup.is_empty());
 }
 
 /// Pinned Go history recording selects the current meta row by both table ID

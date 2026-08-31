@@ -69,7 +69,9 @@ pub(crate) fn predicate_columns<S: MetaSnapshot>(
     let mut columns = Vec::new();
     for (key, value) in pairs {
         let row = SystemRow::parse_in_timezone(&view, &key, &value, Some(&utc))?;
-        if row.i64("table_id")? != Some(table_id) || row.datum("last_used_at")?.is_none() {
+        if row.i64("table_id")? != Some(table_id)
+            || usage_time(&row, "last_used_at", &utc, &utc)?.is_none()
+        {
             continue;
         }
         if let Some(column_id) = row.i64("column_id")? {
@@ -139,6 +141,12 @@ fn usage_time(
             stored: format!("{datum:?}"),
         });
     };
+    // Both pinned SELECTs apply CONVERT_TZ. Go's builtin returns SQL NULL for
+    // every `types.Time::InvalidZero` value (month or day is zero), so these
+    // rows are not conversion errors and cannot make a predicate column.
+    if value.invalid_zero() {
+        return Ok(None);
+    }
     value
         .convert_time_zone(utc, location)
         .map_err(|error| SystemTableError::Decode {

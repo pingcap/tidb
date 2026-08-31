@@ -13,6 +13,7 @@ workspace = true
 [dependencies]
 chrono = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["raw_value"] }
 tidb-model = { path = "../tidb-model" }
 tidb-metadef = { path = "../tidb-metadef" }
 tidb-stats = { path = "../tidb-stats" }

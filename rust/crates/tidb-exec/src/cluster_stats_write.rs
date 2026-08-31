@@ -1532,6 +1532,10 @@ pub fn load_stats_locked_table_ids<S: MetaSnapshot>(
 /// Plans pinned Go `GetPredicateColumns`, including its same-transaction
 /// cleanup of usage rows for columns no longer present in the latest schema.
 ///
+/// `None` means Go's latest infoschema did not contain the table. In that
+/// case `cleanupDroppedColumnStatsUsage` is a no-op, but the following SELECT
+/// still returns persisted predicate-column IDs.
+///
 /// Go executes DELETE before SELECT. This mutation planner cannot make staged
 /// mutations visible through `MetaSnapshot`, so it filters the selected IDs
 /// against the same current-column set while returning the exact deletes for
@@ -1540,13 +1544,17 @@ pub fn plan_get_predicate_columns<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
     table_id: i64,
-    current_column_ids: &[i64],
+    current_column_ids: Option<&[i64]>,
 ) -> Result<(Vec<i64>, StatsWritePlan), StatsWriteError> {
+    let columns = crate::cluster_predicate_column::predicate_columns(snapshot, catalog, table_id)?;
+    let Some(current_column_ids) = current_column_ids else {
+        return Ok((columns, StatsWritePlan::default()));
+    };
     let current = current_column_ids
         .iter()
         .map(|column_id| format!("{:?}", Datum::Int(*column_id)))
         .collect::<std::collections::HashSet<_>>();
-    let columns = crate::cluster_predicate_column::predicate_columns(snapshot, catalog, table_id)?
+    let columns = columns
         .into_iter()
         .filter(|column_id| current_column_ids.contains(column_id))
         .collect();
@@ -2184,6 +2192,11 @@ fn predicate_time_value(
     let Some(value) = value else {
         return Ok(Datum::Null);
     };
+    // Pinned SaveColumnStatsUsageForTable binds the Time string through
+    // CONVERT_TZ. That builtin returns SQL NULL for an incomplete date.
+    if value.invalid_zero() {
+        return Ok(Datum::Null);
+    }
     let field_type = table
         .find_public_column_by_name(column)
         .ok_or_else(|| StatsWriteError::MissingTable(format!("mysql.column_stats_usage.{column}")))?

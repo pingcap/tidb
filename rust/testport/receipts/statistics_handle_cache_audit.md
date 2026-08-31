@@ -69,6 +69,12 @@ removed. The private Go SQL-string helper has no Rust production counterpart
 because the native storage adapter performs keyed reads rather than building
 SQL text; no public helper or standalone test surface remains.
 
+The shared `types.CacheUpdate` payload is no longer a documented Rust-only
+reduction. It retains Go's nested `UpdateOptions.SkipMoveForward` shape, and
+all production and benchmark construction sites use that field. Quota mode
+observes the option while map/copy-on-write mode ignores it, matching the two
+branches of pinned `UpdateStatsCache`.
+
 ## Test and benchmark mapping
 
 - The two original `statscache_test.go` cases execute the same batch-boundary

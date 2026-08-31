@@ -2460,7 +2460,7 @@ fn selected_columns<S: crate::cluster_catalog::MetaSnapshot>(
                 .map(|column| column.read().id)
                 .collect::<Vec<_>>();
             let (columns, cleanup) =
-                plan_get_predicate_columns(snapshot, catalog, table.id, &current)?;
+                plan_get_predicate_columns(snapshot, catalog, table.id, Some(&current))?;
             let empty = columns.is_empty();
             Ok((Some(columns.into_iter().collect()), cleanup, empty))
         }

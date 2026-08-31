@@ -839,9 +839,11 @@ For each bounded behavior cluster:
       `receipts/statistics_handle_updatetest_audit.md`.
 - [x] Audit the complete pinned `pkg/statistics/handle/types` package. Remove
       the Rust-only `StatsLockTable` constructor and two source-absent tests;
-      retain direct construction of the exact shared payload used by lock
-      execution. The remaining interface family is unclaimed until the stats
-      core/handle crate boundary is split. Inventory is in
+      restore the exact nested cache-update payload; and match Go's complete
+      analysis-job JSON ordering, integer-key, float, and error contract. The
+      composite interface family remains unclaimed until every embedded owner
+      package is complete; an unused umbrella trait crate would add no Go
+      behavior. Inventory and the full declaration map are in
       `receipts/statistics_handle_types_audit.md`.
 - [x] Audit the complete pinned `pkg/statistics/handle/lockstats` package.
       Remove three deterministic leaf modules, their eight tests, one duplicate

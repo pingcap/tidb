@@ -15,7 +15,8 @@
 //! Go `pkg/statistics/handle/autoanalyze/priorityqueue`.
 
 use chrono::{DateTime, FixedOffset, Timelike, Utc};
-use serde::Serialize;
+use serde::{ser::SerializeMap, Serialize, Serializer};
+use serde_json::value::RawValue;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -75,17 +76,72 @@ pub struct AnalysisJobJson {
     /// Logical or physical table identity used by the queue.
     pub table_id: i64,
     /// Calculated priority.
+    #[serde(serialize_with = "serialize_go_json_f64")]
     pub weight: f64,
     /// Dynamic partition targets.
     pub partition_ids: Vec<i64>,
     /// Ordinary/static newly added index targets.
     pub index_ids: Vec<i64>,
     /// Dynamic newly added index targets.
+    #[serde(serialize_with = "serialize_partition_index_ids")]
     pub partition_index_ids: HashMap<i64, Vec<i64>>,
     /// Ranking inputs.
     pub indicators: IndicatorsJson,
     /// Whether index creation supplies the special-event weight.
     pub has_newly_added_index: bool,
+}
+
+fn serialize_partition_index_ids<S>(
+    values: &HashMap<i64, Vec<i64>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let mut entries = values
+        .iter()
+        .map(|(key, value)| (key.to_string(), value))
+        .collect::<Vec<_>>();
+    entries.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+    let mut map = serializer.serialize_map(Some(entries.len()))?;
+    for (key, value) in entries {
+        map.serialize_entry(&key, value)?;
+    }
+    map.end()
+}
+
+fn serialize_go_json_f64<S>(value: &f64, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    if !value.is_finite() {
+        return Err(serde::ser::Error::custom(format!(
+            "json: unsupported value: {}",
+            if value.is_nan() {
+                "NaN"
+            } else if value.is_sign_positive() {
+                "+Inf"
+            } else {
+                "-Inf"
+            }
+        )));
+    }
+    let absolute = value.abs();
+    let encoded = if absolute != 0.0 && !(1e-6..1e21).contains(&absolute) {
+        let scientific = format!("{value:e}");
+        let (mantissa, exponent) = scientific
+            .split_once('e')
+            .expect("Rust lower-exponential formatting always has an exponent");
+        let exponent = exponent
+            .parse::<i32>()
+            .expect("Rust lower-exponential formatting has an integer exponent");
+        format!("{mantissa}e{exponent:+}")
+    } else {
+        value.to_string()
+    };
+    RawValue::from_string(encoded)
+        .map_err(serde::ser::Error::custom)?
+        .serialize(serializer)
 }
 
 /// Rust ownership form of Go's three concrete `AnalysisJob` implementations.
@@ -2686,6 +2742,58 @@ mod tests {
         assert_eq!(json.kind, "analyzeTable");
         assert_eq!(json.indicators.change_percentage, "50.00%");
         assert_eq!(json.indicators.last_analysis_duration, "30m0s");
+        let json_value = |weight| {
+            let mut partition_index_ids = HashMap::new();
+            partition_index_ids.insert(2, vec![22]);
+            partition_index_ids.insert(10, vec![101]);
+            AnalysisJobJson {
+                kind: "analyzeTable".to_owned(),
+                table_id: 1,
+                weight,
+                partition_ids: Vec::new(),
+                index_ids: Vec::new(),
+                partition_index_ids,
+                indicators: IndicatorsJson {
+                    change_percentage: "0.00%".to_owned(),
+                    table_size: "0.00".to_owned(),
+                    last_analysis_duration: "0s".to_owned(),
+                },
+                has_newly_added_index: true,
+            }
+        };
+        for _ in 0..64 {
+            let encoded = serde_json::to_string(&json_value(1.0)).unwrap();
+            assert_eq!(
+                encoded,
+                "{\"type\":\"analyzeTable\",\"table_id\":1,\"weight\":1,\"partition_ids\":[],\"index_ids\":[],\"partition_index_ids\":{\"10\":[101],\"2\":[22]},\"indicators\":{\"change_percentage\":\"0.00%\",\"table_size\":\"0.00\",\"last_analysis_duration\":\"0s\"},\"has_newly_added_index\":true}",
+                "Go encoding/json preserves declaration order, emits integral floats without `.0`, and sorts integer map keys by decimal text"
+            );
+        }
+        let encoded_weight = |weight| {
+            let encoded = serde_json::to_string(&json_value(weight)).unwrap();
+            encoded
+                .split_once("\"weight\":")
+                .unwrap()
+                .1
+                .split_once(',')
+                .unwrap()
+                .0
+                .to_owned()
+        };
+        for (weight, expected) in [
+            (-0.0, "-0"),
+            (0.0, "0"),
+            (1e-6, "0.000001"),
+            (1e-7, "1e-7"),
+            (1e20, "100000000000000000000"),
+            (1e21, "1e+21"),
+            (f64::MAX, "1.7976931348623157e+308"),
+        ] {
+            assert_eq!(encoded_weight(weight), expected);
+        }
+        for weight in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(serde_json::to_string(&json_value(weight)).is_err());
+        }
         assert_eq!(
             partition_sql("analyze table %n.%n partition", " index %n", 2),
             "analyze table %n.%n partition %n, %n index %n"

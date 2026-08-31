@@ -63,7 +63,9 @@ use std::time::{Duration, Instant};
 
 use crate::cluster_stats_load::ClusterStatsItem;
 use tidb_stats::{Column, CopyIntent, Index, Table};
-use tidb_stats_handle_cache::{CacheUpdate, StatsCacheImpl, StatsRefreshSource, UpdateError};
+use tidb_stats_handle_cache::{
+    CacheUpdate, StatsCacheImpl, StatsRefreshSource, UpdateError, UpdateOptions,
+};
 
 /// One table's statistics state, as this node currently knows it.
 ///
@@ -163,7 +165,7 @@ impl SharedStats {
                 .cloned()
                 .collect(),
             deleted: Vec::new(),
-            skip_move_forward: false,
+            options: UpdateOptions::default(),
         });
         let result = Self {
             cache,
@@ -271,7 +273,7 @@ impl SharedStats {
         self.cache.update_stats_cache(CacheUpdate {
             updated,
             deleted,
-            skip_move_forward,
+            options: UpdateOptions { skip_move_forward },
         });
         *guard = Arc::new(self.snapshot_with_cache_objects(snapshot));
     }
@@ -378,7 +380,7 @@ impl SharedStats {
         self.cache.update_stats_cache(CacheUpdate {
             updated: vec![Arc::clone(&table)],
             deleted: Vec::new(),
-            skip_move_forward: false,
+            options: UpdateOptions::default(),
         });
         let mut snapshot = guard.as_ref().clone();
         snapshot.insert(table_id, TableStatsState::Loaded(table));

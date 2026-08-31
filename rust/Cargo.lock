@@ -3895,6 +3895,7 @@ version = "0.0.0"
 dependencies = [
  "chrono",
  "serde",
+ "serde_json",
  "tidb-ast",
  "tidb-metadef",
  "tidb-model",

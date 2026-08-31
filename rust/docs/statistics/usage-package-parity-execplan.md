@@ -16,6 +16,10 @@ Pinned TiDB commit `e2788410d8d696605e8cb002585877a063ccc909` defines `pkg/stati
 - [x] (2026-08-30) Verify all root usage tests and integration decisions, replacing the audit-only receipt with a completion receipt.
 - [x] (2026-08-30) Run the Ready validation profile and self-review.
 - [x] (2026-08-30) Prepare the validated package unit for commit, synchronization, and push to `origin/hparser-integration`.
+- [x] (2026-08-30) Re-audit every predicatecolumn branch against the pinned
+  source; represent absent latest-infoschema tables separately from empty
+  schemas and reproduce `CONVERT_TZ`'s invalid-zero-to-NULL behavior on reads,
+  predicate selection, and replacement writes.
 
 ## Surprises & Discoveries
 
@@ -29,6 +33,20 @@ Pinned TiDB commit `e2788410d8d696605e8cb002585877a063ccc909` defines `pkg/stati
   Evidence: pinned `session_stats_collect.go:361-375` deletes map entries only after `DumpColStatsUsageEntries` completely succeeds.
 - Observation: Go formats collected column usage with `types.TimeFormat`, which has whole-second precision, while Rust previously retained `SystemTime` microseconds in TIMESTAMP(6).
   Evidence: pinned `session_stats_collect.go:368`, `types/time.go:43`, and Rust `system_time_timestamp`.
+- Observation: Go's cleanup and selection steps intentionally diverge when
+  `TableByID` misses: cleanup returns without a DELETE, then selection still
+  reads persisted usage. Rust's current-column slice could not represent that
+  state and treated it as an empty schema, deleting every row.
+  Evidence: pinned `predicate_column.go:106-131`; the source-backed regression
+  returned `[]` instead of `[9]` before `Option<&[i64]>` represented schema
+  absence.
+- Observation: every package SQL path that reads or writes timestamps passes through
+  `CONVERT_TZ`, and the pinned builtin returns NULL when month or day is zero.
+  Rust previously preserved zero timestamps in storage and on load, and
+  counted a zero `last_used_at` as predicate usage.
+  Evidence: pinned `predicate_column.go:67-92,134-159` and
+  `expression/builtin_time.go:5448-5458`; the regression observed two
+  `Some(ZeroTime)` values before the correction.
 
 ## Decision Log
 
@@ -42,6 +60,11 @@ Pinned TiDB commit `e2788410d8d696605e8cb002585877a063ccc909` defines `pkg/stati
 ## Outcomes & Retrospective
 
 The complete predicatecolumn dependency and root usage package now have atomic receipts. Session timestamp ownership, failed multi-batch retry, and stored timestamp precision match the pinned source, and focused source tests cover every executed original test disposition. Ready validation passed: focused owner/storage/session/server tests, multi-crate check and all-target clippy, formatting, repository lint, and diff checks all completed successfully. Existing workspace warnings remain unchanged and nonfatal.
+
+The later package re-audit additionally corrected the missing-table cleanup
+branch and invalid-zero `CONVERT_TZ` semantics. Its two exact regressions have
+fail-before/pass-after evidence in the predicatecolumn receipt; the primary
+integration batch owns the subsequent Ready-profile rerun.
 
 Exact Ready commands:
 
@@ -102,3 +125,9 @@ All inspection, formatting, and validation commands are safe to rerun. Dump guar
 The package uses `TableItemID`, system timestamps, the complete indexusage collector, schema metadata, transactional metadata snapshots, and statistics table write plans. Public Rust interfaces should correspond to pinned Go package behavior or necessary native ownership, with source-absent test hooks and convenience constructors kept private or removed.
 
 Revision note: initial plan records both complete pinned inventories, the existing multi-crate integration boundary, and the first concrete API differences before editing.
+
+Revision note (2026-08-30): a complete branch re-audit found that the prior
+receipt had inferred both schema presence and `CONVERT_TZ` validity from the
+happy path. `plan_get_predicate_columns` now accepts an explicit absent-schema
+state, and predicate timestamp writes/reads use the pinned invalid-zero NULL
+contract. No new policy or feature was introduced.

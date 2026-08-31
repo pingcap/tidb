@@ -29,13 +29,20 @@ use tidb_stats_handle_metrics as handle_metrics;
 /// Go `LeaseOffset`.
 pub const LEASE_OFFSET: u32 = 5;
 
-/// Go `types.CacheUpdate` reduced to the parent cache's owned fields.
+/// Go `types.CacheUpdate`.
 #[derive(Clone, Debug, Default)]
 pub struct CacheUpdate {
     /// Full table values to insert or replace.
     pub updated: Vec<Arc<Table>>,
     /// Physical table IDs to delete.
     pub deleted: Vec<i64>,
+    /// Cache-update policy.
+    pub options: UpdateOptions,
+}
+
+/// Go `types.UpdateOptions`.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct UpdateOptions {
     /// Whether this targeted update must leave the lifecycle max version unchanged.
     pub skip_move_forward: bool,
 }
@@ -326,8 +333,11 @@ impl StatsCacheImpl {
             .performance
             .enable_stats_cache_mem_quota
         {
-            self.load()
-                .update(&update.updated, &update.deleted, update.skip_move_forward);
+            self.load().update(
+                &update.updated,
+                &update.deleted,
+                update.options.skip_move_forward,
+            );
         } else {
             let cache = self
                 .load()
@@ -372,7 +382,9 @@ impl StatsCacheImpl {
             self.update_stats_cache(CacheUpdate {
                 updated: updated.to_vec(),
                 deleted: deleted.to_vec(),
-                skip_move_forward: targeted,
+                options: UpdateOptions {
+                    skip_move_forward: targeted,
+                },
             });
         });
         for row in rows {

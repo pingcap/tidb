@@ -65,12 +65,21 @@ current state, and executes generated ANALYZE through the ordinary session
 executor. The refresher and root auto-analyze packages consume that same live
 queue instead of reconstructing caller-supplied snapshots.
 
-Source comparison corrected four observable divergences during integration:
+Source comparison initially corrected four observable divergences during integration:
 the DML watermark is captured before the cache scan, static retry recreates the
 whole logical table, concurrent close callers wait for the single worker reset,
 and duration strings use Go's nanosecond/microsecond/millisecond units. The
 unchanged validation query also drove the ordinary index-reader execution fix;
 no queue-only SQL workaround remains.
+
+A later complete reread of the shared `types.AnalysisJobJSON` contract found
+two more serialization divergences in this package's `AsJSON` output. Rust's
+integer-keyed `HashMap` serialized in randomized order rather than Go's sorted
+decimal-text key order, and Serde rendered integral weights as `1.0` and
+non-finite weights as `null` rather than Go's `1` and serialization error. The
+field serializers now preserve Go's float cutovers/exponents/negative zero,
+reject non-finite values, and sort integer keys. The exact JSON regression was
+observed failing first on map order and then on integral-float rendering.
 
 The 78 original assertion tests are mapped across the crate and its production
 server receipts by behavior: job construction/validation and SQL, keyed heap
@@ -84,6 +93,7 @@ open package and is not claimed by this receipt.
 ## Validation
 
 - `cargo test -p tidb-stats-handle-autoanalyze-priorityqueue`
+- `cargo test --manifest-path rust/Cargo.toml -p tidb-stats-handle-autoanalyze-priorityqueue tests::source_sql_and_json_shapes -- --exact --nocapture`
 - `cargo check -p tidb-server --tests`
 - `cargo fmt --all -- --check`
 - `git diff --check`
