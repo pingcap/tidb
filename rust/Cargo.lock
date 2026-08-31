@@ -3392,6 +3392,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-ddl-session"
+version = "0.0.0"
+dependencies = [
+ "fail",
+ "prometheus 0.14.0",
+ "tidb-ast",
+ "tidb-datatype",
+ "tidb-model",
+ "tidb-resolve",
+ "tidb-sqlexec",
+ "tidb-util",
+ "tracing",
+]
+
+[[package]]
 name = "tidb-ddl-testargsv1"
 version = "0.0.0"
 
