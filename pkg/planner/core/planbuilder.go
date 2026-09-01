@@ -3933,12 +3933,12 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 		return nil, plannererrors.ErrNoDB
 	}
 
-	mvTbl, err := b.is.TableByName(ctx, pmodel.NewCIStr(dbName), viewName.Name)
+	mviewTable, err := b.is.TableByName(ctx, pmodel.NewCIStr(dbName), viewName.Name)
 	if err != nil {
 		return nil, err
 	}
-	mvInfo := mvTbl.Meta()
-	if mvInfo == nil || mvInfo.MaterializedView == nil {
+	mviewInfo := mviewTable.Meta()
+	if mviewInfo == nil || mviewInfo.MaterializedView == nil {
 		return nil, errors.Errorf("table %s.%s is not a materialized view", dbName, viewName.Name.O)
 	}
 
@@ -4004,7 +4004,7 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 
 	switch mode {
 	case ast.RefreshMaterializedViewModeFast:
-		res, err := mview.Build(b.ctx, b.is, mvInfo, mview.BuildOptions{FromTS: fromTS, ToTS: toTS}, nil)
+		res, err := mview.Build(b.ctx, b.is, mviewInfo, mview.BuildOptions{FromTS: fromTS, ToTS: toTS}, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -4151,7 +4151,7 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 		}.Init(b.ctx)
 		return plan, nil
 	case ast.RefreshMaterializedViewModeCompleteDeltaApply:
-		diffRes, err := mview.BuildCompleteDiffSource(b.ctx, b.is, mvInfo)
+		diffRes, err := mview.BuildCompleteDiffSource(b.ctx, b.is, mviewInfo)
 		if err != nil {
 			return nil, err
 		}
@@ -4180,7 +4180,7 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 		}
 		return MViewCompleteDeltaApply{
 			Source:                   sourcePlan,
-			MVTableID:                mvInfo.ID,
+			MVTableID:                mviewInfo.ID,
 			MVColumnCount:            diffRes.MVColumnCount,
 			OpColID:                  diffRes.OpColOffset,
 			MarkerMVOffset:           diffRes.MarkerMVOffset,

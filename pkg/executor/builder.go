@@ -1432,7 +1432,7 @@ func (b *executorBuilder) buildMViewCompleteDeltaApply(v *plannercore.MViewCompl
 		b.err = errors.Errorf("MViewCompleteDeltaApply op column id %d must be integer typed", v.OpColID)
 		return nil
 	}
-	mvTable, ok := b.is.TableByID(context.Background(), v.MVTableID)
+	mviewTable, ok := b.is.TableByID(context.Background(), v.MVTableID)
 	if !ok {
 		b.err = errors.Errorf("MViewCompleteDeltaApply target table id %d not found in infoschema", v.MVTableID)
 		return nil
@@ -1441,7 +1441,7 @@ func (b *executorBuilder) buildMViewCompleteDeltaApply(v *plannercore.MViewCompl
 		b.err = errors.New("MViewCompleteDeltaApply target handle cols is nil")
 		return nil
 	}
-	publicCols := mvTable.Cols()
+	publicCols := mviewTable.Cols()
 	if len(publicCols) != v.MVColumnCount {
 		b.err = errors.Errorf("MViewCompleteDeltaApply target public column count %d != plan MV column count %d", len(publicCols), v.MVColumnCount)
 		return nil
@@ -1454,26 +1454,26 @@ func (b *executorBuilder) buildMViewCompleteDeltaApply(v *plannercore.MViewCompl
 		}
 	}
 
-	currentWritableInputColIDs, err := buildMViewCompleteDeltaWritableInputColIDs(mvTable, v.CurrentRowInputColIDs)
+	currentWritableInputColIDs, err := buildMViewCompleteDeltaWritableInputColIDs(mviewTable, v.CurrentRowInputColIDs)
 	if err != nil {
 		b.err = err
 		return nil
 	}
-	recomputedWritableInputColIDs, err := buildMViewCompleteDeltaWritableInputColIDs(mvTable, v.RecomputedRowInputColIDs)
+	recomputedWritableInputColIDs, err := buildMViewCompleteDeltaWritableInputColIDs(mviewTable, v.RecomputedRowInputColIDs)
 	if err != nil {
 		b.err = err
 		return nil
 	}
-	if err := validateMViewCompleteDeltaWritableInputColTypes(mvTable, sourceFieldTypes, currentWritableInputColIDs); err != nil {
+	if err := validateMViewCompleteDeltaWritableInputColTypes(mviewTable, sourceFieldTypes, currentWritableInputColIDs); err != nil {
 		b.err = err
 		return nil
 	}
-	if err := validateMViewCompleteDeltaWritableInputColTypes(mvTable, sourceFieldTypes, recomputedWritableInputColIDs); err != nil {
+	if err := validateMViewCompleteDeltaWritableInputColTypes(mviewTable, sourceFieldTypes, recomputedWritableInputColIDs); err != nil {
 		b.err = err
 		return nil
 	}
 	compareWritableIdxes, currentCompareInputColIDs, recomputedCompareInputColIDs, err := buildMViewCompleteDeltaCompareMappings(
-		mvTable,
+		mviewTable,
 		v.GroupKeyMVOffsets,
 		currentWritableInputColIDs,
 		recomputedWritableInputColIDs,
@@ -1485,7 +1485,7 @@ func (b *executorBuilder) buildMViewCompleteDeltaApply(v *plannercore.MViewCompl
 
 	return &MViewCompleteDeltaApplyExec{
 		BaseExecutor:                  exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), sourceExec),
-		TargetTable:                   mvTable,
+		TargetTable:                   mviewTable,
 		TargetHandleCols:              v.CurrentHandleCols,
 		OpColID:                       v.OpColID,
 		CurrentWritableInputColIDs:    append([]int(nil), currentWritableInputColIDs...),
@@ -3305,7 +3305,7 @@ func (b *executorBuilder) wrapTableWithMLogIfExists(tbl table.Table, sourceStmt 
 	}
 
 	mlogID := meta.MaterializedViewBase.MLogID
-	mlogTbl, ok := b.is.TableByID(context.Background(), mlogID)
+	mlogTable, ok := b.is.TableByID(context.Background(), mlogID)
 	if !ok {
 		b.err = errors.Errorf(
 			"cannot get materialized view log table id=%d (base=%s id=%d)",
@@ -3316,7 +3316,7 @@ func (b *executorBuilder) wrapTableWithMLogIfExists(tbl table.Table, sourceStmt 
 		return nil
 	}
 
-	wrapped, err := tables.WrapTableWithMaterializedViewLog(tbl, mlogTbl, sourceStmt)
+	wrapped, err := tables.WrapTableWithMaterializedViewLog(tbl, mlogTable, sourceStmt)
 	if err != nil {
 		b.err = err
 		return nil

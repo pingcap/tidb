@@ -15,7 +15,7 @@ The current scope is intentionally narrow:
 - make the running task cancel itself locally after observing the cancel request
 - propagate an explicit `manual canceled` outcome back to the caller / `mvservice`
 - for auto-triggered tasks only, apply a hard-coded 2-minute backoff after manual cancel
-- persist the auto-path backoff into `NEXT_TIME`
+- persist the auto-path backoff into the corresponding Unix-seconds schedule column
 
 ## Background
 
@@ -107,7 +107,7 @@ Instead, add dedicated cancel-request fields to history tables.
 
 Recommended fields for v1:
 
-- `CANCEL_REQUESTED_AT datetime(6) default null`
+- `CANCEL_REQUEST_TIME datetime(6) default null`
 - `CANCEL_REQUESTED_BY varchar(...) default null`
 
 Potential future optional fields:
@@ -149,7 +149,7 @@ Add nullable cancel-request columns to each history table.
 
 - existing key identifier: `REFRESH_JOB_ID`
 - new field:
-  - `CANCEL_REQUESTED_AT datetime(6) default null`
+  - `CANCEL_REQUEST_TIME datetime(6) default null`
   - `CANCEL_REQUESTED_BY varchar(...) default null`
 
 ### Purge history
@@ -158,7 +158,7 @@ Add nullable cancel-request columns to each history table.
 
 - existing key identifier: `PURGE_JOB_ID`
 - new field:
-  - `CANCEL_REQUESTED_AT datetime(6) default null`
+  - `CANCEL_REQUEST_TIME datetime(6) default null`
   - `CANCEL_REQUESTED_BY varchar(...) default null`
 
 ## Cancel request semantics
@@ -170,7 +170,7 @@ Recommended SQL semantics:
 - update only when:
   - target row exists
   - status is `running`
-  - `CANCEL_REQUESTED_AT is null`
+  - `CANCEL_REQUEST_TIME is null`
 
 This makes the operation naturally idempotent.
 
@@ -178,18 +178,18 @@ Pseudo SQL:
 
 ```sql
 UPDATE mysql.tidb_mview_refresh_hist
-   SET CANCEL_REQUESTED_AT = NOW(6),
+   SET CANCEL_REQUEST_TIME = NOW(6),
        CANCEL_REQUESTED_BY = <current_user>
  WHERE REFRESH_JOB_ID = <job_id>
    AND REFRESH_STATUS = 'running'
-   AND CANCEL_REQUESTED_AT IS NULL;
+   AND CANCEL_REQUEST_TIME IS NULL;
 
 UPDATE mysql.tidb_mlog_purge_hist
-   SET CANCEL_REQUESTED_AT = NOW(6),
+   SET CANCEL_REQUEST_TIME = NOW(6),
        CANCEL_REQUESTED_BY = <current_user>
  WHERE PURGE_JOB_ID = <job_id>
    AND PURGE_STATUS = 'running'
-   AND CANCEL_REQUESTED_AT IS NULL;
+   AND CANCEL_REQUEST_TIME IS NULL;
 ```
 
 The statement should not force success if the target job does not exist or is no longer running.
@@ -224,7 +224,7 @@ Instead:
 
 1. The running refresh/purge owns one local cancelable context.
 2. A watcher goroutine polls the corresponding history row by `job_id`.
-3. Once `CANCEL_REQUESTED_AT is not null`, the watcher:
+3. Once `CANCEL_REQUEST_TIME is not null`, the watcher:
    - records local cancel reason as `manual`
    - triggers the local cancel function
 4. The main execution path observes context cancellation and exits.
@@ -292,19 +292,19 @@ First-version behavior:
 - do not treat it as ordinary execution failure for the purpose of retry classification
 - apply a hard-coded 2-minute backoff after manual cancel
 - persist that backoff into:
-  - `mysql.tidb_mview_refresh_info.NEXT_TIME` for refresh
-  - `mysql.tidb_mlog_purge_info.NEXT_TIME` for purge
+  - `mysql.tidb_mview_refresh_info.NEXT_REFRESH_UNIX_SECONDS` for refresh
+  - `mysql.tidb_mlog_purge_info.NEXT_PURGE_UNIX_SECONDS` for purge
 - reschedule the local in-memory task to the same backoff target time
 
 Important implication:
 
-- persisting `NEXT_TIME` is required for correctness of this backoff
+- persisting the corresponding Unix-seconds schedule value is required for correctness of this backoff
 - local in-memory reschedule alone is not enough, because a later metadata fetch would otherwise
   rebuild the task from old system-table state and re-make it too early
 - whether the object still has background auto refresh/purge should be judged from the current
-  persisted info-row state, using `NEXT_TIME IS NOT NULL` as the v1 signal
-- if the current info row already has `NEXT_TIME IS NULL`, `mvservice` must not synthesize a new
-  `NEXT_TIME = now + 2 minutes`; in that case the manual-cancel result should be propagated
+  persisted info-row state, using its `NEXT_*_UNIX_SECONDS IS NOT NULL` value as the v1 signal
+- if the current info row already has its Unix-seconds schedule column set to `NULL`, `mvservice`
+  must not synthesize a new `now + 2 minutes` value; in that case the manual-cancel result should be propagated
   without recreating background scheduling state
 - the 2-minute delay only applies to the auto path; manual SQL still only returns the
   dedicated `manual canceled` error to the caller
@@ -312,7 +312,7 @@ Important implication:
 Future versions may add:
 
 - configurable backoff after manual cancel
-- `NEXT_TIME` rewrite
+- schedule metadata rewrite
 - pause semantics
 
 ## History final status in v1
@@ -339,7 +339,7 @@ Whichever model is chosen, the important part for v1 is:
 2. Executor creates a local cancelable context for this run.
 3. Executor starts one watcher goroutine bound to `job_id`.
 4. Main execution runs normally.
-5. If watcher sees `CANCEL_REQUESTED_AT is not null`:
+5. If watcher sees `CANCEL_REQUEST_TIME is not null`:
    - record local cancel reason `manual`
    - call local `cancel()`
 6. Main execution exits through normal cancel propagation.
@@ -352,7 +352,7 @@ Whichever model is chosen, the important part for v1 is:
    - refresh job id
    - purge job id
 2. Update matching history row:
-   - set `CANCEL_REQUESTED_AT = NOW(6)`
+   - set `CANCEL_REQUEST_TIME = NOW(6)`
    - only when current row is `running`
 3. Return success/failure according to whether a live running row was found.
 
@@ -389,7 +389,7 @@ can proceed incrementally without repeatedly re-deciding cross-layer behavior.
 
 #### Stage A: system-table groundwork
 
-1. Extend both history tables with `CANCEL_REQUESTED_AT` and `CANCEL_REQUESTED_BY`.
+1. Extend both history tables with `CANCEL_REQUEST_TIME` and `CANCEL_REQUESTED_BY`.
 2. Cover both fresh bootstrap and upgrade.
 3. Do not mix parser/executor behavior changes into this step.
 
@@ -457,15 +457,15 @@ Important v1 rule:
 
 - do not infer "auto scheduling exists" by re-evaluating DDL definition text
 - instead, use the current persisted info-row state:
-  - refresh: `mysql.tidb_mview_refresh_info.NEXT_TIME IS NOT NULL`
-  - purge: `mysql.tidb_mlog_purge_info.NEXT_TIME IS NOT NULL`
-- if `NEXT_TIME IS NULL`, manual cancel must not synthesize a new
-  `NEXT_TIME = now + 2 minutes`
+  - refresh: `mysql.tidb_mview_refresh_info.NEXT_REFRESH_UNIX_SECONDS IS NOT NULL`
+  - purge: `mysql.tidb_mlog_purge_info.NEXT_PURGE_UNIX_SECONDS IS NOT NULL`
+- if the relevant Unix-seconds schedule column is `NULL`, manual cancel must not synthesize a new
+  `now + 2 minutes` value
 
 Reason:
 
-- `NEXT_TIME` is the state that the service already loads to rebuild in-memory tasks
-- recreating a non-NULL `NEXT_TIME` when it is already `NULL` would accidentally
+- the Unix-seconds schedule columns are the state that the service already loads to rebuild in-memory tasks
+- recreating a non-NULL schedule value when it is already `NULL` would accidentally
   recreate background scheduling for an object that currently has none
 
 #### Stage F: user-facing `CANCEL ... JOB <job_id>` entry
@@ -479,7 +479,7 @@ Recommended SQL semantics:
 - update target row only when:
   - matching `JOB_ID` exists
   - status is `running`
-  - `CANCEL_REQUESTED_AT IS NULL`
+  - `CANCEL_REQUEST_TIME IS NULL`
 - if no row matches, return a clear user-visible error rather than silent success
 
 #### Stage G: focused validation
@@ -490,7 +490,7 @@ Recommended SQL semantics:
 4. Add auto purge cancel coverage.
 5. Verify final history rows do not remain `running`.
 6. Verify `mvservice` does not recreate background scheduling state when the current
-   info row already has `NEXT_TIME IS NULL`.
+   info row already has a `NULL` Unix-seconds schedule value.
 
 Suggested execution style:
 
@@ -512,7 +512,7 @@ Main files:
 
 Acceptance criteria:
 
-1. Both history tables contain `CANCEL_REQUESTED_AT` and `CANCEL_REQUESTED_BY`.
+1. Both history tables contain `CANCEL_REQUEST_TIME` and `CANCEL_REQUESTED_BY`.
 2. Fresh bootstrap and upgrade path are covered.
 
 ### Step 2: define cancel sentinel / local cancel reason
@@ -570,7 +570,7 @@ Goal:
 1. Make auto execution return a dedicated manual-cancel result.
 2. Let `mvservice` recognize it separately from ordinary failure.
 3. Apply a dedicated 2-minute backoff for the auto path.
-4. Persist the backoff into `NEXT_TIME` so that future metadata fetch does not override it.
+4. Persist the backoff into the corresponding Unix-seconds schedule column so that future metadata fetch does not override it.
 
 Main files:
 
@@ -581,11 +581,11 @@ Main files:
 Acceptance criteria:
 
 1. `mvservice` can identify manually canceled refresh/purge.
-2. Auto path writes `NEXT_TIME = now + 2 minutes` after manual cancel only when the current info row
-   still has `NEXT_TIME IS NOT NULL`.
-3. If the current info row already has `NEXT_TIME IS NULL`, manual cancel does not recreate
+2. Auto path writes `now + 2 minutes` as Unix seconds after manual cancel only when the current info row
+   still has a non-NULL Unix-seconds schedule value.
+3. If the current info row already has a `NULL` Unix-seconds schedule value, manual cancel does not recreate
    background scheduling state.
-4. Local in-memory reschedule matches the persisted `NEXT_TIME` when that backoff is written.
+4. Local in-memory reschedule matches the persisted Unix-seconds schedule value when that backoff is written.
 
 ### Step 6: add `CANCEL ... JOB <job_id>` statement
 
@@ -629,6 +629,6 @@ Suggested test style:
 
 1. Support cancel by table name / MV name.
 2. Make the backoff after manual cancel configurable.
-3. Tune or redesign `NEXT_TIME` handling around manual cancel if needed.
+3. Tune or redesign Unix-seconds schedule handling around manual cancel if needed.
 4. Consider terminal status `cancelled` if v1 starts with `failed + reason`.
 5. Improve observability around cancel requester / cancel timestamp.

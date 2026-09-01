@@ -1433,13 +1433,15 @@ import (
 	ViewDefiner                            "view definer"
 	ViewName                               "view name"
 	ViewFieldList                          "create view statement field list"
-	MViewCreateOptionListOpt               "materialized view create options"
-	MViewCreateOptionList                  "materialized view create option list"
-	MViewCreateOption                      "materialized view create option"
+	MViewTableOptionListOpt                "materialized view table options"
+	MViewTableOptionList                   "materialized view table option list"
+	MViewTableOption                       "materialized view table option"
 	MViewRefreshClause                     "materialized view refresh clause"
 	MViewRefreshOnClauseOpt                "materialized view refresh ON clause"
 	MViewStartWithOrNextOpt                "materialized view START WITH/NEXT option list"
 	MViewStartWithOrNext                   "materialized view START WITH/NEXT option"
+	MViewRefreshClauseOpt                  "optional materialized view refresh clause"
+	MViewAttributesOpt                     "optional materialized view attributes"
 	MLogCreateOptionListOpt                "materialized view log create options"
 	MLogCreateOptionList                   "materialized view log create option list"
 	MLogCreateOption                       "materialized view log create option"
@@ -5262,37 +5264,37 @@ ViewCheckOption:
 	}
 
 CreateMaterializedViewStmt:
-	"CREATE" "MATERIALIZED" "VIEW" TableName '(' ColumnList ')' MViewCreateOptionListOpt "AS" CreateViewSelectOpt
+	"CREATE" "MATERIALIZED" "VIEW" TableName '(' ColumnList ')' MViewTableOptionListOpt MViewRefreshClauseOpt MViewAttributesOpt "AS" CreateViewSelectOpt
 	{
 		opts := $8.(*mviewCreateOptions)
 		x := &ast.CreateMaterializedViewStmt{
 			ViewName:   $4.(*ast.TableName),
 			Cols:       $6.([]model.CIStr),
 			Comment:    opts.comment,
-			Refresh:    opts.refresh,
-			Attributes: opts.attributes,
+			Refresh:    $9.(*ast.MViewRefreshClause),
+			Attributes: $10.(string),
 			Options:    opts.options,
-			Select:     $10.(ast.StmtNode).(ast.ResultSetNode),
+			Select:     $12.(ast.StmtNode).(ast.ResultSetNode),
 		}
 		$$ = x
 	}
 
-MViewCreateOptionListOpt:
+MViewTableOptionListOpt:
 	/* EMPTY */
 	{
 		$$ = &mviewCreateOptions{}
 	}
-|	MViewCreateOptionList
+|	MViewTableOptionList
 	{
 		$$ = $1
 	}
 
-MViewCreateOptionList:
-	MViewCreateOption
+MViewTableOptionList:
+	MViewTableOption
 	{
 		$$ = $1
 	}
-|	MViewCreateOptionList MViewCreateOption
+|	MViewTableOptionList MViewTableOption
 	{
 		opts := $1.(*mviewCreateOptions)
 		opt := $2.(*mviewCreateOptions)
@@ -5302,20 +5304,6 @@ MViewCreateOptionList:
 			}
 			opts.hasComment = true
 			opts.comment = opt.comment
-		}
-		if opt.hasRefresh {
-			if opts.hasRefresh {
-				yylex.AppendError(yylex.Errorf("Duplicate REFRESH clause specified in CREATE MATERIALIZED VIEW"))
-			}
-			opts.hasRefresh = true
-			opts.refresh = opt.refresh
-		}
-		if opt.hasAttributes {
-			if opts.hasAttributes {
-				yylex.AppendError(yylex.Errorf("Duplicate ATTRIBUTES specified in CREATE MATERIALIZED VIEW"))
-			}
-			opts.hasAttributes = true
-			opts.attributes = opt.attributes
 		}
 		if opt.hasShardRowIDBits {
 			if opts.hasShardRowIDBits {
@@ -5333,18 +5321,10 @@ MViewCreateOptionList:
 		$$ = opts
 	}
 
-MViewCreateOption:
+MViewTableOption:
 	"COMMENT" "=" stringLit
 	{
 		$$ = &mviewCreateOptions{hasComment: true, comment: $3}
-	}
-|	MViewRefreshClause
-	{
-		$$ = &mviewCreateOptions{hasRefresh: true, refresh: $1.(*ast.MViewRefreshClause)}
-	}
-|	"ATTRIBUTES" EqOpt stringLit
-	{
-		$$ = &mviewCreateOptions{hasAttributes: true, attributes: $3}
 	}
 |	"SHARD_ROW_ID_BITS" EqOpt LengthNum
 	{
@@ -5365,6 +5345,26 @@ MViewCreateOption:
 				UintValue: $3.(uint64),
 			}},
 		}
+	}
+
+MViewRefreshClauseOpt:
+	/* EMPTY */
+	{
+		$$ = (*ast.MViewRefreshClause)(nil)
+	}
+|	MViewRefreshClause
+	{
+		$$ = $1
+	}
+
+MViewAttributesOpt:
+	/* EMPTY */
+	{
+		$$ = ""
+	}
+|	"ATTRIBUTES" EqOpt stringLit
+	{
+		$$ = $3
 	}
 
 MViewRefreshClause:

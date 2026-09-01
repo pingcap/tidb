@@ -12,15 +12,16 @@ At the moment:
 - `FAST` refresh is implemented and uses the same outer transactional refresh framework as
   `COMPLETE IN PLACE` / `COMPLETE DELTA APPLY`.
 
-## Runtime `NEXT_TIME` Update (Internal SQL Success Path)
+## Runtime `NEXT_REFRESH_UNIX_SECONDS` Update (Internal SQL Success Path)
 
-- For **internal SQL** triggered refresh (identified by `SessionVars.InRestrictedSQL`), after a successful refresh commit, `mysql.tidb_mview_refresh_info.NEXT_TIME` should be updated together with success metadata.
-- Runtime `NEXT_TIME` derivation in this path is intentionally different from create-time derivation:
+- For **internal SQL** triggered refresh (identified by `SessionVars.InRestrictedSQL`), after a successful refresh commit, `mysql.tidb_mview_refresh_info.NEXT_REFRESH_UNIX_SECONDS` should be updated together with success metadata.
+- `NEXT_REFRESH_UNIX_SECONDS` is a signed Unix epoch-seconds value.
+- Runtime `NEXT_REFRESH_UNIX_SECONDS` derivation in this path is intentionally different from create-time derivation:
   - evaluate and use only `RefreshNext` expression;
   - do not apply create-time `START WITH` priority / near-now rules;
-  - if `RefreshStartWith` is non-empty and `RefreshNext` is empty, explicitly set `NEXT_TIME = NULL`;
-  - if both are empty, keep `NEXT_TIME` unchanged.
-- For non-internal (user) SQL refresh, keep existing behavior (do not update `NEXT_TIME` on success path).
+  - if `RefreshStartWith` is non-empty and `RefreshNext` is empty, explicitly set `NEXT_REFRESH_UNIX_SECONDS = NULL`;
+  - if both are empty, keep `NEXT_REFRESH_UNIX_SECONDS` unchanged.
+- For non-internal (user) SQL refresh, keep existing behavior (do not update `NEXT_REFRESH_UNIX_SECONDS` on success path).
 
 > Note: refresh metadata and refresh history are now split:
 > - `mysql.tidb_mview_refresh_info` stores per-MV metadata for next refresh (for example `LAST_SUCCESS_READ_TSO`).
@@ -65,7 +66,7 @@ At the moment:
 
 `MVIEW_ID` directly uses MV physical table `TableInfo.ID`.
 
-## Create-time `NEXT_TIME` Initialization (`CREATE MATERIALIZED VIEW`)
+## Create-time `NEXT_REFRESH_UNIX_SECONDS` Initialization (`CREATE MATERIALIZED VIEW`)
 
 `REFRESH MATERIALIZED VIEW` relies on an existing row in `mysql.tidb_mview_refresh_info`.
 
@@ -73,19 +74,27 @@ When `CREATE MATERIALIZED VIEW` succeeds, DDL worker initializes (or upserts) th
 
 - `MVIEW_ID`
 - initial `LAST_SUCCESS_READ_TSO` (from create-time initial build read tso)
-- `NEXT_TIME` (derived from create-time schedule expressions)
+- `NEXT_REFRESH_UNIX_SECONDS` (derived from create-time schedule expressions)
 
-Create-time `NEXT_TIME` derivation rules (for `RefreshStartWith` / `RefreshNext`) are:
+Create-time `NEXT_REFRESH_UNIX_SECONDS` derivation rules (for `RefreshStartWith` / `RefreshNext`) are:
 
-1. If both are empty, do not update `NEXT_TIME` (row keeps default `NULL`).
-2. Evaluate expressions in prepared eval session (`UTC` timezone + DDL job SQL mode).
+1. If both are empty, do not update `NEXT_REFRESH_UNIX_SECONDS` (row keeps default `NULL`).
+2. Evaluate expressions in a prepared eval session using the schedule timezone captured from the
+   `CREATE MATERIALIZED VIEW` or `ALTER MATERIALIZED VIEW ... REFRESH START WITH/NEXT` statement,
+   together with the DDL job SQL mode.
 3. `START WITH` has higher priority, unless it is near-now (`START WITH < now + 10s`) and `NEXT` exists; in that case use `NEXT`.
-4. If the chosen expression evaluates to `NULL`, explicitly write `NEXT_TIME = NULL`.
+4. If the chosen expression evaluates to `NULL`, explicitly write `NEXT_REFRESH_UNIX_SECONDS = NULL`.
 
 This create-time rule set is intentionally different from runtime internal-refresh reschedule rule:
 
 - runtime internal refresh uses `RefreshNext` only;
 - runtime internal refresh does not apply create-time `START WITH`/near-now priority.
+
+The persisted value is a Unix epoch-seconds instant. Literal `DATETIME` schedule values are
+interpreted in the captured schedule timezone before conversion to Unix seconds. An
+`ALTER MATERIALIZED VIEW ... REFRESH` that only changes the refresh method or clears the
+schedule does not change `RefreshScheduleTimeZone`; the timezone is replaced only when
+`START WITH` or `NEXT` is specified.
 
 ## SQL behavior (user view)
 
@@ -130,7 +139,7 @@ only the data-change implementation differs.
 6. Success path: read `refresh_read_tso` from transaction context (`TxnCtx.GetForUpdateTS()`).
 7. Before commit, persist success metadata with CAS-style SQL:
    - `UPDATE ... SET LAST_SUCCESS_READ_TSO = <refresh_read_tso> WHERE MVIEW_ID = <mview_id> AND LAST_SUCCESS_READ_TSO <=> <locked_tso>`.
-   - runtime internal-SQL rule: update `NEXT_TIME` by evaluating only `RefreshNext`; if `RefreshStartWith != ''` and `RefreshNext == ''`, set `NEXT_TIME = NULL`.
+   - runtime internal-SQL rule: update `NEXT_REFRESH_UNIX_SECONDS` by evaluating only `RefreshNext`; if `RefreshStartWith != ''` and `RefreshNext == ''`, set `NEXT_REFRESH_UNIX_SECONDS = NULL`.
 8. Do double check by reading back `LAST_SUCCESS_READ_TSO` from `mysql.tidb_mview_refresh_info`:
    - if value is `NULL` or not equal to `<refresh_read_tso>`, treat as unknown inconsistency and fail refresh.
 9. Commit refresh transaction.
@@ -164,7 +173,7 @@ SELECT MVIEW_ID, LAST_SUCCESS_READ_TSO
 
 -- (A3) independent internal session (not this transaction) inserts running history
 INSERT INTO mysql.tidb_mview_refresh_hist (
-    MVIEW_ID, REFRESH_JOB_ID, REFRESH_METHOD, REFRESH_TIME, REFRESH_STATUS
+    MVIEW_ID, REFRESH_JOB_ID, REFRESH_METHOD, REFRESH_START_TIME, REFRESH_STATUS
 ) VALUES (
     <mview_id>, <refresh_job_id>, <refresh_method>, NOW(6), 'running'
 );
@@ -186,10 +195,10 @@ INSERT INTO <db>.<mv> <SQLContent>;
 UPDATE mysql.tidb_mview_refresh_info
    SET LAST_SUCCESS_READ_TSO = <refresh_read_tso>
    -- internal SQL path only:
-   --   1) if RefreshNext is non-empty: NEXT_TIME = eval(RefreshNext)
-   --   2) else if RefreshStartWith is non-empty: NEXT_TIME = NULL
-   --   3) else: NEXT_TIME unchanged
-   NEXT_TIME = <runtime_derived_or_unchanged>
+   --   1) if RefreshNext is non-empty: NEXT_REFRESH_UNIX_SECONDS = unix_seconds(eval(RefreshNext))
+   --   2) else if RefreshStartWith is non-empty: NEXT_REFRESH_UNIX_SECONDS = NULL
+   --   3) else: NEXT_REFRESH_UNIX_SECONDS unchanged
+   NEXT_REFRESH_UNIX_SECONDS = <runtime_derived_or_unchanged>
  WHERE MVIEW_ID = <mview_id>
    AND LAST_SUCCESS_READ_TSO <=> <locked_last_success_read_tso>;
 
@@ -204,7 +213,7 @@ COMMIT;
 -- (D) independent internal session finalizes history AFTER refresh commit
 UPDATE mysql.tidb_mview_refresh_hist
    SET REFRESH_STATUS = 'success',
-       REFRESH_ENDTIME = NOW(6),
+       REFRESH_END_TIME = NOW(6),
        REFRESH_READ_TSO = <refresh_read_tso>,
        REFRESH_FAILED_REASON = NULL
  WHERE MVIEW_ID = <mview_id>
@@ -213,7 +222,7 @@ UPDATE mysql.tidb_mview_refresh_hist
 -- (D-failed) if refresh transaction ends as failure, finalize the same row as failed
 UPDATE mysql.tidb_mview_refresh_hist
    SET REFRESH_STATUS = 'failed',
-       REFRESH_ENDTIME = NOW(6),
+       REFRESH_END_TIME = NOW(6),
        REFRESH_READ_TSO = NULL,
        REFRESH_FAILED_REASON = <refresh_error>
  WHERE MVIEW_ID = <mview_id>
@@ -314,7 +323,7 @@ Current execution model:
    - moves MV definition metadata to the new physical table;
    - rewrites base-table reverse references (`MaterializedViewBase.MViewIDs`);
    - migrates `mysql.tidb_mview_refresh_info` ownership from old `MVIEW_ID` to shadow ID;
-   - sets `LAST_SUCCESS_READ_TSO = build_read_tso` and preserves `NEXT_TIME`.
+   - sets `LAST_SUCCESS_READ_TSO = build_read_tso` and preserves `NEXT_REFRESH_UNIX_SECONDS`.
 5. On success, finalize history as `success`; on failure, keep the old MV serving path unchanged and do best-effort shadow cleanup.
 
 #### Next design evolution: protected shadow table
@@ -387,7 +396,7 @@ Recommended implementation shape:
    - Verify user DML/DDL against the shadow table is rejected.
    - Verify internal refresh can still create, build, and cut over the shadow table successfully.
    - Verify TiFlash-replica scenarios observe the shadow table before `IMPORT INTO` starts.
-   - Verify cutover keeps `mysql.tidb_mview_refresh_info`, `LAST_SUCCESS_READ_TSO`, `NEXT_TIME`,
+   - Verify cutover keeps `mysql.tidb_mview_refresh_info`, `LAST_SUCCESS_READ_TSO`, `NEXT_REFRESH_UNIX_SECONDS`,
      and refresh history behavior unchanged from the current out-of-place contract.
 
 ### Support FAST refresh upper bound with `AS OF TIMESTAMP`
