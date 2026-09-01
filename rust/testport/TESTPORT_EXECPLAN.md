@@ -3178,6 +3178,14 @@ For each bounded behavior cluster:
       complete tagged Go tests, repository lint, and diff hygiene pass;
       required `make bazel_prepare` was attempted but Bazel is unavailable
       locally. Details are in `receipts/table_tables_testutil.md`.
+- [x] Complete the Go-master `pkg/ingestor/errdef` package: inventory the
+      error definitions and BUILD metadata, restore the deleted
+      `ErrTooManyDataFiles` sentinel required by global-sort, add the focused
+      RFC/message regression, and update its receipt and ExecPlan.
+- [x] Run the Ready validation profile for `pkg/ingestor/errdef`: complete
+      Go tests, repository lint, and diff hygiene pass; required
+      `make bazel_prepare` was attempted but Bazel is unavailable locally.
+      Details are in `receipts/ingestor_errdef.md`.
 - [x] Complete the Go-master `pkg/util/codec` delta: inventory all 12 source,
       test, benchmark, harness, and build artifacts; remove Rust-only encoder
       value/hash methods; update consumers; add the raw-value regression; and
