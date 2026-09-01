@@ -173,6 +173,18 @@ For each bounded behavior cluster:
   `receipts/lightning_backend_kv.md` and
   `rust/docs/operations/lightning-backend-kv-audit-execplan.md`.
 
+- 2026-09-01: audited the complete three-artifact Go-master
+  `pkg/lightning/backend/tidb` package: 2,227 lines, 42 production
+  declarations, 17 functional tests, two failpoint branches, and a 17-shard
+  flaky BUILD target. The inventory covers SQL literal encoding, metadata
+  discovery, TiDB 4.x auto-ID compatibility, retries, conflict/error-manager
+  recording, prepared statements, batching, and all SQL-mock fixtures. The
+  exact Go-master failpoint suite passes with cleanup. Rust has no
+  dependency-closed SQL/Lightning backend owner, so no Rust-only behavior was
+  removed and no speculative facade was added. The explicit boundary is
+  recorded in `receipts/lightning_backend_tidb.md` and
+  `rust/docs/operations/lightning-backend-tidb-audit-execplan.md`.
+
 - 2026-09-01: audited the complete Go-master
   `pkg/dxf/importinto/conflictrows` package: four tracked artifacts and 872
   lines covering its BUILD target, unique task/subtask path construction,
