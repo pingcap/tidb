@@ -40,6 +40,13 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: completed the package-level `pkg/ingestor` audit after reading
+  `doc.go` first: three tracked artifacts and 42 lines at Go master,
+  including the current BUILD/OWNERS filters. The root is an empty
+  documentation and ownership landing package; no Rust root ingestor owner or
+  executable behavior exists, so no placeholder crate was invented. Recorded
+  the boundary in `receipts/ingestor_root.md`.
+
 - 2026-09-01: audited the complete Go-master
   `pkg/ingestor/ingestcli` client plus its generated mock package: eight
   artifacts and 1,086 lines covering the `/write_sst` stream, `/ingest_s3`
