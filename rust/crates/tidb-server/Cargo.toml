@@ -104,6 +104,7 @@ path = "tests/configured_user_store_source.rs"
 default = ["jemalloc"]
 failpoints = [
     "tidb-ddl-serverstate/failpoints",
+    "tidb-resourcemanager/failpoints",
     "tidb-stats-handle-cache/failpoints",
     "tidb-util/failpoints",
 ]

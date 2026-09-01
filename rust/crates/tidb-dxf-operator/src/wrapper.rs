@@ -23,14 +23,14 @@ use crate::{
 };
 
 /// Go `SimpleDataSource`.
-pub struct SimpleDataSource<T: TaskMayPanic> {
+pub struct SimpleDataSource<T: TaskMayPanic<OperatorError>> {
     context: Arc<Context>,
     inputs: Mutex<Option<Vec<T>>>,
     target: Mutex<Option<SimpleDataChannel<T>>>,
     handle: Mutex<Option<JoinHandle<Result<(), OperatorError>>>>,
 }
 
-impl<T: TaskMayPanic> SimpleDataSource<T> {
+impl<T: TaskMayPanic<OperatorError>> SimpleDataSource<T> {
     /// Go `NewSimpleDataSource`.
     #[must_use]
     pub fn new(context: Arc<Context>, inputs: Vec<T>) -> Self {
@@ -43,7 +43,7 @@ impl<T: TaskMayPanic> SimpleDataSource<T> {
     }
 }
 
-impl<T: TaskMayPanic> WithSink<T> for SimpleDataSource<T> {
+impl<T: TaskMayPanic<OperatorError>> WithSink<T> for SimpleDataSource<T> {
     fn set_sink(&self, channel: SimpleDataChannel<T>) {
         *self
             .target
@@ -52,7 +52,7 @@ impl<T: TaskMayPanic> WithSink<T> for SimpleDataSource<T> {
     }
 }
 
-impl<T: TaskMayPanic> Operator for SimpleDataSource<T> {
+impl<T: TaskMayPanic<OperatorError>> Operator for SimpleDataSource<T> {
     fn open(&self) -> Result<(), OperatorError> {
         let inputs = self
             .inputs
@@ -180,11 +180,11 @@ impl<R: Send + 'static> Operator for SimpleSink<R> {
 }
 
 /// Go private `simpleOperator`, exposed for native external package tests.
-pub(crate) struct SimpleOperator<T: TaskMayPanic, R: Send + 'static> {
+pub(crate) struct SimpleOperator<T: TaskMayPanic<OperatorError>, R: Send + 'static> {
     inner: AsyncOperator<T, R>,
 }
 
-impl<T: TaskMayPanic, R: Send + 'static> SimpleOperator<T, R> {
+impl<T: TaskMayPanic<OperatorError>, R: Send + 'static> SimpleOperator<T, R> {
     /// Go `newSimpleOperator`.
     #[must_use]
     pub(crate) fn new(
@@ -198,19 +198,19 @@ impl<T: TaskMayPanic, R: Send + 'static> SimpleOperator<T, R> {
     }
 }
 
-impl<T: TaskMayPanic, R: Send + 'static> WithSource<T> for SimpleOperator<T, R> {
+impl<T: TaskMayPanic<OperatorError>, R: Send + 'static> WithSource<T> for SimpleOperator<T, R> {
     fn set_source(&self, channel: SimpleDataChannel<T>) {
         self.inner.set_source(channel);
     }
 }
 
-impl<T: TaskMayPanic, R: Send + 'static> WithSink<R> for SimpleOperator<T, R> {
+impl<T: TaskMayPanic<OperatorError>, R: Send + 'static> WithSink<R> for SimpleOperator<T, R> {
     fn set_sink(&self, channel: SimpleDataChannel<R>) {
         self.inner.set_sink(channel);
     }
 }
 
-impl<T: TaskMayPanic, R: Send + 'static> Operator for SimpleOperator<T, R> {
+impl<T: TaskMayPanic<OperatorError>, R: Send + 'static> Operator for SimpleOperator<T, R> {
     fn open(&self) -> Result<(), OperatorError> {
         self.inner.open()
     }
@@ -228,7 +228,7 @@ impl<T: TaskMayPanic, R: Send + 'static> Operator for SimpleOperator<T, R> {
     }
 }
 
-impl<T: TaskMayPanic, R: Send + 'static> TunableOperator for SimpleOperator<T, R> {
+impl<T: TaskMayPanic<OperatorError>, R: Send + 'static> TunableOperator for SimpleOperator<T, R> {
     fn tune_worker_pool_size(&self, worker_num: i32, wait: bool) {
         self.inner.tune_worker_pool_size(worker_num, wait);
     }

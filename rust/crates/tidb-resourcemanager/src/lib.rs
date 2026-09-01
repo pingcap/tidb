@@ -19,6 +19,7 @@ pub mod poolmanager;
 pub mod scheduler;
 pub mod spool;
 pub mod util;
+pub mod workerpool;
 
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::thread::JoinHandle;

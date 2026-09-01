@@ -33,7 +33,7 @@ pub use wrapper::SimpleDataSource;
 struct stringTask(String);
 
 #[cfg(test)]
-impl TaskMayPanic for stringTask {
+impl TaskMayPanic<OperatorError> for stringTask {
     fn recover_args(&self) -> (String, String, Option<OperatorError>) {
         (String::new(), String::new(), None)
     }

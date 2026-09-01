@@ -12,9 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::{Arc, Mutex};
-
-use crossbeam_channel::{bounded, Receiver, RecvError, Select, SendError, Sender};
+use crossbeam_channel::{Receiver, RecvError, SendError, Sender};
+use tidb_resourcemanager::poolmanager::Channel;
 
 /// Go `WithSource`.
 pub trait WithSource<T> {
@@ -28,142 +27,65 @@ pub trait WithSink<T> {
     fn set_sink(&self, channel: SimpleDataChannel<T>);
 }
 
-struct ChannelState<T> {
-    sender: Mutex<Option<Sender<T>>>,
-    receiver: Receiver<T>,
-    close_sender: Mutex<Option<Sender<()>>>,
-    closed: Receiver<()>,
-}
-
 /// Go `SimpleDataChannel`; a zero-capacity channel preserves Go's
 /// unbuffered hand-off.
 pub struct SimpleDataChannel<T> {
-    state: Arc<ChannelState<T>>,
+    channel: Channel<T>,
 }
 
 impl<T> Clone for SimpleDataChannel<T> {
     fn clone(&self) -> Self {
         Self {
-            state: Arc::clone(&self.state),
+            channel: self.channel.clone(),
         }
-    }
-}
-
-impl<T> Default for SimpleDataChannel<T> {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
 impl<T> SimpleDataChannel<T> {
     /// Go `NewSimpleDataChannel(make(chan T))`.
-    #[must_use]
     pub fn new() -> Self {
-        let (sender, receiver) = bounded(0);
-        Self::from_channel(sender, receiver)
+        Self {
+            channel: Channel::bounded(0),
+        }
     }
 
     /// Native form of Go `NewSimpleDataChannel(ch)` for an already-created
     /// channel.
-    #[must_use]
     pub fn from_channel(sender: Sender<T>, receiver: Receiver<T>) -> Self {
-        let (close_sender, closed) = bounded(0);
         Self {
-            state: Arc::new(ChannelState {
-                sender: Mutex::new(Some(sender)),
-                receiver,
-                close_sender: Mutex::new(Some(close_sender)),
-                closed,
-            }),
+            channel: Channel::from_parts(sender, receiver),
         }
     }
 
-    pub(crate) fn sender(&self) -> Option<Sender<T>> {
-        self.state
-            .sender
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
+    pub(crate) fn channel(&self) -> Channel<T> {
+        self.channel.clone()
     }
 
     pub(crate) fn receiver(&self) -> Receiver<T> {
-        self.state.receiver.clone()
+        self.channel.receiver()
     }
 
     /// Sends one value through Go `Channel()`.
     pub fn send(&self, value: T) -> Result<(), SendError<T>> {
-        let Some(sender) = self.sender() else {
-            return Err(SendError(value));
-        };
-        let mut selected = Select::new();
-        let send_index = selected.send(&sender);
-        let closed_index = selected.recv(&self.state.closed);
-        let operation = selected.select();
-        if operation.index() == send_index {
-            operation.send(&sender, value)
-        } else {
-            debug_assert_eq!(operation.index(), closed_index);
-            let _ = operation.recv(&self.state.closed);
-            Err(SendError(value))
-        }
+        self.channel.send_result(value)
     }
 
     /// Receives one value through Go `Channel()`.
     pub fn receive(&self) -> Result<T, RecvError> {
-        self.state.receiver.recv()
+        self.channel.receiver().recv()
     }
 
     /// Go `Finish`.
     pub fn finish(&self) {
-        let sender = self
-            .state
-            .sender
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take()
-            .expect("close of closed channel");
-        drop(sender);
-        self.state
-            .close_sender
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take();
+        self.channel.close();
     }
 
     pub(crate) fn try_finish(&self) {
-        let sender = self
-            .state
-            .sender
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take();
-        drop(sender);
-        self.state
-            .close_sender
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take();
+        self.channel.close_if_open();
     }
 
     pub(crate) fn send_or_cancel(&self, value: T, cancelled: &Receiver<()>) -> bool {
-        let Some(sender) = self.sender() else {
-            return false;
-        };
-        let mut selected = Select::new();
-        let send_index = selected.send(&sender);
-        let closed_index = selected.recv(&self.state.closed);
-        let cancelled_index = selected.recv(cancelled);
-        let operation = selected.select();
-        if operation.index() == send_index {
-            operation.send(&sender, value).is_ok()
-        } else if operation.index() == closed_index {
-            let _ = operation.recv(&self.state.closed);
-            false
-        } else {
-            debug_assert_eq!(operation.index(), cancelled_index);
-            let _ = operation.recv(cancelled);
-            false
-        }
+        self.channel.send_or_cancel(value, cancelled)
     }
 }
 

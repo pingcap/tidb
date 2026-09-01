@@ -3466,6 +3466,7 @@ version = "0.0.0"
 dependencies = [
  "crossbeam-channel",
  "regex",
+ "tidb-resourcemanager",
 ]
 
 [[package]]
@@ -3823,6 +3824,7 @@ dependencies = [
  "fail",
  "getrandom 0.3.4",
  "prometheus 0.14.0",
+ "rand 0.8.7",
  "tidb-util",
  "tracing",
 ]

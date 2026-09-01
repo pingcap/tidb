@@ -36,6 +36,16 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- [x] (2026-08-31) Completed the pinned four-artifact
+  `pkg/resourcemanager/pool/workerpool` package. Added its shared cancellable
+  context, reusable worker lifecycle, panic/error propagation, result-less and
+  custom channels, tuning and wait ordering, exact constructor callback
+  failpoint, and all five source tests with the three tuning subtests. Removed
+  DXF's duplicate narrowed workerpool and rewired `pkg/dxf/operator` through
+  the canonical package boundary. Complete inventory and WIP evidence are in
+  `receipts/resourcemanager_pool_workerpool.md`; the updated integration
+  decision is in `receipts/dxf_operator.md`.
+
 - [x] (2026-08-31) Completed the pinned five-artifact
   `pkg/resourcemanager/pool/spool` package. Added its non-reusing native-thread
   pool, exact blocking admission and five-millisecond retry, grouped channel
@@ -1114,6 +1124,12 @@ For each bounded behavior cluster:
 - Decision: changes may cross Rust crates when ownership requires it, but each
   diff remains tied to a Go-derived behavior and scoped regression.
   Date/Author: 2026-08-28, Codex.
+- Decision: `pkg/resourcemanager/pool/workerpool` is the sole reusable-worker
+  owner. DXF must consume that implementation as pinned Go does; retaining a
+  second DXF-local context, panic, channel, lifecycle, or tuning path would be
+  behaviorally divergent even if its package tests happened to pass. The
+  constructor callback failpoint remains an argument-bearing test seam, not a
+  Rust scheduling policy. Date/Author: 2026-08-31, Codex.
 - Decision: package parity is atomic. File-, function-, batch-, or test-level
   progress cannot be reported as a completed transcreated Go package.
   Date/Author: 2026-08-28, Codex.

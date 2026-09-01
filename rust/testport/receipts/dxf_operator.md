@@ -19,20 +19,18 @@ variant, or other test in the pinned directory.
 ## Native integration decision
 
 Go implements `AsyncOperator` over `pkg/resourcemanager/pool/workerpool`.
-Rust represents the behavior that this package observes directly with native
-threads and crossbeam channels: the same shared first-error cancellation,
-panic-to-error conversion through task recovery arguments, worker close
-handling, result-channel finish, minimum pool size of one, and synchronous or
-asynchronous shrink. This is an implementation boundary, not a partial claim
-for the Go workerpool package.
+Rust now uses the canonical `tidb_resourcemanager::workerpool` implementation
+through the same package boundary. The earlier DXF-local context, worker,
+panic, lifecycle, and tuning implementation was removed rather than retained
+as a second execution path.
 
 Go's channel type is bidirectional and closeable. `SimpleDataChannel` keeps one
-shared close state around a zero-capacity native channel, so every composed
-handoff is unbuffered, a blocked producer is released by finish/cancellation,
-and a second public finish panics like closing a closed Go channel. The native
-`NoResult` marker is the boundary equivalent of external
-`workerpool.None`; ordinary operators without a configured result consumer
-retain Go's blocking result channel instead of silently discarding output.
+shared close state around a zero-capacity native channel owned by the shared
+resource-manager channel carrier. Every composed handoff is unbuffered, and a
+second public finish panics like closing a closed Go channel. The native
+`NoResult` marker is the spelling of external `workerpool.None`; ordinary
+operators without a configured result consumer retain Go's blocking result
+channel instead of silently discarding output.
 
 ## WIP validation
 

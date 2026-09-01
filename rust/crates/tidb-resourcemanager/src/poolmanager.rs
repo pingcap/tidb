@@ -32,6 +32,8 @@ pub struct Channel<T> {
 struct ChannelInner<T> {
     sender: Mutex<Option<crossbeam_channel::Sender<T>>>,
     receiver: crossbeam_channel::Receiver<T>,
+    close_sender: Mutex<Option<crossbeam_channel::Sender<()>>>,
+    closed: crossbeam_channel::Receiver<()>,
 }
 
 impl<T> Clone for Channel<T> {
@@ -46,30 +48,63 @@ impl<T> Channel<T> {
     /// Creates a channel with the source buffer capacity.
     pub fn bounded(capacity: usize) -> Self {
         let (sender, receiver) = crossbeam_channel::bounded(capacity);
+        Self::from_parts(sender, receiver)
+    }
+
+    /// Wraps an existing channel.
+    pub fn from_parts(
+        sender: crossbeam_channel::Sender<T>,
+        receiver: crossbeam_channel::Receiver<T>,
+    ) -> Self {
+        let (close_sender, closed) = crossbeam_channel::bounded(0);
         Self {
             inner: Arc::new(ChannelInner {
                 sender: Mutex::new(Some(sender)),
                 receiver,
+                close_sender: Mutex::new(Some(close_sender)),
+                closed,
             }),
         }
     }
 
     /// Sends a value, blocking until a receiver or buffer slot is available.
     pub fn send(&self, value: T) {
+        self.send_result(value)
+            .unwrap_or_else(|_| panic!("send on closed channel"));
+    }
+
+    /// Sends a value and returns it when the channel is closed.
+    pub fn send_result(&self, value: T) -> Result<(), crossbeam_channel::SendError<T>> {
         let sender = self
             .inner
             .sender
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
-        let sender = sender.unwrap_or_else(|| panic!("send on closed channel"));
-        sender
-            .send(value)
-            .unwrap_or_else(|_| panic!("send on closed channel"));
+        let Some(sender) = sender else {
+            return Err(crossbeam_channel::SendError(value));
+        };
+        let mut selected = crossbeam_channel::Select::new();
+        let send_index = selected.send(&sender);
+        let closed_index = selected.recv(&self.inner.closed);
+        let operation = selected.select();
+        if operation.index() == send_index {
+            operation.send(&sender, value)
+        } else {
+            debug_assert_eq!(operation.index(), closed_index);
+            let _ = operation.recv(&self.inner.closed);
+            Err(crossbeam_channel::SendError(value))
+        }
     }
 
     /// Attempts a nonblocking send.
     pub fn try_send(&self, value: T) -> Result<(), crossbeam_channel::TrySendError<T>> {
+        if !matches!(
+            self.inner.closed.try_recv(),
+            Err(crossbeam_channel::TryRecvError::Empty)
+        ) {
+            return Err(crossbeam_channel::TrySendError::Disconnected(value));
+        }
         let sender = self
             .inner
             .sender
@@ -87,6 +122,14 @@ impl<T> Channel<T> {
         self.inner.receiver.clone()
     }
 
+    pub(crate) fn sender(&self) -> Option<crossbeam_channel::Sender<T>> {
+        self.inner
+            .sender
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
     /// Closes the channel. Buffered values remain receivable.
     pub fn close(&self) {
         let sender = self
@@ -96,6 +139,52 @@ impl<T> Channel<T> {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take();
         assert!(sender.is_some(), "close of closed channel");
+        self.inner
+            .close_sender
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+    }
+
+    /// Closes the channel if it is still open.
+    #[doc(hidden)]
+    pub fn close_if_open(&self) {
+        let sender = self
+            .inner
+            .sender
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        if sender.is_some() {
+            self.inner
+                .close_sender
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take();
+        }
+    }
+
+    /// Sends unless a cancellation channel becomes ready.
+    #[doc(hidden)]
+    pub fn send_or_cancel(&self, value: T, cancelled: &crossbeam_channel::Receiver<()>) -> bool {
+        let Some(sender) = self.sender() else {
+            return false;
+        };
+        let mut selected = crossbeam_channel::Select::new();
+        let send_index = selected.send(&sender);
+        let closed_index = selected.recv(&self.inner.closed);
+        let cancelled_index = selected.recv(cancelled);
+        let operation = selected.select();
+        if operation.index() == send_index {
+            operation.send(&sender, value).is_ok()
+        } else if operation.index() == closed_index {
+            let _ = operation.recv(&self.inner.closed);
+            false
+        } else {
+            debug_assert_eq!(operation.index(), cancelled_index);
+            let _ = operation.recv(cancelled);
+            false
+        }
     }
 }
 
