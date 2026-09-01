@@ -1773,23 +1773,24 @@ const (
 	MinTiDBInstancePlanCacheMemSize                   = 100 * size.MB
 	DefTiDBInstancePlanCacheReservedPercentage        = 0.1
 	// MaxDDLReorgBatchSize is exported for testing.
-	MaxDDLReorgBatchSize                int32  = 10240
-	MinDDLReorgBatchSize                int32  = 32
-	MinExpensiveQueryTimeThreshold      uint64 = 10 // 10s
-	MinExpensiveTxnTimeThreshold        uint64 = 60 // 60s
-	DefTiDBAutoBuildStatsConcurrency           = DefBuildStatsConcurrency
-	DefTiDBSysProcScanConcurrency              = DefAnalyzeDistSQLScanConcurrency
-	DefTiDBRcWriteCheckTs                      = false
-	DefTiDBForeignKeyChecks                    = true
-	DefTiDBForeignKeyCheckInSharedLock         = false
-	DefTiDBOptAdvancedJoinHint                 = true
-	DefTiDBAnalyzePartitionConcurrency         = 2
-	DefTiDBOptRangeMaxSize                     = 64 * int64(size.MB) // 64 MB
-	DefTiDBOptRangeMaxCount             int64  = 0
-	DefTiDBCostModelVer                        = 2
-	DefTiDBServerMemoryLimitSessMinSize        = 128 << 20
-	DefTiDBServerMemoryLimitGCTrigger          = 0.7
-	DefTiDBEnableGOGCTuner                     = true
+	MaxDDLReorgBatchSize               int32  = 10240
+	MinDDLReorgBatchSize               int32  = 32
+	MinExpensiveQueryTimeThreshold     uint64 = 10 // 10s
+	MinExpensiveTxnTimeThreshold       uint64 = 60 // 60s
+	DefTiDBAutoBuildStatsConcurrency          = DefBuildStatsConcurrency
+	DefTiDBSysProcScanConcurrency             = DefAnalyzeDistSQLScanConcurrency
+	DefTiDBRcWriteCheckTs                     = false
+	DefTiDBForeignKeyChecks                   = true
+	DefTiDBForeignKeyCheckInSharedLock        = false
+	DefTiDBOptAdvancedJoinHint                = true
+	DefTiDBAnalyzePartitionConcurrency        = 2
+	DefTiDBOptRangeMaxSize                    = 64 * int64(size.MB) // 64 MB
+	// DefTiDBOptRangeMaxCount is the default maximum number of ranges the optimizer may build; 0 disables the limit.
+	DefTiDBOptRangeMaxCount             int64 = 0
+	DefTiDBCostModelVer                       = 2
+	DefTiDBServerMemoryLimitSessMinSize       = 128 << 20
+	DefTiDBServerMemoryLimitGCTrigger         = 0.7
+	DefTiDBEnableGOGCTuner                    = true
 	// DefTiDBGOGCTunerThreshold is to limit TiDBGOGCTunerThreshold.
 	DefTiDBGOGCTunerThreshold                 float64 = 0.6
 	DefTiDBGOGCMaxValue                               = 500
