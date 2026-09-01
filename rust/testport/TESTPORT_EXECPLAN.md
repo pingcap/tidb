@@ -1520,6 +1520,12 @@ For each bounded behavior cluster:
       storing normalized URLs; the pre-fix regression failed and the focused
       owner tests, Rust format check, and Ready lint passed. Details are in
       `receipts/util_root_audit.md`.
+- 2026-09-01: audited all three Go-master `pkg/util/cgmon` artifacts (229
+      lines: Linux cgroup monitor, fallback test, and Bazel target). The
+      existing Rust cgroup reader covers quota/memory discovery but not this
+      package's ten-second scheduler, process-global lifecycle, metrics, or
+      server wiring, so no detached Rust monitor was added. Details are in
+      `receipts/util_cgmon.md`.
 - [ ] Run Ready validation and self-review only when the requested parity scope
       is genuinely complete enough for a final-status claim.
 
@@ -1560,6 +1566,11 @@ For each bounded behavior cluster:
   crate or silently claim the whole package until those consumers and their
   platform/build/test artifacts can move atomically. Date/Author: 2026-09-01,
   Codex.
+- Decision: keep `pkg/util/cgmon` unclaimed. `tidb-util::cgroup` and process
+  memory readers are supporting authorities, while the Go monitor owns its
+  Linux-only refresh cadence, metric publication, panic recovery, and startup
+  lifecycle; a second Rust timer would be Rust-only behavior. Date/Author:
+  2026-09-01, Codex.
 - Decision: preserve the Rust planner-error declaration table and its
   all-prototype initialization guard. Go package initialization registers all
   98 entries, while Go's only explicit test checks 59; the Rust guard is the
