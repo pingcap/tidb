@@ -33,7 +33,7 @@ func TestStorageClassTransitionsTable(t *testing.T) {
 	require.Equal(t, mysql.TypeDatetime, cols[9].tp)
 	require.Equal(t, 6, cols[9].decimal)
 	require.Equal(t, mysql.TypeLonglong, cols[10].tp)
-	require.Equal(t, uint(mysql.UnsignedFlag), cols[10].flag)
+	require.Equal(t, mysql.UnsignedFlag, cols[10].flag)
 	require.Equal(t, mysql.TypeDatetime, cols[11].tp)
 	require.Equal(t, 6, cols[11].decimal)
 	require.Equal(t, DDLOwner, GetClusterTableCopDestination(TableStorageClassTransitions))
