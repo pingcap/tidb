@@ -149,6 +149,17 @@ For each bounded behavior cluster:
   The Go compile, Rust format, lint, and diff gates are recorded in
   `receipts/dumpformat.md` and `rust/docs/operations/dumpformat-audit-execplan.md`.
 
+- 2026-09-01: audited the complete two-artifact Go-master
+  `pkg/lightning/backend/encode` package: 107 lines containing only the BUILD
+  target and the encoding backend's six exported configuration/interface
+  contracts. There are no tests, fixtures, generated/platform variants,
+  benchmarks, or executable function bodies. Rust has adjacent Lightning
+  modules but no dependency-closed encoder owner or call site, so no Rust-only
+  behavior was removed and no speculative facade was added. The focused Go
+  package check passed; the explicit boundary is recorded in
+  `receipts/lightning_backend_encode.md` and
+  `rust/docs/operations/lightning-backend-encode-audit-execplan.md`.
+
 - 2026-09-01: audited the complete Go-master
   `pkg/session/test/nontransactionaltest` package before editing: three
   tracked artifacts and 614 lines covering six batch-DML behavior tests, the
