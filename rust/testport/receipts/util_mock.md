@@ -1,9 +1,8 @@
 # `pkg/util/mock` — Go-master package boundary receipt
 
 Go source: `origin/master` at
-`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01). The package is
-byte-for-byte unchanged from extraction pin
-`e2788410d8d696605e8cb002585877a063ccc909`.
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02). The package is
+byte-for-byte unchanged at the current Go-master authority pin.
 
 ## Complete inventory
 
@@ -45,11 +44,13 @@ This package remains explicitly unclaimed as Go-only test infrastructure.
 
 ## Validation
 
-Profile: WIP for the continuing repository audit; no source or build artifact
-changed.
+Profile: **Ready** for the continuing repository audit; no source or build
+artifact changed.
 
-- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/mock -count=1` — passed (source tests; no package failpoints).
-- `git diff --stat e2788410d8d696605e8cb002585877a063ccc909..origin/master -- pkg/util/mock` — empty; source is unchanged at Go master.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/mock -count=1` — passed in the active worktree.
+- The same pinned command passed in the exact detached Go-master worktree `/tmp/tidb-go-latest-c605`.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go list -tags=codes -f '{{.GoFiles}}|{{.IgnoredGoFiles}}|{{.TestGoFiles}}' ./pkg/util/mock` — passed in both worktrees and confirmed the `!codes` `fortest.go` variant is excluded.
+- `git diff --exit-code c6054025ed4c32ab3672a2a24ea46892714d21ec -- pkg/util/mock` — empty; active package source is unchanged from Go master.
 - Rust search across session, timer, TiKV, and SQL mock owners — confirmed local trait-specific mocks and no package-level replacement.
 
 No Go or Bazel file changed, so `make bazel_prepare` is not required. The

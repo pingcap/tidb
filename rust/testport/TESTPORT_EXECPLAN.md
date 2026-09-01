@@ -1681,13 +1681,15 @@ For each bounded behavior cluster:
   `receipts/util_dbutil.md` and `operations/util-dbutil-audit-execplan.md` with
   no speculative Rust behavior.
 
-- 2026-09-01: audited all ten current Go-master `pkg/util/mock` artifacts
+- 2026-09-02: refreshed the complete current Go-master `pkg/util/mock`
+  boundary at `c6054025ed4c32ab3672a2a24ea46892714d21ec`: all ten artifacts
   (1,318 lines), including the broad context, fake transaction, KV client and
-  store, iterator, metrics mock, test constructor build tag, source tests,
-  benchmark, harness, and Bazel dependencies. Rust has only crate-local
-  trait-specific mocks, not a dependency-closed package owner; the complete
-  Go-only boundary is recorded in `receipts/util_mock.md` and no speculative
-  Rust mock framework was added.
+  store, iterator, metrics mock, `!codes` constructor variant, source tests,
+  benchmark, harness, and Bazel dependencies, were re-read and validated in
+  both worktrees. Rust has only crate-local trait-specific mocks, not a
+  dependency-closed package owner; the Ready receipt and living plan are
+  recorded in `receipts/util_mock.md` and
+  `operations/util-mock-audit-execplan.md`, with no speculative Rust behavior.
 
 - 2026-09-01: audited all ten current Go-master `pkg/util/schemacmp`
   artifacts (3,293 lines), including charset/collation, lattice, table/type
