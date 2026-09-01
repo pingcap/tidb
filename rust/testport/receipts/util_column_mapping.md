@@ -1,7 +1,7 @@
 # `pkg/util/column-mapping` — complete package transcreation
 
 Go source: `origin/master` at
-`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01). The package is
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02). The package is
 byte-for-byte unchanged from extraction pin
 `e2788410d8d696605e8cb002585877a063ccc909`.
 
@@ -50,7 +50,10 @@ fields during configuration deserialization.
 Profile: WIP; this is one completed package within the continuing repository
 audit, not a repository-wide readiness claim.
 
-- `go test ./pkg/util/column-mapping`
+- `git diff --exit-code 0bc44483e3e41a8ea917d4382dc202369468d200..c6054025ed4c32ab3672a2a24ea46892714d21ec -- pkg/util/column-mapping` — passed; no Go package drift.
+- `git diff --exit-code c6054025ed4c32ab3672a2a24ea46892714d21ec..HEAD -- pkg/util/column-mapping` — passed; no current-branch Go package drift.
+- `git ls-tree -r -l c6054025ed4c32ab3672a2a24ea46892714d21ec pkg/util/column-mapping` — passed; exactly the four artifacts listed above.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/column-mapping -count=1` — passed in current and exact detached latest-master (`/tmp/tidb-go-latest-c605`) worktrees.
 - `cargo test -p tidb-util --lib 'column_mapping::tests' --locked -- --test-threads=1`
 - `cargo test -q -p tidb-util --locked -- --test-threads=1`
 - `cargo check -p tidb-util --all-targets --locked`

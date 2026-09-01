@@ -3118,6 +3118,15 @@ For each bounded behavior cluster:
       Go artifacts, restore nil-versus-empty continuation-key behavior in the
       Rust scan generator, add the focused regression, and update its package
       receipt and ExecPlan.
+- [x] Complete the Go-master `pkg/ttl/session` package: inventory all five Go
+      artifacts, restore the omitted `GetSessionVars`/`GetSQLExecutor`
+      interface forwarding, remove the Rust-only absent-callback constructor,
+      add the focused identity regression, and update its package receipt and
+      ExecPlan.
+- [x] Run the Ready validation profile for `pkg/ttl/session`: complete Rust
+      TTL owner tests, tagged Go session tests, Rust formatting/check,
+      repository lint, and diff hygiene pass with the command-local toolchains
+      recorded in `receipts/ttl_session.md`.
 - [x] Complete the Go-master `pkg/util/codec` delta: inventory all 12 source,
       test, benchmark, harness, and build artifacts; remove Rust-only encoder
       value/hash methods; update consumers; add the raw-value regression; and
@@ -3229,6 +3238,15 @@ For each bounded behavior cluster:
       its BUILD target. The existing `tidb-util::channel` receiver drain is an
       exact equivalent of Go's channel-range cleanup; the Go package and Rust
       utility crate check pass. Details are in `receipts/util_channel_audit.md`.
+- 2026-09-02: re-audited all four Go-master `pkg/util/column-mapping` artifacts
+      (888 lines across `README.md`, partition/mapping production code, seven
+      source tests, and the Bazel target) at authority
+      `c6054025ed4c32ab3672a2a24ea46892714d21ec`; the package is unchanged.
+      The existing `tidb-util::column_mapping` owner preserves the prior
+      signed partition, numeric conversion, DDL tuple, and lowercase fixes, so
+      no new source change was justified. Details are in
+      `receipts/util_column_mapping.md` and
+      `docs/operations/util-column-mapping-audit-execplan.md`.
 - 2026-09-01: audited all four Go-master `pkg/util/cpu` artifacts (308 lines,
       six production functions/methods, two source tests, and one test
       harness), including its failpoint, race/flaky BUILD target, cgroup/EMA,
