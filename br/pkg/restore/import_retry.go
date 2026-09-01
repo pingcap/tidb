@@ -57,14 +57,24 @@ func (o *OverRegionsInRangeController) onError(ctx context.Context, result RPCRe
 	// TODO: Maybe handle some of region errors like `epoch not match`?
 }
 
+<<<<<<< HEAD:br/pkg/restore/import_retry.go
 func (o *OverRegionsInRangeController) tryFindLeader(ctx context.Context, region *split.RegionInfo) (*metapb.Peer, error) {
 	var leader *metapb.Peer
 	failed := false
 	leaderRs := utils.InitialRetryState(4, 5*time.Second, 10*time.Second)
 	err := utils.WithRetry(ctx, func() error {
+=======
+func (o *RangeController) tryFindLeader(ctx context.Context, region *split.RegionInfo) (*metapb.Peer, error) {
+	backoffStrategy := utils.NewBackoffRetryAllExceptStrategy(
+		4, 2*time.Second, 10*time.Second, isNonRetryErrForFindLeader)
+	return utils.WithRetryV2(ctx, backoffStrategy, func(ctx context.Context) (*metapb.Peer, error) {
+>>>>>>> 0bc44483e3e (br: fix region not found (#70772)):br/pkg/restore/log_client/import_retry.go
 		r, err := o.metaClient.GetRegionByID(ctx, region.Region.Id)
 		if err != nil {
 			return err
+		}
+		if r == nil || r.Region == nil {
+			return nil, errors.Annotatef(berrors.ErrKVEpochNotMatch, "region %d is not found", region.Region.Id)
 		}
 		if !split.CheckRegionEpoch(r, region) {
 			failed = true
@@ -85,8 +95,17 @@ func (o *OverRegionsInRangeController) tryFindLeader(ctx context.Context, region
 	return leader, nil
 }
 
+<<<<<<< HEAD:br/pkg/restore/import_retry.go
 // handleInRegionError handles the error happens internal in the region. Update the region info, and perform a suitable backoff.
 func (o *OverRegionsInRangeController) handleInRegionError(ctx context.Context, result RPCResult, region *split.RegionInfo) (cont bool) {
+=======
+func isNonRetryErrForFindLeader(err error) bool {
+	return berrors.ErrKVEpochNotMatch.Equal(err)
+}
+
+// handleRegionError handles the error happens internal in the region. Update the region info, and perform a suitable backoff.
+func (o *RangeController) handleRegionError(ctx context.Context, result RPCResult, region *split.RegionInfo) (cont bool) {
+>>>>>>> 0bc44483e3e (br: fix region not found (#70772)):br/pkg/restore/log_client/import_retry.go
 	if result.StoreError.GetServerIsBusy() != nil {
 		if strings.Contains(result.StoreError.GetMessage(), "memory is limited") {
 			sleepDuration := 15 * time.Second

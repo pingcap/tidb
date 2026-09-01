@@ -51,6 +51,59 @@ func assertRegions(t *testing.T, regions []*split.RegionInfo, keys ...string) {
 	}
 }
 
+<<<<<<< HEAD:br/pkg/restore/import_retry_test.go
+=======
+// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
+func initTestClient(isRawKv bool) *split.TestClient {
+	keys := []string{"", "aay", "bba", "bbh", "cca", ""}
+	stores := make(map[uint64]*metapb.Store)
+	stores[1] = &metapb.Store{
+		Id: 1,
+	}
+	peers := make([]*metapb.Peer, 1)
+	peers[0] = &metapb.Peer{
+		Id:      1,
+		StoreId: 1,
+	}
+	regions := make(map[uint64]*split.RegionInfo)
+	for i := 1; i < len(keys); i++ {
+		startKey := []byte(keys[i-1])
+		if len(startKey) != 0 {
+			startKey = codec.EncodeBytesExt([]byte{}, startKey, isRawKv)
+		}
+		endKey := []byte(keys[i])
+		if len(endKey) != 0 {
+			endKey = codec.EncodeBytesExt([]byte{}, endKey, isRawKv)
+		}
+		regions[uint64(i)] = &split.RegionInfo{
+			Leader: &metapb.Peer{
+				Id:      uint64(i),
+				StoreId: 1,
+			},
+			Region: &metapb.Region{
+				Id:       uint64(i),
+				Peers:    peers,
+				StartKey: startKey,
+				EndKey:   endKey,
+			},
+		}
+	}
+	return split.NewTestClient(stores, regions, 6)
+}
+
+type nilRegionByIDClient struct {
+	*split.TestClient
+	regionID uint64
+}
+
+func (c *nilRegionByIDClient) GetRegionByID(ctx context.Context, regionID uint64) (*split.RegionInfo, error) {
+	if regionID == c.regionID {
+		return nil, nil
+	}
+	return c.TestClient.GetRegionByID(ctx, regionID)
+}
+
+>>>>>>> 0bc44483e3e (br: fix region not found (#70772)):br/pkg/restore/log_client/import_retry_test.go
 func TestScanSuccess(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
 	cli := initTestClient(false)
@@ -359,6 +412,79 @@ func TestRegionSplit(t *testing.T) {
 	assertRegions(t, firstRunRegions, "", "aay")
 	assertRegions(t, secondRunRegions, "", "aay", "aayy", "bba", "bbh", "cca", "")
 	require.NoError(t, err)
+
+	t.Run("missing region by ID falls back to range scan", func(t *testing.T) {
+		cli := initTestClient(false)
+		rs := utils.InitialRetryState(2, 0, 0)
+		ctx := context.Background()
+
+		regions, err := split.PaginateScanRegion(ctx, cli, []byte("aaz"), []byte("aazz"), 1)
+		require.NoError(t, err)
+		require.Len(t, regions, 1)
+		target := regions[0]
+
+		newRegions := []*split.RegionInfo{
+			{
+				Region: &metapb.Region{
+					Id:       42,
+					StartKey: target.Region.StartKey,
+					EndKey:   codec.EncodeBytes(nil, []byte("aayy")),
+				},
+				Leader: &metapb.Peer{
+					Id:      43,
+					StoreId: 1,
+				},
+			},
+			{
+				Region: &metapb.Region{
+					Id:       44,
+					StartKey: codec.EncodeBytes(nil, []byte("aayy")),
+					EndKey:   target.Region.EndKey,
+				},
+				Leader: &metapb.Peer{
+					Id:      45,
+					StoreId: 1,
+				},
+			},
+		}
+		splitRegion := func() {
+			for _, r := range newRegions {
+				cli.RegionsInfo.SetRegion(pdtypes.NewRegionInfo(r.Region, r.Leader))
+				cli.Regions[r.Region.Id] = r
+			}
+		}
+		notLeader := &import_sstpb.Error{
+			Message: "leader not found",
+			StoreError: &errorpb.Error{
+				NotLeader: &errorpb.NotLeader{
+					RegionId: target.Region.Id,
+				},
+			},
+		}
+
+		ctl := logclient.CreateRangeController(
+			[]byte(""), []byte(""), &nilRegionByIDClient{TestClient: cli, regionID: target.Region.Id}, &rs)
+		firstRunRegions := []*split.RegionInfo{}
+		secondRunRegions := []*split.RegionInfo{}
+		isSecondRun := false
+		err = ctl.ApplyFuncToRange(ctx, func(ctx context.Context, r *split.RegionInfo) logclient.RPCResult {
+			if !isSecondRun && r.Region.Id == target.Region.Id {
+				splitRegion()
+				isSecondRun = true
+				return logclient.RPCResultFromPBError(notLeader)
+			}
+			if isSecondRun {
+				secondRunRegions = append(secondRunRegions, r)
+			} else {
+				firstRunRegions = append(firstRunRegions, r)
+			}
+			return logclient.RPCResultOK()
+		})
+
+		assertRegions(t, firstRunRegions, "", "aay")
+		assertRegions(t, secondRunRegions, "", "aay", "aayy", "bba", "bbh", "cca", "")
+		require.NoError(t, err)
+	})
 }
 
 func TestRetryBackoff(t *testing.T) {
