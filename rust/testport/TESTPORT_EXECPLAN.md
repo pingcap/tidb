@@ -502,6 +502,24 @@ For each bounded behavior cluster:
   recorded in `receipts/ddl_ingest.md` and
   `rust/docs/operations/ddl-ingest-audit-execplan.md`.
 
+- 2026-09-02: restored the complete Go-master `pkg/domain/serverinfo`
+  boundary: exactly five artifacts and 2,295 lines, including the leased
+  status-endpoint claim state machine, registration/revocation cleanup,
+  shutdown ordering, and six top-level tests. Focused claim tests and the full
+  failpoint-aware package suite pass. Rust has no dependency-closed domain or
+  etcd owner; the current Go-only inventory supersedes the earlier partial
+  status-claim receipt in `receipts/domain_serverinfo_audit.md`, with details in
+  `rust/docs/operations/domain-serverinfo-audit-execplan.md`.
+
+- 2026-09-02: aligned the complete Go-master `pkg/domain/crossks` package:
+  exactly eight artifacts and 2,094 lines, including runtime eviction,
+  cross-keyspace DDL submission, server-info cleanup, and eight top-level tests.
+  Restored failed-bootstrap/manager-close cleanup and the min-job-ID refresher
+  control seam; focused and complete failpoint-aware suites pass. Four test-only
+  protobuf literals retain this branch's older `kvproto` field spelling. The
+  Go-only boundary is recorded in `receipts/domain_crossks.md` and
+  `rust/docs/operations/domain-crossks-audit-execplan.md`.
+
 - 2026-09-02: updated the complete five-artifact Go-master
   `pkg/server/handler/tests` consumer inventory (3,630 lines) for the DXF
   history redaction contract. Its focused API regression now requires

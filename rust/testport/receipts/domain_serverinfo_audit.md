@@ -1,90 +1,80 @@
-# `pkg/domain/serverinfo` — Go-master parity audit receipt
+# `pkg/domain/serverinfo` parity receipt
 
-Status: complete inventory and one dependency-closed current-master behavior
-batch. This receipt does not claim the whole Go package is transcreated; the
-remaining package boundaries are listed below.
+Comparison source: Go `origin/master` at commit
+`5e8a1a229a7591ddac49a0cd3b795587c2595ab9` (2026-09-01).
 
-Comparison source: Go `origin/master` at
-`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01). The package has
-exactly five tracked artifacts and 2,295 lines:
+## Complete inventory
 
-| Artifact | Lines | Role |
-| --- | ---: | --- |
-| `BUILD.bazel` | 55 | one library and one five-shard, embedded-etcd test target |
-| `info.go` | 179 | server-info model, JSON behavior, cloning, and topology conversion |
-| `status_endpoint_claim.go` | 294 | leased duplicate-status-endpoint claim state machine |
-| `syncer.go` | 612 | registration, sessions, topology, stale cleanup, reads, and loops |
-| `syncer_test.go` | 1,155 | six harness/tests plus embedded-etcd and fault-injection support |
+The package contains exactly five tracked artifacts and 2,295 lines: four
+production files (including the status-endpoint claim implementation) and one
+test file. All production source, test/support code, build metadata, generated
+inputs, and platform variants were read in full before editing. There is no
+package `doc.go`, fixture directory, `testdata`, benchmark, fuzz target, or
+`OWNERS` file.
 
-There is no package `doc.go`, generated source, platform/build-tag variant,
-fixture or testdata directory, benchmark, or nested package. The three
-production files contain 49 function/method declarations. The test artifact
-contains `TestMain`, `TestTopology`, `TestBuildStatusEndpointClaim`,
-`TestStatusEndpointClaim`, `TestCleanupStaleServerAndOwnerInfo`, and
-`TestAssumedServerInfoSyncer`, plus 23 local helper methods/functions. Every
-source, test, helper, and Bazel dependency entry was read from `origin/master`
-before editing Rust.
+| artifact | lines | Go-master blob | SHA-256 | role |
+| --- | ---: | --- | --- | --- |
+| `BUILD.bazel` | 55 | `290b7078dbcc91e53c10e65cf6a7564bf8d250ee` | `45d293b28432cf3a05bb205bb549967061f3ebf73075d9551eb270807e6cbace` | server-info library and five-shard flaky test target |
+| `info.go` | 179 | `95f307646d28415f44efaffe067c0b4715dc5ee8` | `b846f2b3613cd9772c62a5fc216f367ef0de3c1fb4825e8bc5ad3125ba3bfd88` | static/dynamic server and topology information |
+| `status_endpoint_claim.go` | 294 | `f073f886be56db97b227ae2919db217de6724475` | `f1b9eaf28c4a08b6ee18f3ebe0f233c9b7c03dea2db2b541f212df0bfe3d6192` | best-effort etcd advertised status-endpoint claims |
+| `syncer.go` | 612 | `51d550336f8cc4b6bbb7265384b7d92a177d1d1a` | `01ea2f83265836bfe573a74ff3b973401468bf7f3034e5869e5889519d1623ac` | server-info sessions, cleanup, restart, and topology loops |
+| `syncer_test.go` | 1,155 | `af2ec72651ee688e4a9e0ba0a73c3e6ac7fd0976` | `700b67653be53b8c211fe44ab2c200b6f4efb4c49caf2e7aeee6c677266f62f` | topology, stale cleanup, claim, failure, and shutdown regressions |
 
-## Current-master delta implemented
+The production inventory contains 68 declaration lines and the test inventory
+contains six top-level test functions (including `TestMain`). The package now
+matches Go master byte-for-byte.
 
-The requested Rust branch predates `status_endpoint_claim.go` and Go's
-`ServerInfo.String`. This batch adds both to the ordinary server-info path:
+## Native integration decision and fix
 
-- `tidb-domain::status_endpoint_claim` normalizes literal IP and DNS hosts,
-  applies the production `10080` fallback, brackets IPv6, and derives the
-  raw URL-safe base64 etcd key. Disabled status reporting, empty hosts, and
-  assumed-keyspace syncers skip the claim.
-- Registration performs Go's best-effort create, conflict, and same-ID restart
-  state machine. A claim conflict or etcd error is warning-only and cannot
-  block the server-info PUT. Same-ID reattachment is guarded by the observed
-  value and modification revision.
-- `tidb-pd-client` now supplies the atomic create-or-observe transaction and a
-  revision-guarded delete. Cleanup first verifies owner ID and lease, then
-  compares the observed revision, so an old or losing generation cannot delete
-  a newer claim.
-- Failed registration removes only its own claim and revokes its lease.
-  Graceful removal releases the claim before deleting the server-info entry.
-- Both serving node startup paths derive claim enablement from
-  `report_status`; the no-client and disabled paths retain Go's no-op result.
-- `ServerInfo::string` and its `Display` carrier sample the live server-ID
-  getter and return the same JSON representation as `Marshal`.
+Server-info synchronization is Go-native infrastructure coupled to etcd
+leases, TiDB owner election, topology, status configuration, and domain
+lifecycle. Rust's `tidb-dxf` crate has no dependency-closed server-info or
+status endpoint owner, so no speculative Rust implementation was introduced.
 
-Focused regressions cover the source endpoint normalization matrix, disabled
-and assumed syncers, conflict-is-warning-only registration, same-ID restart,
-loser/old-lease cleanup safety, and current-server-ID string formatting.
+The branch lacked Go master's endpoint-claim ownership and lease lifecycle.
+This batch restores normalized IPv4/IPv6/DNS endpoint keys, conflict-safe
+reattachment, namespaced claims, warning-only claim failures, bounded cleanup,
+and the `WithoutStatusEndpointClaim` option for non-serving domains. Server
+registration now cleans up failed claims, `RemoveServerInfo` removes only its
+own claim, `RevokeSession` stops refresh and revokes the lease, and shutdown
+checks `exitCh` before restarting a dead session. `ServerInfo.String` and the
+five-shard embedded Bazel target are restored as well.
 
-## Remaining package boundaries
+## Validation and risk
 
-The earlier `syncer.go` owner remains incomplete for `NewCrossKSSyncer`,
-minimum-start-TS reporting, DDL-owner-key cleanup, and the exact
-`concurrency.Session` done/cancellation surface. The source's embedded-etcd
-matrix also covers concurrent claim winners, namespaces, transaction fault
-injection, parent cancellation, lease-expiry observation, and bounded cleanup;
-this checkout has no embedded-etcd Rust harness, so those transport-level
-cases were inspected but not claimed from the in-memory state-machine tests.
-These boundaries keep this receipt from making an atomic full-package claim.
+Profile: **Ready** for this lifecycle/etcd behavior restoration. Before the
+implementation, the new claim regression could not compile because the
+canonical claim types and methods were absent. Afterward the focused endpoint
+normalization test and complete claim integration test passed with failpoints
+enabled and disabled by the repository wrapper:
 
-## Validation
+```text
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
+GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
+./tools/check/failpoint-go-test.sh ./pkg/domain/serverinfo \
+  -run '^TestBuildStatusEndpointClaim$' -count=1
+# PASS; ok github.com/pingcap/tidb/pkg/domain/serverinfo 0.795s
 
-Profile: Ready for this behavior batch; repository-wide parity remains open.
+./tools/check/failpoint-go-test.sh ./pkg/domain/serverinfo \
+  -run '^TestStatusEndpointClaim$' -count=1
+# PASS; ok github.com/pingcap/tidb/pkg/domain/serverinfo 2.883s
 
-- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 ./tools/check/failpoint-go-test.sh pkg/domain/serverinfo -run 'TestTopology|TestCleanupStaleServerAndOwnerInfo|TestServerInfo'`
-- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --offline --locked -p tidb-domain --lib status_endpoint_claim -- --test-threads=1` (from `rust/`)
-- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --offline --locked -p tidb-domain --lib serverinfo::tests -- --test-threads=1` (from `rust/`)
-- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --offline --locked -p tidb-domain --lib serverinfo_syncer::tests -- --test-threads=1` (from `rust/`)
-- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 check --offline --locked -p tidb-domain -p tidb-pd-client -p tidb-server` (from `rust/`)
-- `cargo +nightly-2026-08-22 fmt --all -- --check` (from `rust/`)
-- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 make lint`
-- `git diff --check`
+./tools/check/failpoint-go-test.sh ./pkg/domain/serverinfo -count=1
+# PASS; ok github.com/pingcap/tidb/pkg/domain/serverinfo 3.324s
+```
 
-The selected failpoint-enabled Go tests pass and the harness disables
-failpoint instrumentation afterward. The Rust claim, model, and syncer filters
-pass 3, 4, and 17 tests respectively; the three-crate owner/consumer check,
-formatting, Ready lint, and diff gates pass. The working Go branch predates the
-new status-claim artifact, so the current-master embedded-etcd status-claim
-tests were not executable in-place. No Go or Bazel file changed; therefore
-`make bazel_prepare` is not required.
+`make lint`, Rust formatting, and `git diff --check` are required Ready gates
+and pass for this batch. `make bazel_prepare` is required because a Go
+production file was added and the Bazel target/import shape changed; the local
+environment has no `bazel` executable, so that gate is recorded as blocked.
 
-Risk is concentrated in the unrun live-etcd concurrency/fault matrix. The
-implemented path is startup/shutdown-only and adds bounded etcd transactions;
-it does not alter SQL compatibility or hot-path performance.
+The main risk is etcd lease/claim cleanup ordering: claim operations are
+best-effort and never block registration, while confirmed cleanup errors are
+logged. The integration suite covers conflicts, races, restarts, namespaces,
+failed writes, bounded cleanup, cancellation, and lease revocation.
+
+## Outcome
+
+The complete server-info inventory and Go-only boundary are recorded here.
+Go-master endpoint claim and lease lifecycle behavior is restored for the
+cross-keyspace consumer; the rolling audit continues after publication.
