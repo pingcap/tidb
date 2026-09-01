@@ -397,6 +397,43 @@ func isNDVClose(lhs, rhs float64) bool {
 	return diff/maxVal < 0.2
 }
 
+// indexJoinPathCountAfterAccess4Compare adjusts CountAfterAccess with join EQ predicates
+// that become runtime lookup keys but are invisible to normal DataSource range estimation.
+func indexJoinPathCountAfterAccess4Compare(
+	indexJoinInfo *indexJoinPathInfo,
+	path *util.AccessPath,
+	idxOff2KeyOff []int,
+	usedColsLen int,
+) float64 {
+	if path.CountAfterAccess <= 0 ||
+		indexJoinInfo.innerTableStats == nil ||
+		indexJoinInfo.innerTableStats.StatsVersion == statistics.PseudoVersion {
+		return path.CountAfterAccess
+	}
+	usedColIDs := make([]int64, 0, usedColsLen)
+	for idxOff, keyOff := range idxOff2KeyOff {
+		if idxOff >= usedColsLen {
+			break
+		}
+		if keyOff < 0 {
+			continue
+		}
+		if idxOff < len(path.ConstCols) && path.ConstCols[idxOff] {
+			continue
+		}
+		if idxOff >= len(path.FullIdxCols) || path.FullIdxCols[idxOff] == nil ||
+			idxOff >= len(path.FullIdxColLens) || path.FullIdxColLens[idxOff] != types.UnspecifiedLength {
+			continue
+		}
+		usedColIDs = append(usedColIDs, path.FullIdxCols[idxOff].UniqueID)
+	}
+	joinKeyNDV := getColsNDVLowerBoundFromHistColl(usedColIDs, indexJoinInfo.innerTableStats.HistColl)
+	if joinKeyNDV <= 0 {
+		return path.CountAfterAccess
+	}
+	return path.CountAfterAccess / float64(joinKeyNDV)
+}
+
 // indexJoinPathConstructResult constructs the index join path result.
 func indexJoinPathConstructResult(
 	sctx planctx.PlanContext,
@@ -423,9 +460,10 @@ func indexJoinPathConstructResult(
 	}
 	idxOff2KeyOff := make([]int, len(buildTmp.curIdxOff2KeyOff))
 	copy(idxOff2KeyOff, buildTmp.curIdxOff2KeyOff)
+	countAfterAccess4Compare := indexJoinPathCountAfterAccess4Compare(indexJoinInfo, path, idxOff2KeyOff, usedColsLen)
 	return &indexJoinPathResult{
 		chosenPath:     path,
-		candidate:      getIndexCandidateForIndexJoin(sctx, path, usedColsLen),
+		candidate:      getIndexCandidateForIndexJoin(sctx, path, usedColsLen, countAfterAccess4Compare),
 		usedColsLen:    len(ranges.Range()[0].LowVal),
 		eqUsedColsNDV:  innerNDV,
 		lastColIsRange: lastColIsRange,

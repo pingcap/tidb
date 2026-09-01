@@ -778,10 +778,11 @@ type candidatePath struct {
 	matchWithAdvisorySortItems bool
 	// partialPathMatchResults stores each partial path's matchProperty result.
 	// Length equals len(path.PartialIndexPaths). Only set for IndexMerge paths.
-	partialPathMatchResults []property.PhysicalPropMatchResult
-	indexJoinCols           int  // how many index columns are used in access conditions in this IndexJoin.
-	isFullRange             bool // cached result of whether this path covers the full scan range.
-	eqOrInCount             int  // cached result of equalPredicateCount().
+	partialPathMatchResults  []property.PhysicalPropMatchResult
+	indexJoinCols            int     // how many index columns are used in access conditions in this IndexJoin.
+	countAfterAccess4Compare float64 // adjusted CountAfterAccess used only by candidate comparison.
+	isFullRange              bool    // cached result of whether this path covers the full scan range.
+	eqOrInCount              int     // cached result of equalPredicateCount().
 }
 
 func compareBool(l, r bool) int {
@@ -846,6 +847,13 @@ func compareRiskRatio(lhs, rhs *candidatePath) (int, float64) {
 		}
 	}
 	return 0, 0
+}
+
+func (c *candidatePath) getCountAfterAccess4Compare() float64 {
+	if c.countAfterAccess4Compare > 0 {
+		return c.countAfterAccess4Compare
+	}
+	return c.path.CountAfterAccess
 }
 
 // compareCandidates is the core of skyline pruning, which is used to decide which candidate path is better.
@@ -915,7 +923,9 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 
 	// This rule is empirical but not always correct.
 	// If x's range row count is significantly lower than y's, for example, 1000 times, we think x is better.
-	if lhs.path.CountAfterAccess > 100 && rhs.path.CountAfterAccess > 100 && // to prevent some extreme cases, e.g. 0.01 : 10
+	lhsCountAfterAccess := lhs.getCountAfterAccess4Compare()
+	rhsCountAfterAccess := rhs.getCountAfterAccess4Compare()
+	if lhsCountAfterAccess > 100 && rhsCountAfterAccess > 100 && // to prevent some extreme cases, e.g. 0.01 : 10
 		len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 && // not IndexMerge since its row count estimation is not accurate enough
 		prop.ExpectedCnt == math.MaxFloat64 { // Limit may affect access row count
 		threshold := float64(fixcontrol.GetIntWithDefault(sctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix45132, 1000))
@@ -923,10 +933,10 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 		if threshold > 0 { // set it to 0 to disable this rule
 			// corrResult is included to ensure we don't preference to a higher risk plan given that
 			// this rule does not check the other criteria included below.
-			if lhs.path.CountAfterAccess/rhs.path.CountAfterAccess > threshold && riskResult <= 0 {
+			if lhsCountAfterAccess/rhsCountAfterAccess > threshold && riskResult <= 0 {
 				return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
 			}
-			if rhs.path.CountAfterAccess/lhs.path.CountAfterAccess > threshold && riskResult >= 0 {
+			if rhsCountAfterAccess/lhsCountAfterAccess > threshold && riskResult >= 0 {
 				return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
 			}
 		}
@@ -1691,8 +1701,8 @@ func getIndexCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *pr
 	return candidate
 }
 
-func getIndexCandidateForIndexJoin(sctx planctx.PlanContext, path *util.AccessPath, indexJoinCols int) *candidatePath {
-	candidate := &candidatePath{path: path, indexJoinCols: indexJoinCols}
+func getIndexCandidateForIndexJoin(sctx planctx.PlanContext, path *util.AccessPath, indexJoinCols int, countAfterAccess4Compare float64) *candidatePath {
+	candidate := &candidatePath{path: path, indexJoinCols: indexJoinCols, countAfterAccess4Compare: countAfterAccess4Compare}
 	candidate.matchPropResult = property.PropNotMatched
 	candidate.accessCondsColMap = util.ExtractCol2Len(sctx.GetExprCtx().GetEvalCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
 	candidate.indexCondsColMap = util.ExtractCol2Len(sctx.GetExprCtx().GetEvalCtx(), append(path.AccessConds, path.IndexFilters...), path.FullIdxCols, path.FullIdxColLens)
