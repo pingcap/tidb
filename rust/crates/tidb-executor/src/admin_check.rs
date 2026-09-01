@@ -225,9 +225,22 @@ pub fn check_table(
                     index: name.to_owned(),
                     table: table.name.clone(),
                 })?;
+            // Go's `buildPhysicalIndexLookUpReaders` skips the clustered
+            // PRIMARY KEY: its key is the record key, not a stored `_i`
+            // entry. `ADMIN CHECK INDEX t PRIMARY` therefore builds no
+            // reader and returns success without scanning the primary key.
+            if found.clustered_primary {
+                return Ok(0);
+            }
             vec![found]
         }
-        None => indexes,
+        // The clustered PRIMARY KEY is the row key itself and has no index
+        // entry range. Keep it in table metadata, but do not ask the
+        // consistency checker to scan that nonexistent `_i` range.
+        None => indexes
+            .into_iter()
+            .filter(|index| !index.clustered_primary)
+            .collect(),
     };
 
     let rows = table

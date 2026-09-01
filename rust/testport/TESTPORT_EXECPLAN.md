@@ -1577,6 +1577,12 @@ For each bounded behavior cluster:
       cross-platform utility owner; adding another signal thread or stack
       endpoint would be Rust-only behavior. Details are in
       `receipts/util_signal.md`.
+- 2026-09-01: audited both Go-master `pkg/util/linter/constructor` artifacts
+      (34 lines: public Bazel library and the zero-sized `Constructor` marker).
+      It is static-analysis-only metadata consumed by the Go constructor
+      linter; Rust has no equivalent linter or runtime consumer. The package
+      remains explicitly unclaimed with no source change. Details are in
+      `receipts/util_linter_constructor.md`.
 - [ ] Run Ready validation and self-review only when the requested parity scope
       is genuinely complete enough for a final-status claim.
 
@@ -1658,6 +1664,10 @@ For each bounded behavior cluster:
   modules cover only server-local Unix shutdown and exit-code behavior; a
   detached signal adapter would duplicate ownership and create Rust-only
   behavior. Date/Author: 2026-09-01, Codex.
+- Decision: keep `pkg/util/linter/constructor` Go-only. Its empty
+  `Constructor` embedding is interpreted by an external Go AST linter and has
+  no Rust runtime or build consumer; adding a native marker would create a
+  second, Rust-only static-analysis policy. Date/Author: 2026-09-01, Codex.
 - Decision: preserve the Rust planner-error declaration table and its
   all-prototype initialization guard. Go package initialization registers all
   98 entries, while Go's only explicit test checks 59; the Rust guard is the
