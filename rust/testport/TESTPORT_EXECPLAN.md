@@ -40,6 +40,15 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: audited the complete Go-master `pkg/sessionctx/sysproctrack`
+  package before editing: two tracked artifacts and 48 lines containing the
+  public `TrackProc`/`Tracker` interfaces and BUILD dependency closure. The
+  package has no tests, fixtures, generated/platform variants, or build
+  inputs and is unchanged from the pinned source. Rust preserves the callback
+  seam through `tidb-sqlexec` and server lifecycle guards; concrete process-map
+  ownership remains outside this package. Recorded the explicit boundary in
+  `receipts/sessionctx_sysproctrack.md`.
+
 - 2026-09-01: audited the complete Go-master `pkg/sessionctx/slowlogrule`
   package before editing: two tracked artifacts and 73 lines, covering the
   public BUILD target and all condition/rule/session/global metadata plus its
