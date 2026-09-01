@@ -40,6 +40,15 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: audited the complete Go-master `pkg/executor/internal/builder`
+  package (two artifacts, 123 lines), including its DAG tree/list helpers,
+  metadata fields, error propagation, and internal Bazel target. The Rust
+  `tidb-exec::dag_request` owner covers the bounded TiKV list path, while this
+  workspace has no TiFlash physical-plan tree builder or index-merge
+  non-natural parent-index caller. Recorded the explicit boundary in
+  `receipts/executor_internal_builder.md` without inventing an uncalled
+  transport or planner path.
+
 - 2026-09-01: audited the complete current Go-master
   `pkg/executor/internal/vecgroupchecker` package (four artifacts, 939
   lines), including its vectorized grouping implementation, common test
