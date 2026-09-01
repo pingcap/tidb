@@ -527,14 +527,10 @@ impl ScanQueryGenerator {
         self.exhausted
     }
 
-    /// Go `setStack`. Go's nil `key` selects the range start; an empty slice
-    /// carries the same meaning here, since nothing constructs a non-nil empty
-    /// key.
+    /// Go `setStack`. Go's nil `key` selects the range start, while a non-nil
+    /// empty key clears the stack without resetting it.
     fn set_stack(&mut self, key: Option<&[Datum]>) -> Result<()> {
-        let key = match key.filter(|key| !key.is_empty()) {
-            Some(key) => key.to_vec(),
-            None => self.key_range_start.clone(),
-        };
+        let key = key.map_or_else(|| self.key_range_start.clone(), <[Datum]>::to_vec);
 
         if key.is_empty() {
             self.stack.clear();

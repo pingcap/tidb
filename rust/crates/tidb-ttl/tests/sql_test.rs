@@ -569,6 +569,31 @@ fn test_scan_query_generator() {
     }
 }
 
+/// Go keeps a non-`nil` empty continuation key distinct from a `nil` key:
+/// `setStack` clears the stack instead of resetting to the configured range
+/// start. This is reachable through a result row carrying no key datums.
+#[test]
+fn test_scan_query_generator_preserves_empty_continuation_key() {
+    let table = PhysicalTable {
+        schema: CiString::new("test"),
+        table_info: table("t1"),
+        key_columns: vec![col("id", FieldType::new(FieldTypeCode::Int24))],
+        time_column: Some(col("time", datetime())),
+        ..Default::default()
+    };
+    let mut generator = ScanQueryGenerator::new(&table, 0, &d![1], &d![100]).unwrap();
+
+    assert_eq!(
+        generator.next_sql(&[], 3).unwrap(),
+        "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `id` >= 1 AND `id` < 100 AND `time` < FROM_UNIXTIME(0) ORDER BY `id` ASC LIMIT 3"
+    );
+    let empty_key_results = vec![Vec::<Datum>::new(); 3];
+    assert_eq!(
+        generator.next_sql(&empty_key_results, 3).unwrap(),
+        "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `id` < 100 AND `time` < FROM_UNIXTIME(0) ORDER BY `id` ASC LIMIT 3"
+    );
+}
+
 /// Go `TestBuildDeleteSQL`.
 #[test]
 fn test_build_delete_sql() {

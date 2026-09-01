@@ -1822,6 +1822,15 @@ For each bounded behavior cluster:
   `cca2f7711b4ac393d8ef0d979dda8accd9c3d243`; local, tracking, and remote SHAs
   match after the push/pull.
 
+- 2026-09-02: audited the complete four-artifact Go-master
+  `pkg/ttl/sqlbuilder` package (1,510 lines), including every SQL formatter,
+  builder/generator branch, test, and BUILD input. Restored Go's distinction
+  between a nil and non-nil empty continuation key in the Rust scan generator;
+  the focused regression failed before the fix and the six-test Rust owner plus
+  tagged Go suite now pass. The package receipt and ExecPlan record the
+  explicit parser-driver and arbitrary-byte writer boundaries; publication is
+  the next step for this batch.
+
 - 2026-09-01: completed the Go-master `pkg/util/stringutil` package as one
   four-artifact unit. The rolling source delta changes `CompileLike2Regexp`
   from an implicit backslash escape to an explicit escape byte; Rust now
@@ -3104,6 +3113,10 @@ For each bounded behavior cluster:
       Go artifacts, restore TTL task range encoding/decoding and JSON state
       parity through the shared Rust codec, add focused regressions, and update
       its package receipt and ExecPlan.
+- [x] Complete the Go-master `pkg/ttl/sqlbuilder` package: inventory all four
+      Go artifacts, restore nil-versus-empty continuation-key behavior in the
+      Rust scan generator, add the focused regression, and update its package
+      receipt and ExecPlan.
 - [x] Complete the Go-master `pkg/util/codec` delta: inventory all 12 source,
       test, benchmark, harness, and build artifacts; remove Rust-only encoder
       value/hash methods; update consumers; add the raw-value regression; and
