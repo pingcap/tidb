@@ -3328,6 +3328,14 @@ For each bounded behavior cluster:
       no Rust-only timer was added. Details are in
       `receipts/util_expensivequery.md` and
       `docs/operations/util-expensivequery-audit-execplan.md`.
+- 2026-09-02: re-audited all four Go-master `pkg/util/benchdaily` artifacts
+      (261 lines across the benchmark JSON adapter, daily combiner, common
+      harness, and Bazel target) at authority
+      `c6054025ed4c32ab3672a2a24ea46892714d21ec`; the package is unchanged.
+      Rust has no dependency-closed CI owner for the reflection adapter or
+      result-file envelope, so no Rust-only serializer was added. Details are
+      in `receipts/util_benchdaily.md` and
+      `docs/operations/util-benchdaily-audit-execplan.md`.
 - 2026-09-01: audited all four Go-master `pkg/util/admin` artifacts (412
       lines including the restricted count path, row/index consistency scan,
       corruption integration test, and Bazel target). The existing Rust
