@@ -570,9 +570,9 @@ func TestCalRangeSize(t *testing.T) {
 	}{
 		{memPerCore: int64(var17 * float64(units.GiB)), rangeInfos: [][3]int64{
 			{2 * 96 * units.MiB, 2 * 960_000, 1},
-			{256 * units.MiB, 2_560_000, 1},
-			{256*units.MiB + 1, 2_560_000, 2},
-			{256*units.MiB + 1, 2_560_000, 4},
+			{128*units.MiB + 1, 1_280_000, 2},
+			{512*units.MiB/3 + 1, 5_120_000 / 3, 3},
+			{units.GiB/5 + 1, 2_048_000, 5},
 		}},
 		{memPerCore: int64(var35 * float64(units.GiB)), rangeInfos: [][3]int64{
 			{5 * 96 * units.MiB, 5 * 960_000, 1},
@@ -581,6 +581,11 @@ func TestCalRangeSize(t *testing.T) {
 			{512*units.MiB + 1, 5_120_000, 2},
 		}},
 	}
+
+	require.Zero(t, getEngineMemoryLimit(readerMemoryQuotaPerCore, 1))
+	memCapacity := int64(2 * units.GiB)
+	expectedLimit := int(float64(memCapacity-readerMemoryQuotaPerCore) / writeStepMemShareCount * 3)
+	require.Equal(t, expectedLimit, getEngineMemoryLimit(memCapacity, 1))
 
 	for i, c := range cases {
 		for j, rs := range commonUsedRegionSizeSettings {
