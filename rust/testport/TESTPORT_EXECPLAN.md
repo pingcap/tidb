@@ -36,6 +36,16 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- [x] (2026-08-31) Completed the pinned three-artifact
+  `pkg/lightning/metric` package and its dependent three-artifact
+  `pkg/lightning/worker` package. Added the exact collector sets, labels,
+  buckets, registration lifecycle, readings, context propagation, worker FIFO,
+  blocking channel behavior, metrics, six metric tests, and one worker test.
+  The worker implementation includes Go's zero-capacity channel rendezvous;
+  no Rust-only scheduling policy or supplemental test remains. Complete
+  inventories and WIP evidence are in `receipts/lightning_metric.md` and
+  `receipts/lightning_worker.md`.
+
 - [x] (2026-08-31) Completed pinned two-artifact
   `pkg/lightning/importdef`. Added only its target database/table carriers with
   byte-preserving strings, nil map/pointer states, shared mutable table/model
