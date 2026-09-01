@@ -1502,6 +1502,16 @@ For each bounded behavior cluster:
       remote profile provider, or infoschema owner; the package is therefore
       explicitly unclaimed and no partial Rust behavior was added. Details are
       in `receipts/util_profile_audit.md`.
+- 2026-09-01: inventoried all 33 Go-master root `pkg/util` artifacts (3,978
+      lines, 118 production declarations, four platform variants, 11 source
+      tests, and the Bazel fixture glob). The package remains explicitly
+      unclaimed because its TLS/certificate, etcd, runtime, SQL-log, pool, and
+      goroutine consumers do not have one dependency-closed Rust owner. Fixed
+      the scoped Rust mock-PD URL boundary by removing extra ftp/tcp/udp/ws/wss
+      schemes, accepting opaque unix/unixs endpoints, trimming input, and
+      storing normalized URLs; the pre-fix regression failed and the focused
+      owner tests, Rust format check, and Ready lint passed. Details are in
+      `receipts/util_root_audit.md`.
 - [ ] Run Ready validation and self-review only when the requested parity scope
       is genuinely complete enough for a final-status claim.
 
@@ -1530,6 +1540,13 @@ For each bounded behavior cluster:
   logging contract, and fixture-backed integration test; those dependencies
   must land atomically before a package-complete claim. Date/Author:
   2026-09-01, Codex.
+- Decision: keep root `pkg/util` explicitly unclaimed despite aligning the
+  mock-PD URL test boundary. The Go package combines independent runtime,
+  security, etcd, SQL/session, and storage consumers; only the URL helper's
+  test seam was dependency-closed. Do not introduce a detached Rust root-util
+  crate or silently claim the whole package until those consumers and their
+  platform/build/test artifacts can move atomically. Date/Author: 2026-09-01,
+  Codex.
 - Decision: preserve the Rust planner-error declaration table and its
   all-prototype initialization guard. Go package initialization registers all
   98 entries, while Go's only explicit test checks 59; the Rust guard is the

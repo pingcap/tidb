@@ -80,7 +80,7 @@ mod mock_pd {
             for address in addresses {
                 let address = address.as_ref();
                 if let Some(url) = normalize_mock_pd_url(address) {
-                    service_urls.push(address.to_owned());
+                    service_urls.push(url.clone());
                     clients.push(MockPdServiceClient { url });
                 }
             }
@@ -104,33 +104,46 @@ mod mock_pd {
     }
 
     fn normalize_mock_pd_url(address: &str) -> Option<String> {
-        if address.is_empty()
-            || address.starts_with('.')
-            || address.chars().any(char::is_whitespace)
-        {
+        let address = address.trim();
+        if address.is_empty() {
             return None;
         }
 
-        let validation_url = if let Some((scheme, rest)) = address.split_once("://") {
-            if !matches!(
-                scheme,
-                "ftp" | "tcp" | "udp" | "ws" | "wss" | "http" | "https"
-            ) {
+        let normalized = if let Some((scheme, rest)) = address.split_once("://") {
+            match scheme {
+                // Go's ServiceURL parser deliberately keeps unix-family
+                // endpoints opaque: the address may be a socket path or a
+                // mock name rather than a host:port pair.
+                "unix" | "unixs" if !rest.is_empty() => format!("{scheme}://{rest}"),
+                "http" | "https" if valid_host_port(rest) && !has_path(rest) => address.to_owned(),
+                // Do not accept schemes that the Go parser rejects. The
+                // previous list (ftp/tcp/udp/ws/wss) was Rust-only behavior.
+                _ => return None,
+            }
+        } else if address.contains(':') || address.contains('.') {
+            if !valid_host_port(address) {
                 return None;
             }
-            format!("http://{rest}")
-        } else if address.contains(':') || address.contains('.') {
             format!("http://{address}")
         } else {
             return None;
         };
-        Endpoint::from_shared(validation_url).ok()?;
 
-        Some(if address.starts_with("http") {
-            address.to_owned()
-        } else {
-            format!("http://{address}")
-        })
+        if normalized.starts_with("http") {
+            Endpoint::from_shared(normalized.clone()).ok()?;
+        }
+        Some(normalized)
+    }
+
+    fn has_path(address: &str) -> bool {
+        address.contains('/')
+    }
+
+    fn valid_host_port(address: &str) -> bool {
+        let Some((host, port)) = address.rsplit_once(':') else {
+            return false;
+        };
+        !host.is_empty() && !port.is_empty() && (!host.contains(':') || host.starts_with('['))
     }
 
     /// One keyspace metadata entry managed by [`MockKeyspaceManager`].
@@ -316,8 +329,33 @@ mod mock_pd {
             assert_eq!(clients[1].url(), "http://172.32.21.32:2379");
             assert_eq!(
                 discovery.service_urls(),
-                ["127.0.0.1:2379", "http://172.32.21.32:2379"]
+                ["http://127.0.0.1:2379", "http://172.32.21.32:2379"]
             );
+        }
+
+        /// Go `TestMockPDServiceDiscovery` also accepts unix-family URLs and
+        /// normalizes bare host:port addresses before storing them.
+        #[test]
+        fn test_mock_pd_service_discovery_matches_service_url_parser() {
+            let discovery = MockPdServiceDiscovery::new([
+                " 127.0.0.1:2379 ",
+                "unix://localhost:m0",
+                "unix:///tmp/etcd.sock",
+                "ftp://127.0.0.1:2379",
+                "ws://127.0.0.1:2379",
+            ]);
+            assert_eq!(
+                discovery.service_urls(),
+                [
+                    "http://127.0.0.1:2379",
+                    "unix://localhost:m0",
+                    "unix:///tmp/etcd.sock",
+                ]
+            );
+            let clients = discovery.all_service_clients();
+            assert_eq!(clients.len(), 3);
+            assert_eq!(clients[1].url(), "unix://localhost:m0");
+            assert_eq!(clients[2].url(), "unix:///tmp/etcd.sock");
         }
 
         /// Source: `pkg/store/mockstore/unistore/pd_test.go::TestMockKeyspaceManager`.
