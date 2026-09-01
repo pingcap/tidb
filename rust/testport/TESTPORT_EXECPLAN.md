@@ -407,6 +407,18 @@ For each bounded behavior cluster:
   implementation was found; the exact Go-master failpoint suite passed and
   the boundary is recorded in `receipts/session_test_schematest.md`.
 
+- 2026-09-01: audited the complete Go-master
+  `pkg/session/test/temporarytabletest` package: three tracked artifacts and
+  512 lines, including the TestMain/goleak harness, three local/global
+  temporary-table tests, and three-shard flaky BUILD target. Rust owns
+  temporary-table session overlays, row lifetime, DDL guards, and core DML
+  assertions, but exact mock TiKV point/batch/index-scan coverage and the
+  cross-session schema lease/MDL lifecycle are not dependency-closed. No
+  Rust-only behavior or safe standalone implementation was found; the exact
+  Go-master failpoint suite passed, the Rust attempt was OpenSSL/pkg-config
+  blocked, and the boundary is recorded in
+  `receipts/session_test_temporarytabletest.md`.
+
 - 2026-09-01: refreshed the complete Go-master
   `pkg/util/password-validation` inventory (three artifacts, 379 lines) and
   confirmed it is unchanged from the prior pinned implementation. The Go
