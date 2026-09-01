@@ -1,9 +1,10 @@
 # `pkg/util/expensivequery` — Go-master parity boundary receipt
 
 Go baseline: `origin/master` at
-`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01). This package is a
-server/session monitor with process-list, metrics, logging, and kill-action
-consumers; it has no dependency-closed Rust owner.
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02). The package is
+unchanged from the previous authority pin. It is a server/session monitor
+with process-list, metrics, logging, and kill-action consumers; it has no
+dependency-closed Rust owner.
 
 ## Complete inventory
 
@@ -50,10 +51,17 @@ code fix and no package-completion claim; `make bazel_prepare` and the Ready
 lint gate are not triggered.
 
 ```text
+git ls-tree -r -l c6054025ed4c32ab3672a2a24ea46892714d21ec pkg/util/expensivequery
+# exactly the three artifacts and sizes listed above
+git diff --exit-code c6054025ed4c32ab3672a2a24ea46892714d21ec..HEAD -- pkg/util/expensivequery
+# no Go package drift at the latest authority
 PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
 GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
 go test ./pkg/util/expensivequery -count=1
-# ok; [no tests to run]
+# ok; [no tests to run] in the current and exact detached latest-master
+# (/tmp/tidb-go-latest-c605) worktrees
+git diff --check
+# passed
 ```
 
 ## Risks and unverified behavior

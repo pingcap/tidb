@@ -3320,6 +3320,14 @@ For each bounded behavior cluster:
       Ready evidence remain valid. Details are in
       `receipts/util_admin.md` and
       `docs/operations/util-admin-audit-execplan.md`.
+- 2026-09-02: re-audited all three Go-master `pkg/util/expensivequery`
+      artifacts (220 lines across the polling monitor, common goleak harness,
+      and Bazel target) at authority `c6054025ed4c32ab3672a2a24ea46892714d21ec`;
+      the package is unchanged. Rust has no dependency-closed owner for the
+      session-manager worker, metrics/logging throttles, or kill policies, so
+      no Rust-only timer was added. Details are in
+      `receipts/util_expensivequery.md` and
+      `docs/operations/util-expensivequery-audit-execplan.md`.
 - 2026-09-01: audited all four Go-master `pkg/util/admin` artifacts (412
       lines including the restricted count path, row/index consistency scan,
       corruption integration test, and Bazel target). The existing Rust
