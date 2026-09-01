@@ -434,6 +434,126 @@ func checkRegionsBoundaries(t *testing.T, regions []*RegionInfo, expected [][]by
 	}
 }
 
+<<<<<<< HEAD
+=======
+type codecAwareMockPDClient struct {
+	*MockPDClientForSplit
+	keyspaceMeta *keyspacepb.KeyspaceMeta
+}
+
+func (c *codecAwareMockPDClient) WithCallerComponent(caller.Component) pd.Client {
+	return c
+}
+
+func (c *codecAwareMockPDClient) LoadKeyspace(context.Context, string) (*keyspacepb.KeyspaceMeta, error) {
+	return c.keyspaceMeta, nil
+}
+
+type nilRegionByIDMockPDClient struct {
+	*MockPDClientForSplit
+	regionID uint64
+}
+
+func (c *nilRegionByIDMockPDClient) WithCallerComponent(caller.Component) pd.Client {
+	return c
+}
+
+func (c *nilRegionByIDMockPDClient) GetRegionByID(
+	ctx context.Context,
+	regionID uint64,
+	opts ...opt.GetRegionOption,
+) (*router.Region, error) {
+	if regionID == c.regionID {
+		return nil, nil
+	}
+	return c.MockPDClientForSplit.GetRegionByID(ctx, regionID, opts...)
+}
+
+func containsKVEpochNotMatch(err error) bool {
+	if berrors.ErrKVEpochNotMatch.Equal(err) {
+		return true
+	}
+	if cause := errors.Cause(err); cause != nil && cause != err && berrors.ErrKVEpochNotMatch.Equal(cause) {
+		return true
+	}
+	errs, ok := err.(interface{ Errors() []error })
+	if !ok {
+		return false
+	}
+	for _, err := range errs.Errors() {
+		if containsKVEpochNotMatch(err) {
+			return true
+		}
+	}
+	return false
+}
+
+func newCodecV2PDClientForSplitTest(t *testing.T, mockClient *MockPDClientForSplit) *tikv.CodecPDClient {
+	codecPDClient, err := tikv.NewCodecPDClientWithKeyspace(tikv.ModeTxn, &codecAwareMockPDClient{
+		MockPDClientForSplit: mockClient,
+		keyspaceMeta: &keyspacepb.KeyspaceMeta{
+			Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 42},
+			Name:     "test_keyspace",
+		},
+	}, "test_keyspace")
+	require.NoError(t, err)
+	return codecPDClient
+}
+
+func TestPaginateScanRegionWithCodecAwareCodecPDClient(t *testing.T) {
+	ctx := context.Background()
+	t.Run("bounded range", func(t *testing.T) {
+		mockPDClient := NewMockPDClientForSplit()
+		codecPDClient := newCodecV2PDClientForSplitTest(t, mockPDClient)
+		tikvCodec := codecPDClient.GetCodec()
+
+		physicalBoundaries := [][]byte{
+			tikvCodec.EncodeRegionKey([]byte("a")),
+			tikvCodec.EncodeRegionKey([]byte("b")),
+			tikvCodec.EncodeRegionKey([]byte("d")),
+		}
+		mockPDClient.SetRegions(physicalBoundaries)
+
+		client := NewCodecAwareClient(codecPDClient, nil, nil, 100, 4)
+		regions, err := PaginateScanRegionWithCodecAware(
+			ctx,
+			client,
+			tikvCodec.EncodeKey([]byte("a")),
+			tikvCodec.EncodeKey([]byte("d")),
+			2,
+		)
+		require.NoError(t, err)
+		checkRegionsBoundaries(t, regions, physicalBoundaries)
+	})
+
+	t.Run("empty logical end key", func(t *testing.T) {
+		mockPDClient := NewMockPDClientForSplit()
+		codecPDClient := newCodecV2PDClientForSplitTest(t, mockPDClient)
+		tikvCodec := codecPDClient.GetCodec()
+
+		_, physicalEnd := tikvCodec.EncodeRegionRange([]byte("b"), nil)
+		physicalBoundaries := [][]byte{
+			tikvCodec.EncodeRegionKey([]byte("a")),
+			tikvCodec.EncodeRegionKey([]byte("b")),
+			physicalEnd,
+		}
+		mockPDClient.SetRegions(physicalBoundaries)
+
+		client := NewCodecAwareClient(codecPDClient, nil, nil, 100, 4)
+		scanStart, scanEnd := tikvCodec.EncodeRange([]byte("a"), nil)
+		regions, err := PaginateScanRegionWithCodecAware(
+			ctx,
+			client,
+			scanStart,
+			scanEnd,
+			2,
+		)
+		require.NoError(t, err)
+		checkRegionsBoundaries(t, regions, physicalBoundaries)
+	})
+}
+
+>>>>>>> 0bc44483e3e (br: fix region not found (#70772))
 func TestPaginateScanRegion(t *testing.T) {
 	ctx := context.Background()
 	mockPDClient := NewMockPDClientForSplit()
@@ -690,6 +810,426 @@ func TestRegionConsistency(t *testing.T) {
 	}
 }
 
+<<<<<<< HEAD
+=======
+func regionInfo(startKey, endKey string) *RegionInfo {
+	return &RegionInfo{
+		Region: &metapb.Region{
+			StartKey: []byte(startKey),
+			EndKey:   []byte(endKey),
+		},
+	}
+}
+
+func TestSplitCheckPartRegionConsistency(t *testing.T) {
+	var (
+		startKey []byte = []byte("a")
+		endKey   []byte = []byte("f")
+		err      error
+	)
+	err = checkPartRegionConsistency(startKey, endKey, nil)
+	require.Error(t, err)
+	err = checkPartRegionConsistency(startKey, endKey, []*RegionInfo{
+		regionInfo("b", "c"),
+	})
+	require.Error(t, err)
+	err = checkPartRegionConsistency(startKey, endKey, []*RegionInfo{
+		regionInfo("a", "c"),
+		regionInfo("d", "e"),
+	})
+	require.Error(t, err)
+	err = checkPartRegionConsistency(startKey, endKey, []*RegionInfo{
+		regionInfo("a", "c"),
+		regionInfo("c", "d"),
+	})
+	require.NoError(t, err)
+	err = checkPartRegionConsistency(startKey, endKey, []*RegionInfo{
+		regionInfo("a", "c"),
+		regionInfo("c", "d"),
+		regionInfo("d", "f"),
+	})
+	require.NoError(t, err)
+	err = checkPartRegionConsistency(startKey, endKey, []*RegionInfo{
+		regionInfo("a", "c"),
+		regionInfo("c", "z"),
+	})
+	require.NoError(t, err)
+}
+
+func TestScanRegionsWithRetry(t *testing.T) {
+	ctx := context.Background()
+	mockPDClient := NewMockPDClientForSplit()
+	mockClient := &pdClient{
+		client: mockPDClient,
+	}
+
+	{
+		_, err := ScanRegionsWithRetry(ctx, mockClient, []byte("1"), []byte("0"), 0)
+		require.Error(t, err)
+	}
+
+	{
+		mockPDClient.SetRegions([][]byte{{}, []byte("1"), []byte("2"), []byte("3"), []byte("4"), {}})
+		regions, err := ScanRegionsWithRetry(ctx, mockClient, []byte("1"), []byte("3"), 0)
+		require.NoError(t, err)
+		require.Len(t, regions, 2)
+		require.Equal(t, []byte("1"), regions[0].Region.StartKey)
+		require.Equal(t, []byte("2"), regions[1].Region.StartKey)
+	}
+}
+
+func TestScanEmptyRegion(t *testing.T) {
+	mockPDCli := NewMockPDClientForSplit()
+	mockPDCli.SetRegions([][]byte{{}, {12}, {34}, {}})
+	client := NewClient(mockPDCli, nil, nil, 100, 4)
+	keys := initKeys()
+	// make keys has only one
+	keys = keys[0:1]
+	regionSplitter := NewRegionSplitter(client)
+
+	ctx := context.Background()
+	err := regionSplitter.ExecuteSortedKeys(ctx, keys)
+	// should not return error with only one range entry
+	require.NoError(t, err)
+}
+
+type recordingSplitClient struct {
+	SplitClient
+	splitCalls     [][][]byte
+	scatterByCalls []bool
+}
+
+func (c *recordingSplitClient) SplitKeysAndScatter(ctx context.Context, keys [][]byte) ([]*RegionInfo, error) {
+	c.recordSplit(keys, true)
+	return nil, nil
+}
+
+func (c *recordingSplitClient) SplitKeys(_ context.Context, keys [][]byte) ([]*RegionInfo, error) {
+	c.recordSplit(keys, false)
+	return nil, nil
+}
+
+func (c *recordingSplitClient) recordSplit(keys [][]byte, scatter bool) {
+	c.splitCalls = append(c.splitCalls, slices.Clone(keys))
+	c.scatterByCalls = append(c.scatterByCalls, scatter)
+}
+
+func TestRegionSplitterRoughSplitUsesConfiguredRegionIndexStep(t *testing.T) {
+	keys := [][]byte{{'a'}, {'b'}, {'c'}, {'d'}, {'e'}, {'f'}}
+	for _, testCase := range []struct {
+		name           string
+		coarseScatter  bool
+		scatterByCalls []bool
+	}{
+		{
+			name:           "default scatter",
+			scatterByCalls: []bool{true, true},
+		},
+		{
+			name:           "coarse scatter",
+			coarseScatter:  true,
+			scatterByCalls: []bool{true, false},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			client := &recordingSplitClient{}
+			regionSplitter := NewRegionSplitterWithRegionIndexStep(client, 2)
+			regionSplitter.SetCoarseScatter(testCase.coarseScatter)
+
+			err := regionSplitter.ExecuteSortedKeys(context.Background(), keys)
+			require.NoError(t, err)
+			require.Len(t, client.splitCalls, 2)
+			require.Equal(t, [][]byte{{'c'}, {'e'}}, client.splitCalls[0])
+			require.Equal(t, keys, client.splitCalls[1])
+			require.Equal(t, testCase.scatterByCalls, client.scatterByCalls)
+		})
+	}
+}
+
+func TestSplitEmptyRegion(t *testing.T) {
+	mockPDCli := NewMockPDClientForSplit()
+	mockPDCli.SetRegions([][]byte{{}, {12}, {34}, {}})
+	client := NewClient(mockPDCli, nil, nil, 100, 4)
+	regionSplitter := NewRegionSplitter(client)
+	err := regionSplitter.ExecuteSortedKeys(context.Background(), nil)
+	require.NoError(t, err)
+}
+
+// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
+// range: [aaa, aae), [aae, aaz), [ccd, ccf), [ccf, ccj)
+// rewrite rules: aa -> xx,  cc -> bb
+// expected regions after split:
+//
+//	[, aay), [aay, bba), [bba, bbf), [bbf, bbh), [bbh, bbj),
+//	[bbj, cca), [cca, xxe), [xxe, xxz), [xxz, )
+func TestSplitAndScatter(t *testing.T) {
+	t.Run("not leader with missing region by ID returns epoch not match", func(t *testing.T) {
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/split/not-leader-error", "return(false)"))
+		t.Cleanup(func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/split/not-leader-error"))
+		})
+
+		mockPDCli := NewMockPDClientForSplit()
+		regions := mockPDCli.SetRegions([][]byte{[]byte(""), []byte("m"), []byte("")})
+		mockPDCli.SetStores(map[uint64]*metapb.Store{
+			1: {Id: 1, Address: "127.0.0.1:1"},
+		})
+		splitRegion := &RegionInfo{
+			Region: regions[0],
+			Leader: &metapb.Peer{Id: regions[0].Id, StoreId: 1},
+		}
+		client := NewClient(&nilRegionByIDMockPDClient{
+			MockPDClientForSplit: mockPDCli,
+			regionID:             regions[0].Id,
+		}, nil, nil, 100, 4)
+
+		_, err := client.SplitWaitAndScatter(context.Background(), splitRegion, [][]byte{[]byte("a")})
+		require.Error(t, err)
+		require.True(t, containsKVEpochNotMatch(err), "unexpected error: %+v", err)
+	})
+
+	rangeBoundaries := [][]byte{[]byte(""), []byte("aay"), []byte("bba"), []byte("bbh"), []byte("cca"), []byte("")}
+	encodeBytes(rangeBoundaries)
+	mockPDCli := NewMockPDClientForSplit()
+	mockPDCli.SetRegions(rangeBoundaries)
+	client := NewClient(mockPDCli, nil, nil, 100, 4)
+	regionSplitter := NewRegionSplitter(client)
+	ctx := context.Background()
+
+	ranges := initRanges()
+	rules := initRewriteRules()
+	splitKeys := make([][]byte, 0, len(ranges))
+	for _, rg := range ranges {
+		tmp, err := restoreutils.RewriteRange(&rg, rules)
+		require.NoError(t, err)
+		splitKeys = append(splitKeys, tmp.EndKey)
+	}
+	sort.Slice(splitKeys, func(i, j int) bool {
+		return bytes.Compare(splitKeys[i], splitKeys[j]) < 0
+	})
+	err := regionSplitter.ExecuteSortedKeys(ctx, splitKeys)
+	require.NoError(t, err)
+	regions := mockPDCli.Regions.ScanRange(nil, nil, 100)
+	expected := [][]byte{[]byte(""), []byte("aay"), []byte("bba"), []byte("bbf"), []byte("bbh"), []byte("bbj"), []byte("cca"), []byte("xxe"), []byte("xxz"), []byte("")}
+	encodeBytes(expected)
+	require.Len(t, regions, len(expected)-1)
+	for i, region := range regions {
+		require.Equal(t, expected[i], region.Meta.StartKey)
+		require.Equal(t, expected[i+1], region.Meta.EndKey)
+	}
+}
+
+func encodeBytes(keys [][]byte) {
+	for i := range keys {
+		if len(keys[i]) == 0 {
+			continue
+		}
+		keys[i] = codec.EncodeBytes(nil, keys[i])
+	}
+}
+
+func TestRawSplit(t *testing.T) {
+	// Fix issue #36490.
+	splitKeys := [][]byte{{}}
+	ctx := context.Background()
+	rangeBoundaries := [][]byte{[]byte(""), []byte("aay"), []byte("bba"), []byte("bbh"), []byte("cca"), []byte("")}
+	mockPDCli := NewMockPDClientForSplit()
+	mockPDCli.SetRegions(rangeBoundaries)
+	client := NewClient(mockPDCli, nil, nil, 100, 4, WithRawKV())
+
+	regionSplitter := NewRegionSplitter(client)
+	err := regionSplitter.ExecuteSortedKeys(ctx, splitKeys)
+	require.NoError(t, err)
+
+	regions := mockPDCli.Regions.ScanRange(nil, nil, 100)
+	require.Len(t, regions, len(rangeBoundaries)-1)
+	for i, region := range regions {
+		require.Equal(t, rangeBoundaries[i], region.Meta.StartKey)
+		require.Equal(t, rangeBoundaries[i+1], region.Meta.EndKey)
+	}
+}
+
+// keys: aae, aaz, ccf, ccj
+func initKeys() [][]byte {
+	return [][]byte{
+		[]byte("aae"),
+		[]byte("aaz"),
+		[]byte("ccf"),
+		[]byte("ccj"),
+	}
+}
+
+// range: [aaa, aae), [aae, aaz), [ccd, ccf), [ccf, ccj)
+func initRanges() []rtree.Range {
+	var ranges [4]rtree.Range
+	ranges[0] = rtree.Range{
+		KeyRange: rtree.KeyRange{
+			StartKey: []byte("aaa"),
+			EndKey:   []byte("aae"),
+		},
+	}
+	ranges[1] = rtree.Range{
+		KeyRange: rtree.KeyRange{
+			StartKey: []byte("aae"),
+			EndKey:   []byte("aaz"),
+		},
+	}
+	ranges[2] = rtree.Range{
+		KeyRange: rtree.KeyRange{
+			StartKey: []byte("ccd"),
+			EndKey:   []byte("ccf"),
+		},
+	}
+	ranges[3] = rtree.Range{
+		KeyRange: rtree.KeyRange{
+			StartKey: []byte("ccf"),
+			EndKey:   []byte("ccj"),
+		},
+	}
+	return ranges[:]
+}
+
+func initRewriteRules() *restoreutils.RewriteRules {
+	var rules [2]*import_sstpb.RewriteRule
+	rules[0] = &import_sstpb.RewriteRule{
+		OldKeyPrefix: []byte("aa"),
+		NewKeyPrefix: []byte("xx"),
+	}
+	rules[1] = &import_sstpb.RewriteRule{
+		OldKeyPrefix: []byte("cc"),
+		NewKeyPrefix: []byte("bb"),
+	}
+	return &restoreutils.RewriteRules{
+		Data: rules[:],
+	}
+}
+
+func keyWithTablePrefix(tableID int64, key string) []byte {
+	rawKey := append(tablecodec.GenTableRecordPrefix(tableID), []byte(key)...)
+	return codec.EncodeBytes([]byte{}, rawKey)
+}
+
+func TestSplitPoint(t *testing.T) {
+	ctx := context.Background()
+	var oldTableID int64 = 50
+	var tableID int64 = 100
+	rewriteRules := &restoreutils.RewriteRules{
+		Data: []*import_sstpb.RewriteRule{
+			{
+				OldKeyPrefix: tablecodec.EncodeTablePrefix(oldTableID),
+				NewKeyPrefix: tablecodec.EncodeTablePrefix(tableID),
+			},
+		},
+	}
+
+	// range:     b   c d   e       g         i
+	//            +---+ +---+       +---------+
+	//          +-------------+----------+---------+
+	// region:  a             f          h         j
+	splitHelper := NewSplitHelper()
+	splitHelper.Merge(Valued{Key: Span{StartKey: keyWithTablePrefix(oldTableID, "b"), EndKey: keyWithTablePrefix(oldTableID, "c")}, Value: Value{Size: 100, Number: 100}})
+	splitHelper.Merge(Valued{Key: Span{StartKey: keyWithTablePrefix(oldTableID, "d"), EndKey: keyWithTablePrefix(oldTableID, "e")}, Value: Value{Size: 200, Number: 200}})
+	splitHelper.Merge(Valued{Key: Span{StartKey: keyWithTablePrefix(oldTableID, "g"), EndKey: keyWithTablePrefix(oldTableID, "i")}, Value: Value{Size: 300, Number: 300}})
+	client := NewFakeSplitClient()
+	client.AppendRegion(keyWithTablePrefix(tableID, "a"), keyWithTablePrefix(tableID, "f"))
+	client.AppendRegion(keyWithTablePrefix(tableID, "f"), keyWithTablePrefix(tableID, "h"))
+	client.AppendRegion(keyWithTablePrefix(tableID, "h"), keyWithTablePrefix(tableID, "j"))
+	client.AppendRegion(keyWithTablePrefix(tableID, "j"), keyWithTablePrefix(tableID+1, "a"))
+
+	iter := NewSplitHelperIterator([]*RewriteSplitter{{tableID: tableID, rule: rewriteRules, splitter: splitHelper}})
+	err := SplitPoint(ctx, iter, client, func(ctx context.Context, u uint64, o int64, ri *RegionInfo, v []Valued) error {
+		require.Equal(t, u, uint64(0))
+		require.Equal(t, o, int64(0))
+		require.Equal(t, ri.Region.StartKey, keyWithTablePrefix(tableID, "a"))
+		require.Equal(t, ri.Region.EndKey, keyWithTablePrefix(tableID, "f"))
+		require.EqualValues(t, v[0].Key.StartKey, keyWithTablePrefix(tableID, "b"))
+		require.EqualValues(t, v[0].Key.EndKey, keyWithTablePrefix(tableID, "c"))
+		require.EqualValues(t, v[1].Key.StartKey, keyWithTablePrefix(tableID, "d"))
+		require.EqualValues(t, v[1].Key.EndKey, keyWithTablePrefix(tableID, "e"))
+		require.Equal(t, len(v), 2)
+		return nil
+	})
+	require.NoError(t, err)
+}
+
+func getCharFromNumber(prefix string, i int) string {
+	c := '1' + (i % 10)
+	b := '1' + (i%100)/10
+	a := '1' + i/100
+	return fmt.Sprintf("%s%c%c%c", prefix, a, b, c)
+}
+
+func TestSplitPoint2(t *testing.T) {
+	ctx := context.Background()
+	var oldTableID int64 = 50
+	var tableID int64 = 100
+	rewriteRules := &restoreutils.RewriteRules{
+		Data: []*import_sstpb.RewriteRule{
+			{
+				OldKeyPrefix: tablecodec.EncodeTablePrefix(oldTableID),
+				NewKeyPrefix: tablecodec.EncodeTablePrefix(tableID),
+			},
+		},
+	}
+
+	// range:     b   c d   e f                 i j    k l        n
+	//            +---+ +---+ +-----------------+ +----+ +--------+
+	//          +---------------+--+.....+----+------------+---------+
+	// region:  a               g   >128      h            m         o
+	splitHelper := NewSplitHelper()
+	splitHelper.Merge(Valued{Key: Span{StartKey: keyWithTablePrefix(oldTableID, "b"), EndKey: keyWithTablePrefix(oldTableID, "c")}, Value: Value{Size: 100, Number: 100}})
+	splitHelper.Merge(Valued{Key: Span{StartKey: keyWithTablePrefix(oldTableID, "d"), EndKey: keyWithTablePrefix(oldTableID, "e")}, Value: Value{Size: 200, Number: 200}})
+	splitHelper.Merge(Valued{Key: Span{StartKey: keyWithTablePrefix(oldTableID, "f"), EndKey: keyWithTablePrefix(oldTableID, "i")}, Value: Value{Size: 300, Number: 300}})
+	splitHelper.Merge(Valued{Key: Span{StartKey: keyWithTablePrefix(oldTableID, "j"), EndKey: keyWithTablePrefix(oldTableID, "k")}, Value: Value{Size: 200, Number: 200}})
+	splitHelper.Merge(Valued{Key: Span{StartKey: keyWithTablePrefix(oldTableID, "l"), EndKey: keyWithTablePrefix(oldTableID, "n")}, Value: Value{Size: 200, Number: 200}})
+	client := NewFakeSplitClient()
+	client.AppendRegion(keyWithTablePrefix(tableID, "a"), keyWithTablePrefix(tableID, "g"))
+	client.AppendRegion(keyWithTablePrefix(tableID, "g"), keyWithTablePrefix(tableID, getCharFromNumber("g", 0)))
+	for i := range 256 {
+		client.AppendRegion(keyWithTablePrefix(tableID, getCharFromNumber("g", i)), keyWithTablePrefix(tableID, getCharFromNumber("g", i+1)))
+	}
+	client.AppendRegion(keyWithTablePrefix(tableID, getCharFromNumber("g", 256)), keyWithTablePrefix(tableID, "h"))
+	client.AppendRegion(keyWithTablePrefix(tableID, "h"), keyWithTablePrefix(tableID, "m"))
+	client.AppendRegion(keyWithTablePrefix(tableID, "m"), keyWithTablePrefix(tableID, "o"))
+	client.AppendRegion(keyWithTablePrefix(tableID, "o"), keyWithTablePrefix(tableID+1, "a"))
+
+	firstSplit := true
+	iter := NewSplitHelperIterator([]*RewriteSplitter{{tableID: tableID, rule: rewriteRules, splitter: splitHelper}})
+	err := SplitPoint(ctx, iter, client, func(ctx context.Context, u uint64, o int64, ri *RegionInfo, v []Valued) error {
+		if firstSplit {
+			require.Equal(t, u, uint64(0))
+			require.Equal(t, o, int64(0))
+			require.Equal(t, ri.Region.StartKey, keyWithTablePrefix(tableID, "a"))
+			require.Equal(t, ri.Region.EndKey, keyWithTablePrefix(tableID, "g"))
+			require.EqualValues(t, v[0].Key.StartKey, keyWithTablePrefix(tableID, "b"))
+			require.EqualValues(t, v[0].Key.EndKey, keyWithTablePrefix(tableID, "c"))
+			require.EqualValues(t, v[1].Key.StartKey, keyWithTablePrefix(tableID, "d"))
+			require.EqualValues(t, v[1].Key.EndKey, keyWithTablePrefix(tableID, "e"))
+			require.EqualValues(t, v[2].Key.StartKey, keyWithTablePrefix(tableID, "f"))
+			require.EqualValues(t, v[2].Key.EndKey, keyWithTablePrefix(tableID, "g"))
+			require.Equal(t, v[2].Value.Size, uint64(1))
+			require.Equal(t, v[2].Value.Number, int64(1))
+			require.Equal(t, len(v), 3)
+			firstSplit = false
+		} else {
+			require.Equal(t, u, uint64(1))
+			require.Equal(t, o, int64(1))
+			require.Equal(t, ri.Region.StartKey, keyWithTablePrefix(tableID, "h"))
+			require.Equal(t, ri.Region.EndKey, keyWithTablePrefix(tableID, "m"))
+			require.EqualValues(t, v[0].Key.StartKey, keyWithTablePrefix(tableID, "j"))
+			require.EqualValues(t, v[0].Key.EndKey, keyWithTablePrefix(tableID, "k"))
+			require.EqualValues(t, v[1].Key.StartKey, keyWithTablePrefix(tableID, "l"))
+			require.EqualValues(t, v[1].Key.EndKey, keyWithTablePrefix(tableID, "m"))
+			require.Equal(t, v[1].Value.Size, uint64(100))
+			require.Equal(t, v[1].Value.Number, int64(100))
+			require.Equal(t, len(v), 2)
+		}
+		return nil
+	})
+	require.NoError(t, err)
+}
+
+>>>>>>> 0bc44483e3e (br: fix region not found (#70772))
 func TestRegionsNotFullyScatter(t *testing.T) {
 	mockClient := NewMockPDClientForSplit()
 	client := pdClient{
