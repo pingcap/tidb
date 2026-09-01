@@ -40,6 +40,17 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: audited the complete Go-master `pkg/sessionctx` root package
+  before editing: four tracked artifacts and 319 lines containing six public
+  interface contracts, one snapshot-read timestamp helper, three context-key
+  constants, one regression test, TestMain, and the race/flaky BUILD target.
+  Rust preserves the context-key value/label behavior and selected cache,
+  transaction, cursor, advisory-lock, and timestamp leaves, but has no
+  dependency-closed `Context` composition or storage-oracle validation owner.
+  No Rust-only behavior or safe standalone implementation was found; the
+  exact Go-master suite passed in 0.488s and the boundary is recorded in
+  `receipts/sessionctx_root.md`.
+
 - 2026-09-01: audited the complete Go-master `pkg/sessionctx/sessionstates`
   package before editing: five tracked artifacts and 2,578 lines covering the
   migratable state schema, token timing, certificate rotation,
