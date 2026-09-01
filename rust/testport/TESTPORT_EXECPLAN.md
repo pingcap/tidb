@@ -4592,6 +4592,11 @@ For each bounded behavior cluster:
   artifacts and 79 lines. The Rust protocol test owner preserves the complete
   no-op byte-buffer connection and TCP-port helper without introducing a
   production mock socket abstraction.
+- `pkg/server/internal/testserverclient` is byte-identical to Go master across
+  two artifacts and 3,159 lines, including all 55 integration helpers and SQL,
+  TLS, load-data, DDL, metrics, and failpoint scenarios. It remains an explicit
+  Go testkit/server lifecycle boundary because no dependency-closed Rust
+  integration harness exists.
 
 ## Outcomes & Retrospective
 
