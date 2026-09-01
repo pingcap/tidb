@@ -160,7 +160,7 @@ For each bounded behavior cluster:
   `docs/operations/util-texttree-audit-execplan.md`.
 
 - 2026-09-02: refreshed the complete Go-master `pkg/util/paging` inventory at
-  `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: four tracked artifacts, 162
+  `c6054025ed4c32ab3672a2a24ea46892714d21ec`: four tracked artifacts, 162
   lines, six constants, two production functions, TestMain, and two source
   tests, with no fixtures, generated/platform variants, benchmarks, or nested
   packages. The Rust owner and DistSQL default consumer preserve wrapping

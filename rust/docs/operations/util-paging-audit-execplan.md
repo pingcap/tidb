@@ -8,7 +8,7 @@ utility owner and DistSQL default-policy consumer.
 ## Progress
 
 - [x] Read all four Go-master artifacts at
-  `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: `BUILD.bazel`, `main_test.go`,
+  `c6054025ed4c32ab3672a2a24ea46892714d21ec`: `BUILD.bazel`, `main_test.go`,
   `paging.go`, and `paging_test.go` (162 lines; six constants, two production
   functions, TestMain, and two source tests).
 - [x] Confirm there are no package docs, fixtures, generated/platform
@@ -19,7 +19,7 @@ utility owner and DistSQL default-policy consumer.
   Rust-only `must_use` policy, and supplemental overflow tests remain removed.
 - [x] Revalidate current and exact detached Go-master tests, both Rust owner
   tests, the consumer default-authority test, formatting, and diff quality.
-- [ ] Commit, push, pull, and verify `origin/hparser-integration`.
+- [x] Commit, push, pull, and verify `origin/hparser-integration`.
 
 ## Validation gate
 
