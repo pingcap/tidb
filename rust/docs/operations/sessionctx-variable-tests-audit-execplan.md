@@ -23,9 +23,9 @@ and record the remaining cross-crate boundary without inventing behavior.
   have executable owner tests; update receipts `b011.md` and `b012.md`.
 - [x] (2026-09-01) Run the focused vardef suite, Rust formatting, `make lint`,
   and diff hygiene checks. Record the exact Go-master suite failures.
-- [ ] Fetch immediately before staging, create one meaningful cleanup batch
+- [x] Fetch immediately before staging, create the meaningful cleanup batch
   commit, push it to `origin/hparser-integration`, and verify all remote SHAs.
-- [ ] Continue the rolling audit with the next unrecorded package.
+- [x] Continue the rolling audit with the next unrecorded package.
 
 ## Scope and decisions
 

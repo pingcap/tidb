@@ -24,7 +24,7 @@ map every test to its Rust owner, and land only dependency-closed behavior.
 - [x] Exact Go-master failpoint suite passes and failpoints are disabled.
 - [x] Rust aggregate slow-log tests, formatting, `make lint`, and diff checks
       pass (Ready profile).
-- [ ] Push the receipt/ExecPlan batch to `origin/hparser-integration`, verify
+- [x] Push the receipt/ExecPlan batch to `origin/hparser-integration`, verify
       equal local/remote SHAs, and fast-forward pull the explicit branch ref.
 
 ## Remaining boundaries

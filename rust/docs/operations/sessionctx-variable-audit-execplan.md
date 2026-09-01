@@ -30,10 +30,11 @@ configuration generation only when an effective value changes.
   URL user-info stripping, key masking/versioning, and registry metadata.
 - [x] (2026-09-01) Run the exact Go-master failpoint suite, focused Rust
   regressions, Rust format check, `make lint`, and diff hygiene checks.
-- [ ] Fetch immediately before staging, create one meaningful batch commit,
-  push it to `origin/hparser-integration`, and verify local/tracking/advertised
-  SHAs and zero divergence.
-- [ ] Continue the rolling audit with the next unrecorded nested package.
+- [x] Fetch immediately before staging, create the meaningful batch commits,
+  push them to `origin/hparser-integration`, and verify local/tracking SHAs
+  and zero divergence.
+- [x] Continue the rolling audit with the nested slow-log and variable-test
+  packages; their separate receipts record the remaining boundaries.
 
 ## Scope and implementation notes
 
