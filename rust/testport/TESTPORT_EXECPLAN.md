@@ -61,6 +61,13 @@ For each bounded behavior cluster:
   The complete inventory and boundary are recorded in
   `receipts/util_execdetails_audit.md`.
 
+- 2026-09-01: completed the Go-master `pkg/util/sqlkiller` package as one
+  three-artifact unit. Ported the concurrent-reset lock/swap ordering and
+  source failpoint interleaves, made pre-reset receivers close instead of
+  receiving a Rust-only reset token, and added the focused race regression.
+  The owner, affected memory/executor/server consumers, formatting, lint, and
+  locked Ready gates are recorded in `receipts/util_sqlkiller.md`.
+
 - 2026-09-01: audited the complete Go `pkg/util/dbterror/exeerrors` package at
   `origin/master` `db35d47066648fe73abce6318d53fc625df51490` against the Rust
   owner on `origin/hparser-integration`. The package has exactly `errors.go`
@@ -1135,6 +1142,9 @@ For each bounded behavior cluster:
 - [x] Audit the complete Go-master `pkg/util/execdetails` package, including
       all eight direct artifacts and all four Rust seed owners; record its
       dependency-closed parity boundary without inventing a partial fix.
+- [x] Complete the Go-master `pkg/util/sqlkiller` package: port the
+      concurrent-reset state ordering and event-closure behavior, add the
+      focused source regression, and update its package receipt.
 - [ ] Audit the next bounded package cluster by reading the requested Go
       `origin/master` first, then fill executable gaps and remove false
       carriers.
@@ -1162,6 +1172,12 @@ For each bounded behavior cluster:
   hash-state, and Explain-RU stats) cannot be added as isolated Rust fields;
   removing the existing seed wrappers now would strand their current callers.
   Date/Author: 2026-09-01, Codex.
+- Decision: serialize `SqlKiller`'s signal CAS/swap and kill-event state under
+  one mutex, as Go master does. A receiver's sender is dropped after the
+  trigger token and on reset, giving the cancellation consumer a permanently
+  ready closed generation instead of the prior Rust-only one-shot reset
+  message. Logging stays outside the lock, while the memory-arbitrator status
+  reloads signal and reason under it. Date/Author: 2026-09-01, Codex.
 - Decision: for the continuing loop, newly selected packages compare against
   the fetched Go `origin/master`; the older `e2788410...` pin remains the
   historical source for receipts already completed. `pkg/util/plancodec`
@@ -1430,6 +1446,11 @@ For each bounded behavior cluster:
   Prometheus process state. A partial field port would be a second runtime
   path, so this loop records the full inventory and defers edits until the
   dependency-closed package can land atomically.
+- Go master added a three-artifact `sqlkiller` test target after the pinned
+  source had no tests. Its failpoint callbacks deliberately call Reset while
+  SendKillSignal is between CAS and logging and start a second signal while
+  Reset holds the event lock; the Rust regression uses the same interleaves,
+  exposing the old split-lock and open-generation behavior deterministically.
 
 ## Outcomes & Retrospective
 

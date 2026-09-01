@@ -78,12 +78,12 @@ impl KillSignal {
 struct KillEventState {
     triggered: bool,
     desc: String,
+    waiters: Vec<Sender<()>>,
 }
 
 #[derive(Default)]
 struct KillEventShared {
     state: Mutex<KillEventState>,
-    waiters: Mutex<Vec<Sender<()>>>,
 }
 
 type AliveFn = Arc<dyn Fn() -> bool + Send + Sync>;
@@ -139,6 +139,7 @@ impl SqlKiller {
                     break value % 5;
                 }
             };
+            let _state = lock_unpoison(&self.kill_event.state);
             self.signal.store(status, SeqCst);
         });
     }
@@ -147,65 +148,89 @@ impl SqlKiller {
     /// reset (Go `GetKillEventChan`).
     pub fn get_kill_event_chan(&self) -> Receiver<()> {
         let (tx, rx) = bounded(1);
-        let state = lock_unpoison(&self.kill_event.state);
+        let mut state = lock_unpoison(&self.kill_event.state);
         if state.triggered {
             let _ = tx.send(());
         } else {
-            lock_unpoison(&self.kill_event.waiters).push(tx);
+            state.waiters.push(tx);
         }
         rx
     }
 
-    fn trigger_kill_event(&self) {
-        let mut state = lock_unpoison(&self.kill_event.state);
+    fn trigger_kill_event_locked(state: &mut KillEventState) {
         if state.triggered {
             return;
         }
         state.triggered = true;
-        for waiter in lock_unpoison(&self.kill_event.waiters).drain(..) {
+        for waiter in state.waiters.drain(..) {
             let _ = waiter.send(());
         }
     }
 
-    fn reset_kill_event(&self) {
-        let mut state = lock_unpoison(&self.kill_event.state);
+    fn reset_kill_event_locked(state: &mut KillEventState) {
         state.triggered = false;
         state.desc.clear();
-        for waiter in lock_unpoison(&self.kill_event.waiters).drain(..) {
-            let _ = waiter.send(());
-        }
+        // Dropping the sender closes an untriggered Go channel. Receivers
+        // created before Reset therefore remain permanently ready, just as a
+        // closed Go channel does, instead of receiving a one-shot token.
+        state.waiters.clear();
     }
 
     /// Sets the kill-event reason and sends the signal (Go
     /// `SendKillSignalWithKillEventReason`).
     pub fn send_kill_signal_with_reason(&self, signal: KillSignal, desc: &str) {
-        lock_unpoison(&self.kill_event.state).desc = desc.to_string();
-        self.send_kill_signal_inner(signal);
-        self.trigger_kill_event();
+        let (signal_sent, event_desc) = {
+            let mut state = lock_unpoison(&self.kill_event.state);
+            state.desc = desc.to_string();
+            let result = self.send_kill_signal_locked(&state, signal);
+            Self::trigger_kill_event_locked(&mut state);
+            result
+        };
+        if signal_sent {
+            self.log_kill_signal(signal, &event_desc);
+        }
     }
 
-    fn send_kill_signal_inner(&self, reason: KillSignal) {
+    fn send_kill_signal_locked(
+        &self,
+        state: &KillEventState,
+        reason: KillSignal,
+    ) -> (bool, String) {
         if self
             .signal
             .compare_exchange(0, reason.raw(), SeqCst, SeqCst)
             .is_ok()
         {
-            let status = self.signal.load(SeqCst);
-            let err = self
-                .kill_error(status)
-                .expect("a newly installed kill signal must map to an error");
-            tracing::warn!(
-                connection_id = self.conn_id.load(SeqCst),
-                reason = %err,
-                "kill initiated"
-            );
+            (true, state.desc.clone())
+        } else {
+            (false, String::new())
         }
+    }
+
+    fn log_kill_signal(&self, reason: KillSignal, desc: &str) {
+        let err = self
+            .kill_error(reason.raw(), desc)
+            .expect("a newly installed kill signal must map to an error");
+        tracing::warn!(
+            connection_id = self.conn_id.load(SeqCst),
+            reason = %err,
+            "kill initiated"
+        );
     }
 
     /// Sends a kill signal to the query (Go `SendKillSignal`).
     pub fn send_kill_signal(&self, reason: KillSignal) {
-        self.send_kill_signal_inner(reason);
-        self.trigger_kill_event();
+        let (signal_sent, event_desc) = {
+            let mut state = lock_unpoison(&self.kill_event.state);
+            let result = self.send_kill_signal_locked(&state, reason);
+            Self::trigger_kill_event_locked(&mut state);
+            result
+        };
+        if signal_sent {
+            #[cfg(feature = "failpoints")]
+            let _ = fail::eval("beforeLogKillSignal", |_| ());
+            self.log_kill_signal(reason, &event_desc);
+        }
     }
 
     /// Gets the current kill signal.
@@ -213,13 +238,9 @@ impl SqlKiller {
         KillSignal(self.signal.load(SeqCst))
     }
 
-    fn kill_event_reason(&self) -> String {
-        lock_unpoison(&self.kill_event.state).desc.clone()
-    }
-
     /// The error for a kill status (Go `getKillError`); `None` when no kill
     /// is pending.
-    fn kill_error(&self, status: u32) -> Option<TerrorError> {
+    fn kill_error(&self, status: u32, desc: &str) -> Option<TerrorError> {
         let conn_id = self.conn_id.load(SeqCst);
         let by_args = |proto: &TerrorError, args: &[FormatArg]| {
             let template = proto.message().to_string();
@@ -245,10 +266,7 @@ impl SqlKiller {
             }
             KillSignal::KilledByMemArbitrator => by_args(
                 &exeerrors::ERR_QUERY_EXEC_STOPPED,
-                &[
-                    FormatArg::from(self.kill_event_reason().as_str()),
-                    FormatArg::from(conn_id),
-                ],
+                &[FormatArg::from(desc), FormatArg::from(conn_id)],
             ),
             _ => return None,
         })
@@ -333,12 +351,18 @@ impl SqlKiller {
                 _ => false,
             };
             if should_check && !fn_alive() {
-                self.send_kill_signal_inner(KillSignal::QueryInterrupted);
+                self.send_kill_signal(KillSignal::QueryInterrupted);
             }
         }
 
         let status = self.signal.load(SeqCst);
-        let err = self.kill_error(status);
+        let (status, desc) = if status == KillSignal::KilledByMemArbitrator.raw() {
+            let state = lock_unpoison(&self.kill_event.state);
+            (self.signal.load(SeqCst), state.desc.clone())
+        } else {
+            (status, String::new())
+        };
+        let err = self.kill_error(status, &desc);
         if status == KillSignal::ServerMemoryExceeded.raw() {
             tracing::warn!(
                 conn = self.conn_id.load(SeqCst),
@@ -355,18 +379,92 @@ impl SqlKiller {
             .map(|probe| Arc::clone(&probe.callback));
         if let Some(fn_alive) = alive {
             if !fn_alive() {
-                self.send_kill_signal_inner(KillSignal::QueryInterrupted);
+                self.send_kill_signal(KillSignal::QueryInterrupted);
             }
         }
     }
 
     /// Resets the killer (Go `Reset`).
     pub fn reset(&self) {
-        if self.signal.load(SeqCst) != 0 {
+        let status = {
+            let mut state = lock_unpoison(&self.kill_event.state);
+            let status = self.signal.swap(0, SeqCst);
+            #[cfg(feature = "failpoints")]
+            let _ = fail::eval("afterResetKillSignalSwap", |_| ());
+            Self::reset_kill_event_locked(&mut state);
+            status
+        };
+        if status != 0 {
             tracing::warn!(conn = self.conn_id.load(SeqCst), "kill finished");
         }
-        self.signal.store(0, SeqCst);
-        self.reset_kill_event();
         *lock_unpoison(&self.last_check_time) = None;
+    }
+}
+
+#[cfg(all(test, feature = "failpoints"))]
+mod tests {
+    use super::*;
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::Duration;
+
+    #[test]
+    fn concurrent_reset_keeps_signal_and_event_state_consistent() {
+        let killer = Arc::new(SqlKiller::default());
+        let before_log_killer = Arc::clone(&killer);
+        fail::cfg_callback("beforeLogKillSignal", move || {
+            before_log_killer.reset();
+        })
+        .unwrap();
+
+        killer.send_kill_signal(KillSignal::QueryInterrupted);
+        fail::remove("beforeLogKillSignal");
+
+        assert_eq!(killer.get_kill_signal(), KillSignal::UnspecifiedKillSignal);
+        assert!(killer.handle_signal().is_none());
+        let state = lock_unpoison(&killer.kill_event.state);
+        assert!(!state.triggered);
+        assert!(state.desc.is_empty());
+        drop(state);
+        let receiver = killer.get_kill_event_chan();
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(crossbeam_channel::TryRecvError::Empty)
+        ));
+
+        let killer = Arc::new(SqlKiller::default());
+        let reason = "memory usage exceeds the instance limit";
+        let after_reset_killer = Arc::clone(&killer);
+        let (sent_tx, sent_rx) = mpsc::channel();
+        let stale_receiver = killer.get_kill_event_chan();
+        fail::cfg_callback("afterResetKillSignalSwap", move || {
+            assert!(after_reset_killer.kill_event.state.try_lock().is_err());
+            let sender_killer = Arc::clone(&after_reset_killer);
+            let sent_tx = sent_tx.clone();
+            thread::spawn(move || {
+                sender_killer
+                    .send_kill_signal_with_reason(KillSignal::KilledByMemArbitrator, reason);
+                sent_tx.send(()).unwrap();
+            });
+        })
+        .unwrap();
+
+        killer.reset();
+        assert!(matches!(
+            stale_receiver.try_recv(),
+            Err(crossbeam_channel::TryRecvError::Disconnected)
+        ));
+        sent_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        fail::remove("afterResetKillSignalSwap");
+
+        assert_eq!(killer.get_kill_signal(), KillSignal::KilledByMemArbitrator);
+        let error = killer.handle_signal().unwrap();
+        assert!(error.to_string().contains(reason));
+        let state = lock_unpoison(&killer.kill_event.state);
+        assert!(state.triggered);
+        assert_eq!(state.desc, reason);
+        drop(state);
+        let receiver = killer.get_kill_event_chan();
+        assert!(matches!(receiver.try_recv(), Ok(())));
     }
 }
