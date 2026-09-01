@@ -14,6 +14,8 @@
 
 //! Local instance resource manager from `pkg/resourcemanager`.
 
+pub mod pool;
+pub mod poolmanager;
 pub mod scheduler;
 pub mod util;
 

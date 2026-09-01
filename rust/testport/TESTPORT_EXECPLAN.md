@@ -36,6 +36,14 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- [x] (2026-08-31) Completed the pinned prerequisite packages
+  `pkg/resourcemanager/pool` and `pkg/resourcemanager/poolmanager`. Added only
+  their canonical pool errors/base state and eight-shard task metadata,
+  registry, boost, and pause behavior; neither source package has tests, so no
+  supplemental tests were introduced. Complete inventories and WIP evidence
+  are in `receipts/resourcemanager_pool.md` and
+  `receipts/resourcemanager_poolmanager.md`.
+
 - [x] (2026-08-31) Completed the coupled pinned Go package batch
   `pkg/util/cpu`, `pkg/resourcemanager/util`,
   `pkg/resourcemanager/scheduler`, and root `pkg/resourcemanager`. Added the
