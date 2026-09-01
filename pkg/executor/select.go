@@ -955,6 +955,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.TriggerCtx = vars.StmtCtx.TriggerCtx
 	}
 	sc.SetTimeZone(vars.Location())
+	sc.PlanCacheDMLParamTypeMatchEnabled = vars.EnablePlanCacheDMLParamTypeMatch
 	sc.TaskID = stmtctx.AllocateTaskID()
 	if sc.CTEStorageMap == nil {
 		sc.CTEStorageMap = map[int]*CTEStorages{}

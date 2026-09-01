@@ -329,33 +329,13 @@ func (s *session) cleanRetryInfo() {
 	}
 
 	planCacheEnabled := s.GetSessionVars().EnablePreparedPlanCache
-	var cacheKey string
-	var err error
-	var preparedObj *plannercore.PlanCacheStmt
-	if planCacheEnabled {
-		firstStmtID := retryInfo.DroppedPreparedStmtIDs[0]
-		if preparedPointer, ok := s.sessionVars.PreparedStmts[firstStmtID]; ok {
-			preparedObj, ok = preparedPointer.(*plannercore.PlanCacheStmt)
-			if ok {
-				cacheKey, _, _, _, err = plannercore.NewPlanCacheKey(s, preparedObj)
-				if err != nil {
-					logutil.Logger(s.currentCtx).Warn("clean cached plan failed", zap.Error(err))
-					return
-				}
-			}
-		}
-	}
-	for i, stmtID := range retryInfo.DroppedPreparedStmtIDs {
-		if planCacheEnabled {
-			if i > 0 && preparedObj != nil {
-				cacheKey, _, _, _, err = plannercore.NewPlanCacheKey(s, preparedObj)
-				if err != nil {
-					logutil.Logger(s.currentCtx).Warn("clean cached plan failed", zap.Error(err))
-					return
-				}
-			}
-			if !s.sessionVars.IgnorePreparedCacheCloseStmt { // keep the plan in cache
-				s.GetSessionPlanCache().Delete(cacheKey)
+	for _, stmtID := range retryInfo.DroppedPreparedStmtIDs {
+		preparedPointer, exists := s.sessionVars.PreparedStmts[stmtID]
+		preparedObj, ok := preparedPointer.(*plannercore.PlanCacheStmt)
+		if planCacheEnabled && exists && ok && !s.sessionVars.IgnorePreparedCacheCloseStmt {
+			if err := plannercore.DeletePreparedPlanCacheVariants(s, preparedObj); err != nil {
+				logutil.Logger(s.currentCtx).Warn("clean cached plan failed", zap.Error(err))
+				return
 			}
 		}
 		s.sessionVars.RemovePreparedStmt(stmtID)
@@ -2670,7 +2650,7 @@ func (s *session) rebuildFromPrepareCache(
 	// Walk the new AST to populate limits, hasSubquery, and tables.
 	// These fields hold pointers into the AST, so they must refer to the
 	// newly-parsed tree rather than the cached one.
-	plannercore.CollectPlanCacheStmtInfo(ctx, is, newStmt, stmtNode)
+	plannercore.FinalizePreparedPlanCacheStmtInfo(ctx, ret.InfoSchema, newStmt, stmtNode)
 
 	// dbName and tbls are only read during Execute (not written to by
 	// CollectPlanCacheStmtInfo since that populates tables, not tbls).

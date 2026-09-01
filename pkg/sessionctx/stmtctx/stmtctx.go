@@ -310,9 +310,14 @@ type StatementContext struct {
 	InCreateOrAlterStmt    bool
 	InSetSessionStatesStmt bool
 	InPreparedPlanBuilding bool
-	InShowWarning          bool
-	InDiagnostics          bool
-	LastWarningNum         int
+	// PlanCacheDMLParamTypeMatchEnabled is the immutable value captured from the
+	// session variable when this statement context is initialized. Plan-cache
+	// key construction, parameter matching and PointUpdate conversion must all
+	// use this snapshot instead of rereading mutable session state.
+	PlanCacheDMLParamTypeMatchEnabled bool
+	InShowWarning                     bool
+	InDiagnostics                     bool
+	LastWarningNum                    int
 
 	contextutil.PlanCacheTracker
 	contextutil.RangeFallbackHandler

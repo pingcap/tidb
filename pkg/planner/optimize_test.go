@@ -27,6 +27,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestPlanCacheDMLParamMatchSetVarHintIsExplicitlyRejected(t *testing.T) {
+	ok, warning := setVarHintChecker(variable.TiDBEnablePlanCacheDMLParamTypeMatch, "SET_VAR")
+	require.False(t, ok)
+	require.Error(t, warning)
+}
+
 func TestLogicalPlanBuildRoundStateResetAndRestore(t *testing.T) {
 	sessVars := variable.NewSessionVars(nil)
 	sessVars.EnableAlternativeLogicalPlans = true

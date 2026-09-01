@@ -2295,7 +2295,7 @@ func buildOrderedList(ctx base.PlanContext, pointPlan base.Plan, list []*ast.Ass
 			return nil, nil, true
 		}
 		visitInfos = append(visitInfos, vs...)
-		if !ctx.GetSessionVars().EnablePlanCacheDMLParamTypeMatch {
+		if !ctx.GetSessionVars().StmtCtx.PlanCacheDMLParamTypeMatchEnabled {
 			castToTP := col.GetStaticType()
 			if (castToTP.GetType() == mysql.TypeEnum || castToTP.GetType() == mysql.TypeSet) &&
 				assign.Expr.GetType().EvalType() == types.ETInt {

@@ -18,6 +18,7 @@ import (
 	"context"
 	"math"
 	"math/rand"
+	"strings"
 	"sync"
 	"time"
 
@@ -967,6 +968,14 @@ func setVarHintChecker(varName, hint string) (ok bool, warning error) {
 	sysVar := variable.GetSysVar(varName)
 	if sysVar == nil { // no such a variable
 		return false, plannererrors.ErrUnresolvedHintName.FastGenByArgs(varName, hint)
+	}
+	// This variable selects both the plan-cache identity and PointUpdate
+	// conversion semantics. Applying it after cache lookup would split one
+	// execution across two modes, so SET_VAR and binding hints are deliberately
+	// unsupported and ignored. Keep warning+ignore explicit rather than relying
+	// on mutable SysVar hint metadata.
+	if strings.EqualFold(varName, variable.TiDBEnablePlanCacheDMLParamTypeMatch) {
+		return false, plannererrors.ErrNotHintUpdatable.FastGenByArgs(varName)
 	}
 	if !sysVar.IsHintUpdatableVerified {
 		warning = plannererrors.ErrNotHintUpdatable.FastGenByArgs(varName)

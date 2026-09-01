@@ -1558,8 +1558,8 @@ type SessionVars struct {
 
 	// EnablePreparedPlanCache indicates whether to enable prepared plan cache.
 	EnablePreparedPlanCache bool
-	// EnablePlanCacheDMLParamTypeMatch selects executor-side target-column
-	// conversion for point UPDATE assignments instead of the legacy planner cast.
+	// EnablePlanCacheDMLParamTypeMatch ignores source types of safe
+	// direct-write parameters during prepared DML plan-cache matching.
 	EnablePlanCacheDMLParamTypeMatch bool
 
 	// PreparedPlanCacheSize controls the size of prepared plan cache.

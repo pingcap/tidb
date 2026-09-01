@@ -17,18 +17,195 @@ package issuetest
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
+
+func instanceCachedPlanForPrepared(t *testing.T, tk *testkit.TestKit, name string) base.Plan {
+	prepared, err := tk.Session().GetSessionVars().GetPreparedStmtByName(name)
+	require.NoError(t, err)
+	cacheKey, _, cacheable, reason, err := core.NewPreparedPlanCacheKey(tk.Session(), prepared.(*core.PlanCacheStmt))
+	require.NoError(t, err)
+	require.True(t, cacheable, reason)
+	raw, ok := domain.GetDomain(tk.Session()).GetInstancePlanCache().Get(cacheKey, nil)
+	require.True(t, ok)
+	return raw.(*core.PlanCacheValue).Plan
+}
+
+func sessionCachedPlanForPrepared(t *testing.T, tk *testkit.TestKit, name string) base.Plan {
+	prepared, err := tk.Session().GetSessionVars().GetPreparedStmtByName(name)
+	require.NoError(t, err)
+	cacheKey, _, cacheable, reason, err := core.NewPreparedPlanCacheKey(tk.Session(), prepared.(*core.PlanCacheStmt))
+	require.NoError(t, err)
+	require.True(t, cacheable, reason)
+	raw, ok := tk.Session().GetSessionPlanCache().Get(cacheKey, nil)
+	require.True(t, ok)
+	return raw.(*core.PlanCacheValue).Plan
+}
+
+func dmlExpressionGraphFingerprint(t testing.TB, plan base.Plan) string {
+	fieldType := func(ft *types.FieldType) string {
+		if ft == nil {
+			return "<nil>"
+		}
+		return fmt.Sprintf("tp=%d/cs=%s/co=%s/fl=%d/len=%d/dec=%d", ft.GetType(), ft.GetCharset(),
+			ft.GetCollate(), ft.GetFlag(), ft.GetFlen(), ft.GetDecimal())
+	}
+	var expressionFingerprint func(expression.Expression) string
+	expressionFingerprint = func(expr expression.Expression) string {
+		switch e := expr.(type) {
+		case nil:
+			return "<nil>"
+		case *expression.Constant:
+			value, err := e.Value.ToString()
+			require.NoError(t, err)
+			marker := "nil"
+			if e.ParamMarker != nil {
+				marker = "present"
+			}
+			return fmt.Sprintf("constant@%p{%s,kind=%d,value=%q,bytes=%x,marker=%s,deferred=%s}",
+				e, fieldType(e.RetType), e.Value.Kind(), value, e.Value.GetBytes(), marker,
+				expressionFingerprint(e.DeferredExpr))
+		case *expression.Column:
+			return fmt.Sprintf("column@%p{%s,id=%d,uid=%d,index=%d,name=%q,hidden=%t,prefix=%t,in=%t,virtual=%s}",
+				e, fieldType(e.RetType), e.ID, e.UniqueID, e.Index, e.OrigName, e.IsHidden, e.IsPrefix,
+				e.InOperand, expressionFingerprint(e.VirtualExpr))
+		case *expression.ScalarFunction:
+			args := e.GetArgs()
+			parts := make([]string, len(args))
+			for i := range args {
+				parts[i] = expressionFingerprint(args[i])
+			}
+			argsBacking := "<nil>"
+			if args != nil {
+				argsBacking = "<empty>"
+				if len(args) > 0 {
+					argsBacking = fmt.Sprintf("%p", &args[0])
+				}
+			}
+			return fmt.Sprintf("scalar@%p{name=%s,%s,args=nil:%t/%d/%d/back=%s:%s}", e, e.FuncName.L,
+				fieldType(e.RetType), args == nil, len(args), cap(args), argsBacking, strings.Join(parts, ","))
+		default:
+			return fmt.Sprintf("expr@%p{%T,type=%s}", expr, expr, fieldType(expr.GetType(nil)))
+		}
+	}
+	assignment := func(a *expression.Assignment) string {
+		if a == nil {
+			return "<nil-assignment>"
+		}
+		return fmt.Sprintf("assignment@%p{name=%s,col=%s,expr=%s,lazy=%v}", a, a.ColName.O,
+			expressionFingerprint(a.Col), expressionFingerprint(a.Expr), a.LazyErr)
+	}
+	var b strings.Builder
+	switch p := plan.(type) {
+	case *core.Insert:
+		listsBacking := "<nil>"
+		if p.Lists != nil {
+			listsBacking = "<empty>"
+			if len(p.Lists) > 0 {
+				listsBacking = fmt.Sprintf("%p", &p.Lists[0])
+			}
+		}
+		fmt.Fprintf(&b, "insert@%p{lists=nil:%t/%d/%d/back=%s", p, p.Lists == nil, len(p.Lists),
+			cap(p.Lists), listsBacking)
+		for _, list := range p.Lists {
+			listBacking := "<nil>"
+			if list != nil {
+				listBacking = "<empty>"
+				if len(list) > 0 {
+					listBacking = fmt.Sprintf("%p", &list[0])
+				}
+			}
+			fmt.Fprintf(&b, ",list=nil:%t/%d/%d/back=%s", list == nil, len(list), cap(list), listBacking)
+			for _, expr := range list {
+				fmt.Fprintf(&b, ",%s", expressionFingerprint(expr))
+			}
+		}
+		onDuplicateBacking := "<nil>"
+		if p.OnDuplicate != nil {
+			onDuplicateBacking = "<empty>"
+			if len(p.OnDuplicate) > 0 {
+				onDuplicateBacking = fmt.Sprintf("%p", &p.OnDuplicate[0])
+			}
+		}
+		fmt.Fprintf(&b, ",ondup=nil:%t/%d/%d/back=%s", p.OnDuplicate == nil, len(p.OnDuplicate),
+			cap(p.OnDuplicate), onDuplicateBacking)
+		for _, a := range p.OnDuplicate {
+			fmt.Fprintf(&b, ",%s", assignment(a))
+		}
+		b.WriteString("}")
+	case *core.Update:
+		orderedBacking := "<nil>"
+		if p.OrderedList != nil {
+			orderedBacking = "<empty>"
+			if len(p.OrderedList) > 0 {
+				orderedBacking = fmt.Sprintf("%p", &p.OrderedList[0])
+			}
+		}
+		fmt.Fprintf(&b, "update@%p{ordered=nil:%t/%d/%d/back=%s", p, p.OrderedList == nil,
+			len(p.OrderedList), cap(p.OrderedList), orderedBacking)
+		for _, a := range p.OrderedList {
+			fmt.Fprintf(&b, ",%s", assignment(a))
+		}
+		b.WriteString("}")
+	default:
+		require.Failf(t, "unsupported DML plan", "%T", plan)
+	}
+	return b.String()
+}
+
+func assertNonFKCachedUpdateAccessPath(t *testing.T, name string, plan base.Plan) {
+	update, ok := plan.(*core.Update)
+	require.True(t, ok, "%s cached plan must be Update, got %T", name, plan)
+	switch name {
+	case "phase_c_non_fk_point":
+		point, ok := update.SelectPlan.(*core.PointGetPlan)
+		require.True(t, ok, "%s must cache a primary-key PointGet, got %T", name, update.SelectPlan)
+		require.Nil(t, point.IndexInfo, "primary-key PointGet must use the table handle")
+		require.NotNil(t, point.Handle, "primary-key PointGet must carry its resolved table handle")
+		require.NotNil(t, point.HandleConstant, "primary-key PointGet must retain its handle parameter")
+		require.NotNil(t, point.HandleConstant.ParamMarker, "primary-key locator must come from the prepared parameter")
+		require.Equal(t, int64(1), point.Handle.IntValue(), "primary-key locator must retain the published handle")
+		require.Equal(t, "phase_c_non_fk", point.TblInfo.Name.L)
+	case "phase_c_non_fk_unique":
+		point, ok := update.SelectPlan.(*core.PointGetPlan)
+		require.True(t, ok, "%s must cache a unique-index PointGet, got %T", name, update.SelectPlan)
+		require.NotNil(t, point.IndexInfo, "unique PointGet must carry the selected index")
+		require.Equal(t, "uk", point.IndexInfo.Name.L)
+		require.Len(t, point.IndexConstants, 1, "unique PointGet must retain its index parameter")
+		require.NotNil(t, point.IndexConstants[0].ParamMarker, "unique-index locator must come from the prepared parameter")
+		require.Len(t, point.IndexValues, 1, "unique PointGet must resolve one index value")
+		require.Equal(t, int64(22), point.IndexValues[0].GetInt64(), "unique-index locator must retain the published value")
+		require.Equal(t, "phase_c_non_fk", point.TblInfo.Name.L)
+	case "phase_c_non_fk_batch":
+		batch, ok := update.SelectPlan.(*core.BatchPointGetPlan)
+		require.True(t, ok, "%s must cache a primary-handle BatchPointGet, got %T", name, update.SelectPlan)
+		require.Nil(t, batch.IndexInfo, "primary-key BatchPointGet must use table handles")
+		require.Len(t, batch.HandleParams, 2, "BatchPointGet must retain both handle parameters")
+		for i, param := range batch.HandleParams {
+			require.NotNil(t, param.ParamMarker, "BatchPointGet locator %d must come from a prepared parameter", i)
+		}
+		require.Len(t, batch.Handles, 2, "BatchPointGet must resolve both table handles")
+		handles := []int64{batch.Handles[0].IntValue(), batch.Handles[1].IntValue()}
+		require.ElementsMatch(t, []int64{1, 2}, handles, "BatchPointGet must retain both published table handles")
+		require.Equal(t, "phase_c_non_fk", batch.TblInfo.Name.L)
+	default:
+		require.Failf(t, "unknown non-FK UPDATE access-path case", "%s", name)
+	}
+}
 
 // It's a case for Columns in tableScan and indexScan with double reader
 func TestIssue43461(t *testing.T) {
@@ -425,44 +602,6 @@ func TestIssue67534PointUpdateAssignmentCasting(t *testing.T) {
 	}
 }
 
-func TestFix69990PointUpdateExecutorConversion(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_plan_cache_dml_param_type_match = ON")
-	tk.MustExec("create table t (id int primary key, uk int unique, i bigint, d decimal(10,2))")
-	tk.MustExec("insert into t values (1, 11, 0, 0), (2, 22, 0, 0)")
-
-	// PointGet by primary key: the marker keeps its current raw Datum and the
-	// executor performs the target-column conversion.
-	tk.MustExec("prepare p from 'update t set i = ?, d = ? where id = ?'")
-	tk.MustExec("set @i = 12, @d = 12.34, @id = 1")
-	tk.MustExec("execute p using @i, @d, @id")
-	tk.MustExec("set @i = 34, @d = 56.78")
-	tk.MustExec("execute p using @i, @d, @id")
-	tk.MustQuery("select i, d from t where id = 1").Check(testkit.Rows("34 56.78"))
-
-	// Unique-index PointGet and BatchPointGet share buildOrderedList and must
-	// therefore retain the same constant fast path.
-	tk.MustExec("prepare u from 'update t set i = ? where uk = ?'")
-	tk.MustExec("set @i = 45, @uk = 11")
-	tk.MustExec("execute u using @i, @uk")
-	tk.MustExec("prepare b from 'update t set i = ? where id in (?, ?)'")
-	tk.MustExec("set @i = 67, @id1 = 1, @id2 = 2")
-	tk.MustExec("execute b using @i, @id1, @id2")
-	tk.MustQuery("select id, i from t order by id").Check(testkit.Rows("1 67", "2 67"))
-
-	// Turning the feature off preserves the legacy source-specific cast path.
-	tk.MustExec("set tidb_enable_plan_cache_dml_param_type_match = OFF")
-	tk.MustExec("set @i = 89")
-	tk.MustExec("execute p using @i, @d, @id")
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-	tk.MustQuery("select i from t where id = 1").Check(testkit.Rows("89"))
-	tk.MustExec("set tidb_enable_plan_cache_dml_param_type_match = ON")
-	tk.MustExec("execute p using @i, @d, @id")
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-}
-
 func TestFix69990PointUpdateCacheConversionOracle(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -477,13 +616,12 @@ func TestFix69990PointUpdateCacheConversionOracle(t *testing.T) {
 		row      [][]any
 	}
 	run := func(cacheEnabled bool, sqlMode, assignment, warmValue, testValue string) (outcome, bool) {
-		if cacheEnabled {
-			tk.MustExec("set tidb_enable_prepared_plan_cache = 1")
-		} else {
-			tk.MustExec("set tidb_enable_prepared_plan_cache = 0")
-		}
+		tk.MustExec("set tidb_enable_prepared_plan_cache = 1")
 		tk.MustExec("set @@sql_mode = ?", sqlMode)
 		tk.MustExec("prepare conversion_stmt from 'update conversion_oracle set " + assignment + " where id=1'")
+		if !cacheEnabled {
+			tk.MustExec("set tidb_enable_prepared_plan_cache = 0")
+		}
 		if cacheEnabled {
 			tk.MustExec("set @v = ?", warmValue)
 			tk.MustExec("execute conversion_stmt using @v")
@@ -521,14 +659,13 @@ func TestFix69990PointUpdateCacheConversionOracle(t *testing.T) {
 		assignment string
 		warmValue  string
 		testValue  string
-		expectHit  bool
 	}{
-		{name: "strict invalid tinyint", sqlMode: "STRICT_TRANS_TABLES", assignment: "i=?", warmValue: "1", testValue: "x", expectHit: true},
-		{name: "strict tinyint overflow", sqlMode: "STRICT_TRANS_TABLES", assignment: "i=?", warmValue: "1", testValue: "999", expectHit: true},
-		{name: "non-strict tinyint overflow", sqlMode: "", assignment: "i=?", warmValue: "1", testValue: "999", expectHit: true},
-		{name: "non-strict bigint overflow", sqlMode: "", assignment: "b=?", warmValue: "1", testValue: "9223372036854775808", expectHit: true},
-		{name: "non-strict decimal rounding", sqlMode: "", assignment: "d=?", warmValue: "1.00", testValue: "1.239", expectHit: true},
-		{name: "sql null", sqlMode: "STRICT_TRANS_TABLES", assignment: "i=?", warmValue: "1", testValue: "<null>", expectHit: false},
+		{name: "strict invalid tinyint", sqlMode: "STRICT_TRANS_TABLES", assignment: "i=?", warmValue: "1", testValue: "x"},
+		{name: "strict tinyint overflow", sqlMode: "STRICT_TRANS_TABLES", assignment: "i=?", warmValue: "1", testValue: "999"},
+		{name: "non-strict tinyint overflow", sqlMode: "", assignment: "i=?", warmValue: "1", testValue: "999"},
+		{name: "non-strict bigint overflow", sqlMode: "", assignment: "b=?", warmValue: "1", testValue: "9223372036854775808"},
+		{name: "non-strict decimal rounding", sqlMode: "", assignment: "d=?", warmValue: "1.00", testValue: "1.239"},
+		{name: "sql null", sqlMode: "STRICT_TRANS_TABLES", assignment: "i=?", warmValue: "1", testValue: "<null>"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -536,10 +673,519 @@ func TestFix69990PointUpdateCacheConversionOracle(t *testing.T) {
 			replan, _ := run(false, tc.sqlMode, tc.assignment, tc.warmValue, tc.testValue)
 			tk.MustExec("update conversion_oracle set i=0, b=0, d=0 where id=1")
 			cached, foundInPlanCache := run(true, tc.sqlMode, tc.assignment, tc.warmValue, tc.testValue)
-			require.Equal(t, tc.expectHit, foundInPlanCache)
+			require.True(t, foundInPlanCache, "conversion must execute through the target-matched cached plan")
 			require.Equal(t, replan, cached)
 		})
 	}
+}
+
+func TestFix69990PhaseBUpdateInsertBindingCacheOracle(t *testing.T) {
+	ctx := context.WithValue(context.Background(), core.PlanCacheKeyEnableInstancePlanCache{}, true)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExecWithContext(ctx, "use test")
+	tk.MustExecWithContext(ctx, "set tidb_enable_plan_cache_dml_param_type_match=ON")
+	tk.MustExecWithContext(ctx, "create table phase_b(id int primary key, grp int, v bigint, s varchar(20))")
+	tk.MustExecWithContext(ctx, "insert into phase_b values(1,10,0,'a'),(2,10,0,'a')")
+
+	// Scan UPDATE: write markers use target matching while the WHERE marker
+	// remains strict. Rotating v from integer to string still hits the plan.
+	tk.MustExecWithContext(ctx, "prepare update_scan from 'update phase_b set v=?, s=? where grp=?'")
+	tk.MustExecWithContext(ctx, "set @v=11, @s='first', @grp=10")
+	tk.MustExecWithContext(ctx, "execute update_scan using @v,@s,@grp")
+	tk.MustExecWithContext(ctx, "set @v='22', @s='second'")
+	tk.MustExecWithContext(ctx, "execute update_scan using @v,@s,@grp")
+	tk.MustQueryWithContext(ctx, "select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQueryWithContext(ctx, "select id,v,s from phase_b order by id").Check(testkit.Rows("1 22 second", "2 22 second"))
+
+	// A marker inside a complex write expression structurally fails closed, so
+	// changing its source type must use a different strict cache variant.
+	tk.MustExecWithContext(ctx, "prepare update_complex from 'update phase_b set v=?+1 where grp=?'")
+	tk.MustExecWithContext(ctx, "set @v=30")
+	tk.MustExecWithContext(ctx, "execute update_complex using @v,@grp")
+	tk.MustExecWithContext(ctx, "set @v='40'")
+	tk.MustExecWithContext(ctx, "execute update_complex using @v,@grp")
+	tk.MustQueryWithContext(ctx, "select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	// Literal/DEFAULT assignments still participate in duplicate-target
+	// detection. The duplicate makes the whole statement strict, so rotating
+	// the direct marker's source type must miss rather than reuse a target-type
+	// cache variant.
+	tk.MustExecWithContext(ctx, "prepare update_duplicate from 'update phase_b set v=1, v=? where grp=?'")
+	tk.MustExecWithContext(ctx, "set @v=50")
+	tk.MustExecWithContext(ctx, "execute update_duplicate using @v,@grp")
+	tk.MustExecWithContext(ctx, "set @v='60'")
+	tk.MustExecWithContext(ctx, "execute update_duplicate using @v,@grp")
+	tk.MustQueryWithContext(ctx, "select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	// Base-table index modifiers are outside the direct-write structural
+	// allowlist and therefore keep every marker strict.
+	tk.MustExecWithContext(ctx, "prepare update_index_hint from 'update phase_b use index(primary) set v=? where grp=?'")
+	tk.MustExecWithContext(ctx, "set @v=70")
+	tk.MustExecWithContext(ctx, "execute update_index_hint using @v,@grp")
+	tk.MustExecWithContext(ctx, "set @v='80'")
+	tk.MustExecWithContext(ctx, "execute update_index_hint using @v,@grp")
+	tk.MustQueryWithContext(ctx, "select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	// Multi-row INSERT and ON DUPLICATE share global marker order. Every safe
+	// direct-write parameter, including varchar targets, ignores its source type
+	// after target conversion. Rotate both numeric and varchar sources while
+	// reusing the same cache variant.
+	insertSQL := "insert into phase_b(id,grp,v,s) values (?,?,?,?),(?,?,?,?) on duplicate key update v=?"
+	tk.MustExecWithContext(ctx, "prepare insert_values from '"+insertSQL+"'")
+	tk.MustExecWithContext(ctx, "set @id1=3,@g1=20,@v1=31,@s1='x',@id2=4,@g2=20,@v2=41,@s2='y',@dup=51")
+	tk.MustExecWithContext(ctx, "execute insert_values using @id1,@g1,@v1,@s1,@id2,@g2,@v2,@s2,@dup")
+	tk.MustExecWithContext(ctx, "set @id1='3',@g1='21',@v1='32',@s1=111,@id2='5',@g2='21',@v2='42',@s2=222,@dup='52'")
+	tk.MustExecWithContext(ctx, "execute insert_values using @id1,@g1,@v1,@s1,@id2,@g2,@v2,@s2,@dup")
+	tk.MustQueryWithContext(ctx, "select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQueryWithContext(ctx, "select id,grp,v,s from phase_b where id>=3 order by id").Check(testkit.Rows(
+		"3 20 52 x", "4 20 41 y", "5 21 42 222"))
+
+	// A second session owns another prepared statement/snapshot but hits the
+	// same Instance entry with its current raw values.
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExecWithContext(ctx, "use test")
+	tk2.MustExecWithContext(ctx, "set tidb_enable_plan_cache_dml_param_type_match=ON")
+	tk2.MustExecWithContext(ctx, "prepare insert_values from '"+insertSQL+"'")
+	tk2.MustExecWithContext(ctx, "set @id1='3',@g1='22',@v1='33',@s1='m',@id2='6',@g2='22',@v2='43',@s2='n',@dup='53'")
+	tk2.MustExecWithContext(ctx, "execute insert_values using @id1,@g1,@v1,@s1,@id2,@g2,@v2,@s2,@dup")
+	tk2.MustQueryWithContext(ctx, "select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk2.MustQueryWithContext(ctx, "select id,grp,v,s from phase_b where id in (3,6) order by id").Check(testkit.Rows(
+		"3 20 53 x", "6 22 43 n"))
+}
+
+// TestFix69990ParamMatchMaskRefreshAfterSchemaChange verifies that schema
+// re-preprocess refreshes the statement-scoped matching modes. Recreating the
+// target as a partitioned table changes the classifier result from direct-write
+// matching to fail-closed strict matching.
+func TestFix69990ParamMatchMaskRefreshAfterSchemaChange(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_prepared_plan_cache=1")
+	tk.MustExec("set tidb_enable_plan_cache_dml_param_type_match=ON")
+	tk.MustExec("set tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("create table mask_refresh(id int primary key, v bigint)")
+	tk.MustExec("insert into mask_refresh values(1,0)")
+	tk.MustExec("prepare mask_refresh_stmt from 'update mask_refresh set v=? where id=?'")
+
+	// The ordinary base table classifies the assignment marker as direct-write.
+	tk.MustExec("set @v=1,@id=1")
+	tk.MustExec("execute mask_refresh_stmt using @v,@id")
+	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	tk.MustExec("set @v='2'")
+	tk.MustExec("execute mask_refresh_stmt using @v,@id")
+	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
+
+	// DROP/CREATE changes the table binding and classifier eligibility. The first
+	// execution misses because the old schema entry is fenced; after refresh the
+	// assignment is strict, so rotating its source type must miss again.
+	tk.MustExec("drop table mask_refresh")
+	tk.MustExec("create table mask_refresh(id int primary key, v bigint) partition by hash(id) partitions 2")
+	tk.MustExec("insert into mask_refresh values(1,0)")
+	tk.MustExec("set @v=3")
+	tk.MustExec("execute mask_refresh_stmt using @v,@id")
+	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	tk.MustExec("set @v='4'")
+	tk.MustExec("execute mask_refresh_stmt using @v,@id")
+	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	tk.MustQuery("select v from mask_refresh where id=1").Check(testkit.Rows("4"))
+}
+
+func TestFix69990PhaseBCacheOffOnOracle(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_plan_cache_dml_param_type_match=ON")
+	tk.MustExec("create table phase_b_oracle(id int primary key, grp int, v bigint, d decimal(10,2))")
+
+	type outcome struct {
+		updateAffected uint64
+		insertAffected uint64
+		warnings       [][]any
+		rows           [][]any
+	}
+	run := func(cacheEnabled bool) outcome {
+		tk.MustExec("truncate table phase_b_oracle")
+		tk.MustExec("insert into phase_b_oracle values(1,10,0,0),(2,10,0,0)")
+		tk.MustExec("set tidb_enable_prepared_plan_cache=1")
+		tk.MustExec("prepare phase_b_update_oracle from 'update phase_b_oracle set v=?, d=? where grp=?'")
+		tk.MustExec("prepare phase_b_insert_oracle from 'insert into phase_b_oracle(id,grp,v,d) values(?,?,?,?),(?,?,?,?) on duplicate key update v=?'")
+		if !cacheEnabled {
+			tk.MustExec("set tidb_enable_prepared_plan_cache=0")
+		}
+		if cacheEnabled {
+			tk.MustExec("set @v=1,@d=1.00,@grp=10")
+			tk.MustExec("execute phase_b_update_oracle using @v,@d,@grp")
+			tk.MustExec("set @id1=3,@g1=20,@v1=3,@d1=3.00,@id2=4,@g2=20,@v2=4,@d2=4.00,@dup=5")
+			tk.MustExec("execute phase_b_insert_oracle using @id1,@g1,@v1,@d1,@id2,@g2,@v2,@d2,@dup")
+			tk.MustExec("truncate table phase_b_oracle")
+			tk.MustExec("insert into phase_b_oracle values(1,10,0,0),(2,10,0,0)")
+		}
+		tk.MustExec("set @v='22',@d='2.239',@grp=10")
+		tk.MustExec("execute phase_b_update_oracle using @v,@d,@grp")
+		result := outcome{updateAffected: tk.Session().GetSessionVars().StmtCtx.AffectedRows()}
+		tk.MustExec("set @id1='3',@g1='20',@v1='31',@d1='3.239',@id2='4',@g2='20',@v2='41',@d2='4.239',@dup='51'")
+		tk.MustExec("execute phase_b_insert_oracle using @id1,@g1,@v1,@d1,@id2,@g2,@v2,@d2,@dup")
+		result.insertAffected = tk.Session().GetSessionVars().StmtCtx.AffectedRows()
+		warnings := tk.MustQuery("show warnings").Rows()
+		for _, warning := range warnings {
+			if len(warning) == 3 && warning[1] == "1105" && warning[2] == "skip prepared plan-cache: plan cache is disabled" {
+				continue
+			}
+			result.warnings = append(result.warnings, warning)
+		}
+		result.rows = tk.MustQuery("select id,grp,v,d from phase_b_oracle order by id").Rows()
+		tk.MustExec("deallocate prepare phase_b_update_oracle")
+		tk.MustExec("deallocate prepare phase_b_insert_oracle")
+		return result
+	}
+
+	replan := run(false)
+	cached := run(true)
+	require.Equal(t, replan, cached)
+}
+
+func TestFix69990PreservesPrepareTimeUncacheableLifecycle(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_plan_cache_dml_param_type_match=ON")
+	tk.MustExec("create table phase_b_uncacheable(id int primary key, v int, s varchar(20))")
+	requireWarningContains := func(fragment string) {
+		warnings := tk.MustQuery("show warnings").Rows()
+		require.Condition(t, func() bool {
+			for _, warning := range warnings {
+				if len(warning) == 3 && strings.Contains(fmt.Sprint(warning[2]), fragment) {
+					return true
+				}
+			}
+			return false
+		}, "warnings %v do not contain %q", warnings, fragment)
+	}
+
+	// The existing PREPARE-time cache switch remains part of StmtCacheable.
+	// Enabling the cache later must neither retroactively enable target matching
+	// nor publish an entry.
+	tk.MustExec("set tidb_enable_prepared_plan_cache=0")
+	tk.MustExec("prepare phase_b_disabled from 'insert into phase_b_uncacheable(id,v) values (?,?)'")
+	prepared, err := tk.Session().GetSessionVars().GetPreparedStmtByName("phase_b_disabled")
+	require.NoError(t, err)
+	require.False(t, prepared.(*core.PlanCacheStmt).StmtCacheable)
+	require.Equal(t, "plan cache is disabled", prepared.(*core.PlanCacheStmt).UncacheableReason)
+	tk.MustExec("set tidb_enable_prepared_plan_cache=1")
+	tk.MustExec("set @id=1,@v='11'")
+	tk.MustExec("execute phase_b_disabled using @id,@v")
+	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	requireWarningContains("plan cache is disabled")
+	tk.MustExec("set @id=2,@v='12'")
+	tk.MustExec("execute phase_b_disabled using @id,@v")
+	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	tk.MustQuery("select * from phase_b_uncacheable order by id").Check(testkit.Rows("1 11 <nil>", "2 12 <nil>"))
+
+	// Stable existing checker rejection also remains legacy with Fix ON for
+	// both UPDATE and INSERT; repeated executions cannot become cache hits.
+	for _, tc := range []struct {
+		name string
+		sql  string
+		set  string
+		use  string
+	}{
+		{name: "update", sql: "update phase_b_uncacheable set v=? where @phase_b_guard is null", set: "set @p='21',@phase_b_guard=null", use: "@p"},
+		{name: "insert", sql: "insert into phase_b_uncacheable(id,v,s) values (?,?,@phase_b_guard)", set: "set @id=3,@p='22',@phase_b_guard='legacy'", use: "@id,@p"},
+	} {
+		tk.MustExec("prepare phase_b_uncacheable_stmt from '" + tc.sql + "'")
+		prepared, err = tk.Session().GetSessionVars().GetPreparedStmtByName("phase_b_uncacheable_stmt")
+		require.NoError(t, err)
+		stmt := prepared.(*core.PlanCacheStmt)
+		require.False(t, stmt.StmtCacheable, tc.name)
+		require.Contains(t, stmt.UncacheableReason, "user-defined variables", tc.name)
+		tk.MustExec(tc.set)
+		tk.MustExec("execute phase_b_uncacheable_stmt using " + tc.use)
+		require.False(t, tk.Session().GetSessionVars().FoundInPlanCache, tc.name)
+		requireWarningContains("user-defined variables")
+		if tc.name == "insert" {
+			tk.MustExec("delete from phase_b_uncacheable where id=3")
+		}
+		tk.MustExec("execute phase_b_uncacheable_stmt using " + tc.use)
+		require.False(t, tk.Session().GetSessionVars().FoundInPlanCache, tc.name)
+		tk.MustExec("deallocate prepare phase_b_uncacheable_stmt")
+	}
+}
+
+func TestFix69990JSONBitCrossSourceHitAndRecovery(t *testing.T) {
+	for _, instance := range []bool{false, true} {
+		cacheName := map[bool]string{false: "session", true: "instance"}[instance]
+		for _, tc := range []struct {
+			name            string
+			column          string
+			allowedSet      string
+			blockedSet      string
+			blockedMayError bool
+		}{
+			{name: "json", column: "j", allowedSet: `set @v='{"a":1}'`, blockedSet: "set @v=1", blockedMayError: true},
+			{name: "bit", column: "b", allowedSet: "set @v=null", blockedSet: "set @v=1"},
+		} {
+			t.Run(cacheName+"/"+tc.name, func(t *testing.T) {
+				store, dom := testkit.CreateMockStoreAndDomain(t)
+				ctx := context.Background()
+				if instance {
+					ctx = context.WithValue(ctx, core.PlanCacheKeyEnableInstancePlanCache{}, true)
+				}
+				tk := testkit.NewTestKit(t, store)
+				tk.MustExecWithContext(ctx, "use test")
+				tk.MustExecWithContext(ctx, "set tidb_enable_plan_cache_dml_param_type_match=ON")
+				tk.MustExecWithContext(ctx, "set tidb_enable_prepared_plan_cache=1")
+				tk.MustExecWithContext(ctx, "create table phase_c_source(id int primary key, j json, b bit(8))")
+				tk.MustExecWithContext(ctx, "insert into phase_c_source values(1,null,null)")
+				tk.MustExecWithContext(ctx, "prepare phase_c_source_stmt from 'update phase_c_source set "+tc.column+"=? where id=1'")
+				cacheSize := func() int64 {
+					if instance {
+						return dom.GetInstancePlanCache().Size()
+					}
+					return int64(tk.Session().GetSessionPlanCache().Size())
+				}
+				execute := func() error {
+					_, err := tk.ExecWithContext(ctx, "execute phase_c_source_stmt using @v")
+					return err
+				}
+
+				tk.MustExecWithContext(ctx, tc.allowedSet)
+				require.NoError(t, execute())
+				require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+				afterPublish := cacheSize()
+				require.Greater(t, afterPublish, int64(0))
+				require.NoError(t, execute())
+				require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
+				if tc.name == "json" {
+					tk.MustExecWithContext(ctx, "set @v='not-json'")
+					require.Error(t, execute())
+					require.True(t, tk.Session().GetSessionVars().FoundInPlanCache,
+						"an allowed nonbinary string source must reach cached executor conversion")
+					require.Equal(t, afterPublish, cacheSize())
+					tk.MustExecWithContext(ctx, tc.allowedSet)
+					require.NoError(t, execute())
+					require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
+				}
+
+				tk.MustExecWithContext(ctx, tc.blockedSet)
+				err := execute()
+				if !tc.blockedMayError {
+					require.NoError(t, err)
+				}
+				require.True(t, tk.Session().GetSessionVars().FoundInPlanCache,
+					"cross-source direct write must reuse the target-typed plan")
+				require.Equal(t, afterPublish, cacheSize(), "cross-source hit must not create a cache variant")
+				for _, warning := range tk.MustQueryWithContext(ctx, "show warnings").Rows() {
+					require.NotContains(t, fmt.Sprint(warning), "skip prepared plan-cache")
+				}
+
+				// Cross-source execution does not delete or mutate the normalized entry.
+				tk.MustExecWithContext(ctx, tc.allowedSet)
+				require.NoError(t, execute())
+				require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
+				require.Equal(t, afterPublish, cacheSize())
+			})
+		}
+	}
+}
+
+func TestFix69990ConcurrentInstanceCrossSourceIsolation(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	ctx := context.WithValue(context.Background(), core.PlanCacheKeyEnableInstancePlanCache{}, true)
+	newSession := func() *testkit.TestKit {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExecWithContext(ctx, "use test")
+		tk.MustExecWithContext(ctx, "set tidb_enable_plan_cache_dml_param_type_match=ON")
+		tk.MustExecWithContext(ctx, "set tidb_enable_prepared_plan_cache=1")
+		return tk
+	}
+	allowed, crossSource := newSession(), newSession()
+	allowed.MustExecWithContext(ctx, "create table phase_c_concurrent(id int primary key, j json)")
+	allowed.MustExecWithContext(ctx, "insert into phase_c_concurrent values(1,null),(2,null)")
+	for _, tk := range []*testkit.TestKit{allowed, crossSource} {
+		tk.MustExecWithContext(ctx, "prepare phase_c_concurrent_stmt from 'update phase_c_concurrent set j=? where id=?'")
+	}
+
+	allowed.MustExecWithContext(ctx, `set @j='{"warm":1}',@id=1`)
+	allowed.MustExecWithContext(ctx, "execute phase_c_concurrent_stmt using @j,@id")
+	require.False(t, allowed.Session().GetSessionVars().FoundInPlanCache)
+	cacheSize := dom.GetInstancePlanCache().Size()
+	require.Greater(t, cacheSize, int64(0))
+	crossSource.MustExecWithContext(ctx, `set @j='{"warm":2}',@id=2`)
+	crossSource.MustExecWithContext(ctx, "execute phase_c_concurrent_stmt using @j,@id")
+	require.True(t, crossSource.Session().GetSessionVars().FoundInPlanCache,
+		"the second session must prove both sessions share the warmed Instance value")
+
+	type result struct {
+		allowed bool
+		err     error
+		hit     bool
+	}
+	for iteration := 0; iteration < 8; iteration++ {
+		allowed.MustExecWithContext(ctx, "set @j=?,@id=1", fmt.Sprintf(`{"allowed":%d}`, iteration))
+		crossSource.MustExecWithContext(ctx, "set @j=?,@id=2", iteration)
+		start := make(chan struct{})
+		results := make(chan result, 2)
+		for _, execution := range []struct {
+			tk      *testkit.TestKit
+			allowed bool
+		}{{allowed, true}, {crossSource, false}} {
+			execution := execution
+			go func() {
+				<-start
+				_, err := execution.tk.ExecWithContext(ctx, "execute phase_c_concurrent_stmt using @j,@id")
+				results <- result{allowed: execution.allowed, err: err, hit: execution.tk.Session().GetSessionVars().FoundInPlanCache}
+			}()
+		}
+		close(start)
+		for range 2 {
+			out := <-results
+			if out.allowed {
+				require.NoError(t, out.err)
+				require.True(t, out.hit)
+			} else {
+				require.NoError(t, out.err)
+				require.True(t, out.hit)
+			}
+		}
+		require.Equal(t, cacheSize, dom.GetInstancePlanCache().Size(), "cross-source hits must not publish another entry")
+	}
+}
+
+func TestFix69990NonFKInstanceAssignmentGraphIsolation(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	ctx := context.WithValue(context.Background(), core.PlanCacheKeyEnableInstancePlanCache{}, true)
+	newSession := func() *testkit.TestKit {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExecWithContext(ctx, "use test")
+		tk.MustExecWithContext(ctx, "set tidb_enable_plan_cache_dml_param_type_match=ON")
+		tk.MustExecWithContext(ctx, "set tidb_enable_prepared_plan_cache=1")
+		return tk
+	}
+	tk1, tk2 := newSession(), newSession()
+	tk1.MustExecWithContext(ctx, "create table phase_c_non_fk(id int primary key,uk int unique,a int,b decimal(10,2),c varchar(20))")
+	tk1.MustExecWithContext(ctx, "insert into phase_c_non_fk values(1,11,0,0,'a'),(2,22,0,0,'b')")
+	statements := []struct {
+		name string
+		sql  string
+	}{
+		{"phase_c_non_fk_point", "update phase_c_non_fk set a=?,b=? where id=?"},
+		{"phase_c_non_fk_unique", "update phase_c_non_fk set a=? where uk=?"},
+		{"phase_c_non_fk_batch", "update phase_c_non_fk set a=? where id in (?,?)"},
+		{"phase_c_non_fk_values", "insert into phase_c_non_fk values(?,?,?,?,?),(?,?,?,?,?)"},
+		{"phase_c_non_fk_set", "insert into phase_c_non_fk set id=?,uk=?,a=?,b=?,c=?"},
+		{"phase_c_non_fk_dup", "insert into phase_c_non_fk(id,uk,a,b,c) values(?,?,?,?,?) on duplicate key update a=?,b=?"},
+	}
+	for _, tk := range []*testkit.TestKit{tk1, tk2} {
+		for _, statement := range statements {
+			tk.MustExecWithContext(ctx, "prepare "+statement.name+" from '"+statement.sql+"'")
+		}
+	}
+	type execution struct {
+		name       string
+		publishSet string
+		hitSet     string
+		execute    string
+	}
+	executions := []execution{
+		{"phase_c_non_fk_point", "set @a=1,@b=1.25,@id=1", "set @a='2',@b='2.50',@id=1", "execute phase_c_non_fk_point using @a,@b,@id"},
+		{"phase_c_non_fk_unique", "set @a=3,@uk=22", "set @a='4',@uk=22", "execute phase_c_non_fk_unique using @a,@uk"},
+		{"phase_c_non_fk_batch", "set @a=5,@id1=1,@id2=2", "set @a='6',@id1=1,@id2=2", "execute phase_c_non_fk_batch using @a,@id1,@id2"},
+		{"phase_c_non_fk_values", "set @id1=3,@uk1=33,@a1=7,@b1=7.25,@c1='c',@id2=4,@uk2=44,@a2=8,@b2=8.25,@c2='d'", "set @id1=5,@uk1=55,@a1='9',@b1='9.25',@c1='e',@id2=6,@uk2=66,@a2='10',@b2='10.25',@c2='f'", "execute phase_c_non_fk_values using @id1,@uk1,@a1,@b1,@c1,@id2,@uk2,@a2,@b2,@c2"},
+		{"phase_c_non_fk_set", "set @id=7,@uk=77,@a=11,@b=11.25,@c='g'", "set @id=8,@uk=88,@a='12',@b='12.25',@c='h'", "execute phase_c_non_fk_set using @id,@uk,@a,@b,@c"},
+		{"phase_c_non_fk_dup", "set @id=1,@uk=11,@a=13,@b=13.25,@c='x',@da=14,@db=14.25", "set @id=1,@uk=11,@a='15',@b='15.25',@c='y',@da='16',@db='16.25'", "execute phase_c_non_fk_dup using @id,@uk,@a,@b,@c,@da,@db"},
+	}
+	fingerprints := make(map[string]string, len(executions))
+	cachedPlans := make(map[string]base.Plan, len(executions))
+	for _, execution := range executions {
+		tk1.MustExecWithContext(ctx, execution.publishSet)
+		tk1.MustExecWithContext(ctx, execution.execute)
+		require.False(t, tk1.Session().GetSessionVars().FoundInPlanCache)
+		cached := instanceCachedPlanForPrepared(t, tk1, execution.name)
+		if strings.HasPrefix(execution.name, "phase_c_non_fk_point") || execution.name == "phase_c_non_fk_unique" || execution.name == "phase_c_non_fk_batch" {
+			assertNonFKCachedUpdateAccessPath(t, execution.name, cached)
+		}
+		cachedPlans[execution.name] = cached
+		fingerprints[execution.name] = dmlExpressionGraphFingerprint(t, cached)
+
+		tk2.MustExecWithContext(ctx, execution.hitSet)
+		tk2.MustExecWithContext(ctx, execution.execute)
+		require.True(t, tk2.Session().GetSessionVars().FoundInPlanCache)
+		require.Equal(t, fingerprints[execution.name], dmlExpressionGraphFingerprint(t, cached))
+	}
+	for iteration := 0; iteration < 4; iteration++ {
+		tk1.MustExecWithContext(ctx, "set @a=?,@b=?,@id=1", 20+iteration, fmt.Sprintf("%d.25", 20+iteration))
+		tk2.MustExecWithContext(ctx, "set @a=?,@b=?,@id=2", fmt.Sprint(30+iteration), fmt.Sprintf("%d.25", 30+iteration))
+		start := make(chan struct{})
+		errs := make(chan error, 2)
+		for _, tk := range []*testkit.TestKit{tk1, tk2} {
+			tk := tk
+			go func() {
+				<-start
+				_, err := tk.ExecWithContext(ctx, "execute phase_c_non_fk_point using @a,@b,@id")
+				errs <- err
+			}()
+		}
+		close(start)
+		require.NoError(t, <-errs)
+		require.NoError(t, <-errs)
+		require.True(t, tk1.Session().GetSessionVars().FoundInPlanCache)
+		require.True(t, tk2.Session().GetSessionVars().FoundInPlanCache)
+		require.Equal(t, fingerprints["phase_c_non_fk_point"], dmlExpressionGraphFingerprint(t, cachedPlans["phase_c_non_fk_point"]))
+	}
+
+	// Session cache executes its cached plan directly rather than cloning it.
+	// Repeat every assignment/list shape and prove real hits leave the cached
+	// graph byte-for-byte identical as source types and values rotate.
+	sessionCtx := context.Background()
+	tkSession := testkit.NewTestKit(t, store)
+	tkSession.MustExecWithContext(sessionCtx, "use test")
+	tkSession.MustExecWithContext(sessionCtx, "set tidb_enable_plan_cache_dml_param_type_match=ON")
+	tkSession.MustExecWithContext(sessionCtx, "set tidb_enable_prepared_plan_cache=1")
+	tkSession.MustExecWithContext(sessionCtx, "create table phase_c_non_fk_session like phase_c_non_fk")
+	tkSession.MustExecWithContext(sessionCtx, "insert into phase_c_non_fk_session(id,uk,a,b,c) values(1,11,0,0,'a'),(2,22,0,0,'b')")
+	for _, statement := range statements {
+		sql := strings.Replace(statement.sql, "phase_c_non_fk", "phase_c_non_fk_session", 1)
+		tkSession.MustExecWithContext(sessionCtx, "prepare "+statement.name+" from '"+sql+"'")
+	}
+	for _, execution := range executions {
+		tkSession.MustExecWithContext(sessionCtx, execution.publishSet)
+		tkSession.MustExecWithContext(sessionCtx, execution.execute)
+		require.False(t, tkSession.Session().GetSessionVars().FoundInPlanCache)
+		cached := sessionCachedPlanForPrepared(t, tkSession, execution.name)
+		fingerprint := dmlExpressionGraphFingerprint(t, cached)
+		tkSession.MustExecWithContext(sessionCtx, execution.hitSet)
+		tkSession.MustExecWithContext(sessionCtx, execution.execute)
+		require.True(t, tkSession.Session().GetSessionVars().FoundInPlanCache)
+		require.Equal(t, fingerprint, dmlExpressionGraphFingerprint(t, cached))
+	}
+
+	// Fix identity changes must not consume or mutate the Fix-ON entry.  Turning
+	// the fix back on recovers the same immutable cached assignment graph.
+	tk2.MustExecWithContext(ctx, "set tidb_enable_plan_cache_dml_param_type_match=OFF")
+	tk2.MustExecWithContext(ctx, "set @a=17,@b=17.25,@id=1")
+	tk2.MustExecWithContext(ctx, "execute phase_c_non_fk_point using @a,@b,@id")
+	require.False(t, tk2.Session().GetSessionVars().FoundInPlanCache)
+	require.Equal(t, fingerprints["phase_c_non_fk_point"], dmlExpressionGraphFingerprint(t, cachedPlans["phase_c_non_fk_point"]))
+	tk2.MustExecWithContext(ctx, "set tidb_enable_plan_cache_dml_param_type_match=ON")
+	tk2.MustExecWithContext(ctx, "execute phase_c_non_fk_point using @a,@b,@id")
+	require.False(t, tk2.Session().GetSessionVars().FoundInPlanCache)
+	tk2.MustExecWithContext(ctx, "set @a=171")
+	tk2.MustExecWithContext(ctx, "execute phase_c_non_fk_point using @a,@b,@id")
+	require.True(t, tk2.Session().GetSessionVars().FoundInPlanCache)
+
+	// A DDL revision fences the old plan.  The old cached graph remains
+	// immutable while the rebuilt revision misses once and then hits.
+	tk1.MustExecWithContext(ctx, "alter table phase_c_non_fk add column note int")
+	tk2.MustExecWithContext(ctx, "set @a=18,@b=18.25,@id=1")
+	tk2.MustExecWithContext(ctx, "execute phase_c_non_fk_point using @a,@b,@id")
+	require.False(t, tk2.Session().GetSessionVars().FoundInPlanCache)
+	require.Equal(t, fingerprints["phase_c_non_fk_point"], dmlExpressionGraphFingerprint(t, cachedPlans["phase_c_non_fk_point"]))
+	tk2.MustExecWithContext(ctx, "set @a=19")
+	tk2.MustExecWithContext(ctx, "execute phase_c_non_fk_point using @a,@b,@id")
+	require.True(t, tk2.Session().GetSessionVars().FoundInPlanCache)
+	require.Greater(t, dom.GetInstancePlanCache().MemUsage(), int64(0))
 }
 
 func TestFix69990PointUpdateUnifiedAssignmentConversion(t *testing.T) {

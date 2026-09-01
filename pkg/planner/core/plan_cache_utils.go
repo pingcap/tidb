@@ -226,8 +226,11 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		Params:              extractor.markers,
 	}
 
-	stmtProcessor := &planCacheStmtProcessor{ctx: ctx, is: is, stmt: preparedObj}
-	paramStmt.Accept(stmtProcessor)
+	if isPrepStmt {
+		FinalizePreparedPlanCacheStmtInfo(ctx, ret.InfoSchema, preparedObj, paramStmt)
+	} else {
+		CollectPlanCacheStmtInfo(ctx, ret.InfoSchema, preparedObj, paramStmt)
+	}
 
 	if err = checkPreparedPriv(ctx, sctx, preparedObj, ret.InfoSchema); err != nil {
 		return nil, nil, 0, err
@@ -252,11 +255,25 @@ func hashInt64Uint64Map(b []byte, m map[int64]uint64) []byte {
 	return b
 }
 
-// NewPlanCacheKey creates the plan cache key for this statement.
+// NewPreparedPlanCacheKey creates the plan cache key for a prepared statement.
 // Note: lastUpdatedSchemaVersion will only be set in the case of rc or for update read in order to
 // differentiate the cache key. In other cases, it will be 0.
 // All information that might affect the plan should be considered in this function.
+func NewPreparedPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding string, cacheable bool, reason string, err error) {
+	config := currentPlanCacheDMLExecutionConfig(sctx, stmt, false)
+	return newPlanCacheKey(sctx, stmt, config)
+}
+
+// NewPlanCacheKey creates the plan cache key for a prepared statement.
+//
+// Deprecated: use NewPreparedPlanCacheKey. This compatibility wrapper retains
+// the historical prepared-statement semantics for downstream release users;
+// non-prepared cache callers must use their frontend-specific execution path.
 func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding string, cacheable bool, reason string, err error) {
+	return NewPreparedPlanCacheKey(sctx, stmt)
+}
+
+func newPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt, matchConfig planCacheDMLExecutionConfig) (key, binding string, cacheable bool, reason string, err error) {
 	binding, ignored := bindinfo.MatchSQLBindingForPlanCache(sctx, stmt.PreparedAst.Stmt, &stmt.BindingInfo)
 	if ignored {
 		return "", binding, false, "ignore plan cache by binding", nil
@@ -421,16 +438,50 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	hash = append(hash, bool2Byte(vars.StmtCtx.ForShareLockEnabledByNoop))
 	hash = append(hash, bool2Byte(vars.SharedLockPromotion))
 
-	// The PointGet UPDATE assignment-conversion feature changes the assignment
-	// expression shape. Keep ON and OFF plans isolated so
-	// toggling the feature cannot reuse an assignment built under the opposite
-	// conversion contract.
-	if _, ok := stmt.PreparedAst.Stmt.(*ast.UpdateStmt); ok {
+	// Keep feature-ON and legacy prepared-DML buckets isolated. Use the value
+	// captured at EXECUTE start rather than rereading mutable session state.
+	// The direct-write mask is intentionally not encoded here: schema versions
+	// fence its AST/schema generation, and PlanCacheValue stores and compares the
+	// exact mask during lookup. Both invariants are required for safe reuse.
+	if matchConfig.applicable {
 		hash = append(hash, '|')
-		hash = append(hash, bool2Byte(vars.EnablePlanCacheDMLParamTypeMatch))
+		hash = append(hash, bool2Byte(matchConfig.enabled))
+	} else if _, ok := stmt.PreparedAst.Stmt.(*ast.UpdateStmt); ok {
+		// The same switch also selects the PointUpdate assignment conversion
+		// shape. Non-prepared UPDATEs therefore need separate cache entries even
+		// though their parameter matching remains unchanged.
+		hash = append(hash, '|')
+		hash = append(hash, bool2Byte(vars.StmtCtx.PlanCacheDMLParamTypeMatchEnabled))
 	}
 
 	return string(hash), binding, true, "", nil
+}
+
+// DeletePreparedPlanCacheVariants deletes both DML parameter-match variants
+// for the prepared statement's current key environment. Cleanup must not guess
+// a single variant from the session's current feature value because the
+// statement may have run in both modes before being closed.
+func DeletePreparedPlanCacheVariants(sctx sessionctx.Context, stmt *PlanCacheStmt) error {
+	config := currentPlanCacheDMLExecutionConfig(sctx, stmt, false)
+	configs := []planCacheDMLExecutionConfig{config}
+	if config.applicable {
+		configs = []planCacheDMLExecutionConfig{
+			{applicable: true, enabled: false},
+			{applicable: true, enabled: true},
+		}
+	}
+	keys := make([]string, 0, len(configs))
+	for _, variant := range configs {
+		key, _, _, _, err := newPlanCacheKey(sctx, stmt, variant)
+		if err != nil {
+			return err
+		}
+		keys = append(keys, key)
+	}
+	for _, key := range keys {
+		sctx.GetSessionPlanCache().Delete(key)
+	}
+	return nil
 }
 
 func bool2Byte(flag bool) byte {
@@ -442,14 +493,15 @@ func bool2Byte(flag bool) byte {
 
 // PlanCacheValue stores the cached Statement and StmtNode.
 type PlanCacheValue struct {
-	Plan          base.Plan          // not-read-only, session might update it before reusing
-	OutputColumns types.NameSlice    // read-only
-	memoryUsage   int64              // read-only
-	testKey       int64              // test-only
-	paramTypes    []*types.FieldType // read-only, all parameters' types, different parameters may share same plan
-	stmtHints     *hint.StmtHints    // read-only, hints which set session variables
-	Warnings      []stmtctx.SQLWarn  // warnings produced while building the cached plan
-	ExtraWarnings []stmtctx.SQLWarn  // extra warnings produced while building the cached plan
+	Plan            base.Plan          // not-read-only, session might update it before reusing
+	OutputColumns   types.NameSlice    // read-only
+	memoryUsage     int64              // read-only
+	testKey         int64              // test-only
+	paramTypes      []*types.FieldType // read-only, all parameters' types, different parameters may share same plan
+	stmtHints       *hint.StmtHints    // read-only, hints which set session variables
+	Warnings        []stmtctx.SQLWarn  // warnings produced while building the cached plan
+	ExtraWarnings   []stmtctx.SQLWarn  // extra warnings produced while building the cached plan
+	paramMatchModes []paramMatchMode   // immutable source-type matching contract
 }
 
 // CloneForInstancePlanCache clones a PlanCacheValue for instance plan cache.
@@ -495,8 +547,10 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 		sum = unKnownMemoryUsage
 	}
 
-	sum += size.SizeOfInterface + size.SizeOfSlice*2 + int64(cap(v.OutputColumns))*size.SizeOfPointer +
-		size.SizeOfMap + size.SizeOfInt64*2
+	// OutputColumns, paramTypes, Warnings, ExtraWarnings, and paramMatchModes
+	// each contribute one slice header to the fixed structure cost.
+	sum += size.SizeOfInterface + size.SizeOfSlice*5 + int64(cap(v.OutputColumns))*size.SizeOfPointer +
+		size.SizeOfMap + size.SizeOfInt64*2 + int64(cap(v.paramMatchModes))*size.SizeOfByte
 	if v.paramTypes != nil {
 		sum += int64(cap(v.paramTypes)) * size.SizeOfPointer
 		for _, ft := range v.paramTypes {
@@ -507,7 +561,6 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 	for _, name := range v.OutputColumns {
 		sum += name.MemoryUsage()
 	}
-	sum += size.SizeOfSlice * 2
 	for _, warn := range v.Warnings {
 		sum += size.SizeOfString + int64(len(warn.Level))
 		if warn.Err != nil {
@@ -527,15 +580,23 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 // NewPlanCacheValue creates a SQLCacheValue.
 func NewPlanCacheValue(plan base.Plan, names []*types.FieldName,
 	paramTypes []*types.FieldType, stmtHints *hint.StmtHints) *PlanCacheValue {
-	userParamTypes := make([]*types.FieldType, len(paramTypes))
-	for i, tp := range paramTypes {
-		userParamTypes[i] = tp.Clone()
+	return newPlanCacheValue(plan, names, paramMatchInput{actualTypes: paramTypes}, stmtHints)
+}
+
+func newPlanCacheValue(plan base.Plan, names []*types.FieldName,
+	input paramMatchInput, stmtHints *hint.StmtHints) *PlanCacheValue {
+	userParamTypes := make([]*types.FieldType, len(input.actualTypes))
+	for i, tp := range input.actualTypes {
+		if tp != nil {
+			userParamTypes[i] = tp.Clone()
+		}
 	}
 	return &PlanCacheValue{
-		Plan:          plan,
-		OutputColumns: names,
-		paramTypes:    userParamTypes,
-		stmtHints:     stmtHints.Clone(),
+		Plan:            plan,
+		OutputColumns:   names,
+		paramTypes:      userParamTypes,
+		stmtHints:       stmtHints.Clone(),
+		paramMatchModes: cloneParamMatchModes(input.modes),
 	}
 }
 
@@ -577,7 +638,17 @@ type PointGetExecutorCache struct {
 	Executor any
 }
 
-// PlanCacheStmt store prepared ast from PrepareExec and other related fields
+// PlanCacheStmt stores the prepared AST and its reusable planning state.
+//
+// A PlanCacheStmt is session-owned and is not goroutine-safe. Executions of the
+// same prepared statement must be serialized. In particular, schema refresh
+// mutates AST-bound state such as ResolveCtx, schema fences, paramMatchModes,
+// Params, and tbls before parameter matching and cache-key construction begin.
+// PreparedAst, ResolveCtx, SchemaVersion, and paramMatchModes must describe the
+// same preprocessing/schema generation. Replacing the AST or ResolveCtx requires
+// rebuilding the schema-derived statement information before the next lookup.
+// Supporting concurrent execution requires execution-local state for the whole
+// statement carrier; synchronizing only a subset of these fields is insufficient.
 type PlanCacheStmt struct {
 	PreparedAst    *ast.Prepared
 	ResolveCtx     *resolve.Context
@@ -627,6 +698,10 @@ type PlanCacheStmt struct {
 	// the same warnings on cache hits as on cache misses.
 	ReplayWarningsOnHit bool
 
+	// paramMatchModes is rebuilt after PREPARE/schema preprocessing and is
+	// immutable between schema refreshes. EXECUTE only borrows this slice.
+	paramMatchModes []paramMatchMode
+
 	// dbName and tbls are used to add metadata lock.
 	dbName []model.CIStr
 	tbls   []table.Table
@@ -666,6 +741,19 @@ func ExtractAndSortParamMarkers(stmtNode ast.StmtNode) []ast.ParamMarkerExpr {
 func CollectPlanCacheStmtInfo(ctx context.Context, is infoschema.InfoSchema, stmt *PlanCacheStmt, stmtNode ast.StmtNode) {
 	processor := &planCacheStmtProcessor{ctx: ctx, is: is, stmt: stmt}
 	stmtNode.Accept(processor)
+}
+
+// FinalizePreparedPlanCacheStmtInfo completes statement-local information
+// derived from a freshly preprocessed prepared-statement AST. Before calling,
+// stmt.PreparedAst, stmt.ResolveCtx, and stmt.SchemaVersion must already come
+// from that same preprocess/schema snapshot. Every prepared PlanCacheStmt
+// construction or AST/ResolveCtx rebuild path must then use this function so
+// the parameter-match mask is derived from the same generation. Schema refresh
+// of an existing AST must preserve the equivalent ordering: preprocess, install
+// ResolveCtx/schema fences, refresh the mask, and only then start cache lookup.
+func FinalizePreparedPlanCacheStmtInfo(ctx context.Context, is infoschema.InfoSchema, stmt *PlanCacheStmt, stmtNode ast.StmtNode) {
+	CollectPlanCacheStmtInfo(ctx, is, stmt, stmtNode)
+	refreshParamMatchModes(is, stmt)
 }
 
 // DBName returns the dbName field (used for metadata lock during Execute).
@@ -712,7 +800,63 @@ func checkTypesCompatibility4PC(expected, actual any) bool {
 	if len(tpsExpected) != len(tpsActual) {
 		return false
 	}
+	return checkTypesCompatibility4PCWithModes(tpsExpected, tpsActual, nil)
+}
+
+func sameParamMatchModes(expected, actual []paramMatchMode) bool {
+	// This is the second fence after the cache key's schema/feature identity:
+	// never reuse a value built from a different direct-write classification.
+	// nil is the legacy strict contract and is intentionally distinct from a
+	// feature-ON, non-nil all-strict contract.
+	if (expected == nil) != (actual == nil) || len(expected) != len(actual) {
+		return false
+	}
+	for i := range expected {
+		if expected[i] != actual[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func checkPlanCacheParamCompatibility(cached *PlanCacheValue, actual any) bool {
+	if cached == nil {
+		return false
+	}
+	input := paramMatchInput{}
+	switch value := actual.(type) {
+	case paramMatchInput:
+		input = value
+	case []*types.FieldType:
+		input.actualTypes = value
+	case nil:
+		return true
+	default:
+		return false
+	}
+	if !sameParamMatchModes(cached.paramMatchModes, input.modes) {
+		return false
+	}
+	if input.modes != nil && (len(input.modes) != len(cached.paramTypes) || len(input.modes) != len(input.actualTypes)) {
+		return false
+	}
+	return checkTypesCompatibility4PCWithModes(cached.paramTypes, input.actualTypes, input.modes)
+}
+
+func checkTypesCompatibility4PCWithModes(tpsExpected, tpsActual []*types.FieldType, modes []paramMatchMode) bool {
+	if len(tpsExpected) != len(tpsActual) {
+		return false
+	}
 	for i := range tpsActual {
+		if modes != nil && modes[i] == matchIgnoreSourceType {
+			continue
+		}
+		if tpsExpected[i] == nil || tpsActual[i] == nil {
+			if tpsExpected[i] != tpsActual[i] {
+				return false
+			}
+			continue
+		}
 		// We only use part of the logic of `func (ft *FieldType) Equal(other *FieldType)` here.
 		// Flen and decimal do not need to match exactly for most cacheable parameter types,
 		// but decimal precision/scale and temporal FSP need extra checks below.

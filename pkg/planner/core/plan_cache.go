@@ -164,8 +164,14 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		if err != nil {
 			return plannererrors.ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
 		}
+		// Publish all schema-derived statement state before parameter matching or
+		// cache-key construction starts. This ordered transition relies on the
+		// session invariant that a PlanCacheStmt is never executed concurrently.
 		stmt.ResolveCtx = nodeW.GetResolveContext()
 		stmt.SchemaVersion = is.SchemaMetaVersion()
+		if !isNonPrepared {
+			refreshParamMatchModes(is, stmt)
+		}
 	}
 
 	// step 5: handle expiration
@@ -212,11 +218,16 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 		cacheEnabled = sessVars.EnablePreparedPlanCache
 	}
 
-	paramTypes := parseParamTypes(sctx, params)
+	actualParamTypes := parseParamTypes(sctx, params)
+	matchConfig := currentPlanCacheDMLExecutionConfig(sctx, stmt, isNonPrepared)
+	paramInput, err := buildParamMatchInput(stmt, actualParamTypes, matchConfig)
+	if err != nil {
+		return nil, nil, err
+	}
 	if cacheEnabled && sessVars.PlanCacheMaxDecimalParamNums >= 0 {
 		// Check the number of parameters' decimal types
 		decimalNums := 0
-		for _, param := range paramTypes {
+		for _, param := range actualParamTypes {
 			if param.GetType() == mysql.TypeNewDecimal {
 				decimalNums++
 			}
@@ -244,7 +255,7 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 	var cacheKey, binding, reason string
 	var cacheable bool
 	if stmtCtx.UseCache() {
-		cacheKey, binding, cacheable, reason, err = NewPlanCacheKey(sctx, stmt)
+		cacheKey, binding, cacheable, reason, err = newPlanCacheKey(sctx, stmt, matchConfig)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -254,15 +265,18 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 	}
 
 	if stmtCtx.UseCache() {
-		cachedVal, hit := lookupPlanCache(ctx, sctx, cacheKey, paramTypes)
+		cachedVal, hit := lookupPlanCache(ctx, sctx, cacheKey, paramInput)
 		if hit {
 			if plan, names, ok, err := adjustCachedPlan(ctx, sctx, cachedVal, isNonPrepared, binding, is, stmt); err != nil || ok {
+				if err == nil && ok && !stmt.ReplayWarningsOnHit {
+					appendRejectedParamMatchHintWarning(sctx, stmt)
+				}
 				return plan, names, err
 			}
 		}
 	}
 
-	return generateNewPlan(ctx, sctx, isNonPrepared, is, stmt, cacheKey, paramTypes)
+	return generateNewPlan(ctx, sctx, isNonPrepared, is, stmt, cacheKey, paramInput)
 }
 
 func instancePlanCacheEnabled(ctx context.Context) bool {
@@ -273,14 +287,14 @@ func instancePlanCacheEnabled(ctx context.Context) bool {
 	return enableInstancePlanCache
 }
 
-func lookupPlanCache(ctx context.Context, sctx sessionctx.Context, cacheKey string, paramTypes []*types.FieldType) (cachedVal *PlanCacheValue, hit bool) {
+func lookupPlanCache(ctx context.Context, sctx sessionctx.Context, cacheKey string, input paramMatchInput) (cachedVal *PlanCacheValue, hit bool) {
 	if instancePlanCacheEnabled(ctx) {
-		if v, hit := domain.GetDomain(sctx).GetInstancePlanCache().Get(cacheKey, paramTypes); hit {
+		if v, hit := domain.GetDomain(sctx).GetInstancePlanCache().Get(cacheKey, input); hit {
 			cachedVal = v.(*PlanCacheValue)
 			return cachedVal.CloneForInstancePlanCache(ctx, sctx.GetPlanCtx()) // clone the value to solve concurrency problem
 		}
 	} else {
-		if v, hit := sctx.GetSessionPlanCache().Get(cacheKey, paramTypes); hit {
+		if v, hit := sctx.GetSessionPlanCache().Get(cacheKey, input); hit {
 			return v.(*PlanCacheValue), true
 		}
 	}
@@ -337,7 +351,7 @@ func replayCachedPlanWarnings(stmtCtx *stmtctx.StatementContext, cached *PlanCac
 // generateNewPlan call the optimizer to generate a new plan for current statement
 // and try to add it to cache
 func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared bool, is infoschema.InfoSchema,
-	stmt *PlanCacheStmt, cacheKey string, paramTypes []*types.FieldType) (base.Plan, []*types.FieldName, error) {
+	stmt *PlanCacheStmt, cacheKey string, input paramMatchInput) (base.Plan, []*types.FieldName, error) {
 	stmtAst := stmt.PreparedAst
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
@@ -353,14 +367,14 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 
 	// check whether this plan is cacheable.
 	if stmtCtx.UseCache() {
-		if cacheable, reason := isPlanCacheable(sctx.GetPlanCtx(), p, len(paramTypes), len(stmt.limits), stmt.hasSubquery); !cacheable {
+		if cacheable, reason := isPlanCacheable(sctx.GetPlanCtx(), p, len(input.actualTypes), len(stmt.limits), stmt.hasSubquery); !cacheable {
 			stmtCtx.SetSkipPlanCache(reason)
 		}
 	}
 
 	// put this plan into the plan cache.
 	if stmtCtx.UseCache() {
-		cached := NewPlanCacheValue(p, names, paramTypes, &stmtCtx.StmtHints)
+		cached := newPlanCacheValue(p, names, input, &stmtCtx.StmtHints)
 		if stmt.ReplayWarningsOnHit {
 			cached.Warnings = stmtCtx.CopyWarnings(nil)
 			cached.ExtraWarnings = append([]stmtctx.SQLWarn(nil), stmtCtx.GetExtraWarnings()...)
@@ -376,10 +390,10 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 				// Sess1: | put plan into cache | ----------- execution (might modify the plan) ----------- |
 				// Sess2:                  | start | ------- hit this plan and clone it (DATA RACE) ------- |
 				cached.Plan = cloned
-				domain.GetDomain(sctx).GetInstancePlanCache().Put(cacheKey, cached, paramTypes)
+				domain.GetDomain(sctx).GetInstancePlanCache().Put(cacheKey, cached, input)
 			}
 		} else {
-			sctx.GetSessionPlanCache().Put(cacheKey, cached, paramTypes)
+			sctx.GetSessionPlanCache().Put(cacheKey, cached, input)
 		}
 	}
 	sessVars.FoundInPlanCache = false

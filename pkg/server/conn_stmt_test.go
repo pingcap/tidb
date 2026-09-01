@@ -165,6 +165,139 @@ func TestCursorWithParams(t *testing.T) {
 	)))
 }
 
+func TestFix69990BinaryProtocolNullBitmapAndTypeReuse(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	srv := CreateMockServer(t, store)
+	srv.SetDomain(dom)
+	defer srv.Close()
+
+	ctx := context.Background()
+	c := CreateMockConn(t, srv).(*mockConn)
+	tk := testkit.NewTestKitWithSession(t, store, c.Context().Session)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_plan_cache_dml_param_type_match=ON")
+	tk.MustExec("set tidb_opt_fix_control='49736:ON'")
+	tk.MustExec("set tidb_enable_prepared_plan_cache=1")
+	tk.MustExec("create table phase_c_protocol(id int primary key, b bit(8))")
+	tk.MustExec("insert into phase_c_protocol values(1,null)")
+
+	// Exercise COM_STMT_PREPARE itself rather than calling Session.PrepareStmt.
+	prepareSQL := "update phase_c_protocol set b=? where id=?"
+	require.NoError(t, c.Dispatch(ctx, append([]byte{mysql.ComStmtPrepare}, prepareSQL...)))
+	require.Len(t, c.Context().stmts, 1)
+	var stmt *TiDBStatement
+	for _, prepared := range c.Context().stmts {
+		stmt = prepared
+	}
+	require.NotNil(t, stmt)
+
+	makeExecute := func(nullValue, newTypes bool, valueType byte, value []byte) []byte {
+		req := binary.LittleEndian.AppendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID()))
+		req = append(req, 0, 1, 0, 0, 0) // flags and iteration count
+		var nullBitmap byte
+		if nullValue {
+			nullBitmap = 1 // parameter zero is SQL NULL
+		}
+		req = append(req, nullBitmap)
+		if newTypes {
+			req = append(req, 1, valueType, 0, mysql.TypeLong, 0)
+		} else {
+			req = append(req, 0)
+		}
+		if !nullValue {
+			req = append(req, value...)
+		}
+		return binary.LittleEndian.AppendUint32(req, 1)
+	}
+	varcharValue := func(value string) []byte {
+		return append([]byte{byte(len(value))}, value...)
+	}
+	execute := func(nullValue, newTypes bool, valueType byte, value []byte) {
+		require.NoError(t, c.Dispatch(ctx, makeExecute(nullValue, newTypes, valueType, value)))
+	}
+
+	// Publish using a NULL bitmap while retaining the client's declared
+	// VARCHAR type. A flag=0 packet must reuse those type bytes and still use
+	// the current execution's NULL sidecar to hit the normalized entry.
+	execute(true, true, mysql.TypeVarchar, nil)
+	require.False(t, c.Context().GetSessionVars().FoundInPlanCache)
+	require.Equal(t, []byte{mysql.TypeVarchar, 0, mysql.TypeLong, 0}, stmt.GetParamsType())
+	cacheSize := c.Context().Session.GetSessionPlanCache().Size()
+	require.Greater(t, cacheSize, 0)
+	execute(true, false, 0, nil)
+	require.True(t, c.Context().GetSessionVars().FoundInPlanCache)
+
+	// With flag=0 the same retained VARCHAR declaration and a non-NULL value
+	// reuses the target-typed entry; executor conversion handles the raw value.
+	execute(false, false, 0, varcharValue("1"))
+	require.True(t, c.Context().GetSessionVars().FoundInPlanCache)
+	require.Equal(t, cacheSize, c.Context().Session.GetSessionPlanCache().Size())
+	require.Empty(t, tk.MustQuery("show warnings").Rows())
+	execute(true, false, 0, nil)
+	require.True(t, c.Context().GetSessionVars().FoundInPlanCache)
+
+	// Rotate the client's declared type with new-params-bound-flag=1, then
+	// prove flag=0 reuses the new declaration while NULL remains allowed.
+	execute(false, true, mysql.TypeLong, binary.LittleEndian.AppendUint32(nil, 1))
+	require.True(t, c.Context().GetSessionVars().FoundInPlanCache)
+	require.Equal(t, []byte{mysql.TypeLong, 0, mysql.TypeLong, 0}, stmt.GetParamsType())
+	require.Equal(t, cacheSize, c.Context().Session.GetSessionPlanCache().Size())
+	require.Empty(t, tk.MustQuery("show warnings").Rows())
+	execute(true, false, 0, nil)
+	require.True(t, c.Context().GetSessionVars().FoundInPlanCache)
+	tk.MustQuery("select b is null from phase_c_protocol where id=1").Check(testkit.Rows("1"))
+}
+
+func TestComStmtCloseDeletesAllPlanCacheDMLParamMatchVariants(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	srv := CreateMockServer(t, store)
+	srv.SetDomain(dom)
+	defer srv.Close()
+
+	ctx := context.Background()
+	c := CreateMockConn(t, srv).(*mockConn)
+	tk := testkit.NewTestKitWithSession(t, store, c.Context().Session)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_prepared_plan_cache=ON")
+	tk.MustExec("create table protocol_close_variants(id int primary key, v bigint)")
+	tk.MustExec("insert into protocol_close_variants values(1,0)")
+
+	require.NoError(t, c.Dispatch(ctx, append([]byte{mysql.ComStmtPrepare},
+		"update protocol_close_variants set v=? where id=?"...)))
+	require.Len(t, c.Context().stmts, 1)
+	var stmt *TiDBStatement
+	for _, prepared := range c.Context().stmts {
+		stmt = prepared
+	}
+	require.NotNil(t, stmt)
+	baseline := c.Context().Session.GetSessionPlanCache().Size()
+	execute := func(value uint32) {
+		req := binary.LittleEndian.AppendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID()))
+		req = append(req, 0, 1, 0, 0, 0) // flags and iteration count
+		req = append(req, 0, 1, mysql.TypeLong, 0, mysql.TypeLong, 0)
+		req = binary.LittleEndian.AppendUint32(req, value)
+		req = binary.LittleEndian.AppendUint32(req, 1)
+		require.NoError(t, c.Dispatch(ctx, req))
+	}
+
+	tk.MustExec("set tidb_enable_plan_cache_dml_param_type_match=OFF")
+	execute(1)
+	tk.MustExec("set tidb_enable_plan_cache_dml_param_type_match=ON")
+	execute(2)
+	require.Equal(t, baseline+2, c.Context().Session.GetSessionPlanCache().Size())
+	require.True(t, c.Context().GetSessionVars().TxnCtx.CouldRetry,
+		"exercise the protocol close branch that defers prepared metadata cleanup")
+
+	closeReq := binary.LittleEndian.AppendUint32([]byte{mysql.ComStmtClose}, uint32(stmt.ID()))
+	require.NoError(t, c.Dispatch(ctx, closeReq))
+	require.Equal(t, baseline, c.Context().Session.GetSessionPlanCache().Size())
+
+	// The retry cleanup path may delete the same variants again; it must remain
+	// idempotent and must not disturb unrelated cache state.
+	tk.MustExec("do 1")
+	require.Equal(t, baseline, c.Context().Session.GetSessionPlanCache().Size())
+}
+
 func TestCursorDetachMemTracker(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	srv := CreateMockServer(t, store)

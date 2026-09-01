@@ -1122,6 +1122,83 @@ func TestMaxPreparedStmtCount(t *testing.T) {
 	require.True(t, terror.ErrorEqual(err, variable.ErrMaxPreparedStmtCountReached))
 }
 
+func TestPlanCacheDMLParamMatchHintIsIgnored(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_prepared_plan_cache=ON")
+	tk.MustExec("create table param_match_hint(id int primary key, v bigint)")
+	tk.MustExec("insert into param_match_hint values(1,0)")
+
+	assertHintWarning := func() {
+		warnings := tk.MustQuery("show warnings").Rows()
+		require.Len(t, warnings, 1)
+		require.Contains(t, fmt.Sprint(warnings),
+			"Variable 'tidb_enable_plan_cache_dml_param_type_match' might not be affected by SET_VAR hint")
+	}
+
+	// Session OFF remains strict even when the statement asks to turn matching
+	// ON. Rotating the assignment parameter's source type therefore misses.
+	tk.MustExec("set tidb_enable_plan_cache_dml_param_type_match=OFF")
+	tk.MustExec("prepare hint_on from 'update /*+ SET_VAR(tidb_enable_plan_cache_dml_param_type_match=ON) */ param_match_hint set v=? where id=?'")
+	tk.MustExec("set @v=1,@id=1")
+	tk.MustExec("execute hint_on using @v,@id")
+	assertHintWarning()
+	tk.MustExec("set @v='2'")
+	tk.MustExec("execute hint_on using @v,@id")
+	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	assertHintWarning()
+	tk.MustQuery("select @@tidb_enable_plan_cache_dml_param_type_match").Check(testkit.Rows("0"))
+
+	// Session ON retains direct-write matching even when the hint asks to turn
+	// it OFF. The same source-type rotation must reuse the ON variant.
+	tk.MustExec("set tidb_enable_plan_cache_dml_param_type_match=ON")
+	tk.MustExec("prepare hint_off from 'update /*+ SET_VAR(tidb_enable_plan_cache_dml_param_type_match=OFF) */ param_match_hint set v=? where id=?'")
+	tk.MustExec("set @v=3")
+	tk.MustExec("execute hint_off using @v,@id")
+	assertHintWarning()
+	tk.MustExec("set @v='4'")
+	tk.MustExec("execute hint_off using @v,@id")
+	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	assertHintWarning()
+	tk.MustQuery("select @@tidb_enable_plan_cache_dml_param_type_match").Check(testkit.Rows("1"))
+	tk.MustQuery("select v from param_match_hint where id=1").Check(testkit.Rows("4"))
+
+	// Ignoring this one rejected SET_VAR must not erase another real hint. The
+	// remaining USE_INDEX hint keeps classification fail-closed and strict.
+	tk.MustExec("prepare hint_mixed from 'update /*+ SET_VAR(tidb_enable_plan_cache_dml_param_type_match=OFF), USE_INDEX(param_match_hint PRIMARY) */ param_match_hint set v=? where id=?'")
+	tk.MustExec("set @v=5")
+	tk.MustExec("execute hint_mixed using @v,@id")
+	assertHintWarning()
+	tk.MustExec("set @v='6'")
+	tk.MustExec("execute hint_mixed using @v,@id")
+	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	assertHintWarning()
+}
+
+func TestDeallocateDeletesAllPlanCacheDMLParamMatchVariants(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_prepared_plan_cache=ON")
+	tk.MustExec("create table param_match_close(id int primary key, v bigint)")
+	tk.MustExec("insert into param_match_close values(1,0)")
+	tk.MustExec("prepare close_variants from 'update param_match_close set v=? where id=?'")
+	baseline := tk.Session().GetSessionPlanCache().Size()
+
+	// Publish one top-level cache-key variant in each mode.
+	tk.MustExec("set tidb_enable_plan_cache_dml_param_type_match=OFF")
+	tk.MustExec("set @v=1,@id=1")
+	tk.MustExec("execute close_variants using @v,@id")
+	tk.MustExec("set tidb_enable_plan_cache_dml_param_type_match=ON")
+	tk.MustExec("set @v=2")
+	tk.MustExec("execute close_variants using @v,@id")
+	require.Equal(t, baseline+2, tk.Session().GetSessionPlanCache().Size())
+
+	tk.MustExec("deallocate prepare close_variants")
+	require.Equal(t, baseline, tk.Session().GetSessionPlanCache().Size())
+}
+
 func TestPrepareWorkWithForeignKey(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

@@ -212,6 +212,17 @@ func (ts *TiDBStatement) Close() error {
 		}
 	}
 
+	if ts.ctx.GetSessionVars().EnablePreparedPlanCache && !ts.ctx.GetSessionVars().IgnorePreparedCacheCloseStmt {
+		preparedPointer := ts.ctx.GetSessionVars().PreparedStmts[ts.id]
+		preparedObj, ok := preparedPointer.(*core.PlanCacheStmt)
+		if !ok {
+			return errors.Errorf("invalid PlanCacheStmt type")
+		}
+		if err := core.DeletePreparedPlanCacheVariants(ts.ctx, preparedObj); err != nil {
+			return err
+		}
+	}
+
 	// TODO close at tidb level
 	if ts.ctx.GetSessionVars().TxnCtx != nil && ts.ctx.GetSessionVars().TxnCtx.CouldRetry {
 		err := ts.ctx.DropPreparedStmt(ts.id)
@@ -219,20 +230,6 @@ func (ts *TiDBStatement) Close() error {
 			return err
 		}
 	} else {
-		if ts.ctx.GetSessionVars().EnablePreparedPlanCache {
-			preparedPointer := ts.ctx.GetSessionVars().PreparedStmts[ts.id]
-			preparedObj, ok := preparedPointer.(*core.PlanCacheStmt)
-			if !ok {
-				return errors.Errorf("invalid PlanCacheStmt type")
-			}
-			cacheKey, _, _, _, err := core.NewPlanCacheKey(ts.ctx, preparedObj)
-			if err != nil {
-				return err
-			}
-			if !ts.ctx.GetSessionVars().IgnorePreparedCacheCloseStmt { // keep the plan in cache
-				ts.ctx.GetSessionPlanCache().Delete(cacheKey)
-			}
-		}
 		ts.ctx.GetSessionVars().RemovePreparedStmt(ts.id)
 	}
 	delete(ts.ctx.stmts, int(ts.id))

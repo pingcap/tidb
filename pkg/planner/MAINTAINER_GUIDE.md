@@ -158,7 +158,7 @@ Frontend entrypoints:
 
 - Backend entrypoint (shared): `pkg/planner/core/plan_cache.go` (`GetPlanFromPlanCache`)
 - Preprocess fences on reuse: `pkg/planner/core/plan_cache.go` (`planCachePreprocess`)
-- Cache key: `pkg/planner/core/plan_cache_utils.go` (`NewPlanCacheKey`)
+- Prepared cache key: `pkg/planner/core/plan_cache_utils.go` (`NewPreparedPlanCacheKey`)
 - Cacheability rules:
   - prepared AST: `pkg/planner/core/plan_cacheable_checker.go` (`IsASTCacheable`)
   - non-prepared: `pkg/planner/core/plan_cacheable_checker.go` (`NonPreparedPlanCacheableWithCtx`)
@@ -184,14 +184,27 @@ There are two different "cached things". Conflating them causes subtle bugs.
     paramTypes)` match.
 
 Non-obvious mutability rule:
+- A `PlanCacheStmt` is session-owned and NOT goroutine-safe. Commands in one
+  connection/session, including executions of the same prepared statement, MUST
+  be serialized. `SessionVars`, `StmtCtx`, AST parameter datums, schema fences,
+  table references, and PointGet executor state all rely on this invariant.
+- A schema refresh MUST finish re-preprocessing and updating `ResolveCtx`,
+  schema/per-table versions, and parameter-match modes before that execution
+  builds its parameter-match input or cache key. These writes are an ordered
+  serialized transition, not an independently published concurrent snapshot.
+- Do not add a local lock around only the schema or parameter-match fields. If
+  concurrent execution within one session is ever supported, introduce a
+  complete execution-local immutable snapshot (including AST parameters,
+  `tbls`, `RelateVersion`, `StmtCtx`, and PointGet state) and audit the whole
+  statement lifecycle.
 - Session plan cache: cached plan is session-owned; it may contain mutable state
   as long as it cannot escape the session.
 - Instance plan cache: cached value MUST be treated as read-only and MUST be a
   clone; every execution clones again before using it.
 
 Why this exists:
-- Session cache optimizes for simplicity and speed inside a single goroutine-ish
-  session context.
+- Session cache optimizes for simplicity and speed under serialized session
+  execution.
 - Instance cache is shared across sessions; any mutable state becomes a data
   race or cross-session correctness leak.
 
@@ -236,14 +249,28 @@ High-signal groups that are intentionally part of the key (non-exhaustive):
   checks, and other knobs that can alter plan selection/semantics
 - runtime semantics state: "dirty table" markers (union scan) and transaction
   flags that change locking/reads
-- `tidb_enable_plan_cache_dml_param_type_match` for point UPDATE plans whose
-  assignment conversion model changes with the feature. The switch currently
-  supports only prepared plan cache; non-prepared plan cache support is planned.
+- `tidb_enable_plan_cache_dml_param_type_match` for applicable
+  prepared DML, isolating legacy strict matching from the contract that ignores
+  safe direct-write parameter source types. For Point UPDATE assignments, OFF
+  also preserves the legacy planner-side cast path, while ON defers target-column
+  conversion to the executor; non-prepared Point UPDATE cache keys also include
+  this state so switching it cannot reuse the opposite conversion shape.
 - optional freshness invalidation: when enabled, a stats-version hash is
   included so fresh stats naturally force a miss
 
 Design intent:
 - "key completeness" is the safety net; cacheability rules are the coarse filter.
+- The prepared-DML direct-write mask is schema-derived but is not serialized
+  into the top-level key. Correctness relies on two coordinated fences: the key
+  contains schema versions and the feature mode, while each `PlanCacheValue`
+  stores its exact mask and lookup rejects a different mask. A cached plan MUST
+  match the current schema generation's direct-write mask.
+- `PreparedAst`, `ResolveCtx`, `SchemaVersion`, and parameter-match modes MUST
+  come from the same preprocess/schema generation. Any path that replaces the
+  AST or resolve context MUST rebuild the schema-derived statement state through
+  `FinalizePreparedPlanCacheStmtInfo` before lookup. Schema refresh of an
+  existing AST must perform the equivalent ordered refresh; never update one of
+  these dependencies in isolation.
 - If you add a new plan-affecting session var / hint / binding behavior, you
   must explicitly decide: key it, or forbid reuse (and test that decision).
 
