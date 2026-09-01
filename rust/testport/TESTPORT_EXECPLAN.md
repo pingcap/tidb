@@ -327,6 +327,16 @@ For each bounded behavior cluster:
   `receipts/dumpformat_testutils.md` and
   `rust/docs/operations/dumpformat-testutils-audit-execplan.md`.
 
+- 2026-09-01: audited the complete Go-master
+  `pkg/dumpformat/csvfile` package: five artifacts and 403 lines covering the
+  BUILD target, CSV framing configuration, escaping/quoting and binary-format
+  implementation, streaming writer, and eleven focused tests. Rust has parser
+  support for CSV syntax but no dependency-closed CSV export writer or
+  `sql.RawBytes`/`io.Writer` owner. No Rust-only behavior or speculative
+  facade was added; the exact detached Go suite and boundary are recorded in
+  `receipts/dumpformat_csvfile.md` and
+  `rust/docs/operations/dumpformat-csvfile-audit-execplan.md`.
+
 - 2026-09-01: audited the complete Go-master `pkg/ingestor/globalsort`
   package before editing: 17 tracked artifacts and 6,814 lines, including the
   external engine, object-store readers, merge and merge-v2 operators, range
