@@ -1655,6 +1655,13 @@ For each bounded behavior cluster:
       conversion, TiDB errors, and TiKV GC state without one dependency-closed
       Rust helper. The package remains explicitly unclaimed; details are in
       `receipts/util_gcutil.md`.
+- 2026-09-01: audited all three Go-master `pkg/util/httputil` artifacts (199
+      lines: TLS-aware 30-second client construction, context GET/JSON/text
+      helpers, non-200 body errors, two source tests, and Bazel target). Rust
+      has separate HTTP transports but no shared client or BR/Lightning
+      object-storage composition root with this contract, so no adapter was
+      added. The package remains explicitly unclaimed; details are in
+      `receipts/util_httputil.md`.
 - 2026-09-01: audited both Go-master `pkg/util/gcutil` artifacts (109 lines:
       GC enable toggles, restricted `tikv_gc_safe_point` lookup, Oracle
       timestamp conversion, snapshot validation, and Bazel target). Rust has
