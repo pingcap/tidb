@@ -4663,6 +4663,13 @@ For each bounded behavior cluster:
   remains an explicit Go HTTP/domain boundary because Rust has no complete
   dependency-closed owner. See `rust/testport/receipts/server_handler.md` and
   `rust/docs/operations/server-handler-audit-execplan.md`.
+- `pkg/server/handler/tests` now restores Go-master coverage for the DXF
+  cleanup-size endpoint, next-gen user-keyspace route isolation, and live
+  TiFlash summary lifecycle. All five test/build artifacts were inventoried;
+  the remaining profiling-log and old-kvproto encoding differences are
+  explicit branch boundaries. Focused failpoint-wrapped integration tests pass.
+  See `rust/testport/receipts/server_handler_tests.md` and
+  `rust/docs/operations/server-handler-tests-audit-execplan.md`.
 
 ## Outcomes & Retrospective
 

@@ -1,45 +1,54 @@
-# `pkg/server/handler/tests` Go-master parity receipt
-
-Comparison source: Go `origin/master` at commit
-`5e8a1a229a7591ddac49a0cd3b795587c2595ab9` (2026-09-01).
+# `pkg/server/handler/tests` Go-parity receipt
 
 ## Complete inventory
 
-This test-only package contains exactly five tracked artifacts and 3,630
-lines. The complete BUILD file, four test files, fixtures, and harness were
-read before editing. It has no production files, generated/platform variants,
-benchmark/fuzz targets, or package-local testdata.
+- Go comparison source: fetched `origin/master` at
+  `c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02 rolling baseline).
+- This test-only package contains exactly five artifacts and 3,591 lines after
+  restoration: `BUILD.bazel` (82), `dxf_test.go` (673),
+  `http_handler_serial_test.go` (855), `http_handler_test.go` (1,909), and
+  `main_test.go` (72). Every production-equivalent test, fixture/harness, and
+  build file was read completely before editing. There is no production file,
+  generated/platform variant, package-local testdata, benchmark, fuzz target,
+  or nested package.
+- Go master has the same five artifacts and 3,630 lines. The remaining 39-line
+  difference is intentional branch context: profiling-log assertions track a
+  server-side logger not present on this branch, the row encoder uses the
+  current collate-aware API, and the locally pinned older kvproto exposes
+  `KeyspaceMeta.Id` rather than Go master's oneof wrapper.
 
-| artifact | lines | Git blob | SHA-256 | role |
-| --- | ---: | --- | --- | --- |
-| `BUILD.bazel` | 82 | `2e81b679319b62b0a6f5b446f083679e371214c4` | `20d55ed62d3163e78f51e48795d43f31f8d99f90db45619c68ba6bd801f6f63` | 46-shard HTTP handler test target |
-| `dxf_test.go` | 673 | `ee247e9af790dc22c510bdbe9e7c7fd94460efea` | `ad0c533ca258c3232b1a0fbe1632202b2b437387113c602d096ea37bcee83e01` | DXF API integration tests, including history redaction |
-| `http_handler_serial_test.go` | 879 | `11ae57a9adf8603ab8fa7a00771504ab40902503` | `4abebffce2d813879e0b422fbd8f90f5282525ecaad96fa122ab50d4365036f2` | serial HTTP handler tests |
-| `http_handler_test.go` | 1,924 | `c4bfc2b649fdc924c04ad4d187b5442e2da0b153` | `836824f0609f854b11762de921dafd30ddb16b64e6d0180383afc68af356018b` | concurrent HTTP handler tests |
-| `main_test.go` | 72 | `e08f866d7768544ec060da92a736a651c2ed884a` | `f92729c7c92ba3e13c7605ada5926e11bd738504e1eb4bbb5c08f84bda621940` | test-server setup and cleanup |
+## Restored coverage
 
-The package has 46 top-level tests in the Go-master source. This batch updates
-the DXF history consumer to decode `ErrorCode`/`ErrorCategory` and assert that
-raw sensitive task errors never cross the HTTP boundary.
+The hparser branch had removed the DXF cleanup-size API subtest, the next-gen
+user-keyspace maintenance-route check, and the complete TiFlash replica summary
+HTTP test. This batch restores those Go-master scenarios and keeps the existing
+DXF history consumer regression: sensitive task-error text is never returned,
+while stable `ErrorCode` and `ErrorCategory` fields remain available. The tests
+now exercise GET/POST validation, memory-only response shape, keyspace route
+isolation, schema reload behavior, stale-summary semantics, columnar-storage
+state, dropped-table leftovers, and method/query errors.
 
-## Rust ownership and parity decision
-
-Rust has no dependency-closed HTTP handler test server or Go session-backed
-DXF history API. No Rust-only handler behavior was found to remove and no
-disconnected Rust HTTP harness was added. This package remains Go-native
-consumer coverage for the storage redaction contract.
+Rust has no dependency-closed Go session-backed HTTP test server or TiFlash/DXF
+handler integration owner. No Rust-only test behavior was found to remove and
+no disconnected Rust harness was added; this package remains Go-native consumer
+coverage for the restored HTTP contracts.
 
 ## Validation
 
+Failpoints are used by the test server, so the canonical wrapper enabled and
+disabled them around each run:
+
 ```text
 PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
-GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
-./tools/check/failpoint-go-test.sh ./pkg/server/handler/tests \
-  -run '^TestDXFAPI$/^task_history_api$/^success$' -count=1
-# PASS; ok github.com/pingcap/tidb/pkg/server/handler/tests 1.489s
+GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp \
+./tools/check/failpoint-go-test.sh pkg/server/handler/tests \
+  -run 'Test(TiFlashReplicaSummary|DXFAPI)$' -count=1
+./tools/check/failpoint-go-test.sh pkg/server/handler/tests \
+  -run '^TestDXFMaintenanceAPINotAvailableInUserKeyspace$' -count=1
 ```
 
-The failpoint wrapper enabled and disabled failpoints around the test. This
-test import changes a Go test file, so `make bazel_prepare` remains required;
-the local gate is blocked because `bazel` is not installed. Ready formatting,
-lint, and diff checks are shared with the storage/proto batch.
+Both focused runs pass (the maintenance test is skipped on the classic kernel).
+The full package suite, external-etcd test, and Bazel regeneration are not run
+locally; `make bazel_prepare` was attempted and is blocked because `bazel` is
+not installed in this workspace. The existing focused history test and Ready
+lint/diff evidence are retained in the prior receipt history.
