@@ -1311,6 +1311,14 @@ For each bounded behavior cluster:
 - [ ] Audit the next bounded package cluster by reading the requested Go
       `origin/master` first, then fill executable gaps and remove false
       carriers.
+- 2026-09-01: completed the four-artifact Go-master `pkg/autoid_service`
+      inventory (969 lines, 22 production methods, 10 test/helper functions).
+      Its kvproto accessor-only delta is already represented by Rust's scalar
+      auto-ID request boundary and wire-compatible oneof bindings; no duplicate
+      server or adapter was added. The six Rust allocator tests pass, while
+      the Go mock-domain suite retains its pre-existing schema-bootstrap
+      `require.True` failure. The full inventory and explicit etcd/GRPC server
+      boundary are recorded in `receipts/autoid_service_audit.md`.
 - [ ] Run Ready validation and self-review only when the requested parity scope
       is genuinely complete enough for a final-status claim.
 
