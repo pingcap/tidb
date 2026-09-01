@@ -105,6 +105,24 @@ For each bounded behavior cluster:
   trait was added. Recorded the explicit boundary in
   `receipts/objstore_storeapi.md`.
 
+- 2026-09-01: audited the complete Go-master `pkg/objstore/s3like` package
+  before editing: eight root artifacts and 1,424 lines, including all S3-like
+  response/client contracts, ranged reader and async writer, metrics,
+  permissions, retry adapter, options/flags, CRUD/walk/range/presign paths, and
+  the focused permission test. The exact current-master delta adds retry-log
+  suppression and positive presign-expiration validation. Rust has no
+  dependency-closed S3-compatible backend owner, so no Rust-only behavior was
+  removed and no speculative cloud stack was added. Recorded the explicit
+  boundary in `receipts/objstore_s3like.md`.
+
+- 2026-09-01: audited the separate generated Go package
+  `pkg/objstore/s3like/mock` in full: its 2 tracked artifacts and 261 lines,
+  including the BUILD target and all 31 MockGen methods/recorders generated
+  from `PrefixClient`. It has no tests, fixtures, platform variants, or
+  additional generator inputs, and is unchanged from the pinned source. Rust
+  has no GoMock-compatible owner; recorded the generated-support boundary in
+  `receipts/objstore_s3like_mock.md`.
+
 - 2026-09-01: audited the complete Go-master `pkg/ingestor/globalsort`
   package before editing: 17 tracked artifacts and 6,814 lines, including the
   external engine, object-store readers, merge and merge-v2 operators, range
@@ -267,6 +285,17 @@ For each bounded behavior cluster:
   session, static-recordset, and infosync consumers. No Rust-only behavior or
   safe missing behavior was found; exact Go-master tests passed and the
   explicit boundary is recorded in `receipts/session_cursor.md`.
+
+- 2026-09-01: audited the complete Go-master `pkg/session/metrics` package:
+  two tracked artifacts and 158 lines, including 49 exported
+  counter/observer bindings for transaction, timing, parse/compile,
+  partition, account-lock, CTE, index-merge, and store-batched telemetry,
+  plus the BUILD target. It has no tests, fixtures, generated outputs,
+  benchmarks, fuzz inputs, or platform variants. Rust's `tidb-exec` leaf owns
+  only the three non-transactional DML labels and not the Prometheus/session
+  registry. No Rust-only behavior or safe missing behavior was found; exact
+  Go-master compilation passed and the explicit boundary is recorded in
+  `receipts/session_metrics.md`.
 
 - 2026-09-01: refreshed the complete Go-master
   `pkg/util/password-validation` inventory (three artifacts, 379 lines) and
