@@ -56,6 +56,8 @@ type readIndexStepExecutor struct {
 
 	avgRowSize      int
 	cloudStorageURI string
+	execID          string
+	runtimeSlots    int
 
 	curRowCount *atomic.Int64
 
@@ -79,6 +81,8 @@ func newReadIndexExecutor(
 	jc *ReorgContext,
 	cloudStorageURI string,
 	avgRowSize int,
+	execID string,
+	runtimeSlots int,
 ) (*readIndexStepExecutor, error) {
 	return &readIndexStepExecutor{
 		d:               d,
@@ -89,6 +93,8 @@ func newReadIndexExecutor(
 		cloudStorageURI: cloudStorageURI,
 		avgRowSize:      avgRowSize,
 		curRowCount:     &atomic.Int64{},
+		execID:          execID,
+		runtimeSlots:    runtimeSlots,
 	}, nil
 }
 
@@ -103,6 +109,17 @@ func hasUniqueIndex(indexes []*model.IndexInfo) bool {
 
 func (r *readIndexStepExecutor) Init(ctx context.Context) error {
 	logutil.DDLLogger().Info("read index executor init subtask exec env")
+	if !r.isGlobalSort() {
+		// This point-in-time, best-effort precheck accounts for the current local-sort
+		// DXF backfill's disk headroom to reduce the risk of frequent small SST imports.
+		// It does not reserve disk or account for the future growth of concurrent jobs.
+		// It does not recheck disk after a concurrency increase with ADMIN ALTER DDL JOB.
+		// After a normal upgrade, TiDB pauses user DDL; applying this check to tasks
+		// created before the upgrade is an accepted behavior change.
+		if err := ingest.CheckLocalSortDiskSpace(r.execID, r.runtimeSlots); err != nil {
+			return errors.Trace(err)
+		}
+	}
 	cfg := config.GetGlobalConfig()
 	if cfg.Store == "tikv" {
 		cfg, bd, err := ingest.CreateLocalBackend(ctx, r.d.store, r.job, hasUniqueIndex(r.indexes), false, 0)
