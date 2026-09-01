@@ -3617,6 +3617,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-gcutil"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "tidb-vardef",
+]
+
+[[package]]
 name = "tidb-hack"
 version = "0.0.0"
 dependencies = [
@@ -3937,6 +3945,7 @@ dependencies = [
  "tidb-error",
  "tidb-exec",
  "tidb-executor",
+ "tidb-gcutil",
  "tidb-log",
  "tidb-metadef",
  "tidb-model",

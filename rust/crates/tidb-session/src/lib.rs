@@ -957,6 +957,7 @@ mod classify;
 pub mod cursor;
 mod dispatch;
 mod explain_arm;
+mod gcutil;
 mod identity;
 pub mod infoschema;
 mod non_prepared_plan_cache;

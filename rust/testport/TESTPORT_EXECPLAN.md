@@ -239,6 +239,22 @@ For each bounded behavior cluster:
   sole source test, and removed four supplemental Rust-only tests. Inventory
   and WIP gates are in `receipts/util_generatedexpr.md`.
 
+- 2026-09-01: inventoried the complete two-artifact pinned
+  `pkg/util/gcutil` package before implementation. The existing workspace
+  pieces cover its sysvar, error-code, and TSO ingredients, but not the
+  `mysql.tidb` bootstrap-table authority.
+
+- 2026-09-01: implemented all six pinned `pkg/util/gcutil` functions in one
+  package owner, including exact restricted SQL/source tagging, global GC
+  switches, compatible client-go time parsing, TSO conversion, strict
+  comparison, and wire error 8055. `tidb-session` implements the narrow native
+  equivalent of Go's context using ordinary global-sysvar and physical-plan
+  paths. Consumer activation remains explicitly unclaimed because Rust's
+  complete `mysql` bootstrap-table package and the flashback/recover/HTTP
+  owners do not yet exist; no side-channel safe point was invented. Inventory,
+  integration decision, and WIP evidence are in
+  `receipts/util_gcutil_audit.md`.
+
 - 2026-09-01: completed inventory and implementation for the currently
   unclaimed pinned Go `pkg/util/sys/storage` package. Its Linux/macOS `statfs`,
   Windows `GetDiskFreeSpaceEx`, and unsupported-platform `math.MaxInt64`

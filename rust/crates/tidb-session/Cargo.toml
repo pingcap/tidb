@@ -16,6 +16,7 @@ tidb-config = { path = "../tidb-config" }
 # same source Go's `setDataForServersInfo` reads through `GetAllServerInfo`.
 tidb-domain = { path = "../tidb-domain" }
 tidb-error = { path = "../tidb-error" }
+tidb-gcutil = { path = "../tidb-gcutil" }
 tidb-ast = { path = "../tidb-ast" }
 chrono = { workspace = true }
 chrono-tz = { workspace = true }

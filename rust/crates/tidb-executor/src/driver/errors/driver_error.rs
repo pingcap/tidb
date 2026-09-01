@@ -118,6 +118,8 @@ pub enum DriverError {
     Txn(TxnErrorKind),
     /// A session-variable statement failed.
     Var(VarErrorKind),
+    /// Go `variable.ErrSnapshotTooOld` (8055).
+    SnapshotTooOld(String),
     /// A schema statement failed.
     Schema(SchemaErrorKind),
     /// Go `autoid.ErrAutoincReadFailed` (1467): the AUTO_INCREMENT column has

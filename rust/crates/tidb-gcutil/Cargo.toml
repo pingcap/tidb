@@ -1,0 +1,11 @@
+[package]
+name = "tidb-gcutil"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+chrono = "0.4"
+tidb-vardef = { path = "../tidb-vardef" }
