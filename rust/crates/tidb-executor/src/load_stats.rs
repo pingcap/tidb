@@ -61,13 +61,10 @@
 //!   the query side.
 
 use std::collections::BTreeMap;
-use std::io::{Read, Write};
-use std::sync::{Arc, RwLock};
+use std::io::{Cursor, Read, Write};
+use std::sync::{Arc, Mutex, RwLock};
 
 use base64::Engine as _;
-use flate2::read::GzDecoder;
-use flate2::write::GzEncoder;
-use flate2::Compression;
 use tidb_datatype::{
     ConversionFlags, Datum, EvalType, FieldType, FieldTypeCode, SessionTimeZone,
     DEFAULT_STATEMENT_FLAGS,
@@ -83,6 +80,7 @@ use tidb_stats::{
     JsonFmSketch, JsonHistogram, JsonPredicateColumn, StatsLoadedStatus, Table,
 };
 pub use tidb_stats::{JsonTable, TIDB_GLOBAL_STATS};
+use tidb_util::compress::{GzipReaderPool, GzipWriterPool};
 
 use crate::access_cost::TableStatistics;
 use crate::kv_table::KvTable;
@@ -353,13 +351,23 @@ pub fn json_table_to_blocks(
     assert_ne!(block_size, 0, "integer divide by zero");
     let json =
         serde_json::to_vec(table).map_err(|error| LoadStatsError::Json(error.to_string()))?;
-    let mut writer = GzEncoder::new(Vec::new(), Compression::default());
-    writer
-        .write_all(&json)
-        .map_err(|error| LoadStatsError::Gzip(error.to_string()))?;
-    let compressed = writer
-        .finish()
-        .map_err(|error| LoadStatsError::Gzip(error.to_string()))?;
+    let compressed = Arc::new(Mutex::new(Vec::new()));
+    let mut writer = GzipWriterPool.get();
+    writer.reset(SharedBuffer(Arc::clone(&compressed)));
+    let result = (|| {
+        writer
+            .write_all(&json)
+            .map_err(|error| LoadStatsError::Gzip(error.to_string()))?;
+        writer
+            .close()
+            .map_err(|error| LoadStatsError::Gzip(error.to_string()))
+    })();
+    GzipWriterPool.put(writer);
+    result?;
+    let compressed = compressed
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
     Ok(compressed.chunks(block_size).map(<[u8]>::to_vec).collect())
 }
 
@@ -369,12 +377,43 @@ pub fn blocks_to_json_table(blocks: &[Vec<u8>]) -> Result<JsonTable, LoadStatsEr
         return Err(LoadStatsError::EmptyBlocks);
     }
     let compressed: Vec<u8> = blocks.iter().flatten().copied().collect();
-    let mut reader = GzDecoder::new(compressed.as_slice());
+    let mut reader = GzipReaderPool.get();
+    if let Err(error) = reader.reset(Cursor::new(compressed)) {
+        GzipReaderPool.put(reader);
+        return Err(LoadStatsError::Gzip(error.to_string()));
+    }
+    if let Err(error) = reader.close() {
+        GzipReaderPool.put(reader);
+        return Err(LoadStatsError::Gzip(error.to_string()));
+    }
     let mut json = Vec::new();
-    reader
+    let result = reader
         .read_to_end(&mut json)
-        .map_err(|error| LoadStatsError::Gzip(error.to_string()))?;
-    serde_json::from_slice(&json).map_err(|error| LoadStatsError::Json(error.to_string()))
+        .map_err(|error| LoadStatsError::Gzip(error.to_string()))
+        .and_then(|_| {
+            serde_json::from_slice(&json).map_err(|error| LoadStatsError::Json(error.to_string()))
+        });
+    GzipReaderPool.put(reader);
+    result
+}
+
+/// A small owned writer used to collect compressed bytes while the gzip
+/// encoder itself remains in the process-wide pool.
+#[derive(Clone)]
+struct SharedBuffer(Arc<Mutex<Vec<u8>>>);
+
+impl Write for SharedBuffer {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 fn encode_base64(value: &[u8]) -> String {

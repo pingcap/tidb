@@ -69,12 +69,24 @@ For each bounded behavior cluster:
   generated-message `Size()` equivalents, changed predicate ordering to Go's
   unstable `slices.SortFunc` contract, and removed the source-absent predicate
   constructor and four-test carrier. Also completed atomic audits of the
-  two-artifact `pkg/util/breakpoint` and `pkg/util/compress` leaves. They remain
-  explicitly unclaimed: breakpoint needs the ordinary session value store and
-  both executor failpoint injection points; compression needs the generic
-  reusable gzip state shared by storage and the absent ingest-control owner.
-  Receipts are `receipts/statistics_util.md`,
-  `receipts/util_breakpoint_audit.md`, and
+  two-artifact `pkg/util/breakpoint` and `pkg/util/compress` leaves. Breakpoint
+  remains explicitly unclaimed because it needs the ordinary session value
+  store and both executor failpoint injection points. The compression audit
+  was selected for completion in the next batch. Receipts are
+  `receipts/statistics_util.md`, `receipts/util_breakpoint_audit.md`, and
+  `receipts/util_compress_audit.md`.
+
+- 2026-09-01: completed the currently unclaimed pinned Go `pkg/util/compress`
+  package as one two-artifact unit. Added the process-wide pooled gzip reader
+  and writer owner in `tidb-util`, including reset/close/discard and invalid
+  header behavior, and routed statistics JSON block framing through both pools.
+  Removed the executor's direct `flate2` dependency so the generic owner is
+  the only compression implementation on that path.
+  The writer reset path suppresses flate2's Drop-time trailer so an unfinished
+  stream is discarded like Go's `gzip.Writer.Reset`. The absent Rust
+  `pkg/ingestor/ingestctrl` owner is recorded as an explicit future integration
+  boundary rather than a fabricated consumer. The complete inventory,
+  focused regressions, and validation receipt are in
   `receipts/util_compress_audit.md`.
 
 - 2026-09-01: completed inventory and implementation for the currently
@@ -772,11 +784,13 @@ For each bounded behavior cluster:
       session value store, failpoint registry, and both executor injection
       sites. The two-artifact inventory is in
       `receipts/util_breakpoint_audit.md` and remains unclaimed.
-- [x] Audit the complete pinned `pkg/util/compress` package. Its writer and
-      reader pools are generic reusable gzip streams shared by statistics
-      storage and ingest control; the current fresh, fixed-buffer Rust codecs
-      are consumer seed behavior, not this package. The two-artifact inventory
-      is in `receipts/util_compress_audit.md` and remains unclaimed.
+- [x] Complete the complete pinned `pkg/util/compress` package in `tidb-util`:
+      preserve both process-wide pools, reset/close lifecycle, discard-bound
+      writer, invalid-header errors, and unfinished-reset behavior; route the
+      statistics JSON block consumer through the owner, and leave the absent
+      ingest-control owner as an explicit integration boundary. The complete
+      two-artifact inventory and Ready gates are in
+      `receipts/util_compress_audit.md`.
 - [x] Complete the pinned `pkg/util/tiflash` package in its live `tidb-txnkv`
       owner: preserve Go's open native-integer policy and exact fallbacks,
       consume vardef's three canonical spellings, retain the threshold and
@@ -1047,6 +1061,11 @@ For each bounded behavior cluster:
       and mark only the planner-local copy pseudo without mutating cached stats.
 - [x] Port `TestSingleColumnIndexNDV`'s exact 96-row NDV/NULL contract and
       `TestIssue44369`'s analyze-then-rename composite-index regression.
+- [x] Run the Ready validation profile for the selected complete
+      `pkg/util/compress` package: locked Rust owner/consumer checks and
+      regressions, workspace formatting, repository `make lint`, and diff
+      hygiene all pass with the command-local toolchains recorded in
+      `receipts/util_compress_audit.md`.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope
@@ -1067,6 +1086,12 @@ For each bounded behavior cluster:
 - Decision: package parity is atomic. File-, function-, batch-, or test-level
   progress cannot be reported as a completed transcreated Go package.
   Date/Author: 2026-08-28, Codex.
+- Decision: `pkg/util/compress` owns generic pooled gzip streams, not a
+  statistics-specific codec. The Rust owner uses `tidb_util::zeropool::Pool`
+  with erased `Send` reader/writer targets, and statistics JSON framing is its
+  first consumer. Reset disables the old target before flate2 drops it so an
+  unfinished stream cannot receive a trailer; the absent ingest-control owner
+  remains an explicit integration boundary. Date/Author: 2026-09-01, Codex.
 - Decision: injected ports are not a substitute for an ordinary Go package
   owner when they move metadata lookup, SQL execution, DML versioning, worker
   lifecycle, or retry reconstruction to callers. Such unconsumed alternate
