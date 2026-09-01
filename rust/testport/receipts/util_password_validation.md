@@ -1,80 +1,61 @@
-# `pkg/util/password-validation` — complete package transcreation
+# `pkg/util/password-validation` — complete Go-master parity receipt
 
-Pinned Go source: `e2788410d8d696605e8cb002585877a063ccc909`.
+Comparison source: Go `origin/master` at commit
+`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01). The package is
+unchanged from the earlier pinned implementation; this receipt refreshes the
+authority, complete inventory, and current validation result.
 
 ## Complete inventory
 
-All three pinned artifacts were read in full: `password_validation.go`,
-`password_validation_test.go`, and `BUILD.bazel`. The package has one
-production file, five exported validators, five unit tests, and one Bazel
-library/test pair. It has no package doc, README, harness, fixture, benchmark,
-generated file, platform variant, or ownership file. The checkout is
-byte-identical to the pin.
+The package contains three tracked artifacts and 379 lines. All production,
+test, and Bazel files were read in full before this update. There is no package
+doc, README, harness, fixture, benchmark, generated file, platform variant,
+or ownership file.
 
-## Rust ownership and audit result
+| Artifact | Lines | Git blob | SHA-256 | Role |
+| --- | ---: | --- | --- | --- |
+| `BUILD.bazel` | 28 | `bf9ad67810b4351a6a8b3e525546fbb4c68b7886` | `1c07c99c1a74cf79fa6680ab100a59fc6a4fad5f196ea0e0368e8eddca0e01fc` | public validator library and flaky short test target |
+| `password_validation.go` | 175 | `b3931de5e6ef6e0759f8f318ce61e24ba061b111` | `f5a89348c6c5aa7d10532226f1b052ce38e26232e976677a32b39116771196b9` | dictionary, username, low/medium policy, and full password validators |
+| `password_validation_test.go` | 176 | `725f0a5392840d1e1858ae8a89e04801f1a5f4b3` | `3fec39cfda134a129e1f2b1ce520852b89e9fed5909e2439e616fd4a4cc1e024` | five source tests covering dictionary, username, low/medium, and full policy |
 
-`rust/crates/tidb-util/src/password_validation.rs` owns the five validators.
-`GlobalVarAccessor`, `PasswordUser`, and `PwdError` are the minimal Rust bridge
-for Go's imported accessor, user-identity, and error interfaces; they do not
-add policy. Passwords and both user names now use `GoString`, preserving Go's
-arbitrary-byte domain for the raw `bytes.Contains` and byte-reversal checks,
-while lowercasing and rune classification decode invalid UTF-8 with Go's
-replacement behavior.
+The validators read global sysvars, preserve Go's byte-oriented username
+checks and Unicode rune policy counts, enforce LOW/MEDIUM/STRONG ordering, and
+return the source warning/error text. The test matrix covers dictionary length
+filters and Unicode words, username reversal, length and character classes,
+and all three policy levels.
 
-The audit removed the package-level `validation_enabled` helper, eight public
-sysvar constants/catalog entries, the public error-code helper, non-required
-clone/equality derives, the extra module policy document, one supplemental
-test, and supplemental rows embedded in two source tests. Exactly the five Go
-test functions remain.
+## Rust ownership and parity
 
-Enablement now belongs to the same callers as Go. The expression
-`VALIDATE_PASSWORD_STRENGTH` path propagates a global-variable read error. The
-session account-DDL path treats that read error as disabled, matching
-`SimpleExec.isValidatePasswordEnabled`. The executor source-suite carrier owns
-its own vardef spellings rather than extending the validator package API.
+`rust/crates/tidb-util/src/password_validation.rs` is the dependency-closed
+owner. Its minimal `GlobalVarAccessor`, `PasswordUser`, and `PwdError` bridges
+preserve the imported Go interfaces without adding policy. Passwords and user
+names use `GoString` for arbitrary bytes; lowercasing and rune classification
+follow Go's replacement behavior. Session account-DDL and expression callers
+own enablement/error handling, matching their respective Go paths.
 
-## Validation
+The prior implementation removed Rust-only validation enablement helpers,
+duplicate sysvar constants/catalog entries, public error-code helpers, extra
+derives, and supplemental tests. Exactly the five Go test behaviors remain in
+the owner; no Rust-only password behavior is present.
 
-Profile: WIP; this is one package checkpoint in the continuing repository
-audit, not a repository-wide readiness claim.
+## Validation and risk
 
-- `cargo test -p tidb-util --lib --locked password_validation::tests::
-  --no-fail-fast` — passed (exactly five source tests).
-- `cargo check -p tidb-expr --lib --locked` — passed.
-- `cargo test -p tidb-expr --lib --locked
-  builtin_ext::crypto::tests::validate_password_strength_go_vectors --
-  --exact` — passed.
-- `cargo test -p tidb-expr --lib --locked
-  tests::crypto_encryption_source::test_validate_password_strength --
-  --exact` — passed.
-- `cargo test -p tidb-executor --lib --locked
-  tests_passwordtest_source::validate_password_policy_matrix_over_the_shared_validator
-  -- --exact` — passed.
-- `cargo test -p tidb-session --lib --locked
-  tests_grants::password_policy::validate_password_enforces_account_writes_and_scores_sql_values
-  -- --exact` — passed.
-- `cargo test -p tidb-session --lib --locked
-  tests_global_vars::statement_context_reads_global_sysvars_through_the_live_accessor
-  -- --exact` — passed.
-- `rustfmt --edition 2021 --check` on the changed owner/session/executor files
-  and `git diff --check` — passed. The changed expression file compiles and its
-  two targeted tests pass; a whole-file rustfmt check is blocked by unrelated
-  pre-existing long-line drift later in that file.
-- `go test ./pkg/util/password-validation -count=1` — blocked before this
-  package compiled by the workspace's existing missing
-  `pkg/util/hack.checkMapABI` build selection and
-  `google.golang.org/grpc/internal/transport` / `http2.TrailerPrefix`
-  dependency mismatch.
+Profile: **WIP** for this documentation-only authority refresh. No Go source,
+imports, Bazel metadata, or module files changed; `make bazel_prepare` and the
+Ready lint gate are not required.
 
-No Go or Bazel file changed, so `make bazel_prepare` is not required.
+```text
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
+GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
+go test ./pkg/util/password-validation -count=1
+# passed: five Go source tests in 0.502s
 
-## Risk
+OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler \
+DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-util password_validation::tests:: --lib --offline --locked -- --nocapture
+# passed: 5 Rust source-derived tests
+```
 
-- Correctness: reduced; byte strings, caller-specific enablement errors,
-  policy ordering, warnings, and all five source tests now match Go.
-- Compatibility: intentionally removes Rust-only public constants, helper,
-  derives, and error-code surface; all production and test consumers were
-  migrated.
-- Performance: neutral to improved; raw byte checks avoid an eager lossy
-  password conversion, while rune-based checks perform the same decoding work
-  Go requires.
+The Rust command emitted existing workspace warnings only. Not verified here:
+full downstream account/expression suites, Bazel execution, and full workspace
+tests. Existing unrelated session worktree changes remain outside this receipt.

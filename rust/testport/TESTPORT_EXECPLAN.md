@@ -40,6 +40,14 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: refreshed the complete Go-master
+  `pkg/util/password-validation` inventory (three artifacts, 379 lines) and
+  confirmed it is unchanged from the prior pinned implementation. The Go
+  package now passes its five source tests under the current toolchain, and
+  Rust's shared validator still passes all five source-derived tests with the
+  same byte/rune policy and caller-owned enablement semantics. Updated
+  `receipts/util_password_validation.md` with current-master hashes.
+
 - 2026-09-01: refreshed the complete Go-master `pkg/util/compress` inventory
   (two artifacts, 45 lines) and corrected the prior receipt's Bazel line count
   and authority metadata. The package is unchanged from the implementation
