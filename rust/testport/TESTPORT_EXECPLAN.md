@@ -1408,6 +1408,11 @@ For each bounded behavior cluster:
       added the focused regression, and passed the Go package, six filtered
       Rust owner tests, formatting check, and Ready lint gate. Details are in
       `receipts/config_configtypes_audit.md`.
+- 2026-09-01: audited both Go-master `pkg/util/channel` artifacts (30 Go
+      lines, one generic production function, and no source test), including
+      its BUILD target. The existing `tidb-util::channel` receiver drain is an
+      exact equivalent of Go's channel-range cleanup; the Go package and Rust
+      utility crate check pass. Details are in `receipts/util_channel_audit.md`.
 - [ ] Run Ready validation and self-review only when the requested parity scope
       is genuinely complete enough for a final-status claim.
 
@@ -1717,6 +1722,10 @@ For each bounded behavior cluster:
   keeps the ordinary decimal path, validates Go underscore placement, and
   decodes `0x…p…` directly so the source's numeric contract reaches the same
   binary-unit conversion. Date/Author: 2026-09-01, Codex.
+- Decision: keep `tidb-util::channel` as a synchronous receiver-drain helper,
+  matching Go's blocking `for range` semantics. Do not add an async wrapper,
+  timeout, or nil-channel emulation because those would be Rust-only channel
+  policy absent from `pkg/util/channel`. Date/Author: 2026-09-01, Codex.
 
 ## Surprises & Discoveries
 
