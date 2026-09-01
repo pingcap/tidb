@@ -3831,6 +3831,7 @@ dependencies = [
 name = "tidb-schemaver"
 version = "0.0.0"
 dependencies = [
+ "tidb-config",
  "tidb-domain",
  "tidb-vardef",
 ]
@@ -3875,6 +3876,7 @@ dependencies = [
  "tidb-proto",
  "tidb-protocol",
  "tidb-resolve",
+ "tidb-schemaver",
  "tidb-session",
  "tidb-sqlexec",
  "tidb-stats",

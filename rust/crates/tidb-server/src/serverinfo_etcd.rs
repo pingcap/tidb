@@ -21,10 +21,14 @@
 //! a direct forward, with the client's typed error rendered as the string
 //! the syncer logs.
 
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc};
+use std::time::Duration;
 
 use tidb_domain::serverinfo_syncer::EtcdOps;
 use tidb_pd_client::EtcdClient;
+use tidb_schemaver::etcd_syncer::{EtcdWatchOps, WatchStream};
+use tidb_schemaver::{SharedRecv, WatchEvent};
 
 /// [`EtcdOps`] over a connected [`EtcdClient`].
 pub struct EtcdClientOps {
@@ -94,6 +98,119 @@ impl EtcdOps for EtcdClientOps {
         self.client
             .delete_prefix(prefix.as_bytes())
             .map_err(|error| error.to_string())
+    }
+}
+
+impl EtcdWatchOps for EtcdClientOps {
+    fn get_prefix_with_rev(&self, prefix: &str) -> Result<(Vec<(String, Vec<u8>)>, i64), String> {
+        self.client
+            .get_prefix_metadata_with_revision(prefix.as_bytes())
+            .map(|(entries, revision)| {
+                (
+                    entries
+                        .into_iter()
+                        .map(|entry| {
+                            (
+                                String::from_utf8_lossy(&entry.key).into_owned(),
+                                entry.value,
+                            )
+                        })
+                        .collect(),
+                    revision,
+                )
+            })
+            .map_err(|error| error.to_string())
+    }
+
+    fn get_with_mod_revision(&self, key: &str) -> Result<(Option<Vec<u8>>, i64), String> {
+        self.client
+            .get_prefix_metadata(key.as_bytes())
+            .map(|entries| {
+                entries
+                    .into_iter()
+                    .find(|entry| entry.key == key.as_bytes())
+                    .map_or((None, 0), |entry| (Some(entry.value), entry.mod_revision))
+            })
+            .map_err(|error| error.to_string())
+    }
+
+    fn compare_and_swap(
+        &self,
+        key: &str,
+        expected_mod_revision: i64,
+        value: &[u8],
+    ) -> Result<bool, String> {
+        self.client
+            .compare_and_put(key.as_bytes(), expected_mod_revision, value)
+            .map_err(|error| error.to_string())
+    }
+
+    fn put_if_not_exists(&self, key: &str, value: &[u8]) -> Result<bool, String> {
+        self.client
+            .create(key.as_bytes(), value)
+            .map_err(|error| error.to_string())
+    }
+
+    fn watch(
+        &self,
+        key: &str,
+        start_revision: i64,
+        with_prefix: bool,
+    ) -> Result<WatchStream, String> {
+        let (sender, receiver) = mpsc::channel();
+        let stop = Arc::new(AtomicBool::new(false));
+        let canceled = Arc::clone(&stop);
+        let on_response = move |response: &tidb_pd_client::EtcdWatchResponse| {
+            if response.canceled {
+                let message = if response.cancel_reason.is_empty() {
+                    format!(
+                        "watch canceled at compact revision {}",
+                        response.compact_revision
+                    )
+                } else {
+                    response.cancel_reason.clone()
+                };
+                let _ = sender.send(Err(message));
+                return;
+            }
+            for event in &response.events {
+                let _ = sender.send(Ok(WatchEvent {
+                    key: String::from_utf8_lossy(&event.key).into_owned(),
+                    value: event.value.clone(),
+                    deleted: event.deleted,
+                }));
+            }
+        };
+        let watcher = if with_prefix {
+            self.client.watch_prefix_responses(
+                key.as_bytes(),
+                start_revision,
+                move || canceled.load(Ordering::Acquire),
+                on_response,
+            )
+        } else {
+            self.client.watch_key_responses(
+                key.as_bytes(),
+                start_revision,
+                move || canceled.load(Ordering::Acquire),
+                on_response,
+            )
+        }
+        .map_err(|error| error.to_string())?;
+        let thread_stop = Arc::clone(&stop);
+        std::thread::Builder::new()
+            .name("schemaver-etcd-watch".to_owned())
+            .spawn(move || {
+                let _watcher = watcher;
+                while !thread_stop.load(Ordering::Acquire) {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            })
+            .map_err(|error| error.to_string())?;
+        Ok(WatchStream {
+            events: SharedRecv::new(receiver),
+            stop,
+        })
     }
 }
 

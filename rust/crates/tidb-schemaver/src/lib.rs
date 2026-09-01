@@ -23,21 +23,18 @@
 //! until EVERY node reports it has loaded that version -- under
 //! `EnableMDL=true` at `/tidb/ddl/all_schema_by_job_versions/<jobID>/<ddlID>`,
 //! otherwise at `/tidb/ddl/all_schema_versions/<id>`. A Rust tidb-server that
-//! never wrote those keys would hang every cluster DDL forever. This crate is
-//! what writes them: [`Syncer::update_self_version`] from the reload path,
-//! [`etcd_syncer::EtcdSyncer::sync_job_schema_ver_loop`] as the follower-side
-//! reporter.
+//! never wrote those keys would hang every cluster DDL forever. This package
+//! owns the two syncer implementations and their exact contracts; process
+//! bootstrap remains the consuming server package's responsibility.
 //!
-//! # Wiring point (deliberately not connected here)
+//! # Integration boundary
 //!
-//! `crates/tidb-exec/src/catalog_watch.rs` already watches
-//! [`DDL_GLOBAL_SCHEMA_VERSION`] and reloads the catalog. The missing leg is
-//! the REPORT back: after each successful catalog reload driven by that
-//! watch, the server must call
-//! [`Syncer::update_self_version`](Syncer::update_self_version) with the new
-//! schema version (and start [`etcd_syncer::EtcdSyncer::sync_job_schema_ver_loop`]
-//! alongside the reloader thread). Until that leg lands, keep the syncer
-//! constructed but idle rather than half-wired.
+//! Go constructs a syncer from DDL/domain bootstrap, outside this package.
+//! Rust keeps the same boundary: [`etcd_syncer::EtcdWatchOps`] is the native
+//! transport seam and [`AllServerInfo`] is the native server-info seam. The
+//! server's catalog-reload/MDL loop is a separate Go package translation and
+//! must bind those seams; this crate does not introduce a second bootstrap or
+//! a cache-specific execution path.
 //!
 //! # Mapping
 //!
@@ -70,6 +67,8 @@ pub mod mem_syncer;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use tidb_domain::serverinfo::ServerInfo;
+
 /// Go `util.DDLAllSchemaVersions`.
 pub const DDL_ALL_SCHEMA_VERSIONS: &str = "/tidb/ddl/all_schema_versions";
 /// Go `util.DDLAllSchemaVersionsByJob`.
@@ -88,6 +87,14 @@ pub(crate) const KEY_OP_DEFAULT_RETRY_CNT: u32 = 3;
 pub(crate) const PUT_KEY_RETRY_UNLIMITED: u32 = u32::MAX;
 /// Go `util.KeyOpRetryInterval`.
 pub(crate) const KEY_OP_RETRY_INTERVAL: Duration = Duration::from_millis(30);
+/// Go `etcd.KeyOpDefaultTimeout`.
+pub(crate) const KEY_OP_DEFAULT_TIMEOUT: Duration = Duration::from_secs(2);
+/// Go `util.NewSessionDefaultRetryCnt`.
+pub(crate) const NEW_SESSION_DEFAULT_RETRY_CNT: u64 = 3;
+/// Go `util.NewSessionRetryUnlimited` (`math.MaxInt64`).
+pub(crate) const NEW_SESSION_RETRY_UNLIMITED: u64 = i64::MAX as u64;
+/// Go `newSessionRetryInterval`.
+pub(crate) const NEW_SESSION_RETRY_INTERVAL: Duration = Duration::from_millis(200);
 /// Go `checkVersInterval`.
 pub(crate) const CHECK_VERS_INTERVAL: Duration = Duration::from_millis(20);
 /// Go `ddlPrompt`.
@@ -95,27 +102,53 @@ pub(crate) const DDL_PROMPT: &str = "ddl-syncer";
 
 /// Go `CheckVersFirstWaitTime`: exported BY UPSTREAM for testing, so it is a
 /// settable static here rather than a `const`.
-static CHECK_VERS_FIRST_WAIT_TIME_MS: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(50);
+static CHECK_VERS_FIRST_WAIT_TIME_NS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(50_000_000);
 
-/// Reads [`CHECK_VERS_FIRST_WAIT_TIME_MS`].
+/// Reads Go `CheckVersFirstWaitTime` without losing sub-millisecond values.
 #[must_use]
 pub fn check_vers_first_wait_time() -> Duration {
-    let millis = std::sync::atomic::AtomicU64::load(
-        &CHECK_VERS_FIRST_WAIT_TIME_MS,
+    let nanos = std::sync::atomic::AtomicU64::load(
+        &CHECK_VERS_FIRST_WAIT_TIME_NS,
         std::sync::atomic::Ordering::Relaxed,
     );
-    Duration::from_millis(millis)
+    Duration::from_nanos(nanos)
 }
 
-/// Overwrites [`CHECK_VERS_FIRST_WAIT_TIME_MS`].
+/// Overwrites Go `CheckVersFirstWaitTime`.
 pub fn set_check_vers_first_wait_time(wait: Duration) {
     std::sync::atomic::AtomicU64::store(
-        &CHECK_VERS_FIRST_WAIT_TIME_MS,
-        wait.as_millis() as u64,
+        &CHECK_VERS_FIRST_WAIT_TIME_NS,
+        u64::try_from(wait.as_nanos()).unwrap_or(u64::MAX),
         std::sync::atomic::Ordering::Relaxed,
     );
 }
+
+/// Go `SyncSummary`.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct SyncSummary {
+    /// Total live server instances checked.
+    pub server_count: usize,
+    /// Assumed-keyspace server instances checked.
+    pub assumed_server_count: usize,
+}
+
+impl std::fmt::Display for SyncSummary {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.assumed_server_count > 0 {
+            write!(
+                formatter,
+                "server count: {}, assumed server count: {}",
+                self.server_count, self.assumed_server_count
+            )
+        } else {
+            write!(formatter, "server count: {}", self.server_count)
+        }
+    }
+}
+
+/// Native boundary for Go `*serverinfo.Syncer.GetAllServerInfo`.
+pub type AllServerInfo = Arc<dyn Fn() -> Result<Vec<ServerInfo>, String> + Send + Sync>;
 
 /// Why a context stopped.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -269,7 +302,8 @@ pub enum Recv<T> {
 }
 
 impl<T> SharedRecv<T> {
-    fn new(receiver: std::sync::mpsc::Receiver<T>) -> Self {
+    /// Wraps one native receiver as a cloneable Go-channel equivalent.
+    pub fn new(receiver: std::sync::mpsc::Receiver<T>) -> Self {
         Self(Arc::new(Mutex::new(receiver)))
     }
 
@@ -325,7 +359,7 @@ pub trait Syncer: Send + Sync {
 
     /// Go `WatchGlobalSchemaVer`: (re)establish the watch feeding
     /// [`Syncer::global_version_ch`].
-    fn watch_global_schema_ver(&self);
+    fn watch_global_schema_ver(&self, ctx: &Context);
 
     /// Go `Done`: fires once when the session is lost and needs a restart.
     fn done(&self) -> DoneCh;
@@ -346,27 +380,29 @@ pub trait Syncer: Send + Sync {
         ctx: &Context,
         job_id: i64,
         latest_ver: i64,
-    ) -> Result<(), String>;
+        check_assumed_server: bool,
+    ) -> Result<SyncSummary, String>;
 
     /// Go `SyncJobSchemaVerLoop`: keep this node's per-job version entries
     /// mirrored from etcd so the OWNER can wait on them. Runs until `ctx`.
     fn sync_job_schema_ver_loop(&self, ctx: &Context);
 
+    /// Go `SetServerInfoSyncer` at the native server-info read boundary.
+    fn set_server_info_syncer(&self, all_server_info: AllServerInfo);
+
     /// Go `Close`: leave, removing this node's own version key.
     fn close(&self);
 }
 
-/// Go `variable.EnableMDL.Load()`, read through this tier's
-/// `tidb_vardef` boundary. The next-generation kernel selection does not
-/// exist here yet, so classic mode reads only the mutable value -- exactly
-/// what Go's schemaver branches on.
+/// Go `vardef.IsMDLEnabled()`, including next-generation TiDB's always-on
+/// MDL rule.
 pub(crate) fn mdl_enabled() -> bool {
-    tidb_vardef::is_mdl_enabled(/* next_gen */ false)
+    tidb_vardef::is_mdl_enabled(tidb_config::kerneltype::is_next_gen())
 }
 
 #[cfg(test)]
 /// Serializes tests that flip the process-global EnableMDL flag or
-/// `CHECK_VERS_FIRST_WAIT_TIME_MS`, which Go tests also share per process.
+/// `CHECK_VERS_FIRST_WAIT_TIME_NS`, which Go tests also share per process.
 #[doc(hidden)]
 pub(crate) fn globals_test_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: std::sync::OnceLock<Mutex<()>> = std::sync::OnceLock::new();

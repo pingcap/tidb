@@ -164,7 +164,7 @@ enum EtcdCommand {
     },
     GetPrefixMetadata {
         prefix: Vec<u8>,
-        reply: mpsc::Sender<Result<Vec<EtcdKeyValue>, EtcdError>>,
+        reply: mpsc::Sender<Result<(Vec<EtcdKeyValue>, i64), EtcdError>>,
     },
     CreateWithLease {
         key: Vec<u8>,
@@ -188,6 +188,12 @@ enum EtcdCommand {
         expected_mod_revision: i64,
         value: Vec<u8>,
         lease: i64,
+        reply: mpsc::Sender<Result<bool, EtcdError>>,
+    },
+    CompareAndPut {
+        key: Vec<u8>,
+        expected_mod_revision: i64,
+        value: Vec<u8>,
         reply: mpsc::Sender<Result<bool, EtcdError>>,
     },
     DeleteKeysAndPutWithLease {
@@ -405,6 +411,29 @@ impl EtcdClient {
             Arc::clone(&self.shared.security),
             key,
             start_revision,
+            false,
+            is_cancelled,
+            on_response,
+        )
+    }
+
+    /// Starts a prefix watch from `start_revision`, preserving etcd watch
+    /// responses and binding its lifetime to the caller's cancellation
+    /// predicate.
+    pub fn watch_prefix_responses(
+        &self,
+        prefix: impl Into<Vec<u8>>,
+        start_revision: i64,
+        is_cancelled: impl Fn() -> bool + Send + 'static,
+        on_response: impl Fn(&EtcdWatchResponse) + Send + 'static,
+    ) -> Result<EtcdWatcher, EtcdError> {
+        EtcdWatcher::spawn_responses_from_revision(
+            self.shared.endpoints.clone(),
+            self.shared.timeout,
+            Arc::clone(&self.shared.security),
+            prefix,
+            start_revision,
+            true,
             is_cancelled,
             on_response,
         )
@@ -537,6 +566,16 @@ impl EtcdClient {
     /// Reads every key under `prefix`, ordered by creation revision, and
     /// retains the MVCC fields used by etcd's concurrency recipes.
     pub fn get_prefix_metadata(&self, prefix: &[u8]) -> Result<Vec<EtcdKeyValue>, EtcdError> {
+        self.get_prefix_metadata_with_revision(prefix)
+            .map(|(entries, _revision)| entries)
+    }
+
+    /// Reads every key under `prefix` and also returns the range response's
+    /// header revision, for a race-free range-then-watch handoff.
+    pub fn get_prefix_metadata_with_revision(
+        &self,
+        prefix: &[u8],
+    ) -> Result<(Vec<EtcdKeyValue>, i64), EtcdError> {
         let (reply, response) = mpsc::channel();
         self.shared
             .commands
@@ -619,6 +658,27 @@ impl EtcdClient {
                 expected_mod_revision,
                 value: value.to_vec(),
                 lease,
+                reply,
+            })
+            .map_err(|_| EtcdError::Closed)?;
+        response.recv().unwrap_or(Err(EtcdError::Closed))
+    }
+
+    /// Replaces `key` iff its modification revision still equals
+    /// `expected_mod_revision`.
+    pub fn compare_and_put(
+        &self,
+        key: &[u8],
+        expected_mod_revision: i64,
+        value: &[u8],
+    ) -> Result<bool, EtcdError> {
+        let (reply, response) = mpsc::channel();
+        self.shared
+            .commands
+            .send(EtcdCommand::CompareAndPut {
+                key: key.to_vec(),
+                expected_mod_revision,
+                value: value.to_vec(),
                 reply,
             })
             .map_err(|_| EtcdError::Closed)?;
@@ -807,6 +867,7 @@ fn run_kv_worker(
                 EtcdCommand::CreateWithLease { reply, .. }
                 | EtcdCommand::Create { reply, .. }
                 | EtcdCommand::CompareValueAndPut { reply, .. }
+                | EtcdCommand::CompareAndPut { reply, .. }
                 | EtcdCommand::CompareAndPutWithLease { reply, .. } => {
                     let _ = reply.send(Err(EtcdError::Closed));
                 }
@@ -967,7 +1028,9 @@ fn run_kv_worker(
                         runtime
                             .block_on(client.get(prefix.clone(), Some(options)))
                             .map(|response| {
-                                response
+                                let revision =
+                                    response.header().map_or(0, |header| header.revision());
+                                let entries = response
                                     .kvs()
                                     .iter()
                                     .map(|kv| EtcdKeyValue {
@@ -977,7 +1040,8 @@ fn run_kv_worker(
                                         mod_revision: kv.mod_revision(),
                                         lease: kv.lease(),
                                     })
-                                    .collect()
+                                    .collect();
+                                (entries, revision)
                             })
                     },
                 );
@@ -1082,6 +1146,33 @@ fn run_kv_worker(
                                 expected_mod_revision,
                             )])
                             .and_then([put]);
+                        runtime
+                            .block_on(client.txn(txn))
+                            .map(|response| response.succeeded())
+                    },
+                );
+                let _ = reply.send(result);
+            }
+            EtcdCommand::CompareAndPut {
+                key,
+                expected_mod_revision,
+                value,
+                reply,
+            } => {
+                let result = across_endpoints(
+                    runtime,
+                    endpoints,
+                    &mut clients,
+                    timeout,
+                    security,
+                    |runtime, mut client| {
+                        let txn = Txn::new()
+                            .when([Compare::mod_revision(
+                                key.clone(),
+                                CompareOp::Equal,
+                                expected_mod_revision,
+                            )])
+                            .and_then([TxnOp::put(key.clone(), value.clone(), None)]);
                         runtime
                             .block_on(client.txn(txn))
                             .map(|response| response.succeeded())
@@ -1299,6 +1390,8 @@ fn connect_etcd_client(
 /// What one watched key change was.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EtcdWatchEvent {
+    /// Changed key.
+    pub key: Vec<u8>,
     /// Whether the key was written or deleted.
     pub deleted: bool,
     /// The value written, empty for a delete.
@@ -1594,6 +1687,7 @@ impl EtcdWatcher {
             security,
             key,
             start_revision,
+            false,
             || false,
             move |response| {
                 for event in &response.events {
@@ -1609,6 +1703,7 @@ impl EtcdWatcher {
         security: Arc<ClusterSecurity>,
         key: impl Into<Vec<u8>>,
         start_revision: i64,
+        with_prefix: bool,
         is_cancelled: impl Fn() -> bool + Send + 'static,
         on_response: impl Fn(&EtcdWatchResponse) + Send + 'static,
     ) -> Result<Self, EtcdError>
@@ -1639,6 +1734,7 @@ impl EtcdWatcher {
                     &security,
                     &key,
                     start_revision,
+                    with_prefix,
                     &is_cancelled,
                     &on_response,
                     &worker_stats,
@@ -1683,6 +1779,7 @@ async fn watch_forever(
     security: &ClusterSecurity,
     key: &[u8],
     mut next_revision: i64,
+    with_prefix: bool,
     is_cancelled: &(impl Fn() -> bool + Send + 'static),
     on_response: &(impl Fn(&EtcdWatchResponse) + Send + 'static),
     stats: &WatchCounters,
@@ -1707,6 +1804,7 @@ async fn watch_forever(
                 security,
                 key,
                 &mut next_revision,
+                with_prefix,
                 is_cancelled,
                 on_response,
                 stats,
@@ -1755,6 +1853,7 @@ async fn watch_one_stream(
     security: &ClusterSecurity,
     key: &[u8],
     next_revision: &mut i64,
+    with_prefix: bool,
     is_cancelled: &(impl Fn() -> bool + Send + 'static),
     on_response: &(impl Fn(&EtcdWatchResponse) + Send + 'static),
     stats: &WatchCounters,
@@ -1777,8 +1876,18 @@ async fn watch_one_stream(
         _ = shutdown.changed() => return WatchEnd::Shutdown,
         () = wait_until_cancelled(is_cancelled) => return WatchEnd::ContextCancelled,
     };
-    let options = (*next_revision > 0)
-        .then(|| etcd_client::WatchOptions::new().with_start_revision(*next_revision));
+    let options = if *next_revision > 0 || with_prefix {
+        let mut options = etcd_client::WatchOptions::new();
+        if *next_revision > 0 {
+            options = options.with_start_revision(*next_revision);
+        }
+        if with_prefix {
+            options = options.with_prefix();
+        }
+        Some(options)
+    } else {
+        None
+    };
     let mut stream = tokio::select! {
         result = client.watch(key.to_vec(), options) => {
             let Ok(stream) = result else {
@@ -1813,13 +1922,14 @@ async fn watch_one_stream(
         let mut events = Vec::with_capacity(raw_events.len());
         for event in raw_events {
             let deleted = event.event_type() == EventType::Delete;
-            let (value, mod_revision) = event.kv().map_or_else(
-                || (Vec::new(), 0),
-                |kv| (kv.value().to_vec(), kv.mod_revision()),
+            let (key, value, mod_revision) = event.kv().map_or_else(
+                || (Vec::new(), Vec::new(), 0),
+                |kv| (kv.key().to_vec(), kv.value().to_vec(), kv.mod_revision()),
             );
             *next_revision = (*next_revision).max(mod_revision + 1);
             stats.events.fetch_add(1, Ordering::AcqRel);
             events.push(EtcdWatchEvent {
+                key,
                 deleted,
                 value,
                 mod_revision,

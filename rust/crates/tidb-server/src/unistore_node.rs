@@ -528,6 +528,7 @@ pub(crate) fn unistore_cluster_session_stack(
             // reload tick above is the only follower -- correct for one node.
             None,
             Arc::clone(&server_info),
+            None,
         )
         .map_err(|error| {
             crate::real_tikv_node::RunConfiguredNodeError::Engine(SqlQueryError::unknown(format!(

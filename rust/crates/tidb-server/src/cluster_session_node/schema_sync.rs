@@ -28,30 +28,24 @@
 //! to this node's shape: after the catalog reloader publishes version `V`,
 //! read `mysql.tidb_mdl_info`, and for each job whose version is at most `V`
 //! — and whose OLD schema no live local statement or transaction still uses
-//! — write the ack. The "still uses" gate is [`SchemaPinRegistry`]: Go
+//! — report through `tidb-schemaver::Syncer`. The "still uses" gate is
+//! [`SchemaPinRegistry`]: Go
 //! removes a job from the ack set while a session on an older schema touches
-//! the job's tables (`CheckOldRunningTxn`); this port blocks on any older
-//! pin regardless of table, which acks later than Go, never earlier.
+//! the job's tables (`CheckOldRunningTxn`).
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use tidb_exec::catalog_watch::SharedCatalog;
 use tidb_exec::mdl_info_load::{load_mdl_jobs, MdlJob};
 use tidb_pd_client::EtcdClient;
+use tidb_schemaver::etcd_syncer::new_etcd_syncer;
+use tidb_schemaver::{Context as SchemaVersionContext, Syncer as SchemaVersionSyncer};
 use tidb_txnkv::transaction::{
     RealOptimisticTransactionOpener, StorePdCapability, StoreWriteClient, StoreWriteLoader,
 };
-
-/// Go `util.DDLAllSchemaVersions`: the MDL-off owner's wait keys, leased.
-const DDL_ALL_SCHEMA_VERSIONS: &str = "/tidb/ddl/all_schema_versions";
-/// Go `util.DDLAllSchemaVersionsByJob`: the MDL owner's per-job wait keys.
-const DDL_ALL_SCHEMA_VERSIONS_BY_JOB: &str = "/tidb/ddl/all_schema_by_job_versions";
-/// Go `util.SessionTTL`: the seconds the self-version lease lives without a
-/// keepalive.
-const SESSION_TTL_SECONDS: i64 = 90;
 
 /// The tables live local work still reads at older schema versions.
 ///
@@ -243,6 +237,9 @@ impl tidb_session::MdlRelatedTableSink for ConnectionMdlSink {
 pub struct SchemaSyncAck {
     stop: Arc<AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
+    syncer_context: SchemaVersionContext,
+    syncer_thread: Option<std::thread::JoinHandle<()>>,
+    syncer: Arc<dyn SchemaVersionSyncer>,
 }
 
 impl SchemaSyncAck {
@@ -250,46 +247,102 @@ impl SchemaSyncAck {
     ///
     /// `tick` is the reload cadence (the caller passes the catalog
     /// reloader's own `schema_lease / 2`); the loop only touches TiKV when
-    /// the loaded version moved or an ack is still owed, so a quiet cluster
-    /// costs nothing but the leased self-key's keepalive.
+    /// the loaded version moved or an ack is still owed. Session, watch,
+    /// monotonic-write, and owner-wait behavior comes from the shared
+    /// `tidb-schemaver` package implementation.
     pub fn spawn<C, L, P>(
         catalog: Arc<SharedCatalog>,
         opener: RealOptimisticTransactionOpener<C, L, P>,
         pins: Arc<SchemaPinRegistry>,
         etcd: Arc<EtcdClient>,
         ddl_id: String,
+        server_info: Arc<tidb_domain::serverinfo_syncer::Syncer>,
         tick: Duration,
         timeout: Duration,
-    ) -> Self
+    ) -> Result<Self, String>
     where
         C: StoreWriteClient + Send + 'static,
         L: StoreWriteLoader + Send + 'static,
         P: StorePdCapability + Send + 'static,
     {
+        let etcd_ops = Arc::new(crate::serverinfo_etcd::EtcdClientOps::new(etcd));
+        let syncer = Arc::new(new_etcd_syncer(etcd_ops, &ddl_id));
+        syncer.set_server_info_syncer(Arc::new(move || {
+            server_info
+                .all_server_info()
+                .map(|servers| servers.into_values().collect())
+        }));
+        let syncer_context = SchemaVersionContext::background();
+        syncer.init(&syncer_context)?;
+        let syncer_thread = match std::thread::Builder::new()
+            .name("schema-version-mirror".to_owned())
+            .spawn({
+                let syncer = Arc::clone(&syncer);
+                let context = syncer_context.clone();
+                move || syncer.sync_job_schema_ver_loop(&context)
+            }) {
+            Ok(thread) => thread,
+            Err(error) => {
+                syncer_context.cancel();
+                syncer.close();
+                return Err(error.to_string());
+            }
+        };
+
+        let syncer: Arc<dyn SchemaVersionSyncer> = syncer;
         let stop = Arc::new(AtomicBool::new(false));
         let stop_seen = Arc::clone(&stop);
         let tick = tick.max(Duration::from_millis(100));
-        let thread = std::thread::Builder::new()
+        let ack_syncer = Arc::clone(&syncer);
+        let ack_context = syncer_context.clone();
+        let thread = match std::thread::Builder::new()
             .name("schema-sync-ack".to_owned())
             .spawn(move || {
                 run_ack_loop(
-                    &catalog, &opener, &pins, &etcd, &ddl_id, tick, timeout, &stop_seen,
+                    &catalog,
+                    &opener,
+                    &pins,
+                    ack_syncer.as_ref(),
+                    &ack_context,
+                    tick,
+                    timeout,
+                    &stop_seen,
                 );
-            })
-            .expect("spawning the schema-sync ack thread");
-        Self {
+            }) {
+            Ok(thread) => thread,
+            Err(error) => {
+                syncer_context.cancel();
+                let _ = syncer_thread.join();
+                syncer.close();
+                return Err(error.to_string());
+            }
+        };
+        Ok(Self {
             stop,
             thread: Some(thread),
-        }
+            syncer_context,
+            syncer_thread: Some(syncer_thread),
+            syncer,
+        })
+    }
+
+    /// The package-parity schema-version syncer shared with the DDL owner.
+    pub fn syncer(&self) -> Arc<dyn SchemaVersionSyncer> {
+        Arc::clone(&self.syncer)
     }
 }
 
 impl Drop for SchemaSyncAck {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
+        self.syncer_context.cancel();
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
+        if let Some(thread) = self.syncer_thread.take() {
+            let _ = thread.join();
+        }
+        self.syncer.close();
     }
 }
 
@@ -298,8 +351,8 @@ fn run_ack_loop<C, L, P>(
     catalog: &SharedCatalog,
     opener: &RealOptimisticTransactionOpener<C, L, P>,
     pins: &SchemaPinRegistry,
-    etcd: &EtcdClient,
-    ddl_id: &str,
+    syncer: &dyn SchemaVersionSyncer,
+    syncer_context: &SchemaVersionContext,
     tick: Duration,
     timeout: Duration,
     stop: &AtomicBool,
@@ -308,55 +361,23 @@ fn run_ack_loop<C, L, P>(
     L: StoreWriteLoader,
     P: StorePdCapability,
 {
-    // Go `Init` writes the self key at startup under a session lease so a
-    // dead node's entry expires instead of blocking an MDL-off owner
-    // forever. Everything etcd-side is best effort with a warning: a node
-    // that cannot reach etcd still serves SQL, exactly like the watch and
-    // the server-info syncer.
-    let mut lease: Option<i64> = None;
-    let mut lease_renewed = Instant::now();
-    let mut published_self: Option<i64> = None;
     // Go's `jobCache`: (job id -> version already acknowledged).
     let mut acked: BTreeMap<i64, i64> = BTreeMap::new();
     // The version whose mdl rows were last read, and whether any read job
     // is still owed its ack (a pin held it back, or a PUT failed).
     let mut scanned_version: Option<i64> = None;
+    let mut reported_loaded_version: Option<i64> = None;
     let mut owed = false;
     while !stop.load(Ordering::SeqCst) {
         let loaded = catalog.load().schema_version;
 
-        // The leased self key, kept CURRENT rather than Go's write-once
-        // under MDL: only an MDL-off owner reads it, and for that reader a
-        // stale value is the harmful shape (see the ExecPlan's decision
-        // log, `docs/schema-sync-ack-execplan.md`).
-        let lease_expired = lease_renewed.elapsed().as_secs() >= (SESSION_TTL_SECONDS as u64) / 3;
-        if published_self != Some(loaded) || lease_expired {
-            if lease.is_none() || lease_expired {
-                if let (Some(id), true) = (lease, lease_expired) {
-                    match etcd.lease_keep_alive_once(id) {
-                        Ok(_) => lease_renewed = Instant::now(),
-                        Err(_) => lease = None,
-                    }
-                }
-                if lease.is_none() {
-                    match etcd.lease_grant(SESSION_TTL_SECONDS) {
-                        Ok((id, _ttl)) => {
-                            lease = Some(id);
-                            lease_renewed = Instant::now();
-                            published_self = None;
-                        }
-                        Err(error) => emit_warning("schema_sync_lease_grant_failed", &error),
-                    }
-                }
-            }
-            if let Some(id) = lease {
-                if published_self != Some(loaded) {
-                    let key = format!("{DDL_ALL_SCHEMA_VERSIONS}/{ddl_id}");
-                    match etcd.put_with_lease(key.as_bytes(), loaded.to_string().as_bytes(), id) {
-                        Ok(()) => published_self = Some(loaded),
-                        Err(error) => emit_warning("schema_sync_self_version_put_failed", &error),
-                    }
-                }
+        // Go's domain reload path reports every newly loaded version with
+        // job id zero. The etcd syncer turns this into the leased self-key
+        // update only when MDL is disabled; with MDL enabled it is a no-op.
+        if reported_loaded_version != Some(loaded) {
+            match syncer.update_self_version(syncer_context, 0, loaded) {
+                Ok(()) => reported_loaded_version = Some(loaded),
+                Err(error) => emit_warning("schema_sync_self_version_put_failed", &error),
             }
         }
 
@@ -377,9 +398,7 @@ fn run_ack_loop<C, L, P>(
                             .is_none_or(|&sent| sent < job.version)
                     });
                     for job in due {
-                        let key =
-                            format!("{DDL_ALL_SCHEMA_VERSIONS_BY_JOB}/{}/{ddl_id}", job.job_id);
-                        match etcd.put(key.as_bytes(), job.version.to_string().as_bytes()) {
+                        match syncer.update_self_version(syncer_context, job.job_id, job.version) {
                             Ok(()) => {
                                 eprintln!(
                                     "{{\"event\":\"schema_sync_acked\",\"job_id\":{},\"version\":{}}}",

@@ -18,12 +18,11 @@
 //! statement is routed here and what happens to the connection's own
 //! catalog afterwards.
 
-use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tidb_pd_client::PdClient;
 use tidb_txnkv::rpc::TonicCoprocessorClient;
 use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
@@ -99,7 +98,7 @@ where
     catalog: Arc<SharedClusterCatalog>,
     timeout: Duration,
     notifier: Option<Arc<EtcdClient>>,
-    server_info: Arc<tidb_domain::serverinfo_syncer::Syncer>,
+    schema_version_syncer: Option<Arc<dyn tidb_schemaver::Syncer>>,
     owner_id: String,
 }
 
@@ -414,6 +413,7 @@ where
         timeout: Duration,
         notifier: Option<Arc<EtcdClient>>,
         server_info: Arc<tidb_domain::serverinfo_syncer::Syncer>,
+        schema_version_syncer: Option<Arc<dyn tidb_schemaver::Syncer>>,
     ) -> Result<Self, String> {
         let owner_id = server_info.local_server_info().static_info.id;
         let server_state_context = ServerStateContext::background();
@@ -448,7 +448,7 @@ where
             catalog: Arc::clone(&catalog),
             timeout,
             notifier: notifier.clone(),
-            server_info,
+            schema_version_syncer,
             owner_id: owner_id.clone(),
         });
         let scheduler = Arc::new(PersistedDdlScheduler {
@@ -590,56 +590,9 @@ where
     }
 }
 
-fn newest_server_ids_by_instance(
-    servers: &HashMap<String, tidb_domain::serverinfo::ServerInfo>,
-) -> HashSet<String> {
-    let mut newest: HashMap<String, (i64, String)> = HashMap::new();
-    for info in servers.values() {
-        let instance = format!("{}:{}", info.static_info.ip, info.static_info.port);
-        let candidate = (
-            info.static_info.start_timestamp,
-            info.static_info.id.clone(),
-        );
-        if newest
-            .get(&instance)
-            .is_none_or(|current| candidate.0 > current.0)
-        {
-            newest.insert(instance, candidate);
-        }
-    }
-    newest.into_values().map(|(_, id)| id).collect()
-}
-
 #[cfg(test)]
 mod schema_sync_tests {
     use super::*;
-
-    fn server(
-        id: &str,
-        ip: &str,
-        port: usize,
-        start_timestamp: i64,
-    ) -> tidb_domain::serverinfo::ServerInfo {
-        let mut info = tidb_domain::serverinfo::ServerInfo::default();
-        info.static_info.id = id.to_owned();
-        info.static_info.ip = ip.to_owned();
-        info.static_info.port = port;
-        info.static_info.start_timestamp = start_timestamp;
-        info
-    }
-
-    #[test]
-    fn schema_wait_uses_only_the_newest_server_id_for_each_instance() {
-        let servers = HashMap::from([
-            ("old".to_owned(), server("old", "10.0.0.1", 4000, 10)),
-            ("new".to_owned(), server("new", "10.0.0.1", 4000, 20)),
-            ("peer".to_owned(), server("peer", "10.0.0.2", 4000, 15)),
-        ]);
-        assert_eq!(
-            newest_server_ids_by_instance(&servers),
-            HashSet::from(["new".to_owned(), "peer".to_owned()])
-        );
-    }
 
     #[test]
     fn closed_server_state_watch_rewatches_and_reloads() {
@@ -700,41 +653,16 @@ where
 
     fn wait_version_synced(&self, ddl_job_id: i64, version: i64) -> Result<(), String> {
         self.reload_catalog()?;
-        let Some(etcd) = self.notifier.as_ref() else {
+        let Some(syncer) = self.schema_version_syncer.as_ref() else {
             return Ok(());
         };
-        let prefix = format!("/tidb/ddl/all_schema_by_job_versions/{ddl_job_id}/");
-        let deadline = Instant::now() + self.timeout;
-        loop {
-            let expected = newest_server_ids_by_instance(&self.server_info.all_server_info()?);
-            let mut loaded = HashMap::new();
-            for (key, value) in etcd
-                .get_prefix(prefix.as_bytes())
-                .map_err(|error| error.to_string())?
-            {
-                let key = String::from_utf8_lossy(&key);
-                let Some(server_id) = key.strip_prefix(&prefix) else {
-                    continue;
-                };
-                let Ok(loaded_version) = String::from_utf8_lossy(&value).parse::<i64>() else {
-                    continue;
-                };
-                loaded.insert(server_id.to_owned(), loaded_version);
-            }
-            if expected.iter().all(|server_id| {
-                loaded
-                    .get(server_id)
-                    .is_some_and(|loaded| *loaded >= version)
-            }) {
-                return Ok(());
-            }
-            if Instant::now() >= deadline {
-                return Err(format!(
-                    "timed out waiting for schema version {version} of DDL job {ddl_job_id}"
-                ));
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        let context = tidb_schemaver::Context::with_timeout(
+            &tidb_schemaver::Context::background(),
+            self.timeout,
+        );
+        syncer
+            .wait_version_synced(&context, ddl_job_id, version, false)
+            .map(|_summary| ())
     }
 
     fn clean_job_versions(&self, ddl_job_id: i64) -> Result<(), String> {

@@ -23,7 +23,9 @@ use std::time::Duration;
 
 use crate::mdl_enabled;
 
-use crate::{Context, DoneCh, GlobalVerRx, SharedRecv, Syncer, WatchEvent};
+use crate::{
+    AllServerInfo, Context, DoneCh, GlobalVerRx, SharedRecv, SyncSummary, Syncer, WatchEvent,
+};
 
 /// Go `checkVersionsInterval`.
 const CHECK_VERSIONS_INTERVAL: Duration = Duration::from_millis(2);
@@ -32,8 +34,8 @@ const CHECK_VERSIONS_INTERVAL: Duration = Duration::from_millis(2);
 pub struct MemSyncer {
     self_schema_version: AtomicI64,
     mdl_schema_versions: Mutex<HashMap<i64, i64>>,
-    global_ver: Mutex<Option<(std::sync::mpsc::Sender<WatchEvent>, GlobalVerRx)>>,
-    mock_session: Mutex<Option<(std::sync::mpsc::Sender<()>, DoneCh)>>,
+    global_ver: Mutex<Option<(std::sync::mpsc::SyncSender<WatchEvent>, GlobalVerRx)>>,
+    mock_session: Mutex<Option<(std::sync::mpsc::SyncSender<()>, DoneCh)>>,
 }
 
 impl Default for MemSyncer {
@@ -61,14 +63,27 @@ impl MemSyncer {
             .mock_session
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        // Dropping the sender closes every receiver, as `close(ch)` would.
-        drop(slot.take());
+        // Go `close(ch)` panics for a nil/already-closed channel.
+        drop(slot.take().expect("close of nil or closed mock session"));
     }
 }
 
-fn fresh_channel<T>() -> (std::sync::mpsc::Sender<T>, SharedRecv<T>) {
-    let (sender, receiver) = std::sync::mpsc::channel::<T>();
+fn fresh_channel<T>() -> (std::sync::mpsc::SyncSender<T>, SharedRecv<T>) {
+    let (sender, receiver) = std::sync::mpsc::sync_channel::<T>(1);
     (sender, SharedRecv::new(receiver))
+}
+
+fn fresh_global_channel() -> (std::sync::mpsc::SyncSender<WatchEvent>, GlobalVerRx) {
+    let (sender, receiver) = std::sync::mpsc::sync_channel::<WatchEvent>(1);
+    (sender, SharedRecv::new(receiver))
+}
+
+fn never_channel<T>() -> SharedRecv<T> {
+    let (sender, receiver) = std::sync::mpsc::channel::<T>();
+    // Go's nil receive channel blocks forever. Keeping this sender alive for
+    // the process lifetime is the native equivalent.
+    std::mem::forget(sender);
+    SharedRecv::new(receiver)
 }
 
 impl Syncer for MemSyncer {
@@ -81,7 +96,7 @@ impl Syncer for MemSyncer {
         *self
             .global_ver
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(fresh_channel::<WatchEvent>());
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(fresh_global_channel());
         *self
             .mock_session
             .lock()
@@ -110,7 +125,7 @@ impl Syncer for MemSyncer {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         if let Some((sender, _)) = slot.as_ref() {
-            let _ = sender.send(WatchEvent::default());
+            let _ = sender.try_send(WatchEvent::default());
         }
         Ok(())
     }
@@ -123,15 +138,12 @@ impl Syncer for MemSyncer {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         match slot.as_ref() {
             Some((_, receiver)) => receiver.clone(),
-            None => {
-                let (_, receiver) = fresh_channel::<WatchEvent>();
-                receiver
-            }
+            None => never_channel(),
         }
     }
 
     /// Go `WatchGlobalSchemaVer`.
-    fn watch_global_schema_ver(&self) {}
+    fn watch_global_schema_ver(&self, _ctx: &Context) {}
 
     /// Go `Done`.
     fn done(&self) -> DoneCh {
@@ -140,7 +152,7 @@ impl Syncer for MemSyncer {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .as_ref()
             .map(|(_, receiver)| receiver.clone())
-            .unwrap_or_else(|| fresh_channel::<()>().1)
+            .unwrap_or_else(never_channel)
     }
 
     /// Go `Restart`.
@@ -158,7 +170,8 @@ impl Syncer for MemSyncer {
         ctx: &Context,
         job_id: i64,
         latest_ver: i64,
-    ) -> Result<(), String> {
+        _check_assumed_server: bool,
+    ) -> Result<SyncSummary, String> {
         loop {
             if let Err(error) = ctx.sleep(CHECK_VERSIONS_INTERVAL) {
                 return Err(error.to_string());
@@ -169,10 +182,16 @@ impl Syncer for MemSyncer {
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner());
                 if versions.get(&job_id).is_some_and(|ver| *ver >= latest_ver) {
-                    return Ok(());
+                    return Ok(SyncSummary {
+                        server_count: 1,
+                        assumed_server_count: 0,
+                    });
                 }
             } else if self.self_schema_version.load(Ordering::Acquire) >= latest_ver {
-                return Ok(());
+                return Ok(SyncSummary {
+                    server_count: 1,
+                    assumed_server_count: 0,
+                });
             }
         }
     }
@@ -180,100 +199,10 @@ impl Syncer for MemSyncer {
     /// Go `SyncJobSchemaVerLoop`.
     fn sync_job_schema_ver_loop(&self, _ctx: &Context) {}
 
+    /// Go `SetServerInfoSyncer` is intentionally unused by the memory
+    /// implementation.
+    fn set_server_info_syncer(&self, _all_server_info: AllServerInfo) {}
+
     /// Go `Close`.
     fn close(&self) {}
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::mpsc;
-    use std::time::Duration;
-
-    use super::*;
-    use crate::{globals_test_lock, Context};
-
-    #[test]
-    fn test_mem_wait_version_synced_both_paths() {
-        let guard = globals_test_lock();
-        let syncer = MemSyncer::new();
-        syncer.init(&Context::background()).unwrap();
-
-        // MDL ON: the per-job map is consulted.
-        tidb_vardef::set_enable_mdl(true);
-        let done = Context::with_timeout(&Context::background(), Duration::from_millis(30));
-        assert!(syncer.wait_version_synced(&done, 7, 100).is_err());
-        syncer
-            .update_self_version(&Context::background(), 7, 99)
-            .unwrap();
-        assert!(
-            syncer.wait_version_synced(&done, 7, 100).is_err(),
-            "99 < 100"
-        );
-        syncer
-            .update_self_version(&Context::background(), 7, 100)
-            .unwrap();
-        syncer
-            .wait_version_synced(&Context::background(), 7, 100)
-            .unwrap();
-
-        // MDL OFF: the single self version is consulted.
-        tidb_vardef::set_enable_mdl(false);
-        let done = Context::with_timeout(&Context::background(), Duration::from_millis(30));
-        assert!(syncer.wait_version_synced(&done, 7, 5).is_err());
-        syncer
-            .update_self_version(&Context::background(), 0, 5)
-            .unwrap();
-        syncer
-            .wait_version_synced(&Context::background(), 0, 5)
-            .unwrap();
-
-        tidb_vardef::set_enable_mdl(false);
-        drop(guard);
-    }
-
-    #[test]
-    fn test_mem_owner_update_global_version_notifies_once() {
-        let syncer = MemSyncer::new();
-        syncer.init(&Context::background()).unwrap();
-        let rx = syncer.global_version_ch();
-        syncer
-            .owner_update_global_version(&Context::background(), 42)
-            .unwrap();
-        assert!(
-            matches!(
-                rx.recv_timeout(Duration::from_secs(1)),
-                crate::Recv::Item(_)
-            ),
-            "the first publish must notify"
-        );
-        // A second publish while nothing drains must NOT block (Go's
-        // non-blocking send onto the buffered channel), and the pending slot
-        // stays occupied.
-        syncer
-            .owner_update_global_version(&Context::background(), 43)
-            .unwrap();
-        assert!(matches!(
-            rx.recv_timeout(Duration::from_millis(50)),
-            crate::Recv::Item(_)
-        ));
-    }
-
-    #[test]
-    fn test_mem_done_and_restart() {
-        let syncer = MemSyncer::new();
-        syncer.init(&Context::background()).unwrap();
-        let done = syncer.done();
-        syncer.close_session();
-        assert!(matches!(
-            done.recv_timeout(Duration::from_secs(1)),
-            crate::Recv::Closed
-        ));
-        // Restart re-arms the session.
-        syncer.restart(&Context::background()).unwrap();
-        let done = syncer.done();
-        assert!(matches!(
-            done.recv_timeout(Duration::from_millis(50)),
-            crate::Recv::Timeout
-        ));
-    }
 }

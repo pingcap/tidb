@@ -202,17 +202,29 @@ pub(crate) fn run_cluster_session_node_with_spill(
     // above is -- a node with no reachable etcd registers nowhere, is waited
     // on by nobody, and correctly spawns no acknowledger either.
     let schema_pins = Arc::new(super::schema_sync::SchemaPinRegistry::default());
-    let schema_sync_ack = crate::real_tikv_node::connect_schema_notifier(&config).map(|etcd| {
-        super::schema_sync::SchemaSyncAck::spawn(
-            Arc::clone(&catalog),
-            authority.transaction_opener(),
-            Arc::clone(&schema_pins),
-            etcd,
-            server_info.local_server_info().static_info.id,
-            config.schema_lease / 2,
-            CONTROL_PLANE_TIMEOUT,
-        )
-    });
+    let schema_sync_ack = match crate::real_tikv_node::connect_schema_notifier(&config) {
+        Some(etcd) => Some(
+            super::schema_sync::SchemaSyncAck::spawn(
+                Arc::clone(&catalog),
+                authority.transaction_opener(),
+                Arc::clone(&schema_pins),
+                etcd,
+                server_info.local_server_info().static_info.id,
+                Arc::clone(&server_info),
+                config.schema_lease / 2,
+                CONTROL_PLANE_TIMEOUT,
+            )
+            .map_err(|error| {
+                RunConfiguredNodeError::Engine(SqlQueryError::unknown(format!(
+                    "initialize schema-version syncer failed: {error}"
+                )))
+            })?,
+        ),
+        None => None,
+    };
+    let schema_version_syncer = schema_sync_ack
+        .as_ref()
+        .map(super::schema_sync::SchemaSyncAck::syncer);
     let cluster_ddl = Arc::new(
         RealClusterDdl::new(
             authority.transaction_opener(),
@@ -220,6 +232,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
             CONTROL_PLANE_TIMEOUT,
             crate::real_tikv_node::connect_schema_notifier(&config),
             Arc::clone(&server_info),
+            schema_version_syncer,
         )
         .map_err(|error| {
             RunConfiguredNodeError::Engine(SqlQueryError::unknown(format!(

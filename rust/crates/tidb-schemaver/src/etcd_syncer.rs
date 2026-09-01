@@ -57,9 +57,11 @@ use tidb_domain::serverinfo::ServerInfo;
 use tidb_domain::serverinfo_syncer::{join_host_port, EtcdOps};
 
 use crate::{
-    mdl_enabled, Context, DoneCh, GlobalVerRx, SharedRecv, Syncer, WatchEvent, CHECK_VERS_INTERVAL,
-    DDL_ALL_SCHEMA_VERSIONS, DDL_ALL_SCHEMA_VERSIONS_BY_JOB, DDL_GLOBAL_SCHEMA_VERSION, DDL_PROMPT,
-    INITIAL_VERSION, KEY_OP_DEFAULT_RETRY_CNT, KEY_OP_RETRY_INTERVAL, PUT_KEY_RETRY_UNLIMITED,
+    mdl_enabled, AllServerInfo, Context, DoneCh, GlobalVerRx, SharedRecv, SyncSummary, Syncer,
+    WatchEvent, CHECK_VERS_INTERVAL, DDL_ALL_SCHEMA_VERSIONS, DDL_ALL_SCHEMA_VERSIONS_BY_JOB,
+    DDL_GLOBAL_SCHEMA_VERSION, DDL_PROMPT, INITIAL_VERSION, KEY_OP_DEFAULT_RETRY_CNT,
+    KEY_OP_DEFAULT_TIMEOUT, KEY_OP_RETRY_INTERVAL, NEW_SESSION_DEFAULT_RETRY_CNT,
+    NEW_SESSION_RETRY_INTERVAL, NEW_SESSION_RETRY_UNLIMITED, PUT_KEY_RETRY_UNLIMITED,
     SESSION_TTL_SECONDS,
 };
 
@@ -104,14 +106,19 @@ pub trait EtcdWatchOps: EtcdOps {
     /// Transport or store failure.
     fn put_if_not_exists(&self, key: &str, value: &[u8]) -> Result<bool, String>;
 
-    /// `Watch(prefix, WithPrefix(), WithRev(start_revision))`: events from
-    /// `start_revision` on, streamed until the stream ends or
+    /// `Watch(key, WithRev(start_revision))`, optionally with `WithPrefix()`:
+    /// events from `start_revision` on, streamed until the stream ends or
     /// [`WatchStream::stop_watching`] fires. A reconnected implementation is
     /// expected to resume from where it left off, like Go's watch channel.
     ///
     /// # Errors
     /// Failure establishing the watch.
-    fn watch_prefix(&self, prefix: &str, start_revision: i64) -> Result<WatchStream, String>;
+    fn watch(
+        &self,
+        key: &str,
+        start_revision: i64,
+        with_prefix: bool,
+    ) -> Result<WatchStream, String>;
 }
 
 /// One running prefix watch: an event queue plus the switch that ends it.
@@ -143,10 +150,7 @@ pub(crate) fn put_kv_to_etcd(
     lease: Option<i64>,
 ) -> Result<(), String> {
     let mut last = String::new();
-    for attempt in 0..retry_cnt {
-        if attempt > 0 && ctx.sleep(KEY_OP_RETRY_INTERVAL).is_err() {
-            return Err(last);
-        }
+    for _ in 0..retry_cnt {
         if let Err(error) = ctx.err() {
             return Err(error.to_string());
         }
@@ -159,6 +163,7 @@ pub(crate) fn put_kv_to_etcd(
             Err(error) => {
                 log_warn("etcd-cli put kv failed", &[("key", key)]);
                 last = error;
+                std::thread::sleep(KEY_OP_RETRY_INTERVAL);
             }
         }
     }
@@ -176,10 +181,7 @@ pub(crate) fn put_kv_to_etcd_mono(
     value: &str,
 ) -> Result<(), String> {
     let mut last = String::new();
-    for attempt in 0..retry_cnt {
-        if attempt > 0 && ctx.sleep(KEY_OP_RETRY_INTERVAL).is_err() {
-            return Err(last);
-        }
+    for _ in 0..retry_cnt {
         if let Err(error) = ctx.err() {
             return Err(error.to_string());
         }
@@ -188,6 +190,7 @@ pub(crate) fn put_kv_to_etcd_mono(
             Err(error) => {
                 log_warn("etcd-cli put kv failed", &[("key", key)]);
                 last = error;
+                std::thread::sleep(KEY_OP_RETRY_INTERVAL);
                 continue;
             }
         };
@@ -196,6 +199,7 @@ pub(crate) fn put_kv_to_etcd_mono(
             Err(error) => {
                 log_warn("etcd-cli put kv failed", &[("key", key)]);
                 last = error;
+                std::thread::sleep(KEY_OP_RETRY_INTERVAL);
                 continue;
             }
         };
@@ -204,6 +208,7 @@ pub(crate) fn put_kv_to_etcd_mono(
         }
         last = "performing compare-and-swap during PutKVToEtcd failed".to_owned();
         log_warn("etcd-cli put kv failed", &[("key", key)]);
+        std::thread::sleep(KEY_OP_RETRY_INTERVAL);
     }
     Err(last)
 }
@@ -342,38 +347,23 @@ impl NodeVersions {
 pub(crate) struct Session {
     lease: i64,
     done: DoneCh,
-    stop: Arc<AtomicBool>,
 }
 
 impl Session {
     /// Go `tidbutil.NewSession`: grant a lease of `SESSION_TTL_SECONDS`,
-    /// start keeping it alive. Upstream retries session creation
-    /// (`NewSessionDefaultRetryCnt`) around this single grant; the fake and
-    /// real clients surface transport errors directly instead. Losing one
-    /// keepalive round closes [`Self::done`] -- Go's session-done event --
-    /// and leaves re-establishment to [`EtcdSyncer::restart`].
-    pub(crate) fn new(etcd: Arc<dyn EtcdWatchOps>, log_prefix: &str) -> Result<Self, String> {
-        // Go's concurrency.Session keeps the lease alive at roughly ttl/3;
-        // the same cadence here, stepped so a stop is noticed promptly.
-        Self::with_keep_alive_interval(
-            etcd,
-            log_prefix,
-            Duration::from_secs(SESSION_TTL_SECONDS as u64 / 3),
-        )
-    }
-
-    /// [`Self::new`] with an explicit keepalive cadence; tests shorten it
-    /// exactly like upstream shortens its TTLs.
-    pub(crate) fn with_keep_alive_interval(
+    /// start keeping it alive under `ctx`. Losing one keepalive round or
+    /// ending the context closes [`Self::done`] exactly like
+    /// `concurrency.Session.Done()`.
+    pub(crate) fn new(
         etcd: Arc<dyn EtcdWatchOps>,
+        ctx: &Context,
         _log_prefix: &str,
-        keep_alive: Duration,
     ) -> Result<Self, String> {
         let lease = etcd.lease_grant(SESSION_TTL_SECONDS)?;
         let (sender, receiver) = mpsc::channel::<()>();
-        let stop = Arc::new(AtomicBool::new(false));
+        let keep_alive = Duration::from_secs(SESSION_TTL_SECONDS as u64 / 3);
         const STEP: Duration = Duration::from_millis(20);
-        let thread_stop = Arc::clone(&stop);
+        let session_ctx = ctx.clone();
         std::thread::Builder::new()
             .name("ddl-syncer-keepalive".to_owned())
             .spawn(move || {
@@ -381,7 +371,7 @@ impl Session {
                 let _keep_sender = sender;
                 let mut slept = Duration::ZERO;
                 loop {
-                    if thread_stop.load(Ordering::Acquire) {
+                    if session_ctx.err().is_err() {
                         return;
                     }
                     if slept >= keep_alive {
@@ -401,7 +391,6 @@ impl Session {
         Ok(Self {
             lease,
             done: SharedRecv::new(receiver),
-            stop,
         })
     }
 
@@ -412,12 +401,6 @@ impl Session {
     pub(crate) fn done(&self) -> DoneCh {
         self.done.clone()
     }
-
-    /// Stops the keepalive thread and closes `done`, as closing the session
-    /// would.
-    pub(crate) fn close(&self) {
-        self.stop.store(true, Ordering::Release);
-    }
 }
 
 /// Go `util.Watcher` reduced to this package's single use: one watch on the
@@ -426,7 +409,12 @@ impl Session {
 /// next `rewatch` ends it.
 struct GlobalVerWatcher {
     etcd: Arc<dyn EtcdWatchOps>,
-    current: Mutex<Option<GlobalVerRx>>,
+    current: Mutex<Option<ActiveGlobalWatch>>,
+}
+
+struct ActiveGlobalWatch {
+    receiver: GlobalVerRx,
+    stop: Arc<AtomicBool>,
 }
 
 impl GlobalVerWatcher {
@@ -438,14 +426,22 @@ impl GlobalVerWatcher {
     }
 
     /// Go `Watcher.Watch`: start feeding the global-version channel.
-    fn watch(&self) {
-        self.rewatch();
+    fn watch(&self, ctx: &Context) {
+        self.rewatch(ctx);
     }
 
     /// Go `Watcher.Rewatch`: end the old watch, start a fresh one. A new
     /// channel replaces the old, exactly as upstream swaps `watchCh`.
-    fn rewatch(&self) {
-        match self.etcd.watch_prefix(DDL_GLOBAL_SCHEMA_VERSION, 0) {
+    fn rewatch(&self, ctx: &Context) {
+        if let Some(previous) = self
+            .current
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take()
+        {
+            previous.stop.store(true, Ordering::Release);
+        }
+        match self.etcd.watch(DDL_GLOBAL_SCHEMA_VERSION, 0, false) {
             Ok(stream) => {
                 // A forwarding thread turns the raw stream into Go's watch
                 // channel: plain events for the consumer, ended on error.
@@ -453,8 +449,11 @@ impl GlobalVerWatcher {
                 *self
                     .current
                     .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner()) =
-                    Some(SharedRecv::new(receiver));
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(ActiveGlobalWatch {
+                    receiver: SharedRecv::new(receiver),
+                    stop: Arc::clone(&stream.stop),
+                });
+                let watch_ctx = ctx.clone();
                 std::thread::Builder::new()
                     .name("ddl-global-ver-watch".to_owned())
                     .spawn(move || {
@@ -470,7 +469,10 @@ impl GlobalVerWatcher {
                                 // rewatch starts a new one.
                                 crate::Recv::Item(Err(_)) | crate::Recv::Closed => return,
                                 crate::Recv::Timeout => {
-                                    if stream.stop.load(Ordering::Acquire) {
+                                    if stream.stop.load(Ordering::Acquire)
+                                        || watch_ctx.err().is_err()
+                                    {
+                                        stream.stop_watching();
                                         return;
                                     }
                                 }
@@ -492,15 +494,16 @@ impl GlobalVerWatcher {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         match &*current {
-            Some(receiver) => SharedRecv::clone(receiver),
-            None => {
-                // Never-sending stand-in for Go's nil-channel block.
-                let (_sender, receiver) = mpsc::channel::<WatchEvent>();
-                let receiver: GlobalVerRx = SharedRecv::new(receiver);
-                receiver
-            }
+            Some(active) => SharedRecv::clone(&active.receiver),
+            None => never_channel(),
         }
     }
+}
+
+fn never_channel<T>() -> SharedRecv<T> {
+    let (sender, receiver) = mpsc::channel::<T>();
+    std::mem::forget(sender);
+    SharedRecv::new(receiver)
 }
 
 /// Go `etcdSyncer`, ported whole.
@@ -510,31 +513,22 @@ pub struct EtcdSyncer {
     ddl_id: String,
     session: Mutex<Option<Arc<Session>>>,
     global_ver_watcher: GlobalVerWatcher,
-    all_server_info: AllServerInfo,
+    all_server_info: Mutex<Option<AllServerInfo>>,
     job_node_versions: Mutex<HashMap<i64, Arc<NodeVersions>>>,
     job_node_ver_prefix: String,
 }
 
-/// The boundary standing in for Go's package-level `infosync.GetAllServerInfo`:
-/// every live server's info, read from etcd by the caller that owns the
-/// server-info syncer (`tidb_domain::serverinfo_syncer::Syncer::all_server_info`).
-pub type AllServerInfo = Arc<dyn Fn() -> Result<Vec<ServerInfo>, String> + Send + Sync>;
-
-/// Go `NewEtcdSyncer`. `all_server_info` is the `infosync.GetAllServerInfo`
-/// boundary; see [`AllServerInfo`].
+/// Go `NewEtcdSyncer`. The server-info syncer is supplied later through
+/// [`Syncer::set_server_info_syncer`], exactly like Go.
 #[must_use]
-pub fn new_etcd_syncer(
-    etcd: Arc<dyn EtcdWatchOps>,
-    id: &str,
-    all_server_info: AllServerInfo,
-) -> EtcdSyncer {
+pub fn new_etcd_syncer(etcd: Arc<dyn EtcdWatchOps>, id: &str) -> EtcdSyncer {
     EtcdSyncer {
         global_ver_watcher: GlobalVerWatcher::new(Arc::clone(&etcd)),
         etcd,
         self_schema_ver_path: format!("{DDL_ALL_SCHEMA_VERSIONS}/{id}"),
         ddl_id: id.to_owned(),
         session: Mutex::new(None),
-        all_server_info,
+        all_server_info: Mutex::new(None),
         job_node_versions: Mutex::new(HashMap::new()),
         job_node_ver_prefix: format!("{DDL_ALL_SCHEMA_VERSIONS_BY_JOB}/"),
     }
@@ -558,9 +552,28 @@ impl EtcdSyncer {
     }
 
     /// Go `newSession`, named for its log prefix shape.
-    fn new_session(&self) -> Result<Arc<Session>, String> {
+    fn new_session(&self, ctx: &Context, retry_count: u64) -> Result<Arc<Session>, String> {
         let log_prefix = format!("[{DDL_PROMPT}] {}", self.self_schema_ver_path);
-        Ok(self.store_session(Session::new(Arc::clone(&self.etcd), &log_prefix)?))
+        let mut last_error = String::new();
+        for failed_count in 0..retry_count {
+            if let Err(error) = ctx.err() {
+                return Err(error.to_string());
+            }
+            match Session::new(Arc::clone(&self.etcd), ctx, &log_prefix) {
+                Ok(session) => return Ok(self.store_session(session)),
+                Err(error) => {
+                    last_error = error;
+                    if failed_count % 15 == 0 {
+                        log_warn(
+                            "failed to establish new session to etcd",
+                            &[("ownerInfo", &log_prefix), ("error", &last_error)],
+                        );
+                    }
+                    std::thread::sleep(NEW_SESSION_RETRY_INTERVAL);
+                }
+            }
+        }
+        Err(last_error)
     }
 
     /// Go `jobSchemaVerMatchOrSet`: get-or-create the job's entry, then run
@@ -575,10 +588,10 @@ impl EtcdSyncer {
             .entry(job_id)
             .or_insert_with(|| Arc::new(NodeVersions::new()))
             .clone();
-        drop(jobs);
         if !item.match_or_set(match_fn) {
             // Predicate installed; `add` will retry it.
         }
+        drop(jobs);
         item
     }
 }
@@ -588,8 +601,8 @@ impl Syncer for EtcdSyncer {
     fn init(&self, ctx: &Context) -> Result<(), String> {
         self.etcd
             .put_if_not_exists(DDL_GLOBAL_SCHEMA_VERSION, INITIAL_VERSION.as_bytes())?;
-        let session = self.new_session()?;
-        self.global_ver_watcher.watch();
+        let session = self.new_session(ctx, NEW_SESSION_DEFAULT_RETRY_CNT)?;
+        self.global_ver_watcher.watch(ctx);
         put_kv_to_etcd(
             ctx,
             self.etcd.as_ref(),
@@ -604,22 +617,16 @@ impl Syncer for EtcdSyncer {
     fn done(&self) -> DoneCh {
         match self.load_session() {
             Some(session) => session.done(),
-            None => {
-                let (_sender, receiver) = mpsc::channel::<()>();
-                let receiver: DoneCh = SharedRecv::new(receiver);
-                receiver
-            }
+            None => never_channel(),
         }
     }
 
     /// Go `Restart`.
     fn restart(&self, ctx: &Context) -> Result<(), String> {
-        if let Some(previous) = self.load_session() {
-            previous.close();
-        }
-        let session = self.new_session()?;
+        let session = self.new_session(ctx, NEW_SESSION_RETRY_UNLIMITED)?;
+        let child_ctx = Context::with_timeout(ctx, KEY_OP_DEFAULT_TIMEOUT);
         put_kv_to_etcd(
-            ctx,
+            &child_ctx,
             self.etcd.as_ref(),
             PUT_KEY_RETRY_UNLIMITED,
             &self.self_schema_ver_path,
@@ -634,8 +641,8 @@ impl Syncer for EtcdSyncer {
     }
 
     /// Go `WatchGlobalSchemaVer`.
-    fn watch_global_schema_ver(&self) {
-        self.global_ver_watcher.rewatch();
+    fn watch_global_schema_ver(&self, ctx: &Context) {
+        self.global_ver_watcher.rewatch(ctx);
     }
 
     /// Go `UpdateSelfVersion`: MDL ON reports under the job prefix with a
@@ -643,6 +650,9 @@ impl Syncer for EtcdSyncer {
     fn update_self_version(&self, ctx: &Context, job_id: i64, version: i64) -> Result<(), String> {
         let version_text = version.to_string();
         if mdl_enabled() {
+            if job_id == 0 {
+                return Ok(());
+            }
             let path = format!("{DDL_ALL_SCHEMA_VERSIONS_BY_JOB}/{job_id}/{}", self.ddl_id);
             put_kv_to_etcd_mono(
                 ctx,
@@ -682,9 +692,10 @@ impl Syncer for EtcdSyncer {
         ctx: &Context,
         job_id: i64,
         latest_ver: i64,
-    ) -> Result<(), String> {
+        check_assumed_server: bool,
+    ) -> Result<SyncSummary, String> {
         if !mdl_enabled() {
-            let _ = ctx.sleep(crate::check_vers_first_wait_time());
+            std::thread::sleep(crate::check_vers_first_wait_time());
         }
         let mut not_match_ver_cnt: usize = 0;
         let interval_cnt =
@@ -703,43 +714,8 @@ impl Syncer for EtcdSyncer {
                 // Rebuild the live-server set every round, keeping the NEWEST
                 // entry per instance (ip:port): a node that restarted has a
                 // new id and the stale one must not be waited on.
-                let server_infos = (self.all_server_info)()?;
-                let mut updated_map_mdl: HashMap<String, String> = HashMap::new();
-                let mut instance2id: HashMap<String, String> = HashMap::new();
-                let mut start_by_id: HashMap<&str, i64> = HashMap::new();
-                for info in &server_infos {
-                    let instance = join_host_port(&info.static_info.ip, info.static_info.port);
-                    let described = format!(
-                        "instance ip {}, port {}, id {}",
-                        info.static_info.ip, info.static_info.port, info.static_info.id
-                    );
-                    match instance2id.get(&instance) {
-                        Some(existing_id) => {
-                            let existing_start = start_by_id
-                                .get(existing_id.as_str())
-                                .copied()
-                                .unwrap_or(i64::MIN);
-                            if info.static_info.start_timestamp > existing_start {
-                                updated_map_mdl.remove(existing_id.as_str());
-                                updated_map_mdl
-                                    .insert(info.static_info.id.clone(), described.clone());
-                                instance2id.insert(instance.clone(), info.static_info.id.clone());
-                                start_by_id.insert(
-                                    info.static_info.id.as_str(),
-                                    info.static_info.start_timestamp,
-                                );
-                            }
-                        }
-                        None => {
-                            updated_map_mdl.insert(info.static_info.id.clone(), described);
-                            instance2id.insert(instance.clone(), info.static_info.id.clone());
-                            start_by_id.insert(
-                                info.static_info.id.as_str(),
-                                info.static_info.start_timestamp,
-                            );
-                        }
-                    }
-                }
+                let server_infos = self.get_servers_for_is_sync(check_assumed_server)?;
+                let (updated_map_mdl, sync_summary) = calculate_updated_map(&server_infos);
 
                 let (notify_tx, notify_rx) = mpsc::channel::<()>();
                 let unmatched: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
@@ -767,10 +743,15 @@ impl Syncer for EtcdSyncer {
                     true
                 });
                 let item = self.job_schema_ver_match_or_set(job_id, match_fn);
-                match SharedRecv::new(notify_rx).recv_timeout(Duration::from_secs(1)) {
-                    crate::Recv::Item(()) => return Ok(()),
-                    crate::Recv::Closed => {}
-                    crate::Recv::Timeout => {
+                let notify_rx = SharedRecv::new(notify_rx);
+                let deadline = std::time::Instant::now() + Duration::from_secs(1);
+                loop {
+                    if let Err(error) = ctx.err() {
+                        item.clear_match_fn();
+                        return Err(error.to_string());
+                    }
+                    let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                    if remaining.is_zero() {
                         item.clear_match_fn();
                         let info = unmatched
                             .lock()
@@ -784,6 +765,11 @@ impl Syncer for EtcdSyncer {
                                 log_info("syncer check all versions, all nodes are not synced", "")
                             }
                         }
+                        break;
+                    }
+                    match notify_rx.recv_timeout(remaining.min(Duration::from_millis(2))) {
+                        crate::Recv::Item(()) => return Ok(sync_summary),
+                        crate::Recv::Closed | crate::Recv::Timeout => {}
                     }
                 }
             } else {
@@ -807,7 +793,6 @@ impl Syncer for EtcdSyncer {
                         latest_ver,
                         not_match_ver_cnt,
                         interval_cnt,
-                        true,
                     );
                     if !succ {
                         break;
@@ -815,7 +800,10 @@ impl Syncer for EtcdSyncer {
                     updated_map.insert(key.clone(), ());
                 }
                 if succ {
-                    return Ok(());
+                    return Ok(SyncSummary {
+                        server_count: updated_map.len(),
+                        assumed_server_count: 0,
+                    });
                 }
                 let _ = ctx.sleep(CHECK_VERS_INTERVAL);
                 not_match_ver_cnt += 1;
@@ -834,6 +822,13 @@ impl Syncer for EtcdSyncer {
         }
     }
 
+    fn set_server_info_syncer(&self, all_server_info: AllServerInfo) {
+        *self
+            .all_server_info
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(all_server_info);
+    }
+
     /// Go `Close`.
     fn close(&self) {
         if let Err(error) = delete_key_from_etcd(
@@ -847,6 +842,23 @@ impl Syncer for EtcdSyncer {
 }
 
 impl EtcdSyncer {
+    fn get_servers_for_is_sync(
+        &self,
+        check_assumed_server: bool,
+    ) -> Result<Vec<ServerInfo>, String> {
+        let read = self
+            .all_server_info
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+            .expect("server info syncer is required by WaitVersionSynced");
+        let mut servers = read()?;
+        if tidb_config::kerneltype::is_next_gen() && !check_assumed_server {
+            servers.retain(|server| !server.static_info.is_assumed());
+        }
+        Ok(servers)
+    }
+
     /// Go `syncJobSchemaVer`: one full mirror pass plus an event tail.
     fn sync_job_schema_ver(&self, ctx: &Context) {
         let (entries, revision) = match self.etcd.get_prefix_with_rev(&self.job_node_ver_prefix) {
@@ -873,7 +885,7 @@ impl EtcdSyncer {
 
         let stream = match self
             .etcd
-            .watch_prefix(&self.job_node_ver_prefix, revision + 1)
+            .watch(&self.job_node_ver_prefix, revision + 1, true)
         {
             Ok(stream) => stream,
             Err(_error) => {
@@ -930,15 +942,10 @@ impl EtcdSyncer {
             let item = Arc::clone(item);
             drop(jobs);
             item.add(&tidb_id, schema_ver);
-        } else if let Some(item) = jobs.get(&job_id) {
-            let item = Arc::clone(item);
-            drop(jobs);
+        } else if let Some(item) = jobs.get(&job_id).cloned() {
             item.del(&tidb_id);
             if item.len() == 0 {
-                self.job_node_versions
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
-                    .remove(&job_id);
+                jobs.remove(&job_id);
             }
         }
     }
@@ -952,7 +959,7 @@ fn decode_job_version_event(
     deleted: bool,
     prefix: &str,
 ) -> Option<(i64, String, i64)> {
-    let left = key.strip_prefix(prefix)?;
+    let left = key.strip_prefix(prefix).unwrap_or(key);
     let parts: Vec<&str> = left.split('/').collect();
     if parts.len() != 2 {
         return None;
@@ -973,7 +980,6 @@ fn is_updated_latest_version(
     latest_ver: i64,
     not_match_ver_cnt: usize,
     interval_cnt: usize,
-    node_alive: bool,
 ) -> bool {
     let ver = match val.parse::<i64>() {
         Ok(ver) => ver,
@@ -984,7 +990,7 @@ fn is_updated_latest_version(
             return false;
         }
     };
-    if ver < latest_ver && node_alive {
+    if ver < latest_ver {
         if not_match_ver_cnt.is_multiple_of(interval_cnt) {
             eprintln!(
                 "{{\"level\":\"info\",\"event\":\"syncer check all versions, someone is not synced, continue checking\",\"ddl\":{key:?},\"currentVer\":{ver},\"latestVer\":{latest_ver}}}"
@@ -995,11 +1001,84 @@ fn is_updated_latest_version(
     true
 }
 
+/// Go `calculateUpdatedMap`.
+fn calculate_updated_map(server_infos: &[ServerInfo]) -> (HashMap<String, String>, SyncSummary) {
+    let mut updated_map = HashMap::new();
+    let mut instance_to_server: HashMap<String, (String, i64, bool)> = HashMap::new();
+    let mut assumed_server_count = 0usize;
+
+    for info in server_infos {
+        let instance = join_host_port(&info.static_info.ip, info.static_info.port);
+        let is_assumed = info.static_info.is_assumed();
+        match instance_to_server.get(&instance).cloned() {
+            Some((existing_id, existing_start, existing_assumed)) => {
+                if info.static_info.start_timestamp > existing_start {
+                    updated_map.remove(&existing_id);
+                    if existing_assumed {
+                        assumed_server_count -= 1;
+                    }
+                    updated_map.insert(info.static_info.id.clone(), get_server_info_for_log(info));
+                    instance_to_server.insert(
+                        instance,
+                        (
+                            info.static_info.id.clone(),
+                            info.static_info.start_timestamp,
+                            is_assumed,
+                        ),
+                    );
+                    if is_assumed {
+                        assumed_server_count += 1;
+                    }
+                }
+            }
+            None => {
+                updated_map.insert(info.static_info.id.clone(), get_server_info_for_log(info));
+                instance_to_server.insert(
+                    instance,
+                    (
+                        info.static_info.id.clone(),
+                        info.static_info.start_timestamp,
+                        is_assumed,
+                    ),
+                );
+                if is_assumed {
+                    assumed_server_count += 1;
+                }
+            }
+        }
+    }
+
+    (
+        updated_map,
+        SyncSummary {
+            server_count: instance_to_server.len(),
+            assumed_server_count,
+        },
+    )
+}
+
+/// Go `getSvrInfoForLog`.
+fn get_server_info_for_log(info: &ServerInfo) -> String {
+    if info.static_info.is_assumed() {
+        format!(
+            "instance ip {}, port {}, id {}, origin keyspace {}",
+            info.static_info.ip,
+            info.static_info.port,
+            info.static_info.id,
+            info.static_info.keyspace
+        )
+    } else {
+        format!(
+            "instance ip {}, port {}, id {}",
+            info.static_info.ip, info.static_info.port, info.static_info.id
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
 
-    use std::collections::HashMap;
     use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering as AtomicOrdering};
     use std::sync::mpsc;
     use std::sync::{Arc, Condvar, Mutex};
@@ -1025,6 +1104,8 @@ mod tests {
     #[derive(Default)]
     struct FakeState {
         kv: Mutex<BTreeMap<String, FakeEntry>>,
+        /// Revision-ordered MVCC events retained for watch replay.
+        events: Mutex<Vec<(i64, WatchEvent)>>,
         cond: Condvar,
         revision: AtomicI64,
         leases: AtomicI64,
@@ -1033,6 +1114,8 @@ mod tests {
         /// read-modify-write windows genuinely overlap, like they do against
         /// real etcd.
         read_delay_micros: AtomicU64,
+        /// Go `mockCompaction`: fail this many newly-created watch streams.
+        watch_failures: AtomicU64,
     }
 
     /// A single-node in-process etcd stand-in with working watches and CAS.
@@ -1054,6 +1137,18 @@ mod tests {
                     lease: None,
                 },
             );
+            self.state
+                .events
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push((
+                    rev,
+                    WatchEvent {
+                        key: key.to_owned(),
+                        value: value.as_bytes().to_vec(),
+                        deleted: false,
+                    },
+                ));
             self.state.cond.notify_all();
         }
 
@@ -1062,9 +1157,19 @@ mod tests {
             let existed = kv.remove(key).is_some();
             drop(kv);
             if existed {
-                // Bump the store revision so a following watch starts after
-                // the delete, like a real mvcc store would.
-                self.state.revision.fetch_add(1, AtomicOrdering::SeqCst);
+                let rev = self.state.revision.fetch_add(1, AtomicOrdering::SeqCst) + 1;
+                self.state
+                    .events
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .push((
+                        rev,
+                        WatchEvent {
+                            key: key.to_owned(),
+                            value: Vec::new(),
+                            deleted: true,
+                        },
+                    ));
                 self.state.cond.notify_all();
             }
         }
@@ -1074,7 +1179,7 @@ mod tests {
             kv.get(key).map(|entry| entry.value.clone())
         }
 
-        fn set_server_infos(&self, infos: &[(&str, &str, u32, i64)]) {
+        fn set_server_infos(&self, infos: &[(&str, &str, usize, i64)]) {
             let mut all = self.server_infos.lock().unwrap_or_else(|e| e.into_inner());
             *all = infos
                 .iter()
@@ -1122,6 +1227,18 @@ mod tests {
                     lease: Some(lease),
                 },
             );
+            self.state
+                .events
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push((
+                    rev,
+                    WatchEvent {
+                        key: key.to_owned(),
+                        value: value.to_vec(),
+                        deleted: false,
+                    },
+                ));
             self.state.cond.notify_all();
             Ok(())
         }
@@ -1144,20 +1261,26 @@ mod tests {
                 .filter(|key| key.starts_with(prefix))
                 .cloned()
                 .collect();
-            for key in doomed {
+            if !doomed.is_empty() {
                 let rev = self.state.revision.fetch_add(1, AtomicOrdering::SeqCst) + 1;
-                kv.insert(
-                    key.clone(),
-                    FakeEntry {
-                        value: Vec::new(),
-                        mod_rev: rev,
-                        lease: None,
-                    },
-                );
-            }
-            drop(kv);
-            for key in self.get_prefix(prefix)?.into_iter().map(|(k, _)| k) {
-                self.delete_raw(&key);
+                for key in &doomed {
+                    kv.remove(key);
+                }
+                self.state
+                    .events
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .extend(doomed.into_iter().map(|key| {
+                        (
+                            rev,
+                            WatchEvent {
+                                key,
+                                value: Vec::new(),
+                                deleted: true,
+                            },
+                        )
+                    }));
+                self.state.cond.notify_all();
             }
             Ok(())
         }
@@ -1208,6 +1331,18 @@ mod tests {
                     lease: previous_lease,
                 },
             );
+            self.state
+                .events
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push((
+                    rev,
+                    WatchEvent {
+                        key: key.to_owned(),
+                        value: value.to_vec(),
+                        deleted: false,
+                    },
+                ));
             self.state.cond.notify_all();
             Ok(true)
         }
@@ -1225,78 +1360,87 @@ mod tests {
                     lease: None,
                 },
             );
+            self.state
+                .events
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push((
+                    rev,
+                    WatchEvent {
+                        key: key.to_owned(),
+                        value: value.to_vec(),
+                        deleted: false,
+                    },
+                ));
             self.state.cond.notify_all();
             Ok(true)
         }
-        fn watch_prefix(&self, prefix: &str, start_revision: i64) -> Result<WatchStream, String> {
+        fn watch(
+            &self,
+            key: &str,
+            start_revision: i64,
+            with_prefix: bool,
+        ) -> Result<WatchStream, String> {
             let (sender, receiver) = mpsc::channel::<Result<WatchEvent, String>>();
             let stop = Arc::new(AtomicBool::new(false));
             let state = Arc::clone(&self.state);
-            let prefix = prefix.to_owned();
+            let key = key.to_owned();
             let thread_stop = Arc::clone(&stop);
+            // An etcd watch without `WithRev` starts after the revision
+            // current when the watch is created; an explicit revision is
+            // inclusive.
+            let start_revision = if start_revision == 0 {
+                state.revision.load(AtomicOrdering::SeqCst) + 1
+            } else {
+                start_revision
+            };
             std::thread::Builder::new()
                 .name("fake-etcd-watch".to_owned())
                 .spawn(move || {
-                    // Seed from current state: only changes AFTER this point
-                    // are streamed, like starting a watch at a revision.
-                    // Seed EVERY current key under the prefix so later
-                    // changes AND DELETIONS of pre-existing keys both stream;
-                    // like etcd from `start_revision`, nothing before it is
-                    // replayed.
-                    let _ = start_revision;
-                    let mut seen: HashMap<String, i64> = HashMap::new();
-                    {
-                        let kv = state.kv.lock().unwrap_or_else(|e| e.into_inner());
-                        for (key, entry) in kv.iter() {
-                            if key.starts_with(&prefix) {
-                                seen.insert(key.clone(), entry.mod_rev);
-                            }
-                        }
-                    }
+                    let mut next_revision = start_revision;
                     loop {
-                        let mut events = Vec::new();
+                        if state
+                            .watch_failures
+                            .try_update(
+                                AtomicOrdering::AcqRel,
+                                AtomicOrdering::Acquire,
+                                |remaining| remaining.checked_sub(1),
+                            )
+                            .is_ok()
                         {
-                            let kv = state.kv.lock().unwrap_or_else(|e| e.into_inner());
-                            for (key, entry) in kv.iter() {
-                                if !key.starts_with(&prefix)
-                                    || seen.get(key) == Some(&entry.mod_rev)
-                                {
-                                    continue;
-                                }
-                                events.push(WatchEvent {
-                                    key: key.clone(),
-                                    value: entry.value.clone(),
-                                    deleted: false,
-                                });
-                                seen.insert(key.clone(), entry.mod_rev);
-                            }
-                            let stale: Vec<String> = seen
-                                .keys()
-                                .filter(|seen_key| !kv.contains_key(*seen_key))
-                                .cloned()
-                                .collect();
-                            for key in stale {
-                                events.push(WatchEvent {
-                                    key: key.clone(),
-                                    value: Vec::new(),
-                                    deleted: true,
-                                });
-                                seen.remove(&key);
-                            }
-                            let _unused_guard =
-                                state.cond.wait_timeout(kv, Duration::from_millis(2));
+                            let _ =
+                                sender.send(Err("required revision has been compacted".to_owned()));
+                            return;
                         }
-                        for event in events {
+                        let events: Vec<(i64, WatchEvent)> = state
+                            .events
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .iter()
+                            .filter(|(revision, event)| {
+                                *revision >= next_revision
+                                    && if with_prefix {
+                                        event.key.starts_with(&key)
+                                    } else {
+                                        event.key == key
+                                    }
+                            })
+                            .cloned()
+                            .collect();
+                        for (revision, event) in events {
                             if thread_stop.load(AtomicOrdering::Acquire) {
                                 return;
                             }
                             if sender.send(Ok(event)).is_err() {
                                 return;
                             }
+                            next_revision = next_revision.max(revision + 1);
                         }
                         if thread_stop.load(AtomicOrdering::Acquire) {
                             return;
                         }
+                        let kv = state.kv.lock().unwrap_or_else(|e| e.into_inner());
+                        let _unused_guard = state.cond.wait_timeout(kv, Duration::from_millis(2));
                     }
                 })
                 .map_err(|error| error.to_string())?;
@@ -1308,19 +1452,19 @@ mod tests {
     }
 
     fn new_syncer(etcd: &FakeEtcd) -> EtcdSyncer {
-        new_etcd_syncer(
-            Arc::new(etcd.clone()),
-            "1111",
-            FakeEtcd::all_server_info_fn(etcd),
-        )
+        let syncer = new_etcd_syncer(Arc::new(etcd.clone()), "1111");
+        syncer.set_server_info_syncer(FakeEtcd::all_server_info_fn(etcd));
+        syncer
     }
 
-    fn test_server_info(id: &str) -> ServerInfo {
+    fn server_info(id: &str, ip: &str, start: i64, keyspace: &str, assumed: &str) -> ServerInfo {
         ServerInfo {
             static_info: StaticInfo {
                 id: id.to_owned(),
-                ip: "test".to_owned(),
-                port: 4000,
+                ip: ip.to_owned(),
+                start_timestamp: start,
+                keyspace: keyspace.to_owned(),
+                assumed_keyspace: assumed.to_owned(),
                 ..StaticInfo::default()
             },
             dynamic_info: DynamicInfo::default(),
@@ -1465,14 +1609,44 @@ mod tests {
             etcd.delete_raw(&format!("{DDL_ALL_SCHEMA_VERSIONS_BY_JOB}/2/bb"));
         }
 
-        // job 3 is matched using WaitVersionSynced (Go's job-4 leg; its
-        // mockCompaction leg is a failpoint and stays uncovered).
+        // job 3 is matched after the watch restarts from Go's injected
+        // compaction error.
+        {
+            etcd.state.watch_failures.store(1, AtomicOrdering::Release);
+            let (notify_tx, notify_rx) = mpsc::channel::<()>();
+            let item = syncer.job_schema_ver_match_or_set(
+                3,
+                Box::new(move |versions| {
+                    if versions.get("aa").is_some_and(|version| *version >= 123) {
+                        let _ = notify_tx.send(());
+                        true
+                    } else {
+                        false
+                    }
+                }),
+            );
+            assert!(item.has_match_fn());
+            etcd.put_raw(&format!("{DDL_ALL_SCHEMA_VERSIONS_BY_JOB}/3/aa"), "123");
+            notify_rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("job 3 must match after compaction restart");
+            assert!(!item.has_match_fn());
+            etcd.delete_raw(&format!("{DDL_ALL_SCHEMA_VERSIONS_BY_JOB}/3/aa"));
+        }
+
+        // job 4 is matched using WaitVersionSynced.
         {
             let guard = globals_test_lock();
             tidb_vardef::set_enable_mdl(true);
             etcd.set_server_infos(&[("aa", "test", 4000, 1)]);
             etcd.put_raw(&format!("{DDL_ALL_SCHEMA_VERSIONS_BY_JOB}/4/aa"), "333");
-            syncer.wait_version_synced(&ctx, 4, 333).unwrap();
+            assert_eq!(
+                syncer.wait_version_synced(&ctx, 4, 333, false).unwrap(),
+                SyncSummary {
+                    server_count: 1,
+                    assumed_server_count: 0,
+                }
+            );
             etcd.delete_raw(&format!("{DDL_ALL_SCHEMA_VERSIONS_BY_JOB}/4/aa"));
             tidb_vardef::set_enable_mdl(false);
             drop(guard);
@@ -1482,10 +1656,101 @@ mod tests {
         loop_handle.join().unwrap();
     }
 
+    // ---- Go TestCalculateUpdatedMap ----
+
+    #[test]
+    fn test_calculate_updated_map() {
+        let (updated, summary) = calculate_updated_map(&[
+            server_info("a", "a", 0, "", ""),
+            server_info("b", "b", 0, "", ""),
+            server_info("c", "c", 0, "", ""),
+        ]);
+        assert_eq!(updated.len(), 3);
+        assert_eq!(
+            summary,
+            SyncSummary {
+                server_count: 3,
+                assumed_server_count: 0,
+            }
+        );
+
+        let (updated, summary) = calculate_updated_map(&[
+            server_info("a", "a", 0, "", ""),
+            server_info("b", "b", 0, "", ""),
+            server_info("c", "c", 0, "", "a"),
+        ]);
+        assert_eq!(updated.len(), 3);
+        assert_eq!(
+            summary,
+            SyncSummary {
+                server_count: 3,
+                assumed_server_count: 1,
+            }
+        );
+
+        let (updated, summary) = calculate_updated_map(&[
+            server_info("a", "a", 100, "", ""),
+            server_info("b", "a", 200, "", ""),
+            server_info("c", "a", 300, "", "a"),
+        ]);
+        assert_eq!(updated.len(), 1);
+        assert_eq!(
+            summary,
+            SyncSummary {
+                server_count: 1,
+                assumed_server_count: 1,
+            }
+        );
+
+        let (updated, summary) = calculate_updated_map(&[
+            server_info("a", "a", 100, "", ""),
+            server_info("b", "a", 200, "", "a"),
+            server_info("c", "a", 300, "", ""),
+        ]);
+        assert_eq!(updated.len(), 1);
+        assert_eq!(
+            summary,
+            SyncSummary {
+                server_count: 1,
+                assumed_server_count: 0,
+            }
+        );
+    }
+
+    // ---- Go TestGetServersForISSync ----
+
+    #[test]
+    fn test_get_servers_for_is_sync() {
+        let etcd = FakeEtcd::default();
+        *etcd.server_infos.lock().unwrap() = vec![
+            server_info("s1", "", 0, "ks1", ""),
+            server_info("s2", "", 0, "ks1", ""),
+            server_info("s3", "", 0, "ks1", "SYSTEM"),
+        ];
+        let syncer = new_syncer(&etcd);
+
+        let servers = syncer.get_servers_for_is_sync(false).unwrap();
+        if tidb_config::kerneltype::is_classic() {
+            assert_eq!(servers.len(), 3);
+        } else {
+            assert_eq!(servers.len(), 2);
+            assert!(servers
+                .iter()
+                .all(|server| !server.static_info.is_assumed()));
+        }
+
+        assert_eq!(syncer.get_servers_for_is_sync(true).unwrap().len(), 3);
+    }
+
     // ---- Go TestSyncerSimple (MDL OFF) ----
 
     #[test]
     fn test_syncer_simple() {
+        if tidb_config::kerneltype::is_next_gen() {
+            // Go skips this MDL-off test because MDL is always enabled in
+            // next-generation TiDB.
+            return;
+        }
         let guard = globals_test_lock();
         tidb_vardef::set_enable_mdl(false);
         let origin = crate::check_vers_first_wait_time();
@@ -1493,16 +1758,10 @@ mod tests {
 
         let etcd = FakeEtcd::default();
         let ctx = Context::background();
-        let one = new_etcd_syncer(
-            Arc::new(etcd.clone()),
-            "1",
-            FakeEtcd::all_server_info_fn(&etcd),
-        );
-        let two = new_etcd_syncer(
-            Arc::new(etcd.clone()),
-            "2",
-            FakeEtcd::all_server_info_fn(&etcd),
-        );
+        let one = new_etcd_syncer(Arc::new(etcd.clone()), "1");
+        one.set_server_info_syncer(FakeEtcd::all_server_info_fn(&etcd));
+        let two = new_etcd_syncer(Arc::new(etcd.clone()), "2");
+        two.set_server_info_syncer(FakeEtcd::all_server_info_fn(&etcd));
         one.init(&ctx).unwrap();
         two.init(&ctx).unwrap();
 
@@ -1539,7 +1798,8 @@ mod tests {
         assert!(is_deadline_error(one.wait_version_synced(
             &child,
             0,
-            current_ver
+            current_ver,
+            false,
         )));
 
         // for UpdateSelfVersion (non-MDL: leased writes to the self path).
@@ -1551,14 +1811,29 @@ mod tests {
         assert!(two.update_self_version(&tiny, 0, current_ver).is_err());
 
         // for CheckAllVersions after both reported.
-        one.wait_version_synced(&ctx, 0, current_ver - 1).unwrap();
-        one.wait_version_synced(&ctx, 0, current_ver).unwrap();
+        assert_eq!(
+            one.wait_version_synced(&ctx, 0, current_ver - 1, false)
+                .unwrap(),
+            SyncSummary {
+                server_count: 2,
+                assumed_server_count: 0,
+            }
+        );
+        assert_eq!(
+            one.wait_version_synced(&ctx, 0, current_ver, false)
+                .unwrap(),
+            SyncSummary {
+                server_count: 2,
+                assumed_server_count: 0,
+            }
+        );
 
         let tiny = Context::with_timeout(&ctx, Duration::ZERO);
         assert!(is_deadline_error(one.wait_version_synced(
             &tiny,
             0,
-            current_ver
+            current_ver,
+            false,
         )));
 
         // for Close
@@ -1588,50 +1863,8 @@ mod tests {
         None
     }
 
-    fn is_deadline_error(result: Result<(), String>) -> bool {
+    fn is_deadline_error(result: Result<SyncSummary, String>) -> bool {
         matches!(result, Err(message) if message.contains("deadline exceeded"))
-    }
-
-    /// Go `Done` semantics: losing keepalives closes the channel.
-    #[test]
-    fn test_session_done_fires_on_lost_lease() {
-        let etcd = FakeEtcd::default();
-        etcd.state
-            .keepalive_failures
-            .store(true, AtomicOrdering::Release);
-        let session = Session::with_keep_alive_interval(
-            Arc::new(etcd.clone()),
-            "[ddl-syncer] /x",
-            Duration::from_millis(50),
-        )
-        .unwrap();
-        let done = session.done();
-        let started = std::time::Instant::now();
-        loop {
-            match done.recv_timeout(Duration::from_millis(50)) {
-                crate::Recv::Closed => break,
-                crate::Recv::Timeout => assert!(
-                    started.elapsed() < Duration::from_secs(5),
-                    "done never fired"
-                ),
-                crate::Recv::Item(_) => panic!("done carries no items"),
-            }
-        }
-        session.close();
-    }
-
-    /// Go `Init` seeds the global version exactly once.
-    #[test]
-    fn test_init_global_version_once() {
-        let etcd = FakeEtcd::default();
-        etcd.put_raw(DDL_GLOBAL_SCHEMA_VERSION, "777");
-        let syncer = new_syncer(&etcd);
-        syncer.init(&Context::background()).unwrap();
-        assert_eq!(
-            Some(b"777".to_vec()),
-            etcd.get_value(DDL_GLOBAL_SCHEMA_VERSION),
-            "Init must not clobber an existing global version"
-        );
     }
 
     /// Go `TestPutKVToEtcdMono`'s contract: monotonic under contention.
@@ -1685,23 +1918,5 @@ mod tests {
             .store(0, AtomicOrdering::Release);
         put_kv_to_etcd_mono(&ctx, &etcd, 3, "testKey", "1").unwrap();
         assert_eq!(Some(b"1".to_vec()), etcd.get_value("testKey"));
-    }
-
-    /// Go `Restart` re-leases and republishes the initial version.
-    #[test]
-    fn test_restart_republishes_initial_version_under_new_lease() {
-        let etcd = FakeEtcd::default();
-        let syncer = new_syncer(&etcd);
-        let ctx = Context::background();
-        syncer.init(&ctx).unwrap();
-        syncer.update_self_version(&ctx, 0, 55).unwrap();
-        let old_session = syncer.load_session().unwrap();
-        syncer.restart(&ctx).unwrap();
-        let new_session = syncer.load_session().unwrap();
-        assert_ne!(old_session.lease(), new_session.lease());
-        assert_eq!(
-            Some(crate::INITIAL_VERSION.as_bytes().to_vec()),
-            etcd.get_value(&format!("{}/{}", crate::DDL_ALL_SCHEMA_VERSIONS, "1111"))
-        );
     }
 }
