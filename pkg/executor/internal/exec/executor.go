@@ -17,6 +17,7 @@ package exec
 import (
 	"context"
 	"reflect"
+	"sync"
 	stdatomic "sync/atomic"
 	"time"
 
@@ -250,6 +251,18 @@ type Executor interface {
 }
 
 var _ Executor = &BaseExecutor{}
+
+var executorNextTraceNames sync.Map
+
+func nextTraceName(e Executor) string {
+	typ := reflect.TypeOf(e)
+	if name, ok := executorNextTraceNames.Load(typ); ok {
+		return name.(string)
+	}
+	name := typ.String() + ".Next"
+	actual, _ := executorNextTraceNames.LoadOrStore(typ, name)
+	return actual.(string)
+}
 
 // executorChunkAllocator is a helper to implement `Chunk` related methods in `Executor` interface
 type executorChunkAllocator struct {
@@ -657,7 +670,7 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) (err error) {
 		recorder = cache.recorder
 	} else {
 		execType := reflect.TypeOf(e).String()
-		regionName = execType + ".Next"
+		regionName = nextTraceName(e)
 		var hasInfo bool
 		if info, hasInfo = ruv2ExecutorMetricByType(execType); hasInfo {
 			if m := execdetails.RUV2MetricsFromContext(ctx); m != nil && !m.Bypass() {
