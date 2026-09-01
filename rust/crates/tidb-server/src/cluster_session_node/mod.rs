@@ -173,7 +173,7 @@ use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::resultset_source::ResultSetSource;
-use chrono::{Datelike, Timelike};
+use chrono::{Datelike, Timelike, Utc};
 use tidb_domain::historical_stats::{
     HistoricalStatsMetrics, HistoricalStatsWorker, InfoSchemaView, SessionInfoSchema,
     StatsHandle as HistoricalStatsHandle, TableMeta,
@@ -1266,12 +1266,42 @@ impl ClusterSessionFactory {
     /// Pinned Go `StatsGC.GCStats` over the current shared schema and
     /// independent restricted cluster transactions.
     pub fn gc_stats(&self, stats_lease: Duration, ddl_lease: Duration) -> Result<(), String> {
-        ClusterHistoricalStatsHandle {
+        let result = ClusterHistoricalStatsHandle {
             transactions: Arc::clone(&self.transactions),
             catalog: Arc::clone(&self.catalog),
             global_vars: self.global_vars.clone(),
         }
-        .gc_stats(stats_lease, ddl_lease)
+        .gc_stats(stats_lease, ddl_lease);
+        self.check_auto_analyze_windows_at(Utc::now());
+        result
+    }
+
+    fn check_auto_analyze_windows_at(&self, now: chrono::DateTime<Utc>) {
+        let Ok(parameters) = self.auto_analyze_refresh_parameters() else {
+            return;
+        };
+        let Ok((start, end)) = tidb_stats_handle_autoanalyze_exec::parse_auto_analysis_window(
+            &parameters.start_time,
+            &parameters.end_time,
+        ) else {
+            return;
+        };
+        let window =
+            tidb_stats_handle_autoanalyze_priorityqueue::AutoAnalysisTimeWindow::new(start, end);
+        if window.is_within_time_window(now) {
+            return;
+        }
+        for process_id in tidb_stats_handle_util::GLOBAL_AUTO_ANALYZE_PROCESS_LIST.all() {
+            eprintln!(
+                "{{\"event\":\"auto_analyze_exceeded_window\",\"process_id\":{process_id},\"now\":{},\"start\":{},\"end\":{}}}",
+                serde_json::to_string(&now.to_rfc3339()).unwrap_or_else(|_| "\"\"".to_owned()),
+                serde_json::to_string(&parameters.start_time)
+                    .unwrap_or_else(|_| "\"\"".to_owned()),
+                serde_json::to_string(&parameters.end_time)
+                    .unwrap_or_else(|_| "\"\"".to_owned()),
+            );
+            self.processes.kill(process_id, true);
+        }
     }
 
     /// Starts Go Domain's usage workers after the factory has stable `Arc`
@@ -3013,6 +3043,17 @@ struct ClusterStatsSessionState {
     registered: std::sync::atomic::AtomicBool,
 }
 
+struct SysProcessTrackGuard {
+    process_id: u64,
+    untrack: tidb_sqlexec::UntrackSysProc,
+}
+
+impl Drop for SysProcessTrackGuard {
+    fn drop(&mut self) {
+        (self.untrack)(self.process_id);
+    }
+}
+
 impl ClusterStatsSessionState {
     fn with_session<T>(
         &self,
@@ -3056,6 +3097,49 @@ impl ClusterStatsSessionState {
             source.close().map_err(stats_session_error)?;
             Ok((rows, stats_result_fields(columns)))
         })
+    }
+
+    fn connection_id(&self) -> Result<u64, tidb_sqlexec::SqlExecError> {
+        self.with_session(|session| Ok(session.connection_id))
+    }
+
+    fn execute_auto_analyze(
+        &self,
+        sql: &str,
+        options: &[tidb_sqlexec::OptionFuncAlias],
+    ) -> Result<
+        (
+            Vec<Vec<tidb_datatype::Datum>>,
+            Vec<tidb_resolve::ResultFieldRef>,
+        ),
+        tidb_sqlexec::SqlExecError,
+    > {
+        let option = tidb_sqlexec::exec_option(options);
+        if option.analyze_ver != 2 || !option.use_cur_session {
+            return Err(stats_session_error(
+                "auto analyze requires statistics version 2 in the current session",
+            ));
+        }
+        let track_guard = if let Some(track) = option.track_sys_proc.as_ref() {
+            track(option.track_sys_proc_id, Arc::new(()))?;
+            option
+                .untrack_sys_proc
+                .clone()
+                .map(|untrack| SysProcessTrackGuard {
+                    process_id: option.track_sys_proc_id,
+                    untrack,
+                })
+        } else {
+            None
+        };
+        let result = self.with_session(|session| {
+            session
+                .run_auto_analyze_sql(sql, option.analyze_snapshot, &option.partition_prune_mode)
+                .map_err(|error| stats_session_error(error.message))?;
+            Ok((Vec::new(), Vec::new()))
+        });
+        drop(track_guard);
+        result
     }
 }
 
@@ -3169,7 +3253,7 @@ impl tidb_sqlexec::RestrictedSqlExecutor for ClusterStatsSqlExecutor {
     fn exec_restricted_sql(
         &self,
         _context: &dyn tidb_sqlexec::ExecutionContext,
-        _options: &[tidb_sqlexec::OptionFuncAlias],
+        options: &[tidb_sqlexec::OptionFuncAlias],
         sql: &str,
         arguments: &[tidb_util::sqlescape::SqlArg<'_>],
     ) -> Result<
@@ -3181,7 +3265,11 @@ impl tidb_sqlexec::RestrictedSqlExecutor for ClusterStatsSqlExecutor {
     > {
         let escaped = tidb_util::sqlescape::escape_sql(sql, arguments)?;
         let escaped = String::from_utf8(escaped)?;
-        self.state.materialize(&escaped)
+        if is_analyze_table_sql(&escaped) && !options.is_empty() {
+            self.state.execute_auto_analyze(&escaped, options)
+        } else {
+            self.state.materialize(&escaped)
+        }
     }
 }
 
@@ -3227,6 +3315,28 @@ impl ClusterStatsSessionContext {
             .into_iter()
             .next()
             .and_then(|mut row| (!row.is_empty()).then(|| row.remove(0))))
+    }
+
+    fn connection_id(&self) -> Result<u64, tidb_sqlexec::SqlExecError> {
+        self.state.connection_id()
+    }
+}
+
+impl tidb_stats_handle_autoanalyze_exec::AutoAnalyzeSessionContext for ClusterStatsSessionContext {
+    fn partition_prune_mode(&self) -> String {
+        <Self as tidb_stats_handle_util::StatsSessionContext>::partition_prune_mode(self)
+    }
+
+    fn enable_analyze_snapshot(&self) -> bool {
+        self.with_session(|session| {
+            session
+                .session
+                .vars()
+                .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_ANALYZE_SNAPSHOT)
+                .map(|value| tidb_exec::option_values::tidb_opt_on(&value))
+                .map_err(|error| stats_session_error(format!("{error:?}")))
+        })
+        .unwrap_or(false)
     }
 }
 
@@ -3639,25 +3749,29 @@ impl tidb_stats_handle_autoanalyze_priorityqueue::AnalysisJobContext
         sql: &str,
         arguments: &[String],
     ) -> bool {
-        let Ok(sql) = bind_identifier_sql(sql, arguments) else {
-            return false;
-        };
-        tidb_stats_handle_autoanalyze_exec::record_auto_analyze_version(
-            stats_version,
-            need_version_rewrite_warning,
-            &sql,
-        );
         let mut analyzed = false;
         tidb_stats_handle_util::call_with_sctx(
             self.session_pool.as_ref(),
             |context| {
-                context.with_session(|session| {
-                    session
-                        .run_auto_analyze_sql(&sql)
-                        .map_err(|error| stats_session_error(error.message))?;
-                    analyzed = true;
-                    Ok(())
-                })
+                let process_id = context.connection_id()?;
+                let generator = tidb_stats_handle_util::Generator::new(move || process_id, |_| {});
+                let track: tidb_sqlexec::TrackSysProc = Arc::new(|_, _| Ok(()));
+                let untrack: tidb_sqlexec::UntrackSysProc = Arc::new(|_| {});
+                let arguments = arguments
+                    .iter()
+                    .map(|argument| tidb_util::sqlescape::SqlArg::from(argument.as_str()))
+                    .collect::<Vec<_>>();
+                analyzed = tidb_stats_handle_autoanalyze_exec::auto_analyze(
+                    context,
+                    &generator,
+                    track,
+                    untrack,
+                    stats_version,
+                    need_version_rewrite_warning,
+                    sql,
+                    &arguments,
+                );
+                Ok(())
             },
             &[],
         )
@@ -3681,21 +3795,6 @@ impl tidb_stats_handle_autoanalyze_priorityqueue::AnalysisJobContext
 
 fn sql_string_literal(value: &str) -> String {
     format!("'{}'", value.replace('\\', "\\\\").replace('\'', "''"))
-}
-
-fn bind_identifier_sql(sql: &str, arguments: &[String]) -> Result<String, String> {
-    let mut rendered = sql.to_owned();
-    for argument in arguments {
-        let Some(index) = rendered.find("%n") else {
-            return Err("too many ANALYZE identifiers".to_owned());
-        };
-        let identifier = format!("`{}`", argument.replace('`', "``"));
-        rendered.replace_range(index..index + 2, &identifier);
-    }
-    if rendered.contains("%n") {
-        return Err("not enough ANALYZE identifiers".to_owned());
-    }
-    Ok(rendered)
 }
 
 struct WorkloadRepositorySessionPool {

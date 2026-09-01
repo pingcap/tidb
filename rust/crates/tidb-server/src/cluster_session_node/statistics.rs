@@ -147,6 +147,8 @@ impl ClusterServerSession {
     pub(super) fn run_auto_analyze_sql(
         &mut self,
         sql: &str,
+        analyze_snapshot: Option<bool>,
+        partition_prune_mode: &str,
     ) -> Result<WriteOutcome, SqlQueryError> {
         self.rebuild_catalog_if_stale();
         let super::StatementRoute::Analyze(mut tables) = self.schema_route(sql)? else {
@@ -156,6 +158,11 @@ impl ClusterServerSession {
         };
         for statement in &mut tables {
             statement.auto_analyze = true;
+            if let Some(analyze_snapshot) = analyze_snapshot {
+                statement.analyze_snapshot = analyze_snapshot;
+            }
+            statement.dynamic_partition_prune =
+                !partition_prune_mode.eq_ignore_ascii_case("static");
         }
         self.run_analyze(&tables)
     }

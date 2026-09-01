@@ -29,31 +29,56 @@ warning and version rewrite for table/partition/global statistics, and killing
 an analyze when it leaves the configured window. They do not test the private
 parsers in isolation.
 
-## Rust comparison and decision
+## Rust implementation and integration
 
-Rust had an unconsumed public `parse_auto_analyze_ratio` leaf and a compatibility
-module that re-exported the priority-queue runtime's minute-based window type.
-Six source-absent tests exercised those public helpers. Repository-wide symbol
-tracing found no production caller. Rust had no `AutoAnalyze`/`RunAnalyzeStmt`
-session execution owner and none of the three Go tests was represented.
+`tidb-stats-handle-autoanalyze-exec` now owns the package as a whole. Its
+`auto_analyze` and `run_analyze_stmt` functions apply the v2,
+analyze-snapshot, partition-prune, current-session, and process-tracking
+options to the shared restricted executor. Process-ID release and process
+untracking use drop guards, including the recovered-panic path. The package
+also owns Go's success/failure metrics and logging, escaped legacy-version
+warning, global parameter reads, ratio parser, and fixed-offset analysis-window
+parser.
 
-The two modules, their six tests, and the duplicate root aliases were removed.
-The minute-based window type that was inside `auto_analyze_runtime` was
-subsequently removed by the whole `priorityqueue` package audit; it was not
-this package's `ParseAutoAnalysisWindow` result.
+The production priority-queue source calls this shared path directly. It no
+longer pre-renders identifiers or invokes a cache-only/server-only ANALYZE
+shortcut. A checked-out system session supplies its registered connection ID;
+the pool owns that ID for the session lifetime, while the per-statement guard
+still invokes the generator's release operation. The global auto-analyze
+process list is connected to the live process registry, and the domain's
+post-statistics-GC window check interrupts registered analyzes outside the
+configured interval, in Go's worker order.
 
-Completing `autoanalyze/exec` is not dependency-closed while the ordinary
-statistics handle/types and current-session ANALYZE execution path remain
-unclaimed. The package must land later with all three artifacts and all three
-integrated tests, not as parser leaves.
+The original three Go tests map to Rust coverage as follows:
+
+| Go test | Rust evidence |
+| --- | --- |
+| `TestExecAutoAnalyzes` | package option/execution tests plus `auto_analyze_exec_uses_live_tracking_and_current_session_like_go` |
+| `TestExecAutoAnalyzeRewritesLegacyStatsVersionToV2` | `source_legacy_rewrite_still_executes_as_version_two` |
+| `TestKillInWindows` | `auto_analyze_window_check_kills_only_outside_the_window_like_go` |
+
+There are no omitted build variants, generated inputs, fixtures, support
+files, benchmarks, or fuzz tests at the pinned package boundary. The package
+is complete; scheduling and job selection remain owned by the parent and
+priority-queue packages.
 
 ## WIP validation
 
-- `cargo check --locked -p tidb-stats` passed.
-- `cargo nextest run --locked -p tidb-stats -E 'not test(/bench/)' --no-fail-fast`
-  passed: 375 run, 375 passed, 154 skipped.
-- `rustfmt --edition 2021 --check crates/tidb-stats/src/lib.rs` passed.
-- `git diff --check` passed.
+- `cargo check --offline -p tidb-server -p tidb-stats-handle-autoanalyze-exec`
+  passed.
+- `cargo test --offline -p tidb-stats-handle-autoanalyze-exec --lib -- --nocapture`
+  passed: 5 passed.
+- `cargo test --offline -p tidb-server --lib auto_analyze_exec_uses_live_tracking_and_current_session_like_go -- --nocapture`
+  passed.
+- `cargo test --offline -p tidb-server --lib auto_analyze_window_check_kills_only_outside_the_window_like_go -- --nocapture`
+  passed.
+- `cargo fmt --all -- --check` and `git diff --check` passed.
+
+The broader existing priority-queue integration test currently fails before
+execution, while observing asynchronous removal of a dropped-table queue job
+(`current_jobs` is 2 instead of 1). The changed exec path has not run at that
+assertion. This is recorded rather than masking the separate queue/lifecycle
+failure in this package receipt.
 
 No Go or Bazel source changed, so `make bazel_prepare` was not required. This
 is a WIP package audit, not a repository-wide Ready parity claim.

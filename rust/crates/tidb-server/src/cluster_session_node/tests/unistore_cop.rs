@@ -20,6 +20,7 @@
 //! never fails in-tree. This module builds the same stack `--store unistore
 //! --cluster-session` boots and pins those plans.
 
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -596,6 +597,159 @@ fn global_temporary_analyze_uses_session_rows_and_statistics() {
             .any(|value| value.contains("stats:pseudo")),
         "an analyzed empty table retains Go's query-time pseudo policy: {after:?}"
     );
+}
+
+/// Pinned `autoanalyze/exec.TestExecAutoAnalyzes`: the live restricted
+/// session consumes the complete auto-analyze option set, invokes the system
+/// process tracker, releases the allocated process ID, and publishes the
+/// ordinary version-2 statistics result.
+#[test]
+fn auto_analyze_exec_uses_live_tracking_and_current_session_like_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let factory = Arc::new(stack.factory);
+    let mut client = factory
+        .open_session(session_context(86))
+        .expect("client session opens");
+    rows(&mut client, "USE test");
+    rows(
+        &mut client,
+        "CREATE TABLE auto_exec_live (a INT, b INT, INDEX idx_a(a))",
+    );
+    let table_id = factory
+        .catalog
+        .load()
+        .find_table("test", "auto_exec_live")
+        .expect("auto-analyze table is published")
+        .1
+        .id;
+    rows(
+        &mut client,
+        "INSERT INTO auto_exec_live VALUES (1,1),(2,2),(3,3)",
+    );
+    rows(
+        &mut client,
+        "SET GLOBAL tidb_partition_prune_mode = 'dynamic'",
+    );
+    rows(&mut client, "SET GLOBAL tidb_enable_analyze_snapshot = ON");
+
+    let tracked = Arc::new(AtomicBool::new(false));
+    let untracked = Arc::new(AtomicBool::new(false));
+    let released = Arc::new(AtomicU64::new(0));
+    let pool = factory.advanced_sys_session_pool();
+    let mut analyzed = false;
+    tidb_stats_handle_util::call_with_sctx(
+        pool.as_ref(),
+        |context| {
+            let released_by_generator = Arc::clone(&released);
+            let generator = tidb_stats_handle_util::Generator::new(
+                || 9_001,
+                move |id| released_by_generator.store(id, Ordering::SeqCst),
+            );
+            let tracked_by_callback = Arc::clone(&tracked);
+            let track: tidb_sqlexec::TrackSysProc = Arc::new(move |id, _| {
+                assert_eq!(id, 9_001);
+                tracked_by_callback.store(true, Ordering::SeqCst);
+                Ok(())
+            });
+            let untracked_by_callback = Arc::clone(&untracked);
+            let untrack: tidb_sqlexec::UntrackSysProc = Arc::new(move |id| {
+                assert_eq!(id, 9_001);
+                untracked_by_callback.store(true, Ordering::SeqCst);
+            });
+            analyzed = tidb_stats_handle_autoanalyze_exec::auto_analyze(
+                context,
+                &generator,
+                track,
+                untrack,
+                2,
+                false,
+                "analyze table %n.%n",
+                &[
+                    tidb_util::sqlescape::SqlArg::from("test"),
+                    tidb_util::sqlescape::SqlArg::from("auto_exec_live"),
+                ],
+            );
+            Ok(())
+        },
+        &[],
+    )
+    .expect("auto analyze uses a system session");
+    assert!(analyzed);
+    assert!(tracked.load(Ordering::SeqCst));
+    assert!(untracked.load(Ordering::SeqCst));
+    assert_eq!(released.load(Ordering::SeqCst), 9_001);
+    assert!(!tidb_stats_handle_util::GLOBAL_AUTO_ANALYZE_PROCESS_LIST.contains(9_001));
+    assert_eq!(
+        displayed(rows(
+            &mut client,
+            &format!(
+                "SELECT count, modify_count FROM mysql.stats_meta WHERE table_id = {table_id}"
+            ),
+        )),
+        [["3", "0"]]
+    );
+}
+
+struct AutoAnalyzeKillTarget {
+    cancelled: Arc<AtomicBool>,
+}
+
+impl tidb_session::process::ProcessKillTarget for AutoAnalyzeKillTarget {
+    fn cancel_query(&self) {
+        self.cancelled.store(true, Ordering::SeqCst);
+    }
+
+    fn kill_connection(&self) {
+        self.cancel_query();
+    }
+}
+
+/// Pinned `autoanalyze/exec.TestKillInWindows` and
+/// `Domain.CheckAutoAnalyzeWindows`: an out-of-window domain check kills the
+/// process ID installed by `RunAnalyzeStmt`; the inclusive configured minute
+/// does not.
+#[test]
+fn auto_analyze_window_check_kills_only_outside_the_window_like_go() {
+    const PROCESS_ID: u64 = 9_002;
+    let (stack, _users) = cop_backed_stack();
+    let factory = Arc::new(stack.factory);
+    let mut client = factory
+        .open_session(session_context(87))
+        .expect("client session opens");
+    rows(
+        &mut client,
+        "SET GLOBAL tidb_auto_analyze_start_time = '00:00 +0000'",
+    );
+    rows(
+        &mut client,
+        "SET GLOBAL tidb_auto_analyze_end_time = '00:00 +0000'",
+    );
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let target: Arc<dyn tidb_session::process::ProcessKillTarget> =
+        Arc::new(AutoAnalyzeKillTarget {
+            cancelled: Arc::clone(&cancelled),
+        });
+    let _guard = factory.processes.register(
+        PROCESS_ID,
+        "root".to_owned(),
+        "127.0.0.1:0".to_owned(),
+        "test".to_owned(),
+        Some(target),
+    );
+    tidb_stats_handle_util::GLOBAL_AUTO_ANALYZE_PROCESS_LIST.tracker(PROCESS_ID);
+
+    let inside = chrono::DateTime::parse_from_rfc3339("2026-08-31T00:00:30Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    factory.check_auto_analyze_windows_at(inside);
+    assert!(!cancelled.load(Ordering::SeqCst));
+    let outside = chrono::DateTime::parse_from_rfc3339("2026-08-31T12:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    factory.check_auto_analyze_windows_at(outside);
+    assert!(cancelled.load(Ordering::SeqCst));
+    tidb_stats_handle_util::GLOBAL_AUTO_ANALYZE_PROCESS_LIST.untracker(PROCESS_ID);
 }
 
 #[test]
