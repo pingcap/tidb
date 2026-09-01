@@ -1701,10 +1701,18 @@ impl tidb_ttl::session::SessionContext for GlobalTimeZoneContext {
     type Row = NoRow;
     type Store = ();
     type InfoSchema = ();
+    type SqlExecutor = ();
+    type SessionVars = ();
 
     fn get_store(&self) {}
     fn get_latest_info_schema(&self) {}
     fn get_txn_info_schema(&self) {}
+    fn get_sql_executor(&self) -> &Self::SqlExecutor {
+        &()
+    }
+    fn get_session_vars(&self) -> &Self::SessionVars {
+        &()
+    }
 
     fn execute_internal(
         &self,
