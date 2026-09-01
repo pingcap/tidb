@@ -1151,7 +1151,12 @@ func mapAvgDependencies(
 		}
 		avgDeps[i] = [3]int{sumIdx, countIdx, countStarIdx}
 		sumCol := baseTableInfo.FindPublicColumnByName(aggCols[sumIdx].info.ArgColName)
-		if sumCol == nil || (sumCol.GetType() != mysql.TypeFloat && sumCol.GetType() != mysql.TypeDouble) {
+		if sumCol == nil {
+			requiredExactSum[sumIdx] = true
+			continue
+		}
+		sumColType := sumCol.GetType()
+		if sumColType != mysql.TypeFloat && sumColType != mysql.TypeDouble {
 			requiredExactSum[sumIdx] = true
 		}
 	}

@@ -155,6 +155,7 @@ func buildMViewDeltaMergeAggMappings(
 	}
 	mappings := make([]MViewDeltaMergeAggMapping, 0, len(aggInfos))
 	countStarMappingIdx := -1
+	exprCtx := sctx.GetExprCtx()
 
 	for mappingIdx, aggInfo := range aggInfos {
 		outputColID := deltaAggColCount + aggInfo.MVOffset
@@ -169,7 +170,7 @@ func buildMViewDeltaMergeAggMappings(
 		if err != nil {
 			return nil, err
 		}
-		aggDesc, err := aggregation.NewAggFuncDesc(sctx.GetExprCtx(), aggFuncName, []expression.Expression{aggArg}, false)
+		aggDesc, err := aggregation.NewAggFuncDesc(exprCtx, aggFuncName, []expression.Expression{aggArg}, false)
 		if err != nil {
 			return nil, err
 		}

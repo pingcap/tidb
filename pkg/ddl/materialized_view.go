@@ -361,8 +361,8 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 		AlertWarningSec:                 alertWarningSec,
 		AlertOverdueSec:                 alertOverdueSec,
 		AlertRefreshFailed:              alertRefreshFailed,
-		DefinitionSQLMode:               ctx.GetSessionVars().SQLMode,
-		DefinitionDivPrecisionIncrement: ctx.GetSessionVars().GetDivPrecisionIncrement(),
+		DefinitionSQLMode:               sessionVars.SQLMode,
+		DefinitionDivPrecisionIncrement: sessionVars.GetDivPrecisionIncrement(),
 		DefinitionTimeZone: model.TimeZoneLocation{
 			Name:   tzName,
 			Offset: tzOffset,
@@ -590,6 +590,7 @@ func restoreMViewAvgFieldTypes(
 	sel *ast.SelectStmt,
 	resultFields []*resolve.ResultField,
 ) error {
+	exprCtx := ctx.GetExprCtx()
 	for i, field := range sel.Fields.Fields {
 		agg, ok := field.Expr.(*ast.AggregateFuncExpr)
 		if !ok || !strings.EqualFold(agg.F, ast.AggFuncAvg) {
@@ -607,7 +608,7 @@ func restoreMViewAvgFieldTypes(
 			return errors.Errorf("AVG column %s does not exist in base table", argCol.Name.Name.O)
 		}
 		aggDesc, err := aggregation.NewAggFuncDesc(
-			ctx.GetExprCtx(),
+			exprCtx,
 			ast.AggFuncAvg,
 			[]expression.Expression{&expression.Column{
 				Index:   0,
@@ -1724,25 +1725,27 @@ func validateCreateMaterializedViewQuery(
 				if err != nil {
 					return nil, err
 				}
+				baseCol := baseColMap[colName]
 				if aggFunc == ast.AggFuncSum {
 					sumExprCols[colName] = struct{}{}
-					tp := baseColMap[colName].GetType()
+					tp := baseCol.GetType()
 					if types.IsTypeTime(tp) || tp == mysql.TypeDuration {
 						return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW does not support SUM on DATE/DATETIME/TIMESTAMP/TIME column")
 					}
-					if !mysql.HasNotNullFlag(baseColMap[colName].GetFlag()) {
+					if !mysql.HasNotNullFlag(baseCol.GetFlag()) {
 						nullableSumCols[colName] = struct{}{}
 					}
 				}
 				if aggFunc == ast.AggFuncAvg {
-					switch baseColMap[colName].GetType() {
+					baseColType := baseCol.GetType()
+					switch baseColType {
 					case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeNewDecimal,
 						mysql.TypeFloat, mysql.TypeDouble:
 						// Supported AVG inputs. Floating-point AVG follows the
 						// existing approximate floating-point SUM semantics.
 					default:
 						return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
-							fmt.Sprintf("CREATE MATERIALIZED VIEW AVG does not support column type %d", baseColMap[colName].GetType()),
+							fmt.Sprintf("CREATE MATERIALIZED VIEW AVG does not support column type %d", baseColType),
 						)
 					}
 					avgExprCols[colName] = struct{}{}
@@ -1774,7 +1777,8 @@ func validateCreateMaterializedViewQuery(
 				fmt.Sprintf("unsupported aggregate function: CREATE MATERIALIZED VIEW AVG on column %s requires matching SUM(%s) in SELECT list", colName, colName),
 			)
 		}
-		if !mysql.HasNotNullFlag(baseColMap[colName].GetFlag()) {
+		baseCol := baseColMap[colName]
+		if !mysql.HasNotNullFlag(baseCol.GetFlag()) {
 			if _, ok := countExprCols[colName]; !ok {
 				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
 					fmt.Sprintf("CREATE MATERIALIZED VIEW AVG on column %s requires matching COUNT(%s) in SELECT list", colName, colName),

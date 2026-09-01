@@ -38,8 +38,9 @@ func (e *Exec) buildAvgMerger(
 	if err != nil {
 		return nil, errors.Annotate(err, "AVG mapping output")
 	}
-	if retTp.EvalType() != types.ETDecimal && retTp.EvalType() != types.ETReal {
-		return nil, errors.Errorf("AVG mapping output must be decimal or real, got %s", retTp.EvalType())
+	retEvalType := retTp.EvalType()
+	if retEvalType != types.ETDecimal && retEvalType != types.ETReal {
+		return nil, errors.Errorf("AVG mapping output must be decimal or real, got %s", retEvalType)
 	}
 
 	refs := make([]depRef, len(mapping.DependencyColID))
@@ -59,8 +60,9 @@ func (e *Exec) buildAvgMerger(
 		switch i {
 		case 0:
 			sumTp = tp
-			if tp.EvalType() != types.ETDecimal && tp.EvalType() != types.ETInt && tp.EvalType() != types.ETReal {
-				return nil, errors.Errorf("AVG SUM dependency must be decimal, integer, or real, got %s", tp.EvalType())
+			sumEvalType := tp.EvalType()
+			if sumEvalType != types.ETDecimal && sumEvalType != types.ETInt && sumEvalType != types.ETReal {
+				return nil, errors.Errorf("AVG SUM dependency must be decimal, integer, or real, got %s", sumEvalType)
 			}
 		case 1, 2:
 			if err := validateSignedIntType(tp); err != nil {
@@ -112,16 +114,46 @@ func (m *avgMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Colu
 	if countExprCol.HasNull() || countStarCol.HasNull() {
 		return errors.New("AVG count dependency contains null")
 	}
+	numRows := input.NumRows()
 	countExprVals := countExprCol.Int64s()
 	countStarVals := countStarCol.Int64s()
-	resultCol := chunk.NewColumn(m.retTp, input.NumRows())
-	if m.retTp.EvalType() == types.ETReal {
-		resultCol.ResizeFloat64(input.NumRows(), true)
+	retEvalType := m.retTp.EvalType()
+	sumEvalType := m.sumTp.EvalType()
+	resultCol := chunk.NewColumn(m.retTp, numRows)
+	if retEvalType == types.ETReal {
+		resultCol.ResizeFloat64(numRows, true)
 	} else {
-		resultCol.ResizeDecimal(input.NumRows(), true)
+		resultCol.ResizeDecimal(numRows, true)
+	}
+	var resultFloatVals []float64
+	var resultDecimalVals []types.MyDecimal
+	if retEvalType == types.ETReal {
+		resultFloatVals = resultCol.Float64s()
+	} else {
+		resultDecimalVals = resultCol.Decimals()
+	}
+	var sumFloatVals []float64
+	var sumDecimalVals []types.MyDecimal
+	var sumIntVals []int64
+	var sumUintVals []uint64
+	switch sumEvalType {
+	case types.ETReal:
+		sumFloatVals = sumCol.Float64s()
+	case types.ETDecimal:
+		sumDecimalVals = sumCol.Decimals()
+	case types.ETInt:
+		if mysql.HasUnsignedFlag(m.sumTp.GetFlag()) {
+			sumUintVals = sumCol.Uint64s()
+		} else {
+			sumIntVals = sumCol.Int64s()
+		}
+	}
+	frac := m.retTp.GetDecimal()
+	if frac == types.UnspecifiedLength {
+		frac = mysql.MaxDecimalScale
 	}
 
-	for rowIdx := 0; rowIdx < input.NumRows(); rowIdx++ {
+	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
 		countExpr := countExprVals[rowIdx]
 		countStar := countStarVals[rowIdx]
 		if countExpr < 0 || countStar < 0 {
@@ -130,46 +162,43 @@ func (m *avgMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Colu
 		if countExpr > countStar {
 			return errors.Errorf("AVG count invariant violated: count(expr)=%d exceeds count(*)=%d", countExpr, countStar)
 		}
+		sumIsNull := sumCol.IsNull(rowIdx)
 		if countExpr == 0 {
-			if !sumCol.IsNull(rowIdx) {
+			if !sumIsNull {
 				return errors.New("AVG state invariant violated: zero COUNT(expr) with non-NULL SUM")
 			}
 			resultCol.SetNull(rowIdx, true)
 			continue
 		}
-		if sumCol.IsNull(rowIdx) {
+		if sumIsNull {
 			return errors.New("AVG state invariant violated: positive COUNT(expr) with NULL SUM")
 		}
 
-		if m.sumTp.EvalType() == types.ETReal {
-			if m.retTp.EvalType() != types.ETReal {
-				return errors.Errorf("AVG real SUM dependency requires real output, got %s", m.retTp.EvalType())
+		if sumEvalType == types.ETReal {
+			if retEvalType != types.ETReal {
+				return errors.Errorf("AVG real SUM dependency requires real output, got %s", retEvalType)
 			}
-			resultCol.Float64s()[rowIdx] = sumCol.Float64s()[rowIdx] / float64(countExpr)
+			resultFloatVals[rowIdx] = sumFloatVals[rowIdx] / float64(countExpr)
 			resultCol.SetNull(rowIdx, false)
 			continue
 		}
 
 		var sum types.MyDecimal
-		switch m.sumTp.EvalType() {
+		switch sumEvalType {
 		case types.ETDecimal:
-			sum = sumCol.Decimals()[rowIdx]
+			sum = sumDecimalVals[rowIdx]
 		case types.ETInt:
-			if mysql.HasUnsignedFlag(m.sumTp.GetFlag()) {
-				sum = *types.NewDecFromUint(sumCol.Uint64s()[rowIdx])
+			if sumUintVals != nil {
+				sum = *types.NewDecFromUint(sumUintVals[rowIdx])
 			} else {
-				sum = *types.NewDecFromInt(sumCol.Int64s()[rowIdx])
+				sum = *types.NewDecFromInt(sumIntVals[rowIdx])
 			}
 		default:
-			return errors.Errorf("AVG SUM dependency has unsupported eval type %s", m.sumTp.EvalType())
+			return errors.Errorf("AVG SUM dependency has unsupported eval type %s", sumEvalType)
 		}
 		avg := new(types.MyDecimal)
 		if err := types.DecimalDiv(&sum, types.NewDecFromInt(countExpr), avg, m.divPrecisionIncrement); err != nil {
 			return err
-		}
-		frac := m.retTp.GetDecimal()
-		if frac == types.UnspecifiedLength {
-			frac = mysql.MaxDecimalScale
 		}
 		if err := avg.Round(avg, frac, types.ModeHalfUp); err != nil {
 			return err
@@ -182,7 +211,7 @@ func (m *avgMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Colu
 		if materialized.Compare(avg) != 0 {
 			return errors.Errorf("AVG result would change value %s to %s", avg.String(), materialized.String())
 		}
-		resultCol.Decimals()[rowIdx] = *materialized
+		resultDecimalVals[rowIdx] = *materialized
 		resultCol.SetNull(rowIdx, false)
 	}
 	outputCols[0] = resultCol

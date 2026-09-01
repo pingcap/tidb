@@ -50,7 +50,7 @@ func validateExactSumType(tp *types.FieldType) error {
 	if tp == nil {
 		return errors.New("exact SUM output type is unavailable")
 	}
-	if tp.EvalType() == types.ETReal {
+	if evalType := tp.EvalType(); evalType == types.ETReal {
 		return errors.New("exact SUM state does not support floating-point values")
 	}
 	return nil
@@ -165,10 +165,12 @@ func (e *Exec) buildSumMerger(
 		}
 	}
 
-	switch retTp.EvalType() {
+	retEvalType := retTp.EvalType()
+	deltaEvalType := deltaTp.EvalType()
+	switch retEvalType {
 	case types.ETInt:
-		if deltaTp.EvalType() != types.ETInt {
-			return nil, errors.Errorf("SUM int merge expects integer delta dependency, got %s", deltaTp.EvalType())
+		if deltaEvalType != types.ETInt {
+			return nil, errors.Errorf("SUM int merge expects integer delta dependency, got %s", deltaEvalType)
 		}
 		if mysql.HasUnsignedFlag(retTp.GetFlag()) {
 			return &sumUintMerger{
@@ -207,7 +209,7 @@ func (e *Exec) buildSumMerger(
 			requiredExactState: mapping.RequiredExactState,
 		}, nil
 	default:
-		return nil, errors.Errorf("SUM merge does not support eval type %s", retTp.EvalType())
+		return nil, errors.Errorf("SUM merge does not support eval type %s", retEvalType)
 	}
 }
 

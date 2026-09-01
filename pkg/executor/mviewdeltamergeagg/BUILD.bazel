@@ -44,7 +44,7 @@ go_test(
     srcs = ["exec_test.go"],
     embed = [":mviewdeltamergeagg"],
     flaky = True,
-    shard_count = 33,
+    shard_count = 35,
     deps = [
         "//pkg/executor/internal/exec",
         "//pkg/executor/internal/util",
