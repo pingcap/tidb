@@ -32,8 +32,9 @@ validation in `rust/testport/receipts/timer.md`.
 - [x] Complete aggregated Rust timer suite passes (48 tests).
 - [x] `cargo fmt --all -- --check` passes.
 - [x] Ready profile `make lint` passes.
-- [ ] Review the staged diff and create one meaningful timer batch commit.
-- [ ] Push the batch to `origin/hparser-integration` and force-fetch the remote
+- [x] Reviewed the staged diff and created the meaningful timer batch commit
+  `4f038d21d9` (`rust: complete timer notifier parity`).
+- [x] Pushed the batch to `origin/hparser-integration` and force-fetched the remote
   tracking tip.
 
 ## Remaining boundaries
