@@ -141,6 +141,14 @@ For each bounded behavior cluster:
   `receipts/sessionctx_variable_tests.md` and
   `rust/docs/operations/sessionctx-variable-tests-audit-execplan.md`.
 
+- 2026-09-01: audited the three-artifact Go-master `pkg/dumpformat` root
+  package (46 lines: BUILD, OWNERS, and `kind.go`'s `FieldKind` enum). The
+  root has no tests, fixtures, generated/platform variants, or writer call
+  sites in Rust; no speculative enum owner was added. Nested CSV, Parquet,
+  parser-definition, SQL, and test-utils packages remain separate claims.
+  The Go compile, Rust format, lint, and diff gates are recorded in
+  `receipts/dumpformat.md` and `rust/docs/operations/dumpformat-audit-execplan.md`.
+
 - 2026-09-01: audited the complete Go-master
   `pkg/session/test/nontransactionaltest` package before editing: three
   tracked artifacts and 614 lines covering six batch-DML behavior tests, the
@@ -299,6 +307,15 @@ For each bounded behavior cluster:
   traits, so no Rust-only behavior was removed and no speculative mock was
   added. Recorded the explicit boundary in
   `receipts/objstore_mockobjstore.md`.
+
+- 2026-09-01: audited the complete Go-master
+  `pkg/dumpformat/parsedef` package: two artifacts and 50 lines containing
+  the public BUILD target, the `Row` data carrier, and its zap array-marshaling
+  method. Rust's execution rows are not a dump-format/importer row or zapcore
+  owner, so no Rust-only behavior or speculative facade was added. The exact
+  pinned Go package compiles with no local tests; the explicit boundary is
+  recorded in `receipts/dumpformat_parsedef.md` and
+  `rust/docs/operations/dumpformat-parsedef-audit-execplan.md`.
 
 - 2026-09-01: audited the complete Go-master `pkg/ingestor/globalsort`
   package before editing: 17 tracked artifacts and 6,814 lines, including the
