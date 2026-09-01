@@ -1764,6 +1764,12 @@ For each bounded behavior cluster:
   heap/goroutine profile side effects; a provider-only tick API or detached
   recorder would omit observable behavior and create Rust-only policy. Date/
   Author: 2026-09-01, Codex.
+- Decision: keep `pkg/util/gcutil` explicitly unclaimed until the session,
+  restricted-SQL, TiKV Oracle, and GC-worker owners can provide the complete
+  safe-point/global-variable contract together. Existing Rust safe-point
+  caches and flashback tests are supporting boundaries, not a replacement for
+  these public helpers; a detached SQL bridge would be Rust-only behavior.
+  Date/Author: 2026-09-01, Codex.
 - Decision: preserve the Rust planner-error declaration table and its
   all-prototype initialization guard. Go package initialization registers all
   98 entries, while Go's only explicit test checks 59; the Rust guard is the
