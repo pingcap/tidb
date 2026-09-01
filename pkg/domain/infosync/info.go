@@ -944,6 +944,8 @@ func CollectStorageClassStatus(ctx context.Context, tableID int64, target string
 	if target != model.StorageClassTierIA && target != model.StorageClassTierStandard {
 		return nil, errors.Errorf("invalid storage class target %q", target)
 	}
+	requestCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
 	type result struct {
 		store  pdhttp.StoreInfo
@@ -959,7 +961,7 @@ func CollectStorageClassStatus(ctx context.Context, tableID int64, target string
 		requestCount++
 		go func() {
 			status, err := helper.CollectStorageClassStatusWithCtx(
-				ctx, store.Store.StatusAddress, is.tikvCodec.GetKeyspaceID(), tableID, target)
+				requestCtx, store.Store.StatusAddress, is.tikvCodec.GetKeyspaceID(), tableID, target)
 			resultCh <- result{store: store, status: status, err: err}
 		}()
 	}
@@ -968,6 +970,7 @@ func CollectStorageClassStatus(ctx context.Context, tableID int64, target string
 	for range requestCount {
 		result := <-resultCh
 		if result.err != nil {
+			cancel()
 			if ctx.Err() != nil {
 				return nil, errors.Trace(ctx.Err())
 			}

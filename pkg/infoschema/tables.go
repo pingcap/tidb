@@ -1254,6 +1254,12 @@ var tableStorageClassTransitionsCols = []columnInfo{
 	{name: "LAST_UPDATE_TIME", tp: mysql.TypeDatetime, size: 26, decimal: 6},
 }
 
+// GetStorageClassTransitionsTableColumns returns fresh column metadata for
+// INFORMATION_SCHEMA.TIKV_STORAGE_CLASS_TRANSITIONS.
+func GetStorageClassTransitionsTableColumns() []*model.ColumnInfo {
+	return buildTableMeta(TableStorageClassTransitions, tableStorageClassTransitionsCols).Columns
+}
+
 var tableInspectionResultCols = []columnInfo{
 	{name: "RULE", tp: mysql.TypeVarchar, size: 64},
 	{name: "ITEM", tp: mysql.TypeVarchar, size: 64},

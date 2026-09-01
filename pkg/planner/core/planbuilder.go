@@ -6118,16 +6118,18 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		names = []string{"Db_name", "Table_name", "Partition_name", "Leader_store_id", "Voter_store_ids", "Status", "Region_count", "Affinity_region_count"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeLonglong}
 	case ast.ShowStorageClassTransitions:
-		names = []string{"TABLE_SCHEMA", "TABLE_NAME", "TABLE_ID", "PARTITION_NAME", "PARTITION_ID", "DIRECTION", "TOTAL_REPLICAS", "COMPLETED_REPLICAS", "PROGRESS", "START_TIME", "DURATION", "LAST_UPDATE_TIME"}
-		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeDatetime, mysql.TypeLonglong, mysql.TypeDatetime}
-		flags = []uint{0, 0, 0, 0, 0, 0, mysql.UnsignedFlag, mysql.UnsignedFlag, 0, 0, mysql.UnsignedFlag, 0}
+		return convertColumnInfosToOutputSchemasAndNames(infoschema.GetStorageClassTransitionsTableColumns())
 	}
 	schema, outputNames = convert2OutputSchemasAndNames(names, ftypes, flags)
-	if s.Tp == ast.ShowStorageClassTransitions {
-		for _, offset := range []int{9, 11} {
-			schema.Columns[offset].RetType.SetFlen(26)
-			schema.Columns[offset].RetType.SetDecimal(types.MaxFsp)
-		}
+	return schema, outputNames
+}
+
+func convertColumnInfosToOutputSchemasAndNames(columns []*model.ColumnInfo) (schema *expression.Schema, outputNames []*types.FieldName) {
+	schema = expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
+	outputNames = make([]*types.FieldName, 0, len(columns))
+	for _, column := range columns {
+		schema.Append(&expression.Column{RetType: column.FieldType.Clone()})
+		outputNames = append(outputNames, &types.FieldName{ColName: column.Name})
 	}
 	return schema, outputNames
 }
