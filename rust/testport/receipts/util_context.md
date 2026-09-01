@@ -40,6 +40,12 @@ panic recovery, and one-shot range fallback.
 The stale semantic manifest and historical audit plan that accepted the
 removed Rust-only API were deleted.
 
+`pkg/util/breakpoint` is now a live `ValueStoreContext` consumer. The native
+trait value is `Any + Send + Sync` because a Rust session moves between
+connection workers; the Go-visible heterogeneous key/value and concrete-type
+lookup behavior is unchanged. `tidb-session::Session` is the canonical owner,
+and its breakpoint integration is inventoried in `util_breakpoint.md`.
+
 ## Validation
 
 Profile: WIP; this is one completed package within the continuing repository

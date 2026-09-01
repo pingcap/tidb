@@ -3031,11 +3031,13 @@ pub(super) fn execute_query(
     ctx: &crate::StmtContext,
 ) -> Result<SelectMeta, DriverError> {
     prepare_apply_bindings(physical)?;
+    ctx.publish_process_plan_info(crate::process_plan_info(physical, catalog));
     let root = build(physical, catalog, ctx)?;
     let columns = match query {
         tidb_ast::QueryStmt::Select(select) => result_columns(select, root.schema()),
         tidb_ast::QueryStmt::SetOpr(_) => physical_result_columns(physical, root.schema()),
     };
+    ctx.notify_before_executor_first_run();
     super::drain_root_executor(root, columns, ctx)
 }
 
@@ -3054,6 +3056,7 @@ pub(crate) fn execute_for_explain(
         ..BuildState::default()
     };
     let mut root = build_with_state(physical, catalog, ctx, &mut state)?;
+    ctx.notify_before_executor_first_run();
     let result = (|| {
         root.open()?;
         let mut req = root.new_chunk();
@@ -3088,6 +3091,7 @@ pub(crate) fn execute_dml_source(
         ..BuildState::default()
     };
     let root = build_with_state(physical, catalog, ctx, &mut state)?;
+    ctx.notify_before_executor_first_run();
     let field_types = root.ret_field_types().to_vec();
     let rows = super::drain_executor_rows(root, &field_types, &ctx.statement_memory())?;
     Ok((rows, state.runtime_counters.take().unwrap_or_default()))

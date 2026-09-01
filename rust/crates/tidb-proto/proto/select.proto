@@ -515,6 +515,7 @@ message ExecutorExecutionSummary {
 
   oneof DetailInfo {
     TiFlashScanContext tiflash_scan_context = 6;
+    ColumnarScanContext columnar_scan_context = 10;
   }
 
   optional bytes ru_consumption = 7;
@@ -607,12 +608,41 @@ message TiFlashScanContext {
   optional uint64 fts_idx_tiny_total_read_others_ms = 172;
   optional uint64 fts_brute_total_read_ms = 173;
   optional uint64 fts_brute_total_search_ms = 174;
+
+  optional uint32 tici_vec_query_count = 200;
+  optional uint64 tici_vec_search_total_ms = 201;
+  optional uint64 tici_vec_filter_total_ms = 202;
+  optional uint64 tici_vec_candidate_count = 203;
+  optional uint64 tici_vec_result_count = 204;
+  optional uint64 tici_vec_shard_count = 205;
 }
 
 message TiFlashWaitSummary {
   optional uint64 minTSO_wait_ns = 1;
   optional uint64 pipeline_queue_wait_ns = 2;
   optional uint64 pipeline_breaker_wait_ns = 3;
+}
+
+message ColumnarScanContext {
+  optional uint64 regions = 1;
+  optional uint64 read_tasks = 3;
+  optional uint64 physical_tables = 4;
+  optional uint64 columns = 5;
+  optional uint64 user_read_bytes = 6;
+  optional uint64 mvcc_input_rows = 7;
+  optional uint64 mvcc_input_bytes = 8;
+  optional uint64 mvcc_output_rows = 9;
+  optional uint64 total_read_block_ms = 10;
+  optional uint64 total_serialize_block_ms = 11;
+  optional uint64 total_init_reader_ms = 12;
+  optional uint64 total_prefetch_ms = 13;
+  optional uint64 rough_check_total_packs = 14;
+  optional uint64 rough_check_selected_packs = 15;
+  optional uint64 rough_check_skipped_packs = 16;
+  optional uint64 rough_check_unknown_packs = 17;
+  optional uint64 remote_segments = 18;
+  optional uint64 total_segments = 19;
+  optional uint64 total_deserialize_block_ms = 20;
 }
 
 message TiFlashNetWorkSummary {

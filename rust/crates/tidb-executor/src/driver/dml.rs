@@ -135,6 +135,9 @@ pub(crate) fn run_insert_stmt_with_physical_and_stats(
         })
         .transpose()?;
     let physical_plan = physical_plan.or(fresh.as_mut());
+    if let Some(plan) = physical_plan.as_deref() {
+        ctx.publish_process_plan_info(crate::process_plan_info(plan, catalog));
+    }
     let physical_source = match physical_plan {
         Some(plan) => dml_select_plan_mut(plan, "Insert")?,
         None => None,
@@ -523,6 +526,9 @@ fn run_insert_with_physical(
     let mut inserted = 0u64;
     // A source query supplies already-evaluated values; a VALUES list
     // supplies expressions. Both fill the same target offsets.
+    if insert.source.is_none() {
+        ctx.notify_before_executor_first_run();
+    }
     let value_rows: Vec<Vec<Datum>> = match &source_rows {
         Some(rows) => rows.clone(),
         None => Vec::new(),
@@ -1860,6 +1866,9 @@ pub(crate) fn run_update_stmt_with_physical_and_stats(
         })
         .transpose()?;
     let physical_plan = physical_plan.or(fresh.as_mut());
+    if let Some(plan) = physical_plan.as_deref() {
+        ctx.publish_process_plan_info(crate::process_plan_info(plan, catalog));
+    }
     let (physical_source, update_expressions) = match physical_plan {
         Some(plan) => {
             let tidb_planner::physical::PhysicalPlan::Dml(root) = plan else {
@@ -2710,6 +2719,7 @@ fn run_update_with_physical(
             &column_names,
             ctx,
         )?;
+        ctx.notify_before_executor_first_run();
         return Ok(0);
     }
     // The retained physical child owns WHERE, ORDER BY and LIMIT exactly as
@@ -2809,7 +2819,10 @@ fn run_update_with_physical(
                     "UPDATE of a sequence is not a statement TiDB accepts",
                 ));
             }
-            TableEntry::Mem(mem) => SourceRows::Mem(mem.rows.clone()),
+            TableEntry::Mem(mem) => {
+                ctx.notify_before_executor_first_run();
+                SourceRows::Mem(mem.rows.clone())
+            }
             TableEntry::Kv(_) => unreachable!("byte-backed tables use the physical child"),
         }
     };
@@ -3192,6 +3205,9 @@ pub(crate) fn run_delete_stmt_with_physical_and_stats(
         })
         .transpose()?;
     let physical_plan = physical_plan.or(fresh.as_mut());
+    if let Some(plan) = physical_plan.as_deref() {
+        ctx.publish_process_plan_info(crate::process_plan_info(plan, catalog));
+    }
     let physical_source = match physical_plan {
         Some(plan) => dml_select_plan_mut(plan, "Delete")?,
         None => None,
@@ -3323,6 +3339,7 @@ fn run_delete_with_physical(
             &column_names,
             ctx,
         )?;
+        ctx.notify_before_executor_first_run();
         return Ok(0);
     }
     let predicate = if physical_kv_source { None } else { predicate };
@@ -3350,7 +3367,10 @@ fn run_delete_with_physical(
             TableEntry::Sequence(_) => {
                 return Err(DriverError::DeleteSequenceUnsupported(name.clone()));
             }
-            TableEntry::Mem(mem) => SourceRows::Mem(mem.rows.clone()),
+            TableEntry::Mem(mem) => {
+                ctx.notify_before_executor_first_run();
+                SourceRows::Mem(mem.rows.clone())
+            }
             TableEntry::Kv(_) => unreachable!("byte-backed tables use the physical child"),
         }
     };

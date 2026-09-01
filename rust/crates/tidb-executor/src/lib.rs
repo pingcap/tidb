@@ -232,10 +232,10 @@ pub use driver::{
 };
 pub use executor::{ExecError, Executor, ExecutorMeta};
 pub use explain::{
-    explain_analyze_delete_stmt, explain_analyze_insert_stmt, explain_analyze_select_stmt,
-    explain_analyze_set_opr_stmt, explain_analyze_update_stmt, explain_delete_stmt,
-    explain_insert_stmt, explain_select_stmt, explain_set_opr_stmt, explain_update_stmt,
-    ExplainFormat,
+    brief_binary_plan, explain_analyze_delete_stmt, explain_analyze_insert_stmt,
+    explain_analyze_select_stmt, explain_analyze_set_opr_stmt, explain_analyze_update_stmt,
+    explain_delete_stmt, explain_insert_stmt, explain_select_stmt, explain_set_opr_stmt,
+    explain_update_stmt, process_plan_info, ExplainFormat,
 };
 pub use hash_agg::{
     AggFunc, AggKind, GroupedStreamAggExec, HashAggContext, HashAggExec, StreamAggExec,
@@ -255,8 +255,8 @@ pub use projection::ProjectionExec;
 pub use selection::SelectionExec;
 pub use sort::{SortByItem, SortExec};
 pub use stmt_context::{
-    GlobalSysvarAccessor, RetryAutoIds, RowIdShardGenerator, SequenceSnapshot, StatementClass,
-    StmtContext,
+    GlobalSysvarAccessor, ProcessPlanInfo, RetryAutoIds, RowIdShardGenerator, SequenceSnapshot,
+    StatementClass, StmtContext,
 };
 pub use table_access::TableAccess;
 pub use table_dual::TableDualExec;

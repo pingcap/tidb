@@ -28,7 +28,7 @@ use tidb_meta::transaction::{
     split_range_int64_max, table_info_must_load, unescape_name, unescape_name_bytes, AutoIdGroup,
     DailyRuStats, DdlJobCodec, DdlTableVersion, GroupRuStats, MemoryTransaction, MetaSnapshotStore,
     MustLoadFilterAttr, Mutator, MutatorOption, MvccInfo, MvccReader, MvccWrite,
-    NextGenBootTableVersion, RawTransaction, RuConsumption, RuStats, TtlTuneFactors,
+    NextGenBootTableVersion, RawTransaction, RuConsumption, RuStats,
     NAME_EXTRACT_REGEXP,
 };
 use tidb_meta::{key, structure, value, MetaError, Result};
@@ -1954,7 +1954,7 @@ fn ddl_history_preserves_constructor_and_both_next_error_boundaries() {
 #[test]
 fn dxf_and_ru_stats_match_go_json_shapes_including_null() {
     let meta = Mutator::new(MemoryTransaction::default());
-    let factors = TtlTuneFactors::default();
+    let factors = tidb_dxf::schstatus::TtlTuneFactors::default();
     meta.set_dxf_schedule_tune_factors("ks", &factors).unwrap();
     let dxf_key = structure::encode_hash_data_key(key::DXF_SCHEDULE_TUNE, b"ks");
     let dxf = meta
@@ -1964,10 +1964,14 @@ fn dxf_and_ru_stats_match_go_json_shapes_including_null() {
     assert_eq!(meta.dxf_schedule_tune_factors("ks").unwrap(), Some(factors));
     assert_eq!(meta.dxf_schedule_tune_factors("missing").unwrap(), None);
 
-    let factors = TtlTuneFactors {
-        ttl_nanoseconds: 3_600_000_000_000,
-        amplify_factor: 1.5,
-        ..Default::default()
+    let factors = tidb_dxf::schstatus::TtlTuneFactors {
+        ttl_info: tidb_dxf::schstatus::TtlInfo {
+            ttl_nanoseconds: 3_600_000_000_000,
+            ..Default::default()
+        },
+        tune_factors: tidb_dxf::schstatus::TuneFactors {
+            amplify_factor: 1.5,
+        },
     };
     meta.set_dxf_schedule_tune_factors("ks2", &factors).unwrap();
     let dxf_key = structure::encode_hash_data_key(key::DXF_SCHEDULE_TUNE, b"ks2");

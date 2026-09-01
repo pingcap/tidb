@@ -949,6 +949,7 @@ impl Session {
                 .with_index_merge(index_merge)
                 .with_pushdown_blacklists(self.pushdown_blacklists.snapshot())
                 .with_planned_apply_channel(Arc::clone(&self.planned_apply))
+                .with_process_plan_info_sink(Arc::clone(&self.process_plan_info))
                 .with_allow_write_row_id(allow_write_row_id)
                 .with_static_partition_prune(static_partition_prune)
                 .with_only_full_group_by(sql_mode.has_only_full_group_by())
@@ -1015,6 +1016,10 @@ impl Session {
                 .with_enable_check_constraint(self.enable_check_constraint())
                 .with_sysdate_is_now(sysdate_is_now)
                 .with_resource_group_name(self.active_resource_group.clone())
+                .with_executor_first_run_breakpoint(
+                    Arc::clone(&self.executor_first_run_breakpoint),
+                    self.breakpoint_notify_func(),
+                )
                 .with_lazy_clock(snapshot.timestamp, zone);
             if let Some(latest_index_schema) = latest_index_schema {
                 ctx = ctx.with_latest_index_schema(latest_index_schema);
@@ -1029,6 +1034,7 @@ impl Session {
         )
         .with_date_modes(date_modes)
         .with_planned_apply_channel(Arc::clone(&self.planned_apply))
+        .with_process_plan_info_sink(Arc::clone(&self.process_plan_info))
         .with_allow_write_row_id(allow_write_row_id)
         .with_only_full_group_by(sql_mode.has_only_full_group_by())
         .with_new_only_full_group_by_check(new_only_full_group_by_check)
@@ -1062,6 +1068,10 @@ impl Session {
         .with_tidb_decode_key_snapshot(self.tidb_decode_key_snapshot())
         .with_sysdate_is_now(sysdate_is_now)
         .with_resource_group_name(self.active_resource_group.clone())
+        .with_executor_first_run_breakpoint(
+            Arc::clone(&self.executor_first_run_breakpoint),
+            self.breakpoint_notify_func(),
+        )
         .with_lazy_clock(snapshot.timestamp, zone)
         .with_sql_mode(snapshot.scanner_sql_mode)
         .with_ddl_sql_mode(sql_mode.0)

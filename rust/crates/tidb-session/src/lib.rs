@@ -430,6 +430,15 @@ pub trait MdlRelatedTableSink: Send + Sync {
 
 pub struct Session {
     catalog: SharedCatalog,
+    /// Go `session.values`: heterogeneous values addressed by session-context
+    /// stringer keys. Values must be thread-safe because the native session
+    /// moves between connection workers.
+    context_values: HashMap<String, Box<dyn std::any::Any + Send + Sync>>,
+    /// Shared with every executor context built for the current attempt.
+    executor_first_run_breakpoint: Arc<std::sync::atomic::AtomicBool>,
+    /// The cluster transaction layer owns the attempt boundary while this is
+    /// true, so inner pessimistic retries do not re-arm the first-run hook.
+    external_executor_breakpoint_scope: bool,
     /// Go `infosync.ServerInfo.StartTimestamp`: when the hosting server
     /// process started, which the server-tier `Statistics` provider turns
     /// into the `Uptime` status variable (`pkg/server/stat.go:87`). `None`
@@ -736,6 +745,9 @@ pub struct Session {
     /// statement now running planned an Apply. Read by the prepared plan
     /// cache (Go's `PhysicalApply` refusal) and cleared per statement.
     planned_apply: Arc<std::sync::atomic::AtomicBool>,
+    /// Go `ProcessInfo.BriefBinaryPlan`, populated from the ordinary physical
+    /// tree before executor construction.
+    process_plan_info: Arc<std::sync::Mutex<tidb_executor::ProcessPlanInfo>>,
     /// Go `SessionVars.FoundInBinding`: whether the statement RUNNING now
     /// took its hints from a binding.
     found_in_binding: bool,
@@ -753,6 +765,9 @@ impl Session {
     fn unbootstrapped(catalog: SharedCatalog) -> Self {
         Session {
             catalog,
+            context_values: HashMap::new(),
+            executor_first_run_breakpoint: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            external_executor_breakpoint_scope: false,
             server_start_timestamp: None,
             tidb_decode_key_cache: std::sync::Mutex::new(None),
             session_memory: tidb_executor::SessionMemory::new(
@@ -824,9 +839,65 @@ impl Session {
             session_bindings: binding::SessionBindings::default(),
             pushdown_blacklists: blacklist::PushdownBlacklists::default(),
             planned_apply: Arc::default(),
+            process_plan_info: Arc::default(),
             found_in_binding: false,
             prev_found_in_binding: false,
         }
+    }
+
+    fn breakpoint_notify_func(&self) -> Option<Arc<dyn Fn(String) + Send + Sync + 'static>> {
+        self.context_values
+            .get(tidb_util::breakpoint::NOTIFY_BREAK_POINT_FUNC_KEY)
+            .and_then(|value| value.downcast_ref::<Arc<dyn Fn(String) + Send + Sync + 'static>>())
+            .cloned()
+    }
+
+    /// Starts one server-owned execution attempt. `notify` is false for a
+    /// PREPARE metadata probe, which builds no executor in Go.
+    #[doc(hidden)]
+    pub fn begin_external_executor_breakpoint_scope(&mut self, notify: bool) {
+        self.external_executor_breakpoint_scope = true;
+        self.executor_first_run_breakpoint
+            .store(!notify, std::sync::atomic::Ordering::Release);
+    }
+
+    /// Ends the server-owned execution-attempt scope.
+    #[doc(hidden)]
+    pub fn end_external_executor_breakpoint_scope(&mut self) {
+        self.external_executor_breakpoint_scope = false;
+    }
+
+    /// Notifies at a cluster pre-lock, which is executor execution in Go but
+    /// must precede the fused Rust session runner to carry the locked value.
+    #[doc(hidden)]
+    pub fn notify_before_executor_first_run(&self) {
+        if self
+            .executor_first_run_breakpoint
+            .swap(true, std::sync::atomic::Ordering::AcqRel)
+        {
+            return;
+        }
+        tidb_util::breakpoint::inject(self, "beforeExecutorFirstRun");
+    }
+}
+
+impl tidb_util::context::ValueStoreContext for Session {
+    type Key = str;
+
+    fn set_value(&mut self, key: &Self::Key, value: Box<dyn std::any::Any + Send + Sync>) {
+        self.context_values.insert(key.to_owned(), value);
+    }
+
+    fn value(&self, key: &Self::Key) -> Option<&(dyn std::any::Any + Send + Sync)> {
+        self.context_values.get(key).map(Box::as_ref)
+    }
+
+    fn clear_value(&mut self, key: &Self::Key) {
+        self.context_values.remove(key);
+    }
+
+    fn get_domain(&self) -> Option<&dyn std::any::Any> {
+        None
     }
 }
 
@@ -886,6 +957,7 @@ mod classify;
 pub mod cursor;
 mod dispatch;
 mod explain_arm;
+mod gcutil;
 mod identity;
 pub mod infoschema;
 mod non_prepared_plan_cache;
@@ -1676,16 +1748,63 @@ impl Session {
         capture_result_authority: bool,
         execute: impl FnOnce(&mut Self) -> Result<StmtOutput, DriverError>,
     ) -> Result<(StmtOutput, Option<ResultMaterializationAuthority>), DriverError> {
+        if !self.external_executor_breakpoint_scope {
+            self.executor_first_run_breakpoint
+                .store(false, std::sync::atomic::Ordering::Release);
+        }
         self.statement_result_authority.get_mut().take();
+        *self
+            .process_plan_info
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            tidb_executor::ProcessPlanInfo::default();
         self.check_sandbox_mode(sql)?;
         // A statement is visible to a peer's SHOW PROCESSLIST for exactly as
         // long as it runs, which is why the process list is updated here --
         // the one door every statement of this session goes through -- rather
         // than in one front end's command loop.
         if let Some(guard) = &self.process {
-            guard
-                .registry()
-                .statement_started(guard.id(), sql, &self.status_text());
+            let registry = guard.registry();
+            registry.statement_started(guard.id(), sql, &self.status_text());
+            let redact_sql = match self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_REDACT_LOG)
+                .as_deref()
+            {
+                Ok("ON") => tidb_parser::RedactMode::Enabled,
+                Ok("MARKER") => tidb_parser::RedactMode::Marker,
+                _ => tidb_parser::RedactMode::Disabled,
+            };
+            let session_analyze_version = self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_ANALYZE_VERSION)
+                .ok()
+                .and_then(|value| value.parse::<i64>().ok())
+                .unwrap_or_default();
+            let session_enabled_rate_limit_action = self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_RATE_LIMIT_ACTION)
+                .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("ON"));
+            let session_mem_quota_query = self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_MEM_QUOTA_QUERY)
+                .ok()
+                .and_then(|value| value.parse::<i64>().ok())
+                .unwrap_or(tidb_util::memory::DEF_MEM_QUOTA_QUERY);
+            registry.statement_metadata(
+                guard.id(),
+                u64::try_from(self.current_tso().value()).unwrap_or_default(),
+                self.active_resource_group.clone(),
+                self.vars
+                    .get_system(tidb_vardef::tidb_vars::TIDB_SESSION_ALIAS)
+                    .unwrap_or_default(),
+                redact_sql,
+                tidb_util::memoryusagealarm::OOMAlarmVariablesInfo {
+                    session_analyze_version,
+                    session_enabled_rate_limit_action,
+                    session_mem_quota_query,
+                },
+            );
         }
         // Go's `ResetContextOfStmt` promotes the PRECEDING statement's
         // publication into the `Prev*` fields the next statement reads, so
@@ -1715,6 +1834,15 @@ impl Session {
         let restore = std::mem::take(&mut self.set_var_hint_restore);
         self.vars.restore_system(restore);
         self.publish_statement_status(&result);
+        if let Some(guard) = &self.process {
+            let affected_rows = match &result {
+                Ok(StmtOutput::Affected(count)) => *count,
+                _ => 0,
+            };
+            guard
+                .registry()
+                .statement_affected_rows(guard.id(), affected_rows);
+        }
         if let Some(collector) = &self.session_index_usage_collector {
             collector
                 .lock()

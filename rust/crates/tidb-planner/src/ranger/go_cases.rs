@@ -582,10 +582,7 @@ fn refine_integer_string_comparison(args: &mut [Expression]) {
             continue;
         };
         const MAX_EXACT_F64_INTEGER: f64 = 9_007_199_254_740_992.0;
-        if !value.is_finite()
-            || value.fract() != 0.0
-            || value.abs() > MAX_EXACT_F64_INTEGER
-        {
+        if !value.is_finite() || value.fract() != 0.0 || value.abs() > MAX_EXACT_F64_INTEGER {
             continue;
         }
         let refined = if field_type.is_unsigned() {

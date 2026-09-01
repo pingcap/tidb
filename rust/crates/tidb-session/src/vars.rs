@@ -299,8 +299,17 @@ impl GlobalSysvars {
         let oom_action = tidb_executor::OomAction::parse(&effective(
             tidb_vardef::tidb_vars::TIDB_MEM_OOM_ACTION,
         ));
+        let oom_action_text = effective(tidb_vardef::tidb_vars::TIDB_MEM_OOM_ACTION);
         let tmp_storage = effective(tidb_vardef::tidb_vars::TIDB_ENABLE_TMP_STORAGE_ON_OOM);
         let tmp_storage_on_oom = !(tmp_storage.eq_ignore_ascii_case("off") || tmp_storage == "0");
+        let memory_usage_alarm_ratio =
+            effective(tidb_vardef::tidb_vars::TIDB_MEMORY_USAGE_ALARM_RATIO)
+                .parse::<f64>()
+                .expect("validated memory usage alarm ratio is a float");
+        let memory_usage_alarm_keep_record_num =
+            effective(tidb_vardef::tidb_vars::TIDB_MEMORY_USAGE_ALARM_KEEP_RECORD_NUM)
+                .parse::<i64>()
+                .expect("validated memory usage alarm record count is an integer");
         let analyze_default_num_buckets =
             effective(tidb_vardef::tidb_vars::TIDB_ANALYZE_DEFAULT_NUM_BUCKETS)
                 .parse::<u64>()
@@ -322,6 +331,12 @@ impl GlobalSysvars {
             tmp_storage_on_oom,
         });
         if self.publishes_runtime_settings {
+            tidb_vardef::set_oom_action(&oom_action_text);
+            tidb_vardef::set_memory_usage_alarm_ratio(memory_usage_alarm_ratio);
+            tidb_vardef::MEMORY_USAGE_ALARM_KEEP_RECORD_NUM.store(
+                memory_usage_alarm_keep_record_num,
+                std::sync::atomic::Ordering::SeqCst,
+            );
             tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS.store(
                 analyze_default_num_buckets,
                 std::sync::atomic::Ordering::SeqCst,

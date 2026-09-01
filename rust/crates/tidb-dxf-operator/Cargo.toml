@@ -9,6 +9,7 @@ name = "operator"
 
 [dependencies]
 crossbeam-channel = "0.5"
+tidb-resourcemanager = { path = "../tidb-resourcemanager" }
 
 [dev-dependencies]
 regex = "1"

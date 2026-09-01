@@ -29,7 +29,7 @@ pub const BACKFILL: TaskType = TaskType::from_static("backfill");
 
 /// Go `Type2Int`: converts a task type to an int.
 #[must_use]
-pub fn type2int(t: &TaskType) -> i64 {
+pub fn type2int(t: &TaskType) -> isize {
     if *t == TASK_TYPE_EXAMPLE {
         1
     } else if *t == IMPORT_INTO {
@@ -43,7 +43,7 @@ pub fn type2int(t: &TaskType) -> i64 {
 
 /// Go `Int2Type`: converts an int to a task type.
 #[must_use]
-pub fn int2type(i: i64) -> TaskType {
+pub fn int2type(i: isize) -> TaskType {
     match i {
         1 => TASK_TYPE_EXAMPLE,
         2 => IMPORT_INTO,

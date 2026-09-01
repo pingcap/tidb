@@ -1089,7 +1089,9 @@ impl NodeConfig {
     }
 
     pub(crate) fn install_process_globals(&self) {
+        let max_procs = self.global_config.performance.max_procs;
         install_process_globals(self.global_config.clone());
+        tidb_util::cpu::install_cpu_count(max_procs, self.affinity_cpus.len());
     }
 
     pub(crate) fn startup_config_json(&self) -> Vec<u8> {

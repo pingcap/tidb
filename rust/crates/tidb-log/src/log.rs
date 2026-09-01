@@ -26,6 +26,8 @@ use crate::config::SamplingConfig;
 use crate::zap_text_core::{AtomicLevel, TextIoCore, WriteSyncer};
 use crate::{Config, Entry, Field, Level, TextEncoder};
 
+type CallerFilter = Arc<dyn Fn(&str) -> bool + Send + Sync>;
+
 /// Name registered by the Go package for its text encoder.
 pub const ZAP_ENCODING_NAME: &str = "pingcap-log";
 
@@ -122,6 +124,8 @@ impl Sampler {
 pub struct Logger {
     core: TextIoCore,
     error_output: Arc<dyn WriteSyncer>,
+    name: String,
+    caller_filter: Option<CallerFilter>,
     caller_enabled: bool,
     caller_skip: usize,
     stacktrace_level: Option<Level>,
@@ -232,6 +236,28 @@ impl Logger {
         clone
     }
 
+    /// Returns a child whose name appends `name` as a path segment.
+    pub fn named(&self, name: &str) -> Self {
+        let mut clone = self.clone();
+        if !name.is_empty() {
+            if !clone.name.is_empty() {
+                clone.name.push('.');
+            }
+            clone.name.push_str(name);
+        }
+        clone
+    }
+
+    /// Returns a child which emits only callers accepted by `filter`.
+    pub fn with_caller_filter(
+        &self,
+        filter: impl Fn(&str) -> bool + Send + Sync + 'static,
+    ) -> Self {
+        let mut clone = self.clone();
+        clone.caller_filter = Some(Arc::new(filter));
+        clone
+    }
+
     /// Returns a child with zap-style options.
     pub fn with_options(&self, options: LoggerOptions) -> Self {
         let mut clone = self.clone();
@@ -247,6 +273,11 @@ impl Logger {
         self.core.level()
     }
 
+    /// Returns whether `level` passes the logger's level gate.
+    pub fn enabled(&self, level: Level) -> bool {
+        self.core.enabled(level)
+    }
+
     /// Flushes buffered output.
     pub fn sync(&self) -> io::Result<()> {
         self.core.sync()
@@ -255,45 +286,54 @@ impl Logger {
     /// Logs at debug level.
     #[track_caller]
     pub fn debug(&self, message: &str, fields: &[Field]) {
-        self.log(Level::Debug, message, fields);
+        self.log_at(Level::Debug, message, fields);
     }
 
     /// Logs at info level.
     #[track_caller]
     pub fn info(&self, message: &str, fields: &[Field]) {
-        self.log(Level::Info, message, fields);
+        self.log_at(Level::Info, message, fields);
     }
 
     /// Logs at warn level.
     #[track_caller]
     pub fn warn(&self, message: &str, fields: &[Field]) {
-        self.log(Level::Warn, message, fields);
+        self.log_at(Level::Warn, message, fields);
     }
 
     /// Logs at error level.
     #[track_caller]
     pub fn error(&self, message: &str, fields: &[Field]) {
-        self.log(Level::Error, message, fields);
+        self.log_at(Level::Error, message, fields);
     }
 
     /// Logs and panics with `message`.
     #[track_caller]
     pub fn panic(&self, message: &str, fields: &[Field]) -> ! {
-        self.log(Level::Panic, message, fields);
+        self.log_at(Level::Panic, message, fields);
         panic!("{message}")
     }
 
     /// Logs and exits the process with status 1.
     #[track_caller]
     pub fn fatal(&self, message: &str, fields: &[Field]) -> ! {
-        self.log(Level::Fatal, message, fields);
+        self.log_at(Level::Fatal, message, fields);
         let _ = self.sync();
         std::process::exit(1)
     }
 
+    /// Logs at an explicitly selected level.
     #[track_caller]
-    fn log(&self, level: Level, message: &str, fields: &[Field]) {
+    pub fn log_at(&self, level: Level, message: &str, fields: &[Field]) {
         if !self.core.enabled(level) {
+            return;
+        }
+        let location = std::panic::Location::caller();
+        if self
+            .caller_filter
+            .as_ref()
+            .is_some_and(|filter| !filter(location.file()))
+        {
             return;
         }
         if let Some(sampler) = &self.sampler {
@@ -301,7 +341,6 @@ impl Logger {
                 return;
             }
         }
-        let location = std::panic::Location::caller();
         let caller = if self.caller_enabled && self.caller_skip == 0 {
             Some((location.file().to_owned(), location.line()))
         } else {
@@ -315,7 +354,7 @@ impl Logger {
         let entry = Entry {
             time: Local::now().fixed_offset(),
             level,
-            logger_name: String::new(),
+            logger_name: self.name.clone(),
             caller,
             message: message.to_owned(),
             stack,
@@ -386,6 +425,8 @@ pub fn init_logger_with_write_syncer(
     let logger = Logger {
         core,
         error_output: error_output.clone(),
+        name: String::new(),
+        caller_filter: None,
         caller_enabled: !config.disable_caller,
         caller_skip: 0,
         stacktrace_level,

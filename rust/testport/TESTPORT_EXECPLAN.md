@@ -40,6 +40,18 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: synchronized the rolling parity work with the latest
+  `origin/hparser-integration` tip `f99acafe16`. The merged remote batch
+  supplies the dependency-ordered `pkg/util` memory/cgroup/cgmon,
+  breakpoint, external-sort, memory-alarm, and plan-codec implementations,
+  plus the Lightning, DXF, resource-manager, executor, session, and metadata
+  consumers recorded in their package receipts. Local batches retain the
+  current logutil, collate, and ranger fixes. Conflicting memory callers now
+  use the remote `memory::mem_total` cache contract, and the latest receipts
+  are selected for packages whose source behavior advanced on the remote
+  stack. The merge itself is a synchronization commit; package-specific
+  regressions and Ready evidence remain recorded in each receipt.
+
 - 2026-09-01: audited and fixed the complete top-level Go-master
   `pkg/util/logutil`
   inventory (8 artifacts, 1,260 lines) and its separate nested

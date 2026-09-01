@@ -4141,7 +4141,7 @@ impl ClusterServerSession {
         run: impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
     ) -> Result<T, SqlQueryError> {
         self.begin_if_autocommit_off(resource_group)?;
-        self.with_bound_statement(shape, &prelock_keys, resource_group, run)
+        self.with_bound_statement(shape, &prelock_keys, resource_group, true, run)
     }
 
     /// Runs work the CLIENT did not ask to execute through the statement
@@ -4171,7 +4171,7 @@ impl ClusterServerSession {
         run: impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
     ) -> Result<T, SqlQueryError> {
         self.rebuild_catalog_if_stale();
-        self.with_bound_statement(shape, &[], resource_group, run)
+        self.with_bound_statement(shape, &[], resource_group, false, run)
     }
 
     /// The statement lifecycle proper: savepoint, attempt, replay budget.
@@ -4180,6 +4180,7 @@ impl ClusterServerSession {
         shape: StatementReadShape,
         prelock_keys: &[Vec<u8>],
         resource_group: &str,
+        notify_executor_breakpoint: bool,
         mut run: impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
     ) -> Result<T, SqlQueryError> {
         // Go's MDL considers a RUNNING statement a user of its schema
@@ -4197,6 +4198,7 @@ impl ClusterServerSession {
                 savepoint.clone(),
                 &prelock_keys,
                 resource_group,
+                notify_executor_breakpoint,
                 &mut run,
             ) {
                 Ok(value) => break Ok(value),
@@ -4247,6 +4249,7 @@ impl ClusterServerSession {
         savepoint: BufferCheckpoint,
         prelock_keys: &[Vec<u8>],
         resource_group: &str,
+        notify_executor_breakpoint: bool,
         run: &mut impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
     ) -> Result<T, SqlQueryError> {
         let autocommit = self.explicit.is_none();
@@ -4257,6 +4260,8 @@ impl ClusterServerSession {
         // back by its publication after the read handle is gone. Autocommit
         // publishes THERE, not at a fresh one: see `StatementReadTs`.
         let read_ts = transactions::StatementReadTs::new(self.session.current_tso());
+        self.session
+            .begin_external_executor_breakpoint_scope(notify_executor_breakpoint);
         let result = self.attempt_statement_inner(
             shape,
             &savepoint,
@@ -4265,6 +4270,7 @@ impl ClusterServerSession {
             run,
             &read_ts,
         );
+        self.session.end_external_executor_breakpoint_scope();
         // The TSO clear is statement TEARDOWN, not a success step: every exit
         // of the attempt -- including the `?`s inside the loop -- must leave
         // no failed statement's timestamp published, or `SET @x =
@@ -4321,6 +4327,7 @@ impl ClusterServerSession {
             // back conflict genuinely needs the fresh acquisition at the new
             // `for_update_ts`.
             if !prelock_keys.is_empty() {
+                self.session.notify_before_executor_first_run();
                 let outcome = match self.explicit.as_ref() {
                     Some(transaction) => {
                         self.session.publish_transaction_lock_waiting(true);
@@ -4359,6 +4366,10 @@ impl ClusterServerSession {
                         // only the read timestamp moves; the next round's lock
                         // attempt re-runs at it.
                         retry_read_ts = Some(for_update_ts);
+                        tidb_util::breakpoint::inject(
+                            &self.session,
+                            "lockErrorAndThenOnStmtRetryCalled",
+                        );
                         continue;
                     }
                     // Statement-scoped 1205/1213 family and transaction-fatal
@@ -4478,6 +4489,10 @@ impl ClusterServerSession {
                             // that beat it.
                             self.buffer.restore(savepoint.clone());
                             retry_read_ts = Some(for_update_ts);
+                            tidb_util::breakpoint::inject(
+                                &self.session,
+                                "lockErrorAndThenOnStmtRetryCalled",
+                            );
                             continue;
                         }
                         Err(error) => break Err(error),
@@ -6335,6 +6350,7 @@ impl QuerySession for ClusterServerSession {
         statement: &PreparedGeneral,
         values: &[tidb_protocol::PreparedValue],
     ) -> Result<GeneralExecuteOutcome<'a>, SqlQueryError> {
+        let process_statement = self.session.retain_process_statement(statement.sql());
         // A `BEGIN` is a `BEGIN` whichever protocol carried it. Run as an
         // ordinary statement it would flip only the driver session's own flag
         // and leave `self.explicit` unopened -- the two pieces of transaction
@@ -6625,20 +6641,22 @@ impl QuerySession for ClusterServerSession {
         Ok(match output {
             StmtOutput::Rows { columns, rows } => {
                 let field_types = columns.iter().map(|(_, field)| field.clone()).collect();
-                GeneralExecuteOutcome::Rows(
-                    QueryResult::new(Box::new(MaterializedResultSetSource::new(
-                        crate::pipeline_session::select_columns(&columns),
-                        rows,
-                    )))
-                    .with_cursor_materialization(
-                        field_types,
-                        result_authority.expect("a row result carries materialization authority"),
-                    )
-                    .with_statement_status(
-                        self.session.wire_warning_count(),
-                        WireStatus::of_session(&self.session),
-                    ),
+                let result = QueryResult::new(Box::new(MaterializedResultSetSource::new(
+                    crate::pipeline_session::select_columns(&columns),
+                    rows,
+                )))
+                .with_cursor_materialization(
+                    field_types,
+                    result_authority.expect("a row result carries materialization authority"),
                 )
+                .with_statement_status(
+                    self.session.wire_warning_count(),
+                    WireStatus::of_session(&self.session),
+                );
+                GeneralExecuteOutcome::Rows(match process_statement {
+                    Some(statement) => result.with_process_statement(statement),
+                    None => result,
+                })
             }
             StmtOutput::Affected(count) => GeneralExecuteOutcome::Write(WriteOutcome {
                 affected_rows: count,
@@ -6709,6 +6727,7 @@ impl QuerySession for ClusterServerSession {
             }
             StatementRoute::Ordinary => {}
         }
+        let process_statement = self.session.retain_process_statement(sql);
         let owned = sql.to_owned();
         let resource_group = self
             .session
@@ -6746,10 +6765,14 @@ impl QuerySession for ClusterServerSession {
                     StmtOutput::Done(_) => crate::pipeline_session::affected_rows_source(0),
                 })
             })?;
-        Ok(QueryResult::new(Box::new(source)).with_statement_status(
+        let result = QueryResult::new(Box::new(source)).with_statement_status(
             self.session.wire_warning_count(),
             WireStatus::of_session(&self.session),
-        ))
+        );
+        Ok(match process_statement {
+            Some(statement) => result.with_process_statement(statement),
+            None => result,
+        })
     }
 }
 

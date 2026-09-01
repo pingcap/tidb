@@ -306,22 +306,8 @@ fn go_fixed_two(value: f64) -> String {
     }
 }
 
-fn is_zero_i64(value: &i64) -> bool {
-    *value == 0
-}
-
 fn is_zero_f64(value: &f64) -> bool {
     *value == 0.0
-}
-
-fn go_zero_time() -> DateTime<Utc> {
-    DateTime::from_naive_utc_and_offset(
-        NaiveDate::from_ymd_opt(1, 1, 1)
-            .expect("Go zero date")
-            .and_hms_nano_opt(0, 0, 0, 0)
-            .expect("Go zero time"),
-        Utc,
-    )
 }
 
 fn serialize_go_time<S: serde::Serializer>(

@@ -27,9 +27,10 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
-use chrono::{DateTime, NaiveDate, SecondsFormat, Utc};
+use chrono::{DateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use tidb_ast::{CiString, MEDIUM_PRIORITY_VALUE};
+use tidb_dxf::schstatus::TtlTuneFactors;
 use tidb_metadef::system::MAX_USER_GLOBAL_ID;
 use tidb_model::db::DBInfo;
 use tidb_model::masking_policy::MaskingPolicyInfo;
@@ -584,41 +585,6 @@ pub const JOB_EXTRACT_FIELDS: &[&str] = &["schema_name", "table_name"];
 pub const FOREIGN_KEY_ATTRIBUTES_NIL: &[u8] = br#""fk_info":null"#;
 /// Go `checkForeignKeyAttributesZero`.
 pub const FOREIGN_KEY_ATTRIBUTES_ZERO: &[u8] = br#""fk_info":[]"#;
-
-/// Go `schstatus.TTLTuneFactors`, the exact stored shape consumed by
-/// `SetDXFScheduleTuneFactors`.
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-pub struct TtlTuneFactors {
-    /// Go `time.Duration`, encoded as integer nanoseconds and omitted at zero.
-    #[serde(rename = "ttl", default, skip_serializing_if = "is_zero_i64")]
-    pub ttl_nanoseconds: i64,
-    /// Go's embedded `time.Time` is serialized even when zero despite its
-    /// `omitempty` tag.
-    #[serde(
-        rename = "expire_time",
-        default = "go_zero_time",
-        serialize_with = "serialize_go_time",
-        deserialize_with = "deserialize_go_time"
-    )]
-    pub expire_time: DateTime<Utc>,
-    /// Resource amplification, omitted at zero.
-    #[serde(
-        rename = "amplify_factor",
-        default,
-        skip_serializing_if = "is_zero_f64"
-    )]
-    pub amplify_factor: f64,
-}
-
-impl Default for TtlTuneFactors {
-    fn default() -> Self {
-        Self {
-            ttl_nanoseconds: 0,
-            expire_time: go_zero_time(),
-            amplify_factor: 0.0,
-        }
-    }
-}
 
 /// Go protobuf `resource_manager.Consumption` as seen by `encoding/json`.
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]

@@ -2288,7 +2288,7 @@ fn memory_usage_table_rows() -> Vec<Vec<tidb_datatype::Datum>> {
     );
     vec![vec![
         Datum::new_int(
-            tidb_util::memory::effective_memory_limit()
+            tidb_util::memory::mem_total()
                 .ok()
                 .and_then(|value| i64::try_from(value).ok())
                 .unwrap_or(0),

@@ -12,41 +12,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Complete transcreation of Go `pkg/lightning/membuf` (`buffer.go`,
-//! `limiter.go`): a block-based arena over a reusable block pool, plus the
-//! quota limiter that bounds it.
-//!
-//! Go hands out `[]byte` slices that alias the arena's blocks, which Rust's
-//! borrow checker will not express — a second allocation invalidates the
-//! first borrow. The package already carries the answer: [`SliceLocation`],
-//! the compact handle it introduced so callers could stop retaining slices.
-//! Allocation therefore returns a location, and [`Buffer::slice`] /
-//! [`Buffer::slice_mut`] read it back. The bytes, block growth, limits, and
-//! accounting are identical; only the alias is expressed as a handle.
-//!
-//! Go's block cache is a buffered channel used with non-blocking send and
-//! receive — a bounded free list, modeled here as a capped queue. Go's
-//! limiter parks each waiter on its own channel and closes them in FIFO
-//! order; here each waiter parks on its own condition variable, woken in the
-//! same order, so a large waiter at the head still blocks the small ones
-//! behind it rather than being starved.
+//! Block-based arena and quota limiter from Go `pkg/lightning/membuf`.
 
+use std::backtrace::Backtrace;
 use std::collections::VecDeque;
-use std::sync::{Arc, Condvar, Mutex};
+use std::ops::{Deref, DerefMut, Range};
+use std::sync::{Arc, Condvar, Mutex, RwLock};
 
 /// Go `defaultPoolSize`: how many blocks the pool caches.
-pub const DEFAULT_POOL_SIZE: usize = 1024;
+const DEFAULT_POOL_SIZE: isize = 1024;
 /// Go `defaultBlockSize`: 1 MiB.
-pub const DEFAULT_BLOCK_SIZE: usize = 1 << 20;
+const DEFAULT_BLOCK_SIZE: isize = 1 << 20;
 
 /// Go's `smallObjOverheadBatch`: the granularity at which per-object
 /// bookkeeping is charged to the limiter.
-const SMALL_OBJ_OVERHEAD_BATCH: usize = 256 * 1024;
+const SMALL_OBJ_OVERHEAD_BATCH: isize = 256 * 1024;
 
 /// Go's `sizeOfSlice`, the cost charged for one handed-out `[]byte` header.
-const SIZE_OF_SLICE: usize = 24;
+const SIZE_OF_SLICE: isize = 3 * std::mem::size_of::<usize>() as isize;
 /// Go's `sizeOfSliceLocation`, the cost charged for one `SliceLocation`.
-const SIZE_OF_SLICE_LOCATION: usize = 12;
+const SIZE_OF_SLICE_LOCATION: isize = std::mem::size_of::<SliceLocation>() as isize;
 
 /// Go `ErrCannotAcquireMemory`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -61,40 +46,100 @@ impl std::fmt::Display for CannotAcquireMemory {
 impl std::error::Error for CannotAcquireMemory {}
 
 /// Go `GetAlignedSize`: `size` rounded up to a whole number of blocks.
-#[must_use]
-pub const fn get_aligned_size(size: u64, block_size: u64) -> u64 {
-    get_block_cnt(size, block_size) * block_size
+pub fn get_aligned_size(size: u64, block_size: u64) -> u64 {
+    get_block_cnt(size, block_size).wrapping_mul(block_size)
 }
 
 /// Go's private `getBlockCnt`: `ceil(size / block_size)`.
-#[must_use]
-pub const fn get_block_cnt(size: u64, block_size: u64) -> u64 {
-    size.div_ceil(block_size)
+const fn get_block_cnt(size: u64, block_size: u64) -> u64 {
+    size.wrapping_add(block_size).wrapping_sub(1) / block_size
 }
 
 /// Go `Allocator`.
 pub trait Allocator: Send + Sync {
     /// Go `Alloc`.
-    fn alloc(&self, n: usize) -> Vec<u8>;
+    fn alloc(&self, n: isize) -> Block;
     /// Go `Free`.
-    fn free(&self, block: Vec<u8>);
+    fn free(&self, block: Block);
+}
+
+/// Native owner for a block returned by a Go-style [`Allocator`].
+pub struct Block {
+    bytes: Option<Vec<u8>>,
+    capacity: usize,
+    release_on_drop: bool,
+}
+
+impl Block {
+    /// Wraps storage whose allocator permits automatic release.
+    pub fn from_vec(bytes: Vec<u8>) -> Self {
+        let capacity = bytes.capacity();
+        Self {
+            bytes: Some(bytes),
+            capacity,
+            release_on_drop: true,
+        }
+    }
+
+    /// Go `cap(block)` for the full block returned by an allocator.
+    pub fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    pub(crate) fn manually_managed(bytes: Vec<u8>) -> Self {
+        let capacity = bytes.len();
+        Self {
+            bytes: Some(bytes),
+            capacity,
+            release_on_drop: false,
+        }
+    }
+
+    pub(crate) fn release(mut self) {
+        self.release_on_drop = true;
+    }
+}
+
+impl Deref for Block {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        self.bytes.as_deref().expect("block storage is present")
+    }
+}
+
+impl DerefMut for Block {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.bytes.as_deref_mut().expect("block storage is present")
+    }
+}
+
+impl Drop for Block {
+    fn drop(&mut self) {
+        if !self.release_on_drop {
+            std::mem::forget(self.bytes.take());
+        }
+    }
 }
 
 /// Go's private `stdAllocator`.
-#[derive(Debug, Default)]
-pub struct StdAllocator;
+#[derive(Default)]
+struct StdAllocator;
 
 impl Allocator for StdAllocator {
-    fn alloc(&self, n: usize) -> Vec<u8> {
-        vec![0; n]
+    fn alloc(&self, n: isize) -> Block {
+        Block::from_vec(vec![
+            0;
+            usize::try_from(n).expect("negative allocation size")
+        ])
     }
 
-    fn free(&self, _block: Vec<u8>) {}
+    fn free(&self, _block: Block) {}
 }
 
 struct LimiterInner {
-    limit: i64,
-    waiters: VecDeque<(i64, Arc<Waiter>)>,
+    limit: isize,
+    waiters: VecDeque<(isize, Arc<Waiter>)>,
 }
 
 #[derive(Default)]
@@ -105,24 +150,13 @@ struct Waiter {
 
 /// Go `Limiter`: blocks an acquire once outstanding tokens reach the limit.
 pub struct Limiter {
-    init_limit: i64,
+    init_limit: isize,
     inner: Mutex<LimiterInner>,
-}
-
-impl std::fmt::Debug for Limiter {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("Limiter")
-            .field("init_limit", &self.init_limit)
-            .field("limit", &self.limit())
-            .finish()
-    }
 }
 
 impl Limiter {
     /// Go `NewLimiter`.
-    #[must_use]
-    pub fn new(limit: i64) -> Self {
+    pub fn new(limit: isize) -> Self {
         Self {
             init_limit: limit,
             inner: Mutex::new(LimiterInner {
@@ -138,9 +172,8 @@ impl Limiter {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// The tokens currently available.
-    #[must_use]
-    pub fn limit(&self) -> i64 {
+    #[cfg(test)]
+    fn limit(&self) -> isize {
         self.lock().limit
     }
 
@@ -148,12 +181,11 @@ impl Limiter {
     ///
     /// A waiter joins a queue rather than retrying, so acquires are granted in
     /// arrival order.
-    pub fn acquire(&self, n: usize) {
-        let n = n as i64;
+    pub fn acquire(&self, n: isize) {
         let waiter = {
             let mut inner = self.lock();
             if inner.limit >= n {
-                inner.limit -= n;
+                inner.limit = inner.limit.wrapping_sub(n);
                 return;
             }
             let waiter = Arc::new(Waiter::default());
@@ -177,24 +209,25 @@ impl Limiter {
     ///
     /// An existing waiter blocks this even when the tokens would fit, so a
     /// non-blocking caller cannot jump the queue.
-    pub fn try_acquire(&self, n: usize) -> bool {
+    pub fn try_acquire(&self, n: isize) -> bool {
         let mut inner = self.lock();
-        if !inner.waiters.is_empty() || inner.limit < n as i64 {
+        if !inner.waiters.is_empty() || inner.limit < n {
             return false;
         }
-        inner.limit -= n as i64;
+        inner.limit = inner.limit.wrapping_sub(n);
         true
     }
 
     /// Go `Release`: returns `n` tokens and wakes whatever waiters now fit,
     /// in order, stopping at the first that does not.
-    pub fn release(&self, n: usize) {
+    pub fn release(&self, n: isize) {
         let mut inner = self.lock();
-        inner.limit += n as i64;
+        inner.limit = inner.limit.wrapping_add(n);
         if inner.limit > self.init_limit {
             tracing::error!(
                 limit = inner.limit,
                 init_limit = self.init_limit,
+                stack = %Backtrace::force_capture(),
                 "limit overflow"
             );
         }
@@ -205,7 +238,7 @@ impl Limiter {
                 break;
             }
             let (needed, waiter) = inner.waiters.pop_front().expect("front just checked");
-            inner.limit -= needed;
+            inner.limit = inner.limit.wrapping_sub(needed);
             woken.push(waiter);
         }
         drop(inner);
@@ -221,104 +254,96 @@ impl Limiter {
     }
 }
 
-/// How a [`Pool`] is configured (Go's `Option` functions).
-pub struct PoolConfig {
-    /// Go `WithAllocator`.
-    pub allocator: Arc<dyn Allocator>,
-    /// Go `WithBlockSize`.
-    pub block_size: usize,
-    /// Go `WithBlockNum`: how many blocks the pool caches.
-    pub block_num: usize,
-    /// Go `WithPoolMemoryLimiter`.
-    pub limiter: Option<Arc<Limiter>>,
+enum PoolOptionKind {
+    BlockNum(isize),
+    BlockSize(isize),
+    Allocator(Option<Arc<dyn Allocator>>),
+    Limiter(Option<Arc<Limiter>>),
 }
 
-impl std::fmt::Debug for PoolConfig {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("PoolConfig")
-            .field("block_size", &self.block_size)
-            .field("block_num", &self.block_num)
-            .field("has_limiter", &self.limiter.is_some())
-            .finish()
-    }
+/// Native opaque representation of Go `Option`.
+pub struct PoolOption(PoolOptionKind);
+
+/// Go `WithBlockNum`.
+pub fn with_block_num(num: isize) -> PoolOption {
+    PoolOption(PoolOptionKind::BlockNum(num))
 }
 
-impl Default for PoolConfig {
-    fn default() -> Self {
-        Self {
-            allocator: Arc::new(StdAllocator),
-            block_size: DEFAULT_BLOCK_SIZE,
-            block_num: DEFAULT_POOL_SIZE,
-            limiter: None,
-        }
-    }
+/// Go `WithBlockSize`.
+pub fn with_block_size(bytes: isize) -> PoolOption {
+    PoolOption(PoolOptionKind::BlockSize(bytes))
+}
+
+/// Go `WithAllocator`; `None` represents a nil interface.
+pub fn with_allocator(allocator: Option<Arc<dyn Allocator>>) -> PoolOption {
+    PoolOption(PoolOptionKind::Allocator(allocator))
+}
+
+/// Go `WithPoolMemoryLimiter`; `None` represents a nil pointer.
+pub fn with_pool_memory_limiter(limiter: Option<Arc<Limiter>>) -> PoolOption {
+    PoolOption(PoolOptionKind::Limiter(limiter))
 }
 
 /// Go `Pool`: a fixed-size free list of equally sized blocks.
 pub struct Pool {
-    allocator: Arc<dyn Allocator>,
-    block_size: usize,
-    block_num: usize,
-    block_cache: Mutex<VecDeque<Vec<u8>>>,
+    allocator: Option<Arc<dyn Allocator>>,
+    block_size: isize,
+    block_cache: Mutex<PoolState>,
     limiter: Option<Arc<Limiter>>,
 }
 
-impl std::fmt::Debug for Pool {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("Pool")
-            .field("block_size", &self.block_size)
-            .field("cached_blocks", &self.cached_block_count())
-            .finish()
-    }
+struct PoolState {
+    blocks: VecDeque<Block>,
+    capacity: usize,
+    closed: bool,
 }
 
 impl Pool {
     /// Go `NewPool`.
-    #[must_use]
-    pub fn new(config: PoolConfig) -> Self {
+    pub fn new(options: impl IntoIterator<Item = PoolOption>) -> Self {
+        let mut allocator: Option<Arc<dyn Allocator>> = Some(Arc::new(StdAllocator));
+        let mut block_size = DEFAULT_BLOCK_SIZE;
+        let mut capacity = DEFAULT_POOL_SIZE as usize;
+        let mut limiter = None;
+        for option in options {
+            match option.0 {
+                PoolOptionKind::BlockNum(value) => {
+                    capacity = usize::try_from(value).expect("negative block count");
+                }
+                PoolOptionKind::BlockSize(value) => block_size = value,
+                PoolOptionKind::Allocator(value) => allocator = value,
+                PoolOptionKind::Limiter(value) => limiter = value,
+            }
+        }
         Self {
-            allocator: config.allocator,
-            block_size: config.block_size,
-            block_num: config.block_num,
-            block_cache: Mutex::new(VecDeque::new()),
-            limiter: config.limiter,
+            allocator,
+            block_size,
+            block_cache: Mutex::new(PoolState {
+                blocks: VecDeque::new(),
+                capacity,
+                closed: false,
+            }),
+            limiter,
         }
     }
 
-    /// A pool with every default (Go `NewPool()` with no options).
-    #[must_use]
-    pub fn with_defaults() -> Self {
-        Self::new(PoolConfig::default())
-    }
-
-    /// The pool's block size.
-    #[must_use]
-    pub const fn block_size(&self) -> usize {
-        self.block_size
-    }
-
-    fn cache(&self) -> std::sync::MutexGuard<'_, VecDeque<Vec<u8>>> {
+    fn cache(&self) -> std::sync::MutexGuard<'_, PoolState> {
         self.block_cache
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// How many blocks are currently cached.
-    #[must_use]
-    pub fn cached_block_count(&self) -> usize {
-        self.cache().len()
+    fn cached_block_count(&self) -> usize {
+        self.cache().blocks.len()
     }
 
     /// Go `TotalSize`: the memory held by the pool itself, excluding buffers.
-    #[must_use]
     pub fn total_size(&self) -> i64 {
-        (self.cached_block_count() * self.block_size) as i64
+        (self.cached_block_count() as isize).wrapping_mul(self.block_size) as i64
     }
 
     /// Go's private `acquire`: charge the limiter, then take a block.
-    fn acquire_block(&self) -> Vec<u8> {
+    fn acquire_block(&self) -> Block {
         if let Some(limiter) = &self.limiter {
             limiter.acquire(self.block_size);
         }
@@ -326,23 +351,36 @@ impl Pool {
     }
 
     /// Go's private `takeBlock`: reuse a cached block, else allocate.
-    fn take_block(&self) -> Vec<u8> {
-        if let Some(block) = self.cache().pop_front() {
-            return block;
+    fn take_block(&self) -> Block {
+        {
+            let mut state = self.cache();
+            if state.closed {
+                return Block::from_vec(Vec::new());
+            }
+            if let Some(block) = state.blocks.pop_front() {
+                return block;
+            }
         }
-        self.allocator.alloc(self.block_size)
+        self.allocator
+            .as_ref()
+            .expect("nil membuf allocator")
+            .alloc(self.block_size)
     }
 
     /// Go's private `release`: cache the block if there is room, else free it,
     /// then return its quota.
-    fn release_block(&self, block: Vec<u8>) {
+    fn release_block(&self, block: Block) {
         {
-            let mut cache = self.cache();
-            if cache.len() < self.block_num {
-                cache.push_back(block);
+            let mut state = self.cache();
+            assert!(!state.closed, "send on closed membuf block cache");
+            if state.blocks.len() < state.capacity {
+                state.blocks.push_back(block);
             } else {
-                drop(cache);
-                self.allocator.free(block);
+                drop(state);
+                self.allocator
+                    .as_ref()
+                    .expect("nil membuf allocator")
+                    .free(block);
             }
         }
         if let Some(limiter) = &self.limiter {
@@ -352,18 +390,41 @@ impl Pool {
 
     /// Go `Destroy`: frees every cached block.
     pub fn destroy(&self) {
-        let blocks: Vec<Vec<u8>> = self.cache().drain(..).collect();
+        let blocks: Vec<Block> = {
+            let mut state = self.cache();
+            assert!(!state.closed, "close of closed membuf block cache");
+            state.closed = true;
+            state.blocks.drain(..).collect()
+        };
         for block in blocks {
-            self.allocator.free(block);
+            self.allocator
+                .as_ref()
+                .expect("nil membuf allocator")
+                .free(block);
         }
     }
+
+    /// Go `Pool.NewBuffer`.
+    pub fn new_buffer(self: &Arc<Self>, options: impl IntoIterator<Item = BufferOption>) -> Buffer {
+        Buffer::new(Arc::clone(self), options)
+    }
+}
+
+/// Native opaque representation of Go `BufferOption`.
+pub struct BufferOption {
+    limit: u64,
+}
+
+/// Go `WithBufferMemoryLimit`.
+pub fn with_buffer_memory_limit(limit: u64) -> BufferOption {
+    BufferOption { limit }
 }
 
 /// Go `SliceLocation`: where an allocation lives inside its buffer.
 ///
 /// Go keeps this smaller than a slice and free of pointers so a large
 /// population of them stays cheap; the same holds here.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub struct SliceLocation {
     buf_idx: i32,
     offset: i32,
@@ -371,94 +432,211 @@ pub struct SliceLocation {
     pub length: i32,
 }
 
-/// What one allocation produced.
+#[derive(Clone)]
+enum BytesStorage {
+    Pooled {
+        block: Arc<RwLock<Block>>,
+        offset: usize,
+        length: usize,
+    },
+    Standalone(Arc<RwLock<Block>>),
+}
+
+/// Native slice header for the `[]byte` values returned by Go.
 ///
-/// Go's `AllocBytes` answers a slice that is either arena-backed or, when the
-/// request exceeds a block, a standalone heap slice outside the arena and
-/// outside the limiter. That split is explicit here.
-#[derive(Debug, PartialEq, Eq)]
-pub enum Allocation {
-    /// Arena-backed; read it through [`Buffer::slice`].
-    Pooled(SliceLocation),
-    /// Larger than one block, so allocated on its own.
-    Standalone(Vec<u8>),
+/// Pooled values alias their buffer and therefore have the same contract as
+/// Go: all aliases must be released before the buffer is reset or destroyed.
+#[derive(Clone)]
+pub struct Bytes {
+    storage: BytesStorage,
+}
+
+impl Bytes {
+    fn pooled(block: Arc<RwLock<Block>>, offset: usize, length: usize) -> Self {
+        Self {
+            storage: BytesStorage::Pooled {
+                block,
+                offset,
+                length,
+            },
+        }
+    }
+
+    fn standalone(length: usize) -> Self {
+        Self {
+            storage: BytesStorage::Standalone(Arc::new(RwLock::new(Block::from_vec(vec![
+                0;
+                length
+            ])))),
+        }
+    }
+
+    /// Go `len(bytes)`.
+    pub fn len(&self) -> usize {
+        match &self.storage {
+            BytesStorage::Pooled { length, .. } => *length,
+            BytesStorage::Standalone(bytes) => bytes
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .len(),
+        }
+    }
+
+    /// Go `cap(bytes)`; pooled allocations use a full slice expression.
+    pub fn capacity(&self) -> usize {
+        self.len()
+    }
+
+    /// Borrows the slice's bytes.
+    pub fn as_slice(&self) -> BytesRef<'_> {
+        match &self.storage {
+            BytesStorage::Pooled {
+                block,
+                offset,
+                length,
+            } => BytesRef {
+                guard: block
+                    .read()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()),
+                range: *offset..*offset + *length,
+            },
+            BytesStorage::Standalone(bytes) => {
+                let guard = bytes
+                    .read()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let length = guard.len();
+                BytesRef {
+                    guard,
+                    range: 0..length,
+                }
+            }
+        }
+    }
+
+    /// Mutably borrows the slice's bytes.
+    pub fn as_mut_slice(&self) -> BytesMut<'_> {
+        match &self.storage {
+            BytesStorage::Pooled {
+                block,
+                offset,
+                length,
+            } => BytesMut {
+                guard: block
+                    .write()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()),
+                range: *offset..*offset + *length,
+            },
+            BytesStorage::Standalone(bytes) => {
+                let guard = bytes
+                    .write()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let length = guard.len();
+                BytesMut {
+                    guard,
+                    range: 0..length,
+                }
+            }
+        }
+    }
+}
+
+/// Read guard for a native Go-style byte slice.
+pub struct BytesRef<'a> {
+    guard: std::sync::RwLockReadGuard<'a, Block>,
+    range: Range<usize>,
+}
+
+impl Deref for BytesRef<'_> {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        &self.guard[self.range.clone()]
+    }
+}
+
+/// Write guard for a native Go-style byte slice.
+pub struct BytesMut<'a> {
+    guard: std::sync::RwLockWriteGuard<'a, Block>,
+    range: Range<usize>,
+}
+
+impl Deref for BytesMut<'_> {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        &self.guard[self.range.clone()]
+    }
+}
+
+impl DerefMut for BytesMut<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.guard[self.range.clone()]
+    }
 }
 
 /// Go `Buffer`: an arena that draws fixed-size blocks from a [`Pool`].
 pub struct Buffer {
     pool: Arc<Pool>,
-    blocks: Vec<Vec<u8>>,
-    /// Go `blockCntLimit`, with `None` for Go's -1 (unlimited).
-    block_cnt_limit: Option<usize>,
-    /// Go `curBlockIdx`, with `None` for Go's -1 (no block yet).
-    cur_block_idx: Option<usize>,
-    cur_idx: usize,
-    small_obj_overhead: usize,
-    small_obj_overhead_cache: usize,
-}
-
-impl std::fmt::Debug for Buffer {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("Buffer")
-            .field("blocks", &self.blocks.len())
-            .field("block_cnt_limit", &self.block_cnt_limit)
-            .field("cur_block_idx", &self.cur_block_idx)
-            .field("cur_idx", &self.cur_idx)
-            .finish()
-    }
+    blocks: Vec<Arc<RwLock<Block>>>,
+    block_cnt_limit: isize,
+    cur_block_idx: isize,
+    cur_idx: isize,
+    small_obj_overhead: isize,
+    small_obj_overhead_cache: isize,
 }
 
 impl Buffer {
-    /// Go `Pool.NewBuffer` with no options.
-    #[must_use]
-    pub fn new(pool: Arc<Pool>) -> Self {
-        Self {
+    fn new(pool: Arc<Pool>, options: impl IntoIterator<Item = BufferOption>) -> Self {
+        let mut buffer = Self {
             pool,
-            blocks: Vec::new(),
-            block_cnt_limit: None,
-            cur_block_idx: None,
+            blocks: Vec::with_capacity(128),
+            block_cnt_limit: -1,
+            cur_block_idx: -1,
             cur_idx: 0,
             small_obj_overhead: 0,
             small_obj_overhead_cache: 0,
+        };
+        for option in options {
+            let block_cnt_limit =
+                get_block_cnt(option.limit, buffer.pool.block_size as u64) as isize;
+            buffer.block_cnt_limit = block_cnt_limit;
+            buffer.blocks = Vec::with_capacity(
+                usize::try_from(block_cnt_limit).expect("negative buffer block limit"),
+            );
         }
-    }
-
-    /// Go `Pool.NewBuffer(WithBufferMemoryLimit(limit))`.
-    ///
-    /// The limit is approximate: memory comes in blocks, so the effective cap
-    /// is `block_size * ceil(limit / block_size)`.
-    #[must_use]
-    pub fn with_memory_limit(pool: Arc<Pool>, limit: u64) -> Self {
-        let block_cnt_limit = get_block_cnt(limit, pool.block_size as u64) as usize;
-        let mut buffer = Self::new(pool);
-        buffer.block_cnt_limit = Some(block_cnt_limit);
-        buffer.blocks = Vec::with_capacity(block_cnt_limit);
         buffer
     }
 
     /// Go `TotalSize`.
-    #[must_use]
     pub fn total_size(&self) -> i64 {
-        (self.blocks.len() * self.pool.block_size) as i64
+        (self.blocks.len() as isize).wrapping_mul(self.pool.block_size) as i64
     }
 
-    fn cur_block_len(&self) -> usize {
-        self.cur_block_idx
-            .map_or(0, |index| self.blocks[index].len())
+    fn cur_block_len(&self) -> isize {
+        if self.cur_block_idx < 0 {
+            return 0;
+        }
+        self.blocks[self.cur_block_idx as usize]
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .len() as isize
     }
 
     /// Go's private `recordSmallObjOverhead`.
-    fn record_small_obj_overhead(&mut self, n: usize) {
+    fn record_small_obj_overhead(&mut self, n: isize) {
         let Some(limiter) = self.pool.limiter.as_ref() else {
             return;
         };
         if n > self.small_obj_overhead_cache {
             limiter.acquire(SMALL_OBJ_OVERHEAD_BATCH);
-            self.small_obj_overhead_cache += SMALL_OBJ_OVERHEAD_BATCH;
-            self.small_obj_overhead += SMALL_OBJ_OVERHEAD_BATCH;
+            self.small_obj_overhead_cache = self
+                .small_obj_overhead_cache
+                .wrapping_add(SMALL_OBJ_OVERHEAD_BATCH);
+            self.small_obj_overhead = self
+                .small_obj_overhead
+                .wrapping_add(SMALL_OBJ_OVERHEAD_BATCH);
         }
-        self.small_obj_overhead_cache -= n;
+        self.small_obj_overhead_cache = self.small_obj_overhead_cache.wrapping_sub(n);
     }
 
     /// Go's private `releaseSmallObjOverhead`.
@@ -476,7 +654,7 @@ impl Buffer {
             self.release_small_obj_overhead();
         }
         if !self.blocks.is_empty() {
-            self.cur_block_idx = Some(0);
+            self.cur_block_idx = 0;
             self.cur_idx = 0;
         }
     }
@@ -487,29 +665,30 @@ impl Buffer {
             self.release_small_obj_overhead();
         }
         for block in std::mem::take(&mut self.blocks) {
+            let block = Arc::try_unwrap(block)
+                .unwrap_or_else(|_| panic!("membuf aliases must be released before Destroy"))
+                .into_inner()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             self.pool.release_block(block);
         }
-        self.cur_block_idx = None;
+        self.cur_block_idx = -1;
         self.cur_idx = 0;
     }
 
     /// Go's private `switchToNextBlock`: reuse an already-held block.
     fn switch_to_next_block(&mut self) -> bool {
-        let next = match self.cur_block_idx {
-            Some(index) => index + 1,
-            None => 0,
-        };
-        if next < self.blocks.len() {
-            self.cur_block_idx = Some(next);
+        let next = self.cur_block_idx.wrapping_add(1);
+        if next < self.blocks.len() as isize {
+            self.cur_block_idx = next;
             self.cur_idx = 0;
             return true;
         }
         false
     }
 
-    fn append_block(&mut self, block: Vec<u8>) {
-        self.blocks.push(block);
-        self.cur_block_idx = Some(self.blocks.len() - 1);
+    fn append_block(&mut self, block: Block) {
+        self.blocks.push(Arc::new(RwLock::new(block)));
+        self.cur_block_idx = self.blocks.len() as isize - 1;
         self.cur_idx = 0;
     }
 
@@ -533,57 +712,61 @@ impl Buffer {
 
     /// Whether the block-count limit forbids starting another block.
     fn block_limit_reached(&self) -> bool {
-        let Some(limit) = self.block_cnt_limit else {
-            return false;
-        };
-        let next_index = match self.cur_block_idx {
-            Some(index) => index + 1,
-            None => 0,
-        };
-        next_index >= limit
+        self.block_cnt_limit >= 0 && self.cur_block_idx.wrapping_add(1) >= self.block_cnt_limit
     }
 
     /// Go's private `allocBytesWithSliceLocation`.
-    fn alloc_location(&mut self, n: usize) -> Option<SliceLocation> {
+    fn alloc_bytes_with_location(&mut self, n: isize) -> (Option<Bytes>, SliceLocation) {
         if n > self.pool.block_size {
-            return None;
+            return (None, SliceLocation::default());
         }
-        if self.cur_idx + n > self.cur_block_len() {
+        if self.cur_idx.wrapping_add(n) > self.cur_block_len() {
             if self.block_limit_reached() {
-                return None;
+                return (None, SliceLocation::default());
             }
             self.add_block();
         }
         let location = SliceLocation {
-            buf_idx: self.cur_block_idx.expect("a block was just ensured") as i32,
+            buf_idx: self.cur_block_idx as i32,
             offset: self.cur_idx as i32,
             length: n as i32,
         };
-        self.cur_idx += n;
-        Some(location)
+        self.cur_idx = self.cur_idx.wrapping_add(n);
+        let bytes = if self.cur_block_idx < 0 {
+            if n == 0 {
+                None
+            } else {
+                panic!("slice bounds out of range")
+            }
+        } else {
+            Some(self.get_slice(&location))
+        };
+        (bytes, location)
     }
 
     /// Go `AllocBytes`. A request larger than one block is served on its own,
     /// outside the arena and outside the limiter.
-    pub fn alloc_bytes(&mut self, n: usize) -> Option<Allocation> {
+    pub fn alloc_bytes(&mut self, n: isize) -> Option<Bytes> {
         if n > self.pool.block_size {
-            return Some(Allocation::Standalone(vec![0; n]));
+            return Some(Bytes::standalone(
+                usize::try_from(n).expect("negative allocation size"),
+            ));
         }
-        let location = self.alloc_location(n)?;
-        if self.pool.limiter.is_some() {
+        let (bytes, _) = self.alloc_bytes_with_location(n);
+        if bytes.is_some() && self.pool.limiter.is_some() {
             self.record_small_obj_overhead(SIZE_OF_SLICE);
         }
-        Some(Allocation::Pooled(location))
+        bytes
     }
 
     /// Go `AllocBytesWithSliceLocation`: always arena-backed, so an
     /// over-block request simply fails.
-    pub fn alloc_bytes_with_slice_location(&mut self, n: usize) -> Option<SliceLocation> {
-        let location = self.alloc_location(n)?;
-        if self.pool.limiter.is_some() {
+    pub fn alloc_bytes_with_slice_location(&mut self, n: isize) -> (Option<Bytes>, SliceLocation) {
+        let (bytes, location) = self.alloc_bytes_with_location(n);
+        if bytes.is_some() && self.pool.limiter.is_some() {
             self.record_small_obj_overhead(SIZE_OF_SLICE_LOCATION);
         }
-        Some(location)
+        (bytes, location)
     }
 
     /// Go `TryAllocBytes`: never blocks on the limiter.
@@ -591,27 +774,26 @@ impl Buffer {
     /// On failure the buffer is unchanged, which is why the quota for both a
     /// new block and the bookkeeping batch is reserved in one attempt before
     /// anything is mutated.
-    pub fn try_alloc_bytes(&mut self, n: usize) -> Result<Option<Allocation>, CannotAcquireMemory> {
+    pub fn try_alloc_bytes(&mut self, n: isize) -> Result<Option<Bytes>, CannotAcquireMemory> {
         if n > self.pool.block_size {
-            return Ok(Some(Allocation::Standalone(vec![0; n])));
+            return Ok(Some(Bytes::standalone(
+                usize::try_from(n).expect("negative allocation size"),
+            )));
         }
 
-        let need_block = self.cur_idx + n > self.cur_block_len();
+        let need_block = self.cur_idx.wrapping_add(n) > self.cur_block_len();
         if need_block && self.block_limit_reached() {
             return Ok(None);
         }
 
         if let Some(limiter) = self.pool.limiter.clone() {
-            let mut need_bytes = 0;
-            let holds_spare_block = self
-                .cur_block_idx
-                .is_some_and(|index| index < self.blocks.len().saturating_sub(1));
-            if need_block && !holds_spare_block {
-                need_bytes += self.pool.block_size;
+            let mut need_bytes: isize = 0;
+            if need_block && self.cur_block_idx >= self.blocks.len() as isize - 1 {
+                need_bytes = need_bytes.wrapping_add(self.pool.block_size);
             }
             let needs_overhead_batch = SIZE_OF_SLICE > self.small_obj_overhead_cache;
             if needs_overhead_batch {
-                need_bytes += SMALL_OBJ_OVERHEAD_BATCH;
+                need_bytes = need_bytes.wrapping_add(SMALL_OBJ_OVERHEAD_BATCH);
             }
             if need_bytes > 0 && !limiter.try_acquire(need_bytes) {
                 return Err(CannotAcquireMemory);
@@ -621,345 +803,315 @@ impl Buffer {
                 self.add_block_with_reserved_quota();
             }
             if needs_overhead_batch {
-                self.small_obj_overhead_cache += SMALL_OBJ_OVERHEAD_BATCH;
-                self.small_obj_overhead += SMALL_OBJ_OVERHEAD_BATCH;
+                self.small_obj_overhead_cache = self
+                    .small_obj_overhead_cache
+                    .wrapping_add(SMALL_OBJ_OVERHEAD_BATCH);
+                self.small_obj_overhead = self
+                    .small_obj_overhead
+                    .wrapping_add(SMALL_OBJ_OVERHEAD_BATCH);
             }
-            self.small_obj_overhead_cache -= SIZE_OF_SLICE;
+            self.small_obj_overhead_cache =
+                self.small_obj_overhead_cache.wrapping_sub(SIZE_OF_SLICE);
         } else if need_block {
             self.add_block();
         }
 
         let location = SliceLocation {
-            buf_idx: self.cur_block_idx.expect("a block was just ensured") as i32,
+            buf_idx: self.cur_block_idx as i32,
             offset: self.cur_idx as i32,
             length: n as i32,
         };
-        self.cur_idx += n;
-        Ok(Some(Allocation::Pooled(location)))
+        self.cur_idx = self.cur_idx.wrapping_add(n);
+        if self.cur_block_idx < 0 {
+            if n == 0 {
+                Ok(None)
+            } else {
+                panic!("slice bounds out of range")
+            }
+        } else {
+            Ok(Some(self.get_slice(&location)))
+        }
     }
 
     /// Go `GetSlice`.
-    #[must_use]
-    pub fn slice(&self, location: &SliceLocation) -> &[u8] {
-        let start = location.offset as usize;
-        let end = start + location.length as usize;
-        &self.blocks[location.buf_idx as usize][start..end]
-    }
-
-    /// The mutable form of [`Buffer::slice`], which is how a caller fills an
-    /// allocation Go would have handed back directly.
-    pub fn slice_mut(&mut self, location: &SliceLocation) -> &mut [u8] {
-        let start = location.offset as usize;
-        let end = start + location.length as usize;
-        &mut self.blocks[location.buf_idx as usize][start..end]
+    pub fn get_slice(&self, location: &SliceLocation) -> Bytes {
+        let start = usize::try_from(location.offset).expect("negative slice offset");
+        let end = usize::try_from(location.offset.wrapping_add(location.length))
+            .expect("negative slice end");
+        let block = Arc::clone(&self.blocks[location.buf_idx as usize]);
+        let length = block
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())[start..end]
+            .len();
+        Bytes::pooled(block, start, length)
     }
 
     /// Go `AddBytes`.
-    pub fn add_bytes(&mut self, bytes: &[u8]) -> Option<Allocation> {
-        match self.alloc_bytes(bytes.len())? {
-            Allocation::Pooled(location) => {
-                self.slice_mut(&location).copy_from_slice(bytes);
-                Some(Allocation::Pooled(location))
-            }
-            Allocation::Standalone(mut owned) => {
-                owned.copy_from_slice(bytes);
-                Some(Allocation::Standalone(owned))
-            }
-        }
+    pub fn add_bytes(&mut self, bytes: &[u8]) -> Option<Bytes> {
+        let output = self.alloc_bytes(bytes.len() as isize)?;
+        output.as_mut_slice().copy_from_slice(bytes);
+        Some(output)
     }
 
     /// Go `TryAddBytes`.
-    pub fn try_add_bytes(
-        &mut self,
-        bytes: &[u8],
-    ) -> Result<Option<Allocation>, CannotAcquireMemory> {
-        match self.try_alloc_bytes(bytes.len())? {
-            None => Ok(None),
-            Some(Allocation::Pooled(location)) => {
-                self.slice_mut(&location).copy_from_slice(bytes);
-                Ok(Some(Allocation::Pooled(location)))
-            }
-            Some(Allocation::Standalone(mut owned)) => {
-                owned.copy_from_slice(bytes);
-                Ok(Some(Allocation::Standalone(owned)))
-            }
-        }
+    pub fn try_add_bytes(&mut self, bytes: &[u8]) -> Result<Option<Bytes>, CannotAcquireMemory> {
+        let Some(output) = self.try_alloc_bytes(bytes.len() as isize)? else {
+            return Ok(None);
+        };
+        output.as_mut_slice().copy_from_slice(bytes);
+        Ok(Some(output))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicI64, Ordering};
+    use std::sync::atomic::{AtomicIsize, AtomicUsize, Ordering};
+    use std::sync::mpsc;
+    use std::time::Duration;
 
-    fn pooled(allocation: Option<Allocation>) -> SliceLocation {
-        match allocation {
-            Some(Allocation::Pooled(location)) => location,
-            other => panic!("expected a pooled allocation, got {other:?}"),
+    #[derive(Default)]
+    struct TestAllocator {
+        allocs: AtomicUsize,
+        frees: AtomicUsize,
+    }
+
+    impl Allocator for TestAllocator {
+        fn alloc(&self, n: isize) -> Block {
+            self.allocs.fetch_add(1, Ordering::SeqCst);
+            Block::from_vec(vec![
+                0;
+                usize::try_from(n).expect("negative allocation size")
+            ])
+        }
+
+        fn free(&self, _block: Block) {
+            self.frees.fetch_add(1, Ordering::SeqCst);
         }
     }
 
-    // Go `TestGetAlignedSizeGetBlockCnt`.
+    fn bytes(bytes: &Bytes) -> BytesRef<'_> {
+        bytes.as_slice()
+    }
+
+    fn bytes_mut(bytes: &Bytes) -> BytesMut<'_> {
+        bytes.as_mut_slice()
+    }
+
     #[test]
-    fn aligned_size_and_block_count() {
+    fn buffer_pool() {
+        let allocator = Arc::new(TestAllocator::default());
+        let pool = Arc::new(Pool::new([
+            with_block_num(2),
+            with_allocator(Some(allocator.clone())),
+            with_block_size(1024),
+        ]));
+
+        let mut buffer = pool.new_buffer([]);
+        assert_eq!(buffer.alloc_bytes(256).unwrap().len(), 256);
+        assert_eq!(allocator.allocs.load(Ordering::SeqCst), 1);
+        assert_eq!(buffer.alloc_bytes(512).unwrap().len(), 512);
+        assert_eq!(allocator.allocs.load(Ordering::SeqCst), 1);
+        assert_eq!(buffer.alloc_bytes(257).unwrap().len(), 257);
+        assert_eq!(allocator.allocs.load(Ordering::SeqCst), 2);
+        assert_eq!(buffer.alloc_bytes(767).unwrap().len(), 767);
+        assert_eq!(allocator.allocs.load(Ordering::SeqCst), 2);
+
+        assert_eq!(buffer.alloc_bytes(1025).unwrap().len(), 1025);
+        assert_eq!(allocator.allocs.load(Ordering::SeqCst), 2);
+
+        assert_eq!(allocator.frees.load(Ordering::SeqCst), 0);
+        buffer.destroy();
+        assert_eq!(allocator.frees.load(Ordering::SeqCst), 0);
+
+        let mut buffer = pool.new_buffer([]);
+        for _ in 0..6 {
+            let _ = buffer.alloc_bytes(512);
+        }
+        buffer.destroy();
+        assert_eq!(allocator.allocs.load(Ordering::SeqCst), 3);
+        assert_eq!(allocator.frees.load(Ordering::SeqCst), 1);
+        pool.destroy();
+    }
+
+    #[test]
+    fn pool_mem_limit() {
+        let limiter = Arc::new(Limiter::new(
+            (2 * 1024 * 1024 + 2 * SMALL_OBJ_OVERHEAD_BATCH) as isize,
+        ));
+        let pool = Arc::new(Pool::new([
+            with_block_size(2 * 1024 * 1024),
+            with_pool_memory_limiter(Some(limiter)),
+        ]));
+        let mut buffer = pool.new_buffer([]);
+        let _ = buffer.alloc_bytes(1024 * 1024);
+        let _ = buffer.alloc_bytes(1024 * 1024);
+
+        let (done_tx, done_rx) = mpsc::sync_channel(1);
+        let thread_pool = Arc::clone(&pool);
+        let waiter = std::thread::spawn(move || {
+            let mut second = thread_pool.new_buffer([]);
+            let _ = second.alloc_bytes(1024 * 1024);
+            second.destroy();
+            done_tx.send(()).unwrap();
+        });
+
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(done_rx.try_recv().is_err());
+        buffer.reset();
+        let _ = buffer.alloc_bytes(1024 * 1024);
+        let _ = buffer.alloc_bytes(1024 * 1024);
+        assert!(done_rx.try_recv().is_err());
+        buffer.destroy();
+        done_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        waiter.join().unwrap();
+
+        let _ = buffer.alloc_bytes(2 * 1024 * 1024);
+        buffer.destroy();
+        pool.destroy();
+
+        let limiter = Arc::new(Limiter::new((1024 + SMALL_OBJ_OVERHEAD_BATCH) as isize));
+        let pool = Arc::new(Pool::new([
+            with_block_num(0),
+            with_block_size(1024),
+            with_pool_memory_limiter(Some(limiter)),
+        ]));
+        let mut first = pool.new_buffer([]);
+        assert!(first.try_add_bytes(b"a").unwrap().is_some());
+        let mut second = pool.new_buffer([]);
+        assert!(matches!(
+            second.try_add_bytes(b"b"),
+            Err(CannotAcquireMemory)
+        ));
+        first.destroy();
+        assert!(second.try_add_bytes(b"b").unwrap().is_some());
+        second.destroy();
+        pool.destroy();
+
+        let limiter = Arc::new(Limiter::new(1024));
+        let pool = Arc::new(Pool::new([
+            with_block_num(0),
+            with_block_size(1024),
+            with_pool_memory_limiter(Some(Arc::clone(&limiter))),
+        ]));
+        let mut buffer = pool.new_buffer([]);
+        assert!(matches!(
+            buffer.try_alloc_bytes(1),
+            Err(CannotAcquireMemory)
+        ));
+        assert_eq!(limiter.limit(), 1024);
+        assert!(buffer.blocks.is_empty());
+        assert_eq!(buffer.cur_block_idx, -1);
+        assert_eq!(buffer.cur_idx, 0);
+        assert_eq!(buffer.small_obj_overhead, 0);
+        assert_eq!(buffer.small_obj_overhead_cache, 0);
+        pool.destroy();
+    }
+
+    #[test]
+    fn buffer_isolation() {
+        let pool = Arc::new(Pool::new([with_block_size(1024)]));
+        let mut buffer = pool.new_buffer([]);
+
+        let first = buffer.alloc_bytes(16).unwrap();
+        let second = buffer.alloc_bytes(16).unwrap();
+        assert_eq!(first.len(), first.capacity());
+        assert_eq!(second.len(), second.capacity());
+
+        getrandom::fill(&mut bytes_mut(&second)).unwrap();
+        let original_second = bytes(&second).to_vec();
+        let mut appended_first = bytes(&first).to_vec();
+        appended_first.extend_from_slice(&[0, 1, 2, 3]);
+        assert_eq!(original_second.as_slice(), &*bytes(&second));
+        assert_ne!(&*bytes(&second), appended_first.as_slice());
+        drop(first);
+        drop(second);
+        buffer.destroy();
+        pool.destroy();
+    }
+
+    #[test]
+    fn buffer_mem_limit() {
+        let pool = Arc::new(Pool::new([with_block_size(10)]));
+        let mut buffer = pool.new_buffer([with_buffer_memory_limit(5)]);
+
+        assert!(buffer.alloc_bytes_with_slice_location(9).0.is_some());
+        assert!(buffer.alloc_bytes_with_slice_location(3).0.is_none());
+
+        buffer.destroy();
+        assert!(buffer.alloc_bytes_with_slice_location(3).0.is_some());
+
+        let mut buffer = pool.new_buffer([with_buffer_memory_limit(20)]);
+        assert!(buffer.alloc_bytes_with_slice_location(9).0.is_some());
+        assert!(buffer.alloc_bytes_with_slice_location(9).0.is_some());
+        assert!(buffer.alloc_bytes_with_slice_location(2).0.is_none());
+
+        buffer.reset();
+        assert!(buffer.alloc_bytes_with_slice_location(9).0.is_some());
+        assert!(buffer.alloc_bytes_with_slice_location(9).0.is_some());
+        assert!(buffer.alloc_bytes_with_slice_location(2).0.is_none());
+        buffer.destroy();
+        pool.destroy();
+    }
+
+    #[test]
+    fn get_aligned_size_get_block_count() {
         assert_eq!(get_block_cnt(10, 16), 1);
         assert_eq!(get_block_cnt(17, 16), 2);
         assert_eq!(get_aligned_size(10, 16), 16);
         assert_eq!(get_aligned_size(17, 16), 32);
     }
 
-    // Go `TestLimiter`: concurrent acquire/release never exceeds the limit,
-    // and every token comes back.
     #[test]
-    fn limiter_never_exceeds_its_limit() {
+    fn limiter() {
         let limit = 20;
+        let current = Arc::new(AtomicIsize::new(0));
         let limiter = Arc::new(Limiter::new(limit));
-        let outstanding = Arc::new(AtomicI64::new(0));
 
         std::thread::scope(|scope| {
             for _ in 0..100 {
+                let current = Arc::clone(&current);
                 let limiter = Arc::clone(&limiter);
-                let outstanding = Arc::clone(&outstanding);
                 scope.spawn(move || {
                     limiter.acquire(1);
-                    let held = outstanding.fetch_add(1, Ordering::SeqCst) + 1;
-                    assert!(held <= limit, "{held} outstanding exceeds {limit}");
-                    outstanding.fetch_sub(1, Ordering::SeqCst);
+                    let value = current.fetch_add(1, Ordering::SeqCst) + 1;
+                    assert!(value <= limit);
+                    current.fetch_sub(1, Ordering::SeqCst);
                     limiter.release(1);
                 });
             }
         });
-
         assert_eq!(limiter.limit(), limit);
     }
 
-    // Go `TestWaitUpMultipleCaller`: one release wakes every waiter that now
-    // fits, and the limit reflects all of them.
     #[test]
-    fn releasing_wakes_multiple_waiters() {
+    fn wait_up_multiple_caller() {
         let limit = 20;
         let limiter = Arc::new(Limiter::new(limit));
         limiter.acquire(18);
 
-        let finished = Arc::new(AtomicI64::new(0));
+        let (started_tx, started_rx) = mpsc::sync_channel(3);
+        let (finished_tx, finished_rx) = mpsc::sync_channel(3);
         std::thread::scope(|scope| {
-            let mut handles = Vec::new();
             for _ in 0..3 {
                 let limiter = Arc::clone(&limiter);
-                let finished = Arc::clone(&finished);
-                handles.push(scope.spawn(move || {
+                let started_tx = started_tx.clone();
+                let finished_tx = finished_tx.clone();
+                scope.spawn(move || {
+                    started_tx.send(()).unwrap();
                     limiter.acquire(3);
-                    finished.fetch_add(1, Ordering::SeqCst);
-                }));
+                    finished_tx.send(()).unwrap();
+                });
             }
-
-            // None can proceed: only 2 tokens are free and each wants 3.
-            std::thread::sleep(std::time::Duration::from_millis(50));
-            assert_eq!(finished.load(Ordering::SeqCst), 0);
-
+            for _ in 0..3 {
+                started_rx.recv().unwrap();
+            }
+            assert!(finished_rx.try_recv().is_err());
             limiter.release(18);
-            for handle in handles {
-                handle.join().expect("waiter finished");
+            for _ in 0..3 {
+                finished_rx.recv().unwrap();
             }
         });
-
         assert_eq!(limiter.limit(), limit - 3 * 3);
-    }
-
-    // A queued waiter blocks a later non-blocking caller even when the tokens
-    // would fit, so try_acquire cannot jump the queue.
-    #[test]
-    fn try_acquire_yields_to_waiters() {
-        let limiter = Limiter::new(10);
-        assert!(limiter.try_acquire(10));
-        assert!(!limiter.try_acquire(1));
-
-        // With a waiter queued, even a fitting request is refused.
-        let limiter = Arc::new(Limiter::new(10));
-        limiter.acquire(10);
-        let waiting = Arc::clone(&limiter);
-        std::thread::scope(|scope| {
-            let handle = scope.spawn(move || waiting.acquire(6));
-            std::thread::sleep(std::time::Duration::from_millis(50));
-            limiter.release(4);
-            assert!(!limiter.try_acquire(1));
-            limiter.release(6);
-            handle.join().expect("waiter finished");
-        });
-    }
-
-    // Go `TestBufferPool`: blocks come back to the pool and are reused.
-    #[test]
-    fn buffers_return_their_blocks_to_the_pool() {
-        let pool = Arc::new(Pool::new(PoolConfig {
-            block_size: 1024,
-            block_num: 2,
-            ..PoolConfig::default()
-        }));
-        assert_eq!(pool.total_size(), 0);
-
-        let mut buffer = Buffer::new(Arc::clone(&pool));
-        let first = pooled(buffer.alloc_bytes(16));
-        buffer.slice_mut(&first).copy_from_slice(&[7; 16]);
-        assert_eq!(buffer.slice(&first), &[7; 16]);
-        assert_eq!(buffer.total_size(), 1024);
-
-        buffer.destroy();
-        // The block is now cached rather than freed.
-        assert_eq!(pool.cached_block_count(), 1);
-        assert_eq!(pool.total_size(), 1024);
-
-        // A fresh buffer reuses it instead of allocating.
-        let mut buffer = Buffer::new(Arc::clone(&pool));
-        let _ = buffer.alloc_bytes(16);
-        assert_eq!(pool.cached_block_count(), 0);
-        buffer.destroy();
-
-        pool.destroy();
-        assert_eq!(pool.cached_block_count(), 0);
-    }
-
-    // Go `TestBufferIsolation`: separate allocations never overlap.
-    #[test]
-    fn allocations_are_isolated_from_each_other() {
-        let pool = Arc::new(Pool::new(PoolConfig {
-            block_size: 1024,
-            ..PoolConfig::default()
-        }));
-        let mut buffer = Buffer::new(pool);
-
-        let first = pooled(buffer.add_bytes(&[1; 10]));
-        let second = pooled(buffer.add_bytes(&[2; 10]));
-        let third = pooled(buffer.add_bytes(&[3; 10]));
-
-        assert_eq!(buffer.slice(&first), &[1; 10]);
-        assert_eq!(buffer.slice(&second), &[2; 10]);
-        assert_eq!(buffer.slice(&third), &[3; 10]);
-
-        // Writing through one does not disturb its neighbours.
-        buffer.slice_mut(&second).copy_from_slice(&[9; 10]);
-        assert_eq!(buffer.slice(&first), &[1; 10]);
-        assert_eq!(buffer.slice(&second), &[9; 10]);
-        assert_eq!(buffer.slice(&third), &[3; 10]);
-    }
-
-    // Reset rewinds to the first block and keeps the blocks for reuse.
-    #[test]
-    fn reset_rewinds_without_returning_blocks() {
-        let pool = Arc::new(Pool::new(PoolConfig {
-            block_size: 16,
-            ..PoolConfig::default()
-        }));
-        let mut buffer = Buffer::new(Arc::clone(&pool));
-
-        let first = pooled(buffer.add_bytes(&[1; 16]));
-        // A second allocation needs a second block.
-        let _ = buffer.add_bytes(&[2; 16]);
-        assert_eq!(buffer.total_size(), 32);
-
-        buffer.reset();
-        assert_eq!(buffer.total_size(), 32);
-        let after = pooled(buffer.alloc_bytes(16));
-        // Reset returns to the very start of the first block.
-        assert_eq!(after, first);
-    }
-
-    // Go `TestBufferMemLimit`: the per-buffer limit caps blocks, and an
-    // allocation past it fails rather than growing.
-    #[test]
-    fn a_buffer_memory_limit_caps_its_blocks() {
-        let pool = Arc::new(Pool::new(PoolConfig {
-            block_size: 16,
-            ..PoolConfig::default()
-        }));
-        // Two blocks' worth: ceil(20/16) == 2.
-        let mut buffer = Buffer::with_memory_limit(Arc::clone(&pool), 20);
-
-        assert!(buffer.alloc_bytes(16).is_some());
-        assert!(buffer.alloc_bytes(16).is_some());
-        assert_eq!(buffer.total_size(), 32);
-        // The third block is refused.
-        assert!(buffer.alloc_bytes(16).is_none());
-
-        // An over-block request bypasses the arena entirely.
-        match buffer.alloc_bytes(64) {
-            Some(Allocation::Standalone(owned)) => assert_eq!(owned.len(), 64),
-            other => panic!("expected a standalone allocation, got {other:?}"),
-        }
-    }
-
-    // Go `TestPoolMemLimit`: the pool's limiter bounds block acquisition, and
-    // try_alloc_bytes reports exhaustion instead of blocking.
-    #[test]
-    fn a_pool_limiter_bounds_block_acquisition() {
-        let block_size = SMALL_OBJ_OVERHEAD_BATCH;
-        // Room for exactly one block plus one bookkeeping batch.
-        let limiter = Arc::new(Limiter::new((block_size + SMALL_OBJ_OVERHEAD_BATCH) as i64));
-        let pool = Arc::new(Pool::new(PoolConfig {
-            block_size,
-            limiter: Some(Arc::clone(&limiter)),
-            ..PoolConfig::default()
-        }));
-        let mut buffer = Buffer::new(Arc::clone(&pool));
-
-        // The first allocation takes one block and one overhead batch.
-        assert!(buffer
-            .try_alloc_bytes(8)
-            .expect("quota available")
-            .is_some());
-        assert_eq!(limiter.limit(), 0);
-
-        // A second block cannot be funded.
-        let filling = block_size;
-        assert_eq!(buffer.try_alloc_bytes(filling), Err(CannotAcquireMemory));
-
-        // Destroying the buffer returns both the block and the overhead.
-        buffer.destroy();
-        assert_eq!(
-            limiter.limit(),
-            (block_size + SMALL_OBJ_OVERHEAD_BATCH) as i64
-        );
-    }
-
-    // Destroy returns the buffer to a usable, empty state.
-    #[test]
-    fn destroy_empties_the_buffer() {
-        let pool = Arc::new(Pool::new(PoolConfig {
-            block_size: 32,
-            ..PoolConfig::default()
-        }));
-        let mut buffer = Buffer::new(Arc::clone(&pool));
-        let _ = buffer.add_bytes(&[1; 8]);
-        assert_eq!(buffer.total_size(), 32);
-
-        buffer.destroy();
-        assert_eq!(buffer.total_size(), 0);
-
-        // It can be filled again afterwards.
-        let again = pooled(buffer.add_bytes(&[2; 8]));
-        assert_eq!(buffer.slice(&again), &[2; 8]);
-    }
-
-    // A slice location survives further allocations, which is the whole point
-    // of handing one out instead of a slice.
-    #[test]
-    fn slice_locations_stay_valid_across_allocations() {
-        let pool = Arc::new(Pool::new(PoolConfig {
-            block_size: 64,
-            ..PoolConfig::default()
-        }));
-        let mut buffer = Buffer::new(pool);
-
-        let first = buffer
-            .alloc_bytes_with_slice_location(4)
-            .expect("fits in a block");
-        buffer.slice_mut(&first).copy_from_slice(&[1, 2, 3, 4]);
-
-        for _ in 0..50 {
-            let _ = buffer.add_bytes(&[9; 8]);
-        }
-
-        assert_eq!(buffer.slice(&first), &[1, 2, 3, 4]);
-        assert_eq!(first.length, 4);
     }
 }

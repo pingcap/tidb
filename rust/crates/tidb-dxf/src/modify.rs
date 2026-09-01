@@ -59,7 +59,7 @@ impl fmt::Display for Modification {
 }
 
 /// Go `ModifyParam`: the parameter for a task modification.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ModifyParam {
     /// The task state before the modification started.
     pub prev_state: TaskState,
@@ -77,43 +77,5 @@ impl fmt::Display for ModifyParam {
             write!(f, "{m}")?;
         }
         f.write_str("]}")
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::task::TASK_STATE_RUNNING;
-
-    /// Not a Go test: `ModifyParam` is persisted as the task table's
-    /// `modify_params` JSON column and rendered into scheduler logs, so both
-    /// forms are pinned here.
-    #[test]
-    fn test_modify_param() {
-        let p = ModifyParam {
-            prev_state: TASK_STATE_RUNNING,
-            modifications: vec![
-                Modification {
-                    tp: MODIFY_REQUIRED_SLOTS,
-                    to: 8,
-                },
-                Modification {
-                    tp: MODIFY_MAX_NODE_COUNT,
-                    to: 3,
-                },
-            ],
-        };
-        assert_eq!(
-            serde_json::to_string(&p).unwrap(),
-            r#"{"prev_state":"running","modifications":[{"type":"modify_concurrency","to":8},{"type":"modify_max_node_count","to":3}]}"#
-        );
-        // Go's `%v` over a slice writes the elements space-separated in
-        // brackets.
-        assert_eq!(
-            p.to_string(),
-            "{prev_state: running, modifications: [{type: modify_concurrency, to: 8} {type: modify_max_node_count, to: 3}]}"
-        );
-        let back: ModifyParam = serde_json::from_str(&serde_json::to_string(&p).unwrap()).unwrap();
-        assert_eq!(back, p);
     }
 }

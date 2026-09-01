@@ -1640,6 +1640,7 @@ pub struct ConcurrentSqlNode<F: QuerySessionFactory> {
     shutdown_grace: Duration,
     connection_timeout: Duration,
     _server_memory_limit: Option<ServerMemoryLimitRunner>,
+    _memory_usage_alarm: Option<MemoryUsageAlarmRunner>,
 }
 
 struct ServerMemoryLimitRunner {
@@ -1661,6 +1662,36 @@ impl ServerMemoryLimitRunner {
 }
 
 impl Drop for ServerMemoryLimitRunner {
+    fn drop(&mut self) {
+        let _ = self.exit.send(());
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+struct MemoryUsageAlarmRunner {
+    exit: crossbeam_channel::Sender<()>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl MemoryUsageAlarmRunner {
+    fn start(manager: Arc<dyn tidb_util::memoryusagealarm::SessionManager>) -> Self {
+        let (exit, receiver) = crossbeam_channel::unbounded();
+        let handle = tidb_util::memoryusagealarm::Handle::new(
+            receiver,
+            Arc::new(tidb_util::memoryusagealarm::TiDBConfigProvider),
+        );
+        handle.set_session_manager(Some(manager));
+        let thread = std::thread::spawn(move || handle.run());
+        Self {
+            exit,
+            thread: Some(thread),
+        }
+    }
+}
+
+impl Drop for MemoryUsageAlarmRunner {
     fn drop(&mut self) {
         let _ = self.exit.send(());
         if let Some(thread) = self.thread.take() {
@@ -1691,9 +1722,11 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             tls.is_some(),
             tls.as_ref().map_or("none", MysqlServerTls::origin)
         );
-        let server_memory_limit = factory
-            .session_manager()
-            .map(ServerMemoryLimitRunner::start);
+        let session_manager = factory.session_manager();
+        let server_memory_limit = session_manager
+            .as_ref()
+            .map(|manager| ServerMemoryLimitRunner::start(Arc::clone(manager)));
+        let memory_usage_alarm = session_manager.map(MemoryUsageAlarmRunner::start);
         Ok(Self {
             listener,
             factory,
@@ -1706,6 +1739,7 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             shutdown_grace: DEFAULT_SHUTDOWN_GRACE,
             connection_timeout: config.connection_timeout,
             _server_memory_limit: server_memory_limit,
+            _memory_usage_alarm: memory_usage_alarm,
         })
     }
 

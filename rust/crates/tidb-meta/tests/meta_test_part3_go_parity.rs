@@ -26,7 +26,7 @@
 use tidb_ast::CiString;
 use tidb_meta::transaction::{
     fast_unmarshal_table_name_info, table_info_must_load, MemoryTransaction, Mutator,
-    NextGenBootTableVersion, TtlTuneFactors, DdlTableVersion,
+    DdlTableVersion, NextGenBootTableVersion,
 };
 use tidb_meta::value;
 use tidb_model::go_runtime::GoSharedPointerSlice;
@@ -194,21 +194,22 @@ fn create_sys_database_by_id_if_not_exists_is_idempotent() {
 }
 
 /// Go `TestSetGetDXFScheduleTuneFactors` (`pkg/meta/meta_test.go:1442`, run
-/// on next-gen kernels; skipped as classic here): before any set,
+/// on next-gen kernels): before any set,
 /// `GetDXFScheduleTuneFactors` returns nil; after storing
 /// `TTLTuneFactors{TTL: time.Hour, TuneFactors{AmplifyFactor: 1.5}}` the same
 /// value is returned.
-///
-/// The Rust crate has no kernel gate at runtime for this accessor, so unlike
-/// Go the assertion runs unconditionally on the classic build too — the
-/// storage format is kernel-independent (hash under `DXFScheduleTune`).
+#[cfg(feature = "nextgen")]
 #[test]
 fn set_get_dxf_schedule_tune_factors_round_trips() {
     let keyspace = ""; // Go store.GetKeyspace() is empty on unistore mocks.
-    let factors = TtlTuneFactors {
-        ttl_nanoseconds: 3_600_000_000_000, // time.Hour
-        expire_time: Default::default(),
-        amplify_factor: 1.5,
+    let factors = tidb_dxf::schstatus::TtlTuneFactors {
+        ttl_info: tidb_dxf::schstatus::TtlInfo {
+            ttl_nanoseconds: 3_600_000_000_000, // time.Hour
+            ..Default::default()
+        },
+        tune_factors: tidb_dxf::schstatus::TuneFactors {
+            amplify_factor: 1.5,
+        },
     };
 
     // Not set yet.
@@ -224,7 +225,5 @@ fn set_get_dxf_schedule_tune_factors_round_trips() {
         .dxf_schedule_tune_factors(keyspace)
         .unwrap()
         .unwrap();
-    assert_eq!(got.ttl_nanoseconds, factors.ttl_nanoseconds);
-    assert_eq!(got.amplify_factor, factors.amplify_factor);
-    assert_eq!(got.expire_time, factors.expire_time);
+    assert_eq!(got, factors);
 }

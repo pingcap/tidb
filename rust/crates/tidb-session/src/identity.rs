@@ -396,7 +396,18 @@ impl Session {
             std::sync::Arc::clone(self.session_memory.session_tracker()),
             std::sync::Arc::clone(self.session_memory.session_disk_tracker()),
         );
+        guard.set_process_plan_info(std::sync::Arc::clone(&self.process_plan_info));
         self.process = Some(guard);
+    }
+
+    /// Retains the running statement in the process list until the server has
+    /// drained its result set. Go resets `ProcessInfo` to `ComSleep` in the
+    /// command-loop defer, after `writeResultSet` returns.
+    #[must_use]
+    pub fn retain_process_statement(&self, sql: &str) -> Option<process::ProcessStatementGuard> {
+        self.process
+            .as_ref()
+            .map(|guard| guard.statement_started(sql, self.current_db.clone(), self.status_text()))
     }
 
     /// Joins this session to the server's account/global-privilege registry.

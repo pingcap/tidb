@@ -16,7 +16,7 @@
 
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
 use tidb_datatype::{core_time_from_datetime, Datum, Time, TimeType};
@@ -46,6 +46,7 @@ pub static GLOBAL_MEMORY_OPS_HISTORY_MANAGER: MemoryOpsHistoryManager =
 struct SessionToBeKilled {
     is_killing: bool,
     sql_start_time: Option<DateTime<Utc>>,
+    sql_start_instant: Option<Instant>,
     session_id: u64,
     session_tracker: Option<Arc<Tracker>>,
 
@@ -58,6 +59,7 @@ impl SessionToBeKilled {
     fn reset(&mut self) {
         self.is_killing = false;
         self.sql_start_time = None;
+        self.sql_start_instant = None;
         self.session_id = 0;
         self.session_tracker = None;
         self.kill_start_time = None;
@@ -122,14 +124,18 @@ fn kill_sess_if_needed(s: &mut SessionToBeKilled, bt: u64, sm: &dyn SessionManag
     if s.is_killing {
         'check: {
             if let Some(info) = sm.get_process_info(s.session_id) {
-                if Some(info.time) == s.sql_start_time {
+                let same_statement = match (info.started_instant, s.sql_start_instant) {
+                    (Some(current), Some(started)) => current == started,
+                    _ => Some(info.time) == s.sql_start_time,
+                };
+                if same_statement {
                     let last_log = s
                         .last_log_time
-                        .unwrap_or(super::memoryusagealarm::ZERO_TIME);
+                        .unwrap_or_else(super::memoryusagealarm::zero_time);
                     if now - last_log > chrono::Duration::seconds(5) {
                         let kill_start = s
                             .kill_start_time
-                            .unwrap_or(super::memoryusagealarm::ZERO_TIME);
+                            .unwrap_or_else(super::memoryusagealarm::zero_time);
                         let seconds = (now - kill_start).num_seconds();
                         bg_logger().warn(
                             &format!(
@@ -248,6 +254,7 @@ fn kill_sess_if_needed(s: &mut SessionToBeKilled, bt: u64, sm: &dyn SessionManag
                 );
                 s.session_id = session_id;
                 s.sql_start_time = Some(info.time);
+                s.sql_start_instant = info.started_instant;
                 s.is_killing = true;
                 s.session_tracker = Some(Arc::clone(&tracker));
                 tracker

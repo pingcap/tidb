@@ -129,9 +129,9 @@ pub use kvrpcpb::{
 };
 
 pub use tipb::{
-    Chunk, EncodeType, Error, ExecutorExecutionSummary, IntermediateOutput, ResourceGroupTag,
-    ResourceGroupTagLabel, Row, RowMeta, SelectResponse, StreamResponse, TiFlashNetWorkSummary,
-    TiFlashRegionNumOfInstance, TiFlashScanContext, TiFlashWaitSummary,
+    Chunk, ColumnarScanContext, EncodeType, Error, ExecutorExecutionSummary, IntermediateOutput,
+    ResourceGroupTag, ResourceGroupTagLabel, Row, RowMeta, SelectResponse, StreamResponse,
+    TiFlashNetWorkSummary, TiFlashRegionNumOfInstance, TiFlashScanContext, TiFlashWaitSummary,
 };
 
 #[cfg(test)]
@@ -139,9 +139,10 @@ mod tests {
     use prost::Message;
 
     use super::{
-        Chunk, EncodeType, Error, ExecutorExecutionSummary, IntermediateOutput, ResourceGroupTag,
-        ResourceGroupTagLabel, Row, RowMeta, SelectResponse, StreamResponse, TiFlashNetWorkSummary,
-        TiFlashRegionNumOfInstance, TiFlashScanContext, TiFlashWaitSummary,
+        Chunk, ColumnarScanContext, EncodeType, Error, ExecutorExecutionSummary,
+        IntermediateOutput, ResourceGroupTag, ResourceGroupTagLabel, Row, RowMeta, SelectResponse,
+        StreamResponse, TiFlashNetWorkSummary, TiFlashRegionNumOfInstance, TiFlashScanContext,
+        TiFlashWaitSummary,
     };
 
     #[test]
@@ -321,6 +322,7 @@ mod tests {
             inverted_idx_search_selected_rows: Some(5),
             fts_n_from_inmemory_noindex: Some(6),
             fts_brute_total_search_ms: Some(7),
+            tici_vec_query_count: Some(8),
             ..Default::default()
         };
         let encoded = context.encode_to_vec();
@@ -329,6 +331,25 @@ mod tests {
         assert!(encoded.windows(2).any(|window| window == [0xa0, 0x06])); // field 100 key
         assert!(encoded.windows(2).any(|window| window == [0xf8, 0x07])); // field 127 key
         assert!(encoded.windows(2).any(|window| window == [0xb0, 0x09])); // field 150 key
+        assert!(encoded.windows(2).any(|window| window == [0xc0, 0x0c])); // field 200 key
+    }
+
+    #[test]
+    fn executor_summary_preserves_columnar_scan_oneof_field_ten() {
+        use crate::tipb::executor_execution_summary::DetailInfo;
+
+        let summary = ExecutorExecutionSummary {
+            detail_info: Some(DetailInfo::ColumnarScanContext(ColumnarScanContext {
+                regions: Some(1),
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+        assert_eq!(summary.encode_to_vec(), vec![0x52, 0x02, 0x08, 0x01]);
+        assert_eq!(
+            ExecutorExecutionSummary::decode(summary.encode_to_vec().as_slice()).unwrap(),
+            summary
+        );
     }
 
     #[test]

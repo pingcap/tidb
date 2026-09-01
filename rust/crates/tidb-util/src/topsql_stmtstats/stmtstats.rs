@@ -20,9 +20,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use super::aggregator::global_aggregator;
-use super::ru_details::RuDetails;
 use super::rustats::{normalize_ru_version, ExecutionContext, RuIncrementMap, RuKey, RuVersion};
 use super::ruv2_metrics::{self, RuV2Metrics, RuV2Weights};
+use tikv_client::RuDetails;
 
 /// Go `BinaryDigest`, converted from `parser.Digest.Bytes()` so that it can be
 /// used as a map key.
@@ -576,7 +576,7 @@ fn current_ru_total(exec_ctx: Option<&ExecutionContext>, ru_details: Option<&RuD
 
     match ru_details {
         None => 0.0,
-        Some(ru) => ru.rru() + ru.wru(),
+        Some(ru) => ru.read_ru() + ru.write_ru(),
     }
 }
 

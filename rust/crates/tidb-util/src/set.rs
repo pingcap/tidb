@@ -24,7 +24,7 @@ use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use std::sync::Arc;
 use tidb_datatype::{GoString, MyDecimal};
-use tidb_hack::MemAwareMap;
+use tidb_hack::{MapValueLayout, MemAwareMap};
 use tidb_mysql::{to_lowercase, to_uppercase};
 
 /// A value whose set identity is an arbitrary-byte Go string.
@@ -423,7 +423,8 @@ struct MemoryMap<K, V> {
 
 impl<K, V> MemoryMap<K, V>
 where
-    K: Eq + Hash,
+    K: Eq + Hash + MapValueLayout,
+    V: MapValueLayout,
 {
     /// Creates an empty map.
     #[must_use]
@@ -501,7 +502,8 @@ where
 
 impl<K, V> Default for MemoryMap<K, V>
 where
-    K: Eq + Hash,
+    K: Eq + Hash + MapValueLayout,
+    V: MapValueLayout,
 {
     fn default() -> Self {
         Self::new()
@@ -515,7 +517,7 @@ struct MemorySet<K> {
 
 impl<K> MemorySet<K>
 where
-    K: Eq + Hash,
+    K: Eq + Hash + MapValueLayout,
 {
     /// Creates an empty set.
     #[must_use]
@@ -573,7 +575,7 @@ where
 
 impl<K> Default for MemorySet<K>
 where
-    K: Eq + Hash,
+    K: Eq + Hash + MapValueLayout,
 {
     fn default() -> Self {
         Self::new()
@@ -633,7 +635,7 @@ macro_rules! tracked_memory_map {
 }
 
 tracked_memory_map!(StringToStringMapWithMemoryUsage, GoString);
-tracked_memory_map!(StringToDecimalMapWithMemoryUsage, MyDecimal);
+tracked_memory_map!(StringToDecimalMapWithMemoryUsage, Box<MyDecimal>);
 
 /// A source memory-aware string set.
 pub struct StringSetWithMemoryUsage {
@@ -750,6 +752,11 @@ impl Int64SetWithMemoryUsage {
 enum FloatKey {
     Number(u64),
     Nan { bits: u64, identity: u64 },
+}
+
+impl MapValueLayout for FloatKey {
+    const SOURCE_SIZE: usize = 8;
+    const SOURCE_ALIGN: usize = 8;
 }
 
 impl FloatKey {

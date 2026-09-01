@@ -1,12 +1,11 @@
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::SeqCst};
+use std::io::{self, ErrorKind};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering, Ordering::SeqCst};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
+use std::time::{Duration, Instant};
 
 #[cfg(target_os = "linux")]
 use std::fs;
-use std::io;
-#[cfg(any(target_os = "linux", test))]
-use std::io::ErrorKind;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "macos")]
 use std::process::Command;
 
 use super::{parse_soft_limit_text, parse_work_mode_text, MemArbitrator, MemStats};
@@ -21,14 +20,25 @@ static USING_GLOBAL_MEM_ARBITRATION: AtomicBool = AtomicBool::new(false);
 
 static PROCESS_ARBITRATOR: OnceLock<Mutex<Weak<MemArbitrator>>> = OnceLock::new();
 
-fn process_arbitrator() -> &'static Mutex<Weak<MemArbitrator>> {
-    PROCESS_ARBITRATOR.get_or_init(|| Mutex::new(Weak::new()))
+#[derive(Default)]
+struct MemInfoCache {
+    value: u64,
+    updated_at: Option<Instant>,
 }
 
-/// Reads physical RAM through the same operating-system boundary Go's
-/// `gopsutil.VirtualMemory().Total` uses for its memory authority.
+static MEM_TOTAL_CACHE: OnceLock<Mutex<MemInfoCache>> = OnceLock::new();
+static MEM_USED_CACHE: OnceLock<Mutex<MemInfoCache>> = OnceLock::new();
+
+#[derive(Clone, Copy)]
+enum MemorySource {
+    Host = 1,
+    Cgroup = 2,
+}
+
+static MEMORY_SOURCE: AtomicU8 = AtomicU8::new(0);
+
 #[cfg(target_os = "linux")]
-fn host_memory_total() -> io::Result<u64> {
+pub(crate) fn host_memory_total() -> io::Result<u64> {
     let content = fs::read_to_string("/proc/meminfo")?;
     let kib = content
         .lines()
@@ -40,8 +50,45 @@ fn host_memory_total() -> io::Result<u64> {
         .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "MemTotal overflows bytes"))
 }
 
+#[cfg(target_os = "linux")]
+fn host_memory_used() -> io::Result<u64> {
+    let content = fs::read_to_string("/proc/meminfo")?;
+    let value = |name: &str| -> io::Result<u64> {
+        content
+            .lines()
+            .find_map(|line| line.strip_prefix(name))
+            .and_then(|value| value.split_whitespace().next())
+            .and_then(|value| value.parse::<u64>().ok())
+            .and_then(|kib| kib.checked_mul(1024))
+            .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, format!("missing {name}")))
+    };
+    let total = value("MemTotal:")?;
+    let free = value("MemFree:")?;
+    let buffers = value("Buffers:")?;
+    let cached = value("Cached:")?;
+    let reclaimable = value("SReclaimable:").unwrap_or_default();
+    let shmem = value("Shmem:").unwrap_or_default();
+    Ok(total.saturating_sub(
+        free.saturating_add(buffers)
+            .saturating_add(cached)
+            .saturating_add(reclaimable)
+            .saturating_sub(shmem),
+    ))
+}
+
+#[cfg(target_os = "linux")]
+fn current_process_memory_usage() -> io::Result<u64> {
+    fs::read_to_string("/proc/self/status")?
+        .lines()
+        .find_map(|line| line.strip_prefix("VmRSS:"))
+        .and_then(|value| value.split_whitespace().next())
+        .and_then(|value| value.parse::<u64>().ok())
+        .and_then(|kib| kib.checked_mul(1024))
+        .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "missing VmRSS"))
+}
+
 #[cfg(target_os = "macos")]
-fn host_memory_total() -> io::Result<u64> {
+pub(crate) fn host_memory_total() -> io::Result<u64> {
     let output = Command::new("sysctl").args(["-n", "hw.memsize"]).output()?;
     if !output.status.success() {
         return Err(io::Error::other("sysctl hw.memsize failed"));
@@ -51,55 +98,36 @@ fn host_memory_total() -> io::Result<u64> {
         .map(str::trim)
         .and_then(|value| value.parse::<u64>().ok())
         .filter(|value| *value > 0)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid hw.memsize"))
+        .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "invalid hw.memsize"))
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
-fn host_memory_total() -> io::Result<u64> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "host memory discovery is not available on this platform",
-    ))
-}
-
-/// Returns the RAM total visible to TiDB: a finite cgroup limit wins over
-/// physical RAM, exactly as Go's memory hook does.
-pub fn effective_memory_limit() -> io::Result<u64> {
-    let physical = host_memory_total()?;
-    Ok(select_effective_memory_limit(
-        physical,
-        crate::cgroup::get_memory_limit().unwrap_or_default(),
-    ))
-}
-
-fn select_effective_memory_limit(physical: u64, cgroup_limit: u64) -> u64 {
-    if cgroup_limit > 0 && cgroup_limit < physical {
-        cgroup_limit
-    } else {
-        physical
+#[cfg(target_os = "macos")]
+fn host_memory_used() -> io::Result<u64> {
+    let total = host_memory_total()?;
+    let output = Command::new("vm_stat").output()?;
+    if !output.status.success() {
+        return Err(io::Error::other("vm_stat failed"));
     }
-}
-
-#[cfg(any(target_os = "linux", test))]
-fn parse_process_rss_kib(status: &str) -> io::Result<u64> {
-    status
+    let text = std::str::from_utf8(&output.stdout)
+        .map_err(|_| io::Error::new(ErrorKind::InvalidData, "invalid vm_stat output"))?;
+    let page_size = text
         .lines()
-        .find_map(|line| line.strip_prefix("VmRSS:"))
-        .and_then(|value| value.split_whitespace().next())
+        .next()
+        .and_then(|line| line.split("page size of ").nth(1))
+        .and_then(|tail| tail.split_whitespace().next())
         .and_then(|value| value.parse::<u64>().ok())
-        .and_then(|kib| kib.checked_mul(1024))
-        .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "missing VmRSS"))
-}
-
-/// Returns the current resident memory of this TiDB process.
-///
-/// Go feeds its memory controller from `runtime.ReadMemStats`. This RSS seam
-/// is the native fallback used when Rust cannot read an allocator-specific
-/// live heap counter; it intentionally measures the process rather than the
-/// whole cgroup.
-#[cfg(target_os = "linux")]
-fn current_process_memory_usage() -> io::Result<u64> {
-    parse_process_rss_kib(&fs::read_to_string("/proc/self/status")?)
+        .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "missing vm_stat page size"))?;
+    let pages = |name: &str| -> u64 {
+        text.lines()
+            .find_map(|line| line.strip_prefix(name))
+            .and_then(|tail| tail.trim().trim_end_matches('.').parse::<u64>().ok())
+            .unwrap_or_default()
+    };
+    let available = pages("Pages free:")
+        .saturating_add(pages("Pages inactive:"))
+        .saturating_add(pages("Pages speculative:"))
+        .saturating_mul(page_size);
+    Ok(total.saturating_sub(available))
 }
 
 #[cfg(target_os = "macos")]
@@ -116,15 +144,88 @@ fn current_process_memory_usage() -> io::Result<u64> {
         .map(str::trim)
         .and_then(|value| value.parse::<u64>().ok())
         .and_then(|kib| kib.checked_mul(1024))
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid process RSS"))
+        .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "invalid process RSS"))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+pub(crate) fn host_memory_total() -> io::Result<u64> {
+    Err(io::Error::new(
+        ErrorKind::Unsupported,
+        "host memory discovery is not available on this platform",
+    ))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn host_memory_used() -> io::Result<u64> {
+    Err(io::Error::new(
+        ErrorKind::Unsupported,
+        "host memory usage discovery is not available on this platform",
+    ))
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn current_process_memory_usage() -> io::Result<u64> {
     Err(io::Error::new(
-        io::ErrorKind::Unsupported,
+        ErrorKind::Unsupported,
         "process memory discovery is not available on this platform",
     ))
+}
+
+fn memory_source() -> io::Result<MemorySource> {
+    match MEMORY_SOURCE.load(Ordering::Acquire) {
+        1 => return Ok(MemorySource::Host),
+        2 => return Ok(MemorySource::Cgroup),
+        _ => {}
+    }
+    let physical = host_memory_total()?;
+    let cgroup = crate::cgroup::get_memory_limit()?;
+    let selected = if cgroup != 0 && cgroup < physical {
+        MemorySource::Cgroup
+    } else {
+        MemorySource::Host
+    };
+    let _ = MEMORY_SOURCE.compare_exchange(0, selected as u8, Ordering::AcqRel, Ordering::Acquire);
+    Ok(match MEMORY_SOURCE.load(Ordering::Acquire) {
+        2 => MemorySource::Cgroup,
+        _ => MemorySource::Host,
+    })
+}
+
+fn effective_memory_limit() -> io::Result<u64> {
+    match memory_source()? {
+        MemorySource::Host => host_memory_total(),
+        MemorySource::Cgroup => Ok(host_memory_total()?.min(crate::cgroup::get_memory_limit()?)),
+    }
+}
+
+fn effective_memory_usage() -> io::Result<u64> {
+    match memory_source()? {
+        MemorySource::Host => host_memory_used(),
+        MemorySource::Cgroup => Ok(host_memory_used()?.min(crate::cgroup::get_memory_usage()?)),
+    }
+}
+
+fn cached_memory_read(
+    cache: &'static OnceLock<Mutex<MemInfoCache>>,
+    max_age: Duration,
+    read: impl FnOnce() -> std::io::Result<u64>,
+) -> std::io::Result<u64> {
+    let cache = cache.get_or_init(|| Mutex::new(MemInfoCache::default()));
+    let mut cached = cache.lock().expect("memory information cache poisoned");
+    if cached
+        .updated_at
+        .is_some_and(|updated_at| updated_at.elapsed() < max_age)
+    {
+        return Ok(cached.value);
+    }
+    let value = read()?;
+    cached.value = value;
+    cached.updated_at = Some(Instant::now());
+    Ok(value)
+}
+
+fn process_arbitrator() -> &'static Mutex<Weak<MemArbitrator>> {
+    PROCESS_ARBITRATOR.get_or_init(|| Mutex::new(Weak::new()))
 }
 
 /// Keeps this process's running memory arbitrator eligible for SQL runtime
@@ -225,7 +326,7 @@ pub fn validate_process_memory_setting(name: &str, value: &str) -> Result<(), St
 pub fn parse_server_memory_limit(text: &str) -> Result<u64, String> {
     let text = text.trim();
     let total = (text.ends_with('%') || text == "0")
-        .then(effective_memory_limit)
+        .then(mem_total)
         .transpose()
         .map_err(|error| error.to_string())?;
     let parsed = if let Some(percent) = text.strip_suffix('%') {
@@ -275,13 +376,12 @@ pub fn parse_server_memory_limit(text: &str) -> Result<u64, String> {
 ///
 /// Go feeds `HandleRuntimeStats` from `runtime.ReadMemStats`, whose
 /// `HeapAlloc` is the live application allocation; on the jemalloc build the
-/// equivalent counters come from this seam (through `tidb-hack`, the only
-/// crate allowed to touch raw pointers). Returns `None` on builds without
+/// equivalent counters come from the native allocator seam. Returns `None` on builds without
 /// the `jemalloc` feature, where callers keep their RSS-based fallback.
 #[cfg(feature = "jemalloc")]
 #[must_use]
 pub fn allocator_live_heap_sample() -> Option<(i64, i64, i64)> {
-    tidb_hack::allocator_stats::sample()
+    tidb_allocator_stats::sample()
 }
 
 /// Non-jemalloc builds have no allocator-statistics seam: there is no finer
@@ -315,6 +415,24 @@ pub fn read_mem_stats() -> MemStats {
     }
 }
 
+/// Go `memory.MemTotal` after the startup cgroup/host hook decision.
+pub fn mem_total() -> std::io::Result<u64> {
+    cached_memory_read(
+        &MEM_TOTAL_CACHE,
+        Duration::from_secs(60),
+        effective_memory_limit,
+    )
+}
+
+/// Go `memory.MemUsed` after the startup cgroup/host hook decision.
+pub fn mem_used() -> std::io::Result<u64> {
+    cached_memory_read(
+        &MEM_USED_CACHE,
+        Duration::from_millis(500),
+        effective_memory_usage,
+    )
+}
+
 /// Reports whether the process is using the global memory arbitrator.
 #[must_use]
 pub fn using_global_mem_arbitration() -> bool {
@@ -335,22 +453,6 @@ pub fn handle_global_mem_arbitrator_runtime() {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn effective_limit_uses_the_smaller_finite_cgroup_value() {
-        assert_eq!(select_effective_memory_limit(16, 0), 16);
-        assert_eq!(select_effective_memory_limit(16, 32), 16);
-        assert_eq!(select_effective_memory_limit(16, 8), 8);
-    }
-
-    #[test]
-    fn process_rss_parser_uses_the_status_value_in_bytes() {
-        assert_eq!(
-            parse_process_rss_kib("Name:\ttidb-server\nVmRSS:\t  1234 kB\n").unwrap(),
-            1234 << 10
-        );
-        assert!(parse_process_rss_kib("Name:\ttidb-server\n").is_err());
-    }
 
     #[test]
     fn explicit_server_memory_limit_observes_the_source_minimum() {

@@ -15,6 +15,7 @@ workspace = true
 [dependencies]
 base64.workspace = true
 chrono.workspace = true
+crossbeam-channel = "0.5"
 tikv-jemallocator = { version = "0.7", optional = true }
 tikv-jemalloc-sys = { version = "0.7", optional = true }
 ctrlc.workspace = true
@@ -69,6 +70,7 @@ tidb-vardef = { path = "../tidb-vardef" }
 tidb-sqlexec = { path = "../tidb-sqlexec" }
 tidb-syssession = { path = "../tidb-syssession" }
 tidb-resolve = { path = "../tidb-resolve" }
+tidb-resourcemanager = { path = "../tidb-resourcemanager" }
 serde_json = { workspace = true }
 tidb-config = { path = "../tidb-config" }
 toml.workspace = true
@@ -102,7 +104,13 @@ path = "tests/configured_user_store_source.rs"
 default = ["jemalloc"]
 failpoints = [
     "tidb-ddl-serverstate/failpoints",
+    "tidb-resourcemanager/failpoints",
     "tidb-stats-handle-cache/failpoints",
     "tidb-util/failpoints",
 ]
-jemalloc = ["dep:tikv-jemallocator", "dep:tikv-jemalloc-sys"]
+jemalloc = [
+    "dep:tikv-jemallocator",
+    "dep:tikv-jemalloc-sys",
+    "tidb-util/jemalloc",
+    "tikv-jemallocator/profiling",
+]

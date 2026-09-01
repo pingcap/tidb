@@ -395,7 +395,7 @@ pub fn load_initial_stats_snapshot<S: MetaSnapshot>(
     mode: InitialStatsLoad,
 ) -> Result<StatsSnapshot, SystemTableError> {
     let total_memory = if mode == InitialStatsLoad::IndexFull {
-        tidb_util::memory::effective_memory_limit()
+        tidb_util::memory::mem_total()
             .map_err(|error| SystemTableError::Snapshot(error.to_string()))?
     } else {
         u64::MAX

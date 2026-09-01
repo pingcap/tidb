@@ -28,21 +28,14 @@
 //!   `BTreeMap<i64, UsedStatsInfoForTable>` over the already-ported
 //!   [`crate::used_stats`] leaf; the sorted map iteration is Go's
 //!   `slices.Sort(keys)` walk.
-//! - `KVExecDetail` (client-go `*util.ExecDetails`, atomic counters read
-//!   through `execdetails.LoadTiKVExecDetails`) narrows to the plain
-//!   post-load [`TikvExecDetailsSnapshot`] value.
+//! - `KVExecDetail` uses the canonical atomic snapshot returned by
+//!   `execdetails.LoadTiKVExecDetails`.
 //! - `CopTasks` (`*execdetails.CopTasksDetails`) narrows to
 //!   [`CopTasksDetails`]/[`TaskTimeStats`] with `BTreeMap`s where Go sorts
 //!   map keys before rendering; only the fields `SlowLogFormat` and
 //!   `TaskTimeStats.String` read are carried.
-//! - `RUDetails` (client-go `*util.RUDetails`) narrows to
-//!   [`RuDetailsSnapshot`]: the five accessor results (`RRU`, `WRU`,
-//!   `RUWaitDuration`, `TiKVRUV2`, `TiflashRU`) as plain values.
-//! - `RUV2Metrics` (`*execdetails.RUV2Metrics`) narrows to
-//!   [`RuV2MetricsSnapshot`]: the atomic/label counters
-//!   `execdetails.FormatRUV2Summary` snapshots, with Go's nil-`extra` state
-//!   collapsing into zero values; [`format_ruv2_summary`] ports that
-//!   function and `calculateRUValuesWithWeights` over the snapshot.
+//! - `RUDetails` and `RUV2Metrics` retain the canonical synchronized objects;
+//!   their accessors are read at formatting time, matching Go.
 //!   `SessionVars.RUV2Weights()` becomes the snapshot field
 //!   [`SlowLogSessionSnapshot::ru_v2_weights`].
 //! - `config.GetGlobalConfig().GetKeyspaceObservabilitySlowLogFields()`
@@ -60,13 +53,15 @@
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::exec_details::{
-    format_seconds, get_ia_remote_read_segment_stats, ExecDetails,
+    format_seconds, get_ia_remote_read_segment_stats, CopTasksDetails, ExecDetails, TaskTimeStats,
     IA_REMOTE_READ_SEGMENT_COUNT_STR, IA_REMOTE_READ_SEGMENT_SIZE_STR,
     IA_REMOTE_READ_SEGMENT_WAIT_TIME_STR,
 };
+use crate::ruv2_metrics::{format_ruv2_summary, RuV2Metrics, RuV2Weights};
 use crate::slow_log_float::format_go_float64;
 use crate::used_stats::UsedStatsInfoForTable;
 
@@ -323,392 +318,6 @@ pub struct CpuUsages {
     pub tikv_cpu_time: Duration,
 }
 
-/// Go `execdetails.TaskTimeStats` — the fields `SlowLogFormat` and
-/// `TaskTimeStats.String` read.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct TaskTimeStats {
-    /// Go `TaskTimeStats.AvgTime`.
-    pub avg_time: Duration,
-    /// Go `TaskTimeStats.P90Time`.
-    pub p90_time: Duration,
-    /// Go `TaskTimeStats.MaxAddress`.
-    pub max_address: String,
-    /// Go `TaskTimeStats.MaxTime`.
-    pub max_time: Duration,
-    /// Go `TaskTimeStats.TotTime`.
-    pub tot_time: Duration,
-}
-
-impl TaskTimeStats {
-    /// Go `TaskTimeStats.String`: the `%v`-spelled avg/p90/max/addr line,
-    /// with the two-column short form for a single cop task.
-    #[must_use]
-    pub fn render(
-        &self,
-        num_cop_tasks: i64,
-        space_mark_str: &str,
-        avg_str: &str,
-        p90_str: &str,
-        max_str: &str,
-        addr_str: &str,
-    ) -> String {
-        if num_cop_tasks == 1 {
-            return format!(
-                "{avg_str}{space_mark_str}{} {addr_str}{space_mark_str}{}",
-                format_go_float64(self.avg_time.as_secs_f64()),
-                self.max_address,
-            );
-        }
-        format!(
-            "{avg_str}{space_mark_str}{} {p90_str}{space_mark_str}{} \
-             {max_str}{space_mark_str}{} {addr_str}{space_mark_str}{}",
-            format_go_float64(self.avg_time.as_secs_f64()),
-            format_go_float64(self.p90_time.as_secs_f64()),
-            format_go_float64(self.max_time.as_secs_f64()),
-            self.max_address,
-        )
-    }
-}
-
-/// Go `execdetails.CopTasksDetails` — the fields `SlowLogFormat` reads.
-/// Go's `map[string]...` backoff maps become `BTreeMap`s: `SlowLogFormat`
-/// sorts the backoff names before rendering, so sorted iteration is the
-/// same walk.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct CopTasksDetails {
-    /// Go `CopTasksDetails.NumCopTasks` (`int`).
-    pub num_cop_tasks: i64,
-    /// Go `CopTasksDetails.ProcessTimeStats`.
-    pub process_time_stats: TaskTimeStats,
-    /// Go `CopTasksDetails.WaitTimeStats`.
-    pub wait_time_stats: TaskTimeStats,
-    /// Go `CopTasksDetails.BackoffTimeStatsMap`.
-    pub backoff_time_stats_map: BTreeMap<String, TaskTimeStats>,
-    /// Go `CopTasksDetails.TotBackoffTimes` (`map[string]int`).
-    pub tot_backoff_times: BTreeMap<String, i64>,
-}
-
-/// The plain value `execdetails.LoadTiKVExecDetails` produces from a
-/// client-go `*util.ExecDetails` (`TiKVExecDetailsSnapshot`): Go's atomic
-/// counters arrive here already loaded. Durations stay Go's `int64`
-/// nanoseconds.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct TikvExecDetailsSnapshot {
-    /// Go `TiKVExecDetailsSnapshot.WaitKVRespDuration` (ns).
-    pub wait_kv_resp_duration: i64,
-    /// Go `TiKVExecDetailsSnapshot.WaitPDRespDuration` (ns).
-    pub wait_pd_resp_duration: i64,
-    /// Go `TiKVExecDetailsSnapshot.BackoffDuration` (ns).
-    pub backoff_duration: i64,
-    /// Go `TiKVExecDetailsSnapshot.UnpackedBytesSentKVTotal`.
-    pub unpacked_bytes_sent_kv_total: i64,
-    /// Go `TiKVExecDetailsSnapshot.UnpackedBytesReceivedKVTotal`.
-    pub unpacked_bytes_received_kv_total: i64,
-    /// Go `TiKVExecDetailsSnapshot.UnpackedBytesSentKVCrossZone`.
-    pub unpacked_bytes_sent_kv_cross_zone: i64,
-    /// Go `TiKVExecDetailsSnapshot.UnpackedBytesReceivedKVCrossZone`.
-    pub unpacked_bytes_received_kv_cross_zone: i64,
-    /// Go `TiKVExecDetailsSnapshot.UnpackedBytesSentMPPTotal`.
-    pub unpacked_bytes_sent_mpp_total: i64,
-    /// Go `TiKVExecDetailsSnapshot.UnpackedBytesReceivedMPPTotal`.
-    pub unpacked_bytes_received_mpp_total: i64,
-    /// Go `TiKVExecDetailsSnapshot.UnpackedBytesSentMPPCrossZone`.
-    pub unpacked_bytes_sent_mpp_cross_zone: i64,
-    /// Go `TiKVExecDetailsSnapshot.UnpackedBytesReceivedMPPCrossZone`.
-    pub unpacked_bytes_received_mpp_cross_zone: i64,
-}
-
-/// The five accessor results `SlowLogFormat` reads off a client-go
-/// `*util.RUDetails` (`RRU`, `WRU`, `RUWaitDuration`, `TiKVRUV2`,
-/// `TiflashRU`), as plain values. Go's nil pointer is `None` at the items
-/// field; the accessors are nil-safe zeros there.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct RuDetailsSnapshot {
-    /// Go `RUDetails.RRU()`.
-    pub rru: f64,
-    /// Go `RUDetails.WRU()`.
-    pub wru: f64,
-    /// Go `RUDetails.RUWaitDuration()`.
-    pub ru_wait_duration: Duration,
-    /// Go `RUDetails.TiKVRUV2()`.
-    pub tikv_ru_v2: f64,
-    /// Go `RUDetails.TiflashRU()`.
-    pub tiflash_ru: f64,
-}
-
-/// Go `execdetails.RUV2Weights`: the per-counter weights
-/// `calculateRUValuesWithWeights` multiplies with.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct RuV2Weights {
-    /// Go `RUV2Weights.RUScale`.
-    pub ru_scale: f64,
-    /// Go `RUV2Weights.ResultChunkCells`.
-    pub result_chunk_cells: f64,
-    /// Go `RUV2Weights.ExecutorL1`.
-    pub executor_l1: f64,
-    /// Go `RUV2Weights.ExecutorL2`.
-    pub executor_l2: f64,
-    /// Go `RUV2Weights.ExecutorL3`.
-    pub executor_l3: f64,
-    /// Go `RUV2Weights.ExecutorL5InsertRows`.
-    pub executor_l5_insert_rows: f64,
-    /// Go `RUV2Weights.PlanCnt`.
-    pub plan_cnt: f64,
-    /// Go `RUV2Weights.PlanDeriveStatsPaths`.
-    pub plan_derive_stats_paths: f64,
-    /// Go `RUV2Weights.ResourceManagerReadCnt`.
-    pub resource_manager_read_cnt: f64,
-    /// Go `RUV2Weights.ResourceManagerWriteCnt`.
-    pub resource_manager_write_cnt: f64,
-    /// Go `RUV2Weights.WriteKeys`.
-    pub write_keys: f64,
-    /// Go `RUV2Weights.SessionParserTotal`.
-    pub session_parser_total: f64,
-    /// Go `RUV2Weights.TxnCnt`.
-    pub txn_cnt: f64,
-}
-
-/// The counters `execdetails.FormatRUV2Summary` snapshots off a
-/// `*execdetails.RUV2Metrics`: Go's atomics and lazily-allocated `extra`
-/// block collapse into plain (zero-defaulted) values. Label maps are
-/// `BTreeMap`s — Go sorts label keys before rendering, so sorted iteration
-/// is the same walk.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct RuV2MetricsSnapshot {
-    /// Go `RUV2Metrics.Bypass()`.
-    pub bypass: bool,
-    /// Go `RUV2Metrics.ResultChunkCells()`.
-    pub result_chunk_cells: i64,
-    /// Go `RUV2Metrics.executorL1.snapshot()`.
-    pub executor_l1: BTreeMap<String, i64>,
-    /// Go `extra.executorL2` snapshot.
-    pub executor_l2: BTreeMap<String, i64>,
-    /// Go `extra.executorL3` snapshot.
-    pub executor_l3: BTreeMap<String, i64>,
-    /// Go `extra.executorL5InsertRows`.
-    pub executor_l5_insert_rows: i64,
-    /// Go `RUV2Metrics.PlanCnt()`.
-    pub plan_cnt: i64,
-    /// Go `extra.planDeriveStatsPaths`.
-    pub plan_derive_stats_paths: i64,
-    /// Go `RUV2Metrics.SessionParserTotal()`.
-    pub session_parser_total: i64,
-    /// Go `RUV2Metrics.TxnCnt()`.
-    pub txn_cnt: i64,
-    /// Go `RUV2Metrics.ResourceManagerReadCnt()`.
-    pub resource_manager_read_cnt: i64,
-    /// Go `extra.resourceManagerWriteCnt`.
-    pub resource_manager_write_cnt: i64,
-    /// Go `extra.writeKeys`.
-    pub write_keys: i64,
-    /// Go `extra.writeSize`.
-    pub write_size: i64,
-    /// Go `RUV2Metrics.TiKVKVEngineCacheMiss()`.
-    pub tikv_kv_engine_cache_miss: i64,
-    /// Go `extra.tikvCoprocessorExecutorIterations`.
-    pub tikv_coprocessor_executor_iterations: i64,
-    /// Go `extra.tikvCoprocessorResponseBytes`.
-    pub tikv_coprocessor_response_bytes: i64,
-    /// Go `extra.tikvRaftstoreStoreWriteTriggerWB`.
-    pub tikv_raftstore_store_write_trigger_wb: i64,
-    /// Go `RUV2Metrics.TiKVStorageProcessedKeysBatchGet()`.
-    pub tikv_storage_processed_keys_batch_get: i64,
-    /// Go `RUV2Metrics.TiKVStorageProcessedKeysGet()`.
-    pub tikv_storage_processed_keys_get: i64,
-    /// Go `extra.tikvCoprocessorWorkTotal` snapshot.
-    pub tikv_coprocessor_executor_work_total: BTreeMap<String, i64>,
-}
-
-impl RuV2MetricsSnapshot {
-    /// Go `RUV2Metrics.calculateRUValuesWithWeights`: the weighted TiDB RU.
-    #[must_use]
-    fn calculate_ru_values_with_weights(&self, weights: &RuV2Weights) -> f64 {
-        let sum = |map: &BTreeMap<String, i64>| map.values().sum::<i64>();
-        #[expect(clippy::cast_precision_loss, reason = "Go float64(int64) conversion")]
-        let tidb_ru_float = self.result_chunk_cells as f64 * weights.result_chunk_cells
-            + sum(&self.executor_l1) as f64 * weights.executor_l1
-            + sum(&self.executor_l2) as f64 * weights.executor_l2
-            + sum(&self.executor_l3) as f64 * weights.executor_l3
-            + self.executor_l5_insert_rows as f64 * weights.executor_l5_insert_rows
-            + self.plan_cnt as f64 * weights.plan_cnt
-            + self.plan_derive_stats_paths as f64 * weights.plan_derive_stats_paths
-            + self.resource_manager_read_cnt as f64 * weights.resource_manager_read_cnt
-            + self.resource_manager_write_cnt as f64 * weights.resource_manager_write_cnt
-            + self.write_keys as f64 * weights.write_keys
-            + self.session_parser_total as f64 * weights.session_parser_total
-            + self.txn_cnt as f64 * weights.txn_cnt;
-        tidb_ru_float * weights.ru_scale
-    }
-
-    /// Whether every counter Go's all-zero check inspects is zero.
-    fn is_all_zero(&self) -> bool {
-        self.result_chunk_cells == 0
-            && self.executor_l1.is_empty()
-            && self.executor_l2.is_empty()
-            && self.executor_l3.is_empty()
-            && self.executor_l5_insert_rows == 0
-            && self.plan_cnt == 0
-            && self.plan_derive_stats_paths == 0
-            && self.session_parser_total == 0
-            && self.txn_cnt == 0
-            && self.resource_manager_read_cnt == 0
-            && self.resource_manager_write_cnt == 0
-            && self.write_keys == 0
-            && self.write_size == 0
-            && self.tikv_kv_engine_cache_miss == 0
-            && self.tikv_coprocessor_executor_iterations == 0
-            && self.tikv_coprocessor_response_bytes == 0
-            && self.tikv_raftstore_store_write_trigger_wb == 0
-            && self.tikv_storage_processed_keys_batch_get == 0
-            && self.tikv_storage_processed_keys_get == 0
-            && self.tikv_coprocessor_executor_work_total.is_empty()
-    }
-}
-
-/// Go `execdetails.formatRUV2LabelMap`: non-zero labels, sorted, as
-/// `{k:v,...}`; empty when nothing is non-zero.
-fn format_ruv2_label_map(values: &BTreeMap<String, i64>) -> String {
-    let mut builder = String::new();
-    for (key, value) in values {
-        if *value == 0 {
-            continue;
-        }
-        builder.push(if builder.is_empty() { '{' } else { ',' });
-        builder.push_str(key);
-        builder.push(':');
-        let _ = write!(builder, "{value}");
-    }
-    if builder.is_empty() {
-        return builder;
-    }
-    builder.push('}');
-    builder
-}
-
-/// Go `execdetails.FormatRUV2Summary`: the RUv2 total and detailed metrics
-/// in one pass, over the narrowed [`RuV2MetricsSnapshot`].
-#[must_use]
-pub fn format_ruv2_summary(
-    metrics: Option<&RuV2MetricsSnapshot>,
-    weights: &RuV2Weights,
-    tikv_ru: f64,
-    tiflash_ru: f64,
-) -> (String, String) {
-    if let Some(metrics) = metrics {
-        if metrics.bypass {
-            return (String::new(), String::new());
-        }
-    }
-    let zero = RuV2MetricsSnapshot::default();
-    let (snapshot, tidb_ru) = match metrics {
-        Some(metrics) => (metrics, metrics.calculate_ru_values_with_weights(weights)),
-        None => (&zero, 0.0),
-    };
-    if snapshot.is_all_zero() && tikv_ru == 0.0 && tiflash_ru == 0.0 {
-        return (String::new(), String::new());
-    }
-
-    let mut parts: Vec<String> = Vec::with_capacity(19);
-    let append_int = |parts: &mut Vec<String>, key: &str, value: i64| {
-        if value != 0 {
-            parts.push(format!("{key}:{value}"));
-        }
-    };
-    let append_float_always =
-        |parts: &mut Vec<String>, key: &str, value: f64| parts.push(format!("{key}:{value:.2}"));
-    let append_map = |parts: &mut Vec<String>, key: &str, value: &BTreeMap<String, i64>| {
-        if value.is_empty() {
-            return;
-        }
-        let formatted = format_ruv2_label_map(value);
-        if !formatted.is_empty() {
-            parts.push(format!("{key}:{formatted}"));
-        }
-    };
-
-    let total_ru = tidb_ru + tikv_ru + tiflash_ru;
-    let total = format!("{total_ru:.2}");
-    append_float_always(&mut parts, "total_ru", total_ru);
-    append_float_always(&mut parts, "tidb_ru", tidb_ru);
-    append_float_always(&mut parts, "tikv_ru", tikv_ru);
-    append_float_always(&mut parts, "tiflash_ru", tiflash_ru);
-
-    append_int(
-        &mut parts,
-        "result_chunk_cells",
-        snapshot.result_chunk_cells,
-    );
-    append_map(&mut parts, "executor_l1", &snapshot.executor_l1);
-    append_map(&mut parts, "executor_l2", &snapshot.executor_l2);
-    append_map(&mut parts, "executor_l3", &snapshot.executor_l3);
-    append_int(
-        &mut parts,
-        "executor_l5_insert_rows",
-        snapshot.executor_l5_insert_rows,
-    );
-    append_int(&mut parts, "plan_cnt", snapshot.plan_cnt);
-    append_int(
-        &mut parts,
-        "plan_derive_stats_paths",
-        snapshot.plan_derive_stats_paths,
-    );
-    append_int(
-        &mut parts,
-        "session_parser_total",
-        snapshot.session_parser_total,
-    );
-    append_int(&mut parts, "txn_cnt", snapshot.txn_cnt);
-    append_int(
-        &mut parts,
-        "resource_manager_read_cnt",
-        snapshot.resource_manager_read_cnt,
-    );
-    append_int(
-        &mut parts,
-        "resource_manager_write_cnt",
-        snapshot.resource_manager_write_cnt,
-    );
-    append_int(&mut parts, "write_keys", snapshot.write_keys);
-    append_int(&mut parts, "write_size", snapshot.write_size);
-    append_int(
-        &mut parts,
-        "tikv_kv_engine_cache_miss",
-        snapshot.tikv_kv_engine_cache_miss,
-    );
-    append_int(
-        &mut parts,
-        "tikv_coprocessor_executor_iterations",
-        snapshot.tikv_coprocessor_executor_iterations,
-    );
-    append_int(
-        &mut parts,
-        "tikv_coprocessor_response_bytes",
-        snapshot.tikv_coprocessor_response_bytes,
-    );
-    append_int(
-        &mut parts,
-        "tikv_raftstore_store_write_trigger_wb_bytes",
-        snapshot.tikv_raftstore_store_write_trigger_wb,
-    );
-    append_int(
-        &mut parts,
-        "tikv_storage_processed_keys_batch_get",
-        snapshot.tikv_storage_processed_keys_batch_get,
-    );
-    append_int(
-        &mut parts,
-        "tikv_storage_processed_keys_get",
-        snapshot.tikv_storage_processed_keys_get,
-    );
-    append_map(
-        &mut parts,
-        "tikv_coprocessor_executor_work_total",
-        &snapshot.tikv_coprocessor_executor_work_total,
-    );
-
-    (total, parts.join(", "))
-}
-
 /// One resolved keyspace-observability slow-log field: the `Name`/`Value`
 /// pair `config.GetKeyspaceObservabilitySlowLogFields` returns.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -720,9 +329,8 @@ pub struct KeyspaceObservabilityField {
 }
 
 /// Go `SlowQueryLogItems`: the collection of items that should be included
-/// in the slow query log. Pointer-typed Go fields whose owners are unported
-/// arrive here as the narrowed snapshots documented on each field.
-#[derive(Clone, Debug, Default, PartialEq)]
+/// in the slow query log.
+#[derive(Clone, Default)]
 pub struct SlowQueryLogItems {
     /// Go `SlowQueryLogItems.TxnTS`.
     pub txn_ts: u64,
@@ -775,10 +383,8 @@ pub struct SlowQueryLogItems {
     pub rewrite_info: RewritePhaseInfo,
     /// Go `SlowQueryLogItems.WriteSQLRespTotal`.
     pub write_sql_resp_total: Duration,
-    /// Go `SlowQueryLogItems.KVExecDetail` (client-go `*util.ExecDetails`),
-    /// narrowed to the post-`LoadTiKVExecDetails` snapshot; `None` is Go's
-    /// nil pointer (the all-`"0"` rendering).
-    pub kv_exec_detail: Option<TikvExecDetailsSnapshot>,
+    /// Go `SlowQueryLogItems.KVExecDetail` (client-go `*util.ExecDetails`).
+    pub kv_exec_detail: Option<Arc<tikv_client::util::ExecDetails>>,
     /// Go `SlowQueryLogItems.ExecDetail` (`*execdetails.ExecDetails`); Go
     /// dereferences it unconditionally, so it is a plain value here.
     pub exec_detail: ExecDetails,
@@ -792,13 +398,10 @@ pub struct SlowQueryLogItems {
     pub warnings: Vec<JsonSqlWarnForSlowLog>,
     /// Go `SlowQueryLogItems.ResourceGroupName`.
     pub resource_group_name: String,
-    /// Go `SlowQueryLogItems.RUDetails` (client-go `*util.RUDetails`),
-    /// narrowed to its five accessor results; `None` is Go's nil pointer
-    /// (nil-safe zero accessors).
-    pub ru_details: Option<RuDetailsSnapshot>,
-    /// Go `SlowQueryLogItems.RUV2Metrics` (`*execdetails.RUV2Metrics`),
-    /// narrowed to the counters `FormatRUV2Summary` snapshots.
-    pub ruv2_metrics: Option<RuV2MetricsSnapshot>,
+    /// Go `SlowQueryLogItems.RUDetails` (client-go `*util.RUDetails`).
+    pub ru_details: Option<Arc<tikv_client::RuDetails>>,
+    /// Go `SlowQueryLogItems.RUV2Metrics` (`*execdetails.RUV2Metrics`).
+    pub ruv2_metrics: Option<Arc<RuV2Metrics>>,
     /// Go `SlowQueryLogItems.MemMax`.
     pub mem_max: i64,
     /// Go `SlowQueryLogItems.DiskMax`.
@@ -962,8 +565,11 @@ fn encode_connect_attrs(out: &mut String, attrs: &BTreeMap<String, String>) {
 
 /// Go `kvExecDetailFormat`: the KV/PD/backoff totals and the eight unpacked
 /// byte counters, all `"0"` for a nil detail.
-fn kv_exec_detail_format(buf: &mut String, kv_exec_detail: Option<&TikvExecDetailsSnapshot>) {
-    let Some(snapshot) = kv_exec_detail else {
+fn kv_exec_detail_format(
+    buf: &mut String,
+    kv_exec_detail: Option<&tikv_client::util::ExecDetails>,
+) {
+    let Some(detail) = kv_exec_detail else {
         write_slow_log_item(buf, SLOW_LOG_KV_TOTAL, ZERO_STR);
         write_slow_log_item(buf, SLOW_LOG_PD_TOTAL, ZERO_STR);
         write_slow_log_item(buf, SLOW_LOG_BACKOFF_TOTAL, ZERO_STR);
@@ -993,64 +599,62 @@ fn kv_exec_detail_format(buf: &mut String, kv_exec_detail: Option<&TikvExecDetai
         );
         return;
     };
-    // Go converts the atomic int64 nanoseconds through time.Duration; a
-    // negative count would carry its sign into Seconds(). Snapshots here are
-    // non-negative in practice; saturate at zero rather than panic.
-    let ns = |value: i64| Duration::from_nanos(value.try_into().unwrap_or(0));
+    let snapshot = crate::exec_details::load_tikv_exec_details(Some(detail));
+    let seconds = |nanoseconds: i64| format_float_f(nanoseconds as f64 / 1_000_000_000.0);
     write_slow_log_item(
         buf,
         SLOW_LOG_KV_TOTAL,
-        &format_seconds(ns(snapshot.wait_kv_resp_duration)),
+        &seconds(snapshot.wait_kv_response_duration_ns),
     );
     write_slow_log_item(
         buf,
         SLOW_LOG_PD_TOTAL,
-        &format_seconds(ns(snapshot.wait_pd_resp_duration)),
+        &seconds(snapshot.wait_pd_response_duration_ns),
     );
     write_slow_log_item(
         buf,
         SLOW_LOG_BACKOFF_TOTAL,
-        &format_seconds(ns(snapshot.backoff_duration)),
+        &seconds(snapshot.backoff_duration_ns),
     );
     write_slow_log_item(
         buf,
         SLOW_LOG_UNPACKED_BYTES_SENT_TIKV_TOTAL,
-        &snapshot.unpacked_bytes_sent_kv_total.to_string(),
+        &snapshot.traffic.sent_kv_total.to_string(),
     );
     write_slow_log_item(
         buf,
         SLOW_LOG_UNPACKED_BYTES_RECEIVED_TIKV_TOTAL,
-        &snapshot.unpacked_bytes_received_kv_total.to_string(),
+        &snapshot.traffic.received_kv_total.to_string(),
     );
     write_slow_log_item(
         buf,
         SLOW_LOG_UNPACKED_BYTES_SENT_TIKV_CROSS_ZONE,
-        &snapshot.unpacked_bytes_sent_kv_cross_zone.to_string(),
+        &snapshot.traffic.sent_kv_cross_zone.to_string(),
     );
     write_slow_log_item(
         buf,
         SLOW_LOG_UNPACKED_BYTES_RECEIVED_TIKV_CROSS_ZONE,
-        &snapshot.unpacked_bytes_received_kv_cross_zone.to_string(),
+        &snapshot.traffic.received_kv_cross_zone.to_string(),
     );
     write_slow_log_item(
         buf,
         SLOW_LOG_UNPACKED_BYTES_SENT_TIFLASH_TOTAL,
-        &snapshot.unpacked_bytes_sent_mpp_total.to_string(),
+        &snapshot.traffic.sent_mpp_total.to_string(),
     );
     write_slow_log_item(
         buf,
         SLOW_LOG_UNPACKED_BYTES_RECEIVED_TIFLASH_TOTAL,
-        &snapshot.unpacked_bytes_received_mpp_total.to_string(),
+        &snapshot.traffic.received_mpp_total.to_string(),
     );
     write_slow_log_item(
         buf,
         SLOW_LOG_UNPACKED_BYTES_SENT_TIFLASH_CROSS_ZONE,
-        &snapshot.unpacked_bytes_sent_mpp_cross_zone.to_string(),
+        &snapshot.traffic.sent_mpp_cross_zone.to_string(),
     );
     write_slow_log_item(
         buf,
         SLOW_LOG_UNPACKED_BYTES_RECEIVED_TIFLASH_CROSS_ZONE,
-        &snapshot.unpacked_bytes_received_mpp_cross_zone.to_string(),
+        &snapshot.traffic.received_mpp_cross_zone.to_string(),
     );
 }
 
@@ -1339,7 +943,7 @@ pub fn slow_log_format(session: &SlowLogSessionSnapshot, items: &SlowQueryLogIte
         SLOW_LOG_HAS_MORE_RESULTS,
         format_bool(items.has_more_results),
     );
-    kv_exec_detail_format(&mut buf, items.kv_exec_detail.as_ref());
+    kv_exec_detail_format(&mut buf, items.kv_exec_detail.as_deref());
     write_slow_log_item(
         &mut buf,
         SLOW_LOG_WRITE_SQL_RESP_TOTAL,
@@ -1391,18 +995,29 @@ pub fn slow_log_format(session: &SlowLogSessionSnapshot, items: &SlowQueryLogIte
             &items.resource_group_name,
         );
     }
-    let ru_details = items.ru_details.unwrap_or_default();
-    if ru_details.rru > 0.0 {
-        write_slow_log_item(&mut buf, SLOW_LOG_RRU, &format_float_f(ru_details.rru));
+    let read_ru = items
+        .ru_details
+        .as_deref()
+        .map_or(0.0, tikv_client::RuDetails::read_ru);
+    let write_ru = items
+        .ru_details
+        .as_deref()
+        .map_or(0.0, tikv_client::RuDetails::write_ru);
+    let ru_wait_duration = items
+        .ru_details
+        .as_deref()
+        .map_or(Duration::ZERO, tikv_client::RuDetails::ru_wait_duration);
+    if read_ru > 0.0 {
+        write_slow_log_item(&mut buf, SLOW_LOG_RRU, &format_float_f(read_ru));
     }
-    if ru_details.wru > 0.0 {
-        write_slow_log_item(&mut buf, SLOW_LOG_WRU, &format_float_f(ru_details.wru));
+    if write_ru > 0.0 {
+        write_slow_log_item(&mut buf, SLOW_LOG_WRU, &format_float_f(write_ru));
     }
-    if ru_details.ru_wait_duration > Duration::ZERO {
+    if ru_wait_duration > Duration::ZERO {
         write_slow_log_item(
             &mut buf,
             SLOW_LOG_WAIT_RU_DURATION,
-            &format_seconds(ru_details.ru_wait_duration),
+            &format_seconds(ru_wait_duration),
         );
     }
     if items.cpu_usages.tidb_cpu_time > Duration::ZERO {
@@ -1429,13 +1044,13 @@ pub fn slow_log_format(session: &SlowLogSessionSnapshot, items: &SlowQueryLogIte
         SLOW_LOG_STORAGE_FROM_MPP,
         format_bool(items.storage_mpp),
     );
-    let (tikv_ru, tiflash_ru) = match items.ru_details {
-        Some(details) => (details.tikv_ru_v2, details.tiflash_ru),
+    let (tikv_ru, tiflash_ru) = match items.ru_details.as_deref() {
+        Some(details) => (details.tikv_ru_v2(), details.tiflash_ru()),
         None => (0.0, 0.0),
     };
     let (total, formatted) = format_ruv2_summary(
-        items.ruv2_metrics.as_ref(),
-        &session.ru_v2_weights,
+        items.ruv2_metrics.as_deref(),
+        session.ru_v2_weights,
         tikv_ru,
         tiflash_ru,
     );
@@ -1589,6 +1204,11 @@ mod tests {
             cop_tasks.tot_backoff_times.insert(backoff.to_owned(), 200);
         }
 
+        let kv_exec_detail = Arc::new(tikv_client::util::ExecDetails::default());
+        kv_exec_detail.add_wait_kv_response(Duration::from_secs(10));
+        kv_exec_detail.add_wait_pd_response(Duration::from_secs(11));
+        kv_exec_detail.add_backoff(Duration::from_secs(12));
+
         SlowQueryLogItems {
             txn_ts: 406_649_736_972_468_225,
             keyspace_name: "keyspace_a".to_owned(),
@@ -1605,12 +1225,7 @@ mod tests {
             plan_from_cache: true,
             plan_from_binding: true,
             has_more_results: true,
-            kv_exec_detail: Some(TikvExecDetailsSnapshot {
-                wait_kv_resp_duration: Duration::from_secs(10).as_nanos() as i64,
-                wait_pd_resp_duration: Duration::from_secs(11).as_nanos() as i64,
-                backoff_duration: Duration::from_secs(12).as_nanos() as i64,
-                ..TikvExecDetailsSnapshot::default()
-            }),
+            kv_exec_detail: Some(kv_exec_detail),
             write_sql_resp_total: Duration::from_secs(1),
             result_rows: 12345,
             succ: true,
@@ -1626,13 +1241,11 @@ mod tests {
             used_stats: [(1, used_stats_1), (2, used_stats_2)].into_iter().collect(),
             resource_group_name: "rg1".to_owned(),
             // Go util.NewRUDetailsWith(50.0, 100.56, 134*time.Millisecond).
-            ru_details: Some(RuDetailsSnapshot {
-                rru: 50.0,
-                wru: 100.56,
-                ru_wait_duration: Duration::from_millis(134),
-                tikv_ru_v2: 0.0,
-                tiflash_ru: 0.0,
-            }),
+            ru_details: Some(Arc::new(tikv_client::RuDetails::new_with(
+                50.0,
+                100.56,
+                Duration::from_millis(134),
+            ))),
             storage_kv: true,
             storage_mpp: false,
             mem_arbitration: Duration::from_nanos(54321).as_secs_f64(),
@@ -1797,6 +1410,13 @@ Cop_backoff_rpcTiKV_avg_time: 0.2 Cop_backoff_rpcTiKV_p90_time: 0.2
     #[test]
     fn slow_log_format_includes_tiflash_ru_in_ruv2_metrics() {
         let session = SlowLogSessionSnapshot::default();
+        let ru_details = Arc::new(tikv_client::RuDetails::new());
+        ru_details.add_tikv_ru_v2(100.0);
+        ru_details.update_tiflash(&tikv_client::proto::resource_manager::Consumption {
+            r_r_u: 20.0,
+            w_r_u: 30.0,
+            ..Default::default()
+        });
         let items = SlowQueryLogItems {
             sql: "select 1".to_owned(),
             digest: "digest".to_owned(),
@@ -1804,13 +1424,9 @@ Cop_backoff_rpcTiKV_avg_time: 0.2 Cop_backoff_rpcTiKV_p90_time: 0.2
             succ: true,
             // Go: RUDetails.AddTiKVRUV2(100) and
             // UpdateTiFlash(&rmpb.Consumption{RRU: 20, WRU: 30}).
-            ru_details: Some(RuDetailsSnapshot {
-                tikv_ru_v2: 100.0,
-                tiflash_ru: 50.0,
-                ..RuDetailsSnapshot::default()
-            }),
+            ru_details: Some(ru_details),
             // Go: execdetails.NewRUV2Metrics() — non-nil, all zero.
-            ruv2_metrics: Some(RuV2MetricsSnapshot::default()),
+            ruv2_metrics: Some(Arc::new(RuV2Metrics::new())),
             ..SlowQueryLogItems::default()
         };
 
@@ -1835,27 +1451,21 @@ Cop_backoff_rpcTiKV_avg_time: 0.2 Cop_backoff_rpcTiKV_p90_time: 0.2
         };
         assert_eq!(
             (String::new(), String::new()),
-            format_ruv2_summary(None, &weights, 0.0, 0.0)
+            format_ruv2_summary(None, weights, 0.0, 0.0)
         );
 
-        let bypassed = RuV2MetricsSnapshot {
-            bypass: true,
-            plan_cnt: 5,
-            ..RuV2MetricsSnapshot::default()
-        };
+        let bypassed = RuV2Metrics::new();
+        bypassed.set_bypass(true);
         assert_eq!(
             (String::new(), String::new()),
-            format_ruv2_summary(Some(&bypassed), &weights, 3.0, 0.0)
+            format_ruv2_summary(Some(&bypassed), weights, 3.0, 0.0)
         );
 
-        let metrics = RuV2MetricsSnapshot {
-            plan_cnt: 5,
-            executor_l1: [("TableReader".to_owned(), 3), ("Zero".to_owned(), 0)]
-                .into_iter()
-                .collect(),
-            ..RuV2MetricsSnapshot::default()
-        };
-        let (total, detail) = format_ruv2_summary(Some(&metrics), &weights, 1.0, 0.5);
+        let metrics = RuV2Metrics::new();
+        metrics.add_plan_cnt(5);
+        metrics.add_executor_metric(1, "TableReader", 3);
+        metrics.add_executor_metric(1, "Zero", 0);
+        let (total, detail) = format_ruv2_summary(Some(&metrics), weights, 1.0, 0.5);
         assert_eq!("11.50", total);
         assert_eq!(
             "total_ru:11.50, tidb_ru:10.00, tikv_ru:1.00, tiflash_ru:0.50, \

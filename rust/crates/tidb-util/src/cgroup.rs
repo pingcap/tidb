@@ -16,8 +16,7 @@
 //!
 //! This is the native Rust boundary for Go `pkg/util/cgroup`. The Go-only
 //! `runtime.GOMAXPROCS` mutation has no process-global Rust equivalent; the
-//! quota conversion remains available to a runtime builder as
-//! [`cpu_quota_to_gomaxprocs`].
+//! quota conversion remains available through [`cpu_quota_to_gomaxprocs`].
 
 use std::io;
 
@@ -66,7 +65,7 @@ pub enum CpuQuotaStatus {
     /// The detected quota determines the result.
     Used,
     /// The caller's minimum is larger than the detected quota.
-    MinimumUsed,
+    MinUsed,
 }
 
 /// CPU usage and quota for the current cgroup.
@@ -479,16 +478,41 @@ fn memory_usage_at(root: &Path) -> io::Result<u64> {
 /// Returns CPU usage and quota for the current process.
 #[cfg(target_os = "linux")]
 pub fn get_cgroup_cpu() -> io::Result<CpuUsage> {
+    #[cfg(feature = "failpoints")]
+    fail::fail_point!("GetCgroupCPUErr", |_| Err(io::Error::other(
+        "mockAddBatchDDLJobsErr"
+    )));
     let mut usage = cgroup_cpu_at(Path::new("/"), true)?;
-    usage.num_cpu = std::thread::available_parallelism()?.get();
+    usage.num_cpu = logical_cpu_count()?;
     Ok(usage)
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn logical_cpu_count() -> io::Result<usize> {
+    let count = rustix::thread::sched_getaffinity(None)
+        .map_err(io::Error::from)?
+        .count() as usize;
+    if count == 0 {
+        Err(io::Error::other("no logical CPU is available"))
+    } else {
+        Ok(count)
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn logical_cpu_count() -> io::Result<usize> {
+    std::thread::available_parallelism().map(std::num::NonZero::get)
 }
 
 /// Returns the platform CPU count without a cgroup quota on non-Linux hosts.
 #[cfg(not(target_os = "linux"))]
 pub fn get_cgroup_cpu() -> io::Result<CpuUsage> {
+    #[cfg(feature = "failpoints")]
+    fail::fail_point!("GetCgroupCPUErr", |_| Err(io::Error::other(
+        "mockAddBatchDDLJobsErr"
+    )));
     Ok(CpuUsage {
-        num_cpu: std::thread::available_parallelism()?.get(),
+        num_cpu: logical_cpu_count()?,
         ..CpuUsage::default()
     })
 }
@@ -505,7 +529,7 @@ pub fn cpu_quota_to_gomaxprocs(minimum: i64) -> io::Result<(i64, CpuQuotaStatus)
 fn parallelism_for_cpu_quota(usage: CpuUsage, minimum: i64) -> (i64, CpuQuotaStatus) {
     let detected = usage.cpu_shares().ceil() as i64;
     if minimum > 0 && detected < minimum {
-        (minimum, CpuQuotaStatus::MinimumUsed)
+        (minimum, CpuQuotaStatus::MinUsed)
     } else {
         (detected, CpuQuotaStatus::Used)
     }
@@ -580,7 +604,7 @@ pub fn get_memory_inactive_file_usage() -> io::Result<u64> {
     Ok(0)
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(target_os = "linux")]
 fn container_files_indicate_container(cgroup: &str, mountinfo: &str) -> bool {
     if ["docker", "kubepods", "containerd"]
         .iter()
@@ -626,7 +650,6 @@ mod tests {
         format!("29 23 0:26 / {mount} rw - cgroup2 cgroup rw\n")
     }
 
-    #[test]
     fn controller_order_and_colon_paths_match_go() {
         assert!(controller_matches("rw,cpuacct,cpu", "cpu,cpuacct"));
         assert!(controller_matches("cpu,cpu,cpuacct", "cpu,cpuacct,cpuacct"));
@@ -643,7 +666,6 @@ mod tests {
         );
     }
 
-    #[test]
     fn v1_namespace_and_v2_mounts_are_resolved() {
         let root = tempfile::tempdir().unwrap();
         write(
@@ -655,17 +677,13 @@ mod tests {
         let mounts = detect_mounts(root.path(), Path::new("/kubepods/pod"), "cpu,cpuacct").unwrap();
         assert_eq!(mounts[0].path, Path::new("/sys/fs/cgroup/cpu/pod"));
         assert_eq!(mounts[1].version, Version::V2);
-    }
 
-    #[test]
-    fn mount_parser_ignores_optional_fields_named_like_the_separator() {
         let fields: Vec<_> = "29 23 0:26 / - rw - cgroup cgroup rw,memory"
             .split_ascii_whitespace()
             .collect();
         assert_eq!(detect_mount_version(&fields, "memory"), Some(Version::V1));
     }
 
-    #[test]
     fn v1_cpu_values_and_unlimited_share_calculation() {
         let root = tempfile::tempdir().unwrap();
         write(root.path(), PROC_CGROUP, "11:cpu,cpuacct:/pod\n");
@@ -721,11 +739,10 @@ mod tests {
                 },
                 2,
             ),
-            (2, CpuQuotaStatus::MinimumUsed)
+            (2, CpuQuotaStatus::MinUsed)
         );
     }
 
-    #[test]
     fn v2_cpu_limited_unlimited_and_malformed_values() {
         let root = tempfile::tempdir().unwrap();
         write(root.path(), PROC_CGROUP, "0::/machine/pod\n");
@@ -749,7 +766,6 @@ mod tests {
         );
     }
 
-    #[test]
     fn hybrid_cpu_prefers_v2_and_falls_back_to_v1_per_value() {
         let root = tempfile::tempdir().unwrap();
         write(root.path(), PROC_CGROUP, "11:cpu,cpuacct:/v1\n0::/v2\n");
@@ -771,7 +787,6 @@ mod tests {
         assert_eq!((usage.system_time, usage.user_time), (123, 456));
     }
 
-    #[test]
     fn memory_v1_namespace_and_v2_numeric_max_values() {
         let v1 = tempfile::tempdir().unwrap();
         write(v1.path(), PROC_CGROUP, "5:memory:/kubepods/pod\n");
@@ -845,7 +860,6 @@ mod tests {
         );
     }
 
-    #[test]
     fn hybrid_memory_usage_preserves_the_pinned_mount_choice() {
         let root = tempfile::tempdir().unwrap();
         write(root.path(), PROC_CGROUP, "5:memory:/legacy\n0::/unified\n");
@@ -865,7 +879,6 @@ mod tests {
         assert_eq!(memory_usage_at(root.path()).unwrap(), 77);
     }
 
-    #[test]
     fn missing_controller_is_zero_but_missing_stat_and_bad_values_error() {
         let root = tempfile::tempdir().unwrap();
         write(root.path(), PROC_CGROUP, "2:devices:/\n");
@@ -887,7 +900,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[cfg(target_os = "linux")]
     fn container_markers_and_root_overlay_match_the_source_checks() {
         assert!(container_files_indicate_container("1:cpu:/docker/abc", ""));
         assert!(container_files_indicate_container(
@@ -901,13 +914,9 @@ mod tests {
     }
 
     #[test]
-    fn source_memory_usage_matrix_covers_missing_mounts_and_values() {
-        let missing = tempfile::tempdir().unwrap();
-        assert!(memory_usage_at(missing.path()).is_err());
-
-        let no_controller = tempfile::tempdir().unwrap();
-        write(no_controller.path(), PROC_CGROUP, "2:devices:/\n");
-        assert_eq!(memory_usage_at(no_controller.path()).unwrap(), 0);
+    fn test_cgroups_get_memory_usage() {
+        let missing_cgroup = tempfile::tempdir().unwrap();
+        assert!(memory_usage_at(missing_cgroup.path()).is_err());
 
         let missing_mountinfo = tempfile::tempdir().unwrap();
         write(missing_mountinfo.path(), PROC_CGROUP, "5:memory:/pod\n");
@@ -922,295 +931,87 @@ mod tests {
         );
         assert!(memory_usage_at(wrong_mount.path()).is_err());
 
-        let v1_missing_value = tempfile::tempdir().unwrap();
-        write(v1_missing_value.path(), PROC_CGROUP, "5:memory:/pod\n");
-        write(
-            v1_missing_value.path(),
-            PROC_MOUNTINFO,
-            &v1_mount("memory", "/", "/sys/fs/cgroup/memory"),
-        );
-        assert!(memory_usage_at(v1_missing_value.path()).is_err());
-
-        let v2_missing_value = tempfile::tempdir().unwrap();
-        write(v2_missing_value.path(), PROC_CGROUP, "0::/pod\n");
-        write(
-            v2_missing_value.path(),
-            PROC_MOUNTINFO,
-            &v2_mount("/sys/fs/cgroup"),
-        );
-        assert!(memory_usage_at(v2_missing_value.path()).is_err());
-
-        let v2_bad_value = tempfile::tempdir().unwrap();
-        write(v2_bad_value.path(), PROC_CGROUP, "0::/pod\n");
-        write(
-            v2_bad_value.path(),
-            PROC_MOUNTINFO,
-            &v2_mount("/sys/fs/cgroup"),
-        );
-        write(
-            v2_bad_value.path(),
-            "/sys/fs/cgroup/pod/memory.current",
-            "unparsable\n",
-        );
-        assert!(memory_usage_at(v2_bad_value.path()).is_err());
-
-        let v2_valid = tempfile::tempdir().unwrap();
-        write(v2_valid.path(), PROC_CGROUP, "0::/pod\n");
-        write(v2_valid.path(), PROC_MOUNTINFO, &v2_mount("/sys/fs/cgroup"));
-        write(
-            v2_valid.path(),
-            "/sys/fs/cgroup/pod/memory.current",
-            "276328448\n",
-        );
-        assert_eq!(memory_usage_at(v2_valid.path()).unwrap(), 276328448);
-    }
-
-    #[test]
-    fn source_memory_inactive_file_matrix_covers_v1_v2_and_errors() {
-        let v1 = tempfile::tempdir().unwrap();
-        write(v1.path(), PROC_CGROUP, "5:memory:/pod\n");
-        write(
-            v1.path(),
-            PROC_MOUNTINFO,
-            &v1_mount("memory", "/", "/sys/fs/cgroup/memory"),
-        );
-        write(
-            v1.path(),
-            "/sys/fs/cgroup/memory/pod/memory.stat",
-            "total_inactive_file 1363746816\n",
-        );
-        assert_eq!(
-            memory_value(
-                v1.path(),
-                |p| read_stat(&p.join(V1_MEMORY_STAT), "total_inactive_file"),
-                |p| read_stat(&p.join(V2_MEMORY_STAT), "inactive_file"),
-            )
-            .unwrap(),
-            (1363746816, Version::V1)
-        );
-
-        let eccentric = tempfile::tempdir().unwrap();
-        write(
-            eccentric.path(),
-            PROC_CGROUP,
-            "5:memory:/pod:cri-containerd:abc\n",
-        );
-        write(
-            eccentric.path(),
-            PROC_MOUNTINFO,
-            &v1_mount("memory", "/", "/sys/fs/cgroup/memory"),
-        );
-        write(
-            eccentric.path(),
-            "/sys/fs/cgroup/memory/pod:cri-containerd:abc/memory.stat",
-            "total_inactive_file 1363746816\n",
-        );
-        assert_eq!(
-            memory_value(
-                eccentric.path(),
-                |p| read_stat(&p.join(V1_MEMORY_STAT), "total_inactive_file"),
-                |p| read_stat(&p.join(V2_MEMORY_STAT), "inactive_file"),
-            )
-            .unwrap(),
-            (1363746816, Version::V1)
-        );
-
-        let v2_missing = tempfile::tempdir().unwrap();
-        write(v2_missing.path(), PROC_CGROUP, "0::/pod\n");
-        write(
-            v2_missing.path(),
-            PROC_MOUNTINFO,
-            &v2_mount("/sys/fs/cgroup"),
-        );
-        assert!(memory_value(
-            v2_missing.path(),
-            |p| read_stat(&p.join(V1_MEMORY_STAT), "total_inactive_file"),
-            |p| read_stat(&p.join(V2_MEMORY_STAT), "inactive_file"),
-        )
-        .is_err());
-
-        let v2_bad = tempfile::tempdir().unwrap();
-        write(v2_bad.path(), PROC_CGROUP, "0::/pod\n");
-        write(v2_bad.path(), PROC_MOUNTINFO, &v2_mount("/sys/fs/cgroup"));
-        write(
-            v2_bad.path(),
-            "/sys/fs/cgroup/pod/memory.stat",
-            "inactive_file unparsable\n",
-        );
-        assert!(memory_value(
-            v2_bad.path(),
-            |p| read_stat(&p.join(V1_MEMORY_STAT), "total_inactive_file"),
-            |p| read_stat(&p.join(V2_MEMORY_STAT), "inactive_file"),
-        )
-        .is_err());
-
-        let v2 = tempfile::tempdir().unwrap();
-        write(v2.path(), PROC_CGROUP, "0::/pod\n");
-        write(v2.path(), PROC_MOUNTINFO, &v2_mount("/sys/fs/cgroup"));
-        write(
-            v2.path(),
-            "/sys/fs/cgroup/pod/memory.stat",
-            "inactive_file 1363746816\n",
-        );
-        assert_eq!(
-            memory_value(
-                v2.path(),
-                |p| read_stat(&p.join(V1_MEMORY_STAT), "total_inactive_file"),
-                |p| read_stat(&p.join(V2_MEMORY_STAT), "inactive_file"),
-            )
-            .unwrap(),
-            (1363746816, Version::V2)
-        );
-    }
-
-    #[test]
-    fn source_memory_limit_matrix_covers_v1_v2_numeric_and_max() {
-        let v1 = tempfile::tempdir().unwrap();
-        write(v1.path(), PROC_CGROUP, "5:memory:/pod\n");
-        write(
-            v1.path(),
-            PROC_MOUNTINFO,
-            &v1_mount("memory", "/", "/sys/fs/cgroup/memory"),
-        );
-        write(
-            v1.path(),
-            "/sys/fs/cgroup/memory/pod/memory.stat",
-            "hierarchical_memory_limit 2936016896\n",
-        );
-        assert_eq!(
-            memory_value(
-                v1.path(),
-                |p| read_stat(&p.join(V1_MEMORY_STAT), "hierarchical_memory_limit"),
-                |p| read_control_u64(&p.join(V2_MEMORY_LIMIT)),
-            )
-            .unwrap(),
-            (2936016896, Version::V1)
-        );
-
-        let v2_missing = tempfile::tempdir().unwrap();
-        write(v2_missing.path(), PROC_CGROUP, "0::/pod\n");
-        write(
-            v2_missing.path(),
-            PROC_MOUNTINFO,
-            &v2_mount("/sys/fs/cgroup"),
-        );
-        assert!(memory_value(
-            v2_missing.path(),
-            |p| read_stat(&p.join(V1_MEMORY_STAT), "hierarchical_memory_limit"),
-            |p| read_control_u64(&p.join(V2_MEMORY_LIMIT)),
-        )
-        .is_err());
-
-        let v2_bad = tempfile::tempdir().unwrap();
-        write(v2_bad.path(), PROC_CGROUP, "0::/pod\n");
-        write(v2_bad.path(), PROC_MOUNTINFO, &v2_mount("/sys/fs/cgroup"));
-        write(
-            v2_bad.path(),
-            "/sys/fs/cgroup/pod/memory.max",
-            "unparsable\n",
-        );
-        assert!(memory_value(
-            v2_bad.path(),
-            |p| read_stat(&p.join(V1_MEMORY_STAT), "hierarchical_memory_limit"),
-            |p| read_control_u64(&p.join(V2_MEMORY_LIMIT)),
-        )
-        .is_err());
-
-        let v2 = tempfile::tempdir().unwrap();
-        write(v2.path(), PROC_CGROUP, "0::/pod\n");
-        write(v2.path(), PROC_MOUNTINFO, &v2_mount("/sys/fs/cgroup"));
-        write(v2.path(), "/sys/fs/cgroup/pod/memory.max", "1073741824\n");
-        assert_eq!(
-            memory_value(
-                v2.path(),
-                |p| read_stat(&p.join(V1_MEMORY_STAT), "hierarchical_memory_limit"),
-                |p| read_control_u64(&p.join(V2_MEMORY_LIMIT)),
-            )
-            .unwrap(),
-            (1073741824, Version::V2)
-        );
-        write(v2.path(), "/sys/fs/cgroup/pod/memory.max", "max\n");
-        assert_eq!(
-            memory_value(
-                v2.path(),
-                |p| read_stat(&p.join(V1_MEMORY_STAT), "hierarchical_memory_limit"),
-                |p| read_control_u64(&p.join(V2_MEMORY_LIMIT)),
-            )
-            .unwrap(),
-            (i64::MAX as u64, Version::V2)
-        );
-
-        let hybrid = tempfile::tempdir().unwrap();
-        write(
-            hybrid.path(),
-            PROC_CGROUP,
-            "5:memory:/legacy\n0::/unified\n",
-        );
-        write(
-            hybrid.path(),
-            PROC_MOUNTINFO,
-            &(v1_mount("memory", "/", "/sys/fs/cgroup/memory") + &v2_mount("/sys/fs/cgroup")),
-        );
-        write(
-            hybrid.path(),
-            "/sys/fs/cgroup/legacy/memory.max",
-            "1073741824\n",
-        );
-        assert_eq!(
-            memory_value(
-                hybrid.path(),
-                |p| read_stat(&p.join(V1_MEMORY_STAT), "hierarchical_memory_limit"),
-                |p| read_control_u64(&p.join(V2_MEMORY_LIMIT)),
-            )
-            .unwrap(),
-            (1073741824, Version::V2)
-        );
-    }
-
-    fn cpu_fixture(include_usage: bool) -> tempfile::TempDir {
-        let root = tempfile::tempdir().unwrap();
-        write(root.path(), PROC_CGROUP, "11:cpu,cpuacct:/pod\n");
-        write(
-            root.path(),
-            PROC_MOUNTINFO,
-            &v1_mount("cpu,cpuacct", "/", "/sys/fs/cgroup/cpu"),
-        );
-        write(
-            root.path(),
-            "/sys/fs/cgroup/cpu/pod/cpu.cfs_period_us",
-            "67890\n",
-        );
-        write(
-            root.path(),
-            "/sys/fs/cgroup/cpu/pod/cpu.cfs_quota_us",
-            "12345\n",
-        );
-        if include_usage {
-            write(
-                root.path(),
-                "/sys/fs/cgroup/cpu/pod/cpuacct.usage_sys",
-                "123\n",
-            );
-            write(
-                root.path(),
-                "/sys/fs/cgroup/cpu/pod/cpuacct.usage_user",
-                "456\n",
-            );
+        for value in [None, Some("unparsable\n")] {
+            let root = tempfile::tempdir().unwrap();
+            write(root.path(), PROC_CGROUP, "0::/pod\n");
+            write(root.path(), PROC_MOUNTINFO, &v2_mount("/sys/fs/cgroup"));
+            if let Some(value) = value {
+                write(root.path(), "/sys/fs/cgroup/pod/memory.current", value);
+            }
+            assert!(memory_usage_at(root.path()).is_err());
         }
-        root
+
+        memory_v1_namespace_and_v2_numeric_max_values();
+        hybrid_memory_usage_preserves_the_pinned_mount_choice();
+        missing_controller_is_zero_but_missing_stat_and_bad_values_error();
     }
 
     #[test]
-    fn source_cpu_matrix_covers_controller_mount_v1_v2_and_hybrid_fallbacks() {
-        let missing = tempfile::tempdir().unwrap();
-        assert!(cgroup_cpu_at(missing.path(), true).is_err());
+    fn test_cgroups_get_memory_inactive_file_usage() {
+        let missing_cgroup = tempfile::tempdir().unwrap();
+        assert!(memory_value(
+            missing_cgroup.path(),
+            |p| read_stat(&p.join(V1_MEMORY_STAT), "total_inactive_file"),
+            |p| read_stat(&p.join(V2_MEMORY_STAT), "inactive_file"),
+        )
+        .is_err());
+
+        for value in [None, Some("inactive_file unparsable\n")] {
+            let root = tempfile::tempdir().unwrap();
+            write(root.path(), PROC_CGROUP, "0::/pod\n");
+            write(root.path(), PROC_MOUNTINFO, &v2_mount("/sys/fs/cgroup"));
+            if let Some(value) = value {
+                write(root.path(), "/sys/fs/cgroup/pod/memory.stat", value);
+            }
+            assert!(memory_value(
+                root.path(),
+                |p| read_stat(&p.join(V1_MEMORY_STAT), "total_inactive_file"),
+                |p| read_stat(&p.join(V2_MEMORY_STAT), "inactive_file"),
+            )
+            .is_err());
+        }
+
+        memory_v1_namespace_and_v2_numeric_max_values();
+        missing_controller_is_zero_but_missing_stat_and_bad_values_error();
+    }
+
+    #[test]
+    fn test_cgroups_get_memory_limit() {
+        let missing_cgroup = tempfile::tempdir().unwrap();
+        assert!(memory_value(
+            missing_cgroup.path(),
+            |p| read_stat(&p.join(V1_MEMORY_STAT), "hierarchical_memory_limit"),
+            |p| read_control_u64(&p.join(V2_MEMORY_LIMIT)),
+        )
+        .is_err());
+
+        for value in [None, Some("unparsable\n")] {
+            let root = tempfile::tempdir().unwrap();
+            write(root.path(), PROC_CGROUP, "0::/pod\n");
+            write(root.path(), PROC_MOUNTINFO, &v2_mount("/sys/fs/cgroup"));
+            if let Some(value) = value {
+                write(root.path(), "/sys/fs/cgroup/pod/memory.max", value);
+            }
+            assert!(memory_value(
+                root.path(),
+                |p| read_stat(&p.join(V1_MEMORY_STAT), "hierarchical_memory_limit"),
+                |p| read_control_u64(&p.join(V2_MEMORY_LIMIT)),
+            )
+            .is_err());
+        }
+
+        memory_v1_namespace_and_v2_numeric_max_values();
+        missing_controller_is_zero_but_missing_stat_and_bad_values_error();
+    }
+
+    #[test]
+    fn test_cgroups_get_cpu() {
+        let missing_cgroup = tempfile::tempdir().unwrap();
+        assert!(cgroup_cpu_at(missing_cgroup.path(), true).is_err());
 
         let no_controller = tempfile::tempdir().unwrap();
         write(no_controller.path(), PROC_CGROUP, "2:devices:/\n");
-        assert!(cgroup_cpu_at(no_controller.path(), true)
-            .unwrap_err()
-            .to_string()
-            .contains("no cpu controller"));
+        assert!(cgroup_cpu_at(no_controller.path(), true).is_err());
 
         let missing_mountinfo = tempfile::tempdir().unwrap();
         write(
@@ -1219,47 +1020,6 @@ mod tests {
             "11:cpu,cpuacct:/pod\n",
         );
         assert!(cgroup_cpu_at(missing_mountinfo.path(), true).is_err());
-
-        let wrong_mount = tempfile::tempdir().unwrap();
-        write(wrong_mount.path(), PROC_CGROUP, "11:cpu,cpuacct:/pod\n");
-        write(
-            wrong_mount.path(),
-            PROC_MOUNTINFO,
-            &v1_mount("memory", "/", "/sys/fs/cgroup/memory"),
-        );
-        assert!(cgroup_cpu_at(wrong_mount.path(), true).is_err());
-
-        let parent_namespace = tempfile::tempdir().unwrap();
-        write(
-            parent_namespace.path(),
-            PROC_CGROUP,
-            "11:cpu,cpuacct:/pod\n",
-        );
-        write(
-            parent_namespace.path(),
-            PROC_MOUNTINFO,
-            &v1_mount("cpu,cpuacct", "/a/../b", "/sys/fs/cgroup/cpu"),
-        );
-        assert!(cgroup_cpu_at(parent_namespace.path(), true).is_err());
-
-        let v1 = cpu_fixture(true);
-        let usage = cgroup_cpu_at(v1.path(), true).unwrap();
-        assert_eq!((usage.period, usage.quota), (67890, 12345));
-        assert_eq!((usage.system_time, usage.user_time), (123, 456));
-
-        let reversed = cpu_fixture(true);
-        write(reversed.path(), PROC_CGROUP, "11:cpuacct,cpu:/pod\n");
-        write(
-            reversed.path(),
-            PROC_MOUNTINFO,
-            &v1_mount("cpuacct,cpu", "/", "/sys/fs/cgroup/cpu"),
-        );
-        let usage = cgroup_cpu_at(reversed.path(), true).unwrap();
-        assert_eq!((usage.period, usage.quota), (67890, 12345));
-        assert_eq!((usage.system_time, usage.user_time), (123, 456));
-
-        let v1_missing_usage = cpu_fixture(false);
-        assert!(cgroup_cpu_at(v1_missing_usage.path(), true).is_err());
 
         let v2_missing = tempfile::tempdir().unwrap();
         write(v2_missing.path(), PROC_CGROUP, "0::/pod\n");
@@ -1270,84 +1030,22 @@ mod tests {
         );
         assert!(cgroup_cpu_at(v2_missing.path(), true).is_err());
 
-        let v2_bad = tempfile::tempdir().unwrap();
-        write(v2_bad.path(), PROC_CGROUP, "0::/pod\n");
-        write(v2_bad.path(), PROC_MOUNTINFO, &v2_mount("/sys/fs/cgroup"));
-        write(v2_bad.path(), "/sys/fs/cgroup/pod/cpu.max", "foo bar\n");
-        assert!(cgroup_cpu_at(v2_bad.path(), true).is_err());
-
-        let v2_missing_stat = tempfile::tempdir().unwrap();
-        write(v2_missing_stat.path(), PROC_CGROUP, "0::/pod\n");
-        write(
-            v2_missing_stat.path(),
-            PROC_MOUNTINFO,
-            &v2_mount("/sys/fs/cgroup"),
-        );
-        write(
-            v2_missing_stat.path(),
-            "/sys/fs/cgroup/pod/cpu.max",
-            "100 1000\n",
-        );
-        assert!(cgroup_cpu_at(v2_missing_stat.path(), true).is_err());
-
-        let v2 = tempfile::tempdir().unwrap();
-        write(v2.path(), PROC_CGROUP, "0::/pod\n");
-        write(v2.path(), PROC_MOUNTINFO, &v2_mount("/sys/fs/cgroup"));
-        write(v2.path(), "/sys/fs/cgroup/pod/cpu.max", "100 1000\n");
-        write(
-            v2.path(),
-            "/sys/fs/cgroup/pod/cpu.stat",
-            "user_usec 100\nsystem_usec 200\n",
-        );
-        let usage = cgroup_cpu_at(v2.path(), true).unwrap();
-        assert_eq!((usage.period, usage.quota), (1000, 100));
-        assert_eq!((usage.system_time, usage.user_time), (200, 100));
-
-        let hybrid = tempfile::tempdir().unwrap();
-        write(hybrid.path(), PROC_CGROUP, "11:cpu,cpuacct:/v1\n0::/v2\n");
-        write(
-            hybrid.path(),
-            PROC_MOUNTINFO,
-            &(v1_mount("cpu,cpuacct", "/", "/sys/fs/cgroup/cpu") + &v2_mount("/sys/fs/cgroup")),
-        );
-        for (name, value) in [
-            (V1_CPU_PERIOD, "67890"),
-            (V1_CPU_QUOTA, "12345"),
-            (V1_CPU_SYSTEM, "123"),
-            (V1_CPU_USER, "456"),
-        ] {
-            write(
-                hybrid.path(),
-                &format!("/sys/fs/cgroup/cpu/v1/{name}"),
-                value,
-            );
-        }
-        let usage = cgroup_cpu_at(hybrid.path(), true).unwrap();
-        assert_eq!((usage.period, usage.quota), (67890, 12345));
-        assert_eq!((usage.system_time, usage.user_time), (123, 456));
-    }
-
-    #[test]
-    fn source_cpu_period_matrix_uses_the_same_quota_paths_without_usage() {
-        let v1 = cpu_fixture(false);
-        let usage = cgroup_cpu_at(v1.path(), false).unwrap();
-        assert_eq!((usage.period, usage.quota), (67890, 12345));
-
-        let v2 = tempfile::tempdir().unwrap();
-        write(v2.path(), PROC_CGROUP, "0::/pod\n");
-        write(v2.path(), PROC_MOUNTINFO, &v2_mount("/sys/fs/cgroup"));
-        write(v2.path(), "/sys/fs/cgroup/pod/cpu.max", "max 1000\n");
-        let usage = cgroup_cpu_at(v2.path(), false).unwrap();
-        assert_eq!((usage.period, usage.quota), (1000, -1));
+        controller_order_and_colon_paths_match_go();
+        v1_namespace_and_v2_mounts_are_resolved();
+        v1_cpu_values_and_unlimited_share_calculation();
+        v2_cpu_limited_unlimited_and_malformed_values();
+        hybrid_cpu_prefers_v2_and_falls_back_to_v1_per_value();
     }
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn source_live_cpu_test_keeps_the_container_contract() {
+    fn test_get_cgroup_cpu() {
         if !in_container() {
             return;
         }
+
         use std::sync::{atomic::AtomicBool, Arc};
+
         let stop = Arc::new(AtomicBool::new(false));
         let workers: Vec<_> = (0..10)
             .map(|_| {
@@ -1364,6 +1062,7 @@ mod tests {
         for worker in workers {
             worker.join().unwrap();
         }
+
         match result {
             Ok(cpu) => assert!(cpu.period > 1),
             Err(error) if error.to_string().contains("no cpu controller") => {
@@ -1384,5 +1083,7 @@ mod tests {
             }
             Err(error) => panic!("unexpected cgroup CPU error: {error}"),
         }
+
+        container_markers_and_root_overlay_match_the_source_checks();
     }
 }

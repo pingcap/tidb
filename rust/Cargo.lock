@@ -3267,6 +3267,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-allocator-stats"
+version = "0.0.0"
+dependencies = [
+ "tikv-jemalloc-sys",
+]
+
+[[package]]
 name = "tidb-ast"
 version = "0.0.0"
 dependencies = [
@@ -3334,6 +3341,7 @@ dependencies = [
  "sha2",
  "smallvec",
  "tidb-error",
+ "tidb-hack",
  "tidb-kvcache",
  "tidb-mysql",
 ]
@@ -3456,6 +3464,7 @@ name = "tidb-dxf"
 version = "0.0.0"
 dependencies = [
  "chrono",
+ "rand 0.8.7",
  "serde",
  "serde_json",
 ]
@@ -3466,6 +3475,7 @@ version = "0.0.0"
 dependencies = [
  "crossbeam-channel",
  "regex",
+ "tidb-resourcemanager",
 ]
 
 [[package]]
@@ -3538,6 +3548,8 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "crc32fast",
+ "flate2",
+ "prost 0.14.4",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -3558,6 +3570,7 @@ dependencies = [
  "tidb-mysql",
  "tidb-parser",
  "tidb-planner",
+ "tidb-proto",
  "tidb-resolve",
  "tidb-stats",
  "tidb-stats-handle-usage",
@@ -3612,12 +3625,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-gcutil"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "tidb-vardef",
+]
+
+[[package]]
 name = "tidb-hack"
 version = "0.0.0"
 dependencies = [
  "foldhash 0.1.5",
  "hashbrown 0.15.5",
- "tikv-jemalloc-sys",
 ]
 
 [[package]]
@@ -3658,6 +3678,7 @@ dependencies = [
  "tidb-ast",
  "tidb-codec",
  "tidb-config",
+ "tidb-dxf",
  "tidb-metadef",
  "tidb-model",
  "tidb-mysql",
@@ -3813,6 +3834,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-resourcemanager"
+version = "0.0.0"
+dependencies = [
+ "crossbeam-channel",
+ "fail",
+ "getrandom 0.3.4",
+ "prometheus 0.14.0",
+ "rand 0.8.7",
+ "tidb-util",
+ "tracing",
+]
+
+[[package]]
 name = "tidb-schemacmp"
 version = "0.0.0"
 dependencies = [
@@ -3841,6 +3875,7 @@ version = "0.0.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
+ "crossbeam-channel",
  "ctrlc",
  "fail",
  "prost 0.14.4",
@@ -3875,6 +3910,7 @@ dependencies = [
  "tidb-proto",
  "tidb-protocol",
  "tidb-resolve",
+ "tidb-resourcemanager",
  "tidb-schemaver",
  "tidb-session",
  "tidb-sqlexec",
@@ -3916,6 +3952,7 @@ dependencies = [
  "tidb-error",
  "tidb-exec",
  "tidb-executor",
+ "tidb-gcutil",
  "tidb-log",
  "tidb-metadef",
  "tidb-model",
@@ -4177,6 +4214,7 @@ dependencies = [
  "tidb-model",
  "tidb-parser",
  "tidb-util",
+ "tikv-client",
 ]
 
 [[package]]
@@ -4303,6 +4341,8 @@ dependencies = [
  "sha2",
  "snap",
  "tempfile",
+ "tidb-allocator-stats",
+ "tidb-codec",
  "tidb-config",
  "tidb-datatype",
  "tidb-error",
@@ -4310,11 +4350,15 @@ dependencies = [
  "tidb-kvcache",
  "tidb-log",
  "tidb-metadef",
+ "tidb-model",
  "tidb-mysql",
  "tidb-naming",
+ "tidb-parser",
  "tidb-proto",
  "tidb-tikvutil",
+ "tidb-vardef",
  "tikv-client",
+ "tonic",
  "tracing",
  "windows-sys 0.61.2",
 ]

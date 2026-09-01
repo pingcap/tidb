@@ -18,9 +18,9 @@ failpoints = ["dep:fail", "fail/failpoints"]
 intest = []
 race = []
 testexport = []
-## Reads live-allocation counters from the running jemalloc (via `tidb-hack`),
+## Reads live-allocation counters from the running jemalloc,
 ## the Go-`HeapAlloc`-equivalent input the memory arbitrator samples.
-jemalloc = ["tidb-hack/jemalloc"]
+jemalloc = ["tidb-allocator-stats/jemalloc"]
 
 [build-dependencies]
 chrono.workspace = true
@@ -33,13 +33,17 @@ fail = { version = "0.4", optional = true }
 prost.workspace = true
 snap.workspace = true
 tidb-log = { path = "../tidb-log" }
+tidb-model = { path = "../tidb-model" }
 tidb-config = { path = "../tidb-config" }
+tidb-codec = { path = "../tidb-codec" }
 tidb-kvcache = { path = "../tidb-kvcache" }
 tidb-metadef = { path = "../tidb-metadef" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-naming = { path = "../tidb-naming" }
+tidb-parser = { path = "../tidb-parser" }
 tidb-proto = { path = "../tidb-proto" }
 tidb-tikvutil = { path = "../tidb-tikvutil" }
+tidb-vardef = { path = "../tidb-vardef" }
 tikv-client.workspace = true
 aes.workspace = true
 chrono.workspace = true
@@ -52,20 +56,23 @@ nix.workspace = true
 prometheus = { version = "0.14", default-features = false }
 regex.workspace = true
 regex-syntax.workspace = true
-rustix = { workspace = true, features = ["fs", "system", "thread"] }
+rustix = { workspace = true, features = ["fs", "pipe", "stdio", "system", "thread"] }
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 tempfile.workspace = true
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-error = { path = "../tidb-error" }
 tidb-hack = { path = "../tidb-hack" }
+tidb-allocator-stats = { path = "../tidb-allocator-stats" }
 tracing = "0.1"
+tonic.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 fs4 = { version = "=1.1.0", default-features = false }
 windows-sys = { workspace = true, features = [
     "Win32_Foundation",
     "Win32_System_SystemInformation",
+    "Win32_System_Threading",
 ] }
 
 [dev-dependencies]
@@ -85,11 +92,24 @@ name = "globalconn"
 harness = false
 
 [[bench]]
+name = "lightning_log"
+harness = false
+
+[[bench]]
 name = "mvmap"
 harness = false
 
 [[bench]]
 name = "intset"
+harness = false
+
+[[bench]]
+name = "memoryusagealarm"
+harness = false
+required-features = ["testexport"]
+
+[[bench]]
+name = "membuf"
 harness = false
 
 [[bench]]

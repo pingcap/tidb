@@ -8,12 +8,15 @@ resolver = "2"
 members = [
     "crates/tidb-error",
     "crates/tidb-errmsg",
+    "crates/tidb-allocator-stats",
     "crates/tidb-hack",
     "crates/tidb-hash",
     "crates/tidb-kvcache",
     "crates/tidb-naming",
     "crates/tidb-tikvutil",
+    "crates/tidb-gcutil",
     "crates/tidb-util",
+    "crates/tidb-resourcemanager",
     "crates/tidb-config",
     "crates/tidb-log",
     "crates/tidb-lexer",
@@ -155,7 +158,7 @@ getrandom = "0.3"
 ctrlc = { version = "3.4", features = ["termination"] }
 signal-hook = { version = "0.3" }
 rustix = { version = "1.1", features = ["process"] }
-nix = { version = "0.31.3", features = ["socket"] }
+nix = { version = "0.31.3", features = ["resource", "socket"] }
 # Go os.Hostname uses GetComputerNameExW on Windows; SEM restores that value.
 windows-sys = "0.61"
 base64 = "0.22"
