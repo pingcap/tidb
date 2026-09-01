@@ -3809,6 +3809,11 @@ For each bounded behavior cluster:
   test, and BUILD inputs. Rust's parser owns the same fractional day/hour/
   minute contract and its TTL/CALIBRATE consumers, with additional malformed
   input and diagnostic coverage; no code delta was needed.
+- `pkg/parser/test_driver` has six Go-master artifacts (1,274 lines) and a
+  154-line AST-dependent `AcceptInPlace`/source-regression addition. The
+  current AST branch does not expose `InPlaceVisitor`/`Walk`, and no Rust
+  test-driver owner closes that dependency graph, so the package remains an
+  explicit boundary pending the complete parser migration.
 
 ## Outcomes & Retrospective
 
