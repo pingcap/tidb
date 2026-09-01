@@ -1208,6 +1208,18 @@ For each bounded behavior cluster:
       consumer wiring, and focused collated-versus-raw regressions are
       recorded in `receipts/util_codec_audit.md`; no additional Go artifact
       drift was found after the earlier `db35d470...` audit.
+- [x] Audit the current Go-master `pkg/tablecodec` root package and its
+      `pkg/util/rowcodec` and `pkg/util/rowDecoder` caller seams: read every
+      production/test/benchmark/harness/build artifact, certify the no-encoder
+      API cleanup, and update the three package receipts.
+- [x] Fix the dependency-closed row-decoder parity gap found by the focused
+      old-collation common-handle regression: route that V2 shape through the
+      mode-sensitive map path while retaining the typed fast path elsewhere.
+- 2026-09-01: the tablecodec/rowcodec/rowDecoder batch is recorded in
+      `receipts/tablecodec_master_audit.md`, `receipts/util_rowcodec_audit.md`,
+      and `receipts/util_rowdecoder_audit.md`; Go tagged tests and Rust owner
+      suites pass, including 55 tablecodec, 27 rowcodec, and 11 rowDecoder
+      source cases.
 - [ ] Audit the next bounded package cluster by reading the requested Go
       `origin/master` first, then fill executable gaps and remove false
       carriers.
@@ -1565,6 +1577,11 @@ For each bounded behavior cluster:
   old Rust source carrier tested the removed method rather than a live Go
   obligation. Removing it exposed one executor append site and one expression
   source regression that had to be routed through the ordinary free functions.
+- The current Go-master row API cleanup exposed a mode-specific fast-path
+  issue rather than a missing tablecodec wrapper: old-collation common handles
+  were skipped by the typed V2 decoder's default restored-data policy. A narrow
+  fallback to the existing map path made the source regression pass without
+  changing new-collation behavior.
 
 ## Outcomes & Retrospective
 
@@ -1576,6 +1593,9 @@ Analyze physical ID 64 and passes its Go/Rust owner and consumer gates. The
 following `pkg/util/dbterror/exeerrors` audit certifies the already-aligned
 82-entry catalog without changing execution behavior. The plannererrors audit
 similarly certifies all 98 prototypes and the source test without changing
-execution behavior. The final outcome must list exact files and commands,
+execution behavior. The tablecodec/rowcodec/rowDecoder batch now certifies the
+current free row/value API and routes old-collation common handles through the
+mode-sensitive decoder, with all scoped source suites passing. The final
+outcome must list exact files and commands,
 remaining unverified packages, and correctness, compatibility, and performance
 risks without claiming repository-wide parity.

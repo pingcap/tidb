@@ -287,7 +287,7 @@ fn row_decoder_restores_every_common_handle_column() {
 }
 
 #[test]
-fn restored_common_handle_value_wins_over_its_lossy_sort_key() {
+fn restored_common_handle_value_wins_over_its_lossy_sort_key_even_when_fast_path_is_disabled() {
     let zone = SessionTimeZone::utc();
     let restored_char =
         FieldType::new(FieldTypeCode::String).with_collation_name("utf8mb4_general_ci");
@@ -338,6 +338,10 @@ fn restored_common_handle_value_wins_over_its_lossy_sort_key() {
     assert_eq!(stored[0].go_bytes(), b"abc");
     assert_eq!(stored[1], Datum::Int(9));
 
+    // The old-collation table exercises the V2 fast-path boundary: the
+    // typed rowcodec uses the new-collation restored-data policy by default,
+    // while Go's table decoder must materialize this handle component when
+    // the table explicitly disables new collations.
     let mut old_collation_table = KvTable::new(44, columns).with_new_collation_mode(false);
     old_collation_table.set_common_handle_offsets(vec![0]);
     old_collation_table

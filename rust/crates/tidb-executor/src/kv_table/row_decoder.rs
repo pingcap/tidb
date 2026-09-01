@@ -513,7 +513,12 @@ impl RowDecoder {
             )
             .collect();
         let v2_fast_path = generated_offsets.is_empty()
-            && columns.iter().all(|column| column.origin_default.is_none());
+            && columns.iter().all(|column| column.origin_default.is_none())
+            // The typed rowcodec fast path uses the default (new-collation)
+            // restored-data policy. Old-collation common handles must use the
+            // map path so `fill_handle_columns_if` can materialize their
+            // handle components, matching Go's mode-sensitive decoder.
+            && (use_new_collation || common_handle_offsets.is_empty());
 
         Ok(Self {
             columns,
