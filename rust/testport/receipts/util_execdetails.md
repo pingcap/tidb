@@ -1,6 +1,10 @@
 # `pkg/util/execdetails` parity receipt
 
-Pinned source: TiDB `e2788410d8d696605e8cb002585877a063ccc909`.
+Pinned source: TiDB Go master `c6054025ed4c32ab3672a2a24ea46892714d21ec`.
+
+This short receipt is retained as a compatibility pointer; the complete
+8-artifact inventory, Go-master delta, Rust seed-owner comparison, and Ready
+validation evidence live in `util_execdetails_audit.md`.
 
 ## Complete Go inventory
 

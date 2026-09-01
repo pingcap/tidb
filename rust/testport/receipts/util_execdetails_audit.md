@@ -7,10 +7,10 @@ zap, and ordinary executor integration cannot be repaired safely as a
 partial leaf. No production or test file was changed in this audit.
 
 Go source: `origin/master`
-`5e8a1a229a7591ddac49a0cd3b795587c2595ab9`.
+`c6054025ed4c32ab3672a2a24ea46892714d21ec`.
 
 Rust comparison branch: `origin/hparser-integration`
-`e9478012b15f779ef270ace1d2046ecc79847dbb` at the time of this refresh.
+`9319f10e99679b997063c7f0699787cc2cbe7b5f` at the time of this refresh.
 
 ## Complete Go inventory
 
@@ -143,7 +143,7 @@ Commands run from the repository root:
   GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test
   ./pkg/util/execdetails -count=1` — passed on the checkout source.
 - Exact detached Go-master checkout at
-  `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: the same package test passed.
+  `c6054025ed4c32ab3672a2a24ea46892714d21ec`: the same package test passed.
 - `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler
   DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib
   cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --locked

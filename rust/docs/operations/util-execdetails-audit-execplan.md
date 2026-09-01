@@ -12,7 +12,7 @@ transcreation.
   files, and the Bazel target (5,919 lines total), including 333 declarations
   and 30 top-level test/benchmark/fuzz entries.
 - Revalidated the current Go checkout and an exact detached Go-master checkout
-  at `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`; both package test suites pass.
+  at `c6054025ed4c32ab3672a2a24ea46892714d21ec`; both package test suites pass.
 - Compared the current three-file Go-master delta (580 additions, 17
   deletions): read-pool details, summary/row coverage, scan-byte estimation,
   hash-state lifecycle, and Explain-RU stats all cross execution, metrics,
@@ -38,7 +38,7 @@ would create Rust-only behavior with no complete Go consumer graph.
 - [x] Existing Rust owner tests pass with the pinned toolchain and OpenSSL
       runtime path.
 - [x] Ready formatting, clean-tree repository lint, and diff checks pass.
-- [ ] Push this receipt/ExecPlan batch, verify remote SHAs, and pull
+- [x] Push this receipt/ExecPlan batch, verify remote SHAs, and pull
       `origin/hparser-integration`.
 
 ## Next boundary
