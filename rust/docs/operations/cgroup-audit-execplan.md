@@ -1,7 +1,8 @@
 # Complete `pkg/util/cgroup` parity
 
-This ExecPlan is a living document and follows `PLANS.md`. Go commit
-`e2788410d8d696605e8cb002585877a063ccc909` remains the behavioral authority.
+This ExecPlan is a living document and follows `PLANS.md`. Go `origin/master`
+at `c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02) is the current
+behavioral authority; this package is unchanged from the previous pin.
 
 ## Purpose / Big Picture
 
@@ -32,8 +33,12 @@ where the existing memory consumers now call them.
       regression, duplicate-controller regression, live container-test
       carrier, and public unsupported-platform checks.
 - [x] (2026-09-01) Ran the Ready profile, updated the receipt with exact
-      results, and reviewed the package diff. The atomic commit/push is the
-      remaining handoff action for this goal.
+      results, and reviewed the package diff. The atomic package commit was
+      pushed to `hparser-integration`.
+- [x] (2026-09-02) Pulled the latest Go master, re-read and re-hashed all nine
+      artifacts, reran the failpoint-safe Go fixture tests in an exact detached
+      latest-master worktree, and confirmed no package drift. Refreshed this
+      plan and the receipt with the rolling authority and Ready evidence.
 
 ## Surprises & Discoveries
 
@@ -89,7 +94,8 @@ unsupported-target assertions separately.
 Finally update the receipt and this plan, run focused Rust tests and the
 affected-crate checks, use the Ready profile (including `make lint`), review
 the diff, make one batch commit, and push it to the requested
-`hparser-integration` branch.
+`hparser-integration` branch. Subsequent loops refresh the authority pin and
+receipt whenever Go master advances.
 
 ## Validation and Acceptance
 
@@ -126,7 +132,8 @@ helpers moved to `src/memory/process.rs` and are re-exported by
 
 ## Outcomes & Retrospective
 
-The Rust cgroup owner now has a complete pinned nine-artifact inventory,
+The Rust cgroup owner now has a complete nine-artifact inventory against the
+latest Go master,
 source-derived fixture coverage, corrected controller/separator parsing, and
 Go-compatible signed quota fallbacks. Memory-only host/RSS helpers no longer
 inflate the cgroup package claim; they remain in the ordinary memory owner and

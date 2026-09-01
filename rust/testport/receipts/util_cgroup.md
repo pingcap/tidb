@@ -1,15 +1,17 @@
 # Complete `pkg/util/cgroup` package receipt
 
-Status: Ready on the host target. Linux cgroup-file execution and the live
-container test remain unrun because this desktop test environment does not
-expose `/proc/self/cgroup`; the pinned source fixtures exercise those paths.
+Status: Ready on the host target. The latest fetched Go master is unchanged
+for this package. Linux cgroup-file execution and the live container test
+remain unrun because this desktop test environment does not expose the Linux
+cgroup files; the pinned source fixtures exercise those paths.
 
 ## Pinned inventory
 
 Comparison source: Go commit
-`e2788410d8d696605e8cb002585877a063ccc909`.
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02).
 
-The complete package tree at that pin contains exactly these nine artifacts:
+The complete package tree at that pin contains exactly these nine artifacts
+and 2,668 lines:
 
     pkg/util/cgroup/BUILD.bazel
     pkg/util/cgroup/cgroup.go
@@ -26,12 +28,24 @@ additional `testdata`. The two platform files are the unsupported-target
 variants selected by Go build constraints; `cgroup_mock_test.go` contains the
 source memory/CPU fixture matrix and its file-writing helper.
 
+| Artifact | Lines | Go blob | SHA-256 | Role |
+| --- | ---: | --- | --- | --- |
+| `BUILD.bazel` | 82 | `8ecdc456c991ac399276a4ed8f3f1289f2129980` | `18570df7422561ae0a9c32aef144238669ae64e1e6714021edf8309d124a48c9` | library, platform select, and flaky short test target |
+| `cgroup.go` | 467 | `c499405c75284b9555f7532f3fc564944b92c596` | `485586f587dcae83355e82271e197070d62b213f1d2022ee6553e840a0c50c7e` | shared types, discovery, mount parsing, and file readers |
+| `cgroup_cpu.go` | 141 | `08170bc89f6a0134b91ade285b4819dad10ad81a` | `15a50a64cd6d631fd3b4c5e38b6d5e9518b70d66c8d1f96f0f79bfa8a321ec97` | CPU v1/v2 selection, quota, usage, and `CPUShares` |
+| `cgroup_cpu_linux.go` | 100 | `665b81f24e2e9f32a53c8b14b522b8e6593a529f` | `319eb7d613ecd3a99bba6f4eef996821b347f268bf082bf4f4dde3e9e3e1e486` | Linux public CPU/container APIs and failpoint hook |
+| `cgroup_cpu_test.go` | 105 | `d32da890cfa47d67d4f313d14e7517b51008f876` | `fe7a07005a9f73f2f3ba7617608093a2c4ecfc3f31586711f3f7f456c1e08172` | Linux live ten-worker CPU test and kernel guard |
+| `cgroup_cpu_unsupport.go` | 55 | `092875c09657bec2927dc195283507f7bb1a2064` | `3bb4f0dd10d469ca0f9b199d8cbb66bd06cbde68caa95671d96a6df3a916d51d` | non-Linux CPU/container sentinels |
+| `cgroup_memory.go` | 236 | `4c298a4834d0d454f6e273b72b2caee628e5afdf` | `b4152b078b5126fe5aa3c63d81a4ef73af628107f0a6713e8ac42665ec96d831` | Linux memory limit, usage, inactive-file, and v1/v2 readers |
+| `cgroup_memory_unsupport.go` | 225 | `d7cf38c6b9fb460b5df79afbcd3979c836aa30dd` | `561ca5ce8ada1d341fb34e4f1dd6cb7e3af42f79b26ecbf62f3846aec0e77af6` | non-Linux memory sentinels and private test helpers |
+| `cgroup_mock_test.go` | 1,257 | `7d01073e5135f8ca9255087398cf69b78e06a345` | `f4bf28f806277c3a28492ee0ccbedd94ede5c2433129ac6e5f5534d08b30baed` | complete temporary-file CPU/memory fixture matrix |
+
 ## Go-to-Rust mapping
 
 | Go artifact / contract | Rust evidence | Decision |
 | --- | --- | --- |
 | `cgroup.go`: `CPUQuotaStatus`, `CPUUsage`, `Version` | `tidb_util::cgroup::{CpuQuotaStatus,CpuUsage,Version}` | Direct behavior; Rust field/variant names follow Rust conventions while preserving values (`Unknown=0`, `V1=1`, `V2=2`). |
-| `cgroup.go`: controller matching, `/proc/self/cgroup` discovery, mountinfo parsing, v1/v2 file parsing | `cgroup.rs::{controller_matches,detect_control_path,detect_mounts,detect_mount_version,read_*}` | Direct behavior, including order-independent controllers, colon-containing cgroup paths, namespace-relative v1 mounts, v2 `max`, and per-value hybrid fallback. |
+| `cgroup.go`: controller matching, `/proc/self/cgroup` discovery, mountinfo parsing, v1/v2 file parsing | `cgroup.rs::{controller_matches,detect_control_path,detect_mounts,detect_mount_version,read_*}` | Direct behavior, including order-independent controllers, raw duplicate-field count, colon-containing cgroup paths, namespace-relative v1 mounts, v2 `max`, and per-value hybrid fallback. |
 | `cgroup_cpu.go`: CPU quota/usage and `CPUShares` | `cgroup_cpu_at`, `CpuUsage::cpu_shares`, and the source CPU matrix in `cgroup.rs` tests | Direct behavior. The hybrid memory-usage fallback intentionally keeps Go's pinned choice of joining the v2 path to the v1 mount. |
 | `cgroup_cpu_linux.go`: `GetCgroupCPU`, `CPUQuotaToGOMAXPROCS`, `GetCPUPeriodAndQuota`, `InContainer` | `get_cgroup_cpu`, `cpu_quota_to_gomaxprocs`, `get_cpu_period_and_quota`, `in_container` | Direct Linux behavior. The signed quota result preserves Go's non-Linux `-1` sentinel. |
 | `cgroup_cpu_unsupport.go` | target-selected non-Linux functions in `cgroup.rs` plus `tests/cgroup_source.rs` | Direct fallback: logical CPU count, `(-1,-1)`, `(-1,Undefined)`, and `false`. |
@@ -71,7 +85,8 @@ memory package.
 Profile: Ready for the continuing package loop. Commands run from the
 repository root:
 
-    git ls-tree -r -l e2788410d8d696605e8cb002585877a063ccc909 pkg/util/cgroup
+    git ls-tree -r -l c6054025ed4c32ab3672a2a24ea46892714d21ec pkg/util/cgroup
+    git diff --exit-code c6054025ed4c32ab3672a2a24ea46892714d21ec..HEAD -- pkg/util/cgroup
     cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check
     OPENSSL_DIR=<bundled-poppler-root> DYLD_LIBRARY_PATH=<bundled-poppler-root>/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --locked -p tidb-util --lib cgroup
     OPENSSL_DIR=<bundled-poppler-root> DYLD_LIBRARY_PATH=<bundled-poppler-root>/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --locked -p tidb-util --lib memory::process
@@ -81,9 +96,10 @@ repository root:
     git diff --check
     PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 make lint
 
-Observed on 2026-09-01:
+Observed on 2026-09-02:
 
-* The pinned `git ls-tree` command listed exactly the nine artifacts above.
+* The latest `git ls-tree` command listed exactly the nine artifacts above;
+  the authority comparison against Go master is unchanged.
 * `go test` passed for `pkg/util/cgroup` with failpoints enabled and disabled
   by `tools/check/failpoint-go-test.sh ... -count=1`.
 * The Rust cgroup owner suite passed all 16 tests; the memory-process filter
