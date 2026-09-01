@@ -2550,12 +2550,14 @@ For each bounded behavior cluster:
   functions and their nil/empty, ordering, formatting, and short-circuit
   contracts. Removed the duplicate `b029` test module, receipt, and manifest
   claim while retaining the complete owner test surface.
-- 2026-08-28: audited every production, test, test-harness, and build file in
-  pinned Go `pkg/util/disjointset`. Removed Rust-only public `len`/`is_empty`
-  conveniences and deep `Clone` implementations whose semantics are absent
-  from (and differ from copying) the Go slice/map-backed structs. Repinned the
-  complete package evidence; all Go operations and downstream chunk usage
-  remain intact.
+- 2026-09-02: refreshed the complete Go-master `pkg/util/disjointset`
+  inventory at `c6054025ed4c32ab3672a2a24ea46892714d21ec`: six artifacts and
+  302 lines, including both source tests, `TestMain`, and the flaky BUILD
+  target. The existing `tidb-util::disjointset` owner preserves dense/sparse
+  union, signed native-width indices, path compression, and current-value
+  lookup; current and detached Go suites plus all three Rust owner tests pass.
+  Details are in `receipts/util_disjointset.md` and
+  `docs/operations/util-disjointset-audit-execplan.md`.
 - 2026-08-28: audited the complete pinned Go `pkg/util/dbterror` root package
   and its distinct `exeerrors` and `plannererrors` subpackages without mixing
   their atomic inventories. Restored the root package's missing 19-code
