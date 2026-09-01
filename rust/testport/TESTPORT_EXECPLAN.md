@@ -40,6 +40,14 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: completed the Go-master `pkg/executor/internal/applycache`
+  inventory (four artifacts, 338 lines) and removed its Rust-only public
+  surface. `tidb-executor::apply_cache` is now crate-internal, the uncalled
+  `len`/`is_empty` observers and supplemental external test file are gone,
+  while the live ApplyExec cache path and source-derived tests remain. The
+  Go package tests and Ready gates (`cargo` source tests plus `make lint`) pass;
+  receipt: `receipts/executor_internal_applycache.md`.
+
 - 2026-09-01: audited the complete current Go-master `pkg/param` package (two
   artifacts, 44 lines). It is a data-only `BinaryParam`/error declaration;
   the dependency-closed Rust owner is the existing `tidb-protocol` splitter
