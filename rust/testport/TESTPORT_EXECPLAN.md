@@ -176,6 +176,14 @@ For each bounded behavior cluster:
   pipeline was added; the complete inventory and explicit boundary are in
   `receipts/util_hint_audit.md`.
 
+- 2026-09-01: audited all 25 Go-master `pkg/expression/aggregation` artifacts
+  (4,193 lines). Go's `max_count`/`min_count` feature crosses parser,
+  descriptor, aggregate runtime, hash aggregation, planner, protobuf, and KV
+  owners. Rust's current `tidb-expr` aggregation code is explicitly a seed and
+  lacks the dependency closure for a safe leaf patch; the complete inventory,
+  ignored source tests, and implementation boundary are in
+  `receipts/expression_aggregation_audit.md`.
+
 - 2026-09-01: audited the complete Go `pkg/util/dbterror/exeerrors` package at
   `origin/master` `db35d47066648fe73abce6318d53fc625df51490` against the Rust
   owner on `origin/hparser-integration`. The package has exactly `errors.go`
@@ -1721,6 +1729,10 @@ For each bounded behavior cluster:
   the package leaf-safe: query-block/view state and warning order cross the
   parser, binding, planner, SEM, and executor seams. The audit therefore keeps
   the existing native consumers and records the missing dependency closure.
+- `pkg/expression/aggregation` confirms that a new aggregate family cannot be
+  made compatible by adding descriptor names alone: parser, type inference,
+  pair-state runtime, planner routing, protobuf, and KV pushdown must move as a
+  single dependency-closed unit.
 
 ## Outcomes & Retrospective
 
