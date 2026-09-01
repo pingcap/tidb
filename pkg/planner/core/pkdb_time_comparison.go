@@ -39,7 +39,7 @@ func (er *expressionRewriter) castTemporalConstantForTimeColumnComparison(
 	lhs, rhs timeComparisonOperand,
 ) (expression.Expression, expression.Expression) {
 	if er.planCtx != nil && er.planCtx.builder != nil && !fixcontrol.GetBoolWithDefault(
-		er.planCtx.builder.ctx.GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix70751, true,
+		er.planCtx.builder.ctx.GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix70751, false,
 	) {
 		return lhs.expr, rhs.expr
 	}

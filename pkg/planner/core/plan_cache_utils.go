@@ -335,7 +335,7 @@ func newPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt, matchConfig p
 	// Fix70751 changes the temporal comparison expression built by the planner.
 	// Keep plans built with the two semantics in separate cache entries.
 	fix70751Enabled := fixcontrol.GetBoolWithDefault(
-		vars.GetOptimizerFixControlMap(), fixcontrol.Fix70751, true,
+		vars.GetOptimizerFixControlMap(), fixcontrol.Fix70751, false,
 	)
 	hash = append(hash, bool2Byte(fix70751Enabled))
 	// Only be set in rc or for update read and leave it default otherwise.

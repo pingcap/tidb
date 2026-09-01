@@ -77,7 +77,7 @@ const (
 	// Fix54337 controls whether to apply or not range intersection for index access.
 	Fix54337 uint64 = 54337
 	// Fix70751 controls whether temporal constants and parameters compared with a direct TIME column
-	// are converted to the TIME column type. See #70751.
+	// are converted to the TIME column type. It is disabled by default. See #70751.
 	Fix70751 uint64 = 70751
 )
 

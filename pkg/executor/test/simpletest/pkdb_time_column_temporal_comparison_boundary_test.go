@@ -26,6 +26,7 @@ func newTimeColumnTemporalComparisonTestKit(t *testing.T) *testkit.TestKit {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_opt_fix_control = '70751:ON'")
 	tk.MustExec("create table t_time (id int primary key, trx_time time, dt datetime, key(trx_time))")
 	tk.MustExec(`insert into t_time values
 		(1, '-01:00:00', '1970-01-01 00:00:00'),
@@ -67,11 +68,12 @@ func TestTimeColumnTemporalComparisonFixControl70751(t *testing.T) {
 	tk := newTimeColumnTemporalComparisonTestKit(t)
 	query := "select count(*) from t_time where trx_time = cast('1000-01-01 19:10:06' as datetime)"
 
-	tk.MustQuery(query).Check(testkit.Rows("1"))
-	tk.MustExec("set tidb_opt_fix_control = '70751:OFF'")
+	tk.MustExec("set tidb_opt_fix_control = ''")
 	tk.MustQuery(query).Check(testkit.Rows("0"))
 	tk.MustExec("set tidb_opt_fix_control = '70751:ON'")
 	tk.MustQuery(query).Check(testkit.Rows("1"))
+	tk.MustExec("set tidb_opt_fix_control = '70751:OFF'")
+	tk.MustQuery(query).Check(testkit.Rows("0"))
 }
 
 func TestTimeColumnTemporalComparisonOutsideScope(t *testing.T) {
@@ -219,6 +221,7 @@ func TestTimeColumnFSPUsedForDatetimeConstant(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_opt_fix_control = '70751:ON'")
 	tk.MustExec("create table t_time_fsp (id int primary key, t0 time(0), t3 time(3), key(t0), key(t3))")
 	tk.MustExec("insert into t_time_fsp values (1, '16:11:01', '16:11:00.124')")
 

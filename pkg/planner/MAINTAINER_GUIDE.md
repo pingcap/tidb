@@ -292,7 +292,7 @@ Plan cache lookup matches by `(cacheKey, paramTypes)`:
   type. This applies through join/selection wrappers, but deliberately excludes
   derived columns, variables, subqueries, deferred functions, and invalid-zero
   values whose date component cannot be discarded safely. Fix control 70751 is
-  ON by default and disables this rewrite when explicitly set to OFF. Its
+  OFF by default and enables this rewrite only when explicitly set to ON. Its
   effective value is part of the plan-cache key, so changing it naturally
   selects a plan built with the matching comparison semantics.
 - while fix control 70751 is enabled, invalid-zero temporal parameters bypass

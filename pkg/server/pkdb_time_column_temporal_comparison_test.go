@@ -34,6 +34,7 @@ func TestTimeColumnComparedWithBinaryTemporalParameter(t *testing.T) {
 	c.capability = mysql.ClientProtocol41
 	tk := testkit.NewTestKitWithSession(t, store, c.Context().Session)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_opt_fix_control = '70751:ON'")
 	tk.MustExec("set @@sql_mode = ''")
 	tk.MustExec("create table t_time_binary (id bigint primary key, trx_time time(0), key(trx_time))")
 	tk.MustExec("insert into t_time_binary values (1, '19:10:07'), (2, '19:10:07'), (3, '18:00:00'), (4, '18:00:00'), (5, '20:00:00')")

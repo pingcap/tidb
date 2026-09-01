@@ -24,6 +24,7 @@ func TestTimeColumnTemporalComparisonUnderJoin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_opt_fix_control = '70751:ON'")
 	tk.MustExec("set time_zone = '+00:00'")
 	tk.MustExec("set timestamp = 69006")
 	tk.MustExec("create table t_time_join (id int primary key, trx_time time, key(trx_time))")

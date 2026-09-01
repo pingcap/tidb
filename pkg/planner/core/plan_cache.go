@@ -240,7 +240,7 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 
 	if stmt.StmtCacheable && cacheEnabled {
 		fix70751Enabled := fixcontrol.GetBoolWithDefault(
-			sessVars.GetOptimizerFixControlMap(), fixcontrol.Fix70751, true,
+			sessVars.GetOptimizerFixControlMap(), fixcontrol.Fix70751, false,
 		)
 		if fix70751Enabled && sessVars.PlanCacheParams.HasInvalidZeroTemporal() {
 			stmtCtx.WarnSkipPlanCache("invalid-zero temporal parameter")
