@@ -865,6 +865,12 @@ fn find_best_task_4_logical_mem_table(
     base.base
         .set_stats(mem_table.base.base.stats_info().cloned());
     base.base.set_schema(mem_table.base.base.schema().cloned());
+    // Go's `buildMemTable` preserves the logical source's output names on the
+    // physical scan. The result-field adapter uses these names for wildcard
+    // queries; without them, virtual INFORMATION_SCHEMA tables expose
+    // synthetic `Column#N` headers instead of their declared columns.
+    base.base
+        .set_output_names(mem_table.base.base.output_names().to_vec());
     let physical = PhysicalPlan::MemTable(physical::PhysicalMemTable {
         base,
         db_name: mem_table.db_name.clone(),
@@ -2497,9 +2503,15 @@ mod tests {
     // plans); these pin the transcreated control flow over a fixture coster.
 
     use super::*;
-    use crate::logical::{BaseLogicalPlan, LogicalSelection, LogicalTableDual};
+    use crate::logical::mem_table::MemTableColumn;
+    use crate::logical::{BaseLogicalPlan, LogicalMemTable, LogicalSelection, LogicalTableDual};
     use crate::physical_property::SortItem;
     use crate::stats_info::StatsInfo;
+    use tidb_datatype::{
+        FieldName, FieldNameMetadata, FieldType, FieldTypeCode, IdentifierMetadata,
+    };
+    use tidb_expr::column::Column;
+    use tidb_expr::schema::Schema;
 
     struct CountCoster;
     impl TaskCoster for CountCoster {
@@ -2515,6 +2527,49 @@ mod tests {
         let mut base = BaseLogicalPlan::new(allocator, LogicalTableDual::TYPE, 0);
         base.base.set_stats(Some(StatsInfo::new(rows, [])));
         LogicalPlan::TableDual(LogicalTableDual::new(base, 1))
+    }
+
+    #[test]
+    fn a_mem_table_physical_plan_keeps_declared_output_names() {
+        // Go's `buildMemTable` carries the information-schema field names from
+        // the logical source into the physical scan. Losing them makes a
+        // wildcard query expose synthetic `Column#N` headers.
+        let allocator = PlanIdAllocator::new();
+        let coster = CountCoster;
+        let mut ctx = DispatchContext::new(&allocator, &coster, 1.0);
+        let mut base = BaseLogicalPlan::new(&allocator, LogicalMemTable::TYPE, 0);
+        let names = ["GRANTEE", "TABLE_SCHEMA"]
+            .into_iter()
+            .map(|name| {
+                FieldName::new(FieldNameMetadata {
+                    column: IdentifierMetadata::new(name),
+                    ..FieldNameMetadata::default()
+                })
+            })
+            .collect::<Vec<_>>();
+        base.base.set_schema(Some(Schema::new(vec![
+            Column::new(1, FieldType::new(FieldTypeCode::LongLong)),
+            Column::new(2, FieldType::new(FieldTypeCode::LongLong)),
+        ])));
+        base.base.set_output_names(names.clone());
+        let mut mem = LogicalMemTable::new(base, "information_schema", "SCHEMA_PRIVILEGES");
+        mem.columns = vec![
+            MemTableColumn {
+                id: 1,
+                name: "GRANTEE".to_owned(),
+            },
+            MemTableColumn {
+                id: 2,
+                name: "TABLE_SCHEMA".to_owned(),
+            },
+        ];
+        let logical = LogicalPlan::MemTable(mem);
+
+        let task = find_best_task(&logical, &PhysicalProperty::default(), &mut ctx).expect("plans");
+        let Some(PhysicalPlan::MemTable(physical)) = task.plan() else {
+            panic!("expected a physical memory table");
+        };
+        assert_eq!(physical.base.base.output_names(), names);
     }
 
     #[test]

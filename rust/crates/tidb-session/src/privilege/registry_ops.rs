@@ -76,10 +76,13 @@ fn host_matches(pattern: &str, host: &str) -> bool {
 }
 
 fn database_matches(pattern: &str, database: &str) -> bool {
-    wildcard_match(
-        database.to_ascii_uppercase().as_bytes(),
-        pattern.to_ascii_uppercase().as_bytes(),
-    )
+    // Go's cache compiles `strings.ToUpper(db)` (not ASCII-only folding)
+    // before applying its binary wildcard matcher.  MySQL identifiers may
+    // contain non-ASCII letters, so preserve the same Unicode case mapping
+    // here instead of silently making those grants case-sensitive.
+    let database = database.to_uppercase();
+    let pattern = pattern.to_uppercase();
+    wildcard_match(database.as_bytes(), pattern.as_bytes())
 }
 
 fn parse_ipv4_network(pattern: &str) -> Option<(Ipv4Addr, Ipv4Addr)> {
@@ -1932,5 +1935,15 @@ impl PrivilegeRegistry {
             role_edges,
             default_roles,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::database_matches;
+
+    #[test]
+    fn database_matching_folds_non_ascii_like_go_strings_to_upper() {
+        assert!(database_matches("ТЕ%", "тест"));
     }
 }

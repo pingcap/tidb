@@ -965,6 +965,15 @@ fn test_build_mem_table_produces_the_table_s_own_schema() {
     assert_eq!(mem_table.columns.len(), 2);
     assert_eq!(plan.schema().expect("a schema").columns.len(), 2);
     assert_eq!(
+        plan.schema()
+            .expect("a schema")
+            .columns
+            .iter()
+            .map(|column| column.orig_name.clone())
+            .collect::<Vec<_>>(),
+        vec!["TYPE".to_owned(), "INSTANCE".to_owned()]
+    );
+    assert_eq!(
         plan.output_names()
             .iter()
             .map(|name| name.names.column.original.clone())

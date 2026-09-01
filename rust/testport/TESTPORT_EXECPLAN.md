@@ -40,6 +40,16 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: audited the complete Go-master
+  `pkg/executor/internal/calibrateresource` package (four artifacts, 1,613
+  lines), including static/dynamic calibration production code, every
+  workload/time-window/metric/TiFlash test, failpoint/goleak harness, and the
+  two-shard Bazel target. Rust has only the CALIBRATE RESOURCE grammar and no
+  dependency-closed execution owner for cluster metrics or quota calculation;
+  recorded the explicit boundary in
+  `receipts/executor_internal_calibrateresource.md` without inventing an
+  uncalled admin executor.
+
 - 2026-09-01: re-audited the complete Go-master
   `pkg/executor/internal/pdhelper` package (four artifacts, 288 lines),
   including PD-region and exact-count fallback, process-global TTL/LRU cache,
@@ -78,7 +88,12 @@ For each bounded behavior cluster:
   Unicode-aware `strings.ToUpper`. Changed the matcher to Unicode folding and
   added `database_matching_folds_non_ascii_like_go_strings_to_upper`, which
   fails before the fix and passes after it. LDAP/JWKS/extension and full
-  manager/session/storage lifecycle remain explicit package boundaries;
+  manager/session/storage lifecycle remain explicit package boundaries. Also
+  fixed virtual INFORMATION_SCHEMA privilege-table headers by preserving
+  logical mem-table output names and scan-column `orig_name`; planner and
+  owner-level regressions now pass (50 passed, 3 ignored). The Go subtree run
+  was attempted; one restricted-privilege test requires `--tags=intest` and
+  one LDAP timeout assertion exceeded its local timing budget;
   receipt: `receipts/privilege.md`, ExecPlan:
   `docs/operations/privilege-audit-execplan.md`.
 

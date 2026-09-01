@@ -1471,6 +1471,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             });
             let mut column = Column::new(self.column_ids.alloc(), source_column.ret_type.clone());
             column.id = source_column.id;
+            // The result-field adapter falls back to a physical column's
+            // original name for `SELECT *`. Virtual tables have no stored
+            // table descriptor at executor-build time, so preserve the
+            // declared name on the scan column just as Go's `buildMemTable`
+            // does through its `ColumnInfo`.
+            column.orig_name.clone_from(&source_column.name);
             if table.pk_is_handle && source_column.ret_type.has_flag(FieldTypeFlags::PRI_KEY) {
                 handle_cols = Some(self.plan_handle_cols(std::slice::from_ref(&column), true));
             }
