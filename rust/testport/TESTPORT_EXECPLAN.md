@@ -388,6 +388,19 @@ For each bounded behavior cluster:
   `receipts/dxf_framework_planner.md` and
   `rust/docs/operations/dxf-framework-planner-audit-execplan.md`.
 
+- 2026-09-02: audited the complete direct Go-master
+  `pkg/dxf/framework/scheduler` package: 17 tracked artifacts and 6,321 lines,
+  with 103 production declarations, 47 top-level tests, and 25 test helpers.
+  The inventory covers autoscaling, slot/stripe reservation, node liveness and
+  scopes, subtask balancing, task-state transitions, BaseScheduler and Manager
+  loops, cleanup/history GC, keyspace runtime ownership, failpoints, and the
+  11-shard flaky test target. The nested generated `scheduler/mock` package is
+  separate. Rust owns only generic DXF values/status and executor identity, no
+  dependency-closed scheduler runtime, so no speculative port or Rust-only
+  behavior was added. Recorded the explicit boundary in
+  `receipts/dxf_framework_scheduler.md` and
+  `rust/docs/operations/dxf-framework-scheduler-audit-execplan.md`.
+
 - 2026-09-01: audited the complete direct Go-master parent
   `pkg/dxf/importinto` package: 26 tracked artifacts and 9,158 lines, with
   170 production function/method declarations and 45 top-level test
@@ -3771,6 +3784,10 @@ For each bounded behavior cluster:
   only a partial owner (it lacks those nodes and the replacement/in-place API
   pair), so this parser, grammar, planner, and executor surface remains one
   dependency-closed boundary rather than a partial port.
+- `pkg/parser/format` is byte-identical to Go master across its formatter,
+  restore flags/context, CTE state, tests, and BUILD metadata. Rust's
+  `tidb-ast` already owns the corresponding restore surface, so no code change
+  or speculative adapter was needed.
 
 ## Outcomes & Retrospective
 
