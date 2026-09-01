@@ -1590,6 +1590,13 @@ For each bounded behavior cluster:
       Compute endpoint identity but has no dependency-closed topology cache or
       startup consumer. The package remains explicitly unclaimed with no
       source change. Details are in `receipts/util_tiflashcompute.md`.
+- 2026-09-01: audited all four Go-master `pkg/util/ddl-checker` artifacts
+      (351 lines: mock-session executable checker, upstream DDL syncer, parse
+      and execute matrix, and flaky Bazel test target). Rust has DDL planning
+      and schema-state owners but no dependency-closed mock SQL executor,
+      parser table-existence classifier, or upstream `SHOW CREATE TABLE`
+      syncer. The package remains explicitly unclaimed with no source change;
+      details are in `receipts/util_ddl_checker.md`.
 - [ ] Run Ready validation and self-review only when the requested parity scope
       is genuinely complete enough for a final-status claim.
 
@@ -1681,6 +1688,12 @@ For each bounded behavior cluster:
   consumers together. Configuration constants and endpoint identity alone do
   not reproduce the Go package; a detached Rust fetcher would be Rust-only
   behavior. Date/Author: 2026-09-01, Codex.
+- Decision: keep `pkg/util/ddl-checker` explicitly unclaimed until parser,
+  mockstore/session execution, DDL table-existence classification, and the
+  upstream database syncer can move as one dependency-closed owner. Rust's
+  ordinary DDL planner is not a substitute for this test/tooling contract;
+  adding a checker-only session would create Rust-only behavior. Date/Author:
+  2026-09-01, Codex.
 - Decision: preserve the Rust planner-error declaration table and its
   all-prototype initialization guard. Go package initialization registers all
   98 entries, while Go's only explicit test checks 59; the Rust guard is the
