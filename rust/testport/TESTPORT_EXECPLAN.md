@@ -4601,6 +4601,11 @@ For each bounded behavior cluster:
   artifacts and 92 lines. Its POST-only HTTP endpoint depends on the Go router,
   session domain, and TTL command client; no dependency-closed Rust HTTP owner
   exists, so no speculative facade was added.
+- `pkg/server/handler/extractorhandler` is byte-identical to Go master across
+  four artifacts and 439 lines. Its HTTP plan-extraction endpoint depends on
+  the Go domain, extstore, statement-summary persistence, and failpoint server
+  lifecycle; no dependency-closed Rust owner exists, so it remains an explicit
+  boundary after the focused failpoint-wrapped integration tests pass.
 
 ## Outcomes & Retrospective
 
