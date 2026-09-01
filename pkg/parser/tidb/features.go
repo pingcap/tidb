@@ -34,6 +34,17 @@ const (
 	FeatureIDResourceGroup = "resource_group"
 	// FeatureIDGlobalIndex is the `Global Index` feature.
 	FeatureIDGlobalIndex = "global_index"
+<<<<<<< HEAD
+=======
+	// FeatureIDPreSplit is the pre-split feature.
+	FeatureIDPreSplit = "pre_split"
+	// FeatureIDPresplit is kept for compatibility.
+	//
+	// Deprecated: use FeatureIDPreSplit instead.
+	FeatureIDPresplit = FeatureIDPreSplit
+	// FeatureIDAutoPreSplit is the automatic index pre-split feature.
+	FeatureIDAutoPreSplit = "auto_presplit"
+>>>>>>> c6054025ed4 (ddl: add auto split hot region for add index (#69425))
 	// FeatureIDAffinity is the `Affinity` feature.
 	FeatureIDAffinity = "affinity"
 	// FeatureIDPresplit is the pre-split feature.
@@ -49,6 +60,11 @@ var featureIDs = map[string]struct{}{
 	FeatureIDPlacement:      {},
 	FeatureIDTTL:            {},
 	FeatureIDGlobalIndex:    {},
+<<<<<<< HEAD
+=======
+	FeatureIDPreSplit:       {},
+	FeatureIDAutoPreSplit:   {},
+>>>>>>> c6054025ed4 (ddl: add auto split hot region for add index (#69425))
 	FeatureIDAffinity:       {},
 	FeatureIDPresplit:       {},
 }

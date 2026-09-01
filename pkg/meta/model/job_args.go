@@ -1362,7 +1362,35 @@ type IndexArg struct {
 	ConditionString string `json:"condition_string,omitempty"`
 
 	// Only used for job args v2.
+<<<<<<< HEAD
 	SplitOpt *IndexArgSplitOpt `json:"split_opt,omitempty"`
+=======
+	// Old DDL owners may ignore AutoPreSplit during rolling upgrades;
+	// this best-effort optimization does not affect correctness.
+	// AutoPreSplit must be separate from SplitOpt. Otherwise, an old DDL owner
+	// ignores the unknown auto field, treats the non-nil empty SplitOpt as a
+	// manual split, and rejects the add-index job.
+	AutoPreSplit bool              `json:"auto_presplit,omitempty"`
+	SplitOpt     *IndexArgSplitOpt `json:"split_opt,omitempty"`
+
+	// ConditionString is used to store the partial index condition string for the index.
+	ConditionString string `json:"condition_string,omitempty"`
+}
+
+// GetColumnarIndexType gets the real columnar index type in a backward compatibility way.
+func (a *IndexArg) GetColumnarIndexType() ColumnarIndexType {
+	// For compatibility, if columnar index type is not set, and it's a columnar index, it's a vector index.
+
+	// If the columnar index type is NA and it's not a columnar index, it's a general index.
+	if a.ColumnarIndexType == ColumnarIndexTypeNA && !a.IsColumnar {
+		return ColumnarIndexTypeNA
+	}
+	// If the columnar index type is NA and it's a columnar index, it's a vector index.
+	if a.ColumnarIndexType == ColumnarIndexTypeNA && a.IsColumnar {
+		return ColumnarIndexTypeVector
+	}
+	return a.ColumnarIndexType
+>>>>>>> c6054025ed4 (ddl: add auto split hot region for add index (#69425))
 }
 
 // IndexArgSplitOpt is a field of IndexArg used by index presplit.

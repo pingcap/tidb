@@ -722,6 +722,7 @@ const (
 //	| WITH PARSER parser_name
 //	| COMMENT 'string'
 //	| GLOBAL
+//	| PRE_SPLIT_REGIONS = AUTO
 //
 // See http://dev.mysql.com/doc/refman/5.7/en/create-table.html
 // with the addition of Global Index
@@ -729,6 +730,7 @@ type IndexOption struct {
 	node
 
 	KeyBlockSize uint64
+<<<<<<< HEAD
 	Tp           model.IndexType
 	Comment      string
 	ParserName   model.CIStr
@@ -737,6 +739,22 @@ type IndexOption struct {
 	Global       bool
 	Condition    ExprNode     `json:"-"` // Condition contains expr nodes, which cannot marshal for DDL job arguments. It's used for partial index.
 	SplitOpt     *SplitOption `json:"-"` // SplitOption contains expr nodes, which cannot marshal for DDL job arguments.
+=======
+	Tp           IndexType
+	Comment      string
+	ParserName   CIStr
+	Visibility   IndexVisibility
+	PrimaryKeyTp PrimaryKeyType
+	Global       bool
+	SplitOpt     *SplitOption `json:"-"` // SplitOption contains expr nodes, which cannot marshal for DDL job arguments.
+	// AutoPreSplit enables leading-column-only, best-effort automatic pre-splitting
+	// for add-index DDL. Parsed ASTs keep it mutually exclusive with SplitOpt; if a
+	// caller constructs both fields manually, SplitOpt takes precedence.
+	AutoPreSplit               bool `json:"-"`
+	SecondaryEngineAttr        string
+	AddColumnarReplicaOnDemand int
+	Condition                  ExprNode `json:"-"` // Condition contains expr nodes, which cannot marshal for DDL job arguments. It's used for partial index.
+>>>>>>> c6054025ed4 (ddl: add auto split hot region for add index (#69425))
 }
 
 // IsEmpty is true if only default options are given
@@ -749,8 +767,15 @@ func (n *IndexOption) IsEmpty() bool {
 		n.Comment != "" ||
 		n.Global ||
 		n.Visibility != IndexVisibilityDefault ||
+<<<<<<< HEAD
 		n.Condition != nil ||
 		n.SplitOpt != nil {
+=======
+		n.SplitOpt != nil ||
+		n.AutoPreSplit ||
+		len(n.SecondaryEngineAttr) > 0 ||
+		n.Condition != nil {
+>>>>>>> c6054025ed4 (ddl: add auto split hot region for add index (#69425))
 		return false
 	}
 	return true
@@ -830,7 +855,7 @@ func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 		if hasPrevOption {
 			ctx.WritePlain(" ")
 		}
-		err := ctx.WriteWithSpecialComments(tidb.FeatureIDPresplit, func() error {
+		err := ctx.WriteWithSpecialComments(tidb.FeatureIDPreSplit, func() error {
 			ctx.WriteKeyWord("PRE_SPLIT_REGIONS")
 			ctx.WritePlain(" = ")
 			if n.SplitOpt.Num != 0 && len(n.SplitOpt.Lower) == 0 {
@@ -842,6 +867,20 @@ func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 				}
 				ctx.WritePlain(")")
 			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		hasPrevOption = true
+	} else if n.AutoPreSplit {
+		if hasPrevOption {
+			ctx.WritePlain(" ")
+		}
+		err := ctx.WriteWithSpecialComments(tidb.FeatureIDAutoPreSplit, func() error {
+			ctx.WriteKeyWord("PRE_SPLIT_REGIONS")
+			ctx.WritePlain(" = ")
+			ctx.WriteKeyWord("AUTO")
 			return nil
 		})
 		if err != nil {

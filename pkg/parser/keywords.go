@@ -272,6 +272,11 @@ var Keywords = []KeywordsType{
 	{"ASCII", false, "unreserved"},
 	{"ATTRIBUTE", false, "unreserved"},
 	{"ATTRIBUTES", false, "unreserved"},
+<<<<<<< HEAD
+=======
+	{"AUTO", false, "unreserved"},
+	{"AUTOEXTEND_SIZE", false, "unreserved"},
+>>>>>>> c6054025ed4 (ddl: add auto split hot region for add index (#69425))
 	{"AUTO_ID_CACHE", false, "unreserved"},
 	{"AUTO_INCREMENT", false, "unreserved"},
 	{"AUTO_RANDOM", false, "unreserved"},
