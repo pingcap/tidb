@@ -40,6 +40,17 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: refreshed the complete Go-master `pkg/util/texttree` inventory at
+  `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: four tracked artifacts, 174
+  lines, five tree constants, two production functions, TestMain, and two
+  source tests, with no fixtures, generated/platform variants, benchmarks, or
+  nested packages. The byte-preserving Rust owner plus plancodec/planner
+  consumers retain Go rune and arbitrary-byte semantics without Rust-only
+  behavior. Current and exact detached Go tests, both Rust owner tests, planner
+  consumer check, formatting, and diff checks pass. Updated
+  `receipts/util_texttree.md` and added the Ready documentation-only plan at
+  `docs/operations/util-texttree-audit-execplan.md`.
+
 - 2026-09-02: refreshed the complete Go-master `pkg/util/paging` inventory at
   `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: four tracked artifacts, 162
   lines, six constants, two production functions, TestMain, and two source
