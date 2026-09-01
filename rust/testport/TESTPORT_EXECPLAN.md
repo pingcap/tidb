@@ -36,6 +36,14 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- [x] (2026-08-31) Completed the pinned five-artifact
+  `pkg/resourcemanager/pool/spool` package. Added its non-reusing native-thread
+  pool, exact blocking admission and five-millisecond retry, grouped channel
+  workers, task-manager tuning, panic recovery, global registration lifecycle,
+  exact labeled concurrency gauge, and all six source concurrency tests. The
+  complete inventory and WIP evidence are in
+  `receipts/resourcemanager_pool_spool.md`.
+
 - [x] (2026-08-31) Completed the pinned prerequisite packages
   `pkg/resourcemanager/pool` and `pkg/resourcemanager/poolmanager`. Added only
   their canonical pool errors/base state and eight-shard task metadata,

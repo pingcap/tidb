@@ -3822,6 +3822,7 @@ dependencies = [
  "crossbeam-channel",
  "fail",
  "getrandom 0.3.4",
+ "prometheus 0.14.0",
  "tidb-util",
  "tracing",
 ]
