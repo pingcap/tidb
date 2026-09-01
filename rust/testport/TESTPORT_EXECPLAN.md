@@ -2481,6 +2481,20 @@ For each bounded behavior cluster:
       trace context, session variables, and domain values. Exact Go-master
       tests and Rust expropt/exprctx/sessionexpr suites pass; details are in
       `receipts/expression_expropt.md`.
+- 2026-09-01: audited the complete Go-master `pkg/expression/exprctx`
+      package: six tracked artifacts and 740 lines, including allocator,
+      Eval/Build/Expr and static-conversion contracts, the truncate override,
+      all ten optional-property keys, empty parameter values, the four source
+      tests, and the four-shard Bazel target. The focused regression initially
+      failed because Rust exposed only the parameter-error string; the batch
+      adds the typed `ParamValues`/`EmptyParamValues` contract and implements it
+      for static and live evaluators. It also closes the master-added
+      `NewCollationEnabled` divergence by capturing the mode in static contexts,
+      exposing the live-session read, and preserving it across static cloning.
+      The umbrella interfaces and truncate-level wrapper remain explicit
+      dependency boundaries with no Rust-only substitute. Exact Go-master tests,
+      focused Rust tests, formatting, diff checks, and Ready lint pass; details
+      are in `receipts/expression_exprctx.md`.
 - [ ] Run Ready validation and self-review only when the requested parity scope
       is genuinely complete enough for a final-status claim.
 

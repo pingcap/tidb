@@ -613,6 +613,14 @@ impl EvalContext {
     }
 }
 
+impl crate::exprctx::ParamValues for EvalContext {
+    type Error = EvalCtxError;
+
+    fn get_param_value(&self, idx: usize) -> Result<Datum, Self::Error> {
+        EvalContext::get_param_value(self, idx)
+    }
+}
+
 impl EvalPropContext for EvalContext {
     fn get_optional_prop_provider(
         &self,

@@ -14,7 +14,7 @@
 
 //! SEED of Go `pkg/expression/exprctx`, covering `optional.go` in full plus
 //! `context.go`'s plan-column-ID allocator and `param.go`'s
-//! `ErrParamIndexExceedParamCounts`.
+//! `ParamValues`/`EmptyParamValues` contract.
 //!
 //! This is a seed, not a completed package. `context.go`'s `EvalContext` and
 //! `BuildContext` umbrella interfaces and the `CtxWithHandleTruncateErrLevel`
@@ -32,11 +32,55 @@
 //! needs, `GetOptionalPropProvider`, it declares there as a boundary trait
 //! until the umbrella interfaces above land here.
 
+use std::fmt;
 use std::sync::atomic::{AtomicI64, Ordering};
+
+use tidb_datatype::Datum;
 
 /// Go `ErrParamIndexExceedParamCounts` (`param.go`), an `errors.New` value
 /// whose message is its whole contract.
 pub const ERR_PARAM_INDEX_EXCEED_PARAM_COUNTS: &str = "Param index exceed param counts";
+
+/// The error returned when a parameter index is outside a parameter list.
+///
+/// Go exposes this as the package-level `ErrParamIndexExceedParamCounts`
+/// value. Rust errors are values rather than mutable interface identities, so
+/// each failed lookup carries this zero-sized equivalent while preserving the
+/// exact source message.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ParamIndexExceedParamCounts;
+
+impl fmt::Display for ParamIndexExceedParamCounts {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(ERR_PARAM_INDEX_EXCEED_PARAM_COUNTS)
+    }
+}
+
+impl std::error::Error for ParamIndexExceedParamCounts {}
+
+/// Go `ParamValues`: read-only access to parameter values by index.
+pub trait ParamValues {
+    /// The error type used when a parameter cannot be read.
+    type Error;
+
+    /// Go `ParamValues.GetParamValue`.
+    fn get_param_value(&self, idx: usize) -> Result<Datum, Self::Error>;
+}
+
+/// Go `EmptyParamValues`: a parameter source containing no values.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct EmptyParamValues;
+
+/// The reusable empty parameter source, equivalent to Go's exported variable.
+pub const EMPTY_PARAM_VALUES: EmptyParamValues = EmptyParamValues;
+
+impl ParamValues for EmptyParamValues {
+    type Error = ParamIndexExceedParamCounts;
+
+    fn get_param_value(&self, _idx: usize) -> Result<Datum, Self::Error> {
+        Err(ParamIndexExceedParamCounts)
+    }
+}
 
 /// Go `OptionalEvalPropKey`: the key of one optional evaluation property.
 ///
@@ -398,5 +442,13 @@ mod tests {
         assert_eq!(allocator.alloc_plan_column_id(), 11);
         assert_eq!(allocator.alloc_plan_column_id(), 12);
         assert_eq!(allocator.last_plan_column_id(), 12);
+    }
+
+    #[test]
+    fn empty_param_values_report_the_source_error() {
+        let err = EmptyParamValues
+            .get_param_value(0)
+            .expect_err("the empty parameter list must reject every index");
+        assert_eq!(err.to_string(), ERR_PARAM_INDEX_EXCEED_PARAM_COUNTS);
     }
 }

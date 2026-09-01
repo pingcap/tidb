@@ -57,6 +57,7 @@ struct ExprCtxState {
     connection_id: u64,
     windowing_use_high_precision: bool,
     group_concat_max_len: u64,
+    new_collation_enabled: bool,
 }
 
 /// Go `ExprCtxOption`: one option of an [`ExprContext`].
@@ -154,6 +155,12 @@ pub fn with_group_concat_max_len(max_len: u64) -> ExprCtxOption {
     ExprCtxOption::new(move |state| state.group_concat_max_len = max_len)
 }
 
+/// Go `WithNewCollationEnabled`.
+#[must_use]
+pub fn with_new_collation_enabled(enabled: bool) -> ExprCtxOption {
+    ExprCtxOption::new(move |state| state.new_collation_enabled = enabled)
+}
+
 /// Go `ExprContext`: a static expression-building context, whose state does
 /// not rely on the session.
 pub struct ExprContext {
@@ -202,6 +209,7 @@ impl ExprContext {
             connection_id: 0,
             windowing_use_high_precision: true,
             group_concat_max_len: DEF_GROUP_CONCAT_MAX_LEN,
+            new_collation_enabled: tidb_datatype::new_collation_enabled(),
         };
 
         for opt in opts {
@@ -327,6 +335,12 @@ impl ExprContext {
         self.state.group_concat_max_len
     }
 
+    /// Go `NewCollationEnabled`.
+    #[must_use]
+    pub fn new_collation_enabled(&self) -> bool {
+        self.state.new_collation_enabled
+    }
+
     /// Go `GetLastPlanColumnID`, implementing `StaticConvertibleExprContext`.
     #[must_use]
     pub fn get_last_plan_column_id(&self) -> i64 {
@@ -446,6 +460,8 @@ pub trait StaticConvertibleExprContext {
     fn get_windowing_use_high_precision(&self) -> bool;
     /// Go `ExprContext.GetGroupConcatMaxLen`.
     fn get_group_concat_max_len(&self) -> u64;
+    /// Go `ExprContext.NewCollationEnabled`.
+    fn new_collation_enabled(&self) -> bool;
 }
 
 impl StaticConvertibleExprContext for ExprContext {
@@ -497,6 +513,10 @@ impl StaticConvertibleExprContext for ExprContext {
     fn get_group_concat_max_len(&self) -> u64 {
         ExprContext::get_group_concat_max_len(self)
     }
+
+    fn new_collation_enabled(&self) -> bool {
+        ExprContext::new_collation_enabled(self)
+    }
 }
 
 /// Go `MakeExprContextStatic`.
@@ -520,6 +540,7 @@ pub fn make_expr_context_static(ctx: &dyn StaticConvertibleExprContext) -> ExprC
         with_connection_id(ctx.connection_id()),
         with_windowing_use_high_precision(ctx.get_windowing_use_high_precision()),
         with_group_concat_max_len(ctx.get_group_concat_max_len()),
+        with_new_collation_enabled(ctx.new_collation_enabled()),
     ])
 }
 
@@ -701,6 +722,7 @@ mod tests {
         let eval_ctx = Arc::new(EvalContext::new([]));
         let plan_cache_tracker =
             Arc::new(PlanCacheTracker::new(Arc::new(StaticWarnHandler::new(0))));
+        let new_collation_enabled = !tidb_datatype::new_collation_enabled();
         let obj = ExprContext::new([
             with_eval_ctx(Arc::clone(&eval_ctx)),
             with_charset("a", "b"),
@@ -714,6 +736,7 @@ mod tests {
             with_connection_id(1),
             with_windowing_use_high_precision(false),
             with_group_concat_max_len(1),
+            with_new_collation_enabled(new_collation_enabled),
         ]);
 
         // Go first proves every field differs from a default context.
@@ -766,6 +789,10 @@ mod tests {
         assert_eq!(
             static_obj.get_group_concat_max_len(),
             obj.get_group_concat_max_len()
+        );
+        assert_eq!(
+            static_obj.new_collation_enabled(),
+            obj.new_collation_enabled()
         );
         assert_eq!(
             static_obj.get_last_plan_column_id(),
@@ -907,5 +934,14 @@ mod tests {
             tidb_util::timeutil::zone_name(ctx.get_eval_ctx().location()),
             "Asia/Tokyo"
         );
+    }
+
+    #[test]
+    fn new_collation_mode_is_captured_per_context() {
+        let enabled = tidb_datatype::new_collation_enabled();
+        let ctx = ExprContext::new([with_new_collation_enabled(!enabled)]);
+        assert_eq!(ctx.new_collation_enabled(), !enabled);
+        let applied = ctx.apply([with_new_collation_enabled(enabled)]);
+        assert_eq!(applied.new_collation_enabled(), enabled);
     }
 }

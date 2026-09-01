@@ -641,6 +641,14 @@ impl EvalContext {
     }
 }
 
+impl crate::exprctx::ParamValues for EvalContext {
+    type Error = EvalCtxError;
+
+    fn get_param_value(&self, idx: usize) -> Result<Datum, Self::Error> {
+        EvalContext::get_param_value(self, idx)
+    }
+}
+
 impl EvalPropContext for EvalContext {
     fn get_optional_prop_provider(
         &self,
@@ -774,6 +782,13 @@ impl ExprContext {
         self.vars().default_collation_for_utf8mb4()
     }
 
+    /// Go `NewCollationEnabled`: expression building follows the process-wide
+    /// collation mode selected during server bootstrap.
+    #[must_use]
+    pub fn new_collation_enabled(&self) -> bool {
+        tidb_datatype::new_collation_enabled()
+    }
+
     /// Go `GetBlockEncryptionMode`: the value of `block_encryption_mode`,
     /// falling back to its default when the variable is unset.
     #[must_use]
@@ -889,6 +904,10 @@ impl StaticConvertibleExprContext for ExprContext {
 
     fn get_default_collation_for_utf8mb4(&self) -> String {
         ExprContext::get_default_collation_for_utf8mb4(self)
+    }
+
+    fn new_collation_enabled(&self) -> bool {
+        ExprContext::new_collation_enabled(self)
     }
 
     fn get_block_encryption_mode(&self) -> String {
@@ -1962,6 +1981,10 @@ mod tests {
         assert_eq!(
             expr_ctx.get_default_collation_for_utf8mb4(),
             "utf8mb4_0900_ai_ci"
+        );
+        assert_eq!(
+            expr_ctx.new_collation_enabled(),
+            tidb_datatype::new_collation_enabled()
         );
 
         // SysdateIsNow.
