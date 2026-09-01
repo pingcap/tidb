@@ -1432,6 +1432,16 @@ For each bounded behavior cluster:
       behavior or current-baseline source gap justified a change. The Go
       package and six owner tests pass; details are in
       `receipts/util_hack_audit.md`.
+- 2026-09-01: audited all nine Go-master `pkg/util/gctuner` artifacts (993
+      Go/Bazel lines, 30 production methods, seven source tests, failpoint
+      races, and the five-way race-enabled test target). The source's
+      self-reinstalling finalizer, GOGC tuner, runtime memory-limit adjustment
+      window, global-arbitration callback, and BR/server lifecycle are not
+      owned by one Rust crate; `tidb-util::memory*` pieces are supporting
+      boundaries, not substitutes. The canonical failpoint workflow passed
+      each focused test (the long issue-48741 test passed before wrapper
+      cleanup exceeded its outer poll window), so no partial Rust runtime
+      owner was added. Details are in `receipts/util_gctuner_audit.md`.
 - 2026-09-01: inventoried all five Go-master `pkg/domain/serverinfo`
       artifacts (2,295 lines, including the embedded-etcd/fault harness and
       Bazel target). Added the missing status-endpoint claim to the ordinary
@@ -1788,6 +1798,13 @@ For each bounded behavior cluster:
   Rust-only map policy. Do not expose Go-runtime raw pointers or add a second
   allocator/memory-arbitrator implementation; exact private-ABI byte counts
   remain a documented portability boundary. Date/Author: 2026-09-01, Codex.
+- Decision: keep `pkg/util/gctuner` unclaimed until Go's repeating finalizer,
+  GOGC and SetMemoryLimit controls, global-arbitration callback, server/BR
+  lifecycle, and failpoint-controlled races can be represented in one
+  dependency-closed owner. `tidb-util::memory`, `memoryusagealarm`, and
+  `servermemorylimit` are supporting packages with distinct contracts; a
+  detached Rust GC thread or synthetic runtime policy would be Rust-only
+  behavior. Date/Author: 2026-09-01, Codex.
 
 ## Surprises & Discoveries
 
