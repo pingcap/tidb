@@ -68,6 +68,13 @@ For each bounded behavior cluster:
   The owner, affected memory/executor/server consumers, formatting, lint, and
   locked Ready gates are recorded in `receipts/util_sqlkiller.md`.
 
+- 2026-09-01: completed the Go-master `pkg/util/serialization` package as one
+  four-artifact unit. Added the missing length-prefixed VectorFloat32
+  serializer/decoder to the native spill owner and a focused empty/non-empty
+  round-trip regression. The complete source inventory, Go build blocker,
+  Rust consumer check, lint, and Ready gates are recorded in
+  `receipts/util_serialization.md`.
+
 - 2026-09-01: audited the complete Go `pkg/util/dbterror/exeerrors` package at
   `origin/master` `db35d47066648fe73abce6318d53fc625df51490` against the Rust
   owner on `origin/hparser-integration`. The package has exactly `errors.go`
@@ -1145,6 +1152,9 @@ For each bounded behavior cluster:
 - [x] Complete the Go-master `pkg/util/sqlkiller` package: port the
       concurrent-reset state ordering and event-closure behavior, add the
       focused source regression, and update its package receipt.
+- [x] Complete the Go-master `pkg/util/serialization` package: port the
+      VectorFloat32 spill framing and decoder, add its focused regression, and
+      update the package receipt.
 - [ ] Audit the next bounded package cluster by reading the requested Go
       `origin/master` first, then fill executable gaps and remove false
       carriers.
@@ -1178,6 +1188,12 @@ For each bounded behavior cluster:
   ready closed generation instead of the prior Rust-only one-shot reset
   message. Logging stays outside the lock, while the memory-arbitrator status
   reloads signal and reason under it. Date/Author: 2026-09-01, Codex.
+- Decision: add VectorFloat32 to the existing native spill serialization
+  owner, not to a new aggregate-specific carrier. Go wraps the vector's
+  little-endian image in the same native-width buffer prefix as strings and
+  JSON; Rust's datatype image and owned decoder already provide that exact
+  contract. Higher-level `pkg/executor/aggfuncs` callers remain consumers,
+  not a second utility implementation. Date/Author: 2026-09-01, Codex.
 - Decision: for the continuing loop, newly selected packages compare against
   the fetched Go `origin/master`; the older `e2788410...` pin remains the
   historical source for receipts already completed. `pkg/util/plancodec`
@@ -1451,6 +1467,10 @@ For each bounded behavior cluster:
   SendKillSignal is between CAS and logging and start a second signal while
   Reset holds the event lock; the Rust regression uses the same interleaves,
   exposing the old split-lock and open-generation behavior deterministically.
+- Go master added VectorFloat32 spill helpers without adding a package test or
+  fixture. The source's zero-value special case is equivalent to Rust's empty
+  vector serialization, so one focused regression covers both the four-byte
+  zero image and a non-empty vector while preserving the existing prefix.
 
 ## Outcomes & Retrospective
 

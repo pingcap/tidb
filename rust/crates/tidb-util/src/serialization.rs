@@ -20,8 +20,8 @@
 use std::mem::size_of;
 
 use tidb_datatype::{
-    BinaryJSON, GoString, MyDecimal, MySqlDuration, MysqlEnum, MysqlSet, Opaque, Time,
-    MYDECIMAL_STRUCT_SIZE,
+    deserialize_vector_float32, BinaryJSON, GoString, MyDecimal, MySqlDuration, MysqlEnum,
+    MysqlSet, Opaque, Time, VectorFloat32, MYDECIMAL_STRUCT_SIZE,
 };
 
 /// Runtime tag for a boolean interface value.
@@ -157,6 +157,11 @@ pub fn serialize_go_duration(nanoseconds: i64, output: &mut Vec<u8>) {
 pub fn serialize_duration(value: MySqlDuration, output: &mut Vec<u8>) {
     serialize_i64(value.nanoseconds(), output);
     serialize_int(value.fsp() as isize, output);
+}
+
+/// Appends a length-prefixed Go `VectorFloat32` spill value.
+pub fn serialize_vector_float32(value: &VectorFloat32, output: &mut Vec<u8>) {
+    serialize_buffer(&value.serialize(), output);
 }
 
 /// Appends one BinaryJSON type code.
@@ -352,6 +357,14 @@ impl<'a> Cursor<'a> {
         MySqlDuration::from_raw_parts(nanoseconds, fsp)
     }
 
+    /// Reads a length-prefixed Go `VectorFloat32` spill value.
+    pub fn read_vector_float32(&mut self) -> VectorFloat32 {
+        let bytes = self.read_buffer();
+        deserialize_vector_float32(bytes)
+            .unwrap_or_else(|error| panic!("{error}"))
+            .0
+    }
+
     /// Reads one BinaryJSON type code.
     pub fn read_json_type_code(&mut self) -> u8 {
         self.read_byte()
@@ -409,6 +422,26 @@ impl<'a> Cursor<'a> {
             TIME_TYPE => InterfaceValue::Time(self.read_time()),
             DURATION_TYPE => InterfaceValue::Duration(self.read_duration()),
             _ => panic!("Invalid data type happens in agg spill deserializing!"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vector_float32_spill_round_trip_matches_go_layout() {
+        for expected in [
+            VectorFloat32::default(),
+            VectorFloat32::must_create(vec![1.25, -2.5, 0.0]),
+        ] {
+            let mut encoded = Vec::new();
+            serialize_vector_float32(&expected, &mut encoded);
+            let mut cursor = Cursor::new(&encoded);
+            let actual = cursor.read_vector_float32();
+            assert_eq!(actual, expected);
+            assert_eq!(cursor.position(), encoded.len());
         }
     }
 }
