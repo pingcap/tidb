@@ -40,6 +40,13 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: audited all five current Go-master `pkg/metaservice` artifacts
+  (708 lines), including PD/etcd discovery, keyspace-group validation,
+  optional real-etcd coverage, and Bazel metadata. Rust has transport and
+  keyspace-loading fragments but no dependency-closed meta-service group
+  owner, so the boundary is recorded in `receipts/metaservice.md` without
+  inventing a second routing client.
+
 - 2026-09-01: audited all three current Go-master `pkg/tidbmanager` artifacts
   (212 lines), including the HTTP/TLS client, all success/error tests, and
   Bazel metadata. No Rust crate owns the `/api/tidb/free` manager protocol or
