@@ -1,9 +1,9 @@
 # `pkg/util/skip` — Go-master package boundary receipt
 
 Go source: `origin/master` at
-`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01). The package is
-byte-for-byte unchanged from extraction pin
-`e2788410d8d696605e8cb002585877a063ccc909`.
+`5e8a1a229a7591ddac49a0cd3b795587c2595ab9` (2026-09-01). The package is
+byte-for-byte unchanged from the previous audit, but this receipt now uses the
+current Go-master authority rather than the older extraction pin.
 
 ## Complete inventory
 
@@ -29,11 +29,13 @@ explicitly unclaimed as Go-only test infrastructure.
 
 ## Validation
 
-Profile: WIP for the continuing repository audit; no source or build artifact
+Profile: Ready for this docs-only boundary refresh; no source or build artifact
 changed.
 
 - `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/skip -count=1` — passed (`[no test files]`).
-- `git diff --stat e2788410d8d696605e8cb002585877a063ccc909..origin/master -- pkg/util/skip` — empty; source is unchanged at Go master.
+- Exact detached Go-master checkout at `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: the same package test passed (`[no test files]`).
+- `git diff --stat 5e8a1a229a7591ddac49a0cd3b795587c2595ab9..origin/master -- pkg/util/skip` — empty; source is unchanged at the current Go-master authority.
+- `cargo +nightly-2026-08-22 fmt --all -- --check`, pinned `make lint`, and `git diff --check` — passed for the repository audit batch.
 
 No Go or Bazel file changed, so `make bazel_prepare` is not required. No
 Rust test was added because there is no Rust production owner or behavior to

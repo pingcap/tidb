@@ -1397,13 +1397,14 @@ For each bounded behavior cluster:
   `receipts/util_importer.md`; `cmd/importer` remains a separate command
   boundary to audit.
 
-- 2026-09-01: audited the complete current Go-master `pkg/util/skip` and
+- 2026-09-02: revalidated the complete current Go-master `pkg/util/skip` and
   `pkg/util/syncutil` inventories (five artifacts, 130 lines total), including
   the `deadlock`/`!deadlock` build-tag variants and all exported test/lock
   helpers. Rust has no dependency-closed replacement for Go's test-flag
   helpers or package-wide lock type identity/deadlock detector. The explicit
   Go-only boundaries are recorded in `receipts/util_skip.md` and
-  `receipts/util_syncutil.md`; no source changed.
+  `receipts/util_syncutil.md`, with the skip-package ExecPlan at
+  `docs/operations/util-skip-audit-execplan.md`; no source changed.
 
 - 2026-09-01: audited both current Go-master `pkg/util/regionsplit` artifacts
   (`BUILD.bazel` and `split_handle.go`, 256 lines total) in full, including
