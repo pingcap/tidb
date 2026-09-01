@@ -468,6 +468,30 @@ fn a_matched_binding_is_part_of_the_prepared_plan_cache_key() {
 }
 
 #[test]
+fn a_prepared_binding_is_published_when_the_plan_cache_is_disabled() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (a int, b int, key kb(b))")
+        .unwrap();
+    session
+        .run(
+            "CREATE SESSION BINDING FOR SELECT * FROM t WHERE a = 1 \
+             USING SELECT * FROM t USE INDEX(kb) WHERE a = 1",
+        )
+        .unwrap();
+    session
+        .run("SET tidb_enable_prepared_plan_cache = OFF")
+        .unwrap();
+    session
+        .run("PREPARE s FROM 'SELECT * FROM t WHERE a = ?'")
+        .unwrap();
+    session.run("SET @a = 1").unwrap();
+
+    session.run("EXECUTE s USING @a").unwrap();
+    assert_eq!(cache_and_binding_flags(&mut session), ["0", "1"]);
+}
+
+#[test]
 fn disabling_the_cache_disables_retained_range_execution() {
     let mut session = Session::new();
     session

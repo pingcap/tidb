@@ -157,6 +157,20 @@ For each bounded behavior cluster:
   passes, focused Go and Rust tests pass, and `make lint` is green. Receipt:
   `receipts/executor_internal_exec.md`.
 
+- 2026-09-01: audited all 25 current Go-master `pkg/bindinfo` artifacts
+  (7,917 lines), including binding/cache production code, automatic binding
+  generation, operators, plan evolution/generation, JSON fixtures, package
+  tests, nested SQL integration tests, and both Bazel targets. The Rust
+  `tidb-session` owner selected bindings correctly but lost the
+  `PrevFoundInBinding` marker across the nested prepared-execution boundary.
+  Re-armed the marker after cached and fallback execution and added a
+  fail-before/pass-after regression for the plan-cache-disabled path. The
+  binding owner suite passes; an unrelated parallel HashAgg panic remains in
+  the broader prepared-plan-cache selector. Automatic-binding persistence and
+  manager/session integration remain explicit boundaries. Receipt:
+  `receipts/bindinfo.md`, ExecPlan:
+  `docs/operations/bindinfo-audit-execplan.md`.
+
 - 2026-09-01: audited the complete Go-master `pkg/executor/internal/util`
   package (three artifacts, 161 lines), including recursive executor ID
   rewriting, all child-node cases and unknown-type errors, test-only spill
