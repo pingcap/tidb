@@ -32,6 +32,7 @@ mod concurrency;
 mod connections;
 mod ddl_schema;
 mod distsql_storage;
+mod embedding;
 mod gc;
 mod innodb;
 mod logging;
@@ -39,6 +40,7 @@ mod memory_limits;
 mod mysql_compat_inert;
 mod observability;
 mod optimizer;
+mod recent;
 mod replication;
 mod security;
 mod server_identity;
@@ -54,6 +56,7 @@ const SLICES: &[&[SysVarDef]] = &[
     &connections::ENTRIES,
     &ddl_schema::ENTRIES,
     &distsql_storage::ENTRIES,
+    &embedding::ENTRIES,
     &gc::ENTRIES,
     &innodb::ENTRIES,
     &logging::ENTRIES,
@@ -61,6 +64,7 @@ const SLICES: &[&[SysVarDef]] = &[
     &mysql_compat_inert::ENTRIES,
     &observability::ENTRIES,
     &optimizer::ENTRIES,
+    &recent::ENTRIES,
     &replication::ENTRIES,
     &security::ENTRIES,
     &server_identity::ENTRIES,
@@ -76,6 +80,7 @@ const TOTAL: usize = concurrency::ENTRIES.len()
     + connections::ENTRIES.len()
     + ddl_schema::ENTRIES.len()
     + distsql_storage::ENTRIES.len()
+    + embedding::ENTRIES.len()
     + gc::ENTRIES.len()
     + innodb::ENTRIES.len()
     + logging::ENTRIES.len()
@@ -83,6 +88,7 @@ const TOTAL: usize = concurrency::ENTRIES.len()
     + mysql_compat_inert::ENTRIES.len()
     + observability::ENTRIES.len()
     + optimizer::ENTRIES.len()
+    + recent::ENTRIES.len()
     + replication::ENTRIES.len()
     + security::ENTRIES.len()
     + server_identity::ENTRIES.len()

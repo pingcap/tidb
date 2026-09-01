@@ -20,7 +20,7 @@
 //! registry does not know is `ErrUnknownSystemVar` (1193), and reading `@@x`
 //! for an unknown name is `ErrUnknownSystemVariable` too.
 //!
-//! The registry itself is [`crate::sysvar`], which holds all 952 entries
+//! The registry itself is [`crate::sysvar`], which holds all 965 entries
 //! captured from Go's own `GetSysVars()`, and the value validation Go's
 //! `ValidateFromType` performs.
 //!
@@ -214,6 +214,10 @@ impl GlobalSysvars {
             return Err(VarError::UnknownSystemVariable(name.to_ascii_lowercase()));
         };
         let def = &crate::sysvar::SYS_VARS[index];
+        if self.publishes_runtime_settings && crate::embedding::is_embedding_variable(def.name) {
+            return Ok(crate::embedding::masked_global_value(def.name)
+                .expect("embedding variable has a process-wide value"));
+        }
         if self.publishes_runtime_settings
             && def.name == tidb_vardef::tidb_vars::REQUIRE_SECURE_TRANSPORT
         {
@@ -371,6 +375,10 @@ impl GlobalSysvars {
     /// [`Self::get`].
     pub(crate) fn get_by_registry_index(&self, index: usize) -> Result<String, VarError> {
         let def = &crate::sysvar::SYS_VARS[index];
+        if self.publishes_runtime_settings && crate::embedding::is_embedding_variable(def.name) {
+            return Ok(crate::embedding::masked_global_value(def.name)
+                .expect("embedding variable has a process-wide value"));
+        }
         if self.publishes_runtime_settings
             && def.name == tidb_vardef::tidb_vars::REQUIRE_SECURE_TRANSPORT
         {
@@ -442,7 +450,30 @@ impl GlobalSysvars {
         if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::REQUIRE_SECURE_TRANSPORT) {
             self.publish_require_secure_transport();
         }
+        self.publish_embedding_settings();
         self.refresh_resolved();
+    }
+
+    /// Publishes the process-wide embedding settings after a live table
+    /// mutation. Scratch cluster tables deliberately keep their values in the
+    /// table until `replace_from` makes the committed image live.
+    fn publish_embedding_settings(&self) {
+        if !self.publishes_runtime_settings {
+            return;
+        }
+        let names = [
+            tidb_vardef::tidb_vars::TIDB_EXP_EMBED_JINA_AI_API_KEY,
+            tidb_vardef::tidb_vars::TIDB_EXP_EMBED_OPENAI_API_KEY,
+            tidb_vardef::tidb_vars::TIDB_EXP_EMBED_OPENAI_API_BASE,
+            tidb_vardef::tidb_vars::TIDB_EXP_EMBED_COHERE_API_KEY,
+            tidb_vardef::tidb_vars::TIDB_EXP_EMBED_HUGGINGFACE_API_KEY,
+            tidb_vardef::tidb_vars::TIDB_EXP_EMBED_NVIDIA_NIM_API_KEY,
+            tidb_vardef::tidb_vars::TIDB_EXP_EMBED_GEMINI_API_KEY,
+        ];
+        let values = self.values.lock().expect("global sysvar lock poisoned");
+        for name in names {
+            crate::embedding::publish_global(name, values.get(name).map(String::as_str));
+        }
     }
 
     fn write(&self, name: &str, value: String, scope: u8) -> Result<bool, VarError> {
@@ -474,6 +505,7 @@ impl GlobalSysvars {
             }
             values.insert(key.clone(), stored_value.clone());
         }
+        self.publish_embedding_settings();
         if key == tidb_vardef::tidb_vars::REQUIRE_SECURE_TRANSPORT {
             self.publish_require_secure_transport();
         }
@@ -506,6 +538,7 @@ impl GlobalSysvars {
             .lock()
             .expect("global sysvar lock poisoned")
             .remove(&key);
+        self.publish_embedding_settings();
         if key == tidb_vardef::tidb_vars::REQUIRE_SECURE_TRANSPORT {
             self.publish_require_secure_transport();
         }
@@ -590,6 +623,7 @@ impl GlobalSysvars {
         if loaded_require_secure_transport {
             self.publish_require_secure_transport();
         }
+        self.publish_embedding_settings();
         self.refresh_resolved();
     }
 
@@ -634,6 +668,7 @@ impl GlobalSysvars {
         self.publish_committer_concurrency();
         self.publish_redaction_mode();
         self.publish_memory_arbitration_settings();
+        self.publish_embedding_settings();
     }
 
     /// Publishes only the named GLOBAL variables from `fresh`.

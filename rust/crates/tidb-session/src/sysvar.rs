@@ -15,7 +15,7 @@
 //! The system-variable registry: Go `pkg/sessionctx/variable`'s `sysVars`
 //! table plus the value validation `SysVar.ValidateFromType` performs.
 //!
-//! GENERATED, NOT HAND-WRITTEN: 948 base entries were captured from
+//! GENERATED, NOT HAND-WRITTEN: 961 base entries were captured from
 //! `sysvar.go`; the four workload-repository entries registered by Go's
 //! `pkg/util/workloadrepo.init` are merged into the same runtime registry.
 //! captured from this repository's own Go registry by iterating
@@ -146,7 +146,7 @@ impl SysVarDef {
     /// variable even though an unqualified internal read remains available.
     ///
     /// The source registry has exactly one such entry. Keep it here rather
-    /// than adding a generated field to all 948 entries for one true value.
+    /// than adding a generated field to all 961 entries for one true value.
     #[must_use]
     pub fn is_internal_session_variable(&self) -> bool {
         self.name == "tidb_redact_log"
@@ -300,6 +300,7 @@ const ALLOW_EMPTY_VARS: &[&str] = &[
     "tidb_stmt_summary_refresh_interval",
     "tidb_stmt_summary_persist_evicted",
     "tidb_stmt_summary_group_by_user",
+    "tidb_exp_embed_openai_api_base",
 ];
 
 /// Go `SysVar.AllowEmptyAll`: the empty string is accepted in every scope.
@@ -510,8 +511,23 @@ impl SysVarDef {
         {
             return Err(ValidationError::Refused(
                 "tidb_enable_auto_analyze_priority_queue has been deprecated and TiDB will always use priority queue to schedule auto analyze"
-                    .to_owned(),
+                .to_owned(),
             ));
+        }
+        if self.name == tidb_vardef::tidb_vars::TIDB_EXP_EMBED_OPENAI_API_BASE {
+            let value = crate::embedding::normalize_openai_embedding_api_base(original)
+                .map_err(ValidationError::Refused)?;
+            return Ok(Validated {
+                value,
+                truncated: validated.truncated,
+            });
+        }
+        if self.name == tidb_vardef::tidb_vars::TIDB_TXN_FILE_MIN_MUTATION_SIZE {
+            let value = original.parse::<u64>().unwrap_or_default();
+            const MIN_MUTATION_SIZE: u64 = 1 << 20;
+            if value > 0 && value < MIN_MUTATION_SIZE {
+                return Err(ValidationError::WrongValue);
+            }
         }
         if self.name == "tidb_workload_repository_dest" {
             return tidb_workloadrepo::validate_dest(&validated.value)
@@ -1038,7 +1054,7 @@ mod tests {
     /// when this table was captured.
     #[test]
     fn the_registry_is_complete_and_sorted() {
-        assert_eq!(SYS_VARS.len(), 952);
+        assert_eq!(SYS_VARS.len(), 965);
         for pair in SYS_VARS.windows(2) {
             assert!(
                 pair[0].name < pair[1].name,
