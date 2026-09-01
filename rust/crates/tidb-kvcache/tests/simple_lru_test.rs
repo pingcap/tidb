@@ -177,6 +177,10 @@ fn test_get() {
         assert!(lru.get(&keys[i]).is_none());
     }
 
+    // Go master added Peek: it returns the value without promoting key 2.
+    assert_eq!(lru.peek(&keys[2]), Some(&vals[2]));
+    assert_eq!(lru.keys()[0].identity(), keys[4].identity());
+
     for i in 2..5usize {
         let value = *lru.get(&keys[i]).expect("hit expected");
         assert_eq!(vals[i], value);

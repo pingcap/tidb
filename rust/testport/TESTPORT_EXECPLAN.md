@@ -40,6 +40,14 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: re-audited all four current Go-master `pkg/util/kvcache`
+  artifacts (including `main_test.go` and every source LRU case) after finding
+  a rolling delta that invalidated the pinned receipt. Go master adds
+  `SimpleLRUCache.Peek`, a non-promoting O(1) lookup; the native
+  `tidb-kvcache` owner now exposes `peek` and the source-shaped LRU test
+  verifies key 4 remains newest after reading key 2. The receipt is updated
+  in `receipts/util_kvcache.md`; all eight Rust owner tests pass.
+
 - 2026-09-01: audited all seven Go-master `pkg/util/profile` artifacts,
   including the 1,206-byte pprof fixture, two production files, three test
   files, and Bazel fixture glob. The Rust workspace only preserves the six
@@ -919,10 +927,9 @@ For each bounded behavior cluster:
 - [x] Remove manifest entries and receipts for batches b009, b051-b056, b060,
       b097, b099, b101, b103, and b112 that did not establish executable
       parity.
-- [x] Re-audit the complete pinned `pkg/util/kvcache` package, remove an
-      invented `Peek` gap absent from Go, remove the duplicate semantic test
-      carrier and Rust-only public cache APIs, repin its semantic receipt, and
-      make its translated tests platform-neutral; all 8 Go tests pass.
+- [x] Audit the complete current-master `pkg/util/kvcache` package, preserve
+      its pinned cleanup, and add the rolling `Peek` API with a no-promotion
+      LRU regression; all 8 Rust owner tests pass.
 - [x] Remove empty expression carriers for Go-only nil-interface,
       `baseBuiltinFunc`, and concrete `*Sig` object-model call shapes, plus the
       no-op SQL-digest retriever test whose complete production owner is not
@@ -1494,6 +1501,11 @@ For each bounded behavior cluster:
 
 ## Decision Log
 
+- Decision: add Go master's `SimpleLRUCache.Peek` to the existing indexed
+  `tidb-kvcache` owner as an immutable lookup, not by reusing `get` and then
+  restoring list links. This keeps the O(1) no-promotion contract visible to
+  stmt-summary callers and leaves all eviction/callback paths unchanged.
+  Date/Author: 2026-09-01, Codex.
 - Decision: keep `pkg/util/profile` as an explicit boundary until the pprof
   decoder, CPU-profiler lifecycle, performance-schema result tables, and
   session/logging consumers can move as one package unit. The existing Rust
@@ -1854,6 +1866,10 @@ For each bounded behavior cluster:
 
 ## Surprises & Discoveries
 
+- The earlier pinned kvcache receipt said Go had no `Peek`, but current
+  `origin/master` adds it inside the existing `TestGet` case. Because the
+  method's observable contract is list order—not merely value equality—the
+  Rust owner needed an immutable lookup rather than a `get`/relink shim.
 - `pkg/util/profile`'s current-master change is entirely integration-facing:
   the source collector is unchanged, while `TestProfiles` now starts the
   CPU profiler and checks six structured log events. Rust's SEM layer already
@@ -1876,9 +1892,10 @@ For each bounded behavior cluster:
   was private, which led to a false planner-property gap outside the owner.
 - Several testport batches consisted entirely of ignored empty functions or
   comments. They increased apparent coverage without testing Go behavior.
-- The pinned `pkg/util/kvcache` package has no `Peek` method or Peek assertion;
-  the Rust gap was derived from a different source state. Its translated tests
-  also assumed Linux `/proc/meminfo`, unlike the platform-neutral Go tests.
+- The prior pinned kvcache receipt had correctly removed an obsolete
+  `Peek`-absence claim, but current Go master adds `Peek` inside `TestGet`.
+  The rolling audit therefore restored that API as a real no-promotion
+  behavior while retaining the platform-neutral Rust memory probe.
 - Go's nil receiver/interface and concrete builtin-signature identity tests
   describe implementation shapes Rust cannot invoke after adopting non-null
   references and name-keyed dispatch. Empty Rust functions for those shapes
@@ -2048,8 +2065,9 @@ For each bounded behavior cluster:
 
 Work remains in progress. Current validated behavior includes ANALYZE prefix
 indexes, MPP equivalence comparison, retained runnable b103 DDL final-state
-tests, lexer tests, funcdep graph tests, and the complete pinned kvcache test
-surface. The 2026-09-01 rolling Go-master plancodec batch also restores
+tests, lexer tests, funcdep graph tests, and the complete current-master
+kvcache test surface including `Peek`. The 2026-09-01 rolling Go-master
+plancodec batch also restores
 Analyze physical ID 64 and passes its Go/Rust owner and consumer gates. The
 following `pkg/util/dbterror/exeerrors` audit certifies the already-aligned
 82-entry catalog without changing execution behavior. The plannererrors audit

@@ -174,6 +174,19 @@ impl<K: CacheKey, V> SimpleLruCache<K, V> {
         Some(&self.node(index).value)
     }
 
+    /// Looks up a value without changing its least-recently-used position.
+    ///
+    /// This is Go `SimpleLRUCache.Peek`, added on the current master branch
+    /// for read-only inspection of an entry's value and ordering.
+    #[must_use]
+    pub fn peek<Q>(&self, key: &Q) -> Option<&V>
+    where
+        Q: CacheKey + ?Sized,
+    {
+        let index = *self.elements.get(key.hash_bytes())?;
+        Some(&self.node(index).value)
+    }
+
     /// Inserts or updates a value.
     ///
     /// Updating an existing byte hash retains its original key object and
