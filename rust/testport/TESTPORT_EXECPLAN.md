@@ -1392,6 +1392,13 @@ For each bounded behavior cluster:
       mode state, kernel gating, parsing, validation, JSON/TOML behavior, and
       source error strings; the Go package and three filtered Rust owner tests
       pass. Details are in `receipts/config_deploymode_audit.md`.
+- 2026-09-01: audited all six Go-master `pkg/config/kerneltype` artifacts
+      (196 lines, both build-tagged production variants, and two source
+      tests), including the package contract and Bazel variant list. The
+      existing `tidb-config::kerneltype` owner already preserves compile-time
+      Classic/NextGen selection, canonical names, and old-PD empty-type
+      matching; the Go package and two filtered Rust owner tests pass. Details
+      are in `receipts/config_kerneltype_audit.md`.
 - [ ] Run Ready validation and self-review only when the requested parity scope
       is genuinely complete enough for a final-status claim.
 
@@ -1861,6 +1868,12 @@ For each bounded behavior cluster:
   process-wide state and NextGen gate remain the only runtime policy. Do not
   add a second configuration parser or a synthetic setter restriction that
   the Go implementation does not enforce. Date/Author: 2026-09-01, Codex.
+- Decision: keep `tidb-config::kerneltype` as one compile-time owner for both
+  Go build-tagged variants. `cfg!(feature = "nextgen")` preserves the
+  binary-wide Classic/NextGen contract, and the old-PD empty-type match stays
+  in the shared path. A runtime kernel switch or duplicated platform module
+  would be Rust-only behavior, so neither is added. Date/Author: 2026-09-01,
+  Codex.
 
 ## Outcomes & Retrospective
 
