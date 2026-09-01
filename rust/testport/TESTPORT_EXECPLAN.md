@@ -168,6 +168,14 @@ For each bounded behavior cluster:
   `pkg/meta/model` owner remains a seed; the complete inventory and boundary
   are recorded in `receipts/util_generatedexpr_audit.md`.
 
+- 2026-09-01: audited all four Go-master `pkg/util/hint` artifacts (2,128
+  lines and 81 production declarations). The only current-master source delta
+  is the non-replacing `ast.Walk` visitor migration; Rust's hint syntax,
+  binding, SEM, and planner consumers are split across crates and do not form
+  a dependency-closed `HintsSet`/`QBHintHandler` owner. No speculative partial
+  pipeline was added; the complete inventory and explicit boundary are in
+  `receipts/util_hint_audit.md`.
+
 - 2026-09-01: audited the complete Go `pkg/util/dbterror/exeerrors` package at
   `origin/master` `db35d47066648fe73abce6318d53fc625df51490` against the Rust
   owner on `origin/hparser-integration`. The package has exactly `errors.go`
@@ -1709,6 +1717,10 @@ For each bounded behavior cluster:
   semantic delta. Its Rust leaf is already source-shaped, but `tidb-model`
   remains a broader seed, so the audit records the boundary instead of
   claiming package-complete metadata parity.
+- `pkg/util/hint` confirms that a source-level visitor migration does not make
+  the package leaf-safe: query-block/view state and warning order cross the
+  parser, binding, planner, SEM, and executor seams. The audit therefore keeps
+  the existing native consumers and records the missing dependency closure.
 
 ## Outcomes & Retrospective
 
