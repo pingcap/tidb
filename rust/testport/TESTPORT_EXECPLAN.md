@@ -40,6 +40,18 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: refreshed the complete Go-master `pkg/util/zeropool` inventory
+  at `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: three tracked artifacts,
+  281 lines, three production methods, one four-subtest `TestPool`, and four
+  benchmarks, with no fixtures, generated/platform variants, or nested
+  packages. The existing Rust owner and benchmark translations preserve the
+  zero-value/factory, concurrent get/put, move-out, no-copy, test, and
+  benchmark contracts without Rust-only behavior. Current and exact detached
+  Go tests, focused Rust test, all-target check, formatting, and diff checks
+  pass. Updated `receipts/util_zeropool.md` and added the Ready
+  documentation-only plan at
+  `docs/operations/util-zeropool-audit-execplan.md`.
+
 - 2026-09-02: refreshed the complete Go-master `pkg/util/watcher` inventory
   at `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: four tracked artifacts,
   605 lines, thirteen production functions/methods, the `TestWatcher` suite,
@@ -595,6 +607,15 @@ For each bounded behavior cluster:
   complete failpoint-aware suites pass; the inventory and Go-only boundary are
   recorded in `receipts/domain_infosync.md` and
   `rust/docs/operations/domain-infosync-audit-execplan.md`.
+
+- 2026-09-02: audited the complete Go-master `pkg/domain/globalconfigsync`
+  package: exactly three artifacts and 203 lines, including the PD global
+  configuration bridge, OpenCensus/session integration tests, and BUILD target.
+  All artifacts are byte-identical to Go master and the complete package suite
+  passes. Rust has no dependency-closed owner for this TiDB-session/PD adapter,
+  so no Rust-only behavior was removed or speculatively implemented. Recorded
+  the explicit boundary in `receipts/domain_globalconfigsync.md` and
+  `rust/docs/operations/domain-globalconfigsync-audit-execplan.md`.
 
 - 2026-09-02: updated the complete five-artifact Go-master
   `pkg/server/handler/tests` consumer inventory (3,630 lines) for the DXF
