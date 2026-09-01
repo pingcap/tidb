@@ -118,6 +118,17 @@ For each bounded behavior cluster:
   are recorded in `receipts/sessionctx_variable_tests_slowlog.md` and
   `rust/docs/operations/sessionctx-variable-tests-slowlog-audit-execplan.md`.
 
+- 2026-09-01: audited the separate nested `pkg/sessionctx/variable/tests`
+  package: four artifacts and 1,904 lines covering the 47-shard BUILD target,
+  goleak harness, 18 session tests, and 29 registry/validation tests. The
+  focused Go-master failpoint subset passed; the full package attempt retained
+  an existing `TestHookContext` assertion panic during optimizer bootstrap.
+  Rust's session sysvar and executor slow-log leaves cover the
+  dependency-closed portions; TestKit/Domain/session mutation boundaries stay
+  explicit. Complete inventory and Ready evidence are recorded in
+  `receipts/sessionctx_variable_tests.md` and
+  `rust/docs/operations/sessionctx-variable-tests-audit-execplan.md`.
+
 - 2026-09-01: audited the complete Go-master
   `pkg/session/test/nontransactionaltest` package before editing: three
   tracked artifacts and 614 lines covering six batch-DML behavior tests, the
