@@ -299,6 +299,10 @@ pub const TIDB_DIST_SQL_SCAN_CONCURRENCY: &str = "tidb_distsql_scan_concurrency"
 /// For versions earlier than v7.6.0, the scan concurrency of index serial scans during ANALYZE is controlled by the tidb_index_serial_scan_concurrency variable.
 /// Go `TiDBAnalyzeDistSQLScanConcurrency`.
 pub const TIDB_ANALYZE_DIST_SQL_SCAN_CONCURRENCY: &str = "tidb_analyze_distsql_scan_concurrency";
+/// TiDBAnalyzeStoreBatchSize is the maximum number of child Region tasks grouped with one main Region task
+/// in a store-batched Analyze request. 0 disables store batching for Analyze.
+/// Go `TiDBAnalyzeStoreBatchSize`.
+pub const TIDB_ANALYZE_STORE_BATCH_SIZE: &str = "tidb_analyze_store_batch_size";
 /// TiDBOptInSubqToJoinAndAgg is used to enable/disable the optimizer rule of rewriting IN subquery.
 /// Go `TiDBOptInSubqToJoinAndAgg`.
 pub const TIDB_OPT_IN_SUBQ_TO_JOIN_AND_AGG: &str = "tidb_opt_insubq_to_join_and_agg";
@@ -1058,7 +1062,8 @@ pub const TIDB_OPT_USE_INVISIBLE_INDEXES: &str = "tidb_opt_use_invisible_indexes
 /// TiDBAnalyzePartitionConcurrency is the number of concurrent workers to save statistics to the system tables.
 /// Go `TiDBAnalyzePartitionConcurrency`.
 pub const TIDB_ANALYZE_PARTITION_CONCURRENCY: &str = "tidb_analyze_partition_concurrency";
-/// TiDBMergePartitionStatsConcurrency indicates the concurrency when merge partition stats into global stats
+/// TiDBMergePartitionStatsConcurrency is deprecated. It is kept for backward compatibility
+/// but no longer affects behavior. Global stats always use the combined merge algorithm.
 /// Go `TiDBMergePartitionStatsConcurrency`.
 pub const TIDB_MERGE_PARTITION_STATS_CONCURRENCY: &str = "tidb_merge_partition_stats_concurrency";
 /// TiDBEnableAsyncMergeGlobalStats indicates whether to enable async merge global stats
@@ -1086,6 +1091,9 @@ pub const TIDB_ENABLE_PLAN_REPLAYER_CAPTURE: &str = "tidb_enable_plan_replayer_c
 /// Go `TiDBEnablePlanReplayerContinuousCapture`.
 pub const TIDB_ENABLE_PLAN_REPLAYER_CONTINUOUS_CAPTURE: &str =
     "tidb_enable_plan_replayer_continuous_capture";
+/// TiDBPlanReplayerFileRetentionTime indicates how long to retain non-capture plan replayer files.
+/// Go `TiDBPlanReplayerFileRetentionTime`.
+pub const TIDB_PLAN_REPLAYER_FILE_RETENTION_TIME: &str = "tidb_plan_replayer_file_retention_time";
 /// TiDBEnableReusechunk indicates whether to enable chunk alloc
 /// Go `TiDBEnableReusechunk`.
 pub const TIDB_ENABLE_REUSECHUNK: &str = "tidb_enable_reuse_chunk";
@@ -1154,6 +1162,9 @@ pub const TIDB_ENABLE_CHECK_CONSTRAINT: &str = "tidb_enable_check_constraint";
 /// TiDBOptEnableHashJoin indicates whether to enable hash join.
 /// Go `TiDBOptEnableHashJoin`.
 pub const TIDB_OPT_ENABLE_HASH_JOIN: &str = "tidb_opt_enable_hash_join";
+/// TiDBEnableFullOuterJoin indicates whether to enable FULL OUTER JOIN.
+/// Go `TiDBEnableFullOuterJoin`.
+pub const TIDB_ENABLE_FULL_OUTER_JOIN: &str = "tidb_enable_full_outer_join";
 /// TiDBHashJoinVersion indicates whether to use hash join implementation v2.
 /// Go `TiDBHashJoinVersion`.
 pub const TIDB_HASH_JOIN_VERSION: &str = "tidb_hash_join_version";
@@ -1187,6 +1198,12 @@ pub const TIDB_ACCELERATE_USER_CREATION_UPDATE: &str = "tidb_accelerate_user_cre
 /// TiDBEnableCachePrepareStmt indicates whether to support cache prepare stmt in plan cache.
 /// Go `TiDBEnableCachePrepareStmt`.
 pub const TIDB_ENABLE_CACHE_PREPARE_STMT: &str = "tidb_enable_cache_prepare_stmt";
+/// TiDBEnableTxnFile is used to control whether to enable file-based transaction feature.
+/// Go `TiDBEnableTxnFile`.
+pub const TIDB_ENABLE_TXN_FILE: &str = "tidb_enable_txn_file";
+/// TiDBTxnFileMinMutationSize is the minimum mutation size for using file-based transactions.
+/// Go `TiDBTxnFileMinMutationSize`.
+pub const TIDB_TXN_FILE_MIN_MUTATION_SIZE: &str = "tidb_txn_file_min_mutation_size";
 /// TiDBGCEnable turns garbage collection on or OFF
 /// Go `TiDBGCEnable`.
 pub const TIDB_GC_ENABLE: &str = "tidb_gc_enable";
@@ -1318,6 +1335,28 @@ pub const TIDB_DDL_DISK_QUOTA: &str = "tidb_ddl_disk_quota";
 /// TiDBCloudStorageURI used to set a cloud storage uri for ddl add index and import into.
 /// Go `TiDBCloudStorageURI`.
 pub const TIDB_CLOUD_STORAGE_URI: &str = "tidb_cloud_storage_uri";
+/// The "exp" prefix in the following embedding system variables means experimental.
+/// TiDBExpEmbedJinaAIAPIKey is the API key to use when calling Jina embedding API.
+/// Go `TiDBExpEmbedJinaAIAPIKey`.
+pub const TIDB_EXP_EMBED_JINA_AI_API_KEY: &str = "tidb_exp_embed_jina_ai_api_key";
+/// TiDBExpEmbedOpenAIAPIKey is the API key to use when calling OpenAI-compatible embedding API.
+/// Go `TiDBExpEmbedOpenAIAPIKey`.
+pub const TIDB_EXP_EMBED_OPENAI_API_KEY: &str = "tidb_exp_embed_openai_api_key";
+/// TiDBExpEmbedOpenAIAPIBase is the base URL to use when calling OpenAI-compatible embedding API.
+/// Go `TiDBExpEmbedOpenAIAPIBase`.
+pub const TIDB_EXP_EMBED_OPENAI_API_BASE: &str = "tidb_exp_embed_openai_api_base";
+/// TiDBExpEmbedCohereAPIKey is the API key to use when calling Cohere embedding API.
+/// Go `TiDBExpEmbedCohereAPIKey`.
+pub const TIDB_EXP_EMBED_COHERE_API_KEY: &str = "tidb_exp_embed_cohere_api_key";
+/// TiDBExpEmbedHuggingFaceAPIKey is the API key to use when calling Hugging Face embedding API.
+/// Go `TiDBExpEmbedHuggingFaceAPIKey`.
+pub const TIDB_EXP_EMBED_HUGGINGFACE_API_KEY: &str = "tidb_exp_embed_huggingface_api_key";
+/// TiDBExpEmbedNvidiaNIMAPIKey is the API key to use when calling NVIDIA NIM embedding API.
+/// Go `TiDBExpEmbedNvidiaNIMAPIKey`.
+pub const TIDB_EXP_EMBED_NVIDIA_NIM_API_KEY: &str = "tidb_exp_embed_nvidia_nim_api_key";
+/// TiDBExpEmbedGeminiAPIKey is the API key to use when calling Gemini embedding API.
+/// Go `TiDBExpEmbedGeminiAPIKey`.
+pub const TIDB_EXP_EMBED_GEMINI_API_KEY: &str = "tidb_exp_embed_gemini_api_key";
 /// TiDBAutoBuildStatsConcurrency is the number of concurrent workers to automatically analyze tables or partitions.
 /// It is very similar to the `tidb_build_stats_concurrency` variable, but it is used for the auto analyze feature.
 /// Go `TiDBAutoBuildStatsConcurrency`.
@@ -1567,6 +1606,9 @@ pub const TIDB_ADVANCER_CHECK_POINT_LAG_LIMIT: &str = "tidb_advancer_check_point
 /// TiDBIndexLookUpPushDownPolicy controls the push down policy of index lookup.
 /// Go `TiDBIndexLookUpPushDownPolicy`.
 pub const TIDB_INDEX_LOOK_UP_PUSH_DOWN_POLICY: &str = "tidb_index_lookup_pushdown_policy";
+/// TiDBEnableConnectionEventLog controls whether to log connection events.
+/// Go `TiDBEnableConnectionEventLog`.
+pub const TIDB_ENABLE_CONNECTION_EVENT_LOG: &str = "tidb_enable_connection_event_log";
 /// Go `DefHostname`.
 pub const DEF_HOSTNAME: &str = "localhost";
 /// Go `DefAutoAnalyzeStartTime`.

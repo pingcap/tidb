@@ -24,7 +24,7 @@
 //! classic-kernel backing value is false.
 //!
 //! SCOPE (documented, not yet the whole `vardef` package): the name constants
-//! (508), the `Def*` defaults (389), and the mode enums are ported; constants
+//! (521), the `Def*` defaults (395), and the mode enums are ported; constants
 //! are script-extracted and byte-verified against the Go source. `ScopeFlag`
 //! and the sysvar `TypeFlag` already live in `tidb-exec`
 //! (`sysvar_scope`/`sysvar_type`). Still DEFERRED from the full package: the
@@ -82,6 +82,7 @@ pub fn is_read_only_var_in_next_gen(name: &str) -> bool {
     )
 }
 
+pub mod bounds;
 pub mod defaults;
 /// One function from `sessionctx/variable/sysvar.go` rather than from
 /// `vardef`: `GlobalSystemVariableInitialValue`, which decides the value a

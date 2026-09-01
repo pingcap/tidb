@@ -109,6 +109,16 @@ For each bounded behavior cluster:
   and 163-test Ready evidence are recorded in
   `receipts/util_codec_audit.md`.
 
+- 2026-09-01: audited all seven Go-master `pkg/sessionctx/vardef` artifacts
+  (3,046 lines, including BUILD/OWNERS, runtime and test files) against the
+  `tidb-vardef` owner. Added the 13 current system-variable names, 7 defaults,
+  and 2 bounds introduced since the Rust extraction point; removed the stale
+  Rust-only `DefTiDBMergePartitionStatsConcurrency`; and added source-derived
+  regressions for every added literal. The mutable runtime globals, SysVar
+  registry, SessionVars, and slow-log/session tests remain an explicit
+  dependency boundary. Complete inventory and Ready evidence are recorded in
+  `receipts/sessionctx_vardef_audit.md`.
+
 - 2026-09-01: audited the complete Go `pkg/util/dbterror/exeerrors` package at
   `origin/master` `db35d47066648fe73abce6318d53fc625df51490` against the Rust
   owner on `origin/hparser-integration`. The package has exactly `errors.go`
@@ -1502,6 +1512,15 @@ For each bounded behavior cluster:
   test nothing and must not count as parity.
 - The current workspace still contains many `go-parity-gap` markers. Their
   presence is an audit queue, not evidence that every carrier should survive.
+- Go master retains `TiDBMergePartitionStatsConcurrency` only as a deprecated
+  compatibility name and hard-codes its registry value; its old `Def*` default
+  disappeared. The Rust constants extraction had preserved that default, so
+  this audit removed it as Rust-only behavior while preserving the name.
+- The Rust vardef extraction predated the current master by several session
+  changes. A complete source diff found the Analyze batching, plan-replayer,
+  FULL OUTER JOIN, transaction-file, embedding, and connection-event constants
+  together; treating them as one constants-layer batch kept the package unit
+  coherent without pulling in the still-unported SessionVars registry.
 - Go's test-only histogram equality deliberately compares `ToString(0)` and
   therefore ignores metadata absent from that projection. Rust derived
   `PartialEq` is stricter and cannot substitute for this helper's behavior.

@@ -218,6 +218,10 @@ const SYSVAR_NAME_CONSTANTS: &[(&str, &str)] = &[
         "tidb_analyze_distsql_scan_concurrency",
     ),
     (
+        "TIDB_ANALYZE_STORE_BATCH_SIZE",
+        "tidb_analyze_store_batch_size",
+    ),
+    (
         "TIDB_OPT_IN_SUBQ_TO_JOIN_AND_AGG",
         "tidb_opt_insubq_to_join_and_agg",
     ),
@@ -806,6 +810,10 @@ const SYSVAR_NAME_CONSTANTS: &[(&str, &str)] = &[
         "TIDB_ENABLE_PLAN_REPLAYER_CONTINUOUS_CAPTURE",
         "tidb_enable_plan_replayer_continuous_capture",
     ),
+    (
+        "TIDB_PLAN_REPLAYER_FILE_RETENTION_TIME",
+        "tidb_plan_replayer_file_retention_time",
+    ),
     ("TIDB_ENABLE_REUSECHUNK", "tidb_enable_reuse_chunk"),
     ("TIDB_STORE_BATCH_SIZE", "tidb_store_batch_size"),
     (
@@ -866,6 +874,7 @@ const SYSVAR_NAME_CONSTANTS: &[(&str, &str)] = &[
         "tidb_enable_check_constraint",
     ),
     ("TIDB_OPT_ENABLE_HASH_JOIN", "tidb_opt_enable_hash_join"),
+    ("TIDB_ENABLE_FULL_OUTER_JOIN", "tidb_enable_full_outer_join"),
     ("TIDB_HASH_JOIN_VERSION", "tidb_hash_join_version"),
     ("TIDB_OPT_INDEX_JOIN_BUILD", "tidb_opt_index_join_build_v2"),
     ("TIDB_OPT_OBJECTIVE", "tidb_opt_objective"),
@@ -887,6 +896,11 @@ const SYSVAR_NAME_CONSTANTS: &[(&str, &str)] = &[
     (
         "TIDB_ENABLE_CACHE_PREPARE_STMT",
         "tidb_enable_cache_prepare_stmt",
+    ),
+    ("TIDB_ENABLE_TXN_FILE", "tidb_enable_txn_file"),
+    (
+        "TIDB_TXN_FILE_MIN_MUTATION_SIZE",
+        "tidb_txn_file_min_mutation_size",
     ),
     ("TIDB_GC_ENABLE", "tidb_gc_enable"),
     ("TIDB_GC_RUN_INTERVAL", "tidb_gc_run_interval"),
@@ -972,6 +986,38 @@ const SYSVAR_NAME_CONSTANTS: &[(&str, &str)] = &[
     ("TIDB_DDL_ENABLE_FAST_REORG", "tidb_ddl_enable_fast_reorg"),
     ("TIDB_DDL_DISK_QUOTA", "tidb_ddl_disk_quota"),
     ("TIDB_CLOUD_STORAGE_URI", "tidb_cloud_storage_uri"),
+    (
+        "TIDB_EXP_EMBED_JINA_AI_API_KEY",
+        "tidb_exp_embed_jina_ai_api_key",
+    ),
+    (
+        "TIDB_EXP_EMBED_OPENAI_API_KEY",
+        "tidb_exp_embed_openai_api_key",
+    ),
+    (
+        "TIDB_EXP_EMBED_OPENAI_API_BASE",
+        "tidb_exp_embed_openai_api_base",
+    ),
+    (
+        "TIDB_EXP_EMBED_COHERE_API_KEY",
+        "tidb_exp_embed_cohere_api_key",
+    ),
+    (
+        "TIDB_EXP_EMBED_HUGGINGFACE_API_KEY",
+        "tidb_exp_embed_huggingface_api_key",
+    ),
+    (
+        "TIDB_EXP_EMBED_NVIDIA_NIM_API_KEY",
+        "tidb_exp_embed_nvidia_nim_api_key",
+    ),
+    (
+        "TIDB_EXP_EMBED_GEMINI_API_KEY",
+        "tidb_exp_embed_gemini_api_key",
+    ),
+    (
+        "TIDB_ENABLE_CONNECTION_EVENT_LOG",
+        "tidb_enable_connection_event_log",
+    ),
     (
         "TIDB_AUTO_BUILD_STATS_CONCURRENCY",
         "tidb_auto_build_stats_concurrency",
