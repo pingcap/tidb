@@ -4588,6 +4588,10 @@ For each bounded behavior cluster:
   artifacts and 303 lines. `tidb-protocol` owns the complete length-encoded,
   BinaryTime, BinaryDateTime, and row framing behavior with source-derived
   vectors; no duplicate dump facade or Rust-only behavior removal is needed.
+- `pkg/server/internal/testutil` is byte-identical to Go master across two
+  artifacts and 79 lines. The Rust protocol test owner preserves the complete
+  no-op byte-buffer connection and TCP-port helper without introducing a
+  production mock socket abstraction.
 
 ## Outcomes & Retrospective
 
