@@ -492,6 +492,16 @@ For each bounded behavior cluster:
   boundary in `receipts/domain_affinity.md` and
   `rust/docs/operations/domain-affinity-audit-execplan.md`.
 
+- 2026-09-02: aligned the complete Go-master `pkg/ddl/ingest` package:
+  exactly 20 artifacts and 4,777 lines, including all local-storage,
+  checkpoint, engine, memory/disk admission, integration, and 34 top-level test
+  functions. Restored Go master's local-sort disk-space admission and
+  retry/fatal error classification, removed the Rust-only exported disk helper
+  and test, and restored the 33-shard embedded Bazel target. The focused and
+  complete failpoint-aware suites pass; the inventory and Go-only boundary are
+  recorded in `receipts/ddl_ingest.md` and
+  `rust/docs/operations/ddl-ingest-audit-execplan.md`.
+
 - 2026-09-02: updated the complete five-artifact Go-master
   `pkg/server/handler/tests` consumer inventory (3,630 lines) for the DXF
   history redaction contract. Its focused API regression now requires
@@ -1056,11 +1066,13 @@ For each bounded behavior cluster:
   same byte/rune policy and caller-owned enablement semantics. Updated
   `receipts/util_password_validation.md` with current-master hashes.
 
-- 2026-09-01: refreshed the complete Go-master `pkg/util/compress` inventory
+- 2026-09-02: refreshed the complete Go-master `pkg/util/compress` inventory
   (two artifacts, 45 lines) and corrected the prior receipt's Bazel line count
-  and authority metadata. The package is unchanged from the implementation
+  and current-master authority metadata. The package is unchanged from the implementation
   batch; pooled gzip ownership, statistics block integration, four focused
   stream regressions, and the explicit ingest-control boundary remain intact.
+  The dedicated audit ExecPlan is
+  `docs/operations/util-compress-audit-execplan.md`.
   Updated `receipts/util_compress_audit.md` with current-master hashes.
 
 - 2026-09-01: refreshed the complete Go-master `pkg/util/nocopy` inventory

@@ -1,9 +1,9 @@
 # `pkg/util/compress` — complete Go-master parity receipt
 
 Comparison source: Go `origin/master` at commit
-`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01). The package is
-unchanged from the earlier pinned implementation; this refresh corrects the
-artifact inventory and records current-master authority.
+`5e8a1a229a7591ddac49a0cd3b795587c2595ab9` (2026-09-01). The package is
+byte-for-byte unchanged from the earlier implementation; this refresh records
+the current Go-master authority.
 
 ## Complete inventory
 
@@ -63,6 +63,9 @@ DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runti
 cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-executor load_stats::tests::json_table_blocks_round_trip --lib --offline --locked -- --exact --nocapture
 # passed: 1 integrated statistics block test
 ```
+
+The same Go package probe also passed in an exact detached checkout of Go
+master at `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`.
 
 The focused Rust commands emitted existing workspace warnings only. Not
 verified here: the absent Rust ingest-control consumer, full workspace tests,
