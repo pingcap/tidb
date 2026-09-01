@@ -65,8 +65,9 @@ Example:
 
 This script runs external starter-mode tests against a real `tidb-server`
 process. It first reuses `bootstrap-test-with-cluster.sh` to start PD, TiKV,
-TiKV-Worker, MinIO, and a TiFlash compute/read node in `tiflash_compute` mode;
-it never starts a TiFlash write node. Then it starts `bin/tidb-server` with
+TiKV-Worker, and MinIO. When `STARTER_COLUMNAR_AP` is enabled, bootstrap also
+starts a TiFlash compute/read node in `tiflash_compute` mode; it never starts a
+TiFlash write node. Then it starts `bin/tidb-server` with
 `deploy-mode = "starter"` and runs Go tests through the MySQL protocol and
 status HTTP APIs. The standard `startertest` Makefile target runs against a
 non-`SYSTEM` keyspace. For a non-`SYSTEM` target keyspace, the script first
@@ -94,10 +95,11 @@ current checkout before starting the external server. The script exports
 next-gen code paths.
 
 Because the script reuses `bootstrap-test-with-cluster.sh`, `bin/pd-server`,
-`bin/tikv-server`, `bin/tikv-worker`, and `bin/tiflash` (or
-`TIFLASH_BIN_PATH`) must also be available. The standard `startertest` runner
-enables `disaggregated-tiflash` with `cse.columnar-store-type = "columnar"` on
-the external starter server.
+`bin/tikv-server`, and `bin/tikv-worker` must also be available. When
+`STARTER_COLUMNAR_AP` is enabled, `bin/tiflash` (or `TIFLASH_BIN_PATH`) is also
+required, and the external starter server enables `disaggregated-tiflash` with
+`cse.columnar-store-type = "columnar"`. The standard `run-tests.sh startertest`
+path enables `STARTER_COLUMNAR_AP` automatically.
 
 For a focused, one-command Docker Compose run of the two starter txn-file SQL
 cases, see the
