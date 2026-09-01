@@ -21,7 +21,11 @@
 function main() {
     local make_test_task="$1"
 
-    local self_dir=$(realpath $(dirname "${BASH_SOURCE[0]}"))
+    local self_dir
+    if ! self_dir="$(realpath "$(dirname "${BASH_SOURCE[0]}")")"; then
+        echo "Failed to resolve the next-gen test script directory." >&2
+        return 1
+    fi
     if [[ "${make_test_task}" == "startertest" ]]; then
         export STARTER_COLUMNAR_AP=1
     fi

@@ -34,10 +34,13 @@ function preserve_starter_diagnostics() {
     cp -f "${stdout_log_file}" "${diagnostics_dir}/tidb-stdout.log" 2>/dev/null || true
     cp -f "${config_file}" "${diagnostics_dir}/starter.toml" 2>/dev/null || true
     cp -f "${activate_response_file}" "${diagnostics_dir}/activate-response.json" 2>/dev/null || true
-    tar -czf "${diagnostics_archive}" -C "${diagnostics_dir}" . || true
+    if tar -czf "${diagnostics_archive}" -C "${diagnostics_dir}" .; then
+        echo "Starter diagnostics saved to ${diagnostics_archive}"
+    else
+        echo "Failed to archive starter diagnostics to ${diagnostics_archive}." >&2
+    fi
     rm -rf "${diagnostics_dir}"
 
-    echo "Starter diagnostics saved to ${diagnostics_archive}"
     tail -200 "${log_file}" || true
     tail -200 "${stdout_log_file}" || true
 }
@@ -413,11 +416,18 @@ EOF
     export TIDB_STARTER_ACTIVATE_EXPORT_ID="${activate_export_id}"
     if is_true "${STARTER_COLUMNAR_AP:-}"; then
         export TIDB_STARTER_COLUMNAR_AP=1
+    else
+        unset TIDB_STARTER_COLUMNAR_AP
     fi
+    unset TIDB_STARTER_RUN_EXIT_WAIT_TEST
     if is_true "${keyspace_observability}"; then
         export TIDB_STARTER_KEYSPACE_OBSERVABILITY=1
         export TIDB_STARTER_KEYSPACE_META_TENANT="${keyspace_meta_tenant}"
         export TIDB_STARTER_KEYSPACE_META_PROJECT="${keyspace_meta_project}"
+    else
+        unset TIDB_STARTER_KEYSPACE_OBSERVABILITY
+        unset TIDB_STARTER_KEYSPACE_META_TENANT
+        unset TIDB_STARTER_KEYSPACE_META_PROJECT
     fi
 
     echo "Running external starter tests: ./tests/realtikvtest/${test_suite}"

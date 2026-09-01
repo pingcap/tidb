@@ -22,7 +22,11 @@ tiflash_compute_pid=""
 schema_manager_dir="/tmp/tidb-realtikvtest-schemas"
 
 function main() {
-    local data_base_dir=$(mktemp -d)
+    local data_base_dir
+    if ! data_base_dir="$(mktemp -d)"; then
+        echo "Failed to create a temporary data directory." >&2
+        return 1
+    fi
     rm -rf "${schema_manager_dir}"
     mkdir -pv "${schema_manager_dir}"
     mkdir -pv ${data_base_dir}/pd-{0,1,2}/data
@@ -48,12 +52,25 @@ function main() {
     bin/tikv-server --config=${config_dir}/tikv.toml --data-dir=${data_base_dir}tikv-2/data --addr=127.0.0.1:20162 --advertise-addr=127.0.0.1:20162 --status-addr=127.0.0.1:20182 --pd=http://127.0.0.1:2379,http://127.0.0.1:2382,http://127.0.0.1:2384 --log-file=tikv2.log &
     bin/tikv-worker --config=${config_dir}/tikv-worker.toml --data-dir=${data_base_dir}/tikv-worker/data --addr=127.0.0.1:19000 --pd-endpoints=http://127.0.0.1:2379,http://127.0.0.1:2382,http://127.0.0.1:2384 --log-file=tikv-worker.log &
 
-    if [[ "${STARTER_COLUMNAR_AP:-}" == "1" ]]; then
+    if is_true "${STARTER_COLUMNAR_AP:-}"; then
         start_tiflash_compute "${data_base_dir}"
     fi
 
     sleep 10
     NEXT_GEN=1 "$@"
+}
+
+function is_true() {
+    local value
+    value="$(printf "%s" "$1" | tr '[:upper:]' '[:lower:]')"
+    case "${value}" in
+        1|true|yes|on)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
 }
 
 function start_tiflash_compute() {
