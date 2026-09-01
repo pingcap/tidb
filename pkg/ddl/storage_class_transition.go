@@ -589,11 +589,13 @@ func (m *storageClassTransitionManager) observe(
 	tikvStores map[int64]pdhttp.StoreInfo,
 ) (bool, error) {
 	var ready, total uint64
+	allTargetsObserved := true
 	for _, target := range operation.targets {
 		statuses, err := infosync.CollectStorageClassStatus(ctx, target.PhysicalID, operation.target, tikvStores)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
+		var targetTotal uint64
 		for _, status := range statuses {
 			if status.Ready > status.Total {
 				return false, errors.Errorf("TiKV store %d returned ready %d greater than total %d for physical table %d",
@@ -601,9 +603,13 @@ func (m *storageClassTransitionManager) observe(
 			}
 			ready += status.Ready
 			total += status.Total
+			targetTotal += status.Total
+		}
+		if targetTotal == 0 {
+			allTargetsObserved = false
 		}
 	}
-	complete := updateStorageClassTransitionProgress(operation, ready, total)
+	complete := updateStorageClassTransitionProgress(operation, ready, total, allTargetsObserved)
 	operation.LastUpdateTime = time.Now()
 	operation.StatusValid = true
 	m.mu.Lock()
@@ -612,16 +618,20 @@ func (m *storageClassTransitionManager) observe(
 	return complete, nil
 }
 
-func updateStorageClassTransitionProgress(operation *storageClassTransitionOperation, ready, total uint64) bool {
+func updateStorageClassTransitionProgress(
+	operation *storageClassTransitionOperation,
+	ready, total uint64,
+	allTargetsObserved bool,
+) bool {
 	operation.CompletedReplicas = ready
 	operation.TotalReplicas = total
 	operation.Progress = 0
 	operation.ProgressValid = false
-	if total > 0 {
+	if allTargetsObserved && total > 0 {
 		operation.Progress = float64(ready) / float64(total)
 		operation.ProgressValid = true
 	}
-	return total > 0 && ready == total
+	return allTargetsObserved && total > 0 && ready == total
 }
 
 func (operation *storageClassTransitionOperation) key() storageClassTransitionKey {

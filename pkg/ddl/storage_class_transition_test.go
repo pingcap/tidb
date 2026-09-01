@@ -100,14 +100,20 @@ func TestAddCurrentStorageClassTransitionTargetsSkipsRemovedTargets(t *testing.T
 
 func TestStorageClassTransitionCompletesOnOneFullObservation(t *testing.T) {
 	operation := &storageClassTransitionOperation{}
-	require.False(t, updateStorageClassTransitionProgress(operation, 0, 0))
+	require.False(t, updateStorageClassTransitionProgress(operation, 0, 0, false))
 	require.False(t, operation.ProgressValid)
 
-	require.False(t, updateStorageClassTransitionProgress(operation, 1, 2))
+	// An unobserved 0/0 target must not be hidden by another target's 3/3.
+	require.False(t, updateStorageClassTransitionProgress(operation, 3, 3, false))
+	require.False(t, operation.ProgressValid)
+	require.Equal(t, uint64(3), operation.CompletedReplicas)
+	require.Equal(t, uint64(3), operation.TotalReplicas)
+
+	require.False(t, updateStorageClassTransitionProgress(operation, 1, 2, true))
 	require.True(t, operation.ProgressValid)
 	require.Equal(t, 0.5, operation.Progress)
 
-	require.True(t, updateStorageClassTransitionProgress(operation, 2, 2))
+	require.True(t, updateStorageClassTransitionProgress(operation, 2, 2, true))
 	require.Equal(t, 1.0, operation.Progress)
 }
 
