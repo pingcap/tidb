@@ -40,6 +40,17 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: refreshed the complete Go-master `pkg/util/slice` inventory at
+  `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: four tracked artifacts, 149
+  lines, three production functions, `TestMain`, and one four-row source test;
+  no fixtures, generated files, platform variants, or nested packages. The
+  existing `tidb-util::slice` owner remains behaviorally aligned for empty
+  truth/short-circuiting, signed decimal conversion, nil-versus-empty cloning,
+  and the source test identity. Current and exact detached Go tests, the Rust
+  source test and sole consumer check, formatting, and diff checks pass. The
+  refreshed receipt and Ready documentation-only plan are in
+  `receipts/util_slice.md` and `docs/operations/util-slice-audit-execplan.md`.
+
 - 2026-09-02: refreshed the complete Go-master `pkg/util/channel` inventory
   (two artifacts, 30 lines, one generic production function, and no source
   tests, fixtures, generated files, or platform variants) at
