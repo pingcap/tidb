@@ -50,6 +50,17 @@ For each bounded behavior cluster:
   test. No source drift or missing behavior was found; the inventory and Ready
   gates are recorded in `receipts/util_dbterror_plannererrors.md`.
 
+- 2026-09-01: audited every production, test, harness, and build artifact in
+  Go-master `pkg/util/execdetails` (8 artifacts, 5,919 Go lines) against all
+  four Rust `tidb-exec` owners. The Rust files are explicitly `SEED`s and
+  remain open across context plumbing, client-go/protobuf/resource-manager
+  details, Prometheus side effects, zap fields, read-pool and row-summary
+  evidence, hash-state/Explain-RU types, and ordinary executor integration.
+  Focused Go and Rust owner tests pass, but the package is not dependency
+  closed; no partial production fix or duplicate regression carrier was added.
+  The complete inventory and boundary are recorded in
+  `receipts/util_execdetails_audit.md`.
+
 - 2026-09-01: audited the complete Go `pkg/util/dbterror/exeerrors` package at
   `origin/master` `db35d47066648fe73abce6318d53fc625df51490` against the Rust
   owner on `origin/hparser-integration`. The package has exactly `errors.go`
@@ -1121,6 +1132,9 @@ For each bounded behavior cluster:
       owner compilation, formatting, repository lint, and diff hygiene pass
       with the command-local toolchains recorded in
       `receipts/util_dbterror_plannererrors.md`.
+- [x] Audit the complete Go-master `pkg/util/execdetails` package, including
+      all eight direct artifacts and all four Rust seed owners; record its
+      dependency-closed parity boundary without inventing a partial fix.
 - [ ] Audit the next bounded package cluster by reading the requested Go
       `origin/master` first, then fill executable gaps and remove false
       carriers.
@@ -1140,6 +1154,13 @@ For each bounded behavior cluster:
   edit because the requested hparser branch already owns and fixture-checks
   them. Preserve the complete generated fixture as source evidence and avoid a
   second partial test that cannot fail independently of the all-entry guard.
+  Date/Author: 2026-09-01, Codex.
+- Decision: keep `pkg/util/execdetails` explicitly unclaimed until its four
+  Rust seed owners can include context, client-go/protobuf/resource-manager,
+  Prometheus, zap, and ordinary executor integration. The recent Go-master
+  additions (`ReadPoolTaskDetails`, row/summary evidence, analyze scan bytes,
+  hash-state, and Explain-RU stats) cannot be added as isolated Rust fields;
+  removing the existing seed wrappers now would strand their current callers.
   Date/Author: 2026-09-01, Codex.
 - Decision: for the continuing loop, newly selected packages compare against
   the fetched Go `origin/master`; the older `e2788410...` pin remains the
@@ -1403,6 +1424,12 @@ For each bounded behavior cluster:
   the remaining 39 are still behaviorally required because Go constructs and
   registers every package-level variable during initialization. Rust's
   all-entry forcing test makes that otherwise-lazy initialization observable.
+- `pkg/util/execdetails` is a cross-cutting package rather than a formatting
+  leaf: Go master added behavior in `runtime_stats.go` while its Rust owners
+  still narrow context, client-go details, resource-manager protobufs, and
+  Prometheus process state. A partial field port would be a second runtime
+  path, so this loop records the full inventory and defers edits until the
+  dependency-closed package can land atomically.
 
 ## Outcomes & Retrospective
 
