@@ -40,6 +40,13 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: audited both current Go-master `pkg/util/injectfailpoint`
+  artifacts (90 lines) in full. Its five exported helpers are named DXF
+  failpoint/random-error test infrastructure; Rust has no dependency-closed
+  failpoint registry or matching production consumer. The explicit boundary is
+  recorded in `receipts/util_injectfailpoint.md`; no Rust-only replacement was
+  added.
+
 - 2026-09-01: revalidated the complete four-artifact
   `pkg/util/column-mapping` package against current Go master. The source,
   tests, README, and Bazel target are unchanged from the pinned transcreation;
@@ -1857,6 +1864,11 @@ For each bounded behavior cluster:
   of Go consumers. Rust test attributes and crate-local standard locks cannot
   replace those contracts; adding facades would be Rust-only behavior or a
   broad uncoordinated source break. Date/Author: 2026-09-01, Codex.
+- Decision: keep `pkg/util/injectfailpoint` explicitly unclaimed. Its named
+  DXF random-error callbacks and partial-read injection depend on Go's runtime
+  failpoint registry and have no matching Rust production consumer; adding a
+  probabilistic Rust hook would be test-only Rust behavior. Date/Author:
+  2026-09-01, Codex.
 - Decision: preserve the Rust planner-error declaration table and its
   all-prototype initialization guard. Go package initialization registers all
   98 entries, while Go's only explicit test checks 59; the Rust guard is the
