@@ -59,7 +59,7 @@ go_test(
     ],
     embed = [":util"],
     flaky = True,
-    shard_count = 6,
+    shard_count = 7,
     deps = [
         "//pkg/domain",
         "//pkg/expression",

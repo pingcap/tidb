@@ -1253,7 +1253,18 @@ func GenIndexKey(enc codec.Encoder, loc *time.Location, tblInfo *model.TableInfo
 	key = GetIndexKeyBuf(buf, RecordRowKeyLen+len(indexedValues)*9+9)
 	key = appendTableIndexPrefix(key, phyTblID)
 	key = codec.EncodeInt(key, idxInfo.ID)
-	key, err = enc.EncodeKey(loc, key, indexedValues...)
+	// For all-ascending indexes (the overwhelmingly common case) the fast
+	// path through EncodeKey produces byte-identical output to the DESC-aware
+	// encoder, so stay on it to avoid building a []bool per insert.
+	if idxInfo.HasDescColumn() {
+		desc := make([]bool, len(idxInfo.Columns))
+		for i, c := range idxInfo.Columns {
+			desc[i] = c.Desc
+		}
+		key, err = enc.EncodeKeyWithDesc(loc, key, desc, indexedValues...)
+	} else {
+		key, err = enc.EncodeKey(loc, key, indexedValues...)
+	}
 	if err != nil {
 		return nil, false, err
 	}

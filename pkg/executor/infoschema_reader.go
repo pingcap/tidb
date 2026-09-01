@@ -562,6 +562,11 @@ func (e *memtableRetriever) setDataForStatisticsInTable(
 				subPart = key.Length
 			}
 
+			collation := "A"
+			if key.Desc {
+				collation = "D"
+			}
+
 			record := types.MakeDatums(
 				infoschema.CatalogVal, // TABLE_CATALOG
 				schema.O,              // TABLE_SCHEMA
@@ -571,7 +576,7 @@ func (e *memtableRetriever) setDataForStatisticsInTable(
 				index.Name.O,          // INDEX_NAME
 				i+1,                   // SEQ_IN_INDEX
 				colName,               // COLUMN_NAME
-				"A",                   // COLLATION
+				collation,             // COLLATION
 				0,                     // CARDINALITY
 				subPart,               // SUB_PART
 				nil,                   // PACKED
