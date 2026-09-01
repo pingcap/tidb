@@ -3882,6 +3882,13 @@ For each bounded behavior cluster:
   152 lines. `tidb-lexer` owns the byte-for-byte escape helper and `tidb-hash`
   owns the eleven-method hasher interface; their source-derived suites pass
   without a duplicate adapter or Rust-only behavior.
+- The root `pkg/parser` inventory covers all 33 Go-master artifacts (64,892
+  lines), 345 declarations, and 150 test/benchmark/fuzz entries, including
+  grammar inputs, generated parser/keyword outputs, support scripts, and build
+  metadata. Go master is a large generated-parser consolidation; Rust's
+  `tidb-parser` is a partial owner without a dependency-closed AST/visitor
+  equivalent, so the package remains an explicit atomic boundary with no
+  speculative facade or Rust-only behavior removal.
 
 ## Outcomes & Retrospective
 
