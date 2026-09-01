@@ -100,6 +100,15 @@ For each bounded behavior cluster:
   lint, and diff gates pass; broad Go/Rust chunk sweeps retain unrelated
   spill-path/failpoint and timing failures in the receipt.
 
+- 2026-09-01: completed the Go-master `pkg/util/codec` delta as one
+  twelve-artifact package audit. Go master makes `Encoder` key-only; Rust's
+  encoder value/hash methods were Rust-only and are removed, with free value
+  and hash functions retaining one non-collating path. The executor and
+  expression consumers now call those package functions, and a raw-string
+  value regression covers the mode split. The complete source/owner inventory
+  and 163-test Ready evidence are recorded in
+  `receipts/util_codec_audit.md`.
+
 - 2026-09-01: audited the complete Go `pkg/util/dbterror/exeerrors` package at
   `origin/master` `db35d47066648fe73abce6318d53fc625df51490` against the Rust
   owner on `origin/hparser-integration`. The package has exactly `errors.go`
@@ -1189,6 +1198,10 @@ For each bounded behavior cluster:
 - [x] Complete the Go-master `pkg/util/chunk` delta: inventory all 30 source,
       test, harness, and build artifacts; port `Chunk.UsedMemoryUsage` with a
       length-versus-capacity regression; and update its package receipt.
+- [x] Complete the Go-master `pkg/util/codec` delta: inventory all 12 source,
+      test, benchmark, harness, and build artifacts; remove Rust-only encoder
+      value/hash methods; update consumers; add the raw-value regression; and
+      update the package receipt.
 - [ ] Audit the next bounded package cluster by reading the requested Go
       `origin/master` first, then fill executable gaps and remove false
       carriers.
@@ -1246,6 +1259,11 @@ For each bounded behavior cluster:
   using lengths for null-bitmap, offsets, data, and element buffers. Keep
   `MemoryUsage` capacity-based and do not invent a consumer for this
   informational API. Date/Author: 2026-09-01, Codex.
+- Decision: keep `tidb-codec::Encoder` limited to comparable-key encoding,
+  matching Go master's key-only type. Move value and hash implementations to
+  the existing package-level functions and update every searched Rust
+  consumer; do not preserve a Rust-only fixed-collation value/hash method.
+  Date/Author: 2026-09-01, Codex.
 - Decision: for the continuing loop, newly selected packages compare against
   the fetched Go `origin/master`; the older `e2788410...` pin remains the
   historical source for receipts already completed. `pkg/util/plancodec`
@@ -1537,6 +1555,10 @@ For each bounded behavior cluster:
   lib (40/325 nextest) cases fail for those pre-existing paths/timing reasons.
   The new `UsedMemoryUsage` regression is isolated and passes, so the failures
   remain validation boundaries rather than prompts for unrelated edits.
+- Go master removed `Encoder.HashCode` while retaining package `HashCode`; the
+  old Rust source carrier tested the removed method rather than a live Go
+  obligation. Removing it exposed one executor append site and one expression
+  source regression that had to be routed through the ordinary free functions.
 
 ## Outcomes & Retrospective
 

@@ -661,7 +661,7 @@ pub(crate) fn append_group_key_part(
         Some(bytes) => {
             encode_compact_bytes(output, &collation.key(bytes));
         }
-        None => tidb_codec::Encoder::new(true).hash_code(output, datum),
+        None => output.extend_from_slice(&tidb_codec::hash_code(datum)),
     }
 }
 

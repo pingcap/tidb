@@ -605,6 +605,16 @@ fn test_encoder_new_collation_enabled() {
 }
 
 #[test]
+fn encode_value_uses_raw_string_bytes_without_encoder_collation_mode() {
+    let collated = Datum::new_collation_string("A ", Collation::Utf8Mb4GeneralCi);
+    let plain = Datum::new_string("A ");
+    assert_eq!(
+        encode_value(std::slice::from_ref(&collated)).unwrap(),
+        encode_value(std::slice::from_ref(&plain)).unwrap()
+    );
+}
+
+#[test]
 fn test_hash_group_key_collation() {
     let field_type = varchar(Collation::Utf8Mb4GeneralCi);
     assert_eq!(
@@ -697,16 +707,6 @@ fn source_serialize_keys_modes_and_nulls() {
     assert_eq!(nulls, [false, true]);
     assert_eq!(keys[0][0], INT_FLAG);
     assert_eq!(u32::from_le_bytes(keys[0][9..13].try_into().unwrap()), 3);
-}
-
-#[test]
-fn source_hash_code_ignores_collation_mode() {
-    let value = Datum::new_collation_string("A ", Collation::Utf8Mb4GeneralCi);
-    let mut enabled = Vec::new();
-    Encoder::new(true).hash_code(&mut enabled, &value);
-    let mut disabled = Vec::new();
-    Encoder::new(false).hash_code(&mut disabled, &value);
-    assert_eq!(enabled, disabled);
 }
 
 #[test]

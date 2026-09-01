@@ -21,7 +21,7 @@
 //! (`pkg/util/codec/codec.go`) equals `codec.EncodeValue(tz, datum)` of that
 //! row's own value. This module pins the same equality through this
 //! workspace's transcreated halves — `tidb_codec::hash_group_key_in_timezone`
-//! versus `tidb_codec::Encoder::encode_value_in_timezone` — with two
+//! versus `tidb_codec::encode_value_in_timezone` — with two
 //! documented substitutions:
 //!
 //! - DETERMINISM: Go fills the column through `fillColumnWithGener` +
@@ -42,7 +42,7 @@
 //! `eType2FieldType` leaves the collation unset.
 
 use chrono::Utc;
-use tidb_codec::{hash_group_key_in_timezone, Encoder};
+use tidb_codec::{encode_value_in_timezone, hash_group_key_in_timezone};
 use tidb_datatype::{Collation, Datum, Decimal, FieldType, FieldTypeCode, MySqlDuration, TimeType};
 
 /// Go `eType2FieldType(eTypes[i])` for the seven types in TestHashGroupKey's
@@ -175,13 +175,11 @@ fn test_hash_group_key_row_keys_equal_encode_value() {
             .unwrap_or_else(|error| panic!("{} case hashes: {error}", case.label));
         assert_eq!(keyed.len(), case.values.len(), "{} case width", case.label);
 
-        let encoder = Encoder::new(false);
         for (row, (key, value)) in keyed.iter().zip(&case.values).enumerate() {
             if value.is_null() {
                 continue;
             }
-            let encoded = encoder
-                .encode_value_in_timezone(&Utc, std::slice::from_ref(value))
+            let encoded = encode_value_in_timezone(&Utc, std::slice::from_ref(value))
                 .unwrap_or_else(|error| panic!("{} case encodes row {row}: {error}", case.label));
             assert_eq!(key, &encoded, "{} case row {row}", case.label);
         }
