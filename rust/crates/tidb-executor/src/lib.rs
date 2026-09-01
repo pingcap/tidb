@@ -193,7 +193,7 @@ pub mod topn;
 pub mod topn_chunk_heap;
 pub mod topn_spill;
 pub mod union_scan;
-pub mod vec_group_checker;
+pub(crate) mod vec_group_checker;
 pub mod view;
 pub mod zero_date;
 

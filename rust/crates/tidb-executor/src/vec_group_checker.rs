@@ -28,7 +28,7 @@ use tidb_expr::{Columns, EvalError};
 
 /// Splits sorted chunks into adjacent equal-key groups.
 #[derive(Clone, Debug)]
-pub struct VecGroupChecker {
+pub(crate) struct VecGroupChecker {
     group_by_items: Vec<Expression>,
     collations: Vec<Collation>,
     previous_last_key: Option<Vec<u8>>,
@@ -39,7 +39,7 @@ pub struct VecGroupChecker {
 impl VecGroupChecker {
     /// Creates a checker for `group_by_items`.
     #[must_use]
-    pub fn new(group_by_items: Vec<Expression>) -> Self {
+    pub(crate) fn new(group_by_items: Vec<Expression>) -> Self {
         let collations = group_by_items.iter().map(collation_of_node).collect();
         Self {
             group_by_items,
@@ -54,7 +54,7 @@ impl VecGroupChecker {
     ///
     /// The caller, like the upstream stream/window/merge executors, must not
     /// pass an empty chunk.
-    pub fn split_into_groups(
+    pub(crate) fn split_into_groups(
         &mut self,
         ctx: &impl Columns,
         chunk: &Chunk,
@@ -150,7 +150,7 @@ impl VecGroupChecker {
     ///
     /// As in the upstream internal API, callers must check [`Self::is_exhausted`]
     /// before calling this method.
-    pub fn get_next_group(&mut self) -> (usize, usize) {
+    pub(crate) fn get_next_group(&mut self) -> (usize, usize) {
         let begin = if self.next_group_id == 0 {
             0
         } else {
@@ -163,19 +163,19 @@ impl VecGroupChecker {
 
     /// Whether every group in the current chunk has been consumed.
     #[must_use]
-    pub fn is_exhausted(&self) -> bool {
+    pub(crate) fn is_exhausted(&self) -> bool {
         self.next_group_id >= self.group_offsets.len()
     }
 
     /// Clears current-chunk state while retaining the previous chunk's key.
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.group_offsets.clear();
         self.next_group_id = 0;
     }
 
     /// Number of groups in the current chunk.
     #[must_use]
-    pub fn group_count(&self) -> usize {
+    pub(crate) fn group_count(&self) -> usize {
         self.group_offsets.len()
     }
 }

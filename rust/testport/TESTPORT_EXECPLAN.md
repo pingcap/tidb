@@ -40,6 +40,15 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: audited the complete current Go-master
+  `pkg/executor/internal/vecgroupchecker` package (four artifacts, 939
+  lines), including its vectorized grouping implementation, common test
+  harness, four-shard Bazel target, and all source tests. Rust's
+  `tidb-executor::vec_group_checker` is used only by `shuffle` and in-crate
+  source-derived tests; its previously public module/type/methods were
+  Rust-only API. Narrowed them to `pub(crate)` with all 12 grouping tests
+  passing, and recorded `receipts/executor_internal_vecgroupchecker.md`.
+
 - 2026-09-01: completed the Go-master `pkg/executor/internal/applycache`
   inventory (four artifacts, 338 lines) and removed its Rust-only public
   surface. `tidb-executor::apply_cache` is now crate-internal, the uncalled
