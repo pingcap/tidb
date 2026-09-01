@@ -40,6 +40,14 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: audited all six current Go-master `pkg/workloadlearning`
+  artifacts (1,154 lines), including statement-stat analysis, binary-plan
+  operator extraction, table-cost persistence/cache behavior, both test files,
+  and Bazel metadata. Rust has a distinct workload-repository worker plus
+  related defaults, but no dependency-closed workload-learning owner; the
+  complete inventory and explicit boundary are recorded in
+  `receipts/workloadlearning.md` without merging the two execution paths.
+
 - 2026-09-01: audited all five current Go-master `pkg/standby` artifacts
   (1,423 lines), including the idle watcher, activation/exit/checkconn HTTP
   handlers, restart-log and manager-free shutdown paths, classic tests, the
