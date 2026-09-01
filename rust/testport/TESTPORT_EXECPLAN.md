@@ -40,6 +40,18 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: fixed the Rust-only `#[must_use]` diagnostics in the complete
+  Go-master `pkg/util/engine` owner. The package has three tracked artifacts
+  and 253 lines at `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: three
+  production classifiers and two five-case HTTP source matrices, with no
+  fixtures, generated/platform variants, benchmarks, fuzz targets, or nested
+  packages. Added `TestReturnValuesMayBeIgnoredLikeGo`, which failed before
+  the fix with three `unused_must_use` errors and passes after removing the
+  annotations. Current and exact detached Go tests, focused Rust tests,
+  package checking, formatting, and diff checks pass. Updated
+  `receipts/util_engine.md` and added the Ready plan at
+  `docs/operations/util-engine-audit-execplan.md`.
+
 - 2026-09-02: refreshed the complete Go-master `pkg/util/texttree` inventory at
   `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: four tracked artifacts, 174
   lines, five tree constants, two production functions, TestMain, and two
