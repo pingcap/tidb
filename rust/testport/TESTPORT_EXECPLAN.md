@@ -1889,8 +1889,8 @@ For each bounded behavior cluster:
   Removed its remaining Rust-only signed-boundary regression and restored the
   exact three Go test identities while retaining the source-derived signed
   length behavior in production.
-- 2026-09-01: refreshed the complete `pkg/util/bitmap` inventory against
-  current Go master (`0bc44483e3e41a8ea917d4382dc202369468d200`). Its four
+- 2026-09-02: refreshed the complete `pkg/util/bitmap` inventory against
+  current Go master (`5e8a1a229a7591ddac49a0cd3b795587c2595ab9`). Its four
   artifacts and 282 textual lines are unchanged; the native atomic owner
   still preserves segment numbering, winner-on-CAS semantics, reset/clone,
   signed-width behavior, and the exact three source tests. The receipt now

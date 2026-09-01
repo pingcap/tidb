@@ -1,8 +1,9 @@
 # `pkg/util/bitmap` — complete package transcreation
 
 Go baseline: `origin/master` at
-`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01). The current Go
-source is byte-for-byte unchanged from the pinned extraction.
+`5e8a1a229a7591ddac49a0cd3b795587c2595ab9` (2026-09-01). The current Go
+source is byte-for-byte unchanged from the earlier implementation; this
+refresh uses the current Go-master authority.
 
 ## Complete inventory
 
@@ -39,10 +40,13 @@ Exactly the three Go test identities remain.
 
 ## Validation
 
-Profile: WIP; this completes one package in the continuing package-by-package
-audit, not a repository-wide readiness claim.
+Profile: Ready for this docs-only authority refresh; the package owner and
+focused signed-boundary regressions were implemented in the earlier atomic
+batch.
 
 - `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/bitmap -count=1` — passed.
+- The same package test passed in an exact detached checkout of Go master at
+  `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`.
 - `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --offline --locked -p tidb-util bitmap::tests --lib -- --test-threads=1` — passed; three tests ran.
 - `cargo check -p tidb-util --all-targets --locked`, `cargo fmt --all --check`,
   and `git diff --check` — passed.

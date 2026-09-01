@@ -26,8 +26,11 @@ three Go concurrency/reset tests.
   tests, diagnostics, and the retired manifest.
 - [x] (2026-08-29) Passed the Go package and direct probe, focused debug and
   release suites, all-target compilation, formatting, and diff checks.
-- [x] (2026-08-29) Self-reviewed the final diff and prepared its atomic commit
-  and normal push.
+- [x] (2026-08-29) Self-reviewed the final diff and pushed its atomic
+  implementation batch.
+- [x] (2026-09-02) Revalidated the complete package against current Go master
+  `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`; the exact detached Go package
+  test passes and source remains unchanged.
 
 ## Surprises & Discoveries
 
@@ -57,7 +60,9 @@ three Go concurrency/reset tests.
 
 ## Outcomes & Retrospective
 
-Signed-length parity is restored and WIP validation passes. Publication is pending.
+Signed-length parity is restored and the implementation batch is published on
+`hparser-integration`; this refresh keeps the current Go-master authority
+explicit.
 
 ## Context and Orientation
 
