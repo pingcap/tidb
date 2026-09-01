@@ -18,6 +18,7 @@ import (
 	"math/rand"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -287,6 +288,51 @@ func TestAntiSemiJoinBasic(t *testing.T) {
 	testAntiSemiJoin(t, false, true, false)  // Left side build with other condition
 	testAntiSemiJoin(t, true, false, false)  // Right side build without other condition
 	testAntiSemiJoin(t, true, true, false)   // Right side build with other condition
+}
+
+func TestAntiSemiJoinTypeNullBuildKey(t *testing.T) {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().InitChunkSize = 1
+	ctx.GetSessionVars().MaxChunkSize = 1
+
+	nullTp := types.NewFieldType(mysql.TypeNull)
+	blobTp := types.NewFieldType(mysql.TypeBlob)
+	leftSchema := buildSchema([]*types.FieldType{nullTp})
+	rightSchema := buildSchema([]*types.FieldType{blobTp})
+
+	leftChk := chunk.NewChunkWithCapacity([]*types.FieldType{nullTp}, 1)
+	leftChk.AppendNull(0)
+	rightChk := chunk.NewChunkWithCapacity([]*types.FieldType{blobTp}, 1)
+	rightChk.AppendBytes(0, []byte{})
+
+	leftDataSource := &testutil.MockDataSource{
+		BaseExecutor: exec.NewBaseExecutor(ctx, leftSchema, 0),
+		GenData:      []*chunk.Chunk{leftChk},
+	}
+	rightDataSource := &testutil.MockDataSource{
+		BaseExecutor: exec.NewBaseExecutor(ctx, rightSchema, 0),
+		GenData:      []*chunk.Chunk{rightChk},
+	}
+	leftDataSource.PrepareChunks()
+	rightDataSource.PrepareChunks()
+
+	leftKey := &expression.Column{Index: 0, RetType: nullTp}
+	rightKey := &expression.Column{Index: 0, RetType: blobTp}
+	info := &hashJoinInfo{
+		ctx:              ctx,
+		schema:           leftSchema,
+		leftExec:         leftDataSource,
+		rightExec:        rightDataSource,
+		joinType:         base.AntiSemiJoin,
+		rightAsBuildSide: false,
+		buildKeys:        []*expression.Column{leftKey},
+		probeKeys:        []*expression.Column{rightKey},
+		lUsed:            []int{0},
+	}
+
+	result := getSortedResults(t, buildHashJoinV2Exec(info), []*types.FieldType{nullTp})
+	require.Len(t, result, 1)
+	require.True(t, result[0].IsNull(0))
 }
 
 func TestAntiSemiJoinDuplicateKeys(t *testing.T) {
