@@ -1413,6 +1413,16 @@ For each bounded behavior cluster:
       its BUILD target. The existing `tidb-util::channel` receiver drain is an
       exact equivalent of Go's channel-range cleanup; the Go package and Rust
       utility crate check pass. Details are in `receipts/util_channel_audit.md`.
+- 2026-09-01: audited all four Go-master `pkg/util/cpu` artifacts (308 lines,
+      six production functions/methods, two source tests, and one test
+      harness), including its failpoint, race/flaky BUILD target, cgroup/EMA,
+      metric, scheduler, and server lifecycle boundaries. The direct Go test
+      failure was a command error; the canonical failpoint wrapper passes the
+      complete package and restores failpoint state. Rust owns the required
+      cgroup support but not the observer, process sampler, shared metric,
+      resource-manager scheduler, or startup consumers, so a detached partial
+      owner was not added and the package remains explicitly unclaimed.
+      Details are in `receipts/util_cpu_audit.md`.
 - [ ] Run Ready validation and self-review only when the requested parity scope
       is genuinely complete enough for a final-status claim.
 
@@ -1726,6 +1736,12 @@ For each bounded behavior cluster:
   matching Go's blocking `for range` semantics. Do not add an async wrapper,
   timeout, or nil-channel emulation because those would be Rust-only channel
   policy absent from `pkg/util/channel`. Date/Author: 2026-09-01, Codex.
+- Decision: keep `pkg/util/cpu` unclaimed until its process-time sampler, EMA
+  worker, shared gauge, resource-manager CPU scheduler, and server lifecycle
+  can land together. `tidb-util::cgroup` is dependency support rather than an
+  observer substitute, and statement-level `ppcpuusage` is a different
+  package. A CPU-count helper or detached sampling thread would be a partial
+  port with no ordinary consumer. Date/Author: 2026-09-01, Codex.
 
 ## Surprises & Discoveries
 
