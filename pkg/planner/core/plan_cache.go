@@ -55,6 +55,15 @@ type PlanCacheKeyTestIssue46760 struct{}
 // PlanCacheKeyTestIssue47133 is only for test.
 type PlanCacheKeyTestIssue47133 struct{}
 
+// PlanCacheKeyTestNonPreparedStmtLookup is only for test.
+type PlanCacheKeyTestNonPreparedStmtLookup struct{}
+
+// PlanCacheKeyTestNonPreparedParam is only for test.
+type PlanCacheKeyTestNonPreparedParam struct{}
+
+// PlanCacheKeyTestNonPreparedParamSQL is only for test.
+type PlanCacheKeyTestNonPreparedParamSQL struct{}
+
 // PlanCacheKeyTestClone is only for test.
 type PlanCacheKeyTestClone struct{}
 

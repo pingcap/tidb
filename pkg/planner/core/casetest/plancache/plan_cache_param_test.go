@@ -17,13 +17,17 @@ package plancache
 import (
 	"fmt"
 	"math/rand"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -151,6 +155,482 @@ func TestGetParamSQLFromASTConcurrently(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
+}
+
+func restorePlanCacheParamTestStmt(t *testing.T, stmt ast.StmtNode) string {
+	var builder strings.Builder
+	ctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &builder)
+	require.NoError(t, stmt.Restore(ctx))
+	return builder.String()
+}
+
+func TestParameterizeForNonPreparedPlanCache(t *testing.T) {
+	sctx := mock.NewContext()
+	sctx.GetSessionVars().EnablePlanCacheForParamLimit = true
+
+	testCases := []struct {
+		name     string
+		sql      string
+		paramSQL string
+		params   []any
+	}{
+		{
+			name:     "filter and preserved clauses",
+			sql:      "select 1 from t where a=2 group by 3 having sum(a)>4 order by 5 limit 6",
+			paramSQL: "SELECT 1 FROM `t` WHERE `a`=? GROUP BY 3 HAVING sum(`a`)>? ORDER BY 5 LIMIT 6",
+			params:   []any{int64(2), int64(4)},
+		},
+		{
+			name:     "literal-list IN",
+			sql:      "select * from t where a in (1, 2, 3) and b=4",
+			paramSQL: "SELECT * FROM `t` WHERE `a` IN (?,?,?) AND `b`=?",
+			params:   []any{int64(1), int64(2), int64(3), int64(4)},
+		},
+		{
+			name:     "BETWEEN",
+			sql:      "select * from t where a between 1 and 2 and b=3",
+			paramSQL: "SELECT * FROM `t` WHERE `a` BETWEEN ? AND ? AND `b`=?",
+			params:   []any{int64(1), int64(2), int64(3)},
+		},
+		{
+			name:     "join and derived table",
+			sql:      "select x.a from (select a from t where b=1) x join t2 on x.a=t2.a and t2.b=2 where x.a=3",
+			paramSQL: "SELECT x.a FROM (SELECT a FROM `t` WHERE `b`=?) AS `x` JOIN `t2` ON `x`.`a`=`t2`.`a` AND `t2`.`b`=? WHERE `x`.`a`=?",
+			params:   []any{int64(1), int64(2), int64(3)},
+		},
+		{
+			name:     "cte",
+			sql:      "with cte as (select a from t where b=1) select a from cte where a=2",
+			paramSQL: "WITH `cte` AS (SELECT a FROM `t` WHERE `b`=?) SELECT a FROM `cte` WHERE `a`=?",
+			params:   []any{int64(1), int64(2)},
+		},
+		{
+			name:     "set operation",
+			sql:      "select a from t where b=1 union select a from t where b=2 order by 1 limit 3",
+			paramSQL: "SELECT a FROM `t` WHERE `b`=? UNION SELECT a FROM `t` WHERE `b`=? ORDER BY 1 LIMIT 3",
+			params:   []any{int64(1), int64(2)},
+		},
+		{
+			name:     "intersect",
+			sql:      "select a from t where b=1 intersect select a from t where b=2",
+			paramSQL: "SELECT a FROM `t` WHERE `b`=? INTERSECT SELECT a FROM `t` WHERE `b`=?",
+			params:   []any{int64(1), int64(2)},
+		},
+		{
+			name:     "except",
+			sql:      "select a from t where b=1 except select a from t where b=2",
+			paramSQL: "SELECT a FROM `t` WHERE `b`=? EXCEPT SELECT a FROM `t` WHERE `b`=?",
+			params:   []any{int64(1), int64(2)},
+		},
+		{
+			name:     "special literals",
+			sql:      "select * from t where a=null or b=b'1' or c=x'0a' or d=4",
+			paramSQL: "SELECT * FROM `t` WHERE `a`=NULL OR `b`=b'1' OR `c`=x'0a' OR `d`=?",
+			params:   []any{int64(4)},
+		},
+		{
+			name:     "binary literal token spelling",
+			sql:      "select * from t where a=b'0001' or b=B'0001' or c=0b0001 or d=X'0A' or e=x'0A' or f=0x0A or g=4",
+			paramSQL: "SELECT * FROM `t` WHERE `a`=b'0001' OR `b`=B'0001' OR `c`=0b0001 OR `d`=X'0A' OR `e`=x'0A' OR `f`=0x0A OR `g`=?",
+			params:   []any{int64(4)},
+		},
+		{
+			name:     "date format",
+			sql:      "select * from t where a=date_format('2020-02-02', '%Y-%m-%d')",
+			paramSQL: "SELECT * FROM `t` WHERE `a`=date_format(?, '%Y-%m-%d')",
+			params:   []any{"2020-02-02"},
+		},
+		{
+			name:     "weight string char syntax",
+			sql:      "select * from t where a=weight_string(b as char(5)) and c=1",
+			paramSQL: "SELECT * FROM `t` WHERE `a`=weight_string(`b` AS CHAR(5)) AND `c`=?",
+			params:   []any{int64(1)},
+		},
+		{
+			name:     "weight string binary syntax",
+			sql:      "select * from t where a=weight_string(b as binary(5)) and c=1",
+			paramSQL: "SELECT * FROM `t` WHERE `a`=weight_string(`b` AS BINARY(5)) AND `c`=?",
+			params:   []any{int64(1)},
+		},
+		{
+			name:     "char charset",
+			sql:      "select * from t where a=char(228 using utf8mb4) and b=1",
+			paramSQL: "SELECT * FROM `t` WHERE `a`=char_func(?, 'utf8mb4') AND `b`=?",
+			params:   []any{int64(228), int64(1)},
+		},
+		{
+			name:     "lpad length",
+			sql:      "select * from t where a=lpad('x', 2, '0') and b=3",
+			paramSQL: "SELECT * FROM `t` WHERE `a`=lpad(?, 2, ?) AND `b`=?",
+			params:   []any{"x", "0", int64(3)},
+		},
+		{
+			name:     "rpad length",
+			sql:      "select * from t where a=rpad('x', 2, '0') and b=3",
+			paramSQL: "SELECT * FROM `t` WHERE `a`=rpad(?, 2, ?) AND `b`=?",
+			params:   []any{"x", "0", int64(3)},
+		},
+		{
+			name:     "convert tz precision",
+			sql:      "select * from t where a=convert_tz('2020-01-01 00:00:00.123','+00:00','+00:00') and b=1",
+			paramSQL: "SELECT * FROM `t` WHERE `a`=convert_tz('2020-01-01 00:00:00.123', ?, ?) AND `b`=?",
+			params:   []any{"+00:00", "+00:00", int64(1)},
+		},
+		{
+			name:     "unix timestamp precision",
+			sql:      "select * from t where a=unix_timestamp('2020-01-01 00:00:00.123') and b=1",
+			paramSQL: "SELECT * FROM `t` WHERE `a`=unix_timestamp('2020-01-01 00:00:00.123') AND `b`=?",
+			params:   []any{int64(1)},
+		},
+		{
+			name:     "from unix time precision",
+			sql:      "select * from t where a=from_unixtime(0.123456) and b=1",
+			paramSQL: "SELECT * FROM `t` WHERE `a`=from_unixtime(0.123456) AND `b`=?",
+			params:   []any{int64(1)},
+		},
+		{
+			name:     "approx percentile preserves percentage",
+			sql:      "select a from t group by a having approx_percentile(a, 50)>1",
+			paramSQL: "SELECT a FROM `t` GROUP BY `a` HAVING approx_percentile(`a`, 50)>?",
+			params:   []any{int64(1)},
+		},
+		{
+			name:     "generic function",
+			sql:      "select * from t where coalesce(a, 1)=2",
+			paramSQL: "SELECT * FROM `t` WHERE coalesce(`a`, ?)=?",
+			params:   []any{int64(1), int64(2)},
+		},
+		{
+			name:     "time precision",
+			sql:      "select * from t where time('00:00:01.123456') > time('00:00:00') and a=1",
+			paramSQL: "SELECT * FROM `t` WHERE time('00:00:01.123456')>time('00:00:00') AND `a`=?",
+			params:   []any{int64(1)},
+		},
+		{
+			name:     "timediff precision",
+			sql:      "select * from t where timediff('2020-01-01 00:00:00.123456', '2020-01-01 00:00:00') > 1",
+			paramSQL: "SELECT * FROM `t` WHERE timediff('2020-01-01 00:00:00.123456', '2020-01-01 00:00:00')>?",
+			params:   []any{int64(1)},
+		},
+		{
+			name:     "timestamp precision",
+			sql:      "select * from t where timestamp('2020-01-01 00:00:00.123456') > '2020-01-01' and a=1",
+			paramSQL: "SELECT * FROM `t` WHERE timestamp('2020-01-01 00:00:00.123456')>? AND `a`=?",
+			params:   []any{"2020-01-01", int64(1)},
+		},
+		{
+			name:     "now precision",
+			sql:      "select * from t where now(6) is not null and a=1",
+			paramSQL: "SELECT * FROM `t` WHERE now(6) IS NOT NULL AND `a`=?",
+			params:   []any{int64(1)},
+		},
+		{
+			name:     "round scale",
+			sql:      "select * from t where round(a, 2)=3",
+			paramSQL: "SELECT * FROM `t` WHERE round(`a`, 2)=?",
+			params:   []any{int64(3)},
+		},
+		{
+			name:     "truncate scale",
+			sql:      "select * from t where truncate(a, 2)=3",
+			paramSQL: "SELECT * FROM `t` WHERE truncate(`a`, 2)=?",
+			params:   []any{int64(3)},
+		},
+		{
+			name:     "rand seed",
+			sql:      "select * from t where rand(1)>0",
+			paramSQL: "SELECT * FROM `t` WHERE rand(1)>?",
+			params:   []any{int64(0)},
+		},
+		{
+			name:     "addtime precision",
+			sql:      "select * from t where a=addtime('2020-01-01 00:00:00', '00:00:00.123456') and b=1",
+			paramSQL: "SELECT * FROM `t` WHERE `a`=addtime('2020-01-01 00:00:00', '00:00:00.123456') AND `b`=?",
+			params:   []any{int64(1)},
+		},
+		{
+			name:     "subtime precision",
+			sql:      "select * from t where a=subtime('2020-01-01 00:00:00', '00:00:00.123456') and b=1",
+			paramSQL: "SELECT * FROM `t` WHERE `a`=subtime('2020-01-01 00:00:00', '00:00:00.123456') AND `b`=?",
+			params:   []any{int64(1)},
+		},
+		{
+			name:     "benchmark loop count",
+			sql:      "select * from t where a=benchmark(1, coalesce(2, 3)) and b=4",
+			paramSQL: "SELECT * FROM `t` WHERE `a`=benchmark(1, coalesce(?, ?)) AND `b`=?",
+			params:   []any{int64(2), int64(3), int64(4)},
+		},
+		{
+			name:     "date format without arguments",
+			sql:      "select * from t where date_format()",
+			paramSQL: "SELECT * FROM `t` WHERE date_format()",
+		},
+		{
+			name:     "window frame",
+			sql:      "select sum(a) over (order by a rows 1 preceding) from t where b=2",
+			paramSQL: "SELECT sum(a) over (order by a rows 1 preceding) FROM `t` WHERE `b`=?",
+			params:   []any{int64(2)},
+		},
+		{
+			name:     "named window",
+			sql:      "select sum(a) over w from t where b=2 window w as (partition by a order by b)",
+			paramSQL: "SELECT sum(a) over w FROM `t` WHERE `b`=? WINDOW `w` AS (PARTITION BY `a` ORDER BY `b`)",
+			params:   []any{int64(2)},
+		},
+		{
+			name:     "uncorrelated subquery",
+			sql:      "select a from t where a in (select a from t2 where b=1) and a>2",
+			paramSQL: "SELECT a FROM `t` WHERE `a` IN (SELECT a FROM `t2` WHERE `b`=?) AND `a`>?",
+			params:   []any{int64(1), int64(2)},
+		},
+		{
+			name:     "correlated subquery",
+			sql:      "select a from t where a > (select max(a) from t2 where t2.b > t.b and t2.a > 1) and b=2",
+			paramSQL: "SELECT a FROM `t` WHERE `a`>(SELECT max(a) FROM `t2` WHERE `t2`.`b`>`t`.`b` AND `t2`.`a`>?) AND `b`=?",
+			params:   []any{int64(1), int64(2)},
+		},
+		{
+			name:     "hint",
+			sql:      "select /*+ use_index(t, idx_a) */ * from t where a=1",
+			paramSQL: "SELECT /*+ use_index(`t` `idx_a`)*/ * FROM `t` WHERE `a`=?",
+			params:   []any{int64(1)},
+		},
+		{
+			name:     "insert values",
+			sql:      "insert into t values (1, null, x'0a')",
+			paramSQL: "INSERT INTO `t` VALUES (?,NULL,x'0a')",
+			params:   []any{int64(1)},
+		},
+		{
+			name:     "insert on duplicate key update",
+			sql:      "insert into t (a, b) values (1, 2) on duplicate key update b=b+3",
+			paramSQL: "INSERT INTO `t` (`a`,`b`) VALUES (?,?) ON DUPLICATE KEY UPDATE `b`=`b`+?",
+			params:   []any{int64(1), int64(2), int64(3)},
+		},
+		{
+			name:     "update assignment",
+			sql:      "update t set a=1 where b=2 order by c+3 limit 4",
+			paramSQL: "UPDATE `t` SET `a`=? WHERE `b`=? ORDER BY `c`+3 LIMIT 4",
+			params:   []any{int64(1), int64(2)},
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			stmt, err := parser.New().ParseOneStmt(testCase.sql, "", "")
+			require.NoError(t, err)
+			originalSQL := restorePlanCacheParamTestStmt(t, stmt)
+
+			result, supported, reason, err := plannercore.ParameterizeForNonPreparedPlanCache(sctx.GetPlanCtx(), stmt)
+			require.NoError(t, err)
+			require.True(t, supported, reason)
+			require.Empty(t, reason)
+			require.Equal(t, testCase.paramSQL, result.ParamSQL)
+			require.Len(t, result.ParamValues, len(testCase.params))
+			for i, param := range result.ParamValues {
+				require.Equal(t, testCase.params[i], param.GetValue())
+			}
+			require.Equal(t, originalSQL, restorePlanCacheParamTestStmt(t, stmt))
+		})
+	}
+}
+
+func TestParameterizeForNonPreparedPlanCacheBypass(t *testing.T) {
+	sctx := mock.NewContext()
+	sctx.GetSessionVars().EnablePlanCacheForParamLimit = true
+
+	testCases := []struct {
+		sql    string
+		reason string
+	}{
+		{"select _utf8mb4'a' from t where a=1", "under-score charset"},
+		{"select * from t into outfile '/tmp/a'", "SELECT INTO"},
+		{"update t1 join t2 on t1.a=t2.a set t1.b=1", "multiple-table UPDATE"},
+		{"delete t1 from t1 join t2 on t1.a=t2.a where t1.b=1", "multiple-table DELETE"},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.reason, func(t *testing.T) {
+			stmt, err := parser.New().ParseOneStmt(testCase.sql, "", "")
+			require.NoError(t, err)
+			originalSQL := restorePlanCacheParamTestStmt(t, stmt)
+			_, supported, reason, err := plannercore.ParameterizeForNonPreparedPlanCache(sctx.GetPlanCtx(), stmt)
+			require.NoError(t, err)
+			require.False(t, supported, "sql: %s, reason: %s", testCase.sql, reason)
+			require.Contains(t, reason, testCase.reason)
+			require.Equal(t, originalSQL, restorePlanCacheParamTestStmt(t, stmt))
+		})
+	}
+
+	stmt, err := parser.New().ParseOneStmt("select * from t where a = ?", "", "")
+	require.NoError(t, err)
+	_, supported, reason, err := plannercore.ParameterizeForNonPreparedPlanCache(sctx.GetPlanCtx(), stmt)
+	require.NoError(t, err)
+	require.False(t, supported)
+	require.Equal(t, "query has parameter markers", reason)
+
+	sctx.GetSessionVars().EnablePlanCacheForParamLimit = false
+	stmt, err = parser.New().ParseOneStmt("select * from t limit 1", "", "")
+	require.NoError(t, err)
+	_, supported, reason, err = plannercore.ParameterizeForNonPreparedPlanCache(sctx.GetPlanCtx(), stmt)
+	require.NoError(t, err)
+	require.False(t, supported)
+	require.Equal(t, "query has 'limit ?' is un-cacheable", reason)
+}
+
+func TestParameterizeForNonPreparedPlanCacheDumpfileBypass(t *testing.T) {
+	sctx := mock.NewContext()
+	stmt, err := parser.New().ParseOneStmt("select * from t into outfile '/tmp/a'", "", "")
+	require.NoError(t, err)
+	selectStmt := stmt.(*ast.SelectStmt)
+	// The current parser does not expose INTO DUMPFILE syntax, but the AST
+	// supports the type. Keep the unified gate conservative for it as well.
+	selectStmt.SelectIntoOpt.Tp = ast.SelectIntoDumpfile
+
+	_, supported, reason, err := plannercore.ParameterizeForNonPreparedPlanCache(sctx.GetPlanCtx(), stmt)
+	require.NoError(t, err)
+	require.False(t, supported)
+	require.Equal(t, "SELECT INTO is not supported", reason)
+}
+
+// unknownPlanCacheExpr deliberately wraps a literal in an expression type that
+// the selector does not know. It verifies the selector's preserve-by-default
+// behavior for future AST nodes.
+type unknownPlanCacheExpr struct {
+	*ast.ParenthesesExpr
+}
+
+func (n *unknownPlanCacheExpr) Accept(v ast.Visitor) (ast.Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*unknownPlanCacheExpr)
+	node, ok := n.Expr.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.Expr = node.(ast.ExprNode)
+	return v.Leave(n)
+}
+
+func TestNonPreparedPlanCacheSelectorPreservesUnknownExpressionChildren(t *testing.T) {
+	sctx := mock.NewContext()
+	sctx.GetSessionVars().EnablePlanCacheForParamLimit = true
+	stmt, err := parser.New().ParseOneStmt("select * from t where a=1 and b=2", "", "")
+	require.NoError(t, err)
+	where := stmt.(*ast.SelectStmt).Where.(*ast.BinaryOperationExpr)
+	where.R = &unknownPlanCacheExpr{ParenthesesExpr: &ast.ParenthesesExpr{Expr: ast.NewValueExpr(int64(2), "", "")}}
+	originalSQL := restorePlanCacheParamTestStmt(t, stmt)
+
+	result, supported, reason, err := plannercore.ParameterizeForNonPreparedPlanCache(sctx.GetPlanCtx(), stmt)
+	require.NoError(t, err)
+	require.True(t, supported, reason)
+	require.Equal(t, "SELECT * FROM `t` WHERE `a`=? AND (2)", result.ParamSQL)
+	require.Len(t, result.ParamValues, 1)
+	require.Equal(t, int64(1), result.ParamValues[0].GetValue())
+	require.Equal(t, originalSQL, restorePlanCacheParamTestStmt(t, stmt))
+}
+
+func TestNonPreparedPlanCacheParameterizerSelectsMultiTableDML(t *testing.T) {
+	testCases := []struct {
+		name   string
+		sql    string
+		reason string
+	}{
+		{
+			name:   "update",
+			sql:    "update t1 join t2 on t1.a=t2.a and t2.b=2 set t1.b=1 where t1.a=3",
+			reason: "multiple-table UPDATE is not supported",
+		},
+		{
+			name:   "delete",
+			sql:    "delete t1 from t1 join t2 on t1.a=t2.a and t2.b=2 where t1.a=3",
+			reason: "multiple-table DELETE is not supported",
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			stmt, err := parser.New().ParseOneStmt(testCase.sql, "", "")
+			require.NoError(t, err)
+			originalSQL := restorePlanCacheParamTestStmt(t, stmt)
+			result, supported, reason, err := plannercore.ParameterizeForNonPreparedPlanCache(mock.NewContext().GetPlanCtx(), stmt)
+			require.NoError(t, err)
+			require.False(t, supported)
+			require.Equal(t, testCase.reason, reason)
+			require.Empty(t, result.ParamSQL)
+			require.Empty(t, result.ParamValues)
+			require.Equal(t, originalSQL, restorePlanCacheParamTestStmt(t, stmt))
+		})
+	}
+}
+
+func TestGetParamSQLFromASTRestoresAfterParamSQLRestoreFailure(t *testing.T) {
+	stmt, err := parser.New().ParseOneStmt("select 1 from t where a=2", "", "")
+	require.NoError(t, err)
+	selectStmt := stmt.(*ast.SelectStmt)
+	selectStmt.Fields.Fields[0].Expr = ast.NewValueExpr(struct{}{}, "", "")
+	selectStmt.Fields.Fields[0].SetText(nil, "")
+
+	_, _, err = plannercore.GetParamSQLFromAST(stmt)
+	require.Error(t, err)
+	binaryExpr := selectStmt.Where.(*ast.BinaryOperationExpr)
+	require.IsType(t, &driver.ValueExpr{}, binaryExpr.R)
+
+	sctx := mock.NewContext()
+	sctx.GetSessionVars().EnablePlanCacheForParamLimit = true
+	for i := 0; i < 8; i++ {
+		_, supported, reason, err := plannercore.ParameterizeForNonPreparedPlanCache(sctx.GetPlanCtx(), stmt)
+		require.NoError(t, err)
+		require.False(t, supported)
+		require.Equal(t, "failed to restore parameterized SQL", reason)
+		require.IsType(t, &driver.ValueExpr{}, binaryExpr.R)
+	}
+}
+
+func TestRestoreASTWithParamsValidatesBeforeMutation(t *testing.T) {
+	stmt, err := parser.New().ParseOneStmt("select * from t where a=1 and b=2", "", "")
+	require.NoError(t, err)
+	_, params, err := plannercore.ParameterizeAST(stmt)
+	require.NoError(t, err)
+	require.Len(t, params, 2)
+	parameterizedSQL := restorePlanCacheParamTestStmt(t, stmt)
+
+	where := stmt.(*ast.SelectStmt).Where.(*ast.BinaryOperationExpr)
+	leftMarker := where.L.(*ast.BinaryOperationExpr).R.(*driver.ParamMarkerExpr)
+	rightMarker := where.R.(*ast.BinaryOperationExpr).R.(*driver.ParamMarkerExpr)
+	leftMarker.Offset = -1
+	require.Error(t, plannercore.RestoreASTWithParams(stmt, params))
+	require.Same(t, leftMarker, where.L.(*ast.BinaryOperationExpr).R)
+	require.Same(t, rightMarker, where.R.(*ast.BinaryOperationExpr).R)
+	require.Equal(t, parameterizedSQL, restorePlanCacheParamTestStmt(t, stmt))
+
+	leftMarker.Offset = 0
+	rightMarker.Offset = len(params)
+	require.Error(t, plannercore.RestoreASTWithParams(stmt, params))
+	require.Same(t, leftMarker, where.L.(*ast.BinaryOperationExpr).R)
+	require.Same(t, rightMarker, where.R.(*ast.BinaryOperationExpr).R)
+	require.Equal(t, parameterizedSQL, restorePlanCacheParamTestStmt(t, stmt))
+
+	rightMarker.Offset = 1
+	require.NoError(t, plannercore.RestoreASTWithParams(stmt, params))
+	require.Equal(t, int64(1), where.L.(*ast.BinaryOperationExpr).R.(*driver.ValueExpr).GetInt64())
+	require.Equal(t, int64(2), where.R.(*ast.BinaryOperationExpr).R.(*driver.ValueExpr).GetInt64())
+}
+
+func TestParameterizeForNonPreparedPlanCacheLiteralLimit(t *testing.T) {
+	sctx := mock.NewContext()
+	sctx.GetSessionVars().EnablePlanCacheForParamLimit = true
+	values := make([]string, 201)
+	for i := range values {
+		values[i] = fmt.Sprintf("%d", i)
+	}
+	stmt, err := parser.New().ParseOneStmt("select * from t where a in ("+strings.Join(values, ",")+")", "", "")
+	require.NoError(t, err)
+	_, supported, reason, err := plannercore.ParameterizeForNonPreparedPlanCache(sctx.GetPlanCtx(), stmt)
+	require.NoError(t, err)
+	require.False(t, supported)
+	require.Equal(t, "query has too many constants", reason)
 }
 
 func BenchmarkParameterizeSelect(b *testing.B) {

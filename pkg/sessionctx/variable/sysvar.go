@@ -1660,6 +1660,10 @@ var defaultSysVars = []*SysVar{
 		s.EnableNonPreparedPlanCache = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableNonPreparedPlanCacheUnifiedCacheabilityCheck, Value: BoolToOnOff(vardef.DefTiDBEnableNonPreparedPlanCacheUnifiedCacheabilityCheck), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableNonPreparedPlanCacheUnifiedCacheabilityCheck = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableNonPreparedPlanCacheForDML, Value: BoolToOnOff(vardef.DefTiDBEnableNonPreparedPlanCacheForDML), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableNonPreparedPlanCacheForDML = TiDBOptOn(val)
 		return nil

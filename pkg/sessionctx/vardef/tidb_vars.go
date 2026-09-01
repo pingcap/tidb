@@ -982,6 +982,8 @@ const (
 
 	// TiDBEnableNonPreparedPlanCache indicates whether to enable non-prepared plan cache.
 	TiDBEnableNonPreparedPlanCache = "tidb_enable_non_prepared_plan_cache"
+	// TiDBEnableNonPreparedPlanCacheUnifiedCacheabilityCheck controls whether the non-prepared plan cache uses the unified cacheability checks.
+	TiDBEnableNonPreparedPlanCacheUnifiedCacheabilityCheck = "tidb_enable_non_prepared_plan_cache_unified_cacheability_check"
 	// TiDBEnableNonPreparedPlanCacheForDML indicates whether to enable non-prepared plan cache for DML statements.
 	TiDBEnableNonPreparedPlanCacheForDML = "tidb_enable_non_prepared_plan_cache_for_dml"
 	// TiDBPlanCacheStrategy controls plan cache strategy.
@@ -1903,6 +1905,9 @@ const (
 	// MinTiDBTxnFileMinMutationSize is the minimum valid nonzero value for `tidb_txn_file_min_mutation_size`.
 	MinTiDBTxnFileMinMutationSize = 1 << 20 // 1 MiB
 )
+
+// DefTiDBEnableNonPreparedPlanCacheUnifiedCacheabilityCheck is the default value for the unified non-prepared plan cache cacheability check.
+const DefTiDBEnableNonPreparedPlanCacheUnifiedCacheabilityCheck = false
 
 const (
 	// MaxTiDBAnalyzeStoreBatchSize is the upper bound for child Region tasks in one Analyze store batch.

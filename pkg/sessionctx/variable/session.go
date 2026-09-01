@@ -1651,6 +1651,9 @@ type SessionVars struct {
 	// EnableNonPreparedPlanCache indicates whether to enable non-prepared plan cache.
 	EnableNonPreparedPlanCache bool
 
+	// EnableNonPreparedPlanCacheUnifiedCacheabilityCheck indicates whether to use the unified non-prepared plan cache checks.
+	EnableNonPreparedPlanCacheUnifiedCacheabilityCheck bool
+
 	// EnableNonPreparedPlanCacheForDML indicates whether to enable non-prepared plan cache for DML statements.
 	EnableNonPreparedPlanCacheForDML bool
 
@@ -2507,6 +2510,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		OptPartialOrderedIndexForTopN:    vardef.DefTiDBOptPartialOrderedIndexForTopN,
 		EnableCachePrepareStmt:           vardef.DefEnableCachePrepareStmt,
 	}
+	vars.EnableNonPreparedPlanCacheUnifiedCacheabilityCheck = vardef.DefTiDBEnableNonPreparedPlanCacheUnifiedCacheabilityCheck
 	vars.TiFlashFineGrainedShuffleBatchSize = vardef.DefTiFlashFineGrainedShuffleBatchSize
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName

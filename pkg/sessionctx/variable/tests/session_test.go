@@ -660,6 +660,24 @@ func TestNonPreparedPlanCacheStmt(t *testing.T) {
 	sessVars.AddNonPreparedPlanCacheStmt(sql2, new(plannercore.PlanCacheStmt))
 	require.NotNil(t, sessVars.GetNonPreparedPlanCacheStmt(sql1))
 	require.NotNil(t, sessVars.GetNonPreparedPlanCacheStmt(sql2))
+
+	t.Run("LRU capacity", func(t *testing.T) {
+		lruVars := variable.NewSessionVars(nil)
+		lruVars.SessionPlanCacheSize = 2
+		stmt1, stmt2, stmt3 := new(plannercore.PlanCacheStmt), new(plannercore.PlanCacheStmt), new(plannercore.PlanCacheStmt)
+		lruSQL1 := "select * from t where a>?"
+		lruSQL2 := "select * from t where a<?"
+		lruSQL3 := "select * from t where a=?"
+
+		lruVars.AddNonPreparedPlanCacheStmt(lruSQL1, stmt1)
+		lruVars.AddNonPreparedPlanCacheStmt(lruSQL2, stmt2)
+		// Touch lruSQL1 so lruSQL2 is the least recently used entry.
+		require.Same(t, stmt1, lruVars.GetNonPreparedPlanCacheStmt(lruSQL1))
+		lruVars.AddNonPreparedPlanCacheStmt(lruSQL3, stmt3)
+		require.Same(t, stmt1, lruVars.GetNonPreparedPlanCacheStmt(lruSQL1))
+		require.Nil(t, lruVars.GetNonPreparedPlanCacheStmt(lruSQL2))
+		require.Same(t, stmt3, lruVars.GetNonPreparedPlanCacheStmt(lruSQL3))
+	})
 }
 
 func TestHookContext(t *testing.T) {
