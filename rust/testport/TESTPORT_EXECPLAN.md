@@ -108,6 +108,18 @@ For each bounded behavior cluster:
   `rust/docs/operations/sessionctx-variable-audit-execplan.md`.
 
 - 2026-09-01: audited the separate nested
+  `pkg/sessionctx/variable/tests` package: four Go-master artifacts and 1,904
+  lines, including its 47-shard BUILD target, TestMain/goleak harness, 18
+  session tests plus helper, and 29 variable tests. The exact failpoint suite
+  reproduced the asynchronous TestHookContext panic and the
+  `tidb_auto_analyze_concurrency` default dependency assertion. Removed six
+  redundant empty vardef carriers now covered by executable `tidb-session` or
+  `tidb-exec` owner tests; all remaining cross-crate integration gaps stay
+  explicit. Complete inventory and Ready evidence are recorded in
+  `receipts/sessionctx_variable_tests.md` and
+  `rust/docs/operations/sessionctx-variable-tests-audit-execplan.md`.
+
+- 2026-09-01: audited the separate nested
   `pkg/sessionctx/variable/tests/slowlog` package: three artifacts and 766
   lines covering the ten-shard BUILD target, goleak harness, and all ten
   field-accessor, matching, and parser tests. The exact Go-master failpoint

@@ -489,18 +489,6 @@ fn set_system_variable_unported() {}
 #[ignore]
 fn session_unported() {}
 
-/// Go `pkg/sessionctx/variable/tests/session_test.go::TestSlowLogFormat`.
-// go-parity-gap: slow-log rendering over execdetails/stmtctx/testkit needs the full kernel; not portable to this leaf crate
-#[test]
-#[ignore]
-fn slow_log_format_unported() {}
-
-/// Go `pkg/sessionctx/variable/tests/session_test.go::TestSlowLogFormatIncludesTiFlashRUInRUV2Metrics`.
-// go-parity-gap: slow-log rendering with TiFlash RUv2 metrics needs executor + resource-group runtime; not portable to this leaf crate
-#[test]
-#[ignore]
-fn slow_log_format_includes_ti_flash_ru_in_ruv2_metrics_unported() {}
-
 /// Go `pkg/sessionctx/variable/tests/session_test.go::TestIsolationRead`.
 // go-parity-gap: session-level isolation-read enforcement via testkit SQL execution; not portable to this leaf crate
 #[test]

@@ -1342,12 +1342,6 @@ fn bool_validation_unported() {}
 #[ignore]
 fn time_validation_unported() {}
 
-/// Go `pkg/sessionctx/variable/tests/variable_test.go::TestGetNativeValType.
-// go-parity-gap: SysVar::GetNativeValType (Datum conversion) not ported; Datum lives in other crates
-#[test]
-#[ignore]
-fn get_native_val_type_unported() {}
-
 /// Go `pkg/sessionctx/variable/tests/variable_test.go::TestDeprecation.
 // go-parity-gap: SysVar registry + deprecation warning emission via StmtCtx not ported
 #[test]
@@ -1371,12 +1365,6 @@ fn default_values_are_settable_unported() {}
 #[test]
 #[ignore]
 fn settersandgetters_unported() {}
-
-/// Go `pkg/sessionctx/variable/tests/variable_test.go::TestScopeToString.
-// go-parity-gap: ScopeFlag and its String() rendering live in tidb-exec, outside this crate
-#[test]
-#[ignore]
-fn scope_to_string_unported() {}
 
 /// Go `pkg/sessionctx/variable/tests/variable_test.go::TestValidateWithRelaxedValidation.
 // go-parity-gap: SysVar registry + ValidateWithRelaxedValidation not ported
@@ -1408,23 +1396,11 @@ fn instance_scope_unported() {}
 #[ignore]
 fn set_sys_var_unported() {}
 
-/// Go `pkg/sessionctx/variable/tests/variable_test.go::TestSkipSysvarCache.
-// go-parity-gap: SysVar SkipSysvarCache flag not ported
-#[test]
-#[ignore]
-fn skip_sysvar_cache_unported() {}
-
 /// Go `pkg/sessionctx/variable/tests/variable_test.go::TestTimeValidationWithTimezone.
 // go-parity-gap: TypeTime validation is timezone-sensitive; SysVar validation not ported
 #[test]
 #[ignore]
 fn time_validation_with_timezone_unported() {}
-
-/// Go `pkg/sessionctx/variable/tests/variable_test.go::TestOrderByDependency`
-// go-parity-gap: OrderByDependency topological sort of sysvar dependencies not ported
-#[test]
-#[ignore]
-fn order_by_dependency_unported() {}
 
 /// Go `pkg/sessionctx/variable/varsutil_test.go::TestTiDBOptOn`
 // go-parity-gap: Go TiDBOptOn helper (varsutil.go) not ported to this crate
