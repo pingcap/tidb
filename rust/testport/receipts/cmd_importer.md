@@ -26,7 +26,7 @@ byte-accounted; it is a checked-in fixture, not generated Rust output.
 | `stats.go` | 151 lines | `51bad8f6f22819ccb667a2c2506d5fd0c6e605d5` | `d399ec9aeefd0a1dd2f369afbaa0059ab4f154c065232ff9e1799c3768d61b10` | JSON stats loader and histogram bound/string/date sampling helpers |
 | `stats.json` | 155,728 bytes, one line | `7fda74fe7c8757aa152ff8b3e473c2a65cf7cb50` | `1bde2ecb15bfa7495b8f158e37ede2732cbcca3f2910b417e7b287c22a579e7f` | JSON fixture for `test.t`, ten column entries, six index histograms, 10,000 rows, zero modifications |
 
-The command contains 1,812 Go lines plus the 155,728-byte JSON fixture, 85
+The command contains 1,812 Go lines plus the 155,728-byte JSON fixture, 62
 production functions/methods (including `main` and config/parser/data/db/job/
 stats helpers), and one top-level Go test function. There is no `doc.go`,
 nested package, generated output, platform-specific variant, benchmark,
