@@ -40,6 +40,15 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: audited the complete Go `pkg/util/dbterror/exeerrors` package at
+  `origin/master` `db35d47066648fe73abce6318d53fc625df51490` against the Rust
+  owner on `origin/hparser-integration`. The package has exactly `errors.go`
+  and `BUILD.bazel`, no functions or tests, and an 82-prototype public error
+  catalog. Go master's three dual-password additions were already present in
+  the Rust owner and its complete 82-row Go-generated fixture, so no duplicate
+  production or test behavior was added. Inventory and Ready evidence are in
+  `receipts/util_dbterror_exeerrors.md`.
+
 - 2026-09-01: audited the complete Go `pkg/util/plancodec` package at
   `origin/master` `db35d47066648fe73abce6318d53fc625df51490` against the Rust
   owner on `origin/hparser-integration`. The seven-artifact package has no
@@ -1085,6 +1094,14 @@ For each bounded behavior cluster:
       tests, all 15 Rust owner tests, direct Rust consumer checks, formatting,
       repository lint, and diff hygiene pass with the command-local toolchains
       recorded in `receipts/util_plancodec.md`.
+- [x] Audit the complete Go-master `pkg/util/dbterror/exeerrors` package,
+      confirm all 82 source prototypes against the 82 Rust statics and 82-row
+      generated fixture, and record the package receipt without inventing a
+      redundant production or test change.
+- [x] Run the Ready validation profile for `pkg/util/dbterror/exeerrors`: Go
+      package compilation, the complete Rust fixture test, owner compilation,
+      formatting, repository lint, and diff hygiene pass with the command-local
+      toolchains recorded in `receipts/util_dbterror_exeerrors.md`.
 - [ ] Audit the next bounded package cluster by reading the requested Go
       `origin/master` first, then fill executable gaps and remove false
       carriers.
@@ -1093,6 +1110,11 @@ For each bounded behavior cluster:
 
 ## Decision Log
 
+- Decision: Go master's three dual-password executor errors require no Rust
+  edit because the requested hparser branch already owns and fixture-checks
+  them. Preserve the complete generated fixture as source evidence and avoid a
+  second partial test that cannot fail independently of the all-entry guard.
+  Date/Author: 2026-09-01, Codex.
 - Decision: for the continuing loop, newly selected packages compare against
   the fetched Go `origin/master`; the older `e2788410...` pin remains the
   historical source for receipts already completed. `pkg/util/plancodec`
@@ -1347,6 +1369,10 @@ For each bounded behavior cluster:
   drift directly observable (`Analyze` encoded as zero and ID 64 decoded as
   `UnknownPlanID64`), so the fix had to extend the table at the end rather
   than renumber any existing operator.
+- Go master added three dual-password prototypes to
+  `pkg/util/dbterror/exeerrors` after the Rust package had already generated
+  the same complete 82-entry catalog. Source chronology alone therefore
+  suggested a gap, but declaration/static/fixture comparison showed none.
 
 ## Outcomes & Retrospective
 
@@ -1355,6 +1381,7 @@ indexes, MPP equivalence comparison, retained runnable b103 DDL final-state
 tests, lexer tests, funcdep graph tests, and the complete pinned kvcache test
 surface. The 2026-09-01 rolling Go-master plancodec batch also restores
 Analyze physical ID 64 and passes its Go/Rust owner and consumer gates. The
-final outcome must list exact files and commands, remaining unverified
-packages, and correctness, compatibility, and performance risks without
-claiming repository-wide parity.
+following `pkg/util/dbterror/exeerrors` audit certifies the already-aligned
+82-entry catalog without changing execution behavior. The final outcome must
+list exact files and commands, remaining unverified packages, and correctness,
+compatibility, and performance risks without claiming repository-wide parity.
