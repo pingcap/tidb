@@ -40,6 +40,18 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: audited the complete Go-master `pkg/ingestor/ingestctrl`
+  package before editing: 33 tracked artifacts and 16,709 lines, including
+  the BUILD target, 18 production sources, all four platform RLimit variants,
+  14 test/benchmark sources with 79 tests and five benchmarks, Pebble engine,
+  duplicate/checksum managers, split/import pipeline, worker/retry/dispatcher,
+  rate/disk gates, and TiKV mode switching. The exact Go-master failpoint
+  suite passed, including current worker-cancellation regressions. Rust
+  contains only generated protocol vocabulary and adjacent helpers, with no
+  dependency-closed ingest-controller owner, so no Rust-only behavior was
+  removed and no speculative implementation was added. Recorded the explicit
+  boundary in `receipts/ingestor_ingestctrl.md`.
+
 - 2026-09-01: audited the complete Go-master `pkg/ingestor/globalsort`
   package before editing: 17 tracked artifacts and 6,814 lines, including the
   external engine, object-store readers, merge and merge-v2 operators, range
