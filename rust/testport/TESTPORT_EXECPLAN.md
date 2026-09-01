@@ -1471,6 +1471,15 @@ For each bounded behavior cluster:
       four fields and the dedicated `ErrUnknownFieldType` errno; the two
       source-derived protocol suites pass and no Rust-only behavior was found.
       Details are in `receipts/param_audit.md`.
+- 2026-09-01: audited all seven Go-master `pkg/util/profile` artifacts (611
+      textual lines plus the 1,206-byte gzip pprof fixture), including the
+      flamegraph DAG, runtime CPU/pprof dispatch, goroutine parser, infoschema
+      profile-table integration, logging assertions, fixture, and Bazel
+      target. Rust has parser/show-profile surfaces but no dependency-closed
+      runtime profiler, pprof decoder/flamegraph renderer, goroutine parser,
+      remote profile provider, or infoschema owner; the package is therefore
+      explicitly unclaimed and no partial Rust behavior was added. Details are
+      in `receipts/util_profile_audit.md`.
 - [ ] Run Ready validation and self-review only when the requested parity scope
       is genuinely complete enough for a final-status claim.
 
@@ -1482,6 +1491,12 @@ For each bounded behavior cluster:
   this batch because Rust has no caller or dependency-closed owner for a
   mutable clientv3 KV/Watcher/Lease namespace; an unused prefixing client
   would be a second transport path. Date/Author: 2026-09-01, Codex.
+- Decision: keep `pkg/util/profile` explicitly unclaimed. A detached Rust
+  pprof parser or flamegraph renderer would omit the shared CPU profiler,
+  runtime goroutine dump, infoschema profile tables, remote TiKV/PD fetches,
+  logging contract, and fixture-backed integration test; those dependencies
+  must land atomically before a package-complete claim. Date/Author:
+  2026-09-01, Codex.
 - Decision: preserve the Rust planner-error declaration table and its
   all-prototype initialization guard. Go package initialization registers all
   98 entries, while Go's only explicit test checks 59; the Rust guard is the
