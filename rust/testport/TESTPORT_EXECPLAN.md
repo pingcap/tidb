@@ -472,6 +472,12 @@ For each bounded behavior cluster:
   still preserves segment numbering, winner-on-CAS semantics, reset/clone,
   signed-width behavior, and the exact three source tests. The receipt now
   records current hashes and environment-qualified validation.
+- 2026-09-01: audited both Go-master `pkg/util/breakpoint` artifacts (47
+      lines: the public Bazel target and failpoint-backed session callback).
+      Rust has no failpoint runtime or session-context breakpoint hook; adding
+      a callback registry would be test-only Rust behavior. The package
+      remains explicitly unclaimed with no source change. Details are in
+      `receipts/util_breakpoint.md`.
 - 2026-08-29: re-audited the complete pinned Go `pkg/util/encrypt` package
   against its existing Rust owner. Removed three Rust-only regression cases
   and the extra alias assertion from the source-named suite; the 17 Go test
@@ -1728,6 +1734,10 @@ For each bounded behavior cluster:
   consumers together. Configuration constants and endpoint identity alone do
   not reproduce the Go package; a detached Rust fetcher would be Rust-only
   behavior. Date/Author: 2026-09-01, Codex.
+- Decision: keep `pkg/util/breakpoint` Go-only. Its sole behavior is a named
+  failpoint invoking a typed callback stored in `sessionctx`; Rust has no
+  equivalent failpoint runtime or callback consumer, so adding one would be
+  test-only Rust behavior. Date/Author: 2026-09-01, Codex.
 - Decision: keep `pkg/util/ddl-checker` explicitly unclaimed until parser,
   mockstore/session execution, DDL table-existence classification, and the
   upstream database syncer can move as one dependency-closed owner. Rust's
