@@ -1793,10 +1793,12 @@ For each bounded behavior cluster:
   in `receipts/util_kvcache.md`; all eight Rust owner tests pass.
 
 - 2026-09-01: refreshed the complete `pkg/util/naming` inventory against
-  current Go master. Its production, test, and Bazel files remain behaviorally
-  identical; only `OWNERS` now filters Bazel approvers separately. The Rust
-  validator owner and its two consumers remain aligned, with the current
-  source/owner validation recorded in `receipts/util_naming.md`.
+  current Go master `c6054025ed4c32ab3672a2a24ea46892714d21ec`. Its
+  production, test, and Bazel files remain behaviorally identical; only the
+  active worktree's older `OWNERS` routing differs. The Rust validator owner
+  and its two consumers remain aligned, with the current source/owner
+  validation recorded in `receipts/util_naming.md` and
+  `docs/operations/util-naming-audit-execplan.md`.
 
 - 2026-09-01: audited both current Go-master `pkg/util/tableutil` artifacts
   (58 lines: interface/global factory and Bazel library), confirming there are

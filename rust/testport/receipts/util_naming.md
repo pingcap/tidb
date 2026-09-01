@@ -1,7 +1,7 @@
 # `pkg/util/naming` — complete current-master package transcreation
 
 Go source: `origin/master` at
-`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01).
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02).
 
 ## Complete inventory
 
@@ -40,13 +40,15 @@ focused regression test protects this previously divergent behavior.
 Profile: Ready for this package audit; the continuing repository loop is not a
 repository-wide readiness claim.
 
-- `git diff --stat e2788410d8d696605e8cb002585877a063ccc909 origin/master -- pkg/util/naming` — passed; only `OWNERS` changed.
+- `git diff --stat c6054025ed4c32ab3672a2a24ea46892714d21ec -- pkg/util/naming` — only the existing worktree `OWNERS` metadata differs; production, test, and Bazel artifacts match current Go master.
 - `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test -tags=intest,deadlock -count=1 ./pkg/util/naming` — passed.
+- The same tagged Go suite passed in the exact detached Go-master checkout at `/tmp/tidb-go-latest-c605`.
 - `cargo +nightly-2026-08-22 test --offline --locked -p tidb-naming --lib -- --nocapture` — passed; 2 tests.
 - `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 check --offline --locked -p tidb-naming -p tidb-config -p tidb-session -p tidb-util` — passed; existing warnings outside `tidb-naming` remain.
 - `cargo +nightly-2026-08-22 clippy --offline --locked -p tidb-naming --all-targets -- -D warnings` — passed.
 - `cargo +nightly-2026-08-22 fmt --all -- --check` — passed.
 - `git diff --check` — passed.
+- The pinned `make lint` gate passed in a clean detached Go-master checkout.
 
 The regression test failed before the fix because Rust returned `Ok(())` for
 `max_len=1001`, then passed after the source-compatible boundary was added.
