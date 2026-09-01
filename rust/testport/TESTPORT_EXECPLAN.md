@@ -3905,6 +3905,13 @@ For each bounded behavior cluster:
   equivalent, so the package remains an explicit atomic boundary with no
   speculative facade or Rust-only behavior removal.
 
+- `pkg/parser/generate_keyword` adds four Go-master artifacts (211 lines).
+  Rust's native generator now matches Go's line splitting and catalog source:
+  the four missing unreserved words (`ALERT`, `FAST`, `IMMEDIATE`, and
+  `MATERIALIZED`) are restored, the static catalog is 689 entries, and the
+  pre-fix count/CRLF regressions pass after correction. The path/`--check` and
+  stdout modes remain tooling-only Rust extensions; no SQL runtime behavior is
+  duplicated or removed. The complete receipt and ExecPlan record this batch.
 ## Outcomes & Retrospective
 
 Work remains in progress. Current validated behavior includes ANALYZE prefix
