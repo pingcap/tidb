@@ -40,6 +40,17 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: completed the Go-master `pkg/keyspace` package audit at
+  `c6054025ed4c32ab3672a2a24ea46892714d21ec`: read all five artifacts and
+  404 lines, confirmed no generated/platform/fixture/nested artifacts or Go
+  source delta, and retained the dependency-closed `tidb-util::keyspace`
+  owner. Removed its 11 Rust-only `#[must_use]` annotations and added the
+  discardable-return regression, which failed before the fix with 11 lint
+  errors and passes afterward. Current and detached latest-master Go tests,
+  all seven Rust keyspace tests, Ready formatting, pinned lint, and diff
+  hygiene pass. Details are in `receipts/keyspace_audit.md` and
+  `docs/operations/keyspace-audit-execplan.md`.
+
 - 2026-09-02: fixed the remaining Rust-only return diagnostics in the
   complete Go-master `pkg/util/checksum` owner. The package has four tracked
   artifacts and 786 lines at `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`,
