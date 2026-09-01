@@ -205,6 +205,14 @@ For each bounded behavior cluster:
   The package-level test inventory and remaining benchmark/integration
   boundaries are recorded in `receipts/b065.md`.
 
+- 2026-09-01: re-audited all 61 current Go-master `pkg/types` artifacts
+  (56 root files plus the five `parser_driver` files) against the existing
+  `tidb-datatype`/`tidb-ast` owners. Rust already contained the checked vector
+  overflow behavior; it now adds the missing `ExplainFormatRU` literal and
+  14-entry validator order with a focused regression. The parser-driver
+  `AcceptInPlace` API remains an explicit AST-driver boundary. Inventory and
+  Ready evidence are recorded in `receipts/types_explain_format_audit.md`.
+
 - 2026-09-01: audited the complete Go `pkg/util/dbterror/exeerrors` package at
   `origin/master` `db35d47066648fe73abce6318d53fc625df51490` against the Rust
   owner on `origin/hparser-integration`. The package has exactly `errors.go`
@@ -1772,6 +1780,10 @@ For each bounded behavior cluster:
   surface: the two current aggregate identities must be moved together in the
   native checker and in the supported/unsupported disposition vectors, with
   the Go test's `ReqTypeSelect` assertions executable rather than ignored.
+- `pkg/types` confirms that even a one-literal validator delta requires both
+  the public owner export and the ordered validator collection; the separate
+  parser-driver visitor methods cannot be safely reconstructed without the
+  missing dependency closure.
 
 ## Outcomes & Retrospective
 
