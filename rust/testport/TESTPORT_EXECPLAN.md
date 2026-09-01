@@ -40,6 +40,14 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: audited all nine current Go-master `pkg/extworkload` artifacts
+  (1,326 lines across the manager and nested client packages), including every
+  gRPC operation, role/deadline/metrics wrapper, request/error path, source
+  test, and both Bazel targets. Rust has external-workload config validation
+  and explicit ignored integration hooks but no dependency-closed manager or
+  client owner; the complete inventory and boundary are recorded in
+  `receipts/extworkload.md` without adding an uncalled protocol path.
+
 - 2026-09-01: audited all six current Go-master `pkg/workloadlearning`
   artifacts (1,154 lines), including statement-stat analysis, binary-plan
   operator extraction, table-cost persistence/cache behavior, both test files,
