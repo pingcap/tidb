@@ -40,6 +40,18 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: refreshed the complete Go-master `pkg/util/cpu` inventory at
+  `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: four tracked artifacts, 308
+  lines, the usage observer/CPU-count production surface, two source tests,
+  and the common goleak harness, with no fixtures, generated/platform Go
+  variants, benchmarks, or nested packages. The Rust Unix/Windows/fallback
+  owner variants, cgroup preflight, EMA observer, metric, failpoint, scheduler,
+  and startup consumers preserve source behavior without Rust-only policy.
+  Current and exact detached Go tests used the failpoint wrapper; both Rust
+  source tests, owner/scheduler/server checks, formatting, and diff checks pass.
+  Updated `receipts/util_cpu.md` and added the Ready documentation-only plan at
+  `docs/operations/util-cpu-audit-execplan.md`.
+
 - 2026-09-02: refreshed the complete Go-master `pkg/util/errmsg` inventory at
   `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: three tracked artifacts, 288
   lines, one production function plus helper, five source tests, and no
