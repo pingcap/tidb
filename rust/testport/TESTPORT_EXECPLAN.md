@@ -1423,6 +1423,15 @@ For each bounded behavior cluster:
       resource-manager scheduler, or startup consumers, so a detached partial
       owner was not added and the package remains explicitly unclaimed.
       Details are in `receipts/util_cpu_audit.md`.
+- 2026-09-01: audited all nine Go-master `pkg/util/hack` artifacts (1,325
+      lines, both Go 1.25/1.26 ABI variants, three source tests, two benchmark
+      functions, and one test harness). The `tidb-hack` owner already preserves
+      zero-copy mutable views, source Swiss-map geometry, checkpointed
+      `MemAwareMap` deltas, seed/clear behavior, and the Go 1.26 layout split;
+      its safe owned table is the required `RealBytes` boundary. No Rust-only
+      behavior or current-baseline source gap justified a change. The Go
+      package and six owner tests pass; details are in
+      `receipts/util_hack_audit.md`.
 - 2026-09-01: inventoried all five Go-master `pkg/domain/serverinfo`
       artifacts (2,295 lines, including the embedded-etcd/fault harness and
       Bazel target). Added the missing status-endpoint claim to the ordinary
@@ -1761,6 +1770,12 @@ For each bounded behavior cluster:
   observer substitute, and statement-level `ppcpuusage` is a different
   package. A CPU-count helper or detached sampling thread would be a partial
   port with no ordinary consumer. Date/Author: 2026-09-01, Codex.
+- Decision: keep `tidb-hack` as the owner for `pkg/util/hack` and preserve the
+  Go 1.25/1.26 ABI files as one source contract. Rust's `MutableBytes`, safe
+  table wrapper, and hashbrown-backed `real_bytes` are ownership seams, not
+  Rust-only map policy. Do not expose Go-runtime raw pointers or add a second
+  allocator/memory-arbitrator implementation; exact private-ABI byte counts
+  remain a documented portability boundary. Date/Author: 2026-09-01, Codex.
 
 ## Surprises & Discoveries
 
