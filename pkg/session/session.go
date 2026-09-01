@@ -1517,7 +1517,7 @@ const (
 	isSelectSQLToken
 
 	defOOMRiskCheckDur   = time.Millisecond * 100 // 100ms: sleep duration when mem-arbitrator is at memory risk
-	defOOMRiskMaxDur    = time.Minute
+	defOOMRiskMaxDur     = time.Minute
 	defSuffixSplitDot    = ", "
 	defSuffixParseSQL    = defSuffixSplitDot + "path=ParseSQL"
 	defSuffixCompilePlan = defSuffixSplitDot + "path=CompilePlan"
@@ -2580,9 +2580,8 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (r
 			if s.sessionPlanCache != nil {
 				s.sessionPlanCache.DeleteAll()
 			}
-			endTime := time.Now().Add(defOOMRiskMaxDur)
 			for globalMemArbitrator.AtMemRisk() {
-				if time.Now().After(endTime) {
+				if globalMemArbitrator.AtOOMRisk() {
 					metrics.GlobalMemArbitratorSubTasks.ForceKillPlan.Inc()
 					return nil, exeerrors.ErrQueryExecStopped.GenWithStackByArgs(memory.ArbitratorOOMRiskKill.String()+defSuffixCompilePlan, sessVars.ConnectionID)
 				}

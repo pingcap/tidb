@@ -2702,8 +2702,8 @@ func (m *MemArbitrator) updateTrackedHeapStats() (top3 top3DigestDataGroup) {
 			if e.notRunning() {
 				return true
 			}
-			ctx := e.ctx.Load()
-			if ctx != nil && ctx.arbitrateHelper != nil {
+
+			if ctx := e.ctx.Load(); ctx.available() {
 				inuse := ctx.arbitrateHelper.MemUsage()
 				totalTrackedHeap += inuse.RootPoolUsed
 				top3.update(ctx.id, inuse.HeapInuse, m.approxUnixTimeSec())
@@ -2713,7 +2713,7 @@ func (m *MemArbitrator) updateTrackedHeapStats() (top3 top3DigestDataGroup) {
 		})
 	}
 	m.setBufferSize(maxHeapUsed)
-	totalTrackedHeap += m.awaitFreePoolUsed().trackedHeap
+	totalTrackedHeap += min(m.awaitFreePoolCap(), m.awaitFreePoolUsed().trackedHeap)
 	m.avoidance.heapTracked.Store(totalTrackedHeap)
 	m.avoidance.heapTracked.lastUpdateUtimeMilli.Store(nowUnixMilli())
 	return
