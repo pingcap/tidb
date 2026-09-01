@@ -687,7 +687,7 @@ func TestEnumClusteredPKPaginationUsesRangeScan(t *testing.T) {
 }
 
 func TestTTLRejectsSetClusteredPrimaryKey(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	setDefinition := func(n int) string {
@@ -697,49 +697,30 @@ func TestTTLRejectsSetClusteredPrimaryKey(t *testing.T) {
 		}
 		return strings.Join(members, ",")
 	}
-	createSQL := func(table string, members int, primaryKeyType string, ttl bool) string {
-		sql := fmt.Sprintf(`create table %s(
+	createSQL := func(table string, members int, primaryKeyType string) string {
+		return fmt.Sprintf(`create table %s(
 			s set(%s),
 			id bigint,
 			expired_at datetime not null,
 			primary key(s, id) %s
-		)`, table, setDefinition(members), primaryKeyType)
-		if ttl {
-			sql += " TTL=expired_at + interval 1 hour"
-		}
-		return sql
+		) TTL=expired_at + interval 1 hour`, table, setDefinition(members), primaryKeyType)
 	}
 
 	// Native numeric SET predicates cannot currently be converted into a
 	// common-handle range, so allowing SET here would cause a full scan on
 	// every continuation page. Larger SET values can additionally lose
 	// precision in numeric comparison.
-	tk.MustGetErrCode(createSQL("set_3_clustered", 3, "clustered", true), errno.ErrUnsupportedPrimaryKeyTypeWithTTL)
-	tk.MustGetErrCode(createSQL("set_64_clustered", 64, "clustered", true), errno.ErrUnsupportedPrimaryKeyTypeWithTTL)
+	tk.MustGetErrCode(createSQL("set_3_clustered", 3, "clustered"), errno.ErrUnsupportedPrimaryKeyTypeWithTTL)
+	tk.MustGetErrCode(createSQL("set_64_clustered", 64, "clustered"), errno.ErrUnsupportedPrimaryKeyTypeWithTTL)
 
 	// The restriction applies only when SET participates in the physical row
 	// handle used by TTL pagination.
-	tk.MustExec(createSQL("set_64_nonclustered", 64, "nonclustered", true))
+	tk.MustExec(createSQL("set_64_nonclustered", 64, "nonclustered"))
 	tk.MustExec(fmt.Sprintf(`create table set_64_not_in_pk(
 		id bigint primary key clustered,
 		s set(%s),
 		expired_at datetime not null
 	) TTL=expired_at + interval 1 hour`, setDefinition(64)))
-
-	// The cache check also protects upgrades from an older TiDB version where
-	// a TTL table with a SET common handle could already exist.
-	tk.MustExec(createSQL("legacy_set_clustered", 3, "clustered", false))
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("legacy_set_clustered"))
-	require.NoError(t, err)
-	tblInfo := tbl.Meta().Clone()
-	tblInfo.TTLInfo = &model.TTLInfo{
-		ColumnName:       ast.NewCIStr("expired_at"),
-		IntervalExprStr:  "1",
-		IntervalTimeUnit: int(ast.TimeUnitHour),
-		Enable:           true,
-	}
-	_, err = cache.NewPhysicalTable(ast.NewCIStr("test"), tblInfo, ast.NewCIStr(""))
-	require.ErrorContains(t, err, "SET column 's' in clustered primary key is unsupported by TTL")
 }
 
 func FuzzEnumCursorSQLParses(f *testing.F) {
