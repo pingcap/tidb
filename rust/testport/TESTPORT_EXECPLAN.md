@@ -40,6 +40,16 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: audited all eight current Go-master `pkg/util/importer`
+  artifacts (1,081 lines: configuration, DDL/index parser, typed random and
+  unique SQL-literal generation, MySQL lifecycle, worker batches, and the
+  Bazel target). Rust has independent SQL `IMPORT INTO` and BR restore paths
+  but no dependency-closed owner of this standalone command utility, so the
+  package remains explicitly unclaimed with no speculative Rust behavior.
+  The complete inventory and boundary are recorded in
+  `receipts/util_importer.md`; `cmd/importer` remains a separate command
+  boundary to audit.
+
 - 2026-09-01: audited the complete current Go-master `pkg/util/skip` and
   `pkg/util/syncutil` inventories (five artifacts, 130 lines total), including
   the `deadlock`/`!deadlock` build-tag variants and all exported test/lock
