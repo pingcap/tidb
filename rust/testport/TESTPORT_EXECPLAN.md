@@ -40,6 +40,17 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: audited the complete Go-master `pkg/importsdk` package before
+  editing: 18 tracked artifacts (including both Bazel targets and the
+  generated GoMock output) and 3,879 lines, with no platform variants,
+  fixtures, benchmarks, or fuzz inputs. The Rust workspace owns only
+  `IMPORT INTO` parser/AST and related metadata; it has no external-storage
+  scanner, schema importer, SQL-generator SDK, or job-manager owner. No
+  Rust-only behavior was present and no speculative implementation was added.
+  The full source-test subset passed; fake-GCS tests remain blocked by missing
+  Application Default Credentials. Recorded the explicit boundary in
+  `receipts/importsdk.md`.
+
 - 2026-09-01: refreshed the complete Go-master
   `pkg/util/password-validation` inventory (three artifacts, 379 lines) and
   confirmed it is unchanged from the prior pinned implementation. The Go
