@@ -2225,10 +2225,15 @@ For each bounded behavior cluster:
   package. Removed the Rust-only public `Selectable::is_empty` operation and
   restored the exact four Go test identities; the benchmark-only quickselect
   remains behind its native test-export boundary.
-- 2026-08-29: re-audited the complete pinned Go `pkg/util/ppcpuusage`
-  package, which has no test artifact. Removed its remaining Rust-only
+- 2026-09-02: re-audited the complete Go-master `pkg/util/ppcpuusage` package
+  at `c6054025ed4c32ab3672a2a24ea46892714d21ec`, which has no test artifact.
+  Removed its remaining Rust-only
   signed-overflow regression and `must_use` diagnostic; the production owner
   and statement-summary consumers retain Go's signed wrapping durations.
+  Current and exact detached Go probes, the zero-test owner, the production
+  consumer, Ready formatting, and diff hygiene pass. Details are in
+  `receipts/util_ppcpuusage.md` and
+  `docs/operations/util-ppcpuusage-audit-execplan.md`.
 - 2026-08-29: re-audited the complete pinned Go `pkg/util/texttree` package.
   Removed Rust-only `must_use` diagnostics, its arbitrary-byte supplemental
   regression, and the corresponding temporary-probe narrative; exactly the

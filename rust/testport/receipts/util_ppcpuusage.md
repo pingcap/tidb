@@ -1,6 +1,7 @@
-# `pkg/util/ppcpuusage` — complete package transcreation
+# `pkg/util/ppcpuusage` — complete Go-master package transcreation
 
-Pinned Go source: `e2788410d8d696605e8cb002585877a063ccc909`.
+Go source: `origin/master` at
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02).
 
 ## Complete inventory
 
@@ -10,6 +11,7 @@ state, SQL-ID-gated TiDB accumulation, unconditional TiKV accumulation,
 wrapping ID allocation, and CPU-time reset. There is no Go test, test-support
 file, package doc, README, fixture, benchmark, generated or platform variant,
 or ownership file. The checkout is byte-identical to the pin.
+The inventory is exactly 94 lines: 8 build lines and 86 production lines.
 
 ## Rust ownership and audit result
 
@@ -26,26 +28,23 @@ The audit changed every mutex acquisition to recover the protected state after
 a poisoned owner, removing a Rust-only failure mode that Go's `sync.Mutex`
 does not have. All Rust-only unit tests and the `must_use` diagnostic were
 removed because this Go package has no test artifact or equivalent diagnostic.
+The current living ExecPlan is
+`rust/docs/operations/util-ppcpuusage-audit-execplan.md`.
 
 ## Validation
 
-Profile: WIP; this is one completed package within the continuing repository
-audit, not a repository-wide readiness claim.
+Profile: **Ready** for this docs-only authority refresh. No Go, Rust, Bazel,
+or module source changed, so `make bazel_prepare` is not required.
 
-- `go test ./pkg/util/ppcpuusage -count=1` — passed (`[no test files]`).
-- `cargo test --offline --locked -p tidb-util ppcpuusage` — passed with no
-  package tests, matching Go.
-- `cargo check --offline --locked -p tidb-stmtsummary --lib` — passed for the
-  production consumer.
-- `rustfmt --edition 2021 crates/tidb-util/src/ppcpuusage.rs` and
-  `git diff --check` — passed.
+- `git diff --exit-code c6054025ed4c32ab3672a2a24ea46892714d21ec -- pkg/util/ppcpuusage` — passed.
+- Pinned-Go `go test ./pkg/util/ppcpuusage -count=1` — passed in the current and exact detached Go-master worktrees (`[no test files]`).
+- With the pinned OpenSSL environment, `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-util ppcpuusage --lib -- --test-threads=1` — passed with zero tests, matching Go.
+- With the same environment, `cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -p tidb-stmtsummary --lib` — passed for the production consumer.
+- `cd rust && cargo +nightly-2026-08-22 fmt --all -- --check` and the batch diff checks — passed.
 
-The broader `cargo check --offline --locked -p tidb-stmtsummary --all-targets`
-currently reaches two unrelated existing test compile errors in
-`crates/tidb-stmtsummary/src/reader.rs`: `Tz::UTC` is used without importing
-`chrono_tz::Tz`. The production library and package owner gates above pass.
-
-No Go or Bazel file changed, so `make bazel_prepare` is not required.
+The focused Rust commands emitted only existing workspace warnings. Full
+workspace tests, all-target consumer tests, and Bazel execution remain outside
+this leaf receipt.
 
 ## Risk
 
