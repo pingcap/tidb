@@ -1343,6 +1343,14 @@ For each bounded behavior cluster:
       ignored). Go runtime-stat additions from `bc04813887`/`db35d47066` and
       the concrete Go coprocessor worker remain explicit dependency boundaries
       in `receipts/distsql_audit.md`.
+- 2026-09-01: completed the 11-artifact Go-master `pkg/meta/autoid` inventory
+      (4,402 lines, 102 production methods, 43 test/benchmark declarations).
+      The existing Rust `tidb-exec` service client now records the greatest
+      allocation response with signed/unsigned CAS ordering, keeps ordinary
+      rebases monotonic while preserving exact forced rebases, and fast-fails
+      repeated RPC errors at Go's count-and-duration limit. The focused owner
+      suite passes 8 tests; the etcd service owner and live gRPC integration
+      remain explicit boundaries in `receipts/meta_autoid_audit.md`.
 - 2026-09-01: audited all three Go-master `pkg/errctx` artifacts (389 lines,
       13 production declarations, and one source test) against the complete
       `tidb-error::errctx` owner. Every level, group membership, context copy,
@@ -1817,6 +1825,12 @@ For each bounded behavior cluster:
   the public owner export and the ordered validator collection; the separate
   parser-driver visitor methods cannot be safely reconstructed without the
   missing dependency closure.
+- `pkg/meta/autoid` confirms that the service client's cached base is a
+  concurrency contract, not merely a diagnostic value: allocation responses
+  can complete out of order, unsigned values compare by their bit pattern, and
+  a non-forced rebase must not move the observed base backwards. The Rust
+  client now uses the same monotonic CAS and the Go count-and-duration retry
+  limit; the etcd service/server remains a separate owner boundary.
 
 ## Outcomes & Retrospective
 

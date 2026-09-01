@@ -58,7 +58,7 @@
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tidb_executor::kv_table::{advance, calc_needed_batch_size, AutoIdStore, AutoIdStoreError};
 use tidb_meta::{key, value};
@@ -200,6 +200,17 @@ pub enum AutoIdServiceError {
     },
     /// A non-retryable discovery, transport, or service failure.
     Rpc(AutoIdServiceRpcError),
+    /// Repeated RPC failures reached the Go client's count-and-duration limit.
+    RpcRetryLimit {
+        /// The operation that exhausted its retry budget.
+        operation: &'static str,
+        /// Number of RPC failures observed for this operation.
+        error_count: usize,
+        /// Time since the first RPC failure.
+        elapsed: Duration,
+        /// The final RPC failure that triggered the limit.
+        last_error: AutoIdServiceRpcError,
+    },
 }
 
 impl std::fmt::Display for AutoIdServiceError {
@@ -212,6 +223,15 @@ impl std::fmt::Display for AutoIdServiceError {
                 "invalid auto ID increment {increment} or offset {offset}"
             ),
             Self::Rpc(error) => write!(formatter, "auto ID service call failed: {error}"),
+            Self::RpcRetryLimit {
+                operation,
+                error_count,
+                elapsed,
+                last_error,
+            } => write!(
+                formatter,
+                "auto ID {operation} failed after {error_count} RPC errors over {elapsed:?}; last RPC error: {last_error}; check AutoID service availability and connectivity, then retry the statement"
+            ),
         }
     }
 }
@@ -228,6 +248,41 @@ pub struct AutoIdServiceAllocator<C> {
     keyspace_id: u32,
     generation: AtomicU64,
     last_allocated: AtomicI64,
+    rpc_retry_policy: AutoIdServiceRetryPolicy,
+}
+
+const DEFAULT_RPC_RETRY_MIN_ERRORS: usize = 10;
+const DEFAULT_RPC_RETRY_MIN_DURATION: Duration = Duration::from_secs(15);
+
+#[derive(Clone, Copy, Debug)]
+struct AutoIdServiceRetryPolicy {
+    min_errors: usize,
+    min_duration: Duration,
+}
+
+impl Default for AutoIdServiceRetryPolicy {
+    fn default() -> Self {
+        Self {
+            min_errors: DEFAULT_RPC_RETRY_MIN_ERRORS,
+            min_duration: DEFAULT_RPC_RETRY_MIN_DURATION,
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct AutoIdServiceRetryState {
+    error_count: usize,
+    first_error: Option<Instant>,
+}
+
+impl AutoIdServiceRetryState {
+    fn observe(&mut self, now: Instant, policy: AutoIdServiceRetryPolicy) -> bool {
+        let first_error = *self.first_error.get_or_insert(now);
+        self.error_count += 1;
+        policy.min_errors > 0
+            && self.error_count >= policy.min_errors
+            && now.duration_since(first_error) >= policy.min_duration
+    }
 }
 
 impl<C: AutoIdServiceRpc> AutoIdServiceAllocator<C> {
@@ -248,6 +303,7 @@ impl<C: AutoIdServiceRpc> AutoIdServiceAllocator<C> {
             keyspace_id,
             generation: AtomicU64::new(0),
             last_allocated: AtomicI64::new(0),
+            rpc_retry_policy: AutoIdServiceRetryPolicy::default(),
         }
     }
 
@@ -273,17 +329,32 @@ impl<C: AutoIdServiceRpc> AutoIdServiceAllocator<C> {
             keyspace_id: self.keyspace_id,
         };
         let mut backoff = AutoIdServiceBackoff::default();
+        let mut retry_state = AutoIdServiceRetryState::default();
         loop {
             let generation = self.generation.load(Ordering::Acquire);
             match self.client.alloc_auto_id(call, request) {
                 Ok((min, max)) => {
                     backoff.reset();
-                    self.last_allocated.store(min, Ordering::Release);
+                    self.update_last_allocated(max);
                     return Ok((min, max));
                 }
                 Err(error @ AutoIdServiceRpcError::Rpc(_)) => {
                     stopped(call)?;
+                    let now = Instant::now();
+                    let limit_reached = retry_state.observe(now, self.rpc_retry_policy);
                     self.reset_generation(generation, &error);
+                    if limit_reached {
+                        stopped(call)?;
+                        let elapsed = retry_state
+                            .first_error
+                            .map_or(Duration::ZERO, |first| now.duration_since(first));
+                        return Err(AutoIdServiceError::RpcRetryLimit {
+                            operation: "alloc",
+                            error_count: retry_state.error_count,
+                            elapsed,
+                            last_error: error,
+                        });
+                    }
                     backoff.backoff(Some(call))?;
                 }
                 Err(error) => return Err(AutoIdServiceError::Rpc(error)),
@@ -300,6 +371,7 @@ impl<C: AutoIdServiceRpc> AutoIdServiceAllocator<C> {
         force: bool,
     ) -> Result<(), AutoIdServiceError> {
         let mut backoff = AutoIdServiceBackoff::default();
+        let mut retry_state = AutoIdServiceRetryState::default();
         let request = AutoIdServiceRebaseRequest {
             db_id: self.db_id,
             table_id: self.table_id,
@@ -313,12 +385,30 @@ impl<C: AutoIdServiceRpc> AutoIdServiceAllocator<C> {
             match self.client.rebase(call, request) {
                 Ok(()) => {
                     backoff.reset();
-                    self.last_allocated.store(new_base, Ordering::Release);
+                    if force {
+                        self.last_allocated.store(new_base, Ordering::Release);
+                    } else {
+                        self.update_last_allocated(new_base);
+                    }
                     return Ok(());
                 }
                 Err(error @ AutoIdServiceRpcError::Rpc(_)) => {
                     stopped(call)?;
+                    let now = Instant::now();
+                    let limit_reached = retry_state.observe(now, self.rpc_retry_policy);
                     self.reset_generation(generation, &error);
+                    if limit_reached {
+                        stopped(call)?;
+                        let elapsed = retry_state
+                            .first_error
+                            .map_or(Duration::ZERO, |first| now.duration_since(first));
+                        return Err(AutoIdServiceError::RpcRetryLimit {
+                            operation: "rebase",
+                            error_count: retry_state.error_count,
+                            elapsed,
+                            last_error: error,
+                        });
+                    }
                     backoff.backoff(Some(call))?;
                 }
                 Err(error) => return Err(AutoIdServiceError::Rpc(error)),
@@ -326,10 +416,32 @@ impl<C: AutoIdServiceRpc> AutoIdServiceAllocator<C> {
         }
     }
 
-    /// Last minimum/base returned by the service, for Go `Transfer` parity.
+    /// Greatest allocated/base value observed from the service, for Go
+    /// `Transfer` parity. Concurrent responses may arrive out of order.
     #[must_use]
     pub fn last_allocated(&self) -> i64 {
         self.last_allocated.load(Ordering::Acquire)
+    }
+
+    fn update_last_allocated(&self, new_base: i64) {
+        loop {
+            let current = self.last_allocated.load(Ordering::Acquire);
+            let advances = if self.unsigned {
+                (new_base as u64) > (current as u64)
+            } else {
+                new_base > current
+            };
+            if !advances {
+                return;
+            }
+            if self
+                .last_allocated
+                .compare_exchange(current, new_base, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                return;
+            }
+        }
     }
 
     fn reset_generation(&self, generation: u64, error: &AutoIdServiceRpcError) {
@@ -696,8 +808,9 @@ fn store_error(step: &str, error: &impl std::fmt::Display) -> AutoIdStoreError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::VecDeque;
     use std::sync::atomic::AtomicUsize;
-    use std::time::Instant;
+    use std::sync::Mutex;
 
     #[derive(Debug)]
     struct MockAutoIdServiceRpc {
@@ -725,6 +838,40 @@ mod tests {
         ) -> Result<(), AutoIdServiceRpcError> {
             self.rebase_calls.fetch_add(1, Ordering::Relaxed);
             self.rebase_error.clone().map_or(Ok(()), Err)
+        }
+
+        fn reset_connection(&self, _generation: u64, _reason: &AutoIdServiceRpcError) {
+            self.reset_calls.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    #[derive(Debug)]
+    struct ScriptedAutoIdServiceRpc {
+        alloc_responses: Mutex<VecDeque<Result<(i64, i64), AutoIdServiceRpcError>>>,
+        alloc_calls: AtomicUsize,
+        reset_calls: AtomicUsize,
+    }
+
+    impl AutoIdServiceRpc for ScriptedAutoIdServiceRpc {
+        fn alloc_auto_id(
+            &self,
+            _call: &UnaryCallContext,
+            _request: AutoIdServiceAllocRequest,
+        ) -> Result<(i64, i64), AutoIdServiceRpcError> {
+            self.alloc_calls.fetch_add(1, Ordering::Relaxed);
+            self.alloc_responses
+                .lock()
+                .expect("scripted responses lock")
+                .pop_front()
+                .expect("scripted allocation response")
+        }
+
+        fn rebase(
+            &self,
+            _call: &UnaryCallContext,
+            _request: AutoIdServiceRebaseRequest,
+        ) -> Result<(), AutoIdServiceRpcError> {
+            Ok(())
         }
 
         fn reset_connection(&self, _generation: u64, _reason: &AutoIdServiceRpcError) {
@@ -840,6 +987,103 @@ mod tests {
         assert!(start.elapsed() < Duration::from_secs(1));
         assert_eq!(client.rebase_calls.load(Ordering::Relaxed), 1);
         assert_eq!(client.reset_calls.load(Ordering::Relaxed), 0);
+    }
+
+    /// Source: `pkg/meta/autoid/autoid_service_test.go`'s
+    /// `keeps the greatest out-of-order allocation response` and
+    /// `TestAutoIDRPCRetry/reaches the common limit` cases.
+    #[test]
+    fn allocation_tracks_maximum_and_rpc_retry_limit_is_bounded() {
+        let successful = Arc::new(ScriptedAutoIdServiceRpc {
+            alloc_responses: Mutex::new(VecDeque::from([Ok((0, 7)), Ok((1, 3))])),
+            alloc_calls: AtomicUsize::new(0),
+            reset_calls: AtomicUsize::new(0),
+        });
+        let allocator = AutoIdServiceAllocator::new(Arc::clone(&successful), 1, 1, false, 0);
+        let call = UnaryCallContext::new(
+            Duration::from_secs(5),
+            tidb_txnkv::rpc::UnaryCancellation::new(),
+        );
+
+        assert_eq!(allocator.alloc(&call, 1, 1, 1), Ok((0, 7)));
+        assert_eq!(allocator.alloc(&call, 1, 1, 1), Ok((1, 3)));
+        assert_eq!(allocator.last_allocated(), 7);
+        assert_eq!(allocator.rebase(&call, 2, false), Ok(()));
+        assert_eq!(allocator.last_allocated(), 7);
+        assert_eq!(allocator.rebase(&call, 2, true), Ok(()));
+        assert_eq!(allocator.last_allocated(), 2);
+
+        let unsigned = Arc::new(ScriptedAutoIdServiceRpc {
+            alloc_responses: Mutex::new(VecDeque::from([Ok((0, 2)), Ok((1, -2))])),
+            alloc_calls: AtomicUsize::new(0),
+            reset_calls: AtomicUsize::new(0),
+        });
+        let unsigned_allocator = AutoIdServiceAllocator::new(Arc::clone(&unsigned), 1, 1, true, 0);
+        assert_eq!(unsigned_allocator.alloc(&call, 1, 1, 1), Ok((0, 2)));
+        assert_eq!(unsigned_allocator.alloc(&call, 1, 1, 1), Ok((1, -2)));
+        assert_eq!(unsigned_allocator.last_allocated(), -2);
+        assert_eq!(unsigned_allocator.rebase(&call, 3, false), Ok(()));
+        assert_eq!(unsigned_allocator.last_allocated(), -2);
+        assert_eq!(unsigned_allocator.rebase(&call, 3, true), Ok(()));
+        assert_eq!(unsigned_allocator.last_allocated(), 3);
+
+        let failing = Arc::new(ScriptedAutoIdServiceRpc {
+            alloc_responses: Mutex::new(VecDeque::from([
+                Err(AutoIdServiceRpcError::Rpc("first RPC failure".to_owned())),
+                Err(AutoIdServiceRpcError::Rpc("final RPC failure".to_owned())),
+                Err(AutoIdServiceRpcError::Rpc(
+                    "unexpected third call".to_owned(),
+                )),
+            ])),
+            alloc_calls: AtomicUsize::new(0),
+            reset_calls: AtomicUsize::new(0),
+        });
+        let mut allocator = AutoIdServiceAllocator::new(Arc::clone(&failing), 1, 1, false, 0);
+        allocator.rpc_retry_policy = AutoIdServiceRetryPolicy {
+            min_errors: 2,
+            min_duration: Duration::ZERO,
+        };
+        let err = allocator
+            .alloc(&call, 1, 1, 1)
+            .expect_err("two RPC errors reach the configured retry limit");
+        assert!(matches!(
+            err,
+            AutoIdServiceError::RpcRetryLimit {
+                operation: "alloc",
+                error_count: 2,
+                last_error: AutoIdServiceRpcError::Rpc(ref message),
+                ..
+            } if message == "final RPC failure"
+        ));
+        assert_eq!(failing.alloc_calls.load(Ordering::Relaxed), 2);
+        assert_eq!(failing.reset_calls.load(Ordering::Relaxed), 2);
+    }
+
+    /// Source: `pkg/meta/autoid/autoid_service_test.go::TestAutoIDRPCRetryPolicy`.
+    #[test]
+    fn retry_policy_uses_go_defaults_and_and_semantics() {
+        let default = AutoIdServiceRetryPolicy::default();
+        assert_eq!(default.min_errors, 10);
+        assert_eq!(default.min_duration, Duration::from_secs(15));
+
+        let policy = AutoIdServiceRetryPolicy {
+            min_errors: 3,
+            min_duration: Duration::from_secs(2),
+        };
+        let start = Instant::now();
+        let mut state = AutoIdServiceRetryState::default();
+        assert!(!state.observe(start, policy));
+        assert!(!state.observe(start + Duration::from_secs(1), policy));
+        assert!(state.observe(start + Duration::from_secs(2), policy));
+
+        let mut count_only = AutoIdServiceRetryState::default();
+        assert!(!count_only.observe(start, policy));
+        assert!(!count_only.observe(start, policy));
+        assert!(!count_only.observe(start, policy));
+
+        let mut duration_only = AutoIdServiceRetryState::default();
+        assert!(!duration_only.observe(start, policy));
+        assert!(!duration_only.observe(start + Duration::from_secs(3), policy));
     }
 
     /// Source: `pkg/meta/autoid/autoid_service_test.go::TestBackoffCtxAware`.
