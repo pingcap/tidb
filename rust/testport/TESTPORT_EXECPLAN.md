@@ -1540,6 +1540,12 @@ For each bounded behavior cluster:
       throttles, and domain bootstrap registration do not have a
       dependency-closed owner. The package remains explicitly unclaimed;
       details are in `receipts/util_expensivequery.md`.
+- 2026-09-01: audited all four Go-master `pkg/util/benchdaily` artifacts (261
+      lines: benchmark JSON conversion/writer, aggregation test, common
+      harness, and Bazel target). It is CI-only `testing.B` reflection and
+      repository-file aggregation with no Rust runtime owner or source
+      behavior gap; the package remains explicitly unclaimed. Details are in
+      `receipts/util_benchdaily.md`.
 - 2026-09-01: audited all four Go-master `pkg/util/admin` artifacts (412
       lines: consistency production owner, corrupted-index integration test,
       common harness, and Bazel target). Rust's executor already owns a
@@ -1603,6 +1609,10 @@ For each bounded behavior cluster:
   can move together. Rust threshold constants alone are not a substitute for
   the Go polling worker and would create Rust-only policy. Date/Author:
   2026-09-01, Codex.
+- Decision: keep `pkg/util/benchdaily` as Go-only CI tooling. Rust benchmark
+  targets are not a substitute for Go's `testing.B` reflection and repository
+  JSON aggregation flags; adding a second report format would be Rust-only
+  behavior with no runtime consumer. Date/Author: 2026-09-01, Codex.
 - Decision: retain `tidb-executor::admin_check` as the sole native consistency
   checker while keeping root `pkg/util/admin` unclaimed. Its existing tests
   cover the byte-level corruption core, but adding a utility wrapper would
