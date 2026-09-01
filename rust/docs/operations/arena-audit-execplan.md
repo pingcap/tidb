@@ -28,8 +28,11 @@ reuses the same bytes.
   the stale semantic manifest, and added the package receipt.
 - [x] (2026-08-29) Passed the Go package, focused three-test Rust owner slice,
   complete `tidb-util` suite, all-target check, formatting, and diff checks.
-- [x] (2026-08-29) Self-reviewed the final package diff and prepared its
-  atomic commit and normal push.
+- [x] (2026-08-29) Self-reviewed the final package diff and pushed its atomic
+  implementation batch.
+- [x] (2026-09-02) Revalidated the package against current Go master
+  `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`; source is unchanged and the
+  exact detached Go package probe passes.
 
 ## Surprises & Discoveries
 
@@ -64,7 +67,8 @@ reuses the same bytes.
 ## Outcomes & Retrospective
 
 The defining shared-backing gap is fixed. The Go oracle, complete owning-crate
-suite, all-target compilation, formatting, and diff checks pass. Publication is pending.
+suite, all-target compilation, formatting, and diff checks pass. The atomic
+implementation batch is published on `hparser-integration`.
 
 ## Context and Orientation
 
