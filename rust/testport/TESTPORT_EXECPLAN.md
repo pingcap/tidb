@@ -160,6 +160,19 @@ For each bounded behavior cluster:
   `receipts/lightning_backend_encode.md` and
   `rust/docs/operations/lightning-backend-encode-audit-execplan.md`.
 
+- 2026-09-01: audited the complete 13-artifact Go-master
+  `pkg/lightning/backend/kv` package: 3,150 lines, 110 production
+  declarations, 22 tests, one benchmark, and a 27-shard flaky BUILD target.
+  The inventory covers pooled Lightning sessions, table KV encoding/decoding,
+  generated columns, auto-ID conversion, checksums, row grouping, and every
+  test/support artifact. Go master adds five new-collation context/test deltas;
+  both current-branch and detached exact-master suites pass. Rust has only
+  adjacent generic tablecodec/transaction-buffer utilities and no
+  dependency-closed owner, so no Rust-only behavior was removed and no
+  speculative facade was added. The explicit boundary is recorded in
+  `receipts/lightning_backend_kv.md` and
+  `rust/docs/operations/lightning-backend-kv-audit-execplan.md`.
+
 - 2026-09-01: audited the complete Go-master
   `pkg/dxf/importinto/conflictrows` package: four tracked artifacts and 872
   lines covering its BUILD target, unique task/subtask path construction,
@@ -171,6 +184,17 @@ For each bounded behavior cluster:
   path, so no detached policy was added. Recorded the explicit boundary in
   `receipts/dxf_importinto_conflictrows.md` and
   `rust/docs/operations/dxf-importinto-conflictrows-audit-execplan.md`.
+
+- 2026-09-01: audited the complete Go-master
+  `pkg/dxf/importinto/taskkey` package: two tracked artifacts and 57 lines
+  containing the BUILD target and all three classic/next-generation
+  ImportInto task-key constructors. The package has no tests, fixtures,
+  generated/platform variants, or owner metadata. Rust preserves adjacent DXF
+  task-type/step labels and task-key table columns but has no
+  dependency-closed mode/configuration/key-consumer owner, so no speculative
+  formatter was added. Recorded the explicit boundary in
+  `receipts/dxf_importinto_taskkey.md` and
+  `rust/docs/operations/dxf-importinto-taskkey-audit-execplan.md`.
 
 - 2026-09-01: audited the complete Go-master
   `pkg/session/test/nontransactionaltest` package before editing: three
