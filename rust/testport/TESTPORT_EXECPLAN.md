@@ -473,6 +473,16 @@ For each bounded behavior cluster:
   `receipts/ddl_jobsubmit.md` and
   `rust/docs/operations/ddl-jobsubmit-audit-execplan.md`.
 
+- 2026-09-02: aligned the complete Go-master `pkg/ddl/notifier` package:
+  exactly eight artifacts and 1,999 lines, including the persistent event
+  store, owner-listener delivery, 12 top-level tests, and 12-shard target. A
+  one-second cleanup eventual timeout was restored to Go master's five-second
+  reliability contract in `TestDeliverOrderAndCleanup`; the focused and full
+  failpoint-aware suites pass. Rust has no dependency-closed SQL-backed DDL
+  notifier, so no Rust-only behavior was removed or speculatively added.
+  Recorded the inventory and boundary in `receipts/ddl_notifier.md` and
+  `rust/docs/operations/ddl-notifier-audit-execplan.md`.
+
 - 2026-09-02: updated the complete five-artifact Go-master
   `pkg/server/handler/tests` consumer inventory (3,630 lines) for the DXF
   history redaction contract. Its focused API regression now requires
@@ -1403,8 +1413,9 @@ For each bounded behavior cluster:
   helpers. Rust has no dependency-closed replacement for Go's test-flag
   helpers or package-wide lock type identity/deadlock detector. The explicit
   Go-only boundaries are recorded in `receipts/util_skip.md` and
-  `receipts/util_syncutil.md`, with the skip-package ExecPlan at
-  `docs/operations/util-skip-audit-execplan.md`; no source changed.
+  `receipts/util_syncutil.md`, with package ExecPlans at
+  `docs/operations/util-skip-audit-execplan.md` and
+  `docs/operations/util-syncutil-audit-execplan.md`; no source changed.
 
 - 2026-09-01: audited both current Go-master `pkg/util/regionsplit` artifacts
   (`BUILD.bazel` and `split_handle.go`, 256 lines total) in full, including
