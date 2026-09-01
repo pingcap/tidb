@@ -2459,10 +2459,13 @@ For each bounded behavior cluster:
       `tidb-util` owner: restore Go string-range indices, nil RuleSets, open
       insert types, and exact errors; remove the unused 1,270-line selector and
       1,544-line column-mapping duplicates from `tidb-exec`.
-- [x] Complete the pinned `pkg/util/queue` package in its `tidb-util` owner and
+- [x] Complete the current Go-master `pkg/util/queue` package in its
+      `tidb-util` owner and
       remove the unused executor duplicate whose `Clear` eagerly dropped
       backing values and whose public head/tail accessors existed only for its
-      duplicate external tests.
+      duplicate external tests. The current inventory and package ExecPlan are
+      recorded in `receipts/util_queue.md` and
+      `docs/operations/util-queue-audit-execplan.md`.
 - [x] Complete the pinned `pkg/util/sli` package in its `tidb-util` owner,
       replace the executor-local observation simulator with direct Go-shaped
       Prometheus reporting, and remove synthetic failpoint, fixture, and

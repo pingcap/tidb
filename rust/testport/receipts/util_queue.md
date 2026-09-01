@@ -1,19 +1,24 @@
 # `pkg/util/queue` — complete package transcreation
 
-Pinned Go source: `e2788410d8d696605e8cb002585877a063ccc909`.
+Go source: `origin/master` at
+`5e8a1a229a7591ddac49a0cd3b795587c2595ab9` (2026-09-01). The package is
+byte-for-byte unchanged from the earlier implementation; this receipt updates
+the authority and complete artifact hashes.
 
 ## Complete inventory
 
-The package has exactly three artifacts, all read in full:
+The package has exactly three artifacts, all read in full before this refresh:
 
-- `queue.go` — the generic circular buffer, zero value, growth, pop, clear,
-  clear-and-expand, length, emptiness, and capacity behavior;
-- `queue_test.go` — `TestQueue` with its four ordered subtests;
-- `BUILD.bazel` — one library and one flaky short test target.
+| Artifact | Lines | Git blob | SHA-256 | Inventory |
+| --- | ---: | --- | --- | --- |
+| `BUILD.bazel` | 17 | `db8f01ebf757ad4a2f20600f9534066b89340b60` | `0ab3a64e1d621b678f056fcf58e3fed825efd36685609945db2e9e2eaf3c97a7` | public library plus flaky short test target |
+| `queue.go` | 94 | `0a13551814d3c0797ff8d0fd9a8510bcc2dda2c5` | `4bdbdc1f9a50aa149673d4e80612fcdc893f6fbfd426cb452b2f9db9afe46f93` | generic circular buffer, zero value, growth, pop, clear, expansion, length, emptiness, and capacity |
+| `queue_test.go` | 87 | `678247705ff6484a0c3e90df2c9a679e2e60bf1b` | `76dbc2ccc2a43f41c5f305e8d961f8389883453ea3e8db3c94056a13f6b5bdf8` | `TestQueue` with four ordered subtests |
 
 There is no `doc.go`, README, ownership file, generated/platform source,
 fixture, benchmark, example test, or additional harness. The checkout is
-byte-identical to the pin.
+byte-identical to the current Go-master authority. The complete inventory is
+198 textual lines, nine function declarations, and no current source delta.
 
 ## Rust ownership and audit result
 
@@ -32,10 +37,12 @@ replacement, and tests the private indices inside the owner module.
 
 ## Validation
 
-Profile: WIP; this is one completed package within the continuing repository
-audit, not a repository-wide readiness claim.
+Profile: Ready for this docs-only authority refresh; the package owner and
+focused retained-slot regression were implemented in the earlier atomic batch.
 
 - `go test ./pkg/util/queue` — passed.
+- The same package test passed in an exact detached checkout of Go master at
+  `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`.
 - `cargo test -p tidb-util --locked queue::` — passed.
 - `cargo test -p tidb-util --locked` — passed.
 - `cargo check -p tidb-exec --lib --locked` — passed.
