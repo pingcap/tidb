@@ -365,6 +365,18 @@ For each bounded behavior cluster:
   safe missing behavior was found; exact Go-master failpoint suite passed and
   the boundary is recorded in `receipts/session_nontransactionaltest.md`.
 
+- 2026-09-01: audited the complete nontransactional production owner
+  `pkg/session/nontransactional.go` (873 lines, 21 functions), its root BUILD
+  registration, and the fully inventoried 614-line focused test package. Go
+  master behavior tests passed under failpoint management; Rust parser tests
+  passed, while the admission target was environment-blocked by missing
+  pkg-config/OpenSSL. Rust currently owns only BATCH parsing and dependency-
+  free admission; sharding, workers, constraints, metrics, timing, and error
+  aggregation remain cross-owner. No Rust-only behavior or safe missing
+  behavior was found; the root `pkg/session` package remains open outside
+  this slice and the boundary is recorded in
+  `receipts/session_nontransactional.md`.
+
 - 2026-09-01: refreshed the complete Go-master
   `pkg/util/password-validation` inventory (three artifacts, 379 lines) and
   confirmed it is unchanged from the prior pinned implementation. The Go
