@@ -4573,6 +4573,11 @@ For each bounded behavior cluster:
   and 135 lines. It is a Go server-facing Prometheus wiring layer with no
   dependency-closed Rust connection-loop owner; the audit records this explicit
   boundary rather than inventing a duplicate global registry facade.
+- `pkg/server/internal/resultset` is byte-identical to Go master across three
+  artifacts and 506 lines. Its session-bound RecordSet/chunk lifecycle,
+  prepared-column cache, lazy cursor iterator, and RUv2 reporting have no
+  dependency-closed Rust owner; the audit records the explicit boundary rather
+  than inventing a second cursor state machine.
 
 ## Outcomes & Retrospective
 
