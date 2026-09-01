@@ -80,7 +80,6 @@ fn initial_seed() -> u64 {
 }
 
 /// Returns a lock-free pseudo-random `u32`.
-#[must_use]
 pub fn uint32() -> u32 {
     RANDOM.with(|state| {
         let mut random = state.get();

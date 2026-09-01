@@ -39,7 +39,6 @@ const fn wymix(a: u64, b: u64) -> u64 {
 }
 
 /// Generates source-shaped random ASCII bytes while excluding NUL and `$`.
-#[must_use]
 pub fn buf(size: usize) -> Vec<u8> {
     let mut result = vec![0; size];
     let mut random = Wyrand::new(u64::from(uint32()));
@@ -55,7 +54,6 @@ pub fn buf(size: usize) -> Vec<u8> {
 }
 
 /// Returns a pseudo-random `u32` in `[0, n)`.
-#[must_use]
 pub fn uint32_n(n: u32) -> u32 {
     ((u64::from(uint32()) * u64::from(n)) >> 32) as u32
 }
@@ -64,7 +62,6 @@ pub fn uint32_n(n: u32) -> u32 {
 ///
 /// Go's unsigned arithmetic makes `n == 0` take the power-of-two mask branch
 /// and return the full generated value. `wrapping_sub` preserves that edge.
-#[must_use]
 pub fn uint64_n(n: u64) -> u64 {
     let value = (u64::from(uint32()) << 32) + u64::from(uint32());
     let mask = n.wrapping_sub(1);
@@ -90,5 +87,15 @@ mod tests {
             observed[uint32_n(256) as usize] = true;
         }
         assert!(observed.iter().filter(|seen| !**seen).count() < 24);
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    #[deny(unused_must_use)]
+    fn TestReturnValuesMayBeIgnoredLikeGo() {
+        buf(0);
+        uint32_n(0);
+        uint64_n(0);
+        super::uint32();
     }
 }

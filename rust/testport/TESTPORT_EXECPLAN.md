@@ -40,6 +40,18 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: fixed the Rust-only `must_use` diagnostics in the complete
+  Go-master `pkg/util/fastrand` owner. The Go package remains five artifacts and
+  227 lines at `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`, including one source
+  test and four benchmarks; its 64-bit/32-bit runtime algorithms and bounded
+  reductions remain aligned. Added a deny-lint regression proving all four
+  public return values may be ignored like Go; the pre-fix test failed with
+  four lint errors and the post-fix suite passes. Current and exact detached Go
+  tests, focused Rust tests, all-target/benchmark checks, formatting, diff
+  checks, and the pinned detached `make lint` gate pass. Updated
+  `receipts/util_fastrand.md` and added the Ready plan at
+  `docs/operations/util-fastrand-audit-execplan.md`.
+
 - 2026-09-02: refreshed the complete Go-master `pkg/util/backoff` inventory at
   `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: three tracked artifacts, 113
   lines, the `Backoffer`/`Exponential` declarations, one source vector test,
@@ -644,6 +656,14 @@ For each bounded behavior cluster:
   passes. Recorded the generated boundary in
   `receipts/domain_sqlsvrapi_mock.md` and
   `rust/docs/operations/domain-sqlsvrapi-mock-audit-execplan.md`.
+
+- 2026-09-02: aligned the complete Go-master `pkg/owner` package: exactly
+  eight artifacts and 1,883 lines, including etcd owner election, distributed
+  lock and failpoint/goleak tests, BUILD metadata, and OWNERS policy. Go source,
+  tests, and BUILD files were already byte-identical; restored the Go-master
+  BUILD-specific approver filter in OWNERS. The full failpoint-aware suite and
+  Ready gates pass. Recorded the boundary in `receipts/owner.md` and
+  `rust/docs/operations/owner-audit-execplan.md`.
 
 - 2026-09-02: updated the complete five-artifact Go-master
   `pkg/server/handler/tests` consumer inventory (3,630 lines) for the DXF
