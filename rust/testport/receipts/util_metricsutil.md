@@ -1,7 +1,7 @@
 # `pkg/util/metricsutil` — Go-master package boundary receipt
 
 Go source: `origin/master` at
-`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01). The package is
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02). The package is
 byte-for-byte unchanged from the earlier extraction pin
 `e2788410d8d696605e8cb002585877a063ccc909`.
 
@@ -50,15 +50,21 @@ unclaimed until the metrics registry and BR/PD consumers move as one unit.
 
 ## Validation
 
-Profile: WIP for the continuing repository audit; no Rust code changed.
+Profile: **Ready** for this documentation-only boundary refresh; no Rust code
+changed.
 
 - `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/metricsutil -count=1` — passed (the one source test).
-- `git diff --stat e2788410d8d696605e8cb002585877a063ccc909..origin/master -- pkg/util/metricsutil` — empty; source is unchanged at Go master.
+- `(cd /tmp/tidb-go-latest-c605 && PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/metricsutil -count=1)` — passed (the one source test).
+- `git diff --stat c6054025ed4c32ab3672a2a24ea46892714d21ec -- pkg/util/metricsutil` — empty; source is unchanged at current Go master.
 - Rust search of metrics, keyspace, BR, PD-client, and store crates — confirmed split owners and no dependency-closed `metricsutil` registry.
 
-No Go or Bazel file changed, so `make bazel_prepare` is not required. Full
-metrics registration, BR keyspace lookup, and live PD retry tests were not run
-for this explicitly unclaimed boundary.
+`cd rust && cargo +nightly-2026-08-22 fmt --all -- --check` and
+`git diff --check` passed. The pinned `make lint` gate passed in the clean
+detached Go-master checkout; the active checkout may be temporarily
+instrumented by a concurrent failpoint test worker. No Go or Bazel file
+changed, so `make bazel_prepare` is not required. Full metrics registration,
+BR keyspace lookup, and live PD retry tests were not run for this explicitly
+unclaimed boundary.
 
 ## Risks and unverified scope
 
