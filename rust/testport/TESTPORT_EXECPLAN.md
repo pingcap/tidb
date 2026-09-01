@@ -86,6 +86,15 @@ For each bounded behavior cluster:
   and no speculative adapter was added. Recorded the explicit boundary in
   `receipts/objstore_objectio.md`.
 
+- 2026-09-01: audited the complete Go-master `pkg/objstore/recording`
+  package before editing: three tracked artifacts and 167 lines, including
+  the BUILD target, nine atomic request/traffic methods, and the one test for
+  GET/HEAD/PUT/POST plus ignored methods and nil requests. It is unchanged
+  from the pinned source. Rust's TiKV RPC traffic counters are unrelated to
+  object-storage access recording, so no Rust-only behavior was removed and
+  no speculative metrics facade was added. Recorded the explicit boundary in
+  `receipts/objstore_recording.md`.
+
 - 2026-09-01: audited the complete Go-master `pkg/ingestor/globalsort`
   package before editing: 17 tracked artifacts and 6,814 lines, including the
   external engine, object-store readers, merge and merge-v2 operators, range
