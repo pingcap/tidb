@@ -1,7 +1,8 @@
 # `pkg/util/deeptest` — Go-master parity boundary receipt
 
 Go baseline: `origin/master` at
-`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01).
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02), unchanged from the
+previous authority pin.
 This is a reflection-heavy Go test utility; it has no Rust production owner.
 
 ## Complete inventory
@@ -47,10 +48,17 @@ code fix or package-completion claim; `make bazel_prepare` and the Ready lint
 gate are not triggered.
 
 ```text
+git ls-tree -r -l c6054025ed4c32ab3672a2a24ea46892714d21ec pkg/util/deeptest
+# exactly the three artifacts and sizes listed above
+git diff --exit-code c6054025ed4c32ab3672a2a24ea46892714d21ec..HEAD -- pkg/util/deeptest
+# no Go package drift at the latest authority
 PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
 GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
 go test ./pkg/util/deeptest -count=1
-# ok
+# ok in the current and exact detached latest-master
+# (/tmp/tidb-go-latest-c605) worktrees
+git diff --check
+# passed
 ```
 
 ## Risks and unverified behavior

@@ -3336,6 +3336,14 @@ For each bounded behavior cluster:
       result-file envelope, so no Rust-only serializer was added. Details are
       in `receipts/util_benchdaily.md` and
       `docs/operations/util-benchdaily-audit-execplan.md`.
+- 2026-09-02: re-audited all three Go-master `pkg/util/deeptest` artifacts
+      (503 lines across the reflection comparator, exhaustive failure matrix,
+      and Bazel target) at authority
+      `c6054025ed4c32ab3672a2a24ea46892714d21ec`; the package is unchanged.
+      It is Go-only test infrastructure with no reusable Rust comparator, so no
+      Rust-only assertion framework was added. Details are in
+      `receipts/util_deeptest.md` and
+      `docs/operations/util-deeptest-audit-execplan.md`.
 - 2026-09-01: audited all four Go-master `pkg/util/admin` artifacts (412
       lines including the restricted count path, row/index consistency scan,
       corruption integration test, and Bazel target). The existing Rust
