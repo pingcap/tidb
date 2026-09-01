@@ -1,6 +1,8 @@
 # `pkg/util/stringutil` — complete package transcreation
 
-Pinned Go source: `origin/master` at
+Go source: `origin/master` at
+`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01). The package is
+byte-for-byte unchanged from the earlier audit pin
 `db35d47066648fe73abce6318d53fc625df51490`.
 
 ## Complete inventory

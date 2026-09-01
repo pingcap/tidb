@@ -150,7 +150,7 @@ For each bounded behavior cluster:
   lint, and Ready gates are recorded in `receipts/util_table_filter.md`.
 
 - 2026-09-01: completed the Go-master `pkg/util/chunk` delta as one
-  thirty-artifact package audit. The source adds `Chunk.UsedMemoryUsage`,
+  twenty-nine-artifact package audit. The source adds `Chunk.UsedMemoryUsage`,
   which reports current buffer lengths rather than retained capacities; the
   Rust `tidb-chunk` owner now exposes the equivalent per-column and aggregate
   methods and extends the source memory regression through reset. The full
@@ -1395,7 +1395,7 @@ For each bounded behavior cluster:
 - [x] Complete the Go-master `pkg/util/table-filter` package: port the
       concrete `ColumnFilterRules` parser API, add its focused regression, and
       update the package receipt.
-- [x] Complete the Go-master `pkg/util/chunk` delta: inventory all 30 source,
+- [x] Complete the Go-master `pkg/util/chunk` delta: inventory all 29 source,
       test, harness, and build artifacts; port `Chunk.UsedMemoryUsage` with a
       length-versus-capacity regression; and update its package receipt.
 - [x] Complete the Go-master `pkg/util/codec` delta: inventory all 12 source,

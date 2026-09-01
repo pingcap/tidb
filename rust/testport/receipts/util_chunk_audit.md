@@ -1,11 +1,13 @@
 # `pkg/util/chunk` — complete package audit and `UsedMemoryUsage` parity
 
-Pinned Go source: `origin/master` at
+Go source: `origin/master` at
+`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01). The package is
+byte-for-byte unchanged from the earlier audit pin
 `db35d47066648fe73abce6318d53fc625df51490`.
 
 ## Complete inventory
 
-The package has exactly 30 artifacts and 11,342 Go lines. Every production
+The package has exactly 29 artifacts and 11,342 Go lines. Every production
 file, test, support harness, and build row was read from the pinned tree; the
 earlier source-shaped transcreation receipts `b015`, `b016`, and `b017` cover
 the complete Go test-function mapping and the Rust owner/test surface.
