@@ -1996,6 +1996,39 @@ func TestPushCollationDown(t *testing.T) {
 	}
 }
 
+// TestPushDownBlockedForCollationsMissingFromStorage pins that expressions collated
+// with latin1_swedish_ci stay in TiDB. TiKV and TiFlash have no collator for it, and
+// CollationToProto would quietly relabel it as the default collation rather than
+// refuse, so the storage layer would evaluate the expression under the wrong rules.
+func TestPushDownBlockedForCollationsMissingFromStorage(t *testing.T) {
+	ctx := mock.NewContext()
+	client := new(mock.Client)
+	pushDownCtx := NewPushDownContextFromSessionVars(ctx, ctx.GetSessionVars(), client)
+
+	for _, storeType := range []kv.StoreType{kv.UnSpecified, kv.TiKV, kv.TiFlash} {
+		// A bare column reference.
+		blocked := columnCollation(genColumn(mysql.TypeVarchar, 1), charset.CharsetLatin1, "latin1_swedish_ci")
+		pushed, remained := PushDownExprs(pushDownCtx, []Expression{blocked}, storeType)
+		require.Emptyf(t, pushed, "store %v", storeType)
+		require.Lenf(t, remained, 1, "store %v", storeType)
+
+		// A function over such a column, blocked through its argument.
+		eq, err := NewFunction(ctx, ast.EQ, types.NewFieldType(mysql.TypeUnspecified),
+			columnCollation(genColumn(mysql.TypeVarchar, 1), charset.CharsetLatin1, "latin1_swedish_ci"),
+			columnCollation(genColumn(mysql.TypeVarchar, 2), charset.CharsetLatin1, "latin1_swedish_ci"))
+		require.NoError(t, err)
+		pushed, remained = PushDownExprs(pushDownCtx, []Expression{eq}, storeType)
+		require.Emptyf(t, pushed, "store %v", storeType)
+		require.Lenf(t, remained, 1, "store %v", storeType)
+
+		// latin1_bin is understood by the storage layer and must still be pushed.
+		allowed := columnCollation(genColumn(mysql.TypeVarchar, 1), charset.CharsetLatin1, charset.CollationLatin1)
+		pushed, remained = PushDownExprs(pushDownCtx, []Expression{allowed}, storeType)
+		require.Lenf(t, pushed, 1, "store %v", storeType)
+		require.Emptyf(t, remained, "store %v", storeType)
+	}
+}
+
 func columnCollation(c *Column, chs, coll string) *Column {
 	c.RetType.SetCharset(chs)
 	c.RetType.SetCollate(coll)
