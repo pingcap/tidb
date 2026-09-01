@@ -1438,6 +1438,13 @@ For each bounded behavior cluster:
   because no Rust startup path requires a mutable clientv3 namespace wrapper.
   Inventory and validation are recorded in `receipts/util_etcd.md`.
 
+- 2026-09-02: refreshed the complete `pkg/util/regionsplit` boundary against
+  Go master `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: two artifacts, 256
+  lines, 12 declarations, and no tests/fixtures/variants. Rust has only
+  lower-level key encoders, so the high-level DDL/executor split-key owner
+  remains explicitly unclaimed. Added the dedicated audit ExecPlan and Ready
+  compile evidence.
+
 - 2026-09-01: audited the complete Go `pkg/util/dbterror/plannererrors`
   package at `origin/master`
   `db35d47066648fe73abce6318d53fc625df51490` against the Rust
