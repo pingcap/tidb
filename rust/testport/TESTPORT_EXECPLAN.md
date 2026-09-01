@@ -441,6 +441,15 @@ For each bounded behavior cluster:
   in `receipts/server_handler_tests.md` and
   `rust/docs/operations/server-handler-tests-audit-execplan.md`.
 
+- 2026-09-02: aligned the complete direct Go-master
+  `pkg/dxf/framework/taskexecutor` package: exactly 12 tracked artifacts and
+  4,129 lines, including cancellation classification, the `GetExecID` API,
+  and observer-backed regression coverage. Rust has no dependency-closed
+  task-executor runtime owner, so no speculative Rust implementation was
+  added. Recorded the inventory and validation boundary in
+  `receipts/dxf_framework_taskexecutor.md` and
+  `rust/docs/operations/dxf-framework-taskexecutor-audit-execplan.md`.
+
 - 2026-09-02: audited the complete Go-master
   `pkg/dxf/framework/taskexecutor/execute` leaf: exactly three artifacts and
   517 lines, with 17 production declarations and one speed-window test. The
