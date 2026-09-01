@@ -3323,6 +3323,16 @@ For each bounded behavior cluster:
       latest Go tests, ten Rust owner tests, formatting, Ready lint, and diff
       checks pass. Details are in `receipts/util_globalconn.md` and
       `docs/operations/globalconn-audit-execplan.md`.
+- 2026-09-02: refreshed all three Go-master `pkg/util/queue` artifacts (198
+      lines covering the circular-buffer owner, four source subtests, and the
+      Bazel target) at authority
+      `c6054025ed4c32ab3672a2a24ea46892714d21ec`. Removed four Rust-only
+      `#[must_use]` diagnostics from `Queue::new`, `len`, `is_empty`, and
+      `cap`; the focused deny-lint regression failed with four errors before
+      the fix and passes afterward. Current/detached Go tests, nine Rust owner
+      tests, formatting, Ready lint, and diff checks pass. Details are in
+      `receipts/util_queue.md` and
+      `docs/operations/util-queue-audit-execplan.md`.
 - 2026-09-01: audited all four Go-master `pkg/util/cpu` artifacts (308 lines,
       six production functions/methods, two source tests, and one test
       harness), including its failpoint, race/flaky BUILD target, cgroup/EMA,
