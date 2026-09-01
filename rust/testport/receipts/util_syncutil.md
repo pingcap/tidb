@@ -1,7 +1,7 @@
 # `pkg/util/syncutil` — Go-master package boundary receipt
 
 Go source: `origin/master` at
-`5e8a1a229a7591ddac49a0cd3b795587c2595ab9` (2026-09-01). The package is
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02). The package is
 byte-for-byte unchanged from the previous audit, but this receipt now uses the
 current Go-master authority rather than the older extraction pin.
 
@@ -40,14 +40,15 @@ Profile: Ready for this docs-only boundary refresh; no source or build artifact
 changed.
 
 - `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/syncutil -count=1` — passed (`[no test files]`).
-- Exact detached Go-master checkout at `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: the same package test passed (`[no test files]`).
-- `git diff --stat 5e8a1a229a7591ddac49a0cd3b795587c2595ab9..origin/master -- pkg/util/syncutil` — empty; source is unchanged at the current Go-master authority.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test -tags=deadlock ./pkg/util/syncutil -count=1` — passed (`[no test files]`).
+- Default/deadlock `go list` probes selected `mutex_sync.go`/`mutex_deadlock.go` and ignored the complementary variant; the exact detached Go-master checkout at `c6054025ed4c32ab3672a2a24ea46892714d21ec` produced the same selections and test results.
+- `git diff --exit-code c6054025ed4c32ab3672a2a24ea46892714d21ec -- pkg/util/syncutil` — passed; source matches the exact latest Go-master authority.
 - Rust search across all crates and Go call sites — found only crate-local standard locks and no dependency-closed public replacement.
 - `cargo +nightly-2026-08-22 fmt --all -- --check`, pinned `make lint`, and `git diff --check` — passed for the repository audit batch.
 
-No Go or Bazel file changed, so `make bazel_prepare` is not required. Deadlock
-build-tag execution and detector diagnostics were not run beyond the default
-package compile because they are external Go tooling behavior.
+No Go or Bazel file changed, so `make bazel_prepare` is not required. The
+deadlock-tag build was compiled, but live detector timeout diagnostics were
+not exercised because they are external Go tooling behavior.
 
 ## Risks and unverified scope
 
@@ -58,5 +59,4 @@ package compile because they are external Go tooling behavior.
   identity is a broad source break.
 - Performance: standard-lock behavior is unchanged; enabling deadlock mode has
   intentional diagnostic overhead.
-- Not verified locally: `-tags=deadlock` package/test builds and detector
-  timeout reporting under CI contention.
+- Not verified locally: live detector timeout reporting under CI contention.

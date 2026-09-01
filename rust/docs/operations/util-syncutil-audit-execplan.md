@@ -15,8 +15,9 @@ type identity remain part of the Go build contract.
   are no package tests, fixtures, generated/platform files, benchmarks, fuzz
   targets, or nested packages.
 - Revalidated the working-tree package and an exact detached checkout of Go
-  master at `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`; both default compile
-  probes pass with no test files.
+  master at `c6054025ed4c32ab3672a2a24ea46892714d21ec`; both default and
+  `deadlock` compile probes pass with no test files and select complementary
+  variants.
 - Confirmed Rust has no dependency-closed owner that can replace Go's
   package-wide wrapper identity, method promotion, or `go-deadlock` build-tag
   diagnostics. Kept the package explicitly unclaimed and added no Rust-only
@@ -26,10 +27,10 @@ type identity remain part of the Go build contract.
 
 - [x] Complete production/build-tag/Bazel inventory recorded in
       `rust/testport/receipts/util_syncutil.md`.
-- [x] Current and exact Go-master default package compile probes pass.
+- [x] Current and exact Go-master default/deadlock package probes pass.
 - [x] Ready formatting, repository lint, and diff checks pass on the clean
       committed tree.
-- [ ] Push this receipt/ExecPlan batch, verify remote SHAs, and pull
+- [x] Push this receipt/ExecPlan batch, verify remote SHAs, and pull
       `origin/hparser-integration`.
 
 ## Next boundary
