@@ -1350,6 +1350,15 @@ For each bounded behavior cluster:
       no source delta, Rust-only behavior, or safe production edit was found.
       The full inventory and targeted Go/Rust validation are recorded in
       `receipts/errctx_audit.md`.
+- 2026-09-01: audited all five Go-master `pkg/format/textrow` artifacts
+      (732 lines, 11 production declarations, and seven test/helper
+      declarations), including the package's BUILD target and every scalar,
+      charset, metadata, result-stream, and generated-vector owner. The
+      dependency-closed `tidb-protocol` implementation already matches the
+      source formatter and its 1,516-row Go-generated fixture; five source
+      vectors and eight result-encoder tests pass. No production edit or
+      Rust-only behavior removal was justified. Details are in
+      `receipts/format_textrow_audit.md`.
 - [ ] Run Ready validation and self-review only when the requested parity scope
       is genuinely complete enough for a final-status claim.
 
