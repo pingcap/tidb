@@ -1,13 +1,15 @@
 # `pkg/util/cgmon` — Go-master parity boundary receipt
 
 Go baseline: `origin/master` at
-`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01). This package is a
-Linux-only process monitor with Go metrics and server lifecycle consumers; no
-dependency-closed Rust owner exists.
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02). The package is
+unchanged from the previous authority pin. It is a Linux-only process monitor
+with Go metrics and server lifecycle consumers; no dependency-closed Rust
+owner exists.
 
 ## Complete inventory
 
-All three artifacts were read in full before making the ownership decision:
+All three artifacts (229 lines total) were read in full before making the
+ownership decision:
 
 | Artifact | Lines | Git blob | SHA-256 | Disposition |
 | --- | ---: | --- | --- | --- |
@@ -52,10 +54,17 @@ gate, and a broad server integration run are not triggered.
 Passed:
 
 ```text
+git ls-tree -r -l c6054025ed4c32ab3672a2a24ea46892714d21ec pkg/util/cgmon
+# passed: exactly the three artifacts and sizes listed above
+
+git diff --exit-code c6054025ed4c32ab3672a2a24ea46892714d21ec..HEAD -- pkg/util/cgmon
+# passed: no Go package drift at the latest authority
+
 PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
 GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
 go test ./pkg/util/cgmon -count=1
-# ok
+# passed in the current worktree and exact detached latest-master worktree
+# /tmp/tidb-go-latest-c605
 ```
 
 The existing Rust `tidb-util::cgroup` suite was already run in the adjacent

@@ -3280,12 +3280,14 @@ For each bounded behavior cluster:
       behavior or safe standalone implementation was found; the exact
       Go-master failpoint suite passed in 5.087s and the explicit boundary is
       recorded in `receipts/session_test_clusteredindextest.md`.
-- 2026-09-01: audited all three Go-master `pkg/util/cgmon` artifacts (229
-      lines: Linux cgroup monitor, fallback test, and Bazel target). The
-      existing Rust cgroup reader covers quota/memory discovery but not this
-      package's ten-second scheduler, process-global lifecycle, metrics, or
-      server wiring, so no detached Rust monitor was added. Details are in
-      `receipts/util_cgmon.md`.
+- 2026-09-02: re-audited all three Go-master `pkg/util/cgmon` artifacts (229
+      lines: Linux cgroup monitor, fallback test, and Bazel target) against
+      latest master `c6054025ed4c32ab3672a2a24ea46892714d21ec`. The existing
+      Rust cgroup reader covers quota/memory discovery but not this package's
+      ten-second scheduler, process-global lifecycle, metrics, or server
+      wiring, so no detached Rust monitor was added. Details are in
+      `receipts/util_cgmon.md` and
+      `docs/operations/util-cgmon-audit-execplan.md`.
 - 2026-09-01: audited all six Go-master `pkg/util/cpuprofile` artifacts (790
       lines across the profiler, HTTP adapter, source tests, labelled load
       harness, and two Bazel targets). Rust has no dependency-closed
