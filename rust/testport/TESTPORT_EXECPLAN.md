@@ -3216,6 +3216,10 @@ For each bounded behavior cluster:
       failpoint-enabled package tests, repository lint, and diff hygiene pass;
       required `make bazel_prepare` was attempted but Bazel is unavailable
       locally. Details are in `receipts/infoschema_perfschema.md`.
+- [x] Audit the complete Go-master `pkg/server/err` package: inventory its
+      two artifacts and 15 server-class error prototypes, compare every code,
+      message, RFC identity, and SQL state with the Rust error catalog, and
+      record the explicit parity boundary in its receipt and ExecPlan.
 - [x] Complete the Go-master `pkg/util/codec` delta: inventory all 12 source,
       test, benchmark, harness, and build artifacts; remove Rust-only encoder
       value/hash methods; update consumers; add the raw-value regression; and
