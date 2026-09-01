@@ -12,6 +12,8 @@ workspace = true
 
 [dependencies]
 chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 tidb-ast = { path = "../tidb-ast" }
 tidb-codec = { path = "../tidb-codec" }
 tidb-datatype = { path = "../tidb-datatype" }

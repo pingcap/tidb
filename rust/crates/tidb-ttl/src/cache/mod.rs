@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! SEED of Go `pkg/ttl/cache`: the TTL worker's view of which physical tables
+//! Go `pkg/ttl/cache`: the TTL worker's view of which physical tables
 //! have TTL, what state their jobs and tasks are in, and how a table's key
 //! space splits into scan ranges.
 //!
@@ -23,24 +23,21 @@
 //! - [`task`] <- `task.go`
 //! - [`ttlstatus`] <- `ttlstatus.go`
 //!
-//! This is labelled a SEED rather than a complete package, and the reason is
+//! This remains a partial package because the two cache `Update` methods need
+//! the real `infoschema.InfoSchema`, which has no transcreation. The reason is
 //! *not* that most of Go's tests need `testkit`: `base.go`'s and `table.go`'s
 //! whole content, both row decoders, and every SQL statement builder that does
 //! not encode datums came across, and they are covered by direct assertions
-//! here. It is a seed because two pieces of production behaviour are still
-//! missing:
+//! here. The remaining production boundary is:
 //!
 //! - The `Update` methods of [`infoschema::InfoSchemaCache`] and
 //!   [`ttlstatus::TableStatusCache`], whose info-schema traversal is expressed
 //!   against trait boundaries rather than the real `infoschema.InfoSchema`.
 //!   This is a genuine boundary: `pkg/infoschema` has no transcreation to
 //!   depend on.
-//! - `task.go`'s `InsertIntoTTLTask`, which memcomparable-encodes the scan
-//!   range bounds through `codec.EncodeKey`, and the `encoding/json` decode of
-//!   `TTLTaskState`. These are NOT blocked any more — `tidb-codec` is now a
-//!   dependency of this crate — they are simply unported work in a module this
-//!   change did not touch, and [`task`]'s own header still describes them as
-//!   dependency-blocked.
+//! The task statement builder now uses `tidb-codec` for scan-range encoding,
+//! and `RowToTTLTask` decodes both ranges and `TTLTaskState` with the same
+//! persisted contracts as Go.
 //!
 //! Every narrowing is named at its own definition site with a `// boundary:`
 //! comment identifying the Go symbol it stands for.

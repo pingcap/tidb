@@ -1803,6 +1803,17 @@ For each bounded behavior cluster:
   Rust consumer check, lint, and Ready gates are recorded in
   `receipts/util_serialization.md`.
 
+- 2026-09-02: completed the thirteen-artifact Go-master `pkg/ttl/cache`
+  inventory (3,566 lines), including every TTL task/table cache source, test,
+  and BUILD input. Restored dependency-closed task scan-range
+  `codec.EncodeKey`/`codec.Decode` behavior through `tidb-codec`, decoded
+  `TTLTaskState` with Go-compatible `serde_json` defaults and error handling,
+  and added focused range/JSON regressions. The cache owner suite (20 tests),
+  Go tagged package suite (19.402s), Rust all-target check, formatting, lint,
+  and diff gates are recorded in `receipts/ttl_cache.md`; only the two
+  info-schema `Update` traversals remain explicit boundaries. Publication and
+  remote SHA verification are the next step for this batch.
+
 - 2026-09-01: completed the Go-master `pkg/util/stringutil` package as one
   four-artifact unit. The rolling source delta changes `CompileLike2Regexp`
   from an implicit backslash escape to an explicit escape byte; Rust now
@@ -3081,6 +3092,10 @@ For each bounded behavior cluster:
 - [x] Complete the Go-master `pkg/util/chunk` delta: inventory all 29 source,
       test, harness, and build artifacts; port `Chunk.UsedMemoryUsage` with a
       length-versus-capacity regression; and update its package receipt.
+- [x] Complete the Go-master `pkg/ttl/cache` package: inventory all thirteen
+      Go artifacts, restore TTL task range encoding/decoding and JSON state
+      parity through the shared Rust codec, add focused regressions, and update
+      its package receipt and ExecPlan.
 - [x] Complete the Go-master `pkg/util/codec` delta: inventory all 12 source,
       test, benchmark, harness, and build artifacts; remove Rust-only encoder
       value/hash methods; update consumers; add the raw-value regression; and
@@ -3296,6 +3311,14 @@ For each bounded behavior cluster:
       endpoint was added. Details are in
       `receipts/util_cpuprofile.md` and
       `docs/operations/util-cpuprofile-audit-execplan.md`.
+- 2026-09-02: re-audited all four Go-master `pkg/util/admin` artifacts at
+      authority `c6054025ed4c32ab3672a2a24ea46892714d21ec` (412 lines; the
+      package is unchanged from the prior authority). Re-ran the tagged Go
+      integration package tests in current and detached latest-master
+      worktrees and confirmed the existing clustered-primary source fix and
+      Ready evidence remain valid. Details are in
+      `receipts/util_admin.md` and
+      `docs/operations/util-admin-audit-execplan.md`.
 - 2026-09-01: audited all four Go-master `pkg/util/admin` artifacts (412
       lines including the restricted count path, row/index consistency scan,
       corruption integration test, and Bazel target). The existing Rust

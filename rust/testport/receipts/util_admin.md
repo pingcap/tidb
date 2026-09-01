@@ -1,9 +1,10 @@
 # `pkg/util/admin` — Go-master parity receipt
 
 Go baseline: `origin/master` at
-`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01). The package is
-implemented by the Rust executor/session ADMIN CHECK owners; this audit found
-and fixed one clustered-primary-index selection gap.
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02). The package is
+unchanged from the previous authority pin and is implemented by the Rust
+executor/session ADMIN CHECK owners; this audit found and fixed one
+clustered-primary-index selection gap.
 
 ## Complete inventory
 
@@ -69,11 +70,15 @@ The pre-fix focused Rust session test failed with
 `DataInconsistent` on index `PRIMARY` for
 `clustered_primary_key_with_two_indexes`. After the fix:
 
+- `git ls-tree -r -l c6054025ed4c32ab3672a2a24ea46892714d21ec pkg/util/admin` —
+  exactly the four artifacts and sizes listed above.
+- `git diff --exit-code c6054025ed4c32ab3672a2a24ea46892714d21ec..HEAD -- pkg/util/admin` —
+  no Go package drift at the latest authority.
 - `cargo +nightly-2026-08-22 fmt --all -- --check` — passed.
 - `cargo +nightly-2026-08-22 test --offline --locked -p tidb-executor --lib admin_check -- --test-threads=1` — 7 passed.
 - `cargo +nightly-2026-08-22 test --offline --locked -p tidb-session --lib tests_admin_check::clustered_primary_key_is_not_scanned_as_an_index -- --test-threads=1` — passed.
 - `cargo +nightly-2026-08-22 test --offline --locked -p tidb-session --lib tests_admin_check -- --test-threads=1` — 17 passed.
-- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test -tags=intest ./pkg/util/admin -count=1` — passed.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test -tags=intest ./pkg/util/admin -count=1` — passed in the current and exact detached latest-master (`/tmp/tidb-go-latest-c605`) worktrees.
 - `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 make lint` — passed.
 - `git diff --check` — passed.
 
