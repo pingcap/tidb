@@ -1505,6 +1505,14 @@ For each bounded behavior cluster:
   The complete inventory and boundary are recorded in
   `receipts/util_execdetails_audit.md`.
 
+- 2026-09-02: refreshed the complete `pkg/util/execdetails` boundary against
+  Go master `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: the same eight
+  artifacts and 5,919 lines now have a current-authority receipt, exact
+  detached Go test evidence, and a dedicated ExecPlan. The three-file delta
+  adds read-pool, row/summary coverage, scan-byte, hash-state, and Explain-RU
+  behavior that still crosses context, protobuf, metrics, and executor seams;
+  no partial Rust fix was introduced.
+
 - 2026-09-01: completed the Go-master `pkg/util/sqlkiller` package as one
   three-artifact unit. Ported the concurrent-reset lock/swap ordering and
   source failpoint interleaves, made pre-reset receivers close instead of

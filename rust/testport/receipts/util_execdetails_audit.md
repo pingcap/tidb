@@ -7,10 +7,10 @@ zap, and ordinary executor integration cannot be repaired safely as a
 partial leaf. No production or test file was changed in this audit.
 
 Go source: `origin/master`
-`db35d47066648fe73abce6318d53fc625df51490`.
+`5e8a1a229a7591ddac49a0cd3b795587c2595ab9`.
 
 Rust comparison branch: `origin/hparser-integration`
-`5a005978dda57fbb3373a303660ea0a5f7990b38`.
+`e9478012b15f779ef270ace1d2046ecc79847dbb` at the time of this refresh.
 
 ## Complete Go inventory
 
@@ -46,6 +46,16 @@ variant in the Go package. The checkout source is the older branch copy; the
 Go-master delta is 33 additions/deletions in `execdetails.go`, 156 test lines,
 and 408 additions/deletions in `runtime_stats.go` (the current package source
 itself was not edited here).
+
+Against the current Go-master authority, the complete package remains eight
+artifacts, 5,919 lines, 333 declarations, and 30 top-level test/benchmark/fuzz
+entries. The current branch is missing the same three-file delta: 32 added and
+one removed line in `execdetails.go`, 152 added and four removed lines in
+`execdetails_test.go`, and 396 added and 12 removed lines in
+`runtime_stats.go`. These additions cover read-pool details, checked cop/root
+row snapshots and summary coverage, analyze scan-byte estimates, hash-state
+state transitions, and Explain-RU output; they are not dependency-closed
+leaves.
 
 ### Production function inventory
 
@@ -93,9 +103,9 @@ string/merge/inter-zone getter, and `MergeTiFlashRUConsumption`.
 The four direct Rust owners are exported by `rust/crates/tidb-exec/src/lib.rs`
 and contain:
 
-- `exec_details.rs` — 991 lines, four source-shaped formatting/IA tests;
+- `exec_details.rs` — 991 lines, three source-shaped formatting/IA tests;
 - `runtime_stats.rs` — 2,620 lines, sixteen focused runtime/RU tests;
-- `ruv2_metrics.rs` — 1,581 lines, ten focused metric tests;
+- `ruv2_metrics.rs` — a re-export of `tidb_util::ruv2_metrics`;
 - `tiflash_stats.rs` — 1,753 lines, three TiFlash/vector/columnar tests.
 
 The owners' headers explicitly identify them as `SEED`s. `exec_details.rs`
@@ -121,8 +131,8 @@ the executable evidence for the implemented subset.
 
 ## Validation
 
-Profile: WIP for a continuing package audit; a Ready claim is intentionally
-not made for this incomplete package.
+Profile: Ready for this docs-only authority refresh; the package itself
+remains explicitly unclaimed and is not presented as a completed transcreation.
 
 Commands run from the repository root:
 
@@ -132,12 +142,16 @@ Commands run from the repository root:
 - `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH
   GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test
   ./pkg/util/execdetails -count=1` — passed on the checkout source.
+- Exact detached Go-master checkout at
+  `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: the same package test passed.
 - `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler
   DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib
   cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --locked
-  -p tidb-exec --lib exec_details` — passed, 4 tests.
-- The same locked command for `runtime_stats`, `ruv2_metrics`, and
-  `tiflash_stats` — passed, respectively 16, 10, and 3 tests.
+  -p tidb-exec --lib exec_details` — passed, 3 tests.
+- The same locked command for `runtime_stats` and `tiflash_stats` — passed,
+  respectively 16 and 3 tests.
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --locked
+  -p tidb-util --lib ruv2_metrics::tests` — passed, 9 tests.
 - The same OpenSSL/toolchain environment with
   `cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --locked
   -p tidb-exec --lib` — passed.
@@ -145,9 +159,11 @@ Commands run from the repository root:
   --check` — passed.
 
 No Go source, Go import block, test function, Bazel file, or module metadata
-changed, so `make bazel_prepare` and the Ready-only repository `make lint`
-gate are not claimed for this audit. `git diff --check` is run after the
-receipt/plan documentation batch is staged.
+changed, so `make bazel_prepare` is not required. The pinned `make lint` was
+run successfully on a clean committed worktree; the concurrent working tree
+has unrelated uncommitted failpoint-generated edits that produce unrelated
+lint findings. `git diff --check` is run after the receipt/plan documentation
+batch is staged.
 
 ## Risks and unverified scope
 
