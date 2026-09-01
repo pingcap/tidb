@@ -184,7 +184,7 @@ PARTITION BY RANGE ( a ) (
 	require.Less(t, p1.GetCol(tableInfo.Columns[2].ID).LastUpdateVersion, p1.GetCol(tableInfo.Columns[0].ID).LastUpdateVersion)
 	rs = tk.MustQuery("select sample_rate,buckets,topn,column_choice,column_ids from mysql.analyze_options where table_id=" + strconv.FormatInt(tableInfo.ID, 10))
 	require.Equal(t, 1, len(rs.Rows()))
-	require.Equal(t, "0", rs.Rows()[0][0])
+	require.Equal(t, "-1", rs.Rows()[0][0])
 	require.Equal(t, "2", rs.Rows()[0][1])
 	require.Equal(t, "0", rs.Rows()[0][2])
 	require.Equal(t, "LIST", rs.Rows()[0][3])
@@ -192,14 +192,14 @@ PARTITION BY RANGE ( a ) (
 	require.Equal(t, colIDStrsAB, rs.Rows()[0][4])
 	rs = tk.MustQuery("select sample_rate,buckets,topn,column_choice,column_ids from mysql.analyze_options where table_id=" + strconv.FormatInt(p0.PhysicalID, 10))
 	require.Equal(t, 1, len(rs.Rows()))
-	require.Equal(t, "0", rs.Rows()[0][0])
+	require.Equal(t, "-1", rs.Rows()[0][0])
 	require.Equal(t, "2", rs.Rows()[0][1])
 	require.Equal(t, "0", rs.Rows()[0][2])
 	require.Equal(t, "LIST", rs.Rows()[0][3])
 	require.Equal(t, colIDStrsAB, rs.Rows()[0][4])
 	rs = tk.MustQuery("select sample_rate,buckets,topn,column_choice,column_ids from mysql.analyze_options where table_id=" + strconv.FormatInt(p1.PhysicalID, 10))
 	require.Equal(t, 1, len(rs.Rows()))
-	require.Equal(t, "0", rs.Rows()[0][0])
+	require.Equal(t, "-1", rs.Rows()[0][0])
 	require.Equal(t, "2", rs.Rows()[0][1])
 	require.Equal(t, "0", rs.Rows()[0][2])
 	require.Equal(t, "LIST", rs.Rows()[0][3])
@@ -251,7 +251,7 @@ PARTITION BY RANGE ( a ) (
 	require.Equal(t, 3, len(p0.GetCol(tableInfo.Columns[0].ID).Buckets))
 	rs = tk.MustQuery("select sample_rate,buckets,topn,column_choice,column_ids from mysql.analyze_options where table_id=" + strconv.FormatInt(p0.PhysicalID, 10))
 	require.Equal(t, 1, len(rs.Rows()))
-	require.Equal(t, "0", rs.Rows()[0][0])
+	require.Equal(t, "-1", rs.Rows()[0][0])
 	require.Equal(t, "3", rs.Rows()[0][1])
 	require.Equal(t, "0", rs.Rows()[0][2])
 	require.Equal(t, "LIST", rs.Rows()[0][3])
@@ -270,14 +270,14 @@ PARTITION BY RANGE ( a ) (
 	require.Equal(t, 2, len(p2.GetCol(tableInfo.Columns[0].ID).Buckets))
 	rs = tk.MustQuery("select sample_rate,buckets,topn,column_choice,column_ids from mysql.analyze_options where table_id=" + strconv.FormatInt(p2.PhysicalID, 10))
 	require.Equal(t, 1, len(rs.Rows()))
-	require.Equal(t, "0", rs.Rows()[0][0])
+	require.Equal(t, "-1", rs.Rows()[0][0])
 	require.Equal(t, "2", rs.Rows()[0][1])
 	require.Equal(t, "0", rs.Rows()[0][2])
 	require.Equal(t, "LIST", rs.Rows()[0][3])
 	require.Equal(t, colIDStrsAB, rs.Rows()[0][4])
 	rs = tk.MustQuery("select sample_rate,buckets,topn,column_choice,column_ids from mysql.analyze_options where table_id=" + strconv.FormatInt(tableInfo.ID, 10))
 	require.Equal(t, 1, len(rs.Rows()))
-	require.Equal(t, "0", rs.Rows()[0][0])
+	require.Equal(t, "-1", rs.Rows()[0][0])
 	require.Equal(t, "2", rs.Rows()[0][1])
 	require.Equal(t, "0", rs.Rows()[0][2])
 	require.Equal(t, "LIST", rs.Rows()[0][3])
@@ -462,4 +462,216 @@ func TestSavedAnalyzeColumnOptions(t *testing.T) {
 	require.Equal(t, lastVersion, tblStats.GetCol(tblInfo.Columns[1].ID).LastUpdateVersion)
 	require.Equal(t, lastVersion, tblStats.GetCol(tblInfo.Columns[2].ID).LastUpdateVersion)
 	tk.MustQuery(fmt.Sprintf("select column_choice, column_ids from mysql.analyze_options where table_id = %v", tblInfo.ID)).Check(testkit.Rows("ALL "))
+}
+
+// TestAnalyzeWithDefaultResetsSavedOptions tests ANALYZE ... WITH DEFAULT <option>,
+// which resets a persisted analyze option so that it follows the system default
+// again, both for the current run and for later analyzes.
+// See https://github.com/pingcap/tidb/issues/69853
+func TestAnalyzeWithDefaultResetsSavedOptions(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	originalVal1 := tk.MustQuery("select @@tidb_persist_analyze_options").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_persist_analyze_options = %v", originalVal1))
+	}()
+	tk.MustExec("set global tidb_persist_analyze_options = true")
+	originalVal2 := tk.MustQuery("select @@tidb_analyze_default_num_buckets").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_analyze_default_num_buckets = %v", originalVal2))
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
+	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 20000") // to stabilise test
+	tk.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
+	tk.MustExec("insert into t values (1,1,1),(2,1,2),(3,1,3),(4,2,4),(5,2,5),(6,2,6),(7,3,7),(8,3,8),(9,3,9),(10,10,10),(11,11,11),(12,12,12)")
+
+	h := dom.StatsHandle()
+	is := dom.InfoSchema()
+	table, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := table.Meta()
+	optsQuery := fmt.Sprintf("select sample_num,sample_rate,buckets,topn,column_choice from mysql.analyze_options where table_id = %d", tableInfo.ID)
+	loadStats := func() *statistics.Table {
+		tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1")
+		require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
+		return h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
+	}
+	hasAdaptiveSampleRateNote := func() bool {
+		for _, row := range tk.MustQuery("show warnings").Rows() {
+			if strings.Contains(fmt.Sprintf("%v", row[2]), "auto adjusted sample rate") {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Pin all four persisted numeric options. 100000 samples covers all rows, so
+	// the sample set is deterministic.
+	tk.MustExec("analyze table t all columns with 2 buckets, 1 topn, 100000 samples")
+	require.False(t, hasAdaptiveSampleRateNote())
+	tk.MustQuery(optsQuery).Check(testkit.Rows("100000 -1 2 1 ALL"))
+	tbl := loadStats()
+	require.Equal(t, 2, len(tbl.GetCol(tableInfo.Columns[0].ID).Buckets))
+	require.Equal(t, 1, len(tbl.GetCol(tableInfo.Columns[1].ID).TopN.TopN))
+
+	// WITH DEFAULT BUCKETS resets only the bucket option: the current run uses
+	// the system default and the persisted field is cleared, other options are kept.
+	tk.MustExec("analyze table t with default buckets")
+	tk.MustQuery(optsQuery).Check(testkit.Rows("100000 -1 0 1 ALL"))
+	tbl = loadStats()
+	require.Greater(t, len(tbl.GetCol(tableInfo.Columns[0].ID).Buckets), 2)
+
+	// After the reset, later analyzes follow tidb_analyze_default_num_buckets again.
+	tk.MustExec("set global tidb_analyze_default_num_buckets = 3")
+	tk.MustExec("analyze table t")
+	tk.MustQuery(optsQuery).Check(testkit.Rows("100000 -1 0 1 ALL"))
+	tbl = loadStats()
+	require.Equal(t, 3, len(tbl.GetCol(tableInfo.Columns[0].ID).Buckets))
+
+	// TOPN 0 is a pinned value that disables TopN collection, not a reset: it
+	// persists as 0, which is distinct from the -1 that means unset. This is why
+	// no literal can express a reset for TOPN and DEFAULT is needed.
+	tk.MustExec("analyze table t with 0 topn")
+	tk.MustQuery(optsQuery).Check(testkit.Rows("100000 -1 0 0 ALL"))
+	tbl = loadStats()
+	require.Nil(t, tbl.GetCol(tableInfo.Columns[1].ID).TopN)
+
+	// A later plain analyze keeps following the pinned 0 rather than the default.
+	tk.MustExec("analyze table t")
+	tk.MustQuery(optsQuery).Check(testkit.Rows("100000 -1 0 0 ALL"))
+	tbl = loadStats()
+	require.Nil(t, tbl.GetCol(tableInfo.Columns[1].ID).TopN)
+
+	// WITH DEFAULT TOPN clears the persisted topn (-1 means unset).
+	tk.MustExec("analyze table t with default topn")
+	tk.MustQuery(optsQuery).Check(testkit.Rows("100000 -1 0 -1 ALL"))
+	tbl = loadStats()
+	require.Greater(t, len(tbl.GetCol(tableInfo.Columns[1].ID).TopN.TopN), 1)
+
+	// Switch from a fixed sample num back to a sample rate, the motivating
+	// example from the issue.
+	tk.MustExec("analyze table t with default samples, 1 samplerate")
+	require.False(t, hasAdaptiveSampleRateNote())
+	tk.MustQuery(optsQuery).Check(testkit.Rows("0 1 0 -1 ALL"))
+
+	// WITH DEFAULT SAMPLERATE returns to adaptive sampling: the run logs the
+	// auto adjusted sample rate note and the persisted field is cleared.
+	tk.MustExec("analyze table t with default samplerate")
+	require.True(t, hasAdaptiveSampleRateNote())
+	tk.MustQuery(optsQuery).Check(testkit.Rows("0 -1 0 -1 ALL"))
+
+	// A plain analyze keeps everything unset and still follows the defaults.
+	tk.MustExec("analyze table t")
+	require.True(t, hasAdaptiveSampleRateNote())
+	tk.MustQuery(optsQuery).Check(testkit.Rows("0 -1 0 -1 ALL"))
+
+	// With persistence off there is no saved value to reset, so DEFAULT only
+	// means "use the system default for this run": it is accepted, the run
+	// follows tidb_analyze_default_num_buckets, and the persisted row that an
+	// earlier analyze wrote is left untouched rather than cleared.
+	tk.MustExec("analyze table t all columns with 2 buckets")
+	tk.MustQuery(optsQuery).Check(testkit.Rows("0 -1 2 -1 ALL"))
+	tk.MustExec("set global tidb_persist_analyze_options = false")
+	tk.MustExec("analyze table t all columns with default buckets")
+	tk.MustQuery(optsQuery).Check(testkit.Rows("0 -1 2 -1 ALL"))
+	tbl = loadStats()
+	require.Equal(t, 3, len(tbl.GetCol(tableInfo.Columns[0].ID).Buckets))
+}
+
+// TestAnalyzeWithDefaultResetsPartitionOptions tests the partition semantics of
+// ANALYZE ... WITH DEFAULT <option>: a partition-level reset drops only that
+// partition's own persisted value, so the partition immediately follows the
+// table-level saved value again if one exists, otherwise the system default.
+// A whole-table reset clears the table row and all partition rows. In dynamic
+// prune mode a partition-level DEFAULT is ignored like other options.
+// See https://github.com/pingcap/tidb/issues/69853
+func TestAnalyzeWithDefaultResetsPartitionOptions(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	originalVal := tk.MustQuery("select @@tidb_persist_analyze_options").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_persist_analyze_options = %v", originalVal))
+	}()
+	tk.MustExec("set global tidb_persist_analyze_options = true")
+
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
+	tk.MustExec(`create table t (a int, b int, primary key(a), key idx(b))
+partition by range (a) (
+	partition p0 values less than (10),
+	partition p1 values less than (20)
+)`)
+	tk.MustExec("insert into t values (1,1),(2,1),(3,1),(4,2),(5,2),(6,2),(7,7),(8,8),(9,9),(10,10),(11,11),(12,12),(13,13),(14,14)")
+
+	h := dom.StatsHandle()
+	is := dom.InfoSchema()
+	table, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := table.Meta()
+	pi := tableInfo.GetPartitionInfo()
+	require.NotNil(t, pi)
+	p0ID := pi.Definitions[0].ID
+	p1ID := pi.Definitions[1].ID
+	optsFor := func(id int64) *testkit.Result {
+		return tk.MustQuery(fmt.Sprintf("select buckets,topn from mysql.analyze_options where table_id = %d", id))
+	}
+	p0Buckets := func() int {
+		p0 := h.GetPhysicalTableStats(p0ID, tableInfo)
+		return len(p0.GetCol(tableInfo.Columns[0].ID).Buckets)
+	}
+
+	// Pin table-level options: the table row and both partition rows are saved.
+	tk.MustExec("analyze table t with 2 buckets, 1 topn")
+	optsFor(tableInfo.ID).Check(testkit.Rows("2 1"))
+	optsFor(p0ID).Check(testkit.Rows("2 1"))
+	optsFor(p1ID).Check(testkit.Rows("2 1"))
+	require.Equal(t, 2, p0Buckets())
+
+	// Pin a partition-level override on p0.
+	tk.MustExec("analyze table t partition p0 with 3 buckets")
+	optsFor(tableInfo.ID).Check(testkit.Rows("2 1"))
+	optsFor(p0ID).Check(testkit.Rows("3 1"))
+	require.Equal(t, 3, p0Buckets())
+
+	// A partition-level reset drops only p0's override: the run immediately
+	// follows the table-level saved value again, which is re-materialized into
+	// p0's row; the table row and other partitions are untouched.
+	tk.MustExec("analyze table t partition p0 with default buckets")
+	optsFor(tableInfo.ID).Check(testkit.Rows("2 1"))
+	optsFor(p0ID).Check(testkit.Rows("2 1"))
+	optsFor(p1ID).Check(testkit.Rows("2 1"))
+	require.Equal(t, 2, p0Buckets())
+
+	// A whole-table reset clears the field on the table row and all partition rows.
+	tk.MustExec("analyze table t with default buckets")
+	optsFor(tableInfo.ID).Check(testkit.Rows("0 1"))
+	optsFor(p0ID).Check(testkit.Rows("0 1"))
+	optsFor(p1ID).Check(testkit.Rows("0 1"))
+	require.Greater(t, p0Buckets(), 3)
+
+	// With no table-level saved value, a partition-level reset falls back to
+	// the system default.
+	tk.MustExec("analyze table t partition p0 with 3 buckets")
+	optsFor(p0ID).Check(testkit.Rows("3 1"))
+	require.Equal(t, 3, p0Buckets())
+	tk.MustExec("analyze table t partition p0 with default buckets")
+	optsFor(tableInfo.ID).Check(testkit.Rows("0 1"))
+	optsFor(p0ID).Check(testkit.Rows("0 1"))
+	require.Greater(t, p0Buckets(), 3)
+
+	// In dynamic prune mode a partition-level DEFAULT is ignored with the same
+	// warning as other options, and nothing is cleared.
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("analyze table t partition p0 with default topn")
+	ignoreWarningFound := false
+	for _, row := range tk.MustQuery("show warnings").Rows() {
+		if strings.Contains(fmt.Sprintf("%v", row[2]), "Ignore columns and options when analyze partition in dynamic mode") {
+			ignoreWarningFound = true
+		}
+	}
+	require.True(t, ignoreWarningFound)
+	optsFor(tableInfo.ID).Check(testkit.Rows("0 1"))
 }
