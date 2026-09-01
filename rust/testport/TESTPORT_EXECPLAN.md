@@ -1385,6 +1385,13 @@ For each bounded behavior cluster:
       source-shaped regressions. The Go package, seven filtered Rust owner
       tests, and Rust formatting check pass; details are in
       `receipts/keyspace_audit.md`.
+- 2026-09-01: audited all four Go-master `pkg/config/deploymode` artifacts
+      (319 lines, 11 production function/method declarations, and three
+      tests), including the package contract, Bazel target, and all encoding
+      paths. The existing `tidb-config::deploymode` owner already preserves
+      mode state, kernel gating, parsing, validation, JSON/TOML behavior, and
+      source error strings; the Go package and three filtered Rust owner tests
+      pass. Details are in `receipts/config_deploymode_audit.md`.
 - [ ] Run Ready validation and self-review only when the requested parity scope
       is genuinely complete enough for a final-status claim.
 
@@ -1848,6 +1855,12 @@ For each bounded behavior cluster:
   logger. These are carrier adaptations of source behavior; adding a fake
   client or a second logger core would be Rust-only policy, so no such path is
   added. Date/Author: 2026-09-01, Codex.
+- Decision: keep `tidb-config::deploymode` as the complete owner for Go's
+  `pkg/config/deploymode`. Rust's `Mode` and Serde traits are the native
+  representation of Go's integer/JSON/TOML interfaces, while the same atomic
+  process-wide state and NextGen gate remain the only runtime policy. Do not
+  add a second configuration parser or a synthetic setter restriction that
+  the Go implementation does not enforce. Date/Author: 2026-09-01, Codex.
 
 ## Outcomes & Retrospective
 
