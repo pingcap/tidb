@@ -56,6 +56,13 @@ For each bounded behavior cluster:
   Go-only boundary is recorded in `receipts/util_mock.md` and no speculative
   Rust mock framework was added.
 
+- 2026-09-01: audited all ten current Go-master `pkg/util/schemacmp`
+  artifacts (3,293 lines), including charset/collation, lattice, table/type
+  production files, all nine source tests, and Bazel metadata. The existing
+  `tidb-schemacmp` crate is dependency-closed and its aggregate harness passes
+  all nine source tests; the complete inventory and current-master parity
+  receipt are recorded in `receipts/util_schemacmp.md`.
+
 - 2026-09-01: revalidated the complete ten-artifact `pkg/util/table-filter`
   package against current Go master. The concrete `ColumnFilterRules` API,
   ASCII regexp authority, source test rows, and Rust consumer wiring are
@@ -1927,6 +1934,11 @@ For each bounded behavior cluster:
   dependency-closed Rust port; crate-local mocks are not substitutes and a
   shared Rust framework would be Rust-only behavior. Date/Author: 2026-09-01,
   Codex.
+- Decision: retain `tidb-schemacmp` as the sole owner of the complete
+  `pkg/util/schemacmp` package. Its lattice, metadata encoding, restore, and
+  parser/model joins are dependency-closed and the nine source tests pass;
+  no duplicate Rust-only schema comparator is needed. Date/Author:
+  2026-09-01, Codex.
 - Decision: preserve the Rust planner-error declaration table and its
   all-prototype initialization guard. Go package initialization registers all
   98 entries, while Go's only explicit test checks 59; the Rust guard is the
