@@ -41,6 +41,16 @@ For each bounded behavior cluster:
 ## Progress
 
 - 2026-09-01: audited the complete Go-master
+  `pkg/executor/internal/testutil` package (six artifacts, 909 lines),
+  including all aggregate/limit/sort/window defaults, mock physical-plan and
+  data-source helpers, typed random chunk generation, OOM-action probe, and
+  internal Bazel target. The package has no Go tests and is only test/benchmark
+  scaffolding; Rust constructs chunk and planner fixtures directly. Recorded
+  the explicit boundary in
+  `receipts/executor_internal_testutil.md` without creating a compatibility
+  API for uncalled test helpers.
+
+- 2026-09-01: audited the complete Go-master
   `pkg/executor/internal/querywatch` package (four artifacts, 542 lines),
   including query-watch production logic, failpoint/goleak harness, all
   exact/similar/plan/drop tests, and the two-shard Bazel target. Rust has the
