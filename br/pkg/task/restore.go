@@ -75,6 +75,8 @@ const (
 
 	FlagResetSysUsers = "reset-sys-users"
 
+	FlagSysCheckCollation = "sys-check-collation"
+
 	defaultPiTRBatchCount     = 8
 	defaultPiTRBatchSize      = 16 * 1024 * 1024
 	defaultRestoreConcurrency = 128
@@ -109,6 +111,8 @@ type RestoreCommonConfig struct {
 	WithSysTable bool `json:"with-sys-table" toml:"with-sys-table"`
 
 	ResetSysUsers []string `json:"reset-sys-users" toml:"reset-sys-users"`
+
+	SysCheckCollation bool `json:"sys-check-collation" toml:"sys-check-collation"`
 }
 
 // adjust adjusts the abnormal config value in the current config.
@@ -237,6 +241,15 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(flagUseCheckpoint)
 
 	flags.Bool(FlagWaitTiFlashReady, false, "whether wait tiflash replica ready if tiflash exists")
+<<<<<<< HEAD
+=======
+	flags.Bool(flagAllowPITRFromIncremental, true, "whether make incremental restore compatible with later log restore"+
+		" default is true, the incremental restore will not perform rewrite on the incremental data"+
+		" meanwhile the incremental restore will not allow to restore 3 backfilled type ddl jobs,"+
+		" these ddl jobs are Add index, Modify column and Reorganize partition")
+	flags.Bool(FlagSysCheckCollation, false, "whether check the privileges table rows to permit to restore the privilege data"+
+		" from utf8mb4_bin collate column to utf8mb4_general_ci collate column")
+>>>>>>> 0cb39391dce (br: support restore privileges tables from v6.5 to v7.5 (#64668))
 
 	DefineRestoreCommonFlags(flags)
 }
@@ -349,6 +362,17 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", FlagWaitTiFlashReady)
 	}
+<<<<<<< HEAD
+=======
+	cfg.SysCheckCollation, err = flags.GetBool(FlagSysCheckCollation)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag %s", FlagSysCheckCollation)
+	}
+	cfg.AllowPITRFromIncremental, err = flags.GetBool(flagAllowPITRFromIncremental)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag %s", flagAllowPITRFromIncremental)
+	}
+>>>>>>> 0cb39391dce (br: support restore privileges tables from v6.5 to v7.5 (#64668))
 
 	if flags.Lookup(flagFullBackupType) != nil {
 		// for restore full only
@@ -491,6 +515,7 @@ func configureRestoreClient(ctx context.Context, client *restore.Client, cfg *Re
 	client.SetBatchDdlSize(cfg.DdlBatchSize)
 	client.SetPlacementPolicyMode(cfg.WithPlacementPolicy)
 	client.SetWithSysTable(cfg.WithSysTable)
+<<<<<<< HEAD
 
 	err := restore.CheckKeyspaceBREnable(ctx, client.GetPDClient())
 	if err != nil {
@@ -505,6 +530,10 @@ func configureRestoreClient(ctx context.Context, client *restore.Client, cfg *Re
 		return errors.Trace(err)
 	}
 
+=======
+	client.SetRewriteMode(ctx)
+	client.SetCheckPrivilegeTableRowsCollateCompatiblity(cfg.SysCheckCollation)
+>>>>>>> 0cb39391dce (br: support restore privileges tables from v6.5 to v7.5 (#64668))
 	return nil
 }
 
@@ -739,6 +768,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Trace(err)
 	}
 
+<<<<<<< HEAD
 	if client.IsIncremental() {
 		// don't support checkpoint for the ddl restore
 		log.Info("the incremental snapshot restore doesn't support checkpoint mode, so unuse checkpoint.")
@@ -795,7 +825,16 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	if client.IsFull() && checkpointFirstRun && cfg.CheckRequirements {
 		if err := checkTableExistence(ctx, mgr, tables, g); err != nil {
 			schedulersRemovable = true
+=======
+	if client.IsFullClusterRestore() && client.HasBackedUpSysDB() {
+		canLoadSysTablePhysical, err := snapclient.CheckSysTableCompatibility(mgr.GetDomain(), tables, client.GetCheckPrivilegeTableRowsCollateCompatiblity())
+		if err != nil {
+>>>>>>> 0cb39391dce (br: support restore privileges tables from v6.5 to v7.5 (#64668))
 			return errors.Trace(err)
+		}
+		if loadSysTablePhysical && !canLoadSysTablePhysical {
+			log.Info("The system tables schema is not compatible. Fallback to logically load system tables.")
+			loadSysTablePhysical = false
 		}
 	}
 
