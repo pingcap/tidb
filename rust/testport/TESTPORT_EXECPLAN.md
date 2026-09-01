@@ -40,6 +40,16 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: audited the complete Go `pkg/util/dbterror/plannererrors`
+  package at `origin/master`
+  `db35d47066648fe73abce6318d53fc625df51490` against the Rust
+  `tidb-error::plannererrors` owner on `origin/hparser-integration`. The
+  package has exactly `planner_terror.go`, `errors_test.go`, and `BUILD.bazel`:
+  98 source prototypes and the exact 59-entry `TestError` are represented by
+  98 Rust statics, an all-entry initialization guard, and the source-derived
+  test. No source drift or missing behavior was found; the inventory and Ready
+  gates are recorded in `receipts/util_dbterror_plannererrors.md`.
+
 - 2026-09-01: audited the complete Go `pkg/util/dbterror/exeerrors` package at
   `origin/master` `db35d47066648fe73abce6318d53fc625df51490` against the Rust
   owner on `origin/hparser-integration`. The package has exactly `errors.go`
@@ -1102,6 +1112,15 @@ For each bounded behavior cluster:
       package compilation, the complete Rust fixture test, owner compilation,
       formatting, repository lint, and diff hygiene pass with the command-local
       toolchains recorded in `receipts/util_dbterror_exeerrors.md`.
+- [x] Audit the complete Go-master `pkg/util/dbterror/plannererrors` package,
+      confirm all 98 source prototypes and the 59-entry source test against the
+      Rust owner, and record the package receipt without inventing a duplicate
+      catalog or test.
+- [x] Run the Ready validation profile for
+      `pkg/util/dbterror/plannererrors`: Go source tests, both Rust owner tests,
+      owner compilation, formatting, repository lint, and diff hygiene pass
+      with the command-local toolchains recorded in
+      `receipts/util_dbterror_plannererrors.md`.
 - [ ] Audit the next bounded package cluster by reading the requested Go
       `origin/master` first, then fill executable gaps and remove false
       carriers.
@@ -1110,6 +1129,13 @@ For each bounded behavior cluster:
 
 ## Decision Log
 
+- Decision: preserve the Rust planner-error declaration table and its
+  all-prototype initialization guard. Go package initialization registers all
+  98 entries, while Go's only explicit test checks 59; the Rust guard is the
+  executable equivalent of validating the remaining initializers and is not a
+  Rust-only runtime policy. Keep `ErrAccessDenied`'s isolated special-message
+  initializer even though its static is declared last. Date/Author:
+  2026-09-01, Codex.
 - Decision: Go master's three dual-password executor errors require no Rust
   edit because the requested hparser branch already owns and fixture-checks
   them. Preserve the complete generated fixture as source evidence and avoid a
@@ -1373,6 +1399,10 @@ For each bounded behavior cluster:
   `pkg/util/dbterror/exeerrors` after the Rust package had already generated
   the same complete 82-entry catalog. Source chronology alone therefore
   suggested a gap, but declaration/static/fixture comparison showed none.
+- The planner-error owner has 98 entries while Go's source test names only 59;
+  the remaining 39 are still behaviorally required because Go constructs and
+  registers every package-level variable during initialization. Rust's
+  all-entry forcing test makes that otherwise-lazy initialization observable.
 
 ## Outcomes & Retrospective
 
@@ -1382,6 +1412,8 @@ tests, lexer tests, funcdep graph tests, and the complete pinned kvcache test
 surface. The 2026-09-01 rolling Go-master plancodec batch also restores
 Analyze physical ID 64 and passes its Go/Rust owner and consumer gates. The
 following `pkg/util/dbterror/exeerrors` audit certifies the already-aligned
-82-entry catalog without changing execution behavior. The final outcome must
-list exact files and commands, remaining unverified packages, and correctness,
-compatibility, and performance risks without claiming repository-wide parity.
+82-entry catalog without changing execution behavior. The plannererrors audit
+similarly certifies all 98 prototypes and the source test without changing
+execution behavior. The final outcome must list exact files and commands,
+remaining unverified packages, and correctness, compatibility, and performance
+risks without claiming repository-wide parity.
