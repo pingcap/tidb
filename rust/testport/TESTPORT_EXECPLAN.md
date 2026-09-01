@@ -233,6 +233,18 @@ For each bounded behavior cluster:
   `rust/docs/operations/dxf-importinto-jobhistory-audit-execplan.md`.
 
 - 2026-09-01: audited the complete Go-master
+  `pkg/dxf/importinto/conflictedkv` package: 11 tracked artifacts and 2,667
+  lines covering its package contract, BUILD target, duplicate-KV collection,
+  checksum and conflict-row file limits, data/index re-encoding, keyspace
+  codecs, snapshot traffic, transactional deletion, retry/backoff, filters,
+  failpoints, and all nine top-level tests with nested cases. The exact
+  failpoint-enabled Go-master suite passed. Rust owns adjacent DXF step labels
+  and generic DML conflict logic but has no dependency-closed ImportInto
+  collect/resolve pipeline, so no speculative facade was added. Recorded the
+  explicit boundary in `receipts/dxf_importinto_conflictedkv.md` and
+  `rust/docs/operations/dxf-importinto-conflictedkv-audit-execplan.md`.
+
+- 2026-09-01: audited the complete Go-master
   `pkg/session/test/nontransactionaltest` package before editing: three
   tracked artifacts and 614 lines covering six batch-DML behavior tests, the
   shard-composition helper, failpoint/goleak harness, and six-shard flaky
