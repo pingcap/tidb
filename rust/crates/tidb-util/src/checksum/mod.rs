@@ -86,7 +86,6 @@ where
     W: CloseWrite,
 {
     /// Creates a checksum writer over `underlying`.
-    #[must_use]
     pub fn new(underlying: W) -> Self {
         Self {
             error: None,
@@ -98,13 +97,11 @@ where
     }
 
     /// Returns unused logical payload bytes in the current block.
-    #[must_use]
     pub const fn available_size(&self) -> usize {
         CHECKSUM_PAYLOAD_SIZE - self.payload_used
     }
 
     /// Returns buffered logical payload bytes.
-    #[must_use]
     pub const fn buffered(&self) -> usize {
         self.payload_used
     }
@@ -141,13 +138,11 @@ where
     }
 
     /// Returns logical payload not yet flushed.
-    #[must_use]
     pub fn get_cache(&self) -> &[u8] {
         &self.buffer[CHECKSUM_SIZE..CHECKSUM_SIZE + self.payload_used]
     }
 
     /// Returns the logical offset of the cached payload.
-    #[must_use]
     pub const fn get_cache_data_offset(&self) -> i64 {
         self.flushed_user_data_count
     }
@@ -216,7 +211,6 @@ where
     R: ReadAt,
 {
     /// Creates a checksum reader over `underlying`.
-    #[must_use]
     pub const fn new(underlying: R) -> Self {
         Self { underlying }
     }
@@ -739,5 +733,17 @@ mod tests {
         assert_eq!(result.n, 1020);
         assert!(result.error.is_none());
         assert_eq!(read, data);
+    }
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn TestReturnValuesMayBeIgnoredLikeGo() {
+        Writer::new(MemoryFile::default());
+        let writer = Writer::new(MemoryFile::default());
+        writer.available_size();
+        writer.buffered();
+        writer.get_cache();
+        writer.get_cache_data_offset();
+        Reader::new(MemoryFile::default());
     }
 }

@@ -40,6 +40,20 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: fixed the remaining Rust-only return diagnostics in the
+  complete Go-master `pkg/util/checksum` owner. The package has four tracked
+  artifacts and 786 lines at `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`,
+  including ten source tests, with no fixtures, generated/platform Go
+  variants, benchmarks, fuzz targets, or nested packages. The prior
+  Rust-only `Writer::underlying` accessor remains removed; six explicit
+  `#[must_use]` annotations were also removed. Added
+  `TestReturnValuesMayBeIgnoredLikeGo`, which failed before the fix with six
+  lint errors and passes afterward. Current and exact detached Go tests, all
+  eleven Rust owner tests, encrypted spill consumer checks, formatting, diff
+  checks, and the pinned detached `make lint` gate pass. Updated
+  `receipts/util_checksum.md` and added the Ready plan at
+  `docs/operations/util-checksum-audit-execplan.md`.
+
 - 2026-09-02: refreshed the complete Go-master `pkg/util/cpu` inventory at
   `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: four tracked artifacts, 308
   lines, the usage observer/CPU-count production surface, two source tests,
