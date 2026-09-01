@@ -2288,13 +2288,13 @@ For each bounded behavior cluster:
   safe-TS filtering, grouping, messages, and source logging. The single source
   test identity covers both upstream subtests. Complete inventory and WIP
   gates are recorded in `receipts/util_cdcutil.md`.
-- 2026-09-01: refreshed the complete `pkg/util/cdcutil` inventory against
-  current Go master (`0bc44483e3e41a8ea917d4382dc202369468d200`). All four
+- 2026-09-02: refreshed the complete `pkg/util/cdcutil` inventory against
+  current Go master (`c6054025ed4c32ab3672a2a24ea46892714d21ec`). All four
   artifacts and 489 textual lines are unchanged; the `tidb-domain::cdcutil`
   owner and embedded-etcd source matrix still cover both key generations,
-  checkpoint/state rules, grouping, and message output. The receipt now
-  records current hashes and environment-qualified validation; BR/Lightning/
-  executor composition roots remain outside this package claim.
+  checkpoint/state rules, grouping, and message output. The receipt and
+  package ExecPlan now record current authority and Ready validation;
+  BR/Lightning/executor composition roots remain outside this package claim.
 - 2026-08-29: completed the pinned Go `pkg/util/resourcegrouptag` package
   (one production file, one source test, one test harness, and `BUILD.bazel`).
   Split its decoder, label classifier, and first-key extraction out of the
@@ -4597,6 +4597,10 @@ For each bounded behavior cluster:
   TLS, load-data, DDL, metrics, and failpoint scenarios. It remains an explicit
   Go testkit/server lifecycle boundary because no dependency-closed Rust
   integration harness exists.
+- `pkg/server/handler/ttlhandler` is byte-identical to Go master across two
+  artifacts and 92 lines. Its POST-only HTTP endpoint depends on the Go router,
+  session domain, and TTL command client; no dependency-closed Rust HTTP owner
+  exists, so no speculative facade was added.
 
 ## Outcomes & Retrospective
 
