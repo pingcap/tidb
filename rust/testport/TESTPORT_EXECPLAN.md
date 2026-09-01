@@ -245,6 +245,17 @@ For each bounded behavior cluster:
   `rust/docs/operations/dxf-importinto-conflictedkv-audit-execplan.md`.
 
 - 2026-09-01: audited the complete Go-master
+  `pkg/dxf/importinto/mock` package: two tracked artifacts and 74 lines,
+  consisting of the public Bazel target and the complete MockGen
+  `MiniTaskExecutor` recorder. It has no tests, fixtures, platform variants,
+  or generator inputs beyond the generated source. Rust's existing test mocks
+  implement unrelated traits and has no dependency-closed ImportInto writer /
+  collector seam, so no speculative Rust mock or Rust-only behavior was
+  introduced. Recorded the explicit generated-support boundary in
+  `receipts/dxf_importinto_mock.md` and
+  `rust/docs/operations/dxf-importinto-mock-audit-execplan.md`.
+
+- 2026-09-01: audited the complete Go-master
   `pkg/session/test/nontransactionaltest` package before editing: three
   tracked artifacts and 614 lines covering six batch-DML behavior tests, the
   shard-composition helper, failpoint/goleak harness, and six-shard flaky
