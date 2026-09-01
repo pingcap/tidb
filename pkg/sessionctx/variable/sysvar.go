@@ -1419,7 +1419,7 @@ var defaultSysVars = []*SysVar{
 		s.EnablePreparedPlanCache = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanCacheDMLParamTypeMatch, Value: Off, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanCacheDMLParamTypeMatch, Value: On, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnablePlanCacheDMLParamTypeMatch = TiDBOptOn(val)
 		return nil
 	}},

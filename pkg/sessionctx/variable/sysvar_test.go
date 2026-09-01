@@ -673,7 +673,7 @@ func TestPlanCacheDMLParamTypeMatchSysVar(t *testing.T) {
 	require.True(t, sv.HasGlobalScope())
 	require.True(t, sv.HasSessionScope())
 	require.Equal(t, TypeBool, sv.Type)
-	require.Equal(t, Off, sv.Value)
+	require.Equal(t, On, sv.Value)
 	require.False(t, sv.ReadOnly)
 
 	vars := NewSessionVars(nil)

@@ -70,21 +70,21 @@ func TestPlanCacheDMLParamTypeMatchGlobalSessionSemantics(t *testing.T) {
 	admin := testkit.NewTestKit(t, store)
 	existing := testkit.NewTestKit(t, store)
 	const name = "tidb_enable_plan_cache_dml_param_type_match"
-	defer admin.MustExec("set global " + name + "=OFF")
+	defer admin.MustExec("set global " + name + "=ON")
 
-	admin.MustQuery("select @@global." + name).Check(testkit.Rows("0"))
-	existing.MustQuery("select @@session." + name).Check(testkit.Rows("0"))
-	admin.MustExec("set global " + name + "=ON")
-	admin.MustQuery("show global variables like '" + name + "'").Check(testkit.Rows(name + " ON"))
-	existing.MustQuery("select @@global." + name + ", @@session." + name).Check(testkit.Rows("1 0"))
+	admin.MustQuery("select @@global." + name).Check(testkit.Rows("1"))
+	existing.MustQuery("select @@session." + name).Check(testkit.Rows("1"))
+	admin.MustExec("set global " + name + "=OFF")
+	admin.MustQuery("show global variables like '" + name + "'").Check(testkit.Rows(name + " OFF"))
+	existing.MustQuery("select @@global." + name + ", @@session." + name).Check(testkit.Rows("0 1"))
 
 	inherited := testkit.NewTestKit(t, store)
-	inherited.MustQuery("select @@session." + name).Check(testkit.Rows("1"))
-	inherited.MustExec("set session " + name + "=OFF")
-	require.False(t, inherited.Session().GetSessionVars().EnablePlanCacheDMLParamTypeMatch)
-	inherited.MustQuery("show session variables like '" + name + "'").Check(testkit.Rows(name + " OFF"))
+	inherited.MustQuery("select @@session." + name).Check(testkit.Rows("0"))
 	inherited.MustExec("set session " + name + "=ON")
 	require.True(t, inherited.Session().GetSessionVars().EnablePlanCacheDMLParamTypeMatch)
+	inherited.MustQuery("show session variables like '" + name + "'").Check(testkit.Rows(name + " ON"))
+	inherited.MustExec("set session " + name + "=OFF")
+	require.False(t, inherited.Session().GetSessionVars().EnablePlanCacheDMLParamTypeMatch)
 	for _, sql := range []string{
 		"set session " + name + "=2",
 		"set session " + name + "='invalid'",
