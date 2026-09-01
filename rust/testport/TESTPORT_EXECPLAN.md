@@ -40,6 +40,14 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: audited all nine current Go-master `pkg/telemetry` artifacts
+  (2,190 lines), including the complete feature/TTL/window production code,
+  26 SQL/counter/failpoint tests, goleak harness, and Bazel dependencies.
+  Rust currently has only configuration/bootstrap and planner-classification
+  fragments, not the dependency-closed session/domain/metrics/report owner;
+  the package is recorded as an explicit boundary in
+  `receipts/telemetry.md` without inventing a reporting path.
+
 - 2026-09-01: audited the complete `pkg/lock` and nested
   `pkg/lock/context` Go-master boundaries (five tracked Go/Bazel artifacts,
   232 source/support lines, no tests or fixtures). The parent checker and
