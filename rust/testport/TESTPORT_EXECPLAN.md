@@ -246,7 +246,7 @@ For each bounded behavior cluster:
   `docs/operations/util-size-audit-execplan.md`.
 
 - 2026-09-02: refreshed the complete Go-master `pkg/util/tikvutil` inventory
-  at `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: two tracked artifacts, 31
+  at `c6054025ed4c32ab3672a2a24ea46892714d21ec`: two tracked artifacts, 31
   lines, one exported atomic setting, and no tests, fixtures, generated or
   platform variants, or nested packages. Traced all Go config, GLOBAL sysvar,
   and upgrade consumers and confirmed the existing Rust atomic/config/session

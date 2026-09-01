@@ -8,7 +8,7 @@ aligned with its Rust owner and every configuration/session consumer.
 ## Progress
 
 - [x] Read both Go-master artifacts at
-  `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: `BUILD.bazel` and
+  `c6054025ed4c32ab3672a2a24ea46892714d21ec`: `BUILD.bazel` and
   `tikvutil.go` (31 lines total; one exported atomic setting).
 - [x] Confirm there are no package docs, tests, fixtures, generated/platform
   variants, benchmarks, fuzz targets, or nested packages.
@@ -19,7 +19,7 @@ aligned with its Rust owner and every configuration/session consumer.
   behavior remains.
 - [x] Revalidate current and exact detached Go-master package checks, the Rust
   owner/config/session checks, formatting, and diff quality.
-- [ ] Commit, push, pull, and verify `origin/hparser-integration`.
+- [x] Commit, push, pull, and verify `origin/hparser-integration`.
 
 ## Validation gate
 
