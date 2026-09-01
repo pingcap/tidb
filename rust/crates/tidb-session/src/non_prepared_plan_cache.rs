@@ -785,11 +785,11 @@ impl crate::Session {
     }
 
     fn non_prepared_plan_cache_allowed(&self, statement: &Stmt) -> bool {
-        let hints = crate::variables::statement_hints(statement).unwrap_or_default();
-        if hints
-            .iter()
-            .any(|hint| hint.name.eq_ignore_ascii_case("IGNORE_PLAN_CACHE"))
-        {
+        let hints = crate::variables::parse_statement_hints_without_catalog(
+            statement,
+            self.current_database(),
+        );
+        if hints.ignore_plan_cache {
             return false;
         }
         let hint_only = self
@@ -800,10 +800,7 @@ impl crate::Session {
                     tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_STRATEGY_HINT_ONLY,
                 )
             });
-        !hint_only
-            || hints
-                .iter()
-                .any(|hint| hint.name.eq_ignore_ascii_case("USE_PLAN_CACHE"))
+        !hint_only || hints.use_plan_cache
     }
 
     fn non_prepared_plan_cache_capacity(&self) -> usize {

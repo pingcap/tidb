@@ -280,9 +280,21 @@ fn statement_set_var_is_first_wins_warns_on_invalid_and_covers_dml() {
         )),
         [["1"]]
     );
-    assert!(
-        row_text(session.run("SHOW WARNINGS")).is_empty(),
-        "the deferred unknown-name warning must not become a false duplicate 3126"
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        [
+            [
+                "Warning",
+                "3128",
+                "Unresolved name 'no_such_fix_variable' for SET_VAR hint"
+            ],
+            [
+                "Warning",
+                "3128",
+                "Unresolved name 'no_such_fix_variable' for SET_VAR hint"
+            ]
+        ],
+        "Go validates each unknown name before duplicate detection"
     );
     assert_eq!(
         row_text(session.run(

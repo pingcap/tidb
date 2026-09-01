@@ -2215,6 +2215,7 @@ fn try_annotate_ordered_leading_anchor(
     anchor.internal_hint_info = Some(Rc::new(crate::plan_builder::from::JoinHints {
         tables: BTreeMap::new(),
         leading: Some(vec![tidb_ast::LeadingElement::Table(table)]),
+        ..crate::plan_builder::from::JoinHints::default()
     }));
     true
 }

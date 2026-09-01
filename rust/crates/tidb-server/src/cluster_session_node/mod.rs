@@ -6435,7 +6435,7 @@ impl QuerySession for ClusterServerSession {
         // a newly rebuilt, potentially multi-read plan.
         self.rebuild_catalog_if_stale();
         let resource_group = match effective {
-            Some(template) => self.session.statement_resource_group(template).to_owned(),
+            Some(template) => self.session.statement_resource_group(template).into_owned(),
             None => self
                 .session
                 .statement_resource_group_sql(statement.sql())

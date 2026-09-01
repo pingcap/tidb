@@ -58,9 +58,8 @@
 //!
 //! # Narrowings
 //!
-//! * **`hint.HintsSet` / `hint.BindHint`** resolve to [`crate::binding`]'s own
-//!   port of the same Go type, not to `pkg/util/hint` through `tidb-executor`.
-//!   Same function, closer at hand.
+//! * **`hint.HintsSet` / `hint.BindHint`** resolve to the canonical
+//!   [`tidb_hint`] package port rather than a session-owned copy.
 //! * **`RestoreDBForBinding` (`binding.go:464`)** is
 //!   [`crate::binding::restore_with_default_db`] -- already ported, reused
 //!   rather than duplicated. Go passes `node.Text()` so its `SimpleCases` fast

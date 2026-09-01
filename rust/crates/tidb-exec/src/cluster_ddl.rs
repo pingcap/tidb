@@ -3630,6 +3630,12 @@ fn apply_partition_change(
         .collect();
     let mut kv_table = KvTable::new(stored.id, kv_columns);
     kv_table.name = table.to_owned();
+    kv_table.set_tiflash_replica(
+        stored
+            .tiflash_replica
+            .as_ref()
+            .map(|replica| replica.read().clone()),
+    );
     kv_table.set_partition(spec);
     let mut catalog = Catalog::default();
     catalog.create_database(schema);

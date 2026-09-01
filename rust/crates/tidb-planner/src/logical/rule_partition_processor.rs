@@ -63,6 +63,8 @@ fn resolve_index_hints_for_partition(
         true,
         source.force_no_index_lookup_push_down,
         source.index_lookup_push_down_session,
+        source.tikv_in_isolation_read,
+        &source.isolation_read_engines_value,
     )?;
     source.enumerated_paths = resolution.paths;
     source.forced_index_ids = resolution.forced_index_ids;

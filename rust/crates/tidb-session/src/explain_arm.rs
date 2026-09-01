@@ -60,6 +60,9 @@ impl Session {
         // produces -- which is how TiDB's own `bindinfo` suite checks that a
         // binding took effect at all.
         let bound = self.bind_statement_hints(target);
+        if let Some(bound) = bound.as_ref() {
+            self.apply_set_var_hints(bound)?;
+        }
         let target = bound.as_ref().unwrap_or(target);
         self.activate_statement_resource_group(target);
         let current_db = self.current_db.clone();

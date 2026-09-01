@@ -53,20 +53,17 @@
 //!
 //! # What a match changes here
 //!
-//! The binding's hints replace the statement's. Table-level `USE`/`FORCE`/
-//! `IGNORE INDEX` are honoured by this tier's own access-path selection
-//! (`tidb_executor::index_hints`), so such a binding really does move the
-//! plan. `/*+ ... */` comment hints are inert in this tier whether they are
-//! written in the query or carried by a binding -- `report_comment_index_hints`
-//! only warns -- so a binding carrying them transfers them faithfully and
-//! changes nothing, exactly as writing them directly changes nothing. The gap
-//! is this tier's comment-hint coverage, not the binding.
+//! The binding's hints replace the statement's. Both table-level index hints
+//! and `/*+ ... */` optimizer hints then enter the same planner hint path as
+//! hints written directly in the statement.
 
 use std::any::Any;
 use std::collections::BTreeMap;
 
 use tidb_ast::{Stmt, Visitable as _, Visitor};
 use tidb_executor::DriverError;
+
+pub(crate) use tidb_hint::HintsSet;
 
 /// Go `utilparser.RestoreWithDefaultDB`: the statement's canonical text with
 /// every unqualified table name qualified by `default_db`. Delegates to the
@@ -99,87 +96,9 @@ pub(crate) fn no_db_digest(stmt: &Stmt) -> String {
     digest.as_str().to_owned()
 }
 
-/// Go's `hint.HintsSet`: the table-level optimizer hints of each statement
-/// block and the index hints of each table name, both in traversal order.
-///
-/// Two parallel lists rather than a tree because that is the whole trick:
-/// collecting from one statement and assigning to another in the SAME order
-/// transfers hints between two statements that differ only in literals.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub(crate) struct HintsSet {
-    table_hints: Vec<Vec<tidb_ast::Hint>>,
-    index_hints: Vec<Vec<tidb_ast::IndexHint>>,
-}
-
-/// Go's `hintProcessor`, both directions. `bind_to_ast` false collects
-/// (`CollectHint`), true assigns (`BindHint`).
-struct HintProcessor {
-    set: HintsSet,
-    bind_to_ast: bool,
-    table_counter: usize,
-    index_counter: usize,
-    block_counter: usize,
-}
-
-impl Visitor for HintProcessor {
-    fn enter(&mut self, node: &mut dyn Any) -> bool {
-        if let Some(select) = node.downcast_mut::<tidb_ast::SelectStmt>() {
-            if self.bind_to_ast {
-                select.hints = self
-                    .set
-                    .table_hints
-                    .get(self.table_counter)
-                    .cloned()
-                    .unwrap_or_default();
-                self.table_counter += 1;
-            } else {
-                self.set.table_hints.push(select.hints.clone());
-            }
-            self.block_counter += 1;
-            return false;
-        }
-        if let Some(table_ref) = node.downcast_mut::<tidb_ast::TableRef>() {
-            // Go's `hp.blockCounter == 0` guard: a table name reached outside
-            // any SELECT/UPDATE/DELETE block (an INSERT's target) is not an
-            // index-hint site and must not consume a slot.
-            if self.block_counter == 0 {
-                return false;
-            }
-            if self.bind_to_ast {
-                table_ref.hints = self
-                    .set
-                    .index_hints
-                    .get(self.index_counter)
-                    .cloned()
-                    .unwrap_or_default();
-                self.index_counter += 1;
-            } else {
-                self.set.index_hints.push(table_ref.hints.clone());
-            }
-        }
-        false
-    }
-
-    fn leave(&mut self, node: &mut dyn Any) -> bool {
-        if node.is::<tidb_ast::SelectStmt>() {
-            self.block_counter = self.block_counter.saturating_sub(1);
-        }
-        true
-    }
-}
-
 /// Go `hint.CollectHint`.
 pub(crate) fn collect_hints(stmt: &Stmt) -> HintsSet {
-    let mut stmt = stmt.clone();
-    let mut processor = HintProcessor {
-        set: HintsSet::default(),
-        bind_to_ast: false,
-        table_counter: 0,
-        index_counter: 0,
-        block_counter: 0,
-    };
-    stmt.accept(&mut processor);
-    processor.set
+    tidb_hint::collect_hint(stmt)
 }
 
 /// Go `hint.BindHint`: replaces the statement's hints with the set's, block
@@ -187,14 +106,7 @@ pub(crate) fn collect_hints(stmt: &Stmt) -> HintsSet {
 /// Go's `setTableHints4StmtNode(in, nil)` -- the binding decides every block's
 /// hints, not just the ones it has something to say about.
 pub(crate) fn bind_hints(stmt: &mut Stmt, set: &HintsSet) {
-    let mut processor = HintProcessor {
-        set: set.clone(),
-        bind_to_ast: true,
-        table_counter: 0,
-        index_counter: 0,
-        block_counter: 0,
-    };
-    stmt.accept(&mut processor);
+    tidb_hint::bind_hint(stmt, set);
 }
 
 /// Collects `(schema, table)` in traversal order, lowercased, which is Go's

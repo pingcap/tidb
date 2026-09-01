@@ -1,0 +1,17 @@
+[package]
+name = "tidb-hint"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB optimizer-hint interpretation and AST hint binding."
+
+[dependencies]
+tidb-ast = { path = "../tidb-ast" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-model = { path = "../tidb-model" }
+tidb-parser = { path = "../tidb-parser" }
+
+[lints]
+workspace = true

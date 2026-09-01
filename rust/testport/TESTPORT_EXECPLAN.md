@@ -456,14 +456,6 @@ For each bounded behavior cluster:
   `pkg/meta/model` owner remains a seed; the complete inventory and boundary
   are recorded in `receipts/util_generatedexpr_audit.md`.
 
-- 2026-09-01: audited all four Go-master `pkg/util/hint` artifacts (2,128
-  lines and 81 production declarations). The only current-master source delta
-  is the non-replacing `ast.Walk` visitor migration; Rust's hint syntax,
-  binding, SEM, and planner consumers are split across crates and do not form
-  a dependency-closed `HintsSet`/`QBHintHandler` owner. No speculative partial
-  pipeline was added; the complete inventory and explicit boundary are in
-  `receipts/util_hint_audit.md`.
-
 - 2026-09-01: audited all 25 Go-master `pkg/expression/aggregation` artifacts
   (4,193 lines). Go's `max_count`/`min_count` feature crosses parser,
   descriptor, aggregate runtime, hash aggregation, planner, protobuf, and KV
@@ -1155,6 +1147,14 @@ For each bounded behavior cluster:
   of reconstructing it from a duplicated invalid-token field. Deleted the
   stale receipt and duplicate manifest batch claim; all eleven Go tests remain
   executable across the two owner crates.
+- 2026-09-01: audited the complete four-artifact pinned `pkg/util/hint`
+  package and moved statement, plan, AST-transfer, query-block, and view-hint
+  behavior into the canonical `tidb-hint` owner. Removed four Rust-only package
+  tests absent from Go, removed split consumer logic, and wired parser, planner,
+  binding/cache, session, executor, and server consumers through the ordinary
+  statement path. Exact inventory, mappings, and WIP gates are recorded in
+  `receipts/util_hint.md`; TiFlash columnar-index identity and MPP enforcement
+  remain planner-package work and are not included in this package claim.
 - 2026-08-28: audited every production, test, harness, and build file in pinned
   Go `pkg/util/checksum`. Removed public exports for Go's three private framing
   constants and the Rust-only negative-offset refusal; downstream spill tests

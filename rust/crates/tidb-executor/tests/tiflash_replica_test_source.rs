@@ -23,11 +23,11 @@
 //! `ALTER TABLE ... SET TIFLASH REPLICA` carrier (the measured answer for
 //! every shape is the generic `1105 this ALTER TABLE action is not supported
 //! yet`, the catch-all arm of `ddl/alter_table.rs:359`), no
-//! `DDLExecutor.UpdateTableReplicaInfo`, and the live table model
-//! (`crate::kv_table::KvTable`) carries no TiFlash replica metadata at all.
-//! The TiFlash-dependent contracts are therefore `#[ignore]`d gap tests with
-//! their Go sources re-derived; the one carrier-independent slice —
-//! `TestTruncateTable2`'s rows contract — runs. Nothing is approximated.
+//! `DDLExecutor.UpdateTableReplicaInfo`, and no replica-status integration.
+//! The live table model now carries the persisted replica metadata, so the
+//! carrier-independent `CREATE TABLE LIKE` reset contract runs alongside
+//! `TestTruncateTable2`'s rows contract. Contracts that require the absent
+//! DDL/poller machinery remain ignored. Nothing is approximated.
 
 use tidb_datatype::Datum;
 use tidb_executor::{
@@ -105,7 +105,7 @@ fn truncate_table_empties_the_rows_and_the_table_stays_live() {
 /// `the tiflash replica count: 2 should be less than the total tiflash
 /// server count: 0`.
 // go-parity-gap: no SET TIFLASH REPLICA carrier, no UpdateTableReplicaInfo,
-// no store-count spoof, no TiFlash replica metadata on the live table.
+// no store-count spoof or replica-status update carrier.
 #[test]
 #[ignore]
 fn set_table_flash_replica_records_and_clears_replica_settings() {
@@ -210,14 +210,68 @@ fn create_table_like_started_during_non_public_source_schema_changes() {
 /// `BuildTableInfoWithLike`, `pkg/ddl/create_table.go:1281-1289` keeps the
 /// settings and strips the availability), while `t1` itself stays available
 /// with both partition ids.
-// go-parity-gap: documented divergence — Go's LIKE copies the replica
-// settings minus availability; this tier's `KvTable::create_like`
-// (kv_table.rs:860) carries no TiFlash replica metadata at all, so a copy
-// drops the settings outright, and the UpdateTableReplicaInfo setup itself is
-// unavailable. Nothing is approximated.
 #[test]
-#[ignore]
 fn create_table_like_copies_tiflash_replica_settings_clearing_availability() {
+    let mut catalog = Catalog::default();
+    run_create_table_on(
+        "create table t1 (a int) partition by hash(a) partitions 2",
+        &mut catalog,
+    )
+    .expect("source table is created");
+    let partition_ids = match catalog.table_in("test", "t1") {
+        Some(tidb_executor::TableEntry::Kv(table)) => table
+            .partition()
+            .expect("source table is partitioned")
+            .definitions
+            .iter()
+            .map(|definition| definition.id)
+            .collect::<Vec<_>>(),
+        _ => panic!("t1 is a stored table"),
+    };
+    match catalog
+        .table_mut_in("test", "t1")
+        .expect("source table exists")
+    {
+        tidb_executor::TableEntry::Kv(table) => {
+            table.set_tiflash_replica(Some(tidb_model::TiFlashReplicaInfo {
+                count: 2,
+                location_labels: vec!["zone".to_owned()].into(),
+                available: true,
+                available_partition_ids: partition_ids.clone().into(),
+            }));
+        }
+        _ => panic!("t1 is a stored table"),
+    }
+
+    run_create_table_on("create table t2 like t1", &mut catalog)
+        .expect("CREATE TABLE LIKE succeeds");
+
+    let source = match catalog.table_in("test", "t1") {
+        Some(tidb_executor::TableEntry::Kv(table)) => table,
+        _ => panic!("t1 is a stored table"),
+    };
+    assert_eq!(
+        source.tiflash_replica(),
+        Some(&tidb_model::TiFlashReplicaInfo {
+            count: 2,
+            location_labels: vec!["zone".to_owned()].into(),
+            available: true,
+            available_partition_ids: partition_ids.into(),
+        })
+    );
+    let copy = match catalog.table_in("test", "t2") {
+        Some(tidb_executor::TableEntry::Kv(table)) => table,
+        _ => panic!("t2 is a stored table"),
+    };
+    assert_eq!(
+        copy.tiflash_replica(),
+        Some(&tidb_model::TiFlashReplicaInfo {
+            count: 2,
+            location_labels: vec!["zone".to_owned()].into(),
+            available: false,
+            available_partition_ids: Default::default(),
+        })
+    );
 }
 
 /// Go `tiflash_replica_test.go:503-576::TestTruncateTable2`, the slices this
@@ -233,8 +287,8 @@ fn create_table_like_copies_tiflash_replica_settings_clearing_availability() {
 /// unchanged.
 // go-parity-gap: documented divergence — this tier truncates IN PLACE
 // (KvTable::truncate, kv_table.rs:1670, keeps the table id), and has no GC
-// worker, no key-range iteration, and no TiFlash replica metadata, so none
-// of (a)-(c) can be pinned.
+// worker or key-range iteration; its in-place truncate also cannot reproduce
+// Go's replica-availability reset, so none of (a)-(c) can be pinned.
 #[test]
 #[ignore]
 fn truncate_table_reassigns_the_id_and_clears_tiflash_availability() {

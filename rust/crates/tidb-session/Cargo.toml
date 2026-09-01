@@ -16,7 +16,9 @@ tidb-config = { path = "../tidb-config" }
 # same source Go's `setDataForServersInfo` reads through `GetAllServerInfo`.
 tidb-domain = { path = "../tidb-domain" }
 tidb-error = { path = "../tidb-error" }
+tidb-exec = { path = "../tidb-exec" }
 tidb-gcutil = { path = "../tidb-gcutil" }
+tidb-hint = { path = "../tidb-hint" }
 tidb-ast = { path = "../tidb-ast" }
 chrono = { workspace = true }
 chrono-tz = { workspace = true }
@@ -44,7 +46,6 @@ serde_json.workspace = true
 [dev-dependencies]
 # `tests_dml_lock_keys` classifies the raw keys a DML statement leaves behind
 # as record or index keys, which is `tablecodec`'s judgement to make.
-tidb-exec = { path = "../tidb-exec" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 serde = { workspace = true }
 

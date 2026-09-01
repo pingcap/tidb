@@ -1476,7 +1476,6 @@ impl Session {
         mut select_plan: Option<RetainedSelectPlan<'_>>,
         dml_plan: Option<&mut tidb_planner::physical::PhysicalPlan>,
     ) -> Result<StmtOutput, DriverError> {
-        self.activate_statement_resource_group(&stmt);
         // Go `SelectInto` with `SelectIntoVars`: the query runs as itself and
         // its one row lands in the named user variables. Intercepted at this
         // one door so text and prepared spellings share the rules: more than
@@ -1548,7 +1547,7 @@ impl Session {
         // applies its own hints after its early control-statement doors.
         if matches!(&stmt, Stmt::Admin(admin) if matches!(&**admin, tidb_ast::AdminStmt::Explain(_)))
         {
-            self.apply_set_var_hints(&stmt);
+            self.apply_set_var_hints(&stmt)?;
         }
         // Database DDL is answered by `apply_schema_stmt` below, before the
         // ordinary planner door. Its Go visitInfo must therefore be checked
@@ -1607,7 +1606,27 @@ impl Session {
         // variable, which is where Go applies it too: the optimizer installs
         // it, and expression rewriting -- the `@@x` reads below -- happens
         // after.
-        self.apply_set_var_hints(&stmt);
+        self.apply_set_var_hints(&stmt)?;
+        // Go first applies the statement's own StmtHints, then tries the
+        // matched binding and applies that binding's StmtHints before
+        // optimizing the replacement tree. Prepared execution has already
+        // performed this match in order to construct its binding-aware cache
+        // key, so only an ordinary statement matches here.
+        let binding_sql = if !prepared && matches!(stmt, Stmt::Query(_) | Stmt::Dml(_)) {
+            if let Some((bound, bind_sql)) = self.bind_statement_hints_with_sql(&stmt) {
+                self.apply_set_var_hints(&bound)?;
+                stmt = bound;
+                Some(bind_sql)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        // Go applies the effective statement's RESOURCE_GROUP hint only
+        // after binding selection.  Activating the original tree first can
+        // leak its group (and warning) when a binding supplies another hint.
+        self.activate_statement_resource_group(&stmt);
         self.bind_variables(&mut stmt)?;
         self.try_add_extra_limit(&mut stmt);
         // The mode the DDL arms below re-parse under: the one in force NOW,
@@ -1697,26 +1716,14 @@ impl Session {
                 if let Some(output) = self.run_information_schema_select(select)? {
                     return Ok(output);
                 }
-                // Go plans a matched SQL binding's hints onto the statement
-                // before optimizing it (`planner.optimize`), so the binding
-                // decides the access path the same way a hint written in the
-                // query would. See `crate::binding`.
-                let bound = self.bind_statement_hints(&stmt);
-                if let Some(bound) = bound.as_ref() {
-                    self.activate_statement_resource_group(bound);
-                }
-                let select = match &bound {
-                    Some(Stmt::Query(query)) => match query.as_ref() {
-                        tidb_ast::QueryStmt::Select(bound) => bound,
-                        tidb_ast::QueryStmt::SetOpr(_) => select,
-                    },
-                    _ => select,
-                };
                 let current_db = self.current_db.clone();
                 let ctx = self.statement_context(false);
                 if let Some(parameterized) = non_prepared.as_ref() {
-                    let (effective_parameterized, binding_sql) =
-                        self.prepared_statement_with_binding(&parameterized.statement);
+                    let mut effective_parameterized = parameterized.statement.clone();
+                    if binding_sql.is_some() {
+                        let binding_hints = crate::binding::collect_hints(&stmt);
+                        crate::binding::bind_hints(&mut effective_parameterized, &binding_hints);
+                    }
                     if let Some(execution) = self.bind_non_prepared_select(
                         parameterized,
                         &effective_parameterized,

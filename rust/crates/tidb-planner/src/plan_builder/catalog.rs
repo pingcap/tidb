@@ -223,8 +223,10 @@ pub struct SourceTable {
     /// Go `CommonHandleLens`, index-parallel to
     /// [`Self::common_handle_col_offsets`].
     pub common_handle_lens: Vec<i64>,
-    /// Go `PreferStoreType`: the already-resolved `READ_FROM_STORAGE` hint.
-    pub prefer_store_type: i32,
+    /// Whether Go `TableInfo.TiFlashReplica` exists and is available.
+    /// `READ_FROM_STORAGE` is resolved by the planner from this fact and the
+    /// active query-block hints; it is not pre-resolved by the catalog.
+    pub has_tiflash_replica: bool,
 }
 
 impl SourceTable {
@@ -294,6 +296,12 @@ impl SourceTable {
             state: SchemaState::PUBLIC,
             pk_is_handle: self.pk_is_handle,
             is_common_handle: self.is_common_handle,
+            tiflash_replica: self.has_tiflash_replica.then(|| {
+                GoShared::new(tidb_model::TiFlashReplicaInfo {
+                    available: true,
+                    ..tidb_model::TiFlashReplicaInfo::default()
+                })
+            }),
             ..TableInfo::default()
         }));
     }

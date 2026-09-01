@@ -297,34 +297,16 @@ pub struct RewriterHints {
     pub prefer_agg_to_cop: bool,
 }
 
-/// Go `hint.PreferHashAgg`. Keep the source bit position because
-/// `LogicalAggregation.PreferAggType` is the same bit set, not a Rust-only
-/// classification.
-pub const PREFER_HASH_AGG: u32 = 1 << 25;
-/// Go `hint.PreferStreamAgg`.
-pub const PREFER_STREAM_AGG: u32 = 1 << 26;
+pub use tidb_hint::{PREFER_HASH_AGG, PREFER_STREAM_AGG};
 
 impl RewriterHints {
-    /// Resolves the current SELECT block's aggregation hints into the same
-    /// fields Go copies from `TableHintInfo` to every logical aggregation.
+    /// Adapts Go `PlanHints` to the two fields expression rewriting consumes.
     #[must_use]
-    pub fn from_select(select: &tidb_ast::SelectStmt) -> Self {
-        let mut hints = Self::default();
-        for hint in &select.hints {
-            match (&*hint.name, &hint.kind) {
-                ("HASH_AGG", tidb_ast::HintKind::Nullary { qb_name: None }) => {
-                    hints.prefer_agg_type |= PREFER_HASH_AGG;
-                }
-                ("STREAM_AGG", tidb_ast::HintKind::Nullary { qb_name: None }) => {
-                    hints.prefer_agg_type |= PREFER_STREAM_AGG;
-                }
-                ("AGG_TO_COP", tidb_ast::HintKind::Tables { qb_name: None, .. }) => {
-                    hints.prefer_agg_to_cop = true
-                }
-                _ => {}
-            }
+    pub const fn from_plan_hints(hints: &tidb_hint::PlanHints) -> Self {
+        Self {
+            prefer_agg_type: hints.prefer_agg_type,
+            prefer_agg_to_cop: hints.prefer_agg_to_cop,
         }
-        hints
     }
 
     /// Go `LogicalAggregation.ResetHintIfConflicted`'s conflict test.

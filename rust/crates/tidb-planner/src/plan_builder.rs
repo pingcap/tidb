@@ -132,13 +132,13 @@
 //!   materialised [`Datum`] rather than evaluating. A constant that is NOT
 //!   materialised (a parameter marker, a non-deterministic builtin) is
 //!   conservatively kept as a condition, which is Go's `useCache` arm.
-//! * `hint.QBHintHandler` / the unconsumed `hint.PlanHints` families /
-//!   `setPreferredStoreType`. Table-syntax index hints and the consumed
-//!   query-block hint families have ordinary planner owners; the remaining
-//!   catalogue fields stay explicit dependencies rather than empty stubs.
-//! * `tableHasDirtyContent`, `addExtraPhysTblIDColumn4DS`,
-//!   `BuildDataSourceFromView`. The transaction membuffer and view expander
-//!   each need a handle this crate does not hold.
+//! * The unconsumed `hint.PlanHints` families.
+//!   Query-block hint handling, view-hint inheritance, table-syntax index
+//!   hints, and the consumed query-block hint families have ordinary planner
+//!   owners; the remaining catalogue fields stay explicit dependencies rather
+//!   than empty stubs.
+//! * `tableHasDirtyContent` and `addExtraPhysTblIDColumn4DS`. The transaction
+//!   membuffer needs a handle this crate does not hold.
 //!
 //! # Narrowings, by name
 //!
@@ -185,6 +185,7 @@ pub mod window;
 #[cfg(test)]
 mod window_tests;
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
@@ -210,6 +211,7 @@ use crate::expression_rewriter::{
 };
 use crate::logical::data_source::{
     DataSource, DataSourceColumn, DataSourceIndexHint, DataSourceIndexMergeHint, EXTRA_HANDLE_ID,
+    PREFER_TIFLASH, PREFER_TIKV,
 };
 use crate::logical::limit::LogicalLimit;
 use crate::logical::projection::LogicalProjection;
@@ -395,6 +397,7 @@ struct IndexMergeHint {
     partitions: Vec<String>,
     /// Go `Restore2IndexHint(HintIndexMerge, hint)` warning text.
     restored: String,
+    matched: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -418,145 +421,86 @@ struct NoIndexLookupPushDownHint {
     matched: bool,
 }
 
-fn restore_index_hint(name: &str, table: &tidb_ast::HintTable, indexes: &[String]) -> String {
-    let mut restored = format!("/*+ {name}({}", table.name.to_ascii_lowercase());
-    if !table.partitions.is_empty() {
-        restored.push_str(" PARTITION(");
-        restored.push_str(
-            &table
-                .partitions
-                .iter()
-                .map(|partition| partition.to_ascii_lowercase())
-                .collect::<Vec<_>>()
-                .join(", "),
-        );
-        restored.push(')');
-    }
-    for (index, name) in indexes.iter().enumerate() {
-        if index > 0 {
-            restored.push(',');
-        }
-        restored.push(' ');
-        restored.push_str(&name.to_ascii_lowercase());
-    }
-    restored.push_str(") */");
-    restored
+struct QueryBlockHintFrame {
+    hints: RewriterHints,
+    join_hints: Rc<from::JoinHints>,
+    plan_hints: Option<Rc<RefCell<tidb_hint::PlanHints>>>,
+    index_merge_hints: Vec<IndexMergeHint>,
+    index_hints: Vec<IndexHint>,
+    no_index_lookup_push_down_hints: Vec<NoIndexLookupPushDownHint>,
+    in_straight_join: bool,
 }
 
-fn current_query_block_name(select: &SelectStmt) -> Option<&str> {
-    select.hints.iter().find_map(|hint| match &hint.kind {
-        tidb_ast::HintKind::QbName { qb_name, views } if views.is_empty() => Some(qb_name.as_str()),
-        _ => None,
-    })
-}
-
-fn hint_belongs_to_block(qb_name: Option<&str>, named: Option<&str>, offset: i32) -> bool {
-    qb_name.is_none_or(|name| {
-        name.eq_ignore_ascii_case(&format!("sel_{offset}"))
-            || named.is_some_and(|named| name.eq_ignore_ascii_case(named))
-    })
-}
-
-fn index_hints_from_select(
-    select: &SelectStmt,
-    offset: i32,
-) -> (
-    Vec<IndexHint>,
-    Vec<NoIndexLookupPushDownHint>,
-    Vec<&'static str>,
-) {
-    let named = current_query_block_name(select);
-    let mut no_lookup = Vec::new();
-    let mut warnings = Vec::new();
-    let hints = select.hints.iter().filter_map(|hint| {
-            let tidb_ast::HintKind::Index {
-                qb_name,
-                table,
-                indexes,
-            } = &hint.kind
-            else {
-                return None;
-            };
-            if !hint_belongs_to_block(qb_name.as_deref(), named, offset)
-                || !hint_belongs_to_block(table.qb_name.as_deref(), named, offset)
-            {
-                return None;
-            }
-            let upper = hint.name.to_ascii_uppercase();
-            if upper == "NO_INDEX_LOOKUP_PUSHDOWN" {
-                if !indexes.is_empty() {
-                    warnings.push(
-                        "hint NO_INDEX_LOOKUP_PUSH_DOWN is inapplicable, only table name without indexes is supported",
-                    );
-                } else {
-                    no_lookup.push(NoIndexLookupPushDownHint {
-                        db_name: table.db_name.clone(),
-                        table_name: table.name.clone(),
-                        matched: false,
-                    });
+fn index_hints_from_plan(
+    plan: &tidb_hint::PlanHints,
+) -> (Vec<IndexHint>, Vec<NoIndexLookupPushDownHint>) {
+    let hints = plan
+        .index_hint_list
+        .iter()
+        .map(|hint| {
+            let (kind, force_keep_order, force_no_keep_order, hint_name) = match hint.kind {
+                tidb_hint::HintedIndexKind::Use => (
+                    tidb_ast::IndexHintKind::Use,
+                    false,
+                    false,
+                    if hint.push_down_lookup {
+                        "INDEX_LOOKUP_PUSHDOWN"
+                    } else {
+                        "USE_INDEX"
+                    },
+                ),
+                tidb_hint::HintedIndexKind::Ignore => (
+                    tidb_ast::IndexHintKind::Ignore,
+                    false,
+                    false,
+                    "IGNORE_INDEX",
+                ),
+                tidb_hint::HintedIndexKind::Force => {
+                    (tidb_ast::IndexHintKind::Force, false, false, "FORCE_INDEX")
                 }
-                return None;
-            }
-            let (kind, push_down_lookup, force_keep_order, force_no_keep_order) =
-                match upper.as_str() {
-                    "USE_INDEX" => (tidb_ast::IndexHintKind::Use, false, false, false),
-                    "IGNORE_INDEX" => (tidb_ast::IndexHintKind::Ignore, false, false, false),
-                    "FORCE_INDEX" => (tidb_ast::IndexHintKind::Force, false, false, false),
-                    "ORDER_INDEX" => (tidb_ast::IndexHintKind::Use, false, true, false),
-                    "NO_ORDER_INDEX" => (tidb_ast::IndexHintKind::Use, false, false, true),
-                    "INDEX_LOOKUP_PUSHDOWN" if !indexes.is_empty() => {
-                        (tidb_ast::IndexHintKind::Use, true, false, false)
-                    }
-                    "INDEX_LOOKUP_PUSHDOWN" => {
-                        warnings.push(
-                            "hint INDEX_LOOKUP_PUSH_DOWN is inapplicable, the index names should be specified",
-                        );
-                        return None;
-                    }
-                    _ => return None,
-                };
-            Some(IndexHint {
-                db_name: table.db_name.clone(),
-                table_name: table.name.clone(),
+                tidb_hint::HintedIndexKind::Order => {
+                    (tidb_ast::IndexHintKind::Use, true, false, "ORDER_INDEX")
+                }
+                tidb_hint::HintedIndexKind::NoOrder => {
+                    (tidb_ast::IndexHintKind::Use, false, true, "NO_ORDER_INDEX")
+                }
+            };
+            IndexHint {
+                db_name: Some(hint.database_name.clone()),
+                table_name: hint.table_name.clone(),
                 kind,
-                index_names: indexes.clone(),
-                partitions: table.partitions.clone(),
-                push_down_lookup,
+                index_names: hint.index_names.clone(),
+                partitions: hint.partitions.clone(),
+                push_down_lookup: hint.push_down_lookup,
                 force_keep_order,
                 force_no_keep_order,
-                restored: restore_index_hint(&upper, table, indexes),
+                restored: tidb_hint::restore_index_hint(hint_name, hint),
                 matched: false,
-            })
-        }).collect();
-    (hints, no_lookup, warnings)
+            }
+        })
+        .collect();
+    let no_lookup = plan
+        .no_index_lookup_pushdown
+        .iter()
+        .map(|hint| NoIndexLookupPushDownHint {
+            db_name: Some(hint.database_name.clone()),
+            table_name: hint.table_name.clone(),
+            matched: false,
+        })
+        .collect();
+    (hints, no_lookup)
 }
 
-fn index_merge_hints_from_select(select: &SelectStmt) -> Vec<IndexMergeHint> {
-    select
-        .hints
+fn index_merge_hints_from_plan(plan: &tidb_hint::PlanHints) -> Vec<IndexMergeHint> {
+    plan.index_merge_hint_list
         .iter()
-        .filter_map(|hint| {
-            let tidb_ast::HintKind::Index {
-                qb_name,
-                table,
-                indexes,
-            } = &hint.kind
-            else {
-                return None;
-            };
-            if !hint.name.eq_ignore_ascii_case("USE_INDEX_MERGE")
-                || qb_name.is_some()
-                || table.qb_name.is_some()
-            {
-                return None;
-            }
-            Some(IndexMergeHint {
-                db_name: table.db_name.clone(),
-                table_name: table.name.clone(),
-                index_names: indexes.clone(),
-                partitions: table.partitions.clone(),
-                restored: restore_index_hint("USE_INDEX_MERGE", table, indexes),
-            })
+        .map(|hint| IndexMergeHint {
+            db_name: Some(hint.database_name.clone()),
+            table_name: hint.table_name.clone(),
+            index_names: hint.index_names.clone(),
+            partitions: hint.partitions.clone(),
+            restored: tidb_hint::restore_index_hint("USE_INDEX_MERGE", hint),
+            matched: false,
         })
         .collect()
 }
@@ -595,6 +539,10 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     pub qb_offset: Vec<i32>,
     /// The next query-block offset assigned by the statement's preorder walk.
     next_qb_offset: i32,
+    /// Go `QBHintHandler`, shared by every query block in one build.
+    qb_hint_handler: Option<tidb_hint::QBHintHandler>,
+    /// Go `QBHintBuildState`, scoped to one statement build.
+    qb_hint_state: Option<tidb_hint::QBHintBuildState>,
 
     /// Go `outerSchemas`, outermost first.
     pub outer_schemas: Vec<Schema>,
@@ -659,6 +607,8 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     /// Go `b.TableHints()`'s JOIN half, which `buildJoin` reads through
     /// `SetPreferredJoinTypeAndOrder`; see [`from::JoinHints`].
     pub join_hints: Rc<from::JoinHints>,
+    /// Canonical Go `PlanHints` for the current query block.
+    plan_hints: Option<Rc<RefCell<tidb_hint::PlanHints>>>,
     /// Go `PlanHints.IndexMergeHintList` for the current query block.
     index_merge_hints: Vec<IndexMergeHint>,
     /// Go `PlanHints.IndexHintList` for the current query block.
@@ -676,6 +626,14 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     /// Go `SessionVars.OptimizerUseInvisibleIndexes` (default OFF): whether
     /// `getPossibleAccessPaths` may enumerate invisible indexes.
     pub optimizer_use_invisible_indexes: bool,
+    /// Whether `SessionVars.IsolationReadEngines` contains TiKV.
+    pub tikv_in_isolation_read: bool,
+    /// Whether `SessionVars.IsolationReadEngines` contains TiFlash.
+    pub tiflash_in_isolation_read: bool,
+    /// Whether `SessionVars.IsolationReadEngines` contains TiDB.
+    pub tidb_in_isolation_read: bool,
+    /// Canonical session-variable value used by isolation-read diagnostics.
+    pub isolation_read_engines_value: String,
     /// Go fix control 52869, consumed by index pruning through the built
     /// `DataSource`.
     pub prefer_index_merge_by_fix_control: bool,
@@ -909,6 +867,8 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             cur_clause: ClauseCode::Unknow,
             qb_offset: Vec::new(),
             next_qb_offset: 0,
+            qb_hint_handler: None,
+            qb_hint_state: None,
             outer_schemas: Vec::new(),
             outer_names: Vec::new(),
             lateral_outer_count: 0,
@@ -934,6 +894,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             flags: RewriterSessionFlags::default(),
             hints: RewriterHints::default(),
             join_hints: Rc::new(from::JoinHints::default()),
+            plan_hints: None,
             index_merge_hints: Vec::new(),
             index_hints: Vec::new(),
             no_index_lookup_push_down_hints: Vec::new(),
@@ -941,6 +902,10 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             only_full_group_by: true,
             // Go `DefTiDBOptimizerUseInvisibleIndexes = false`.
             optimizer_use_invisible_indexes: false,
+            tikv_in_isolation_read: true,
+            tiflash_in_isolation_read: true,
+            tidb_in_isolation_read: true,
+            isolation_read_engines_value: "tikv,tiflash,tidb".to_owned(),
             prefer_index_merge_by_fix_control: false,
             index_lookup_push_down_session: Default::default(),
             enable_skew_distinct_agg: false,
@@ -954,6 +919,21 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
     #[must_use]
     pub fn select_offset(&self) -> i32 {
         self.qb_offset.last().copied().unwrap_or(-1)
+    }
+
+    /// Installs Go `SessionVars.IsolationReadEngines` for access-path and
+    /// `READ_FROM_STORAGE` resolution.
+    pub fn set_isolation_read_engines(&mut self, engines: &str) {
+        self.isolation_read_engines_value = engines.to_owned();
+        self.tikv_in_isolation_read = engines
+            .split(',')
+            .any(|engine| engine.trim().eq_ignore_ascii_case("tikv"));
+        self.tiflash_in_isolation_read = engines
+            .split(',')
+            .any(|engine| engine.trim().eq_ignore_ascii_case("tiflash"));
+        self.tidb_in_isolation_read = engines
+            .split(',')
+            .any(|engine| engine.trim().eq_ignore_ascii_case("tidb"));
     }
 
     /// Go `GetOptFlag()` (`planbuilder.go:455`).
@@ -975,6 +955,148 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
     /// enumerated. Global indexes remain available in dynamic mode, as in Go.
     pub const fn set_partition_processor_enabled(&mut self, enabled: bool) {
         self.partition_processor_enabled = enabled;
+    }
+
+    fn begin_hint_build(&mut self, query: &tidb_ast::QueryStmt) -> bool {
+        if self.qb_hint_handler.is_some() {
+            return false;
+        }
+        let mut query = query.clone();
+        let mut handler = tidb_hint::QBHintHandler::build_query(&mut query);
+        for warning in handler.take_warnings() {
+            self.ctx.append_warning(warning.code, &warning.message);
+        }
+        self.qb_hint_state = Some(handler.new_build_state());
+        self.qb_hint_handler = Some(handler);
+        true
+    }
+
+    fn end_hint_build(&mut self) {
+        self.flush_hint_build_warnings();
+        self.qb_hint_handler = None;
+        self.qb_hint_state = None;
+    }
+
+    fn flush_hint_build_warnings(&mut self) {
+        if let (Some(handler), Some(state)) =
+            (self.qb_hint_handler.as_mut(), self.qb_hint_state.as_ref())
+        {
+            for warning in handler.unused_view_hint_warnings(state) {
+                self.ctx.append_warning(1815, &warning);
+            }
+            for warning in handler.take_warnings() {
+                self.ctx.append_warning(warning.code, &warning.message);
+            }
+        }
+    }
+
+    fn push_query_block_hints(&mut self, select: &SelectStmt) -> QueryBlockHintFrame {
+        let select_offset = self.select_offset();
+        let current_table_hints = {
+            let handler = self
+                .qb_hint_handler
+                .as_mut()
+                .expect("hint handler is initialized at the query root");
+            let state = self
+                .qb_hint_state
+                .as_mut()
+                .expect("hint state is initialized at the query root");
+            handler.current_stmt_hints(&select.hints, select_offset, state)
+        };
+        let straight_join_order = select.straight_join
+            || current_table_hints
+                .iter()
+                .any(|hint| hint.name.eq_ignore_ascii_case("straight_join"));
+        let (mut parsed_plan_hints, subquery_hint_flags, hint_warnings) =
+            tidb_hint::parse_plan_hints(
+                &current_table_hints,
+                select_offset,
+                self.source.current_database(),
+                self.qb_hint_handler
+                    .as_ref()
+                    .expect("hint handler is initialized at the query root"),
+                straight_join_order,
+                self.sub_query_ctx == SubQueryCtx::In,
+                self.sub_query_ctx == SubQueryCtx::Exists,
+                self.sub_query_ctx == SubQueryCtx::NotHandlingSubquery,
+            );
+        for warning in hint_warnings {
+            self.ctx.append_warning(warning.code, &warning.message);
+        }
+        self.sub_query_hint_flags |= subquery_hint_flags;
+        let mut current_hints = RewriterHints::from_plan_hints(&parsed_plan_hints);
+        if current_hints.aggregation_type_conflicted() {
+            self.ctx
+                .append_warning(1815, "Optimizer aggregation hints are conflicted");
+            current_hints.prefer_agg_type = 0;
+            parsed_plan_hints.prefer_agg_type = 0;
+        }
+        let current_plan_hints = Rc::new(RefCell::new(parsed_plan_hints));
+        let current_join_hints = Rc::new(from::JoinHints::from_plan_hints(
+            Rc::clone(&current_plan_hints),
+            select_offset,
+        ));
+        let current_index_merge_hints = index_merge_hints_from_plan(&current_plan_hints.borrow());
+        let (current_index_hints, current_no_lookup_hints) =
+            index_hints_from_plan(&current_plan_hints.borrow());
+
+        let frame = QueryBlockHintFrame {
+            hints: std::mem::replace(&mut self.hints, current_hints),
+            join_hints: std::mem::replace(&mut self.join_hints, current_join_hints),
+            plan_hints: self.plan_hints.replace(current_plan_hints),
+            index_merge_hints: std::mem::replace(
+                &mut self.index_merge_hints,
+                current_index_merge_hints,
+            ),
+            index_hints: std::mem::replace(&mut self.index_hints, current_index_hints),
+            no_index_lookup_push_down_hints: std::mem::replace(
+                &mut self.no_index_lookup_push_down_hints,
+                current_no_lookup_hints,
+            ),
+            in_straight_join: self.in_straight_join,
+        };
+        if self
+            .plan_hints
+            .as_ref()
+            .is_some_and(|hints| hints.borrow().straight_join_order)
+            || select.straight_join
+        {
+            self.in_straight_join = true;
+        }
+        frame
+    }
+
+    fn pop_query_block_hints(&mut self, frame: QueryBlockHintFrame) {
+        if let Some(plan) = &self.plan_hints {
+            let mut plan = plan.borrow_mut();
+            for (canonical, applied) in plan.index_hint_list.iter_mut().zip(&self.index_hints) {
+                canonical.matched = applied.matched;
+            }
+            for (canonical, applied) in plan
+                .index_merge_hint_list
+                .iter_mut()
+                .zip(&self.index_merge_hints)
+            {
+                canonical.matched = applied.matched;
+            }
+            for (canonical, applied) in plan
+                .no_index_lookup_pushdown
+                .iter_mut()
+                .zip(&self.no_index_lookup_push_down_hints)
+            {
+                canonical.matched = applied.matched;
+            }
+            for warning in tidb_hint::collect_unmatched_hint_warnings(&plan) {
+                self.ctx.append_warning(1815, &warning);
+            }
+        }
+        self.hints = frame.hints;
+        self.join_hints = frame.join_hints;
+        self.plan_hints = frame.plan_hints;
+        self.index_merge_hints = frame.index_merge_hints;
+        self.index_hints = frame.index_hints;
+        self.no_index_lookup_push_down_hints = frame.no_index_lookup_push_down_hints;
+        self.in_straight_join = frame.in_straight_join;
     }
 
     fn base(&self, tp: &str) -> BaseLogicalPlan {
@@ -1331,6 +1453,24 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if !self.source.database_exists(&db_name) {
             return Err(PlanError::unknown_database(db_name));
         }
+        if let Some(view) = self.source.find_view(&db_name, &table_name).cloned() {
+            if table_ref.sample.is_some() {
+                return Err(PlanError::internal("Unsupported TABLESAMPLE in views"));
+            }
+            let visible_name = table_ref.alias.as_deref().unwrap_or(&view.view_name);
+            let current_offset = self.select_offset();
+            let inherited = match (self.qb_hint_handler.as_ref(), self.qb_hint_state.as_mut()) {
+                (Some(handler), Some(state)) => {
+                    handler.matching_view_hints(visible_name, current_offset, state)
+                }
+                _ => tidb_hint::ViewHintContext::default(),
+            };
+            return self.build_data_source_from_view_with_hints(
+                &view,
+                table_ref.alias.as_deref(),
+                inherited,
+            );
+        }
         let table = self
             .source
             .find_table(&db_name, &table_name)
@@ -1421,23 +1561,23 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 restored: hint.restored.clone(),
             });
         }
-        let index_merge_hints = self
-            .index_merge_hints
-            .iter()
-            .filter(|hint| {
-                let hint_db = hint
-                    .db_name
-                    .as_deref()
-                    .unwrap_or_else(|| self.source.current_database());
-                hint.table_name.eq_ignore_ascii_case(&visible_table)
-                    && hint_db.eq_ignore_ascii_case(&db_name)
-            })
-            .map(|hint| DataSourceIndexMergeHint {
-                index_names: hint.index_names.clone(),
-                partitions: hint.partitions.clone(),
-                restored: hint.restored.clone(),
-            })
-            .collect();
+        let mut index_merge_hints = Vec::new();
+        for hint in &mut self.index_merge_hints {
+            let hint_db = hint
+                .db_name
+                .as_deref()
+                .unwrap_or_else(|| self.source.current_database());
+            if hint.table_name.eq_ignore_ascii_case(&visible_table)
+                && (hint_db.eq_ignore_ascii_case(&db_name) || hint_db == "*")
+            {
+                hint.matched = true;
+                index_merge_hints.push(DataSourceIndexMergeHint {
+                    index_names: hint.index_names.clone(),
+                    partitions: hint.partitions.clone(),
+                    restored: hint.restored.clone(),
+                });
+            }
+        }
 
         let mut columns = Vec::with_capacity(table.columns.len() + 2);
         let mut schema_columns = Vec::with_capacity(table.columns.len() + 2);
@@ -1618,11 +1758,13 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             is_cached: table.is_cached,
             has_affinity: table.has_affinity,
             index_lookup_push_down_session: self.index_lookup_push_down_session,
+            tikv_in_isolation_read: self.tikv_in_isolation_read,
+            isolation_read_engines_value: self.isolation_read_engines_value.clone(),
             handle_cols,
             handle_is_int,
             common_handle_cols,
             common_handle_lens: table.common_handle_lens.clone(),
-            prefer_store_type: table.prefer_store_type,
+            has_tiflash_replica: table.has_tiflash_replica,
             is_for_update_read: self.is_for_update_read,
             prefer_index_merge_by_fix_control: self.prefer_index_merge_by_fix_control,
             ast_index_hints: table_ref.hints.clone(),
@@ -1638,7 +1780,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // [`DataSourceAccessPath`] demands an already-PROVEN ranger/statistics
         // input, and that costing seam fills them later, as Go's
         // `deriveStatsByFilter` stage does.
-        let public_paths = crate::access_path::get_possible_access_paths(
+        let mut public_paths = crate::access_path::get_possible_access_paths(
             table,
             self.optimizer_use_invisible_indexes,
             self.source.latest_index_schema(),
@@ -1646,7 +1788,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             self.index_lookup_push_down_session.repeatable_read,
             self.is_for_update_read,
         )?;
-        let resolution = crate::access_path::apply_table_index_hints(
+        let mut resolution = crate::access_path::apply_table_index_hints(
             table,
             &public_paths,
             &table_ref.hints,
@@ -1654,7 +1796,53 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             table.is_partitioned && self.partition_processor_enabled,
             data_source.force_no_index_lookup_push_down,
             data_source.index_lookup_push_down_session,
+            self.tikv_in_isolation_read,
+            &self.isolation_read_engines_value,
         )?;
+        if !matches!(
+            data_source.db_name.to_ascii_lowercase().as_str(),
+            "mysql" | "sys" | "workload_schema"
+        ) {
+            let available_engines =
+                public_paths
+                    .iter()
+                    .rev()
+                    .fold(Vec::<&'static str>::new(), |mut engines, path| {
+                        let engine = match path {
+                            crate::access_path::PossiblePath::TiFlashTable => "tiflash",
+                            crate::access_path::PossiblePath::Table { .. }
+                            | crate::access_path::PossiblePath::Index { .. } => "tikv",
+                        };
+                        if !engines.contains(&engine) {
+                            engines.push(engine);
+                        }
+                        engines
+                    });
+            let permitted = |path: &crate::access_path::PossiblePath| match path {
+                crate::access_path::PossiblePath::TiFlashTable => self.tiflash_in_isolation_read,
+                crate::access_path::PossiblePath::Table { .. }
+                | crate::access_path::PossiblePath::Index { .. } => self.tikv_in_isolation_read,
+            };
+            public_paths.retain(&permitted);
+            resolution.paths.retain(permitted);
+            if resolution.paths.is_empty() {
+                let help = if self
+                    .isolation_read_engines_value
+                    .to_ascii_lowercase()
+                    .contains("tiflash")
+                {
+                    ". Please check tiflash replica"
+                } else {
+                    ""
+                };
+                return Err(PlanError::internal(format!(
+                    "No access path for table '{}' is found with 'tidb_isolation_read_engines' = '{}', valid values can be '{}'{help}.",
+                    table.table_name,
+                    self.isolation_read_engines_value,
+                    available_engines.join(", ")
+                )));
+            }
+        }
         for index in &resolution.unknown_comment_indexes {
             self.ctx.append_warning(
                 1176,
@@ -1667,6 +1855,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         for warning in &resolution.hint_warnings {
             self.ctx.append_warning(1815, warning);
         }
+        for warning in &resolution.isolation_read_warnings {
+            self.ctx.append_warning(1105, warning);
+        }
         data_source.public_enumerated_paths = public_paths;
         data_source.enumerated_paths = resolution.paths;
         data_source.forced_index_ids = resolution.forced_index_ids;
@@ -1676,6 +1867,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         data_source.force_no_keep_order_table_path = resolution.force_no_keep_order_table_path;
         data_source.index_lookup_push_down_by = resolution.index_lookup_push_down_by;
         data_source.indexes = table.indexes.clone();
+        self.set_preferred_store_type(&mut data_source);
         debug_assert!(data_source.possible_access_paths.is_empty());
 
         data_source
@@ -1689,6 +1881,95 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // Each needs a handle this crate does not hold; see the module
         // boundaries.
         Ok(LogicalPlan::DataSource(data_source))
+    }
+
+    /// Go `setPreferredStoreType(ds, b.TableHints())`.
+    fn set_preferred_store_type(&self, data_source: &mut DataSource) {
+        let Some(plan_hints) = &self.plan_hints else {
+            return;
+        };
+        let visible_table = data_source
+            .table_as_name
+            .as_deref()
+            .unwrap_or(&data_source.table_name);
+        let table = tidb_hint::HintedTable {
+            database_name: data_source.db_name.clone(),
+            table_name: visible_table.to_owned(),
+            select_offset: data_source.base.base.query_block_offset(),
+            ..tidb_hint::HintedTable::default()
+        };
+        let isolation_engines = self.isolation_read_engines_display();
+        let mut plan_hints = plan_hints.borrow_mut();
+
+        if let Some(hinted) = plan_hints.prefer_tikv(Some(&table)) {
+            if data_source.enumerated_paths.iter().any(|path| {
+                matches!(
+                    path,
+                    crate::access_path::PossiblePath::Table { .. }
+                        | crate::access_path::PossiblePath::Index { .. }
+                )
+            }) {
+                data_source.prefer_store_type |= PREFER_TIKV;
+                data_source
+                    .prefer_partitions
+                    .insert(PREFER_TIKV, hinted.partitions);
+            } else {
+                self.ctx.append_warning(
+                    1815,
+                    &format!(
+                        "No available path for table {}.{} with the store type tikv of the hint /*+ read_from_storage */, please check the status of the table replica and variable value of tidb_isolation_read_engines({isolation_engines})",
+                        data_source.db_name, data_source.table_name
+                    ),
+                );
+            }
+        }
+
+        if let Some(hinted) = plan_hints.prefer_tiflash(Some(&table)) {
+            if data_source.prefer_store_type != 0 {
+                self.ctx.append_warning(
+                    1815,
+                    &format!(
+                        "Storage hints are conflict, you can only specify one storage type of table {}.{}",
+                        table.database_name.to_ascii_lowercase(),
+                        table.table_name.to_ascii_lowercase()
+                    ),
+                );
+                data_source.prefer_store_type = 0;
+                return;
+            }
+            if data_source
+                .enumerated_paths
+                .iter()
+                .any(|path| matches!(path, crate::access_path::PossiblePath::TiFlashTable))
+            {
+                data_source.prefer_store_type |= PREFER_TIFLASH;
+                data_source
+                    .prefer_partitions
+                    .insert(PREFER_TIFLASH, hinted.partitions);
+            } else {
+                self.ctx.append_warning(
+                    1815,
+                    &format!(
+                        "No available path for table {}.{} with the store type tiflash of the hint /*+ read_from_storage */, please check the status of the table replica and variable value of tidb_isolation_read_engines({isolation_engines})",
+                        data_source.db_name, data_source.table_name
+                    ),
+                );
+            }
+        }
+    }
+
+    fn isolation_read_engines_display(&self) -> String {
+        let mut engines = Vec::new();
+        if self.tikv_in_isolation_read {
+            engines.push("0:{}");
+        }
+        if self.tiflash_in_isolation_read {
+            engines.push("1:{}");
+        }
+        if self.tidb_in_isolation_read {
+            engines.push("2:{}");
+        }
+        format!("map[{}]", engines.join(" "))
     }
 
     fn plan_handle_cols(&self, handle_cols: &[Column], handle_is_int: bool) -> PlanHandleCols {
@@ -2504,14 +2785,29 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     /// Any clause's error, or an unported clause (locking, `INTO OUTFILE`) or
     /// unported shape inside one, each naming its Go symbol.
     pub fn build_select(&mut self, select: &SelectStmt) -> Result<(LogicalPlan, u64), PlanError> {
+        let owns_hint_build =
+            self.begin_hint_build(&tidb_ast::QueryStmt::Select(Box::new(select.clone())));
         self.next_qb_offset += 1;
         self.qb_offset.push(self.next_qb_offset);
         let result = self.build_select_in_query_block(select);
         self.qb_offset.pop();
+        if owns_hint_build {
+            self.end_hint_build();
+        }
         result
     }
 
     fn build_select_in_query_block(
+        &mut self,
+        select: &SelectStmt,
+    ) -> Result<(LogicalPlan, u64), PlanError> {
+        let hint_frame = self.push_query_block_hints(select);
+        let result = self.build_select_after_hints(select);
+        self.pop_query_block_hints(hint_frame);
+        result
+    }
+
+    fn build_select_after_hints(
         &mut self,
         select: &SelectStmt,
     ) -> Result<(LogicalPlan, u64), PlanError> {
@@ -2538,6 +2834,30 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             }
         }
 
+        if self
+            .plan_hints
+            .as_ref()
+            .is_some_and(|hints| hints.borrow().cte_merge)
+        {
+            if self.building_cte {
+                if self.is_cte {
+                    if let Some(cte) = self.outer_ctes.last_mut() {
+                        cte.force_inline_by_hint_or_var = true;
+                    }
+                } else if !self.building_recursive_part_for_cte {
+                    self.ctx.append_warning(
+                        1815,
+                        "Hint merge() is inapplicable. Please check whether the hint is used in the right place, you should use this hint inside the CTE.",
+                    );
+                }
+            } else if !self.is_cte {
+                self.ctx.append_warning(
+                    1815,
+                    "Hint merge() is inapplicable. Please check whether the hint is used in the right place, you should use this hint inside the CTE.",
+                );
+            }
+        }
+
         // `:4266` the WITH clause, whose scope is truncated on EVERY exit path
         // — Go's `defer func() { b.outerCTEs = b.outerCTEs[:l] }()`.
         let outer_cte_depth = self.outer_ctes.len();
@@ -2557,89 +2877,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             },
             None => Vec::new(),
         };
-        // Go installs the current query block's resolved table hints before
-        // building its operators and restores the parent block on exit.
-        // Parsing the AST here keeps nested SELECT hints scoped and ensures
-        // physical dispatch sees every preference on the one logical tree it
-        // enumerates.
-        let mut current_hints = RewriterHints::from_select(select);
-        if current_hints.aggregation_type_conflicted() {
-            self.ctx
-                .append_warning(1815, "Optimizer aggregation hints are conflicted");
-            current_hints.prefer_agg_type = 0;
-        }
-        let parent_hints = std::mem::replace(&mut self.hints, current_hints);
-        let select_offset = self.select_offset();
-        let parent_join_hints = std::mem::replace(
-            &mut self.join_hints,
-            Rc::new(from::JoinHints::from_select_at(select, select_offset)),
-        );
-        let parent_index_merge_hints = std::mem::replace(
-            &mut self.index_merge_hints,
-            index_merge_hints_from_select(select),
-        );
-        let (index_hints, no_index_lookup_push_down_hints, index_hint_warnings) =
-            index_hints_from_select(select, select_offset);
-        for warning in index_hint_warnings {
-            self.ctx.append_warning(1815, warning);
-        }
-        let parent_index_hints = std::mem::replace(&mut self.index_hints, index_hints);
-        let parent_no_index_lookup_push_down_hints = std::mem::replace(
-            &mut self.no_index_lookup_push_down_hints,
-            no_index_lookup_push_down_hints,
-        );
         let built = self.build_select_body(select);
-        for hint in self.index_hints.iter().filter(|hint| !hint.matched) {
-            let db = hint
-                .db_name
-                .as_deref()
-                .unwrap_or_else(|| self.source.current_database());
-            let mut indexes = String::new();
-            for index in &hint.index_names {
-                indexes.push_str(", ");
-                indexes.push_str(&index.to_ascii_lowercase());
-            }
-            let type_string = if hint.force_keep_order || hint.force_no_keep_order {
-                ""
-            } else if hint.push_down_lookup {
-                "index_lookup_pushdown"
-            } else {
-                match hint.kind {
-                    tidb_ast::IndexHintKind::Use => "use_index",
-                    tidb_ast::IndexHintKind::Ignore => "ignore_index",
-                    tidb_ast::IndexHintKind::Force => "force_index",
-                }
-            };
-            self.ctx.append_warning(
-                1815,
-                &format!(
-                    "{type_string}({db}.{}{indexes}) is inapplicable, check whether the table({db}.{}) exists",
-                    hint.table_name, hint.table_name
-                ),
-            );
-        }
-        for hint in self
-            .no_index_lookup_push_down_hints
-            .iter()
-            .filter(|hint| !hint.matched)
-        {
-            let db = hint
-                .db_name
-                .as_deref()
-                .unwrap_or_else(|| self.source.current_database());
-            self.ctx.append_warning(
-                1815,
-                &format!(
-                    "no_index_lookup_pushdown({db}.{}) is inapplicable, check whether the table({db}.{}) exists",
-                    hint.table_name, hint.table_name
-                ),
-            );
-        }
-        self.hints = parent_hints;
-        self.join_hints = parent_join_hints;
-        self.index_merge_hints = parent_index_merge_hints;
-        self.index_hints = parent_index_hints;
-        self.no_index_lookup_push_down_hints = parent_no_index_lookup_push_down_hints;
         let result = built.map(|(plan, flag)| {
             // `:4652` the trailing `return b.tryToBuildSequence(currentLayerCTEs, p)`,
             // which Go evaluates BEFORE the deferred truncation runs.

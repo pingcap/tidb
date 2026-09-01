@@ -21,7 +21,7 @@
 //! read side); both read the one [`crate::SessionVars`] this session owns, so
 //! both live here.
 
-use std::collections::HashSet;
+use std::borrow::Cow;
 
 use tidb_ast::{DmlStmt, Hint, SessionStmt, Stmt, Visitable, Visitor};
 use tidb_datatype::Datum;
@@ -29,6 +29,16 @@ use tidb_executor::DriverError;
 
 use crate::vars::validation_var_error;
 use crate::{sysvar, Session, VarError};
+
+/// Go `kv.ReplicaReadFollower`, passed as a byte to avoid coupling the hint
+/// package to the storage package.
+const REPLICA_READ_FOLLOWER: u8 = 1;
+
+#[derive(Clone, Copy)]
+enum ResourceGroupHintRejection {
+    Disabled,
+    AccessDenied,
+}
 
 /// Go `SysVar.GetNativeValType` (`pkg/sessionctx/variable/variable.go:455`),
 /// which `rewriteSystemVariable` applies to every `@@var` it folds into a
@@ -290,23 +300,71 @@ impl Session {
     /// `RESOURCE_GROUP(name)` hint wins for this statement, otherwise the
     /// connection's `SET RESOURCE GROUP` selection is used.
     #[must_use]
-    pub fn statement_resource_group<'a>(&'a self, stmt: &'a Stmt) -> &'a str {
-        resource_group_hint(statement_hints(stmt).unwrap_or_default())
-            .unwrap_or(&self.resource_group)
+    pub fn statement_resource_group<'a>(&'a self, stmt: &Stmt) -> Cow<'a, str> {
+        let stmt_hints = parse_statement_hints_without_catalog(stmt, &self.current_db);
+        if stmt_hints.has_resource_group && self.resource_group_hint_rejection().is_none() {
+            Cow::Owned(stmt_hints.resource_group)
+        } else {
+            Cow::Borrowed(&self.resource_group)
+        }
+    }
+
+    fn resource_group_hint_rejection(&self) -> Option<ResourceGroupHintRejection> {
+        let resource_control_enabled = self
+            .vars
+            .get_system("tidb_enable_resource_control")
+            .is_ok_and(|value| value.eq_ignore_ascii_case("on") || value == "1");
+        if !resource_control_enabled {
+            return Some(ResourceGroupHintRejection::Disabled);
+        }
+
+        let strict_mode = self
+            .vars
+            .get_system("tidb_resource_control_strict_mode")
+            .is_ok_and(|value| value.eq_ignore_ascii_case("on") || value == "1");
+        (strict_mode
+            && !self.has_dynamic_privilege("RESOURCE_GROUP_ADMIN", false)
+            && !self.has_dynamic_privilege("RESOURCE_GROUP_USER", false))
+        .then_some(ResourceGroupHintRejection::AccessDenied)
     }
 
     /// Resets Go `StmtCtx.ResourceGroupName` for one statement before its
     /// snapshot, transaction, planner, or executor is opened.
     pub(crate) fn activate_statement_resource_group(&mut self, stmt: &Stmt) {
-        let resource_group = self.statement_resource_group(stmt).to_ascii_lowercase();
-        self.active_resource_group = resource_group;
+        self.active_resource_group.clone_from(&self.resource_group);
+        let stmt_hints = parse_statement_hints_without_catalog(stmt, &self.current_db);
+        if !stmt_hints.has_resource_group {
+            return;
+        }
+
+        match self.resource_group_hint_rejection() {
+            Some(ResourceGroupHintRejection::Disabled) => {
+                self.append_warning(
+                    crate::warnings::WarningLevel::Warning,
+                    8250,
+                    "Resource control feature is disabled. Run `SET GLOBAL tidb_enable_resource_control='on'` to enable the feature".to_owned(),
+                );
+                return;
+            }
+            Some(ResourceGroupHintRejection::AccessDenied) => {
+                self.append_warning(
+                    crate::warnings::WarningLevel::Warning,
+                    1227,
+                    "Access denied; you need (at least one of) the SUPER or RESOURCE_GROUP_ADMIN or RESOURCE_GROUP_USER privilege(s) for this operation".to_owned(),
+                );
+                return;
+            }
+            None => {}
+        }
+
+        self.active_resource_group = stmt_hints.resource_group.to_ascii_lowercase();
     }
 
     /// Parses one text-protocol statement and resolves its statement-scoped
     /// resource group before any snapshot or transaction is opened.
     pub fn statement_resource_group_sql(&self, sql: &str) -> Result<String, DriverError> {
         let stmt = self.parse(sql)?;
-        Ok(self.statement_resource_group(&stmt).to_owned())
+        Ok(self.statement_resource_group(&stmt).into_owned())
     }
 
     /// One `name = value` assignment.
@@ -1045,59 +1103,55 @@ impl Session {
         Ok(bound)
     }
 
-    /// Go `hint.go`'s `set_var` arm plus `optimize.go`'s application of
-    /// `StmtHints.SetVars`: each `SET_VAR(name = value)` writes the session
-    /// variable for the duration of THIS statement only, and where the same
-    /// name appears twice the FIRST occurrence wins.
+    /// Applies Go `optimize.go`'s `StmtHints.SetVars` after the canonical
+    /// `hint.ParseStmtHints` pass: each `SET_VAR(name = value)` writes the
+    /// session variable for the duration of THIS statement only, and where
+    /// the same name appears twice the FIRST occurrence wins.
     ///
     /// The snapshot goes on [`Session::set_var_hint_restore`], which
     /// [`Session::run_with_columns`] puts back once the statement is over --
     /// so a statement that FAILS restores the overlay too, as Go's does.
     ///
-    /// DEFERRED (documented): Go's two hint warnings. An unknown name is
-    /// `ErrUnresolvedHintName` and a name whose registry entry is not
-    /// `IsHintUpdatableVerified` is `ErrNotHintUpdatable` -- the second needs a
-    /// registry field this tier's generated table does not carry. A name this
-    /// registry rejects is skipped, which is the outcome Go reaches for an
-    /// unknown name.
-    pub(crate) fn apply_set_var_hints(&mut self, stmt: &Stmt) {
+    pub(crate) fn apply_set_var_hints(&mut self, stmt: &Stmt) -> Result<(), DriverError> {
         let Some(hints) = statement_hints(stmt) else {
-            return;
+            return Ok(());
         };
-        let mut seen = HashSet::new();
-        let mut first = Vec::new();
-        // Go parses the complete hint list before it applies any SetVars
-        // entry. Collect first occurrences now so a duplicate warning is
-        // emitted before validation of an invalid first value below.
-        for hint in hints {
-            let tidb_ast::HintKind::SetVar { var_name, value } = &hint.kind else {
-                continue;
+        let current_database = self.current_db.clone();
+        let (mut stmt_hints, _, warnings) = {
+            let catalog = self.lock_catalog()?;
+            let mut set_var_checker = set_var_hint_checker;
+            let mut hypo_index_checker = |database: &str, table: &str, column: &str| {
+                let Some(table_entry) = catalog.table_in(database, table) else {
+                    return Err(format!("table '{database}.{table}' doesn't exist"));
+                };
+                table_entry
+                    .column_names()
+                    .iter()
+                    .position(|table_column| table_column.eq_ignore_ascii_case(column))
+                    .map(|offset| offset as i64)
+                    .ok_or_else(|| {
+                        format!("can't find column {column} in table {database}.{table}")
+                    })
             };
-            let name = var_name.to_ascii_lowercase();
-            // Go's setVarHintChecker rejects an unknown name before the
-            // duplicate map is consulted. This tier defers the dedicated
-            // unknown-hint warning, so the matching behavior is to skip it
-            // without manufacturing a 3126 conflict either.
-            if sysvar::get_sys_var(&name).is_none() {
-                continue;
-            }
-            // Go puts the first value in `StmtHints.SetVars` before it asks
-            // the sysvar hook to validate it. Therefore an INVALID first hint
-            // still occupies the name and a later valid one cannot take over.
-            if !seen.insert(name.clone()) {
-                self.append_warning(
-                    crate::warnings::WarningLevel::Warning,
-                    3126,
-                    format!(
-                        "Hint {}({name}={value}) is ignored as conflicting/duplicated.",
-                        hint.name
-                    ),
-                );
-                continue;
-            }
-            first.push((name, value.clone()));
+            tidb_hint::parse_stmt_hints(
+                hints,
+                &mut set_var_checker,
+                &mut hypo_index_checker,
+                &current_database,
+                REPLICA_READ_FOLLOWER,
+            )
+        };
+        for warning in warnings {
+            self.append_warning(
+                crate::warnings::WarningLevel::Warning,
+                warning.code,
+                warning.message,
+            );
         }
-        for (name, value) in first {
+        let set_vars = std::mem::take(&mut stmt_hints.set_vars);
+        self.stmt_hints = stmt_hints;
+        for (name, value) in set_vars {
+            let name = name.to_ascii_lowercase();
             let is_fix_control = name == tidb_vardef::tidb_vars::TIDB_OPT_FIX_CONTROL;
             if is_fix_control {
                 match tidb_planner::fix_control::OptimizerFixControl::parse(&value) {
@@ -1126,11 +1180,25 @@ impl Session {
             let value = self.relaxed_noop_gated_value(&name, value);
             let snapshot = self.vars.snapshot_system(&name);
             if self.vars.set_system(&name, value).is_ok() {
-                self.set_var_hint_restore.extend(snapshot);
+                // Go `StmtCtx.AddSetVarHintRestore` stores the value that
+                // preceded the FIRST overlay for a name. This matters when
+                // the query and its matched binding both carry SET_VAR for
+                // the same variable: restoring the binding-time snapshot
+                // would leave the query-time overlay installed.
+                for (key, previous) in snapshot {
+                    if !self
+                        .set_var_hint_restore
+                        .iter()
+                        .any(|(saved, _)| saved == &key)
+                    {
+                        self.set_var_hint_restore.push((key, previous));
+                    }
+                }
             } else if is_fix_control {
                 unreachable!("the source-shaped fix-control pre-validation just succeeded");
             }
         }
+        Ok(())
     }
 
     /// Go `preprocess.go:TryAddExtraLimit`: while `sql_select_limit` is not
@@ -1202,14 +1270,52 @@ pub(crate) fn statement_hints(stmt: &Stmt) -> Option<&[Hint]> {
     }
 }
 
-fn resource_group_hint(hints: &[Hint]) -> Option<&str> {
-    hints.iter().rev().find_map(|hint| match &hint.kind {
-        tidb_ast::HintKind::Name {
-            qb_name: None,
-            name,
-        } if hint.name.eq_ignore_ascii_case("RESOURCE_GROUP") => Some(name.as_str()),
-        _ => None,
-    })
+fn set_var_hint_checker(
+    variable_name: &str,
+    hint_name: &str,
+) -> (bool, Option<tidb_hint::HintWarning>) {
+    let folded = variable_name.to_ascii_lowercase();
+    if sysvar::get_sys_var(&folded).is_none() {
+        return (
+            false,
+            Some(tidb_hint::HintWarning {
+                code: 3128,
+                message: format!("Unresolved name '{variable_name}' for {hint_name} hint"),
+            }),
+        );
+    }
+    let warning =
+        (!tidb_exec::hint_updatable_vars::is_hint_updatable_verified(&folded)).then(|| {
+            tidb_hint::HintWarning {
+                code: 3637,
+                message: format!(
+                    "Variable '{variable_name}' might not be affected by SET_VAR hint."
+                ),
+            }
+        });
+    (true, warning)
+}
+
+/// Runs Go `ParseStmtHints` for consumers that do not read hypothetical-index
+/// metadata. Warnings are intentionally left to the execution-time parse,
+/// where Go appends them to StmtCtx exactly once.
+pub(crate) fn parse_statement_hints_without_catalog(
+    stmt: &Stmt,
+    current_database: &str,
+) -> tidb_hint::StmtHints {
+    let hints = statement_hints(stmt).unwrap_or_default();
+    let mut set_var_checker = set_var_hint_checker;
+    let mut hypo_index_checker = |_database: &str, _table: &str, _column: &str| {
+        Err("hypothetical-index metadata is unavailable in this hint consumer".to_owned())
+    };
+    tidb_hint::parse_stmt_hints(
+        hints,
+        &mut set_var_checker,
+        &mut hypo_index_checker,
+        current_database,
+        REPLICA_READ_FOLLOWER,
+    )
+    .0
 }
 
 /// Fix 52592 as it will be seen by this statement's planner, computed before
@@ -1224,23 +1330,13 @@ pub(crate) fn effective_fix_52592(
     persistent: &tidb_planner::fix_control::OptimizerFixControl,
 ) -> bool {
     let persistent = persistent.get_bool_with_default(tidb_planner::fix_control::FIX_52592, false);
-    let Some(hints) = statement_hints(stmt) else {
-        return persistent;
-    };
-    for hint in hints {
-        let tidb_ast::HintKind::SetVar { var_name, value } = &hint.kind else {
-            continue;
-        };
-        if !var_name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_OPT_FIX_CONTROL) {
-            continue;
-        }
-        return tidb_planner::fix_control::OptimizerFixControl::parse(value)
-            .map(|(overlay, _warnings)| {
-                overlay.get_bool_with_default(tidb_planner::fix_control::FIX_52592, false)
-            })
-            .unwrap_or(persistent);
-    }
-    persistent
+    parse_statement_hints_without_catalog(stmt, "")
+        .set_vars
+        .get(tidb_vardef::tidb_vars::TIDB_OPT_FIX_CONTROL)
+        .and_then(|value| tidb_planner::fix_control::OptimizerFixControl::parse(value).ok())
+        .map_or(persistent, |(overlay, _warnings)| {
+            overlay.get_bool_with_default(tidb_planner::fix_control::FIX_52592, false)
+        })
 }
 
 fn dml_hints(dml: &DmlStmt) -> Option<&[Hint]> {

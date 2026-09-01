@@ -1139,6 +1139,9 @@ impl Catalog {
                             is_cached: table.cache_status()
                                 != tidb_model::TableCacheStatusType::DISABLE,
                             has_affinity: table.has_affinity(),
+                            has_tiflash_replica: table
+                                .tiflash_replica()
+                                .is_some_and(|replica| replica.available),
                             handle_col_offsets: table
                                 .pk_handle_offset()
                                 .into_iter()

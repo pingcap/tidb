@@ -769,6 +769,165 @@ fn test_comment_index_hint_warnings_match_go() {
 }
 
 #[test]
+fn test_read_from_storage_is_resolved_from_plan_hints_like_go() {
+    use crate::logical::data_source::{PREFER_TIFLASH, PREFER_TIKV};
+
+    let mut harness = Harness::new();
+    harness.tables_mut()[0].has_tiflash_replica = true;
+    let warnings = WarningColumns::default();
+
+    let build = |sql: &str, engines: &str| {
+        warnings
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+        let mut builder = PlanBuilder::new(
+            &harness.catalog,
+            &warnings,
+            &harness.plan_ids,
+            &harness.column_ids,
+            SessionTimeZone::utc(),
+        );
+        builder.set_isolation_read_engines(engines);
+        let (plan, _) = builder
+            .build_select(&parse_select(sql))
+            .expect("the storage hint builds");
+        let mut source = None;
+        plan.walk_preorder(&mut |node| {
+            if let LogicalPlan::DataSource(data_source) = node {
+                source = Some(data_source.clone());
+            }
+        });
+        (
+            source.expect("the SELECT contains a DataSource"),
+            warnings
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone(),
+        )
+    };
+
+    let (source, warning) = build(
+        "SELECT /*+ READ_FROM_STORAGE(TIKV[x]) */ a FROM t AS x",
+        "tikv,tiflash,tidb",
+    );
+    assert_eq!(source.prefer_store_type, PREFER_TIKV);
+    assert_eq!(source.prefer_partitions.get(&PREFER_TIKV), Some(&vec![]));
+    assert!(warning.is_empty());
+
+    let (source, warning) = build(
+        "SELECT /*+ READ_FROM_STORAGE(TIFLASH[x]) */ a FROM t AS x",
+        "tikv,tidb",
+    );
+    assert_eq!(source.prefer_store_type, 0);
+    assert_eq!(
+        warning,
+        vec![(
+            1815,
+            "No available path for table test.t with the store type tiflash of the hint /*+ read_from_storage */, please check the status of the table replica and variable value of tidb_isolation_read_engines(map[0:{} 2:{}])".to_owned(),
+        )]
+    );
+
+    let (source, warning) = build(
+        "SELECT /*+ READ_FROM_STORAGE(TIKV[x], TIFLASH[x]) */ a FROM t AS x",
+        "tikv,tiflash,tidb",
+    );
+    assert_eq!(source.prefer_store_type, 0);
+    assert_eq!(source.prefer_partitions.get(&PREFER_TIKV), Some(&vec![]));
+    assert_eq!(
+        warning,
+        vec![(
+            1815,
+            "Storage hints are conflict, you can only specify one storage type of table test.x"
+                .to_owned(),
+        )]
+    );
+
+    let (source, warning) = build(
+        "SELECT /*+ READ_FROM_STORAGE(TIFLASH[x]) */ a FROM t AS x",
+        "tikv,tiflash,tidb",
+    );
+    assert_eq!(source.prefer_store_type, PREFER_TIFLASH);
+    assert_eq!(source.prefer_partitions.get(&PREFER_TIFLASH), Some(&vec![]));
+    assert!(warning.is_empty());
+}
+
+#[test]
+fn test_index_hints_respect_tikv_isolation_like_go() {
+    use crate::access_path::PossiblePath;
+
+    let mut harness = Harness::new();
+    harness.tables_mut()[0].has_tiflash_replica = true;
+    let warnings = WarningColumns::default();
+    let build = |sql: &str| {
+        warnings
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+        let mut builder = PlanBuilder::new(
+            &harness.catalog,
+            &warnings,
+            &harness.plan_ids,
+            &harness.column_ids,
+            SessionTimeZone::utc(),
+        );
+        builder.set_isolation_read_engines("tiflash");
+        builder.build_select(&parse_select(sql))
+    };
+
+    let (plan, _) = build("SELECT a FROM t USE INDEX ()")
+        .expect("an empty USE INDEX does not force TiKV when TiKV is disabled");
+    let mut source = None;
+    plan.walk_preorder(&mut |node| {
+        if let LogicalPlan::DataSource(data_source) = node {
+            source = Some(data_source.clone());
+        }
+    });
+    assert_eq!(
+        source
+            .expect("the SELECT contains a DataSource")
+            .enumerated_paths,
+        vec![PossiblePath::TiFlashTable]
+    );
+
+    let error = build("SELECT a FROM t USE INDEX (idx_b)")
+        .expect_err("a table-syntax TiKV index hint is an error without TiKV");
+    assert_eq!(
+        error.message(),
+        "TiDB doesn't support index 'idx_b' in the isolation read engines(value: 'tiflash')"
+    );
+
+    let (plan, _) = build("SELECT /*+ USE_INDEX(t, idx_b) */ a FROM t")
+        .expect("a comment-style TiKV index hint is downgraded to a warning");
+    let mut source = None;
+    plan.walk_preorder(&mut |node| {
+        if let LogicalPlan::DataSource(data_source) = node {
+            source = Some(data_source.clone());
+        }
+    });
+    assert_eq!(
+        source
+            .expect("the SELECT contains a DataSource")
+            .enumerated_paths,
+        vec![PossiblePath::TiFlashTable]
+    );
+    assert_eq!(
+        *warnings
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+        vec![(
+            1105,
+            "TiDB doesn't support index 'idx_b' in the isolation read engines(value: 'tiflash')"
+                .to_owned(),
+        )]
+    );
+}
+
+#[test]
 fn test_no_index_lookup_pushdown_matches_and_overrides_positive_hint() {
     let harness = Harness::new();
     let warnings = WarningColumns::default();
@@ -886,6 +1045,8 @@ fn test_lookup_pushdown_support_gates_and_auto_policy_match_go() {
             false,
             false,
             session,
+            true,
+            "tikv,tiflash,tidb",
         )
         .expect("lookup-pushdown hint resolution")
     };
@@ -975,6 +1136,8 @@ fn test_lookup_pushdown_support_gates_and_auto_policy_match_go() {
             policy: IndexLookupPushDownPolicy::Force,
             ..Default::default()
         },
+        true,
+        "tikv,tiflash,tidb",
     )
     .unwrap();
     assert_eq!(
@@ -992,6 +1155,8 @@ fn test_lookup_pushdown_support_gates_and_auto_policy_match_go() {
             policy: IndexLookupPushDownPolicy::AffinityForce,
             ..Default::default()
         },
+        true,
+        "tikv,tiflash,tidb",
     )
     .unwrap();
     assert!(affinity_only.index_lookup_push_down_by.is_empty());

@@ -549,6 +549,7 @@ where
             paging_min_size: request.paging_min_size,
             time_zone: request.statement.time_zone.clone(),
             resource_group_name: request.statement.resource_group_name.clone(),
+            replica_read: request.statement.replica_read,
             warnings: request.statement.warnings.clone(),
             cop_plan_ids,
             root_plan_id: request.statement.plan_id,
@@ -601,6 +602,8 @@ struct RemoteScanPlan {
     time_zone: tidb_datatype::SessionTimeZone,
     /// Go `StmtCtx.ResourceGroupName` for this request.
     resource_group_name: String,
+    /// Go `SessionVars.GetReplicaRead()` for this request.
+    replica_read: tidb_distsql::ReplicaReadType,
     /// The statement's warning sink. It is an `Arc` handler, so warnings
     /// appended while the query worker decodes land in the buffer
     /// `SHOW WARNINGS` reads.
@@ -627,13 +630,14 @@ where
     // `ResourceGroupName`, neither of which any TiDB sends: a stock session
     // is `tidb_distsql_scan_concurrency = 15` and resource group `default`.
     //
-    // The remaining `SetFromSessionVars` fields (replica read, statement
-    // priority, request source, task id, max_execution_time,
+    // The remaining `SetFromSessionVars` fields (statement priority, request
+    // source, task id, max_execution_time,
     // tidb_kv_read_timeout, the runaway checker) are session variables no
     // `StmtContext` carries yet. Resource group is statement-scoped in Go and
     // is therefore copied from this request rather than the stock context.
     let mut context = DistSqlContext::new();
     context.request.resource_group_name = plan.resource_group_name;
+    context.request.replica_read = plan.replica_read;
     if let Some(min_size) = plan.paging_min_size {
         // Go's buildIndexSelectResultForRange raises both paging bounds to
         // the worker's first handle batch. Keep the normal session defaults

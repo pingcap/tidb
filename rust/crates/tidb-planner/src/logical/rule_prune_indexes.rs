@@ -139,7 +139,9 @@ pub fn prune_indexes_by_where_and_order(
 
     for path in paths {
         match path {
-            PossiblePath::Table { .. } => table_paths.push(path.clone()),
+            PossiblePath::Table { .. } | PossiblePath::TiFlashTable => {
+                table_paths.push(path.clone())
+            }
             PossiblePath::Index { index } => {
                 let Some(metadata) = source.indexes.get(*index) else {
                     continue;
@@ -233,6 +235,7 @@ pub fn prune_data_source(source: &mut DataSource, threshold: i32) -> Option<Hash
                 ..
             } => source.indexes.get(*index).map(|index| index.id),
             PossiblePath::Table { .. } => None,
+            PossiblePath::TiFlashTable => None,
         })
         .collect();
     source.enumerated_paths = pruned;

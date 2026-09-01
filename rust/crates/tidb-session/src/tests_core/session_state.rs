@@ -38,6 +38,134 @@ fn resource_group_is_session_scoped_and_statement_hint_overrides_once() {
     );
 }
 
+/// Pinned Go `pkg/planner/optimize.go`: RESOURCE_GROUP is an optimizer
+/// postcondition, not an unconditional parser-side override.  Disabled
+/// resource control leaves the session group in force and emits 8250.
+#[test]
+fn resource_group_hint_is_ignored_when_resource_control_is_disabled() {
+    let mut session = Session::new();
+    session
+        .run("SET GLOBAL tidb_enable_resource_control = OFF")
+        .unwrap();
+
+    session
+        .run("SELECT /*+ RESOURCE_GROUP(analytics) */ 1")
+        .unwrap();
+
+    assert_eq!(session.active_resource_group(), "default");
+    assert_eq!(
+        warnings_of(&session),
+        vec![(
+            8250,
+            "Resource control feature is disabled. Run `SET GLOBAL tidb_enable_resource_control='on'` to enable the feature".to_owned(),
+        )]
+    );
+}
+
+/// Pinned Go `pkg/planner/optimize.go`: strict resource control accepts
+/// SUPER (through the dynamic-privilege fallback), RESOURCE_GROUP_ADMIN, or
+/// RESOURCE_GROUP_USER.  A connected account with none keeps its session
+/// group and receives the ordinary 1227 warning.
+#[test]
+fn strict_resource_group_hint_requires_resource_group_authority() {
+    let privileges = privilege::PrivilegeRegistry::default();
+    let mut session = authenticated_session(&privileges, "ordinary", "%");
+
+    session
+        .run("SELECT /*+ RESOURCE_GROUP(analytics) */ 1")
+        .unwrap();
+
+    assert_eq!(session.active_resource_group(), "default");
+    assert_eq!(
+        warnings_of(&session),
+        vec![(
+            1227,
+            "Access denied; you need (at least one of) the SUPER or RESOURCE_GROUP_ADMIN or RESOURCE_GROUP_USER privilege(s) for this operation".to_owned(),
+        )]
+    );
+}
+
+/// Pinned Go `pkg/session/test/session_test.go:TestStmtHints`: statement-level
+/// fields come from the one `hint.ParseStmtHints` result retained in StmtCtx.
+#[test]
+fn statement_hints_use_the_canonical_parse_result() {
+    let mut session = Session::new();
+
+    session.run("SELECT /*+ MEMORY_QUOTA(1 MB) */ 1").unwrap();
+    assert!(session.stmt_hints.has_mem_quota_hint);
+    assert_eq!(session.stmt_hints.mem_quota_query, 1024 * 1024);
+    assert_eq!(
+        session.statement_context(false).statement_memory().quota(),
+        1024 * 1024,
+    );
+
+    session.run("SELECT /*+ NO_INDEX_MERGE() */ 1").unwrap();
+    assert!(session.stmt_hints.no_index_merge_hint);
+    assert!(!session.statement_context(false).index_merge());
+
+    session.run("SELECT /*+ STRAIGHT_JOIN() */ 1").unwrap();
+    assert!(session.stmt_hints.straight_join_order);
+
+    session.run("SELECT /*+ USE_TOJA(false) */ 1").unwrap();
+    assert!(session.stmt_hints.has_allow_in_subq_to_join_and_agg_hint);
+    assert!(!session.stmt_hints.allow_in_subq_to_join_and_agg);
+    assert!(!session
+        .statement_context(false)
+        .allow_in_subq_to_join_and_agg());
+
+    session.run("SELECT /*+ USE_CASCADES(true) */ 1").unwrap();
+    assert!(session.stmt_hints.has_enable_cascades_planner_hint);
+    assert!(session.stmt_hints.enable_cascades_planner);
+
+    session
+        .run("SELECT /*+ READ_CONSISTENT_REPLICA() */ 1")
+        .unwrap();
+    assert!(session.stmt_hints.has_replica_read_hint);
+    assert_eq!(session.stmt_hints.replica_read, 1);
+    assert_eq!(
+        session.statement_context(false).replica_read(),
+        tidb_executor::ReplicaReadType::Follower,
+    );
+
+    // Statement-local fields are not part of the generation-cached session
+    // variable snapshot. An unhinted successor immediately sees the
+    // persistent session values again.
+    session.run("SELECT 1").unwrap();
+    let ctx = session.statement_context(false);
+    assert!(ctx.index_merge());
+    assert!(ctx.allow_in_subq_to_join_and_agg());
+    assert_eq!(ctx.replica_read(), tidb_executor::ReplicaReadType::Leader,);
+    assert_eq!(
+        ctx.statement_memory().quota(),
+        session
+            .vars
+            .get_system("tidb_mem_quota_query")
+            .unwrap()
+            .parse::<i64>()
+            .unwrap(),
+    );
+}
+
+/// Pinned Go `pkg/session/test/variable/variable_test.go::TestIsolationRead`:
+/// the session variable is the source of the planner's per-statement engine
+/// set, not a catalog-side preference.
+#[test]
+fn isolation_read_engines_reach_the_statement_context() {
+    let mut session = Session::new();
+    assert_eq!(
+        session.statement_context(false).isolation_read_engines(),
+        "tikv,tiflash,tidb"
+    );
+
+    session
+        .run("SET @@session.tidb_isolation_read_engines = 'tiflash'")
+        .unwrap();
+    assert_eq!(
+        session.statement_context(false).isolation_read_engines(),
+        "tiflash"
+    );
+}
+
 /// SET and the variable reads a connecting client performs.
 #[test]
 fn session_variables() {

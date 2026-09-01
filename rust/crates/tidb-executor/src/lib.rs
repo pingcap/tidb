@@ -261,6 +261,7 @@ pub use stmt_context::{
 pub use table_access::TableAccess;
 pub use table_dual::TableDualExec;
 pub use tidb_decode_key::TidbDecodeKeySnapshot;
+pub use tidb_distsql::ReplicaReadType;
 /// The level a statement warning carries -- Go's three `contextutil` levels,
 /// re-exported so the session can read the one a `StmtContext` recorded
 /// without depending on `tidb-distsql` directly.

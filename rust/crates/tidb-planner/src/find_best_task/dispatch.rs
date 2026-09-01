@@ -1086,6 +1086,7 @@ fn path_matches_index_join_runtime(
         .map(|column| column.unique_id)
         .collect();
     match path {
+        crate::access_path::PossiblePath::TiFlashTable => false,
         crate::access_path::PossiblePath::Table { .. } => {
             if !runtime.table_range_scan {
                 return false;
@@ -1149,6 +1150,7 @@ fn index_join_feedback(
     ranges: crate::ranger::types::Ranges,
 ) -> crate::task::IndexJoinInfo {
     let (access_columns, idx_col_lens) = match path {
+        crate::access_path::PossiblePath::TiFlashTable => (Vec::new(), Vec::new()),
         crate::access_path::PossiblePath::Table { .. } if ds.handle_is_int => (
             ds.handle_cols.iter().take(1).collect::<Vec<_>>(),
             Vec::new(),
@@ -1207,6 +1209,7 @@ fn index_join_feedback(
                 ds.indexes.get(*index).map(|index| index.id)
             }
             crate::access_path::PossiblePath::Table { .. } => None,
+            crate::access_path::PossiblePath::TiFlashTable => None,
         },
         ranges,
         idx_col_lens,
@@ -1378,6 +1381,13 @@ fn find_best_task_4_logical_data_source_without_enforcer(
     let desc = ordered && prop.sort_items[0].desc;
     let mut best = Task::invalid_task();
     'paths: for path in &ds.enumerated_paths {
+        if (ds.prefer_store_type & crate::logical::data_source::PREFER_TIFLASH != 0
+            && !matches!(path, crate::access_path::PossiblePath::TiFlashTable))
+            || (ds.prefer_store_type & crate::logical::data_source::PREFER_TIKV != 0
+                && matches!(path, crate::access_path::PossiblePath::TiFlashTable))
+        {
+            continue;
+        }
         if let Some(runtime) = &prop.index_join_prop {
             if !path_matches_index_join_runtime(ds, path, runtime) {
                 continue;
@@ -1727,6 +1737,75 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         .index_join_prop
                         .as_ref()
                         .map(|runtime| index_join_feedback(ds, path, runtime, ranges.clone())),
+                    ..crate::task::CopTask::default()
+                })
+            }
+            crate::access_path::PossiblePath::TiFlashTable => {
+                if cop_multi_read || prop.index_join_prop.is_some() {
+                    continue 'paths;
+                }
+                let keep_order = ordered;
+                if keep_order && !table_path_matches_order(ds, prop) {
+                    continue 'paths;
+                }
+                let mut base = crate::physical::BasePhysicalPlan::new(
+                    ctx.allocator,
+                    "TableScan",
+                    ds.base.base.query_block_offset(),
+                );
+                base.base.set_schema(ds.base.base.schema().cloned());
+                base.base.set_stats(
+                    ds.table_stats
+                        .clone()
+                        .or_else(|| ds.base.base.stats_info().cloned()),
+                );
+                let ranges = crate::ranger::points::full_int_range(false);
+                let scan = PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
+                    base,
+                    table_id: ds.physical_table_id,
+                    table_as_name: ds.table_as_name.clone(),
+                    dynamic_partition_access: ds.dynamic_partition_access.clone(),
+                    cost_columns: ds.table_columns.clone(),
+                    store_type: crate::physical_table_reader::StoreType::TiFlash,
+                    keep_order,
+                    desc,
+                    ranges,
+                    range_rebuild: None,
+                    table_scan_penalty: ds.table_scan_penalty,
+                    tikv_pushdown: None,
+                    resolved_descriptor: Some(crate::access_path::ResolvedTableDescriptor::new(
+                        ds.physical_table_id,
+                        ds.is_common_handle,
+                        crate::access_path::ResolvedTableScanKind::Full,
+                        crate::access_path::TableScanExplainIdSuffix::IncludePlanId,
+                    )),
+                });
+                let table_plan = if ds.pushed_down_conds.is_empty() {
+                    scan
+                } else {
+                    let mut selection_base = crate::physical::BasePhysicalPlan::new(
+                        ctx.allocator,
+                        "Selection",
+                        ds.base.base.query_block_offset(),
+                    );
+                    selection_base
+                        .base
+                        .set_schema(ds.base.base.schema().cloned());
+                    selection_base
+                        .base
+                        .set_stats(ds.base.base.stats_info().cloned());
+                    selection_base.set_children(vec![scan]);
+                    PhysicalPlan::Selection(crate::physical::PhysicalSelection {
+                        base: selection_base,
+                        conditions: ds.pushed_down_conds.clone(),
+                        from_data_source: true,
+                    })
+                };
+                Task::Cop(crate::task::CopTask {
+                    table_plan: Some(Box::new(table_plan)),
+                    index_plan_finished: true,
+                    keep_order,
+                    expect_cnt: prop.expected_cnt as u64,
                     ..crate::task::CopTask::default()
                 })
             }
@@ -2692,6 +2771,49 @@ mod tests {
         let prop = PhysicalProperty::new(TaskType::Root, &[1], false, f64::MAX, false);
         let task = find_best_task(&source(&allocator), &prop, &mut ctx).expect("answers");
         assert!(task.invalid());
+    }
+
+    #[test]
+    fn read_from_storage_tiflash_selects_the_tiflash_table_path() {
+        use crate::access_path::PossiblePath;
+        use crate::logical::data_source::PREFER_TIFLASH;
+        use crate::logical::DataSource;
+
+        let allocator = PlanIdAllocator::new();
+        let coster = CountCoster;
+        let mut ctx = DispatchContext::new(&allocator, &coster, 1.0);
+        let mut base = BaseLogicalPlan::new(&allocator, "DataSource", 0);
+        base.base.set_stats(Some(StatsInfo::new(50.0, [])));
+        let source = LogicalPlan::DataSource(DataSource {
+            base,
+            physical_table_id: 7,
+            enumerated_paths: vec![
+                PossiblePath::Table {
+                    is_int_handle: true,
+                    primary_index: None,
+                },
+                PossiblePath::TiFlashTable,
+            ],
+            prefer_store_type: PREFER_TIFLASH,
+            has_tiflash_replica: true,
+            ..DataSource::default()
+        });
+
+        let task = find_best_task(&source, &PhysicalProperty::default(), &mut ctx).expect("plans");
+        let Some(PhysicalPlan::TableReader(reader)) = task.plan() else {
+            panic!("a TableReader, got {:?}", task.plan());
+        };
+        assert_eq!(
+            reader.store_type,
+            crate::physical_table_reader::StoreType::TiFlash
+        );
+        let Some(PhysicalPlan::TableScan(scan)) = reader.table_plan.as_deref() else {
+            panic!("the TiFlash scan hangs off TablePlan");
+        };
+        assert_eq!(
+            scan.store_type,
+            crate::physical_table_reader::StoreType::TiFlash
+        );
     }
 
     #[test]

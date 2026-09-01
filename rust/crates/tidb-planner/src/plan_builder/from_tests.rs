@@ -609,6 +609,37 @@ fn test_a_view_builds_a_projection_over_its_body() {
 }
 
 #[test]
+fn test_from_view_routes_through_the_view_builder_and_applies_the_alias() {
+    let harness = Harness::new();
+    let plan = build(&harness, "SELECT x.va, x.vb FROM v AS x");
+
+    assert_eq!(
+        qualified_names(&plan),
+        vec!["x.va".to_owned(), "x.vb".to_owned()]
+    );
+    let mut saw_view_projection = false;
+    plan.walk_preorder(&mut |node| {
+        saw_view_projection |= matches!(node, LogicalPlan::Projection(_))
+            && node
+                .output_names()
+                .first()
+                .is_some_and(|name| name.names.original_table.original == "t1");
+    });
+    assert!(saw_view_projection, "the stored view body was expanded");
+}
+
+#[test]
+fn test_from_recursive_view_reaches_the_recursion_guard() {
+    let harness = Harness::new();
+    let mut builder = harness.builder();
+    let error = builder
+        .build_select(&parse_select("SELECT * FROM bad_v"))
+        .expect_err("the self-referencing view must be refused");
+    assert!(format!("{error:?}").contains("view recursion"));
+    assert!(builder.building_view_stack.is_empty());
+}
+
+#[test]
 fn test_a_recursive_view_is_refused() {
     // Go `checkRecursiveView` (:5487): ErrViewRecursive.
     let harness = Harness::new();
@@ -736,7 +767,23 @@ fn test_leading_hint_is_retained_on_the_join() {
     let harness = Harness::new();
     let mut builder = harness.builder();
     let select = parse_select("SELECT /*+ LEADING(t1, t2) */ * FROM t1 JOIN t2 ON t1.a = t2.a");
-    builder.join_hints = std::rc::Rc::new(JoinHints::from_select(&select));
+    let mut query = tidb_ast::QueryStmt::Select(Box::new(select.clone()));
+    let handler = tidb_hint::QBHintHandler::build_query(&mut query);
+    let (plan_hints, _, warnings) = tidb_hint::parse_plan_hints(
+        &select.hints,
+        1,
+        "test",
+        &handler,
+        false,
+        false,
+        false,
+        true,
+    );
+    assert!(warnings.is_empty());
+    builder.join_hints = std::rc::Rc::new(JoinHints::from_plan_hints(
+        std::rc::Rc::new(std::cell::RefCell::new(plan_hints)),
+        1,
+    ));
     let plan = builder
         .build_join(select.from.as_ref().expect("FROM clause"))
         .expect("the join builds");

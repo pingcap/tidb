@@ -3645,6 +3645,16 @@ name = "tidb-hash"
 version = "0.0.0"
 
 [[package]]
+name = "tidb-hint"
+version = "0.0.0"
+dependencies = [
+ "tidb-ast",
+ "tidb-datatype",
+ "tidb-model",
+ "tidb-parser",
+]
+
+[[package]]
 name = "tidb-kvcache"
 version = "0.0.0"
 
@@ -3785,6 +3795,7 @@ dependencies = [
  "tidb-expr",
  "tidb-funcdep",
  "tidb-hash",
+ "tidb-hint",
  "tidb-model",
  "tidb-parser",
  "tidb-proto",
@@ -3953,6 +3964,7 @@ dependencies = [
  "tidb-exec",
  "tidb-executor",
  "tidb-gcutil",
+ "tidb-hint",
  "tidb-log",
  "tidb-metadef",
  "tidb-model",

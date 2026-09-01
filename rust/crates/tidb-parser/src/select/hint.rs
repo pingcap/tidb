@@ -46,12 +46,17 @@ impl Parser {
             | "HASH_JOIN_PROBE"
             | "BROADCAST_JOIN"
             | "SHUFFLE_JOIN"
+            | "SWAP_JOIN_INPUTS"
+            | "NO_SWAP_JOIN_INPUTS"
             | "NO_HASH_JOIN"
             | "MERGE_JOIN"
             | "NO_MERGE_JOIN"
             | "TIDB_SMJ"
             | "TIDB_INLJ"
             | "TIDB_HJ"
+            | "INDEX_JOIN"
+            | "INDEX_HASH_JOIN"
+            | "INDEX_MERGE_JOIN"
             | "NO_INDEX_JOIN"
             | "NO_INDEX_HASH_JOIN"
             | "NO_INDEX_MERGE_JOIN" => {
@@ -80,36 +85,67 @@ impl Parser {
                     kind: HintKind::Tables { qb_name, tables },
                 })
             }
+            "HYPO_INDEX" => {
+                self.expect_op("(")?;
+                let qb_name = if self.peek().kind == TokenKind::UserVar {
+                    Some(self.bumped_at_name())
+                } else {
+                    None
+                };
+                if self.is_op(")") {
+                    return Err(self.err_here("expected a table name"));
+                }
+                let mut tables = vec![self.parse_hint_table()?];
+                while self.is_op(",") {
+                    self.bump();
+                    tables.push(HintTable {
+                        db_name: None,
+                        name: self.parse_charset_name()?,
+                        qb_name: None,
+                        partitions: Vec::new(),
+                    });
+                }
+                self.expect_op(")")?;
+                Ok(Hint {
+                    name,
+                    kind: HintKind::Tables { qb_name, tables },
+                })
+            }
             // `MERGE` is a genuine PARSE/RESTORE asymmetry in real TiDB,
             // confirmed via `godump restore` after this project's own
             // coverage measurement caught it: it PARSES a table list
             // exactly like `MERGE_JOIN`/etc. above (`MERGE(t1, t2)` is
-            // valid grammar), but ALWAYS restores as bare `MERGE()`,
-            // discarding the parsed tables entirely — real TiDB's own
+            // valid grammar), but ALWAYS restores as bare `MERGE()`. The AST
+            // retains the parsed tables because `hint.ParsePlanHints` uses
+            // their presence to diagnose incorrect MERGE usage; only restore
+            // discards them. Real TiDB's own
             // restore code puts `"merge"` in its argument-less bucket
             // even though `parseOneHint` dispatches it through the
             // SAME table-list parser as `MERGE_JOIN`. `NO_MERGE`
             // (distinct from `NO_MERGE_JOIN`, which IS a normal
             // table-list hint) is a genuinely different, real MySQL
             // compatibility hint that real TiDB doesn't support AT ALL
-            // — parsed only far enough to skip its own args, producing
-            // NO hint node, a real, narrower divergence from this
-            // project's own "unrecognized name" `ParseError`
-            // (deliberately not replicated — see `parse_one_hint`'s own
-            // final `_ =>` arm).
+            // — parsed only far enough to skip its own args, producing no
+            // hint node.
             "MERGE" => {
                 self.expect_op("(")?;
+                let qb_name = if self.peek().kind == TokenKind::UserVar {
+                    Some(self.bumped_at_name())
+                } else {
+                    None
+                };
+                let mut tables = Vec::new();
                 if !self.is_op(")") {
-                    self.parse_hint_table()?;
+                    tables.push(self.parse_hint_table()?);
                     while self.is_op(",") {
                         self.bump();
-                        self.parse_hint_table()?;
+                        tables.push(self.parse_hint_table()?);
                     }
                 }
                 self.expect_op(")")?;
                 Ok(Hint {
                     name,
-                    kind: HintKind::Nullary { qb_name: None },
+                    kind: HintKind::Tables { qb_name, tables },
                 })
             }
             "USE_INDEX"
@@ -158,14 +194,9 @@ impl Parser {
             // `LEADING` gets its own recursive arm: real TiDB's own
             // `parseLeadingTableList` calls `parseLeadingElement()`
             // unconditionally once before ever checking for a comma, so
-            // `LEADING()` (empty) is a genuine parse failure there (real
-            // TiDB drops the hint silently with a warning; confirmed via
-            // `godump restore` — `LEADING()` restores with NO hint at
-            // all, unlike `INL_JOIN()`, which restores fine). This
-            // project's own narrower, `ParseError`-over-silent-drop
-            // convention (see `tidb_ast::Hint`'s own doc) applies the
-            // same way here: requiring at least one table below makes
-            // `LEADING()` a `ParseError` instead of silently vanishing.
+            // `LEADING()` (empty) is a parse failure there. The surrounding
+            // hint parser converts that failure to the source warning and
+            // omits the malformed occurrence.
             // The recursive tree and optional hint-level `@qb` prefix are
             // preserved in `HintKind::Leading` so restore matches Go.
             "LEADING" => {
@@ -253,15 +284,8 @@ impl Parser {
             // parses, so `parse_charset_name` — which accepts any
             // identifier-OR-keyword token, the SAME lenient acceptance
             // `SET_VAR`'s own `var_name` above already relies on — is the
-            // right fit, not the narrower `parse_name`). No `@qb_name`
-            // suffix is accepted here — real TiDB's own
-            // `parseResourceGroupHint` only ever calls `parseIdentifier`,
-            // never `parseHintTable`, confirmed via `godump restore`:
-            // `RESOURCE_GROUP(rg1@sel_1)` is real TiDB's own silent-drop-
-            // with-warning case (the whole hint vanishes from restore),
-            // so it stays a genuine `ParseError` here — the SAME
-            // narrower, `ParseError`-over-silent-drop convention already
-            // applied to `LEADING()`/`USE_TOJA(1)`.
+            // right fit, not `parse_name`). No `@qb_name` suffix is accepted
+            // here: Go calls `parseIdentifier`, never `parseHintTable`.
             "RESOURCE_GROUP" => {
                 self.expect_op("(")?;
                 let qb_name = if self.peek().kind == TokenKind::UserVar {
@@ -432,18 +456,8 @@ impl Parser {
                 })
             }
             // `READ_FROM_STORAGE([@qb] STORE[t, ...], STORE2[t2, ...],
-            // ...)` — see `tidb_ast::HintKind::ReadFromStorage`'s own
-            // doc for the exact restore shape. Real TiDB's own
-            // `parseStorageHint` treats an unrecognized store name (not
-            // `TIKV`/`TIFLASH`) as a silent-drop-the-rest case (its own
-            // `default:` arm skips to the close paren and returns
-            // whatever groups were already built) — NOT replicated
-            // here, since it's a genuinely obscure malformed-input edge
-            // case with zero corpus coverage to verify against; this
-            // project's own general `ParseError`-over-silent-drop
-            // convention applies instead (see [`tidb_ast::Hint`]'s own
-            // doc), the SAME choice already made for `LEADING()`'s own
-            // empty-table-list case.
+            // ...)`. Go retains groups parsed before an unknown store and
+            // discards the rest of that occurrence.
             "READ_FROM_STORAGE" => {
                 self.expect_op("(")?;
                 let qb_name = if self.peek().kind == TokenKind::UserVar {
@@ -458,7 +472,16 @@ impl Parser {
                     }
                     let store = self.bump().text.to_ascii_uppercase();
                     if store != "TIKV" && store != "TIFLASH" {
-                        return Err(self.err_here("expected TIKV or TIFLASH"));
+                        while !self.at_eof() && !self.is_op(")") {
+                            self.bump();
+                        }
+                        if self.is_op(")") {
+                            self.bump();
+                        }
+                        return Ok(Hint {
+                            name,
+                            kind: HintKind::ReadFromStorage { qb_name, groups },
+                        });
                     }
                     // The bracketed table list is OPTIONAL — real TiDB's
                     // own `parseStorageHint` only enters it via `if
@@ -493,12 +516,9 @@ impl Parser {
             | "MPP_1PHASE_AGG"
             | "MPP_2PHASE_AGG"
             | "AGG_TO_COP"
-            | "NO_DECORRELATE"
             | "NO_INDEX_MERGE"
             | "IGNORE_PLAN_CACHE"
             | "LIMIT_TO_COP"
-            | "USE_PLAN_CACHE"
-            | "SEMI_JOIN_REWRITE"
             | "STRAIGHT_JOIN"
             | "READ_CONSISTENT_REPLICA" => {
                 // The parens are optional; when present they may contain
@@ -516,6 +536,19 @@ impl Parser {
                 } else {
                     None
                 };
+                Ok(Hint {
+                    name,
+                    kind: HintKind::Nullary { qb_name },
+                })
+            }
+            "SEMI_JOIN_REWRITE" | "NO_DECORRELATE" | "USE_PLAN_CACHE" => {
+                self.expect_op("(")?;
+                let qb_name = if self.peek().kind == TokenKind::UserVar {
+                    Some(self.bumped_at_name())
+                } else {
+                    None
+                };
+                self.expect_op(")")?;
                 Ok(Hint {
                     name,
                     kind: HintKind::Nullary { qb_name },
@@ -837,13 +870,8 @@ fn hint_syntax_diagnostic(initial_line: usize) -> HintDiagnostic {
 /// text with a fresh, fully self-contained nested [`Parser`] (see its own
 /// `new`) rather than a bespoke hint-only lexer, reusing the SAME
 /// token-cursor primitives (`peek`/`bump`/`is_kw`/`expect_op`/...) every
-/// other parsing function in this crate already uses — real TiDB's own
-/// hint grammar has its OWN dedicated ~1200-line lexer/parser
-/// (`pkg/parser/hintparser.go`) covering roughly 30 distinct hint shapes;
-/// this covers only the four shapes confirmed (via a stratified sample of
-/// real TiDB's own integration-test corpus) to account for the
-/// overwhelming majority of real-world hint usage — see
-/// [`tidb_ast::Hint`]'s own doc for the exact scope boundary.
+/// other parsing function in this crate already uses. The dispatch mirrors
+/// the semantic and unsupported-hint cases in `pkg/parser/hintparser.go`.
 pub(crate) fn parse_hint_comment(text: &str, initial_line: usize) -> HintParseResult {
     parse_hint(text, false, initial_line)
 }
@@ -854,12 +882,8 @@ pub(crate) fn parse_hint_comment(text: &str, initial_line: usize) -> HintParseRe
 /// Anything NOT in this list tokenizes as a generic `hintIdentifier`
 /// there, which `parseOneHint`'s own `default:` case ALWAYS treats as
 /// "warn and drop" — see `Parser::parse_hint_comment`'s own doc for how
-/// this is used (a name real TiDB doesn't recognize at all can never
-/// carry real content, by construction, so it's always safe to drop —
-/// UNLIKE a name that simply isn't yet in THIS crate's own smaller
-/// `parse_one_hint` dispatch, e.g. `READ_FROM_STORAGE`, which IS in
-/// this list and so is deliberately left alone here, kept a
-/// `ParseError` by `parse_one_hint`'s own `_ =>` arm instead).
+/// this is used. Names recognized by the lexer are dispatched by
+/// `parse_one_hint` or the source-compatible unsupported-hint bucket.
 fn is_recognized_hint_token_name(name: &str) -> bool {
     matches!(
         name,

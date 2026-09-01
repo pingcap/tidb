@@ -117,6 +117,8 @@ fn encode_signed_varint(output: &mut Vec<u8>, value: i64) {
 /// half of the seam produced the answer.
 #[derive(Clone, Debug, Default)]
 struct Observation {
+    /// Go `SessionVars.GetReplicaRead()` carried by RequestBuilder.
+    replica_read: tidb_txnkv::ReplicaReadType,
     /// Direction carried by the DistSQL request, which orders region tasks.
     request_desc: bool,
     /// Direction carried by the TableScan executor, which orders rows inside
@@ -196,6 +198,7 @@ impl QueryTransport for FakeTransport {
             .map(|column| column.column_id.unwrap_or(-1))
             .collect();
         let mut observation = Observation::default();
+        observation.replica_read = metadata.replica_read;
         observation.request_desc = metadata.desc;
         observation.scan_desc = scan.desc.unwrap_or(false);
         observation.primary_column_ids = scan.primary_column_ids.clone();
@@ -574,7 +577,10 @@ fn count_star_lowers_to_count_with_one_constant_child() {
         snapshot_ts: 4_242,
         ranges: vec![(Key::from_bytes(b"a"), Key::from_bytes(b"z"))],
         range_hints: Vec::new(),
-        statement: PushdownStatementContext::default(),
+        statement: PushdownStatementContext {
+            replica_read: tidb_txnkv::ReplicaReadType::Follower,
+            ..PushdownStatementContext::default()
+        },
     };
     let mut stream = scanner
         .open(&request)
@@ -591,6 +597,10 @@ fn count_star_lowers_to_count_with_one_constant_child() {
     };
     assert_eq!(observation.primary_column_ids, [1]);
     assert_eq!(observation.primary_prefix_column_ids, [1]);
+    assert_eq!(
+        observation.replica_read,
+        tidb_txnkv::ReplicaReadType::Follower,
+    );
     let [argument] = observation.count_children.as_slice() else {
         panic!(
             "Go sends COUNT(1) with one child, got {:?}",

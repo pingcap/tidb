@@ -407,11 +407,16 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         query: &QueryStmt,
         is_cte: bool,
     ) -> Result<LogicalPlan, PlanError> {
+        let owns_hint_build = self.begin_hint_build(query);
         self.is_cte = is_cte;
-        match query {
+        let result = match query {
             QueryStmt::Select(select) => self.build_select(select).map(|(plan, _)| plan),
             QueryStmt::SetOpr(set_opr) => self.build_set_opr(set_opr),
+        };
+        if owns_hint_build {
+            self.end_hint_build();
         }
+        result
     }
 
     /// Go `buildWith(ctx, w)` (`logical_plan_builder.go:7994`).
@@ -1066,12 +1071,26 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let building_recursive = self.building_recursive_part_for_cte;
         let cte = &mut self.outer_ctes[index];
         if cte.recur_lp.is_some() {
-            // Go warns "Recursive CTE %s can not be inlined by merge() or
-            // tidb_opt_force_inline_cte." here; no warning channel, same
-            // decision.
+            if cte.force_inline_by_hint_or_var {
+                self.ctx.append_warning(
+                    1815,
+                    &format!(
+                        "Recursive CTE {} can not be inlined by merge() or tidb_opt_force_inline_cte.",
+                        cte.name_original
+                    ),
+                );
+            }
             cte.is_inline = false;
         } else if cte.contain_recursive_forbidden_operator && building_recursive {
-            // Go warns `ErrCTERecursiveForbidsAggregation` here.
+            if cte.force_inline_by_hint_or_var {
+                self.ctx.append_warning(
+                    3575,
+                    &format!(
+                        "Recursive Common Table Expression '{}' can contain neither aggregation nor window functions in recursive query block",
+                        cte.name_original
+                    ),
+                );
+            }
             cte.is_inline = false;
         } else if cte.consumer_count != 1 {
             cte.is_inline = cte.force_inline_by_hint_or_var;

@@ -181,6 +181,11 @@ pub struct DataSource {
     pub has_affinity: bool,
     /// Session/transaction inputs to Go's lookup-pushdown support check.
     pub index_lookup_push_down_session: crate::access_path::IndexLookupPushDownSession,
+    /// Whether TiKV is present in Go `SessionVars.IsolationReadEngines`.
+    pub tikv_in_isolation_read: bool,
+    /// Raw `tidb_isolation_read_engines`, retained for Go-compatible index
+    /// hint diagnostics during static partition re-resolution.
+    pub isolation_read_engines_value: String,
     /// Go `HandleCols`' columns; empty when the table has no usable handle.
     pub handle_cols: Vec<Column>,
     /// Whether Go's `HandleCols.IsInt()` holds.
@@ -191,6 +196,8 @@ pub struct DataSource {
     pub common_handle_lens: Vec<i64>,
     /// Go `PreferStoreType`: the resolved `READ_FROM_STORAGE` decision.
     pub prefer_store_type: i32,
+    /// Go `PreferPartitions`, keyed by `h.PreferTiKV` / `h.PreferTiFlash`.
+    pub prefer_partitions: std::collections::BTreeMap<i32, Vec<String>>,
     /// Go `IsForUpdateRead`.
     pub is_for_update_read: bool,
     /// Go `ContainExprPrefixUk`: a `tidb_shard()` prefix unique key exists, so
@@ -455,7 +462,8 @@ impl DataSource {
                 .indexes
                 .get(*index)
                 .is_some_and(|metadata| keep_index_id(metadata.id)),
-            crate::access_path::PossiblePath::Table { .. } => !partial_index_used_hint,
+            crate::access_path::PossiblePath::Table { .. }
+            | crate::access_path::PossiblePath::TiFlashTable => !partial_index_used_hint,
         });
         self.all_possible_access_paths.retain(|path| match path {
             DataSourceAccessPath::Index(index) => keep_index_id(index.candidate().index_id),
@@ -703,11 +711,14 @@ impl DataSource {
             is_cached: self.is_cached,
             has_affinity: self.has_affinity,
             index_lookup_push_down_session: self.index_lookup_push_down_session,
+            tikv_in_isolation_read: self.tikv_in_isolation_read,
+            isolation_read_engines_value: self.isolation_read_engines_value.clone(),
             handle_cols: self.handle_cols.clone(),
             handle_is_int: self.handle_is_int,
             common_handle_cols: self.common_handle_cols.clone(),
             common_handle_lens: self.common_handle_lens.clone(),
             prefer_store_type: self.prefer_store_type,
+            prefer_partitions: self.prefer_partitions.clone(),
             is_for_update_read: self.is_for_update_read,
             contain_expr_prefix_uk: self.contain_expr_prefix_uk,
             cols_requiring_full_len: self.cols_requiring_full_len.clone(),

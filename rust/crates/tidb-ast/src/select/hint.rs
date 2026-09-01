@@ -59,63 +59,12 @@ pub enum IndexHintScope {
     GroupBy,
 }
 
-/// One optimizer hint from a `SELECT`'s own `/*+ ... */` comment (see
-/// [`SelectStmt::hints`]'s own doc for the position boundary). Real TiDB
-/// has a genuinely separate, dedicated hint grammar covering roughly 30
-/// distinct hint names across many argument shapes (`pkg/parser/
-/// hintparser.go`, ~1200 lines of its own hand-written mini-parser); this
-/// models the shapes confirmed — via a stratified sample of real TiDB's
-/// own integration-test corpus, read directly rather than guessed, and
-/// grown incrementally as new samples surfaced more shapes — to cover
-/// the overwhelming majority of real-world hint occurrences by volume:
-/// join/aggregate-pushdown hints taking a bare table list
-/// (`INL_JOIN`/`INL_HASH_JOIN`/`INL_MERGE_JOIN`/`HASH_JOIN`/
-/// `HASH_JOIN_BUILD`/`HASH_JOIN_PROBE`/`MERGE_JOIN`/`TIDB_SMJ`/
-/// `TIDB_INLJ`/`TIDB_HJ`/`LEADING`, the last requiring at least one
-/// table — real TiDB's own `LEADING(table|(...), ...)` grammar also
-/// allows a nested parenthesized sub-list per element and a
-/// hint-level `@qb` prefix, represented by [`HintKind::Leading`];
-/// `LEADING()` remains a genuine `ParseError` here
-/// (empty), which real TiDB itself silently drops with a warning
-/// rather than erroring, confirmed via `godump restore`), index hints taking a table plus an
-/// index-name list (`USE_INDEX`/`USE_INDEX_MERGE`/`IGNORE_INDEX`/
-/// `INDEX_LOOKUP_PUSHDOWN`/`ORDER_INDEX` — an EMPTY table list, e.g.
-/// `USE_INDEX()`, is likewise a genuine `ParseError` here; real TiDB's
-/// own `parseIndexLevelHint` treats it as a syntax error internally too,
-/// then silently drops the hint rather than propagating it, the SAME
-/// narrower divergence as `LEADING()`), `SET_VAR(name = value)`,
-/// `TRUE`/`FALSE`-argument hints (`USE_TOJA`/`USE_CASCADES` — anything
-/// other than the `TRUE`/`FALSE` keyword is a genuine `ParseError` here,
-/// matching this doc's own narrower, `ParseError`-over-silent-drop
-/// convention rather than real TiDB's own silent drop-with-warning),
-/// argument-less hints with an optional empty `(...)`
-/// (`STREAM_AGG`/`HASH_AGG`/`AGG_TO_COP`/`NO_DECORRELATE`/
-/// `NO_INDEX_MERGE`/`IGNORE_PLAN_CACHE`/`LIMIT_TO_COP`/`USE_PLAN_CACHE`/
-/// `SEMI_JOIN_REWRITE`/`STRAIGHT_JOIN`), `RESOURCE_GROUP(name)`, `MAX_EXECUTION_TIME`/
-/// `NTH_PLAN`'s own `([@qb_name] N)` numeric-argument shape,
-/// `QB_NAME(name [, view...])` (see [`HintKind::QbName`]'s own doc), and
-/// `READ_FROM_STORAGE` (see [`HintKind::ReadFromStorage`]).
-/// `MERGE` is a special, isolated case straddling both: it PARSES a
-/// table list exactly like `MERGE_JOIN` above, but ALWAYS restores as
-/// bare `MERGE()`, discarding the parsed tables entirely — confirmed via
-/// `godump restore` (real TiDB's own restore code puts `merge` in its
-/// argument-less bucket even though parsing dispatches it through the
-/// table-list path) — so [`Hint::kind`] is [`HintKind::Nullary`] for it
-/// despite consuming table-list syntax at parse time. A hint name real
-/// TiDB's own lexer doesn't recognize AT ALL, or recognizes but always
-/// treats as unsupported regardless of args (`NO_MERGE`, a real but
-/// genuinely DIFFERENT MySQL compatibility hint distinct from the real,
-/// content-bearing `NO_MERGE_JOIN`), is silently DROPPED, matching real
-/// TiDB's own behavior exactly (`Parser::is_recognized_hint_token_name`/
-/// `is_always_unsupported_hint_name`, called from
-/// `Parser::parse_hint_comment` — see their own docs for the exact
-/// verified name lists). The handful of other REAL, recognized hint names
-/// this crate hasn't implemented full
-/// grammar for yet (its own `HintKind` variant/dispatch arm) stay
-/// genuine `ParseError`s here instead — a real, narrower, deliberate
-/// scope boundary: these DO carry real content in real TiDB (confirmed
-/// via `godump restore`), so silently dropping them would risk
-/// discarding it rather than a safe `ParseError`.
+/// One optimizer hint from a `SELECT`'s own `/*+ ... */` comment. Its
+/// argument variants mirror `pkg/parser/hintparser.go`: table, index,
+/// leading-tree, boolean, numeric, query-block, storage, statement, and
+/// nullary shapes. Malformed occurrences are diagnosed and omitted by the
+/// hint parser, as in Go; names routed to Go's unsupported-hint parser are
+/// likewise diagnosed and omitted rather than represented here.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Hint {
     /// The canonical (uppercase) hint name.
@@ -193,11 +142,7 @@ pub enum HintKind {
     /// as uppercase `TRUE`/`FALSE` regardless of the source's own casing
     /// (confirmed via `godump restore`: `USE_TOJA(true)` restores as
     /// `USE_TOJA(TRUE)`). Anything other than the `TRUE`/`FALSE` keyword
-    /// inside the parens (`USE_TOJA(1)`, `USE_TOJA()`) is a genuine
-    /// `ParseError` here — real TiDB itself silently drops the whole
-    /// hint with a warning instead, the SAME narrower,
-    /// `ParseError`-over-silent-drop convention already applied to
-    /// `LEADING()`.
+    /// inside the parens is diagnosed and omitted by the hint parser.
     Bool {
         /// Optional hint-level query block.
         qb_name: Option<String>,
@@ -205,15 +150,8 @@ pub enum HintKind {
         value: bool,
     },
     /// `NAME(identifier)` — `RESOURCE_GROUP`. A single BARE identifier
-    /// argument, always back-quoted on restore (real TiDB's own
-    /// `WriteName`, confirmed via `godump restore`: `RESOURCE_GROUP(rg1)`
-    /// restores as `` RESOURCE_GROUP(`rg1`) ``) — a genuinely narrower
-    /// shape than [`HintTable`] (no `@qb_name` suffix accepted on the
-    /// argument itself; `RESOURCE_GROUP(rg1@sel_1)` is real TiDB's own
-    /// silent-drop-with-warning case, confirmed via `godump restore`:
-    /// the whole hint vanishes from restore — this project's own
-    /// narrower `ParseError`-over-silent-drop convention applies here
-    /// too).
+    /// argument, always back-quoted on restore. An optional query-block
+    /// prefix precedes the identifier; a suffix on the identifier is invalid.
     Name {
         /// Optional hint-level query block.
         qb_name: Option<String>,
@@ -314,7 +252,7 @@ pub enum HintKind {
     },
 }
 
-/// One table argument inside a [`Hint`] — a NARROWER shape than
+/// One table argument inside a [`Hint`] — a distinct shape from
 /// [`crate::TableRef`] (no alias; a hint table argument is a bare name plus
 /// optional schema, query-block, and partition qualifiers).
 #[derive(Debug, Clone, PartialEq)]
@@ -423,6 +361,12 @@ impl Hint {
                 }
             }
             HintKind::Tables { qb_name, tables } => {
+                if self.name.eq_ignore_ascii_case("MERGE") {
+                    // Go restores MERGE from its argument-less bucket while
+                    // retaining Tables for ParsePlanHints validation.
+                    out.push(')');
+                    return;
+                }
                 if let Some(qb) = qb_name {
                     out.push('@');
                     out.push_str(&back_quote(qb));

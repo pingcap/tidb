@@ -510,6 +510,10 @@ pub struct Session {
     /// group. A statement-level `RESOURCE_GROUP` hint may override this value
     /// for one statement, but never mutates it.
     resource_group: String,
+    /// Go `StmtCtx.StmtHints`: the canonical statement-hint parse result for
+    /// the statement currently executing. It is reset at every statement
+    /// boundary and replaced after `hint.ParseStmtHints`.
+    stmt_hints: tidb_hint::StmtHints,
     /// Go `StmtCtx.ResourceGroupName`: the group selected for the statement
     /// currently passing through the session funnel. It starts from
     /// [`Self::resource_group`] at every statement boundary and may be
@@ -782,6 +786,7 @@ impl Session {
             global_temporary_data: std::collections::HashMap::new(),
             vars: SessionVars::new(),
             resource_group: "default".to_owned(),
+            stmt_hints: tidb_hint::StmtHints::default(),
             active_resource_group: "default".to_owned(),
             warnings: Vec::new(),
             deferred_multi_statement_warning: false,
@@ -1753,6 +1758,7 @@ impl Session {
                 .store(false, std::sync::atomic::Ordering::Release);
         }
         self.statement_result_authority.get_mut().take();
+        self.stmt_hints = tidb_hint::StmtHints::default();
         *self
             .process_plan_info
             .lock()

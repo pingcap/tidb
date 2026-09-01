@@ -436,7 +436,7 @@ impl Session {
     /// Returns the statement to plan. The caller keeps the original when
     /// nothing matched, so a session with no bindings pays one map-emptiness
     /// test and nothing else.
-    fn bind_statement_hints_with_sql(&mut self, stmt: &Stmt) -> Option<(Stmt, String)> {
+    pub(crate) fn bind_statement_hints_with_sql(&mut self, stmt: &Stmt) -> Option<(Stmt, String)> {
         // The Go shape is a cache-size test before any digest is computed;
         // here the global "cache" is the table itself, so its side of the
         // test is a row count (see [`Self::has_global_binding_rows`]).

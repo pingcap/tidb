@@ -93,6 +93,7 @@ fn data_source_orders(source: &super::DataSource, inherited_fixed: &[i64]) -> Ve
             }
             | PossiblePath::Index { index } => orders.extend(index_orders(index)),
             PossiblePath::Table { .. } => {}
+            PossiblePath::TiFlashTable => {}
         }
     }
     orders

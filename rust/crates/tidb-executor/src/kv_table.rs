@@ -516,6 +516,8 @@ pub struct KvTable {
     cache_status: tidb_model::TableCacheStatusType,
     /// Whether Go `TableInfo.Affinity` is non-nil.
     has_affinity: bool,
+    /// Go `TableInfo.TiFlashReplica`.
+    tiflash_replica: Option<tidb_model::TiFlashReplicaInfo>,
     /// Go `TableInfo.TempTableType` (`setTemporaryType`, `create_table.go`):
     /// whether this is an ordinary table, a GLOBAL temporary table, or a
     /// LOCAL one.
@@ -841,6 +843,7 @@ impl KvTable {
             comment: String::new(),
             cache_status: tidb_model::TableCacheStatusType::DISABLE,
             has_affinity: false,
+            tiflash_replica: None,
             temp_table_type: tidb_model::TempTableType::NONE,
             use_new_collation,
             foreign_keys: Vec::new(),
@@ -968,6 +971,11 @@ impl KvTable {
         copy.common_handle_offsets = self.common_handle_offsets.clone();
         copy.common_handle_version = self.common_handle_version;
         copy.has_affinity = self.has_affinity;
+        copy.tiflash_replica = self.tiflash_replica.clone().map(|mut replica| {
+            replica.available = false;
+            replica.available_partition_ids = Default::default();
+            replica
+        });
         copy.auto_increment_offset = self.auto_increment_offset;
         copy.auto_random = self.auto_random;
         if let Some(spec) = copy.auto_random {
@@ -1584,6 +1592,17 @@ impl KvTable {
     #[must_use]
     pub const fn has_affinity(&self) -> bool {
         self.has_affinity
+    }
+
+    /// Installs Go `TableInfo.TiFlashReplica` metadata.
+    pub fn set_tiflash_replica(&mut self, replica: Option<tidb_model::TiFlashReplicaInfo>) {
+        self.tiflash_replica = replica;
+    }
+
+    /// Returns Go `TableInfo.TiFlashReplica` metadata.
+    #[must_use]
+    pub fn tiflash_replica(&self) -> Option<&tidb_model::TiFlashReplicaInfo> {
+        self.tiflash_replica.as_ref()
     }
 
     /// The clustered primary key's column offsets, empty when there is none.

@@ -132,6 +132,7 @@
 //!   The depth counter's only other reader is the `ErrViewNoExplain`
 //!   privilege arm, itself a boundary above.
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
@@ -240,85 +241,56 @@ pub struct JoinHints {
     pub tables: BTreeMap<String, u32>,
     /// Go `PlanHints.LeadingList`, retaining the nested AST order.
     pub leading: Option<Vec<tidb_ast::LeadingElement>>,
+    pub(crate) canonical: Option<Rc<RefCell<tidb_hint::PlanHints>>>,
+    pub(crate) select_offset: i32,
 }
 
 impl JoinHints {
-    /// Resolves the table-list join hints written on one SELECT into the
-    /// preference bits consumed by `LogicalJoin`. This is the local
-    /// equivalent of Go's `ParsePlanHints`/`SetPreferredJoinTypeAndOrder`
-    /// handoff; physical dispatch remains the only family selector.
+    /// Adapts the canonical Go `PlanHints` join fields to the preference bits
+    /// consumed by `LogicalJoin`.
     #[must_use]
-    pub fn from_select(select: &tidb_ast::SelectStmt) -> Self {
-        Self::from_select_at(select, 1)
-    }
-
-    /// Resolves join hints for the SELECT at `select_offset`.
-    #[must_use]
-    pub fn from_select_at(select: &tidb_ast::SelectStmt, select_offset: i32) -> Self {
-        use tidb_ast::HintKind;
-
+    pub fn from_plan_hints(
+        canonical: Rc<RefCell<tidb_hint::PlanHints>>,
+        select_offset: i32,
+    ) -> Self {
+        let plan = canonical.borrow();
         let mut hints = Self::default();
-        let named_block = select.hints.iter().find_map(|hint| match &hint.kind {
-            HintKind::QbName { qb_name, views } if views.is_empty() => {
-                Some(qb_name.to_ascii_lowercase())
-            }
-            _ => None,
-        });
-        let belongs_to_current_block = |qb_name: Option<&str>| {
-            qb_name.is_none_or(|qb_name| {
-                qb_name.eq_ignore_ascii_case(&format!("sel_{select_offset}"))
-                    || named_block
-                        .as_deref()
-                        .is_some_and(|name| qb_name.eq_ignore_ascii_case(name))
-            })
-        };
-        for hint in &select.hints {
-            if let HintKind::Leading { qb_name, elements } = &hint.kind {
-                if belongs_to_current_block(qb_name.as_deref()) {
-                    let mut elements = elements.clone();
-                    normalize_leading_query_blocks(
-                        &mut elements,
-                        select_offset,
-                        named_block.as_deref(),
-                    );
-                    hints.leading = Some(elements);
-                }
-                continue;
-            }
-            let HintKind::Tables { qb_name, tables } = &hint.kind else {
-                continue;
-            };
-            if !belongs_to_current_block(qb_name.as_deref()) {
-                continue;
-            }
-            let flag = match hint.name.to_ascii_uppercase().as_str() {
-                "INL_JOIN" | "TIDB_INLJ" => join_hint_flags::INLJ,
-                "INL_HASH_JOIN" => join_hint_flags::INLHJ,
-                "INL_MERGE_JOIN" => join_hint_flags::INLMJ,
-                "HASH_JOIN" | "TIDB_HJ" => join_hint_flags::HASH_JOIN,
-                "HASH_JOIN_BUILD" => join_hint_flags::HJ_BUILD,
-                "HASH_JOIN_PROBE" => join_hint_flags::HJ_PROBE,
-                "NO_HASH_JOIN" => join_hint_flags::NO_HASH_JOIN,
-                "MERGE_JOIN" | "TIDB_SMJ" => join_hint_flags::MERGE_JOIN,
-                "NO_MERGE_JOIN" => join_hint_flags::NO_MERGE_JOIN,
-                "NO_INDEX_JOIN" => join_hint_flags::NO_INDEX_JOIN,
-                "NO_INDEX_HASH_JOIN" => join_hint_flags::NO_INDEX_HASH_JOIN,
-                "NO_INDEX_MERGE_JOIN" => join_hint_flags::NO_INDEX_MERGE_JOIN,
-                "BROADCAST_JOIN" => join_hint_flags::BC_JOIN,
-                "SHUFFLE_JOIN" => join_hint_flags::SHUFFLE_JOIN,
-                _ => continue,
-            };
+        for (tables, flag) in [
+            (&plan.index_join.inlj_tables, join_hint_flags::INLJ),
+            (&plan.index_join.inlhj_tables, join_hint_flags::INLHJ),
+            (&plan.index_join.inlmj_tables, join_hint_flags::INLMJ),
+            (&plan.hash_join, join_hint_flags::HASH_JOIN),
+            (&plan.hash_join_build, join_hint_flags::HJ_BUILD),
+            (&plan.hash_join_probe, join_hint_flags::HJ_PROBE),
+            (&plan.no_hash_join, join_hint_flags::NO_HASH_JOIN),
+            (&plan.sort_merge_join, join_hint_flags::MERGE_JOIN),
+            (&plan.no_merge_join, join_hint_flags::NO_MERGE_JOIN),
+            (
+                &plan.no_index_join.inlj_tables,
+                join_hint_flags::NO_INDEX_JOIN,
+            ),
+            (
+                &plan.no_index_join.inlhj_tables,
+                join_hint_flags::NO_INDEX_HASH_JOIN,
+            ),
+            (
+                &plan.no_index_join.inlmj_tables,
+                join_hint_flags::NO_INDEX_MERGE_JOIN,
+            ),
+            (&plan.broadcast_join, join_hint_flags::BC_JOIN),
+            (&plan.shuffle_join, join_hint_flags::SHUFFLE_JOIN),
+        ] {
             for table in tables
                 .iter()
-                .filter(|table| belongs_to_current_block(table.qb_name.as_deref()))
+                .filter(|table| table.select_offset == select_offset)
             {
-                hints.hint_table(
-                    table.db_name.as_deref().unwrap_or_default(),
-                    &table.name,
-                    flag,
-                );
+                hints.hint_table(&table.database_name, &table.table_name, flag);
             }
         }
+        hints.leading = plan.leading_list.clone();
+        drop(plan);
+        hints.canonical = Some(canonical);
+        hints.select_offset = select_offset;
         hints
     }
 
@@ -327,6 +299,35 @@ impl JoinHints {
     #[must_use]
     pub fn prefers(&self, alias: Option<&HintedTable>, flag: u32) -> bool {
         let Some(alias) = alias else { return false };
+        if let Some(canonical) = &self.canonical {
+            let table = tidb_hint::HintedTable {
+                database_name: alias.db_name.clone(),
+                table_name: alias.table_name.clone(),
+                select_offset: self.select_offset,
+                ..tidb_hint::HintedTable::default()
+            };
+            let tables = [Some(&table)];
+            let mut canonical = canonical.borrow_mut();
+            return match flag {
+                join_hint_flags::INLJ => canonical.prefer_index_join(&tables),
+                join_hint_flags::INLHJ => canonical.prefer_index_hash_join(&tables),
+                join_hint_flags::INLMJ => canonical.prefer_index_merge_join(&tables),
+                join_hint_flags::HJ_BUILD => canonical.prefer_hash_join_build(&tables),
+                join_hint_flags::HJ_PROBE => canonical.prefer_hash_join_probe(&tables),
+                join_hint_flags::HASH_JOIN => canonical.prefer_hash_join(&tables),
+                join_hint_flags::NO_HASH_JOIN => canonical.prefer_no_hash_join(&tables),
+                join_hint_flags::MERGE_JOIN => canonical.prefer_merge_join(&tables),
+                join_hint_flags::NO_MERGE_JOIN => canonical.prefer_no_merge_join(&tables),
+                join_hint_flags::NO_INDEX_JOIN => canonical.prefer_no_index_join(&tables),
+                join_hint_flags::NO_INDEX_HASH_JOIN => canonical.prefer_no_index_hash_join(&tables),
+                join_hint_flags::NO_INDEX_MERGE_JOIN => {
+                    canonical.prefer_no_index_merge_join(&tables)
+                }
+                join_hint_flags::BC_JOIN => canonical.prefer_broadcast_join(&tables),
+                join_hint_flags::SHUFFLE_JOIN => canonical.prefer_shuffle_join(&tables),
+                _ => false,
+            };
+        }
         let qualified = format!("{}.{}", alias.db_name, alias.table_name);
         let bits = self
             .tables
@@ -345,28 +346,6 @@ impl JoinHints {
             format!("{}.{}", db_name.to_lowercase(), table_name.to_lowercase())
         };
         *self.tables.entry(key).or_insert(0) |= flags;
-    }
-}
-
-fn normalize_leading_query_blocks(
-    elements: &mut [tidb_ast::LeadingElement],
-    select_offset: i32,
-    named_block: Option<&str>,
-) {
-    for element in elements {
-        match element {
-            tidb_ast::LeadingElement::Table(table) => {
-                if table.qb_name.as_deref().is_some_and(|query_block| {
-                    query_block.eq_ignore_ascii_case(&format!("sel_{select_offset}"))
-                        || named_block.is_some_and(|name| query_block.eq_ignore_ascii_case(name))
-                }) {
-                    table.qb_name = Some(format!("sel_{select_offset}"));
-                }
-            }
-            tidb_ast::LeadingElement::Group(group) => {
-                normalize_leading_query_blocks(group, select_offset, named_block);
-            }
-        }
     }
 }
 
@@ -478,6 +457,26 @@ pub fn set_preferred_join_type_and_order(
                 })
             })
         });
+        if join.prefer_join_order {
+            if let Some(canonical) = &hints.canonical {
+                let aliases = [lhs.as_ref(), rhs.as_ref()]
+                    .into_iter()
+                    .flatten()
+                    .map(|alias| tidb_hint::HintedTable {
+                        database_name: alias.db_name.clone(),
+                        table_name: alias.table_name.clone(),
+                        select_offset: hints.select_offset,
+                        ..tidb_hint::HintedTable::default()
+                    })
+                    .collect::<Vec<_>>();
+                let candidates = aliases.iter().map(Some).collect::<Vec<_>>();
+                let mut canonical = canonical.borrow_mut();
+                tidb_hint::PlanHints::match_table_names(
+                    &candidates,
+                    &mut canonical.leading_join_order,
+                );
+            }
+        }
     }
     if join.prefer_join_type != 0 || join.prefer_join_order {
         join.hint_info = Some(Rc::clone(hints));
@@ -493,21 +492,6 @@ fn collect_leading_tables<'a>(
             tidb_ast::LeadingElement::Table(table) => tables.push(table),
             tidb_ast::LeadingElement::Group(group) => collect_leading_tables(group, tables),
         }
-    }
-}
-
-/// Go `setPreferredStoreType(ds, hintInfo)` (`:586`), over
-/// [`SourceTable::prefer_store_type`].
-///
-/// Go resolves `READ_FROM_STORAGE` against `ds.AllPossibleAccessPaths` and
-/// warns when no path of the hinted store type exists. 6a leaves that path
-/// list EMPTY on purpose (`buildDataSource`'s `getPossibleAccessPaths`
-/// boundary), so there is nothing here to check the hint against and the
-/// already-resolved value on the catalogue seam is what stands: the seam's
-/// implementor knows its own replicas. The warning arms are the boundary.
-pub fn set_preferred_store_type(plan: &mut LogicalPlan, prefer_store_type: i32) {
-    if let LogicalPlan::DataSource(ds) = plan {
-        ds.prefer_store_type = prefer_store_type;
     }
 }
 
@@ -1556,11 +1540,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     /// Go `BuildDataSourceFromView(ctx, dbName, tableInfo, qbNameMap4View,
     /// viewHints)` (`:5509`).
     ///
-    /// Ported: the recursion guard, the view body's parse and build, the
-    /// CTE save/restore around it, the column-count check, and the projection
-    /// over the result. The two hint maps are the boundary — there is no
-    /// `QBHintHandler` to convert a view hint into a normal one — as are every
-    /// `visitInfo` and privilege line; see this module's boundaries.
+    /// Ported: the recursion guard, view-hint query-block conversion, the view
+    /// body's parse and build, the CTE save/restore around it, the column-count
+    /// check, and the projection over the result. Privilege collection remains
+    /// on the session/catalog boundary rather than this metadata-only builder.
     ///
     /// # Errors
     ///
@@ -1570,27 +1553,47 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         &mut self,
         view: &SourceView,
     ) -> Result<LogicalPlan, PlanError> {
-        let guard = self.check_recursive_view(&view.db_name, &view.view_name)?;
-        let built = self.build_view_body(view);
-        guard.release(self);
-        built
+        self.build_data_source_from_view_with_hints(
+            view,
+            None,
+            tidb_hint::ViewHintContext::default(),
+        )
     }
 
-    fn build_view_body(&mut self, view: &SourceView) -> Result<LogicalPlan, PlanError> {
-        let statement = tidb_parser::parse(&view.select_sql)
+    pub(crate) fn build_data_source_from_view_with_hints(
+        &mut self,
+        view: &SourceView,
+        alias: Option<&str>,
+        inherited_hints: tidb_hint::ViewHintContext,
+    ) -> Result<LogicalPlan, PlanError> {
+        let guard = self.check_recursive_view(&view.db_name, &view.view_name)?;
+        let built = self.build_view_body(view, inherited_hints);
+        guard.release(self);
+        let mut plan = built?;
+        if let Some(alias) = alias.filter(|alias| !alias.is_empty()) {
+            let mut names = plan.output_names().to_vec();
+            for name in &mut names {
+                if !name.hidden {
+                    name.names.table = IdentifierMetadata::new(alias);
+                }
+            }
+            plan.base_mut().base.set_output_names(names);
+        }
+        Ok(plan)
+    }
+
+    fn build_view_body(
+        &mut self,
+        view: &SourceView,
+        inherited_hints: tidb_hint::ViewHintContext,
+    ) -> Result<LogicalPlan, PlanError> {
+        let mut statement = tidb_parser::parse(&view.select_sql)
             .map_err(|error| PlanError::internal(format!("{error:?}")))?;
+        let (view_hint_handler, view_hint_state) =
+            tidb_hint::QBHintHandler::for_view_body(&mut statement, inherited_hints);
         let tidb_ast::Stmt::Query(query) = statement else {
             return Err(PlanError::internal(format!(
                 "View '{}.{}' body is not a query",
-                view.db_name, view.view_name
-            )));
-        };
-        let QueryStmt::Select(select) = query.as_ref() else {
-            // A view body is a SELECT or a set operation; the latter is
-            // `buildSetOpr`, batch 6d.
-            return Err(PlanError::internal(format!(
-                "View '{}.{}' body is not a plain SELECT; buildSetOpr \
-                 (logical_plan_builder.go:2149) is a later batch",
                 view.db_name, view.view_name
             )));
         };
@@ -1599,10 +1602,18 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // save the CTEs after the views are established."
         let saved_ctes = std::mem::take(&mut self.outer_ctes);
         let saved_building_cte = std::mem::replace(&mut self.building_cte, false);
-        let built = self.build_select(select);
+        let outer_hint_handler = self.qb_hint_handler.replace(view_hint_handler);
+        let outer_hint_state = self.qb_hint_state.replace(view_hint_state);
+        let built = match query.as_ref() {
+            QueryStmt::Select(select) => self.build_select(select).map(|(plan, _)| plan),
+            QueryStmt::SetOpr(set_operation) => self.build_set_opr(set_operation),
+        };
+        self.flush_hint_build_warnings();
+        self.qb_hint_handler = outer_hint_handler;
+        self.qb_hint_state = outer_hint_state;
         self.outer_ctes = saved_ctes;
         self.building_cte = saved_building_cte;
-        let (plan, _) = built?;
+        let plan = built?;
 
         let (schema, names) = snapshot_schema_and_names(&plan);
         if view.columns.len() != schema.columns.len() {

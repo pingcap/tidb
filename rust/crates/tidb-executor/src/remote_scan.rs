@@ -444,6 +444,8 @@ pub struct PushdownStatementContext {
     pub time_zone: SessionTimeZone,
     /// Go `StmtCtx.ResourceGroupName`, copied to every DistSQL request.
     pub resource_group_name: String,
+    /// Go `SessionVars.GetReplicaRead()` copied to every DistSQL request.
+    pub replica_read: tidb_distsql::ReplicaReadType,
 }
 
 impl Default for PushdownStatementContext {
@@ -454,6 +456,7 @@ impl Default for PushdownStatementContext {
             warnings: WarningCollector::default(),
             time_zone: SessionTimeZone::default(),
             resource_group_name: "default".to_owned(),
+            replica_read: tidb_distsql::ReplicaReadType::Leader,
         }
     }
 }
@@ -468,6 +471,7 @@ impl PushdownStatementContext {
             warnings: ctx.cop_warning_sink(),
             time_zone: ctx.session_zone(),
             resource_group_name: ctx.resource_group_name().to_owned(),
+            replica_read: ctx.replica_read(),
         }
     }
 

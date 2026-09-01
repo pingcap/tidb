@@ -66,6 +66,7 @@ pub(crate) struct StatementVarSnapshot {
     always_keep_join_key: bool,
     enable_unsafe_substitute: bool,
     enable_semi_join_rewrite: bool,
+    allow_in_subq_to_join_and_agg: bool,
     enable_no_decorrelate_in_select: bool,
     enable_skew_distinct_agg: bool,
     max_execution_time_ms: u64,
@@ -82,6 +83,8 @@ pub(crate) struct StatementVarSnapshot {
     static_partition_prune: bool,
     new_only_full_group_by_check: bool,
     mem_quota: i64,
+    replica_read: tidb_executor::ReplicaReadType,
+    isolation_read_engines: String,
     init_chunk_size: usize,
     max_chunk_size: usize,
     max_allowed_packet: u64,
@@ -216,8 +219,12 @@ impl Session {
         }
         let snapshot = self.statement_var_snapshot();
         let (oom_action, tmp_storage_on_oom) = self.vars.statement_memory_policy();
-        let authority =
-            self.build_statement_result_authority(&snapshot, oom_action, tmp_storage_on_oom);
+        let authority = self.build_statement_result_authority(
+            &snapshot,
+            snapshot.mem_quota,
+            oom_action,
+            tmp_storage_on_oom,
+        );
         self.statement_result_authority
             .replace(Some(authority.clone()));
         authority
@@ -226,11 +233,12 @@ impl Session {
     fn build_statement_result_authority(
         &self,
         snapshot: &StatementVarSnapshot,
+        mem_quota: i64,
         oom_action: tidb_executor::OomAction,
         tmp_storage_on_oom: bool,
     ) -> crate::ResultMaterializationAuthority {
         self.session_memory
-            .configure(snapshot.mem_quota, oom_action, tmp_storage_on_oom);
+            .configure(mem_quota, oom_action, tmp_storage_on_oom);
         let memory = self.session_memory.statement_with_arbitration(
             snapshot.arbitrator_wait_averse,
             snapshot.arbitrator_reserved,
@@ -705,6 +713,9 @@ impl Session {
             always_keep_join_key: on(tidb_vardef::tidb_vars::TIDB_OPT_ALWAYS_KEEP_JOIN_KEY),
             enable_unsafe_substitute: on(tidb_vardef::tidb_vars::TIDB_ENABLE_UNSAFE_SUBSTITUTE),
             enable_semi_join_rewrite: on(tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_SEMI_JOIN_REWRITE),
+            allow_in_subq_to_join_and_agg: on(
+                tidb_vardef::tidb_vars::TIDB_OPT_IN_SUBQ_TO_JOIN_AND_AGG,
+            ),
             enable_no_decorrelate_in_select: on(
                 tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_NO_DECORRELATE_IN_SELECT,
             ),
@@ -754,6 +765,24 @@ impl Session {
                 .ok()
                 .and_then(|value| value.parse::<i64>().ok())
                 .unwrap_or(tidb_util::memory::DEF_MEM_QUOTA_QUERY),
+            replica_read: match self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_REPLICA_READ)
+                .unwrap_or_default()
+                .as_str()
+            {
+                "follower" => tidb_executor::ReplicaReadType::Follower,
+                "leader-and-follower" => tidb_executor::ReplicaReadType::Mixed,
+                "closest-replicas" => tidb_executor::ReplicaReadType::Closest,
+                "closest-adaptive" => tidb_executor::ReplicaReadType::ClosestAdaptive,
+                "learner" => tidb_executor::ReplicaReadType::Learner,
+                "prefer-leader" => tidb_executor::ReplicaReadType::PreferLeader,
+                _ => tidb_executor::ReplicaReadType::Leader,
+            },
+            isolation_read_engines: self
+                .vars
+                .get_system("tidb_isolation_read_engines")
+                .unwrap_or_else(|_| "tikv,tiflash,tidb".to_owned()),
             init_chunk_size: self
                 .vars
                 .get_system(tidb_vardef::tidb_vars::TIDB_INIT_CHUNK_SIZE)
@@ -868,9 +897,19 @@ impl Session {
         let always_keep_join_key = snapshot.always_keep_join_key;
         let enable_unsafe_substitute = snapshot.enable_unsafe_substitute;
         let enable_semi_join_rewrite = snapshot.enable_semi_join_rewrite;
+        let allow_in_subq_to_join_and_agg =
+            if self.stmt_hints.has_allow_in_subq_to_join_and_agg_hint {
+                self.stmt_hints.allow_in_subq_to_join_and_agg
+            } else {
+                snapshot.allow_in_subq_to_join_and_agg
+            };
         let enable_no_decorrelate_in_select = snapshot.enable_no_decorrelate_in_select;
         let enable_skew_distinct_agg = snapshot.enable_skew_distinct_agg;
-        let max_execution_time_ms = snapshot.max_execution_time_ms;
+        let max_execution_time_ms = if self.stmt_hints.has_max_execution_time {
+            self.stmt_hints.max_execution_time
+        } else {
+            snapshot.max_execution_time_ms
+        };
         let advanced_join_reorder = snapshot.advanced_join_reorder;
         let constraint_check_in_place = snapshot.constraint_check_in_place;
         let ordering_index_selectivity_ratio = snapshot.ordering_index_selectivity_ratio;
@@ -891,10 +930,20 @@ impl Session {
         let join_reorder_through_proj = snapshot.join_reorder_through_proj;
         let join_reorder_through_sel = snapshot.join_reorder_through_sel;
         let outer_join_reorder = snapshot.outer_join_reorder;
-        let index_merge = snapshot.index_merge;
+        let index_merge = snapshot.index_merge && !self.stmt_hints.no_index_merge_hint;
         let static_partition_prune = snapshot.static_partition_prune;
         let new_only_full_group_by_check = snapshot.new_only_full_group_by_check;
-        let mem_quota = snapshot.mem_quota;
+        let mem_quota = if self.stmt_hints.has_mem_quota_hint {
+            self.stmt_hints.mem_quota_query
+        } else {
+            snapshot.mem_quota
+        };
+        let replica_read = if self.stmt_hints.has_replica_read_hint {
+            tidb_executor::ReplicaReadType::from_raw(self.stmt_hints.replica_read)
+        } else {
+            snapshot.replica_read
+        };
+        let isolation_read_engines = snapshot.isolation_read_engines.clone();
         let max_allowed_packet = snapshot.max_allowed_packet;
         let group_concat_max_len = snapshot.group_concat_max_len;
         let apply_cache_capacity = snapshot.apply_cache_capacity;
@@ -904,8 +953,12 @@ impl Session {
         let global_sysvar_accessor = self.vars.global_sysvar_accessor();
         let (oom_action, tmp_storage_on_oom) = self.vars.statement_memory_policy();
         let optimizer_cost_env = self.optimizer_cost_env(mem_quota, tmp_storage_on_oom);
-        let result_authority =
-            self.build_statement_result_authority(&snapshot, oom_action, tmp_storage_on_oom);
+        let result_authority = self.build_statement_result_authority(
+            &snapshot,
+            mem_quota,
+            oom_action,
+            tmp_storage_on_oom,
+        );
         let statement_memory = result_authority.statement_memory();
         let index_usage_collector = self.session_index_usage_collector.as_ref().map(|session| {
             Arc::new(
@@ -955,6 +1008,7 @@ impl Session {
                 .with_only_full_group_by(sql_mode.has_only_full_group_by())
                 .with_new_only_full_group_by_check(new_only_full_group_by_check)
                 .with_session_state(current_db, version)
+                .with_isolation_read_engines(isolation_read_engines)
                 .with_connection_charset_info(
                     connection_charset.clone(),
                     connection_collation.clone(),
@@ -1011,11 +1065,13 @@ impl Session {
                 .with_always_keep_join_key(always_keep_join_key)
                 .with_enable_unsafe_substitute(enable_unsafe_substitute)
                 .with_enable_semi_join_rewrite(enable_semi_join_rewrite)
+                .with_allow_in_subq_to_join_and_agg(allow_in_subq_to_join_and_agg)
                 .with_enable_no_decorrelate_in_select(enable_no_decorrelate_in_select)
                 .with_enable_skew_distinct_agg(enable_skew_distinct_agg)
                 .with_enable_check_constraint(self.enable_check_constraint())
                 .with_sysdate_is_now(sysdate_is_now)
                 .with_resource_group_name(self.active_resource_group.clone())
+                .with_replica_read(replica_read)
                 .with_executor_first_run_breakpoint(
                     Arc::clone(&self.executor_first_run_breakpoint),
                     self.breakpoint_notify_func(),
@@ -1039,6 +1095,7 @@ impl Session {
         .with_only_full_group_by(sql_mode.has_only_full_group_by())
         .with_new_only_full_group_by_check(new_only_full_group_by_check)
         .with_session_state(current_db, version)
+        .with_isolation_read_engines(isolation_read_engines)
         .with_connection_charset_info(connection_charset, connection_collation)
         .with_user(self.current_user.clone(), self.login_user.clone())
         .with_global_sysvar_accessor(global_sysvar_accessor)
@@ -1068,6 +1125,7 @@ impl Session {
         .with_tidb_decode_key_snapshot(self.tidb_decode_key_snapshot())
         .with_sysdate_is_now(sysdate_is_now)
         .with_resource_group_name(self.active_resource_group.clone())
+        .with_replica_read(tidb_executor::ReplicaReadType::Leader)
         .with_executor_first_run_breakpoint(
             Arc::clone(&self.executor_first_run_breakpoint),
             self.breakpoint_notify_func(),
@@ -1099,6 +1157,7 @@ impl Session {
         .with_always_keep_join_key(always_keep_join_key)
         .with_enable_unsafe_substitute(enable_unsafe_substitute)
         .with_enable_semi_join_rewrite(enable_semi_join_rewrite)
+        .with_allow_in_subq_to_join_and_agg(allow_in_subq_to_join_and_agg)
         .with_enable_no_decorrelate_in_select(enable_no_decorrelate_in_select)
         .with_enable_skew_distinct_agg(enable_skew_distinct_agg)
         .with_auto_increment_step(increment, offset)

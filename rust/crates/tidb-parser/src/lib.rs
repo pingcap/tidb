@@ -163,6 +163,22 @@ pub fn parse_with_warnings(sql: &str) -> PResult<ParseOutput> {
     })
 }
 
+/// Parses one statement with connection charset/collation metadata without
+/// discarding recoverable parser warnings.
+pub fn parse_with_connection_and_warnings(
+    sql: &str,
+    charset: &str,
+    collation: &str,
+) -> PResult<ParseOutput> {
+    let mut parser =
+        Parser::new_with_full_configuration(sql, false, SqlMode::default(), charset, collation);
+    let statement = parse_one_with_parser(sql, &mut parser)?;
+    Ok(ParseOutput {
+        statement,
+        warnings: parser.warnings,
+    })
+}
+
 /// Parses one statement with the same MariaDB compatibility switch as Go's
 /// parser configuration. The default [`parse`] API remains MySQL/TiDB-strict;
 /// callers must opt in before `AS ROW START|END` becomes grammar.
@@ -267,6 +283,19 @@ pub fn parse_multi_with_mariadb(sql: &str, enable_mariadb: bool) -> PResult<Vec<
 /// Rust lexer.
 pub fn parse_multi_with_sql_mode(sql: &str, sql_mode: SqlMode) -> PResult<Vec<Stmt>> {
     parse_multi_with_configuration(sql, false, sql_mode)
+}
+
+/// Parses all statements with connection charset/collation metadata and
+/// returns recoverable parser warnings in source order.
+pub fn parse_multi_with_connection_and_warnings(
+    sql: &str,
+    charset: &str,
+    collation: &str,
+) -> PResult<(Vec<Stmt>, Vec<HintDiagnostic>)> {
+    let mut parser =
+        Parser::new_with_full_configuration(sql, false, SqlMode::default(), charset, collation);
+    let statements = parse_multi_with_parser(sql, &mut parser)?;
+    Ok((statements, parser.warnings))
 }
 
 /// Whether `sql` provably holds EXACTLY ONE statement, decided without a
@@ -450,6 +479,10 @@ fn parse_multi_with_configuration(
     sql_mode: SqlMode,
 ) -> PResult<Vec<Stmt>> {
     let mut p = Parser::new_with_configuration(sql, enable_mariadb, sql_mode);
+    parse_multi_with_parser(sql, &mut p)
+}
+
+fn parse_multi_with_parser(sql: &str, p: &mut Parser) -> PResult<Vec<Stmt>> {
     let mut statements = Vec::new();
     let mut source_start = statement_source_start(sql, 0);
     while p.is_op(";") {

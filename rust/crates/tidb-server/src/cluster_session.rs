@@ -753,6 +753,12 @@ pub(crate) fn cluster_table(
             .unwrap_or(tidb_executor::TableCharset::default().collation),
     });
     kv_table.set_cache_status(table.table_cache_status_type);
+    kv_table.set_tiflash_replica(
+        table
+            .tiflash_replica
+            .as_ref()
+            .map(|replica| replica.read().clone()),
+    );
     // Go `TableInfo.TempTableType`, which the meta store really does carry:
     // a GLOBAL temporary table is created by an ordinary DDL job and its
     // `TableInfo` is persisted like any other. Dropping it here would make

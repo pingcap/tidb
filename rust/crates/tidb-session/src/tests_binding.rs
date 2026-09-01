@@ -68,6 +68,35 @@ fn a_session_with_no_binding_reports_no_match() {
     assert_eq!(matched(&mut session), "0");
 }
 
+/// Pinned Go `pkg/planner/core/hint_test.go`:
+/// `TestSetVarTimestampHintsWorksWithBindings` and
+/// `TestSetVarInQueriesAndBindingsWorkTogether`.
+///
+/// A binding's SET_VAR is applied after the query's own SET_VAR and both
+/// overlays restore the one persistent value captured before either hint.
+#[test]
+fn binding_set_var_overrides_the_query_hint_and_restores_the_persistent_value() {
+    let mut session = binding_session();
+    session.run("set sql_select_limit = 3").unwrap();
+    session
+        .run(
+            "create session binding for select * from t \
+             using select /*+ set_var(sql_select_limit=1) */ * from t",
+        )
+        .unwrap();
+
+    let (_, rows) = query_text(
+        &mut session,
+        "select /*+ set_var(sql_select_limit=2) */ * from t",
+    );
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        session.vars.get_system("sql_select_limit").as_deref(),
+        Ok("3"),
+    );
+    assert_eq!(matched(&mut session), "1");
+}
+
 /// The central capture. Real TiDB, `gorun`, database `bt3`:
 ///
 /// ```text

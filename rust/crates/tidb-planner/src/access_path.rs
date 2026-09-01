@@ -680,6 +680,9 @@ pub enum PossiblePath {
         /// its PRIMARY index, by offset into the catalog's index list.
         primary_index: Option<usize>,
     },
+    /// Go `genTiFlashPath`: a table path served by an available TiFlash
+    /// replica.
+    TiFlashTable,
     /// One public index, by offset into the catalog's index list.
     Index {
         /// The offset into `SourceTable::indexes`.
@@ -753,13 +756,12 @@ impl Default for IndexLookupPushDownSession {
 ///   `OptimizerUseInvisibleIndexes` (`:1378`);
 /// * a common-handle table's PRIMARY index is skipped as an index path
 ///   (`:1382`) — it already rode in on the table path;
-/// * a columnar index is skipped, because using one requires an available
-///   TiFlash replica (`:1399-1404`) and this catalog carries no replica
-///   state.
+/// * a columnar index is skipped because this access-path representation does
+///   not yet carry Go's TiFlash index-path identity (`:1399-1404`).
 ///
 /// Named boundaries, absent rather than approximated:
-/// * TiFlash replica paths (`genTiFlashPath`, `:1332-1347`) — no replica
-///   state on [`crate::plan_builder::catalog::SourceTable`];
+/// * TiFlash columnar-index paths (`:1399-1404`) — only TiFlash table paths
+///   are represented today;
 /// * `kv.TiDB` for cluster tables (`:1324-1326`) — no cluster-table flag;
 /// * inverted indexes (`:1396-1398`) — no inverted flag on
 ///   [`crate::plan_builder::catalog::SourceIndex`], so an inverted index
@@ -793,6 +795,9 @@ pub fn get_possible_access_paths(
             None
         },
     });
+    if table.has_tiflash_replica {
+        paths.push(PossiblePath::TiFlashTable);
+    }
     let mut check_latest_schema =
         (is_for_update_read || !repeatable_read) && connection_id.is_some_and(|id| id > 0);
     let mut latest_indexes = None;
@@ -851,6 +856,9 @@ pub struct ResolvedIndexPaths {
     pub unknown_comment_indexes: Vec<String>,
     /// Go statement-context hint warnings produced while resolving paths.
     pub hint_warnings: Vec<String>,
+    /// Ordinary statement warnings produced when a comment-style index hint
+    /// names a TiKV index while TiKV is absent from the isolation engines.
+    pub isolation_read_warnings: Vec<String>,
 }
 
 /// Applies Go `getPossibleAccessPaths`' table-syntax and already-matched
@@ -863,6 +871,8 @@ pub fn apply_table_index_hints(
     remove_global_indexes: bool,
     force_no_index_lookup_push_down: bool,
     session: IndexLookupPushDownSession,
+    tikv_in_isolation_read: bool,
+    isolation_read_engines_value: &str,
 ) -> Result<ResolvedIndexPaths, crate::plan_base::PlanError> {
     use tidb_ast::{IndexHintKind, IndexHintScope};
 
@@ -951,6 +961,13 @@ pub fn apply_table_index_hints(
         table_hints.chain(comment_hints)
     {
         has_scan_hint = true;
+        // Go checks this before the ordinary empty-list handling. With TiKV
+        // disabled, `USE INDEX ()` must leave the public TiFlash paths
+        // available rather than manufacture a TiKV table path that the
+        // isolation filter immediately removes.
+        if !tikv_in_isolation_read && indexes.is_empty() {
+            continue;
+        }
         if indexes.is_empty() && kind != IndexHintKind::Ignore {
             has_use_or_force = true;
             available.push(table_path.clone());
@@ -979,6 +996,7 @@ pub fn apply_table_index_hints(
                         false
                     })
                 }
+                PossiblePath::TiFlashTable => false,
             });
             let path = exact_path.or_else(|| {
                 if prefix_matches == 1 {
@@ -1002,6 +1020,27 @@ pub fn apply_table_index_hints(
                     ignored.insert(index);
                 }
                 continue;
+            }
+            let is_tikv_index = match path {
+                PossiblePath::Table { .. } => {
+                    name.eq_ignore_ascii_case("primary") && table.pk_is_handle
+                        || table.is_common_handle
+                }
+                PossiblePath::Index { index } => table
+                    .indexes
+                    .get(index)
+                    .is_some_and(|metadata| !metadata.is_columnar),
+                PossiblePath::TiFlashTable => false,
+            };
+            if is_tikv_index && !tikv_in_isolation_read {
+                let message = format!(
+                    "TiDB doesn't support index '{name}' in the isolation read engines(value: '{isolation_read_engines_value}')"
+                );
+                if comment_style {
+                    result.isolation_read_warnings.push(message);
+                    continue;
+                }
+                return Err(crate::plan_base::PlanError::internal(message));
             }
             has_use_or_force = true;
             match path {
@@ -1068,6 +1107,7 @@ pub fn apply_table_index_hints(
                         }
                     }
                 }
+                PossiblePath::TiFlashTable => continue,
             }
             available.push(path);
         }
@@ -1088,7 +1128,7 @@ pub fn apply_table_index_hints(
         available.push(table_path.clone());
     }
     if available.iter().all(|path| match path {
-        PossiblePath::Table { .. } => false,
+        PossiblePath::Table { .. } | PossiblePath::TiFlashTable => false,
         PossiblePath::Index { index } => table.indexes.get(*index).is_some_and(|metadata| {
             metadata.is_multi_valued || !metadata.condition_expr_string.is_empty()
         }),
@@ -1264,9 +1304,9 @@ mod enumeration_tests {
     }
 
     #[test]
-    fn a_columnar_index_is_skipped_without_replica_state() {
-        // Go admits a columnar index only with an available TiFlash replica
-        // (`planbuilder.go:1399-1404`); this catalog has no replica state.
+    fn a_columnar_index_is_skipped_without_a_tiflash_index_path_identity() {
+        // Go admits a columnar index only as a TiFlash index path
+        // (`planbuilder.go:1399-1404`); this path type is not represented yet.
         let mut columnar = index("v");
         columnar.is_columnar = true;
         assert_eq!(

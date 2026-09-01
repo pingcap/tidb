@@ -209,6 +209,18 @@ fn test_parse_hint() {
         ],
     );
     assert_hints(
+        "HYPO_INDEX(@qb1 t, idx, c1, c2) SWAP_JOIN_INPUTS(t1) NO_SWAP_JOIN_INPUTS(t2) INDEX_JOIN(t3) INDEX_HASH_JOIN(t4) INDEX_MERGE_JOIN(t5)",
+        false,
+        &[
+            "HYPO_INDEX|tables|qb1|t,idx,c1,c2",
+            "SWAP_JOIN_INPUTS|tables||t1",
+            "NO_SWAP_JOIN_INPUTS|tables||t2",
+            "INDEX_JOIN|tables||t3",
+            "INDEX_HASH_JOIN|tables||t4",
+            "INDEX_MERGE_JOIN|tables||t5",
+        ],
+    );
+    assert_hints(
         "USE_INDEX_MERGE(@qb1 tbl1 x, y, z) IGNORE_INDEX(tbl2@qb2) USE_INDEX(tbl3 PRIMARY) FORCE_INDEX(tbl4@qb3 c1) INDEX_LOOKUP_PUSHDOWN(tbl5@qb6 c3)",
         false,
         &[
@@ -265,6 +277,14 @@ fn test_parse_hint() {
             "READ_FROM_STORAGE|storage||TIKV[e]",
         ],
     );
+    assert_hints(
+        "READ_FROM_STORAGE(TIKV[a], UNKNOWN[b])",
+        false,
+        &["READ_FROM_STORAGE|storage||TIKV[a]"],
+    );
+    for input in ["NO_DECORRELATE", "SEMI_JOIN_REWRITE", "USE_PLAN_CACHE"] {
+        assert_errors(input, &["Optimizer hint syntax error at line 1 "]);
+    }
     assert_hints(
         "WRITE_SLOW_LOG, WRITE_SLOW_LOG",
         false,

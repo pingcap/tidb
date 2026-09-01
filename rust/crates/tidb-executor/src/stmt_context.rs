@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use tidb_datatype::Datum;
-use tidb_distsql::{WarningCollector, WarningLevel};
+use tidb_distsql::{ReplicaReadType, WarningCollector, WarningLevel};
 use tidb_expr::{Columns, CurrentTso, ErrorLevel, MysqlRng};
 
 const MAX_WARNING_COUNT: usize = u16::MAX as usize;
@@ -339,6 +339,11 @@ pub struct StmtContext {
     /// Go `StmtCtx.ResourceGroupName`: the statement hint's group when one
     /// is present, otherwise the connection's selected resource group.
     resource_group_name: String,
+    /// Go `SessionVars.GetReplicaRead()` for this statement.
+    replica_read: ReplicaReadType,
+    /// Go `SessionVars.IsolationReadEngines`, in the session variable's
+    /// canonical comma-separated spelling.
+    isolation_read_engines: String,
     /// Go `BuildContext.GetCharsetInfo`: the statement snapshot of
     /// `@@character_set_connection` and `@@collation_connection`.
     connection_charset: String,
@@ -622,6 +627,8 @@ pub struct StmtContext {
     enable_unsafe_substitute: bool,
     /// Go `SessionVars.EnableSemiJoinRewrite`.
     enable_semi_join_rewrite: bool,
+    /// Go `SessionVars.GetAllowInSubqToJoinAndAgg()`.
+    allow_in_subq_to_join_and_agg: bool,
     /// Go `SessionVars.EnableNoDecorrelateInSelect`.
     enable_no_decorrelate_in_select: bool,
     /// Go `SessionVars.EnableSkewDistinctAgg`.
@@ -799,6 +806,8 @@ impl StmtContext {
             sysdate_is_now: false,
             time_zone: None,
             resource_group_name: "default".to_owned(),
+            replica_read: ReplicaReadType::Leader,
+            isolation_read_engines: "tikv,tiflash,tidb".to_owned(),
             connection_charset: "utf8mb4".to_owned(),
             connection_collation: "utf8mb4_bin".to_owned(),
             rand_session: None,
@@ -881,6 +890,7 @@ impl StmtContext {
             always_keep_join_key: tidb_vardef::defaults::DEF_OPT_ALWAYS_KEEP_JOIN_KEY,
             enable_unsafe_substitute: false,
             enable_semi_join_rewrite: tidb_vardef::defaults::DEF_OPT_ENABLE_SEMI_JOIN_REWRITE,
+            allow_in_subq_to_join_and_agg: true,
             enable_no_decorrelate_in_select:
                 tidb_vardef::defaults::DEF_OPT_ENABLE_NO_DECORRELATE_IN_SELECT,
             enable_skew_distinct_agg: tidb_vardef::defaults::DEF_TIDB_SKEW_DISTINCT_AGG,
@@ -1205,6 +1215,13 @@ impl StmtContext {
         self
     }
 
+    /// Sets Go `SessionVars.GetAllowInSubqToJoinAndAgg()` for this statement.
+    #[must_use]
+    pub const fn with_allow_in_subq_to_join_and_agg(mut self, allow: bool) -> Self {
+        self.allow_in_subq_to_join_and_agg = allow;
+        self
+    }
+
     /// Sets `@@tidb_opt_enable_no_decorrelate_in_select` for this statement.
     #[must_use]
     pub const fn with_enable_no_decorrelate_in_select(mut self, enable: bool) -> Self {
@@ -1341,6 +1358,11 @@ impl StmtContext {
     /// Returns `@@tidb_opt_enable_semi_join_rewrite`.
     pub const fn enable_semi_join_rewrite(&self) -> bool {
         self.enable_semi_join_rewrite
+    }
+
+    /// Returns Go `SessionVars.GetAllowInSubqToJoinAndAgg()`.
+    pub const fn allow_in_subq_to_join_and_agg(&self) -> bool {
+        self.allow_in_subq_to_join_and_agg
     }
 
     /// Returns `@@tidb_opt_enable_no_decorrelate_in_select`.
@@ -2136,6 +2158,19 @@ impl StmtContext {
         self
     }
 
+    /// Attaches Go `SessionVars.IsolationReadEngines` to physical planning.
+    #[must_use]
+    pub fn with_isolation_read_engines(mut self, engines: String) -> Self {
+        self.isolation_read_engines = engines;
+        self
+    }
+
+    /// Returns the statement snapshot of `tidb_isolation_read_engines`.
+    #[must_use]
+    pub fn isolation_read_engines(&self) -> &str {
+        &self.isolation_read_engines
+    }
+
     /// The database in which this statement resolves unqualified object
     /// names. DDL persists it into schema-bound expression defaults.
     #[must_use]
@@ -2267,10 +2302,23 @@ impl StmtContext {
         self
     }
 
+    /// Sets Go `SessionVars.GetReplicaRead()` for this statement.
+    #[must_use]
+    pub const fn with_replica_read(mut self, replica_read: ReplicaReadType) -> Self {
+        self.replica_read = replica_read;
+        self
+    }
+
     /// The resource group selected for this statement.
     #[must_use]
     pub fn resource_group_name(&self) -> &str {
         &self.resource_group_name
+    }
+
+    /// Returns Go `SessionVars.GetReplicaRead()`.
+    #[must_use]
+    pub const fn replica_read(&self) -> ReplicaReadType {
+        self.replica_read
     }
 
     /// Attaches the connection charset/collation captured for this statement.
