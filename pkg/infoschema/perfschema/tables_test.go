@@ -15,6 +15,7 @@
 package perfschema_test
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net/http"
@@ -25,6 +26,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/infoschema/perfschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -34,6 +36,8 @@ import (
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client/http"
 	"go.opencensus.io/stats/view"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 func TestPredefinedTables(t *testing.T) {
@@ -176,6 +180,23 @@ func TestTiKVProfileCPU(t *testing.T) {
 	require.Lenf(t, warnings, 0, "expect no warnings, but found: %+v", warnings)
 
 	require.Lenf(t, accessed, 5, "expect all HTTP API had been accessed, but found: %v", accessed)
+}
+
+func TestTiDBProfileRequestLog(t *testing.T) {
+	store := newMockStore(t)
+
+	var logs bytes.Buffer
+	core := zapcore.NewCore(zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig()), zapcore.AddSync(&logs), zap.InfoLevel)
+	props := &log.ZapProperties{Level: zap.NewAtomicLevelAt(zap.InfoLevel)}
+	restore := log.ReplaceGlobals(zap.New(core), props)
+	defer restore()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use performance_schema")
+	tk.MustQuery("select * from tidb_profile_goroutines limit 1")
+
+	require.Contains(t, logs.String(), `"msg":"profiling request received"`)
+	require.Contains(t, logs.String(), `"table":"performance_schema.tidb_profile_goroutines"`)
 }
 
 // TestSessionConnectAttrs tests the `SESSION_CONNECT_ATTRS` table
