@@ -91,11 +91,14 @@ platform variants are in this claim.
 
 ## Outcomes & Retrospective
 
-Completion will state the exact three-file Go production inventory, the two
-test artifacts, BUILD metadata, Rust owner, spill-storage integration, and
-Ready commands. Any unavailable cross-platform execution (for example,
-Windows or an unsupported target) will be reported as not run rather than
-implied by a host-platform test.
+The implementation now states the exact three-file Go production inventory,
+the two test artifacts, BUILD metadata, Rust owner, and spill-storage startup
+integration. The POSIX adapter uses `statfs`, matching Go's block arithmetic;
+the focused offline source-module harness passes all three checks. The
+repository Ready gate remains unverified because this host lacks the required
+Go toolchain and OpenSSL/pkg-config setup. Any unavailable cross-platform
+execution (for example, Windows or an unsupported target) is reported as not
+run rather than implied by a host-platform test.
 
 ## Context and Orientation
 
