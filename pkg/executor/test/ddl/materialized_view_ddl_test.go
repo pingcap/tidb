@@ -192,6 +192,12 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, tk.Session().GetSessionVars().GetDivPrecisionIncrement(), mvAvgTable.Meta().MaterializedView.DefinitionDivPrecisionIncrement)
 
+	tk.MustExec("create table t_avg_not_null (a int not null, b int not null)")
+	tk.MustExec("insert into t_avg_not_null values (1, 10), (1, 20)")
+	tk.MustExec("create materialized view log on t_avg_not_null (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_avg_not_null (a, avg_b, sum_b, cnt) as select a, avg(b), sum(b), count(1) from t_avg_not_null group by a")
+	tk.MustQuery("select a, avg_b, sum_b, cnt from mv_avg_not_null order by a").Check(testkit.Rows("1 15.0000 30 2"))
+
 	// ATTRIBUTES configures overdue-alert thresholds for automatically scheduled MV refresh tasks.
 	tk.MustExec("create materialized view mv_alert (a, cnt) refresh fast attributes='mview_alert_warning=300,mview_alert_overdue=600' as select a, count(1) from t group by a")
 	is = dom.InfoSchema()
@@ -450,6 +456,7 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	tk.MustExec("drop materialized view mv")
 	tk.MustExec("drop materialized view mv_count_col")
 	tk.MustExec("drop materialized view mv_avg")
+	tk.MustExec("drop materialized view mv_avg_not_null")
 	tk.MustExec("drop materialized view mv_alert")
 	tk.MustExec("drop materialized view mv_alert_zero")
 	tk.MustExec("drop materialized view mv_alert_failed")
@@ -463,6 +470,7 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	tk.MustExec("drop materialized view mv_minmax_nullable")
 	tk.MustExec("drop materialized view mv_presplit")
 	tk.MustExec("drop materialized view log on t")
+	tk.MustExec("drop materialized view log on t_avg_not_null")
 	tk.MustExec("drop materialized view log on t_nullable")
 	tk.MustExec("drop materialized view log on t_sum_nullable")
 	tk.MustExec("drop materialized view log on t_sum_time")

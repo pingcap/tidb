@@ -352,7 +352,7 @@ type AggInfo struct {
 	//     - matched_count_expr_mv: absolute output offset of matched COUNT(expr) MV column.
 	//       COUNT(expr) must be updated before SUM(expr), and SUM should read this updated MV value.
 	//       The same matched COUNT(expr) can be a dependency for multiple aggregate functions.
-	//   - AggAvg: [matching_sum_mv, matching_count_expr_mv, count_all_rows_mv].
+	//   - AggAvg: [matching_sum_mv, matching_count_expr_mv or count_all_rows_mv, count_all_rows_mv].
 	//   - AggMax / AggMin:
 	//     - [added_val, added_cnt, removed_val, removed_cnt] always.
 	//     - [added_val, added_cnt, removed_val, removed_cnt, matched_count_expr_mv] optionally when a
@@ -640,7 +640,7 @@ func buildFromLocal(
 	if err != nil {
 		return nil, err
 	}
-	avgDependencies, requiredExactSum, err := mapAvgDependencies(local.aggCols)
+	avgDependencies, requiredExactSum, err := mapAvgDependencies(local.aggCols, aggArgNotNullByOffset)
 	if err != nil {
 		return nil, err
 	}
@@ -1091,9 +1091,9 @@ func mapSumToCountExprDependencies(aggCols []aggColInfo, sumArgNotNullByOffset m
 }
 
 // mapAvgDependencies resolves each AVG to the first matching SUM, COUNT(expr),
-// and COUNT(*) in SELECT-list order. The returned SUM indexes are marked as
-// requiring exact state even when the base column is NOT NULL.
-func mapAvgDependencies(aggCols []aggColInfo) (map[int][3]int, map[int]bool, error) {
+// and COUNT(*) in SELECT-list order. For a NOT NULL AVG argument, COUNT(*) can
+// replace COUNT(expr) because both counts are equivalent.
+func mapAvgDependencies(aggCols []aggColInfo, argNotNullByOffset map[int]bool) (map[int][3]int, map[int]bool, error) {
 	avgDeps := make(map[int][3]int)
 	requiredExactSum := make(map[int]bool)
 	countStarIdx := -1
@@ -1124,6 +1124,9 @@ func mapAvgDependencies(aggCols []aggColInfo) (map[int][3]int, map[int]bool, err
 			if countIdx < 0 && candidate.info.Kind == AggCount {
 				countIdx = j
 			}
+		}
+		if countIdx < 0 && argNotNullByOffset[ac.info.MVOffset] {
+			countIdx = countStarIdx
 		}
 		if sumIdx < 0 {
 			return nil, nil, errors.Errorf(

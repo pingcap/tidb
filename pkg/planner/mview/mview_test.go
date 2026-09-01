@@ -184,6 +184,82 @@ func TestBuildCountSum(t *testing.T) {
 	require.ErrorContains(t, err, "invalid maintenance numeric metadata")
 }
 
+func TestBuildAvgUsesCountStarForNotNullArg(t *testing.T) {
+	sctx := core.MockContext()
+
+	baseID := int64(41)
+	mlogID := int64(42)
+	mvID := int64(43)
+
+	base := &model.TableInfo{
+		ID:    baseID,
+		Name:  pmodel.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+		},
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: mlogID},
+	}
+	base.Columns[0].AddFlag(mysql.NotNullFlag)
+	base.Columns[1].AddFlag(mysql.NotNullFlag)
+	mlog := &model.TableInfo{
+		ID:    mlogID,
+		Name:  pmodel.NewCIStr("$mlog$t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+			mkCol(3, model.MaterializedViewLogDMLTypeColumnName, 2, mysql.TypeVarchar),
+			mkCol(4, model.MaterializedViewLogOldNewColumnName, 3, mysql.TypeTiny),
+		},
+		MaterializedViewLog: &model.MaterializedViewLogInfo{
+			BaseTableID: baseID,
+			Columns:     []pmodel.CIStr{pmodel.NewCIStr("a"), pmodel.NewCIStr("b")},
+		},
+	}
+	mv := &model.TableInfo{
+		ID:    mvID,
+		Name:  pmodel.NewCIStr("mv_avg_not_null_tbl"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "x", 0, mysql.TypeLong),
+			mkCol(2, "cnt_star", 1, mysql.TypeLonglong),
+			mkCol(3, "avg_b", 2, mysql.TypeNewDecimal),
+			mkCol(4, "sum_b", 3, mysql.TypeLonglong),
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1), avg(b), sum(b) from t group by a",
+		},
+	}
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, mv})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	res, err := mview.Build(sctx.GetPlanCtx(), is, mv, mview.BuildOptions{FromTS: 10}, nil)
+	require.NoError(t, err)
+	require.Equal(t, 1, res.CountStarMVOffset)
+
+	var hasAvg, hasSum bool
+	for _, ai := range res.AggInfos {
+		switch ai.Kind {
+		case mview.AggCountStar:
+			requireDependencies(t, ai, []int{0})
+		case mview.AggAvg:
+			hasAvg = true
+			require.Equal(t, "b", ai.ArgColName)
+			requireDependencies(t, ai, []int{5, 3, 3})
+		case mview.AggSum:
+			hasSum = true
+			require.Equal(t, "b", ai.ArgColName)
+			requireDependencies(t, ai, []int{1, 3})
+		}
+	}
+	require.True(t, hasAvg)
+	require.True(t, hasSum)
+}
+
 func TestBuildCountExprSumExpr(t *testing.T) {
 	sctx := core.MockContext()
 
