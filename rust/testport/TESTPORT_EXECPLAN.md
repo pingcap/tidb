@@ -100,7 +100,7 @@ For each bounded behavior cluster:
 
 - 2026-09-02: fixed the remaining Rust-only return diagnostics in the
   complete Go-master `pkg/util/checksum` owner. The package has four tracked
-  artifacts and 786 lines at `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`,
+  artifacts and 786 lines at `c6054025ed4c32ab3672a2a24ea46892714d21ec`,
   including ten source tests, with no fixtures, generated/platform Go
   variants, benchmarks, fuzz targets, or nested packages. The prior
   Rust-only `Writer::underlying` accessor remains removed; six explicit

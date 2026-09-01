@@ -1,7 +1,7 @@
 # `pkg/util/checksum` — complete Go-master parity receipt
 
 Comparison source: Go `origin/master` at
-`5e8a1a229a7591ddac49a0cd3b795587c2595ab9` (2026-09-01). The package is
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02). The package is
 unchanged from the earlier pinned implementation; this receipt records the
 rolling authority, complete artifact hashes, and the Rust-only API fix.
 
@@ -57,9 +57,9 @@ quality, and the pinned detached Go lint gate were run. No Go source, imports,
 Bazel metadata, or module file changed; `make bazel_prepare` is not required.
 
 ```text
-git diff --exit-code 5e8a1a229a7591ddac49a0cd3b795587c2595ab9..origin/master \
-  -- pkg/util/checksum
-# passed: current package is unchanged from the previous authority pin
+git diff --exit-code c6054025ed4c32ab3672a2a24ea46892714d21ec -- \
+  pkg/util/checksum
+# passed: current package matches the exact latest Go-master authority
 
 PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
 GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
@@ -69,19 +69,19 @@ go test ./pkg/util/checksum -count=1
 # Before the fix, the focused regression failed with six unused_must_use
 # errors; after removing the Rust-only annotations it passes.
 OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler \
-DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib \
+DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib \
 cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-util \
   --lib checksum::tests --offline --locked -- --test-threads=1
 # passed: ten source tests and TestReturnValuesMayBeIgnoredLikeGo (11 tests)
 
 OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler \
-DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib \
+DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib \
 cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-chunk \
   --lib chunk_util --offline --locked -- --test-threads=1
 # passed: encrypted/plain spill checksum consumer tests
 
 OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler \
-DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib \
+DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib \
 cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml \
   -p tidb-util -p tidb-chunk --all-targets --offline --locked
 # passed: owner, encryption benchmark, and spill consumer targets

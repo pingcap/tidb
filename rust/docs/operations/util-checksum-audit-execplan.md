@@ -8,7 +8,7 @@ owner, encryption/spill consumers, and Go's ignored-return API behavior.
 ## Progress
 
 - [x] Read all four Go-master artifacts at
-  `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: `BUILD.bazel`, `checksum.go`,
+  `c6054025ed4c32ab3672a2a24ea46892714d21ec`: `BUILD.bazel`, `checksum.go`,
   `checksum_test.go`, and `main_test.go` (786 lines; writer/reader APIs, ten
   source tests, helpers, and goleak harness).
 - [x] Confirm there are no package docs, fixtures/testdata, generated or
@@ -26,7 +26,7 @@ owner, encryption/spill consumers, and Go's ignored-return API behavior.
 - [x] Revalidate current and exact detached Go tests, all eleven Rust owner
   tests, spill consumer tests/checks, formatting, diff quality, and the pinned
   detached `make lint` Ready gate.
-- [ ] Commit, push, pull, and verify `origin/hparser-integration`.
+- [x] Commit, push, pull, and verify `origin/hparser-integration`.
 
 ## Validation gate
 
