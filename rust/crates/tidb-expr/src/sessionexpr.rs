@@ -41,7 +41,8 @@
 //! its definition site:
 //!
 //! - `// boundary:` Go `sessionctx.Context` — [`SessionContext`], carrying only
-//!   the ten accessors this file calls on a session (`GetSessionVars`,
+//!   the twelve accessors this file calls on a session (`GetTraceCtx`,
+//!   `GetSessionVars`, `GetDomain`,
 //!   `GetStore`, `IsDDLOwner`, `GetInfoSchema`, `GetLatestInfoSchema`,
 //!   `GetRestrictedSQLExecutor`, the session's own `AdvisoryLockContext`, the
 //!   bound privilege manager, sequence lookup, and the plan context's
@@ -77,7 +78,7 @@
 //!   pull in the storage client.
 //!
 //! Reused from the sibling packages instead of re-modeled:
-//! [`crate::expropt`]'s nine providers and its `KvStorage` / `SqlExecutor` /
+//! [`crate::expropt`]'s ten providers and its `KvStorage` / `SqlExecutor` /
 //! `SessionVars` / `AdvisoryLockContext` / `PrivilegeChecker` boundary traits,
 //! [`crate::exprctx`]'s optional-property keys,
 //! [`crate::metabuild::MetaOnlyInfoSchema`], [`crate::user_vars::UserVarsReader`],
@@ -105,6 +106,7 @@
 //!   line for a failing stale-TSO provider is dropped with it; Go proceeds to
 //!   the `timestamp` variable in exactly the same way after logging.
 
+use std::any::Any;
 use std::sync::{Arc, Weak};
 
 use chrono::{DateTime, Utc};
@@ -133,8 +135,8 @@ use crate::expropt::{
     CurrentUserPropProvider, DdlOwnerInfoProvider, DynOptionalEvalPropProvider, EvalPropContext,
     ExprOptError, InfoSchemaPropProvider, KvStorage, KvStorePropProvider,
     OptionalEvalPropProviders, PrivilegeChecker, PrivilegeCheckerProvider, SequenceOperator,
-    SequenceOperatorProvider, SessionVars as ExproptSessionVars, SessionVarsProvider, SqlExecutor,
-    SqlExecutorPropProvider,
+    SequenceOperatorProvider, SessionContext as ExproptSessionContext, SessionContextPropProvider,
+    SessionVars as ExproptSessionVars, SessionVarsProvider, SqlExecutor, SqlExecutorPropProvider,
 };
 use crate::exprstatic::evalctx::{
     make_eval_context_static, StaticConvertibleEvalContext, BLOCK_ENCRYPTION_MODE,
@@ -199,8 +201,12 @@ pub trait SessionVarsAccessor: SessionVarsSnapshot + ExproptSessionVars {
 /// boundary: Go `sessionctx.Context`, narrowed to the accessors this package
 /// calls on a session. See the module header.
 pub trait SessionContext: Send + Sync {
+    /// Go `Context.GetTraceCtx`.
+    fn get_trace_ctx(&self) -> Option<Arc<dyn Any + Send + Sync>>;
     /// Go `Context.GetSessionVars`.
     fn get_session_vars(&self) -> Arc<dyn SessionVarsAccessor>;
+    /// Go `ValueStoreContext.GetDomain` as exposed by `sessionctx.Context`.
+    fn get_domain(&self) -> Option<Arc<dyn Any + Send + Sync>>;
     /// Go `Context.GetStore`.
     fn get_store(&self) -> Arc<dyn KvStorage>;
     /// Go `Context.IsDDLOwner`.
@@ -377,6 +383,12 @@ impl EvalContext {
                 &mut props,
                 Arc::new(new_session_vars_provider(Arc::new(
                     SessionVarsProviderAdapter(Arc::clone(&sctx)),
+                ))),
+            );
+            set_optional_prop(
+                &mut props,
+                Arc::new(SessionContextPropProvider::from_context(Arc::new(
+                    SessionContextProviderAdapter(Arc::clone(&sctx)),
                 ))),
             );
             set_optional_prop(&mut props, Arc::new(info_schema_prop(Arc::clone(&sctx))));
@@ -1028,6 +1040,25 @@ impl SessionVarsProvider for SessionVarsProviderAdapter {
     }
 }
 
+/// Go hands the session straight to `NewSessionContextPropProvider`. The
+/// local session boundary is wider than expropt's three-method view, so this
+/// adapter exposes exactly that view without introducing a crate dependency.
+struct SessionContextProviderAdapter(Arc<dyn SessionContext>);
+
+impl ExproptSessionContext for SessionContextProviderAdapter {
+    fn get_trace_ctx(&self) -> Option<Arc<dyn Any + Send + Sync>> {
+        self.0.get_trace_ctx()
+    }
+
+    fn get_session_vars(&self) -> Arc<dyn ExproptSessionVars> {
+        self.0.get_session_vars()
+    }
+
+    fn get_domain(&self) -> Option<Arc<dyn Any + Send + Sync>> {
+        self.0.get_domain()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1047,7 +1078,7 @@ mod tests {
     use crate::expropt::{
         AdvisoryLockPropReader, CurrentUserPropReader, DdlOwnerPropReader, InfoSchemaPropReader,
         KvStorePropReader, PrivilegeCheckerPropReader, SequenceOperatorPropReader,
-        SessionVarsPropReader, SqlExecutorPropReader,
+        SessionContextPropReader, SessionVarsPropReader, SqlExecutorPropReader,
     };
     use crate::exprstatic::StaticSessionVars;
     use crate::user_vars::UserVars;
@@ -1429,8 +1460,16 @@ mod tests {
     }
 
     impl SessionContext for MockSession {
+        fn get_trace_ctx(&self) -> Option<Arc<dyn Any + Send + Sync>> {
+            Some(Arc::new(()))
+        }
+
         fn get_session_vars(&self) -> Arc<dyn SessionVarsAccessor> {
             Arc::clone(&self.vars) as _
+        }
+
+        fn get_domain(&self) -> Option<Arc<dyn Any + Send + Sync>> {
+            None
         }
 
         fn get_store(&self) -> Arc<dyn KvStorage> {
@@ -1833,6 +1872,17 @@ mod tests {
             .get_session_vars(eval_ctx.as_ref())
             .unwrap();
         assert!(same_alloc(&got_vars, &ctx.vars));
+
+        // OptPropSessionContext: the adapter forwards the session's
+        // trace/domain values and session variables through expropt's narrow
+        // boundary.
+        let got_session = SessionContextPropReader
+            .get_session_context(eval_ctx.as_ref())
+            .unwrap()
+            .expect("a live EvalContext always has a session");
+        assert!(got_session.get_trace_ctx().is_some());
+        assert!(got_session.get_domain().is_none());
+        assert!(same_alloc(&got_session.get_session_vars(), &ctx.vars));
 
         // OptPropAdvisoryLock: the lock context is the session itself.
         let lock_provider = AdvisoryLockPropReader

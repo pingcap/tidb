@@ -24,8 +24,8 @@
 //!
 //! Every production symbol of the Go package is here: `RequireOptionalEvalProps`,
 //! `OptionalEvalPropProviders` with `Contains`/`Get`/`Add`/`PropKeySet`,
-//! `getPropProvider`, and the nine provider/reader pairs of `current_user.go`,
-//! `sessionvars.go`, `infoschema.go`, `kvstore.go`, `sqlexec.go`,
+//! `getPropProvider`, and the ten provider/reader pairs of `current_user.go`,
+//! `sessionvars.go`, `sessioncontext.go`, `infoschema.go`, `kvstore.go`, `sqlexec.go`,
 //! `sequence.go`, `advisory_lock.go`, `ddlowner.go` and `priv.go`. The Go
 //! package's own test, `optional_test.go`'s `TestOptionalEvalPropProviders`,
 //! is ported in [`mod tests`](self#tests).
@@ -51,6 +51,9 @@
 //!   opaque [`SessionVars`] marker trait. `SessionVars` itself is ported in
 //!   `tidb-session`, which sits *above* this crate, so a dependency on it
 //!   would be a cycle.
+//! - `// boundary:` Go `pkg/expression/expropt.SessionContext` — its session
+//!   variables reuse that same opaque [`SessionVars`] boundary, while
+//!   `context.Context` and `GetDomain() any` remain opaque thread-safe values.
 //! - Go `pkg/util/sqlexec.RestrictedSQLExecutor` is shared from its
 //!   `tidb-sqlexec` owner. Drained rows are materialized Rust `Datum` rows so
 //!   the method set retains Go's behavior without extending a chunk borrow.
@@ -79,6 +82,7 @@ mod infoschema;
 mod kvstore;
 mod privilege;
 mod sequence;
+mod sessioncontext;
 mod sessionvars;
 mod sqlexec;
 
@@ -89,6 +93,7 @@ pub use infoschema::{InfoSchemaPropProvider, InfoSchemaPropReader};
 pub use kvstore::{KvStorage, KvStorePropProvider, KvStorePropReader};
 pub use privilege::{PrivilegeChecker, PrivilegeCheckerPropReader, PrivilegeCheckerProvider};
 pub use sequence::{SequenceOperator, SequenceOperatorPropReader, SequenceOperatorProvider};
+pub use sessioncontext::{SessionContext, SessionContextPropProvider, SessionContextPropReader};
 pub use sessionvars::{
     new_session_vars_provider, SessionVars, SessionVarsPropProvider, SessionVarsPropReader,
     SessionVarsProvider,
@@ -246,6 +251,7 @@ fn provider_type_matches_key(val: &dyn DynOptionalEvalPropProvider) -> bool {
     match val.desc().key() {
         OptionalEvalPropKey::CurrentUser => any.is::<CurrentUserPropProvider>(),
         OptionalEvalPropKey::SessionVars => any.is::<SessionVarsPropProvider>(),
+        OptionalEvalPropKey::SessionContext => any.is::<SessionContextPropProvider>(),
         OptionalEvalPropKey::InfoSchema => any.is::<InfoSchemaPropProvider>(),
         OptionalEvalPropKey::KvStore => any.is::<KvStorePropProvider>(),
         OptionalEvalPropKey::SqlExecutor => any.is::<SqlExecutorPropProvider>(),

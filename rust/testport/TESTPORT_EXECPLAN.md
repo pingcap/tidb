@@ -2443,6 +2443,18 @@ For each bounded behavior cluster:
       BR/Lightning/object-store composition roots. The package remains
       explicitly unclaimed with no source change; details are in
       `receipts/util_httputil.md`.
+- 2026-09-01: audited the complete Go-master `pkg/expression/expropt`
+      package: 13 tracked artifacts and 1,116 lines, including all eleven
+      provider/reader production files, the provider-array type checks, the
+      ten-key optional-property test, the new EMBED_TEXT session-context
+      source, and the BUILD target. Rust's `tidb-expr` owner had only nine
+      keys/providers; the focused regression failed at `OPT_PROPS_CNT == 9`.
+      Added the tenth key and descriptor, a nil-preserving
+      `SessionContextPropProvider`/reader, the complete provider test case,
+      and live `sessionexpr` installation through a narrow adapter forwarding
+      trace context, session variables, and domain values. Exact Go-master
+      tests and Rust expropt/exprctx/sessionexpr suites pass; details are in
+      `receipts/expression_expropt.md`.
 - [ ] Run Ready validation and self-review only when the requested parity scope
       is genuinely complete enough for a final-status claim.
 

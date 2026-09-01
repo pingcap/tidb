@@ -50,24 +50,26 @@ pub enum OptionalEvalPropKey {
     CurrentUser = 0,
     /// Go `OptPropSessionVars`.
     SessionVars = 1,
+    /// Go `OptPropSessionContext`.
+    SessionContext = 2,
     /// Go `OptPropInfoSchema`.
-    InfoSchema = 2,
+    InfoSchema = 3,
     /// Go `OptPropKVStore`.
-    KvStore = 3,
+    KvStore = 4,
     /// Go `OptPropSQLExecutor`.
-    SqlExecutor = 4,
+    SqlExecutor = 5,
     /// Go `OptPropSequenceOperator`.
-    SequenceOperator = 5,
+    SequenceOperator = 6,
     /// Go `OptPropAdvisoryLock`.
-    AdvisoryLock = 6,
+    AdvisoryLock = 7,
     /// Go `OptPropDDLOwnerInfo`.
-    DdlOwnerInfo = 7,
+    DdlOwnerInfo = 8,
     /// Go `OptPropPrivilegeChecker`.
-    PrivilegeChecker = 8,
+    PrivilegeChecker = 9,
 }
 
 /// Go `OptPropsCnt`: the number of optional properties.
-pub const OPT_PROPS_CNT: usize = 9;
+pub const OPT_PROPS_CNT: usize = 10;
 
 /// Go's private `allOptPropsMask`.
 const ALL_OPT_PROPS_MASK: u64 = (1 << OPT_PROPS_CNT) - 1;
@@ -106,6 +108,10 @@ static OPTIONAL_PROPERTY_DESC_LIST: [OptionalEvalPropDesc; OPT_PROPS_CNT] = [
     OptionalEvalPropDesc {
         key: OptionalEvalPropKey::SessionVars,
         str: "OptPropSessionVars",
+    },
+    OptionalEvalPropDesc {
+        key: OptionalEvalPropKey::SessionContext,
+        str: "OptPropSessionContext",
     },
     OptionalEvalPropDesc {
         key: OptionalEvalPropKey::InfoSchema,
@@ -148,6 +154,7 @@ impl OptionalEvalPropKey {
     pub const ALL: [Self; OPT_PROPS_CNT] = [
         Self::CurrentUser,
         Self::SessionVars,
+        Self::SessionContext,
         Self::InfoSchema,
         Self::KvStore,
         Self::SqlExecutor,
@@ -308,6 +315,7 @@ mod tests {
         // Add all the other keys.
         let key_set4 = key_set3
             .add(OptionalEvalPropKey::SessionVars)
+            .add(OptionalEvalPropKey::SessionContext)
             .add(OptionalEvalPropKey::InfoSchema)
             .add(OptionalEvalPropKey::KvStore)
             .add(OptionalEvalPropKey::SqlExecutor)

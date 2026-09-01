@@ -157,6 +157,26 @@ impl SqlExecutor for MockSqlExecutor {
 struct MockSessionVars;
 impl SessionVars for MockSessionVars {}
 
+struct MockSessionContext {
+    trace: Arc<dyn std::any::Any + Send + Sync>,
+    vars: Arc<dyn SessionVars>,
+    domain: Arc<dyn std::any::Any + Send + Sync>,
+}
+
+impl SessionContext for MockSessionContext {
+    fn get_trace_ctx(&self) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
+        Some(Arc::clone(&self.trace))
+    }
+
+    fn get_session_vars(&self) -> Arc<dyn SessionVars> {
+        Arc::clone(&self.vars)
+    }
+
+    fn get_domain(&self) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
+        Some(Arc::clone(&self.domain))
+    }
+}
+
 struct MockSessionVarsProvider {
     vars: Arc<dyn SessionVars>,
 }
@@ -310,6 +330,47 @@ fn optional_eval_prop_providers() {
 
         let got = assert_reader_func_value(reader.get_session_vars(&ctx));
         assert!(Arc::ptr_eq(&vars, &got));
+    }
+
+    // OptPropSessionContext.
+    {
+        let key = OptionalEvalPropKey::SessionContext;
+        let trace: Arc<dyn std::any::Any + Send + Sync> = Arc::new("trace");
+        let vars: Arc<dyn SessionVars> = Arc::new(MockSessionVars);
+        let domain: Arc<dyn std::any::Any + Send + Sync> = Arc::new("domain");
+        let session: Arc<dyn SessionContext> = Arc::new(MockSessionContext {
+            trace,
+            vars,
+            domain,
+        });
+        let provider = Arc::new(SessionContextPropProvider::from_context(Arc::clone(
+            &session,
+        )));
+        let reader = SessionContextPropReader;
+
+        assert_before_add(
+            &ctx,
+            key,
+            provider.as_ref(),
+            reader.required_optional_eval_props(),
+        );
+        assert_reader_func_return_err(reader.get_session_context(&ctx));
+
+        ctx.props.add(provider);
+        let val = assert_after_add(&ctx, key);
+
+        let got = val
+            .as_any()
+            .downcast_ref::<SessionContextPropProvider>()
+            .expect("provider must keep its concrete type")
+            .call()
+            .expect("the constructor keeps its session");
+        assert!(Arc::ptr_eq(&session, &got));
+        assert!(Arc::ptr_eq(
+            &session,
+            &assert_reader_func_value(reader.get_session_context(&ctx))
+                .expect("the constructor keeps its session")
+        ));
     }
 
     // OptPropInfoSchema.
@@ -585,4 +646,20 @@ fn optional_eval_prop_providers() {
 
     // Every key is now provided.
     assert!(ctx.props.prop_key_set().is_full());
+}
+
+/// Go master added `OptPropSessionContext` in `sessioncontext.go`; keep the
+/// Rust provider table synchronized with that source-level contract.
+#[test]
+fn session_context_property_regression() {
+    assert_eq!(OPT_PROPS_CNT, 10);
+
+    let mut ctx = MockEvalCtx::default();
+    ctx.props
+        .add(Arc::new(SessionContextPropProvider::new(|| None)));
+
+    assert!(SessionContextPropReader
+        .get_session_context(&ctx)
+        .expect("the provider exists")
+        .is_none());
 }
