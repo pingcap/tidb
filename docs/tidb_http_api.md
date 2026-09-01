@@ -739,6 +739,35 @@ timezone.*
      curl http://{TiDBIP}:10080/txn-gc-states
      ```
 
+43. Get the live TiFlash replica summary for this TiDB.
+
+     Method: `GET` only. Counts **logical** tables that currently have `TiFlashReplica` metadata on this TiDB's InfoSchema. Dropped or truncated leftovers are not included.
+
+     Optional query `reload` (default `false` when omitted): `false` uses the in-memory InfoSchema (cheap default). `true` will sync the schema first to reduce lease-lag under-counts TiFlash replica on non-DDL-owner nodes; invalid values return HTTP 400. Reload can be slow on a large schema. This is a **best-effort** snapshot for operators. Even with `reload=true`, a concurrent `SET TIFLASH REPLICA` after the read can invalidate the `table_count` and `can_disable`.
+
+     Next-gen: the count is for the keyspace bound to this TiDB. Query a user-keyspace instance to inspect that logical cluster; a SYSTEM instance only reports SYSTEM.
+
+     ```shell
+     curl http://{TiDBIP}:10080/tiflash/replica
+     curl 'http://{TiDBIP}:10080/tiflash/replica?reload=true'
+     ```
+
+     Example response:
+
+     ```json
+     {
+      "keyspace": "ks1",
+      "keyspace_id": 123,
+      "tidb_columnar_storage_enabled": "ON",
+      "columnar_store_type": "columnar",
+      "can_disable": false,
+      "table_count": 2,
+      "reloaded": false
+     }
+     ```
+
+     `can_disable` is true only when `table_count` is 0. `tidb_columnar_storage_enabled` is always present as `ON` or `OFF` on HTTP 200; if the sysvar cannot be read, the API returns HTTP 5xx instead of omitting the field. `columnar_store_type` is this TiDB's `cse.columnar-store-type` (`tiflash`, `columnar`, or `both`). `reloaded` reports whether this request synced schema first. If schema reload fails, the API also returns HTTP 5xx instead of an empty success body. Old kernels do not serve this endpoint.
+
 ## Test-only APIs (enableTestAPI failpoint)
 
 These APIs are only registered when the `enableTestAPI` failpoint is enabled.
@@ -1051,6 +1080,40 @@ curl -X POST "http://{TiDBIP}:10080/dxf/schedule/max_concurrent_task?value={numb
 ```json
 {
  "max_concurrent_task": 128,
+ "persistence": "memory_only"
+}
+```
+
+### Get or update the DXF task cleanup batch size
+
+This API gets or updates the maximum number of finished DXF tasks returned by each cleanup query, independently of the scheduler concurrency limit. It is available only on a TiDB server that uses the `SYSTEM` keyspace. The value applies only to the TiDB process that handles the request, is kept in memory only, and is reset when that process restarts. Send requests to the current DXF owner to inspect or update the effective value.
+
+Get the current value, which defaults to `20`:
+
+```shell
+curl http://{TiDBIP}:10080/dxf/schedule/task_cleanup_batch_size
+```
+
+Example response:
+
+```json
+{
+ "task_cleanup_batch_size": 20,
+ "persistence": "memory_only"
+}
+```
+
+Update the value:
+
+```shell
+curl -X POST "http://{TiDBIP}:10080/dxf/schedule/task_cleanup_batch_size?value={number}"
+```
+
+The `value` parameter is required and must be an integer in the range `[1, 1000]`. The response uses the same format as the `GET` request:
+
+```json
+{
+ "task_cleanup_batch_size": 128,
  "persistence": "memory_only"
 }
 ```

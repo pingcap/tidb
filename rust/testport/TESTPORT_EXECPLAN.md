@@ -19,7 +19,9 @@ implementation progress and must not be presented as a completed Go-package
 port.
 
 The user explicitly permits coordinated changes across multiple Rust crates.
-No Go source or Bazel metadata is expected to change.
+Go source and Bazel metadata may be restored when the current branch is
+missing behavior present at the fetched Go master; such changes remain tied to
+the complete owning package and are recorded in the package receipt.
 
 ## Method
 
@@ -4637,6 +4639,14 @@ For each bounded behavior cluster:
   `tidb-domain` owner suite pass. See
   `rust/testport/receipts/server_handler_optimizor.md` and
   `rust/docs/operations/server-handler-optimizor-audit-execplan.md`.
+- `pkg/server/handler/tikvhandler` was missing Go master's TiFlash replica
+  summary and DXF task-cleanup batch-size APIs. The complete five-file
+  production/build inventory is restored (plus focused parser and handler
+  regressions), the columnar-storage sysvar required by the summary is
+  restored, and the HTTP routes and API documentation now match Go master.
+  The package remains a Go HTTP/domain boundary with no dependency-closed Rust
+  HTTP owner. See `rust/testport/receipts/server_handler_tikvhandler.md` and
+  `rust/docs/operations/server-handler-tikvhandler-audit-execplan.md`.
 
 ## Outcomes & Retrospective
 
