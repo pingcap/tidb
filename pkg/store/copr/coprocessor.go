@@ -1839,14 +1839,10 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 	} else if worker.req.IsStaleness {
 		req.EnableStaleWithMixedReplicaRead()
 	}
-	ops := make([]tikv.StoreSelectorOption, 0, 2)
-	if len(worker.req.MatchStoreLabels) > 0 {
-		ops = append(ops, tikv.WithMatchLabels(worker.req.MatchStoreLabels))
-	}
+	ops := buildStoreSelectorOptions(worker.req.MatchStoreLabels, task.redirect2Replica)
 	if task.redirect2Replica != nil {
 		req.ReplicaRead = true
 		req.ReplicaReadType = options.GetTiKVReplicaReadType(kv.ReplicaReadFollower)
-		ops = append(ops, tikv.WithMatchStores([]uint64{*task.redirect2Replica}))
 	}
 
 	if worker.requestRateLimit != nil {
@@ -1910,6 +1906,23 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		}
 	}
 	return result, err
+}
+
+func buildStoreSelectorOptions(
+	labels []*metapb.StoreLabel,
+	redirect *uint64,
+) []tikv.StoreSelectorOption {
+	if len(labels) == 0 && redirect == nil {
+		return nil
+	}
+	ops := make([]tikv.StoreSelectorOption, 0, 2)
+	if len(labels) > 0 {
+		ops = append(ops, tikv.WithMatchLabels(labels))
+	}
+	if redirect != nil {
+		ops = append(ops, tikv.WithMatchStores([]uint64{*redirect}))
+	}
+	return ops
 }
 
 const (
@@ -2679,11 +2692,17 @@ func (worker *copIteratorWorker) handleCopCache(task *copTask, resp *copResponse
 		resp.pbResp.Data = data
 		if worker.req.Paging.Enable || worker.req.Paging.PagingSizeBytes > 0 {
 			var start, end []byte
-			if cacheValue.PageStart != nil {
-				start = slices.Clone(cacheValue.PageStart)
-			}
-			if cacheValue.PageEnd != nil {
-				end = slices.Clone(cacheValue.PageEnd)
+			if cacheValue.PageStart != nil || cacheValue.PageEnd != nil {
+				startLen := len(cacheValue.PageStart)
+				keys := make([]byte, startLen+len(cacheValue.PageEnd))
+				if cacheValue.PageStart != nil {
+					start = keys[:startLen:startLen]
+					copy(start, cacheValue.PageStart)
+				}
+				if cacheValue.PageEnd != nil {
+					end = keys[startLen:len(keys):len(keys)]
+					copy(end, cacheValue.PageEnd)
+				}
 			}
 			// When paging protocol is used, the response key range is part of the cache data.
 			if start != nil || end != nil {
@@ -2899,11 +2918,9 @@ func (worker *copIteratorWorker) calculateRetry(ranges *KeyRanges, split *coproc
 		return ranges
 	}
 	if desc {
-		left, _ := ranges.Split(split.End)
-		return left
+		return ranges.splitLeft(split.End)
 	}
-	_, right := ranges.Split(split.Start)
-	return right
+	return ranges.splitRight(split.Start)
 }
 
 // calculateRemain calculates the remain ranges to be processed, it's used in paging API.
@@ -2917,11 +2934,9 @@ func (worker *copIteratorWorker) calculateRemain(ranges *KeyRanges, split *copro
 		return ranges
 	}
 	if desc {
-		left, _ := ranges.Split(split.Start)
-		return left
+		return ranges.splitLeft(split.Start)
 	}
-	_, right := ranges.Split(split.End)
-	return right
+	return ranges.splitRight(split.End)
 }
 
 // finished checks the flags and finished channel, it tells whether the worker is finished.

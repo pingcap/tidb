@@ -32,6 +32,38 @@ import (
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
+var percentileSumSink float64
+
+func BenchmarkPercentileAdd(b *testing.B) {
+	b.Run("Int64", func(b *testing.B) {
+		p := Percentile[Int64]{values: make([]Int64, 0, 32)}
+		b.ReportAllocs()
+		for b.Loop() {
+			p.values = p.values[:0]
+			p.size = 0
+			p.sumVal = 0
+			for i := range 32 {
+				p.Add(Int64(i))
+			}
+		}
+		percentileSumSink = p.sumVal
+	})
+	b.Run("DurationWithAddr", func(b *testing.B) {
+		p := Percentile[DurationWithAddr]{values: make([]DurationWithAddr, 0, 32)}
+		value := DurationWithAddr{D: time.Millisecond, Addr: "store-1"}
+		b.ReportAllocs()
+		for b.Loop() {
+			p.values = p.values[:0]
+			p.size = 0
+			p.sumVal = 0
+			for range 32 {
+				p.Add(value)
+			}
+		}
+		percentileSumSink = p.sumVal
+	})
+}
+
 func defaultRUV2WeightsForTest() RUV2Weights {
 	cfg := config.DefaultRUV2Config()
 	return RUV2Weights{

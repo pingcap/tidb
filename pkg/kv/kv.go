@@ -873,6 +873,23 @@ type ResourceGroupTagBuilder struct {
 	keyspaceName []byte
 }
 
+var (
+	resourceGroupTagLabelUnknown = tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown
+	resourceGroupTagLabelRow     = tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow
+	resourceGroupTagLabelIndex   = tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex
+)
+
+func resourceGroupTagLabelPtr(label tipb.ResourceGroupTagLabel) *tipb.ResourceGroupTagLabel {
+	switch label {
+	case tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow:
+		return &resourceGroupTagLabelRow
+	case tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex:
+		return &resourceGroupTagLabelIndex
+	default:
+		return &resourceGroupTagLabelUnknown
+	}
+}
+
 // NewResourceGroupTagBuilder creates a new ResourceGroupTagBuilder.
 func NewResourceGroupTagBuilder(keyspaceName []byte) *ResourceGroupTagBuilder {
 	return &ResourceGroupTagBuilder{keyspaceName: keyspaceName}
@@ -908,8 +925,7 @@ func (b *ResourceGroupTagBuilder) EncodeTagWithKey(key []byte) []byte {
 	}
 	if len(key) > 0 {
 		tag.TableId = decodeTableID(key)
-		label := resourcegrouptag.GetResourceGroupLabelByKey(key)
-		tag.Label = &label
+		tag.Label = resourceGroupTagLabelPtr(resourcegrouptag.GetResourceGroupLabelByKey(key))
 	}
 	tagEncoded, err := tag.Marshal()
 	if err != nil {
