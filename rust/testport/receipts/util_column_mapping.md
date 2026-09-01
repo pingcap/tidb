@@ -1,6 +1,9 @@
 # `pkg/util/column-mapping` — complete package transcreation
 
-Pinned Go source: `e2788410d8d696605e8cb002585877a063ccc909`.
+Go source: `origin/master` at
+`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01). The package is
+byte-for-byte unchanged from extraction pin
+`e2788410d8d696605e8cb002585877a063ccc909`.
 
 ## Complete inventory
 

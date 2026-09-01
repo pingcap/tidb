@@ -40,6 +40,14 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: revalidated the complete four-artifact
+  `pkg/util/column-mapping` package against current Go master. The source,
+  tests, README, and Bazel target are unchanged from the pinned transcreation;
+  Rust's sole `tidb-util::column_mapping` owner retains the exact source
+  expression/type/error behavior and only the two documented source-derived
+  regressions. The receipt now pins `origin/master` explicitly; no new source
+  change is needed.
+
 - 2026-09-01: audited all eight current Go-master `pkg/util/importer`
   artifacts (1,081 lines: configuration, DDL/index parser, typed random and
   unique SQL-literal generation, MySQL lifecycle, worker batches, and the
