@@ -209,6 +209,18 @@ For each bounded behavior cluster:
   `rust/docs/operations/dxf-importinto-taskkey-audit-execplan.md`.
 
 - 2026-09-01: audited the complete Go-master
+  `pkg/dxf/importinto/jobhistory` package: three tracked artifacts and 408
+  lines covering its BUILD target, history-table SQL and JSON aggregation,
+  mode-sensitive task-key lookup, byte/rate/duration formatters, and the one
+  end-to-end test with large task IDs and missing-job coverage. The exact
+  failpoint-enabled Go-master suite and compile probe passed. Rust has only
+  adjacent history-table definitions and DXF labels, not a dependency-closed
+  ImportInto history API; no speculative facade was added. Recorded the
+  boundary and validation evidence
+  in `receipts/dxf_importinto_jobhistory.md` and
+  `rust/docs/operations/dxf-importinto-jobhistory-audit-execplan.md`.
+
+- 2026-09-01: audited the complete Go-master
   `pkg/session/test/nontransactionaltest` package before editing: three
   tracked artifacts and 614 lines covering six batch-DML behavior tests, the
   shard-composition helper, failpoint/goleak harness, and six-shard flaky
