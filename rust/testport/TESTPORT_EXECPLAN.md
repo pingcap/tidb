@@ -161,6 +161,16 @@ For each bounded behavior cluster:
   the pinned source. Rust has no GoMock-compatible owner; recorded the
   generated-support boundary in `receipts/objstore_s3store_mock.md`.
 
+- 2026-09-01: audited the separate generated Go package
+  `pkg/objstore/mockobjstore` in full: two artifacts and 232 lines, including
+  the BUILD target and all 27 MockGen methods/recorders for the complete
+  `storeapi.Storage` contract. It has no production sources, tests, fixtures,
+  platform variants, or generator inputs and is unchanged from the pinned
+  source. Rust's plan-replayer and TiKV test mocks implement unrelated storage
+  traits, so no Rust-only behavior was removed and no speculative mock was
+  added. Recorded the explicit boundary in
+  `receipts/objstore_mockobjstore.md`.
+
 - 2026-09-01: audited the complete Go-master `pkg/ingestor/globalsort`
   package before editing: 17 tracked artifacts and 6,814 lines, including the
   external engine, object-store readers, merge and merge-v2 operators, range
