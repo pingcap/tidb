@@ -3127,6 +3127,13 @@ For each bounded behavior cluster:
       TTL owner tests, tagged Go session tests, Rust formatting/check,
       repository lint, and diff hygiene pass with the command-local toolchains
       recorded in `receipts/ttl_session.md`.
+- [x] Audit the complete Go-master `pkg/ttl/metrics` package: inventory all
+      three artifacts, confirm there is no Rust owner for the Prometheus/context
+      registry, retain the explicit phase-tracer boundary without speculative
+      behavior, and update its package receipt and ExecPlan.
+- [x] Run the Ready validation profile for `pkg/ttl/metrics`: tagged Go package
+      tests, repository lint, and diff hygiene pass with the command-local
+      toolchains recorded in `receipts/ttl_metrics.md`.
 - [x] Complete the Go-master `pkg/util/codec` delta: inventory all 12 source,
       test, benchmark, harness, and build artifacts; remove Rust-only encoder
       value/hash methods; update consumers; add the raw-value regression; and
