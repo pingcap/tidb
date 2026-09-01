@@ -1,9 +1,9 @@
 # `pkg/util/tikvutil` — complete Go-master parity receipt
 
 Comparison source: Go `origin/master` at commit
-`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01). The package is
-unchanged from the earlier pinned audit; this receipt refreshes the authority
-and records the complete artifact hashes.
+`5e8a1a229a7591ddac49a0cd3b795587c2595ab9` (2026-09-01). The package is
+unchanged from the earlier pinned audit; this receipt refreshes the rolling
+master authority and records the complete artifact hashes.
 
 ## Complete inventory
 
@@ -34,9 +34,10 @@ initialization, ordering, and publication semantics match.
 
 ## Validation and risk
 
-Profile: **WIP** for this documentation-only authority refresh. No Go source,
-imports, Bazel metadata, or module files changed; `make bazel_prepare` and the
-Ready lint gate are not required.
+Profile: **Ready** for this documentation-only authority refresh. No Go source,
+imports, Bazel metadata, or module files changed, so `make bazel_prepare` is
+not required. No source behavior changed and no regression test is added;
+the package has no source test and this batch only refreshes authority data.
 
 ```text
 PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
@@ -46,8 +47,15 @@ go test ./pkg/util/tikvutil -count=1
 
 OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler \
 DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib \
+OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler \
+DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib \
 cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml -p tidb-tikvutil -p tidb-config -p tidb-session --offline --locked
-# passed previously for the source-derived owner and all three consumers
+# passed for the owner and all three consumers (workspace warnings only)
+
+cd rust && cargo +nightly-2026-08-22 fmt --all -- --check
+# passed
+git diff --check
+# passed
 ```
 
 Not verified here: full workspace tests, Bazel execution, or real TiKV commit

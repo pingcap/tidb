@@ -40,6 +40,17 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: refreshed the complete Go-master `pkg/util/tikvutil` inventory
+  at `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: two tracked artifacts, 31
+  lines, one exported atomic setting, and no tests, fixtures, generated or
+  platform variants, or nested packages. Traced all Go config, GLOBAL sysvar,
+  and upgrade consumers and confirmed the existing Rust atomic/config/session
+  owners preserve default 128, signed width, SeqCst ordering, and validation
+  semantics without Rust-only behavior. Current and exact detached Go checks,
+  Rust owner/consumer checks, formatting, and diff checks pass. Updated
+  `receipts/util_tikvutil.md` and added the Ready documentation-only plan at
+  `docs/operations/util-tikvutil-audit-execplan.md`.
+
 - 2026-09-02: refreshed the complete Go-master `pkg/util/nocopy` inventory at
   `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: two tracked artifacts, 32
   lines, one marker type, two methods, and no tests, fixtures, generated or
@@ -551,6 +562,17 @@ For each bounded behavior cluster:
   protobuf literals retain this branch's older `kvproto` field spelling. The
   Go-only boundary is recorded in `receipts/domain_crossks.md` and
   `rust/docs/operations/domain-crossks-audit-execplan.md`.
+
+- 2026-09-02: aligned the complete Go-master `pkg/domain/infosync` package:
+  exactly twelve artifacts and 3,618 Go-master lines, including etcd/PD
+  registration, placement/schedule/resource/TiFlash managers, all tests, and
+  BUILD metadata. Restored variadic `serverinfo.SyncerOption` forwarding in
+  `GlobalInfoSyncerInit`, added the focused constructor-option regression, and
+  restored mock resource-manager metastore `Get`/`Put` methods. The branch's
+  older kvproto keeps one test-only keyspace literal spelling. Focused and
+  complete failpoint-aware suites pass; the inventory and Go-only boundary are
+  recorded in `receipts/domain_infosync.md` and
+  `rust/docs/operations/domain-infosync-audit-execplan.md`.
 
 - 2026-09-02: updated the complete five-artifact Go-master
   `pkg/server/handler/tests` consumer inventory (3,630 lines) for the DXF
