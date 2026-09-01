@@ -1693,6 +1693,13 @@ For each bounded behavior cluster:
   all nine source tests; the complete inventory and current-master parity
   receipt are recorded in `receipts/util_schemacmp.md`.
 
+- 2026-09-02: re-audited all ten `pkg/util/schemacmp` artifacts at current Go
+  master `c6054025ed4c32ab3672a2a24ea46892714d21ec` (3,293 lines). The
+  dependency-closed `tidb-schemacmp` owner and nine source-derived tests remain
+  aligned with no Go source delta or Rust-only duplicate behavior. Details are
+  in `receipts/util_schemacmp.md` and
+  `docs/operations/util-schemacmp-audit-execplan.md`.
+
 - 2026-09-01: revalidated the complete ten-artifact `pkg/util/table-filter`
   package against current Go master. The concrete `ColumnFilterRules` API,
   ASCII regexp authority, source test rows, and Rust consumer wiring are

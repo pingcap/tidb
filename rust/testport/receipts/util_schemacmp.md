@@ -1,7 +1,7 @@
 # `pkg/util/schemacmp` — current Go-master package parity receipt
 
 Go source: `origin/master` at
-`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01). The package is
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02). The package is
 byte-for-byte unchanged from extraction pin
 `e2788410d8d696605e8cb002585877a063ccc909`.
 
@@ -40,13 +40,14 @@ master revision.
 
 ## Validation
 
-Profile: Ready for this package audit; the repository-wide loop remains in
+Profile: **Ready** for this package authority refresh; the repository-wide loop remains in
 progress.
 
 - `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/schemacmp -count=1` — passed.
+- The same focused Go suite passed in the exact detached Go-master checkout at `/tmp/tidb-go-latest-c605`.
 - `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-schemacmp --test all -- --test-threads=1` — passed (9 tests).
 - `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check` — passed during the adjacent Ready validation.
-- `git diff --stat e2788410d8d696605e8cb002585877a063ccc909..origin/master -- pkg/util/schemacmp` — empty; source is unchanged at Go master.
+- `git diff --stat c6054025ed4c32ab3672a2a24ea46892714d21ec -- pkg/util/schemacmp` — empty; source is unchanged at current Go master.
 
 No Go or Bazel file changed, so `make bazel_prepare` is not required. Full
 cross-package DDL/schema-version consumers and non-source Rust workspace
