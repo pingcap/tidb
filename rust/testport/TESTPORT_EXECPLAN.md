@@ -318,6 +318,19 @@ For each bounded behavior cluster:
   support boundary in `receipts/dxf_framework_mock_execute.md` and
   `rust/docs/operations/dxf-framework-mock-execute-audit-execplan.md`.
 
+- 2026-09-02: audited the complete direct Go-master
+  `pkg/dxf/framework/mock` package: five tracked artifacts and 1,556 lines,
+  consisting of the public Bazel target and generated GoMock implementations
+  for nine planner, scheduler, cleaner, storage, task-table, task-executor,
+  and extension interfaces (195 generated functions). It has no direct tests,
+  fixtures, platform variants, benchmarks, fuzz targets, or generator inputs;
+  the nested `mock/execute` package is inventoried separately. Rust's generic
+  `tidb-dxf` task/resource/step model has no dependency-closed owner for these
+  Go lifecycle and recorder contracts, so no speculative mocks or Rust-only
+  behavior were added. Recorded the explicit generated-support boundary in
+  `receipts/dxf_framework_mock.md` and
+  `rust/docs/operations/dxf-framework-mock-audit-execplan.md`.
+
 - 2026-09-01: audited the complete direct Go-master parent
   `pkg/dxf/importinto` package: 26 tracked artifacts and 9,158 lines, with
   170 production function/method declarations and 45 top-level test
