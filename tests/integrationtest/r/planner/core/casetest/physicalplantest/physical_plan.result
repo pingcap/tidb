@@ -1176,11 +1176,19 @@ PRIMARY KEY (`COL1`,`COL2`) /*T![clustered_index] NONCLUSTERED */
 insert into PK_S_MULTI_31 values(122,100),(124,-22),(124,34),(127,103);
 explain format='brief' SELECT col2 FROM PK_S_MULTI_31 AS T1 WHERE (SELECT count(DISTINCT COL1, COL2) FROM PK_S_MULTI_31 AS T2 WHERE T2.COL1>T1.COL1)>2 order by col2;
 id	estRows	task	access object	operator info
+<<<<<<< HEAD
 Sort	0.80	root		planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col2
 └─Projection	0.80	root		planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col2
   └─Selection	0.80	root		gt(Column#7, 2)
     └─HashAgg	1.00	root		group by:planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col1, planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col2, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col2)->planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col2, funcs:count(distinct planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col1, planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col2)->Column#7
       └─HashJoin	100000000.00	root		CARTESIAN left outer join, other cond:gt(planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col1, planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col1)
+=======
+Sort	6400.00	root		planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col2
+└─Projection	6400.00	root		planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col2
+  └─Selection	6400.00	root		gt(Column#7, 2)
+    └─HashAgg	8000.00	root		group by:planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col1, planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col2, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col2)->planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col2, funcs:count(distinct planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col1, planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col2)->Column#7
+      └─HashJoin	100000000.00	root		CARTESIAN left outer join, left side:IndexReader, other cond:gt(planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col1, planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col1)
+>>>>>>> 8d02f1fc8a1 (planner: fix the wrong join estimation depending on missing or uninitialized stats (#61604))
         ├─IndexReader(Build)	10000.00	root		index:IndexFullScan
         │ └─IndexFullScan	10000.00	cop[tikv]	table:T2, index:PRIMARY(COL1, COL2)	keep order:false, stats:pseudo
         └─IndexReader(Probe)	10000.00	root		index:IndexFullScan
