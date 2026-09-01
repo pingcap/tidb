@@ -1,8 +1,9 @@
-# `pkg/util/backoff` — complete package transcreation
+# `pkg/util/backoff` — complete Go-master parity receipt
 
-Go baseline: `origin/master` at
-`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01). The current Go
-source is byte-for-byte unchanged from the pinned extraction.
+Comparison source: Go `origin/master` at
+`5e8a1a229a7591ddac49a0cd3b795587c2595ab9` (2026-09-01). The package is
+unchanged from the earlier pinned implementation; this receipt records the
+rolling authority.
 
 ## Complete inventory
 
@@ -40,14 +41,40 @@ The single Go `TestExponential` translation remains authoritative.
 
 ## Validation
 
-Profile: WIP; this completes one package in the continuing package-by-package
-audit, not a repository-wide readiness claim.
+Profile: **Ready** for this documentation-only authority refresh. No Go
+source, imports, Bazel metadata, or module files changed, so `make
+bazel_prepare` is not required. No source behavior changed and no new
+regression test is added; the existing source-derived `TestExponential` is the
+focused regression carrier.
 
-- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/backoff -count=1` — passed.
-- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --offline --locked -p tidb-util backoff::tests --lib -- --test-threads=1` — passed; exactly one test ran.
-- `cargo +nightly-2026-08-22 check --offline --locked -p tidb-util --all-targets`, `cargo +nightly-2026-08-22 fmt --all -- --check`, and `git diff --check` — passed.
+```text
+git diff --exit-code 0bc44483e3e41a8ea917d4382dc202369468d200..origin/master \
+  -- pkg/util/backoff
+# passed: current package is unchanged from the previous authority pin
 
-No Go or Bazel file changed, so `make bazel_prepare` is not required.
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
+GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
+go test ./pkg/util/backoff -count=1
+# passed (current worktree and exact detached Go-master worktree)
+
+OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler \
+DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-util backoff::tests --lib --offline --locked -- --test-threads=1
+# passed: exactly one source-derived test
+
+OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler \
+DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib \
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml -p tidb-util --all-targets --offline --locked
+# passed: owner and benchmark targets (workspace warnings only)
+
+cd rust && cargo +nightly-2026-08-22 fmt --all -- --check
+# passed
+git diff --check
+# passed
+```
+
+No Go or Bazel file changed, so `make bazel_prepare` is not required. Full
+workspace tests and Bazel execution remain outside this leaf receipt.
 
 ## Risk
 
