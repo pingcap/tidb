@@ -2511,12 +2511,14 @@ For each bounded behavior cluster:
   source-shaped atomic, wired config and sysvar consumers directly, and
   removed the package's Rust-only unit test. Complete inventory and WIP gates
   are recorded in `receipts/util_tikvutil.md`.
-- 2026-08-29: audited every production and build-tag artifact in pinned Go
-  `pkg/util/israce`. The production mapping already matched both source build
+- 2026-09-02: re-audited every production and build-tag artifact in Go-master
+  `pkg/util/israce` at `c6054025ed4c32ab3672a2a24ea46892714d21ec`.
+  The production mapping already matched both source build
   variants. Removed the two Rust-only unit tests, retired semantic-gate
   manifest, and stale standalone audit plan; the ordinary printer remains the
-  source-shaped consumer. Complete inventory and WIP gates are recorded in
-  `receipts/util_israce.md`.
+  source-shaped consumer. Complete inventory and Ready gates are recorded in
+  `receipts/util_israce.md`; the living plan is
+  `docs/operations/util-israce-audit-execplan.md`.
 - 2026-08-29: audited the complete pinned Go `pkg/util/versioninfo` package
   and re-read every `pkg/util/printer` artifact before changing its consumers.
   Removed Rust's twelve-field per-node/per-session `VersionInfo` snapshots and
