@@ -413,6 +413,34 @@ For each bounded behavior cluster:
   `receipts/dxf_framework_scheduler_mock.md` and
   `rust/docs/operations/dxf-framework-scheduler-mock-audit-execplan.md`.
 
+- 2026-09-02: aligned the complete Go-master `pkg/dxf/framework/proto`
+  package: 11 tracked artifacts and 1,283 lines, with the owner-local DXF
+  task-cleanup batch-size knob, [1, 1000] validation, test restore helper,
+  and 11-shard Bazel metadata. Rust owns generic DXF values but no
+  dependency-closed scheduler/storage tuning surface, so no speculative Rust
+  API or Rust-only behavior was added. Recorded the updated boundary in
+  `receipts/dxf_framework_proto.md` and
+  `rust/docs/operations/dxf-framework-proto-audit-execplan.md`.
+
+- 2026-09-02: aligned the complete Go-master `pkg/dxf/framework/storage`
+  package: 11 tracked artifacts and 4,841 lines, including canonical VARCHAR
+  task-key conversion, atomic task/subtask history transfer, bounded cleanup
+  selection, redacted history error categories, and all 35 top-level tests.
+  Rust has no dependency-closed SQL/session-backed DXF storage owner; the
+  branch retains `GetTasksInStates` only for older scheduler consumers while
+  exposing Go master’s `GetCleanupTasks`. Recorded the boundary in
+  `receipts/dxf_framework_storage.md` and
+  `rust/docs/operations/dxf-framework-storage-audit-execplan.md`.
+
+- 2026-09-02: updated the complete five-artifact Go-master
+  `pkg/server/handler/tests` consumer inventory (3,630 lines) for the DXF
+  history redaction contract. Its focused API regression now requires
+  `ErrorCode`/`ErrorCategory` and rejects raw sensitive task-error text. Rust
+  has no dependency-closed HTTP handler server or session-backed history
+  owner, so this remains Go-native consumer coverage. Recorded the boundary
+  in `receipts/server_handler_tests.md` and
+  `rust/docs/operations/server-handler-tests-audit-execplan.md`.
+
 - 2026-09-01: audited the complete direct Go-master parent
   `pkg/dxf/importinto` package: 26 tracked artifacts and 9,158 lines, with
   170 production function/method declarations and 45 top-level test
