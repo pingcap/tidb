@@ -40,6 +40,15 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: audited the complete Go-master `pkg/executor/internal/util`
+  package (three artifacts, 161 lines), including recursive executor ID
+  rewriting, all child-node cases and unknown-type errors, test-only spill
+  helpers, and Bazel metadata. Rust selects physical IDs before constructing
+  per-table TiKV requests and has no TiFlash MPP caller for this mutator, so
+  no dependency-closed owner exists. Recorded the explicit boundary in
+  `receipts/executor_internal_util.md` without adding an uncalled protobuf
+  rewriter or Rust test scaffold.
+
 - 2026-09-01: audited the complete Go-master `pkg/executor/internal/builder`
   package (two artifacts, 123 lines), including its DAG tree/list helpers,
   metadata fields, error propagation, and internal Bazel target. The Rust
