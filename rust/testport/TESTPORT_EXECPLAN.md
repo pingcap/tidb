@@ -40,6 +40,16 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: audited the complete Go-master
+  `pkg/ingestor/ingestcli` client plus its generated mock package: eight
+  artifacts and 1,086 lines covering the `/write_sst` stream, `/ingest_s3`
+  request, protobuf error mapping, metrics, interfaces, tests, and Bazel
+  targets. All Go source tests pass. Rust has no next-generation TiKV worker
+  HTTP/PD client owner; local external-sort helpers and DXF step metadata do
+  not implement this protocol. No Rust-only behavior was found and no
+  disconnected client API was invented. Recorded the explicit boundary in
+  `receipts/ingestor_ingestcli.md`.
+
 - 2026-09-01: audited four complete bounded ingestor packages against Go
   master before entering the large engine implementations:
   `pkg/ingestor/engineapi` (three artifacts, 212 lines), `errdef` (two
