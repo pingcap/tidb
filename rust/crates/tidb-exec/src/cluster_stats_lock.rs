@@ -22,9 +22,7 @@ use tidb_stats::{StatsLockTable, StatsLockTransaction};
 use tidb_txnkv::transaction::OptimisticMutation;
 
 use crate::cluster_catalog::{ClusterCatalog, MetaSnapshot};
-use crate::mysql_system_tables::{
-    scan_system_table, HandleLayout, SystemRow, SystemTableError, SystemTableView,
-};
+use crate::mysql_system_tables::{scan_system_table, SystemRow, SystemTableError, SystemTableView};
 use crate::system_row_write::{
     defaults_row, delete_clustered_row, store_clustered_row, RowEncodeError, RowValues,
 };
@@ -92,13 +90,11 @@ pub fn prepare_cluster_stats_lock(
     Ok(Some(ClusterStatsLockStatement { lock, targets }))
 }
 
-/// Planned mutations and optional skipped-target warning.
-#[derive(Debug, Default)]
-pub struct ClusterStatsLockPlan {
-    /// Mutations committed atomically.
-    pub mutations: Vec<OptimisticMutation>,
-    /// Go's warning text, empty when no target was skipped.
-    pub warning: String,
+/// Separates target-resolution failures from the storage transaction used by
+/// the shared lockstats policy.
+pub(crate) enum ClusterStatsLockApplyError<E> {
+    Plan(ClusterStatsLockError),
+    Transaction(E),
 }
 
 /// Why a cluster lock operation could not be planned.
@@ -162,54 +158,36 @@ impl From<RowEncodeError> for ClusterStatsLockError {
     }
 }
 
-/// Plans one statement against the catalog and rows from the same snapshot.
-pub fn plan_cluster_stats_lock<S: MetaSnapshot>(
-    snapshot: &mut S,
+/// Resolves one statement's targets once, then drives Go's lockstats policy
+/// through the supplied transaction boundary.
+pub(crate) fn apply_cluster_stats_lock<T: StatsLockTransaction>(
+    transaction: &mut T,
     catalog: &ClusterCatalog,
     statement: &ClusterStatsLockStatement,
-    start_ts: u64,
-    now: Time,
-) -> Result<ClusterStatsLockPlan, ClusterStatsLockError> {
+) -> Result<String, ClusterStatsLockApplyError<T::Error>> {
     if statement.targets.is_empty() {
-        return Err(ClusterStatsLockError::Invalid(if statement.lock {
-            "Lock Stats: table should not empty".to_owned()
-        } else {
-            "Unlock Stats: table should not empty ".to_owned()
-        }));
-    }
-    let lock_table = system_table(catalog, LOCK_TABLE)?;
-    let meta_table = system_table(catalog, META_TABLE)?;
-    if matches!(HandleLayout::of(lock_table), HandleLayout::RowId)
-        || matches!(HandleLayout::of(meta_table), HandleLayout::RowId)
-    {
-        return Err(ClusterStatsLockError::Invalid(
-            "the pinned Go statistics lock tables require clustered primary keys".to_owned(),
+        return Err(ClusterStatsLockApplyError::Plan(
+            ClusterStatsLockError::Invalid(if statement.lock {
+                "Lock Stats: table should not empty".to_owned()
+            } else {
+                "Unlock Stats: table should not empty ".to_owned()
+            }),
         ));
     }
-    let locks = read_rows(snapshot, lock_table)?;
-    let meta = read_rows(snapshot, meta_table)?;
-    let mut transaction = ClusterTransaction {
-        lock_table,
-        meta_table,
-        initial_locks: locks.clone(),
-        locks,
-        initial_meta: meta.clone(),
-        meta,
-        start_ts,
-        now,
-    };
-
     let only_partitions =
         statement.targets.len() == 1 && !statement.targets[0].partitions.is_empty();
-    let warning = if only_partitions {
+    if only_partitions {
         let target = &statement.targets[0];
-        let table = user_table(catalog, &target.schema, &target.table)?;
+        let table = user_table(catalog, &target.schema, &target.table)
+            .map_err(ClusterStatsLockApplyError::Plan)?;
         let Some(partition) = table.get_partition_info() else {
-            return Err(ClusterStatsLockError::Invalid(format!(
-                "table {}.{} is not a partition table",
-                target.schema.to_lowercase(),
-                target.table.to_lowercase()
-            )));
+            return Err(ClusterStatsLockApplyError::Plan(
+                ClusterStatsLockError::Invalid(format!(
+                    "table {}.{} is not a partition table",
+                    target.schema.to_lowercase(),
+                    target.table.to_lowercase()
+                )),
+            ));
         };
         let partition = partition.read();
         let mut partitions = BTreeMap::new();
@@ -226,9 +204,11 @@ pub fn plan_cluster_stats_lock<S: MetaSnapshot>(
                 .into_iter()
                 .flatten()
                 .next()
-                .ok_or_else(|| ClusterStatsLockError::UnknownPartition {
-                    partition: written.to_lowercase(),
-                    table: table.name.original().to_owned(),
+                .ok_or_else(|| {
+                    ClusterStatsLockApplyError::Plan(ClusterStatsLockError::UnknownPartition {
+                        partition: written.to_lowercase(),
+                        table: table.name.original().to_owned(),
+                    })
                 })?;
             partitions.insert(definition.0, written.to_lowercase());
         }
@@ -242,19 +222,17 @@ pub fn plan_cluster_stats_lock<S: MetaSnapshot>(
             format!("{}.{}", target.schema, target.table)
         };
         if statement.lock {
-            tidb_stats::add_locked_partitions(&mut transaction, table.id, &displayed, &partitions)?
+            tidb_stats::add_locked_partitions(transaction, table.id, &displayed, &partitions)
+                .map_err(ClusterStatsLockApplyError::Transaction)
         } else {
-            tidb_stats::remove_locked_partitions(
-                &mut transaction,
-                table.id,
-                &displayed,
-                &partitions,
-            )?
+            tidb_stats::remove_locked_partitions(transaction, table.id, &displayed, &partitions)
+                .map_err(ClusterStatsLockApplyError::Transaction)
         }
     } else {
         let mut tables = BTreeMap::new();
         for target in &statement.targets {
-            let table = user_table(catalog, &target.schema, &target.table)?;
+            let table = user_table(catalog, &target.schema, &target.table)
+                .map_err(ClusterStatsLockApplyError::Plan)?;
             let partition_info = table.get_partition_info().map(|partition| {
                 partition
                     .read()
@@ -286,125 +264,122 @@ pub fn plan_cluster_stats_lock<S: MetaSnapshot>(
             );
         }
         if statement.lock {
-            tidb_stats::add_locked_tables(&mut transaction, &tables)?
+            tidb_stats::add_locked_tables(transaction, &tables)
+                .map_err(ClusterStatsLockApplyError::Transaction)
         } else {
-            tidb_stats::remove_locked_tables(&mut transaction, &tables)?
+            tidb_stats::remove_locked_tables(transaction, &tables)
+                .map_err(ClusterStatsLockApplyError::Transaction)
         }
-    };
-    Ok(ClusterStatsLockPlan {
-        mutations: transaction.finish()?,
-        warning,
-    })
+    }
 }
 
-struct ClusterTransaction<'a> {
-    lock_table: &'a TableInfo,
-    meta_table: &'a TableInfo,
-    initial_locks: BTreeMap<i64, RowValues>,
-    locks: BTreeMap<i64, RowValues>,
-    initial_meta: BTreeMap<i64, RowValues>,
-    meta: BTreeMap<i64, RowValues>,
-    start_ts: u64,
+/// Plans Go's `SELECT table_id FROM mysql.stats_table_locked` statement.
+pub(crate) fn query_cluster_locked_tables<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+) -> Result<BTreeSet<i64>, ClusterStatsLockError> {
+    Ok(read_rows(snapshot, system_table(catalog, LOCK_TABLE)?)?
+        .into_keys()
+        .collect())
+}
+
+/// Plans Go's one `INSERT ... ON DUPLICATE KEY UPDATE` lock statement.
+pub(crate) fn plan_cluster_insert_lock<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    table_id: i64,
     now: Time,
-}
-
-impl StatsLockTransaction for ClusterTransaction<'_> {
-    type Error = ClusterStatsLockError;
-
-    fn query_locked_tables(&mut self) -> Result<BTreeSet<i64>, Self::Error> {
-        Ok(self.locks.keys().copied().collect())
-    }
-
-    fn insert_lock_and_update_meta_version(&mut self, table_id: i64) -> Result<(), Self::Error> {
-        if !self.locks.contains_key(&table_id) {
-            let mut row = defaults_row(self.lock_table, self.now)?;
-            set(self.lock_table, &mut row, "table_id", Datum::Int(table_id))?;
-            self.locks.insert(table_id, row);
-        }
-        if let Some(row) = self.meta.get_mut(&table_id) {
-            set(self.meta_table, row, "version", Datum::UInt(self.start_ts))?;
-        }
-        Ok(())
-    }
-
-    fn lock_delta(&mut self, table_id: i64) -> Result<(i64, i64), Self::Error> {
-        let Some(row) = self.locks.get(&table_id) else {
-            return Ok((0, 0));
-        };
-        Ok((
-            row_i64(self.lock_table, row, "count")?,
-            row_i64(self.lock_table, row, "modify_count")?,
-        ))
-    }
-
-    fn update_meta_delta(
-        &mut self,
-        table_id: i64,
-        count_delta: i64,
-        modify_count_delta: i64,
-    ) -> Result<(), Self::Error> {
-        let Some(row) = self.meta.get_mut(&table_id) else {
-            return Ok(());
-        };
-        let count = i128::from(row_u64(self.meta_table, row, "count")?) + i128::from(count_delta);
-        let count = u64::try_from(count.max(0))
-            .map_err(|_| ClusterStatsLockError::Invalid("stats_meta.count overflow".to_owned()))?;
-        let modify_count = row_i64(self.meta_table, row, "modify_count")?
-            .checked_add(modify_count_delta)
-            .ok_or_else(|| {
-                ClusterStatsLockError::Invalid("stats_meta.modify_count overflow".to_owned())
-            })?;
-        set(self.meta_table, row, "version", Datum::UInt(self.start_ts))?;
-        set(self.meta_table, row, "count", Datum::UInt(count))?;
-        set(
-            self.meta_table,
-            row,
-            "modify_count",
-            Datum::Int(modify_count),
-        )?;
-        Ok(())
-    }
-
-    fn delete_lock(&mut self, table_id: i64) -> Result<(), Self::Error> {
-        self.locks.remove(&table_id);
-        Ok(())
-    }
-}
-
-impl ClusterTransaction<'_> {
-    fn finish(self) -> Result<Vec<OptimisticMutation>, ClusterStatsLockError> {
-        let mut mutations = diff_rows(self.lock_table, &self.initial_locks, &self.locks)?;
-        mutations.extend(diff_rows(self.meta_table, &self.initial_meta, &self.meta)?);
-        Ok(mutations)
-    }
-}
-
-fn diff_rows(
-    table: &TableInfo,
-    initial: &BTreeMap<i64, RowValues>,
-    final_rows: &BTreeMap<i64, RowValues>,
 ) -> Result<Vec<OptimisticMutation>, ClusterStatsLockError> {
-    let ids = initial
-        .keys()
-        .chain(final_rows.keys())
-        .copied()
-        .collect::<BTreeSet<_>>();
-    let mut mutations = Vec::new();
-    for id in ids {
-        match (initial.get(&id), final_rows.get(&id)) {
-            (None, Some(final_row)) => {
-                mutations.extend(store_clustered_row(table, None, final_row)?);
-            }
-            (Some(initial_row), None) => {
-                mutations.extend(delete_clustered_row(table, initial_row)?);
-            }
-            (Some(initial_row), Some(final_row)) if initial_row != final_row => {
-                mutations.extend(store_clustered_row(table, Some(initial_row), final_row)?);
-            }
-            _ => {}
-        }
+    let table = system_table(catalog, LOCK_TABLE)?;
+    let rows = read_rows(snapshot, table)?;
+    if let Some(row) = rows.get(&table_id) {
+        // The duplicate arm still writes `table_id = table_id` and therefore
+        // participates in Go's pessimistic statement locking.
+        return Ok(store_clustered_row(table, Some(row), row)?);
     }
-    Ok(mutations)
+    let mut row = defaults_row(table, now)?;
+    set(table, &mut row, "table_id", Datum::Int(table_id))?;
+    Ok(store_clustered_row(table, None, &row)?)
+}
+
+/// Plans Go's one stats-meta version update statement.
+pub(crate) fn plan_cluster_update_meta_version<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    table_id: i64,
+    start_ts: u64,
+) -> Result<Vec<OptimisticMutation>, ClusterStatsLockError> {
+    let table = system_table(catalog, META_TABLE)?;
+    let rows = read_rows(snapshot, table)?;
+    let Some(initial) = rows.get(&table_id) else {
+        return Ok(Vec::new());
+    };
+    let mut updated = initial.clone();
+    set(table, &mut updated, "version", Datum::UInt(start_ts))?;
+    Ok(store_clustered_row(table, Some(initial), &updated)?)
+}
+
+/// Executes Go's one lock-delta select against the transaction snapshot.
+pub(crate) fn query_cluster_lock_delta<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    table_id: i64,
+) -> Result<(i64, i64), ClusterStatsLockError> {
+    let table = system_table(catalog, LOCK_TABLE)?;
+    let rows = read_rows(snapshot, table)?;
+    let Some(row) = rows.get(&table_id) else {
+        return Ok((0, 0));
+    };
+    Ok((
+        row_i64(table, row, "count")?,
+        row_i64(table, row, "modify_count")?,
+    ))
+}
+
+/// Plans Go's one delta merge into `mysql.stats_meta`.
+pub(crate) fn plan_cluster_update_meta_delta<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    table_id: i64,
+    count_delta: i64,
+    modify_count_delta: i64,
+    start_ts: u64,
+) -> Result<Vec<OptimisticMutation>, ClusterStatsLockError> {
+    let table = system_table(catalog, META_TABLE)?;
+    let rows = read_rows(snapshot, table)?;
+    let Some(initial) = rows.get(&table_id) else {
+        return Ok(Vec::new());
+    };
+    let mut updated = initial.clone();
+    let count = i128::from(row_u64(table, initial, "count")?) + i128::from(count_delta);
+    let count = u64::try_from(count.max(0))
+        .map_err(|_| ClusterStatsLockError::Invalid("stats_meta.count overflow".to_owned()))?;
+    let modify_count = row_i64(table, initial, "modify_count")?
+        .checked_add(modify_count_delta)
+        .ok_or_else(|| {
+            ClusterStatsLockError::Invalid("stats_meta.modify_count overflow".to_owned())
+        })?;
+    set(table, &mut updated, "version", Datum::UInt(start_ts))?;
+    set(table, &mut updated, "count", Datum::UInt(count))?;
+    set(
+        table,
+        &mut updated,
+        "modify_count",
+        Datum::Int(modify_count),
+    )?;
+    Ok(store_clustered_row(table, Some(initial), &updated)?)
+}
+
+/// Plans Go's one lock-row delete statement.
+pub(crate) fn plan_cluster_delete_lock<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    table_id: i64,
+) -> Result<Vec<OptimisticMutation>, ClusterStatsLockError> {
+    let table = system_table(catalog, LOCK_TABLE)?;
+    let rows = read_rows(snapshot, table)?;
+    rows.get(&table_id)
+        .map_or(Ok(Vec::new()), |row| Ok(delete_clustered_row(table, row)?))
 }
 
 fn read_rows<S: MetaSnapshot>(
@@ -506,5 +481,126 @@ fn datum_i64(value: Option<&Datum>, column: &str) -> Result<i64, ClusterStatsLoc
         value => Err(ClusterStatsLockError::Invalid(format!(
             "invalid {column}: {value:?}"
         ))),
+    }
+}
+
+#[cfg(test)]
+mod statement_tests {
+    use super::*;
+    use crate::cluster_catalog::{
+        load_cluster_catalog, ClusterCatalogError, MetaPairs, MetaSnapshot,
+    };
+    use crate::cluster_stats_load::ClusterStatsLoader;
+    use crate::cluster_stats_write::plan_loaded_stats_meta_write;
+    use crate::mysql_bootstrap::{plan_mysql_bootstrap, BootstrapEnvironment};
+    use std::collections::BTreeMap;
+    use tidb_datatype::TimeType;
+    use tidb_txnkv::transaction::OptimisticMutationKind;
+
+    #[derive(Default)]
+    struct MetaStore {
+        pairs: BTreeMap<Vec<u8>, Vec<u8>>,
+    }
+
+    impl MetaSnapshot for MetaStore {
+        fn get(&mut self, raw_key: &[u8]) -> Result<Option<Vec<u8>>, ClusterCatalogError> {
+            Ok(self.pairs.get(raw_key).cloned())
+        }
+
+        fn scan_prefix(&mut self, prefix: &[u8]) -> Result<MetaPairs, ClusterCatalogError> {
+            Ok(self
+                .pairs
+                .iter()
+                .filter(|(key, _)| key.starts_with(prefix))
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect())
+        }
+    }
+
+    impl MetaStore {
+        fn apply(&mut self, mutations: &[OptimisticMutation]) {
+            for mutation in mutations {
+                match mutation.kind() {
+                    OptimisticMutationKind::Insert => {
+                        assert!(self
+                            .pairs
+                            .insert(mutation.key().to_vec(), mutation.value().to_vec())
+                            .is_none());
+                    }
+                    OptimisticMutationKind::PutExisting
+                    | OptimisticMutationKind::IndexPut
+                    | OptimisticMutationKind::UniqueIndexInsert
+                    | OptimisticMutationKind::MetaPut
+                    | OptimisticMutationKind::SystemRowPut => {
+                        self.pairs
+                            .insert(mutation.key().to_vec(), mutation.value().to_vec());
+                    }
+                    OptimisticMutationKind::Delete
+                    | OptimisticMutationKind::IndexDelete
+                    | OptimisticMutationKind::MetaDelete
+                    | OptimisticMutationKind::SystemRowDelete => {
+                        self.pairs.remove(mutation.key());
+                    }
+                    OptimisticMutationKind::LockOnly => {}
+                }
+            }
+        }
+    }
+
+    fn timestamp() -> Time {
+        Time::from_date_checked(2026, 8, 31, 12, 0, 0, 0, TimeType::Timestamp, 0).unwrap()
+    }
+
+    fn bootstrapped() -> MetaStore {
+        let mut store = MetaStore::default();
+        let write = plan_mysql_bootstrap(
+            &mut store,
+            468_772_000_000_000_000,
+            &BootstrapEnvironment {
+                system_tz: "UTC".to_owned(),
+                new_collation_enabled: true,
+                cluster_id: 7,
+                current_timestamp: timestamp(),
+                ddl_table_version: 0,
+            },
+        )
+        .unwrap();
+        store.apply(&write.mutations);
+        store
+    }
+
+    #[test]
+    fn lock_insert_and_meta_version_are_separate_go_statements() {
+        const TABLE_ID: i64 = 42;
+        let mut store = bootstrapped();
+        let catalog = load_cluster_catalog(&mut store).unwrap();
+        let meta =
+            plan_loaded_stats_meta_write(&mut store, &catalog, TABLE_ID, 5, 2, 10, timestamp())
+                .unwrap();
+        store.apply(&meta.mutations);
+
+        let insert = plan_cluster_insert_lock(&mut store, &catalog, TABLE_ID, timestamp()).unwrap();
+        assert!(!insert.is_empty());
+        store.apply(&insert);
+        let loader = ClusterStatsLoader::locate(&catalog).unwrap();
+        assert_eq!(
+            loader.load_meta(&mut store, TABLE_ID).unwrap(),
+            Some((10, 0, 2, 5, 10))
+        );
+
+        let version = plan_cluster_update_meta_version(&mut store, &catalog, TABLE_ID, 11).unwrap();
+        assert!(!version.is_empty());
+        store.apply(&version);
+        assert_eq!(
+            loader.load_meta(&mut store, TABLE_ID).unwrap(),
+            Some((11, 0, 2, 5, 10))
+        );
+
+        let duplicate =
+            plan_cluster_insert_lock(&mut store, &catalog, TABLE_ID, timestamp()).unwrap();
+        assert!(
+            !duplicate.is_empty(),
+            "ON DUPLICATE KEY UPDATE must still lock the existing row"
+        );
     }
 }

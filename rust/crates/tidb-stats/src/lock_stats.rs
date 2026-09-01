@@ -327,6 +327,72 @@ mod tests {
     }
 
     #[test]
+    fn skipped_message_matrices_match_go() {
+        assert_eq!(skipped_tables_message(3, vec![], "locking", "locked"), "");
+        assert_eq!(
+            skipped_tables_message(1, vec!["t1".to_owned()], "locking", "locked"),
+            "skip locking locked table: t1"
+        );
+        assert_eq!(
+            skipped_tables_message(
+                4,
+                vec!["t3".to_owned(), "t1".to_owned(), "t2".to_owned()],
+                "locking",
+                "locked",
+            ),
+            "skip locking locked tables: t1, t2, t3, other tables locked successfully"
+        );
+        assert_eq!(
+            skipped_tables_message(
+                4,
+                vec![
+                    "t4".to_owned(),
+                    "t2".to_owned(),
+                    "t1".to_owned(),
+                    "t3".to_owned(),
+                ],
+                "unlocking",
+                "unlocked",
+            ),
+            "skip unlocking unlocked tables: t1, t2, t3, t4"
+        );
+
+        assert_eq!(
+            skipped_partitions_message(3, "test.t", vec![], "locking", "locked"),
+            ""
+        );
+        assert_eq!(
+            skipped_partitions_message(1, "test.t", vec!["p1".to_owned()], "locking", "locked",),
+            "skip locking locked partition of table test.t: p1"
+        );
+        assert_eq!(
+            skipped_partitions_message(
+                4,
+                "test.t",
+                vec!["p3".to_owned(), "p1".to_owned(), "p2".to_owned()],
+                "locking",
+                "locked",
+            ),
+            "skip locking locked partitions of table test.t: p1, p2, p3, other partitions locked successfully"
+        );
+        assert_eq!(
+            skipped_partitions_message(
+                4,
+                "test.t",
+                vec![
+                    "p4".to_owned(),
+                    "p2".to_owned(),
+                    "p1".to_owned(),
+                    "p3".to_owned(),
+                ],
+                "unlocking",
+                "unlocked",
+            ),
+            "skip unlocking unlocked partitions of table test.t: p1, p2, p3, p4"
+        );
+    }
+
+    #[test]
     fn table_lock_and_unlock_match_go_skip_and_delta_rules() {
         let mut transaction = MemoryTransaction {
             locks: BTreeMap::from([(1, (0, 0))]),

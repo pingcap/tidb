@@ -599,6 +599,69 @@ fn global_temporary_analyze_uses_session_rows_and_statistics() {
     );
 }
 
+/// Pinned `lockstats.TestRemoveLockedTables`: the live cluster path wraps the
+/// complete operation in Go's independent pessimistic transaction and merges
+/// a partition lock delta into both physical and logical metadata.
+#[test]
+fn stats_lock_live_pessimistic_transaction_merges_partition_delta_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let factory = Arc::new(stack.factory);
+    let mut session = factory
+        .open_session(session_context(85))
+        .expect("client session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "CREATE TABLE lock_live (a INT) PARTITION BY RANGE (a) (\
+         PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN MAXVALUE)",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO lock_live VALUES (1),(2),(11),(12)",
+    );
+    rows(&mut session, "ANALYZE TABLE lock_live");
+    let catalog = factory.catalog.load();
+    let table = catalog
+        .find_table("test", "lock_live")
+        .expect("lock table is published")
+        .1;
+    let table_id = table.id;
+    let partition = table.get_partition_info().expect("partition metadata");
+    let partition = partition.read();
+    let partition_ids = partition
+        .definitions
+        .map_visible(|definition| definition.id);
+    let p0_id = partition_ids[0];
+    let p1_id = partition_ids[1];
+    drop(partition);
+    drop(catalog);
+
+    rows(&mut session, "LOCK STATS lock_live");
+    rows(
+        &mut session,
+        &format!(
+            "UPDATE mysql.stats_table_locked SET count = -1, modify_count = 1 \
+             WHERE table_id = {p0_id}"
+        ),
+    );
+    rows(&mut session, "UNLOCK STATS lock_live");
+
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT table_id, count, modify_count FROM mysql.stats_meta \
+                 WHERE table_id IN ({table_id},{p0_id},{p1_id}) ORDER BY table_id"
+            ),
+        )),
+        [
+            [table_id.to_string(), "3".to_owned(), "1".to_owned()],
+            [p0_id.to_string(), "1".to_owned(), "1".to_owned()],
+            [p1_id.to_string(), "2".to_owned(), "0".to_owned()],
+        ]
+    );
+}
+
 /// Pinned `autoanalyze/exec.TestExecAutoAnalyzes`: the live restricted
 /// session consumes the complete auto-analyze option set, invokes the system
 /// process tracker, releases the allocated process ID, and publishes the
