@@ -1733,7 +1733,8 @@ For each bounded behavior cluster:
   `receipts/util_sys_linux.md`.
 
 - 2026-09-02: refreshed both current Go-master `pkg/util/injectfailpoint`
-  artifacts (90 lines) in full. Its five exported helpers are named DXF
+  artifacts (90 lines) at `c6054025ed4c32ab3672a2a24ea46892714d21ec`
+  in full. Its five exported helpers are named DXF
   failpoint/random-error test infrastructure; Rust has no dependency-closed
   failpoint registry or matching production consumer. The explicit boundary is
   recorded in `receipts/util_injectfailpoint.md`, with the dedicated ExecPlan

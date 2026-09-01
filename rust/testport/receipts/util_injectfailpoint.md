@@ -1,7 +1,7 @@
 # `pkg/util/injectfailpoint` — Go-master package boundary receipt
 
 Go source: `origin/master` at
-`5e8a1a229a7591ddac49a0cd3b795587c2595ab9` (2026-09-01). The package is
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02). The package is
 byte-for-byte unchanged from the previous audit, but this receipt now uses the
 current Go-master authority rather than the older extraction pin.
 
@@ -33,15 +33,16 @@ remains explicitly unclaimed as Go failpoint infrastructure.
 Profile: Ready for this docs-only boundary refresh; no source or build artifact
 changed.
 
-- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/injectfailpoint -count=1` — passed (`[no test files]`).
-- Exact detached Go-master checkout at `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: the same package test passed (`[no test files]`).
-- `git diff --stat 5e8a1a229a7591ddac49a0cd3b795587c2595ab9..origin/master -- pkg/util/injectfailpoint` — empty; source is unchanged at the current Go-master authority.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 ./tools/check/failpoint-go-test.sh pkg/util/injectfailpoint -count=1` — passed (`[no test files]`) and restored the failpoint refcount to zero.
+- Exact detached Go-master checkout at `c6054025ed4c32ab3672a2a24ea46892714d21ec`: the same failpoint-aware package probe passed (`[no test files]`) and restored the refcount to zero.
+- `git diff --exit-code c6054025ed4c32ab3672a2a24ea46892714d21ec -- pkg/util/injectfailpoint` — passed; source matches the exact latest Go-master authority.
 - Rust failpoint search across all crates — confirmed only crate-local hooks and no owner for this helper package.
 - `cargo +nightly-2026-08-22 fmt --all -- --check`, pinned `make lint`, and `git diff --check` — passed for the repository audit batch.
 
 No Go or Bazel file changed, so `make bazel_prepare` is not required. Named
-DXF failpoint injection and probabilistic fault distributions were not run;
-they require the Go failpoint-enabled DXF integration harness.
+DXF failpoint injection was compiled through the required failpoint wrapper;
+the probabilistic distributions were not sampled because there is no direct
+package test and doing so requires the DXF integration harness.
 
 ## Risks and unverified scope
 
