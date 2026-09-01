@@ -3721,6 +3721,12 @@ For each bounded behavior cluster:
   a non-forced rebase must not move the observed base backwards. The Rust
   client now uses the same monotonic CAS and the Go count-and-duration retry
   limit; the etcd service/server remains a separate owner boundary.
+- `pkg/lightning/mydump` removes regexp-based CSV/chunk unescaping in favor of
+  Go's byte scanner, adopts `io.ReadSeekCloser`, and adds the deferred Parquet
+  reader opener. The custom `*` escape regression and unescape benchmark pass
+  on current and exact Go master; the branch's older parser AST keeps
+  `view_import` on `Accept` until the in-place visitor migration lands as one
+  dependency-closed parser change.
 
 ## Outcomes & Retrospective
 
