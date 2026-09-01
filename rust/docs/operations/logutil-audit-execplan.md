@@ -33,6 +33,10 @@ commit.
   and race suites, Rust logutil and full-crate suites, Clippy with warnings
   denied, formatting, semantic package gate, repository lint, source pin,
   inventory, failpoint decision, and diff checks all pass.
+- [x] (2026-09-01) Added package-scoped parity receipts for both the top-level
+  `pkg/util/logutil` boundary and the separate nested
+  `pkg/util/logutil/consistency` reporting adapter; both remain source-clean
+  against Go master and no additional Rust behavior was invented.
 - [ ] Publish one package-scoped commit to `hparser-integration` and verify
   local, remote-tracking, and `ls-remote` SHAs.
 
