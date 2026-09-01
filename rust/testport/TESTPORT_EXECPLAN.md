@@ -66,6 +66,16 @@ For each bounded behavior cluster:
   separate package audits. Recorded the explicit boundary in
   `receipts/objstore_root.md`.
 
+- 2026-09-01: audited the complete Go-master `pkg/objstore/compressedio`
+  package before editing: five tracked artifacts and 261 lines, covering the
+  BUILD target plus all 12 buffer, enum/parser, reader, and writer
+  functions. It has no tests, fixtures, generated files, or platform variants
+  and is unchanged from the pinned source. Rust's `tidb-util::compress` owns
+  the separate `pkg/util/compress` gzip pool, not this object-store codec
+  contract, so no Rust-only behavior was removed and no speculative facade was
+  added. Recorded the explicit boundary in
+  `receipts/objstore_compressedio.md`.
+
 - 2026-09-01: audited the complete Go-master `pkg/ingestor/globalsort`
   package before editing: 17 tracked artifacts and 6,814 lines, including the
   external engine, object-store readers, merge and merge-v2 operators, range
