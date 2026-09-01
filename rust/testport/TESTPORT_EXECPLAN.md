@@ -3134,6 +3134,13 @@ For each bounded behavior cluster:
 - [x] Run the Ready validation profile for `pkg/ttl/metrics`: tagged Go package
       tests, repository lint, and diff hygiene pass with the command-local
       toolchains recorded in `receipts/ttl_metrics.md`.
+- [x] Audit the complete Go-master `pkg/ttl/client` package: inventory all four
+      artifacts, confirm no Rust owner exists for the etcd command/notification
+      protocol, retain the explicit dependency boundary without speculative
+      behavior, and update its package receipt and ExecPlan.
+- [x] Run the Ready validation profile for `pkg/ttl/client`: tagged Go client
+      integration tests, repository lint, and diff hygiene pass with the
+      command-local toolchains recorded in `receipts/ttl_client.md`.
 - [x] Complete the Go-master `pkg/util/codec` delta: inventory all 12 source,
       test, benchmark, harness, and build artifacts; remove Rust-only encoder
       value/hash methods; update consumers; add the raw-value regression; and
@@ -3263,6 +3270,14 @@ For each bounded behavior cluster:
       unused-return error and the focused Rust/Go suites plus Ready lint pass.
       Details are in `receipts/util_format.md` and
       `docs/operations/util-format-audit-execplan.md`.
+- 2026-09-02: fixed five Rust-only `#[must_use]` diagnostics in the complete
+      `pkg/util/context` owner (two static-warning constructors and three
+      plan-cache accessors). The Go package remains five artifacts and 757
+      lines at authority `c6054025ed4c32ab3672a2a24ea46892714d21ec`; added a
+      deny-lint regression whose pre-fix compile failed with five errors, then
+      passed the focused Rust/Go suites, formatting, and Ready lint gate.
+      Details are in `receipts/util_context.md` and
+      `docs/operations/util-context-audit-execplan.md`.
 - 2026-09-01: audited all four Go-master `pkg/util/cpu` artifacts (308 lines,
       six production functions/methods, two source tests, and one test
       harness), including its failpoint, race/flaky BUILD target, cgroup/EMA,

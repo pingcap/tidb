@@ -161,7 +161,6 @@ pub struct StaticWarnHandler {
 
 impl StaticWarnHandler {
     /// Creates a handler preallocating `slice_cap` entries.
-    #[must_use]
     pub fn new(slice_cap: usize) -> Self {
         StaticWarnHandler {
             warnings: Mutex::new(Vec::with_capacity(slice_cap)),
@@ -170,7 +169,6 @@ impl StaticWarnHandler {
 
     /// Creates a handler copying the warnings from `h` (Go
     /// `NewStaticWarnHandlerWithHandler`; Go's nil handler is `None`).
-    #[must_use]
     pub fn with_handler(h: Option<&dyn WarnHandler>) -> Self {
         match h {
             None => Self::new(0),

@@ -199,3 +199,16 @@ fn plan_cache_and_range_fallback_publish_source_ordered_decisions() {
     assert!(!tracker.use_cache());
     assert_eq!(tracker.plan_cache_unqualified(), "in-list is too long");
 }
+
+#[test]
+#[deny(unused_must_use)]
+fn context_return_values_may_be_ignored_like_go() {
+    StaticWarnHandler::new(1);
+    StaticWarnHandler::with_handler(None);
+
+    let warnings = Arc::new(StaticWarnHandler::new(1));
+    let tracker = PlanCacheTracker::new(warnings);
+    tracker.save();
+    tracker.use_cache();
+    tracker.plan_cache_unqualified();
+}

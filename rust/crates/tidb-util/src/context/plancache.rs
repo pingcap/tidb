@@ -131,7 +131,6 @@ impl PlanCacheTracker {
     }
 
     /// Captures the mutable planning-time state (Go `Save`'s five values).
-    #[must_use]
     pub fn save(&self) -> (bool, PlanCacheType, String, bool, bool) {
         let state = self.state();
         (
@@ -161,13 +160,11 @@ impl PlanCacheTracker {
     }
 
     /// Returns whether to use the plan cache.
-    #[must_use]
     pub fn use_cache(&self) -> bool {
         self.state().use_cache
     }
 
     /// Returns the reason why the plan cache is unqualified.
-    #[must_use]
     pub fn plan_cache_unqualified(&self) -> String {
         self.state().plan_cache_unqualified.clone()
     }
