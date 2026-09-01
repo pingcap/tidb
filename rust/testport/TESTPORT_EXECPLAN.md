@@ -662,7 +662,7 @@ For each bounded behavior cluster:
   lock and failpoint/goleak tests, BUILD metadata, and OWNERS policy. Go source,
   tests, and BUILD files were already byte-identical; restored the Go-master
   BUILD-specific approver filter in OWNERS. The full failpoint-aware suite and
-  Ready gates pass. Recorded the boundary in `receipts/owner.md` and
+  Ready gates pass. Recorded the boundary in `receipts/owner_parity.md` and
   `rust/docs/operations/owner-audit-execplan.md`.
 
 - 2026-09-02: updated the complete five-artifact Go-master
