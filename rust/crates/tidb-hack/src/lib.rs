@@ -12,170 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Rust owner for the portable behavior of pinned Go `pkg/util/hack`.
+//! Rust counterpart of pinned Go `pkg/util/hack`.
 //!
-//! Go's package has two jobs: zero-copy byte/string views and memory accounting
-//! by reading the private Go Swiss-map ABI. Rust cannot soundly turn an
-//! arbitrary `&str` into `&mut [u8]`, so [`slice`] exposes the read-only
-//! zero-copy view used by every TiDB consumer. [`MutableBytes`] and
-//! [`MutableString`] preserve the deliberately mutable string behavior with
-//! shared, owned backing storage: mutation is visible through existing views,
-//! while growing the byte buffer keeps the old allocation alive just as Go's
-//! garbage collector does.
-//!
-//! The Go 1.25 and 1.26 private-map files become one Rust map implementation.
-//! Rust cannot inspect Go's runtime map ABI, so the exact-size primitive uses
-//! the owned hashbrown table. The public `MemAwareMap` policy remains Go's:
-//! approximate bytes advance only at the same element-count checkpoints using
-//! the same source group geometry and ratio. Go's `TestMain` only installs
-//! common test state and leak exclusions;
-//! this module starts no background tasks, so Rust needs no process hook.
-//!
-//! Source disposition is complete: `hack.go` maps to this file;
-//! `map_abi.go` and `map_abi_go126.go` map to `map.rs`; `hack_test.go` maps to
-//! this file's test module; `map_abi_test.go` plus both build-tagged
-//! `map_abi_test_type_*` aliases map to `map.rs` tests and `benches/hack.rs`;
-//! `main_test.go` has the no-worker disposition above; and `BUILD.bazel` maps
-//! to this crate manifest.
+//! It provides zero-copy byte/string views and checkpointed hash-map memory
+//! accounting. Rust's ownership model requires owned shared storage for the
+//! deliberately mutable string view. The map counterpart models Go's Swiss-map
+//! group, table, directory, split, and checkpoint accounting over native keys.
 
 #![allow(unsafe_code)]
 
 mod map;
-
-/// Live-allocation counters of the running jemalloc, the seam Go gets for
-/// free from `runtime.ReadMemStats`: TiDB's memory arbitrator samples the
-/// LIVE application allocation (`runtime.MemStats.HeapAlloc`), which on a
-/// jemalloc build is `stats.allocated` -- process RSS cannot stand in for it
-/// because RSS also counts freed-but-retained pages and non-heap mappings.
-/// Only this crate's raw-pointer exception may call `_rjem_mallctl`; every
-/// consumer reads plain numbers through [`sample`].
-#[cfg(feature = "jemalloc")]
-pub mod allocator_stats {
-    use std::ffi::{c_char, c_void, CString};
-    use std::io;
-    use std::path::Path;
-
-    /// Reads one `size_t` mallctl counter; `None` when the allocator rejects
-    /// the name (e.g. stats compiled out).
-    fn stat(name: &[u8]) -> Option<i64> {
-        let mut value: usize = 0;
-        let mut size = std::mem::size_of::<usize>();
-        // SAFETY: `name` is a NUL-terminated literal, and `value`/`size` are
-        // valid out-parameters for a `size_t` read; no new pointer escapes.
-        let ok = unsafe {
-            tikv_jemalloc_sys::mallctl(
-                name.as_ptr().cast(),
-                (&mut value as *mut usize).cast(),
-                &mut size,
-                std::ptr::null_mut(),
-                0,
-            )
-        } == 0;
-        ok.then(|| i64::try_from(value).unwrap_or(i64::MAX))
-    }
-
-    /// One coherent-enough sample in bytes:
-    /// `(allocated, active, resident)`.
-    ///
-    /// - `allocated`: live application allocations (Go `HeapAlloc`).
-    /// - `active`: pages backing live allocations (Go `HeapInuse`).
-    /// - `resident`: pages physically mapped by the allocator.
-    ///
-    /// The cached statistics epoch is refreshed first so these are current,
-    /// exactly what Go's stop-the-world read guarantees. `None` when the
-    /// running allocator does not answer statistics queries.
-    #[must_use]
-    pub fn sample() -> Option<(i64, i64, i64)> {
-        let mut epoch: u64 = 0;
-        let mut epoch_size = std::mem::size_of::<u64>();
-        // SAFETY: passing the same `u64` as both old and new value refreshes
-        // the statistics epoch, the documented way to make counters current.
-        let refreshed = unsafe {
-            tikv_jemalloc_sys::mallctl(
-                b"epoch\0".as_ptr().cast(),
-                (&mut epoch as *mut u64).cast(),
-                &mut epoch_size,
-                (&mut epoch as *mut u64).cast(),
-                epoch_size,
-            )
-        } == 0;
-        if !refreshed {
-            return None;
-        }
-        Some((
-            stat(b"stats.allocated\0")?,
-            stat(b"stats.active\0")?,
-            stat(b"stats.resident\0")?,
-        ))
-    }
-
-    /// Writes jemalloc's sampled live-allocation profile to `path`.
-    pub fn dump(path: &Path) -> io::Result<()> {
-        #[cfg(unix)]
-        use std::os::unix::ffi::OsStrExt;
-
-        #[cfg(unix)]
-        let path = CString::new(path.as_os_str().as_bytes()).map_err(|_| {
-            io::Error::new(io::ErrorKind::InvalidInput, "profile path contains NUL")
-        })?;
-        #[cfg(not(unix))]
-        let path = CString::new(path.to_string_lossy().as_bytes()).map_err(|_| {
-            io::Error::new(io::ErrorKind::InvalidInput, "profile path contains NUL")
-        })?;
-        let mut path_ptr = path.as_ptr();
-        // SAFETY: `prof.dump` consumes one `const char *`; the CString lives
-        // through the call and no pointer escapes.
-        let result = unsafe {
-            tikv_jemalloc_sys::mallctl(
-                b"prof.dump\0".as_ptr().cast(),
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                (&mut path_ptr as *mut *const c_char).cast::<c_void>(),
-                std::mem::size_of::<*const c_char>(),
-            )
-        };
-        if result == 0 {
-            Ok(())
-        } else {
-            Err(io::Error::from_raw_os_error(result))
-        }
-    }
-}
-
-#[cfg(feature = "jemalloc")]
-mod allocator_profile_config {
-    use std::ffi::c_char;
-
-    union Pointer {
-        bytes: &'static u8,
-        chars: &'static c_char,
-    }
-
-    // Go's runtime heap profiler samples one allocation per 512 KiB by
-    // default. Keep jemalloc profiling active at the same lg2 sample rate so
-    // an alarm can dump allocation stacks without enabling a different
-    // runtime policy at alarm time.
-    #[allow(non_upper_case_globals)]
-    #[export_name = "_rjem_malloc_conf"]
-    pub static malloc_conf: Option<&'static c_char> = Some(unsafe {
-        Pointer {
-            bytes: &b"prof:true,lg_prof_sample:19\0"[0],
-        }
-        .chars
-    });
-}
 
 use std::cell::UnsafeCell;
 use std::fmt;
 use std::rc::Rc;
 
 pub use map::{
-    map_type, to_swiss_map, MapType, MemAwareMap, SwissMapWrap,
+    to_swiss_map, MapType, MapValueLayout, MemAwareMap, SwissMapWrap,
     DEF_BUCKET_MEMORY_USAGE_FOR_MAP_STRING_TO_ANY,
     DEF_BUCKET_MEMORY_USAGE_FOR_MAP_STRING_TO_DECIMAL,
     DEF_BUCKET_MEMORY_USAGE_FOR_MAP_STRING_TO_STRING, DEF_BUCKET_MEMORY_USAGE_FOR_SET_FLOAT64,
     DEF_BUCKET_MEMORY_USAGE_FOR_SET_INT64, DEF_BUCKET_MEMORY_USAGE_FOR_SET_STRING,
-    MAX_TABLE_CAPACITY, MOCK_SEED_FOR_TEST,
 };
 
 /// An owned mutable byte buffer whose backing allocation may be shared by
@@ -197,18 +54,10 @@ impl MutableBytes {
         }
     }
 
-    /// Returns the current number of bytes.
-    #[must_use]
-    pub fn len(&self) -> usize {
+    fn len(&self) -> usize {
         // SAFETY: `MutableBytes` and `MutableString` are deliberately
         // single-threaded (`Rc`). No reference into the `UnsafeCell` escapes.
         unsafe { (&*self.storage.get()).len() }
-    }
-
-    /// Returns whether the buffer is empty.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
     }
 
     /// Replaces one byte.
@@ -248,19 +97,6 @@ impl MutableBytes {
             }
         }
     }
-
-    /// Copies the current bytes for an ownership-independent snapshot.
-    #[must_use]
-    pub fn snapshot(&self) -> Vec<u8> {
-        // SAFETY: no reference into the cell escapes.
-        unsafe { (&*self.storage.get()).clone() }
-    }
-}
-
-impl From<Vec<u8>> for MutableBytes {
-    fn from(value: Vec<u8>) -> Self {
-        Self::new(value)
-    }
 }
 
 /// A zero-copy string-like view over [`MutableBytes`].
@@ -288,24 +124,6 @@ impl MutableString {
         // slice is confined to this call.
         let storage = unsafe { &*self.storage.get() };
         f(&storage[..self.len])
-    }
-
-    /// Returns the byte length captured when the view was created.
-    #[must_use]
-    pub const fn len(&self) -> usize {
-        self.len
-    }
-
-    /// Returns whether this view is empty.
-    #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-
-    /// Copies the current view into an owned byte vector.
-    #[must_use]
-    pub fn snapshot(&self) -> Vec<u8> {
-        self.with_bytes(<[u8]>::to_vec)
     }
 }
 
@@ -373,15 +191,6 @@ mod tests {
 
         bytes.append(b"abc");
         assert_eq!(value, "aello world");
-        assert_eq!(bytes.snapshot(), b"aello worldabc");
-
-        let mut spare = Vec::with_capacity(32);
-        spare.extend_from_slice(b"hello world");
-        let mut spare = MutableBytes::new(spare);
-        let shared = string(&spare);
-        spare.append(b"abc");
-        spare.set(0, b'A');
-        assert_eq!(shared, "Aello world");
     }
 
     #[test]
@@ -398,14 +207,5 @@ mod tests {
 
         bytes.set(0, b's');
         assert_eq!(mutable, "sbc");
-    }
-
-    #[test]
-    fn get_bytes_from_pointer_preserves_the_requested_window() {
-        let bytes = b"prefix-value-suffix";
-        // SAFETY: the pointer starts six bytes into `bytes` and the requested
-        // five-byte window remains inside that live allocation.
-        let value = unsafe { get_bytes_from_ptr(bytes.as_ptr().add(7), 5) };
-        assert_eq!(value, b"value");
     }
 }

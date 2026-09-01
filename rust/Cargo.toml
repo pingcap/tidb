@@ -8,6 +8,7 @@ resolver = "2"
 members = [
     "crates/tidb-error",
     "crates/tidb-errmsg",
+    "crates/tidb-allocator-stats",
     "crates/tidb-hack",
     "crates/tidb-hash",
     "crates/tidb-kvcache",

@@ -39,7 +39,10 @@ Memory-aware variadic constructors now pre-size the underlying table from the
 exact input count before insertion, matching `make(map, len(ss))`, and do not
 allocate a temporary collection. Their map iteration surface is lazy, matching
 direct iteration over the embedded Go `MemAwareMap.M`, rather than materializing
-a Rust-only vector.
+a Rust-only vector. The shared `MemAwareMap` owner now uses explicit Go value
+layouts for `GoString`, primitives, empty values, and boxed decimal pointers,
+so these concrete set/map types feed the same source group sizes into the
+checkpoint policy rather than Rust struct sizes.
 
 HashAgg now consumes `StringSetWithMemoryUsage`, matching Go's executor, and
 performs the same existence check before insertion.

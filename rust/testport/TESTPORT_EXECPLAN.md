@@ -255,6 +255,16 @@ For each bounded behavior cluster:
   integration decision, and WIP evidence are in
   `receipts/util_gcutil_audit.md`.
 
+- 2026-09-01: completed the nine-artifact pinned `pkg/util/gctuner` audit.
+  The package is entirely a Go tracing-runtime controller: self-rearming
+  finalizers, forced GC, live HeapInuse/NextGC/NumGC, SetGCPercent, and
+  SetMemoryLimit behavior define its production and seven-test surface. Rust
+  has no corresponding runtime authorities; its explicit allocation/session
+  killer belongs to `pkg/util/servermemorylimit` and cannot substitute. No
+  fake tuner exists to remove, and no private percentage-only island was
+  added. The package remains explicitly unclaimed in
+  `receipts/util_gctuner_audit.md`.
+
 - 2026-09-01: completed inventory and implementation for the currently
   unclaimed pinned Go `pkg/util/sys/storage` package. Its Linux/macOS `statfs`,
   Windows `GetDiskFreeSpaceEx`, and unsupported-platform `math.MaxInt64`
@@ -653,8 +663,15 @@ For each bounded behavior cluster:
   and build file in pinned Go `pkg/util/hack`. Restored Go's checkpointed
   `MemAwareMap` byte-delta policy and eight-slot source group geometry in the
   Rust owner; removed the duplicate `b004` test module, receipt, and manifest
-  claim. Exact `RealBytes` necessarily measures the owned Rust table rather
-  than Go's private runtime ABI.
+  claim.
+- 2026-09-01: re-read all nine pinned `pkg/util/hack` artifacts and replaced
+  the remaining native-hash-table approximation with the Go 1.25/1.26
+  Swiss-map group/table/directory growth model. Source value layouts now cross
+  crate boundaries explicitly, and `TestSwissTable` executes the pinned exact
+  184/360/102608/2165296/2702278 values, split directory, checkpoint bound,
+  clear/seed, and insertion contracts. Removed source-absent public helpers,
+  supplemental tests, and jemalloc profiling from the package boundary;
+  inventory and WIP evidence are in `receipts/util_hack.md`.
 - 2026-08-28: audited every production, test, ownership, and build file in
   pinned Go `pkg/meta/metadef`. The local Go package is byte-identical to the
   pin and Rust's whole-package contract matches every public system-table SQL

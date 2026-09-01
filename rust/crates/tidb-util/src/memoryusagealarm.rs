@@ -774,7 +774,7 @@ fn write_heap_profile(record_dir: &Path) -> io::Result<()> {
     }
     #[cfg(feature = "jemalloc")]
     {
-        return tidb_hack::allocator_stats::dump(&profile).inspect_err(|err| {
+        return tidb_allocator_stats::dump(&profile).inspect_err(|err| {
             log_profile_error("write heap profile file fail", err);
         });
     }

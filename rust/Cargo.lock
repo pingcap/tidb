@@ -3267,6 +3267,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-allocator-stats"
+version = "0.0.0"
+dependencies = [
+ "tikv-jemalloc-sys",
+]
+
+[[package]]
 name = "tidb-ast"
 version = "0.0.0"
 dependencies = [
@@ -3334,6 +3341,7 @@ dependencies = [
  "sha2",
  "smallvec",
  "tidb-error",
+ "tidb-hack",
  "tidb-kvcache",
  "tidb-mysql",
 ]
@@ -3630,7 +3638,6 @@ version = "0.0.0"
 dependencies = [
  "foldhash 0.1.5",
  "hashbrown 0.15.5",
- "tikv-jemalloc-sys",
 ]
 
 [[package]]
@@ -4334,6 +4341,7 @@ dependencies = [
  "sha2",
  "snap",
  "tempfile",
+ "tidb-allocator-stats",
  "tidb-codec",
  "tidb-config",
  "tidb-datatype",

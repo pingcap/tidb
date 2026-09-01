@@ -18,9 +18,9 @@ failpoints = ["dep:fail", "fail/failpoints"]
 intest = []
 race = []
 testexport = []
-## Reads live-allocation counters from the running jemalloc (via `tidb-hack`),
+## Reads live-allocation counters from the running jemalloc,
 ## the Go-`HeapAlloc`-equivalent input the memory arbitrator samples.
-jemalloc = ["tidb-hack/jemalloc"]
+jemalloc = ["tidb-allocator-stats/jemalloc"]
 
 [build-dependencies]
 chrono.workspace = true
@@ -63,6 +63,7 @@ tempfile.workspace = true
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-error = { path = "../tidb-error" }
 tidb-hack = { path = "../tidb-hack" }
+tidb-allocator-stats = { path = "../tidb-allocator-stats" }
 tracing = "0.1"
 tonic.workspace = true
 
