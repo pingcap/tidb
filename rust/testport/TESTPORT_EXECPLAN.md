@@ -40,6 +40,12 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: audited all three current Go-master `pkg/tidbmanager` artifacts
+  (212 lines), including the HTTP/TLS client, all success/error tests, and
+  Bazel metadata. No Rust crate owns the `/api/tidb/free` manager protocol or
+  pod lifecycle contract, so the package is recorded as an explicit boundary
+  in `receipts/tidbmanager.md` without adding an uncalled Rust-only path.
+
 - 2026-09-01: audited all nine current Go-master `pkg/telemetry` artifacts
   (2,190 lines), including the complete feature/TTL/window production code,
   26 SQL/counter/failpoint tests, goleak harness, and Bazel dependencies.
