@@ -107,6 +107,17 @@ For each bounded behavior cluster:
   `receipts/sessionctx_variable.md` and the living implementation plan in
   `rust/docs/operations/sessionctx-variable-audit-execplan.md`.
 
+- 2026-09-01: audited the separate nested
+  `pkg/sessionctx/variable/tests/slowlog` package: three artifacts and 766
+  lines covering the ten-shard BUILD target, goleak harness, and all ten
+  field-accessor, matching, and parser tests. The exact Go-master failpoint
+  suite passed; Rust's executable `slow_log_parse`, `slow_log_match`, and
+  `slow_log_threshold` leaves cover parser/grouping/precedence contracts, while
+  live accessor matching remains dependency-blocked on SessionVars,
+  StmtContext, and execdetails owners. Complete inventory and Ready evidence
+  are recorded in `receipts/sessionctx_variable_tests_slowlog.md` and
+  `rust/docs/operations/sessionctx-variable-tests-slowlog-audit-execplan.md`.
+
 - 2026-09-01: audited the complete Go-master
   `pkg/session/test/nontransactionaltest` package before editing: three
   tracked artifacts and 614 lines covering six batch-DML behavior tests, the
