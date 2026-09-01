@@ -232,7 +232,8 @@ func BuildMViewImportIntoOptions(importThreads int, importDiskQuota string) []st
 }
 
 func checkMaterializedViewEnabled(ctx sessionctx.Context) error {
-	if !ctx.GetSessionVars().EnableMaterializedView {
+	sessionVars := ctx.GetSessionVars() //nolint:forbidigo
+	if !sessionVars.EnableMaterializedView {
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStack(
 			"Materialized View is disabled, please set `tidb_materialized_view_enable` to `ON` to enable it",
 		)
@@ -244,13 +245,14 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 	if err := checkMaterializedViewEnabled(ctx); err != nil {
 		return err
 	}
+	sessionVars := ctx.GetSessionVars() //nolint:forbidigo
 	is := e.infoCache.GetLatest()
 	schemaName := s.Table.Schema
 	if schemaName.O == "" {
-		if ctx.GetSessionVars().CurrentDB == "" {
+		if sessionVars.CurrentDB == "" {
 			return errors.Trace(plannererrors.ErrNoDB)
 		}
-		schemaName = ast.NewCIStr(ctx.GetSessionVars().CurrentDB)
+		schemaName = ast.NewCIStr(sessionVars.CurrentDB)
 		s.Table.Schema = schemaName
 	}
 	schema, ok := is.SchemaByName(schemaName)
