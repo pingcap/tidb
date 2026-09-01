@@ -2458,6 +2458,11 @@ For each bounded behavior cluster:
   spelling, deleted the duplicate three-test external suite and supplemental
   inline cases, and retained the one exact source test. Complete inventory and
   WIP gates are recorded in `receipts/util_intest.md`.
+- 2026-09-02: re-audited all seven `pkg/util/intest` artifacts at current Go
+  master `c6054025ed4c32ab3672a2a24ea46892714d21ec`; the complete build-tag
+  owner, source regression, failpoint startup contract, and feature-shape
+  checks remain aligned. Details are in `receipts/util_intest.md` and
+  `docs/operations/intest-audit-execplan.md`.
 - 2026-08-29: audited every production, test, harness, benchmark, and build
   artifact in pinned Go `pkg/util/stringutil`. Removed Rust-only optional
   escape handling, UTF-8-narrow wrappers, duplicate byte APIs, public wrapper

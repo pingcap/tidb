@@ -1,6 +1,6 @@
 # `pkg/util/intest` — complete package transcreation
 
-Pinned Go source: `e2788410d8d696605e8cb002585877a063ccc909`.
+Pinned Go source: `c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02).
 
 ## Complete inventory
 
@@ -39,17 +39,19 @@ as additional repository tests.
 
 ## Validation
 
-Profile: WIP; this completes one package in the continuing package-by-package
-audit, not a repository-wide readiness claim.
+Profile: **Ready** for this complete package parity fix and authority refresh;
+this is not a repository-wide readiness claim.
 
-- `git diff --exit-code e2788410d8d696605e8cb002585877a063ccc909 -- pkg/util/intest` — passed.
+- `git diff --exit-code c6054025ed4c32ab3672a2a24ea46892714d21ec -- pkg/util/intest` — passed; Go source is unchanged at current authority.
 - `go test -tags=intest ./pkg/util/intest -count=1` — passed, 1 test.
+- The same tagged Go suite passed in the exact detached Go-master checkout at `/tmp/tidb-go-latest-c605`.
 - `cargo test --offline --locked -p tidb-util --lib intest::tests::TestAssert -- --exact` — passed, 1 test.
 - `cargo check --offline --locked -p tidb-util --no-default-features` — passed.
 - `cargo check --offline --locked -p tidb-util --no-default-features --features enableassert` — passed.
 - `cargo check --offline --locked -p tidb-util --no-default-features --features intest` — passed.
 - Temporary default, `enableassert`, and `intest` executable probes verified the runtime build-selection behavior; an exact slash-prefixed `GO_FAILPOINTS` probe verified startup activation. The probe was removed after passing.
-- `cargo fmt -p tidb-util` and `git diff --check` — passed.
+- `cargo +nightly-2026-08-22 fmt --all -- --check` and `git diff --check` — passed.
+- The pinned `make lint` gate passed in a clean detached Go-master checkout.
 
 No Go or Bazel file changed, so `make bazel_prepare` is not required.
 

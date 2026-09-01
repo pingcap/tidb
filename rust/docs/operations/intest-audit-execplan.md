@@ -11,13 +11,17 @@ TiDB's `intest` utility makes internal assertions conditional on Go build tags a
 ## Progress
 
 - [x] (2026-08-12) Fixed the seven-artifact Go inventory and accepted source pin `5ea5a54cd3239cf534cfd171422ee676eb7f2934`; current package bytes match the pin.
+- [x] (2026-09-02) Re-audited the same seven artifacts at current Go master
+  `c6054025ed4c32ab3672a2a24ea46892714d21ec`; no source delta exists from the
+  accepted implementation pin, and the failpoint-managed Go suite plus all
+  three Rust feature-shape checks pass.
 - [x] (2026-08-12) Confirmed there is no `doc.go`, generated input, fixture, benchmark, fuzz target, example, `go:generate`, or `go:embed`; identified the `intest`, `enableassert`, and default build variants and the package-init failpoint.
 - [x] (2026-08-12) Read all Go sources, the original Go test, Bazel metadata, the Rust owner, historical receipt, Cargo feature declarations, and live `tidb-util` consumers.
 - [x] (2026-08-12) Ran the failpoint-managed Go authority normally and under race, and probed all build-tag/failpoint startup shapes through an overlay without changing accepted source files.
 - [x] (2026-08-12) Added a public Rust contract, reproduced the old startup-switch mismatch, and replaced assertion-only initialization with shared lazy initialization visible through the public switches.
 - [x] (2026-08-12) Added the compact semantic receipt and passed WIP owner, default/feature contract, and focused consumer validation.
 - [x] (2026-08-12) Completed Ready Go/Rust validation, source/inventory/evidence gates, formatting, three Clippy feature shapes, repository lint, and staged-diff self-review.
-- [ ] Rebase one package commit onto a fresh target tip if needed, push without force, and verify fresh local, remote-tracking, and remote-advertised SHAs.
+- [x] Rebase one package commit onto a fresh target tip if needed, push without force, and verify fresh local, remote-tracking, and remote-advertised SHAs.
 
 ## Surprises & Discoveries
 
