@@ -3912,6 +3912,13 @@ For each bounded behavior cluster:
   pre-fix count/CRLF regressions pass after correction. The path/`--check` and
   stdout modes remain tooling-only Rust extensions; no SQL runtime behavior is
   duplicated or removed. The complete receipt and ExecPlan record this batch.
+- `pkg/parser/goyacc` contains three Go-master generator artifacts (1,443
+  lines, 46 declarations, no tests or fixtures). Its formatter, modernc yacc
+  table generator, reports, and CLI flags form one build-time unit. The Rust
+  hparser uses a handwritten parser and has no dependency-closed goyacc owner,
+  so this remains an explicit tooling boundary; the exact Go compile is pending
+  modernc module downloads after a proxy EOF.
+
 ## Outcomes & Retrospective
 
 Work remains in progress. Current validated behavior includes ANALYZE prefix
