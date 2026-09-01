@@ -270,6 +270,17 @@ For each bounded behavior cluster:
   `receipts/dxf_importinto_mock.md` and
   `rust/docs/operations/dxf-importinto-mock-audit-execplan.md`.
 
+- 2026-09-01: audited the complete Go-master
+  `pkg/dxf/framework/dxfutil` package: three tracked artifacts and 314 lines,
+  covering cross-keyspace runtime acquisition/release, store and session
+  keyspace validation, stable DXF holder IDs, and all acquire/error/mismatch
+  tests. No fixtures, generated/platform variants, benchmarks, fuzz targets,
+  or generator inputs exist. Rust's generic `tidb-dxf` task/resource model has
+  no SQL-server runtime or keyspace session-pool owner, so no speculative
+  facade or Rust-only behavior was added. Recorded the explicit Go-only
+  boundary in `receipts/dxf_framework_dxfutil.md` and
+  `rust/docs/operations/dxf-framework-dxfutil-audit-execplan.md`.
+
 - 2026-09-01: audited the complete direct Go-master parent
   `pkg/dxf/importinto` package: 26 tracked artifacts and 9,158 lines, with
   170 production function/method declarations and 45 top-level test
