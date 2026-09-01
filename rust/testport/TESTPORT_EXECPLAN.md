@@ -1662,6 +1662,13 @@ For each bounded behavior cluster:
       object-storage composition root with this contract, so no adapter was
       added. The package remains explicitly unclaimed; details are in
       `receipts/util_httputil.md`.
+- 2026-09-01: audited all three Go-master `pkg/util/metricsutil` artifacts
+      (269 lines: process/BR metrics registration, keyspace labels, PD retry,
+      one source test, and Bazel target). Its initialization fans out across
+      nearly every Go metrics family and BR/PD consumer; Rust has only split
+      collector fragments and no dependency-closed registry owner. The package
+      remains explicitly unclaimed; details are in
+      `receipts/util_metricsutil.md`.
 - 2026-09-01: audited both Go-master `pkg/util/gcutil` artifacts (109 lines:
       GC enable toggles, restricted `tikv_gc_safe_point` lookup, Oracle
       timestamp conversion, snapshot validation, and Bazel target). Rust has
