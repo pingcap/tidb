@@ -1684,6 +1684,9 @@ const (
 	DefEnableCachePrepareStmt                         = true
 )
 
+// MaxDivPrecisionIncrement is the maximum supported div_precision_increment value.
+const MaxDivPrecisionIncrement = 30
+
 // Process global variables.
 var (
 	ProcessGeneralLog              = atomic.NewBool(false)

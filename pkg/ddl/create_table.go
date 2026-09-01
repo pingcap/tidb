@@ -709,9 +709,17 @@ func (w *worker) hasCreateMaterializedViewBuildRows(ctx context.Context, schemaN
 	return len(rows) > 0, nil
 }
 
-func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, job *model.Job, currentDB string) (func(), error) {
+func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, job *model.Job, mvTblInfo *model.TableInfo, currentDB string) (func(), error) {
 	if job == nil || job.ReorgMeta == nil {
 		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: missing reorg metadata")
+	}
+	if mvTblInfo == nil || mvTblInfo.MaterializedView == nil {
+		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: missing materialized view metadata")
+	}
+	mviewInfo := mvTblInfo.MaterializedView
+	if mviewInfo.DefinitionDivPrecisionIncrement < 0 ||
+		mviewInfo.DefinitionDivPrecisionIncrement > variable.MaxDivPrecisionIncrement {
+		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid maintenance numeric metadata")
 	}
 	restore := restoreSessCtx(sessCtx)
 	origInMaterializedViewMaintenance := sessCtx.GetSessionVars().InMaterializedViewMaintenance
@@ -722,6 +730,7 @@ func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, job *mod
 		restore(sessCtx)
 		return nil, errors.Trace(err)
 	}
+	sessCtx.GetSessionVars().DivPrecisionIncrement = mviewInfo.DefinitionDivPrecisionIncrement
 	targetExecutionVars, err := MViewExecutionSessionVarsFromJob(job, sessCtx.GetSessionVars())
 	if err != nil {
 		restore(sessCtx)
@@ -778,7 +787,7 @@ func (w *worker) buildCreateMaterializedViewDataByImport(ctx context.Context, jo
 	if err != nil {
 		return errors.Trace(err)
 	}
-	restoreSess, err := initCreateMaterializedViewBuildSession(sessCtx, job, job.SchemaName)
+	restoreSess, err := initCreateMaterializedViewBuildSession(sessCtx, job, mvTblInfo, job.SchemaName)
 	if err != nil {
 		w.sessPool.Put(sessCtx)
 		return errors.Trace(err)
@@ -814,7 +823,7 @@ func (w *worker) buildCreateMaterializedViewDataByInsert(ctx context.Context, jo
 	if err != nil {
 		return errors.Trace(err)
 	}
-	restoreSess, err := initCreateMaterializedViewBuildSession(sessCtx, job, job.SchemaName)
+	restoreSess, err := initCreateMaterializedViewBuildSession(sessCtx, job, mvTblInfo, job.SchemaName)
 	if err != nil {
 		w.sessPool.Put(sessCtx)
 		return errors.Trace(err)

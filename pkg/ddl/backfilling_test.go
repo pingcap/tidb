@@ -276,24 +276,60 @@ func TestReorgExprContext(t *testing.T) {
 }
 
 func TestCreateMaterializedViewBuildSessionMVMaintenance(t *testing.T) {
-	store := &mockStorage{client: &mock.Client{}}
-	sctx := newMockReorgSessCtx(store)
-	originalInMaterializedViewMaintenance := sctx.GetSessionVars().InMaterializedViewMaintenance
+	for _, tt := range []struct {
+		name          string
+		definitionDPI int
+		wantDPI       int
+		wantError     string
+	}{
+		{
+			name:          "maintenance with nonzero precision",
+			definitionDPI: 11,
+			wantDPI:       11,
+		},
+		{
+			name:          "maintenance with zero precision",
+			definitionDPI: 0,
+			wantDPI:       0,
+		},
+		{
+			name:          "invalid precision",
+			definitionDPI: variable.MaxDivPrecisionIncrement + 1,
+			wantError:     "invalid maintenance numeric metadata",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &mockStorage{client: &mock.Client{}}
+			sctx := newMockReorgSessCtx(store)
+			sctx.GetSessionVars().DivPrecisionIncrement = 17
+			originalInMaterializedViewMaintenance := sctx.GetSessionVars().InMaterializedViewMaintenance
 
-	reorgMeta := &model.DDLReorgMeta{
-		Location:          &model.TimeZoneLocation{Name: "UTC"},
-		ResourceGroupName: "default",
-	}
-	job := &model.Job{
-		ReorgMeta:   reorgMeta,
-		SessionVars: make(map[string]string),
-	}
-	restore, err := initCreateMaterializedViewBuildSession(sctx, job, sctx.GetSessionVars().CurrentDB)
-	require.NoError(t, err)
-	require.True(t, sctx.GetSessionVars().InMaterializedViewMaintenance)
+			job := &model.Job{
+				Type: model.ActionCreateMaterializedView,
+				ReorgMeta: &model.DDLReorgMeta{
+					Location:          &model.TimeZoneLocation{Name: "UTC"},
+					ResourceGroupName: "default",
+				},
+				SessionVars: make(map[string]string),
+			}
+			mvTblInfo := &model.TableInfo{MaterializedView: &model.MaterializedViewInfo{
+				DefinitionDivPrecisionIncrement: tt.definitionDPI,
+			}}
+			restore, err := initCreateMaterializedViewBuildSession(sctx, job, mvTblInfo, sctx.GetSessionVars().CurrentDB)
+			if tt.wantError != "" {
+				require.ErrorContains(t, err, tt.wantError)
+				require.Nil(t, restore)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tt.wantDPI, sctx.GetSessionVars().DivPrecisionIncrement)
+			require.True(t, sctx.GetSessionVars().InMaterializedViewMaintenance)
 
-	restore()
-	require.Equal(t, originalInMaterializedViewMaintenance, sctx.GetSessionVars().InMaterializedViewMaintenance)
+			restore()
+			require.Equal(t, originalInMaterializedViewMaintenance, sctx.GetSessionVars().InMaterializedViewMaintenance)
+			require.Equal(t, 17, sctx.GetSessionVars().DivPrecisionIncrement)
+		})
+	}
 }
 
 func TestReorgTableMutateContext(t *testing.T) {

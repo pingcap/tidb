@@ -155,6 +155,7 @@ func buildMViewDeltaMergeAggMappings(
 	}
 	mappings := make([]MViewDeltaMergeAggMapping, 0, len(aggInfos))
 	countStarMappingIdx := -1
+	exprCtx := sctx.GetExprCtx()
 
 	for mappingIdx, aggInfo := range aggInfos {
 		outputColID := deltaAggColCount + aggInfo.MVOffset
@@ -169,15 +170,23 @@ func buildMViewDeltaMergeAggMappings(
 		if err != nil {
 			return nil, err
 		}
-		aggDesc, err := aggregation.NewAggFuncDesc(sctx.GetExprCtx(), aggFuncName, []expression.Expression{aggArg}, false)
+		aggDesc, err := aggregation.NewAggFuncDesc(exprCtx, aggFuncName, []expression.Expression{aggArg}, false)
 		if err != nil {
 			return nil, err
 		}
 
 		mapping := MViewDeltaMergeAggMapping{
-			AggFunc:         aggDesc,
-			ColID:           []int{outputColID},
-			DependencyColID: deps,
+			AggFunc:            aggDesc,
+			ColID:              []int{outputColID},
+			DependencyColID:    deps,
+			RequiredExactState: aggInfo.RequiredExactState,
+		}
+		if aggInfo.Kind == mview.AggAvg {
+			// The AVG merger must use the physical MV output type, not AVG(SUM(...))'s inferred type.
+			if outputColID < 0 || outputColID >= len(sourceFieldTypes) || sourceFieldTypes[outputColID] == nil {
+				return nil, errors.Errorf("AVG output column %d type is unavailable", outputColID)
+			}
+			aggDesc.RetTp = sourceFieldTypes[outputColID].Clone()
 		}
 		if countStarMappingIdx < 0 && aggInfo.Kind == mview.AggCountStar {
 			countStarMappingIdx = mappingIdx
@@ -297,6 +306,8 @@ func mviewDeltaMergeAggFuncName(kind mview.AggKind) (string, error) {
 		return ast.AggFuncCount, nil
 	case mview.AggSum:
 		return ast.AggFuncSum, nil
+	case mview.AggAvg:
+		return ast.AggFuncAvg, nil
 	case mview.AggMin:
 		return ast.AggFuncMin, nil
 	case mview.AggMax:

@@ -668,6 +668,8 @@ func formatMViewDeltaMergeAggKind(kind mview.AggKind) string {
 		return "count"
 	case mview.AggSum:
 		return "sum"
+	case mview.AggAvg:
+		return "avg"
 	case mview.AggMin:
 		return "min"
 	case mview.AggMax:

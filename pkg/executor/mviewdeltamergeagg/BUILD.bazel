@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "exec.go",
         "merge.go",
+        "merge_avg.go",
         "merge_count.go",
         "merge_minmax.go",
         "merge_sum.go",
@@ -43,12 +44,13 @@ go_test(
     srcs = ["exec_test.go"],
     embed = [":mviewdeltamergeagg"],
     flaky = True,
-    shard_count = 33,
+    shard_count = 35,
     deps = [
         "//pkg/executor/internal/exec",
         "//pkg/executor/internal/util",
         "//pkg/expression",
         "//pkg/expression/aggregation",
+        "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
         "//pkg/sessionctx",

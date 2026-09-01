@@ -811,6 +811,9 @@ type MaterializedViewInfo struct {
 
 	// DefinitionTimeZone is the timezone captured from CREATE MATERIALIZED VIEW session.
 	DefinitionTimeZone TimeZoneLocation `json:"definition_time_zone"`
+
+	// DefinitionDivPrecisionIncrement is the div_precision_increment captured when the MV was created.
+	DefinitionDivPrecisionIncrement int `json:"definition_div_precision_increment,omitempty"`
 }
 
 // Clone clones MaterializedViewInfo.
