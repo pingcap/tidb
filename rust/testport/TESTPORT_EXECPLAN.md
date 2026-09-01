@@ -447,6 +447,14 @@ For each bounded behavior cluster:
   API and VARCHAR task-key conversion in all SQL inspection helpers; focused
   scheduler/integration consumers now use the updated generated mock seam.
 
+- 2026-09-02: aligned the complete Go-master
+  `pkg/dxf/framework/integrationtests` package: exactly 11 tracked artifacts
+  and 2,210 lines. Cleanup registrations now use `Cleaner`, manual-recovery
+  updates use canonical numeric task IDs, and subtask SQL checks use
+  `TaskIDToKey`; the full inventory and Go-only harness boundary are recorded
+  in `receipts/dxf_framework_integrationtests.md` and
+  `rust/docs/operations/dxf-framework-integrationtests-audit-execplan.md`.
+
 - 2026-09-02: updated the complete five-artifact Go-master
   `pkg/server/handler/tests` consumer inventory (3,630 lines) for the DXF
   history redaction contract. Its focused API regression now requires
