@@ -463,6 +463,16 @@ For each bounded behavior cluster:
   explicit documentation-only boundary in `receipts/dxf_framework.md` and
   `rust/docs/operations/dxf-framework-audit-execplan.md`.
 
+- 2026-09-02: audited the complete Go-master `pkg/ddl/jobsubmit` package:
+  exactly six artifacts and 1,119 lines, including transactional DDL
+  submission, global-ID retry, BDR/upgrading-state validation, table-mode job
+  construction, and six top-level tests. All artifacts are byte-identical to
+  Go master and the failpoint-aware suite passes. Rust has no dependency-closed
+  SQL/session-backed DDL job submitter, so no Rust-only behavior was removed or
+  speculatively reimplemented. Recorded the boundary in
+  `receipts/ddl_jobsubmit.md` and
+  `rust/docs/operations/ddl-jobsubmit-audit-execplan.md`.
+
 - 2026-09-02: updated the complete five-artifact Go-master
   `pkg/server/handler/tests` consumer inventory (3,630 lines) for the DXF
   history redaction contract. Its focused API regression now requires
