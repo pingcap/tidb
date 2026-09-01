@@ -40,6 +40,7 @@ go_test(
     timeout = "short",
     srcs = [
         "bench_test.go",
+        "checker_test.go",
         "main_test.go",
         "ranger_test.go",
         "types_test.go",

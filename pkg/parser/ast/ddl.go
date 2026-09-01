@@ -526,6 +526,7 @@ const (
 	ColumnOptionColumnFormat
 	ColumnOptionStorage
 	ColumnOptionAutoRandom
+	ColumnOptionNoNullIndex
 )
 
 var (
@@ -598,6 +599,8 @@ func (n *ColumnOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("UNIQUE KEY")
 	case ColumnOptionNull:
 		ctx.WriteKeyWord("NULL")
+	case ColumnOptionNoNullIndex:
+		ctx.WriteKeyWord("NO_NULL_INDEX")
 	case ColumnOptionOnUpdate:
 		ctx.WriteKeyWord("ON UPDATE ")
 		if err := n.Expr.Restore(ctx); err != nil {

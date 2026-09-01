@@ -106,6 +106,14 @@ func (c *index) GenIndexValue(ec errctx.Context, loc *time.Location, distinct bo
 // 3. (i1, null, i2, ...) ==> [(i1, null, i2, ...)]
 // 4. (i1, [], i2, ...) ==> nothing.
 func (c *index) getIndexedValue(indexedValues []types.Datum) [][]types.Datum {
+	if len(c.idxInfo.NoNullIdxColOffsets) != 0 {
+		for _, offset := range c.idxInfo.NoNullIdxColOffsets {
+			if indexedValues[offset].IsNull() {
+				return nil
+			}
+		}
+	}
+
 	if !c.idxInfo.MVIndex {
 		return [][]types.Datum{indexedValues}
 	}
@@ -529,6 +537,13 @@ func (c *index) GenIndexKVIter(ec errctx.Context, loc *time.Location, indexedVal
 	if c.Meta().MVIndex {
 		mvIndexValues = c.getIndexedValue(indexedValue)
 		return table.NewMultiValueIndexKVGenerator(c, ec, loc, h, handleRestoreData, mvIndexValues)
+	}
+	if len(c.Meta().NoNullIdxColOffsets) != 0 {
+		for _, v := range c.Meta().NoNullIdxColOffsets {
+			if indexedValue[v].Kind() == types.KindNull {
+				return table.NewEmptyIndexKVGenerator(c, ec, loc, h, handleRestoreData, indexedValue)
+			}
+		}
 	}
 	return table.NewPlainIndexKVGenerator(c, ec, loc, h, handleRestoreData, indexedValue)
 }

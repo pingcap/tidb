@@ -1091,6 +1091,9 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.GetFlag()) {
 			pkCol = col
 		}
+		if col.NoNullIndex {
+			buf.WriteString(" NO_NULL_INDEX")
+		}
 	}
 
 	if pkCol != nil {
