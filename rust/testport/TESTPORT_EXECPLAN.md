@@ -346,6 +346,17 @@ For each bounded behavior cluster:
   suite and boundary are recorded in `receipts/dumpformat_sqlfile.md` and
   `rust/docs/operations/dumpformat-sqlfile-audit-execplan.md`.
 
+- 2026-09-01: audited the complete Go-master
+  `pkg/dumpformat/parquetfile` package: 20 artifacts and 9,586 lines,
+  including 126 production functions, 32 test/benchmark declarations, the
+  29-shard BUILD target, generated Spark 3.5.7 rebase data, and two binary
+  Parquet fixtures. The exact detached Go-master failpoint suite passed in
+  1.261s. Rust has only parser/decimal leaves and no dependency-closed
+  Arrow/Parquet owner, so no Rust-only behavior or speculative crate was
+  added. Complete inventory and boundary evidence are recorded in
+  `receipts/dumpformat_parquetfile.md` and
+  `rust/docs/operations/dumpformat-parquetfile-audit-execplan.md`.
+
 - 2026-09-01: audited the complete Go-master `pkg/ingestor/globalsort`
   package before editing: 17 tracked artifacts and 6,814 lines, including the
   external engine, object-store readers, merge and merge-v2 operators, range
