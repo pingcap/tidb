@@ -1391,12 +1391,13 @@ For each bounded behavior cluster:
   complete inventory and host/platform risk notes are recorded in
   `receipts/util_sys_linux.md`.
 
-- 2026-09-01: audited both current Go-master `pkg/util/injectfailpoint`
+- 2026-09-02: refreshed both current Go-master `pkg/util/injectfailpoint`
   artifacts (90 lines) in full. Its five exported helpers are named DXF
   failpoint/random-error test infrastructure; Rust has no dependency-closed
   failpoint registry or matching production consumer. The explicit boundary is
-  recorded in `receipts/util_injectfailpoint.md`; no Rust-only replacement was
-  added.
+  recorded in `receipts/util_injectfailpoint.md`, with the dedicated ExecPlan
+  at `docs/operations/util-injectfailpoint-audit-execplan.md`; no Rust-only
+  replacement was added.
 
 - 2026-09-01: revalidated the complete four-artifact
   `pkg/util/column-mapping` package against current Go master. The source,
