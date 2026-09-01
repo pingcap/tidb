@@ -441,6 +441,15 @@ For each bounded behavior cluster:
   in `receipts/server_handler_tests.md` and
   `rust/docs/operations/server-handler-tests-audit-execplan.md`.
 
+- 2026-09-02: audited the complete Go-master
+  `pkg/dxf/framework/taskexecutor/execute` leaf: exactly three artifacts and
+  517 lines, with 17 production declarations and one speed-window test. The
+  checkout is byte-identical to Go master; Rust has no dependency-closed
+  StepExecutor runtime or equivalent metering-summary owner, so no speculative
+  trait or Rust-only behavior change was made. Recorded the explicit boundary
+  in `receipts/dxf_framework_taskexecutor_execute.md` and
+  `rust/docs/operations/dxf-framework-taskexecutor-execute-audit-execplan.md`.
+
 - 2026-09-01: audited the complete direct Go-master parent
   `pkg/dxf/importinto` package: 26 tracked artifacts and 9,158 lines, with
   170 production function/method declarations and 45 top-level test
