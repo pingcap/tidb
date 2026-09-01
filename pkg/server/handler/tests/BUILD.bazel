@@ -10,7 +10,11 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 46,
+=======
+    shard_count = 48,
+>>>>>>> 5a064438c49 (ddl, br: gate adding tiflash replica by global variable (#70500))
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
