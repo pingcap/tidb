@@ -60,11 +60,11 @@ For each bounded behavior cluster:
   carriers, restored the sole Go source test in an external carrier, and added
   focused POSIX arithmetic and error-boundary regressions. The complete
   six-artifact Go
-  inventory and current validation status are recorded in
+  inventory and validation status are recorded in
   `receipts/util_sys_storage.md` and
-  `docs/operations/storage-audit-execplan.md`; Ready remains blocked by missing
-  local Go/OpenSSL tooling. The package commit is pushed; only the final Ready
-  gate remains for an environment with those prerequisites.
+  `docs/operations/storage-audit-execplan.md`; the Ready profile passes using
+  command-local bundled Go/OpenSSL tooling, with Windows and unsupported-target
+  execution explicitly unrun. The package commit is pushed.
 
 - 2026-08-29: completed the pinned Go
   `pkg/statistics/handle/usage/indexusage` package in

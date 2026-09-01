@@ -32,8 +32,8 @@ platform variants are in this claim.
 - [x] Add focused regressions for the exact `statfs` arithmetic and the
       supported-platform OS error boundary.
 - [x] Record the exact host-toolchain result and create one batch commit.
-- [ ] Complete the Ready validation successfully once the missing local Go and
-      OpenSSL tooling is available.
+- [x] Complete the Ready validation with command-local bundled Go and OpenSSL
+      tooling; Windows and unsupported-target execution remain unrun.
 
 ## Surprises & Discoveries
 
@@ -94,11 +94,10 @@ platform variants are in this claim.
 The implementation now states the exact three-file Go production inventory,
 the two test artifacts, BUILD metadata, Rust owner, and spill-storage startup
 integration. The POSIX adapter uses `statfs`, matching Go's block arithmetic;
-the focused offline source-module harness passes all three checks. The
-repository Ready gate remains unverified because this host lacks the required
-Go toolchain and OpenSSL/pkg-config setup. Any unavailable cross-platform
-execution (for example, Windows or an unsupported target) is reported as not
-run rather than implied by a host-platform test.
+the focused source-module and repository package tests pass. The Ready gate
+passes with command-local bundled Go and OpenSSL dependencies. Any unavailable
+cross-platform execution (for example, Windows or an unsupported target) is
+reported as not run rather than implied by a host-platform test.
 
 ## Context and Orientation
 

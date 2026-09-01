@@ -1,8 +1,7 @@
 # Complete `pkg/util/sys/storage` package receipt
 
-Status: implementation complete; the package is not marked Ready until the
-required checks can run in an environment with the repository's toolchain and
-native dependencies. Go remains the behavioral authority.
+Status: Ready on the host target. Go remains the behavioral authority; Windows
+and unsupported-target runtime execution remain unrun.
 
 ## Pinned inventory
 
@@ -58,11 +57,11 @@ Commands run from the repository root:
     cargo fmt --manifest-path rust/Cargo.toml --all -- --check
     cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check
     cargo test --manifest-path rust/Cargo.toml --locked -p tidb-util --test sys_storage_source
-    cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --locked -p tidb-util --test sys_storage_source
-    cargo test --manifest-path rust/Cargo.toml --locked -p tidb-util --lib sys::storage
+    OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --locked -p tidb-util --test sys_storage_source
+    OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --locked -p tidb-util --lib sys::storage
     cargo metadata --manifest-path rust/Cargo.toml --locked --offline --no-deps
     git diff --check
-    make lint
+    PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 make lint
 
 Supplementary source-module check (outside the workspace, using only cached
 dependencies):
@@ -76,25 +75,26 @@ Observed results on 2026-09-01:
   artifacts above.
 * Both the default formatter and the pinned nightly formatter passed.
 * Offline locked Cargo metadata and `git diff --check` passed.
-* The default Cargo test could not start because the active rustc is 1.95.0,
-  below the workspace minimum 1.97.
-* The pinned nightly test compiled until the pre-existing `openssl-sys`
-  build, then stopped because macOS has neither `pkg-config` nor a discoverable
-  OpenSSL installation (`OPENSSL_DIR` is unset).
-* `make lint` could not start because this environment has no `go` executable
-  and therefore cannot set up `GOPATH`.
-* The isolated offline harness compiled the corrected `storage.rs` source
+* The pinned nightly package test passed all three focused tests with the
+  command-local bundled OpenSSL tree.
+* The pinned nightly library filter passed with zero remaining in-module
+  `sys::storage` tests (501 unrelated tests filtered out).
+* `make lint` passed end-to-end using the command-local Go 1.25.10 toolchain
+  and GOPATH.
+* The isolated offline harness also compiled the corrected `storage.rs` source
   module with cached `rustix` 1.1.4 and `tempfile` 3.27.0; all three focused
-  tests (source assertion, exact `statfs` arithmetic, and missing-path error)
-  passed.
+  tests passed.
+
+The default `cargo test` invocation remains unsuitable on this host because
+the active rustc is 1.95.0, below the workspace minimum 1.97; the repository's
+pinned nightly command above is the Ready validation command.
 
 The Bazel preparation gate was not required: this batch adds no Go files,
 changes no Go imports or tests, and does not touch Bazel metadata or module
 dependencies.
 
-The supplementary harness is useful source-level evidence but cannot replace
-the repository Ready test. Windows and unsupported-target execution remain
-unverified on this host.
+The supplementary harness is source-level corroboration. Windows and
+unsupported-target execution remain unverified on this host.
 
 ## Risks and unverified targets
 
