@@ -1526,6 +1526,13 @@ For each bounded behavior cluster:
       package's ten-second scheduler, process-global lifecycle, metrics, or
       server wiring, so no detached Rust monitor was added. Details are in
       `receipts/util_cgmon.md`.
+- 2026-09-01: audited all three Go-master `pkg/util/expensivequery` artifacts
+      (220 lines: handler, common TestMain/goleak harness, and Bazel target;
+      no source tests). Threshold variables and kill signals exist in Rust,
+      but the polling worker, session-manager enumeration, metrics/logging
+      throttles, and domain bootstrap registration do not have a
+      dependency-closed owner. The package remains explicitly unclaimed;
+      details are in `receipts/util_expensivequery.md`.
 - [ ] Run Ready validation and self-review only when the requested parity scope
       is genuinely complete enough for a final-status claim.
 
@@ -1570,6 +1577,11 @@ For each bounded behavior cluster:
   memory readers are supporting authorities, while the Go monitor owns its
   Linux-only refresh cadence, metric publication, panic recovery, and startup
   lifecycle; a second Rust timer would be Rust-only behavior. Date/Author:
+  2026-09-01, Codex.
+- Decision: keep `pkg/util/expensivequery` unclaimed until the session manager,
+  process-list, histogram/logging, kill-action, and domain bootstrap owners
+  can move together. Rust threshold constants alone are not a substitute for
+  the Go polling worker and would create Rust-only policy. Date/Author:
   2026-09-01, Codex.
 - Decision: preserve the Rust planner-error declaration table and its
   all-prototype initialization guard. Go package initialization registers all
