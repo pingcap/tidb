@@ -193,7 +193,7 @@ func (s *BaseScheduler) scheduleTask() {
 		if err != nil {
 			if goerrors.Is(err, storage.ErrTaskNotFound) {
 				// this can happen when task is reverted/succeed, but before
-				// we reach here, cleanup routine move it to history.
+				// We reach here when task cleanup moves it to history.
 				s.logger.Debug("task not found, might be reverted/succeed/failed")
 				return
 			}

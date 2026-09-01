@@ -325,6 +325,10 @@ const (
 	// For versions earlier than v7.6.0, the scan concurrency of index serial scans during ANALYZE is controlled by the tidb_index_serial_scan_concurrency variable.
 	TiDBAnalyzeDistSQLScanConcurrency = "tidb_analyze_distsql_scan_concurrency"
 
+	// TiDBAnalyzeStoreBatchSize is the maximum number of child Region tasks grouped with one main Region task
+	// in a store-batched Analyze request. 0 disables store batching for Analyze.
+	TiDBAnalyzeStoreBatchSize = "tidb_analyze_store_batch_size"
+
 	// TiDBOptInSubqToJoinAndAgg is used to enable/disable the optimizer rule of rewriting IN subquery.
 	TiDBOptInSubqToJoinAndAgg = "tidb_opt_insubq_to_join_and_agg"
 
@@ -1153,6 +1157,12 @@ const (
 
 	// TiDBEnableCachePrepareStmt indicates whether to support cache prepare stmt in plan cache.
 	TiDBEnableCachePrepareStmt = "tidb_enable_cache_prepare_stmt"
+
+	// TiDBEnableTxnFile is used to control whether to enable file-based transaction feature.
+	TiDBEnableTxnFile = "tidb_enable_txn_file"
+
+	// TiDBTxnFileMinMutationSize is the minimum mutation size for using file-based transactions.
+	TiDBTxnFileMinMutationSize = "tidb_txn_file_min_mutation_size"
 )
 
 // TiDB vars that have only global scope
@@ -1477,6 +1487,7 @@ const (
 	DefIndexLookupSize                  = 20000
 	DefDistSQLScanConcurrency           = 15
 	DefAnalyzeDistSQLScanConcurrency    = 4
+	DefTiDBAnalyzeStoreBatchSize        = 4
 	DefBuildStatsConcurrency            = 2
 	DefBuildSamplingStatsConcurrency    = 2
 	DefAutoAnalyzeRatio                 = 0.5
@@ -1882,9 +1893,21 @@ const (
 	// This corresponds to performance_schema_session_connect_attrs_size. In TiDB, -1 means no limit up to 64KB.
 	DefConnectAttrsSize             int64 = 4096
 	DefTiDBEnableConnectionEventLog       = false
+	// DefTiDBEnableTxnFile is the default value of `tidb_enable_txn_file`.
+	// Leaving `tikv-client.txn-chunk-writer-addr` empty disables file-based transactions for this TiDB instance.
+	// Apply it to every TiDB instance to disable the feature cluster-wide.
+	DefTiDBEnableTxnFile = false
+	// DefTiDBTxnFileMinMutationSize is 0, so the threshold defaults to `tikv-client.txn-file-min-mutation-size`.
+	DefTiDBTxnFileMinMutationSize = 0
+	// MinTiDBTxnFileMinMutationSize is the minimum valid nonzero value for `tidb_txn_file_min_mutation_size`.
+	MinTiDBTxnFileMinMutationSize = 1 << 20 // 1 MiB
 )
 
 const (
+	// MaxTiDBAnalyzeStoreBatchSize is the upper bound for child Region tasks in one Analyze store batch.
+	// The limit is conservative because tasks run serially and results stay buffered until finalization, so larger batches
+	// can increase RPC tail latency, timeout risk, and TiKV memory usage. It may be adjusted based on production observations.
+	MaxTiDBAnalyzeStoreBatchSize uint64 = 8
 	// MinTiDBAnalyzeDefaultNumBuckets is the lower bound for the default ANALYZE bucket count.
 	MinTiDBAnalyzeDefaultNumBuckets int64 = 1
 	// MaxTiDBAnalyzeDefaultNumBuckets is the upper bound for the default ANALYZE bucket count.

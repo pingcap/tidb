@@ -1,13 +1,26 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
+sh_test(
+    name = "docker_compose_run_test",
+    srcs = ["docker-compose/run_test.sh"],
+    data = ["docker-compose/run.sh"],
+)
+
 go_test(
     name = "startertest_test",
     timeout = "moderate",
-    srcs = ["starter_external_test.go"],
+    srcs = [
+        "starter_external_test.go",
+        "txn_file_conflict_test.go",
+        "txn_file_metrics_test.go",
+        "txn_file_test.go",
+    ],
     flaky = True,
-    shard_count = 13,
+    shard_count = 15,
     deps = [
         "@com_github_go_sql_driver_mysql//:mysql",
+        "@com_github_prometheus_client_model//go",
+        "@com_github_prometheus_common//expfmt",
         "@com_github_stretchr_testify//require",
     ],
 )

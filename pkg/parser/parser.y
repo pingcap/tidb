@@ -562,6 +562,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	only                       "ONLY"
 	onDuplicate                "ON_DUPLICATE"
 	open                       "OPEN"
+	operate                    "OPERATE"
 	optional                   "OPTIONAL"
 	packKeys                   "PACK_KEYS"
 	pageSym                    "PAGE"
@@ -6668,8 +6669,14 @@ logAnd:
 	"&&"
 |	"AND"
 
+// At "INTERVAL" '(' Expression ',', goyacc can shift ',' to continue the
+// scalar INTERVAL(Expression, Expression) production or reduce Expression to
+// ExpressionList for the anonymous row expression (Expression, Expression).
+// %prec lowerThanComma makes that reduction lose to the lookahead comma and
+// resolves the conflict explicitly. Other expression lists still reduce
+// normally when no shift action competes.
 ExpressionList:
-	Expression
+	Expression %prec lowerThanComma
 	{
 		$$ = []ast.ExprNode{$1}
 	}
@@ -7388,6 +7395,7 @@ UnReservedKeyword:
 |	"NAMES"
 |	"NVARCHAR"
 |	"OFFSET"
+|	"OPERATE"
 |	"PACK_KEYS"
 |	"PARSER"
 |	"PASSWORD" %prec lowerThanEq
@@ -8749,7 +8757,6 @@ FunctionNameConflict:
 |	"DAY"
 |	"HOUR"
 |	"IF"
-|	"INTERVAL"
 |	"LOG"
 |	"FORMAT"
 |	"LEFT"
@@ -8797,6 +8804,14 @@ FunctionCallKeyword:
 	FunctionNameConflict '(' ExpressionListOpt ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: ast.NewCIStr($1), Args: $3.([]ast.ExprNode)}
+	}
+|	"INTERVAL" '(' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: ast.NewCIStr(ast.Interval), Args: []ast.ExprNode{$3, $5}}
+	}
+|	"INTERVAL" '(' Expression ',' Expression ',' ExpressionList ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: ast.NewCIStr(ast.Interval), Args: append([]ast.ExprNode{$3, $5}, $7.([]ast.ExprNode)...)}
 	}
 |	builtinUser '(' ExpressionListOpt ')'
 	{
@@ -15696,6 +15711,10 @@ PrivType:
 |	"SHOW" "VIEW"
 	{
 		$$ = mysql.ShowViewPriv
+	}
+|	"OPERATE" "VIEW"
+	{
+		$$ = mysql.OperateViewPriv
 	}
 |	"CREATE" "ROLE"
 	{

@@ -91,7 +91,7 @@ func getNumberExampleSchedulerExt(ctrl *gomock.Controller) scheduler.Extension {
 	return mockScheduler
 }
 
-func MockSchedulerManager(store kv.Storage, pool *pools.ResourcePool, ext scheduler.Extension, cleanup scheduler.CleanUpRoutine) (*scheduler.Manager, *storage.TaskManager) {
+func MockSchedulerManager(store kv.Storage, pool *pools.ResourcePool, ext scheduler.Extension, cleaner scheduler.Cleaner) (*scheduler.Manager, *storage.TaskManager) {
 	ctx := context.WithValue(context.Background(), "etcd", true)
 	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
@@ -102,9 +102,9 @@ func MockSchedulerManager(store kv.Storage, pool *pools.ResourcePool, ext schedu
 			mockScheduler.Extension = ext
 			return mockScheduler
 		})
-	if cleanup != nil {
-		scheduler.RegisterSchedulerCleanUpFactory(proto.TaskTypeExample, func() scheduler.CleanUpRoutine {
-			return cleanup
+	if cleaner != nil {
+		scheduler.RegisterCleanerFactory(proto.TaskTypeExample, func() scheduler.Cleaner {
+			return cleaner
 		})
 	}
 	return sch, mgr

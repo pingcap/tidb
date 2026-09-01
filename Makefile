@@ -163,6 +163,10 @@ test_part_parser_dev: parser_fmt parser_unit_test
 parser:
 	@cd pkg/parser && make parser
 
+.PHONY: parser_ast_visitor
+parser_ast_visitor: ## Regenerate in-place AST visitor methods
+	@cd pkg/parser && $(GO) run ./ast/visitor_codegen/cmd -source-dir ast -output ast/visitor_inplace_generated.go
+
 .PHONY: parser_yacc
 parser_yacc:
 	@cd pkg/parser && mv parser.go parser.go.committed && make parser && diff -u parser.go.committed parser.go && rm parser.go.committed
@@ -559,7 +563,7 @@ mock_import: mockgen
 	tools/bin/mockgen -package mocklocal github.com/pingcap/tidb/pkg/ingestor/ingestctrl DiskUsage,TiKVModeSwitcher,StoreHelper > br/pkg/mock/mocklocal/local.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/br/pkg/utils TaskRegister > br/pkg/mock/task_register.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor TaskTable,TaskExecutor,Extension > pkg/dxf/framework/mock/task_executor_mock.go
-	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/dxf/framework/scheduler Scheduler,CleanUpRoutine,TaskManager > pkg/dxf/framework/mock/scheduler_mock.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/dxf/framework/scheduler Scheduler,Cleaner,TaskManager > pkg/dxf/framework/mock/scheduler_mock.go
 	tools/bin/mockgen -destination pkg/dxf/framework/scheduler/mock/scheduler_mock.go -package mock github.com/pingcap/tidb/pkg/dxf/framework/scheduler Extension
 	tools/bin/mockgen -embed -package mockexecute github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute StepExecutor > pkg/dxf/framework/mock/execute/execute_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/dxf/importinto MiniTaskExecutor > pkg/dxf/importinto/mock/import_mock.go

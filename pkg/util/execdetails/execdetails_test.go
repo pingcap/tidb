@@ -392,6 +392,15 @@ func TestCopRuntimeStats(t *testing.T) {
 	}
 	stats.RecordCopStats(tableScanID, kv.TiKV, scanDetail, util.TimeDetail{}, nil, nil)
 	require.True(t, stats.ExistsCopStats(tableScanID))
+	scanSnapshot, ok := stats.GetCopScanDetail(tableScanID)
+	require.True(t, ok)
+	require.Equal(t, *scanDetail, scanSnapshot)
+	scanSnapshot.TotalKeys = 0
+	scanSnapshot, ok = stats.GetCopScanDetail(tableScanID)
+	require.True(t, ok)
+	require.Equal(t, int64(15), scanSnapshot.TotalKeys)
+	_, ok = stats.GetCopScanDetail(999)
+	require.False(t, ok)
 
 	cop := stats.GetCopStats(tableScanID)
 	expected := "tikv_task:{proc max:2ns, min:1ns, avg: 1ns, p80:2ns, p95:2ns, iters:3, tasks:2}, " +
@@ -431,6 +440,23 @@ func TestCopRuntimeStats(t *testing.T) {
 	require.Equal(t, "", zeroScanDetail.String())
 	require.Equal(t, "", zeroTimeDetail.String())
 	require.Equal(t, "", zeroCopStats.String())
+
+	firstEstimate, ok := EstimateScanBytes(10, 1, 100)
+	require.True(t, ok)
+	secondEstimate, ok := EstimateScanBytes(9, 9, 9)
+	require.True(t, ok)
+	zeroEstimate, ok := EstimateScanBytes(10, 0, 0)
+	require.True(t, ok)
+	require.Zero(t, zeroEstimate)
+	_, ok = EstimateScanBytes(10, 0, 1)
+	require.False(t, ok)
+	stats.RecordAnalyzeScanBytes(tableReaderID, firstEstimate)
+	stats.RecordAnalyzeScanBytes(tableReaderID, secondEstimate)
+	totalEstimate, ok := stats.GetAnalyzeScanBytes(tableReaderID)
+	require.True(t, ok)
+	require.InDelta(t, 1009, totalEstimate, 1e-9)
+	_, ok = stats.GetAnalyzeScanBytes(999)
+	require.False(t, ok)
 }
 
 func TestRUV2MetricsSnapshotCalculateRUValues(t *testing.T) {
