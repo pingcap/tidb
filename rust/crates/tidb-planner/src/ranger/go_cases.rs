@@ -526,6 +526,7 @@ fn planner_rewriter_stage(expr: &Expression) -> Expression {
                 }
             }
             if matches!(name, "eq" | "ne" | "lt" | "le" | "gt" | "ge" | "nulleq") {
+                refine_integer_string_comparison(&mut rewritten.args);
                 let real_column = rewritten.args.iter().any(|arg| {
                     matches!(arg, Expression::Column(col)
                     if col.ret_type.as_ref().is_some_and(|ft| {
@@ -545,6 +546,66 @@ fn planner_rewriter_stage(expr: &Expression) -> Expression {
             Expression::ScalarFunction(rewritten)
         }
         other => other.clone(),
+    }
+}
+
+/// Go `compareFunctionClass.refineArgs` runs before `generateCmpSigs` casts a
+/// mixed integer/string comparison to DOUBLE. `rewrite_expr_resolved` has the
+/// opposite construction order today, so this ranger fixture stage restores
+/// the source planner's input: an exact integral string becomes the integer
+/// column's own datum type and the implicit `cast_double(column)` disappears.
+fn refine_integer_string_comparison(args: &mut [Expression]) {
+    if args.len() != 2 {
+        return;
+    }
+    for column_index in 0..2 {
+        let constant_index = 1 - column_index;
+        let Expression::ScalarFunction(cast) = &args[column_index] else {
+            continue;
+        };
+        if cast.func_name.lowercase() != "cast_double" || cast.args.len() != 1 {
+            continue;
+        }
+        let Expression::Column(column) = &cast.args[0] else {
+            continue;
+        };
+        let Some(field_type) = column.ret_type.as_ref() else {
+            continue;
+        };
+        if field_type.eval_type() != tidb_datatype::EvalType::Int {
+            continue;
+        }
+        let Expression::Constant(constant) = &args[constant_index] else {
+            continue;
+        };
+        let Datum::Real(value) = constant.value else {
+            continue;
+        };
+        const MAX_EXACT_F64_INTEGER: f64 = 9_007_199_254_740_992.0;
+        if !value.is_finite()
+            || value.fract() != 0.0
+            || value.abs() > MAX_EXACT_F64_INTEGER
+        {
+            continue;
+        }
+        let refined = if field_type.is_unsigned() {
+            if !(0.0..=u64::MAX as f64).contains(&value) {
+                continue;
+            }
+            Datum::UInt(value as u64)
+        } else {
+            if value < i64::MIN as f64 || value > i64::MAX as f64 {
+                continue;
+            }
+            Datum::Int(value as i64)
+        };
+        let column = column.clone();
+        let mut constant = constant.clone();
+        constant.value = refined;
+        constant.ret_type = Some(field_type.clone());
+        args[column_index] = Expression::Column(column);
+        args[constant_index] = Expression::Constant(constant);
+        return;
     }
 }
 
@@ -1538,7 +1599,19 @@ fn issue_40997_dnf_ranges_match_go() {
     };
     let rewritten =
         rewrite_expr_resolved(&select.where_clause.expect("where"), &table).expect("rewrites");
-    let conds = split_cnf_items(&rewritten);
+    let ctx = tidb_expr::NoColumns;
+    let builder = RealFunctionBuilder::new(&ctx);
+    let conds: Vec<Expression> = split_cnf_items(&rewritten)
+        .iter()
+        .map(planner_rewriter_stage)
+        .map(|cond| push_down_not(&cond, &builder))
+        .map(|mut cond| {
+            tidb_expr::rewriter::derive_tree_collation(&mut cond)
+                .map(|()| cond)
+                .map_err(|error| format!("collation: {error:?}"))
+        })
+        .collect::<Result<Vec<_>, String>>()
+        .expect("rewrites conditions");
     let lengths = vec![super::checker::UNSPECIFIED_LENGTH; 3];
     let result =
         super::detacher::detach_cond_and_build_range_for_index(&conds, &table.columns, &lengths, 0)

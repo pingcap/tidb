@@ -36,10 +36,12 @@
 //! ShardIndexFuncSuites, MinAccessCondsForDNFCond, the three
 //! RangeFallback ladders, MemUsage, BinCollation, and issues 40997/50051.
 //!
-//! Boundaries, by name:
-//! * `RangesToString`/`RangeSingleColToString` are not ported: nothing in
-//!   the production tree consumes them (only `ranger.go` itself defines
-//!   them), and no upstream test covers them.
+//! Native adaptations:
+//! * `ranges_to_string`/`range_single_col_to_string` expose Go's
+//!   `RangesToString`/`RangeSingleColToString` without a mutable statement
+//!   context. The typed datum model owns comparison policy, while literal
+//!   restoration returns an error for the same value kinds Go's
+//!   `ValueExpr.Restore` rejects.
 //! * A `Constant`'s plan-cache mutability (`ParamMarker`/`DeferredExpr`)
 //!   is structurally absent from this expression model; `ValueInfo`'s
 //!   `mutable` leg activates with the plan-cache track.
@@ -54,6 +56,7 @@ pub mod points;
 pub mod ranger;
 pub mod types;
 
+pub use ranger::{range_single_col_to_string, ranges_to_string};
 pub use types::{HasFullRange, Range, Ranges};
 
 /// The pseudo-statistics bridge: `ranger` ranges into the shapes
