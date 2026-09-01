@@ -15,16 +15,21 @@
 package ddl_test
 
 import (
+	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
 	mysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -89,6 +94,78 @@ func TestCreateSequence(t *testing.T) {
 	_, err = tk1.Exec("create sequence my_seq")
 	require.Error(t, err)
 	require.EqualError(t, err, "[planner:1142]CREATE command denied to user 'myuser'@'localhost' for table 'my_seq'")
+}
+
+func TestPKDBSequenceCacheEpoch(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	currentEpoch := variable.CurrentSequenceCacheEpoch()
+	targetEpoch := currentEpoch + 1
+	tk.MustExec("create sequence seq start 1 cache 10")
+	tk.MustQuery("select @@global.pkdb_sequence_cache_epoch").Check(testkit.Rows(strconv.FormatUint(currentEpoch, 10)))
+	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("1"))
+
+	tk.MustExec(fmt.Sprintf("set global pkdb_sequence_cache_epoch = %d", targetEpoch))
+	tk.MustQuery("select @@global.pkdb_sequence_cache_epoch").Check(testkit.Rows(strconv.FormatUint(targetEpoch, 10)))
+	// Setting the same epoch is an idempotent no-op.
+	tk.MustExec(fmt.Sprintf("set global pkdb_sequence_cache_epoch = %d", targetEpoch))
+	tk.MustQuery("select @@global.pkdb_sequence_cache_epoch").Check(testkit.Rows(strconv.FormatUint(targetEpoch, 10)))
+	if targetEpoch > 1 {
+		tk.MustContainErrMsg(fmt.Sprintf("set global pkdb_sequence_cache_epoch = %d", targetEpoch-1), "cannot be decreased")
+	}
+	tk.MustQuery("show create sequence seq").CheckContain("cache 10")
+
+	// The old local cache [2, 10] must be logically invalidated after epoch advances.
+	// The next value is allocated from the persisted global sequence boundary with normal CACHE semantics.
+	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("11"))
+	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("12"))
+	tk.MustQuery("show table seq next_row_id").Check(testkit.Rows(
+		"test seq _tidb_rowid 1 _TIDB_ROWID",
+		"test seq  21 SEQUENCE",
+	))
+
+	nextEpoch := targetEpoch + 1
+	tk.MustExec(fmt.Sprintf("set global pkdb_sequence_cache_epoch = %d", nextEpoch))
+	tk.MustContainErrMsg(fmt.Sprintf("set global pkdb_sequence_cache_epoch = %d", targetEpoch), "cannot be decreased")
+	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("21"))
+	tk.MustQuery("show table seq next_row_id").Check(testkit.Rows(
+		"test seq _tidb_rowid 1 _TIDB_ROWID",
+		"test seq  31 SEQUENCE",
+	))
+
+	// Setting the epoch to 0 is allowed as an explicit maintenance reset.
+	tk.MustExec("set global pkdb_sequence_cache_epoch = 0")
+	tk.MustQuery("select @@global.pkdb_sequence_cache_epoch").Check(testkit.Rows("0"))
+}
+
+func TestSequenceFunctionsRespectRestrictedReadOnly(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	tk.MustExec("use test")
+	tk.MustExec("create sequence seq start 1 cache 10")
+	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("1"))
+
+	tk.MustExec("set global tidb_restricted_read_only = ON")
+	defer func() {
+		tk.MustExec("set global tidb_restricted_read_only = OFF")
+		tk.MustExec("set global tidb_super_read_only = OFF")
+	}()
+
+	err := tk.QueryToErr("select nextval(seq)")
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrSQLInReadOnlyMode), "err %v", err)
+	err = tk.QueryToErr("select setval(seq, 100)")
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrSQLInReadOnlyMode), "err %v", err)
+	tk.MustQuery("select lastval(seq)").Check(testkit.Rows("1"))
+
+	tk.MustExec("set global tidb_restricted_read_only = OFF")
+	tk.MustExec("set global tidb_super_read_only = OFF")
+	tk.MustExec("grant RESTRICTED_REPLICA_WRITER_ADMIN on *.* to 'root'")
+	tk.MustExec("set global tidb_restricted_read_only = ON")
+	tk.MustQuery("select setval(seq, 100)").Check(testkit.Rows("100"))
 }
 
 func TestSequenceFunction(t *testing.T) {

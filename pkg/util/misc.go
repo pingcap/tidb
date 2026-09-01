@@ -481,8 +481,8 @@ var GetSequenceByName func(is infoschema.MetaOnlyInfoSchema, schema, sequence pm
 // Otherwise calling table will cause import cycle problem.
 type SequenceTable interface {
 	GetSequenceID() int64
-	GetSequenceNextVal(ctx any, dbName, seqName string) (int64, error)
-	SetSequenceVal(ctx any, newVal int64, dbName, seqName string) (int64, bool, error)
+	GetSequenceNextVal(ctx any, dbName, seqName string, sequenceCacheEpoch uint64) (int64, error)
+	SetSequenceVal(ctx any, newVal int64, dbName, seqName string, sequenceCacheEpoch uint64) (int64, bool, error)
 }
 
 // LoadTLSCertificates loads CA/KEY/CERT for special paths.

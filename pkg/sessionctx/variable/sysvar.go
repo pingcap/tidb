@@ -3909,6 +3909,29 @@ var defaultSysVars = []*SysVar{
 			return strconv.FormatInt(CommentByteLengthLimit.Load(), 10), nil
 		},
 	},
+	{Scope: ScopeGlobal, Name: PKDBSequenceCacheEpoch, Value: strconv.FormatUint(DefPKDBSequenceCacheEpoch, 10), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint32,
+		Validation: func(_ *SessionVars, normalizedValue string, _ string, _ ScopeFlag) (string, error) {
+			epoch, err := strconv.ParseUint(normalizedValue, 10, 32)
+			if err != nil {
+				return normalizedValue, err
+			}
+			current := CurrentSequenceCacheEpoch()
+			if epoch != DefPKDBSequenceCacheEpoch && epoch < current {
+				return normalizedValue, errors.Errorf("%s cannot be decreased from %d to %d except reset to %d", PKDBSequenceCacheEpoch, current, epoch, DefPKDBSequenceCacheEpoch)
+			}
+			return normalizedValue, nil
+		},
+		SetGlobal: func(_ context.Context, _ *SessionVars, val string) error {
+			epoch, err := strconv.ParseUint(val, 10, 32)
+			if err != nil {
+				return err
+			}
+			SetSequenceCacheEpoch(epoch)
+			return nil
+		}, GetGlobal: func(context.Context, *SessionVars) (string, error) {
+			return strconv.FormatUint(CurrentSequenceCacheEpoch(), 10), nil
+		},
+	},
 	{Scope: ScopeGlobal, Name: LowerCaseTableNames, Value: "2", Type: TypeInt, MinValue: 0, MaxValue: 2, ReadOnly: true, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
 		return strconv.Itoa(model.GetLowerCaseTableNames()), nil
 	}},
