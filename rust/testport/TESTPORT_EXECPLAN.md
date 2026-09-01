@@ -1402,10 +1402,12 @@ For each bounded behavior cluster:
 - 2026-09-01: audited all three Go-master `pkg/config/configtypes` artifacts
       (204 lines, 10 production marshal/unmarshal methods, and two source
       tests), including the Bazel target and both JSON/TOML wrappers. The
-      existing `tidb-config::configtypes` owner already preserves
-      docker/go-units byte-size parsing/rendering and Go duration grammar,
-      with focused edge matrices; the Go package and five filtered Rust owner
-      tests pass. Details are in `receipts/config_configtypes_audit.md`.
+      existing `tidb-config::configtypes` owner preserves docker/go-units
+      byte-size parsing/rendering and Go duration grammar. The audit fixed its
+      missing Go 1.25 hexadecimal/digit-separator float forms in `RAMInBytes`,
+      added the focused regression, and passed the Go package, six filtered
+      Rust owner tests, formatting check, and Ready lint gate. Details are in
+      `receipts/config_configtypes_audit.md`.
 - [ ] Run Ready validation and self-review only when the requested parity scope
       is genuinely complete enough for a final-status claim.
 
@@ -1685,9 +1687,44 @@ For each bounded behavior cluster:
   Go has no public parser API or parser-only tests. Rust's detached helpers and
   aliases are removed until the full execution owner can land.
   Date/Author: 2026-08-29, Codex.
+- Decision: keep `tidb-util::keyspace` as the complete owner for Go's
+  `pkg/keyspace`. The absent client-go codec and PD API-context types are
+  represented by a narrow trait and value enum, while logger wrapping is
+  represented by the canonical `keyspaceName` field consumed by the Rust
+  logger. These are carrier adaptations of source behavior; adding a fake
+  client or a second logger core would be Rust-only policy, so no such path is
+  added. Date/Author: 2026-09-01, Codex.
+- Decision: keep `tidb-config::deploymode` as the complete owner for Go's
+  `pkg/config/deploymode`. Rust's `Mode` and Serde traits are the native
+  representation of Go's integer/JSON/TOML interfaces, while the same atomic
+  process-wide state and NextGen gate remain the only runtime policy. Do not
+  add a second configuration parser or a synthetic setter restriction that
+  the Go implementation does not enforce. Date/Author: 2026-09-01, Codex.
+- Decision: keep `tidb-config::kerneltype` as one compile-time owner for both
+  Go build-tagged variants. `cfg!(feature = "nextgen")` preserves the
+  binary-wide Classic/NextGen contract, and the old-PD empty-type match stays
+  in the shared path. A runtime kernel switch or duplicated platform module
+  would be Rust-only behavior, so neither is added. Date/Author: 2026-09-01,
+  Codex.
+- Decision: keep `tidb-config::configtypes` as the single serialization owner
+  for Go's `ByteSize` and `Duration` wrappers. The Rust implementations retain
+  the source parser/formatter semantics and expose them through Serde, so a
+  second config-specific parser or a cache-only conversion would be
+  Rust-only behavior. Date/Author: 2026-09-01, Codex.
+- Decision: extend `tidb-config::configtypes`' existing `RAMInBytes` parser
+  for Go's hexadecimal floating literals and valid digit separators, rather
+  than changing the config schema or adding a conversion layer. The helper
+  keeps the ordinary decimal path, validates Go underscore placement, and
+  decodes `0x…p…` directly so the source's numeric contract reaches the same
+  binary-unit conversion. Date/Author: 2026-09-01, Codex.
 
 ## Surprises & Discoveries
 
+- Go 1.25's `strconv.ParseFloat`, which backs `docker/go-units.RAMInBytes`,
+  accepts hexadecimal floating literals and valid digit separators. The
+  existing Rust configtypes owner covered the older decimal-only cases, so
+  `0x1p10KiB` and `1_000KiB` exposed a real rolling-master gap; a focused
+  regression now pins both accepted forms and malformed separator rejection.
 - Rust retained raw ANALYZE samples but skipped prefix-index statistics in the
   cluster path; Go cuts raw index values before histogram construction.
 - Rust had functional-dependency machinery but the needed equivalence closure
@@ -1861,31 +1898,6 @@ For each bounded behavior cluster:
   a non-forced rebase must not move the observed base backwards. The Rust
   client now uses the same monotonic CAS and the Go count-and-duration retry
   limit; the etcd service/server remains a separate owner boundary.
-
-- Decision: keep `tidb-util::keyspace` as the complete owner for Go's
-  `pkg/keyspace`. The absent client-go codec and PD API-context types are
-  represented by a narrow trait and value enum, while logger wrapping is
-  represented by the canonical `keyspaceName` field consumed by the Rust
-  logger. These are carrier adaptations of source behavior; adding a fake
-  client or a second logger core would be Rust-only policy, so no such path is
-  added. Date/Author: 2026-09-01, Codex.
-- Decision: keep `tidb-config::deploymode` as the complete owner for Go's
-  `pkg/config/deploymode`. Rust's `Mode` and Serde traits are the native
-  representation of Go's integer/JSON/TOML interfaces, while the same atomic
-  process-wide state and NextGen gate remain the only runtime policy. Do not
-  add a second configuration parser or a synthetic setter restriction that
-  the Go implementation does not enforce. Date/Author: 2026-09-01, Codex.
-- Decision: keep `tidb-config::kerneltype` as one compile-time owner for both
-  Go build-tagged variants. `cfg!(feature = "nextgen")` preserves the
-  binary-wide Classic/NextGen contract, and the old-PD empty-type match stays
-  in the shared path. A runtime kernel switch or duplicated platform module
-  would be Rust-only behavior, so neither is added. Date/Author: 2026-09-01,
-  Codex.
-- Decision: keep `tidb-config::configtypes` as the single serialization owner
-  for Go's `ByteSize` and `Duration` wrappers. The Rust implementations retain
-  the source parser/formatter semantics and expose them through Serde, so a
-  second config-specific parser or a cache-only conversion would be
-  Rust-only behavior. Date/Author: 2026-09-01, Codex.
 
 ## Outcomes & Retrospective
 
