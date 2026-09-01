@@ -40,6 +40,15 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: audited the complete `pkg/lock` and nested
+  `pkg/lock/context` Go-master boundaries (five tracked Go/Bazel artifacts,
+  232 source/support lines, no tests or fixtures). The parent checker and
+  child session interfaces require a shared infoschema/table-lock registry
+  that no Rust crate currently owns; existing executor tests record that
+  dependency gap. Receipts `receipts/lock.md` and
+  `receipts/lock_context.md` preserve the inventory without inventing a
+  second authorization path.
+
 - 2026-09-01: audited the complete current Go-master `pkg/structure`
   inventory (8 artifacts, 1,423 lines), including all string/hash/list
   operations, reverse and bounded iterators, error declarations, test
