@@ -162,17 +162,34 @@ func TestValidateStorageClassTransitionTargets(t *testing.T) {
 
 func TestStorageClassTransitionTargetsExist(t *testing.T) {
 	tblInfo := &model.TableInfo{
-		ID: 10,
+		ID:               10,
+		StorageClassTier: model.StorageClassTierIA,
 		Partition: &model.PartitionInfo{Definitions: []model.PartitionDefinition{
-			{ID: 11, Name: ast.NewCIStr("p0")},
-			{ID: 12, Name: ast.NewCIStr("p1")},
+			{ID: 11, Name: ast.NewCIStr("p0"), StorageClassTier: model.StorageClassTierIA},
+			{ID: 12, Name: ast.NewCIStr("p1"), StorageClassTier: model.StorageClassTierIA},
+			{ID: 13, Name: ast.NewCIStr("p2"), StorageClassTier: model.StorageClassTierStandard},
 		}},
 	}
 	operation := &storageClassTransitionOperation{
+		target:  model.StorageClassTierIA,
 		targets: []storageClassTransitionTarget{{PhysicalID: 11}, {PhysicalID: 12}},
 	}
 	require.True(t, storageClassTransitionTargetsExist(tblInfo, operation))
 
-	tblInfo.Partition.Definitions = tblInfo.Partition.Definitions[:1]
+	tblInfo.Partition.Definitions = []model.PartitionDefinition{
+		{ID: 11, Name: ast.NewCIStr("p0"), StorageClassTier: model.StorageClassTierIA},
+		{ID: 14, Name: ast.NewCIStr("p1"), StorageClassTier: model.StorageClassTierIA},
+		{ID: 13, Name: ast.NewCIStr("p2"), StorageClassTier: model.StorageClassTierStandard},
+	}
 	require.False(t, storageClassTransitionTargetsExist(tblInfo, operation))
+	require.Equal(t, map[int64]struct{}{11: {}, 14: {}},
+		replacementStorageClassTransitionPhysicalIDs(tblInfo, operation, nil))
+	require.Equal(t, map[int64]struct{}{11: {}},
+		replacementStorageClassTransitionPhysicalIDs(tblInfo, operation, map[int64]struct{}{14: {}}))
+
+	operation.targets = append(operation.targets, storageClassTransitionTarget{PhysicalID: tblInfo.ID})
+	require.Equal(t, map[int64]struct{}{10: {}, 11: {}, 14: {}},
+		replacementStorageClassTransitionPhysicalIDs(tblInfo, operation, nil))
+	tblInfo.Partition.DDLState = model.StateWriteOnly
+	require.False(t, storageClassTransitionTopologyIsStable(tblInfo))
 }

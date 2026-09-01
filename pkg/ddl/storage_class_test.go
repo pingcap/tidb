@@ -15,16 +15,21 @@
 package ddl_test
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
+	"sync/atomic"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
+	ddlsess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -954,4 +959,79 @@ func TestStorageClassTransitionUsesSystemTableState(t *testing.T) {
 		"TO_IA SUPERSEDED 1",
 		"TO_STANDARD RUNNING 1",
 	))
+
+	// Replacing a physical partition ends the old operation and starts a new
+	// one for every current physical target configured for the same tier.
+	tk.MustExec(`INSERT INTO mysql.tidb_storage_class_transition_history
+		(table_schema, table_name, table_id, partition_name, partition_id, direction,
+		 state, start_ts, start_time, physical_targets)
+		VALUES ('test', 'history_t', 500, 'p0', 501, 'TO_IA', 'RUNNING', 100,
+		 '2020-01-01 00:00:00',
+		 '[{"physical_id":501,"partition_id":501,"partition_name":"p0"}]')`)
+	tblInfo := &model.TableInfo{
+		ID:               500,
+		Name:             ast.NewCIStr("history_t"),
+		StorageClassTier: model.StorageClassTierIA,
+		Partition: &model.PartitionInfo{Definitions: []model.PartitionDefinition{
+			{ID: 502, Name: ast.NewCIStr("p0"), StorageClassTier: model.StorageClassTierIA},
+		}},
+	}
+	se := ddlsess.NewSession(tk.Session())
+	require.NoError(t, ddl.ReconcileStorageClassTransitionTopologyForTest(context.Background(), se, tblInfo))
+	tk.MustQuery(`SELECT state, COUNT(*) FROM mysql.tidb_storage_class_transition_history
+		WHERE table_id = 500 GROUP BY state ORDER BY state`).Check(testkit.Rows(
+		"RUNNING 1",
+		"SUPERSEDED 1",
+	))
+	tk.MustQuery(`SELECT physical_targets FROM mysql.tidb_storage_class_transition_history
+		WHERE table_id = 500 AND state = 'RUNNING'`).Check(testkit.Rows(
+		`[{"physical_id":502,"partition_id":502,"partition_name":"p0"}]`,
+	))
+
+	// Pruning by a stable row boundary is idempotent. A repeated prune from a
+	// former owner cannot consume another batch from the retained history.
+	tk.MustExec("SET GLOBAL tidb_storage_class_transition_history_size = 100")
+	for i := 0; i < 102; i++ {
+		tk.MustExec(fmt.Sprintf(`INSERT INTO mysql.tidb_storage_class_transition_history
+			(table_schema, table_name, table_id, direction, state, start_ts, start_time,
+			 finish_time, duration, physical_targets)
+			VALUES ('test', 'history', %d, 'TO_IA', 'COMPLETED', %d,
+			 '2020-01-01 00:00:00', '2020-01-01 00:00:00', 1, '[]')`, 10000+i, i+1))
+	}
+	secondTK := testkit.NewTestKit(t, store)
+	secondSession := ddlsess.NewSession(secondTK.Session())
+	var snapshotCount atomic.Int32
+	entered := make(chan struct{}, 2)
+	releaseFirst := make(chan struct{})
+	releaseSecond := make(chan struct{})
+	testfailpoint.EnableCall(t,
+		"github.com/pingcap/tidb/pkg/ddl/afterStorageClassTransitionHistoryPruneSnapshot",
+		func() {
+			call := snapshotCount.Add(1)
+			if call > 2 {
+				return
+			}
+			entered <- struct{}{}
+			if call == 1 {
+				<-releaseFirst
+				return
+			}
+			<-releaseSecond
+		},
+	)
+	errCh := make(chan error, 2)
+	go func() {
+		errCh <- ddl.PruneStorageClassTransitionHistoryForTest(context.Background(), se)
+	}()
+	go func() {
+		errCh <- ddl.PruneStorageClassTransitionHistoryForTest(context.Background(), secondSession)
+	}()
+	<-entered
+	<-entered
+	close(releaseFirst)
+	require.NoError(t, <-errCh)
+	close(releaseSecond)
+	require.NoError(t, <-errCh)
+	tk.MustQuery(`SELECT COUNT(*) FROM mysql.tidb_storage_class_transition_history
+		WHERE state IN ('COMPLETED', 'SUPERSEDED')`).Check(testkit.Rows("100"))
 }

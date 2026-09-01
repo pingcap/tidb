@@ -940,9 +940,6 @@ func (d *ddl) Start(startMode StartMode, ctxPool *pools.ResourcePool) error {
 
 	// Start some background routine to manage TiFlash replica.
 	d.wg.Run(d.PollTiFlashRoutine)
-	if kerneltype.IsNextGen() {
-		d.wg.Run(d.PollStorageClassTransitionRoutine)
-	}
 
 	ingestDataDir, err := ingest.GenIngestTempDataDir()
 	if err != nil {

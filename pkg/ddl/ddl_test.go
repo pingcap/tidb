@@ -74,6 +74,27 @@ func NewJobSubmitterForTest() *JobSubmitter {
 	}
 }
 
+// PruneStorageClassTransitionHistoryForTest exposes history pruning to external tests.
+func PruneStorageClassTransitionHistoryForTest(ctx context.Context, se *sess.Session) error {
+	return pruneStorageClassTransitionHistory(ctx, se)
+}
+
+// ReconcileStorageClassTransitionTopologyForTest exposes topology reconciliation to external tests.
+func ReconcileStorageClassTransitionTopologyForTest(
+	ctx context.Context,
+	se *sess.Session,
+	tblInfo *model.TableInfo,
+) error {
+	operations, err := loadRunningStorageClassTransitionsForTable(ctx, se, tblInfo.ID)
+	if err != nil {
+		return err
+	}
+	if len(operations) != 1 {
+		return fmt.Errorf("expected one running storage class transition, got %d", len(operations))
+	}
+	return reconcileStorageClassTransitionTopology(ctx, se, tblInfo, operations[0])
+}
+
 func (s *JobSubmitter) DDLJobDoneChMap() *generic.SyncMap[int64, chan struct{}] {
 	return s.ddlJobDoneChMap
 }
