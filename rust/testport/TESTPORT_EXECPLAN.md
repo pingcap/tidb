@@ -40,6 +40,15 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: audited the complete Go-master
+  `pkg/session/test/nontransactionaltest` package before editing: three
+  tracked artifacts and 614 lines covering six batch-DML behavior tests, the
+  shard-composition helper, failpoint/goleak harness, and six-shard flaky
+  BUILD target. The package is unchanged from the pinned Go source. Rust has
+  typed admission and metric-label leaves but no dependency-closed shard
+  planner/worker/storage owner; recorded the explicit boundary in
+  `receipts/session_test_nontransactionaltest.md`.
+
 - 2026-09-01: audited the complete Go-master `pkg/session/test/common`
   package before editing: four tracked artifacts and 600 lines, including
   seven session metadata/protocol tests, five prepared-statement dedup-cache
