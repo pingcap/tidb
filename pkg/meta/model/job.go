@@ -1422,6 +1422,20 @@ type TimeZoneLocation struct {
 	mu       sync.RWMutex
 }
 
+// Clone returns a copy of the time zone location without copying its mutex.
+func (tz *TimeZoneLocation) Clone() TimeZoneLocation {
+	if tz == nil {
+		return TimeZoneLocation{}
+	}
+	tz.mu.RLock()
+	defer tz.mu.RUnlock()
+	return TimeZoneLocation{
+		Name:     tz.Name,
+		Offset:   tz.Offset,
+		location: tz.location,
+	}
+}
+
 // GetLocation gets the timezone location.
 func (tz *TimeZoneLocation) GetLocation() (*time.Location, error) {
 	tz.mu.RLock()

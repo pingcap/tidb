@@ -77,7 +77,7 @@ func (w *worker) onCreateMaterializedViewLog(jobCtx *jobContext, job *model.Job)
 	}
 
 	mlogTableInfo.State = model.StateNone
-	mlogTableInfo, err = createTable(jobCtx, job, jobCtx.getAutoIDRequirement(), &model.CreateTableArgs{TableInfo: mlogTableInfo, FKCheck: false})
+	mlogTableInfo, err = createTable(w, jobCtx, job, jobCtx.getAutoIDRequirement(), &model.CreateTableArgs{TableInfo: mlogTableInfo, FKCheck: false})
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -184,7 +184,7 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 			}
 		}
 		mviewTableInfo.State = model.StateNone
-		mviewTableInfo, err = createTable(jobCtx, job, jobCtx.getAutoIDRequirement(), &model.CreateTableArgs{TableInfo: mviewTableInfo, FKCheck: false})
+		mviewTableInfo, err = createTable(w, jobCtx, job, jobCtx.getAutoIDRequirement(), &model.CreateTableArgs{TableInfo: mviewTableInfo, FKCheck: false})
 		if err != nil {
 			return ver, errors.Trace(err)
 		}

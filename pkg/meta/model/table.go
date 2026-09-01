@@ -883,9 +883,21 @@ func (i *MaterializedViewInfo) Clone() *MaterializedViewInfo {
 	if i == nil {
 		return nil
 	}
-	ni := *i
-	ni.BaseTableIDs = append([]int64(nil), i.BaseTableIDs...)
-	return &ni
+	return &MaterializedViewInfo{
+		BaseTableIDs:                    append([]int64(nil), i.BaseTableIDs...),
+		InitBuildState:                  i.InitBuildState,
+		SQLContent:                      i.SQLContent,
+		RefreshMethod:                   i.RefreshMethod,
+		RefreshStartWith:                i.RefreshStartWith,
+		RefreshNext:                     i.RefreshNext,
+		AlertWarningSec:                 i.AlertWarningSec,
+		AlertOverdueSec:                 i.AlertOverdueSec,
+		AlertRefreshFailed:              i.AlertRefreshFailed,
+		DefinitionSQLMode:               i.DefinitionSQLMode,
+		DefinitionDivPrecisionIncrement: i.DefinitionDivPrecisionIncrement,
+		DefinitionTimeZone:              i.DefinitionTimeZone.Clone(),
+		RefreshScheduleTimeZone:         i.RefreshScheduleTimeZone.Clone(),
+	}
 }
 
 // GetInitBuildState returns the initial-build state, treating nil metadata as ready.
@@ -932,13 +944,20 @@ func (i *MaterializedViewLogInfo) Clone() *MaterializedViewLogInfo {
 	if i == nil {
 		return nil
 	}
-	ni := *i
-	ni.Columns = append([]ast.CIStr(nil), i.Columns...)
+	clone := &MaterializedViewLogInfo{
+		BaseTableID:           i.BaseTableID,
+		Columns:               append([]ast.CIStr(nil), i.Columns...),
+		PurgeMethod:           i.PurgeMethod,
+		PurgeStartWith:        i.PurgeStartWith,
+		PurgeNext:             i.PurgeNext,
+		DefinitionSQLMode:     i.DefinitionSQLMode,
+		PurgeScheduleTimeZone: i.PurgeScheduleTimeZone.Clone(),
+	}
 	if i.LogAccumulationAlertRows != nil {
 		rows := *i.LogAccumulationAlertRows
-		ni.LogAccumulationAlertRows = &rows
+		clone.LogAccumulationAlertRows = &rows
 	}
-	return &ni
+	return clone
 }
 
 // EffectiveLogAccumulationAlertRows returns the configured alert threshold when enabled.
