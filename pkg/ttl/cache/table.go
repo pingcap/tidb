@@ -179,7 +179,24 @@ func NewPhysicalTable(schema ast.CIStr, tbl *model.TableInfo, partition ast.CISt
 		return nil, errors.Errorf("time column '%s' is not public in ttl table '%s.%s'", ttlInfo.ColumnName, schema, tbl.Name)
 	}
 
-	return NewBasePhysicalTable(schema, tbl, partition, timeColumn)
+	physicalTable, err := NewBasePhysicalTable(schema, tbl, partition, timeColumn)
+	if err != nil {
+		return nil, err
+	}
+	// SET comparisons are not currently converted into common-handle ranges by
+	// the planner. Besides making every continuation page rescan the handle
+	// range, numeric SET comparison may also lose precision. Reject SET here as
+	// well as in DDL so tables created by an older TiDB version cannot run an
+	// unsafe TTL job after an upgrade.
+	if tbl.IsCommonHandle {
+		for _, col := range physicalTable.KeyColumns {
+			if col.GetType() == mysql.TypeSet {
+				return nil, errors.Errorf("SET column '%s' in clustered primary key is unsupported by TTL", col.Name)
+			}
+		}
+	}
+
+	return physicalTable, nil
 }
 
 // ValidateKeyPrefix validates a key prefix

@@ -68,22 +68,6 @@ func (*builtinCastIntAsDurationSig) vectorized() bool {
 }
 
 func (b *builtinCastIntAsIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
-	if b.castSetAsUnsigned(ctx) {
-		result.ResizeInt64(0, false)
-		it := chunk.NewIterator4Chunk(input)
-		for row := it.Begin(); row != it.End(); row = it.Next() {
-			val, isNull, err := b.evalInt(ctx, row)
-			if err != nil {
-				return err
-			}
-			if isNull {
-				result.AppendNull()
-			} else {
-				result.AppendInt64(val)
-			}
-		}
-		return nil
-	}
 	if err := b.args[0].VecEvalInt(ctx, input, result); err != nil {
 		return err
 	}

@@ -250,39 +250,6 @@ func TestCastFunctions(t *testing.T) {
 	require.Equal(t, "", res.GetString())
 }
 
-func TestCastSetAsUnsignedPreservesBitmask(t *testing.T) {
-	ctx := createContext(t)
-	setType := types.NewFieldType(mysql.TypeSet)
-	setType.SetElems(make([]string, 64))
-	unsignedType := types.NewFieldType(mysql.TypeLonglong)
-	unsignedType.AddFlag(mysql.UnsignedFlag)
-	masks := []uint64{
-		0,
-		1 << 53,
-		1<<53 | 1,
-		1 << 63,
-		1<<63 | 1,
-		math.MaxUint64,
-	}
-
-	input := chunk.NewChunkWithCapacity([]*types.FieldType{setType}, len(masks))
-	for _, mask := range masks {
-		d := types.NewMysqlSetDatum(types.Set{Value: mask}, setType.GetCollate())
-		input.AppendDatum(0, &d)
-	}
-	castExpr := BuildCastFunction(ctx, &Column{Index: 0, RetType: setType}, unsignedType)
-	result := chunk.NewColumn(unsignedType, len(masks))
-	require.NoError(t, castExpr.VecEvalInt(ctx, input, result))
-	for i, mask := range masks {
-		scalarResult, isNull, err := castExpr.EvalInt(ctx, input.GetRow(i))
-		require.NoError(t, err)
-		require.False(t, isNull)
-		require.Equal(t, mask, uint64(scalarResult))
-		require.False(t, result.IsNull(i))
-		require.Equal(t, mask, uint64(result.GetInt64(i)))
-	}
-}
-
 var (
 	year, month, day            = time.Now().In(time.UTC).Date()
 	curDateInt                  = int64(year*10000 + int(month)*100 + day)

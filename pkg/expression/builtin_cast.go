@@ -145,13 +145,7 @@ func (c *castAsIntFunctionClass) getFunction(ctx BuildContext, args []Expression
 	bf := newBaseBuiltinCastFunc(b, c.inUnion)
 	if args[0].GetType(ctx.GetEvalCtx()).Hybrid() || IsBinaryLiteral(args[0]) {
 		sig = &builtinCastIntAsIntSig{bf}
-		// TiKV's generic CastIntAsInt path does not preserve the complete
-		// unsigned SET bitmask yet. Keep this particular cast in TiDB until the
-		// coprocessor has the same exact conversion semantics.
-		if args[0].GetType(ctx.GetEvalCtx()).GetType() != mysql.TypeSet ||
-			!mysql.HasUnsignedFlag(c.tp.GetFlag()) {
-			sig.setPbCode(tipb.ScalarFuncSig_CastIntAsInt)
-		}
+		sig.setPbCode(tipb.ScalarFuncSig_CastIntAsInt)
 		return sig, nil
 	}
 	argTp := args[0].GetType(ctx.GetEvalCtx()).EvalType()
@@ -997,16 +991,6 @@ func (b *builtinCastIntAsIntSig) Clone() builtinFunc {
 }
 
 func (b *builtinCastIntAsIntSig) evalInt(ctx EvalContext, row chunk.Row) (res int64, isNull bool, err error) {
-	if b.castSetAsUnsigned(ctx) {
-		val, err := b.args[0].Eval(ctx, row)
-		if err != nil || val.IsNull() {
-			return 0, val.IsNull(), err
-		}
-		if val.Kind() != types.KindMysqlSet {
-			return 0, false, errors.Errorf("invalid SET datum kind: %d", val.Kind())
-		}
-		return int64(val.GetMysqlSet().Value), false, nil
-	}
 	res, isNull, err = b.args[0].EvalInt(ctx, row)
 	if isNull || err != nil {
 		return
@@ -1015,10 +999,6 @@ func (b *builtinCastIntAsIntSig) evalInt(ctx EvalContext, row chunk.Row) (res in
 		res = 0
 	}
 	return
-}
-
-func (b *builtinCastIntAsIntSig) castSetAsUnsigned(ctx EvalContext) bool {
-	return b.args[0].GetType(ctx).GetType() == mysql.TypeSet && mysql.HasUnsignedFlag(b.tp.GetFlag())
 }
 
 type builtinCastIntAsRealSig struct {

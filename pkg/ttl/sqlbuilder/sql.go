@@ -53,8 +53,8 @@ func writeDatum(restoreCtx *format.RestoreCtx, d types.Datum, ft *types.FieldTyp
 }
 
 // writeCursorDatum writes a datum used by a pagination or task-range predicate.
-// ENUM and SET are physically ordered by their numeric values rather than their
-// display strings, so their cursors must use the ordinal/bitmask form as well.
+// ENUM is physically ordered by its numeric ordinal rather than its display
+// string, so its cursor must use the ordinal form as well.
 // DELETE key predicates intentionally keep using writeDatum: their equality
 // comparisons do not depend on the physical ordering.
 func writeCursorDatum(restoreCtx *format.RestoreCtx, d types.Datum, ft *types.FieldType) error {
@@ -68,12 +68,6 @@ func writeCursorDatum(restoreCtx *format.RestoreCtx, d types.Datum, ft *types.Fi
 			return errors.Errorf("invalid ENUM cursor datum kind: %d", d.Kind())
 		}
 		restoreCtx.WritePlain(strconv.FormatUint(d.GetMysqlEnum().Value, 10))
-		return nil
-	case mysql.TypeSet:
-		if d.Kind() != types.KindMysqlSet {
-			return errors.Errorf("invalid SET cursor datum kind: %d", d.Kind())
-		}
-		restoreCtx.WritePlain(strconv.FormatUint(d.GetMysqlSet().Value, 10))
 		return nil
 	default:
 		return writeDatum(restoreCtx, d, ft)
@@ -178,18 +172,17 @@ func (b *SQLBuilder) WriteDelete() error {
 
 // WriteCommonCondition writes a new condition
 func (b *SQLBuilder) WriteCommonCondition(cols []*model.ColumnInfo, op string, dp []types.Datum) error {
-	return b.writeCondition(cols, op, dp, b.writeColNames, writeDatum)
+	return b.writeCondition(cols, op, dp, writeDatum)
 }
 
 func (b *SQLBuilder) writeCursorCondition(cols []*model.ColumnInfo, op string, dp []types.Datum) error {
-	return b.writeCondition(cols, op, dp, b.writeCursorColNames, writeCursorDatum)
+	return b.writeCondition(cols, op, dp, writeCursorDatum)
 }
 
 func (b *SQLBuilder) writeCondition(
 	cols []*model.ColumnInfo,
 	op string,
 	dp []types.Datum,
-	columnWriter func([]*model.ColumnInfo, bool),
 	datumWriter func(*format.RestoreCtx, types.Datum, *types.FieldType) error,
 ) error {
 	switch b.state {
@@ -202,7 +195,7 @@ func (b *SQLBuilder) writeCondition(
 		return errors.Errorf("invalid state: %v", b.state)
 	}
 
-	columnWriter(cols, len(cols) > 1)
+	b.writeColNames(cols, len(cols) > 1)
 	b.restoreCtx.WritePlain(" ")
 	b.restoreCtx.WritePlain(op)
 	b.restoreCtx.WritePlain(" ")
@@ -296,35 +289,7 @@ func (b *SQLBuilder) writeColName(col *model.ColumnInfo) {
 	b.restoreCtx.WriteName(col.Name.O)
 }
 
-// writeCursorColName makes SET pagination compare the complete unsigned
-// bitmask. A bare SET-to-number comparison follows MySQL's approximate DOUBLE
-// semantics and cannot distinguish adjacent values above 2^53. An explicit
-// CAST AS UNSIGNED is exact for all of MySQL's supported 64 SET members.
-func (b *SQLBuilder) writeCursorColName(col *model.ColumnInfo) {
-	if col.FieldType.GetType() == mysql.TypeSet {
-		b.restoreCtx.WriteKeyWord("CAST")
-		b.restoreCtx.WritePlain("(")
-		b.writeColName(col)
-		b.restoreCtx.WriteKeyWord(" AS UNSIGNED")
-		b.restoreCtx.WritePlain(")")
-		return
-	}
-	b.writeColName(col)
-}
-
 func (b *SQLBuilder) writeColNames(cols []*model.ColumnInfo, writeBrackets bool) {
-	b.writeColNamesWith(cols, writeBrackets, b.writeColName)
-}
-
-func (b *SQLBuilder) writeCursorColNames(cols []*model.ColumnInfo, writeBrackets bool) {
-	b.writeColNamesWith(cols, writeBrackets, b.writeCursorColName)
-}
-
-func (b *SQLBuilder) writeColNamesWith(
-	cols []*model.ColumnInfo,
-	writeBrackets bool,
-	columnWriter func(*model.ColumnInfo),
-) {
 	if writeBrackets {
 		b.restoreCtx.WritePlain("(")
 	}
@@ -336,7 +301,7 @@ func (b *SQLBuilder) writeColNamesWith(
 		} else {
 			b.restoreCtx.WritePlain(", ")
 		}
-		columnWriter(col)
+		b.writeColName(col)
 	}
 
 	if writeBrackets {

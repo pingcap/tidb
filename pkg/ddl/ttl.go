@@ -191,9 +191,13 @@ func checkDropColumnWithTTLConfig(tblInfo *model.TableInfo, colName string) erro
 	return nil
 }
 
-// We should forbid creating a TTL table with clustered primary key that contains a column with type float/double.
-// This is because currently we are using SQL to delete expired rows and when the primary key contains float/double column,
-// it is hard to use condition `WHERE PK in (...)` to delete specified rows because some precision will be lost when comparing.
+// We should forbid creating a TTL table with a clustered primary key that contains
+// a FLOAT, DOUBLE, or SET column.
+//
+// TTL uses SQL predicates to page and delete rows by their primary key. FLOAT and
+// DOUBLE values may lose precision in those predicates. Numeric SET comparisons can
+// also lose precision, and the planner cannot currently turn them into common-handle
+// ranges. Rejecting SET prevents both incorrect pagination and a full scan per page.
 func checkPrimaryKeyForTTLTable(tblInfo *model.TableInfo) error {
 	if !tblInfo.IsCommonHandle {
 		// only check the primary keys when it is common handle
@@ -209,6 +213,8 @@ func checkPrimaryKeyForTTLTable(tblInfo *model.TableInfo) error {
 		col := tblInfo.Columns[colDef.Offset]
 		switch col.GetType() {
 		case mysql.TypeFloat, mysql.TypeDouble:
+			return dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL
+		case mysql.TypeSet:
 			return dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL
 		}
 	}
