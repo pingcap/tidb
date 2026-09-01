@@ -40,6 +40,18 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: refreshed the complete Go-master `pkg/util/errmsg` inventory at
+  `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: three tracked artifacts, 288
+  lines, one production function plus helper, five source tests, and no
+  fixtures, generated/platform variants, benchmarks, fuzz targets, or nested
+  packages. The Rust error/config owners and ordinary server packet writer
+  preserve nil handling, prepared regex ordering, first-match punctuation,
+  concurrent publication, and raw packet bytes without Rust-only behavior.
+  Current and exact detached Go tests, all five Rust source tests, owner/server
+  checks, formatting, and diff checks pass. Updated
+  `receipts/util_errmsg.md` and added the Ready documentation-only plan at
+  `docs/operations/util-errmsg-audit-execplan.md`.
+
 - 2026-09-02: fixed the Rust-only `#[must_use]` diagnostics in the complete
   Go-master `pkg/util/engine` owner. The package has three tracked artifacts
   and 253 lines at `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: three
