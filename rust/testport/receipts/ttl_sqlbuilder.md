@@ -3,6 +3,10 @@
 Status: Ready for this scoped batch. This receipt covers the complete Go
 package inventory; it is not a repository-wide parity claim.
 
+Published commit: `8bf78c07e0b82a8738a1e8e5cd1e222a1c032fd3` on
+`origin/hparser-integration`; local, tracking, and `git ls-remote` SHAs were
+verified equal after the push/pull.
+
 Comparison source: Go `origin/master` at `c6054025ed4c32ab3672a2a24ea46892714d21ec`.
 Rust owner: `rust/crates/tidb-ttl/src/sql_builder.rs` and
 `rust/crates/tidb-ttl/tests/sql_test.rs`.

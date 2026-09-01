@@ -1828,8 +1828,9 @@ For each bounded behavior cluster:
   between a nil and non-nil empty continuation key in the Rust scan generator;
   the focused regression failed before the fix and the six-test Rust owner plus
   tagged Go suite now pass. The package receipt and ExecPlan record the
-  explicit parser-driver and arbitrary-byte writer boundaries; publication is
-  the next step for this batch.
+  explicit parser-driver and arbitrary-byte writer boundaries. Published as
+  `8bf78c07e0b82a8738a1e8e5cd1e222a1c032fd3`; local, tracking, and remote SHAs
+  match after the push/pull.
 
 - 2026-09-01: completed the Go-master `pkg/util/stringutil` package as one
   four-artifact unit. The rolling source delta changes `CompileLike2Regexp`

@@ -26,9 +26,9 @@ that require the unavailable parser-driver/byte-preserving stack.
 - [x] (2026-09-02) Ran the complete Rust SQL-builder suite and tagged Go
   package suite; Ready formatting, all-target compilation, lint, and diff gates
   are recorded in `receipts/ttl_sqlbuilder.md`.
-- [ ] Publish one scoped commit, push it to `hparser-integration`, fetch and
-  fast-forward pull the latest tip, verify local/remote SHAs, then continue the
-  rolling package audit.
+- [x] (2026-09-02) Published commit `8bf78c07e0b82a8738a1e8e5cd1e222a1c032fd3`
+  to `origin/hparser-integration`, fetched and fast-forward pulled the latest
+  tip, and verified local, tracking, and `git ls-remote` SHAs match.
 
 ## Scope and decisions
 
@@ -63,6 +63,6 @@ No Go/Bazel artifact changed, so `make bazel_prepare` is not required.
 
 ## Outcomes and retrospective
 
-After publication, the receipt will record the commit and remote SHA. The
-source-shaped scan continuation behavior will be complete; formatter and AST
-limitations remain explicit and unverified outside their owner tests.
+The source-shaped scan continuation behavior is complete in published commit
+`8bf78c07e0b82a8738a1e8e5cd1e222a1c032fd3`; formatter and AST limitations
+remain explicit and unverified outside their owner tests.
