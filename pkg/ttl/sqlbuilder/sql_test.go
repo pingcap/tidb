@@ -17,6 +17,7 @@ package sqlbuilder_test
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -610,10 +611,10 @@ func TestEnumAndSetPaginationUsePhysicalValues(t *testing.T) {
 
 	sql, err = g.NextSQL(boundary, 1)
 	require.NoError(t, err)
-	require.Equal(t, "SELECT LOW_PRIORITY SQL_NO_CACHE `e`, `s`, `id` FROM `test`.`enum_set_pk` WHERE `e` = 2 AND `s` = 5 AND `id` > 7 AND `created_time` < FROM_UNIXTIME(1) ORDER BY `e`, `s`, `id` ASC LIMIT 1", sql)
+	require.Equal(t, "SELECT LOW_PRIORITY SQL_NO_CACHE `e`, `s`, `id` FROM `test`.`enum_set_pk` WHERE `e` = 2 AND CAST(`s` AS UNSIGNED) = 5 AND `id` > 7 AND `created_time` < FROM_UNIXTIME(1) ORDER BY `e`, `s`, `id` ASC LIMIT 1", sql)
 	sql, err = g.NextSQL(nil, 1)
 	require.NoError(t, err)
-	require.Equal(t, "SELECT LOW_PRIORITY SQL_NO_CACHE `e`, `s`, `id` FROM `test`.`enum_set_pk` WHERE `e` = 2 AND `s` > 5 AND `created_time` < FROM_UNIXTIME(1) ORDER BY `e`, `s`, `id` ASC LIMIT 1", sql)
+	require.Equal(t, "SELECT LOW_PRIORITY SQL_NO_CACHE `e`, `s`, `id` FROM `test`.`enum_set_pk` WHERE `e` = 2 AND CAST(`s` AS UNSIGNED) > 5 AND `created_time` < FROM_UNIXTIME(1) ORDER BY `e`, `s`, `id` ASC LIMIT 1", sql)
 	sql, err = g.NextSQL(nil, 1)
 	require.NoError(t, err)
 	require.Equal(t, "SELECT LOW_PRIORITY SQL_NO_CACHE `e`, `s`, `id` FROM `test`.`enum_set_pk` WHERE `e` > 2 AND `created_time` < FROM_UNIXTIME(1) ORDER BY `e`, `s`, `id` ASC LIMIT 1", sql)
@@ -691,6 +692,84 @@ func TestEnumSetClusteredPKPagination(t *testing.T) {
 	}
 	require.True(t, generator.IsExhausted())
 	require.Equal(t, []string{"0/0/1", "1/0/2", "1/1/3", "1/2/4", "1/3/5", "2/0/6"}, cursors)
+}
+
+func TestSetClusteredPKPaginationPreservesUint64Bitmask(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	members := make([]string, 64)
+	allMembers := make([]string, 64)
+	for i := range members {
+		members[i] = fmt.Sprintf("'e%d'", i+1)
+		allMembers[i] = fmt.Sprintf("e%d", i+1)
+	}
+	tk.MustExec(fmt.Sprintf(`create table ttl_set_clustered(
+		s set(%s) not null,
+		id bigint not null,
+		expired_at datetime not null,
+		primary key(s, id) clustered
+	) TTL=expired_at + interval 1 hour`, strings.Join(members, ",")))
+	tk.MustExec(fmt.Sprintf(`insert into ttl_set_clustered values
+		('', 1, '2024-01-01'),
+		('e54', 2, '2024-01-01'),
+		('e1,e54', 3, '2024-01-01'),
+		('e2,e54', 4, '2024-01-01'),
+		('e64', 5, '2024-01-01'),
+		('e1,e64', 6, '2024-01-01'),
+		('%s', 7, '2024-01-01')`, strings.Join(allMembers, ",")))
+
+	// MySQL defines CAST(SET AS UNSIGNED) as the exact bitmask conversion,
+	// including values which cannot be represented exactly by a float64.
+	tk.MustQuery("select id, cast(s as unsigned) from ttl_set_clustered order by s, id").Check(testkit.Rows(
+		"1 0",
+		"2 9007199254740992",
+		"3 9007199254740993",
+		"4 9007199254740994",
+		"5 9223372036854775808",
+		"6 9223372036854775809",
+		"7 18446744073709551615",
+	))
+
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("ttl_set_clustered"))
+	require.NoError(t, err)
+	ttlTbl, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tbl.Meta(), ast.NewCIStr(""))
+	require.NoError(t, err)
+	generator, err := sqlbuilder.NewScanQueryGenerator(
+		ttlTbl, time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), nil, nil)
+	require.NoError(t, err)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
+	var previous [][]types.Datum
+	var masks []uint64
+	for range 32 {
+		sql, err := generator.NextSQL(previous, 1)
+		require.NoError(t, err)
+		if sql == "" {
+			break
+		}
+		if previous != nil {
+			require.Contains(t, sql, "CAST(`s` AS UNSIGNED)")
+		}
+		rs, err := tk.Session().GetSQLExecutor().ExecuteInternal(ctx, sql)
+		require.NoError(t, err, sql)
+		rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
+		require.NoError(t, err, sql)
+		previous = make([][]types.Datum, len(rows))
+		for i, row := range rows {
+			previous[i] = row.GetDatumRow(ttlTbl.KeyColumnTypes)
+			masks = append(masks, previous[i][0].GetMysqlSet().Value)
+		}
+	}
+	require.True(t, generator.IsExhausted())
+	require.Equal(t, []uint64{
+		0,
+		1 << 53,
+		1<<53 | 1,
+		1<<53 | 2,
+		1 << 63,
+		1<<63 | 1,
+		math.MaxUint64,
+	}, masks)
 }
 
 func FuzzEnumSetCursorSQLParses(f *testing.F) {

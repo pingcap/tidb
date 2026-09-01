@@ -178,17 +178,18 @@ func (b *SQLBuilder) WriteDelete() error {
 
 // WriteCommonCondition writes a new condition
 func (b *SQLBuilder) WriteCommonCondition(cols []*model.ColumnInfo, op string, dp []types.Datum) error {
-	return b.writeCondition(cols, op, dp, writeDatum)
+	return b.writeCondition(cols, op, dp, b.writeColNames, writeDatum)
 }
 
 func (b *SQLBuilder) writeCursorCondition(cols []*model.ColumnInfo, op string, dp []types.Datum) error {
-	return b.writeCondition(cols, op, dp, writeCursorDatum)
+	return b.writeCondition(cols, op, dp, b.writeCursorColNames, writeCursorDatum)
 }
 
 func (b *SQLBuilder) writeCondition(
 	cols []*model.ColumnInfo,
 	op string,
 	dp []types.Datum,
+	columnWriter func([]*model.ColumnInfo, bool),
 	datumWriter func(*format.RestoreCtx, types.Datum, *types.FieldType) error,
 ) error {
 	switch b.state {
@@ -201,7 +202,7 @@ func (b *SQLBuilder) writeCondition(
 		return errors.Errorf("invalid state: %v", b.state)
 	}
 
-	b.writeColNames(cols, len(cols) > 1)
+	columnWriter(cols, len(cols) > 1)
 	b.restoreCtx.WritePlain(" ")
 	b.restoreCtx.WritePlain(op)
 	b.restoreCtx.WritePlain(" ")
@@ -295,7 +296,35 @@ func (b *SQLBuilder) writeColName(col *model.ColumnInfo) {
 	b.restoreCtx.WriteName(col.Name.O)
 }
 
+// writeCursorColName makes SET pagination compare the complete unsigned
+// bitmask. A bare SET-to-number comparison follows MySQL's approximate DOUBLE
+// semantics and cannot distinguish adjacent values above 2^53. An explicit
+// CAST AS UNSIGNED is exact for all of MySQL's supported 64 SET members.
+func (b *SQLBuilder) writeCursorColName(col *model.ColumnInfo) {
+	if col.FieldType.GetType() == mysql.TypeSet {
+		b.restoreCtx.WriteKeyWord("CAST")
+		b.restoreCtx.WritePlain("(")
+		b.writeColName(col)
+		b.restoreCtx.WriteKeyWord(" AS UNSIGNED")
+		b.restoreCtx.WritePlain(")")
+		return
+	}
+	b.writeColName(col)
+}
+
 func (b *SQLBuilder) writeColNames(cols []*model.ColumnInfo, writeBrackets bool) {
+	b.writeColNamesWith(cols, writeBrackets, b.writeColName)
+}
+
+func (b *SQLBuilder) writeCursorColNames(cols []*model.ColumnInfo, writeBrackets bool) {
+	b.writeColNamesWith(cols, writeBrackets, b.writeCursorColName)
+}
+
+func (b *SQLBuilder) writeColNamesWith(
+	cols []*model.ColumnInfo,
+	writeBrackets bool,
+	columnWriter func(*model.ColumnInfo),
+) {
 	if writeBrackets {
 		b.restoreCtx.WritePlain("(")
 	}
@@ -307,7 +336,7 @@ func (b *SQLBuilder) writeColNames(cols []*model.ColumnInfo, writeBrackets bool)
 		} else {
 			b.restoreCtx.WritePlain(", ")
 		}
-		b.writeColName(col)
+		columnWriter(col)
 	}
 
 	if writeBrackets {
