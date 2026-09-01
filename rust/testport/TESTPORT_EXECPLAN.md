@@ -1526,6 +1526,13 @@ For each bounded behavior cluster:
       package's ten-second scheduler, process-global lifecycle, metrics, or
       server wiring, so no detached Rust monitor was added. Details are in
       `receipts/util_cgmon.md`.
+- 2026-09-01: audited all six Go-master `pkg/util/cpuprofile` artifacts (790
+      lines across the profiler, HTTP adapter, source tests, labelled load
+      harness, and two Bazel targets). Rust has no dependency-closed
+      process-wide runtime/pprof sampler, Google pprof merger, labelled
+      goroutine source, or HTTP/profile-table consumer; no detached sampler or
+      endpoint was added. Details are in
+      `receipts/util_cpuprofile.md`.
 - 2026-09-01: audited all three Go-master `pkg/util/expensivequery` artifacts
       (220 lines: handler, common TestMain/goleak harness, and Bazel target;
       no source tests). Threshold variables and kill signals exist in Rust,
@@ -1578,6 +1585,11 @@ For each bounded behavior cluster:
   Linux-only refresh cadence, metric publication, panic recovery, and startup
   lifecycle; a second Rust timer would be Rust-only behavior. Date/Author:
   2026-09-01, Codex.
+- Decision: keep `pkg/util/cpuprofile` unclaimed until the runtime profiler,
+  pprof decoder/merge path, HTTP handler, profile-table consumers, and
+  labelled test harness can move as one dependency-closed package. A detached
+  Rust sampler or endpoint would duplicate Go runtime ownership and create
+  behavior without its SQL/logging consumers. Date/Author: 2026-09-01, Codex.
 - Decision: keep `pkg/util/expensivequery` unclaimed until the session manager,
   process-list, histogram/logging, kill-action, and domain bootstrap owners
   can move together. Rust threshold constants alone are not a substitute for
