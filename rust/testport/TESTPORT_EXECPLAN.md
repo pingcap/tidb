@@ -3805,6 +3805,10 @@ For each bounded behavior cluster:
   Remaining `BINARY` spellings belong to distinct cast, charset, and
   weight-string concepts. The required Bazel preparation is blocked only by
   the unavailable local `bazel` executable.
+- `pkg/parser/duration` is byte-identical to Go master across its parser,
+  test, and BUILD inputs. Rust's parser owns the same fractional day/hour/
+  minute contract and its TTL/CALIBRATE consumers, with additional malformed
+  input and diagnostic coverage; no code delta was needed.
 
 ## Outcomes & Retrospective
 
