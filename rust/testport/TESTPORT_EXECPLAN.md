@@ -297,6 +297,15 @@ For each bounded behavior cluster:
   Go-master compilation passed and the explicit boundary is recorded in
   `receipts/session_metrics.md`.
 
+- 2026-09-01: audited the complete Go-master `pkg/session/sessmgr` package:
+  three tracked artifacts and 392 lines, including process/transaction row
+  conversion, status and kill helpers, manager/coordinator interfaces, the
+  shallow-clone test, and the flaky BUILD target. Rust's process registry is
+  only a partial owner and lacks the full Go process-info fields and session
+  manager/coordinator APIs. No Rust-only behavior or safe missing behavior
+  was found; the exact Go-master failpoint suite passed and the explicit
+  boundary is recorded in `receipts/session_sessmgr.md`.
+
 - 2026-09-01: refreshed the complete Go-master
   `pkg/util/password-validation` inventory (three artifacts, 379 lines) and
   confirmed it is unchanged from the prior pinned implementation. The Go
