@@ -139,11 +139,13 @@ fn cluster_index_id(table: &KvTable) -> Option<i64> {
     if table.common_handle_offsets().is_empty() {
         return None;
     }
-    table
-        .indexes()
-        .iter()
-        .find(|index| index.clustered_primary)
-        .map(|index| index.id)
+    Some(
+        table
+            .indexes()
+            .iter()
+            .find(|index| index.clustered_primary)
+            .map_or(0, |index| index.id),
+    )
 }
 
 #[derive(Clone, Copy)]
@@ -413,5 +415,27 @@ mod tests {
 
         let usage = global.get_index_usage(1, 2);
         assert_eq!(usage.percentage_access, [0, 1, 0, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn common_handle_without_primary_uses_zero_index_id() {
+        let (global, session, statement) = collectors();
+        let reporter = IndexUsageReporter::new(Some(&statement));
+        let mut table = KvTable::new(1, vec![]);
+        table.set_common_handle_offsets(vec![0]);
+
+        reporter.report_point_for_handle(
+            &table,
+            Some(&TableStatistics {
+                row_count: 100,
+                ..TableStatistics::default()
+            }),
+            1,
+            1,
+        );
+        session.lock().expect("session collector").flush();
+        global.close();
+
+        assert_eq!(global.get_index_usage(1, 0).query_total, 1);
     }
 }

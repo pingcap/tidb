@@ -40,6 +40,16 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: audited the complete Go-master `pkg/executor/internal/exec`
+  package (five artifacts, 1,610 lines), including the internal Executor
+  protocol, panic/killer/tracing/RU-v2 wrappers, clustered-index usage
+  reporter, all mock-domain/prepared/partition/global-index tests, and the
+  eight-shard Bazel target. Found and fixed a parity gap where Rust skipped
+  index-usage reporting for a common-handle table with no primary-index entry;
+  Go's zero-value contract reports index 0. The fail-before regression now
+  passes, focused Go and Rust tests pass, and `make lint` is green. Receipt:
+  `receipts/executor_internal_exec.md`.
+
 - 2026-09-01: audited the complete Go-master `pkg/executor/internal/util`
   package (three artifacts, 161 lines), including recursive executor ID
   rewriting, all child-node cases and unknown-type errors, test-only spill
