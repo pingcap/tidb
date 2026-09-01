@@ -40,6 +40,15 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: audited the complete current Go-master `pkg/resourcegroup`
+  family (14 artifacts, 4,242 lines): the root interface package, the
+  failpoint-backed `runaway` checker/manager/record/syncer package, and the
+  nine-shard integration-test package. Rust has only resource-group model/DDL
+  conversion, process-global RU management, and an unimplemented request
+  carrier; it has no dependency-closed runaway owner. Three receipts record
+  the exact inventories and explicit boundaries, with failpoint-safe root,
+  runaway, and integration tests passing.
+
 - 2026-09-01: audited all 18 current Go-master `pkg/plugin` artifacts (2,734
   lines), including the dynamic/static plugin framework, audit event SPI,
   etcd flush watcher, lifecycle/error paths, the `conn_ip_example` fixture and
