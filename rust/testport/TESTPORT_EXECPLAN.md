@@ -3869,6 +3869,10 @@ For each bounded behavior cluster:
   artifacts and 3,319 lines, including the generated GB18030 input. Its
   existing Rust charset owner passes the focused source-derived and encoding
   suites; the receipt is refreshed to the current authority and Ready gates.
+- `pkg/parser/util` is byte-identical to Go master across four artifacts and
+  152 lines. `tidb-lexer` owns the byte-for-byte escape helper and `tidb-hash`
+  owns the eleven-method hasher interface; their source-derived suites pass
+  without a duplicate adapter or Rust-only behavior.
 
 ## Outcomes & Retrospective
 
