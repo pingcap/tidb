@@ -3288,13 +3288,14 @@ For each bounded behavior cluster:
       wiring, so no detached Rust monitor was added. Details are in
       `receipts/util_cgmon.md` and
       `docs/operations/util-cgmon-audit-execplan.md`.
-- 2026-09-01: audited all six Go-master `pkg/util/cpuprofile` artifacts (790
-      lines across the profiler, HTTP adapter, source tests, labelled load
+- 2026-09-02: re-audited all six Go-master `pkg/util/cpuprofile` artifacts
+      (790 lines across the profiler, HTTP adapter, source tests, labelled load
       harness, and two Bazel targets). Rust has no dependency-closed
       process-wide runtime/pprof sampler, Google pprof merger, labelled
       goroutine source, or HTTP/profile-table consumer; no detached sampler or
       endpoint was added. Details are in
-      `receipts/util_cpuprofile.md`.
+      `receipts/util_cpuprofile.md` and
+      `docs/operations/util-cpuprofile-audit-execplan.md`.
 - 2026-09-01: audited all four Go-master `pkg/util/admin` artifacts (412
       lines including the restricted count path, row/index consistency scan,
       corruption integration test, and Bazel target). The existing Rust

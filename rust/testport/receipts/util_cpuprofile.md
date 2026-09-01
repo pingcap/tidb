@@ -1,13 +1,14 @@
 # `pkg/util/cpuprofile` — Go-master parity boundary receipt
 
 Go baseline: `origin/master` at
-`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01). The package owns
-the process-wide runtime/pprof sampler and its HTTP/test adapters; no
-dependency-closed Rust owner exists.
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02). The package is
+unchanged from the previous authority pin. It owns the process-wide
+runtime/pprof sampler and its HTTP/test adapters; no dependency-closed Rust
+owner exists.
 
 ## Complete inventory
 
-All six Go-master artifacts were read in full before deciding ownership. The
+All six Go-master artifacts (790 lines total) were read in full before deciding ownership. The
 top-level package and its nested test-support package are inventoried
 together because the test target imports the latter directly:
 
@@ -71,10 +72,17 @@ not a package-completion or final repository-readiness claim.
 Passed:
 
 ```text
+git ls-tree -r -l c6054025ed4c32ab3672a2a24ea46892714d21ec pkg/util/cpuprofile
+# passed: exactly the six artifacts and sizes listed above
+
+git diff --exit-code c6054025ed4c32ab3672a2a24ea46892714d21ec..HEAD -- pkg/util/cpuprofile
+# passed: no Go package drift at the latest authority
+
 PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
 GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
 go test ./pkg/util/cpuprofile -count=1
-# ok github.com/pingcap/tidb/pkg/util/cpuprofile
+# passed in the current worktree and exact detached latest-master worktree
+# /tmp/tidb-go-latest-c605
 ```
 
 No Go or Bazel file changed, so `make bazel_prepare` is not required. No Rust
