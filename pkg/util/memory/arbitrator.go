@@ -2705,7 +2705,7 @@ func (m *MemArbitrator) updateTrackedHeapStats() (top3 top3DigestDataGroup) {
 
 			if ctx := e.ctx.Load(); ctx.available() {
 				inuse := ctx.arbitrateHelper.MemUsage()
-				totalTrackedHeap += inuse.RootPoolUsed
+				totalTrackedHeap += min(e.pool.ApproxCap(),inuse.RootPoolUsed)
 				top3.update(ctx.id, inuse.HeapInuse, m.approxUnixTimeSec())
 				maxHeapUsed = max(maxHeapUsed, inuse.MaxHeapUsed)
 			}
