@@ -184,6 +184,13 @@ For each bounded behavior cluster:
   ignored source tests, and implementation boundary are in
   `receipts/expression_aggregation_audit.md`.
 
+- 2026-09-01: audited all 15 Go-master `pkg/parser/mysql` artifacts (9,678
+  lines). Go's new `OperateViewPriv` changes privilege maps and scope lists,
+  but its parser keyword, generated lexer catalog, bootstrap columns, registry,
+  and executor consumers are split across Rust crates. No partial privilege
+  bit was added; the complete inventory and dependency boundary are in
+  `receipts/parser_mysql_operate_view_audit.md`.
+
 - 2026-09-01: audited the complete Go `pkg/util/dbterror/exeerrors` package at
   `origin/master` `db35d47066648fe73abce6318d53fc625df51490` against the Rust
   owner on `origin/hparser-integration`. The package has exactly `errors.go`
@@ -1733,6 +1740,10 @@ For each bounded behavior cluster:
   made compatible by adding descriptor names alone: parser, type inference,
   pair-state runtime, planner routing, protobuf, and KV pushdown must move as a
   single dependency-closed unit.
+- `pkg/parser/mysql` confirms that a new privilege cannot be made compatible by
+  adding one enum value: generated lexical inputs, parser restoration, scope
+  masks, persisted privilege columns, and executor display/check paths must
+  preserve one bit and column order.
 
 ## Outcomes & Retrospective
 
