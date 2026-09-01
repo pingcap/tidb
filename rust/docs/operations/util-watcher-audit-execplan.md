@@ -8,7 +8,7 @@ Rust owner, including source event sequencing and platform file metadata.
 ## Progress
 
 - [x] Read all four Go-master artifacts at
-  `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: `BUILD.bazel`, `event.go`,
+  `c6054025ed4c32ab3672a2a24ea46892714d21ec`: `BUILD.bazel`, `event.go`,
   `watcher.go`, and `watcher_test.go` (605 lines; thirteen production
   functions/methods, `TestWatcher`, and its assertion helper).
 - [x] Confirm there are no package docs, fixtures, generated files, platform
@@ -20,7 +20,7 @@ Rust owner, including source event sequencing and platform file metadata.
   removed.
 - [x] Revalidate current and exact detached Go-master tests, the source-derived
   Rust event test, formatting, and diff quality.
-- [ ] Commit, push, pull, and verify `origin/hparser-integration`.
+- [x] Commit, push, pull, and verify `origin/hparser-integration`.
 
 ## Validation gate
 

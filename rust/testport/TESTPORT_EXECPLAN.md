@@ -224,7 +224,7 @@ For each bounded behavior cluster:
   `docs/operations/util-zeropool-audit-execplan.md`.
 
 - 2026-09-02: refreshed the complete Go-master `pkg/util/watcher` inventory
-  at `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: four tracked artifacts,
+  at `c6054025ed4c32ab3672a2a24ea46892714d21ec`: four tracked artifacts,
   605 lines, thirteen production functions/methods, the `TestWatcher` suite,
   and no fixtures, generated files, platform variants, or nested packages.
   The existing Rust owner preserves Go's polling lifecycle, event priority,
