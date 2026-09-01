@@ -40,6 +40,16 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: audited the complete current Go-master `pkg/structure`
+  inventory (8 artifacts, 1,423 lines), including all string/hash/list
+  operations, reverse and bounded iterators, error declarations, test
+  harness, fixtures (none), and Bazel metadata. The dependency-closed
+  `tidb-meta::structure` owner and its raw transaction adapter already match
+  the Go key layout, ordering, missing-key behavior, integer encoding, and
+  snapshot mutation boundary; all five source-derived structure tests pass.
+  The complete inventory and explicit no-change decision are recorded in
+  `receipts/structure.md`.
+
 - 2026-09-01: synchronized the rolling parity work with the latest
   `origin/hparser-integration` tip `f99acafe16`. The merged remote batch
   supplies the dependency-ordered `pkg/util` memory/cgroup/cgmon,
