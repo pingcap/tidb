@@ -52,6 +52,20 @@ For each bounded behavior cluster:
   removed and no speculative implementation was added. Recorded the explicit
   boundary in `receipts/ingestor_ingestctrl.md`.
 
+- 2026-09-01: audited the complete Go-master root `pkg/objstore` package
+  before editing: 27 root-level tracked artifacts and 8,388 lines, including
+  the public BUILD target, all 17 production/support files, Azure/GCS/HDFS and
+  local/memory/no-op backends, URL/flag parsing, multipart upload, compression,
+  lock transactions, range readers, and all nine root test files. The current
+  master source adds Azure concurrent block upload, GCS multipart abort/error
+  handling, parser URL redaction, and their focused tests; the exact
+  failpoint-enabled Go-master suite passed. Rust has no dependency-closed
+  object-storage owner (plan-replayer storage traits and generated protocol
+  vocabulary are not this package), so no Rust-only behavior was removed and
+  no speculative backend was added. Nested `objstore/*` packages remain
+  separate package audits. Recorded the explicit boundary in
+  `receipts/objstore_root.md`.
+
 - 2026-09-01: audited the complete Go-master `pkg/ingestor/globalsort`
   package before editing: 17 tracked artifacts and 6,814 lines, including the
   external engine, object-store readers, merge and merge-v2 operators, range
