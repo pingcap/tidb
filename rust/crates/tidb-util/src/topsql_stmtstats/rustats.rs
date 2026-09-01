@@ -18,9 +18,9 @@ use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
-use super::ru_details::RuDetails;
 use super::ruv2_metrics::{RuV2Metrics, RuV2Weights};
 use super::stmtstats::BinaryDigest;
+use tikv_client::RuDetails;
 
 /// boundary: Go `rmclient.RUVersion` from the PD client's
 /// `resource_group/controller`, an integer enum whose zero value means

@@ -12,48 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! SEED of Go `pkg/util/memoryusagealarm`: the OOM-risk monitor that records
-//! running SQL and profiles when memory usage crosses the alarm ratio.
+//! Go `pkg/util/memoryusagealarm`: the 100ms OOM-risk monitor that records
+//! running SQL, heap state, and thread stacks when memory crosses the alarm
+//! ratio.
 //!
-//! Narrowings (each named against the Go source):
-//! - `Handle.Run`'s 100ms ticker goroutine and `exitCh` become the explicit
-//!   [`Handle::tick`] step, which tests (and a server loop) drive directly.
-//! - Ambient clock reads (`time.Now` / `time.Since` in `updateVariable`,
-//!   `alarm4ExcessiveMemUsage`, and `needRecord`) become passed-in `now`
-//!   timestamps.
-//! - Ambient memory/runtime reads (`memory.ServerMemoryLimit`,
-//!   `memory.MemTotal`, `memory.MemUsed`, `memory.ReadMemStats`,
-//!   `memory.UsingGlobalMemArbitration`) and the `vardef.OOMAction` session
-//!   variable are narrowed behind [`MemoryStateProvider`] snapshot inputs.
-//! - `recordProfile`/`write` (runtime/pprof heap profile) and
-//!   `recordGoroutineProfile` (`runtime.Stack` all-goroutine dump) are Go
-//!   runtime facilities with no Rust equivalent; the dump side effect is
-//!   isolated behind the injected [`ProfileRecorder`] trait and the
-//!   `running_sql` record stays pure text built by `getTop10SqlInfo` ports.
-//! - `TiDBConfigProvider` (reads `vardef.MemoryUsageAlarmRatio`,
-//!   `vardef.MemoryUsageAlarmKeepRecordNum`, and `config.GetGlobalConfig`)
-//!   stays in the server layer; only the [`ConfigProvider`] seam lands here.
-//! - `util.GenLogFields` (Go `pkg/util`) is transcribed here as
-//!   [`gen_log_fields`] over the narrowed [`ProcessInfo`] snapshot; the
-//!   `ExecDetails`/`CopTasksDetails` zap fields, `mem_arbitration` fields,
-//!   the `RefCountOfStmtCtx.TryIncrease` guard, and `parser.Normalize` SQL
-//!   redaction are not modeled by the snapshot and are dropped.
-//! - Go tests `TestRecordGoroutineProfileWithBackgroundGoroutine` and
-//!   `BenchmarkRecordGoroutineProfile` assert on Go-runtime stack-dump text
-//!   (`"goroutine "`, `"created by"`) and are skipped with the
-//!   `recordGoroutineProfile` boundary above.
-//!
-//! This module also hosts the one shared narrow seam for Go
-//! `pkg/session/sessmgr`: [`SessionManager`] and the [`ProcessInfo`]
-//! snapshot, reused by `crate::servermemorylimit`.
+//! The shared [`SessionManager`] and [`ProcessInfo`] types are Rust's crate
+//! boundary for Go `pkg/session/sessmgr`; `crate::servermemorylimit` consumes
+//! the same live process list.
 
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::fmt;
 use std::fs;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
-use chrono::{DateTime, Duration as ChronoDuration, SecondsFormat, Utc};
+use chrono::{DateTime, Duration as ChronoDuration, Local, SecondsFormat, TimeZone, Utc};
 use tidb_datatype::EXPLAIN_FORMAT_ROW;
 use tidb_log::{Field, Value};
 
@@ -61,8 +37,12 @@ use crate::logutil::bg_logger;
 use crate::memory::{format_bytes, Tracker};
 use crate::plancodec::decode_binary_plan_for_connection;
 
-/// Go zero `time.Time` stand-in for the narrowed chrono timestamps.
-pub(crate) const ZERO_TIME: DateTime<Utc> = DateTime::<Utc>::UNIX_EPOCH;
+/// Go zero `time.Time`: midnight UTC on January 1, year 1.
+pub(crate) fn zero_time() -> DateTime<Utc> {
+    Utc.with_ymd_and_hms(1, 1, 1, 0, 0, 0)
+        .single()
+        .expect("Go zero time is representable by chrono")
+}
 
 // boundary: Go `sessmgr.OOMAlarmVariablesInfo`.
 /// OOM-alarm-relevant session variables captured on a process entry.
@@ -98,8 +78,13 @@ pub struct ProcessInfo {
     pub digest: String,
     /// Go `Info` (the SQL text).
     pub info: String,
+    /// Go `RedactSQL`.
+    pub redact_sql: tidb_parser::RedactMode,
     /// Go `Time` (statement start time).
     pub time: DateTime<Utc>,
+    /// The monotonic reading embedded in a live Go `time.Time`. Test fixtures
+    /// built with `time.Unix` have no such reading and leave this as `None`.
+    pub started_instant: Option<Instant>,
     /// Go `MemTracker`.
     pub mem_tracker: Option<Arc<Tracker>>,
     /// Go `DiskTracker`.
@@ -117,9 +102,9 @@ pub struct ProcessInfo {
     /// Go `IndexNames`.
     pub index_names: Vec<String>,
     // boundary: Go `StatsInfo` is a closure over `Plan`; narrowed to its
-    // materialized result (ordered for deterministic log output).
+    // materialized result.
     /// Materialized Go `StatsInfo(info.Plan)` result.
-    pub stats_info: BTreeMap<String, u64>,
+    pub stats_info: HashMap<String, u64>,
     // boundary: Go reads this through `StmtCtx.AffectedRows()`.
     /// Affected row count of the current statement.
     pub affected_rows: u64,
@@ -137,7 +122,9 @@ impl Default for ProcessInfo {
             db: String::new(),
             digest: String::new(),
             info: String::new(),
-            time: ZERO_TIME,
+            redact_sql: tidb_parser::RedactMode::Disabled,
+            time: zero_time(),
+            started_instant: None,
             mem_tracker: None,
             disk_tracker: None,
             cur_txn_start_ts: 0,
@@ -146,7 +133,7 @@ impl Default for ProcessInfo {
             brief_binary_plan: String::new(),
             table_ids: Vec::new(),
             index_names: Vec::new(),
-            stats_info: BTreeMap::new(),
+            stats_info: HashMap::new(),
             affected_rows: 0,
             oom_alarm_variables_info: OOMAlarmVariablesInfo::default(),
         }
@@ -176,49 +163,40 @@ pub trait ConfigProvider: Send + Sync {
     fn get_component_name(&self) -> String;
 }
 
-/// Instance memory readings, Go `memory.ReadMemStats`' consumed subset.
+/// Go `TiDBConfigProvider`.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct InstanceMemStats {
-    /// Go `runtime.MemStats.HeapAlloc`.
-    pub heap_alloc: u64,
-    /// Go `runtime.MemStats.HeapInuse`.
-    pub heap_inuse: u64,
-}
+pub struct TiDBConfigProvider;
 
-// boundary: Go ambient reads narrowed to snapshot inputs —
-// `memory.ServerMemoryLimit.Load()`, `memory.MemTotal()`,
-// `memory.MemUsed()`, `memory.ReadMemStats()`,
-// `memory.UsingGlobalMemArbitration()`, and `vardef.OOMAction.Load()`.
-/// Provider of the ambient memory/runtime state the Go source reads from
-/// package globals.
-pub trait MemoryStateProvider: Send + Sync {
-    /// Go `memory.ServerMemoryLimit.Load()`.
-    fn server_memory_limit(&self) -> u64;
-    /// Go `memory.MemTotal()`.
-    fn mem_total(&self) -> Result<u64, String>;
-    /// Go `memory.MemUsed()`.
-    fn mem_used(&self) -> Result<u64, String>;
-    /// Go `memory.ReadMemStats()`.
-    fn read_mem_stats(&self) -> InstanceMemStats;
-    /// Go `memory.UsingGlobalMemArbitration()`.
-    fn using_global_mem_arbitration(&self) -> bool {
-        false
+impl ConfigProvider for TiDBConfigProvider {
+    fn get_memory_usage_alarm_ratio(&self) -> f64 {
+        tidb_vardef::memory_usage_alarm_ratio()
     }
-    /// Go `vardef.OOMAction.Load()` (default `vardef.DefTiDBMemOOMAction`).
-    fn oom_action(&self) -> String {
-        "CANCEL".to_owned()
-    }
-}
 
-// boundary: Go `recordProfile`/`write` (runtime/pprof "heap" profile) and
-// `recordGoroutineProfile` (`runtime.Stack` dump into a 64MB buffer) are Go
-// runtime facilities; a production implementation belongs to a layer that
-// owns an allocator/thread profiler.
-/// The injected profile-dump side effect of Go `recordProfile` +
-/// `recordGoroutineProfile`.
-pub trait ProfileRecorder: Send + Sync {
-    /// Writes the runtime profiles under `record_dir`.
-    fn record_profile(&self, record_dir: &Path) -> Result<(), String>;
+    fn get_memory_usage_alarm_keep_record_num(&self) -> i64 {
+        tidb_vardef::MEMORY_USAGE_ALARM_KEEP_RECORD_NUM.load(Ordering::SeqCst)
+    }
+
+    fn get_log_dir(&self) -> PathBuf {
+        let filename = tidb_config::config_tree::config::get_global_config()
+            .log
+            .file
+            .filename;
+        let path = Path::new(&filename);
+        path.parent().map_or_else(
+            || {
+                if path.has_root() {
+                    path.to_path_buf()
+                } else {
+                    PathBuf::new()
+                }
+            },
+            Path::to_path_buf,
+        )
+    }
+
+    fn get_component_name(&self) -> String {
+        "tidb-server".to_owned()
+    }
 }
 
 /// Go `AlarmReason`: why a record was (or was not) taken.
@@ -246,46 +224,67 @@ impl fmt::Display for AlarmReason {
 
 /// Go `Handle`: the handler for memory usage alarm.
 pub struct Handle {
-    record: MemoryUsageAlarm,
-    sm: Option<Arc<dyn SessionManager>>,
+    exit: crossbeam_channel::Receiver<()>,
+    // The outer option is Go's nil atomic pointer (SetSessionManager was
+    // never called); the inner option is a stored nil sessmgr.Manager.
+    sm: std::sync::Mutex<Option<Option<Arc<dyn SessionManager>>>>,
+    config_provider: Arc<dyn ConfigProvider>,
 }
 
 impl Handle {
-    /// Go `NewMemoryUsageAlarmHandle` (the `exitCh` is dropped with the
-    /// goroutine loop; see the module narrowings).
+    /// Go `NewMemoryUsageAlarmHandle`.
     pub fn new(
+        exit: crossbeam_channel::Receiver<()>,
         config_provider: Arc<dyn ConfigProvider>,
-        mem_state: Arc<dyn MemoryStateProvider>,
-        profile_recorder: Arc<dyn ProfileRecorder>,
     ) -> Handle {
         Handle {
-            record: MemoryUsageAlarm::new(config_provider, mem_state, profile_recorder),
-            sm: None,
+            exit,
+            sm: std::sync::Mutex::new(None),
+            config_provider,
         }
     }
 
     /// Go `Handle.SetSessionManager`.
-    pub fn set_session_manager(&mut self, sm: Arc<dyn SessionManager>) -> &mut Handle {
-        self.sm = Some(sm);
+    pub fn set_session_manager(&self, sm: Option<Arc<dyn SessionManager>>) -> &Handle {
+        *self
+            .sm
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(sm);
         self
     }
 
-    /// One iteration of Go `Handle.Run`'s 100ms ticker loop
-    /// (`record.alarm4ExcessiveMemUsage(*sm)`).
-    pub fn tick(&mut self, now: DateTime<Utc>) {
-        let sm = self.sm.clone();
-        self.record.alarm4_excessive_mem_usage(sm.as_deref(), now);
+    /// Go `Handle.Run`: samples every 100ms until the exit channel fires.
+    pub fn run(&self) {
+        let ticker = crossbeam_channel::tick(Duration::from_millis(100));
+        let sm = self
+            .sm
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let mut record = MemoryUsageAlarm::new(Arc::clone(&self.config_provider));
+        loop {
+            crossbeam_channel::select! {
+                recv(ticker) -> _ => {
+                    record.alarm4_excessive_mem_usage(
+                        sm.as_ref()
+                            .expect("session manager must be set before the first alarm tick")
+                            .as_deref(),
+                    );
+                }
+                recv(self.exit) -> _ => return,
+            }
+        }
     }
 }
 
 /// Go `memoryUsageAlarm`.
 struct MemoryUsageAlarm {
     last_check_time: DateTime<Utc>,
+    last_check_instant: Option<Instant>,
     last_update_variable_time: DateTime<Utc>,
+    last_update_variable_instant: Option<Instant>,
     err: Option<String>,
     config_provider: Arc<dyn ConfigProvider>,
-    mem_state: Arc<dyn MemoryStateProvider>,
-    profile_recorder: Arc<dyn ProfileRecorder>,
     base_record_dir: PathBuf,
     last_record_dir_name: Vec<PathBuf>,
     last_record_mem_used: u64,
@@ -297,20 +296,15 @@ struct MemoryUsageAlarm {
 }
 
 impl MemoryUsageAlarm {
-    /// Zero-value construction plus the injected seams (Go builds the zero
-    /// `memoryUsageAlarm{configProvider: ...}` struct literal).
-    fn new(
-        config_provider: Arc<dyn ConfigProvider>,
-        mem_state: Arc<dyn MemoryStateProvider>,
-        profile_recorder: Arc<dyn ProfileRecorder>,
-    ) -> MemoryUsageAlarm {
+    /// Go's zero `memoryUsageAlarm{configProvider: ...}` construction.
+    fn new(config_provider: Arc<dyn ConfigProvider>) -> MemoryUsageAlarm {
         MemoryUsageAlarm {
-            last_check_time: ZERO_TIME,
-            last_update_variable_time: ZERO_TIME,
+            last_check_time: zero_time(),
+            last_check_instant: None,
+            last_update_variable_time: zero_time(),
+            last_update_variable_instant: None,
             err: None,
             config_provider,
-            mem_state,
-            profile_recorder,
             base_record_dir: PathBuf::new(),
             last_record_dir_name: Vec::new(),
             last_record_mem_used: 0,
@@ -323,28 +317,35 @@ impl MemoryUsageAlarm {
     }
 
     /// Go `memoryUsageAlarm.updateVariable`.
-    fn update_variable(&mut self, now: DateTime<Utc>) {
-        if now - self.last_update_variable_time < ChronoDuration::seconds(60) {
+    fn update_variable(&mut self) {
+        let update_is_fresh = self.last_update_variable_instant.map_or_else(
+            || Utc::now() - self.last_update_variable_time < ChronoDuration::seconds(60),
+            |instant| instant.elapsed() < Duration::from_secs(60),
+        );
+        if update_is_fresh {
             return;
         }
         self.memory_usage_alarm_ratio = self.config_provider.get_memory_usage_alarm_ratio();
         self.memory_usage_alarm_keep_record_num = self
             .config_provider
             .get_memory_usage_alarm_keep_record_num();
-        self.server_memory_limit = self.mem_state.server_memory_limit();
+        self.server_memory_limit = crate::memory::SERVER_MEMORY_LIMIT.load(Ordering::SeqCst);
         if self.server_memory_limit != 0 {
             self.is_server_memory_limit_set = true;
         } else {
-            match self.mem_state.mem_total() {
-                Ok(total) => self.server_memory_limit = total,
+            match crate::memory::mem_total() {
+                Ok(total) => {
+                    self.server_memory_limit = total;
+                    self.err = None;
+                }
                 Err(err) => {
-                    self.err = Some(err.clone());
+                    self.err = Some(err.to_string());
                     bg_logger().error(
                         "get system total memory fail",
                         &[Field::new(
                             "error",
                             Value::Error {
-                                basic: err,
+                                basic: err.to_string(),
                                 verbose: None,
                             },
                         )],
@@ -354,19 +355,25 @@ impl MemoryUsageAlarm {
             }
             self.is_server_memory_limit_set = false;
         }
-        self.last_update_variable_time = now;
+        self.last_update_variable_time = Utc::now();
+        self.last_update_variable_instant = Some(Instant::now());
     }
 
     /// Go `memoryUsageAlarm.initMemoryUsageAlarmRecord`.
-    fn init_memory_usage_alarm_record(&mut self, now: DateTime<Utc>) {
-        self.last_check_time = ZERO_TIME;
-        self.last_update_variable_time = ZERO_TIME;
-        self.update_variable(now);
+    fn init_memory_usage_alarm_record(&mut self) {
+        self.last_check_time = zero_time();
+        self.last_check_instant = None;
+        self.last_update_variable_time = zero_time();
+        self.last_update_variable_instant = None;
+        self.update_variable();
         let tidb_log_dir = self.config_provider.get_log_dir();
         self.base_record_dir = tidb_log_dir.join("oom_record");
-        if let Err(err) = crate::disk::check_and_create_dir(&self.base_record_dir) {
-            self.err = Some(err.to_string());
-            return;
+        match crate::disk::check_and_create_dir(&self.base_record_dir) {
+            Ok(()) => self.err = None,
+            Err(err) => {
+                self.err = Some(err.to_string());
+                return;
+            }
         }
         // Read last records.
         let record_dirs = match fs::read_dir(&self.base_record_dir) {
@@ -376,7 +383,15 @@ impl MemoryUsageAlarm {
                 return;
             }
         };
-        for dir in record_dirs.flatten() {
+        let mut record_dirs = match record_dirs.collect::<Result<Vec<_>, _>>() {
+            Ok(dirs) => dirs,
+            Err(err) => {
+                self.err = Some(err.to_string());
+                return;
+            }
+        };
+        record_dirs.sort_by_key(std::fs::DirEntry::file_name);
+        for dir in record_dirs {
             let file_name = dir.file_name();
             let name = file_name.to_string_lossy();
             if name.contains("record") {
@@ -388,35 +403,38 @@ impl MemoryUsageAlarm {
     }
 
     /// Go `memoryUsageAlarm.alarm4ExcessiveMemUsage`.
-    fn alarm4_excessive_mem_usage(&mut self, sm: Option<&dyn SessionManager>, now: DateTime<Utc>) {
-        if self.mem_state.using_global_mem_arbitration() {
+    fn alarm4_excessive_mem_usage(&mut self, sm: Option<&dyn SessionManager>) {
+        if crate::memory::using_global_mem_arbitration() {
             return;
         }
         if !self.initialized {
-            self.init_memory_usage_alarm_record(now);
+            self.init_memory_usage_alarm_record();
             if self.err.is_some() {
                 return;
             }
         } else {
-            self.update_variable(now);
+            self.update_variable();
         }
         if self.memory_usage_alarm_ratio <= 0.0 || self.memory_usage_alarm_ratio >= 1.0 {
             return;
         }
-        let instance_stats = self.mem_state.read_mem_stats();
+        let instance_stats = crate::memory::read_mem_stats();
         let memory_usage = if self.is_server_memory_limit_set {
-            instance_stats.heap_alloc
+            u64::try_from(instance_stats.heap_alloc).unwrap_or_default()
         } else {
-            match self.mem_state.mem_used() {
-                Ok(used) => used,
+            match crate::memory::mem_used() {
+                Ok(used) => {
+                    self.err = None;
+                    used
+                }
                 Err(err) => {
-                    self.err = Some(err.clone());
+                    self.err = Some(err.to_string());
                     bg_logger().error(
                         "get system memory usage fail",
                         &[Field::new(
                             "error",
                             Value::Error {
-                                basic: err,
+                                basic: err.to_string(),
                                 verbose: None,
                             },
                         )],
@@ -427,17 +445,23 @@ impl MemoryUsageAlarm {
         };
 
         // TODO(from Go source): Consider NextGC to record SQLs.
-        let (need_record, reason) = self.need_record(memory_usage, now);
+        let (need_record, reason) = self.need_record(memory_usage);
         if need_record {
-            self.last_check_time = now;
+            self.last_check_time = Utc::now();
+            self.last_check_instant = Some(Instant::now());
             self.last_record_mem_used = memory_usage;
-            self.do_record(memory_usage, instance_stats.heap_alloc, sm, reason);
+            self.do_record(
+                memory_usage,
+                u64::try_from(instance_stats.heap_alloc).unwrap_or_default(),
+                sm,
+                reason,
+            );
             self.try_remove_redundant_records();
         }
     }
 
     /// Go `memoryUsageAlarm.needRecord`.
-    fn need_record(&self, memory_usage: u64, now: DateTime<Utc>) -> (bool, AlarmReason) {
+    fn need_record(&self, memory_usage: u64) -> (bool, AlarmReason) {
         // At least 60 seconds between two recordings that memory usage is
         // less than threshold (default 70% system memory). If the memory is
         // still exceeded, only records once. If the memory used ratio
@@ -447,9 +471,12 @@ impl MemoryUsageAlarm {
             return (false, AlarmReason::NoReason);
         }
 
-        let interval = now - self.last_check_time;
-        let mem_diff = memory_usage as i64 - self.last_record_mem_used as i64;
-        if interval > ChronoDuration::seconds(60) {
+        let interval_exceeds_minimum = self.last_check_instant.map_or_else(
+            || Utc::now() - self.last_check_time > ChronoDuration::seconds(60),
+            |instant| instant.elapsed() > Duration::from_secs(60),
+        );
+        let mem_diff = (memory_usage as i64).wrapping_sub(self.last_record_mem_used as i64);
+        if interval_exceeds_minimum {
             return (true, AlarmReason::ExceedAlarmRatio);
         }
         if mem_diff as f64 > 0.1 * self.server_memory_limit as f64 {
@@ -510,29 +537,36 @@ impl MemoryUsageAlarm {
         let record_dir = self.base_record_dir.join(format!(
             "record{}",
             self.last_check_time
+                .with_timezone(&Local)
                 .to_rfc3339_opts(SecondsFormat::Secs, true)
         ));
-        if let Err(err) = crate::disk::check_and_create_dir(&record_dir) {
-            self.err = Some(err.to_string());
-            return;
-        }
-        self.last_record_dir_name.push(record_dir.clone());
-        if let Some(sm) = sm {
-            if let Err(err) = self.record_sql(sm, &record_dir) {
-                self.err = Some(err);
+        match crate::disk::check_and_create_dir(&record_dir) {
+            Ok(()) => self.err = None,
+            Err(err) => {
+                self.err = Some(err.to_string());
                 return;
             }
         }
-        if let Err(err) = self.profile_recorder.record_profile(&record_dir) {
-            self.err = Some(err);
+        self.last_record_dir_name.push(record_dir.clone());
+        if let Some(sm) = sm {
+            match self.record_sql(sm, &record_dir) {
+                Ok(()) => self.err = None,
+                Err(err) => {
+                    self.err = Some(err);
+                    return;
+                }
+            }
+        }
+        match record_profile(&record_dir) {
+            Ok(()) => self.err = None,
+            Err(err) => self.err = Some(err.to_string()),
         }
     }
 
     /// Go `memoryUsageAlarm.tryRemoveRedundantRecords`.
     fn try_remove_redundant_records(&mut self) {
-        let keep = usize::try_from(self.memory_usage_alarm_keep_record_num).unwrap_or(0);
-        while self.last_record_dir_name.len() > keep {
-            if let Err(err) = fs::remove_dir_all(&self.last_record_dir_name[0]) {
+        while (self.last_record_dir_name.len() as i64) > self.memory_usage_alarm_keep_record_num {
+            if let Err(err) = remove_all(&self.last_record_dir_name[0]) {
                 bg_logger().error(
                     "remove temp files failed",
                     &[Field::new(
@@ -548,38 +582,60 @@ impl MemoryUsageAlarm {
         }
     }
 
-    /// Go `memoryUsageAlarm.printTop10SqlInfo`, with the `*os.File` narrowed
-    /// to building the full text before one write.
-    fn print_top10_sql_info(&self, pinfo: &[Arc<ProcessInfo>]) -> String {
-        let mut out = String::new();
-        out.push_str("The 10 SQLs with the most memory usage for OOM analysis\n");
-        out.push_str(&self.get_top10_sql_info_by_memory_usage(pinfo));
-        out.push_str("The 10 SQLs with the most time usage for OOM analysis\n");
-        out.push_str(&self.get_top10_sql_info_by_cost_time(pinfo));
-        out
+    /// Go `memoryUsageAlarm.printTop10SqlInfo`.
+    fn print_top10_sql_info(&self, pinfo: &mut [Arc<ProcessInfo>], file: &mut fs::File) {
+        let mut write = |text: &str, message: &str| {
+            if let Err(err) = file.write_all(text.as_bytes()) {
+                bg_logger().error(
+                    message,
+                    &[Field::new(
+                        "error",
+                        Value::Error {
+                            basic: err.to_string(),
+                            verbose: None,
+                        },
+                    )],
+                );
+            }
+        };
+        write(
+            "The 10 SQLs with the most memory usage for OOM analysis\n",
+            "write top 10 memory sql info fail",
+        );
+        write(
+            &self.get_top10_sql_info_by_memory_usage(pinfo),
+            "write top 10 memory sql info fail",
+        );
+        write(
+            "The 10 SQLs with the most time usage for OOM analysis\n",
+            "write top 10 time cost sql info fail",
+        );
+        write(
+            &self.get_top10_sql_info_by_cost_time(pinfo),
+            "write top 10 time cost sql info fail",
+        );
     }
 
     /// Go `memoryUsageAlarm.getTop10SqlInfo`.
     fn get_top10_sql_info(
         &self,
         cmp: impl Fn(&Arc<ProcessInfo>, &Arc<ProcessInfo>) -> std::cmp::Ordering,
-        pinfo: &[Arc<ProcessInfo>],
+        pinfo: &mut [Arc<ProcessInfo>],
     ) -> String {
-        let mut list: Vec<Arc<ProcessInfo>> = pinfo.to_vec();
-        list.sort_by(cmp);
+        pinfo.sort_unstable_by(cmp);
         let mut buf = String::new();
-        let oom_action = self.mem_state.oom_action();
-        let server_memory_limit = self.mem_state.server_memory_limit();
+        let oom_action = tidb_vardef::oom_action();
+        let server_memory_limit = crate::memory::SERVER_MEMORY_LIMIT.load(Ordering::SeqCst);
         let mut total_cnt = 10;
-        for (i, info) in list.iter().enumerate() {
+        for (i, info) in pinfo.iter().enumerate() {
             if total_cnt == 0 {
                 break;
             }
             buf.push_str(&format!("SQL {i}: \n"));
-            let mut fields = gen_log_fields(self.last_check_time - info.time, info, false);
+            let mut fields = gen_log_fields(self.cost_time(info), info);
             fields.push(Field::new(
                 "tidb_mem_oom_action",
-                Value::Str(oom_action.clone()),
+                Value::Str(oom_action.to_owned()),
             ));
             fields.push(Field::new(
                 "tidb_server_memory_limit",
@@ -624,11 +680,19 @@ impl MemoryUsageAlarm {
     }
 
     /// Go `memoryUsageAlarm.getTop10SqlInfoByMemoryUsage`.
-    fn get_top10_sql_info_by_memory_usage(&self, pinfo: &[Arc<ProcessInfo>]) -> String {
+    fn get_top10_sql_info_by_memory_usage(&self, pinfo: &mut [Arc<ProcessInfo>]) -> String {
         self.get_top10_sql_info(
             |i, j| {
-                let i_max = i.mem_tracker.as_ref().map_or(0, |t| t.max_consumed());
-                let j_max = j.mem_tracker.as_ref().map_or(0, |t| t.max_consumed());
+                let i_max = i
+                    .mem_tracker
+                    .as_ref()
+                    .expect("running process has a memory tracker")
+                    .max_consumed();
+                let j_max = j
+                    .mem_tracker
+                    .as_ref()
+                    .expect("running process has a memory tracker")
+                    .max_consumed();
                 j_max.cmp(&i_max)
             },
             pinfo,
@@ -636,20 +700,36 @@ impl MemoryUsageAlarm {
     }
 
     /// Go `memoryUsageAlarm.getTop10SqlInfoByCostTime`.
-    fn get_top10_sql_info_by_cost_time(&self, pinfo: &[Arc<ProcessInfo>]) -> String {
-        self.get_top10_sql_info(|i, j| i.time.cmp(&j.time), pinfo)
+    fn get_top10_sql_info_by_cost_time(&self, pinfo: &mut [Arc<ProcessInfo>]) -> String {
+        self.get_top10_sql_info(
+            |i, j| match (i.started_instant, j.started_instant) {
+                (Some(i), Some(j)) => i.cmp(&j),
+                _ => i.time.cmp(&j.time),
+            },
+            pinfo,
+        )
+    }
+
+    fn cost_time(&self, info: &ProcessInfo) -> ChronoDuration {
+        match (self.last_check_instant, info.started_instant) {
+            (Some(check), Some(start)) => match check.checked_duration_since(start) {
+                Some(duration) => ChronoDuration::from_std(duration).unwrap_or(ChronoDuration::MAX),
+                None => -ChronoDuration::from_std(start.duration_since(check))
+                    .unwrap_or(ChronoDuration::MAX),
+            },
+            _ => self.last_check_time - info.time,
+        }
     }
 
     /// Go `memoryUsageAlarm.recordSQL`.
     fn record_sql(&self, sm: &dyn SessionManager, record_dir: &Path) -> Result<(), String> {
         let process_info = sm.show_process_list();
-        let pinfo: Vec<Arc<ProcessInfo>> = process_info
+        let mut pinfo: Vec<Arc<ProcessInfo>> = process_info
             .into_iter()
             .filter(|info| !info.info.is_empty())
             .collect();
         let file_name = record_dir.join("running_sql");
-        let text = self.print_top10_sql_info(&pinfo);
-        fs::write(&file_name, text).map_err(|err| {
+        let mut file = fs::File::create(&file_name).map_err(|err| {
             bg_logger().error(
                 "create oom record file fail",
                 &[Field::new(
@@ -661,8 +741,156 @@ impl MemoryUsageAlarm {
                 )],
             );
             err.to_string()
-        })
+        })?;
+        self.print_top10_sql_info(&mut pinfo, &mut file);
+        Ok(())
     }
+}
+
+/// Native `os.RemoveAll`: remove a directory tree or one non-directory entry,
+/// and treat an already-missing path as success.
+fn remove_all(path: &Path) -> io::Result<()> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_dir() => fs::remove_dir_all(path),
+        Ok(_) => fs::remove_file(path),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+/// Go `memoryUsageAlarm.recordProfile`.
+fn record_profile(record_dir: &Path) -> io::Result<()> {
+    write_heap_profile(record_dir)?;
+    record_thread_profile(record_dir)
+}
+
+/// Native sampled allocation profile written under Go's `heap` profile
+/// filename.
+fn write_heap_profile(record_dir: &Path) -> io::Result<()> {
+    let profile = record_dir.join("heap");
+    if let Err(err) = fs::File::create(&profile) {
+        log_profile_error("create heap profile file fail", &err);
+        return Err(err);
+    }
+    #[cfg(feature = "jemalloc")]
+    {
+        return tidb_hack::allocator_stats::dump(&profile).inspect_err(|err| {
+            log_profile_error("write heap profile file fail", err);
+        });
+    }
+
+    #[cfg(not(feature = "jemalloc"))]
+    {
+        let err = io::Error::new(
+            io::ErrorKind::Unsupported,
+            "heap profiling requires the production jemalloc build",
+        );
+        log_profile_error("write heap profile file fail", &err);
+        Err(err)
+    }
+}
+
+const GOROUTINE_PROFILE_BUFFER_SIZE: usize = 1 << 26;
+
+struct StackProfileBuffer {
+    bytes: Vec<u8>,
+    written: usize,
+    truncated: bool,
+}
+
+impl StackProfileBuffer {
+    fn new() -> Self {
+        Self {
+            // Go uses `make([]byte, 1<<26)`, so retain its eager 64 MiB
+            // allocation rather than allowing Vec to grow on demand.
+            bytes: vec![0; GOROUTINE_PROFILE_BUFFER_SIZE],
+            written: 0,
+            truncated: false,
+        }
+    }
+
+    fn written(&self) -> &[u8] {
+        &self.bytes[..self.written]
+    }
+}
+
+impl Write for StackProfileBuffer {
+    fn write(&mut self, source: &[u8]) -> io::Result<usize> {
+        let remaining = self.bytes.len().saturating_sub(self.written);
+        let copied = remaining.min(source.len());
+        self.bytes[self.written..self.written + copied].copy_from_slice(&source[..copied]);
+        self.written += copied;
+        self.truncated |= copied != source.len();
+        // `runtime.Stack` truncates rather than reporting a write failure.
+        Ok(source.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Native thread stacks written with Go's fixed 64 MiB all-goroutine buffer.
+fn record_thread_profile(record_dir: &Path) -> io::Result<()> {
+    let mut file = fs::File::create(record_dir.join("goroutine")).inspect_err(|err| {
+        log_profile_error("create goroutine profile file fail", err);
+    })?;
+    let mut stack = StackProfileBuffer::new();
+    let result = (|| -> io::Result<()> {
+        #[cfg(target_os = "linux")]
+        {
+            let mut tasks = fs::read_dir("/proc/self/task")?.collect::<Result<Vec<_>, _>>()?;
+            tasks.sort_by_key(std::fs::DirEntry::file_name);
+            for task in tasks {
+                let id = task.file_name();
+                writeln!(stack, "thread {}:", id.to_string_lossy())?;
+                if let Ok(name) = fs::read_to_string(task.path().join("comm")) {
+                    writeln!(stack, "name {}", name.trim_end())?;
+                }
+                if let Ok(task_stack) = fs::read_to_string(task.path().join("stack")) {
+                    stack.write_all(task_stack.as_bytes())?;
+                }
+                writeln!(stack)?;
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            writeln!(stack, "thread {:?}:", std::thread::current().id())?;
+            writeln!(stack, "{:?}", std::backtrace::Backtrace::force_capture())?;
+        }
+        if stack.truncated {
+            bg_logger().warn(
+                "goroutine stack trace is too large, truncating",
+                &[Field::new("size", Value::I64(stack.written as i64))],
+            );
+        }
+        file.write_all(stack.written())?;
+        Ok(())
+    })();
+    if let Err(err) = &result {
+        log_profile_error("write goroutine profile file fail", err);
+    }
+    result
+}
+
+fn log_profile_error(message: &str, err: &io::Error) {
+    bg_logger().error(
+        message,
+        &[Field::new(
+            "error",
+            Value::Error {
+                basic: err.to_string(),
+                verbose: None,
+            },
+        )],
+    );
+}
+
+/// Package-private benchmark bridge for Go's unexported
+/// `recordGoroutineProfile` benchmark target.
+#[cfg(feature = "testexport")]
+pub fn record_goroutine_profile_for_benchmark(record_dir: &Path) -> io::Result<()> {
+    record_thread_profile(record_dir)
 }
 
 /// Go `getPlanString`.
@@ -684,18 +912,20 @@ fn get_plan_string(info: &ProcessInfo) -> String {
     buf
 }
 
-/// Go `util.GenLogFields` (`pkg/util/util.go`) over the narrowed snapshot.
-///
-/// boundary: `ExecDetails`/`CopTasksDetails` zap fields, `mem_arbitration`
-/// fields, the `RefCountOfStmtCtx.TryIncrease` nil return, and
-/// `parser.Normalize` redaction are not modeled (see module narrowings).
-fn gen_log_fields(
-    cost_time: ChronoDuration,
-    info: &ProcessInfo,
-    need_truncate_sql: bool,
-) -> Vec<Field> {
+/// Go `util.GenLogFields` (`pkg/util/util.go`) over an ownership-safe process
+/// snapshot. Rust snapshots the statement fields while the registry lock is
+/// held, so Go's `RefCountOfStmtCtx.TryIncrease` lifetime guard has no
+/// separate runtime branch here.
+fn gen_log_fields(cost_time: ChronoDuration, info: &ProcessInfo) -> Vec<Field> {
     let mut log_fields = Vec::with_capacity(20);
-    let secs = cost_time.num_microseconds().unwrap_or(i64::MAX) as f64 / 1_000_000.0;
+    let nanos = cost_time.num_nanoseconds().unwrap_or_else(|| {
+        if cost_time < ChronoDuration::zero() {
+            i64::MIN
+        } else {
+            i64::MAX
+        }
+    });
+    let secs = nanos as f64 / 1_000_000_000.0;
     log_fields.push(Field::new(
         "cost_time",
         Value::Str(format!("{}s", format_go_float(secs))),
@@ -756,17 +986,7 @@ fn gen_log_fields(
             )),
         ));
     }
-
-    const LOG_SQL_LEN: usize = 1024 * 8;
-    let mut sql = info.info.clone();
-    if sql.len() > LOG_SQL_LEN && need_truncate_sql {
-        let full_len = sql.len();
-        let mut cut = LOG_SQL_LEN;
-        while !sql.is_char_boundary(cut) {
-            cut -= 1;
-        }
-        sql = format!("{} len({})", &sql[..cut], full_len);
-    }
+    let sql = tidb_parser::normalize(&info.info, info.redact_sql);
     log_fields.push(Field::new("sql", Value::Str(sql)));
     log_fields.push(Field::new(
         "session_alias",
@@ -789,7 +1009,7 @@ fn format_go_float(v: f64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::atomic::Ordering;
 
     use chrono::TimeZone;
 
@@ -808,7 +1028,7 @@ mod tests {
     impl MockConfigProvider {
         fn new(ratio: f64, keep_num: i64, component_name: &str) -> MockConfigProvider {
             MockConfigProvider {
-                log_dir: PathBuf::new(),
+                log_dir: std::env::temp_dir(),
                 component_name: component_name.to_owned(),
                 ratio: std::sync::Mutex::new(ratio),
                 keep_num: std::sync::atomic::AtomicI64::new(keep_num),
@@ -840,103 +1060,80 @@ mod tests {
         }
     }
 
-    /// Test stand-in for the Go `memory` package globals: the Go tests store
-    /// into `memory.ServerMemoryLimit` directly; here the same knob lives on
-    /// the injected provider (module narrowing).
-    #[derive(Default)]
-    struct MockMemoryState {
-        server_memory_limit: AtomicU64,
-    }
+    struct RestoreServerMemoryLimit(u64);
 
-    impl MemoryStateProvider for MockMemoryState {
-        fn server_memory_limit(&self) -> u64 {
-            self.server_memory_limit.load(Ordering::SeqCst)
-        }
-
-        fn mem_total(&self) -> Result<u64, String> {
-            // Any positive stand-in for the machine total works: the Go
-            // assertions scale against `record.serverMemoryLimit`.
-            Ok(16 << 30)
-        }
-
-        fn mem_used(&self) -> Result<u64, String> {
-            Ok(0)
-        }
-
-        fn read_mem_stats(&self) -> InstanceMemStats {
-            InstanceMemStats::default()
+    impl RestoreServerMemoryLimit {
+        fn set(value: u64) -> Self {
+            Self(crate::memory::SERVER_MEMORY_LIMIT.swap(value, Ordering::SeqCst))
         }
     }
 
-    struct NoopProfileRecorder;
-
-    impl ProfileRecorder for NoopProfileRecorder {
-        fn record_profile(&self, _record_dir: &Path) -> Result<(), String> {
-            Ok(())
+    impl Drop for RestoreServerMemoryLimit {
+        fn drop(&mut self) {
+            crate::memory::SERVER_MEMORY_LIMIT.store(self.0, Ordering::SeqCst);
         }
     }
 
-    fn new_record(mock_state: Arc<MockMemoryState>, ratio: f64, keep_num: i64) -> MemoryUsageAlarm {
-        MemoryUsageAlarm::new(
-            Arc::new(MockConfigProvider::new(ratio, keep_num, "test-component")),
-            mock_state,
-            Arc::new(NoopProfileRecorder),
-        )
-    }
-
-    fn new_record_with_config(
-        config: Arc<MockConfigProvider>,
-        mock_state: Arc<MockMemoryState>,
-    ) -> MemoryUsageAlarm {
-        MemoryUsageAlarm::new(config, mock_state, Arc::new(NoopProfileRecorder))
+    fn new_record(ratio: f64, keep_num: i64) -> MemoryUsageAlarm {
+        MemoryUsageAlarm::new(Arc::new(MockConfigProvider::new(
+            ratio,
+            keep_num,
+            "test-component",
+        )))
     }
 
     /// Go test `TestIfNeedDoRecord`.
     #[test]
     fn test_if_need_do_record() {
-        let mut record = new_record(Arc::new(MockMemoryState::default()), 0.7, 5);
-        record.init_memory_usage_alarm_record(Utc::now());
-        assert!(record.err.is_none());
+        let _test_guard = crate::global_logger_test_guard();
+        let _restore = RestoreServerMemoryLimit::set(16 << 30);
+        let mut record = new_record(0.7, 5);
+        record.init_memory_usage_alarm_record();
 
         // mem usage ratio < 70% will not be recorded
         let mem_used = (0.69 * record.server_memory_limit as f64) as u64;
-        let (need_record, reason) = record.need_record(mem_used, Utc::now());
+        let (need_record, reason) = record.need_record(mem_used);
         assert!(!need_record);
         assert_eq!(AlarmReason::NoReason, reason);
 
         // mem usage ratio > 70% will not be recorded
         let mem_used = (0.71 * record.server_memory_limit as f64) as u64;
-        let (need_record, reason) = record.need_record(mem_used, Utc::now());
+        let (need_record, reason) = record.need_record(mem_used);
         assert!(need_record);
         assert_eq!(AlarmReason::ExceedAlarmRatio, reason);
         record.last_check_time = Utc::now();
+        record.last_check_instant = Some(Instant::now());
         record.last_record_mem_used = mem_used;
 
         // check time - last record time < 60s will not be recorded
         let mem_used = (0.71 * record.server_memory_limit as f64) as u64;
-        let (need_record, reason) = record.need_record(mem_used, Utc::now());
+        let (need_record, reason) = record.need_record(mem_used);
         assert!(!need_record);
         assert_eq!(AlarmReason::NoReason, reason);
 
         // check time - last record time > 60s will be recorded
         record.last_check_time -= ChronoDuration::seconds(60);
+        record.last_check_instant = record
+            .last_check_instant
+            .and_then(|instant| instant.checked_sub(Duration::from_secs(60)));
         let mem_used = (0.71 * record.server_memory_limit as f64) as u64;
-        let (need_record, reason) = record.need_record(mem_used, Utc::now());
+        let (need_record, reason) = record.need_record(mem_used);
         assert!(need_record);
         assert_eq!(AlarmReason::ExceedAlarmRatio, reason);
         record.last_check_time = Utc::now();
+        record.last_check_instant = Some(Instant::now());
         record.last_record_mem_used = mem_used;
 
         // mem usage ratio - last mem usage ratio < 10% will not be recorded
         let mem_used = (0.80 * record.server_memory_limit as f64) as u64;
-        let (need_record, reason) = record.need_record(mem_used, Utc::now());
+        let (need_record, reason) = record.need_record(mem_used);
         assert!(!need_record);
         assert_eq!(AlarmReason::NoReason, reason);
 
         // mem usage ratio - last mem usage ratio > 10% will be recorded even
         // though check time - last record time < 60s
         let mem_used = (0.82 * record.server_memory_limit as f64) as u64;
-        let (need_record, reason) = record.need_record(mem_used, Utc::now());
+        let (need_record, reason) = record.need_record(mem_used);
         assert!(need_record);
         assert_eq!(AlarmReason::GrowTooFast, reason);
     }
@@ -972,24 +1169,26 @@ mod tests {
     /// Go literals.
     #[test]
     fn test_get_top10_sql() {
-        let mut record = new_record(Arc::new(MockMemoryState::default()), 0.7, 5);
-        record.init_memory_usage_alarm_record(Utc::now());
+        let _test_guard = crate::global_logger_test_guard();
+        let _restore = RestoreServerMemoryLimit::set(0);
+        let mut record = new_record(0.7, 5);
+        record.init_memory_usage_alarm_record();
         record.last_check_time = gen_time(123_456);
 
-        let process_info_list = gen_mock_process_info_list(
+        let mut process_info_list = gen_mock_process_info_list(
             &[1000, 87_263_523, 34_223],
             &[gen_time(1234), gen_time(123_456), gen_time(12)],
             3,
         );
-        let actual = record.get_top10_sql_info_by_memory_usage(&process_info_list);
+        let actual = record.get_top10_sql_info_by_memory_usage(&mut process_info_list);
         assert_eq!(
             "SQL 0: \ncost_time: 0s\ntxn_start_ts: 0\nmem_max: 87263523 Bytes (83.2 MB)\nsql: \nsession_alias: \naffected rows: 0\ntidb_mem_oom_action: CANCEL\ntidb_server_memory_limit: 0\ntidb_mem_quota_query: 0\ntidb_analyze_version: 0\ntidb_enable_rate_limit_action: false\ncurrent_analyze_plan: |id|estRows|task|access object|operator info|\nSQL 1: \ncost_time: 123444s\ntxn_start_ts: 0\nmem_max: 34223 Bytes (33.4 KB)\nsql: \nsession_alias: \naffected rows: 0\ntidb_mem_oom_action: CANCEL\ntidb_server_memory_limit: 0\ntidb_mem_quota_query: 0\ntidb_analyze_version: 0\ntidb_enable_rate_limit_action: false\ncurrent_analyze_plan: |id|estRows|task|access object|operator info|\nSQL 2: \ncost_time: 122222s\ntxn_start_ts: 0\nmem_max: 1000 Bytes (1000 Bytes)\nsql: \nsession_alias: \naffected rows: 0\ntidb_mem_oom_action: CANCEL\ntidb_server_memory_limit: 0\ntidb_mem_quota_query: 0\ntidb_analyze_version: 0\ntidb_enable_rate_limit_action: false\ncurrent_analyze_plan: |id|estRows|task|access object|operator info|\n\n",
             actual
         );
-        let actual = record.get_top10_sql_info_by_cost_time(&process_info_list);
+        let actual = record.get_top10_sql_info_by_cost_time(&mut process_info_list);
         assert_eq!("SQL 0: \ncost_time: 123444s\ntxn_start_ts: 0\nmem_max: 34223 Bytes (33.4 KB)\nsql: \nsession_alias: \naffected rows: 0\ntidb_mem_oom_action: CANCEL\ntidb_server_memory_limit: 0\ntidb_mem_quota_query: 0\ntidb_analyze_version: 0\ntidb_enable_rate_limit_action: false\ncurrent_analyze_plan: |id|estRows|task|access object|operator info|\nSQL 1: \ncost_time: 122222s\ntxn_start_ts: 0\nmem_max: 1000 Bytes (1000 Bytes)\nsql: \nsession_alias: \naffected rows: 0\ntidb_mem_oom_action: CANCEL\ntidb_server_memory_limit: 0\ntidb_mem_quota_query: 0\ntidb_analyze_version: 0\ntidb_enable_rate_limit_action: false\ncurrent_analyze_plan: |id|estRows|task|access object|operator info|\nSQL 2: \ncost_time: 0s\ntxn_start_ts: 0\nmem_max: 87263523 Bytes (83.2 MB)\nsql: \nsession_alias: \naffected rows: 0\ntidb_mem_oom_action: CANCEL\ntidb_server_memory_limit: 0\ntidb_mem_quota_query: 0\ntidb_analyze_version: 0\ntidb_enable_rate_limit_action: false\ncurrent_analyze_plan: |id|estRows|task|access object|operator info|\n\n", actual);
 
-        let process_info_list = gen_mock_process_info_list(
+        let mut process_info_list = gen_mock_process_info_list(
             &[
                 1000,
                 87_263_523,
@@ -1022,24 +1221,22 @@ mod tests {
             ],
             13,
         );
-        let actual = record.get_top10_sql_info_by_memory_usage(&process_info_list);
+        let actual = record.get_top10_sql_info_by_memory_usage(&mut process_info_list);
         assert_eq!("SQL 0: \ncost_time: 111222s\ntxn_start_ts: 0\nmem_max: 12515134234 Bytes (11.7 GB)\nsql: \nsession_alias: \naffected rows: 0\ntidb_mem_oom_action: CANCEL\ntidb_server_memory_limit: 0\ntidb_mem_quota_query: 0\ntidb_analyze_version: 0\ntidb_enable_rate_limit_action: false\ncurrent_analyze_plan: |id|estRows|task|access object|operator info|\nSQL 1: \ncost_time: 120241s\ntxn_start_ts: 0\nmem_max: 231231515 Bytes (220.5 MB)\nsql: \nsession_alias: \naffected rows: 0\ntidb_mem_oom_action: CANCEL\ntidb_server_memory_limit: 0\ntidb_mem_quota_query: 0\ntidb_analyze_version: 0\ntidb_enable_rate_limit_action: false\ncurrent_analyze_plan: |id|estRows|task|access object|operator info|\nSQL 2: \ncost_time: 110941s\ntxn_start_ts: 0\nmem_max: 123225151 Bytes (117.5 MB)\nsql: \nsession_alias: \naffected rows: 0\ntidb_mem_oom_action: CANCEL\ntidb_server_memory_limit: 0\ntidb_mem_quota_query: 0\ntidb_analyze_version: 0\ntidb_enable_rate_limit_action: false\ncurrent_analyze_plan: |id|estRows|task|access object|operator info|\nSQL 3: \ncost_time: 101234s\ntxn_start_ts: 0\nmem_max: 123123123 Bytes (117.4 MB)\nsql: \nsession_alias: \naffected rows: 0\ntidb_mem_oom_action: CANCEL\ntidb_server_memory_limit: 0\ntidb_mem_quota_query: 0\ntidb_analyze_version: 0\ntidb_enable_rate_limit_action: false\ncurrent_analyze_plan: |id|estRows|task|access object|operator info|\nSQL 4: \ncost_time: 0s\ntxn_start_ts: 0\nmem_max: 87263523 Bytes (83.2 MB)\nsql: \nsession_alias: \naffected rows: 0\ntidb_mem_oom_action: CANCEL\ntidb_server_memory_limit: 0\ntidb_mem_quota_query: 0\ntidb_analyze_version: 0\ntidb_enable_rate_limit_action: false\ncurrent_analyze_plan: |id|estRows|task|access object|operator info|\nSQL 5: \ncost_time: 112345s\ntxn_start_ts: 0\nmem_max: 15263236 Bytes (14.6 MB)\nsql: \nsession_alias: \naffected rows: 0\ntidb_mem_oom_action: CANCEL\ntidb_server_memory_limit: 0\ntidb_mem_quota_query: 0\ntidb_analyze_version: 0\ntidb_enable_rate_limit_action: false\ncurrent_analyze_plan: |id|estRows|task|access object|operator info|\nSQL 6: \ncost_time: 120215s\ntxn_start_ts: 0\nmem_max: 532355 Bytes (519.9 KB)\nsql: \nsession_alias: \naffected rows: 0\ntidb_mem_oom_action: CANCEL\ntidb_server_memory_limit: 0\ntidb_mem_quota_query: 0\ntidb_analyze_version: 0\ntidb_enable_rate_limit_action: false\ncurrent_analyze_plan: |id|estRows|task|access object|operator info|\nSQL 7: \ncost_time: 123444s\ntxn_start_ts: 0\nmem_max: 34223 Bytes (33.4 KB)\nsql: \nsession_alias: \naffected rows: 0\ntidb_mem_oom_action: CANCEL\ntidb_server_memory_limit: 0\ntidb_mem_quota_query: 0\ntidb_analyze_version: 0\ntidb_enable_rate_limit_action: false\ncurrent_analyze_plan: |id|estRows|task|access object|operator info|\nSQL 8: \ncost_time: 122944s\ntxn_start_ts: 0\nmem_max: 12414 Bytes (12.1 KB)\nsql: \nsession_alias: \naffected rows: 0\ntidb_mem_oom_action: CANCEL\ntidb_server_memory_limit: 0\ntidb_mem_quota_query: 0\ntidb_analyze_version: 0\ntidb_enable_rate_limit_action: false\ncurrent_analyze_plan: |id|estRows|task|access object|operator info|\nSQL 9: \ncost_time: 62142s\ntxn_start_ts: 0\nmem_max: 12312 Bytes (12.0 KB)\nsql: \nsession_alias: \naffected rows: 0\ntidb_mem_oom_action: CANCEL\ntidb_server_memory_limit: 0\ntidb_mem_quota_query: 0\ntidb_analyze_version: 0\ntidb_enable_rate_limit_action: false\ncurrent_analyze_plan: |id|estRows|task|access object|operator info|\n\n", actual);
-        let actual = record.get_top10_sql_info_by_cost_time(&process_info_list);
+        let actual = record.get_top10_sql_info_by_cost_time(&mut process_info_list);
         assert_eq!("SQL 0: \ncost_time: 123444s\ntxn_start_ts: 0\nmem_max: 34223 Bytes (33.4 KB)\nsql: \nsession_alias: \naffected rows: 0\ntidb_mem_oom_action: CANCEL\ntidb_server_memory_limit: 0\ntidb_mem_quota_query: 0\ntidb_analyze_version: 0\ntidb_enable_rate_limit_action: false\ncurrent_analyze_plan: |id|estRows|task|access object|operator info|\nSQL 1: \ncost_time: 122944s\ntxn_start_ts: 0\nmem_max: 12414 Bytes (12.1 KB)\nsql: \nsession_alias: \naffected rows: 0\ntidb_mem_oom_action: CANCEL\ntidb_server_memory_limit: 0\ntidb_mem_quota_query: 0\ntidb_analyze_version: 0\ntidb_enable_rate_limit_action: false\ncurrent_analyze_plan: |id|estRows|task|access object|operator info|\nSQL 2: \ncost_time: 122333s\ntxn_start_ts: 0\nmem_max: 232 Bytes (232 Bytes)\nsql: \nsession_alias: \naffected rows: 0\ntidb_mem_oom_action: CANCEL\ntidb_server_memory_limit: 0\ntidb_mem_quota_query: 0\ntidb_analyze_version: 0\ntidb_enable_rate_limit_action: false\ncurrent_analyze_plan: |id|estRows|task|access object|operator info|\nSQL 3: \ncost_time: 122222s\ntxn_start_ts: 0\nmem_max: 1000 Bytes (1000 Bytes)\nsql: \nsession_alias: \naffected rows: 0\ntidb_mem_oom_action: CANCEL\ntidb_server_memory_limit: 0\ntidb_mem_quota_query: 0\ntidb_analyze_version: 0\ntidb_enable_rate_limit_action: false\ncurrent_analyze_plan: |id|estRows|task|access object|operator info|\nSQL 4: \ncost_time: 120241s\ntxn_start_ts: 0\nmem_max: 231231515 Bytes (220.5 MB)\nsql: \nsession_alias: \naffected rows: 0\ntidb_mem_oom_action: CANCEL\ntidb_server_memory_limit: 0\ntidb_mem_quota_query: 0\ntidb_analyze_version: 0\ntidb_enable_rate_limit_action: false\ncurrent_analyze_plan: |id|estRows|task|access object|operator info|\nSQL 5: \ncost_time: 120215s\ntxn_start_ts: 0\nmem_max: 532355 Bytes (519.9 KB)\nsql: \nsession_alias: \naffected rows: 0\ntidb_mem_oom_action: CANCEL\ntidb_server_memory_limit: 0\ntidb_mem_quota_query: 0\ntidb_analyze_version: 0\ntidb_enable_rate_limit_action: false\ncurrent_analyze_plan: |id|estRows|task|access object|operator info|\nSQL 6: \ncost_time: 117944s\ntxn_start_ts: 0\nmem_max: 15 Bytes (15 Bytes)\nsql: \nsession_alias: \naffected rows: 0\ntidb_mem_oom_action: CANCEL\ntidb_server_memory_limit: 0\ntidb_mem_quota_query: 0\ntidb_analyze_version: 0\ntidb_enable_rate_limit_action: false\ncurrent_analyze_plan: |id|estRows|task|access object|operator info|\nSQL 7: \ncost_time: 112345s\ntxn_start_ts: 0\nmem_max: 15263236 Bytes (14.6 MB)\nsql: \nsession_alias: \naffected rows: 0\ntidb_mem_oom_action: CANCEL\ntidb_server_memory_limit: 0\ntidb_mem_quota_query: 0\ntidb_analyze_version: 0\ntidb_enable_rate_limit_action: false\ncurrent_analyze_plan: |id|estRows|task|access object|operator info|\nSQL 8: \ncost_time: 111222s\ntxn_start_ts: 0\nmem_max: 12515134234 Bytes (11.7 GB)\nsql: \nsession_alias: \naffected rows: 0\ntidb_mem_oom_action: CANCEL\ntidb_server_memory_limit: 0\ntidb_mem_quota_query: 0\ntidb_analyze_version: 0\ntidb_enable_rate_limit_action: false\ncurrent_analyze_plan: |id|estRows|task|access object|operator info|\nSQL 9: \ncost_time: 110941s\ntxn_start_ts: 0\nmem_max: 123225151 Bytes (117.5 MB)\nsql: \nsession_alias: \naffected rows: 0\ntidb_mem_oom_action: CANCEL\ntidb_server_memory_limit: 0\ntidb_mem_quota_query: 0\ntidb_analyze_version: 0\ntidb_enable_rate_limit_action: false\ncurrent_analyze_plan: |id|estRows|task|access object|operator info|\n\n", actual);
     }
 
-    /// Go test `TestUpdateVariables`. Adaptation: Go stores into the
-    /// `memory.ServerMemoryLimit` package global; the narrowed provider knob
-    /// takes its place.
+    /// Go test `TestUpdateVariables`.
     #[test]
     fn test_update_variables() {
+        let _test_guard = crate::global_logger_test_guard();
+        let _restore = RestoreServerMemoryLimit::set(1024);
         let mock_config = Arc::new(MockConfigProvider::new(0.3, 3, "test-component"));
-        let mock_state = Arc::new(MockMemoryState::default());
-        mock_state.server_memory_limit.store(1024, Ordering::SeqCst);
+        let config_provider: Arc<dyn ConfigProvider> = mock_config.clone();
+        let mut record = MemoryUsageAlarm::new(config_provider);
 
-        let mut record = new_record_with_config(Arc::clone(&mock_config), Arc::clone(&mock_state));
-
-        record.init_memory_usage_alarm_record(Utc::now());
+        record.init_memory_usage_alarm_record();
         assert_eq!(0.3, record.config_provider.get_memory_usage_alarm_ratio());
         assert_eq!(
             3,
@@ -1051,9 +1248,9 @@ mod tests {
 
         *mock_config.ratio.lock().unwrap() = 0.6;
         mock_config.keep_num.store(6, Ordering::SeqCst);
-        mock_state.server_memory_limit.store(2048, Ordering::SeqCst);
+        crate::memory::SERVER_MEMORY_LIMIT.store(2048, Ordering::SeqCst);
 
-        record.update_variable(Utc::now());
+        record.update_variable();
         assert_eq!(0.6, record.config_provider.get_memory_usage_alarm_ratio());
         assert_eq!(
             6,
@@ -1063,7 +1260,10 @@ mod tests {
         );
         assert_eq!(1024, record.server_memory_limit);
         record.last_update_variable_time -= ChronoDuration::seconds(60);
-        record.update_variable(Utc::now());
+        record.last_update_variable_instant = record
+            .last_update_variable_instant
+            .and_then(|instant| instant.checked_sub(Duration::from_secs(60)));
+        record.update_variable();
         assert_eq!(0.6, record.config_provider.get_memory_usage_alarm_ratio());
         assert_eq!(
             6,
@@ -1072,5 +1272,15 @@ mod tests {
                 .get_memory_usage_alarm_keep_record_num()
         );
         assert_eq!(2048, record.server_memory_limit);
+    }
+
+    /// Go test `TestRecordGoroutineProfileWithBackgroundGoroutine`.
+    #[test]
+    fn test_record_goroutine_profile_with_background_goroutine() {
+        let record_dir = tempfile::tempdir().unwrap();
+        record_thread_profile(record_dir.path()).unwrap();
+        let content = fs::read_to_string(record_dir.path().join("goroutine")).unwrap();
+        assert!(!content.is_empty());
+        assert!(content.contains("thread "));
     }
 }

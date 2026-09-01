@@ -22,11 +22,14 @@ use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use chrono::{DateTime, Utc};
-use tidb_exec::exec_details::{get_ia_remote_read_segment_stats, ExecDetails};
-use tidb_exec::slow_log_format::{RuDetailsSnapshot, TikvExecDetailsSnapshot};
+use tidb_exec::exec_details::{get_ia_remote_read_segment_stats, CopTasksSummary, ExecDetails};
 use tidb_kvcache::{CacheKey, InvalidCapacity, SimpleLruCache};
 use tidb_util::plancodec::{BINARY_PLAN_DISCARDED_ENCODED, PLAN_DISCARDED_ENCODED};
 use tidb_util::ppcpuusage::CpuUsages;
+use tikv_client::util::ExecDetailsSnapshot;
+#[cfg(test)]
+use tikv_client::util::TrafficDetailsSnapshot;
+use tikv_client::RuDetails;
 
 use crate::reader::StmtSummaryChecker;
 
@@ -179,27 +182,6 @@ impl StmtSummaryStmtCtx {
     }
 }
 
-/// Go `execdetails.CopTasksSummary`: the coprocessor-task rollup
-/// `stmtSummaryStats.add` reads. Declared here because `tidb-exec` does not
-/// carry it yet.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct CopTasksSummary {
-    /// Go `CopTasksSummary.NumCopTasks` (`int`).
-    pub num_cop_tasks: i64,
-    /// Go `CopTasksSummary.MaxProcessAddress`.
-    pub max_process_address: String,
-    /// Go `CopTasksSummary.MaxProcessTime`.
-    pub max_process_time: Duration,
-    /// Go `CopTasksSummary.TotProcessTime`.
-    pub tot_process_time: Duration,
-    /// Go `CopTasksSummary.MaxWaitAddress`.
-    pub max_wait_address: String,
-    /// Go `CopTasksSummary.MaxWaitTime`.
-    pub max_wait_time: Duration,
-    /// Go `CopTasksSummary.TotWaitTime`.
-    pub tot_wait_time: Duration,
-}
-
 /// The error Go returns as the third (`any`) result of
 /// `StmtExecLazyInfo.GetEncodedPlan`.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -277,7 +259,7 @@ pub struct StmtExecInfo {
     /// Go `StmtExecInfo.ResultRows`.
     pub result_rows: i64,
     /// Go `StmtExecInfo.TiKVExecDetails`, already loaded out of its atomics.
-    pub tikv_exec_details: Option<TikvExecDetailsSnapshot>,
+    pub tikv_exec_details: Option<ExecDetailsSnapshot>,
     /// Go `StmtExecInfo.Prepared`.
     pub prepared: bool,
     /// Go `StmtExecInfo.KeyspaceName`.
@@ -286,8 +268,8 @@ pub struct StmtExecInfo {
     pub keyspace_id: u32,
     /// Go `StmtExecInfo.ResourceGroupName`.
     pub resource_group_name: String,
-    /// Go `StmtExecInfo.RUDetail`, already read through its accessors.
-    pub ru_detail: Option<RuDetailsSnapshot>,
+    /// Go `StmtExecInfo.RUDetail`.
+    pub ru_detail: Option<Arc<RuDetails>>,
     /// Go `StmtExecInfo.TotalRUV2`.
     pub total_ru_v2: f64,
     /// Go `StmtExecInfo.CPUUsages`.
@@ -322,19 +304,19 @@ pub struct StmtRuSummary {
 impl StmtRuSummary {
     /// Go `(*StmtRUSummary).Add`: adds a new sample value to the ru summary
     /// record.
-    pub fn add(&mut self, info: Option<&RuDetailsSnapshot>, total_ru_v2: f64) {
+    pub fn add(&mut self, info: Option<&RuDetails>, total_ru_v2: f64) {
         if let Some(info) = info {
-            let rru = info.rru;
+            let rru = info.read_ru();
             self.sum_rru += rru;
             if self.max_rru < rru {
                 self.max_rru = rru;
             }
-            let wru = info.wru;
+            let wru = info.write_ru();
             self.sum_wru += wru;
             if self.max_wru < wru {
                 self.max_wru = wru;
             }
-            let ru_wait_dur = info.ru_wait_duration;
+            let ru_wait_dur = info.ru_wait_duration();
             self.sum_ru_wait_duration += ru_wait_dur;
             if self.max_ru_wait_duration < ru_wait_dur {
                 self.max_ru_wait_duration = ru_wait_dur;
@@ -408,20 +390,18 @@ impl StmtNetworkTrafficSummary {
     }
 
     /// Go `(*StmtNetworkTrafficSummary).Add`.
-    pub fn add(&mut self, info: Option<&TikvExecDetailsSnapshot>) {
+    pub fn add(&mut self, info: Option<&ExecDetailsSnapshot>) {
         let Some(snapshot) = info else {
             return;
         };
-        self.unpacked_bytes_sent_tikv_total += snapshot.unpacked_bytes_sent_kv_total;
-        self.unpacked_bytes_received_tikv_total += snapshot.unpacked_bytes_received_kv_total;
-        self.unpacked_bytes_sent_tikv_cross_zone += snapshot.unpacked_bytes_sent_kv_cross_zone;
-        self.unpacked_bytes_received_tikv_cross_zone +=
-            snapshot.unpacked_bytes_received_kv_cross_zone;
-        self.unpacked_bytes_sent_tiflash_total += snapshot.unpacked_bytes_sent_mpp_total;
-        self.unpacked_bytes_received_tiflash_total += snapshot.unpacked_bytes_received_mpp_total;
-        self.unpacked_bytes_sent_tiflash_cross_zone += snapshot.unpacked_bytes_sent_mpp_cross_zone;
-        self.unpacked_bytes_received_tiflash_cross_zone +=
-            snapshot.unpacked_bytes_received_mpp_cross_zone;
+        self.unpacked_bytes_sent_tikv_total += snapshot.traffic.sent_kv_total;
+        self.unpacked_bytes_received_tikv_total += snapshot.traffic.received_kv_total;
+        self.unpacked_bytes_sent_tikv_cross_zone += snapshot.traffic.sent_kv_cross_zone;
+        self.unpacked_bytes_received_tikv_cross_zone += snapshot.traffic.received_kv_cross_zone;
+        self.unpacked_bytes_sent_tiflash_total += snapshot.traffic.sent_mpp_total;
+        self.unpacked_bytes_received_tiflash_total += snapshot.traffic.received_mpp_total;
+        self.unpacked_bytes_sent_tiflash_cross_zone += snapshot.traffic.sent_mpp_cross_zone;
+        self.unpacked_bytes_received_tiflash_cross_zone += snapshot.traffic.received_mpp_cross_zone;
     }
 }
 
@@ -892,9 +872,9 @@ impl StmtSummaryStats {
             if scan_detail.rocksdb_block_read_count > self.max_rocksdb_block_read_count {
                 self.max_rocksdb_block_read_count = scan_detail.rocksdb_block_read_count;
             }
-            self.sum_rocksdb_block_read_byte += scan_detail.rocksdb_block_read_byte;
-            if scan_detail.rocksdb_block_read_byte > self.max_rocksdb_block_read_byte {
-                self.max_rocksdb_block_read_byte = scan_detail.rocksdb_block_read_byte;
+            self.sum_rocksdb_block_read_byte += scan_detail.rocksdb_block_read_bytes;
+            if scan_detail.rocksdb_block_read_bytes > self.max_rocksdb_block_read_byte {
+                self.max_rocksdb_block_read_byte = scan_detail.rocksdb_block_read_bytes;
             }
             let ia_stats = get_ia_remote_read_segment_stats(Some(scan_detail));
             self.sum_ia_remote_read_segment_count += ia_stats.count;
@@ -926,7 +906,7 @@ impl StmtSummaryStats {
             if commit_details.get_commit_ts_time > self.max_get_commit_ts_time {
                 self.max_get_commit_ts_time = commit_details.get_commit_ts_time;
             }
-            let resolve_lock_time = commit_details.resolve_lock.resolve_lock_time;
+            let resolve_lock_time = commit_details.resolve_lock.resolve_lock_time_ns;
             self.sum_resolve_lock_time += resolve_lock_time;
             if resolve_lock_time > self.max_resolve_lock_time {
                 self.max_resolve_lock_time = resolve_lock_time;
@@ -935,34 +915,37 @@ impl StmtSummaryStats {
             if commit_details.local_latch_time > self.max_local_latch_time {
                 self.max_local_latch_time = commit_details.local_latch_time;
             }
-            self.sum_write_keys += commit_details.write_keys;
-            if commit_details.write_keys > self.max_write_keys {
-                self.max_write_keys = commit_details.write_keys;
+            let write_keys = commit_details.write_keys as i64;
+            self.sum_write_keys += write_keys;
+            if write_keys > self.max_write_keys {
+                self.max_write_keys = write_keys;
             }
-            self.sum_write_size += commit_details.write_size;
-            if commit_details.write_size > self.max_write_size {
-                self.max_write_size = commit_details.write_size;
+            let write_size = commit_details.write_size as i64;
+            self.sum_write_size += write_size;
+            if write_size > self.max_write_size {
+                self.max_write_size = write_size;
             }
             let prewrite_region_num = commit_details.prewrite_region_num;
             self.sum_prewrite_region_num += i64::from(prewrite_region_num);
             if prewrite_region_num > self.max_prewrite_region_num {
                 self.max_prewrite_region_num = prewrite_region_num;
             }
-            self.sum_txn_retry += commit_details.txn_retry;
-            if commit_details.txn_retry > self.max_txn_retry {
-                self.max_txn_retry = commit_details.txn_retry;
+            let transaction_retry = commit_details.transaction_retry as i64;
+            self.sum_txn_retry += transaction_retry;
+            if transaction_retry > self.max_txn_retry {
+                self.max_txn_retry = transaction_retry;
             }
-            let commit_backoff_time = commit_details.commit_backoff_time;
+            let commit_backoff_time = commit_details.detail.commit_backoff_time_ns;
             self.sum_commit_backoff_time += commit_backoff_time;
             if commit_backoff_time > self.max_commit_backoff_time {
                 self.max_commit_backoff_time = commit_backoff_time;
             }
-            self.sum_backoff_times += commit_details.prewrite_backoff_types.len() as i64;
-            for backoff_type in &commit_details.prewrite_backoff_types {
+            self.sum_backoff_times += commit_details.detail.prewrite_backoff_types.len() as i64;
+            for backoff_type in &commit_details.detail.prewrite_backoff_types {
                 *self.backoff_types.entry(backoff_type.clone()).or_insert(0) += 1;
             }
-            self.sum_backoff_times += commit_details.commit_backoff_types.len() as i64;
-            for backoff_type in &commit_details.commit_backoff_types {
+            self.sum_backoff_times += commit_details.detail.commit_backoff_types.len() as i64;
+            for backoff_type in &commit_details.detail.commit_backoff_types {
                 *self.backoff_types.entry(backoff_type.clone()).or_insert(0) += 1;
             }
         }
@@ -1021,9 +1004,9 @@ impl StmtSummaryStats {
             self.min_result_rows = 0;
         }
         if let Some(tikv) = sei.tikv_exec_details.as_ref() {
-            self.sum_kv_total += nanos_to_duration(tikv.wait_kv_resp_duration);
-            self.sum_pd_total += nanos_to_duration(tikv.wait_pd_resp_duration);
-            self.sum_backoff_total += nanos_to_duration(tikv.backoff_duration);
+            self.sum_kv_total += nanos_to_duration(tikv.wait_kv_response_duration_ns);
+            self.sum_pd_total += nanos_to_duration(tikv.wait_pd_response_duration_ns);
+            self.sum_backoff_total += nanos_to_duration(tikv.backoff_duration_ns);
         }
         self.sum_write_sql_resp_total += sei.write_sql_resp_duration;
         self.sum_tidb_cpu = self.sum_tidb_cpu.wrapping_add(sei.cpu_usages.tidb_cpu_time);
@@ -1033,7 +1016,7 @@ impl StmtSummaryStats {
         self.network.add(sei.tikv_exec_details.as_ref());
 
         // request-units
-        self.ru.add(sei.ru_detail.as_ref(), sei.total_ru_v2);
+        self.ru.add(sei.ru_detail.as_deref(), sei.total_ru_v2);
 
         self.storage_kv = sei.stmt_ctx.is_tikv.load(Ordering::SeqCst);
         self.storage_mpp = sei.stmt_ctx.is_tiflash.load(Ordering::SeqCst);
@@ -1856,7 +1839,8 @@ pub(crate) mod tests {
     use std::thread;
 
     use tidb_exec::exec_details::{
-        CommitDetails, CopExecDetails, ResolveLockDetail, ScanDetail, TimeDetail,
+        CommitDetails, CommitDetailsInner, CopExecDetails, ResolveLockDetail, ScanDetail,
+        TimeDetail,
     };
 
     use super::*;
@@ -1982,15 +1966,17 @@ pub(crate) mod tests {
                     prewrite_time: Duration::from_nanos(10000),
                     commit_time: Duration::from_nanos(1000),
                     local_latch_time: Duration::from_nanos(10),
-                    commit_backoff_time: 200,
-                    prewrite_backoff_types: vec![BO_TXN_LOCK_NAME.to_owned()],
-                    commit_backoff_types: Vec::new(),
+                    detail: CommitDetailsInner {
+                        commit_backoff_time_ns: 200,
+                        prewrite_backoff_types: vec![BO_TXN_LOCK_NAME.to_owned()],
+                        ..CommitDetailsInner::default()
+                    },
                     write_keys: 20000,
                     write_size: 200_000,
                     prewrite_region_num: 20,
-                    txn_retry: 2,
+                    transaction_retry: 2,
                     resolve_lock: ResolveLockDetail {
-                        resolve_lock_time: 2000,
+                        resolve_lock_time_ns: 2000,
                     },
                     ..CommitDetails::default()
                 }),
@@ -2003,7 +1989,7 @@ pub(crate) mod tests {
                         rocksdb_key_skipped_count: 10,
                         rocksdb_block_cache_hit_count: 10,
                         rocksdb_block_read_count: 10,
-                        rocksdb_block_read_byte: 1000,
+                        rocksdb_block_read_bytes: 1000,
                         ..ScanDetail::default()
                     }),
                     time_detail: TimeDetail {
@@ -2012,6 +1998,7 @@ pub(crate) mod tests {
                         ..TimeDetail::default()
                     },
                     callee_address: "129".to_owned(),
+                    ..CopExecDetails::default()
                 },
                 ..ExecDetails::default()
             },
@@ -2027,23 +2014,25 @@ pub(crate) mod tests {
             exec_retry_time: Duration::ZERO,
             write_sql_resp_duration: Duration::ZERO,
             result_rows: 0,
-            tikv_exec_details: Some(TikvExecDetailsSnapshot {
-                unpacked_bytes_sent_kv_total: 10,
-                unpacked_bytes_received_kv_total: 1000,
-                unpacked_bytes_received_kv_cross_zone: 1,
-                unpacked_bytes_sent_kv_cross_zone: 100,
-                ..TikvExecDetailsSnapshot::default()
+            tikv_exec_details: Some(ExecDetailsSnapshot {
+                traffic: TrafficDetailsSnapshot {
+                    sent_kv_total: 10,
+                    received_kv_total: 1000,
+                    received_kv_cross_zone: 1,
+                    sent_kv_cross_zone: 100,
+                    ..TrafficDetailsSnapshot::default()
+                },
+                ..ExecDetailsSnapshot::default()
             }),
             prepared: false,
             keyspace_name: String::new(),
             keyspace_id: 0,
             resource_group_name: "rg1".to_owned(),
-            ru_detail: Some(RuDetailsSnapshot {
-                rru: 1.1,
-                wru: 2.5,
-                ru_wait_duration: Duration::from_millis(2),
-                ..RuDetailsSnapshot::default()
-            }),
+            ru_detail: Some(Arc::new(RuDetails::new_with(
+                1.1,
+                2.5,
+                Duration::from_millis(2),
+            ))),
             total_ru_v2: 23456.0,
             cpu_usages: CpuUsages {
                 tidb_cpu_time: 20,
@@ -2196,6 +2185,7 @@ pub(crate) mod tests {
             .commit_detail
             .as_mut()
             .unwrap()
+            .detail
             .prewrite_backoff_types = Vec::new();
         let mut key = StmtDigestKey::new();
         key.init(
@@ -2217,7 +2207,7 @@ pub(crate) mod tests {
             .unwrap();
         let time1 = info1.exec_detail.cop_exec_details.time_detail.clone();
         let tikv1 = info1.tikv_exec_details.unwrap();
-        let ru1 = info1.ru_detail.unwrap();
+        let ru1 = info1.ru_detail.as_ref().unwrap();
 
         let mut expected_element = StmtSummaryByDigestElement {
             begin_time: now + 60,
@@ -2259,18 +2249,18 @@ pub(crate) mod tests {
                 max_commit_time: commit1.commit_time,
                 sum_local_latch_time: commit1.local_latch_time,
                 max_local_latch_time: commit1.local_latch_time,
-                sum_commit_backoff_time: commit1.commit_backoff_time,
-                max_commit_backoff_time: commit1.commit_backoff_time,
-                sum_resolve_lock_time: commit1.resolve_lock.resolve_lock_time,
-                max_resolve_lock_time: commit1.resolve_lock.resolve_lock_time,
-                sum_write_keys: commit1.write_keys,
-                max_write_keys: commit1.write_keys,
-                sum_write_size: commit1.write_size,
-                max_write_size: commit1.write_size,
+                sum_commit_backoff_time: commit1.detail.commit_backoff_time_ns,
+                max_commit_backoff_time: commit1.detail.commit_backoff_time_ns,
+                sum_resolve_lock_time: commit1.resolve_lock.resolve_lock_time_ns,
+                max_resolve_lock_time: commit1.resolve_lock.resolve_lock_time_ns,
+                sum_write_keys: commit1.write_keys as i64,
+                max_write_keys: commit1.write_keys as i64,
+                sum_write_size: commit1.write_size as i64,
+                max_write_size: commit1.write_size as i64,
                 sum_prewrite_region_num: i64::from(commit1.prewrite_region_num),
                 max_prewrite_region_num: commit1.prewrite_region_num,
-                sum_txn_retry: commit1.txn_retry,
-                max_txn_retry: commit1.txn_retry,
+                sum_txn_retry: commit1.transaction_retry as i64,
+                max_txn_retry: commit1.transaction_retry as i64,
                 backoff_types: HashMap::new(),
                 sum_mem: info1.mem_max,
                 max_mem: info1.mem_max,
@@ -2280,28 +2270,27 @@ pub(crate) mod tests {
                 first_seen: info1.start_time,
                 last_seen: info1.start_time,
                 ru: StmtRuSummary {
-                    sum_rru: ru1.rru,
-                    max_rru: ru1.rru,
-                    sum_wru: ru1.wru,
-                    max_wru: ru1.wru,
-                    sum_ru_wait_duration: ru1.ru_wait_duration,
-                    max_ru_wait_duration: ru1.ru_wait_duration,
+                    sum_rru: ru1.read_ru(),
+                    max_rru: ru1.read_ru(),
+                    sum_wru: ru1.write_ru(),
+                    max_wru: ru1.write_ru(),
+                    sum_ru_wait_duration: ru1.ru_wait_duration(),
+                    max_ru_wait_duration: ru1.ru_wait_duration(),
                     sum_ru_v2: info1.total_ru_v2,
                     max_ru_v2: info1.total_ru_v2,
                 },
                 resource_group_name: info1.resource_group_name.clone(),
                 network: StmtNetworkTrafficSummary {
-                    unpacked_bytes_sent_tikv_total: tikv1.unpacked_bytes_sent_kv_total,
-                    unpacked_bytes_received_tikv_total: tikv1.unpacked_bytes_received_kv_total,
-                    unpacked_bytes_sent_tikv_cross_zone: tikv1.unpacked_bytes_sent_kv_cross_zone,
-                    unpacked_bytes_received_tikv_cross_zone: tikv1
-                        .unpacked_bytes_received_kv_cross_zone,
-                    unpacked_bytes_sent_tiflash_total: tikv1.unpacked_bytes_sent_mpp_total,
-                    unpacked_bytes_received_tiflash_total: tikv1.unpacked_bytes_received_mpp_total,
-                    unpacked_bytes_sent_tiflash_cross_zone: tikv1
-                        .unpacked_bytes_sent_mpp_cross_zone,
+                    unpacked_bytes_sent_tikv_total: tikv1.traffic.sent_kv_total,
+                    unpacked_bytes_received_tikv_total: tikv1.traffic.received_kv_total,
+                    unpacked_bytes_sent_tikv_cross_zone: tikv1.traffic.sent_kv_cross_zone,
+                    unpacked_bytes_received_tikv_cross_zone: tikv1.traffic.received_kv_cross_zone,
+                    unpacked_bytes_sent_tiflash_total: tikv1.traffic.sent_mpp_total,
+                    unpacked_bytes_received_tiflash_total: tikv1.traffic.received_mpp_total,
+                    unpacked_bytes_sent_tiflash_cross_zone: tikv1.traffic.sent_mpp_cross_zone,
                     unpacked_bytes_received_tiflash_cross_zone: tikv1
-                        .unpacked_bytes_received_mpp_cross_zone,
+                        .traffic
+                        .received_mpp_cross_zone,
                 },
                 storage_kv: info1.stmt_ctx.is_tikv.load(Ordering::SeqCst),
                 storage_mpp: info1.stmt_ctx.is_tiflash.load(Ordering::SeqCst),
@@ -2361,15 +2350,17 @@ pub(crate) mod tests {
                     prewrite_time: Duration::from_nanos(50000),
                     commit_time: Duration::from_nanos(5000),
                     local_latch_time: Duration::from_nanos(50),
-                    commit_backoff_time: 1000,
-                    prewrite_backoff_types: vec![BO_TXN_LOCK_NAME.to_owned()],
-                    commit_backoff_types: Vec::new(),
+                    detail: CommitDetailsInner {
+                        commit_backoff_time_ns: 1000,
+                        prewrite_backoff_types: vec![BO_TXN_LOCK_NAME.to_owned()],
+                        ..CommitDetailsInner::default()
+                    },
                     write_keys: 100_000,
                     write_size: 1_000_000,
                     prewrite_region_num: 100,
-                    txn_retry: 10,
+                    transaction_retry: 10,
                     resolve_lock: ResolveLockDetail {
-                        resolve_lock_time: 10000,
+                        resolve_lock_time_ns: 10000,
                     },
                     ..CommitDetails::default()
                 }),
@@ -2382,7 +2373,7 @@ pub(crate) mod tests {
                         rocksdb_key_skipped_count: 10,
                         rocksdb_block_cache_hit_count: 10,
                         rocksdb_block_read_count: 10,
-                        rocksdb_block_read_byte: 1000,
+                        rocksdb_block_read_bytes: 1000,
                         ..ScanDetail::default()
                     }),
                     time_detail: TimeDetail {
@@ -2391,6 +2382,7 @@ pub(crate) mod tests {
                         ..TimeDetail::default()
                     },
                     callee_address: "202".to_owned(),
+                    ..CopExecDetails::default()
                 },
                 ..ExecDetails::default()
             },
@@ -2399,17 +2391,19 @@ pub(crate) mod tests {
             disk_max: 20000,
             start_time: start_time(10, 10, 20),
             succeed: true,
-            ru_detail: Some(RuDetailsSnapshot {
-                rru: 123.0,
-                wru: 45.6,
-                ru_wait_duration: Duration::from_secs(2),
-                ..RuDetailsSnapshot::default()
-            }),
+            ru_detail: Some(Arc::new(RuDetails::new_with(
+                123.0,
+                45.6,
+                Duration::from_secs(2),
+            ))),
             total_ru_v2: 34567.0,
-            tikv_exec_details: Some(TikvExecDetailsSnapshot {
-                unpacked_bytes_sent_kv_total: 100,
-                unpacked_bytes_received_kv_total: 200,
-                ..TikvExecDetailsSnapshot::default()
+            tikv_exec_details: Some(ExecDetailsSnapshot {
+                traffic: TrafficDetailsSnapshot {
+                    sent_kv_total: 100,
+                    received_kv_total: 200,
+                    ..TrafficDetailsSnapshot::default()
+                },
+                ..ExecDetailsSnapshot::default()
             }),
             resource_group_name: "rg1".to_owned(),
             lazy_info: mock_lazy_info("original_sql2", "binding_sql2", "binding_digest2"),
@@ -2441,7 +2435,7 @@ pub(crate) mod tests {
             .clone()
             .unwrap();
         let time2 = info2.exec_detail.cop_exec_details.time_detail.clone();
-        let ru2 = info2.ru_detail.unwrap();
+        let ru2 = info2.ru_detail.as_ref().unwrap();
         {
             let s = &mut expected_element.stats;
             s.exec_count += 1;
@@ -2477,18 +2471,18 @@ pub(crate) mod tests {
             s.max_commit_time = commit2.commit_time;
             s.sum_local_latch_time += commit2.local_latch_time;
             s.max_local_latch_time = commit2.local_latch_time;
-            s.sum_commit_backoff_time += commit2.commit_backoff_time;
-            s.max_commit_backoff_time = commit2.commit_backoff_time;
-            s.sum_resolve_lock_time += commit2.resolve_lock.resolve_lock_time;
-            s.max_resolve_lock_time = commit2.resolve_lock.resolve_lock_time;
-            s.sum_write_keys += commit2.write_keys;
-            s.max_write_keys = commit2.write_keys;
-            s.sum_write_size += commit2.write_size;
-            s.max_write_size = commit2.write_size;
+            s.sum_commit_backoff_time += commit2.detail.commit_backoff_time_ns;
+            s.max_commit_backoff_time = commit2.detail.commit_backoff_time_ns;
+            s.sum_resolve_lock_time += commit2.resolve_lock.resolve_lock_time_ns;
+            s.max_resolve_lock_time = commit2.resolve_lock.resolve_lock_time_ns;
+            s.sum_write_keys += commit2.write_keys as i64;
+            s.max_write_keys = commit2.write_keys as i64;
+            s.sum_write_size += commit2.write_size as i64;
+            s.max_write_size = commit2.write_size as i64;
             s.sum_prewrite_region_num += i64::from(commit2.prewrite_region_num);
             s.max_prewrite_region_num = commit2.prewrite_region_num;
-            s.sum_txn_retry += commit2.txn_retry;
-            s.max_txn_retry = commit2.txn_retry;
+            s.sum_txn_retry += commit2.transaction_retry as i64;
+            s.max_txn_retry = commit2.transaction_retry as i64;
             s.sum_backoff_times += 1;
             s.backoff_types.insert(BO_TXN_LOCK_NAME.to_owned(), 1);
             s.sum_mem += info2.mem_max;
@@ -2499,12 +2493,12 @@ pub(crate) mod tests {
             s.max_disk = info2.disk_max;
             s.sum_affected_rows += info2.stmt_ctx.affected_rows();
             s.last_seen = info2.start_time;
-            s.ru.sum_rru += ru2.rru;
-            s.ru.max_rru = ru2.rru;
-            s.ru.sum_wru += ru2.wru;
-            s.ru.max_wru = ru2.wru;
-            s.ru.sum_ru_wait_duration += ru2.ru_wait_duration;
-            s.ru.max_ru_wait_duration = ru2.ru_wait_duration;
+            s.ru.sum_rru += ru2.read_ru();
+            s.ru.max_rru = ru2.read_ru();
+            s.ru.sum_wru += ru2.write_ru();
+            s.ru.max_wru = ru2.write_ru();
+            s.ru.sum_ru_wait_duration += ru2.ru_wait_duration();
+            s.ru.max_ru_wait_duration = ru2.ru_wait_duration();
             s.ru.sum_ru_v2 += info2.total_ru_v2;
             s.ru.max_ru_v2 = info2.total_ru_v2;
             s.network.add(info2.tikv_exec_details.as_ref());
@@ -2543,15 +2537,17 @@ pub(crate) mod tests {
                     prewrite_time: Duration::from_nanos(5000),
                     commit_time: Duration::from_nanos(500),
                     local_latch_time: Duration::from_nanos(5),
-                    commit_backoff_time: 100,
-                    prewrite_backoff_types: vec![BO_TXN_LOCK_NAME.to_owned()],
-                    commit_backoff_types: Vec::new(),
+                    detail: CommitDetailsInner {
+                        commit_backoff_time_ns: 100,
+                        prewrite_backoff_types: vec![BO_TXN_LOCK_NAME.to_owned()],
+                        ..CommitDetailsInner::default()
+                    },
                     write_keys: 10000,
                     write_size: 100_000,
                     prewrite_region_num: 10,
-                    txn_retry: 1,
+                    transaction_retry: 1,
                     resolve_lock: ResolveLockDetail {
-                        resolve_lock_time: 1000,
+                        resolve_lock_time_ns: 1000,
                     },
                     ..CommitDetails::default()
                 }),
@@ -2564,7 +2560,7 @@ pub(crate) mod tests {
                         rocksdb_key_skipped_count: 10,
                         rocksdb_block_cache_hit_count: 10,
                         rocksdb_block_read_count: 10,
-                        rocksdb_block_read_byte: 1000,
+                        rocksdb_block_read_bytes: 1000,
                         ..ScanDetail::default()
                     }),
                     time_detail: TimeDetail {
@@ -2573,6 +2569,7 @@ pub(crate) mod tests {
                         ..TimeDetail::default()
                     },
                     callee_address: "302".to_owned(),
+                    ..CopExecDetails::default()
                 },
                 ..ExecDetails::default()
             },
@@ -2580,19 +2577,21 @@ pub(crate) mod tests {
             mem_max: 200,
             disk_max: 200,
             start_time: start_time(10, 10, 0),
-            ru_detail: Some(RuDetailsSnapshot {
-                rru: 0.12,
-                wru: 0.34,
-                ru_wait_duration: Duration::from_micros(5),
-                ..RuDetailsSnapshot::default()
-            }),
+            ru_detail: Some(Arc::new(RuDetails::new_with(
+                0.12,
+                0.34,
+                Duration::from_micros(5),
+            ))),
             total_ru_v2: 123.0,
-            tikv_exec_details: Some(TikvExecDetailsSnapshot {
-                unpacked_bytes_sent_kv_total: 1,
-                unpacked_bytes_received_kv_total: 300,
-                unpacked_bytes_sent_mpp_total: 1,
-                unpacked_bytes_received_mpp_total: 300,
-                ..TikvExecDetailsSnapshot::default()
+            tikv_exec_details: Some(ExecDetailsSnapshot {
+                traffic: TrafficDetailsSnapshot {
+                    sent_kv_total: 1,
+                    received_kv_total: 300,
+                    sent_mpp_total: 1,
+                    received_mpp_total: 300,
+                    ..TrafficDetailsSnapshot::default()
+                },
+                ..ExecDetailsSnapshot::default()
             }),
             lazy_info: mock_lazy_info("original_sql3", "binding_sql3", "binding_digest3"),
             mem_arbitration: 200.0,
@@ -2608,7 +2607,7 @@ pub(crate) mod tests {
             .clone()
             .unwrap();
         let time3 = info3.exec_detail.cop_exec_details.time_detail.clone();
-        let ru3 = info3.ru_detail.unwrap();
+        let ru3 = info3.ru_detail.as_ref().unwrap();
         {
             let s = &mut expected_element.stats;
             s.exec_count += 1;
@@ -2628,12 +2627,12 @@ pub(crate) mod tests {
             s.sum_prewrite_time += commit3.prewrite_time;
             s.sum_commit_time += commit3.commit_time;
             s.sum_local_latch_time += commit3.local_latch_time;
-            s.sum_commit_backoff_time += commit3.commit_backoff_time;
-            s.sum_resolve_lock_time += commit3.resolve_lock.resolve_lock_time;
-            s.sum_write_keys += commit3.write_keys;
-            s.sum_write_size += commit3.write_size;
+            s.sum_commit_backoff_time += commit3.detail.commit_backoff_time_ns;
+            s.sum_resolve_lock_time += commit3.resolve_lock.resolve_lock_time_ns;
+            s.sum_write_keys += commit3.write_keys as i64;
+            s.sum_write_size += commit3.write_size as i64;
             s.sum_prewrite_region_num += i64::from(commit3.prewrite_region_num);
-            s.sum_txn_retry += commit3.txn_retry;
+            s.sum_txn_retry += commit3.transaction_retry as i64;
             s.sum_backoff_times += 1;
             s.backoff_types.insert(BO_TXN_LOCK_NAME.to_owned(), 2);
             s.sum_mem += info3.mem_max;
@@ -2641,9 +2640,9 @@ pub(crate) mod tests {
             s.sum_disk += info3.disk_max;
             s.sum_affected_rows += info3.stmt_ctx.affected_rows();
             s.first_seen = info3.start_time;
-            s.ru.sum_rru += ru3.rru;
-            s.ru.sum_wru += ru3.wru;
-            s.ru.sum_ru_wait_duration += ru3.ru_wait_duration;
+            s.ru.sum_rru += ru3.read_ru();
+            s.ru.sum_wru += ru3.write_ru();
+            s.ru.sum_ru_wait_duration += ru3.ru_wait_duration();
             s.ru.sum_ru_v2 += info3.total_ru_v2;
             s.network.add(info3.tikv_exec_details.as_ref());
             s.storage_kv = info3.stmt_ctx.is_tikv.load(Ordering::SeqCst);

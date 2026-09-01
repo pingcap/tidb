@@ -36,6 +36,24 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- [x] (2026-08-31) Completed pinned Go `pkg/util/execdetails` as the prerequisite
+  for memory-alarm running-SQL output. One shared implementation now owns the
+  live RUv2 counters and weights; executor and Top-SQL paths re-export/use it
+  instead of maintaining narrowed snapshots. Commit/lock/scan/time/RU details
+  use the canonical `tikv-client` owners, TiFlash details use generated `tipb`,
+  runtime-stat collection returns shared live values, and the atomic TiKV
+  detail load follows Go. Inventory and WIP evidence are in
+  `receipts/util_execdetails.md`.
+
+- [x] (2026-08-31) Completed pinned Go `pkg/util/memoryusagealarm` as one
+  three-artifact package (`BUILD.bazel`, production source, and the combined
+  test/benchmark source). The ordinary server lifecycle now runs the 100ms
+  monitor over the live session/process registry, vardef and memory globals,
+  cgroup/system readings, running-SQL formatting, record retention, jemalloc
+  heap dumps, and fixed-buffer native thread dumps. Removed the prior mock
+  memory-state path and the fabricated Go-looking thread text. Inventory and
+  WIP evidence are in `receipts/util_memoryusagealarm.md`.
+
 - 2026-08-31: completed pinned `pkg/util/disk` as one five-artifact package.
   Added the missing temp-directory lifecycle and global-tracker constructor,
   wired server/chunk/memory-alarm consumers to those canonical owners, moved

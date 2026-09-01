@@ -3539,6 +3539,7 @@ dependencies = [
  "chrono-tz",
  "crc32fast",
  "flate2",
+ "prost 0.14.4",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -3559,6 +3560,7 @@ dependencies = [
  "tidb-mysql",
  "tidb-parser",
  "tidb-planner",
+ "tidb-proto",
  "tidb-resolve",
  "tidb-stats",
  "tidb-stats-handle-usage",
@@ -3842,6 +3844,7 @@ version = "0.0.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
+ "crossbeam-channel",
  "ctrlc",
  "fail",
  "prost 0.14.4",
@@ -4178,6 +4181,7 @@ dependencies = [
  "tidb-model",
  "tidb-parser",
  "tidb-util",
+ "tikv-client",
 ]
 
 [[package]]
@@ -4313,8 +4317,10 @@ dependencies = [
  "tidb-metadef",
  "tidb-mysql",
  "tidb-naming",
+ "tidb-parser",
  "tidb-proto",
  "tidb-tikvutil",
+ "tidb-vardef",
  "tikv-client",
  "tracing",
  "windows-sys 0.61.2",

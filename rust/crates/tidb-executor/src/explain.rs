@@ -21,6 +21,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
+use prost::Message;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_planner::access::{AccessObject, IndexAccess, OtherAccessObject, ScanAccessObject};
 use tidb_planner::explain::{
@@ -28,6 +29,7 @@ use tidb_planner::explain::{
     ExplainFormat as PlannerExplainFormat, ExplainOperator, ExplainTask,
 };
 use tidb_planner::physical::{PhysicalPlan, RedactMode};
+use tidb_proto::tipb::{ExplainData, ExplainOperator as PbExplainOperator, OperatorLabel};
 
 use crate::driver::{
     run_delete_stmt_with_physical_and_stats, run_insert_stmt_with_physical_and_stats,
@@ -858,14 +860,12 @@ fn cte_definitions(
     }
 }
 
-fn render_physical_plan(
+fn physical_explain_roots(
     physical: &PhysicalPlan,
     catalog: &Catalog,
-    format: ExplainFormat,
-    analyze: bool,
     runtime: Option<&crate::driver::physical_builder::PhysicalRuntimeStats>,
-) -> Result<SelectMeta, DriverError> {
-    let ignore_explain_id_suffix = matches!(format, ExplainFormat::Brief | ExplainFormat::PlanTree);
+    ignore_explain_id_suffix: bool,
+) -> Vec<ExplainOperator> {
     let mut roots = vec![physical_explain_operator(
         physical,
         catalog,
@@ -882,6 +882,290 @@ fn render_physical_plan(
         &mut roots,
         ignore_explain_id_suffix,
     );
+    roots
+}
+
+fn binary_operator(full: ExplainOperator, brief: ExplainOperator) -> PbExplainOperator {
+    let labels = match full.label.as_str() {
+        "(Build)" => vec![OperatorLabel::BuildSide as i32],
+        "(Probe)" => vec![OperatorLabel::ProbeSide as i32],
+        "(Seed Part)" => vec![OperatorLabel::SeedPart as i32],
+        "(Recursive Part)" => vec![OperatorLabel::RecursivePart as i32],
+        _ => Vec::new(),
+    };
+    let task = full.task.to_string();
+    let (task_type, store_type) = if task == "root" {
+        (
+            tidb_proto::tipb::TaskType::Root as i32,
+            tidb_proto::tipb::StoreType::Tidb as i32,
+        )
+    } else {
+        (
+            tidb_proto::tipb::TaskType::Cop as i32,
+            tidb_proto::tipb::StoreType::Tikv as i32,
+        )
+    };
+    let children = full
+        .children
+        .into_iter()
+        .zip(brief.children)
+        .map(|(full, brief)| binary_operator(full, brief))
+        .collect();
+    let brief_operator_info = matches!(
+        full.operator.as_str(),
+        "TableReader" | "IndexReader" | "HashJoin" | "IndexJoin" | "IndexHashJoin" | "MergeJoin"
+    )
+    .then_some(brief.operator_info)
+    .unwrap_or_default();
+    let mut operator = PbExplainOperator {
+        name: format!("{}_{}", full.operator, full.id),
+        children,
+        labels,
+        est_rows: full.estimated_rows.unwrap_or_default(),
+        task_type,
+        store_type,
+        operator_info: full.operator_info,
+        memory_bytes: -1,
+        disk_bytes: -1,
+        brief_name: brief.operator,
+        brief_operator_info,
+        ..Default::default()
+    };
+    if let Some(access) = full.access_object {
+        access.set_into_pb(&mut operator);
+    }
+    operator
+}
+
+/// Go `GetBriefBinaryPlan`: encodes the retained ordinary physical tree with
+/// build-side-first traversal and brief operator metadata.
+#[must_use]
+pub fn brief_binary_plan(physical: &PhysicalPlan, catalog: &Catalog) -> String {
+    let mut full = physical_explain_roots(physical, catalog, None, false);
+    let mut brief = physical_explain_roots(physical, catalog, None, true);
+    if full.is_empty() || brief.is_empty() {
+        return String::new();
+    }
+    let main = binary_operator(full.remove(0), brief.remove(0));
+    let ctes = full
+        .into_iter()
+        .zip(brief)
+        .map(|(full, brief)| binary_operator(full, brief))
+        .collect();
+    let data = ExplainData {
+        main: Some(main),
+        ctes,
+        ..Default::default()
+    };
+    tidb_util::plancodec::compress(&data.encode_to_vec())
+}
+
+fn first_table_scan(plan: &PhysicalPlan) -> Option<&tidb_planner::physical::PhysicalTableScan> {
+    match plan {
+        PhysicalPlan::TableScan(scan) => Some(scan),
+        PhysicalPlan::TableReader(reader) => {
+            reader.table_plan.as_deref().and_then(first_table_scan)
+        }
+        PhysicalPlan::IndexLookUpReader(reader) => {
+            reader.table_plan.as_deref().and_then(first_table_scan)
+        }
+        PhysicalPlan::IndexMergeReader(reader) => {
+            reader.table_plan.as_deref().and_then(first_table_scan)
+        }
+        PhysicalPlan::Dml(root) => root.select_plan.as_deref().and_then(first_table_scan),
+        _ => plan.children().iter().find_map(first_table_scan),
+    }
+}
+
+fn first_index_scan(plan: &PhysicalPlan) -> Option<&tidb_planner::physical::PhysicalIndexScan> {
+    match plan {
+        PhysicalPlan::IndexScan(scan) => Some(scan),
+        PhysicalPlan::IndexReader(reader) => {
+            reader.index_plan.as_deref().and_then(first_index_scan)
+        }
+        PhysicalPlan::IndexLookUpReader(reader) => {
+            reader.index_plan.as_deref().and_then(first_index_scan)
+        }
+        PhysicalPlan::IndexMergeReader(reader) => {
+            reader.partial_plans_raw.iter().find_map(first_index_scan)
+        }
+        PhysicalPlan::Dml(root) => root.select_plan.as_deref().and_then(first_index_scan),
+        _ => plan.children().iter().find_map(first_index_scan),
+    }
+}
+
+fn logical_table_id(catalog: &Catalog, physical_id: i64) -> i64 {
+    catalog
+        .physical_kv_table_by_id(physical_id)
+        .map_or(physical_id, |table| table.table_id)
+}
+
+fn index_process_name(
+    catalog: &Catalog,
+    scan: &tidb_planner::physical::PhysicalIndexScan,
+) -> String {
+    format!(
+        "{}:{}",
+        table_name(catalog, scan.table_id, None),
+        scan.index_name
+    )
+}
+
+fn collect_executor_process_fields(
+    plan: &PhysicalPlan,
+    catalog: &Catalog,
+    table_ids: &mut Vec<i64>,
+    index_names: &mut Vec<String>,
+) {
+    match plan {
+        PhysicalPlan::TableReader(reader) => {
+            if let Some(scan) = reader.table_plan.as_deref().and_then(first_table_scan) {
+                table_ids.push(logical_table_id(catalog, scan.table_id));
+            }
+        }
+        PhysicalPlan::IndexReader(reader) => {
+            if let Some(scan) = reader.index_plan.as_deref().and_then(first_index_scan) {
+                index_names.push(index_process_name(catalog, scan));
+            }
+        }
+        PhysicalPlan::IndexLookUpReader(reader) => {
+            if let Some(scan) = reader.index_plan.as_deref().and_then(first_index_scan) {
+                index_names.push(index_process_name(catalog, scan));
+            }
+            if let Some(scan) = reader.table_plan.as_deref().and_then(first_table_scan) {
+                table_ids.push(logical_table_id(catalog, scan.table_id));
+            }
+        }
+        PhysicalPlan::IndexMergeReader(reader) => {
+            for partial in &reader.partial_plans_raw {
+                if let Some(scan) = first_index_scan(partial) {
+                    index_names.push(index_process_name(catalog, scan));
+                } else if let Some(scan) = first_table_scan(partial) {
+                    if let Some(table) = catalog.physical_kv_table_by_id(scan.table_id) {
+                        if let Some(primary) =
+                            table.indexes().iter().find(|index| index.clustered_primary)
+                        {
+                            index_names.push(format!("{}:{}", table.name, primary.name));
+                        }
+                    }
+                }
+            }
+            if let Some(scan) = reader.table_plan.as_deref().and_then(first_table_scan) {
+                table_ids.push(logical_table_id(catalog, scan.table_id));
+            }
+        }
+        PhysicalPlan::PointGet(point) => {
+            if let Some(index_id) = point.index_id {
+                if let Some(table) = catalog.physical_kv_table_by_id(point.table_id) {
+                    if let Some(index) = table.indexes().iter().find(|index| index.id == index_id) {
+                        index_names.push(format!("{}:{}", table.name, index.name));
+                    }
+                }
+            }
+        }
+        PhysicalPlan::BatchPointGet(point) => {
+            if let Some(index_id) = point.index_id {
+                if let Some(table) = catalog.physical_kv_table_by_id(point.table_id) {
+                    if let Some(index) = table.indexes().iter().find(|index| index.id == index_id) {
+                        index_names.push(format!("{}:{}", table.name, index.name));
+                    }
+                }
+            }
+        }
+        PhysicalPlan::TableScan(scan) => {
+            table_ids.push(logical_table_id(catalog, scan.table_id));
+        }
+        PhysicalPlan::IndexScan(scan) => index_names.push(index_process_name(catalog, scan)),
+        PhysicalPlan::TableSample(sample) => {
+            table_ids.push(logical_table_id(catalog, sample.physical_table_id));
+        }
+        PhysicalPlan::Dml(root) => {
+            if let Some(select) = root.select_plan.as_deref() {
+                collect_executor_process_fields(select, catalog, table_ids, index_names);
+            }
+        }
+        _ => {
+            for child in plan.children() {
+                collect_executor_process_fields(child, catalog, table_ids, index_names);
+            }
+        }
+    }
+}
+
+fn collect_stats_info(
+    plan: &PhysicalPlan,
+    catalog: &Catalog,
+    stats_info: &mut std::collections::HashMap<String, u64>,
+) {
+    for child in plan.children() {
+        collect_stats_info(child, catalog, stats_info);
+    }
+    match plan {
+        PhysicalPlan::TableReader(reader) => {
+            if let Some(inner) = reader.table_plan.as_deref() {
+                collect_stats_info(inner, catalog, stats_info);
+            }
+        }
+        PhysicalPlan::IndexReader(reader) => {
+            if let Some(inner) = reader.index_plan.as_deref() {
+                collect_stats_info(inner, catalog, stats_info);
+            }
+        }
+        PhysicalPlan::IndexLookUpReader(reader) => {
+            if let Some(inner) = reader.index_plan.as_deref() {
+                collect_stats_info(inner, catalog, stats_info);
+            }
+        }
+        PhysicalPlan::IndexScan(scan) => {
+            let name = table_name(catalog, scan.table_id, None);
+            let version = catalog
+                .table_statistics(logical_table_id(catalog, scan.table_id))
+                .map_or(0, |statistics| statistics.version);
+            stats_info.insert(name, version);
+        }
+        PhysicalPlan::TableScan(scan) => {
+            let name = table_name(catalog, scan.table_id, None);
+            let version = catalog
+                .table_statistics(logical_table_id(catalog, scan.table_id))
+                .map_or(0, |statistics| statistics.version);
+            stats_info.insert(name, version);
+        }
+        PhysicalPlan::Dml(root) => {
+            if let Some(select) = root.select_plan.as_deref() {
+                collect_stats_info(select, catalog, stats_info);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The plan-derived fields Go publishes while the ordinary executor is
+/// constructed.
+#[must_use]
+pub fn process_plan_info(physical: &PhysicalPlan, catalog: &Catalog) -> crate::ProcessPlanInfo {
+    let mut info = crate::ProcessPlanInfo {
+        brief_binary_plan: brief_binary_plan(physical, catalog),
+        ..crate::ProcessPlanInfo::default()
+    };
+    collect_executor_process_fields(
+        physical,
+        catalog,
+        &mut info.table_ids,
+        &mut info.index_names,
+    );
+    collect_stats_info(physical, catalog, &mut info.stats_info);
+    info
+}
+
+fn render_physical_plan(
+    physical: &PhysicalPlan,
+    catalog: &Catalog,
+    format: ExplainFormat,
+    analyze: bool,
+    runtime: Option<&crate::driver::physical_builder::PhysicalRuntimeStats>,
+) -> Result<SelectMeta, DriverError> {
+    let ignore_explain_id_suffix = matches!(format, ExplainFormat::Brief | ExplainFormat::PlanTree);
+    let roots = physical_explain_roots(physical, catalog, runtime, ignore_explain_id_suffix);
 
     let mut rows = Vec::new();
     let mut columns = Vec::new();

@@ -37,7 +37,7 @@
 //! global registry (the singleton the rewrite deliberately replaces with
 //! explicit wiring), and `runtime.go`.
 
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicU8, Ordering};
 
 static ENABLE_MDL: AtomicBool = AtomicBool::new(false);
 
@@ -52,6 +52,53 @@ pub static ANALYZE_DEFAULT_NUM_TOP_N: AtomicU64 =
 /// Go `vardef.StatsCacheMemQuota`.
 pub static STATS_CACHE_MEM_QUOTA: AtomicI64 =
     AtomicI64::new(defaults::DEF_TIDB_STATS_CACHE_MEM_QUOTA);
+
+/// Go `vardef.MemoryUsageAlarmRatio`, stored as the IEEE-754 bit pattern.
+pub static MEMORY_USAGE_ALARM_RATIO: AtomicU64 =
+    AtomicU64::new(defaults::DEF_MEMORY_USAGE_ALARM_RATIO.to_bits());
+
+/// Go `vardef.MemoryUsageAlarmKeepRecordNum`.
+pub static MEMORY_USAGE_ALARM_KEEP_RECORD_NUM: AtomicI64 =
+    AtomicI64::new(defaults::DEF_MEMORY_USAGE_ALARM_KEEP_RECORD_NUM);
+
+const OOM_ACTION_CANCEL: u8 = 0;
+const OOM_ACTION_LOG: u8 = 1;
+
+/// Go `vardef.OOMAction`'s typed process-wide value.
+static OOM_ACTION: AtomicU8 = AtomicU8::new(OOM_ACTION_CANCEL);
+
+/// Loads Go `vardef.MemoryUsageAlarmRatio`.
+#[must_use]
+pub fn memory_usage_alarm_ratio() -> f64 {
+    f64::from_bits(MEMORY_USAGE_ALARM_RATIO.load(Ordering::SeqCst))
+}
+
+/// Stores Go `vardef.MemoryUsageAlarmRatio`.
+pub fn set_memory_usage_alarm_ratio(value: f64) {
+    MEMORY_USAGE_ALARM_RATIO.store(value.to_bits(), Ordering::SeqCst);
+}
+
+/// Loads Go `vardef.OOMAction`.
+#[must_use]
+pub fn oom_action() -> &'static str {
+    if OOM_ACTION.load(Ordering::SeqCst) == OOM_ACTION_LOG {
+        tidb_vars::OOM_ACTION_LOG
+    } else {
+        tidb_vars::OOM_ACTION_CANCEL
+    }
+}
+
+/// Stores Go `vardef.OOMAction` after sysvar validation.
+pub fn set_oom_action(value: &str) {
+    OOM_ACTION.store(
+        if value.eq_ignore_ascii_case(tidb_vars::OOM_ACTION_LOG) {
+            OOM_ACTION_LOG
+        } else {
+            OOM_ACTION_CANCEL
+        },
+        Ordering::SeqCst,
+    );
+}
 
 /// Go `IsMDLEnabled` with the process-global kernel selection made explicit.
 ///

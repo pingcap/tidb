@@ -66,7 +66,7 @@ use tidb_ast::{AdminShowSlowStmt, AdminShowSlowTopScope};
 use crate::exec_details::ExecDetails;
 
 /// Go `SlowQueryInfo`: one recorded slow query.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SlowQueryInfo {
     /// Go `SlowQueryInfo.SQL`.
     pub sql: String,

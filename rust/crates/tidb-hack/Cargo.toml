@@ -19,7 +19,7 @@ all = "warn"
 [dependencies]
 foldhash.workspace = true
 hashbrown.workspace = true
-tikv-jemalloc-sys = { version = "0.7", optional = true }
+tikv-jemalloc-sys = { version = "0.7", optional = true, features = ["profiling"] }
 
 [features]
 default = []

@@ -78,6 +78,7 @@ pub mod promutil;
 pub mod queue;
 pub mod redact;
 pub mod regexpr_router;
+pub mod ruv2_metrics;
 pub mod selection;
 pub mod sem;
 pub mod sem_compat;

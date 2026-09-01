@@ -1,5 +1,12 @@
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::SeqCst};
+use std::io::{self, ErrorKind};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering, Ordering::SeqCst};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
+use std::time::{Duration, Instant};
+
+#[cfg(target_os = "linux")]
+use std::fs;
+#[cfg(target_os = "macos")]
+use std::process::Command;
 
 use super::{parse_soft_limit_text, parse_work_mode_text, MemArbitrator, MemStats};
 
@@ -12,6 +19,174 @@ pub static SERVER_MEMORY_LIMIT_SESS_MIN_SIZE: AtomicU64 = AtomicU64::new(128 << 
 static USING_GLOBAL_MEM_ARBITRATION: AtomicBool = AtomicBool::new(false);
 
 static PROCESS_ARBITRATOR: OnceLock<Mutex<Weak<MemArbitrator>>> = OnceLock::new();
+
+#[derive(Default)]
+struct MemInfoCache {
+    value: u64,
+    updated_at: Option<Instant>,
+}
+
+static MEM_TOTAL_CACHE: OnceLock<Mutex<MemInfoCache>> = OnceLock::new();
+static MEM_USED_CACHE: OnceLock<Mutex<MemInfoCache>> = OnceLock::new();
+
+#[derive(Clone, Copy)]
+enum MemorySource {
+    Host = 1,
+    Cgroup = 2,
+}
+
+static MEMORY_SOURCE: AtomicU8 = AtomicU8::new(0);
+
+#[cfg(target_os = "linux")]
+fn host_memory_total() -> io::Result<u64> {
+    let content = fs::read_to_string("/proc/meminfo")?;
+    let kib = content
+        .lines()
+        .find_map(|line| line.strip_prefix("MemTotal:"))
+        .and_then(|value| value.split_whitespace().next())
+        .and_then(|value| value.parse::<u64>().ok())
+        .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "missing MemTotal"))?;
+    kib.checked_mul(1024)
+        .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "MemTotal overflows bytes"))
+}
+
+#[cfg(target_os = "linux")]
+fn host_memory_used() -> io::Result<u64> {
+    let content = fs::read_to_string("/proc/meminfo")?;
+    let value = |name: &str| -> io::Result<u64> {
+        content
+            .lines()
+            .find_map(|line| line.strip_prefix(name))
+            .and_then(|value| value.split_whitespace().next())
+            .and_then(|value| value.parse::<u64>().ok())
+            .and_then(|kib| kib.checked_mul(1024))
+            .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, format!("missing {name}")))
+    };
+    let total = value("MemTotal:")?;
+    let free = value("MemFree:")?;
+    let buffers = value("Buffers:")?;
+    let cached = value("Cached:")?;
+    let reclaimable = value("SReclaimable:").unwrap_or_default();
+    let shmem = value("Shmem:").unwrap_or_default();
+    Ok(total.saturating_sub(
+        free.saturating_add(buffers)
+            .saturating_add(cached)
+            .saturating_add(reclaimable)
+            .saturating_sub(shmem),
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn host_memory_total() -> io::Result<u64> {
+    let output = Command::new("sysctl").args(["-n", "hw.memsize"]).output()?;
+    if !output.status.success() {
+        return Err(io::Error::other("sysctl hw.memsize failed"));
+    }
+    std::str::from_utf8(&output.stdout)
+        .ok()
+        .map(str::trim)
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "invalid hw.memsize"))
+}
+
+#[cfg(target_os = "macos")]
+fn host_memory_used() -> io::Result<u64> {
+    let total = host_memory_total()?;
+    let output = Command::new("vm_stat").output()?;
+    if !output.status.success() {
+        return Err(io::Error::other("vm_stat failed"));
+    }
+    let text = std::str::from_utf8(&output.stdout)
+        .map_err(|_| io::Error::new(ErrorKind::InvalidData, "invalid vm_stat output"))?;
+    let page_size = text
+        .lines()
+        .next()
+        .and_then(|line| line.split("page size of ").nth(1))
+        .and_then(|tail| tail.split_whitespace().next())
+        .and_then(|value| value.parse::<u64>().ok())
+        .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "missing vm_stat page size"))?;
+    let pages = |name: &str| -> u64 {
+        text.lines()
+            .find_map(|line| line.strip_prefix(name))
+            .and_then(|tail| tail.trim().trim_end_matches('.').parse::<u64>().ok())
+            .unwrap_or_default()
+    };
+    let available = pages("Pages free:")
+        .saturating_add(pages("Pages inactive:"))
+        .saturating_add(pages("Pages speculative:"))
+        .saturating_mul(page_size);
+    Ok(total.saturating_sub(available))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn host_memory_total() -> io::Result<u64> {
+    Err(io::Error::new(
+        ErrorKind::Unsupported,
+        "host memory discovery is not available on this platform",
+    ))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn host_memory_used() -> io::Result<u64> {
+    Err(io::Error::new(
+        ErrorKind::Unsupported,
+        "host memory usage discovery is not available on this platform",
+    ))
+}
+
+fn memory_source() -> io::Result<MemorySource> {
+    match MEMORY_SOURCE.load(Ordering::Acquire) {
+        1 => return Ok(MemorySource::Host),
+        2 => return Ok(MemorySource::Cgroup),
+        _ => {}
+    }
+    let physical = host_memory_total()?;
+    let cgroup = crate::cgroup::get_memory_limit()?;
+    let selected = if cgroup != 0 && cgroup < physical {
+        MemorySource::Cgroup
+    } else {
+        MemorySource::Host
+    };
+    let _ = MEMORY_SOURCE.compare_exchange(0, selected as u8, Ordering::AcqRel, Ordering::Acquire);
+    Ok(match MEMORY_SOURCE.load(Ordering::Acquire) {
+        2 => MemorySource::Cgroup,
+        _ => MemorySource::Host,
+    })
+}
+
+fn effective_memory_limit() -> io::Result<u64> {
+    match memory_source()? {
+        MemorySource::Host => host_memory_total(),
+        MemorySource::Cgroup => Ok(host_memory_total()?.min(crate::cgroup::get_memory_limit()?)),
+    }
+}
+
+fn effective_memory_usage() -> io::Result<u64> {
+    match memory_source()? {
+        MemorySource::Host => host_memory_used(),
+        MemorySource::Cgroup => Ok(host_memory_used()?.min(crate::cgroup::get_memory_usage()?)),
+    }
+}
+
+fn cached_memory_read(
+    cache: &'static OnceLock<Mutex<MemInfoCache>>,
+    max_age: Duration,
+    read: impl FnOnce() -> std::io::Result<u64>,
+) -> std::io::Result<u64> {
+    let cache = cache.get_or_init(|| Mutex::new(MemInfoCache::default()));
+    let mut cached = cache.lock().expect("memory information cache poisoned");
+    if cached
+        .updated_at
+        .is_some_and(|updated_at| updated_at.elapsed() < max_age)
+    {
+        return Ok(cached.value);
+    }
+    let value = read()?;
+    cached.value = value;
+    cached.updated_at = Some(Instant::now());
+    Ok(value)
+}
 
 fn process_arbitrator() -> &'static Mutex<Weak<MemArbitrator>> {
     PROCESS_ARBITRATOR.get_or_init(|| Mutex::new(Weak::new()))
@@ -115,7 +290,7 @@ pub fn validate_process_memory_setting(name: &str, value: &str) -> Result<(), St
 pub fn parse_server_memory_limit(text: &str) -> Result<u64, String> {
     let text = text.trim();
     let total = (text.ends_with('%') || text == "0")
-        .then(crate::cgroup::effective_memory_limit)
+        .then(mem_total)
         .transpose()
         .map_err(|error| error.to_string())?;
     let parsed = if let Some(percent) = text.strip_suffix('%') {
@@ -203,6 +378,24 @@ pub fn read_mem_stats() -> MemStats {
         heap_inuse: rss,
         ..MemStats::default()
     }
+}
+
+/// Go `memory.MemTotal` after the startup cgroup/host hook decision.
+pub fn mem_total() -> std::io::Result<u64> {
+    cached_memory_read(
+        &MEM_TOTAL_CACHE,
+        Duration::from_secs(60),
+        effective_memory_limit,
+    )
+}
+
+/// Go `memory.MemUsed` after the startup cgroup/host hook decision.
+pub fn mem_used() -> std::io::Result<u64> {
+    cached_memory_read(
+        &MEM_USED_CACHE,
+        Duration::from_millis(500),
+        effective_memory_usage,
+    )
 }
 
 /// Reports whether the process is using the global memory arbitrator.

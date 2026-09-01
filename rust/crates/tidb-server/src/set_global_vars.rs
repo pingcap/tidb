@@ -32,9 +32,9 @@
 //!   instance scope. Unported with that mutation, alongside the config
 //!   fields it reads (`cfg.Instance.*`).
 //! * `tidb_force_priority`, distinct/projection push-down switches,
-//!   `datadir`, slow-query file, MPP enforcement, memory alarms, plan-cache
-//!   sizing — each reads a `NodeConfig` surface this port does not carry
-//!   yet; they follow their config fields.
+//!   `datadir`, slow-query file, MPP enforcement, and plan-cache sizing —
+//!   each reads a `NodeConfig` surface this port does not carry yet; they
+//!   follow their config fields.
 
 use tidb_session::GlobalSysvars;
 
@@ -75,11 +75,26 @@ pub(crate) fn set_global_vars(config: &NodeConfig, globals: &GlobalSysvars) {
     // client that asked that it had no limit at all. Connection poolers and
     // monitoring read this variable to size themselves.
     globals.set_startup("max_connections", config.max_connections.to_string());
+    // `vardef.MemoryUsageAlarmRatio.Store(cfg.Instance.MemoryUsageAlarmRatio)`.
+    // Keep this after the startup registry writes: publishing a registry
+    // value refreshes the typed process globals, while Go's direct atomic
+    // store is the final value for this setting during startup.
+    tidb_vardef::set_memory_usage_alarm_ratio(
+        config.global_config.instance.memory_usage_alarm_ratio,
+    );
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct RestoreMemoryUsageAlarmRatio(f64);
+
+    impl Drop for RestoreMemoryUsageAlarmRatio {
+        fn drop(&mut self) {
+            tidb_vardef::set_memory_usage_alarm_ratio(self.0);
+        }
+    }
 
     /// `TestSetGlobalVars` (`cmd/tidb-server/main_test.go:97`), transcreated
     /// over the ported slice. Legs kept, in the source's order: the
@@ -88,6 +103,8 @@ mod tests {
     /// The instance-scope promotion leg is unported with `setInstanceVar`.
     #[test]
     fn set_global_vars_matches_gos_table() {
+        let _restore_alarm_ratio =
+            RestoreMemoryUsageAlarmRatio(tidb_vardef::memory_usage_alarm_ratio());
         // Registry defaults before any startup push (Go's first asserts).
         assert_eq!(
             tidb_session::sysvar::get_sys_var("tidb_isolation_read_engines")
@@ -124,8 +141,10 @@ mod tests {
 
         let globals = GlobalSysvars::new();
         let mut config = config;
+        assert_eq!(config.global_config.instance.memory_usage_alarm_ratio, 0.8);
         config.isolation_read_engines = vec!["tikv".to_owned(), "tidb".to_owned()];
         set_global_vars(&config, &globals);
+        assert_eq!(tidb_vardef::memory_usage_alarm_ratio(), 0.8);
 
         assert_eq!(
             globals

@@ -17,6 +17,7 @@ chrono = { workspace = true }
 chrono-tz = { workspace = true }
 crc32fast = { workspace = true }
 flate2 = { workspace = true }
+prost = { workspace = true }
 smallvec = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -36,6 +37,7 @@ tidb-model = { path = "../tidb-model" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-parser = { path = "../tidb-parser" }
 tidb-planner = { path = "../tidb-planner" }
+tidb-proto = { path = "../tidb-proto" }
 tidb-resolve = { path = "../tidb-resolve" }
 tidb-stats = { path = "../tidb-stats" }
 tidb-stats-handle-usage = { path = "../tidb-stats-handle-usage" }

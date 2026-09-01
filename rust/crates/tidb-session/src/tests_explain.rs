@@ -3,6 +3,63 @@
 use crate::tests_support::*;
 use crate::*;
 
+#[test]
+fn ordinary_execution_publishes_the_brief_binary_plan() {
+    let registry = process::ProcessRegistry::default();
+    let mut session = Session::new();
+    let guard = registry.register(
+        41,
+        "root".to_owned(),
+        "127.0.0.1:4000".to_owned(),
+        "test".to_owned(),
+        None,
+    );
+    session.attach_process(41, guard);
+    session
+        .run("CREATE TABLE src (a BIGINT, INDEX ia(a))")
+        .unwrap();
+    session.run("CREATE TABLE dst (a BIGINT)").unwrap();
+    session.run("INSERT INTO src VALUES (1)").unwrap();
+
+    session.run("SELECT * FROM src USE INDEX ()").unwrap();
+    let select_info = tidb_util::memoryusagealarm::SessionManager::get_process_info(&registry, 41)
+        .expect("registered process");
+    let select_plan = select_info.brief_binary_plan.clone();
+    let select_rows =
+        tidb_util::plancodec::decode_binary_plan_for_connection(select_plan, "row", true).unwrap();
+    assert!(
+        select_rows
+            .iter()
+            .any(|row| row.first().is_some_and(|id| id.contains("TableReader"))),
+        "ordinary SELECT must publish its retained physical plan: {select_rows:?}"
+    );
+    assert_eq!(select_info.table_ids.len(), 1);
+    assert_eq!(select_info.index_names, Vec::<String>::new());
+    assert_eq!(select_info.stats_info.get("src"), Some(&0));
+
+    session
+        .run("SELECT a FROM src USE INDEX (ia) WHERE a > 0")
+        .unwrap();
+    let index_info = tidb_util::memoryusagealarm::SessionManager::get_process_info(&registry, 41)
+        .expect("registered process");
+    assert_eq!(index_info.index_names, ["src:ia"]);
+
+    session.run("INSERT INTO dst SELECT a FROM src").unwrap();
+    let insert_plan = tidb_util::memoryusagealarm::SessionManager::get_process_info(&registry, 41)
+        .expect("registered process")
+        .brief_binary_plan
+        .clone();
+    let insert_rows =
+        tidb_util::plancodec::decode_binary_plan_for_connection(insert_plan, "row", true).unwrap();
+    assert!(
+        insert_rows
+            .first()
+            .and_then(|row| row.first())
+            .is_some_and(|id| id.contains("Insert")),
+        "ordinary INSERT must publish its DML physical root: {insert_rows:?}"
+    );
+}
+
 /// `EXPLAIN <select>` reports the plan this tier would run, in Go's five
 /// columns, without executing anything.
 ///

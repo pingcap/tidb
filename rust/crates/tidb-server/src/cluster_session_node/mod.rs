@@ -6335,6 +6335,7 @@ impl QuerySession for ClusterServerSession {
         statement: &PreparedGeneral,
         values: &[tidb_protocol::PreparedValue],
     ) -> Result<GeneralExecuteOutcome<'a>, SqlQueryError> {
+        let process_statement = self.session.retain_process_statement(statement.sql());
         // A `BEGIN` is a `BEGIN` whichever protocol carried it. Run as an
         // ordinary statement it would flip only the driver session's own flag
         // and leave `self.explicit` unopened -- the two pieces of transaction
@@ -6625,20 +6626,22 @@ impl QuerySession for ClusterServerSession {
         Ok(match output {
             StmtOutput::Rows { columns, rows } => {
                 let field_types = columns.iter().map(|(_, field)| field.clone()).collect();
-                GeneralExecuteOutcome::Rows(
-                    QueryResult::new(Box::new(MaterializedResultSetSource::new(
-                        crate::pipeline_session::select_columns(&columns),
-                        rows,
-                    )))
-                    .with_cursor_materialization(
-                        field_types,
-                        result_authority.expect("a row result carries materialization authority"),
-                    )
-                    .with_statement_status(
-                        self.session.wire_warning_count(),
-                        WireStatus::of_session(&self.session),
-                    ),
+                let result = QueryResult::new(Box::new(MaterializedResultSetSource::new(
+                    crate::pipeline_session::select_columns(&columns),
+                    rows,
+                )))
+                .with_cursor_materialization(
+                    field_types,
+                    result_authority.expect("a row result carries materialization authority"),
                 )
+                .with_statement_status(
+                    self.session.wire_warning_count(),
+                    WireStatus::of_session(&self.session),
+                );
+                GeneralExecuteOutcome::Rows(match process_statement {
+                    Some(statement) => result.with_process_statement(statement),
+                    None => result,
+                })
             }
             StmtOutput::Affected(count) => GeneralExecuteOutcome::Write(WriteOutcome {
                 affected_rows: count,
@@ -6709,6 +6712,7 @@ impl QuerySession for ClusterServerSession {
             }
             StatementRoute::Ordinary => {}
         }
+        let process_statement = self.session.retain_process_statement(sql);
         let owned = sql.to_owned();
         let resource_group = self
             .session
@@ -6746,10 +6750,14 @@ impl QuerySession for ClusterServerSession {
                     StmtOutput::Done(_) => crate::pipeline_session::affected_rows_source(0),
                 })
             })?;
-        Ok(QueryResult::new(Box::new(source)).with_statement_status(
+        let result = QueryResult::new(Box::new(source)).with_statement_status(
             self.session.wire_warning_count(),
             WireStatus::of_session(&self.session),
-        ))
+        );
+        Ok(match process_statement {
+            Some(statement) => result.with_process_statement(statement),
+            None => result,
+        })
     }
 }
 

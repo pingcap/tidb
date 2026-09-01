@@ -38,8 +38,10 @@ tidb-kvcache = { path = "../tidb-kvcache" }
 tidb-metadef = { path = "../tidb-metadef" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-naming = { path = "../tidb-naming" }
+tidb-parser = { path = "../tidb-parser" }
 tidb-proto = { path = "../tidb-proto" }
 tidb-tikvutil = { path = "../tidb-tikvutil" }
+tidb-vardef = { path = "../tidb-vardef" }
 tikv-client.workspace = true
 aes.workspace = true
 chrono.workspace = true
@@ -91,6 +93,11 @@ harness = false
 [[bench]]
 name = "intset"
 harness = false
+
+[[bench]]
+name = "memoryusagealarm"
+harness = false
+required-features = ["testexport"]
 
 [[bench]]
 name = "set"

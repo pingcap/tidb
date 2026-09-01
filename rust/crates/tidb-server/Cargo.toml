@@ -15,6 +15,7 @@ workspace = true
 [dependencies]
 base64.workspace = true
 chrono.workspace = true
+crossbeam-channel = "0.5"
 tikv-jemallocator = { version = "0.7", optional = true }
 tikv-jemalloc-sys = { version = "0.7", optional = true }
 ctrlc.workspace = true
@@ -105,4 +106,9 @@ failpoints = [
     "tidb-stats-handle-cache/failpoints",
     "tidb-util/failpoints",
 ]
-jemalloc = ["dep:tikv-jemallocator", "dep:tikv-jemalloc-sys"]
+jemalloc = [
+    "dep:tikv-jemallocator",
+    "dep:tikv-jemalloc-sys",
+    "tidb-util/jemalloc",
+    "tikv-jemallocator/profiling",
+]

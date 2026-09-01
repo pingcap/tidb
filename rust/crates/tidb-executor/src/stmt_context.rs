@@ -229,6 +229,20 @@ pub trait GlobalSysvarAccessor: Send + Sync {
     fn get_global_sysvar(&self, name: &str) -> Option<String>;
 }
 
+/// Plan-derived fields Go publishes on `sessmgr.ProcessInfo` when the
+/// ordinary executor is built.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ProcessPlanInfo {
+    /// Go `ProcessInfo.BriefBinaryPlan`.
+    pub brief_binary_plan: String,
+    /// Go `StmtCtx.TableIDs`.
+    pub table_ids: Vec<i64>,
+    /// Go `StmtCtx.IndexNames`.
+    pub index_names: Vec<String>,
+    /// Go `physicalop.GetStatsInfo(ProcessInfo.Plan)`.
+    pub stats_info: std::collections::HashMap<String, u64>,
+}
+
 /// Go `stmtctx.StatementContext`, in the part evaluation actually reads: the
 /// warning buffer and the error levels that decide whether a tolerable
 /// condition warns or fails the statement.
@@ -509,6 +523,9 @@ pub struct StmtContext {
     /// prepared-statement layer that reads it is outside the driver that
     /// knows.
     planned_apply: Arc<AtomicBool>,
+    /// The session-owned publication cell for the plan-derived fields Go
+    /// stores on `ProcessInfo` while building the ordinary executor.
+    process_plan_info: Option<Arc<Mutex<ProcessPlanInfo>>>,
     /// Go `SessionVars.AllowWriteRowID` (`tidb_opt_write_row_id`): whether an
     /// `INSERT`/`REPLACE`/`UPDATE` may name `_tidb_rowid` and write it.
     allow_write_row_id: bool,
@@ -828,6 +845,7 @@ impl StmtContext {
             // Go `vardef.DefTiDBEnableIndexMerge = true`.
             index_merge: true,
             planned_apply: Arc::default(),
+            process_plan_info: None,
             allow_write_row_id: false,
             expr_pushdown_blacklist: std::sync::Arc::default(),
             disabled_logical_rules: std::sync::Arc::default(),
@@ -1887,6 +1905,23 @@ impl StmtContext {
     pub fn report_planned_apply(&self) {
         self.planned_apply
             .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Installs the current session's process-plan publication cell.
+    #[must_use]
+    pub fn with_process_plan_info_sink(mut self, sink: Arc<Mutex<ProcessPlanInfo>>) -> Self {
+        self.process_plan_info = Some(sink);
+        self
+    }
+
+    /// Publishes the fields derived from the retained physical tree before
+    /// executor construction.
+    pub fn publish_process_plan_info(&self, plan: ProcessPlanInfo) {
+        if let Some(sink) = &self.process_plan_info {
+            *sink
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = plan;
+        }
     }
 
     /// Installs the two published blacklists. See

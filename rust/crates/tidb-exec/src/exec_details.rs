@@ -12,36 +12,28 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! SEED of Go `pkg/util/execdetails`, covering `execdetails.go`'s formatting
-//! surface: the slow-log field-name `*Str` constants, the value shape of
+//! Go `pkg/util/execdetails` execution-detail formatting surface: the
+//! slow-log field-name `*Str` constants, the value shape of
 //! `ExecDetails` and the client-go detail types its `String()` reads
 //! (`CommitDetails`, `LockKeysDetails`, `ScanDetail`, `TimeDetail`,
 //! `ReqDetailInfo`, `TiKVExecDetails`, `WriteDetail`), the byte-exact
 //! `ExecDetails.String()` rendering, and `GetIARemoteReadSegmentStats`.
 //!
-//! Boundaries:
-//! - client-go (`github.com/tikv/client-go/v2/util`) source is not on disk
-//!   here; the detail-struct field shapes are derived only from how
-//!   `execdetails.go` and `execdetails_test.go` use them. Go's mutex-guarded
-//!   `CommitDetails.Mu` / `LockKeysDetails.Mu` fields are flattened into
-//!   plain fields: the data arrives at this boundary as an already-collected
-//!   snapshot, so no lock is carried.
-//! - `format_go_duration` matches Go `time.Duration.String()`, and client-go
-//!   `util.FormatDuration` is pinned only at the fixture-exercised points
-//!   (`500ms`, `20ms`, `40ms`, `10µs`, `45µs`, `101µs`, `1s`, `2s`, `0s`)
-//!   where the two coincide; FormatDuration's rounding of long durations to
-//!   three significant digits stays open.
-//! - The nested client-go `TiKVExecDetails.String()` spelling is recovered
-//!   from the expected literal in Go `TestString`; fields the fixture leaves
-//!   at zero (nested `time_detail` beyond `tikv_wall_time`, nested
-//!   `scan_detail` beyond the rocksdb block, `write_detail` zero-suppression,
-//!   `util.FormatBytes` above the plain-`Bytes` branch) stay open.
-//! - The runtime-stats/`CopRuntimeStats` half of the package (`P90Summary`,
-//!   `SyncExecDetails`, `CopTasksDetails`, `RuntimeStatsColl`, zap fields)
-//!   stays open.
+//! The client-go detail types reuse the canonical `tikv-client` types. As in
+//! Go, [`load_tikv_exec_details`] takes an atomic snapshot of the per-request
+//! execution and traffic counters.
 
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+use tidb_log::{Field, Value};
+
+use crate::runtime_stats::{
+    merge_commit_details, merge_lock_keys_details, DurationWithAddr, Percentile,
+};
+use crate::slow_log_float::format_go_float64;
 
 /// Go `CopTimeStr`: the sum of cop-task time spent in TiDB distSQL.
 pub const COP_TIME_STR: &str = "Cop_time";
@@ -113,198 +105,14 @@ pub const IA_REMOTE_READ_SEGMENT_SIZE_STR: &str = "IA_remote_read_segment_size";
 /// segment reads.
 pub const IA_REMOTE_READ_SEGMENT_WAIT_TIME_STR: &str = "IA_remote_read_segment_wait_time";
 
-/// Go client-go `util.TimeDetail` — the fields `execdetails.go` reads.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct TimeDetail {
-    /// Go `TimeDetail.ProcessTime`.
-    pub process_time: Duration,
-    /// Go `TimeDetail.WaitTime`.
-    pub wait_time: Duration,
-    /// Go `TimeDetail.TotalRPCWallTime`, rendered as `tikv_wall_time` inside
-    /// the nested `time_detail: {...}` block.
-    pub total_rpc_wall_time: Duration,
-}
-
-/// Go client-go `util.ScanDetail` — the fields `execdetails.go` reads.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct ScanDetail {
-    /// Go `ScanDetail.ProcessedKeys` (`int64`).
-    pub processed_keys: i64,
-    /// Go `ScanDetail.TotalKeys` (`int64`).
-    pub total_keys: i64,
-    /// Go `ScanDetail.GetSnapshotDuration`.
-    pub get_snapshot_duration: Duration,
-    /// Go `ScanDetail.RocksdbDeleteSkippedCount` (`uint64`).
-    pub rocksdb_delete_skipped_count: u64,
-    /// Go `ScanDetail.RocksdbKeySkippedCount` (`uint64`).
-    pub rocksdb_key_skipped_count: u64,
-    /// Go `ScanDetail.RocksdbBlockCacheHitCount` (`uint64`).
-    pub rocksdb_block_cache_hit_count: u64,
-    /// Go `ScanDetail.RocksdbBlockReadCount` (`uint64`).
-    pub rocksdb_block_read_count: u64,
-    /// Go `ScanDetail.RocksdbBlockReadByte` (`uint64`).
-    pub rocksdb_block_read_byte: u64,
-    /// Go `ScanDetail.RocksdbBlockReadDuration`.
-    pub rocksdb_block_read_duration: Duration,
-    /// Go `ScanDetail.IaRemoteReadSegmentCount` (`uint64`), read by
-    /// [`get_ia_remote_read_segment_stats`].
-    pub ia_remote_read_segment_count: u64,
-    /// Go `ScanDetail.IaRemoteReadSegmentBytes` (`uint64`), read by
-    /// [`get_ia_remote_read_segment_stats`].
-    pub ia_remote_read_segment_bytes: u64,
-    /// Go `ScanDetail.IaRemoteReadSegmentDuration`, read by
-    /// [`get_ia_remote_read_segment_stats`].
-    pub ia_remote_read_segment_duration: Duration,
-}
-
-/// Go client-go `util.WriteDetail` — the fields the Go `TestString` fixture
-/// sets, plus the scheduler process slot its expected literal proves exists.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct WriteDetail {
-    /// Go `WriteDetail.StoreBatchWaitDuration`.
-    pub store_batch_wait_duration: Duration,
-    /// Go `WriteDetail.ProposeSendWaitDuration`.
-    pub propose_send_wait_duration: Duration,
-    /// Go `WriteDetail.PersistLogDuration`.
-    pub persist_log_duration: Duration,
-    /// Go `WriteDetail.RaftDbWriteLeaderWaitDuration`.
-    pub raft_db_write_leader_wait_duration: Duration,
-    /// Go `WriteDetail.RaftDbSyncLogDuration`.
-    pub raft_db_sync_log_duration: Duration,
-    /// Go `WriteDetail.RaftDbWriteMemtableDuration`.
-    pub raft_db_write_memtable_duration: Duration,
-    /// Go `WriteDetail.CommitLogDuration`.
-    pub commit_log_duration: Duration,
-    /// Go `WriteDetail.ApplyBatchWaitDuration`.
-    pub apply_batch_wait_duration: Duration,
-    /// Go `WriteDetail.ApplyLogDuration`.
-    pub apply_log_duration: Duration,
-    /// Go `WriteDetail.ApplyMutexLockDuration`.
-    pub apply_mutex_lock_duration: Duration,
-    /// Go `WriteDetail.ApplyWriteLeaderWaitDuration`.
-    pub apply_write_leader_wait_duration: Duration,
-    /// Go `WriteDetail.ApplyWriteWalDuration`.
-    pub apply_write_wal_duration: Duration,
-    /// Go `WriteDetail.ApplyWriteMemtableDuration`.
-    pub apply_write_memtable_duration: Duration,
-    /// The duration rendered as `scheduler: {process: ...}` in the nested
-    /// spelling. The Go fixture never sets it (it renders `0s` there), so
-    /// its client-go field name is derived from the rendering alone.
-    pub scheduler_process_duration: Duration,
-}
-
-/// Go client-go `util.TiKVExecDetails`: the per-RPC detail bundle nested
-/// inside `ReqDetailInfo` and the lock-keys slowest-request snapshot.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct TiKVExecDetails {
-    /// Go `TiKVExecDetails.TimeDetail` (`*util.TimeDetail`).
-    pub time_detail: Option<TimeDetail>,
-    /// Go `TiKVExecDetails.ScanDetail` (`*util.ScanDetail`).
-    pub scan_detail: Option<ScanDetail>,
-    /// Go `TiKVExecDetails.WriteDetail` (`*util.WriteDetail`).
-    pub write_detail: Option<WriteDetail>,
-}
-
-/// Go client-go `util.ReqDetailInfo`: one slowest-RPC record inside
-/// `CommitDetails.Mu`.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct ReqDetailInfo {
-    /// Go `ReqDetailInfo.ReqTotalTime`.
-    pub req_total_time: Duration,
-    /// Go `ReqDetailInfo.Region` (`uint64`).
-    pub region: u64,
-    /// Go `ReqDetailInfo.StoreAddr`.
-    pub store_addr: String,
-    /// Go `ReqDetailInfo.ExecDetails`.
-    pub exec_details: TiKVExecDetails,
-}
-
-/// Go client-go `util.ResolveLockDetail` — the field `execdetails.go` reads.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct ResolveLockDetail {
-    /// Go `ResolveLockDetail.ResolveLockTime`: nanoseconds as `int64`
-    /// (loaded atomically in Go; a plain snapshot here).
-    pub resolve_lock_time: i64,
-}
-
-/// Go client-go `util.CommitDetails` — the fields `ExecDetails.String()`
-/// reads. Go guards `CommitBackoffTime` through `CommitPrimary` behind the
-/// embedded `Mu sync.Mutex`; here they are flattened into plain fields
-/// because the data arrives at this boundary as an already-collected
-/// snapshot.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct CommitDetails {
-    /// Go `CommitDetails.GetCommitTsTime`.
-    pub get_commit_ts_time: Duration,
-    /// Go `CommitDetails.GetLatestTsTime`.
-    pub get_latest_ts_time: Duration,
-    /// Go `CommitDetails.PrewriteTime`.
-    pub prewrite_time: Duration,
-    /// Go `CommitDetails.WaitPrewriteBinlogTime`.
-    pub wait_prewrite_binlog_time: Duration,
-    /// Go `CommitDetails.CommitTime`.
-    pub commit_time: Duration,
-    /// Go `CommitDetails.LocalLatchTime`.
-    pub local_latch_time: Duration,
-    /// Go `CommitDetails.Mu.CommitBackoffTime`: nanoseconds as `int64`.
-    pub commit_backoff_time: i64,
-    /// Go `CommitDetails.Mu.PrewriteBackoffTypes`.
-    pub prewrite_backoff_types: Vec<String>,
-    /// Go `CommitDetails.Mu.CommitBackoffTypes`.
-    pub commit_backoff_types: Vec<String>,
-    /// Go `CommitDetails.Mu.SlowestPrewrite`.
-    pub slowest_prewrite: ReqDetailInfo,
-    /// Go `CommitDetails.Mu.CommitPrimary`.
-    pub commit_primary: ReqDetailInfo,
-    /// Go `CommitDetails.ResolveLock`.
-    pub resolve_lock: ResolveLockDetail,
-    /// Go `CommitDetails.WriteKeys` (`int`).
-    pub write_keys: i64,
-    /// Go `CommitDetails.WriteSize` (`int`).
-    pub write_size: i64,
-    /// Go `CommitDetails.PrewriteRegionNum` (`int32`, loaded atomically in
-    /// Go; a plain snapshot here).
-    pub prewrite_region_num: i32,
-    /// Go `CommitDetails.TxnRetry` (`int`).
-    pub txn_retry: i64,
-}
-
-/// Go client-go `util.LockKeysDetails` — the fields the Go `TestString`
-/// fixture sets. `ExecDetails.String()` reads only `total_time`; the rest
-/// keeps the fixture's slowest-request fragment representable. The
-/// mutex-guarded `Mu` fields are flattened as in [`CommitDetails`].
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct LockKeysDetails {
-    /// Go `LockKeysDetails.TotalTime`.
-    pub total_time: Duration,
-    /// Go `LockKeysDetails.RegionNum` (`int32`).
-    pub region_num: i32,
-    /// Go `LockKeysDetails.LockKeys` (`int32`).
-    pub lock_keys: i32,
-    /// Go `LockKeysDetails.ResolveLock`.
-    pub resolve_lock: ResolveLockDetail,
-    /// Go `LockKeysDetails.BackoffTime`: nanoseconds as `int64`.
-    pub backoff_time: i64,
-    /// Go `LockKeysDetails.Mu.BackoffTypes`.
-    pub backoff_types: Vec<String>,
-    /// Go `LockKeysDetails.Mu.SlowestReqTotalTime`.
-    pub slowest_req_total_time: Duration,
-    /// Go `LockKeysDetails.Mu.SlowestRegion` (`uint64`).
-    pub slowest_region: u64,
-    /// Go `LockKeysDetails.Mu.SlowestStoreAddr`.
-    pub slowest_store_addr: String,
-    /// Go `LockKeysDetails.Mu.SlowestExecDetails`.
-    pub slowest_exec_details: TiKVExecDetails,
-    /// Go `LockKeysDetails.LockRPCTime` (`int64` nanoseconds).
-    pub lock_rpc_time: i64,
-    /// Go `LockKeysDetails.LockRPCCount` (`int64`).
-    pub lock_rpc_count: i64,
-    /// Go `LockKeysDetails.RetryCount` (`int`).
-    pub retry_count: i64,
-}
+pub use tikv_client::util::{
+    CommitDetails, CommitDetailsInner, CommitTsLagDetails, LockKeysDetails, LockKeysDetailsInner,
+    ReqDetailInfo, ResolveLockDetail, ScanDetail, TiKvExecDetails as TiKVExecDetails, TimeDetail,
+    WriteDetail,
+};
 
 /// Go `CopExecDetails`: cop execution detail information.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct CopExecDetails {
     /// Go `CopExecDetails.ScanDetail` (`*util.ScanDetail`).
     pub scan_detail: Option<ScanDetail>,
@@ -314,11 +122,15 @@ pub struct CopExecDetails {
     pub callee_address: String,
     /// Go `CopExecDetails.BackoffTime`.
     pub backoff_time: Duration,
+    /// Go `CopExecDetails.BackoffSleep`.
+    pub backoff_sleep: HashMap<String, Duration>,
+    /// Go `CopExecDetails.BackoffTimes`.
+    pub backoff_times: HashMap<String, i64>,
 }
 
 /// Go `ExecDetails`: execution detail information. Go embeds
 /// `CopExecDetails`; here it is a named field read through the same paths.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct ExecDetails {
     /// Go's embedded `CopExecDetails`.
     pub cop_exec_details: CopExecDetails,
@@ -334,6 +146,556 @@ pub struct ExecDetails {
     pub lock_keys_duration: Duration,
     /// Go `ExecDetails.RequestCount` (`int`).
     pub request_count: i64,
+}
+
+/// Go `P90BackoffSummary`: one backoff type's request and duration summary.
+#[derive(Clone, Debug, Default)]
+pub struct P90BackoffSummary {
+    /// Go `ReqTimes`.
+    pub req_times: i64,
+    /// Go `BackoffPercentile`.
+    pub backoff_percentile: Percentile<DurationWithAddr>,
+    /// Go `TotBackoffTime`.
+    pub tot_backoff_time: Duration,
+    /// Go `TotBackoffTimes`.
+    pub tot_backoff_times: i64,
+}
+
+/// Go `P90Summary`: percentile input accumulated across cop tasks.
+#[derive(Clone, Debug, Default)]
+pub struct P90Summary {
+    /// Go `NumCopTasks`.
+    pub num_cop_tasks: i64,
+    /// Go `ProcessTimePercentile`.
+    pub process_time_percentile: Percentile<DurationWithAddr>,
+    /// Go `WaitTimePercentile`.
+    pub wait_time_percentile: Percentile<DurationWithAddr>,
+    /// Go `BackoffInfo`.
+    pub backoff_info: HashMap<String, P90BackoffSummary>,
+}
+
+/// Go `TaskTimeStats`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TaskTimeStats {
+    /// Go `TaskTimeStats.AvgTime`.
+    pub avg_time: Duration,
+    /// Go `TaskTimeStats.P90Time`.
+    pub p90_time: Duration,
+    /// Go `TaskTimeStats.MaxAddress`.
+    pub max_address: String,
+    /// Go `TaskTimeStats.MaxTime`.
+    pub max_time: Duration,
+    /// Go `TaskTimeStats.TotTime`.
+    pub tot_time: Duration,
+}
+
+impl TaskTimeStats {
+    /// Go `TaskTimeStats.String`.
+    #[must_use]
+    pub fn render(
+        &self,
+        num_cop_tasks: i64,
+        space_mark_str: &str,
+        avg_str: &str,
+        p90_str: &str,
+        max_str: &str,
+        addr_str: &str,
+    ) -> String {
+        if num_cop_tasks == 1 {
+            return format!(
+                "{avg_str}{space_mark_str}{} {addr_str}{space_mark_str}{}",
+                format_go_float64(self.avg_time.as_secs_f64()),
+                self.max_address,
+            );
+        }
+        format!(
+            "{avg_str}{space_mark_str}{} {p90_str}{space_mark_str}{} \
+             {max_str}{space_mark_str}{} {addr_str}{space_mark_str}{}",
+            format_go_float64(self.avg_time.as_secs_f64()),
+            format_go_float64(self.p90_time.as_secs_f64()),
+            format_go_float64(self.max_time.as_secs_f64()),
+            self.max_address,
+        )
+    }
+}
+
+/// Go `CopTasksDetails`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CopTasksDetails {
+    /// Go `CopTasksDetails.NumCopTasks`.
+    pub num_cop_tasks: i64,
+    /// Go `CopTasksDetails.ProcessTimeStats`.
+    pub process_time_stats: TaskTimeStats,
+    /// Go `CopTasksDetails.WaitTimeStats`.
+    pub wait_time_stats: TaskTimeStats,
+    /// Go `CopTasksDetails.BackoffTimeStatsMap`.
+    pub backoff_time_stats_map: BTreeMap<String, TaskTimeStats>,
+    /// Go `CopTasksDetails.TotBackoffTimes`.
+    pub tot_backoff_times: BTreeMap<String, i64>,
+}
+
+impl P90Summary {
+    /// Go `P90Summary.Reset`.
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    /// Go `P90Summary.Merge`.
+    pub fn merge(
+        &mut self,
+        backoff_sleep: &HashMap<String, Duration>,
+        backoff_times: &HashMap<String, i64>,
+        callee_address: &str,
+        time_detail: &TimeDetail,
+    ) {
+        self.num_cop_tasks += 1;
+        self.process_time_percentile.add(DurationWithAddr {
+            d: duration_nanos_i64(time_detail.process_time),
+            addr: callee_address.to_owned(),
+        });
+        self.wait_time_percentile.add(DurationWithAddr {
+            d: duration_nanos_i64(time_detail.wait_time),
+            addr: callee_address.to_owned(),
+        });
+        for (backoff, times) in backoff_times {
+            let sleep = backoff_sleep.get(backoff).copied().unwrap_or_default();
+            let info = self.backoff_info.entry(backoff.clone()).or_default();
+            info.req_times += 1;
+            info.tot_backoff_time = info.tot_backoff_time.saturating_add(sleep);
+            info.tot_backoff_times += times;
+            info.backoff_percentile.add(DurationWithAddr {
+                d: duration_nanos_i64(sleep),
+                addr: callee_address.to_owned(),
+            });
+        }
+    }
+}
+
+/// Go `StmtExecDetails`: statement-local execution details and RUv2 metrics.
+#[derive(Debug, Default)]
+pub struct StmtExecDetails {
+    /// Go `WriteSQLRespDuration`.
+    pub write_sql_resp_duration: Duration,
+    ruv2_metrics: Option<std::sync::Arc<crate::ruv2_metrics::RuV2Metrics>>,
+}
+
+/// Rust shared-pointer representation of Go `*StmtExecDetails`.
+pub type SharedStmtExecDetails = Arc<Mutex<StmtExecDetails>>;
+
+struct StmtExecDetailsContextKey;
+struct Ruv2MetricsContextKey;
+
+fn stmt_exec_details_from_context(
+    context: &tikv_client::trace::TraceContext,
+) -> Option<&SharedStmtExecDetails> {
+    context.value::<StmtExecDetailsContextKey, SharedStmtExecDetails>()
+}
+
+/// Go `ContextWithInitializedExecDetails`.
+#[must_use]
+pub fn context_with_initialized_exec_details(
+    context: &tikv_client::trace::TraceContext,
+) -> tikv_client::trace::TraceContext {
+    let mut stmt_details = StmtExecDetails::default();
+    stmt_details.ensure_ruv2_metrics();
+    let context = tikv_client::util::context_with_exec_details(
+        context,
+        Arc::new(tikv_client::util::ExecDetails::default()),
+    );
+    let context = tikv_client::util::context_with_ru_details(
+        &context,
+        Arc::new(tikv_client::RuDetails::new()),
+    );
+    context.with_value::<StmtExecDetailsContextKey, _>(Arc::new(Mutex::new(stmt_details)))
+}
+
+/// Go `ContextWithMissingExecDetailsInitialized`.
+#[must_use]
+pub fn context_with_missing_exec_details_initialized(
+    context: &tikv_client::trace::TraceContext,
+) -> tikv_client::trace::TraceContext {
+    let mut derived = context.clone();
+    if tikv_client::util::exec_details_from_context(&derived).is_none() {
+        derived = tikv_client::util::context_with_exec_details(
+            &derived,
+            Arc::new(tikv_client::util::ExecDetails::default()),
+        );
+    }
+    if tikv_client::util::ru_details_from_context(&derived).is_none() {
+        derived = tikv_client::util::context_with_ru_details(
+            &derived,
+            Arc::new(tikv_client::RuDetails::new()),
+        );
+    }
+
+    let stmt_details = match stmt_exec_details_from_context(&derived).cloned() {
+        Some(details) => details,
+        None => {
+            let inherited = derived
+                .value::<Ruv2MetricsContextKey, Arc<crate::ruv2_metrics::RuV2Metrics>>()
+                .cloned();
+            let mut details = StmtExecDetails::default();
+            details.set_ruv2_metrics(inherited);
+            let details = Arc::new(Mutex::new(details));
+            derived = derived.with_value::<StmtExecDetailsContextKey, _>(details.clone());
+            details
+        }
+    };
+    let mut stmt_details = stmt_details.lock().expect("StmtExecDetails mutex poisoned");
+    if stmt_details.ruv2_metrics().is_none() {
+        if let Some(inherited) = derived
+            .value::<Ruv2MetricsContextKey, Arc<crate::ruv2_metrics::RuV2Metrics>>()
+            .cloned()
+        {
+            stmt_details.set_ruv2_metrics(Some(inherited));
+        } else {
+            stmt_details.ensure_ruv2_metrics();
+        }
+    }
+    drop(stmt_details);
+    derived
+}
+
+/// Go `ContextWithInheritedRUV2Details`.
+#[must_use]
+pub fn context_with_inherited_ruv2_details(
+    context: &tikv_client::trace::TraceContext,
+    source: Option<&tikv_client::trace::TraceContext>,
+) -> tikv_client::trace::TraceContext {
+    let Some(source) = source else {
+        return context.clone();
+    };
+    let mut derived = context.clone();
+    if tikv_client::util::ru_details_from_context(&derived).is_none() {
+        if let Some(details) = tikv_client::util::ru_details_from_context(source) {
+            derived = tikv_client::util::context_with_ru_details(&derived, details.clone());
+        }
+    }
+    if ruv2_metrics_from_context(&derived).is_none() {
+        if let Some(metrics) = ruv2_metrics_from_context(source) {
+            derived = context_with_ruv2_metrics(&derived, Some(metrics));
+        }
+    }
+    derived
+}
+
+/// Go `ContextWithRUV2Metrics`.
+#[must_use]
+pub fn context_with_ruv2_metrics(
+    context: &tikv_client::trace::TraceContext,
+    metrics: Option<Arc<crate::ruv2_metrics::RuV2Metrics>>,
+) -> tikv_client::trace::TraceContext {
+    let Some(metrics) = metrics else {
+        return context.clone();
+    };
+    if let Some(stmt_details) = stmt_exec_details_from_context(context) {
+        stmt_details
+            .lock()
+            .expect("StmtExecDetails mutex poisoned")
+            .set_ruv2_metrics(Some(metrics));
+        return context.clone();
+    }
+    context.with_value::<Ruv2MetricsContextKey, _>(metrics)
+}
+
+/// Go `RUV2MetricsFromContext`.
+#[must_use]
+pub fn ruv2_metrics_from_context(
+    context: &tikv_client::trace::TraceContext,
+) -> Option<Arc<crate::ruv2_metrics::RuV2Metrics>> {
+    if let Some(stmt_details) = stmt_exec_details_from_context(context) {
+        if let Some(metrics) = stmt_details
+            .lock()
+            .expect("StmtExecDetails mutex poisoned")
+            .ruv2_metrics()
+            .cloned()
+        {
+            return Some(metrics);
+        }
+    }
+    context
+        .value::<Ruv2MetricsContextKey, Arc<crate::ruv2_metrics::RuV2Metrics>>()
+        .cloned()
+}
+
+/// Go `SyncRUV2MetricsFromContext`.
+#[must_use]
+pub fn sync_ruv2_metrics_from_context(
+    context: &tikv_client::trace::TraceContext,
+) -> Option<Arc<crate::ruv2_metrics::RuV2Metrics>> {
+    let metrics = ruv2_metrics_from_context(context)?;
+    crate::ruv2_metrics::sync_ruv2_metrics_from_ru_details(
+        Some(&metrics),
+        tikv_client::util::ru_details_from_context(context).map(Arc::as_ref),
+    );
+    Some(metrics)
+}
+
+/// Go `LoadTiKVExecDetails`: snapshots every atomic field in client-go's
+/// `util.ExecDetails`. A nil detail maps to the zero value.
+#[must_use]
+pub fn load_tikv_exec_details(
+    detail: Option<&tikv_client::util::ExecDetails>,
+) -> tikv_client::util::ExecDetailsSnapshot {
+    detail.map_or_else(Default::default, tikv_client::util::ExecDetails::snapshot)
+}
+
+/// Go `GetExecDetailsFromContext`. The returned client execution details are
+/// an atomic snapshot; a missing RU detail is replaced by a fresh empty one.
+#[must_use]
+pub fn get_exec_details_from_context(
+    context: &tikv_client::trace::TraceContext,
+) -> (
+    Duration,
+    tikv_client::util::ExecDetailsSnapshot,
+    Arc<tikv_client::RuDetails>,
+) {
+    let write_sql_resp_duration = stmt_exec_details_from_context(context)
+        .map(|details| {
+            details
+                .lock()
+                .expect("StmtExecDetails mutex poisoned")
+                .write_sql_resp_duration
+        })
+        .unwrap_or_default();
+    let exec_details = load_tikv_exec_details(
+        tikv_client::util::exec_details_from_context(context).map(Arc::as_ref),
+    );
+    let ru_details = tikv_client::util::ru_details_from_context(context)
+        .cloned()
+        .unwrap_or_else(|| Arc::new(tikv_client::RuDetails::new()));
+    (write_sql_resp_duration, exec_details, ru_details)
+}
+
+impl StmtExecDetails {
+    /// Go `ensureRUV2Metrics`.
+    pub fn ensure_ruv2_metrics(&mut self) -> std::sync::Arc<crate::ruv2_metrics::RuV2Metrics> {
+        self.ruv2_metrics
+            .get_or_insert_with(|| std::sync::Arc::new(crate::ruv2_metrics::RuV2Metrics::new()))
+            .clone()
+    }
+
+    /// Go `getRUV2Metrics`.
+    #[must_use]
+    pub fn ruv2_metrics(&self) -> Option<&std::sync::Arc<crate::ruv2_metrics::RuV2Metrics>> {
+        self.ruv2_metrics.as_ref()
+    }
+
+    /// Go `setRUV2Metrics`.
+    pub fn set_ruv2_metrics(
+        &mut self,
+        metrics: Option<std::sync::Arc<crate::ruv2_metrics::RuV2Metrics>>,
+    ) {
+        self.ruv2_metrics = metrics;
+    }
+}
+
+/// Go `CopTasksSummary`: statement-summary subset of cop task statistics.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CopTasksSummary {
+    /// Go `NumCopTasks`.
+    pub num_cop_tasks: i64,
+    /// Go `MaxProcessAddress`.
+    pub max_process_address: String,
+    /// Go `MaxProcessTime`.
+    pub max_process_time: Duration,
+    /// Go `TotProcessTime`.
+    pub tot_process_time: Duration,
+    /// Go `MaxWaitAddress`.
+    pub max_wait_address: String,
+    /// Go `MaxWaitTime`.
+    pub max_wait_time: Duration,
+    /// Go `TotWaitTime`.
+    pub tot_wait_time: Duration,
+}
+
+#[derive(Clone, Debug, Default)]
+struct SyncExecDetailsInner {
+    exec_details: ExecDetails,
+    details_summary: P90Summary,
+}
+
+/// Go `SyncExecDetails`: mutex-protected statement execution details.
+#[derive(Debug, Default)]
+pub struct SyncExecDetails {
+    inner: Mutex<SyncExecDetailsInner>,
+}
+
+impl SyncExecDetails {
+    /// Go `MergeExecDetails`.
+    pub fn merge_exec_details(&self, commit_details: Option<&CommitDetails>) {
+        let Some(commit_details) = commit_details else {
+            return;
+        };
+        let mut inner = self.inner.lock().expect("SyncExecDetails mutex poisoned");
+        match &mut inner.exec_details.commit_detail {
+            Some(existing) => merge_commit_details(existing, commit_details),
+            None => inner.exec_details.commit_detail = Some(commit_details.clone()),
+        }
+    }
+
+    /// Go `MergeCopExecDetails`.
+    pub fn merge_cop_exec_details(&self, details: Option<&CopExecDetails>, cop_time: Duration) {
+        let Some(details) = details else {
+            return;
+        };
+        let mut inner = self.inner.lock().expect("SyncExecDetails mutex poisoned");
+        inner.exec_details.cop_time = inner.exec_details.cop_time.saturating_add(cop_time);
+        inner.exec_details.cop_exec_details.backoff_time = inner
+            .exec_details
+            .cop_exec_details
+            .backoff_time
+            .saturating_add(details.backoff_time);
+        inner.exec_details.request_count += 1;
+        merge_scan_detail(
+            &mut inner.exec_details.cop_exec_details.scan_detail,
+            details.scan_detail.as_ref(),
+        );
+        inner.exec_details.cop_exec_details.time_detail.process_time = inner
+            .exec_details
+            .cop_exec_details
+            .time_detail
+            .process_time
+            .saturating_add(details.time_detail.process_time);
+        inner.exec_details.cop_exec_details.time_detail.wait_time = inner
+            .exec_details
+            .cop_exec_details
+            .time_detail
+            .wait_time
+            .saturating_add(details.time_detail.wait_time);
+        inner.details_summary.merge(
+            &details.backoff_sleep,
+            &details.backoff_times,
+            &details.callee_address,
+            &details.time_detail,
+        );
+    }
+
+    /// Go `MergeLockKeysExecDetails`.
+    pub fn merge_lock_keys_exec_details(&self, lock_keys: Option<&LockKeysDetails>) {
+        let Some(lock_keys) = lock_keys else {
+            return;
+        };
+        let mut inner = self.inner.lock().expect("SyncExecDetails mutex poisoned");
+        match &mut inner.exec_details.lock_keys_detail {
+            Some(existing) => merge_lock_keys_details(existing, lock_keys),
+            None => inner.exec_details.lock_keys_detail = Some(lock_keys.clone()),
+        }
+    }
+
+    /// Go `MergeSharedLockKeysExecDetails`.
+    pub fn merge_shared_lock_keys_exec_details(&self, lock_keys: Option<&LockKeysDetails>) {
+        let Some(lock_keys) = lock_keys else {
+            return;
+        };
+        let mut inner = self.inner.lock().expect("SyncExecDetails mutex poisoned");
+        match &mut inner.exec_details.shared_lock_keys_detail {
+            Some(existing) => merge_lock_keys_details(existing, lock_keys),
+            None => inner.exec_details.shared_lock_keys_detail = Some(lock_keys.clone()),
+        }
+    }
+
+    /// Go `Reset`.
+    pub fn reset(&self) {
+        *self.inner.lock().expect("SyncExecDetails mutex poisoned") =
+            SyncExecDetailsInner::default();
+    }
+
+    /// Go `GetExecDetails` as an ownership-safe snapshot.
+    #[must_use]
+    pub fn exec_details(&self) -> ExecDetails {
+        self.inner
+            .lock()
+            .expect("SyncExecDetails mutex poisoned")
+            .exec_details
+            .clone()
+    }
+
+    /// Go `CopTasksDetails`.
+    #[must_use]
+    pub fn cop_tasks_details(&self) -> Option<CopTasksDetails> {
+        let mut inner = self.inner.lock().expect("SyncExecDetails mutex poisoned");
+        let n = inner.details_summary.num_cop_tasks;
+        if n == 0 {
+            return None;
+        }
+        let process_max = inner.details_summary.process_time_percentile.get_max();
+        let wait_max = inner.details_summary.wait_time_percentile.get_max();
+        let mut detail = CopTasksDetails {
+            num_cop_tasks: n,
+            process_time_stats: TaskTimeStats {
+                tot_time: inner.exec_details.cop_exec_details.time_detail.process_time,
+                avg_time: divide_duration(
+                    inner.exec_details.cop_exec_details.time_detail.process_time,
+                    n,
+                ),
+                p90_time: duration_from_f64_nanos(
+                    inner
+                        .details_summary
+                        .process_time_percentile
+                        .get_percentile(0.9),
+                ),
+                max_time: duration_from_i64_nanos(process_max.d),
+                max_address: process_max.addr,
+            },
+            wait_time_stats: TaskTimeStats {
+                tot_time: inner.exec_details.cop_exec_details.time_detail.wait_time,
+                avg_time: divide_duration(
+                    inner.exec_details.cop_exec_details.time_detail.wait_time,
+                    n,
+                ),
+                p90_time: duration_from_f64_nanos(
+                    inner
+                        .details_summary
+                        .wait_time_percentile
+                        .get_percentile(0.9),
+                ),
+                max_time: duration_from_i64_nanos(wait_max.d),
+                max_address: wait_max.addr,
+            },
+            ..CopTasksDetails::default()
+        };
+        for (backoff, info) in &mut inner.details_summary.backoff_info {
+            if info.req_times == 0 {
+                continue;
+            }
+            let max = info.backoff_percentile.get_max();
+            detail.backoff_time_stats_map.insert(
+                backoff.clone(),
+                TaskTimeStats {
+                    max_address: max.addr,
+                    max_time: duration_from_i64_nanos(max.d),
+                    p90_time: duration_from_f64_nanos(info.backoff_percentile.get_percentile(0.9)),
+                    avg_time: divide_duration(info.tot_backoff_time, info.req_times),
+                    tot_time: info.tot_backoff_time,
+                },
+            );
+            detail
+                .tot_backoff_times
+                .insert(backoff.clone(), info.tot_backoff_times);
+        }
+        Some(detail)
+    }
+
+    /// Go `CopTasksSummary`.
+    #[must_use]
+    pub fn cop_tasks_summary(&self) -> Option<CopTasksSummary> {
+        let inner = self.inner.lock().expect("SyncExecDetails mutex poisoned");
+        if inner.details_summary.num_cop_tasks == 0 {
+            return None;
+        }
+        let process_max = inner.details_summary.process_time_percentile.get_max();
+        let wait_max = inner.details_summary.wait_time_percentile.get_max();
+        Some(CopTasksSummary {
+            num_cop_tasks: inner.details_summary.num_cop_tasks,
+            max_process_address: process_max.addr,
+            max_process_time: duration_from_i64_nanos(process_max.d),
+            tot_process_time: inner.exec_details.cop_exec_details.time_detail.process_time,
+            max_wait_address: wait_max.addr,
+            max_wait_time: duration_from_i64_nanos(wait_max.d),
+            tot_wait_time: inner.exec_details.cop_exec_details.time_detail.wait_time,
+        })
+    }
 }
 
 /// Go `IARemoteReadSegmentStats`: IA remote-read scan statistics.
@@ -360,6 +722,70 @@ pub fn get_ia_remote_read_segment_stats(
             bytes: detail.ia_remote_read_segment_bytes,
             wait_time: detail.ia_remote_read_segment_duration,
         },
+    }
+}
+
+fn duration_nanos_i64(duration: Duration) -> i64 {
+    i64::try_from(duration.as_nanos()).unwrap_or(i64::MAX)
+}
+
+fn duration_from_i64_nanos(nanos: i64) -> Duration {
+    Duration::from_nanos(nanos.max(0) as u64)
+}
+
+fn duration_from_f64_nanos(nanos: f64) -> Duration {
+    if !nanos.is_finite() || nanos <= 0.0 {
+        Duration::ZERO
+    } else {
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "Go time.Duration(float64) conversion"
+        )]
+        Duration::from_nanos(nanos as u64)
+    }
+}
+
+fn divide_duration(duration: Duration, divisor: i64) -> Duration {
+    if divisor <= 0 {
+        return Duration::ZERO;
+    }
+    Duration::from_nanos(duration_nanos_i64(duration).div_euclid(divisor) as u64)
+}
+
+fn merge_scan_detail(dst: &mut Option<ScanDetail>, src: Option<&ScanDetail>) {
+    let Some(src) = src else {
+        return;
+    };
+    let dst = dst.get_or_insert_with(ScanDetail::default);
+    dst.processed_keys += src.processed_keys;
+    dst.processed_keys_size += src.processed_keys_size;
+    dst.total_keys += src.total_keys;
+    dst.get_snapshot_duration = dst
+        .get_snapshot_duration
+        .saturating_add(src.get_snapshot_duration);
+    dst.ia_cache_hit_count += src.ia_cache_hit_count;
+    dst.rocksdb_delete_skipped_count += src.rocksdb_delete_skipped_count;
+    dst.rocksdb_key_skipped_count += src.rocksdb_key_skipped_count;
+    dst.rocksdb_block_cache_hit_count += src.rocksdb_block_cache_hit_count;
+    dst.rocksdb_block_read_count += src.rocksdb_block_read_count;
+    dst.rocksdb_block_read_bytes += src.rocksdb_block_read_bytes;
+    dst.rocksdb_block_read_duration = dst
+        .rocksdb_block_read_duration
+        .saturating_add(src.rocksdb_block_read_duration);
+    dst.ia_remote_read_segment_count += src.ia_remote_read_segment_count;
+    dst.ia_remote_read_segment_bytes += src.ia_remote_read_segment_bytes;
+    dst.ia_remote_read_segment_duration = dst
+        .ia_remote_read_segment_duration
+        .saturating_add(src.ia_remote_read_segment_duration);
+}
+
+fn push_zap_duration_field(fields: &mut Vec<Field>, key: &str, duration: Duration) {
+    if duration > Duration::ZERO {
+        fields.push(Field::new(
+            key,
+            Value::Str(format!("{}s", format_seconds(duration))),
+        ));
     }
 }
 
@@ -435,106 +861,10 @@ fn push_fraction(out: &mut String, frac: u128, prec: usize) {
     }
 }
 
-/// Renders a byte count the way the fixture pins client-go
-/// `util.FormatBytes`: small values spell as `N Bytes`. The larger-unit
-/// branches of FormatBytes stay open (source not readable here).
-fn format_bytes(n: u64) -> String {
-    format!("{n} Bytes")
-}
-
 /// Renders a Go `[]string` the way `fmt.Sprintf("%v", s)` does:
 /// space-joined inside brackets.
 fn format_go_string_slice(items: &[String]) -> String {
     format!("[{}]", items.join(" "))
-}
-
-/// The nested spelling of client-go `TiKVExecDetails.String()`, recovered
-/// from the expected literal in Go `TestString`. Sections render only for
-/// present (non-nil in Go) details, joined by `, `.
-impl fmt::Display for TiKVExecDetails {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut sections = Vec::with_capacity(3);
-        if let Some(time_detail) = &self.time_detail {
-            sections.push(format!(
-                "time_detail: {{{}}}",
-                nested_time_detail(time_detail)
-            ));
-        }
-        if let Some(scan_detail) = &self.scan_detail {
-            sections.push(format!(
-                "scan_detail: {{{}}}",
-                nested_scan_detail(scan_detail)
-            ));
-        }
-        if let Some(write_detail) = &self.write_detail {
-            sections.push(format!(
-                "write_detail: {{{}}}",
-                nested_write_detail(write_detail)
-            ));
-        }
-        f.write_str(&sections.join(", "))
-    }
-}
-
-/// The body of the nested `time_detail: {...}` block. Only the
-/// `tikv_wall_time` arm is pinned by the fixture; the nested spelling of
-/// `process_time`/`wait_time` stays open and is not rendered.
-fn nested_time_detail(detail: &TimeDetail) -> String {
-    if detail.total_rpc_wall_time > Duration::ZERO {
-        format!(
-            "tikv_wall_time: {}",
-            format_go_duration(detail.total_rpc_wall_time)
-        )
-    } else {
-        String::new()
-    }
-}
-
-/// The body of the nested `scan_detail: {...}` block, exactly as the fixture
-/// pins it. The fixture sets every rendered field non-zero, so whether
-/// client-go suppresses zero fields here stays open; this renders the pinned
-/// fields unconditionally.
-fn nested_scan_detail(detail: &ScanDetail) -> String {
-    format!(
-        "total_process_keys: {}, total_keys: {}, rocksdb: {{delete_skipped_count: {}, \
-         key_skipped_count: {}, block: {{cache_hit_count: {}, read_count: {}, read_byte: {}, \
-         read_time: {}}}}}",
-        detail.processed_keys,
-        detail.total_keys,
-        detail.rocksdb_delete_skipped_count,
-        detail.rocksdb_key_skipped_count,
-        detail.rocksdb_block_cache_hit_count,
-        detail.rocksdb_block_read_count,
-        format_bytes(detail.rocksdb_block_read_byte),
-        format_go_duration(detail.rocksdb_block_read_duration),
-    )
-}
-
-/// The body of the nested `write_detail: {...}` block, exactly as the
-/// fixture pins it — including the asymmetric `persist_log: {total: ` versus
-/// `apply: {total:` spacing and the unconditional `scheduler: {process: ...}`
-/// tail the fixture leaves at `0s`.
-fn nested_write_detail(detail: &WriteDetail) -> String {
-    format!(
-        "store_batch_wait: {}, propose_send_wait: {}, persist_log: {{total: {}, \
-         write_leader_wait: {}, sync_log: {}, write_memtable: {}}}, commit_log: {}, \
-         apply_batch_wait: {}, apply: {{total:{}, mutex_lock: {}, write_leader_wait: {}, \
-         write_wal: {}, write_memtable: {}}}, scheduler: {{process: {}}}",
-        format_go_duration(detail.store_batch_wait_duration),
-        format_go_duration(detail.propose_send_wait_duration),
-        format_go_duration(detail.persist_log_duration),
-        format_go_duration(detail.raft_db_write_leader_wait_duration),
-        format_go_duration(detail.raft_db_sync_log_duration),
-        format_go_duration(detail.raft_db_write_memtable_duration),
-        format_go_duration(detail.commit_log_duration),
-        format_go_duration(detail.apply_batch_wait_duration),
-        format_go_duration(detail.apply_log_duration),
-        format_go_duration(detail.apply_mutex_lock_duration),
-        format_go_duration(detail.apply_write_leader_wait_duration),
-        format_go_duration(detail.apply_write_wal_duration),
-        format_go_duration(detail.apply_write_memtable_duration),
-        format_go_duration(detail.scheduler_process_duration),
-    )
 }
 
 /// One slowest-RPC part: Go's
@@ -542,9 +872,9 @@ fn nested_write_detail(detail: &WriteDetail) -> String {
 fn req_detail_part(label: &str, info: &ReqDetailInfo) -> String {
     format!(
         "{label}: {{total:{}s, region_id: {}, store: {}, {}}}",
-        format_seconds_3(info.req_total_time),
+        format_seconds_3(info.request_total_time),
         info.region,
-        info.store_addr,
+        info.store_address,
         info.exec_details,
     )
 }
@@ -618,43 +948,43 @@ impl fmt::Display for ExecDetails {
                     format_seconds(commit.get_latest_ts_time)
                 ));
             }
-            if commit.commit_backoff_time > 0 {
+            if commit.detail.commit_backoff_time_ns > 0 {
                 parts.push(format!(
                     "{COMMIT_BACKOFF_TIME_STR}: {}",
                     format_seconds(Duration::from_nanos(
-                        commit.commit_backoff_time.unsigned_abs()
+                        commit.detail.commit_backoff_time_ns.unsigned_abs()
                     ))
                 ));
             }
-            if !commit.prewrite_backoff_types.is_empty() {
+            if !commit.detail.prewrite_backoff_types.is_empty() {
                 parts.push(format!(
                     "Prewrite_{BACKOFF_TYPES_STR}: {}",
-                    format_go_string_slice(&commit.prewrite_backoff_types)
+                    format_go_string_slice(&commit.detail.prewrite_backoff_types)
                 ));
             }
-            if !commit.commit_backoff_types.is_empty() {
+            if !commit.detail.commit_backoff_types.is_empty() {
                 parts.push(format!(
                     "Commit_{BACKOFF_TYPES_STR}: {}",
-                    format_go_string_slice(&commit.commit_backoff_types)
+                    format_go_string_slice(&commit.detail.commit_backoff_types)
                 ));
             }
-            if commit.slowest_prewrite.req_total_time > Duration::ZERO {
+            if commit.detail.slowest_prewrite.request_total_time > Duration::ZERO {
                 parts.push(req_detail_part(
                     SLOWEST_PREWRITE_RPC_DETAIL_STR,
-                    &commit.slowest_prewrite,
+                    &commit.detail.slowest_prewrite,
                 ));
             }
-            if commit.commit_primary.req_total_time > Duration::ZERO {
+            if commit.detail.commit_primary.request_total_time > Duration::ZERO {
                 parts.push(req_detail_part(
                     COMMIT_PRIMARY_RPC_DETAIL_STR,
-                    &commit.commit_primary,
+                    &commit.detail.commit_primary,
                 ));
             }
-            if commit.resolve_lock.resolve_lock_time > 0 {
+            if commit.resolve_lock.resolve_lock_time_ns > 0 {
                 parts.push(format!(
                     "{RESOLVE_LOCK_TIME_STR}: {}",
                     format_seconds(Duration::from_nanos(
-                        commit.resolve_lock.resolve_lock_time.unsigned_abs()
+                        commit.resolve_lock.resolve_lock_time_ns.unsigned_abs()
                     ))
                 ));
             }
@@ -676,8 +1006,8 @@ impl fmt::Display for ExecDetails {
                     commit.prewrite_region_num
                 ));
             }
-            if commit.txn_retry > 0 {
-                parts.push(format!("{TXN_RETRY_STR}: {}", commit.txn_retry));
+            if commit.transaction_retry > 0 {
+                parts.push(format!("{TXN_RETRY_STR}: {}", commit.transaction_retry));
             }
         }
         if let Some(scan) = &self.cop_exec_details.scan_detail {
@@ -717,10 +1047,10 @@ impl fmt::Display for ExecDetails {
                     scan.rocksdb_block_read_count
                 ));
             }
-            if scan.rocksdb_block_read_byte > 0 {
+            if scan.rocksdb_block_read_bytes > 0 {
                 parts.push(format!(
                     "{ROCKSDB_BLOCK_READ_BYTE_STR}: {}",
-                    scan.rocksdb_block_read_byte
+                    scan.rocksdb_block_read_bytes
                 ));
             }
             if scan.rocksdb_block_read_duration > Duration::ZERO {
@@ -734,6 +1064,191 @@ impl fmt::Display for ExecDetails {
     }
 }
 
+impl ExecDetails {
+    /// Go `ExecDetails.ToZapFields`.
+    #[must_use]
+    pub fn to_zap_fields(&self) -> Vec<Field> {
+        let mut fields = Vec::with_capacity(16);
+        push_zap_duration_field(
+            &mut fields,
+            &COP_TIME_STR.to_ascii_lowercase(),
+            self.cop_time,
+        );
+        push_zap_duration_field(
+            &mut fields,
+            &PROCESS_TIME_STR.to_ascii_lowercase(),
+            self.cop_exec_details.time_detail.process_time,
+        );
+        push_zap_duration_field(
+            &mut fields,
+            &WAIT_TIME_STR.to_ascii_lowercase(),
+            self.cop_exec_details.time_detail.wait_time,
+        );
+        push_zap_duration_field(
+            &mut fields,
+            &BACKOFF_TIME_STR.to_ascii_lowercase(),
+            self.cop_exec_details.backoff_time,
+        );
+        if self.request_count > 0 {
+            fields.push(Field::new(
+                REQUEST_COUNT_STR.to_ascii_lowercase(),
+                Value::Str(self.request_count.to_string()),
+            ));
+        }
+        if let Some(scan) = &self.cop_exec_details.scan_detail {
+            if scan.total_keys > 0 {
+                fields.push(Field::new(
+                    TOTAL_KEYS_STR.to_ascii_lowercase(),
+                    Value::Str(scan.total_keys.to_string()),
+                ));
+            }
+            if scan.processed_keys > 0 {
+                fields.push(Field::new(
+                    PROCESS_KEYS_STR.to_ascii_lowercase(),
+                    Value::Str(scan.processed_keys.to_string()),
+                ));
+            }
+        }
+        if let Some(commit) = &self.commit_detail {
+            push_zap_duration_field(&mut fields, "prewrite_time", commit.prewrite_time);
+            push_zap_duration_field(&mut fields, "commit_time", commit.commit_time);
+            push_zap_duration_field(&mut fields, "get_commit_ts_time", commit.get_commit_ts_time);
+            if commit.detail.commit_backoff_time_ns > 0 {
+                push_zap_duration_field(
+                    &mut fields,
+                    "commit_backoff_time",
+                    Duration::from_nanos(commit.detail.commit_backoff_time_ns as u64),
+                );
+            }
+            if !commit.detail.prewrite_backoff_types.is_empty() {
+                fields.push(Field::new(
+                    format!("Prewrite_{BACKOFF_TYPES_STR}"),
+                    Value::Str(format_go_string_slice(
+                        &commit.detail.prewrite_backoff_types,
+                    )),
+                ));
+            }
+            if !commit.detail.commit_backoff_types.is_empty() {
+                fields.push(Field::new(
+                    format!("Commit_{BACKOFF_TYPES_STR}"),
+                    Value::Str(format_go_string_slice(&commit.detail.commit_backoff_types)),
+                ));
+            }
+            if commit.detail.slowest_prewrite.request_total_time > Duration::ZERO {
+                fields.push(Field::new(
+                    SLOWEST_PREWRITE_RPC_DETAIL_STR,
+                    Value::Str(format!(
+                        "total:{}s, region_id: {}, store: {}, {}}}",
+                        format_seconds_3(commit.detail.slowest_prewrite.request_total_time),
+                        commit.detail.slowest_prewrite.region,
+                        commit.detail.slowest_prewrite.store_address,
+                        commit.detail.slowest_prewrite.exec_details,
+                    )),
+                ));
+            }
+            if commit.detail.commit_primary.request_total_time > Duration::ZERO {
+                fields.push(Field::new(
+                    COMMIT_PRIMARY_RPC_DETAIL_STR,
+                    Value::Str(format!(
+                        "{{total:{}s, region_id: {}, store: {}, {}}}",
+                        format_seconds_3(commit.detail.commit_primary.request_total_time),
+                        commit.detail.commit_primary.region,
+                        commit.detail.commit_primary.store_address,
+                        commit.detail.commit_primary.exec_details,
+                    )),
+                ));
+            }
+            if commit.resolve_lock.resolve_lock_time_ns > 0 {
+                push_zap_duration_field(
+                    &mut fields,
+                    "resolve_lock_time",
+                    Duration::from_nanos(commit.resolve_lock.resolve_lock_time_ns as u64),
+                );
+            }
+            push_zap_duration_field(
+                &mut fields,
+                "local_latch_wait_time",
+                commit.local_latch_time,
+            );
+            if commit.write_keys > 0 {
+                fields.push(Field::new(
+                    "write_keys",
+                    Value::I64(commit.write_keys as i64),
+                ));
+            }
+            if commit.write_size > 0 {
+                fields.push(Field::new(
+                    "write_size",
+                    Value::I64(commit.write_size as i64),
+                ));
+            }
+            if commit.prewrite_region_num > 0 {
+                fields.push(Field::new(
+                    "prewrite_region",
+                    Value::I64(i64::from(commit.prewrite_region_num)),
+                ));
+            }
+            if commit.transaction_retry > 0 {
+                fields.push(Field::new(
+                    "txn_retry",
+                    Value::I64(commit.transaction_retry as i64),
+                ));
+            }
+        }
+        fields
+    }
+}
+
+impl TaskTimeStats {
+    /// Go `TaskTimeStats.FormatFloatFields`.
+    #[must_use]
+    pub fn format_float_fields(&self) -> (String, String, String) {
+        (
+            format_seconds(self.avg_time),
+            format_seconds(self.p90_time),
+            format_seconds(self.max_time),
+        )
+    }
+}
+
+impl CopTasksDetails {
+    /// Go `CopTasksDetails.ToZapFields`.
+    #[must_use]
+    pub fn to_zap_fields(&self) -> Vec<Field> {
+        if self.num_cop_tasks == 0 {
+            return Vec::new();
+        }
+        let mut fields = Vec::with_capacity(10);
+        fields.push(Field::new("num_cop_tasks", Value::I64(self.num_cop_tasks)));
+        let (avg, p90, max) = self.process_time_stats.format_float_fields();
+        fields.push(Field::new(
+            "process_avg_time",
+            Value::Str(format!("{avg}s")),
+        ));
+        fields.push(Field::new(
+            "process_p90_time",
+            Value::Str(format!("{p90}s")),
+        ));
+        fields.push(Field::new(
+            "process_max_time",
+            Value::Str(format!("{max}s")),
+        ));
+        fields.push(Field::new(
+            "process_max_addr",
+            Value::Str(self.process_time_stats.max_address.clone()),
+        ));
+        let (avg, p90, max) = self.wait_time_stats.format_float_fields();
+        fields.push(Field::new("wait_avg_time", Value::Str(format!("{avg}s"))));
+        fields.push(Field::new("wait_p90_time", Value::Str(format!("{p90}s"))));
+        fields.push(Field::new("wait_max_time", Value::Str(format!("{max}s"))));
+        fields.push(Field::new(
+            "wait_max_addr",
+            Value::Str(self.wait_time_stats.max_address.clone()),
+        ));
+        fields
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -742,22 +1257,22 @@ mod tests {
     /// slot and the lock-keys slowest-request fragment in Go `TestString`.
     fn fixture_tikv_exec_details() -> TiKVExecDetails {
         TiKVExecDetails {
-            time_detail: Some(TimeDetail {
+            time_detail: Some(Arc::new(TimeDetail {
                 total_rpc_wall_time: Duration::from_millis(500),
                 ..TimeDetail::default()
-            }),
-            scan_detail: Some(ScanDetail {
+            })),
+            scan_detail: Some(Arc::new(ScanDetail {
                 processed_keys: 10,
                 total_keys: 100,
                 rocksdb_delete_skipped_count: 1,
                 rocksdb_key_skipped_count: 1,
                 rocksdb_block_cache_hit_count: 1,
                 rocksdb_block_read_count: 1,
-                rocksdb_block_read_byte: 100,
+                rocksdb_block_read_bytes: 100,
                 rocksdb_block_read_duration: Duration::from_millis(20),
                 ..ScanDetail::default()
-            }),
-            write_detail: Some(WriteDetail {
+            })),
+            write_detail: Some(Arc::new(WriteDetail {
                 store_batch_wait_duration: Duration::from_micros(10),
                 propose_send_wait_duration: Duration::from_micros(20),
                 persist_log_duration: Duration::from_micros(30),
@@ -772,7 +1287,8 @@ mod tests {
                 apply_write_wal_duration: Duration::from_micros(101),
                 apply_write_memtable_duration: Duration::from_micros(102),
                 scheduler_process_duration: Duration::ZERO,
-            }),
+                ..WriteDetail::default()
+            })),
         }
     }
 
@@ -788,22 +1304,25 @@ mod tests {
                 total_time: Duration::from_secs(1),
                 region_num: 2,
                 lock_keys: 10,
-                backoff_time: 3_000_000_000,
-                backoff_types: vec![
-                    "backoff4".to_owned(),
-                    "backoff5".to_owned(),
-                    "backoff5".to_owned(),
-                ],
-                slowest_req_total_time: Duration::from_secs(1),
-                slowest_region: 1000,
-                slowest_store_addr: "tikv-1:20160".to_owned(),
-                slowest_exec_details: fixture_tikv_exec_details(),
-                lock_rpc_time: 5_000_000_000,
+                backoff_time_ns: 3_000_000_000,
+                detail: LockKeysDetailsInner {
+                    backoff_types: vec![
+                        "backoff4".to_owned(),
+                        "backoff5".to_owned(),
+                        "backoff5".to_owned(),
+                    ],
+                    slowest_request_total_time: Duration::from_secs(1),
+                    slowest_region: 1000,
+                    slowest_store_address: "tikv-1:20160".to_owned(),
+                    slowest_exec_details: fixture_tikv_exec_details(),
+                },
+                lock_rpc_time_ns: 5_000_000_000,
                 lock_rpc_count: 50,
                 retry_count: 2,
                 resolve_lock: ResolveLockDetail {
-                    resolve_lock_time: 2_000_000_000,
+                    resolve_lock_time_ns: 2_000_000_000,
                 },
+                ..LockKeysDetails::default()
             }),
             commit_detail: Some(CommitDetails {
                 get_commit_ts_time: Duration::from_secs(1),
@@ -811,60 +1330,63 @@ mod tests {
                 prewrite_time: Duration::from_secs(1),
                 commit_time: Duration::from_secs(1),
                 local_latch_time: Duration::from_secs(1),
-                commit_backoff_time: 1_000_000_000,
-                prewrite_backoff_types: vec!["backoff1".to_owned(), "backoff2".to_owned()],
-                commit_backoff_types: vec!["commit1".to_owned(), "commit2".to_owned()],
-                slowest_prewrite: ReqDetailInfo {
-                    req_total_time: Duration::from_secs(1),
-                    region: 1000,
-                    store_addr: "tikv-1:20160".to_owned(),
-                    exec_details: fixture_tikv_exec_details(),
-                },
-                commit_primary: ReqDetailInfo {
-                    req_total_time: Duration::from_secs(2),
-                    region: 2000,
-                    store_addr: "tikv-2:20160".to_owned(),
-                    exec_details: TiKVExecDetails {
-                        time_detail: Some(TimeDetail {
-                            total_rpc_wall_time: Duration::from_millis(1000),
-                            ..TimeDetail::default()
-                        }),
-                        scan_detail: Some(ScanDetail {
-                            processed_keys: 20,
-                            total_keys: 200,
-                            rocksdb_delete_skipped_count: 2,
-                            rocksdb_key_skipped_count: 2,
-                            rocksdb_block_cache_hit_count: 2,
-                            rocksdb_block_read_count: 2,
-                            rocksdb_block_read_byte: 200,
-                            rocksdb_block_read_duration: Duration::from_millis(40),
-                            ..ScanDetail::default()
-                        }),
-                        write_detail: Some(WriteDetail {
-                            store_batch_wait_duration: Duration::from_micros(110),
-                            propose_send_wait_duration: Duration::from_micros(120),
-                            persist_log_duration: Duration::from_micros(130),
-                            raft_db_write_leader_wait_duration: Duration::from_micros(140),
-                            raft_db_sync_log_duration: Duration::from_micros(145),
-                            raft_db_write_memtable_duration: Duration::from_micros(150),
-                            commit_log_duration: Duration::from_micros(160),
-                            apply_batch_wait_duration: Duration::from_micros(170),
-                            apply_log_duration: Duration::from_micros(180),
-                            apply_mutex_lock_duration: Duration::from_micros(190),
-                            apply_write_leader_wait_duration: Duration::from_micros(200),
-                            apply_write_wal_duration: Duration::from_micros(201),
-                            apply_write_memtable_duration: Duration::from_micros(202),
-                            scheduler_process_duration: Duration::ZERO,
-                        }),
+                detail: CommitDetailsInner {
+                    commit_backoff_time_ns: 1_000_000_000,
+                    prewrite_backoff_types: vec!["backoff1".to_owned(), "backoff2".to_owned()],
+                    commit_backoff_types: vec!["commit1".to_owned(), "commit2".to_owned()],
+                    slowest_prewrite: ReqDetailInfo {
+                        request_total_time: Duration::from_secs(1),
+                        region: 1000,
+                        store_address: "tikv-1:20160".to_owned(),
+                        exec_details: fixture_tikv_exec_details(),
+                    },
+                    commit_primary: ReqDetailInfo {
+                        request_total_time: Duration::from_secs(2),
+                        region: 2000,
+                        store_address: "tikv-2:20160".to_owned(),
+                        exec_details: TiKVExecDetails {
+                            time_detail: Some(Arc::new(TimeDetail {
+                                total_rpc_wall_time: Duration::from_millis(1000),
+                                ..TimeDetail::default()
+                            })),
+                            scan_detail: Some(Arc::new(ScanDetail {
+                                processed_keys: 20,
+                                total_keys: 200,
+                                rocksdb_delete_skipped_count: 2,
+                                rocksdb_key_skipped_count: 2,
+                                rocksdb_block_cache_hit_count: 2,
+                                rocksdb_block_read_count: 2,
+                                rocksdb_block_read_bytes: 200,
+                                rocksdb_block_read_duration: Duration::from_millis(40),
+                                ..ScanDetail::default()
+                            })),
+                            write_detail: Some(Arc::new(WriteDetail {
+                                store_batch_wait_duration: Duration::from_micros(110),
+                                propose_send_wait_duration: Duration::from_micros(120),
+                                persist_log_duration: Duration::from_micros(130),
+                                raft_db_write_leader_wait_duration: Duration::from_micros(140),
+                                raft_db_sync_log_duration: Duration::from_micros(145),
+                                raft_db_write_memtable_duration: Duration::from_micros(150),
+                                commit_log_duration: Duration::from_micros(160),
+                                apply_batch_wait_duration: Duration::from_micros(170),
+                                apply_log_duration: Duration::from_micros(180),
+                                apply_mutex_lock_duration: Duration::from_micros(190),
+                                apply_write_leader_wait_duration: Duration::from_micros(200),
+                                apply_write_wal_duration: Duration::from_micros(201),
+                                apply_write_memtable_duration: Duration::from_micros(202),
+                                scheduler_process_duration: Duration::ZERO,
+                                ..WriteDetail::default()
+                            })),
+                        },
                     },
                 },
                 write_keys: 1,
                 write_size: 1,
                 prewrite_region_num: 1,
-                txn_retry: 1,
+                transaction_retry: 1,
                 resolve_lock: ResolveLockDetail {
                     // 10^9 ns = 1s, as the Go fixture spells it.
-                    resolve_lock_time: 1_000_000_000,
+                    resolve_lock_time_ns: 1_000_000_000,
                 },
                 ..CommitDetails::default()
             }),
@@ -877,7 +1399,7 @@ mod tests {
                     rocksdb_key_skipped_count: 1,
                     rocksdb_block_cache_hit_count: 1,
                     rocksdb_block_read_count: 1,
-                    rocksdb_block_read_byte: 100,
+                    rocksdb_block_read_bytes: 100,
                     rocksdb_block_read_duration: Duration::from_millis(1),
                     ..ScanDetail::default()
                 }),
@@ -929,42 +1451,6 @@ mod tests {
         assert_eq!("", ExecDetails::default().to_string());
     }
 
-    /// Pins `format_seconds` against Go's
-    /// `strconv.FormatFloat(seconds, 'f', -1, 64)` at the fixture values.
-    #[test]
-    fn format_seconds_matches_go_format_float() {
-        let cases = [
-            (Duration::from_millis(1003), "1.003"),
-            (Duration::from_millis(2005), "2.005"),
-            (Duration::from_secs(1), "1"),
-            (Duration::from_millis(500), "0.5"),
-            (Duration::from_secs(3), "3"),
-        ];
-        for (duration, expected) in cases {
-            assert_eq!(expected, format_seconds(duration));
-        }
-    }
-
-    /// Pins `format_go_duration` at every point the Go `TestString` fixture
-    /// exercises client-go's duration rendering.
-    #[test]
-    fn format_go_duration_fixture_points() {
-        let cases = [
-            (Duration::ZERO, "0s"),
-            (Duration::from_micros(10), "10µs"),
-            (Duration::from_micros(45), "45µs"),
-            (Duration::from_micros(101), "101µs"),
-            (Duration::from_millis(20), "20ms"),
-            (Duration::from_millis(40), "40ms"),
-            (Duration::from_millis(500), "500ms"),
-            (Duration::from_secs(1), "1s"),
-            (Duration::from_secs(2), "2s"),
-        ];
-        for (duration, expected) in cases {
-            assert_eq!(expected, format_go_duration(duration));
-        }
-    }
-
     /// Go `GetIARemoteReadSegmentStats`: nil detail yields zeros; a present
     /// detail is read field for field.
     #[test]
@@ -986,6 +1472,49 @@ mod tests {
                 wait_time: Duration::from_millis(7),
             },
             get_ia_remote_read_segment_stats(Some(&scan))
+        );
+    }
+
+    /// Port of Go `TestString/load tikv exec details snapshot`.
+    #[test]
+    fn load_tikv_exec_details_snapshots_all_atomic_fields() {
+        assert_eq!(
+            tikv_client::util::ExecDetailsSnapshot::default(),
+            load_tikv_exec_details(None)
+        );
+
+        let details = tikv_client::util::ExecDetails::default();
+        details.add_backoff(Duration::from_secs(3));
+        details.add_backoff(Duration::ZERO);
+        details.add_wait_kv_response(Duration::from_secs(4));
+        details.add_wait_pd_response(Duration::from_secs(5));
+        details.traffic.add_request(11, false, false);
+        details.traffic.add_response(12, false, false);
+        details.traffic.add_request(13, false, true);
+        details.traffic.add_response(14, false, true);
+        details.traffic.add_request(15, true, false);
+        details.traffic.add_response(16, true, false);
+        details.traffic.add_request(17, true, true);
+        details.traffic.add_response(18, true, true);
+
+        assert_eq!(
+            tikv_client::util::ExecDetailsSnapshot {
+                backoff_count: 2,
+                backoff_duration_ns: 3_000_000_000,
+                wait_kv_response_duration_ns: 4_000_000_000,
+                wait_pd_response_duration_ns: 5_000_000_000,
+                traffic: tikv_client::util::TrafficDetailsSnapshot {
+                    sent_kv_total: 24,
+                    received_kv_total: 26,
+                    sent_kv_cross_zone: 13,
+                    received_kv_cross_zone: 14,
+                    sent_mpp_total: 32,
+                    received_mpp_total: 34,
+                    sent_mpp_cross_zone: 17,
+                    received_mpp_cross_zone: 18,
+                },
+            },
+            load_tikv_exec_details(Some(&details))
         );
     }
 }

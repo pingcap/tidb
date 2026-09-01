@@ -55,12 +55,12 @@
 //! - `*stmtctx.StatementContext` narrows to
 //!   [`statement_summary::StmtSummaryStmtCtx`], carrying only the fields this
 //!   file reads.
-//! - `execdetails.CopTasksSummary` is not yet in `tidb-exec`, so it is declared
-//!   here as [`statement_summary::CopTasksSummary`].
-//! - client-go `*util.RUDetails` / `*util.ExecDetails` arrive as the
-//!   already-loaded snapshots `tidb_exec::slow_log_format::RuDetailsSnapshot`
-//!   and `TikvExecDetailsSnapshot`, so Go's `atomic.LoadInt64` calls become
-//!   plain field reads.
+//! - `execdetails.CopTasksSummary` uses the canonical
+//!   `tidb_exec::exec_details::CopTasksSummary` owner.
+//! - client-go `*util.RUDetails` / `*util.ExecDetails` use the canonical
+//!   `tikv-client` `RuDetails` and already-loaded `ExecDetailsSnapshot`, so
+//!   Go's atomic loads become canonical accessor calls or snapshot field
+//!   reads.
 //! - Go's `sql[:maxSQLLength]` byte slice becomes a UTF-8 boundary-safe
 //!   truncation in [`statement_summary::format_sql`].
 //!

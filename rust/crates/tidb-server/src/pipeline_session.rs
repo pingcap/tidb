@@ -436,6 +436,7 @@ impl QuerySession for PipelineServerSession {
         statement: &PreparedGeneral,
         values: &[tidb_protocol::PreparedValue],
     ) -> Result<GeneralExecuteOutcome<'a>, SqlQueryError> {
+        let process_statement = self.session.retain_process_statement(statement.sql());
         let params = prepared_parameters(values);
         let (output, result_authority) = self
             .session
@@ -444,20 +445,22 @@ impl QuerySession for PipelineServerSession {
         Ok(match output {
             StmtOutput::Rows { columns, rows } => {
                 let field_types = columns.iter().map(|(_, field)| field.clone()).collect();
-                GeneralExecuteOutcome::Rows(
-                    QueryResult::new(Box::new(MaterializedResultSetSource::new(
-                        select_columns(&columns),
-                        rows,
-                    )))
-                    .with_cursor_materialization(
-                        field_types,
-                        result_authority.expect("a row result carries materialization authority"),
-                    )
-                    .with_statement_status(
-                        self.session.wire_warning_count(),
-                        WireStatus::of_session(&self.session),
-                    ),
+                let result = QueryResult::new(Box::new(MaterializedResultSetSource::new(
+                    select_columns(&columns),
+                    rows,
+                )))
+                .with_cursor_materialization(
+                    field_types,
+                    result_authority.expect("a row result carries materialization authority"),
                 )
+                .with_statement_status(
+                    self.session.wire_warning_count(),
+                    WireStatus::of_session(&self.session),
+                );
+                GeneralExecuteOutcome::Rows(match process_statement {
+                    Some(statement) => result.with_process_statement(statement),
+                    None => result,
+                })
             }
             StmtOutput::Affected(count) => GeneralExecuteOutcome::Write(WriteOutcome {
                 affected_rows: count,
@@ -471,6 +474,7 @@ impl QuerySession for PipelineServerSession {
     }
 
     fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+        let process_statement = self.session.retain_process_statement(sql);
         let source = match self.session.run_with_columns(sql).map_err(map_error)? {
             StmtOutput::Rows { columns, rows } => {
                 MaterializedResultSetSource::new(select_columns(&columns), rows)
@@ -484,10 +488,14 @@ impl QuerySession for PipelineServerSession {
         };
         // The rows are already materialized, so the buffer this reads is the
         // finished statement's -- the same one Go's terminal `writeEOF` reads.
-        Ok(QueryResult::new(Box::new(source)).with_statement_status(
+        let result = QueryResult::new(Box::new(source)).with_statement_status(
             self.session.wire_warning_count(),
             WireStatus::of_session(&self.session),
-        ))
+        );
+        Ok(match process_statement {
+            Some(statement) => result.with_process_statement(statement),
+            None => result,
+        })
     }
 }
 

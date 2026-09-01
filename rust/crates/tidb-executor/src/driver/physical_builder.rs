@@ -3031,6 +3031,7 @@ pub(super) fn execute_query(
     ctx: &crate::StmtContext,
 ) -> Result<SelectMeta, DriverError> {
     prepare_apply_bindings(physical)?;
+    ctx.publish_process_plan_info(crate::process_plan_info(physical, catalog));
     let root = build(physical, catalog, ctx)?;
     let columns = match query {
         tidb_ast::QueryStmt::Select(select) => result_columns(select, root.schema()),
