@@ -25,11 +25,23 @@ fn test_keywords() {
 
 #[test]
 fn test_keywords_length() {
-    assert_eq!(KEYWORDS.len(), 685);
+    assert_eq!(KEYWORDS.len(), 689);
     assert_eq!(
         KEYWORDS.iter().filter(|keyword| keyword.reserved).count(),
         233
     );
+}
+
+#[test]
+fn test_go_master_added_unreserved_keywords() {
+    for word in ["ALERT", "FAST", "IMMEDIATE", "MATERIALIZED"] {
+        let keyword = KEYWORDS
+            .iter()
+            .find(|keyword| keyword.word == word)
+            .unwrap_or_else(|| panic!("missing Go-master keyword {word}"));
+        assert!(!keyword.reserved, "{word} must remain unreserved");
+        assert_eq!(keyword.section, "unreserved");
+    }
 }
 
 #[test]
