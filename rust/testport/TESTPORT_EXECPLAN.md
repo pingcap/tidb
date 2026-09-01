@@ -36,6 +36,15 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- [x] (2026-08-31) Completed pinned five-artifact
+  `pkg/lightning/membuf`. Replaced the prior location-token-only allocation
+  path with native shared byte-slice aliases, restored target-sized arithmetic,
+  option order, channel-close and panic boundaries, exact pool/buffer limiter
+  accounting, all seven functional tests, and all nine benchmarks. Removed
+  Rust-only configuration, accessors, diagnostics, and supplemental tests.
+  Complete inventory and WIP evidence are in
+  `receipts/lightning_membuf.md`.
+
 - [x] (2026-08-31) Completed pinned seven-artifact `pkg/util/plancodec`.
   Restored target-sized IDs/depths, Go's textual panic/error boundary and
   store-type wrapping, and mandatory binary main-operator behavior. Removed

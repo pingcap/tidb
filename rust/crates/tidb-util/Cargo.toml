@@ -101,6 +101,10 @@ harness = false
 required-features = ["testexport"]
 
 [[bench]]
+name = "membuf"
+harness = false
+
+[[bench]]
 name = "set"
 harness = false
 
