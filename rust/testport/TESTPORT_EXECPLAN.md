@@ -3818,6 +3818,11 @@ For each bounded behavior cluster:
   1,441 lines. `tidb-datatype` owns the FieldType/EvalType, type-name,
   formatting, JSON, sizing, and error-prototype behavior with source-derived
   tests; no Rust-only behavior or code delta was found.
+- `pkg/parser/tidb` is byte-identical to Go master across its two artifacts
+  and 75 lines of feature identifiers plus `CanParseFeature`. No Rust crate
+  currently consumes this public allowlist, so no speculative facade or
+  Rust-only behavior removal was justified; the package remains an explicit
+  ownership boundary.
 
 ## Outcomes & Retrospective
 
