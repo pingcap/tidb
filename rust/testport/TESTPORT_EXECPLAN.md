@@ -40,6 +40,16 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: audited the complete Go-master `pkg/sessionctx/slowlogrule`
+  package before editing: two tracked artifacts and 73 lines, covering the
+  public BUILD target and all condition/rule/session/global metadata plus its
+  constructor. The package has no tests, fixtures, generated/platform
+  variants, or build inputs and is unchanged from the pinned source. Rust's
+  `tidb-exec::slow_log_rules` and `slow_log_parse` preserve the data model and
+  parser contracts; session-variable evaluator wiring remains a larger
+  boundary. Recorded the explicit boundary in
+  `receipts/sessionctx_slowlogrule.md`.
+
 - 2026-09-01: audited the complete Go-master `pkg/sessionctx/stmtctx`
   package before editing: four tracked artifacts and 2,416 lines, including
   129 production functions, 17 statement-context tests, one benchmark,
