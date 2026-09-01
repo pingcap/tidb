@@ -40,6 +40,13 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: audited the complete current Go-master `pkg/param` package (two
+  artifacts, 44 lines). It is a data-only `BinaryParam`/error declaration;
+  the dependency-closed Rust owner is the existing `tidb-protocol` splitter
+  sourced from `pkg/server/conn_stmt_params.go`, with 12 focused binary
+  parameter tests passing. Recorded `receipts/param.md` without duplicating a
+  Rust-only carrier or changing source behavior.
+
 - 2026-09-01: audited the complete current Go-master `pkg/resourcegroup`
   family (14 artifacts, 4,242 lines): the root interface package, the
   failpoint-backed `runaway` checker/manager/record/syncer package, and the
