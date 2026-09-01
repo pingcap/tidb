@@ -82,7 +82,7 @@ func TestOnUserKeyspace(t *testing.T) {
 	require.Len(t, result, 1)
 	jobID, err := strconv.Atoi(result[0][0].(string))
 	require.NoError(t, err)
-	userTK.MustQuery("select * from t").Check(testkit.Rows(resultSlice...))
+	userTK.MustQuery("select * from t order by a").Check(testkit.Rows(resultSlice...))
 	taskKey := importinto.TaskKey(int64(jobID))
 	tableID, err := strconv.Atoi(result[0][fmap["TableID"]].(string))
 	require.NoError(t, err)
@@ -104,11 +104,17 @@ func TestOnUserKeyspace(t *testing.T) {
 	// check table stats
 	require.Eventually(t, func() bool {
 		r := userTK.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta where table_id=%d", tableID)).Rows()
-		require.Len(t, r, 1)
+		if len(r) != 1 {
+			return false
+		}
 		modified, err := strconv.Atoi(r[0][0].(string))
-		require.NoError(t, err)
+		if err != nil {
+			return false
+		}
 		rows, err := strconv.Atoi(r[0][1].(string))
-		require.NoError(t, err)
+		if err != nil {
+			return false
+		}
 		// import into will update both modify_count and count to rowCount, after
 		// auto analyze, modify_count will be set to 0
 		return modified == 0 && rows == rowCount
