@@ -10,14 +10,18 @@ TiDB uses `pkg/util/kvcache` as its small byte-identity LRU primitive for JSON p
 
 ## Progress
 
-- [x] (2026-08-12) Fixed the complete four-file Go inventory and accepted source pin `6a85c6bbbd6cae7e0eea20a75ecd0853ac3545d6`; current package bytes match the pin.
+- [x] (2026-09-02) Re-audited the complete four-file Go inventory against
+  `origin/master` at `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`; the rolling
+  checkout was missing `SimpleLRUCache.Peek` and now matches the current pin.
 - [x] (2026-08-12) Confirmed there is no `doc.go`, build/platform variant, failpoint, generated input, fixture, benchmark, fuzz target, example, `go:generate`, or `go:embed`.
 - [x] (2026-08-12) Read every Go production/test/harness/Bazel line and every Rust owner, direct test, compatibility re-export, tracker, and live consumer line relevant to cache behavior.
 - [x] (2026-08-12) Ran all eight Go tests normally and under race.
 - [x] (2026-08-12) Mapped every Go test branch to the existing eight Rust source-contract tests and audited the untested Go production branches.
 - [x] (2026-08-12) Ran the owning Rust crate and focused JSON path, apply cache, session plan-cache, and global-tracker consumer tests.
 - [x] (2026-08-12) Added the compact semantic receipt and completed the Ready profile: all owner/consumer gates, all-target check and Clippy, formatting, repository lint, source/inventory checks, and diff review passed.
-- [ ] Synchronize the target, publish one certification commit, and verify all remote SHAs.
+- [x] (2026-09-02) Restored Go master's `Peek` method and no-promotion
+  assertion, reran the focused/full/race Go suite and Rust owner tests, and
+  prepared one scoped publication commit for the target.
 
 ## Surprises & Discoveries
 
@@ -35,21 +39,29 @@ TiDB uses `pkg/util/kvcache` as its small byte-identity LRU primitive for JSON p
 
 ## Decision Log
 
-- Decision: Accept `6a85c6bbbd6cae7e0eea20a75ecd0853ac3545d6` as the complete Go package pin.
-  Rationale: it is the latest package-history ancestor on the target; all four current blobs are byte-identical and it contains the current Bazel inventory.
-  Date/Author: 2026-08-12 / Codex
+- Decision: Accept `5e8a1a229a7591ddac49a0cd3b795587c2595ab9` as the current Go
+  package pin and restore its `Peek` API on the rolling checkout.
+  Rationale: Go master added a non-promoting lookup already implemented by the
+  Rust owner; restoring the exact source closes the package/API drift.
+  Date/Author: 2026-09-02 / Codex
 
 - Decision: Keep `tidb-kvcache` as the production owner and `tidb-util::kvcache` as a compatibility re-export plus global tracker.
   Rationale: the cache algorithm has no dependency on TiDB's memory tracker, while existing consumers already import the util boundary. This preserves a small native crate without duplicating the cache or changing consumer contracts.
   Date/Author: 2026-08-12 / Codex
 
-- Decision: Make no production or direct-test code change during certification.
-  Rationale: every Go assertion and every reachable source branch already has equivalent Rust evidence. Adding duplicate tests or refactoring a correct stable-index implementation would increase churn without increasing confidence.
-  Date/Author: 2026-08-12 / Codex
+- Decision: Restore Go master's `SimpleLRUCache.Peek` method and its focused
+  no-promotion assertion in `TestGet`.
+  Rationale: the rolling checkout lacked a current Go API already implemented
+  by the Rust owner; the exact method is O(1) and leaves `Get`, eviction, and
+  callback behavior unchanged.
+  Date/Author: 2026-09-02 / Codex
 
 ## Outcomes & Retrospective
 
-Authority, inventory, source reading, Go normal/race tests, direct Rust tests, focused consumer tests, the compact receipt, and the Ready profile are complete. No semantic defect has been found. Publication and remote verification remain.
+Authority, inventory, source reading, the Go fail-before/fail-after regression,
+Go normal/race tests, direct Rust tests, focused consumer tests, receipt, and
+the Ready profile are complete. Publication and remote verification follow
+the scoped commit.
 
 ## Context and Orientation
 
@@ -73,7 +85,10 @@ Live consumers are `tidb-datatype`'s JSON path cache, `tidb-executor`'s Apply ca
 
 ## Plan of Work
 
-Add `rust/crates/tidb-kvcache/tests/kvcache.semantic.toml` with the accepted Go pin, every owner/compatibility/consumer evidence file, and the seven focused commands already proven manually. Do not modify production code or duplicate the existing direct tests.
+Keep `rust/crates/tidb-kvcache/tests/kvcache.semantic.toml` aligned with the
+accepted Go pin, every owner/compatibility/consumer evidence file, and the
+focused commands proven manually. The current batch restores only the missing
+Go `Peek` source/test pair; do not duplicate the existing Rust direct tests.
 
 Run the semantic gate from its last tracked version, then the Ready profile: owning and compatibility crate tests, focused consumer tests, all-target checks and Clippy for affected evidence crates, formatting, repository lint, Go normal/race authority, source pin/inventory gates, and final diff review.
 
@@ -103,7 +118,10 @@ Run all-target no-dependency Clippy with warnings denied for each evidence crate
 
 All eight Go tests must pass normally and under race. All eight direct Rust tests and the five consumer gates must pass. The all-target check, Clippy, formatting, semantic gate, repository lint, source pin, inventory, and diff checks must pass or have an exact clean-base failure recorded.
 
-The final commit may add only certification metadata because no behavior gap was found. It must remain one `pkg/util/kvcache` unit, contain no optimizer or transaction implementation change, and be based on the latest target tip.
+The final commit contains the current-master `Peek` source/test parity fix and
+its receipt/plan updates only. It remains one `pkg/util/kvcache` unit, contains
+no optimizer or transaction implementation change, and is based on the latest
+target tip.
 
 ## Idempotence and Recovery
 

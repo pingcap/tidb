@@ -1,16 +1,16 @@
 # `pkg/util/kvcache` — complete Go-master package transcreation
 
 Go source: `origin/master` at
-`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01).
+`5e8a1a229a7591ddac49a0cd3b795587c2595ab9` (2026-09-01).
 
 ## Complete inventory
 
 The package has exactly four artifacts, all read in full: `simple_lru.go`,
 `simple_lru_test.go`, `main_test.go`, and `BUILD.bazel`. There is no package
 doc, README, benchmark, generated or platform variant, or ownership file.
-The production file is unchanged from the prior pin; Go master adds
-`SimpleLRUCache.Peek` and folds its no-promotion ordering assertion into
-`TestGet`.
+The rolling checkout was missing Go master's `SimpleLRUCache.Peek`; this
+batch restores the O(1) non-promoting method and folds its ordering assertion
+into `TestGet` exactly as pinned above.
 
 Production behavior includes byte-hash key identity, MRU promotion and
 ordering, non-promoting `Peek`, capacity and process-memory eviction, eviction
@@ -50,9 +50,17 @@ open and this is not a final-status claim.
 - `git ls-tree -r --name-only origin/master -- pkg/util/kvcache` and full-file
   reads — passed; confirmed the four-artifact inventory and current-master
   `Peek` delta.
+- Before the fix, the focused `TestGet` command failed to compile with
+  `lru.Peek undefined`; after restoring the method, the same test passed.
 - `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH
   GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test
-  ./pkg/util/kvcache -run '^(TestPut|TestZeroQuota|TestOOMGuard|TestGet|TestDelete|TestDeleteAll|TestValues|TestPutProfileName)$' -count=1` — passed on the checkout's pre-`Peek` Go source.
+  ./pkg/util/kvcache -run '^TestGet$' -count=1` — passed.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH
+  GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test
+  ./pkg/util/kvcache -count=1` — passed.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH
+  GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test -race
+  ./pkg/util/kvcache -count=1` — passed (macOS linker warning only).
 - `cargo +nightly-2026-08-22 test --offline --locked -p tidb-kvcache` — passed (8 integration tests and doc tests), including `Peek` ordering.
 - `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler
   DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib
@@ -64,15 +72,13 @@ open and this is not a final-status claim.
 - `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH
   GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 make lint` — passed.
 
-No Go or Bazel file changed, so `make bazel_prepare` is not required.
-The current checkout's Go test predates the master-only `Peek` assertion; the
-origin/master test was read in full but not executed from an alternate
-worktree.
+The existing Go source and test files were updated without adding imports,
+top-level tests, or Bazel targets, so `make bazel_prepare` is not required.
 
 ## Risk
 
 - Correctness: the new read-only lookup preserves MRU state; all eight
   source-owned tests and every repository consumer compile.
-- Compatibility: adds the current-master `peek` API without changing `get`,
+- Compatibility: adds the current-master `Peek` API without changing `Get`,
   eviction, or callback behavior.
 - Performance: `peek` is O(1) and does not relink the list.
