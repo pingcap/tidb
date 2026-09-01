@@ -111,8 +111,8 @@ func TestGetRegionsTableInfo(t *testing.T) {
 func TestGetRegionsTableInfoWithKeyspace(t *testing.T) {
 	keyspaceID := uint32(1)
 	codecV2, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{
-		Id:   keyspaceID,
-		Name: "test_keyspace",
+		Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: keyspaceID},
+		Name:     "test_keyspace",
 	})
 	require.NoError(t, err)
 
@@ -188,7 +188,7 @@ func TestGetRegionsTableInfoWithKeyspace(t *testing.T) {
 // clusters.
 func TestGetPDRegionStatsKeyspaceEncoding(t *testing.T) {
 	keyspaceID := uint32(1)
-	keyspaceMeta := &keyspacepb.KeyspaceMeta{Id: keyspaceID, Name: "test_keyspace"}
+	keyspaceMeta := &keyspacepb.KeyspaceMeta{Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: keyspaceID}, Name: "test_keyspace"}
 	codecV2, err := tikv.NewCodecV2(tikv.ModeTxn, keyspaceMeta)
 	require.NoError(t, err)
 

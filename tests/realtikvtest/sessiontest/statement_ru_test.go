@@ -35,7 +35,8 @@ const (
 type statementRURealTiKVObservation struct {
 	sync.Mutex
 	calibrationUnits int
-	state            uint8
+	calibrationState string
+	cpuWork          float64
 	scanBytes        float64
 	netBytes         float64
 	frontendBytes    float64
@@ -61,8 +62,8 @@ func TestStatementRUSimpleSelectRealTiKV(t *testing.T) {
 	tikvBefore := testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues(metrics.LblEngineTiKV))
 	testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
 		observedConnectionID uint64,
-		state uint8,
-		scanBytes, netBytes, frontendCompileBytes float64,
+		calibrationState string,
+		cpuWork, scanBytes, netBytes, frontendCompileBytes float64,
 	) {
 		if observedConnectionID != connectionID {
 			return
@@ -70,7 +71,8 @@ func TestStatementRUSimpleSelectRealTiKV(t *testing.T) {
 		observation.Lock()
 		defer observation.Unlock()
 		observation.calibrationUnits++
-		observation.state = state
+		observation.calibrationState = calibrationState
+		observation.cpuWork = cpuWork
 		observation.scanBytes = scanBytes
 		observation.netBytes = netBytes
 		observation.frontendBytes = frontendCompileBytes
@@ -100,17 +102,18 @@ func TestStatementRUSimpleSelectRealTiKV(t *testing.T) {
 	require.NoError(t, rs.Close())
 	observation.Lock()
 	defer observation.Unlock()
-	t.Logf("statement RU observation: calibration=%d state=%d scan=%v net=%v frontend=%v",
+	t.Logf("statement RU observation: calibration=%d state=%s cpu=%v scan=%v net=%v frontend=%v",
 		observation.calibrationUnits,
-		observation.state, observation.scanBytes, observation.netBytes, observation.frontendBytes)
+		observation.calibrationState, observation.cpuWork, observation.scanBytes, observation.netBytes, observation.frontendBytes)
 	require.Equal(t, 1, observation.calibrationUnits)
-	require.Equal(t, uint8(1), observation.state)
+	require.Equal(t, "incomplete", observation.calibrationState)
+	require.Zero(t, observation.cpuWork)
 	require.Positive(t, observation.scanBytes)
 	require.Positive(t, observation.netBytes)
 	require.Equal(t, float64(len(query)), observation.frontendBytes)
-	require.InDelta(t, observation.scanBytes+observation.netBytes+observation.frontendBytes,
+	require.InDelta(t, observation.cpuWork+observation.scanBytes+observation.netBytes+observation.frontendBytes,
 		testutil.ToFloat64(metrics.RUV3Total)-totalBefore, 1e-9)
-	require.InDelta(t, observation.scanBytes+observation.netBytes+observation.frontendBytes,
+	require.InDelta(t, observation.cpuWork+observation.scanBytes+observation.netBytes+observation.frontendBytes,
 		testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues(metrics.LblSQLTypeRead))-readBefore, 1e-9)
 	require.InDelta(t, observation.scanBytes+observation.netBytes,
 		testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues(metrics.LblEngineTiKV))-tikvBefore, 1e-9)

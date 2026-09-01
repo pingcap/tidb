@@ -460,7 +460,7 @@ func (e *executor) getPendingTiFlashTableCount(originVersion int64, pendingCount
 
 func isSessionDone(sctx sessionctx.Context) (bool, uint32) {
 	done := false
-	killed := sctx.GetSessionVars().SQLKiller.HandleSignal() == exeerrors.ErrQueryInterrupted
+	killed := exeerrors.ErrQueryInterrupted.Equal(sctx.GetSessionVars().SQLKiller.HandleSignal())
 	if killed {
 		return true, 1
 	}
@@ -470,7 +470,17 @@ func isSessionDone(sctx sessionctx.Context) (bool, uint32) {
 	return done, 0
 }
 
-func (e *executor) waitPendingTableThreshold(sctx sessionctx.Context, schemaID int64, tableID int64, originVersion int64, pendingCount uint32, threshold uint32) (bool, int64, uint32, bool) {
+// convertKillFlag maps killed!=0 to ErrQueryInterrupted for batch
+// ALTER DATABASE SET TIFLASH REPLICA. killed==0 is the failpoint-only abort
+// and still returns nil.
+func convertKillFlag(killed uint32) error {
+	if killed != 0 {
+		return exeerrors.ErrQueryInterrupted.GenWithStackByArgs()
+	}
+	return nil
+}
+
+func (e *executor) waitPendingTableThreshold(sctx sessionctx.Context, schemaID int64, tableID int64, originVersion int64, pendingCount uint32, threshold uint32) (bool, int64, uint32, bool, uint32) {
 	configRetry := tiflashCheckPendingTablesRetry
 	configWaitTime := tiflashCheckPendingTablesWaitTime
 	failpoint.Inject("FastFailCheckTiFlashPendingTables", func(value failpoint.Value) {
@@ -482,13 +492,13 @@ func (e *executor) waitPendingTableThreshold(sctx sessionctx.Context, schemaID i
 		done, killed := isSessionDone(sctx)
 		if done {
 			logutil.DDLLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", schemaID), zap.Uint32("isKilled", killed))
-			return true, originVersion, pendingCount, false
+			return true, originVersion, pendingCount, false, killed
 		}
 		originVersion, pendingCount = e.getPendingTiFlashTableCount(originVersion, pendingCount)
 		delay := time.Duration(0)
 		if pendingCount < threshold {
 			// If there are not many unavailable tables, we don't need a force check.
-			return false, originVersion, pendingCount, false
+			return false, originVersion, pendingCount, false, 0
 		}
 		logutil.DDLLogger().Info("too many unavailable tables, wait",
 			zap.Uint32("threshold", threshold),
@@ -502,7 +512,7 @@ func (e *executor) waitPendingTableThreshold(sctx sessionctx.Context, schemaID i
 	logutil.DDLLogger().Info("too many unavailable tables, timeout", zap.Int64("schemaID", schemaID), zap.Int64("tableID", tableID))
 	// If timeout here, we will trigger a ddl job, to force sync schema. However, it doesn't mean we remove limiter,
 	// so there is a force check immediately after that.
-	return false, originVersion, pendingCount, true
+	return false, originVersion, pendingCount, true, 0
 }
 
 func (e *executor) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, tiflashReplica *ast.TiFlashReplicaSpec) error {
@@ -531,6 +541,10 @@ func (e *executor) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *
 	if total == 0 {
 		return infoschema.ErrEmptyDatabase.GenWithStack("Empty database '%v'", dbName.O)
 	}
+	// Store-count check is shared by every table in the batch.
+	// The Columnar Storage gate is deferred until shouldModifyTiFlashReplica
+	// finds a table that actually needs a job, matching AlterTableSetTiFlashReplica
+	// (batch no-ops must not fail when the gate is OFF).
 	err = checkTiFlashReplicaCount(sctx, tiflashReplica.Count)
 	if err != nil {
 		return errors.Trace(err)
@@ -539,6 +553,7 @@ func (e *executor) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *
 	var originVersion int64
 	var pendingCount uint32
 	forceCheck := false
+	columnarGateChecked := false
 
 	logutil.DDLLogger().Info("start batch add TiFlash replicas", zap.Int("total", total), zap.Int64("schemaID", dbInfo.ID))
 	threshold := uint32(sctx.GetSessionVars().BatchPendingTiFlashCount)
@@ -547,7 +562,7 @@ func (e *executor) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *
 		done, killed := isSessionDone(sctx)
 		if done {
 			logutil.DDLLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", dbInfo.ID), zap.Uint32("isKilled", killed))
-			return nil
+			return convertKillFlag(killed)
 		}
 
 		tbReplicaInfo := tbl.TiFlashReplica
@@ -574,15 +589,25 @@ func (e *executor) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *
 			continue
 		}
 
+		// SET TIFLASH REPLICA 0 stays allowed when the flag is OFF.
+		if tiflashReplica.Count > 0 && !columnarGateChecked {
+			err = checkColumnarStorageEnabled(sctx)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			columnarGateChecked = true
+		}
+
 		// Alter `tiflashCheckPendingTablesLimit` tables are handled, we need to check if we have reached threshold.
 		if (succ+fail)%tiflashCheckPendingTablesLimit == 0 || forceCheck {
 			// We can execute one probing ddl to the latest schema, if we timeout in `pendingFunc`.
 			// However, we shall mark `forceCheck` to true, because we may still reach `threshold`.
 			finished := false
-			finished, originVersion, pendingCount, forceCheck = e.waitPendingTableThreshold(sctx, dbInfo.ID, tbl.ID, originVersion, pendingCount, threshold)
+			var killed uint32
+			finished, originVersion, pendingCount, forceCheck, killed = e.waitPendingTableThreshold(sctx, dbInfo.ID, tbl.ID, originVersion, pendingCount, threshold)
 			if finished {
-				logutil.DDLLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", dbInfo.ID))
-				return nil
+				logutil.DDLLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", dbInfo.ID), zap.Uint32("isKilled", killed))
+				return convertKillFlag(killed)
 			}
 		}
 
@@ -603,14 +628,18 @@ func (e *executor) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *
 		args := &model.SetTiFlashReplicaArgs{TiflashReplica: *tiflashReplica}
 		err := e.doDDLJob2(sctx, job, args)
 		if err != nil {
-			oneFail = tbl.ID
-			fail++
 			logutil.DDLLogger().Info("processing schema table error",
 				zap.Int64("tableID", tbl.ID),
 				zap.Int64("schemaID", dbInfo.ID),
 				zap.Stringer("tableName", tbl.Name),
 				zap.Stringer("schemaName", dbInfo.Name),
 				zap.Error(err))
+			// KILL cancelled this job; return the error and do not process remaining tables.
+			if dbterror.ErrCancelledDDLJob.Equal(err) || exeerrors.ErrQueryInterrupted.Equal(err) {
+				return err
+			}
+			oneFail = tbl.ID
+			fail++
 		} else {
 			succ++
 		}
@@ -1128,6 +1157,9 @@ func (e *executor) createTableWithInfoJob(
 	}
 
 	if err := checkTableInfoValidExtra(ctx.GetSessionVars().StmtCtx.ErrCtx(), ctx.GetStore(), dbName, tbInfo); err != nil {
+		return nil, err
+	}
+	if err := checkColumnarStorageEnabledForNewTable(ctx, tbInfo); err != nil {
 		return nil, err
 	}
 
@@ -3828,10 +3860,16 @@ func (e *executor) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast
 		return e.setHypoTiFlashReplica(ctx, schema.Name, tb.Meta().Name, replicaInfo)
 	}
 
-	checkTiFlash := config.GetGlobalConfig().CSE.IsTiFlashEnabled()
-
-	if checkTiFlash {
-		err = checkTiFlashReplicaCount(ctx, replicaInfo.Count)
+	// Two independent pre-checks:
+	//  - replica count vs live TiFlash stores (when cse.columnar-store-type is not "columnar")
+	//  - cluster Columnar Storage gate, only when adding replicas
+	//    (SET TIFLASH REPLICA 0 stays allowed when the flag is OFF)
+	err = checkTiFlashReplicaCount(ctx, replicaInfo.Count)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if replicaInfo.Count > 0 {
+		err = checkColumnarStorageEnabled(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -4009,8 +4047,9 @@ func isTableTiFlashSupported(dbName ast.CIStr, tbl *model.TableInfo) error {
 }
 
 func checkTiFlashReplicaCount(ctx sessionctx.Context, replicaCount uint64) error {
-	tiflashEnabled := config.GetGlobalConfig().CSE.IsTiFlashEnabled()
-	if !tiflashEnabled {
+	// Callers can invoke this unconditionally. Classic TiFlash is absent when
+	// cse.columnar-store-type is "columnar", so there is no store count to check.
+	if !config.GetGlobalConfig().CSE.IsTiFlashEnabled() {
 		return nil
 	}
 	// Check the tiflash replica count should be less than the total tiflash stores.
@@ -4022,6 +4061,87 @@ func checkTiFlashReplicaCount(ctx sessionctx.Context, replicaCount uint64) error
 		return errors.Errorf("the tiflash replica count: %d should be less than the total tiflash server count: %d", replicaCount, tiflashStoreCnt)
 	}
 	return nil
+}
+
+// globalVarGetter is the subset of *domain.Domain used by the columnar-storage
+// DDL gate. pkg/ddl cannot import pkg/domain because domain already imports ddl.
+type globalVarGetter interface {
+	GetGlobalVar(name string) (string, error)
+}
+
+// checkColumnarStorageEnabled checks whether the cluster allows creating TiFlash replicas.
+// It reads tidb_columnar_storage_enabled from the domain sysvar cache (memory, no PD RPC).
+func checkColumnarStorageEnabled(ctx sessionctx.Context) error {
+	if !config.GetGlobalConfig().CSE.IsColumnarStoreEnabled() {
+		return nil
+	}
+	keyspace := ctx.GetStore().GetKeyspace()
+	failpoint.Inject("mockColumnarStorageEnabledCheckFail", func() {
+		failpoint.Return(dbterror.ErrTiFlashColumnarStorageCheckFailed.GenWithStackByArgs(keyspace))
+	})
+	do, ok := ctx.GetDomain().(globalVarGetter)
+	if !ok || do == nil {
+		logutil.DDLLogger().Warn("failed to read tidb_columnar_storage_enabled for columnar storage check: domain is unavailable")
+		return dbterror.ErrTiFlashColumnarStorageCheckFailed.GenWithStackByArgs(keyspace)
+	}
+	val, err := do.GetGlobalVar(vardef.TiDBColumnarStorageEnabled)
+	if err != nil {
+		logutil.DDLLogger().Warn("failed to read tidb_columnar_storage_enabled for columnar storage check",
+			zap.Error(err))
+		return dbterror.ErrTiFlashColumnarStorageCheckFailed.GenWithStackByArgs(keyspace)
+	}
+	failpoint.Inject("mockColumnarStorageEnabledValue", func(v failpoint.Value) {
+		if s, ok := v.(string); ok {
+			val = s
+		}
+	})
+	// Fail-closed: only explicit opt-in values (ON/1) are accepted.
+	// Cache entries such as "0", "OFF", empty, or any other unknown string
+	// are treated as not enabled (SET GLOBAL normalizes to ON/OFF).
+	if !variable.TiDBOptOn(val) {
+		logutil.DDLLogger().Warn("columnar storage gate rejected tidb_columnar_storage_enabled value",
+			zap.String("value", val),
+			zap.String("keyspace", keyspace))
+		return dbterror.ErrTiFlashColumnarStorageNotEnabled.GenWithStackByArgs(keyspace, val)
+	}
+	return nil
+}
+
+func tableHasColumnarIndex(tbInfo *model.TableInfo) bool {
+	for _, idx := range tbInfo.Indices {
+		if idx.IsColumnarIndex() {
+			return true
+		}
+	}
+	return false
+}
+
+func wrapColumnarStorageGateForColumnarIndex(err error) error {
+	if err == nil {
+		return nil
+	}
+	if dbterror.ErrTiFlashColumnarStorageNotEnabled.Equal(err) {
+		return dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("Columnar Storage is not enabled")
+	}
+	return err
+}
+
+// checkColumnarStorageEnabledForNewTable rejects persisting TiFlash replica
+// metadata on CREATE TABLE / CREATE TABLE LIKE when Columnar Storage is off.
+// CREATE TABLE with a columnar index is remapped to ErrUnsupportedAddColumnarIndex
+// because the user intent is adding the index, not SET TIFLASH REPLICA.
+func checkColumnarStorageEnabledForNewTable(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
+	if tbInfo.TiFlashReplica == nil || tbInfo.TiFlashReplica.Count == 0 {
+		return nil
+	}
+	err := checkColumnarStorageEnabled(ctx)
+	if err == nil {
+		return nil
+	}
+	if tableHasColumnarIndex(tbInfo) {
+		return wrapColumnarStorageGateForColumnarIndex(err)
+	}
+	return err
 }
 
 // AlterTableAddStatistics would register extended statistics for a table.
@@ -4971,6 +5091,9 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 
 	if err := checkTableTypeForColumnarIndex(tblInfo); err != nil {
 		return errors.Trace(err)
+	}
+	if err := checkColumnarStorageEnabled(ctx); err != nil {
+		return wrapColumnarStorageGateForColumnarIndex(err)
 	}
 
 	metaBuildCtx := NewMetaBuildContextWithSctx(ctx)
@@ -7212,6 +7335,15 @@ func (e *executor) doDDLJob2(ctx sessionctx.Context, job *model.Job, args model.
 	return e.DoDDLJobWrapper(ctx, NewJobWrapperWithArgs(job, args, false))
 }
 
+// isRetryableDDLCancelErr reports whether DoDDLJobWrapper should call
+// CancelJobsBySystem again. Finished, cannot-cancel, and not-found results are
+// terminal for the cancel command.
+func isRetryableDDLCancelErr(err error) bool {
+	return !dbterror.ErrCancelFinishedDDLJob.Equal(err) &&
+		!dbterror.ErrCannotCancelDDLJob.Equal(err) &&
+		!dbterror.ErrDDLJobNotFound.Equal(err)
+}
+
 // DoDDLJobWrapper submit DDL job and wait it finishes.
 // When fast create is enabled, we might merge multiple jobs into one, so do not
 // depend on job.ID, use JobID from jobSubmitResult.
@@ -7339,7 +7471,7 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 		}
 
 		// If the connection being killed, we need to CANCEL the DDL job.
-		if sessVars.SQLKiller.HandleSignal() == exeerrors.ErrQueryInterrupted {
+		if exeerrors.ErrQueryInterrupted.Equal(sessVars.SQLKiller.HandleSignal()) {
 			if atomic.LoadInt32(&sessVars.ConnectionStatus) == variable.ConnStatusShutdown {
 				logutil.DDLLogger().Info("DoDDLJob will quit because context done")
 				return context.Canceled
@@ -7350,16 +7482,23 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 					logutil.DDLLogger().Error("get session failed, check again", zap.Error(err))
 					continue
 				}
-				sessVars.StmtCtx.DDLJobID = 0 // Avoid repeat.
 				errs, err := CancelJobsBySystem(se, []int64{jobID})
 				e.sessPool.Put(se)
-				if len(errs) > 0 {
-					logutil.DDLLogger().Warn("error canceling DDL job", zap.Error(errs[0]))
-				}
 				if err != nil {
 					logutil.DDLLogger().Warn("Kill command could not cancel DDL job", zap.Error(err))
 					continue
 				}
+				// CancelJobsBySystem returns one result per requested job; only
+				// non-nil entries need error handling.
+				if len(errs) > 0 && errs[0] != nil {
+					logutil.DDLLogger().Warn("error canceling DDL job", zap.Error(errs[0]))
+					if isRetryableDDLCancelErr(errs[0]) {
+						continue
+					}
+				}
+				// Clear DDLJobID so CancelJobsBySystem is not issued again. The wait
+				// loop continues until the job is in history.
+				sessVars.StmtCtx.DDLJobID = 0
 			}
 		}
 

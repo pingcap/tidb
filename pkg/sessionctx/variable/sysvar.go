@@ -1026,6 +1026,7 @@ var defaultSysVars = []*SysVar{
 			tikvstore.TxnCommitBatchSize.Store(uint64(TidbOptInt64(val, int64(tikvstore.DefTxnCommitBatchSize))))
 			return nil
 		}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBColumnarStorageEnabled, Value: BoolToOnOff(vardef.DefTiDBColumnarStorageEnabled), Type: vardef.TypeBool},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBRestrictedReadOnly, Value: BoolToOnOff(vardef.DefTiDBRestrictedReadOnly), Type: vardef.TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		on := TiDBOptOn(val)
 		// For user initiated SET GLOBAL, also change the value of TiDBSuperReadOnly
@@ -2362,6 +2363,10 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBAnalyzeDistSQLScanConcurrency, Value: strconv.Itoa(vardef.DefAnalyzeDistSQLScanConcurrency), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
 		s.analyzeDistSQLScanConcurrency = tidbOptPositiveInt32(val, vardef.DefAnalyzeDistSQLScanConcurrency)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBAnalyzeStoreBatchSize, Value: strconv.Itoa(vardef.DefTiDBAnalyzeStoreBatchSize), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: vardef.MaxTiDBAnalyzeStoreBatchSize, SetSession: func(s *SessionVars, val string) error {
+		s.AnalyzeStoreBatchSize = TidbOptInt(val, vardef.DefTiDBAnalyzeStoreBatchSize)
 		return nil
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptInSubqToJoinAndAgg, Value: BoolToOnOff(vardef.DefOptInSubqToJoinAndAgg), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
@@ -4160,6 +4165,21 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
 		return BoolToOnOff(vardef.EnableConnectionEventLog.Load()), nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableTxnFile, Value: BoolToOnOff(vardef.DefTiDBEnableTxnFile), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.KVVars.DisableTxnFile = !TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBTxnFileMinMutationSize, Value: strconv.Itoa(vardef.DefTiDBTxnFileMinMutationSize),
+		Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
+			s.KVVars.TxnFileMinMutationSize = TidbOptUint64(val, vardef.DefTiDBTxnFileMinMutationSize)
+			return nil
+		}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
+			val := TidbOptUint64(originalValue, vardef.DefTiDBTxnFileMinMutationSize)
+			if val > 0 && val < vardef.MinTiDBTxnFileMinMutationSize {
+				return originalValue, ErrWrongValueForVar.GenWithStackByArgs(vardef.TiDBTxnFileMinMutationSize, originalValue)
+			}
+			return normalizedValue, nil
+		}},
 }
 
 // GlobalSystemVariableInitialValue gets the default value for a system variable including ones that are dynamically set (e.g. based on the store)

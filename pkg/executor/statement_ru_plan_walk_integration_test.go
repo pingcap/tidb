@@ -17,10 +17,12 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -28,17 +30,22 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 )
 
-const statementRUOwnerInstallFailpoint = "github.com/pingcap/tidb/pkg/executor/observeStatementRUOwnerInstallForTest"
+const (
+	statementRUOwnerInstallFailpoint     = "github.com/pingcap/tidb/pkg/executor/observeStatementRUOwnerInstallForTest"
+	statementRUCalibrationUnitsFailpoint = "github.com/pingcap/tidb/pkg/executor/observeStatementRUCalibrationUnitsForTest"
+)
 
 type statementRUObservation struct {
 	stmt  *executor.ExecStmt
@@ -87,6 +94,11 @@ func countStatementRUFlatOccurrences(flat *plannercore.FlatPhysicalPlan) (total,
 	return total, scalar
 }
 
+func isStatementRUPlanType[T base.Plan](plan base.Plan) bool {
+	_, ok := plan.(T)
+	return ok
+}
+
 func drainStatementRURecordSet(t *testing.T, rs sqlexec.RecordSet) error {
 	t.Helper()
 	chk := rs.NewChunk(nil)
@@ -101,7 +113,217 @@ func drainStatementRURecordSet(t *testing.T, rs sqlexec.RecordSet) error {
 	}
 }
 
+func TestStatementRUAnalyzeNoDelayLifecycle(t *testing.T) {
+	originalCollectExecutionInfo := config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load()
+	config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Store(true)
+	t.Cleanup(func() {
+		config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Store(originalCollectExecutionInfo)
+	})
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int primary key, b int, index idx_b(b))")
+	tk.MustExec("insert into t values (1, 10), (2, 20), (3, 30)")
+
+	var observation *statementRUObservation
+	testfailpoint.EnableCall(t, statementRUOwnerInstallFailpoint, func(stmt *executor.ExecStmt) {
+		if stmt.Ctx == tk.Session() {
+			observation = observeInstalledStatementRUOwner(stmt)
+		}
+	})
+	type calibrationObservation struct {
+		count     int
+		state     string
+		scanBytes float64
+	}
+	connectionID := tk.Session().GetSessionVars().ConnectionID
+	var calibration calibrationObservation
+	testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
+		observedConnectionID uint64,
+		state string,
+		_, scanBytes, _, _ float64,
+	) {
+		if observedConnectionID != connectionID {
+			return
+		}
+		calibration.count++
+		calibration.state = state
+		calibration.scanBytes = scanBytes
+	})
+
+	tk.MustExec("analyze table t")
+	require.NotNil(t, observation)
+	require.NotNil(t, observation.owner)
+	require.True(t, observation.owner.ConsumedForTest())
+	require.True(t, observation.owner.RecordedSuccessForTest())
+	analyzePlan, ok := observation.stmt.Plan.(*plannercore.Analyze)
+	require.True(t, ok)
+	require.Positive(t, analyzePlan.ID())
+	flat := requireStatementRUTerminalFlatPlan(t, observation.stmt)
+	require.Len(t, flat.Main, 1)
+	require.Same(t, analyzePlan, flat.Main[0].Origin)
+
+	runtimeStats := observation.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
+	detail, found := runtimeStats.GetCopScanDetail(analyzePlan.ID())
+	require.True(t, found)
+	require.NotNil(t, detail)
+	scanBytes, found := runtimeStats.GetAnalyzeScanBytes(analyzePlan.ID())
+	require.True(t, found)
+	require.GreaterOrEqual(t, scanBytes, float64(0))
+	execDetail := observation.stmt.Ctx.GetSessionVars().StmtCtx.GetExecDetails()
+	require.NotNil(t, execDetail.ScanDetail)
+	require.Equal(t, detail.ProcessedKeys, execDetail.ScanDetail.ProcessedKeys)
+	require.Equal(t, detail.ProcessedKeysSize, execDetail.ScanDetail.ProcessedKeysSize)
+
+	binaryPlan := observation.stmt.GetBinaryPlan()
+	require.NotEmpty(t, binaryPlan)
+	decoded, err := plancodec.DecodeBinaryPlan(binaryPlan)
+	require.NoError(t, err)
+	require.Contains(t, decoded, "Analyze")
+	require.Contains(t, decoded, "cop_task:")
+
+	require.Equal(t, 1, calibration.count)
+	require.Equal(t, "incomplete", calibration.state)
+	require.InDelta(t, scanBytes, calibration.scanBytes, 1e-9)
+
+	rows := tk.MustQuery("select tidb_decode_binary_plan(?)", binaryPlan).Rows()
+	require.Len(t, rows, 1)
+	require.Len(t, rows[0], 1)
+	decodedBySQL, ok := rows[0][0].(string)
+	require.True(t, ok)
+	require.Contains(t, decodedBySQL, "Analyze")
+	require.Contains(t, decodedBySQL, "cop_task:")
+}
+
 func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
+	t.Run("producer plans publish only supported operator trees", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table t(a int primary key, b int, c int, index idx_b(b))")
+		tk.MustExec("insert into t values (1, 10, 100), (2, 20, 200), (3, 30, 300)")
+		tk.MustExec("set @@tidb_enable_non_prepared_plan_cache = off")
+
+		var observation *statementRUObservation
+		testfailpoint.EnableCall(t, statementRUOwnerInstallFailpoint, func(stmt *executor.ExecStmt) {
+			if stmt.Ctx == tk.Session() {
+				observation = observeInstalledStatementRUOwner(stmt)
+			}
+		})
+		type calibrationObservation struct {
+			count         int
+			state         string
+			cpuWork       float64
+			scanBytes     float64
+			netBytes      float64
+			frontendBytes float64
+		}
+		connectionID := tk.Session().GetSessionVars().ConnectionID
+		var calibrationMu sync.Mutex
+		var calibration calibrationObservation
+		testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
+			observedConnectionID uint64,
+			state string,
+			cpuWork, scanBytes, netBytes, frontendCompileBytes float64,
+		) {
+			if observedConnectionID != connectionID {
+				return
+			}
+			calibrationMu.Lock()
+			defer calibrationMu.Unlock()
+			calibration.count++
+			calibration.state = state
+			calibration.cpuWork = cpuWork
+			calibration.scanBytes = scanBytes
+			calibration.netBytes = netBytes
+			calibration.frontendBytes = frontendCompileBytes
+		})
+		type operatorExpectation func(base.Plan) bool
+		testCases := []struct {
+			name           string
+			query          string
+			rows           [][]any
+			expectOperator operatorExpectation
+			sortRows       bool
+			wantPublish    bool
+			wantCPUWork    bool
+		}{
+			{name: "Selection", query: "select * from t ignore index (idx_b) where b > 10", rows: testkit.Rows("2 20 200", "3 30 300"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalSelection], sortRows: true, wantPublish: true, wantCPUWork: true},
+			{name: "Sort", query: "select * from t ignore index (idx_b) order by b desc", rows: testkit.Rows("3 30 300", "2 20 200", "1 10 100"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalSort], wantPublish: true, wantCPUWork: true},
+			{name: "TopN", query: "select * from t ignore index (idx_b) order by b desc limit 2", rows: testkit.Rows("3 30 300", "2 20 200"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalTopN], wantPublish: true, wantCPUWork: true},
+			{name: "Limit", query: "select * from t ignore index (idx_b) limit 2", rows: testkit.Rows("1 10 100", "2 20 200"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalLimit], wantPublish: true, wantCPUWork: true},
+			{name: "IndexReader", query: "select b from t use index (idx_b) where b >= 20", rows: testkit.Rows("20", "30"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalIndexReader], sortRows: true, wantPublish: true},
+			{name: "IndexLookup", query: "select * from t use index (idx_b) where b >= 20", rows: testkit.Rows("2 20 200", "3 30 300"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalIndexLookUpReader], sortRows: true, wantPublish: true},
+			{name: "unsupported Projection", query: "select b + 1 from t ignore index (idx_b)", rows: testkit.Rows("11", "21", "31"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalProjection], sortRows: true},
+		}
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				observation = nil
+				calibrationMu.Lock()
+				calibration = calibrationObservation{}
+				calibrationMu.Unlock()
+				result := tk.MustQuery(tc.query)
+				if tc.sortRows {
+					result = result.Sort()
+				}
+				result.Check(tc.rows)
+
+				require.NotNil(t, observation)
+				require.True(t, observation.owner.ConsumedForTest())
+				require.True(t, observation.owner.RecordedSuccessForTest())
+				flat := requireStatementRUTerminalFlatPlan(t, observation.stmt)
+				runtimeStats := observation.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
+				planSummary := make([]string, 0, len(flat.Main))
+				for index, operator := range flat.Main {
+					if operator == nil || operator.Origin == nil {
+						planSummary = append(planSummary, fmt.Sprintf("%d:<nil>", index))
+						continue
+					}
+					rootRows := runtimeStats.GetPlanActRows(operator.Origin.ID())
+					_, copRows := runtimeStats.GetCopCountAndRows(operator.Origin.ID())
+					detail, detailFound := runtimeStats.GetCopScanDetail(operator.Origin.ID())
+					planSummary = append(planSummary, fmt.Sprintf(
+						"%d:%T(root=%v,store=%v,req=%v,label=%v,probe=%v,children=%v,rootRows=%d,copRows=%d,scanFound=%v,scan=[%d,%d,%d])",
+						index,
+						operator.Origin,
+						operator.IsRoot,
+						operator.StoreType,
+						operator.ReqType,
+						operator.Label,
+						operator.IsINLProbeChild,
+						operator.ChildrenIdx,
+						rootRows,
+						copRows,
+						detailFound,
+						detail.TotalKeys,
+						detail.ProcessedKeys,
+						detail.ProcessedKeysSize,
+					))
+				}
+				require.True(t, slices.ContainsFunc(flat.Main, func(operator *plannercore.FlatOperator) bool {
+					return operator != nil && operator.Origin != nil && tc.expectOperator(operator.Origin)
+				}), "query plan does not contain expected operator: %s; flat plan: %v", tc.query, planSummary)
+
+				calibrationMu.Lock()
+				published := calibration
+				calibrationMu.Unlock()
+				if !tc.wantPublish {
+					require.Zero(t, published.count)
+					return
+				}
+				require.Equal(t, 1, published.count, "flat plan: %v", planSummary)
+				require.Equal(t, "incomplete", published.state)
+				require.Equal(t, float64(len(tc.query)), published.frontendBytes)
+				require.GreaterOrEqual(t, published.scanBytes, float64(0))
+				require.GreaterOrEqual(t, published.netBytes, float64(0))
+				if tc.wantCPUWork {
+					require.Positive(t, published.cpuWork)
+				}
+			})
+		}
+	})
+
 	t.Run("post-compile panic consumes owner", func(t *testing.T) {
 		store := testkit.CreateMockStore(t)
 		tk := testkit.NewTestKit(t, store)

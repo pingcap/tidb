@@ -169,6 +169,14 @@ func TestCompare(t *testing.T) {
 	args = bf.getArgs()
 	require.Equal(t, mysql.TypeJSON, args[0].GetType(ctx).GetType())
 	require.Equal(t, mysql.TypeJSON, args[1].GetType(ctx).GetType())
+
+	// Some callers override a comparison function's derived collation after construction.
+	bf, err = funcs[ast.EQ].getFunction(ctx, primitiveValsToConstants(ctx, []any{"a", "A"}))
+	require.NoError(t, err)
+	bf.SetCharsetAndCollation("utf8mb4", "utf8mb4_unicode_ci")
+	result, err := evalBuiltinFunc(bf, ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), result.GetInt64())
 }
 
 func TestCoalesce(t *testing.T) {

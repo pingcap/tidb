@@ -140,7 +140,7 @@ func TestSimple(t *testing.T) {
 		"add_columnar_replica_on_demand", "auto_increment", "after", "begin", "bit", "bool", "boolean", "charset", "columns", "commit",
 		"date", "datediff", "datetime", "deallocate", "do", "from_days", "end", "engine", "engines", "execute", "extended", "first", "file", "full",
 		"local", "names", "offset", "password", "prepare", "quick", "rollback", "savepoint", "session", "signed",
-		"start", "global", "tables", "tablespace", "target", "text", "time", "timestamp", "tidb", "transaction", "truncate", "unknown",
+		"start", "global", "operate", "tables", "tablespace", "target", "text", "time", "timestamp", "tidb", "transaction", "truncate", "unknown",
 		"value", "warnings", "year", "now", "substr", "subpartition", "subpartitions", "substring", "mode", "any", "some", "user", "identified",
 		"collation", "comment", "avg_row_length", "checksum", "compression", "connection", "key_block_size",
 		"max_rows", "min_rows", "national", "quarter", "escape", "grants", "status", "fields", "triggers", "language",
@@ -431,6 +431,93 @@ func RunTest(t *testing.T, table []testCase, enableWindowFunc bool, MariaDB bool
 			RunRestoreTest(t, tbl.src, tbl.restore, enableWindowFunc, MariaDB)
 		}
 	}
+}
+
+func TestMaterializedViewDDLStatements(t *testing.T) {
+	table := []testCase{
+		{"CREATE MATERIALIZED VIEW mv (a) AS SELECT 1", true, "CREATE MATERIALIZED VIEW \x60mv\x60 (\x60a\x60) AS SELECT 1"},
+		{"CREATE MATERIALIZED VIEW mv (a) COMMENT = 'c1' SHARD_ROW_ID_BITS = 2 PRE_SPLIT_REGIONS = 3 REFRESH FAST NEXT 300 ATTRIBUTES = 'x' AS SELECT 1", true, "CREATE MATERIALIZED VIEW \x60mv\x60 (\x60a\x60) COMMENT = 'c1' SHARD_ROW_ID_BITS = 2 PRE_SPLIT_REGIONS = 3 REFRESH FAST NEXT 300 ATTRIBUTES = 'x' AS SELECT 1"},
+		{"CREATE MATERIALIZED VIEW mv (a) COMMENT 'c1' AS SELECT 1", true, "CREATE MATERIALIZED VIEW \x60mv\x60 (\x60a\x60) COMMENT = 'c1' AS SELECT 1"},
+		{"CREATE MATERIALIZED VIEW LOG ON t (a,b) PURGE IMMEDIATE ALERT ROWS 10", true, "CREATE MATERIALIZED VIEW LOG ON \x60t\x60 (\x60a\x60, \x60b\x60) PURGE IMMEDIATE ALERT ROWS 10"},
+		{"CREATE MATERIALIZED VIEW LOG ON t (a) PURGE NEXT 300", true, "CREATE MATERIALIZED VIEW LOG ON \x60t\x60 (\x60a\x60) PURGE NEXT 300"},
+		{"ALTER MATERIALIZED VIEW mv COMMENT = 'c2', REFRESH START WITH now() NEXT 300, ATTRIBUTES = 'y'", true, "ALTER MATERIALIZED VIEW \x60mv\x60 COMMENT = 'c2', REFRESH START WITH NOW() NEXT 300, ATTRIBUTES = 'y'"},
+		{"ALTER MATERIALIZED VIEW mv COMMENT 'c2'", true, "ALTER MATERIALIZED VIEW \x60mv\x60 COMMENT = 'c2'"},
+		{"ALTER MATERIALIZED VIEW mv REFRESH", true, "ALTER MATERIALIZED VIEW \x60mv\x60 REFRESH"},
+		{"ALTER MATERIALIZED VIEW LOG ON t PURGE, ADD COLUMN (b,c)", true, "ALTER MATERIALIZED VIEW LOG ON \x60t\x60 PURGE, ADD COLUMN (\x60b\x60, \x60c\x60)"},
+		{"ALTER MATERIALIZED VIEW LOG ON t PURGE", true, "ALTER MATERIALIZED VIEW LOG ON \x60t\x60 PURGE"},
+		{"DROP MATERIALIZED VIEW IF EXISTS mv", true, "DROP MATERIALIZED VIEW IF EXISTS \x60mv\x60"},
+		{"DROP MATERIALIZED VIEW LOG IF EXISTS ON t", true, "DROP MATERIALIZED VIEW LOG IF EXISTS ON \x60t\x60"},
+	}
+	RunTest(t, table, false, false)
+	wantTypes := []ast.StmtNode{
+		&ast.CreateMaterializedViewStmt{}, &ast.CreateMaterializedViewStmt{}, &ast.CreateMaterializedViewStmt{},
+		&ast.CreateMaterializedViewLogStmt{}, &ast.CreateMaterializedViewLogStmt{},
+		&ast.AlterMaterializedViewStmt{}, &ast.AlterMaterializedViewStmt{}, &ast.AlterMaterializedViewStmt{},
+		&ast.AlterMaterializedViewLogStmt{}, &ast.AlterMaterializedViewLogStmt{},
+		&ast.DropMaterializedViewStmt{}, &ast.DropMaterializedViewLogStmt{},
+	}
+	p := parser.New()
+	for i, tc := range table {
+		stmt, err := p.ParseOneStmt(tc.src, "", "")
+		require.NoError(t, err, tc.src)
+		require.IsType(t, wantTypes[i], stmt, tc.src)
+	}
+}
+
+func TestMaterializedViewDuplicateOptionsErrMsg(t *testing.T) {
+	p := parser.New()
+	dupCases := []struct {
+		sql       string
+		substring string
+	}{
+		{
+			sql:       "CREATE MATERIALIZED VIEW mv (a) COMMENT = 'c1' COMMENT = 'c2' AS SELECT 1",
+			substring: "Duplicate COMMENT specified in CREATE MATERIALIZED VIEW",
+		},
+		{
+			sql:       "CREATE MATERIALIZED VIEW mv (a) SHARD_ROW_ID_BITS = 1 SHARD_ROW_ID_BITS = 2 AS SELECT 1",
+			substring: "Duplicate SHARD_ROW_ID_BITS specified in CREATE MATERIALIZED VIEW",
+		},
+		{
+			sql:       "CREATE MATERIALIZED VIEW mv (a) PRE_SPLIT_REGIONS = 1 PRE_SPLIT_REGIONS = 2 AS SELECT 1",
+			substring: "Duplicate PRE_SPLIT_REGIONS specified in CREATE MATERIALIZED VIEW",
+		},
+		{
+			sql:       "CREATE MATERIALIZED VIEW LOG ON t (a) SHARD_ROW_ID_BITS = 1 SHARD_ROW_ID_BITS = 2",
+			substring: "Duplicate SHARD_ROW_ID_BITS specified in CREATE MATERIALIZED VIEW LOG",
+		},
+		{
+			sql:       "CREATE MATERIALIZED VIEW LOG ON t (a) PRE_SPLIT_REGIONS = 1 PRE_SPLIT_REGIONS = 2",
+			substring: "Duplicate PRE_SPLIT_REGIONS specified in CREATE MATERIALIZED VIEW LOG",
+		},
+	}
+	for _, c := range dupCases {
+		_, err := p.ParseOneStmt(c.sql, "", "")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), c.substring, c.sql)
+	}
+}
+
+func TestMaterializedViewCreateOptionOrder(t *testing.T) {
+	p := parser.New()
+	invalidCases := []string{
+		"CREATE MATERIALIZED VIEW mv (a) REFRESH FAST SHARD_ROW_ID_BITS = 4 AS SELECT 1",
+		"CREATE MATERIALIZED VIEW mv (a) ATTRIBUTES = 'x' REFRESH FAST AS SELECT 1",
+		"CREATE MATERIALIZED VIEW mv (a) REFRESH FAST REFRESH FAST AS SELECT 1",
+		"CREATE MATERIALIZED VIEW mv (a) ATTRIBUTES = 'x' ATTRIBUTES = 'y' AS SELECT 1",
+	}
+	for _, sql := range invalidCases {
+		_, err := p.ParseOneStmt(sql, "", "")
+		require.Error(t, err, sql)
+	}
+}
+
+func TestMaterializedViewLogCreatePurgeClauseSyntax(t *testing.T) {
+	p := parser.New()
+	_, err := p.ParseOneStmt("CREATE MATERIALIZED VIEW LOG ON t (a) PURGE START WITH now()", "", "")
+	require.Error(t, err)
+	_, err = p.ParseOneStmt("CREATE MATERIALIZED VIEW LOG ON t (a) PURGE", "", "")
+	require.Error(t, err)
 }
 
 func RunRestoreTest(t *testing.T, sourceSQLs, expectSQLs string, enableWindowFunc bool, MariaDB bool) {
@@ -1780,6 +1867,18 @@ func TestBuiltin(t *testing.T) {
 
 		{"SELECT LEAST(), LEAST(1, 2, 3);", true, "SELECT LEAST(),LEAST(1, 2, 3)"},
 
+		{"SELECT INTERVAL()", false, ""},
+		{"SELECT INTERVAL(1)", false, ""},
+		{"SELECT INTERVAL(1, 0)", true, "SELECT INTERVAL(1, 0)"},
+		{"SELECT NOW() + INTERVAL(1+2) DAY `add`", true, "SELECT DATE_ADD(NOW(), INTERVAL (1+2) DAY) AS `add`"},
+		{"SELECT d + INTERVAL (q - 1) QUARTER", true, "SELECT DATE_ADD(`d`, INTERVAL (`q`-1) QUARTER)"},
+		{"SELECT d - INTERVAL (q - 1) QUARTER", true, "SELECT DATE_SUB(`d`, INTERVAL (`q`-1) QUARTER)"},
+		{"SELECT INTERVAL (q - 1) QUARTER + d", true, "SELECT DATE_ADD(`d`, INTERVAL (`q`-1) QUARTER)"},
+		{"SELECT ADDDATE(d, INTERVAL (q - 1) QUARTER)", true, "SELECT ADDDATE(`d`, INTERVAL (`q`-1) QUARTER)"},
+		{"SELECT SUBDATE(d, INTERVAL (q - 1) QUARTER)", true, "SELECT SUBDATE(`d`, INTERVAL (`q`-1) QUARTER)"},
+		{"SELECT ROW(ROW(1,2),3), ROW(1,ROW(2,3))", true, "SELECT ROW(ROW(1,2),3),ROW(1,ROW(2,3))"},
+		{"SELECT (1,2), ((1,2),3), (1,(2,3))", true, "SELECT ROW(1,2),ROW(ROW(1,2),3),ROW(1,ROW(2,3))"},
+		{"SELECT MAKEDATE(YEAR(d), 1) + INTERVAL (QUARTER(d) - 1) QUARTER", true, "SELECT DATE_ADD(MAKEDATE(YEAR(`d`), 1), INTERVAL (QUARTER(`d`)-1) QUARTER)"},
 		{"SELECT INTERVAL(1, 0, 1, 2)", true, "SELECT INTERVAL(1, 0, 1, 2)"},
 		{"SELECT (INTERVAL(1, 0, 1, 2)+5)*7+INTERVAL(1, 0, 1, 2)/2", true, "SELECT (INTERVAL(1, 0, 1, 2)+5)*7+INTERVAL(1, 0, 1, 2)/2"},
 		{"SELECT INTERVAL(0, (1*5)/2)+INTERVAL(5, 4, 3)", true, "SELECT INTERVAL(0, (1*5)/2)+INTERVAL(5, 4, 3)"},
@@ -5447,6 +5546,7 @@ func TestPrivilege(t *testing.T) {
 		{"GRANT ALL ON TABLE db1.* TO 'jeffrey'@'localhost';", true, "GRANT ALL ON TABLE `db1`.* TO `jeffrey`@`localhost`"},
 		{"GRANT ALL ON db1.* TO 'jeffrey'@'localhost' WITH GRANT OPTION;", true, "GRANT ALL ON `db1`.* TO `jeffrey`@`localhost` WITH GRANT OPTION"},
 		{"GRANT SELECT ON db2.invoice TO 'jeffrey'@'localhost';", true, "GRANT SELECT ON `db2`.`invoice` TO `jeffrey`@`localhost`"},
+		{"GRANT OPERATE VIEW ON db2.invoice TO 'jeffrey'@'localhost';", true, "GRANT OPERATE VIEW ON `db2`.`invoice` TO `jeffrey`@`localhost`"},
 		{"GRANT ALL ON *.* TO 'someuser'@'somehost';", true, "GRANT ALL ON *.* TO `someuser`@`somehost`"},
 		{"GRANT ALL ON *.* TO 'SOMEuser'@'SOMEhost';", true, "GRANT ALL ON *.* TO `SOMEuser`@`somehost`"},
 		{"GRANT SELECT, INSERT ON *.* TO 'someuser'@'somehost';", true, "GRANT SELECT, INSERT ON *.* TO `someuser`@`somehost`"},
@@ -5479,6 +5579,7 @@ func TestPrivilege(t *testing.T) {
 		// for revoke statement
 		{"REVOKE ALL ON db1.* FROM 'jeffrey'@'LOCalhost';", true, "REVOKE ALL ON `db1`.* FROM `jeffrey`@`localhost`"},
 		{"REVOKE SELECT ON db2.invoice FROM 'jeffrey'@'localhost';", true, "REVOKE SELECT ON `db2`.`invoice` FROM `jeffrey`@`localhost`"},
+		{"REVOKE OPERATE VIEW ON db2.invoice FROM 'jeffrey'@'localhost';", true, "REVOKE OPERATE VIEW ON `db2`.`invoice` FROM `jeffrey`@`localhost`"},
 		{"REVOKE ALL ON *.* FROM 'someuser'@'somehost';", true, "REVOKE ALL ON *.* FROM `someuser`@`somehost`"},
 		{"REVOKE SELECT, INSERT ON *.* FROM 'someuser'@'somehost';", true, "REVOKE SELECT, INSERT ON *.* FROM `someuser`@`somehost`"},
 		{"REVOKE ALL ON mydb.* FROM 'someuser'@'somehost';", true, "REVOKE ALL ON `mydb`.* FROM `someuser`@`somehost`"},
