@@ -1062,6 +1062,19 @@ mod tests {
             }"#,
         )
         .expect("source JSON table");
+        let zero_histogram =
+            serde_json::to_value(JsonHistogram::default()).expect("zero histogram JSON");
+        assert_eq!(zero_histogram["ndv"], 0);
+        assert_eq!(
+            JsonColumn {
+                histogram: Some(JsonHistogram::default()),
+                cm_sketch: Some(JsonCmSketch::default()),
+                fm_sketch: Some(JsonFmSketch::default()),
+                ..JsonColumn::default()
+            }
+            .total_memory_usage(),
+            6
+        );
         let blocks = json_table_to_blocks(&source, 30).expect("compress table");
         assert!(blocks.len() > 1);
         let converted = blocks_to_json_table(&blocks).expect("decompress table");

@@ -61,7 +61,7 @@ impl JsonTable {
     /// Go `(*JSONTable).Sort`.
     pub fn sort(&mut self) {
         if let Some(columns) = &mut self.predicate_columns {
-            columns.sort_by_key(|column| {
+            columns.sort_unstable_by_key(|column| {
                 column
                     .as_ref()
                     .expect("nil JSONPredicateColumn in JSONTable.Sort")
@@ -128,23 +128,11 @@ pub struct JsonPredicateColumn {
     pub id: i64,
 }
 
-impl JsonPredicateColumn {
-    /// Creates predicate metadata with only its source column ID.
-    #[must_use]
-    pub const fn new(id: i64) -> Self {
-        Self {
-            last_used_at: None,
-            last_analyzed_at: None,
-            id,
-        }
-    }
-}
-
 /// JSON form of `tipb.Histogram`.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 pub struct JsonHistogram {
     /// Number of distinct values.
-    #[serde(default, skip_serializing_if = "is_zero_i64")]
+    #[serde(default)]
     pub ndv: i64,
     /// Histogram buckets.
     #[serde(default, skip_serializing_if = "option_vec_is_none_or_empty")]
@@ -153,7 +141,7 @@ pub struct JsonHistogram {
 
 impl JsonHistogram {
     fn encoded_len(&self) -> usize {
-        scalar_len(1, self.ndv as u64, self.ndv != 0)
+        scalar_len(1, self.ndv as u64, true)
             + self
                 .buckets
                 .as_deref()
@@ -171,7 +159,7 @@ impl JsonHistogram {
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 pub struct JsonBucket {
     /// Cumulative row count.
-    #[serde(default, skip_serializing_if = "is_zero_i64")]
+    #[serde(default)]
     pub count: i64,
     /// Base64-encoded lower bound.
     #[serde(default, skip_serializing_if = "option_string_is_none_or_empty")]
@@ -180,7 +168,7 @@ pub struct JsonBucket {
     #[serde(default, skip_serializing_if = "option_string_is_none_or_empty")]
     pub upper_bound: Option<String>,
     /// Upper-bound repeat count.
-    #[serde(default, skip_serializing_if = "is_zero_i64")]
+    #[serde(default)]
     pub repeats: i64,
     /// Optional per-bucket NDV.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -189,10 +177,10 @@ pub struct JsonBucket {
 
 impl JsonBucket {
     fn encoded_len(&self) -> usize {
-        scalar_len(1, self.count as u64, self.count != 0)
-            + bytes_len(2, self.lower_bound.as_deref().map_or(0, base64_decoded_len))
-            + bytes_len(3, self.upper_bound.as_deref().map_or(0, base64_decoded_len))
-            + scalar_len(4, self.repeats as u64, self.repeats != 0)
+        scalar_len(1, self.count as u64, true)
+            + optional_bytes_len(2, self.lower_bound.as_deref())
+            + optional_bytes_len(3, self.upper_bound.as_deref())
+            + scalar_len(4, self.repeats as u64, true)
             + self.ndv.map_or(0, |ndv| scalar_len(5, ndv as u64, true))
     }
 }
@@ -207,7 +195,7 @@ pub struct JsonCmSketch {
     #[serde(default, skip_serializing_if = "option_vec_is_none_or_empty")]
     pub top_n: Option<Vec<Option<JsonCmSketchTopN>>>,
     /// Default counter value.
-    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    #[serde(default)]
     pub default_value: u64,
 }
 
@@ -232,7 +220,7 @@ impl JsonCmSketch {
                     message_len(2, len)
                 })
                 .sum::<usize>()
-            + scalar_len(3, self.default_value, self.default_value != 0)
+            + scalar_len(3, self.default_value, true)
     }
 }
 
@@ -262,14 +250,13 @@ pub struct JsonCmSketchTopN {
     #[serde(default, skip_serializing_if = "option_string_is_none_or_empty")]
     pub data: Option<String>,
     /// Row count.
-    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    #[serde(default)]
     pub count: u64,
 }
 
 impl JsonCmSketchTopN {
     fn encoded_len(&self) -> usize {
-        bytes_len(1, self.data.as_deref().map_or(0, base64_decoded_len))
-            + scalar_len(2, self.count, self.count != 0)
+        optional_bytes_len(1, self.data.as_deref()) + scalar_len(2, self.count, true)
     }
 }
 
@@ -277,7 +264,7 @@ impl JsonCmSketchTopN {
 #[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
 pub struct JsonFmSketch {
     /// Sketch mask.
-    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    #[serde(default)]
     pub mask: u64,
     /// Retained hashes.
     #[serde(default, skip_serializing_if = "option_vec_is_none_or_empty")]
@@ -286,7 +273,7 @@ pub struct JsonFmSketch {
 
 impl JsonFmSketch {
     fn encoded_len(&self) -> usize {
-        scalar_len(1, self.mask, self.mask != 0)
+        scalar_len(1, self.mask, true)
             + self
                 .hashset
                 .as_deref()
@@ -320,8 +307,10 @@ fn message_len(field: u64, len: usize) -> usize {
     tag_len(field, 2) + varint_len(len as u64) + len
 }
 
-fn bytes_len(field: u64, len: usize) -> usize {
-    (len > 0).then(|| message_len(field, len)).unwrap_or(0)
+fn optional_bytes_len(field: u64, value: Option<&str>) -> usize {
+    value
+        .map(|value| message_len(field, base64_decoded_len(value)))
+        .unwrap_or(0)
 }
 
 fn base64_decoded_len(value: &str) -> usize {
@@ -332,14 +321,6 @@ fn base64_decoded_len(value: &str) -> usize {
         .take_while(|byte| **byte == b'=')
         .count();
     (value.len().saturating_mul(3) / 4).saturating_sub(padding.min(2))
-}
-
-fn is_zero_i64(value: &i64) -> bool {
-    *value == 0
-}
-
-fn is_zero_u64(value: &u64) -> bool {
-    *value == 0
 }
 
 fn option_vec_is_none_or_empty<T>(value: &Option<Vec<T>>) -> bool {

@@ -36,6 +36,19 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-08-31: re-audited and completed pinned `pkg/statistics/util`. Corrected
+  the shared JSON model to retain protobuf scalar zero fields and count them in
+  generated-message `Size()` equivalents, changed predicate ordering to Go's
+  unstable `slices.SortFunc` contract, and removed the source-absent predicate
+  constructor and four-test carrier. Also completed atomic audits of the
+  two-artifact `pkg/util/breakpoint` and `pkg/util/compress` leaves. They remain
+  explicitly unclaimed: breakpoint needs the ordinary session value store and
+  both executor failpoint injection points; compression needs the generic
+  reusable gzip state shared by storage and the absent ingest-control owner.
+  Receipts are `receipts/statistics_util.md`,
+  `receipts/util_breakpoint_audit.md`, and
+  `receipts/util_compress_audit.md`.
+
 - 2026-09-01: completed inventory and implementation for the currently
   unclaimed pinned Go `pkg/util/sys/storage` package. Its Linux/macOS `statfs`,
   Windows `GetDiskFreeSpaceEx`, and unsupported-platform `math.MaxInt64`
@@ -726,6 +739,16 @@ For each bounded behavior cluster:
 - [x] Complete the pinned `pkg/util/size` package in its `tidb-util` owner,
       retain all twenty source constants with Go ABI sizing, and remove the
       supplementary Rust test absent from this test-free Go package.
+- [x] Audit the complete pinned `pkg/util/breakpoint` package. Do not add a
+      detached callback wrapper: its sole behavior requires the ordinary
+      session value store, failpoint registry, and both executor injection
+      sites. The two-artifact inventory is in
+      `receipts/util_breakpoint_audit.md` and remains unclaimed.
+- [x] Audit the complete pinned `pkg/util/compress` package. Its writer and
+      reader pools are generic reusable gzip streams shared by statistics
+      storage and ingest control; the current fresh, fixed-buffer Rust codecs
+      are consumer seed behavior, not this package. The two-artifact inventory
+      is in `receipts/util_compress_audit.md` and remains unclaimed.
 - [x] Complete the pinned root `pkg/util/sem` package in its `tidb-util`
       owner, verify its full policy and cross-crate sysvar wiring, retain its
       five source tests, and remove supplementary Rust-only assertions.
