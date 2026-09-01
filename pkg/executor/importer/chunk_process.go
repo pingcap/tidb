@@ -64,11 +64,11 @@ type rowToEncode struct {
 	resetFn  func()
 }
 
-type encodeReaderFn func(ctx context.Context) (data rowToEncode, closed bool, err error)
+type encodeReaderFn func(ctx context.Context, row []types.Datum) (data rowToEncode, closed bool, err error)
 
 // parserEncodeReader wraps a mydump.Parser as a encodeReaderFn.
 func parserEncodeReader(parser mydump.Parser, endOffset int64, filename string) encodeReaderFn {
-	return func(context.Context) (data rowToEncode, closed bool, err error) {
+	return func(context.Context, []types.Datum) (data rowToEncode, closed bool, err error) {
 		readPos, _ := parser.Pos()
 		if readPos >= endOffset {
 			closed = true
@@ -99,9 +99,21 @@ func parserEncodeReader(parser mydump.Parser, endOffset int64, filename string) 
 	}
 }
 
+<<<<<<< HEAD
 // queryRowEncodeReader wraps a QueryRow channel as a encodeReaderFn.
 func queryRowEncodeReader(rowCh <-chan QueryRow) encodeReaderFn {
 	return func(ctx context.Context) (data rowToEncode, closed bool, err error) {
+=======
+type queryChunkEncodeReader struct {
+	chunkCh <-chan QueryChunk
+	currChk QueryChunk
+	cursor  int
+	numRows int
+}
+
+func (r *queryChunkEncodeReader) readRow(ctx context.Context, row []types.Datum) (data rowToEncode, closed bool, err error) {
+	if r.currChk.Chk == nil || r.cursor >= r.numRows {
+>>>>>>> d1e09c73fbc (executor: tiny optimize import into from select performance by avoid 1 cast and memory allocation (#60397))
 		select {
 		case <-ctx.Done():
 			err = ctx.Err()
@@ -121,6 +133,37 @@ func queryRowEncodeReader(rowCh <-chan QueryRow) encodeReaderFn {
 			return
 		}
 	}
+<<<<<<< HEAD
+=======
+
+	chkRow := r.currChk.Chk.GetRow(r.cursor)
+	rowLen := chkRow.Len()
+	if cap(row) < rowLen {
+		row = make([]types.Datum, rowLen)
+	} else {
+		row = row[:0]
+		for range rowLen {
+			row = append(row, types.Datum{}) // nozero
+		}
+	}
+	row = chkRow.GetDatumRowWithBuffer(r.currChk.Fields, row)
+	r.cursor++
+	data = rowToEncode{
+		row:       row,
+		rowID:     r.currChk.RowIDOffset + int64(r.cursor),
+		endOffset: -1,
+		resetFn:   func() {},
+	}
+	return
+}
+
+// queryRowEncodeReader wraps a queryChunkEncodeReader as a encodeReaderFn.
+func queryRowEncodeReader(chunkCh <-chan QueryChunk) encodeReaderFn {
+	reader := queryChunkEncodeReader{chunkCh: chunkCh}
+	return func(ctx context.Context, row []types.Datum) (data rowToEncode, closed bool, err error) {
+		return reader.readRow(ctx, row)
+	}
+>>>>>>> d1e09c73fbc (executor: tiny optimize import into from select performance by avoid 1 cast and memory allocation (#60397))
 }
 
 type encodedKVGroupBatch struct {
@@ -143,8 +186,9 @@ func (b *encodedKVGroupBatch) reset() {
 	b.memBuf = nil
 }
 
-func newEncodedKVGroupBatch(keyspace []byte) *encodedKVGroupBatch {
+func newEncodedKVGroupBatch(keyspace []byte, count int) *encodedKVGroupBatch {
 	return &encodedKVGroupBatch{
+		dataKVs:       make([]common.KvPair, 0, count),
 		indexKVs:      make(map[int64][]common.KvPair, 8),
 		groupChecksum: verify.NewKVGroupChecksumWithKeyspace(keyspace),
 	}
@@ -160,6 +204,9 @@ func (b *encodedKVGroupBatch) add(kvs *kv.Pairs) error {
 			indexID, err := tablecodec.DecodeIndexID(pair.Key)
 			if err != nil {
 				return errors.Trace(err)
+			}
+			if len(b.indexKVs[indexID]) == 0 {
+				b.indexKVs[indexID] = make([]common.KvPair, 0, cap(b.dataKVs))
 			}
 			b.indexKVs[indexID] = append(b.indexKVs[indexID], pair)
 			b.groupChecksum.UpdateOneIndexKV(indexID, pair)
@@ -251,8 +298,7 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		p.encodeTotalDur += encodeDur
 		p.readTotalDur += readDur
 
-		kvGroupBatch := newEncodedKVGroupBatch(p.keyspace)
-
+		kvGroupBatch := newEncodedKVGroupBatch(p.keyspace, rowCount)
 		for _, kvs := range rowBatch {
 			if err := kvGroupBatch.add(kvs); err != nil {
 				return errors.Trace(err)
@@ -275,17 +321,25 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		return nil
 	}
 
+<<<<<<< HEAD
 	var rowNumber int
+=======
+	var readRowCache []types.Datum
+>>>>>>> d1e09c73fbc (executor: tiny optimize import into from select performance by avoid 1 cast and memory allocation (#60397))
 	for {
 		readDurStart := time.Now()
-		data, closed, err := p.readFn(ctx)
+		data, closed, err := p.readFn(ctx, readRowCache)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if closed {
 			break
 		}
+<<<<<<< HEAD
 		rowNumber++
+=======
+		readRowCache = data.row
+>>>>>>> d1e09c73fbc (executor: tiny optimize import into from select performance by avoid 1 cast and memory allocation (#60397))
 		readDur += time.Since(readDurStart)
 
 		encodeDurStart := time.Now()
