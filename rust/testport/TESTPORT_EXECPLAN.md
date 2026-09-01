@@ -40,6 +40,15 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: audited all thirteen current Go-master `cmd/importer`
+  artifacts (1,812 Go lines plus the 155,728-byte `stats.json` fixture),
+  including the CLI README/configuration, complete generator/parser/database
+  sources, the decimal-format test, and Bazel binary/test targets. Rust has
+  separate SQL `IMPORT INTO` and BR restore implementations but no
+  dependency-closed owner for this standalone legacy generator command. The
+  complete boundary is recorded in `receipts/cmd_importer.md`; no speculative
+  Rust behavior was added.
+
 - 2026-09-01: revalidated the six-artifact `pkg/util/sys/storage` inventory
   against current Go master, including POSIX, Windows, unsupported-target,
   test, harness, and Bazel variants. Source is unchanged from the earlier
