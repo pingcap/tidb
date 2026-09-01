@@ -20,7 +20,7 @@ decision:
 
 There is no `doc.go`, platform-specific source, generated output, fixture or
 `testdata` tree, benchmark, fuzz target, example, nested package, or test
-harness beyond the two source test files. The package has 2,624 Go lines and
+harness beyond the two source test files. The package has 2,667 Go lines and
 the source has no current-master delta.
 
 ## Go behavior and consumers
