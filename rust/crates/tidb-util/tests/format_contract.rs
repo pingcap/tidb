@@ -127,3 +127,9 @@ fn empty_format_still_observes_the_source_writer() {
     assert_eq!(writer.calls, 1);
     assert!(writer.bytes.is_empty());
 }
+
+#[test]
+#[deny(unused_must_use)]
+fn output_format_return_value_may_be_ignored_like_go() {
+    output_format("discarded");
+}

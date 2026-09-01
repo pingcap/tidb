@@ -3247,6 +3247,15 @@ For each bounded behavior cluster:
       no new source change was justified. Details are in
       `receipts/util_column_mapping.md` and
       `docs/operations/util-column-mapping-audit-execplan.md`.
+- 2026-09-02: fixed the Rust-only `#[must_use]` diagnostic on
+      `tidb-util::format::output_format`. The complete Go-master
+      `pkg/util/format` package is four artifacts and 318 lines at authority
+      `c6054025ed4c32ab3672a2a24ea46892714d21ec`; its formatter state machine
+      remains owned by `tidb-datatype`. Added a deny-lint regression proving
+      the return may be ignored like Go; the pre-fix test failed with one
+      unused-return error and the focused Rust/Go suites plus Ready lint pass.
+      Details are in `receipts/util_format.md` and
+      `docs/operations/util-format-audit-execplan.md`.
 - 2026-09-01: audited all four Go-master `pkg/util/cpu` artifacts (308 lines,
       six production functions/methods, two source tests, and one test
       harness), including its failpoint, race/flaky BUILD target, cgroup/EMA,
