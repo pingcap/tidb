@@ -628,6 +628,23 @@ For each bounded behavior cluster:
   the explicit boundary in `receipts/domain_globalconfigsync.md` and
   `rust/docs/operations/domain-globalconfigsync-audit-execplan.md`.
 
+- 2026-09-02: audited the complete Go-master `pkg/domain/sqlsvrapi` root
+  package: exactly two artifacts and 82 lines containing the public runtime,
+  keyspace-handle, and SQL-server interfaces. All files are byte-identical to
+  Go master and the package plus generated mock package compile. Rust has no
+  dependency-closed SQL/session/DDL API owner, so no Rust-only behavior was
+  removed or speculatively implemented. Recorded the root boundary in
+  `receipts/domain_sqlsvrapi.md` and
+  `rust/docs/operations/domain-sqlsvrapi-audit-execplan.md`.
+
+- 2026-09-02: audited the complete Go-master nested
+  `pkg/domain/sqlsvrapi/mock` package: exactly four artifacts and 301 lines,
+  including all three MockGen outputs and BUILD metadata. Generated files are
+  byte-identical to Go master and were not hand-edited; parent/mock compilation
+  passes. Recorded the generated boundary in
+  `receipts/domain_sqlsvrapi_mock.md` and
+  `rust/docs/operations/domain-sqlsvrapi-mock-audit-execplan.md`.
+
 - 2026-09-02: updated the complete five-artifact Go-master
   `pkg/server/handler/tests` consumer inventory (3,630 lines) for the DXF
   history redaction contract. Its focused API regression now requires
