@@ -40,6 +40,16 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: refreshed the complete Go-master `pkg/util/disk` inventory at
+  `c6054025ed4c32ab3672a2a24ea46892714d21ec`: five artifacts and 283 lines,
+  with directory locking, cleanup, tracker aliases, and the concurrent source
+  test covered. Removed the two Rust-only tracker-constructor `#[must_use]`
+  annotations and added a regression that failed before the edit with two
+  lint errors and passes afterward. Current and detached latest-master Go
+  tests, focused Rust regressions, Ready formatting, pinned lint, and diff
+  hygiene pass. Details are in `receipts/util_disk.md` and
+  `docs/operations/util-disk-audit-execplan.md`.
+
 - 2026-09-02: refreshed the complete Go-master `pkg/util/stringutil`
   inventory at `c6054025ed4c32ab3672a2a24ea46892714d21ec`: four artifacts and
   927 lines, including all source tests, benchmarks, the goleak harness, and

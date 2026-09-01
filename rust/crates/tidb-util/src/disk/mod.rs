@@ -25,13 +25,25 @@ use std::sync::Arc;
 pub type Tracker = crate::memory::Tracker;
 
 /// Go `disk.NewTracker`.
-#[must_use]
 pub fn new_tracker(label: i64, bytes_limit: i64) -> Arc<Tracker> {
     Tracker::new(label, bytes_limit)
 }
 
 /// Go `disk.NewGlobalTracker`.
-#[must_use]
 pub fn new_global_tracker(label: i64, bytes_limit: i64) -> Arc<Tracker> {
     Tracker::new_global(label, bytes_limit)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Go permits callers to discard these constructor results; Rust must not
+    // add a `must_use` diagnostic at the transcreation boundary.
+    #[test]
+    #[deny(unused_must_use)]
+    fn return_values_may_be_ignored_like_go() {
+        new_tracker(0, 0);
+        new_global_tracker(0, 0);
+    }
 }

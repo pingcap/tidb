@@ -1,10 +1,10 @@
-# Complete `pkg/util/disk` package receipt
+# `pkg/util/disk` — Go-master parity audit receipt
 
-Status: package behavior complete against pinned Go commit
-`e2788410d8d696605e8cb002585877a063ccc909`. This is one WIP package claim
-inside the ongoing repository parity goal, not a repository Ready claim.
+Status: complete dependency-closed audit against current Go `master`; the Rust
+owner now exposes Go's discardable constructor contract. This remains one
+bounded package claim inside the ongoing repository parity goal.
 
-## Pinned inventory
+## Go-master inventory
 
 | Artifact | Lines | Blob |
 | --- | ---: | --- |
@@ -13,6 +13,11 @@ inside the ongoing repository parity goal, not a repository Ready claim.
 | `pkg/util/disk/tracker.go` | 30 | `4def0cea71fe91fc51c294aec6b55830483f3125` |
 | `pkg/util/disk/tempDir_test.go` | 55 | `76e207eadd6b52230e9f40d744178cfb8d27aa58` |
 | `pkg/util/disk/main_test.go` | 33 | `056351761b00edd47fa8f09dc3577361e9f13124` |
+
+Comparison authority: Go `origin/master` at
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02). The five-artifact,
+283-line package is unchanged at that authority. Every production, test, and
+BUILD artifact was read in full before editing.
 
 There is no `doc.go`, fixture, testdata, benchmark, fuzz target, generated
 source, or build/platform source variant. `main_test.go` only installs TiDB's
@@ -53,20 +58,28 @@ Rust-only lease/quota/encryption tests attached to that duplicate authority
 were removed. The server-local spill-path encoding test and
 `memoryusagealarm`'s private copy of `CheckAndCreateDir` were also removed.
 
-## Validation
+The two public tracker constructors carried explicit Rust-only `#[must_use]`
+annotations. The new `return_values_may_be_ignored_like_go` regression failed
+before the fix with two `unused_must_use` errors; removing those annotations
+lets Go-style discarded constructor calls compile without weakening global
+lint policy.
 
-WIP commands run from `rust/`:
+## Validation (Ready profile)
 
-    cargo fmt --all -- --check
-    cargo check --offline -p tidb-util -p tidb-chunk -p tidb-executor -p tidb-session -p tidb-server
-    cargo test --offline -p tidb-util --lib disk::temp_dir::tests::test_remove_dir -- --nocapture
-    cargo test --offline -p tidb-chunk --test all chunk_in_disk_contract -- --nocapture
-    cargo test --offline -p tidb-server --test all node_config_source::configured_sem_is_installed_before_startup_resource_admission -- --exact --nocapture
-    cargo test --offline -p tidb-server --test all node_config_source::impossible_spill_quota_fails_before_auth_listener_or_cluster_startup -- --exact --nocapture
+Commands run from the repository root unless noted:
+
+    PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/disk -count=1
+    (cd /tmp/tidb-go-latest-c605 && PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/disk -count=1)
+    OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib CARGO_INCREMENTAL=0 cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-util --lib disk::tests::return_values_may_be_ignored_like_go --offline --locked -- --exact
+    OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib CARGO_INCREMENTAL=0 cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-util --lib disk::temp_dir::tests::test_remove_dir --offline --locked -- --exact --nocapture
+    (cd rust && cargo +nightly-2026-08-22 fmt --all -- --check)
+    PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 make lint
     git diff --check
 
-The Bazel preparation gate is not required because no Go/Bazel/module file is
-changed.
+The current and detached latest-master Go suites pass; both focused Rust
+regressions pass. Ready formatting, pinned repository lint, and diff hygiene
+pass. The Bazel preparation gate and failpoint toggling are not required
+because this batch changes only Rust and documentation.
 
 ## Risk and unverified targets
 
