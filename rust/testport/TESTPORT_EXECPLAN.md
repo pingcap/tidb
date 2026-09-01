@@ -161,6 +161,18 @@ For each bounded behavior cluster:
   `rust/docs/operations/lightning-backend-encode-audit-execplan.md`.
 
 - 2026-09-01: audited the complete Go-master
+  `pkg/dxf/importinto/conflictrows` package: four tracked artifacts and 872
+  lines covering its BUILD target, unique task/subtask path construction,
+  seven-day success retention policy, task metadata decisions, bounded
+  cleanup batches and diagnostic samples, object-store deletion/retry
+  behavior, and all four top-level tests with 38 leaf cases. The exact
+  Go-master package suite passed. Rust owns adjacent DXF task-step vocabulary
+  but has no dependency-closed importer/object-store/task-cleanup execution
+  path, so no detached policy was added. Recorded the explicit boundary in
+  `receipts/dxf_importinto_conflictrows.md` and
+  `rust/docs/operations/dxf-importinto-conflictrows-audit-execplan.md`.
+
+- 2026-09-01: audited the complete Go-master
   `pkg/session/test/nontransactionaltest` package before editing: three
   tracked artifacts and 614 lines covering six batch-DML behavior tests, the
   shard-composition helper, failpoint/goleak harness, and six-shard flaky
