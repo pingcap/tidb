@@ -3006,6 +3006,10 @@ var defaultSysVars = []*SysVar{
 		s.EnableFullOuterJoin = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBMaterializedViewEnable, Value: BoolToOnOff(vardef.DefTiDBMaterializedViewEnable), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableMaterializedView = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableIndexMergeJoin, Value: BoolToOnOff(vardef.DefTiDBEnableIndexMergeJoin), Hidden: true, Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableIndexMergeJoin = TiDBOptOn(val)
 		return nil

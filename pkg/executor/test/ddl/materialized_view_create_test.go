@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
 	ddlsess "github.com/pingcap/tidb/pkg/ddl/session"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -37,15 +38,29 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func newMViewTestKit(t testing.TB, store kv.Storage) *testkit.TestKit {
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tidb_materialized_view_enable = on")
+	return tk
+}
+
 func TestCreateMaterializedViewAndLog(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set div_precision_increment = 9")
 	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
 
+	tk.MustExec("set tidb_materialized_view_enable = off")
+	err := tk.ExecToErr("create materialized view log on t (a, b)")
+	require.ErrorContains(t, err, "tidb_materialized_view_enable")
+	tk.MustExec("set tidb_materialized_view_enable = on")
 	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("set tidb_materialized_view_enable = off")
+	err = tk.ExecToErr("create materialized view mv_disabled (a, s, cnt) as select a, sum(b), count(1) from t group by a")
+	require.ErrorContains(t, err, "tidb_materialized_view_enable")
+	tk.MustExec("set tidb_materialized_view_enable = on")
 	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a")
 	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
 
@@ -72,7 +87,7 @@ func TestCreateMaterializedViewAndLog(t *testing.T) {
 
 func TestCreateMaterializedViewLogBasic(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int, b int)")
 	expectedSQLMode := tk.Session().GetSessionVars().SQLMode
@@ -121,7 +136,7 @@ func TestCreateMaterializedViewLogBasic(t *testing.T) {
 
 func TestCreateMaterializedViewLogPreservesTextColumnTypes(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
 
 	tk.MustExec("create table t_text_types (id bigint not null primary key, c_tiny tinytext, c_text text, c_medium mediumtext, c_long longtext)")
@@ -136,7 +151,7 @@ func TestCreateMaterializedViewLogPreservesTextColumnTypes(t *testing.T) {
 
 func TestCreateMaterializedViewLogPreSplitOptions(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
 	originSplit := atomic.LoadUint32(&ddl.EnableSplitTableRegion)
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
@@ -168,7 +183,7 @@ func TestCreateMaterializedViewLogPreSplitOptions(t *testing.T) {
 
 func TestCreateMaterializedViewLogPurgeExprTypeValidation(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int, b int)")
 
@@ -187,7 +202,7 @@ func TestCreateMaterializedViewLogPurgeExprTypeValidation(t *testing.T) {
 
 func TestCreateMaterializedViewLogAccumulationAlert(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t_alert_default (a int)")
 	tk.MustExec("create table t_alert_zero (a int)")
@@ -232,7 +247,7 @@ func TestCreateMaterializedViewLogAccumulationAlert(t *testing.T) {
 
 func TestCreateMaterializedViewLogPurgeInfoNextUnixSecondsDerivation(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
 
 	getMLogID := func(baseTable string) int64 {
@@ -277,7 +292,7 @@ func TestCreateMaterializedViewLogPurgeInfoNextUnixSecondsDerivation(t *testing.
 
 func TestCreateMaterializedViewLogPurgeInfoNextUnixSecondsUsesScheduleTimeZone(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set time_zone = '+08:00'")
 
@@ -307,7 +322,7 @@ func TestCreateMaterializedViewLogPurgeInfoNextUnixSecondsUsesScheduleTimeZone(t
 
 func TestCreateMaterializedViewLogMetaColumnNameConflict(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t_conflict (`_MLOG$_DML_TYPE` int, a int)")
 	tk.MustGetErrCode("create materialized view log on t_conflict (`_MLOG$_DML_TYPE`, a)", 1060)
@@ -315,7 +330,7 @@ func TestCreateMaterializedViewLogMetaColumnNameConflict(t *testing.T) {
 
 func TestCreateMaterializedViewLogRejectNonBaseObject(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int)")
 	tk.MustExec("create view v as select a from t")
@@ -350,7 +365,7 @@ func TestCreateMaterializedViewLogRejectNonBaseObject(t *testing.T) {
 
 func TestCreateMaterializedViewLogRejectUnsupportedColumns(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
 
 	for _, tableName := range []string{"t_tinyblob", "t_blob", "t_mediumblob", "t_longblob"} {
@@ -373,7 +388,7 @@ func TestCreateMaterializedViewLogRejectUnsupportedColumns(t *testing.T) {
 
 func TestCreateMaterializedViewLogUpdatesPlacementBundle(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create placement policy mlog_p followers=1")
 	tk.MustExec("alter database test placement policy mlog_p")
@@ -386,7 +401,7 @@ func TestCreateMaterializedViewLogUpdatesPlacementBundle(t *testing.T) {
 
 func TestCreateMaterializedViewLogAllowsGeneratedColumns(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE t_gen (id BIGINT NOT NULL PRIMARY KEY, base BIGINT NOT NULL, gv BIGINT AS (base + 1) VIRTUAL, gs BIGINT AS (base + 2) STORED)")
 	tk.MustExec("CREATE MATERIALIZED VIEW LOG ON t_gen (id, gv, gs)")
@@ -403,7 +418,7 @@ func TestCreateMaterializedViewLogAllowsGeneratedColumns(t *testing.T) {
 
 func TestCreateMaterializedViewLogColumnKeyFlag(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table base_test(id int, v1 int, v2 int, v3 int, v4 int, index k(v1,v2,v3,v4))")
 	tk.MustExec("create materialized view log on base_test(v1, v2) purge next date_add(now(), interval 1 hour)")
@@ -415,7 +430,7 @@ func TestCreateMaterializedViewLogColumnKeyFlag(t *testing.T) {
 
 func TestCreateMaterializedViewColumnFlags(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table base_mv_flags(id bigint not null auto_increment primary key, g1 int not null, v1 bigint not null, key idx_g1_id(g1, id))")
 	tk.MustExec("create materialized view log on base_mv_flags(id, g1, v1) purge next date_add(now(), interval 1 hour)")
@@ -428,7 +443,7 @@ func TestCreateMaterializedViewColumnFlags(t *testing.T) {
 
 func TestMaterializedViewCommentLength(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t_mv_comment_len (id bigint not null primary key, g1 int not null, v1 bigint not null, key idx_g1(g1))")
 	tk.MustExec("create materialized view log on t_mv_comment_len (id, g1, v1)")
@@ -456,7 +471,7 @@ func TestMaterializedViewCommentLength(t *testing.T) {
 
 func TestCreateMaterializedViewRefreshExprTypeValidation(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
@@ -471,7 +486,7 @@ func TestCreateMaterializedViewRefreshExprTypeValidation(t *testing.T) {
 
 func TestCreateTableLikeShouldNotCarryMaterializedViewMetadata(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
@@ -507,7 +522,7 @@ func TestCreateTableLikeShouldNotCarryMaterializedViewMetadata(t *testing.T) {
 
 func TestCreateMaterializedViewRefreshInfoNextUnixSecondsDerivation(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
@@ -548,7 +563,7 @@ func TestCreateMaterializedViewRefreshInfoNextUnixSecondsDerivation(t *testing.T
 
 func TestCreateMaterializedViewRefreshInfoNextUnixSecondsUsesScheduleTimeZone(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set time_zone = '+08:00'")
 	tk.MustExec("create table t (a int not null, b int not null)")
@@ -579,7 +594,7 @@ func TestCreateMaterializedViewRefreshInfoNextUnixSecondsUsesScheduleTimeZone(t 
 
 func TestCreateMaterializedViewRejectNonBaseObject(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int)")
 	tk.MustExec("create materialized view log on t (a)")
@@ -591,7 +606,7 @@ func TestCreateMaterializedViewRejectNonBaseObject(t *testing.T) {
 
 func TestCreateMaterializedViewBuildFailureRollback(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
@@ -617,7 +632,7 @@ func TestCreateMaterializedViewBuildFailureRollback(t *testing.T) {
 
 func TestCreateMaterializedViewBuildContextCanceledRollback(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
@@ -643,7 +658,7 @@ func TestCreateMaterializedViewBuildContextCanceledRollback(t *testing.T) {
 
 func TestCreateMaterializedViewRollbackIgnoreMissingRefreshInfoTable(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
@@ -671,7 +686,7 @@ func TestCreateMaterializedViewRollbackIgnoreMissingRefreshInfoTable(t *testing.
 
 func TestCreateMaterializedViewRefreshInfoUpsertFailureRollback(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
@@ -704,7 +719,7 @@ func TestCreateMaterializedViewRefreshInfoUpsertFailureRollback(t *testing.T) {
 
 func TestCreateMaterializedViewRetryWithResidualBuildRowsRollback(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (null, 7), (null, 3)")
@@ -732,7 +747,7 @@ func TestCreateMaterializedViewRetryWithResidualBuildRowsRollback(t *testing.T) 
 
 func TestCreateMaterializedViewRetryAfterUpsertFailure(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
@@ -758,7 +773,7 @@ func TestCreateMaterializedViewRetryAfterUpsertFailure(t *testing.T) {
 
 func TestCreateMaterializedViewLogPrivilege(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t_create_mlog_priv (a int)")
 	for _, user := range []string{"u_create_mlog_no_create", "u_create_mlog_no_select", "u_create_mlog_table_create", "u_create_mlog_ok"} {
@@ -767,7 +782,7 @@ func TestCreateMaterializedViewLogPrivilege(t *testing.T) {
 	}
 
 	tk.MustExec("grant select on test.t_create_mlog_priv to 'u_create_mlog_no_create'@'%'")
-	tkNoCreate := testkit.NewTestKit(t, store)
+	tkNoCreate := newMViewTestKit(t, store)
 	require.NoError(t, tkNoCreate.Session().Auth(&auth.UserIdentity{Username: "u_create_mlog_no_create", Hostname: "%"}, nil, nil, nil))
 	err := tkNoCreate.ExecToErr("create materialized view log on test.t_create_mlog_priv (a)")
 	require.ErrorContains(t, err, "CREATE MATERIALIZED VIEW LOG command denied")
@@ -775,20 +790,20 @@ func TestCreateMaterializedViewLogPrivilege(t *testing.T) {
 	require.NotContains(t, err.Error(), "$mlog$")
 
 	tk.MustExec("grant create view on test.* to 'u_create_mlog_no_select'@'%'")
-	tkNoSelect := testkit.NewTestKit(t, store)
+	tkNoSelect := newMViewTestKit(t, store)
 	require.NoError(t, tkNoSelect.Session().Auth(&auth.UserIdentity{Username: "u_create_mlog_no_select", Hostname: "%"}, nil, nil, nil))
 	err = tkNoSelect.ExecToErr("create materialized view log on test.t_create_mlog_priv (a)")
 	require.ErrorContains(t, err, "SELECT command denied")
 
 	tk.MustExec("grant create view on test.* to 'u_create_mlog_ok'@'%'")
 	tk.MustExec("grant select on test.t_create_mlog_priv to 'u_create_mlog_ok'@'%'")
-	tkOK := testkit.NewTestKit(t, store)
+	tkOK := newMViewTestKit(t, store)
 	require.NoError(t, tkOK.Session().Auth(&auth.UserIdentity{Username: "u_create_mlog_ok", Hostname: "%"}, nil, nil, nil))
 	tkOK.MustExec("create materialized view log on test.t_create_mlog_priv (a)")
 
 	tk.MustExec("grant create view on test.t_create_mlog_priv to 'u_create_mlog_table_create'@'%'")
 	tk.MustExec("grant select on test.t_create_mlog_priv to 'u_create_mlog_table_create'@'%'")
-	tkTableCreate := testkit.NewTestKit(t, store)
+	tkTableCreate := newMViewTestKit(t, store)
 	require.NoError(t, tkTableCreate.Session().Auth(&auth.UserIdentity{Username: "u_create_mlog_table_create", Hostname: "%"}, nil, nil, nil))
 	err = tkTableCreate.ExecToErr("create materialized view log on test.t_create_mlog_priv (a)")
 	require.ErrorContains(t, err, "CREATE MATERIALIZED VIEW LOG command denied")
@@ -798,7 +813,7 @@ func TestCreateMaterializedViewLogPrivilege(t *testing.T) {
 
 func TestCreateMaterializedViewHistoryJobSchemaVersion(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
@@ -816,12 +831,12 @@ func TestCreateMaterializedViewHistoryJobSchemaVersion(t *testing.T) {
 
 func TestCreateMaterializedViewCancelRollback(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
 	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
-	tkCancel := testkit.NewTestKit(t, store)
+	tkCancel := newMViewTestKit(t, store)
 	tkCancel.MustExec("use test")
 
 	const pauseBuildFailpoint = "github.com/pingcap/tidb/pkg/ddl/pauseCreateMaterializedViewBuild"
@@ -835,7 +850,7 @@ func TestCreateMaterializedViewCancelRollback(t *testing.T) {
 
 	ddlDone := make(chan error, 1)
 	go func() {
-		tkDDL := testkit.NewTestKit(t, store)
+		tkDDL := newMViewTestKit(t, store)
 		tkDDL.MustExec("use test")
 		ddlDone <- tkDDL.ExecToErr("create materialized view mv_cancel (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a")
 	}()
@@ -871,7 +886,7 @@ func TestCreateMaterializedViewCancelRollback(t *testing.T) {
 
 func TestCreateMaterializedViewRefreshInfoRunningAndSuccess(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
@@ -888,7 +903,7 @@ func TestCreateMaterializedViewRefreshInfoRunningAndSuccess(t *testing.T) {
 
 	ddlDone := make(chan error, 1)
 	go func() {
-		tkDDL := testkit.NewTestKit(t, store)
+		tkDDL := newMViewTestKit(t, store)
 		tkDDL.MustExec("use test")
 		ddlDone <- tkDDL.ExecToErr("create materialized view mv_state (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a")
 	}()
@@ -925,7 +940,7 @@ func TestCreateMaterializedViewRefreshInfoRunningAndSuccess(t *testing.T) {
 
 func TestCreateMaterializedViewBuildReadTSQueryTypeAlignment(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int)")
 	tk.MustExec("insert into t values (1)")
@@ -946,7 +961,7 @@ func TestCreateMaterializedViewBuildReadTSQueryTypeAlignment(t *testing.T) {
 
 func TestCreateMaterializedViewLogRejectsDuplicateColumns(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t_dup (id bigint not null primary key, g1 int not null)")
 
@@ -956,7 +971,7 @@ func TestCreateMaterializedViewLogRejectsDuplicateColumns(t *testing.T) {
 
 func TestCreateMaterializedViewLogNameLengthByRune(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
 
 	maxBaseNameLen := mysql.MaxTableNameLength - len([]rune(model.MaterializedViewLogTableNamePrefix))
@@ -976,7 +991,7 @@ func TestCreateMaterializedViewLogNameLengthByRune(t *testing.T) {
 
 func TestCreateMaterializedViewSuccessRefreshInfoVisibilityBeforeCommit(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
@@ -1003,7 +1018,7 @@ func TestCreateMaterializedViewSuccessRefreshInfoVisibilityBeforeCommit(t *testi
 
 	ddlDone := make(chan error, 1)
 	go func() {
-		tkDDL := testkit.NewTestKit(t, store)
+		tkDDL := newMViewTestKit(t, store)
 		tkDDL.MustExec("use test")
 		ddlDone <- tkDDL.ExecToErr("create materialized view mv_upsert_visibility (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a")
 	}()
@@ -1052,7 +1067,7 @@ func TestCreateMaterializedViewSuccessRefreshInfoVisibilityBeforeCommit(t *testi
 
 func TestCreateMaterializedViewPauseAndResume(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
@@ -1069,12 +1084,12 @@ func TestCreateMaterializedViewPauseAndResume(t *testing.T) {
 
 	ddlDone := make(chan error, 1)
 	go func() {
-		tkDDL := testkit.NewTestKit(t, store)
+		tkDDL := newMViewTestKit(t, store)
 		tkDDL.MustExec("use test")
 		ddlDone <- tkDDL.ExecToErr("create materialized view mv_pause (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a")
 	}()
 
-	tkCtl := testkit.NewTestKit(t, store)
+	tkCtl := newMViewTestKit(t, store)
 	tkCtl.MustExec("use test")
 	jobID := ""
 	require.Eventually(t, func() bool {

@@ -1511,6 +1511,9 @@ type SessionVars struct {
 	// EnableFullOuterJoin indicates whether to enable full outer join.
 	EnableFullOuterJoin bool
 
+	// EnableMaterializedView indicates whether to enable materialized view DDL.
+	EnableMaterializedView bool
+
 	// EnableHistoricalStats indicates whether to enable historical statistics.
 	EnableHistoricalStats bool
 
@@ -2484,6 +2487,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		AnalyzeVersion:                   vardef.DefTiDBAnalyzeVersion,
 		AnalyzeStoreBatchSize:            vardef.DefTiDBAnalyzeStoreBatchSize,
 		EnableFullOuterJoin:              vardef.DefTiDBEnableFullOuterJoin,
+		EnableMaterializedView:           vardef.DefTiDBMaterializedViewEnable,
 		EnableIndexMergeJoin:             vardef.DefTiDBEnableIndexMergeJoin,
 		AllowFallbackToTiKV:              make(map[kv.StoreType]struct{}),
 		CTEMaxRecursionDepth:             vardef.DefCTEMaxRecursionDepth,

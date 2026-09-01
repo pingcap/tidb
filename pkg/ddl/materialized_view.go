@@ -231,7 +231,19 @@ func BuildMViewImportIntoOptions(importThreads int, importDiskQuota string) []st
 	return options
 }
 
+func checkMaterializedViewEnabled(ctx sessionctx.Context) error {
+	if !ctx.GetSessionVars().EnableMaterializedView {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStack(
+			"Materialized View is disabled, please set `tidb_materialized_view_enable` to `ON` to enable it",
+		)
+	}
+	return nil
+}
+
 func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.CreateMaterializedViewLogStmt) error {
+	if err := checkMaterializedViewEnabled(ctx); err != nil {
+		return err
+	}
 	is := e.infoCache.GetLatest()
 	schemaName := s.Table.Schema
 	if schemaName.O == "" {
@@ -389,6 +401,9 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 }
 
 func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateMaterializedViewStmt) error {
+	if err := checkMaterializedViewEnabled(ctx); err != nil {
+		return err
+	}
 	is := e.infoCache.GetLatest()
 	schemaName := s.ViewName.Schema
 	if schemaName.O == "" {
