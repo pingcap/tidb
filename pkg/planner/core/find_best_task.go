@@ -778,11 +778,11 @@ type candidatePath struct {
 	matchWithAdvisorySortItems bool
 	// partialPathMatchResults stores each partial path's matchProperty result.
 	// Length equals len(path.PartialIndexPaths). Only set for IndexMerge paths.
-	partialPathMatchResults  []property.PhysicalPropMatchResult
-	indexJoinCols            int     // how many index columns are used in access conditions in this IndexJoin.
+	partialPathMatchResults    []property.PhysicalPropMatchResult
+	indexJoinCols              int     // how many index columns are used in access conditions in this IndexJoin.
 	countAfterAccess4IndexJoin float64 // adjusted CountAfterAccess used only by index join candidate comparison.
-	isFullRange              bool    // cached result of whether this path covers the full scan range.
-	eqOrInCount              int     // cached result of equalPredicateCount().
+	isFullRange                bool    // cached result of whether this path covers the full scan range.
+	eqOrInCount                int     // cached result of equalPredicateCount().
 }
 
 func compareBool(l, r bool) int {
