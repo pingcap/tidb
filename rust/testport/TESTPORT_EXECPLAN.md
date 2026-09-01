@@ -2303,15 +2303,14 @@ For each bounded behavior cluster:
   identities and gave it an independent Cargo target matching Go's package
   test artifact. Complete inventory and WIP gates are recorded in
   `receipts/util_resourcegrouptag.md`.
-- 2026-08-29: completed the pinned Go `pkg/util/deadlockhistory` package
-  (one production file, one source test, one test harness, and `BUILD.bazel`).
-  Removed the Rust-only package row renderer, key decoder, server policy, and
-  recording entry point; executor code now owns retryable admission and live
-  recording while the ordinary information-schema reader owns key decoding
-  and statement-summary digest-text lookup, matching Go's boundaries. Reduced
-  the package tests to the four source identities and deleted an unregistered
-  duplicate DEADLOCKS test file. Complete inventory and WIP gates are recorded
-  in `receipts/util_deadlockhistory.md`.
+- 2026-09-02: refreshed the complete Go-master `pkg/util/deadlockhistory`
+  inventory at `c6054025ed4c32ab3672a2a24ea46892714d21ec`: four artifacts and
+  669 lines, including the four source tests, `TestMain`, and the flaky BUILD
+  target. The existing `tidb-executor::deadlock_history` owner preserves
+  bounded retention, IDs, datum/null rules, timestamp precision, digest
+  conversion, and resize behavior; current and detached Go suites plus the
+  four Rust owner tests pass. Details are in `receipts/util_deadlockhistory.md`
+  and `docs/operations/util-deadlockhistory-audit-execplan.md`.
 - 2026-08-29: completed the pinned Go `pkg/util/keydecoder` package (one
   production file, one source test, one test harness, and `BUILD.bazel`). Read
   the complete package first, then removed four supplemental Rust test

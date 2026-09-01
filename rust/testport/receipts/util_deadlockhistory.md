@@ -1,75 +1,60 @@
-# `pkg/util/deadlockhistory` — complete package transcreation
+# `pkg/util/deadlockhistory` — Go-master parity audit receipt
 
-Pinned Go source: `e2788410d8d696605e8cb002585877a063ccc909`.
+Go authority: `origin/master` at `c6054025ed4c32ab3672a2a24ea46892714d21ec`.
 
 ## Complete inventory
 
-The pinned package contains `BUILD.bazel`, production
-`deadlock_history.go`, source test `deadlock_history_test.go`, and package
-harness `main_test.go`. It has four top-level source tests and no `doc.go`,
-fixture, generated source, benchmark, fuzz target, example, platform variant,
-or build-tagged production variant. The checkout package is byte-identical to
-the pin.
+The package contains exactly four artifacts, all read in full (669 lines
+total):
 
-`main_test.go` supplies Go's common test setup and goroutine leak checker;
-Rust's aggregate unit test does not start Go runtime workers and needs no
-package setup analogue. `BUILD.bazel` maps to the existing `tidb-executor`
-production owner and the generated aggregate test target.
+- `deadlock_history.go` (242 lines): column contracts, wait-chain/record
+  values, datum conversion, bounded thread-safe history, global history, and
+  TiKV error conversion;
+- `deadlock_history_test.go` (354 lines): the four source test identities for
+  collection, datum conversion, error conversion, and resize;
+- `main_test.go` (33 lines): `TestMain`, common setup, and leak exclusions;
+- `BUILD.bazel` (40 lines): production and flaky test targets.
 
-## Rust ownership and integration
+There is no `doc.go`, fixture, testdata, benchmark, fuzz target, example,
+generated/platform variant, nested package, or other build input. All four
+files are byte-identical to Go master.
 
-`tidb-executor::deadlock_history` owns only the package behavior: column
-constants, wait-chain and record values, column-to-datum conversion, the
-thread-safe bounded history, the process-global history, and conversion from
-TiKV's deadlock error. History IDs start at one, remain monotonic across clear
-and resize, do not advance at zero capacity, preserve the newest entries when
-shrunk, and wrap through native unsigned arithmetic. Snapshots retain shared
-ownership of the stored record, the Rust equivalent of Go returning the same
-record pointer.
+## Rust ownership and parity
 
-The Rust-only package-level information-schema row renderer, key decoder,
-retryable collection policy, server configuration, and live recording entry
-point were removed. As in Go, executor code now owns retryable admission and
-calls `ErrDeadlockToDeadlockRecord` before pushing the global history. The
-ordinary session information-schema reader owns `KEY_INFO` decoding and
-`CURRENT_SQL_DIGEST_TEXT` lookup. The latter now reads the cumulative
-statement-summary map, replacing Rust's former unconditional SQL NULL.
+`rust/crates/tidb-executor/src/deadlock_history.rs` owns the package behavior:
+column constants and datum/null rules, wait-chain conversion, timestamp
+precision, bounded FIFO retention, monotonic IDs, clear/resize semantics,
+pointer-sharing snapshots, and the process-global history. The executor owns
+retryable admission and the session information-schema reader owns key/digest
+lookup, matching Go's package boundaries. Rust-only row renderers, decoders,
+retry policies, configuration, and alternate recording entry points are not
+present.
 
-The package test surface is the same four source-shaped identities:
-collection, datum conversion, deadlock-error conversion, and resize. The
-supplemental Rust concurrency, snapshot, and process-policy test identities
-were removed or folded into their Go owner. The unregistered duplicate
-`tests_deadlocks_table_source.rs` file was deleted; the ordinary session SQL
-test remains the consumer regression and now verifies digest-text retrieval.
+No Go or Rust production delta was found in this rolling audit, so no new
+package-local regression was warranted. The existing four source-derived Rust
+tests remain the focused regression carrier.
 
-## Validation
+## Validation (Ready profile)
 
-Profile: WIP; this is a complete package checkpoint inside the continuing
-package-by-package parity audit, not repository-wide readiness.
-
-- `git diff --exit-code e2788410d8d696605e8cb002585877a063ccc909 -- pkg/util/deadlockhistory` — passed.
-- `GOTOOLCHAIN=go1.25.10 go test ./pkg/util/deadlockhistory -count=1` — passed; four tests.
-- `cargo check -p tidb-executor -p tidb-exec -p tidb-session -p tidb-server` — passed.
-- `cargo test -p tidb-executor --lib deadlock_history::tests` — passed; four tests.
-- `cargo test -p tidb-session --lib deadlocks_table_exposes_package_rows_and_requires_process` — passed.
-- `cargo test -p tidb-exec --lib a_live_deadlock_failure_is_recorded_before_it_reaches_sql` — passed.
-- `cargo test -p tidb-exec --lib retryable_deadlock_history_obeys_the_process_policy` — passed.
-- `cargo fmt -p tidb-executor -p tidb-exec -p tidb-session -p tidb-server` — passed.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/deadlockhistory -count=1` — passed (four tests).
+- `(cd /tmp/tidb-go-latest-c605 && PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/deadlockhistory -count=1)` — passed (four tests).
+- `env OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-executor --lib deadlock_history::tests --offline --locked -- --test-threads=1` — passed (four tests).
+- `cd rust && cargo +nightly-2026-08-22 fmt --all -- --check` — passed.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 make lint` — passed for the current repository Ready gate.
 - `git diff --check` — passed.
 
-No Go source, Go test, Bazel metadata, or Go module file changed, so
-`make bazel_prepare` is not required.
+This batch changes documentation only; no Go source, import section, test
+function, Bazel file, or module dependency changed, so `make bazel_prepare` is
+not required. The package has no failpoint use, so the failpoint wrapper is not
+applicable.
 
-## Risk
+## Risks and boundaries
 
-- Correctness: improved; package API/behavior matches its Go owner and the
-  ordinary information-schema path now resolves digest text and key metadata.
-- Compatibility: deadlock IDs, retention, datum nullability, digest encoding,
-  retryable admission, PROCESS access, and DEADLOCKS row values follow the
-  pinned Go boundaries.
-- Performance: history operations remain mutex-protected and bounded; the
-  information-schema reader snapshots once and borrows the catalog once per
-  query.
-- Not verified locally: a live TiKV deadlock followed by a distributed
-  `CLUSTER_DEADLOCKS` read. Package tests and local executor/session consumer
-  regressions cover the pinned package and ordinary local reader boundary.
+- Correctness: source tests cover IDs, retention, nullability, timestamp
+  conversion, digest decoding, and resize-to-zero behavior.
+- Compatibility: no public API or runtime behavior changed in this batch.
+- Performance: no production code changed; the bounded mutex-backed history is
+  unchanged.
+- Not verified locally: a live TiKV deadlock followed by distributed
+  `CLUSTER_DEADLOCKS`; ordinary session/executor regressions remain the local
+  integration evidence.
