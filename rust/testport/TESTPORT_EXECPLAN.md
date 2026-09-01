@@ -1597,6 +1597,14 @@ For each bounded behavior cluster:
       parser table-existence classifier, or upstream `SHOW CREATE TABLE`
       syncer. The package remains explicitly unclaimed with no source change;
       details are in `receipts/util_ddl_checker.md`.
+- 2026-09-01: re-audited all three Go-master `pkg/util/memoryusagealarm`
+      artifacts (744 lines, including the race-enabled flaky test target and
+      Go-runtime goroutine-profile cases). Rust already has a source-shaped
+      `tidb-util::memoryusagealarm` seed with threshold/formatting/refresh
+      tests, but no dependency-closed startup handle, TiDB config provider,
+      session integration, or real heap/goroutine profile recorder. The
+      package remains explicitly unclaimed; details are in
+      `receipts/util_memoryusagealarm.md`.
 - [ ] Run Ready validation and self-review only when the requested parity scope
       is genuinely complete enough for a final-status claim.
 
@@ -1694,6 +1702,12 @@ For each bounded behavior cluster:
   ordinary DDL planner is not a substitute for this test/tooling contract;
   adding a checker-only session would create Rust-only behavior. Date/Author:
   2026-09-01, Codex.
+- Decision: keep `pkg/util/memoryusagealarm` explicitly unclaimed despite the
+  existing Rust seed. The Go contract couples a 100ms lifecycle, global
+  config/vardef reads, session-manager SQL snapshots, retention, and runtime
+  heap/goroutine profile side effects; a provider-only tick API or detached
+  recorder would omit observable behavior and create Rust-only policy. Date/
+  Author: 2026-09-01, Codex.
 - Decision: preserve the Rust planner-error declaration table and its
   all-prototype initialization guard. Go package initialization registers all
   98 entries, while Go's only explicit test checks 59; the Rust guard is the
