@@ -226,6 +226,17 @@ For each bounded behavior cluster:
   Go-master compilation passed and the explicit boundary is recorded in
   `receipts/sessiontxn_internal.md`.
 
+- 2026-09-01: audited the complete Go-master `pkg/session/txninfo` package:
+  three tracked artifacts and 473 lines, including the FNV/LRU transaction
+  summary recorder, five running-state labels, Prometheus state metrics,
+  `TxnInfo`/`ProcessInfo` fields and Datum conversion map, and the BUILD
+  target. The package has no local tests, fixtures, generated outputs,
+  benchmarks, fuzz inputs, or platform variants. Rust owns state labels and a
+  partial live transaction registry, but no dependency-closed summary,
+  metrics, and `TIDB_TRX` Datum datasource equivalent. No Rust-only behavior
+  or safe missing behavior was found; exact Go-master compilation passed and
+  the explicit boundary is recorded in `receipts/session_txninfo.md`.
+
 - 2026-09-01: refreshed the complete Go-master
   `pkg/util/password-validation` inventory (three artifacts, 379 lines) and
   confirmed it is unchanged from the prior pinned implementation. The Go
