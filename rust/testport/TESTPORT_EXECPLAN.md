@@ -387,6 +387,16 @@ For each bounded behavior cluster:
   missing behavior was found; the exact Go-master failpoint suite passed and
   the boundary is recorded in `receipts/session_test_privileges.md`.
 
+- 2026-09-01: audited the complete Go-master
+  `pkg/session/test/resourcegrouptest` package: two tracked artifacts and 76
+  lines, including the failpoint-driven statement/transaction resource-group
+  test and flaky BUILD target. Rust already owns statement hint resolution
+  and transaction resource-group propagation, but not the Go resource-group
+  catalog/cost controller and `TxnResourceGroupChecker` observation seam. No
+  Rust-only behavior or safe standalone implementation was found; the exact
+  Go-master failpoint suite passed and the explicit boundary is recorded in
+  `receipts/session_test_resourcegrouptest.md`.
+
 - 2026-09-01: refreshed the complete Go-master
   `pkg/util/password-validation` inventory (three artifacts, 379 lines) and
   confirmed it is unchanged from the prior pinned implementation. The Go
