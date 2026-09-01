@@ -342,6 +342,18 @@ For each bounded behavior cluster:
   added. Recorded the explicit boundary in `receipts/dxf_example.md` and
   `rust/docs/operations/dxf-example-audit-execplan.md`.
 
+- 2026-09-02: audited the complete Go-master `pkg/dxf/framework/testutil`
+  package: seven tracked artifacts and 1,258 lines, with 68 test-support
+  function/method declarations covering multi-node DXF contexts, owner
+  election, GoMock scheduler/executor extensions, SQL-backed task/subtask
+  helpers, keyspace selection, failpoint setup, and interval reduction. It has
+  no package-local tests, fixtures, generated/platform variants, benchmarks,
+  fuzz targets, or OWNERS files. Rust's generic `tidb-dxf` types have no
+  dependency-closed mock-store/session/failpoint harness, so no speculative
+  utility facade or Rust-only behavior was added. Recorded the explicit
+  boundary in `receipts/dxf_framework_testutil.md` and
+  `rust/docs/operations/dxf-framework-testutil-audit-execplan.md`.
+
 - 2026-09-01: audited the complete direct Go-master parent
   `pkg/dxf/importinto` package: 26 tracked artifacts and 9,158 lines, with
   170 production function/method declarations and 45 top-level test
