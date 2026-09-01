@@ -2383,6 +2383,16 @@ For each bounded behavior cluster:
       passes; Rust's combined BootstrapSession/Domain/DDL/mock-TiKV upgrade
       pipeline remains an explicit boundary. Details are in
       `receipts/session_test_bootstraptest2.md`.
+- 2026-09-01: audited the complete Go-master
+      `pkg/session/test/clusteredindextest` package: three artifacts and 253
+      lines covering the TestMain/goleak harness, three clustered-index tests,
+      one snapshot-cache interface, and the three-shard race/flaky target.
+      Rust has partial row/partition/session owners and ignored carriers, but
+      no dependency-closed mock-TiKV snapshot-cache, old-row-format DML,
+      TestKit executor, and randomized partition-scan owner. No Rust-only
+      behavior or safe standalone implementation was found; the exact
+      Go-master failpoint suite passed in 5.087s and the explicit boundary is
+      recorded in `receipts/session_test_clusteredindextest.md`.
 - 2026-09-01: audited all three Go-master `pkg/util/cgmon` artifacts (229
       lines: Linux cgroup monitor, fallback test, and Bazel target). The
       existing Rust cgroup reader covers quota/memory discovery but not this
