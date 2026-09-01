@@ -7,12 +7,25 @@ uses the current Go-master authority.
 
 ## Complete inventory
 
-All eleven package artifacts were read in full: five production files, five
-test/benchmark files, and `BUILD.bazel`. They define the generic keyed set,
-int/int64/string/float map sets, five memory-aware concrete types, seven unit
-tests, three benchmarks, and the shared test harness. There is no package doc,
-README, fixture, generated/platform variant, or ownership file. The checkout
-is byte-identical to the pin.
+All twelve current Go-master artifacts were read in full: five production
+files, six test/benchmark files, and `BUILD.bazel`. They define the generic
+keyed set, int/int64/string/float map sets, five memory-aware concrete types,
+seven unit tests, three benchmarks, and the shared test harness. There is no
+package doc, README, fixture, generated/platform variant, or ownership file.
+The checkout is byte-identical to the current authority.
+
+| Artifact | Lines |
+| --- | ---: |
+| `BUILD.bazel` | 40 |
+| `float64_set.go` / `float64_set_test.go` | 43 / 43 |
+| `int_set.go` / `int_set_test.go` | 71 / 70 |
+| `main_test.go` | 33 |
+| `set.go` / `set_test.go` | 184 / 96 |
+| `set_with_memory_usage.go` / `set_with_memory_usage_test.go` | 157 / 108 |
+| `string_set.go` / `string_set_test.go` | 92 / 64 |
+
+Total: 1,001 lines, 60 declarations, seven unit-test functions, three
+benchmarks, and no current source delta.
 
 ## Rust ownership and audit result
 
