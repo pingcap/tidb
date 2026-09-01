@@ -76,6 +76,16 @@ For each bounded behavior cluster:
   added. Recorded the explicit boundary in
   `receipts/objstore_compressedio.md`.
 
+- 2026-09-01: audited the complete Go-master `pkg/objstore/objectio` package
+  before editing: four tracked artifacts and 493 lines, including the public
+  BUILD target, 14 production interface/buffer/writer functions, and three
+  tests covering local chunking plus gzip/Snappy/Zstandard round trips and
+  decoder concurrency. Go master adds only the context-binding `NewIOWriter`
+  adapter. Rust's plan-replayer `ObjectWriter` is a separate narrow boundary,
+  not an object-store buffered writer, so no Rust-only behavior was removed
+  and no speculative adapter was added. Recorded the explicit boundary in
+  `receipts/objstore_objectio.md`.
+
 - 2026-09-01: audited the complete Go-master `pkg/ingestor/globalsort`
   package before editing: 17 tracked artifacts and 6,814 lines, including the
   external engine, object-store readers, merge and merge-v2 operators, range
