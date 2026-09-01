@@ -531,6 +531,7 @@ type MemArbitrator struct {
 		startTime    time.Time          // start time of each round
 		blockedState blockedState       // blocked state during arbitration
 		mode         ArbitratorWorkMode // work mode of each round
+		sync.Mutex
 	}
 	actions   MemArbitratorActions // actions interfaces
 	controlMu struct {             // control the async work process
@@ -1899,6 +1900,22 @@ func (m *MemArbitrator) implicitRun() { // satisfy any subscription task
 	}
 }
 
+// TryRunOneRound attempts to run one round of memory arbitration if the execution lock can be acquired.
+func (m *MemArbitrator) TryRunOneRound() {
+	if m.execMu.TryLock() {
+		if now().After(m.execMu.startTime.Add(defTaskTickDur)) {
+			m.runOneRound()
+		}
+		m.execMu.Unlock()
+	}
+}
+
+func (m *MemArbitrator) tick() {
+	m.execMu.Lock()
+	m.runOneRound()
+	m.execMu.Unlock()
+}
+
 // -1: at ArbitratorModeDisable
 // -2: mem unsafe
 // >= 0: execute / cancel task num
@@ -1951,7 +1968,7 @@ func (m *MemArbitrator) asyncRun(duration time.Duration) bool {
 				m.weakWake()
 			case <-m.notifer.C:
 				m.notifer.clear()
-				m.runOneRound()
+				m.tick()
 			}
 		}
 
@@ -3254,7 +3271,7 @@ func (m *MemArbitrator) stop() bool {
 
 	<-m.controlMu.finishCh
 
-	m.runOneRound()
+	m.tick()
 
 	return true
 }
