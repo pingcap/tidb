@@ -270,6 +270,20 @@ For each bounded behavior cluster:
   `receipts/dxf_importinto_mock.md` and
   `rust/docs/operations/dxf-importinto-mock-audit-execplan.md`.
 
+- 2026-09-01: audited the complete direct Go-master parent
+  `pkg/dxf/importinto` package: 26 tracked artifacts and 9,158 lines, with
+  170 production function/method declarations and 45 top-level test
+  functions/suite methods. The inventory covers planner metadata and range
+  splitting, scheduler/keyspace transaction boundaries, local/global
+  encode/merge/ingest, conflict collection/resolution, checksum, cleanup,
+  metering, metrics, and every direct mock-store/failpoint test; no direct
+  fixtures, platform/generated variants, benchmarks, fuzz targets, or
+  generator inputs exist. Rust owns only generic DXF task/step vocabulary and
+  SQL IMPORT INTO parser/session support, not a dependency-closed ImportInto
+  runtime, so no speculative Rust behavior was added. Recorded the explicit
+  parent boundary in `receipts/dxf_importinto.md` and
+  `rust/docs/operations/dxf-importinto-audit-execplan.md`.
+
 - 2026-09-01: audited the complete Go-master
   `pkg/session/test/nontransactionaltest` package before editing: three
   tracked artifacts and 614 lines covering six batch-DML behavior tests, the
