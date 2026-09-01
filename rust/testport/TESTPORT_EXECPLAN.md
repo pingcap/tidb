@@ -4648,6 +4648,12 @@ For each bounded behavior cluster:
   The package remains a Go HTTP/domain boundary with no dependency-closed Rust
   HTTP owner. See `rust/testport/receipts/server_handler_tikvhandler.md` and
   `rust/docs/operations/server-handler-tikvhandler-audit-execplan.md`.
+- The parent `pkg/server/handler` inventory covers all six Go-master artifacts
+  and 773 lines, including the auto-ID owner test, TiKV/MVCC helpers, upgrade
+  state handler, and response utilities. It is byte-identical to Go master and
+  remains an explicit Go HTTP/domain boundary because Rust has no complete
+  dependency-closed owner. See `rust/testport/receipts/server_handler.md` and
+  `rust/docs/operations/server-handler-audit-execplan.md`.
 
 ## Outcomes & Retrospective
 
