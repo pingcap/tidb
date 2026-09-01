@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -67,4 +68,16 @@ func TestImportIntoShouldHaveSameFlagsAsInsert(t *testing.T) {
 			require.EqualValues(t, insertTypeCtx.Flags(), importTypeCtx.Flags())
 		})
 	}
+}
+
+func TestJSONBooleanContext(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (j json)")
+	tk.MustExec("insert into t values ('[1384012953742982754,2947325532971048317]'), ('[1150596447037189411,2407534394954758420]')")
+
+	const predicate = "j <=> '[1150596447037189411,2407534394954758420]'"
+	tk.MustQuery("select j from (select j from t limit 1000) x where " + predicate).Check(testkit.Rows())
+	tk.MustQuery("select j from (select j from t limit 1000) x where case when (j or not j or j is null) then " + predicate + " else 1 end").Check(testkit.Rows())
 }
