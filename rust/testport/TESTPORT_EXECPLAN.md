@@ -40,6 +40,17 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: refreshed the complete Go-master `pkg/util/vitess` inventory at
+  `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: four tracked artifacts, 154
+  lines, one production function, five source vectors, TestMain, and no
+  fixtures, generated/platform variants, benchmarks, or nested packages. The
+  existing Rust DES owner and expression consumer preserve byte order, key,
+  block width, and nil-error semantics without Rust-only behavior. Current and
+  exact detached Go tests, focused Rust vector test, consumer check,
+  formatting, and diff checks pass. Updated `receipts/util_vitess.md` and
+  added the Ready documentation-only plan at
+  `docs/operations/util-vitess-audit-execplan.md`.
+
 - 2026-09-02: fixed the Rust-only `must_use` diagnostics in the complete
   Go-master `pkg/util/fastrand` owner. The Go package remains five artifacts and
   227 lines at `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`, including one source
