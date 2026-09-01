@@ -377,6 +377,17 @@ For each bounded behavior cluster:
   `receipts/dxf_framework_handle.md` and
   `rust/docs/operations/dxf-framework-handle-audit-execplan.md`.
 
+- 2026-09-02: audited the complete Go-master `pkg/dxf/framework/planner`
+  package: five tracked artifacts and 320 lines, with four production and two
+  top-level test declarations. The inventory covers `PlanCtx`, logical and
+  physical plan contracts, processor-step filtering, pipeline subtask metadata,
+  session-aware task creation, and a two-shard flaky Bazel target. Rust's
+  `tidb-planner` is the separate SQL optimizer and has no dependency-closed DXF
+  planner/storage owner, so no speculative facade or Rust-only behavior was
+  added. Recorded the explicit boundary in
+  `receipts/dxf_framework_planner.md` and
+  `rust/docs/operations/dxf-framework-planner-audit-execplan.md`.
+
 - 2026-09-01: audited the complete direct Go-master parent
   `pkg/dxf/importinto` package: 26 tracked artifacts and 9,158 lines, with
   170 production function/method declarations and 45 top-level test
