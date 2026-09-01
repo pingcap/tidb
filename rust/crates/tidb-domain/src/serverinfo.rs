@@ -12,11 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! SEED of Go `pkg/domain/serverinfo`: `info.go` (the data model, whole);
-//! `syncer.go` is the etcd half — the topology session, TTL refresh, and
-//! stale-info cleanup — and rides with the unported etcd client, alongside
-//! its integration-bound tests (`syncer_test.go` runs an embedded etcd
-//! cluster).
+//! Go `pkg/domain/serverinfo`: `info.go` (the data model, whole). The
+//! `syncer.go` etcd half — topology session, TTL refresh, stale-info cleanup,
+//! and server-info registration — lives in [`crate::serverinfo_syncer`],
+//! while status endpoint claims live in [`crate::status_endpoint_claim`].
+//! The source integration suite (`syncer_test.go`) runs an embedded etcd
+//! cluster; Rust exercises the same state machine through its `EtcdOps` seam.
 //!
 //! The model's wire behavior is exact, including its two quirks:
 //! * `ServerInfo.Marshal` reads `ServerIDGetter()` into `JSONServerID`
@@ -180,6 +181,18 @@ impl ServerInfo {
         serde_json::to_vec(self)
     }
 
+    /// Go `String`: JSON text on success, or a diagnostic string when
+    /// marshaling fails. The getter is sampled just as in [`Self::marshal`].
+    #[must_use]
+    pub fn string(&mut self) -> String {
+        match self.marshal() {
+            Ok(bytes) => String::from_utf8(bytes).unwrap_or_else(|error| {
+                format!("<failed to marshal server info: invalid UTF-8: {error}>")
+            }),
+            Err(error) => format!("<failed to marshal server info: {error}>"),
+        }
+    }
+
     /// Go `Unmarshal`: decode, then REBIND the getter to the decoded id.
     pub fn unmarshal(&mut self, bytes: &[u8]) -> Result<(), serde_json::Error> {
         *self = serde_json::from_slice(bytes)?;
@@ -207,6 +220,13 @@ impl ServerInfo {
             start_timestamp: self.static_info.start_timestamp,
             labels: self.dynamic_info.labels.clone(),
         }
+    }
+}
+
+impl std::fmt::Display for ServerInfo {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut snapshot = self.clone();
+        formatter.write_str(&snapshot.string())
     }
 }
 
@@ -262,6 +282,17 @@ mod tests {
             .expect("rebound");
         assert_eq!(getter(), 42);
         assert_eq!(decoded.dynamic_info.labels["foo"], "bar");
+    }
+
+    /// Go `String` marshals the current server-id getter before returning the
+    /// JSON representation, just like `Marshal` does.
+    #[test]
+    fn string_uses_the_current_server_id_getter() {
+        let mut info = sample();
+        let text = info.string();
+        assert!(text.contains("\"server_id\":42"), "{text}");
+        assert_eq!(info.static_info.json_server_id, 42);
+        assert_eq!(format!("{info}"), text);
     }
 
     /// Go `ToTopologyInfo`: the topology's version is the BUILD release

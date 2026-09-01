@@ -161,13 +161,16 @@ pub(crate) fn run_cluster_session_node_with_spill(
     // etcd still HAS the record; it just publishes nowhere, and
     // `information_schema.TIDB_SERVERS_INFO` then reports this node alone,
     // which is Go's `etcdCli == nil` answer.
-    let server_info = Arc::new(tidb_domain::serverinfo_syncer::Syncer::new(
-        crate::serverinfo_etcd::node_server_info(&config),
-        crate::real_tikv_node::connect_schema_notifier(&config).map(|client| {
-            Arc::new(crate::serverinfo_etcd::EtcdClientOps::new(client))
-                as Arc<dyn tidb_domain::serverinfo_syncer::EtcdOps>
-        }),
-    ));
+    let server_info = Arc::new(
+        tidb_domain::serverinfo_syncer::Syncer::new_with_status_endpoint_claim(
+            crate::serverinfo_etcd::node_server_info(&config),
+            crate::real_tikv_node::connect_schema_notifier(&config).map(|client| {
+                Arc::new(crate::serverinfo_etcd::EtcdClientOps::new(client))
+                    as Arc<dyn tidb_domain::serverinfo_syncer::EtcdOps>
+            }),
+            config.report_status,
+        ),
+    );
     let server_info_runner = match tidb_domain::serverinfo_syncer::SyncerRunner::start(
         Arc::clone(&server_info),
         tidb_domain::serverinfo_syncer::SyncIntervals::default(),

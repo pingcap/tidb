@@ -507,10 +507,13 @@ pub(crate) fn unistore_cluster_session_stack(
     // With no etcd client the syncer publishes nothing and answers reads
     // with this node alone -- Go's `etcdCli == nil` path, and exactly what
     // `information_schema.TIDB_SERVERS_INFO` shows on a single node.
-    let server_info = Arc::new(tidb_domain::serverinfo_syncer::Syncer::new(
-        crate::serverinfo_etcd::node_server_info(config),
-        None,
-    ));
+    let server_info = Arc::new(
+        tidb_domain::serverinfo_syncer::Syncer::new_with_status_endpoint_claim(
+            crate::serverinfo_etcd::node_server_info(config),
+            None,
+            config.report_status,
+        ),
+    );
     let stats_owner: Arc<dyn tidb_owner::Manager> = Arc::new(tidb_owner::MockManager::new(
         tidb_owner::Context::background(),
         server_info.local_server_info().static_info.id.clone(),

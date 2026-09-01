@@ -41,6 +41,7 @@ use std::time::Duration;
 use etcd_client::{
     Client as RawEtcdClient, Compare, CompareOp, ConnectOptions, DeleteOptions,
     Error as RawEtcdError, EventType, GetOptions, PutOptions, SortOrder, SortTarget, Txn, TxnOp,
+    TxnOpResponse,
 };
 use tokio::sync::watch;
 
@@ -172,6 +173,12 @@ enum EtcdCommand {
         lease: i64,
         reply: mpsc::Sender<Result<bool, EtcdError>>,
     },
+    CreateOrGetWithLease {
+        key: Vec<u8>,
+        value: Vec<u8>,
+        lease: i64,
+        reply: mpsc::Sender<Result<EtcdCreateOrGet, EtcdError>>,
+    },
     Create {
         key: Vec<u8>,
         value: Vec<u8>,
@@ -194,6 +201,11 @@ enum EtcdCommand {
         key: Vec<u8>,
         expected_mod_revision: i64,
         value: Vec<u8>,
+        reply: mpsc::Sender<Result<bool, EtcdError>>,
+    },
+    DeleteIfModRevision {
+        key: Vec<u8>,
+        expected_mod_revision: i64,
         reply: mpsc::Sender<Result<bool, EtcdError>>,
     },
     DeleteKeysAndPutWithLease {
@@ -267,6 +279,15 @@ pub struct EtcdKeyValue {
     pub mod_revision: i64,
     /// Attached lease ID, or zero when unleased.
     pub lease: i64,
+}
+
+/// Result of an atomic create-if-absent transaction.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EtcdCreateOrGet {
+    /// Whether the transaction created the requested key.
+    pub created: bool,
+    /// The existing key observed by the transaction when `created` is false.
+    pub existing: Option<EtcdKeyValue>,
 }
 
 struct EtcdClientShared {
@@ -607,6 +628,27 @@ impl EtcdClient {
         response.recv().unwrap_or(Err(EtcdError::Closed))
     }
 
+    /// Atomically creates `key` under `lease`, or returns the existing key's
+    /// value and MVCC metadata when another owner already holds it.
+    pub fn create_or_get_with_lease(
+        &self,
+        key: &[u8],
+        value: &[u8],
+        lease: i64,
+    ) -> Result<EtcdCreateOrGet, EtcdError> {
+        let (reply, response) = mpsc::channel();
+        self.shared
+            .commands
+            .send(EtcdCommand::CreateOrGetWithLease {
+                key: key.to_vec(),
+                value: value.to_vec(),
+                lease,
+                reply,
+            })
+            .map_err(|_| EtcdError::Closed)?;
+        response.recv().unwrap_or(Err(EtcdError::Closed))
+    }
+
     /// Creates `key` without a lease iff it does not exist.
     pub fn create(&self, key: &[u8], value: &[u8]) -> Result<bool, EtcdError> {
         let (reply, response) = mpsc::channel();
@@ -679,6 +721,25 @@ impl EtcdClient {
                 key: key.to_vec(),
                 expected_mod_revision,
                 value: value.to_vec(),
+                reply,
+            })
+            .map_err(|_| EtcdError::Closed)?;
+        response.recv().unwrap_or(Err(EtcdError::Closed))
+    }
+
+    /// Deletes `key` iff its modification revision still equals the expected
+    /// revision. A false result means another writer changed or removed it.
+    pub fn delete_if_mod_revision(
+        &self,
+        key: &[u8],
+        expected_mod_revision: i64,
+    ) -> Result<bool, EtcdError> {
+        let (reply, response) = mpsc::channel();
+        self.shared
+            .commands
+            .send(EtcdCommand::DeleteIfModRevision {
+                key: key.to_vec(),
+                expected_mod_revision,
                 reply,
             })
             .map_err(|_| EtcdError::Closed)?;
@@ -869,6 +930,12 @@ fn run_kv_worker(
                 | EtcdCommand::CompareValueAndPut { reply, .. }
                 | EtcdCommand::CompareAndPut { reply, .. }
                 | EtcdCommand::CompareAndPutWithLease { reply, .. } => {
+                    let _ = reply.send(Err(EtcdError::Closed));
+                }
+                EtcdCommand::DeleteIfModRevision { reply, .. } => {
+                    let _ = reply.send(Err(EtcdError::Closed));
+                }
+                EtcdCommand::CreateOrGetWithLease { reply, .. } => {
                     let _ = reply.send(Err(EtcdError::Closed));
                 }
                 EtcdCommand::DeleteKeysAndPutWithLease { reply, .. } => {
@@ -1075,6 +1142,56 @@ fn run_kv_worker(
                 );
                 let _ = reply.send(result);
             }
+            EtcdCommand::CreateOrGetWithLease {
+                key,
+                value,
+                lease,
+                reply,
+            } => {
+                let result = across_endpoints(
+                    runtime,
+                    endpoints,
+                    &mut clients,
+                    timeout,
+                    security,
+                    |runtime, mut client| {
+                        let put = TxnOp::put(
+                            key.clone(),
+                            value.clone(),
+                            Some(PutOptions::new().with_lease(lease)),
+                        );
+                        let txn = Txn::new()
+                            .when([Compare::create_revision(key.clone(), CompareOp::Equal, 0)])
+                            .and_then([put])
+                            .or_else([TxnOp::get(key.clone(), None)]);
+                        runtime.block_on(client.txn(txn)).map(|response| {
+                            if response.succeeded() {
+                                return EtcdCreateOrGet {
+                                    created: true,
+                                    existing: None,
+                                };
+                            }
+                            let existing = response.op_responses().into_iter().find_map(|op| {
+                                let TxnOpResponse::Get(get) = op else {
+                                    return None;
+                                };
+                                get.kvs().first().map(|kv| EtcdKeyValue {
+                                    key: kv.key().to_vec(),
+                                    value: kv.value().to_vec(),
+                                    create_revision: kv.create_revision(),
+                                    mod_revision: kv.mod_revision(),
+                                    lease: kv.lease(),
+                                })
+                            });
+                            EtcdCreateOrGet {
+                                created: false,
+                                existing,
+                            }
+                        })
+                    },
+                );
+                let _ = reply.send(result);
+            }
             EtcdCommand::Create { key, value, reply } => {
                 let result = across_endpoints(
                     runtime,
@@ -1173,6 +1290,32 @@ fn run_kv_worker(
                                 expected_mod_revision,
                             )])
                             .and_then([TxnOp::put(key.clone(), value.clone(), None)]);
+                        runtime
+                            .block_on(client.txn(txn))
+                            .map(|response| response.succeeded())
+                    },
+                );
+                let _ = reply.send(result);
+            }
+            EtcdCommand::DeleteIfModRevision {
+                key,
+                expected_mod_revision,
+                reply,
+            } => {
+                let result = across_endpoints(
+                    runtime,
+                    endpoints,
+                    &mut clients,
+                    timeout,
+                    security,
+                    |runtime, mut client| {
+                        let txn = Txn::new()
+                            .when([Compare::mod_revision(
+                                key.clone(),
+                                CompareOp::Equal,
+                                expected_mod_revision,
+                            )])
+                            .and_then([TxnOp::delete(key.clone(), None)]);
                         runtime
                             .block_on(client.txn(txn))
                             .map(|response| response.succeeded())

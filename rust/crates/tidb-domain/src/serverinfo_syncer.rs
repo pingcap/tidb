@@ -47,6 +47,11 @@
 //!   object this port has no counterpart for; see the mapping under
 //!   [`SyncerRunner`].
 //!
+//! The current-master status-endpoint claim is implemented in
+//! [`crate::status_endpoint_claim`]. Its transport methods are optional on
+//! [`EtcdOps`] so non-serving and in-memory callers remain warning-free; the
+//! real server binding supplies the revision-guarded etcd operations.
+//!
 //! # What rides here and what does not
 //!
 //! The TOPOLOGY half (`/topology/tidb/<host:port>`) is here too, on its
@@ -75,6 +80,9 @@ use crate::serverinfo::{
     ServerInfo, TopologyInfo, SERVER_INFORMATION_PATH, TOPOLOGY_INFORMATION_PATH,
     TOPOLOGY_SESSION_TTL,
 };
+use crate::status_endpoint_claim::{
+    StatusEndpointClaim, StatusEndpointClaimCreate, StatusEndpointClaimResult,
+};
 
 /// Go `pkg/ddl/util.SessionTTL`: the server-info session's TTL, seconds.
 pub const SESSION_TTL_SECONDS: i64 = 90;
@@ -101,6 +109,33 @@ pub trait EtcdOps: Send + Sync {
     fn put(&self, key: &str, value: &[u8]) -> Result<(), String>;
     /// `KV.DeleteRange` over `[prefix, prefix+1)`.
     fn delete_prefix(&self, prefix: &str) -> Result<(), String>;
+
+    /// Atomically creates a leased status-endpoint claim, or returns the
+    /// current owner and MVCC revision for a safe reattach attempt.
+    fn status_claim_try_create(
+        &self,
+        _key: &str,
+        _value: &str,
+        _lease: i64,
+    ) -> Result<StatusEndpointClaimCreate, String> {
+        Err("status endpoint claim operations are unavailable".to_owned())
+    }
+
+    /// Reattaches a same-ID claim only when its observed revision is current.
+    fn status_claim_reattach(
+        &self,
+        _key: &str,
+        _value: &str,
+        _expected_mod_revision: i64,
+        _lease: i64,
+    ) -> Result<bool, String> {
+        Err("status endpoint claim operations are unavailable".to_owned())
+    }
+
+    /// Removes a claim only when both its owner ID and lease still match.
+    fn status_claim_remove(&self, _key: &str, _value: &str, _lease: i64) -> Result<(), String> {
+        Err("status endpoint claim operations are unavailable".to_owned())
+    }
 }
 
 /// Go `serverInfoKeyPath`.
@@ -119,6 +154,8 @@ pub struct Syncer {
     /// The TOPOLOGY session's lease: a separate session with its own TTL,
     /// exactly as Go keeps `topologySession` beside `session`.
     topology_session: Mutex<Option<i64>>,
+    endpoint_claim: StatusEndpointClaim,
+    last_endpoint_claim: Mutex<Option<StatusEndpointClaimResult>>,
 }
 
 impl Syncer {
@@ -127,13 +164,26 @@ impl Syncer {
     /// local info alone, which is how a single-node deployment runs.
     #[must_use]
     pub fn new(info: ServerInfo, etcd: Option<Arc<dyn EtcdOps>>) -> Self {
+        Self::new_with_status_endpoint_claim(info, etcd, true)
+    }
+
+    /// Constructs a syncer with explicit status-endpoint claim policy.
+    #[must_use]
+    pub fn new_with_status_endpoint_claim(
+        info: ServerInfo,
+        etcd: Option<Arc<dyn EtcdOps>>,
+        claim_enabled: bool,
+    ) -> Self {
         let server_info_path = server_info_key_path(&info.static_info.id);
+        let endpoint_claim = StatusEndpointClaim::new(&info, claim_enabled);
         Self {
             etcd,
             info: Mutex::new(info),
             server_info_path,
             session: Mutex::new(None),
             topology_session: Mutex::new(None),
+            endpoint_claim,
+            last_endpoint_claim: Mutex::new(None),
         }
     }
 
@@ -155,6 +205,15 @@ impl Syncer {
         *self.session.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    /// The most recent status-endpoint claim result, if a session attempted it.
+    #[must_use]
+    pub fn last_endpoint_claim(&self) -> Option<StatusEndpointClaimResult> {
+        self.last_endpoint_claim
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
     /// Go `NewSessionAndStoreServerInfo`: clean up whatever a previous
     /// instance at this address left behind, take a session, publish.
     pub fn new_session_and_store_server_info(&self) -> Result<(), String> {
@@ -164,7 +223,20 @@ impl Syncer {
         self.cleanup_stale_server_info();
         let lease = etcd.lease_grant(SESSION_TTL_SECONDS)?;
         *self.session.lock().unwrap_or_else(|e| e.into_inner()) = Some(lease);
-        self.store_server_info()
+        let claim = self.endpoint_claim.acquire(etcd.as_ref(), lease);
+        self.endpoint_claim.report(&claim);
+        *self
+            .last_endpoint_claim
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(claim);
+        if let Err(error) = self.store_server_info() {
+            // Go's failed-registration path orphans and revokes the lease and
+            // conditionally removes any claim created under that lease.
+            let _ = self.endpoint_claim.remove(etcd.as_ref(), lease);
+            let _ = etcd.lease_revoke(lease);
+            return Err(error);
+        }
+        Ok(())
     }
 
     /// Go `StoreServerInfo`: the marshaled info PUT under the session's
@@ -276,10 +348,11 @@ impl Syncer {
         let Some(etcd) = self.etcd.as_ref() else {
             return;
         };
-        let _ = etcd.delete(&self.server_info_path);
         if let Some(lease) = self.session_lease() {
+            let _ = self.endpoint_claim.remove(etcd.as_ref(), lease);
             let _ = etcd.lease_revoke(lease);
         }
+        let _ = etcd.delete(&self.server_info_path);
     }
 
     /// The topology session's lease, once one is held.

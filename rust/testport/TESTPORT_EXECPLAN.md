@@ -1423,6 +1423,18 @@ For each bounded behavior cluster:
       resource-manager scheduler, or startup consumers, so a detached partial
       owner was not added and the package remains explicitly unclaimed.
       Details are in `receipts/util_cpu_audit.md`.
+- 2026-09-01: inventoried all five Go-master `pkg/domain/serverinfo`
+      artifacts (2,295 lines, including the embedded-etcd/fault harness and
+      Bazel target). Added the missing status-endpoint claim to the ordinary
+      server registration path with atomic create-or-observe, revision-guarded
+      reattachment/cleanup, warning-only conflicts, report-status wiring, and
+      focused state-machine regressions; also restored `ServerInfo.String` via
+      the Rust model's display carrier. The selected Go tests, 24 filtered Rust
+      tests, three-crate owner/consumer check, formatting, Ready lint, and diff
+      gates pass. Cross-keyspace construction, minimum-start-TS reporting,
+      DDL-owner cleanup, session cancellation, and the live-etcd concurrency
+      matrix remain explicit package boundaries in
+      `receipts/domain_serverinfo_audit.md`.
 - [ ] Run Ready validation and self-review only when the requested parity scope
       is genuinely complete enough for a final-status claim.
 
@@ -1732,6 +1744,13 @@ For each bounded behavior cluster:
   keeps the ordinary decimal path, validates Go underscore placement, and
   decodes `0x…p…` directly so the source's numeric contract reaches the same
   binary-unit conversion. Date/Author: 2026-09-01, Codex.
+- Decision: model Go's advertised status endpoint as a leased etcd claim in
+  `tidb-domain`, with `tidb-pd-client` owning the atomic create-or-observe and
+  compare-delete transport. Conflicts and operation failures stay
+  warning-only; revision and lease guards prevent an old or losing server
+  generation from removing a current claim. Serving node construction uses
+  `report_status`, while assumed-keyspace and explicitly disabled syncers skip
+  the claim. Date/Author: 2026-09-01, Codex.
 - Decision: keep `tidb-util::channel` as a synchronous receiver-drain helper,
   matching Go's blocking `for range` semantics. Do not add an async wrapper,
   timeout, or nil-channel emulation because those would be Rust-only channel

@@ -26,6 +26,7 @@ use std::sync::{mpsc, Arc};
 use std::time::Duration;
 
 use tidb_domain::serverinfo_syncer::EtcdOps;
+use tidb_domain::status_endpoint_claim::{ObservedStatusEndpointClaim, StatusEndpointClaimCreate};
 use tidb_pd_client::EtcdClient;
 use tidb_schemaver::etcd_syncer::{EtcdWatchOps, WatchStream};
 use tidb_schemaver::{SharedRecv, WatchEvent};
@@ -98,6 +99,70 @@ impl EtcdOps for EtcdClientOps {
         self.client
             .delete_prefix(prefix.as_bytes())
             .map_err(|error| error.to_string())
+    }
+
+    fn status_claim_try_create(
+        &self,
+        key: &str,
+        value: &str,
+        lease: i64,
+    ) -> Result<StatusEndpointClaimCreate, String> {
+        let outcome = self
+            .client
+            .create_or_get_with_lease(key.as_bytes(), value.as_bytes(), lease)
+            .map_err(|error| error.to_string())?;
+        if outcome.created {
+            return Ok(StatusEndpointClaimCreate::Created);
+        }
+        let entry = outcome.existing.ok_or_else(|| {
+            "advertised status endpoint claim disappeared while reading its owner".to_owned()
+        })?;
+        Ok(StatusEndpointClaimCreate::Existing(observed_claim(entry)))
+    }
+
+    fn status_claim_reattach(
+        &self,
+        key: &str,
+        value: &str,
+        expected_mod_revision: i64,
+        lease: i64,
+    ) -> Result<bool, String> {
+        self.client
+            .compare_and_put_with_lease(
+                key.as_bytes(),
+                expected_mod_revision,
+                value.as_bytes(),
+                lease,
+            )
+            .map_err(|error| error.to_string())
+    }
+
+    fn status_claim_remove(&self, key: &str, value: &str, lease: i64) -> Result<(), String> {
+        let entries = self
+            .client
+            .get_prefix_metadata(key.as_bytes())
+            .map_err(|error| error.to_string())?;
+        let Some(entry) = entries
+            .into_iter()
+            .find(|entry| entry.key == key.as_bytes())
+        else {
+            return Ok(());
+        };
+        if entry.value != value.as_bytes() || entry.lease != lease {
+            return Ok(());
+        }
+        self.client
+            .delete_if_mod_revision(key.as_bytes(), entry.mod_revision)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+}
+
+fn observed_claim(entry: tidb_pd_client::EtcdKeyValue) -> ObservedStatusEndpointClaim {
+    ObservedStatusEndpointClaim {
+        id: String::from_utf8_lossy(&entry.value).into_owned(),
+        lease: entry.lease,
+        mod_revision: entry.mod_revision,
     }
 }
 
