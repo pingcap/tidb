@@ -2519,6 +2519,14 @@ For each bounded behavior cluster:
   source-shaped consumer. Complete inventory and Ready gates are recorded in
   `receipts/util_israce.md`; the living plan is
   `docs/operations/util-israce-audit-execplan.md`.
+- 2026-09-02: re-audited all three Go-master `pkg/util/prefetch` artifacts and
+  300 lines at `c6054025ed4c32ab3672a2a24ea46892714d21ec`. The native owner
+  retains the exact four source tests, unbuffered handoff, alternating
+  buffers, EOF conversion, and explicit source-close ordering; the earlier
+  Rust-only no-close constructor, Drop-time close, and two supplemental tests
+  remain removed. Current and exact detached Go tests plus all four Rust owner
+  tests pass. Details are in `receipts/util_prefetch.md` and
+  `docs/operations/util-prefetch-audit-execplan.md`.
 - 2026-08-29: audited the complete pinned Go `pkg/util/versioninfo` package
   and re-read every `pkg/util/printer` artifact before changing its consumers.
   Removed Rust's twelve-field per-node/per-session `VersionInfo` snapshots and

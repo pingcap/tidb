@@ -1,6 +1,7 @@
-# `pkg/util/prefetch` — complete package transcreation
+# `pkg/util/prefetch` — complete Go-master package transcreation
 
-Pinned Go source: `e2788410d8d696605e8cb002585877a063ccc909`.
+Go source: `origin/master` at
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02).
 
 ## Complete inventory
 
@@ -10,6 +11,8 @@ reader, two alternating buffers and an unbuffered handoff, partial-range EOF
 conversion, explicit idempotent close, and exactly four tests. There is no
 package doc, README, fixture, benchmark, generated or platform variant, or
 ownership file. The checkout is byte-identical to the pin.
+The inventory is exactly 300 lines: 17 build lines, 126 production lines, and
+157 test/support lines.
 
 ## Rust ownership and audit result
 
@@ -23,19 +26,21 @@ cancel/join, error return, and idempotence order.
 
 The test module now contains exactly the four Go source tests. Two
 supplemental Rust close tests were removed; their extra scenarios are not
-artifacts of this Go package.
+artifacts of this Go package. The current living ExecPlan is
+`rust/docs/operations/util-prefetch-audit-execplan.md`.
 
 ## Validation
 
-Profile: WIP; this is one completed package within the continuing repository
-audit, not a repository-wide readiness claim.
+Profile: **Ready** for this docs-only authority refresh. No Go, Rust, Bazel,
+or module source changed, so `make bazel_prepare` is not required.
 
-- `go test ./pkg/util/prefetch -run '^(TestBasic|TestConvertUnexpectedEOF|TestCloseBeforeDrainRead|TestFillPrefetchBuffer)$' -count=1` — passed.
-- `cargo test -p tidb-util --locked 'prefetch::tests::'` — passed (4 tests).
-- `cargo fmt --all --check` — passed.
-- `cargo test -p tidb-util --locked` — prefetch and 646 other unit tests passed; one unrelated parallel logger-capture test observed a concurrent SEM v2 log and failed. `cargo test -p tidb-util --locked 'logutil::tests::zap_logger_with_keys' -- --exact` passed on isolated rerun.
+- `git diff --exit-code c6054025ed4c32ab3672a2a24ea46892714d21ec -- pkg/util/prefetch` — passed.
+- Pinned-Go `go test ./pkg/util/prefetch -run '^(TestBasic|TestConvertUnexpectedEOF|TestCloseBeforeDrainRead|TestFillPrefetchBuffer)$' -count=1` — passed in the current and exact detached Go-master worktrees.
+- With the pinned OpenSSL environment, `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-util --lib prefetch::tests:: --offline --locked -- --test-threads=1` — passed (4 tests).
+- `cd rust && cargo +nightly-2026-08-22 fmt --all -- --check` and the batch diff checks — passed.
 
-No Go or Bazel file changed, so `make bazel_prepare` is not required.
+The focused Rust command emitted only existing workspace warnings. Full
+workspace tests and Bazel execution remain outside this leaf receipt.
 
 ## Risk
 
