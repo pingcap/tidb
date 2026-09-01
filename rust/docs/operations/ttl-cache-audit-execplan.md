@@ -25,11 +25,11 @@ available task codec and JSON state gaps while retaining the real-
   regressions. The pre-fix focused test failed to compile against the old raw
   byte/text API.
 - [x] (2026-09-02) Ran the Rust owner focused/full tests, Go package tests with
-  the required `intest` tag, Rust formatting/check, and diff hygiene. Ready
-  lint remains the final gate before publication.
-- [ ] Publish one scoped commit, push it to `hparser-integration`, fetch and
-  fast-forward pull the latest tip, verify local/remote SHAs, then continue the
-  rolling package audit.
+  the required `intest` tag, Rust formatting/check, repository lint, and diff
+  hygiene; the Ready profile is green.
+- [x] (2026-09-02) Published commit `cca2f7711b4ac393d8ef0d979dda8accd9c3d243`
+  to `origin/hparser-integration`, fetched and fast-forward pulled the latest
+  tip, and verified local, tracking, and `git ls-remote` SHAs match.
 
 ## Scope and decisions
 
@@ -71,7 +71,7 @@ Rust-only batch.
 
 ## Outcomes and retrospective
 
-After publication, the receipt will record the commit and remote SHA. The
-complete task SQL/row behavior will be source-shaped; the package remains
-partial only for the two real info-schema traversal boundaries and for live
-server/region integration tests outside the dependency-closed owner.
+The complete task SQL/row behavior is source-shaped in published commit
+`cca2f7711b4ac393d8ef0d979dda8accd9c3d243`; the package remains partial only
+for the two real info-schema traversal boundaries and for live server/region
+integration tests outside the dependency-closed owner.

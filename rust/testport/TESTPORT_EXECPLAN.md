@@ -1811,8 +1811,9 @@ For each bounded behavior cluster:
   and added focused range/JSON regressions. The cache owner suite (20 tests),
   Go tagged package suite (19.402s), Rust all-target check, formatting, lint,
   and diff gates are recorded in `receipts/ttl_cache.md`; only the two
-  info-schema `Update` traversals remain explicit boundaries. Publication and
-  remote SHA verification are the next step for this batch.
+  info-schema `Update` traversals remain explicit boundaries. Published as
+  `cca2f7711b4ac393d8ef0d979dda8accd9c3d243`; local, tracking, and remote SHAs
+  match after the push/pull.
 
 - 2026-09-01: completed the Go-master `pkg/util/stringutil` package as one
   four-artifact unit. The rolling source delta changes `CompileLike2Regexp`
