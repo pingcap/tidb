@@ -1596,7 +1596,7 @@ func TestGrantOptionAndRevoke(t *testing.T) {
 		Hostname: "localhost",
 	}, nil, nil, nil)
 
-	tk.MustQuery(`SHOW GRANTS FOR u1`).Check(testkit.Rows("GRANT SELECT ON *.* TO 'u1'@'%' WITH GRANT OPTION", "GRANT UPDATE,DELETE ON `db`.* TO 'u1'@'%'"))
+	tk.MustQuery(`SHOW GRANTS FOR u1`).Check(testkit.Rows("GRANT SELECT ON *.* TO `u1`@`%` WITH GRANT OPTION", "GRANT UPDATE,DELETE ON `db`.* TO `u1`@`%`"))
 
 	tk.MustExec("GRANT SELECT ON d1.* to u2")
 	tk.MustExec("GRANT SELECT ON d2.* to u2 WITH GRANT OPTION")
@@ -1604,18 +1604,18 @@ func TestGrantOptionAndRevoke(t *testing.T) {
 	tk.MustExec("GRANT SELECT ON d4.* to u2")
 	tk.MustExec("GRANT SELECT ON d5.* to u2")
 	tk.MustQuery(`SHOW GRANTS FOR u2;`).Sort().Check(testkit.Rows(
-		"GRANT SELECT ON `d1`.* TO 'u2'@'%'",
-		"GRANT SELECT ON `d2`.* TO 'u2'@'%' WITH GRANT OPTION",
-		"GRANT SELECT ON `d3`.* TO 'u2'@'%'",
-		"GRANT SELECT ON `d4`.* TO 'u2'@'%'",
-		"GRANT SELECT ON `d5`.* TO 'u2'@'%'",
-		"GRANT USAGE ON *.* TO 'u2'@'%'",
+		"GRANT SELECT ON `d1`.* TO `u2`@`%`",
+		"GRANT SELECT ON `d2`.* TO `u2`@`%` WITH GRANT OPTION",
+		"GRANT SELECT ON `d3`.* TO `u2`@`%`",
+		"GRANT SELECT ON `d4`.* TO `u2`@`%`",
+		"GRANT SELECT ON `d5`.* TO `u2`@`%`",
+		"GRANT USAGE ON *.* TO `u2`@`%`",
 	))
 
 	tk.MustExec("grant all on hchwang.* to u3 with grant option")
-	tk.MustQuery(`SHOW GRANTS FOR u3;`).Check(testkit.Rows("GRANT USAGE ON *.* TO 'u3'@'%'", "GRANT ALL PRIVILEGES ON `hchwang`.* TO 'u3'@'%' WITH GRANT OPTION"))
+	tk.MustQuery(`SHOW GRANTS FOR u3;`).Check(testkit.Rows("GRANT USAGE ON *.* TO `u3`@`%`", "GRANT ALL PRIVILEGES ON `hchwang`.* TO `u3`@`%` WITH GRANT OPTION"))
 	tk.MustExec("revoke all on hchwang.* from u3")
-	tk.MustQuery(`SHOW GRANTS FOR u3;`).Check(testkit.Rows("GRANT USAGE ON *.* TO 'u3'@'%'", "GRANT USAGE ON `hchwang`.* TO 'u3'@'%' WITH GRANT OPTION"))
+	tk.MustQuery(`SHOW GRANTS FOR u3;`).Check(testkit.Rows("GRANT USAGE ON *.* TO `u3`@`%`", "GRANT USAGE ON `hchwang`.* TO `u3`@`%` WITH GRANT OPTION"))
 
 	// Same again but with column privileges.
 
@@ -1624,9 +1624,9 @@ func TestGrantOptionAndRevoke(t *testing.T) {
 	tk.MustExec("grant all on test.testgrant to u3 with grant option")
 	tk.MustExec("revoke all on test.testgrant from u3")
 	tk.MustQuery(`SHOW GRANTS FOR u3`).Sort().Check(testkit.Rows(
-		"GRANT USAGE ON *.* TO 'u3'@'%'",
-		"GRANT USAGE ON `hchwang`.* TO 'u3'@'%' WITH GRANT OPTION",
-		"GRANT USAGE ON `test`.`testgrant` TO 'u3'@'%' WITH GRANT OPTION",
+		"GRANT USAGE ON *.* TO `u3`@`%`",
+		"GRANT USAGE ON `hchwang`.* TO `u3`@`%` WITH GRANT OPTION",
+		"GRANT USAGE ON `test`.`testgrant` TO `u3`@`%` WITH GRANT OPTION",
 	))
 }
 
@@ -1660,30 +1660,30 @@ func TestDashboardClientDynamicPriv(t *testing.T) {
 		Hostname: "localhost",
 	}, nil, nil, nil)
 	tk1.MustQuery("SHOW GRANTS FOR CURRENT_USER()").Check(testkit.Rows(
-		"GRANT USAGE ON *.* TO 'dc_u1'@'%'",
-		"GRANT 'dc_r1'@'%' TO 'dc_u1'@'%'",
+		"GRANT USAGE ON *.* TO `dc_u1`@`%`",
+		"GRANT `dc_r1`@`%` TO `dc_u1`@`%`",
 	))
 	tk.MustExec("GRANT DASHBOARD_CLIENT ON *.* TO dc_r1")
 	tk1.MustQuery("SHOW GRANTS FOR CURRENT_USER()").Check(testkit.Rows(
-		"GRANT USAGE ON *.* TO 'dc_u1'@'%'",
-		"GRANT 'dc_r1'@'%' TO 'dc_u1'@'%'",
-		"GRANT DASHBOARD_CLIENT ON *.* TO 'dc_u1'@'%'",
+		"GRANT USAGE ON *.* TO `dc_u1`@`%`",
+		"GRANT `dc_r1`@`%` TO `dc_u1`@`%`",
+		"GRANT DASHBOARD_CLIENT ON *.* TO `dc_u1`@`%`",
 	))
 	tk.MustExec("REVOKE DASHBOARD_CLIENT ON *.* FROM dc_r1")
 	tk1.MustQuery("SHOW GRANTS FOR CURRENT_USER()").Check(testkit.Rows(
-		"GRANT USAGE ON *.* TO 'dc_u1'@'%'",
-		"GRANT 'dc_r1'@'%' TO 'dc_u1'@'%'",
+		"GRANT USAGE ON *.* TO `dc_u1`@`%`",
+		"GRANT `dc_r1`@`%` TO `dc_u1`@`%`",
 	))
 	tk.MustExec("GRANT DASHBOARD_CLIENT ON *.* TO dc_u1")
 	tk1.MustQuery("SHOW GRANTS FOR CURRENT_USER()").Check(testkit.Rows(
-		"GRANT USAGE ON *.* TO 'dc_u1'@'%'",
-		"GRANT 'dc_r1'@'%' TO 'dc_u1'@'%'",
-		"GRANT DASHBOARD_CLIENT ON *.* TO 'dc_u1'@'%'",
+		"GRANT USAGE ON *.* TO `dc_u1`@`%`",
+		"GRANT `dc_r1`@`%` TO `dc_u1`@`%`",
+		"GRANT DASHBOARD_CLIENT ON *.* TO `dc_u1`@`%`",
 	))
 	tk.MustExec("REVOKE DASHBOARD_CLIENT ON *.* FROM dc_u1")
 	tk1.MustQuery("SHOW GRANTS FOR CURRENT_USER()").Check(testkit.Rows(
-		"GRANT USAGE ON *.* TO 'dc_u1'@'%'",
-		"GRANT 'dc_r1'@'%' TO 'dc_u1'@'%'",
+		"GRANT USAGE ON *.* TO `dc_u1`@`%`",
+		"GRANT `dc_r1`@`%` TO `dc_u1`@`%`",
 	))
 }
 
@@ -1704,8 +1704,8 @@ func TestGrantCreateTmpTables(t *testing.T) {
 		Hostname: "localhost",
 	}, nil, nil, nil)
 	tk.MustQuery("SHOW GRANTS FOR u1").Check(testkit.Rows(
-		`GRANT CREATE TEMPORARY TABLES ON *.* TO 'u1'@'%'`,
-		"GRANT CREATE TEMPORARY TABLES ON `create_tmp_table_db`.* TO 'u1'@'%'"))
+		"GRANT CREATE TEMPORARY TABLES ON *.* TO `u1`@`%`",
+		"GRANT CREATE TEMPORARY TABLES ON `create_tmp_table_db`.* TO `u1`@`%`"))
 	tk.MustExec("DROP USER u1")
 	tk.MustExec("DROP DATABASE create_tmp_table_db")
 }
@@ -1882,8 +1882,8 @@ func TestGrantEvent(t *testing.T) {
 		Hostname: "localhost",
 	}, nil, nil, nil)
 	tk.MustQuery("SHOW GRANTS FOR u1").Check(testkit.Rows(
-		`GRANT EVENT ON *.* TO 'u1'@'%'`,
-		"GRANT EVENT ON `event_db`.* TO 'u1'@'%'"))
+		"GRANT EVENT ON *.* TO `u1`@`%`",
+		"GRANT EVENT ON `event_db`.* TO `u1`@`%`"))
 	tk.MustExec("DROP USER u1")
 	tk.MustExec("DROP DATABASE event_db")
 }
@@ -2184,14 +2184,14 @@ func TestShowGrantsSQLMode(t *testing.T) {
 	tk.MustExec(`GRANT Select ON test.* TO 'show_sql_mode'@'localhost';`)
 
 	testShowGrantsSQLMode(t, tk, []string{
-		"GRANT USAGE ON *.* TO 'show_sql_mode'@'localhost'",
-		"GRANT SELECT ON `test`.* TO 'show_sql_mode'@'localhost'",
+		"GRANT USAGE ON *.* TO `show_sql_mode`@`localhost`",
+		"GRANT SELECT ON `test`.* TO `show_sql_mode`@`localhost`",
 	})
 
 	ctx.GetSessionVars().SQLMode = mysql.SetSQLMode(ctx.GetSessionVars().SQLMode, mysql.ModeANSIQuotes)
 	testShowGrantsSQLMode(t, tk, []string{
-		"GRANT USAGE ON *.* TO 'show_sql_mode'@'localhost'",
-		"GRANT SELECT ON \"test\".* TO 'show_sql_mode'@'localhost'",
+		"GRANT USAGE ON *.* TO `show_sql_mode`@`localhost`",
+		"GRANT SELECT ON \"test\".* TO `show_sql_mode`@`localhost`",
 	})
 }
 
