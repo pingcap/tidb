@@ -456,6 +456,18 @@ For each bounded behavior cluster:
   failpoint suite passed and the boundary is recorded in
   `receipts/session_test_vars.md`.
 
+- 2026-09-01: audited the complete Go-master
+  `pkg/session/test/bootstraptest` package: four tracked artifacts and 2,967
+  lines, including the TestMain/goleak harness, 50 runnable bootstrap/upgrade
+  tests, ten helpers, and the 45-shard flaky BUILD target. Rust has partial
+  session/meta/metadef/exec/server bootstrap owners and ignored source
+  carriers, but no dependency-closed owner for historical schema upgrades,
+  Domain/DDL pause-resume, failpoint choreography, system-table validation,
+  and mock-TiKV lifecycle. No Rust-only behavior or safe standalone
+  implementation was found; the exact Go-master failpoint suite timed out in
+  `TestUpgradeVersionForSystemPausedJob` after 601.691s, and the explicit
+  boundary is recorded in `receipts/session_test_bootstraptest.md`.
+
 - 2026-09-01: refreshed the complete Go-master
   `pkg/util/password-validation` inventory (three artifacts, 379 lines) and
   confirmed it is unchanged from the prior pinned implementation. The Go
@@ -2360,6 +2372,10 @@ For each bounded behavior cluster:
       storing normalized URLs; the pre-fix regression failed and the focused
       owner tests, Rust format check, and Ready lint passed. Details are in
       `receipts/util_root_audit.md`.
+- 2026-09-01: refreshed the root `pkg/util` receipt's comparison source to the
+      requested current Go master (`5e8a1a229a`); its 33-artifact inventory is
+      byte-identical to the previously audited snapshot, with the only
+      intervening Go change in nested `pkg/util/dbterror`.
 - 2026-09-01: audited all three Go-master `pkg/util/cgmon` artifacts (229
       lines: Linux cgroup monitor, fallback test, and Bazel target). The
       existing Rust cgroup reader covers quota/memory discovery but not this

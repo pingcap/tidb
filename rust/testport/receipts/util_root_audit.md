@@ -1,7 +1,7 @@
 # Root `pkg/util` — Go-master inventory and parity boundary receipt
 
 Go baseline: `origin/master` at
-`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01). The root package is
+`5e8a1a229a7591ddac49a0cd3b795587c2595ab9` (2026-09-01). The root package is
 cross-cutting and is not dependency-closed in one Rust crate. This audit read
 every root-level production file, test, platform variant, and build input
 before the scoped mock-PD URL fix below.
@@ -75,9 +75,11 @@ certificate rotation, SQL log-field assembly, or the full goroutine/wait-group
 instrumentation. A detached replacement would create Rust-only behavior and
 violate the package-atomic rule.
 
-The current hparser worktree predates Go-master's `service_url.go` and
-`service_url_test.go` addition and has the older `urls.go` implementation; the
-baseline inventory above intentionally uses `origin/master` as requested.
+The root `pkg/util` tree is unchanged between the previously recorded
+`0bc44483e3e41a8ea917d4382dc202369468d200` snapshot and the current
+`origin/master`; the only intervening Go-master change is in nested
+`pkg/util/dbterror`, outside this package. The baseline inventory therefore
+remains byte-identical while now naming the requested current source commit.
 
 ## Scoped fix and regression
 
