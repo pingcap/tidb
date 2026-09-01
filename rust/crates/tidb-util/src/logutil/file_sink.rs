@@ -13,9 +13,10 @@
 // limitations under the License.
 
 //! The rotating file sink behind `pingcap/log`'s lumberjack writer:
-//! size-based rotation with timestamped backups, retention by count, and
+//! size-based rotation with timestamped backups, retention by count/age, and
 //! optional gzip compression of rotated files.
 
+use std::collections::HashSet;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -62,6 +63,8 @@ pub struct RotatingFile {
     pub max_size_mb: i64,
     /// Max rotated files kept (0 = unlimited).
     pub max_backups: i64,
+    /// Max age of rotated files in days (0 = unlimited).
+    pub max_days: i64,
     /// gzip-compress rotated files.
     pub compress: bool,
 }
@@ -72,6 +75,17 @@ impl RotatingFile {
         path: &Path,
         max_size_mb: i64,
         max_backups: i64,
+        compress: bool,
+    ) -> std::io::Result<RotatingFile> {
+        Self::open_with_max_days(path, max_size_mb, max_backups, 0, compress)
+    }
+
+    /// Opens a rotating file writer with count and age retention.
+    pub fn open_with_max_days(
+        path: &Path,
+        max_size_mb: i64,
+        max_backups: i64,
+        max_days: i64,
         compress: bool,
     ) -> std::io::Result<RotatingFile> {
         if let Some(parent) = path.parent() {
@@ -87,6 +101,7 @@ impl RotatingFile {
             size,
             max_size_mb: if max_size_mb <= 0 { 100 } else { max_size_mb },
             max_backups,
+            max_days,
             compress,
         })
     }
@@ -144,7 +159,7 @@ impl RotatingFile {
     }
 
     fn prune_backups(&self) {
-        if self.max_backups <= 0 {
+        if self.max_backups <= 0 && self.max_days <= 0 {
             return;
         }
         let Some(dir) = self.path.parent() else {
@@ -164,20 +179,41 @@ impl RotatingFile {
         }) else {
             return;
         };
-        let mut backups: Vec<PathBuf> = entries
+        let extension = self
+            .path
+            .extension()
+            .map(|value| format!(".{}", value.to_string_lossy()))
+            .unwrap_or_default();
+        let prefix = format!("{stem}-");
+        let mut backups: Vec<(PathBuf, chrono::NaiveDateTime, String)> = entries
             .flatten()
             .map(|e| e.path())
-            .filter(|p| {
-                p != &self.path
-                    && p.file_name()
-                        .map(|n| n.to_string_lossy().starts_with(&format!("{stem}-")))
-                        .unwrap_or(false)
+            .filter_map(|path| {
+                if path.is_dir() {
+                    return None;
+                }
+                let name = path.file_name()?.to_str()?;
+                let base_name = name.strip_suffix(".gz").unwrap_or(name);
+                let timestamp = base_name.strip_prefix(&prefix)?.strip_suffix(&extension)?;
+                let timestamp =
+                    chrono::NaiveDateTime::parse_from_str(timestamp, "%Y-%m-%dT%H-%M-%S%.3f")
+                        .ok()?;
+                let base_name = base_name.to_string();
+                Some((path, timestamp, base_name))
             })
             .collect();
-        backups.sort();
-        while backups.len() > self.max_backups as usize {
-            let victim = backups.remove(0);
-            let _ = std::fs::remove_file(victim);
+        backups.sort_by_key(|left| std::cmp::Reverse(left.1));
+
+        let cutoff = (self.max_days > 0)
+            .then(|| chrono::Local::now().naive_local() - chrono::Duration::days(self.max_days));
+        let mut preserved = HashSet::new();
+        for (path, timestamp, base_name) in backups {
+            preserved.insert(base_name);
+            let too_many = self.max_backups > 0 && preserved.len() > self.max_backups as usize;
+            let too_old = cutoff.is_some_and(|cutoff| timestamp < cutoff);
+            if too_many || too_old {
+                let _ = std::fs::remove_file(path);
+            }
         }
     }
 }

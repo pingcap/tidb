@@ -14,6 +14,16 @@ commit.
 
 ## Progress
 
+- [x] (2026-09-01) Re-audited and fixed the current Go-master top-level package:
+  `FileLogConfig.MaxDays` now reaches the rotating sink, with a focused
+  age-retention/lookalike regression. Also
+  separately inventoried `pkg/util/logutil/consistency`; current package
+  receipts are `rust/testport/receipts/util_logutil.md` and
+  `rust/testport/receipts/util_logutil_consistency.md`. The top-level source
+  remains unchanged from the earlier certified pin; the Rust source now
+  forwards `MaxDays` and its source-derived regressions pass the Go normal/race
+  suites and the full `tidb-util` crate.
+
 - [x] (2026-08-12) Fixed the package boundary and source pin
   `3606de5c43fcf4fa5206596c41cd0793403b9818`; the top-level Go files are
   byte-identical to that pin.
@@ -35,8 +45,10 @@ commit.
   inventory, failpoint decision, and diff checks all pass.
 - [x] (2026-09-01) Added package-scoped parity receipts for both the top-level
   `pkg/util/logutil` boundary and the separate nested
-  `pkg/util/logutil/consistency` reporting adapter; both remain source-clean
-  against Go master and no additional Rust behavior was invented.
+  `pkg/util/logutil/consistency` reporting adapter. The Rust rotating sink now
+  forwards Go's `FileLogConfig.MaxDays` and filters cleanup to timestamp-shaped
+  lumberjack backups; a focused regression fails before and passes after this
+  fix.
 - [ ] Publish one package-scoped commit to `hparser-integration` and verify
   local, remote-tracking, and `ls-remote` SHAs.
 
@@ -69,6 +81,10 @@ commit.
 - The full Go package suite passes on the source pin, and the Rust logutil
   tests pass on the target base before changes. No Go testdata or integration
   result files belong to this package.
+- Go's `pingcap/log.initFileLog` forwards `MaxDays` to lumberjack. The Rust
+  sink previously ignored that field and deleted any file sharing the active
+  stem; age-aware timestamp parsing is now covered by a source-derived
+  regression while preserving the public four-argument `RotatingFile::open`.
 
 ## Decision Log
 
@@ -125,10 +141,12 @@ commit.
 ## Outcomes & Retrospective
 
 Implementation and Ready validation are complete locally. All 12 Go tests pass
-normally and under the race detector; the 19-test Rust logutil slice and full
+normally and under the race detector; the 20-test Rust logutil slice and full
 `tidb-util` crate pass. The result fixes every discovered logger/sampler gap,
 keeps the Go-only integration omissions explicit, and makes no change to the
-separate consistency package. Publication and remote SHA verification remain.
+separate consistency package. The 2026-09-01 re-audit records that nested
+package as an explicit boundary in the current testport receipts. Publication
+and remote SHA verification remain.
 
 ## Context and Orientation
 
@@ -172,6 +190,9 @@ as module tests.
 5. Run the Go package suite, Rust logutil tests, Rust formatting/clippy and
    repository lint. Recheck source pin, package inventory, diff scope, and
    Bazel prerequisite decision before one normal push.
+6. Forward `FileLogConfig.MaxDays` to rotation, restrict cleanup to valid
+   lumberjack backup names, and run the regression fail-before/pass-after plus
+   the Ready checks.
 
 ## Validation and Acceptance
 
@@ -202,7 +223,7 @@ Initial evidence on target base `0c6d021686d78e070bb88bb98863ac0a7646e747`:
     Rust: cargo test -p tidb-util logutil -- --test-threads=1 (12 passed)
     Failpoint checks: no matches in source/tests/BUILD
 
-Post-fix regression evidence (the Rust logutil slice now has 19 tests):
+Post-fix regression evidence (the Rust logutil slice now has 20 tests):
 
     slow logger fields: pre-fix unified line, post-fix `# Time:` line
     RFC3339Nano: pre-fix `.120` and `+00:00`, post-fix `.12` and `Z`
@@ -212,13 +233,15 @@ Post-fix regression evidence (the Rust logutil slice now has 19 tests):
     sampler buckets: pre-fix both colliding messages emitted, post-fix second dropped
     proxy precedence: pinned dependency is uppercase-first; Rust now matches
     default level: the lazy stdout logger now shares the exported level control
+    MaxDays: pre-fix expired backup retained, post-fix expired backup removed
+    and invalid lookalike retained
 
 Final Ready evidence was repeated after rebasing onto
 `45abc6e52a5b95f25742bc04ff6ffe07897f5c6e`:
 
     go test -count=1 -tags=intest,deadlock ./pkg/util/logutil (pass)
     go test -race -count=1 -tags=intest,deadlock ./pkg/util/logutil (pass)
-    cargo test -p tidb-util logutil -- --test-threads=1 (19 passed)
+    cargo test -p tidb-util logutil -- --test-threads=1 (20 passed)
     cargo test -p tidb-util (360 passed, 1 ignored; integration/doctests passed)
     cargo clippy -p tidb-util --all-targets -- -D warnings (pass)
     cargo fmt --all --check (pass)

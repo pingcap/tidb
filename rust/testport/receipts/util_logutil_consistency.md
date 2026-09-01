@@ -1,67 +1,53 @@
-# `pkg/util/logutil/consistency` — Go-master package boundary receipt
+# `pkg/util/logutil/consistency` — current Go-master boundary receipt
 
 Go source: `origin/master` at
-`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01). This nested
-directory is a separate import path from `pkg/util/logutil` and has no source
-delta from the extraction pin.
+`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01). This is a separate
+Go package under the top-level `pkg/util/logutil` directory and is recorded as
+its own package unit.
 
 ## Complete inventory
 
-Both package artifacts were read in full before ownership review:
+Both package artifacts were read in full before deciding ownership:
 
-| Artifact | Lines | Git blob | SHA-256 | Inventory |
+| Artifact | Lines | Blob | SHA-256 | Inventory |
 | --- | ---: | --- | --- | --- |
-| `BUILD.bazel` | 23 | `3e0c7594177494f8ae08b59ec9ffefc936ed3ec0` | `88df90aecf53f2183a09ac7f92c911b82765834b701dea306b936ebd99788a85` | public library target and storage/tablecodec/logging dependencies |
-| `reporter.go` | 313 | `8fe201c938333564bc9d340e281aae998afd45a6` | `fb142692a267397bbb5be6f15cff4624a743dfdbcf2bb3181e69d0f54668b9f0` | MVCC lookup/decode helpers, row/index report payloads, redaction, and inconsistency errors |
+| `BUILD.bazel` | 23 | `3e0c7594177494f8ae08b59ec9ffefc936ed3ec0` | `88df90aecf53f2183a09ac7f92c911b82765834b701dea306b936ebd99788a85` | public library target and helper/tablecodec/TiKV/protobuf/redaction dependencies |
+| `reporter.go` | 313 | `8fe201c938333564bc9d340e281aae998afd45a6` | `fb142692a267397bbb5be6f15cff4624a743dfdbcf2bb3181e69d0f54668b9f0` | MVCC fetch/region lookup, row/index MVCC decoding, `RecordData`, and lookup/admin inconsistency reports |
 
-The boundary has 336 Go lines, 11 production functions/methods (including
-`RecordData.String` and the unexported decode/region helpers), no tests,
-benchmark, fuzz target, example, fixture/testdata tree, generated output, or
-platform/build-tag variant. Its BUILD target has no failpoint dependency.
+The package has 336 Go lines, no tests, fixtures, generated or platform
+variants, benchmark, fuzz target, or nested package. Its exported behavior is
+the error/reporting contract for `ADMIN CHECK` and index-lookup inconsistencies:
+`GetMVCCByKeyResp`, `GetMvccByKey`, `DecodeRowMvccData`,
+`DecodeIndexMvccData`, the three `Reporter` methods, and `RecordData.String`.
 
-## Go behavior and Rust ownership decision
+## Rust ownership and decision
 
-The package is a reporting adapter used by Go executor consistency checks. It
-fetches MVCC by encoded row/index key, resolves region IDs, decodes row and
-index values into JSON, truncates oversized payloads, applies redact-log mode,
-and appends stack/error fields before returning the three typed TiDB errors.
-The `Reporter` also carries table/index metadata and storage callbacks used to
-construct the diagnostic fields.
+Rust has lower-level pieces in `tidb-executor::admin_check` for checking stored
+row/index relationships and rendering `RecordData`-like error details, but no
+dependency-closed owner for this package's helper-storage MVCC RPC calls,
+region lookup, row/index value decoders, redaction, and zap reporter. The
+existing checker is a consumer-specific execution path, not a drop-in
+replacement for the Go reporter package.
 
-Rust has no dependency-closed `Reporter` equivalent. The consistency check
-itself is owned by `rust/crates/tidb-executor/src/admin_check.rs` and surfaced
-by `rust/crates/tidb-session/src/admin_check_arm.rs`, which computes the same
-count, missing-row, and indexed-value mismatch outcomes. It intentionally
-returns structured `AdminCheckError` values mapped to the client error text;
-there is no Rust MVCC helper/storage callback or redaction/logging subsystem
-that can safely reproduce this diagnostic adapter in isolation.
-
-No Rust-only behavior was found, and no safe missing Go behavior can be added
-without porting the complete storage-backed diagnostic and redaction stack.
-The Go package remains explicitly unclaimed as a cross-cutting reporting
-adapter; no duplicate Rust implementation or regression carrier was added.
+No Rust-only behavior was found that can be removed safely, and no missing Go
+behavior can be implemented without first moving the complete helper storage,
+MVCC protobuf, tablecodec, metadata, and reporting stack. This package remains
+explicitly unclaimed rather than receiving a speculative logger/reporting API.
 
 ## Validation
 
-Profile: WIP for the continuing repository audit; this receipt adds evidence
-only and does not claim a source fix.
+Profile: Ready package re-audit; no source changed. The parent Go command
+`go test -tags=intest,deadlock -count=1 ./pkg/util/logutil/...` passed and
+reported this package as `[no test files]`. No failpoint lifecycle applies.
 
-- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/logutil/consistency -count=1` — passed (`[no test files]`; package compiles).
-- `git diff --stat e2788410d8d696605e8cb002585877a063ccc909..origin/master -- pkg/util/logutil/consistency` — empty.
-- `rg` inventory checks found no failpoint, build-tag, fixture, generated, or platform variant in the boundary.
-
-No Go or Bazel file changed, so `make bazel_prepare` is not required. The
-Rust admin-check suites were not rerun for this evidence-only boundary; their
-existing source-backed tests cover the executable check path rather than the
-Go-only MVCC diagnostic logger.
+`make bazel_prepare` is not required because no Go/Bazel artifact changed.
 
 ## Risks and unverified scope
 
-- Correctness: future consistency diagnostics must preserve exact error codes,
-  handle/index/value formatting, MVCC truncation, and redact-log policy.
-- Compatibility: Rust client errors cover the check outcome but do not promise
-  Go's structured log fields or MVCC JSON payloads.
-- Performance: no runtime code changed; no new storage reads or decoding were
-  introduced.
-- Not verified locally: live TiKV MVCC response decoding, redaction modes,
-  region-cache failures, and dependent executor logging paths.
+- Correctness: MVCC decoding and error text depend on TiKV wire responses,
+  tablecodec versions, and redaction policy.
+- Compatibility: the Rust admin checker intentionally covers statement
+  execution, not the Go reporter's RPC/reporting API.
+- Performance: no production path changed.
+- Not verified locally: live TiKV helper RPCs, corruption/error responses,
+  and every executor caller that consumes the Go reporter.

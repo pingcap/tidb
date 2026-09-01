@@ -40,6 +40,20 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: audited and fixed the complete top-level Go-master
+  `pkg/util/logutil`
+  inventory (8 artifacts, 1,260 lines) and its separate nested
+  `pkg/util/logutil/consistency` package (2 artifacts, 336 lines), including
+  every production function, source test, goleak harness, Bazel dependency,
+  and Rust logger/hex/rotation owner file. The existing `tidb-util::logutil`
+  owner retains the prior focused logger regressions and now forwards Go's
+  `FileLogConfig.MaxDays` to age-aware rotation, with a focused regression for
+  expired backups and invalid lookalikes. Go normal/race suites and the full
+  `tidb-util` test suite pass. gRPC/OpenTracing/runtime trace hooks and the
+  MVCC consistency reporter remain explicit integration boundaries with no
+  dependency-closed Rust owner; receipts are recorded in
+  `receipts/util_logutil.md` and `receipts/util_logutil_consistency.md`.
+
 - 2026-09-01: audited all seventeen current Go-master `pkg/util/dbutil`
   artifacts (2,518 lines across the public utility and nested `dbutiltest`
   helper), including every SQL-mock/table/index/retry/variable test and all
@@ -1792,6 +1806,24 @@ For each bounded behavior cluster:
 
 ## Decision Log
 
+- Decision: keep top-level `pkg/util/logutil` on the existing
+  `tidb-util::logutil` owner and record `pkg/util/logutil/consistency` as a
+  separate explicitly unclaimed package. The logger owner already carries the
+  source-derived configuration, contextual fields, slow-log, hex, rotation,
+  and sampler behavior; adding a second context/logger path would be
+  Rust-only duplication. The consistency reporter additionally requires the
+  helper-storage MVCC RPC, tablecodec/model decoding, redaction, and zap
+  reporting stack, while Rust's `admin_check` is a consumer-specific checker
+  rather than a drop-in reporter. Date/Author: 2026-09-01, Codex.
+
+- Decision: forward Go `FileLogConfig.MaxDays` into the existing rotating sink
+  and parse only lumberjack-shaped backup names for age/count cleanup. The
+  previous Rust sink silently ignored age retention and deleted any filename
+  sharing the log stem; the focused regression covers both source contracts.
+  Keep the four-argument `RotatingFile::open` API as a zero-age compatibility
+  wrapper while `build_sink` uses the new age-aware constructor. Date/Author:
+  2026-09-01, Codex.
+
 - Decision: add Go master's `SimpleLRUCache.Peek` to the existing indexed
   `tidb-kvcache` owner as an immutable lookup, not by reusing `get` and then
   restoring list links. This keeps the O(1) no-promotion contract visible to
@@ -2495,6 +2527,9 @@ similarly certifies all 98 prototypes and the source test without changing
 execution behavior. The tablecodec/rowcodec/rowDecoder batch now certifies the
 current free row/value API and routes old-collation common handles through the
 mode-sensitive decoder, with all scoped source suites passing. The final
-outcome must list exact files and commands,
+mode-sensitive decoder, with all scoped source suites passing. The logutil
+batch now forwards Go's age-based file retention and records the nested
+consistency reporter as an explicit boundary. The final outcome must list
+exact files and commands,
 remaining unverified packages, and correctness, compatibility, and performance
 risks without claiming repository-wide parity.

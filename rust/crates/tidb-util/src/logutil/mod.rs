@@ -392,10 +392,11 @@ fn build_sink(file: &FileLogConfig) -> Result<SharedSink, String> {
         return Ok(Arc::new(Mutex::new(Sink::Stdout)));
     }
     let compress = validate_compression(&file.compression)?;
-    let rf = RotatingFile::open(
+    let rf = RotatingFile::open_with_max_days(
         Path::new(&file.filename),
         file.max_size,
         file.max_backups,
+        file.max_days,
         compress,
     )
     .map_err(|e| e.to_string())?;
@@ -1154,6 +1155,52 @@ mod tests {
         let conf = new_log_config("warn", DEFAULT_LOG_FORMAT, &filename, "", file_cfg, false);
         init_logger(&conf).unwrap();
         let _ = std::fs::remove_file(&filename);
+    }
+
+    /// Source: `pingcap/log.initFileLog` forwards `FileLogConfig.MaxDays` to
+    /// lumberjack's age-based cleanup. An invalid lookalike filename must not
+    /// be treated as a lumberjack backup.
+    #[test]
+    fn max_days_prunes_only_expired_lumberjack_backups() {
+        let _g = guard();
+        let dir = std::env::temp_dir().join(format!(
+            "tidb_logutil_max_days_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let filename = dir.join("max_days.log");
+        let expired = dir.join("max_days-2000-01-01T00-00-00.000.log");
+        let lookalike = dir.join("max_days-not-a-timestamp.log");
+        let directory = dir.join("max_days-2000-01-01T00-00-00.001.log");
+        std::fs::write(&filename, b"seed").unwrap();
+        std::fs::write(&expired, b"expired").unwrap();
+        std::fs::write(&lookalike, b"keep").unwrap();
+        std::fs::create_dir(&directory).unwrap();
+
+        let conf = new_log_config(
+            "info",
+            DEFAULT_LOG_FORMAT,
+            "",
+            "",
+            FileLogConfig {
+                filename: filename.to_string_lossy().to_string(),
+                max_size: 1,
+                max_days: 1,
+                ..Default::default()
+            },
+            false,
+        );
+        init_logger(&conf).unwrap();
+        bg_logger().info(&"x".repeat(1024 * 1024), &[]);
+
+        assert!(!expired.exists(), "expired lumberjack backup was retained");
+        assert!(lookalike.exists(), "non-backup lookalike was deleted");
+        assert!(directory.exists(), "backup-looking directory was deleted");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     // Go TestGlobalLoggerReplace.
