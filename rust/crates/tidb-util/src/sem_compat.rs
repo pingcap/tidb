@@ -22,14 +22,12 @@ fn assert_exclusive() {
 }
 
 /// Whether either SEM v1 or SEM v2 is enabled.
-#[must_use]
 pub fn is_enabled() -> bool {
     assert_exclusive();
     crate::sem::is_enabled() || crate::sem_v2::is_enabled()
 }
 
 /// Go `compat.IsInvisibleSchema`.
-#[must_use]
 pub fn is_invisible_schema(db_name: &str) -> bool {
     assert_exclusive();
     (crate::sem::is_enabled() && crate::sem::is_invisible_schema(db_name))
@@ -37,7 +35,6 @@ pub fn is_invisible_schema(db_name: &str) -> bool {
 }
 
 /// Go `compat.IsInvisibleTable`.
-#[must_use]
 pub fn is_invisible_table(db_lower_name: &str, tbl_lower_name: &str) -> bool {
     assert_exclusive();
     (crate::sem::is_enabled() && crate::sem::is_invisible_table(db_lower_name, tbl_lower_name))
@@ -46,7 +43,6 @@ pub fn is_invisible_table(db_lower_name: &str, tbl_lower_name: &str) -> bool {
 }
 
 /// Go `compat.IsInvisibleStatusVar`.
-#[must_use]
 pub fn is_invisible_status_var(var_name: &str) -> bool {
     assert_exclusive();
     (crate::sem::is_enabled() && crate::sem::is_invisible_status_var(var_name))
@@ -54,7 +50,6 @@ pub fn is_invisible_status_var(var_name: &str) -> bool {
 }
 
 /// Go `compat.IsInvisibleSysVar`.
-#[must_use]
 pub fn is_invisible_sys_var(var_name: &str) -> bool {
     assert_exclusive();
     (crate::sem::is_enabled() && crate::sem::is_invisible_sys_var(var_name))
@@ -62,7 +57,6 @@ pub fn is_invisible_sys_var(var_name: &str) -> bool {
 }
 
 /// Go `compat.IsRestrictedPrivilege`.
-#[must_use]
 pub fn is_restricted_privilege(privilege: &str) -> bool {
     assert_exclusive();
     crate::intest::assert_with_message(
@@ -82,6 +76,25 @@ mod tests {
     use crate::sem_v2::{
         Config, SysVar, SysVarRegistry, SysVarScope, TableRestriction, VariableRestriction,
     };
+
+    // Go permits callers to discard these predicate results; Rust must not add
+    // a `must_use` diagnostic at the transcreation boundary.
+    #[test]
+    #[deny(unused_must_use)]
+    fn return_values_may_be_ignored_like_go() {
+        let _lock = crate::SEM_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        crate::sem::disable();
+        crate::sem_v2::disable();
+
+        is_enabled();
+        is_invisible_schema("test");
+        is_invisible_table("test", "t");
+        is_invisible_status_var("status");
+        is_invisible_sys_var("sys");
+        is_restricted_privilege("SELECT");
+    }
 
     const MYSQL_TABLES: &[&str] = &[
         "expr_pushdown_blacklist",

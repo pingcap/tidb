@@ -1,12 +1,16 @@
-# `pkg/util/sem/compat` — complete package transcreation
+# `pkg/util/sem/compat` — Go-master parity audit receipt
 
-Pinned Go source: `e2788410d8d696605e8cb002585877a063ccc909`.
+Status: complete dependency-closed audit against current Go `master`; the
+Rust owner now exposes Go's discardable predicate contract.
+
+Go source authority: `origin/master` at
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02).
 
 ## Complete inventory
 
 The package has exactly five artifacts, all read in full: `sem.go`,
 `testhelper.go`, `compat_test.go`, `sem_integration_test.go`, and
-`BUILD.bazel`. They define the six compatibility predicates selecting SEM v1
+`BUILD.bazel` (522 lines total). They define the six compatibility predicates selecting SEM v1
 or v2, test configuration installation, five predicate tests, and the
 restricted-SQL integration test. There is no package doc, README, fixture,
 benchmark, generated or platform variant, or ownership file. The checkout is
@@ -21,19 +25,29 @@ private Rust support rather than new public API. The five direct Go tests are
 retained, while the integration behavior is exercised at the session's common
 statement funnel together with the v2 package integration regression.
 
-## Validation
+All six public wrappers carried explicit Rust-only `#[must_use]` annotations.
+The new `return_values_may_be_ignored_like_go` regression failed before the
+fix with six `unused_must_use` errors; removing those annotations preserves Go's
+discardable return behavior without weakening global lint settings.
 
-Profile: WIP; this is one completed package within the continuing repository
-audit, not a repository-wide readiness claim.
+## Validation (Ready profile)
 
-- `cargo test -p tidb-util --locked 'sem_compat::tests::'` — passed (5 tests).
-- `cargo test -p tidb-session --locked 'tests_sem_v2::configured_sem_v2_policy_reaches_statement_hint_and_privilege_gates' -- --exact` — passed.
-- `cargo test -p tidb-util --locked` — passed (658 unit tests and all integration/doc tests; 3 ignored helpers).
-- `cargo check -p tidb-util -p tidb-executor -p tidb-session -p tidb-server --locked` — passed.
-- `cargo fmt --all --check` and `git diff --check` — passed.
-- `go test ./pkg/util/sem/compat -run '^(TestIsInvisibleSchema|TestIsInvisibleTable|TestIsInvisibleStatusVar|TestIsInvisibleSysVar|TestIsRestrictedPrivilege)$' -count=1` — blocked before this package compiled by the workspace's existing missing `pkg/util/hack.checkMapABI` build selection and gRPC `http2.TrailerPrefix` dependency mismatch.
+Profile: Ready for this package batch; the repository-wide audit is still
+continuing.
 
-No Go or Bazel file changed, so `make bazel_prepare` is not required.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 ./tools/check/failpoint-go-test.sh pkg/util/sem/compat -run '^(TestInvisibleSchema|TestIsInvisibleTable|TestIsRestrictedPrivilege|TestIsInvisibleStatusVar|TestIsInvisibleSysVar|TestRestrictedSQL)$' -count=1` — passed; the wrapper enabled and disabled failpoints around the six selected tests.
+- Same failpoint-wrapper command from detached `/tmp/tidb-go-latest-c605` — not run because the wrapper is repository-local.
+- A direct detached latest-master `go test ./pkg/util/sem/compat -count=1` was started twice and stopped after two minutes per run because the integration-heavy suite did not terminate on this host; it is not claimed as locally verified.
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib CARGO_INCREMENTAL=0 cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-util --lib sem_compat::tests::return_values_may_be_ignored_like_go --offline --locked -- --exact` — passed after the six-error pre-fix failure.
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib CARGO_INCREMENTAL=0 cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-util --lib sem_compat::tests --offline --locked -- --test-threads=1` — passed, six Rust tests.
+- `cd rust && cargo +nightly-2026-08-22 fmt --all -- --check` — passed.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 make lint` — passed.
+- `git diff --check` — passed.
+
+No Go or Bazel file changed, so `make bazel_prepare` is not required. The
+failpoint wrapper was used because `sem_integration_test.go` calls
+`testfailpoint.EnableCall`; it restored the source tree's failpoint state on
+exit.
 
 ## Risk
 

@@ -40,6 +40,18 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: refreshed the complete Go-master `pkg/util/sem/compat`
+  inventory at `c6054025ed4c32ab3672a2a24ea46892714d21ec`: five artifacts and
+  522 lines, including the SEM integration fixture and BUILD metadata. The
+  Rust owner retained its six active-policy wrappers and source tests; removed
+  six Rust-only `#[must_use]` annotations and added a regression that failed
+  before the edit with six lint errors and passes afterward. The
+  failpoint-wrapped current Go suite, all six Rust tests, Ready formatting,
+  pinned lint, and diff hygiene pass. Details are in
+  `receipts/util_sem_compat.md` and
+  `docs/operations/util-sem-compat-audit-execplan.md`; detached latest-master
+  full Go execution remains unverified because it did not terminate locally.
+
 - 2026-09-02: refreshed the complete Go-master `pkg/util/disk` inventory at
   `c6054025ed4c32ab3672a2a24ea46892714d21ec`: five artifacts and 283 lines,
   with directory locking, cleanup, tracker aliases, and the concurrent source
