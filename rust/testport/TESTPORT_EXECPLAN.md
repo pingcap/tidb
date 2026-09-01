@@ -347,6 +347,16 @@ For each bounded behavior cluster:
   `rust/docs/operations/dumpformat-sqlfile-audit-execplan.md`.
 
 - 2026-09-01: audited the complete Go-master
+  `pkg/dumpformat/parquetfile` package: 20 artifacts, 9,567 Go text lines,
+  29 tests, three benchmarks, the generated 3,108-line Spark rebase table,
+  and Aurora/Hive binary fixtures. The full failpoint-enabled Go suite passed.
+  Rust has no Arrow/Parquet, object-store reader, Spark rebase, or fixture
+  owner, so no Rust-only behavior or speculative implementation was added.
+  The complete inventory and explicit boundary are recorded in
+  `receipts/dumpformat_parquetfile.md` and
+  `rust/docs/operations/dumpformat-parquetfile-audit-execplan.md`.
+
+- 2026-09-01: audited the complete Go-master
   `pkg/dumpformat/parquetfile` package: 20 artifacts and 9,586 lines,
   including 126 production functions, 32 test/benchmark declarations, the
   29-shard BUILD target, generated Spark 3.5.7 rebase data, and two binary
