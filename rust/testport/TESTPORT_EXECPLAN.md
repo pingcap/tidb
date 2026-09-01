@@ -136,15 +136,22 @@ For each bounded behavior cluster:
   `docs/operations/util-fastrand-audit-execplan.md`.
 
 - 2026-09-02: refreshed the complete Go-master `pkg/util/backoff` inventory at
-  `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: three tracked artifacts, 113
+      `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: three tracked artifacts, 113
   lines, the `Backoffer`/`Exponential` declarations, one source vector test,
   and no fixtures, generated/platform variants, benchmarks, fuzz targets, or
   nested packages. The existing Rust owner preserves signed duration
   arithmetic, reset-on-zero, multiplier/cap behavior, and the source test
   without Rust-only behavior. Current and exact detached Go tests, the
   focused Rust test, all-target check, formatting, and diff checks pass.
-  Updated `receipts/util_backoff.md` and added the Ready documentation-only
-  plan at `docs/operations/util-backoff-audit-execplan.md`.
+      Updated `receipts/util_backoff.md` and added the Ready documentation-only
+      plan at `docs/operations/util-backoff-audit-execplan.md`.
+- 2026-09-02: re-audited the complete Go-master `pkg/util/backoff` inventory
+      at current authority `c6054025ed4c32ab3672a2a24ea46892714d21ec`; all
+      three artifacts and 113 lines remain unchanged. Re-read the production,
+      test, and Bazel files and confirmed the existing Rust owner and source
+      vector still preserve signed-duration arithmetic, reset-on-zero, and
+      multiplier/cap behavior. Details are in `receipts/util_backoff.md` and
+      `docs/operations/util-backoff-audit-execplan.md`.
 
 - 2026-09-02: refreshed the complete Go-master `pkg/util/zeropool` inventory
   at `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: three tracked artifacts,

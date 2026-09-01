@@ -1,5 +1,8 @@
 # `pkg/util/backoff` parity audit ExecPlan
 
+Go `origin/master` at `c6054025ed4c32ab3672a2a24ea46892714d21ec`
+(2026-09-02) is the current authority.
+
 ## Objective
 
 Keep the complete Go-master exponential backoff package aligned with its
@@ -8,7 +11,7 @@ native Rust owner and source test vector.
 ## Progress
 
 - [x] Read all three Go-master artifacts at
-  `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: `BUILD.bazel`, `backoff.go`,
+  `c6054025ed4c32ab3672a2a24ea46892714d21ec`: `BUILD.bazel`, `backoff.go`,
   and `backoff_test.go` (113 lines; one interface, one implementation, three
   production methods/declarations, and one source vector test).
 - [x] Confirm there are no package docs, fixtures, generated/platform
@@ -20,7 +23,8 @@ native Rust owner and source test vector.
   diagnostics, manifests, and supplemental tests remain removed.
 - [x] Revalidate current and exact detached Go-master tests, the source-derived
   Rust test, all-target owner/benchmark check, formatting, and diff quality.
-- [ ] Commit, push, pull, and verify `origin/hparser-integration`.
+- [x] Commit, push, pull, and verify `origin/hparser-integration` for the
+  prior source/receipt batch; this authority refresh is now ready to publish.
 
 ## Validation gate
 
