@@ -36,6 +36,23 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: completed inventory and implementation for the currently
+  unclaimed pinned Go `pkg/util/sys/storage` package. Its Linux/macOS `statfs`,
+  Windows `GetDiskFreeSpaceEx`, and unsupported-platform `math.MaxInt64`
+  variants are owned by `tidb-util::sys::storage`; its POSIX path now uses
+  `statfs` (matching Go's `syscall.Statfs`) rather than the prior
+  behaviorally different `statvfs`. Go's direct startup quota
+  check is represented by the Rust `open_spill_storage -> SpillStorage::open`
+  path. Removed the Rust-only in-module fallback and missing-path test
+  carriers, restored the sole Go source test in an external carrier, and added
+  focused POSIX arithmetic and error-boundary regressions. The complete
+  six-artifact Go
+  inventory and current validation status are recorded in
+  `receipts/util_sys_storage.md` and
+  `docs/operations/storage-audit-execplan.md`; Ready remains blocked by missing
+  local Go/OpenSSL tooling. The package commit is pushed; only the final Ready
+  gate remains for an environment with those prerequisites.
+
 - 2026-08-29: completed the pinned Go
   `pkg/statistics/handle/usage/indexusage` package in
   `tidb-stats-handle-usage-indexusage`. Restored the real `model.TableInfo`

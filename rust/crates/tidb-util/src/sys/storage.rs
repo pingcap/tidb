@@ -23,7 +23,7 @@
 use std::io;
 use std::path::Path;
 
-#[cfg(any(test, not(any(target_os = "linux", target_os = "macos", windows))))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 const OTHER_PLATFORM_CAPACITY: u64 = i64::MAX as u64;
 
 /// Go `GetTargetDirectoryCapacity`: returns bytes available to the caller on
@@ -34,8 +34,8 @@ pub fn get_target_directory_capacity(path: impl AsRef<Path>) -> io::Result<u64> 
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn get_target_directory_capacity_impl(path: &Path) -> io::Result<u64> {
-    let stat = rustix::fs::statvfs(path).map_err(io::Error::from)?;
-    Ok(stat.f_bavail.wrapping_mul(stat.f_bsize))
+    let stat = rustix::fs::statfs(path).map_err(io::Error::from)?;
+    Ok(stat.f_bavail.wrapping_mul(u64::from(stat.f_bsize)))
 }
 
 #[cfg(windows)]
@@ -46,26 +46,4 @@ fn get_target_directory_capacity_impl(path: &Path) -> io::Result<u64> {
 #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 fn get_target_directory_capacity_impl(_path: &Path) -> io::Result<u64> {
     Ok(OTHER_PLATFORM_CAPACITY)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn current_directory_has_capacity_like_the_go_test() {
-        assert!(get_target_directory_capacity(".").unwrap() >= 1);
-    }
-
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    #[test]
-    fn missing_directory_reports_the_os_error() {
-        let root = tempfile::tempdir().unwrap();
-        assert!(get_target_directory_capacity(root.path().join("missing")).is_err());
-    }
-
-    #[test]
-    fn other_platform_fallback_is_go_math_max_int64() {
-        assert_eq!(OTHER_PLATFORM_CAPACITY, 9_223_372_036_854_775_807);
-    }
 }
