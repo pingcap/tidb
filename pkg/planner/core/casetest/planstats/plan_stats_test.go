@@ -366,13 +366,16 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 		tableInfo := tbl.Meta()
 		neededColumn := model.StatsLoadItem{TableItemID: model.TableItemID{TableID: tableInfo.ID, ID: tableInfo.Columns[0].ID, IsIndex: false}, FullLoad: true}
 		resultCh := make(chan stmtctx.StatsLoadResult, 1)
-		timeout := time.Duration(1<<63 - 1)
+		queueFillTimeout := time.Second
 		task := &types.NeededItemTask{
 			Item:      neededColumn,
 			ResultCh:  resultCh,
-			ToTimeout: time.Now().Local().Add(timeout),
+			ToTimeout: time.Now().Local().Add(queueFillTimeout),
 		}
-		dom.StatsHandle().AppendNeededItem(task, timeout) // make channel queue full
+		err = dom.StatsHandle().AppendNeededItem(task, queueFillTimeout) // make channel queue full
+		if err != nil {
+			require.ErrorContains(t, err, "Channel is full")
+		}
 		sql := "select /*+ MAX_EXECUTION_TIME(1000) */ * from t where c>1"
 		stmt, err := p.ParseOneStmt(sql, "", "")
 		require.NoError(t, err)
