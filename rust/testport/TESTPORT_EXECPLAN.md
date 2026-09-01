@@ -40,6 +40,14 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: audited the complete current Go-master `pkg/util/skip` and
+  `pkg/util/syncutil` inventories (five artifacts, 130 lines total), including
+  the `deadlock`/`!deadlock` build-tag variants and all exported test/lock
+  helpers. Rust has no dependency-closed replacement for Go's test-flag
+  helpers or package-wide lock type identity/deadlock detector. The explicit
+  Go-only boundaries are recorded in `receipts/util_skip.md` and
+  `receipts/util_syncutil.md`; no source changed.
+
 - 2026-09-01: audited both current Go-master `pkg/util/regionsplit` artifacts
   (`BUILD.bazel` and `split_handle.go`, 256 lines total) in full, including
   all production helpers and their DDL/executor call sites. Rust currently
@@ -1825,6 +1833,12 @@ For each bounded behavior cluster:
   Adding a detached key generator would omit its `pkg/ddl` and
   `pkg/executor` consumers and create Rust-only split behavior. Date/Author:
   2026-09-01, Codex.
+- Decision: keep `pkg/util/skip` and `pkg/util/syncutil` explicitly unclaimed.
+  `skip` is Go test-selection infrastructure, while `syncutil` is a
+  package-wide type-identity and `deadlock` build-tag boundary used by dozens
+  of Go consumers. Rust test attributes and crate-local standard locks cannot
+  replace those contracts; adding facades would be Rust-only behavior or a
+  broad uncoordinated source break. Date/Author: 2026-09-01, Codex.
 - Decision: preserve the Rust planner-error declaration table and its
   all-prototype initialization guard. Go package initialization registers all
   98 entries, while Go's only explicit test checks 59; the Rust guard is the
