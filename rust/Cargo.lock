@@ -4340,6 +4340,7 @@ dependencies = [
  "tidb-tikvutil",
  "tidb-vardef",
  "tikv-client",
+ "tonic",
  "tracing",
  "windows-sys 0.61.2",
 ]

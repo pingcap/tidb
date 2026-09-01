@@ -55,7 +55,7 @@ nix.workspace = true
 prometheus = { version = "0.14", default-features = false }
 regex.workspace = true
 regex-syntax.workspace = true
-rustix = { workspace = true, features = ["fs", "system", "thread"] }
+rustix = { workspace = true, features = ["fs", "pipe", "stdio", "system", "thread"] }
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 tempfile.workspace = true
@@ -63,6 +63,7 @@ tidb-datatype = { path = "../tidb-datatype" }
 tidb-error = { path = "../tidb-error" }
 tidb-hack = { path = "../tidb-hack" }
 tracing = "0.1"
+tonic.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 fs4 = { version = "=1.1.0", default-features = false }
@@ -86,6 +87,10 @@ harness = false
 
 [[bench]]
 name = "globalconn"
+harness = false
+
+[[bench]]
+name = "lightning_log"
 harness = false
 
 [[bench]]

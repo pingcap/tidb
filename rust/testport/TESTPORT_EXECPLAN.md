@@ -36,6 +36,16 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- [x] (2026-09-01) Completed the pinned six-artifact
+  `pkg/lightning/log` package. Added exact config adjustment and logger
+  initialization, global level/logger replacement, package-qualified core
+  filtering, JSON test logging, short/full errors, cancellation classification,
+  task timing, all five source tests, and both source benchmarks. Extended the
+  canonical `tidb-log` dependency only with zap's named child, explicit-level,
+  enabled, and caller-predicate capabilities required by this package, so
+  Lightning and process-global logs share the same filter. Complete inventory
+  and WIP evidence are in `receipts/lightning_log.md`.
+
 - [x] (2026-08-31) Completed the pinned four-artifact
   `pkg/lightning/manual` package, including both cgo and non-cgo source
   variants. Added its zeroed allocation, explicit release, safe cgo slice cap,
