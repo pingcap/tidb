@@ -4132,3 +4132,50 @@ func TestLoadDataLocalRetryDesyncExplicitTxn(t *testing.T) {
 		require.Equal(t, 1, val)
 	})
 }
+
+// TestLoadDataLocalPessimisticRetryDesync verifies that a retryable
+// single-statement deadlock does not re-execute LOAD DATA LOCAL INFILE.
+// The client file stream is a one-shot resource, so reopening LoadDataExec
+// would send a second LOCAL_INFILE_REQUEST and desynchronize the connection.
+func TestLoadDataLocalPessimisticRetryDesync(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+	ts.RunTests(t, func(c *mysql.Config) {
+		c.AllowAllFiles = true
+	}, func(dbt *testkit.DBTestKit) {
+		ctx := context.Background()
+
+		filePath := filepath.Join(t.TempDir(), "pessimistic_retry_desync.csv")
+		mysql.RegisterLocalFile(filePath)
+		err := os.WriteFile(filePath, []byte("1,one\n"), os.ModePerm)
+		require.NoError(t, err)
+
+		conn, err := dbt.GetDB().Conn(ctx)
+		require.NoError(t, err)
+
+		testserverclient.MustExec(ctx, t, conn, "CREATE TABLE t_pessimistic_retry (id INT PRIMARY KEY, v VARCHAR(16))")
+		testserverclient.MustExec(ctx, t, conn, "SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
+		testserverclient.MustExec(ctx, t, conn, "BEGIN PESSIMISTIC")
+
+		// Return a retryable single-statement deadlock for the first LockKeys
+		// request after the local file has been consumed.
+		testfailpoint.Enable(t,
+			"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/pessimisticLockReturnDeadlock",
+			`1*return(true)->return(false)`)
+
+		loadCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		_, loadErr := conn.ExecContext(loadCtx, fmt.Sprintf(
+			"LOAD DATA LOCAL INFILE '%s' REPLACE INTO TABLE t_pessimistic_retry FIELDS TERMINATED BY ','",
+			filePath))
+		require.Error(t, loadErr)
+		var mysqlErr *mysql.MySQLError
+		require.ErrorAs(t, loadErr, &mysqlErr, "the original deadlock should be returned")
+		require.Equal(t, uint16(tmysql.ErrLockDeadlock), mysqlErr.Number)
+
+		// No row is committed and the connection protocol remains synchronized.
+		var count int
+		err = conn.QueryRowContext(ctx, "SELECT COUNT(*) FROM t_pessimistic_retry").Scan(&count)
+		require.NoError(t, err, "connection should be usable after the deadlock")
+		require.Equal(t, 0, count)
+	})
+}

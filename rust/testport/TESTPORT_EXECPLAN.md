@@ -4693,6 +4693,13 @@ For each bounded behavior cluster:
   package. See
   `rust/testport/receipts/scalar_subquery_statement_boundary.md` and
   `rust/docs/operations/scalar-subquery-statement-boundary-execplan.md`.
+- `pkg/store/mockstore/unistore/tikv` is byte-identical to Go master across all
+  16 artifacts and 9,286 lines after restoring the deterministic pessimistic
+  deadlock failpoint. The executor now returns the original lock error instead
+  of reopening a consumed `LOAD DATA LOCAL INFILE` stream, and the focused
+  protocol-synchronization regression passes. See
+  `rust/testport/receipts/store_mockstore_unistore_tikv.md` and
+  `rust/docs/operations/store-mockstore-unistore-tikv-audit-execplan.md`.
 
 ## Outcomes & Retrospective
 
