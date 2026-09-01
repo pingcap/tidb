@@ -1643,6 +1643,20 @@ For each bounded behavior cluster:
       session integration, or real heap/goroutine profile recorder. The
       package remains explicitly unclaimed; details are in
       `receipts/util_memoryusagealarm.md`.
+- 2026-09-01: audited both Go-master `pkg/util/gcutil` artifacts (109 lines:
+      GC enable toggles, restricted `tikv_gc_safe_point` lookup, Oracle
+      timestamp conversion, snapshot validation, and Bazel target). Rust has
+      safe-point/flashback support but no dependency-closed session global
+      accessor or `mysql.tidb` helper owner. The package remains explicitly
+      unclaimed with no source change; details are in
+      `receipts/util_gcutil.md`.
+- 2026-09-01: audited all five Go-master `pkg/util/extsort` artifacts (2,624
+  lines: Pebble-backed SST writer/reader pool, compaction/merge machinery,
+  interfaces, 16 source tests, and the Bazel target). Rust has no Pebble or
+  Lightning importer owner; executor row-spill sorting is a different
+  dependency graph and cannot substitute for the key/value sorter. The
+  package remains explicitly unclaimed with no speculative Rust behavior;
+  details are in `receipts/util_extsort.md`.
 - [ ] Run Ready validation and self-review only when the requested parity scope
       is genuinely complete enough for a final-status claim.
 
