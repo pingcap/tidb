@@ -1,6 +1,6 @@
 # `pkg/util/mathutil` — complete package transcreation
 
-Pinned Go source: `e2788410d8d696605e8cb002585877a063ccc909`.
+Pinned Go source: `c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02).
 
 ## Complete inventory
 
@@ -31,10 +31,11 @@ existing implementation.
 
 ## Validation
 
-Profile: WIP; this completes one package in the continuing package-by-package
-audit, not a repository-wide readiness claim.
+Profile: **Ready** for this complete package parity fix and authority refresh;
+this is not a repository-wide readiness claim.
 
-- `go test ./pkg/util/mathutil` — passed.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/mathutil -count=1` — passed in the active and exact detached Go-master checkouts.
+- `git diff --stat c6054025ed4c32ab3672a2a24ea46892714d21ec -- pkg/util/mathutil` — empty; Go source is unchanged at the current authority.
 - `cargo test -q -p tidb-util mathutil --lib --locked -- --test-threads=1` —
   passed; exactly eight tests ran.
 - `cargo test -q -p tidb-exec ddl_job_merge --lib --locked --
@@ -43,6 +44,10 @@ audit, not a repository-wide readiness claim.
   `cargo check -q -p tidb-expr -p tidb-executor -p tidb-session -p tidb-stats
   --all-targets --locked`, `cargo fmt --all --check`, and `git diff --check` —
   passed. Checks emitted only pre-existing warnings outside the changed code.
+
+- `cd rust && cargo +nightly-2026-08-22 fmt --all -- --check` and
+  `git diff --check` — passed.
+- Pinned `make lint` — passed in a clean detached Go-master checkout.
 
 No Go or Bazel file changed, so `make bazel_prepare` is not required.
 
