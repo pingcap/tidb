@@ -2528,6 +2528,15 @@ For each bounded behavior cluster:
       static and live contexts. Exact Go-master and Rust carrier suites pass;
       the full inventory and remaining sysvar-catalog boundary are recorded in
       `receipts/expression_exprstatic.md`.
+- 2026-09-01: audited the complete Go-master `pkg/expression/sessionexpr`
+      package: three tracked artifacts and 837 lines, including the live
+      expression/evaluation contexts, timestamp and privilege paths, all ten
+      optional-property registrations, sequence operator, five source tests,
+      and the five-shard Bazel target. The master additions (`NewCollationEnabled`
+      and `OptPropSessionContext`) are implemented through the live runtime
+      mode and a narrow session-context adapter, with the shared parameter
+      contract applied to live evaluation. Exact Go-master and Rust carrier
+      suites pass; details are in `receipts/expression_sessionexpr.md`.
 - [ ] Run Ready validation and self-review only when the requested parity scope
       is genuinely complete enough for a final-status claim.
 
