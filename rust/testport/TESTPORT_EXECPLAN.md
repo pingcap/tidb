@@ -397,6 +397,16 @@ For each bounded behavior cluster:
   Go-master failpoint suite passed and the explicit boundary is recorded in
   `receipts/session_test_resourcegrouptest.md`.
 
+- 2026-09-01: audited the complete Go-master
+  `pkg/session/test/schematest` package: three tracked artifacts and 506 lines,
+  including the TestMain/goleak harness, ten schema/chunk/transaction/
+  validation tests, and ten-shard flaky BUILD target. Rust has partial
+  session, transaction, and chunk owners but no dependency-closed schema
+  lease/MDL, mock-cluster DistSQL, transaction-size observation, or recursive
+  variable-validation owner. No Rust-only behavior or safe standalone
+  implementation was found; the exact Go-master failpoint suite passed and
+  the boundary is recorded in `receipts/session_test_schematest.md`.
+
 - 2026-09-01: refreshed the complete Go-master
   `pkg/util/password-validation` inventory (three artifacts, 379 lines) and
   confirmed it is unchanged from the prior pinned implementation. The Go
