@@ -1554,6 +1554,12 @@ For each bounded behavior cluster:
       partition-handle, reporter, and SQL-command seams are not dependency
       closed for the root utility package. No duplicate checker was added;
       details are in `receipts/util_admin.md`.
+- 2026-09-01: audited all three Go-master `pkg/util/deeptest` artifacts (503
+      lines: reflection comparator, exhaustive failure matrix, and Bazel
+      target). This is test-only infrastructure with no Rust production or
+      reusable comparator owner; local Rust assertions remain intentionally
+      scoped. The package remains explicitly unclaimed; details are in
+      `receipts/util_deeptest.md`.
 - [ ] Run Ready validation and self-review only when the requested parity scope
       is genuinely complete enough for a final-status claim.
 
@@ -1618,6 +1624,11 @@ For each bounded behavior cluster:
   cover the byte-level corruption core, but adding a utility wrapper would
   duplicate the Go session/restricted-SQL/index/reporting integration that is
   still outside the dependency closure. Date/Author: 2026-09-01, Codex.
+- Decision: keep `pkg/util/deeptest` Go-only test infrastructure. Its
+  reflection, pointer-alias, path-glob, and expected-failure semantics have no
+  production consumer; a Rust assertion framework would be a second test
+  policy rather than a dependency-closed transcreation. Date/Author:
+  2026-09-01, Codex.
 - Decision: preserve the Rust planner-error declaration table and its
   all-prototype initialization guard. Go package initialization registers all
   98 entries, while Go's only explicit test checks 59; the Rust guard is the
