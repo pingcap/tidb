@@ -1,47 +1,55 @@
-# `pkg/util/tikvutil` — complete package transcreation
+# `pkg/util/tikvutil` — complete Go-master parity receipt
 
-Pinned Go source: `e2788410d8d696605e8cb002585877a063ccc909`.
+Comparison source: Go `origin/master` at commit
+`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01). The package is
+unchanged from the earlier pinned audit; this receipt refreshes the authority
+and records the complete artifact hashes.
 
 ## Complete inventory
 
-The package has exactly two artifacts, both read in full: `tikvutil.go` and
-`BUILD.bazel`. There is no package doc, test, test harness, benchmark, fixture,
-generated input/output, platform variant, README, or ownership file. The local
-Go package is byte-identical to the pin.
+The package contains two tracked artifacts and 31 lines. Both artifacts were
+read in full before this update. There is no package doc, test, test harness,
+benchmark, fixture, generated input/output, platform variant, README, or
+ownership file.
 
-Production behavior is one public sequentially consistent atomic signed
-32-bit integer, `CommitterConcurrency`, initialized to 128. The pinned tree has
-three consumers: config loads it into TiKV client config, and the committer
-concurrency sysvar stores and loads it.
+| Artifact | Lines | Git blob | SHA-256 | Role |
+| --- | ---: | --- | --- | --- |
+| `BUILD.bazel` | 9 | `e8391be50a080baf413a59348f98238cc170f1ad` | `33c974d1426e69ad9951cf3bfcb3b09eff759362ff1c03e07306e4d683c731f8` | public Go utility library target |
+| `tikvutil.go` | 22 | `b19d642214d47385dd1da6dd6b9a088cd1aa0960` | `d7ed4273a9648aa17c5f018237bb9ae794894184bd2a62321a9e7f4a289babce` | process-wide atomic committer-concurrency setting |
 
-## Rust ownership and audit result
+`CommitterConcurrency` is one public sequentially consistent signed 32-bit
+atomic initialized to 128. The three source consumers load it into TiKV client
+configuration and use it as the GLOBAL `tidb_committer_concurrency` sysvar's
+set/get authority; validation clamps values to the Go range 1–10,000.
 
-`rust/crates/tidb-tikvutil/src/lib.rs` owns the atomic. The audit replaced a
-private atomic plus Rust-only public default/getter/setter APIs with the single
-public atomic object Go exposes. Config and sysvar consumers now load and store
-that owner directly with sequential consistency. The standalone Rust-only unit
-test was removed; the Go-derived config and sysvar consumer tests remain.
+## Rust ownership and parity
 
-## Validation
+`rust/crates/tidb-tikvutil/src/lib.rs` owns the source-shaped public
+`COMMITTER_CONCURRENCY: AtomicI32`, initialized to 128. The config and session
+sysvar consumers load/store that single atomic with sequential consistency,
+including cluster-table publication and reset. Earlier Rust-only wrapper
+getters/setters and a private duplicate atomic were removed; no Rust-only
+behavior remains in the current owner, and the Go-visible value width,
+initialization, ordering, and publication semantics match.
 
-Profile: WIP; this completes one package in the continuing package-by-package
-audit, not a repository-wide readiness claim.
+## Validation and risk
 
-- `git diff --exit-code e2788410d8d696605e8cb002585877a063ccc909 -- pkg/util/tikvutil` — passed.
-- `go test ./pkg/util/tikvutil -count=1` — passed (`[no test files]`).
-- `cargo check --offline --locked -p tidb-tikvutil -p tidb-config -p tidb-session` — passed with existing warnings in dependencies and consumer crates.
-- `cargo test --offline --locked -p tidb-config config_tree::config::tests::test_get_tikv_config_uses_the_runtime_committer_concurrency --lib -- --exact` — passed.
-- `cargo test --offline --locked -p tidb-session tests_global_vars::committer_concurrency_updates_the_process_authority --lib -- --exact` — passed.
-- `rustfmt --edition 2021 --check crates/tidb-tikvutil/src/lib.rs crates/tidb-config/src/config_tree/config.rs crates/tidb-session/src/vars.rs crates/tidb-session/src/tests_global_vars.rs` — passed.
-- `git diff --check` — passed.
+Profile: **WIP** for this documentation-only authority refresh. No Go source,
+imports, Bazel metadata, or module files changed; `make bazel_prepare` and the
+Ready lint gate are not required.
 
-No Go or Bazel file changed, so `make bazel_prepare` is not required.
+```text
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
+GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
+go test ./pkg/util/tikvutil -count=1
+# passed: package compiled; no test files
 
-## Risk
+OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler \
+DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib \
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml -p tidb-tikvutil -p tidb-config -p tidb-session --offline --locked
+# passed previously for the source-derived owner and all three consumers
+```
 
-- Correctness: the value, width, initialization, atomicity, and memory ordering
-  are unchanged; ownership now matches Go.
-- Compatibility: removes Rust-only helper APIs in favor of the source-shaped
-  public atomic.
-- Performance: removes wrapper calls; atomic ordering remains sequentially
-  consistent.
+Not verified here: full workspace tests, Bazel execution, or real TiKV commit
+throughput. Existing unrelated session/planner worktree changes remain outside
+this receipt.

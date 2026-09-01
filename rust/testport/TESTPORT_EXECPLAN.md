@@ -40,6 +40,14 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: refreshed the complete Go-master `pkg/util/tikvutil` inventory
+  (two artifacts, 31 lines) and confirmed it is unchanged from the prior
+  pinned audit. The Rust `tidb-tikvutil` atomic and its config/session
+  consumers already preserve Go's single process authority, width, default,
+  sequential consistency, and GLOBAL publication/reset semantics. Updated
+  `receipts/util_tikvutil.md` with current-master hashes; no new behavior was
+  invented.
+
 - 2026-09-01: refreshed the complete Go-master `pkg/util/channel` inventory
   (two artifacts, 30 lines) and confirmed it is unchanged from the prior
   pinned audit. Rust's borrowed `tidb-util::channel::clear` already matches
