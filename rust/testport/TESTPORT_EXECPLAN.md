@@ -2545,6 +2545,23 @@ For each bounded behavior cluster:
       Go-only code-generation boundary; generated parent-package outputs remain
       covered by the expression test-port receipts. Details are in
       `receipts/expression_generator.md`.
+- 2026-09-01: audited the complete Go-master `pkg/expression/integration_test`
+      package: four tracked artifacts and 4,906 lines, including 63 SQL tests,
+      the common failpoint/goleak harness, README rule, and 50-shard target.
+      The master-only EMBED_TEXT/auto-embedding additions are recorded as a
+      dependency-closed provider→DDL→executor gap; details are in
+      `receipts/expression_integration_test.md`.
+- 2026-09-01: audited the complete Go-master
+      `pkg/expression/test/constantpropagation` package: three artifacts and
+      148 lines. Its single plan-tree regression passes in Go; Rust carries the
+      expression-level propagation but not the mock-storage planner fixture.
+      Details are in `receipts/expression_constantpropagation_test.md`.
+- 2026-09-01: audited the complete Go-master
+      `pkg/expression/test/multivaluedindex` package: three artifacts and 405
+      lines. Four exact KV-key/duplicate/partition regressions pass in Go;
+      Rust's ARRAY index admission remains an explicit dependency-closed DDL,
+      executor, and storage gap. Details are in
+      `receipts/expression_multivaluedindex_test.md`.
 - [ ] Run Ready validation and self-review only when the requested parity scope
       is genuinely complete enough for a final-status claim.
 
