@@ -117,7 +117,6 @@ impl<K: CacheKey, V> SimpleLruCache<K, V> {
     /// # Panics
     ///
     /// Panics when `capacity` is zero, matching the source constructor.
-    #[must_use]
     pub fn new(capacity: usize) -> Self {
         assert!(capacity > 0, "capacity of LRU Cache should be at least 1.");
         Self {
@@ -178,7 +177,6 @@ impl<K: CacheKey, V> SimpleLruCache<K, V> {
     ///
     /// This is Go `SimpleLRUCache.Peek`, added on the current master branch
     /// for read-only inspection of an entry's value and ordering.
-    #[must_use]
     pub fn peek<Q>(&self, key: &Q) -> Option<&V>
     where
         Q: CacheKey + ?Sized,
@@ -247,13 +245,11 @@ impl<K: CacheKey, V> SimpleLruCache<K, V> {
     }
 
     /// Returns the current cache size (`SimpleLRUCache.Size`).
-    #[must_use]
     pub fn size(&self) -> usize {
         self.entry_count()
     }
 
     /// Returns values in most-recently-used order.
-    #[must_use]
     pub fn values(&self) -> Vec<&V> {
         self.indices_from_newest()
             .map(|index| &self.node(index).value)
@@ -261,7 +257,6 @@ impl<K: CacheKey, V> SimpleLruCache<K, V> {
     }
 
     /// Returns keys in most-recently-used order.
-    #[must_use]
     pub fn keys(&self) -> Vec<&K> {
         self.indices_from_newest()
             .map(|index| &self.node(index).key)

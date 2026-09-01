@@ -3343,6 +3343,15 @@ For each bounded behavior cluster:
       tests, formatting, Ready lint, and diff checks pass. Details are in
       `receipts/util_queue.md` and
       `docs/operations/util-queue-audit-execplan.md`.
+- 2026-09-02: refreshed all four Go-master `pkg/util/kvcache` artifacts (600
+      lines covering the LRU owner, eight source tests, and the BUILD target)
+      at authority `c6054025ed4c32ab3672a2a24ea46892714d21ec`. Removed five
+      cache-owner and one global-tracker Rust-only `#[must_use]` diagnostics;
+      focused deny-lint regressions failed with five and one errors before the
+      fixes and pass afterward. Current/detached Go tests, nine cache-owner
+      tests, the global-tracker test, formatting, Ready lint, and diff checks
+      pass. Details are in `receipts/util_kvcache.md` and
+      `docs/operations/kvcache-audit-execplan.md`.
 - 2026-09-01: audited all four Go-master `pkg/util/cpu` artifacts (308 lines,
       six production functions/methods, two source tests, and one test
       harness), including its failpoint, race/flaky BUILD target, cgroup/EMA,

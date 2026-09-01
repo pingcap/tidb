@@ -22,6 +22,13 @@ TiDB uses `pkg/util/kvcache` as its small byte-identity LRU primitive for JSON p
 - [x] (2026-09-02) Restored Go master's `Peek` method and no-promotion
   assertion, reran the focused/full/race Go suite and Rust owner tests, and
   prepared one scoped publication commit for the target.
+- [x] (2026-09-02) Refreshed all four artifacts against Go `origin/master`
+  `c6054025ed4c32ab3672a2a24ea46892714d21ec`; the package remains unchanged
+  at 600 lines.
+- [x] (2026-09-02) Removed five cache-owner and one global-tracker
+  Rust-only `#[must_use]` diagnostics. The focused deny-lint regressions failed
+  before the edits with five and one errors and pass afterward; focused Rust
+  and Go suites, formatting, and Ready lint pass.
 
 ## Surprises & Discoveries
 
@@ -56,12 +63,19 @@ TiDB uses `pkg/util/kvcache` as its small byte-identity LRU primitive for JSON p
   callback behavior unchanged.
   Date/Author: 2026-09-02 / Codex
 
+- Decision: Remove explicit `#[must_use]` diagnostics from cache constructors,
+  queries, and the global-tracker accessor.
+  Rationale: Go permits discarding each function result (the tracker is a
+  package variable initialized by `init`), and deny-lint regressions reproduce
+  that source contract without changing cache state or ordering.
+  Date/Author: 2026-09-02 / Codex
+
 ## Outcomes & Retrospective
 
 Authority, inventory, source reading, the Go fail-before/fail-after regression,
-Go normal/race tests, direct Rust tests, focused consumer tests, receipt, and
-the Ready profile are complete. Publication and remote verification follow
-the scoped commit.
+Go normal/race tests, direct Rust tests, focused consumer tests, return-value
+diagnostic regressions, receipt, and the Ready profile are complete.
+Publication and remote verification follow the scoped commit.
 
 ## Context and Orientation
 
@@ -87,8 +101,9 @@ Live consumers are `tidb-datatype`'s JSON path cache, `tidb-executor`'s Apply ca
 
 Keep `rust/crates/tidb-kvcache/tests/kvcache.semantic.toml` aligned with the
 accepted Go pin, every owner/compatibility/consumer evidence file, and the
-focused commands proven manually. The current batch restores only the missing
-Go `Peek` source/test pair; do not duplicate the existing Rust direct tests.
+focused commands proven manually. The current batch removes only Rust-only
+return diagnostics after the earlier `Peek` source/test restoration; do not
+duplicate the existing Rust direct tests.
 
 Run the semantic gate from its last tracked version, then the Ready profile: owning and compatibility crate tests, focused consumer tests, all-target checks and Clippy for affected evidence crates, formatting, repository lint, Go normal/race authority, source pin/inventory gates, and final diff review.
 
@@ -116,7 +131,12 @@ Run all-target no-dependency Clippy with warnings denied for each evidence crate
 
 ## Validation and Acceptance
 
-All eight Go tests must pass normally and under race. All eight direct Rust tests and the five consumer gates must pass. The all-target check, Clippy, formatting, semantic gate, repository lint, source pin, inventory, and diff checks must pass or have an exact clean-base failure recorded.
+All eight Go tests must pass normally and under race. The cache-owner and
+global-tracker deny-lint regressions must fail before and pass after the
+annotation removals. All eight direct Rust tests and the five consumer gates
+must pass. The all-target check, Clippy, formatting, semantic gate, repository
+lint, source pin, inventory, and diff checks must pass or have an exact
+clean-base failure recorded.
 
 The final commit contains the current-master `Peek` source/test parity fix and
 its receipt/plan updates only. It remains one `pkg/util/kvcache` unit, contains
@@ -137,7 +157,7 @@ Initial evidence:
 
     Go normal: pass.
     Go race: pass with only the recurring macOS linker LC_DYSYMTAB warning.
-    tidb-kvcache: 8 passed.
+    tidb-kvcache: 8 passed before the return-diagnostic regression was added.
     JSON path: 5 passed.
     Apply cache source: 4 passed.
     Apply executor: 8 passed.
@@ -162,3 +182,8 @@ Ready evidence:
 Plan revision note (2026-08-12): created after complete source/inventory reading, Go normal/race validation, direct Rust owner validation, and focused live-consumer validation found no production gap.
 
 Plan revision note (2026-08-12): recorded the compact receipt and complete Ready certification evidence.
+
+Plan revision note (2026-09-02): refreshed the complete package against Go
+`origin/master` `c6054025ed4c32ab3672a2a24ea46892714d21ec`, removed six explicit
+Rust-only `#[must_use]` diagnostics, recorded the two focused regressions, and
+updated the Ready evidence.

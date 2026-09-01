@@ -55,6 +55,19 @@ impl CacheKey for MockCacheKey {
     }
 }
 
+// Go permits callers to discard constructor and query return values; Rust
+// must not add a `must_use` diagnostic at the transcreation boundary.
+#[test]
+#[deny(unused_must_use)]
+fn return_values_may_be_ignored_like_go() {
+    SimpleLruCache::<Vec<u8>, ()>::new(1);
+    let cache = SimpleLruCache::<Vec<u8>, ()>::new(1);
+    cache.peek(b"missing");
+    cache.size();
+    cache.values();
+    cache.keys();
+}
+
 /// Deterministic stand-ins for Go's successful `memory.MemTotal()` and
 /// `memory.InstanceMemUsed()` calls. The production Rust API receives the
 /// process-memory probe from its owner; these tests exercise the resulting
