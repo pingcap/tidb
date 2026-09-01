@@ -36,6 +36,18 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- [x] (2026-08-31) Completed the pinned four-artifact
+  `pkg/lightning/manual` package, including both cgo and non-cgo source
+  variants. Added its zeroed allocation, explicit release, safe cgo slice cap,
+  optional shared atomic reference count, and exact leak error. Extended the
+  existing membuf allocator boundary with a native byte-block owner so manual
+  blocks really remain allocated until `Free`, rather than gaining
+  source-absent Rust RAII release. The source package has no tests, so none
+  were added; both Go build variants compile and all seven membuf source tests
+  still pass. Complete inventory and WIP evidence are in
+  `receipts/lightning_manual.md`; the updated integration decision is recorded
+  in `receipts/lightning_membuf.md`.
+
 - [x] (2026-08-31) Completed the pinned three-artifact
   `pkg/lightning/metric` package and its dependent three-artifact
   `pkg/lightning/worker` package. Added the exact collector sets, labels,

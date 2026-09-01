@@ -59,6 +59,7 @@ pub mod keyspace;
 pub mod kvcache;
 pub mod layered_io;
 pub mod lightning_importdef;
+pub mod lightning_manual;
 pub mod lightning_metric;
 pub mod lightning_verification;
 pub mod lightning_worker;

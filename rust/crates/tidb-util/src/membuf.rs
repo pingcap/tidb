@@ -58,9 +58,68 @@ const fn get_block_cnt(size: u64, block_size: u64) -> u64 {
 /// Go `Allocator`.
 pub trait Allocator: Send + Sync {
     /// Go `Alloc`.
-    fn alloc(&self, n: isize) -> Vec<u8>;
+    fn alloc(&self, n: isize) -> Block;
     /// Go `Free`.
-    fn free(&self, block: Vec<u8>);
+    fn free(&self, block: Block);
+}
+
+/// Native owner for a block returned by a Go-style [`Allocator`].
+pub struct Block {
+    bytes: Option<Vec<u8>>,
+    capacity: usize,
+    release_on_drop: bool,
+}
+
+impl Block {
+    /// Wraps storage whose allocator permits automatic release.
+    pub fn from_vec(bytes: Vec<u8>) -> Self {
+        let capacity = bytes.capacity();
+        Self {
+            bytes: Some(bytes),
+            capacity,
+            release_on_drop: true,
+        }
+    }
+
+    /// Go `cap(block)` for the full block returned by an allocator.
+    pub fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    pub(crate) fn manually_managed(bytes: Vec<u8>) -> Self {
+        let capacity = bytes.len();
+        Self {
+            bytes: Some(bytes),
+            capacity,
+            release_on_drop: false,
+        }
+    }
+
+    pub(crate) fn release(mut self) {
+        self.release_on_drop = true;
+    }
+}
+
+impl Deref for Block {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        self.bytes.as_deref().expect("block storage is present")
+    }
+}
+
+impl DerefMut for Block {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.bytes.as_deref_mut().expect("block storage is present")
+    }
+}
+
+impl Drop for Block {
+    fn drop(&mut self) {
+        if !self.release_on_drop {
+            std::mem::forget(self.bytes.take());
+        }
+    }
 }
 
 /// Go's private `stdAllocator`.
@@ -68,11 +127,14 @@ pub trait Allocator: Send + Sync {
 struct StdAllocator;
 
 impl Allocator for StdAllocator {
-    fn alloc(&self, n: isize) -> Vec<u8> {
-        vec![0; usize::try_from(n).expect("negative allocation size")]
+    fn alloc(&self, n: isize) -> Block {
+        Block::from_vec(vec![
+            0;
+            usize::try_from(n).expect("negative allocation size")
+        ])
     }
 
-    fn free(&self, _block: Vec<u8>) {}
+    fn free(&self, _block: Block) {}
 }
 
 struct LimiterInner {
@@ -231,7 +293,7 @@ pub struct Pool {
 }
 
 struct PoolState {
-    blocks: VecDeque<Vec<u8>>,
+    blocks: VecDeque<Block>,
     capacity: usize,
     closed: bool,
 }
@@ -281,7 +343,7 @@ impl Pool {
     }
 
     /// Go's private `acquire`: charge the limiter, then take a block.
-    fn acquire_block(&self) -> Vec<u8> {
+    fn acquire_block(&self) -> Block {
         if let Some(limiter) = &self.limiter {
             limiter.acquire(self.block_size);
         }
@@ -289,11 +351,11 @@ impl Pool {
     }
 
     /// Go's private `takeBlock`: reuse a cached block, else allocate.
-    fn take_block(&self) -> Vec<u8> {
+    fn take_block(&self) -> Block {
         {
             let mut state = self.cache();
             if state.closed {
-                return Vec::new();
+                return Block::from_vec(Vec::new());
             }
             if let Some(block) = state.blocks.pop_front() {
                 return block;
@@ -307,7 +369,7 @@ impl Pool {
 
     /// Go's private `release`: cache the block if there is room, else free it,
     /// then return its quota.
-    fn release_block(&self, block: Vec<u8>) {
+    fn release_block(&self, block: Block) {
         {
             let mut state = self.cache();
             assert!(!state.closed, "send on closed membuf block cache");
@@ -328,7 +390,7 @@ impl Pool {
 
     /// Go `Destroy`: frees every cached block.
     pub fn destroy(&self) {
-        let blocks: Vec<Vec<u8>> = {
+        let blocks: Vec<Block> = {
             let mut state = self.cache();
             assert!(!state.closed, "close of closed membuf block cache");
             state.closed = true;
@@ -373,11 +435,11 @@ pub struct SliceLocation {
 #[derive(Clone)]
 enum BytesStorage {
     Pooled {
-        block: Arc<RwLock<Vec<u8>>>,
+        block: Arc<RwLock<Block>>,
         offset: usize,
         length: usize,
     },
-    Standalone(Arc<RwLock<Vec<u8>>>),
+    Standalone(Arc<RwLock<Block>>),
 }
 
 /// Native slice header for the `[]byte` values returned by Go.
@@ -390,7 +452,7 @@ pub struct Bytes {
 }
 
 impl Bytes {
-    fn pooled(block: Arc<RwLock<Vec<u8>>>, offset: usize, length: usize) -> Self {
+    fn pooled(block: Arc<RwLock<Block>>, offset: usize, length: usize) -> Self {
         Self {
             storage: BytesStorage::Pooled {
                 block,
@@ -402,7 +464,10 @@ impl Bytes {
 
     fn standalone(length: usize) -> Self {
         Self {
-            storage: BytesStorage::Standalone(Arc::new(RwLock::new(vec![0; length]))),
+            storage: BytesStorage::Standalone(Arc::new(RwLock::new(Block::from_vec(vec![
+                0;
+                length
+            ])))),
         }
     }
 
@@ -477,7 +542,7 @@ impl Bytes {
 
 /// Read guard for a native Go-style byte slice.
 pub struct BytesRef<'a> {
-    guard: std::sync::RwLockReadGuard<'a, Vec<u8>>,
+    guard: std::sync::RwLockReadGuard<'a, Block>,
     range: Range<usize>,
 }
 
@@ -491,7 +556,7 @@ impl Deref for BytesRef<'_> {
 
 /// Write guard for a native Go-style byte slice.
 pub struct BytesMut<'a> {
-    guard: std::sync::RwLockWriteGuard<'a, Vec<u8>>,
+    guard: std::sync::RwLockWriteGuard<'a, Block>,
     range: Range<usize>,
 }
 
@@ -512,7 +577,7 @@ impl DerefMut for BytesMut<'_> {
 /// Go `Buffer`: an arena that draws fixed-size blocks from a [`Pool`].
 pub struct Buffer {
     pool: Arc<Pool>,
-    blocks: Vec<Arc<RwLock<Vec<u8>>>>,
+    blocks: Vec<Arc<RwLock<Block>>>,
     block_cnt_limit: isize,
     cur_block_idx: isize,
     cur_idx: isize,
@@ -601,7 +666,7 @@ impl Buffer {
         }
         for block in std::mem::take(&mut self.blocks) {
             let block = Arc::try_unwrap(block)
-                .expect("membuf aliases must be released before Destroy")
+                .unwrap_or_else(|_| panic!("membuf aliases must be released before Destroy"))
                 .into_inner()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             self.pool.release_block(block);
@@ -621,7 +686,7 @@ impl Buffer {
         false
     }
 
-    fn append_block(&mut self, block: Vec<u8>) {
+    fn append_block(&mut self, block: Block) {
         self.blocks.push(Arc::new(RwLock::new(block)));
         self.cur_block_idx = self.blocks.len() as isize - 1;
         self.cur_idx = 0;
@@ -812,12 +877,15 @@ mod tests {
     }
 
     impl Allocator for TestAllocator {
-        fn alloc(&self, n: isize) -> Vec<u8> {
+        fn alloc(&self, n: isize) -> Block {
             self.allocs.fetch_add(1, Ordering::SeqCst);
-            vec![0; usize::try_from(n).expect("negative allocation size")]
+            Block::from_vec(vec![
+                0;
+                usize::try_from(n).expect("negative allocation size")
+            ])
         }
 
-        fn free(&self, _block: Vec<u8>) {
+        fn free(&self, _block: Block) {
             self.frees.fetch_add(1, Ordering::SeqCst);
         }
     }

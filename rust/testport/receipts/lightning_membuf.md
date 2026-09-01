@@ -37,6 +37,14 @@ boundaries. The limiter preserves FIFO admission, prevents `TryAcquire` from
 jumping queued waiters, wakes every fitting prefix, and logs overflow with a
 stack trace.
 
+The allocator boundary now returns a native `Block` byte owner instead of a
+bare automatically dropped vector. Standard and custom blocks retain normal
+release-on-drop behavior, while the complete `pkg/lightning/manual`
+transcreation selects explicit-release-only storage. Pooling, aliasing,
+allocation contents, cache order, allocator calls, and every public membuf
+result are unchanged; the block owner exists solely to preserve the allocator
+lifetime policy carried by Go's `[]byte`.
+
 Go's returned `[]byte` is represented by `Bytes`, a cloneable native slice
 header over shared block storage. Its read/write guards preserve aliasing,
 full-slice capacity isolation, and multiple immutable readers without the old
@@ -99,8 +107,9 @@ vendored TiKV-client `private_bounds` warning.
 - Correctness: all five artifacts, seven tests, and nine benchmark identities
   are mapped; both pinned Go and Rust functional suites pass.
 - Compatibility: the old location-only Rust return API is intentionally
-  removed in favor of the source byte-slice behavior; there were no production
-  consumers to migrate.
+  removed in favor of the source byte-slice behavior. Custom native allocator
+  implementations wrap their returned storage in `Block`; there were no
+  production consumers to migrate.
 - Performance: allocation and accounting shapes match the source. Native
   `RwLock` guards provide safe shared slice access, and the multi-gigabyte
   benchmark workloads were compile-checked rather than run locally.
