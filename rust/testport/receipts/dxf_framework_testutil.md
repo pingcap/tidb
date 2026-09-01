@@ -40,10 +40,15 @@ context. No Rust-only test utility behavior or ignored test was found to
 remove. A disconnected Rust helper facade would be speculative, so this
 complete support package remains an explicit Go-only boundary.
 
-## Validation and risk
+## Go-master alignment and validation
 
-Profile: **Ready** for this documentation-only boundary audit. The exact
-Go-master package compile probe passed with no package-local test files:
+The test utility now uses the Go-master `Cleaner` registration contract and
+canonical `TaskIDToKey` conversion for every task/subtask SQL inspection and
+mutation helper. This keeps integration tests aligned with VARCHAR task keys
+and the scheduler cleanup API.
+
+Profile: **Ready** for this support-package alignment. The exact Go-master
+package compile probe passed with no package-local test files:
 
 ```text
 PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
@@ -52,12 +57,13 @@ go test ./pkg/dxf/framework/testutil -count=1 -run '^$'
 # ? github.com/pingcap/tidb/pkg/dxf/framework/testutil [no test files]
 ```
 
-Ready repository gates for this receipt batch are
+Ready repository gates for this batch are
 `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check`,
-`make lint`, and `git diff --check`. No Go source, import section, test,
-Bazel target, or module dependency changed, so `make bazel_prepare` is not
-required. Rust tests and a full workspace build are not run because no Rust
-source or owning target changed.
+`make lint`, and `git diff --check`. Go source changed but no Bazel target or
+module dependency changed; `make bazel_prepare` is still required by the
+repository gate policy and is blocked locally because `bazel` is unavailable.
+Rust tests and a full workspace build are not run because no Rust source or
+owning target changed.
 
 The remaining risk is helper drift: changes to DXF scheduler/task-table
 interfaces, failpoint names, SQL schemas, or keyspace behavior require

@@ -20,9 +20,11 @@ owners without inventing a disconnected utility API.
   multi-node lifecycle/owner election, GoMock expectation setup, SQL-backed
   task/subtask helpers, keyspace selection, and failpoint cleanup. Search Rust
   `tidb-dxf` owners and confirm no dependency-closed equivalent exists.
-- [x] (2026-09-02) Run the exact Go-master compile probe and Ready
-  documentation gates; capture the no-test result and explicit Go-only support
-  boundary in the receipt.
+- [x] (2026-09-02) Align cleaner registration and all task/subtask SQL helper
+  arguments with Go master’s `Cleaner` and `TaskIDToKey` contracts.
+- [x] (2026-09-02) Run the exact Go-master compile probe and Ready repository
+  gates; capture the support-package alignment and Bazel prerequisite
+  limitation in the receipt.
 - [ ] Publish this receipt batch to `origin/hparser-integration`, verify the
   remote SHA, pull the branch's latest state, and continue the rolling package
   audit.
@@ -47,8 +49,9 @@ GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 make lint
 git diff --check
 ```
 
-No Go/Bazel/module or Rust source changed, so neither `make bazel_prepare` nor
-a Rust test target is required for this receipt-only boundary batch.
+Go support source changed, so `make bazel_prepare` is required by repository
+policy; the local command is blocked because `bazel` is unavailable. No Rust
+source or owning target changed, so a Rust test target is not required.
 
 ## Outcome
 

@@ -43,10 +43,16 @@ GoMock controller/recorder contract. No Rust-only mock behavior or ignored test
 was found to remove. Adding disconnected Rust mocks would be speculative, so
 this complete generated-support package remains an explicit Go-only boundary.
 
-## Validation and risk
+## Go-master alignment and validation
 
-Profile: **Ready** for this documentation-only boundary audit. The complete
-Go-master package compile probe passed with no test files:
+The generated scheduler mock now exposes the Go-master `Cleaner` and
+`GetCleanupTasks` methods while dropping the stale `GetTasksInStates` seam;
+the task-table mock likewise follows the parent taskexecutor contract. These
+outputs were regenerated from the pinned Go-master interfaces and are consumed
+by the scheduler cleanup regressions.
+
+Profile: **Ready** for this generated-support batch. The complete package
+compile probe passed with no test files:
 
 ```text
 PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
@@ -55,12 +61,12 @@ go test ./pkg/dxf/framework/mock -count=1 -run '^$'
 # ? github.com/pingcap/tidb/pkg/dxf/framework/mock [no test files]
 ```
 
-Ready repository gates for this receipt batch are
+Ready repository gates for this batch are
 `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check`,
-`make lint`, and `git diff --check`. No Go source, import section, test,
-Bazel target, or module dependency changed, so `make bazel_prepare` is not
-required. Rust tests and a full workspace build are not run because no Rust
-source or owning target changed.
+`make lint`, and `git diff --check`. `make bazel_prepare` is required because
+the generated Go interfaces changed; the local gate is blocked by the
+unavailable `bazel` executable. Rust tests and a full workspace build are not
+run because no Rust source or owning target changed.
 
 The remaining risk is generated-code drift: any future interface change in the
 nine source contracts must regenerate the corresponding MockGen output.

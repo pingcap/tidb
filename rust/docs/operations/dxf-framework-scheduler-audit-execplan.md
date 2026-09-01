@@ -22,9 +22,13 @@ Rust owners without fabricating a disconnected scheduler runtime.
   transitions, BaseScheduler, Manager loops, SQL/task contracts, failpoints,
   and cross-keyspace runtime tests. Search Rust `tidb-dxf`/domain owners and
   confirm no dependency-closed scheduler implementation exists.
-- [x] (2026-09-02) Run the failpoint-aware complete Go-master suite and Ready
-  documentation gates; record the pass and explicit Go-only boundary in the
-  receipt.
+- [x] (2026-09-02) Align bounded cleanup selection, cleaner capability
+  grouping, history-transfer progress, startup draining, and data-error
+  metrics with Go master; retain explicit legacy cleanup adapters for
+  unmigrated DDL/import-into callers.
+- [x] (2026-09-02) Run the failpoint-aware complete package suite and Ready
+  repository gates; record the pass, focused regression coverage, and Bazel
+  prerequisite limitation in the receipt.
 - [ ] Publish this receipt batch to `origin/hparser-integration`, verify the
   remote SHA, pull the branch's latest state, and continue the rolling package
   audit.
@@ -49,8 +53,9 @@ GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 make lint
 git diff --check
 ```
 
-No Go/Bazel/module or Rust source changed, so neither `make bazel_prepare` nor
-a Rust test target is required for this receipt-only boundary batch.
+Go/Bazel source changed, so `make bazel_prepare` is required; the local gate is
+blocked because `bazel` is unavailable. No Rust source or owning target
+changed, so a Rust test target is not required.
 
 ## Outcome
 

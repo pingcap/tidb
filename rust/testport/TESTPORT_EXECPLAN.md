@@ -401,6 +401,13 @@ For each bounded behavior cluster:
   `receipts/dxf_framework_scheduler.md` and
   `rust/docs/operations/dxf-framework-scheduler-audit-execplan.md`.
 
+- 2026-09-02: aligned the scheduler package with Go master’s bounded cleanup
+  contract: `GetCleanupTasks`, `Cleaner`/`BatchCleaner`, startup draining,
+  cleanup-progress accounting, and data-error metric classification. Added
+  focused cleanup-batch/error-path regressions; legacy cleanup names remain
+  explicit adapters for packages not yet migrated. Updated the scheduler
+  receipt and ExecPlan with the failpoint-aware package pass.
+
 - 2026-09-02: audited the complete generated Go-master nested
   `pkg/dxf/framework/scheduler/mock` package: exactly two tracked artifacts
   and 173 lines (`BUILD.bazel` plus the MockGen `scheduler_mock.go`), with 19
@@ -412,6 +419,10 @@ For each bounded behavior cluster:
   support boundary remains explicit. Recorded the receipt in
   `receipts/dxf_framework_scheduler_mock.md` and
   `rust/docs/operations/dxf-framework-scheduler-mock-audit-execplan.md`.
+
+- 2026-09-02: regenerated the direct DXF GoMock outputs for the scheduler
+  `Cleaner`/`GetCleanupTasks` contract and removed stale task-table methods;
+  the generated-mock receipt now records this implementation alignment.
 
 - 2026-09-02: aligned the complete Go-master `pkg/dxf/framework/proto`
   package: 11 tracked artifacts and 1,283 lines, with the owner-local DXF
@@ -431,6 +442,10 @@ For each bounded behavior cluster:
   exposing Go master’s `GetCleanupTasks`. Recorded the boundary in
   `receipts/dxf_framework_storage.md` and
   `rust/docs/operations/dxf-framework-storage-audit-execplan.md`.
+
+- 2026-09-02: aligned DXF test utilities with the canonical Go-master cleaner
+  API and VARCHAR task-key conversion in all SQL inspection helpers; focused
+  scheduler/integration consumers now use the updated generated mock seam.
 
 - 2026-09-02: updated the complete five-artifact Go-master
   `pkg/server/handler/tests` consumer inventory (3,630 lines) for the DXF

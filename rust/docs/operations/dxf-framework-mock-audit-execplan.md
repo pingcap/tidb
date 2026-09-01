@@ -21,8 +21,12 @@ contracts with Rust owners without fabricating disconnected mock APIs.
 - [x] (2026-09-02) Trace all 195 generated functions and their source
   interfaces, then search Rust's `tidb-dxf` and test-mock owners for a
   dependency-closed equivalent.
-- [x] (2026-09-02) Run the package compile probe and Ready documentation gates;
-  capture the no-test result and generated-source boundary in the receipt.
+- [x] (2026-09-02) Regenerate the scheduler/task-table mocks for Go master’s
+  `Cleaner`/`GetCleanupTasks` contracts and remove stale methods; the package
+  compile probe passes with no test files.
+- [x] (2026-09-02) Run the package compile probe and Ready repository gates;
+  capture the generated-source alignment and Bazel prerequisite limitation in
+  the receipt.
 - [ ] Publish this receipt batch to `origin/hparser-integration`, verify the
   remote SHA, pull the branch's latest state, and continue the rolling package
   audit.
@@ -48,8 +52,9 @@ GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 make lint
 git diff --check
 ```
 
-No Go/Bazel/module or Rust source changed, so neither `make bazel_prepare` nor
-a Rust test target is required for this receipt-only boundary batch.
+The generated Go interfaces changed, so `make bazel_prepare` is required; the
+local command is blocked because `bazel` is unavailable. No Rust source or
+owning target changed, so a Rust test target is not required.
 
 ## Outcome
 

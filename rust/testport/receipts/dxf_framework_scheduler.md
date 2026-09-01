@@ -60,26 +60,37 @@ would be speculative, so this complete Go scheduler package remains an
 explicit Go-only boundary; the nested generated mock package is audited
 separately.
 
-## Validation and risk
+## Go-master alignment and validation
 
-Profile: **Ready** for this documentation-only boundary audit. Because the
-package contains failpoints and integration harnesses, the prescribed wrapper
-enabled and disabled Go failpoints around the complete suite in the pinned
-detached Go-master worktree:
+The branch now carries the Go-master scheduler behavior for bounded cleanup:
+`GetCleanupTasks` drives a startup-and-ticker drain loop; single and batched
+cleaners are grouped by task type; history transfer progress stops draining on
+partial cleanup or transfer failure; and reverted-task metrics classify
+cancelled and data-conversion/conflict errors. Focused cleanup-batch,
+cleaner-capability, transfer-failure, startup-drain, and data-error regressions
+were ported from Go master. The direct package retains deprecated
+`CleanUpRoutine`/`RegisterSchedulerCleanUpFactory`/`IsCancelledErr` adapters so
+older DDL/import-into consumers continue to compile while they migrate.
+
+Profile: **Ready** for this code/test batch. Because the package contains
+failpoints and integration harnesses, the prescribed wrapper enabled and
+disabled Go failpoints around the complete suite:
 
 ```text
 PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
 GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
 ./tools/check/failpoint-go-test.sh ./pkg/dxf/framework/scheduler -count=1
 # PASS
-# ok github.com/pingcap/tidb/pkg/dxf/framework/scheduler 21.214s
+# PASS
+# ok github.com/pingcap/tidb/pkg/dxf/framework/scheduler 19.204s
 ```
 
-Ready repository gates for this receipt batch are
+The baseline pre-change cleanup/metric tests passed before applying the delta.
+Ready repository gates for this batch are
 `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check`,
-`make lint`, and `git diff --check`. No Go source, import section, test,
-Bazel target, or module dependency changed, so `make bazel_prepare` is not
-required. Rust tests and a full workspace build are not run because no Rust
+`make lint`, and `git diff --check`. `make bazel_prepare` is required because
+Go/Bazel files changed; the local gate is blocked by the unavailable `bazel`
+executable. Rust tests and a full workspace build are not run because no Rust
 source or owning target changed.
 
 The remaining risk is distributed-runtime compatibility: task state transitions,
