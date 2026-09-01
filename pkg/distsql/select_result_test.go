@@ -32,7 +32,21 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/util"
 )
+
+type closeOrderingResponse struct {
+	*mockResponse
+	stats               []*copr.CopRuntimeStats
+	collectedAfterClose bool
+}
+
+func (r *closeOrderingResponse) CollectUnconsumedCopRuntimeStats() []*copr.CopRuntimeStats {
+	r.Lock()
+	r.collectedAfterClose = r.closed
+	r.Unlock()
+	return r.stats
+}
 
 func TestUpdateCopRuntimeStats(t *testing.T) {
 	ctx := mock.NewContext()
@@ -72,6 +86,96 @@ func TestUpdateCopRuntimeStats(t *testing.T) {
 	sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{CopExecDetails: execdetails.CopExecDetails{CalleeAddress: "callee", BackoffSleep: backOffSleep}}, 0, false)
 	require.Equal(t, "tikv_task:{time:1ns, loops:1}", ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopStats(1234).String())
 	require.Equal(t, sr.stats.backoffSleep["RegionMiss"], time.Duration(500))
+	snapshot := ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopRowsSnapshot(1234)
+	require.True(t, snapshot.Complete())
+	require.Equal(t, int64(1), snapshot.Rows)
+	update := func(tb testing.TB, scan *util.ScanDetail, unconsumed bool) {
+		require.NoError(tb, sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{
+			CopExecDetails: execdetails.CopExecDetails{CalleeAddress: "callee", ScanDetail: scan},
+		}, 0, unconsumed))
+	}
+
+	t.Run("multiple responses and stale close-time summaries", func(t *testing.T) {
+		two := uint64(2)
+		sr.selectResp = &tipb.SelectResponse{ExecutionSummaries: []*tipb.ExecutorExecutionSummary{
+			{TimeProcessedNs: &i, NumProducedRows: &two, NumIterations: &i},
+		}}
+		update(t, &util.ScanDetail{ProcessedKeysSize: 2}, false)
+		snapshot = ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopRowsSnapshot(1234)
+		require.True(t, snapshot.Complete())
+		require.Equal(t, int64(3), snapshot.Rows)
+		require.Equal(t, uint64(2), snapshot.ObservedSummaries)
+
+		// A consumed response with no summary remains marked as incomplete while
+		// rows from the two valid responses stay usable.
+		sr.selectResp = &tipb.SelectResponse{}
+		update(t, &util.ScanDetail{ProcessedKeysSize: 3}, false)
+		snapshot = ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopRowsSnapshot(1234)
+		require.False(t, snapshot.Complete())
+		require.True(t, snapshot.Observed())
+		require.Equal(t, int64(3), snapshot.Rows)
+		require.Equal(t, uint64(2), snapshot.ObservedSummaries)
+		require.Equal(t, uint64(3), snapshot.ExpectedSummaries)
+		scan, ok := ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopScanDetail(1234)
+		require.True(t, ok)
+		require.Equal(t, int64(5), scan.ProcessedKeysSize)
+
+		// Close-time unconsumed stats have no new SelectResponse. They must neither
+		// add an expectation nor replay the two-row summary still in selectResp.
+		sr.selectResp = &tipb.SelectResponse{ExecutionSummaries: []*tipb.ExecutorExecutionSummary{
+			{TimeProcessedNs: &i, NumProducedRows: &two, NumIterations: &i},
+		}}
+		update(t, nil, true)
+		require.Equal(t, snapshot,
+			ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopRowsSnapshot(1234))
+	})
+
+	t.Run("malformed response invalidates the complete summary vector", func(t *testing.T) {
+		sr.copPlanIDs = []int{sr.rootPlanID, sr.rootPlanID + 1}
+		two := uint64(2)
+		sr.selectResp = &tipb.SelectResponse{ExecutionSummaries: []*tipb.ExecutorExecutionSummary{
+			{TimeProcessedNs: &i, NumProducedRows: &i, NumIterations: &i},
+			{TimeProcessedNs: &i, NumProducedRows: &two, NumIterations: &i},
+		}}
+		update(t, nil, false)
+		// A non-empty, truncated vector is contradictory rather than a missing
+		// response. It poisons every plan slot even after an earlier valid response.
+		sr.selectResp.ExecutionSummaries = sr.selectResp.ExecutionSummaries[:1]
+		update(t, nil, false)
+		for _, planID := range sr.copPlanIDs {
+			snapshot := ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopRowsSnapshot(planID)
+			require.True(t, snapshot.Invalid)
+			require.False(t, snapshot.Observed())
+		}
+	})
+}
+
+func TestCloseCollectsUnconsumedStatsAfterResponseClose(t *testing.T) {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().StmtCtx = stmtctx.NewStmtCtx()
+	ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
+	resp := &closeOrderingResponse{
+		mockResponse: &mockResponse{},
+		stats: []*copr.CopRuntimeStats{{
+			CopExecDetails: execdetails.CopExecDetails{CalleeAddress: "callee"},
+		}},
+	}
+	sr := &selectResult{
+		resp:       resp,
+		ctx:        ctx.GetDistSQLCtx(),
+		rootPlanID: 1234,
+		copPlanIDs: []int{1234},
+		storeType:  kv.TiKV,
+	}
+
+	require.NoError(t, sr.close())
+	require.True(t, resp.collectedAfterClose)
+	require.NotNil(t, sr.stats)
+	require.True(t, ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.ExistsRootStats(1234))
+	snapshot := ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopRowsSnapshot(1234)
+	require.Equal(t, uint64(0), snapshot.ExpectedSummaries)
+	require.Equal(t, uint64(0), snapshot.ObservedSummaries)
+	require.False(t, snapshot.Complete())
 }
 
 func TestNewSelRespChannelIter(t *testing.T) {

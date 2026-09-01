@@ -343,6 +343,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	after                      "AFTER"
 	against                    "AGAINST"
 	ago                        "AGO"
+	alert                      "ALERT"
 	algorithm                  "ALGORITHM"
 	always                     "ALWAYS"
 	any                        "ANY"
@@ -461,6 +462,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	explore                    "EXPLORE"
 	extended                   "EXTENDED"
 	failedLoginAttempts        "FAILED_LOGIN_ATTEMPTS"
+	fast                       "FAST"
 	faultsSym                  "FAULTS"
 	fields                     "FIELDS"
 	file                       "FILE"
@@ -486,6 +488,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	identified                 "IDENTIFIED"
 	ietfQuotes                 "IETF_QUOTES"
 	ignoreStats                "IGNORE_STATS"
+	immediate                  "IMMEDIATE"
 	importKwd                  "IMPORT"
 	imports                    "IMPORTS"
 	increment                  "INCREMENT"
@@ -516,6 +519,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	logs                       "LOGS"
 	masking                    "MASKING"
 	master                     "MASTER"
+	materialized               "MATERIALIZED"
 	maxConnectionsPerHour      "MAX_CONNECTIONS_PER_HOUR"
 	max_idxnum                 "MAX_IDXNUM"
 	max_minutes                "MAX_MINUTES"
@@ -1040,6 +1044,12 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	CommitStmt                 "COMMIT statement"
 	CreateTableStmt            "CREATE TABLE statement"
 	CreateViewStmt             "CREATE VIEW  statement"
+	CreateMaterializedViewStmt "CREATE MATERIALIZED VIEW statement"
+	CreateMaterializedViewLogStmt "CREATE MATERIALIZED VIEW LOG statement"
+	AlterMaterializedViewStmt  "ALTER MATERIALIZED VIEW statement"
+	AlterMaterializedViewLogStmt "ALTER MATERIALIZED VIEW LOG statement"
+	DropMaterializedViewStmt   "DROP MATERIALIZED VIEW statement"
+	DropMaterializedViewLogStmt "DROP MATERIALIZED VIEW LOG statement"
 	CreateUserStmt             "CREATE User statement"
 	CreateRoleStmt             "CREATE Role statement"
 	CreateDatabaseStmt         "Create Database Statement"
@@ -1498,6 +1508,27 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	ViewDefiner                            "view definer"
 	ViewName                               "view name"
 	ViewFieldList                          "create view statement field list"
+	MViewTableOptionListOpt                "materialized view table options"
+	MViewTableOptionList                   "materialized view table option list"
+	MViewTableOption                       "materialized view table option"
+	MViewRefreshClause                     "materialized view refresh clause"
+	MViewStartWithOrNextOpt                "materialized view START WITH/NEXT option list"
+	MViewStartWithOrNext                   "materialized view START WITH/NEXT option"
+	MViewRefreshClauseOpt                  "optional materialized view refresh clause"
+	MViewAttributesOpt                     "optional materialized view attributes"
+	MLogCreateOptionListOpt                "materialized view log create options"
+	MLogCreateOptionList                   "materialized view log create option list"
+	MLogCreateOption                       "materialized view log create option"
+	MLogPurgeClauseOpt                     "materialized view log optional PURGE clause"
+	MLogPurgeClause                        "materialized view log PURGE clause"
+	AlterMLogPurgeClause                   "ALTER materialized view log PURGE clause"
+	MLogAccumulationAlertClauseOpt         "materialized view log optional ALERT ROWS clause"
+	MLogAccumulationAlertClause            "materialized view log ALERT ROWS clause"
+	MLogStartWithOpt                       "materialized view log START WITH option"
+	AlterMaterializedViewAction            "ALTER MATERIALIZED VIEW action"
+	AlterMaterializedViewActionList        "ALTER MATERIALIZED VIEW action list"
+	AlterMaterializedViewLogAction         "ALTER MATERIALIZED VIEW LOG action"
+	AlterMaterializedViewLogActionList     "ALTER MATERIALIZED VIEW LOG action list"
 	ViewSQLSecurity                        "view sql security"
 	WhereClause                            "WHERE clause"
 	WhereClauseOptional                    "Optional WHERE clause"
@@ -5593,6 +5624,335 @@ ViewCheckOption:
 		$$ = ast.CheckOptionLocal
 	}
 
+/*******************************************************************
+ *
+ *  Materialized View Statements
+ *
+ *******************************************************************/
+CreateMaterializedViewStmt:
+	"CREATE" "MATERIALIZED" "VIEW" TableName '(' ColumnList ')' MViewTableOptionListOpt MViewRefreshClauseOpt MViewAttributesOpt "AS" CreateViewSelectOpt
+	{
+		opts := $8.(*mviewCreateOptions)
+		$$ = &ast.CreateMaterializedViewStmt{
+			ViewName:   $4.(*ast.TableName),
+			Cols:       $6.([]ast.CIStr),
+			Comment:    opts.comment,
+			Refresh:    $9.(*ast.MViewRefreshClause),
+			Attributes: $10.(string),
+			Options:    opts.options,
+			Select:     $12.(ast.StmtNode).(ast.ResultSetNode),
+		}
+	}
+
+MViewTableOptionListOpt:
+	/* EMPTY */
+	{
+		$$ = &mviewCreateOptions{}
+	}
+|	MViewTableOptionList
+	{
+		$$ = $1
+	}
+
+MViewTableOptionList:
+	MViewTableOption
+	{
+		$$ = $1
+	}
+|	MViewTableOptionList MViewTableOption
+	{
+		opts := $1.(*mviewCreateOptions)
+		opt := $2.(*mviewCreateOptions)
+		if opt.hasComment {
+			if opts.hasComment {
+				yylex.AppendError(yylex.Errorf("Duplicate COMMENT specified in CREATE MATERIALIZED VIEW"))
+			}
+			opts.hasComment, opts.comment = true, opt.comment
+		}
+		if opt.hasShardRowIDBits {
+			if opts.hasShardRowIDBits {
+				yylex.AppendError(yylex.Errorf("Duplicate SHARD_ROW_ID_BITS specified in CREATE MATERIALIZED VIEW"))
+			}
+			opts.hasShardRowIDBits = true
+		}
+		if opt.hasPreSplitRegion {
+			if opts.hasPreSplitRegion {
+				yylex.AppendError(yylex.Errorf("Duplicate PRE_SPLIT_REGIONS specified in CREATE MATERIALIZED VIEW"))
+			}
+			opts.hasPreSplitRegion = true
+		}
+		opts.options = append(opts.options, opt.options...)
+		$$ = opts
+	}
+
+MViewTableOption:
+	"COMMENT" EqOpt stringLit
+	{
+		$$ = &mviewCreateOptions{hasComment: true, comment: $3}
+	}
+|	"SHARD_ROW_ID_BITS" EqOpt LengthNum
+	{
+		$$ = &mviewCreateOptions{
+			hasShardRowIDBits: true,
+			options: []*ast.TableOption{{Tp: ast.TableOptionShardRowID, UintValue: $3.(uint64)}},
+		}
+	}
+|	"PRE_SPLIT_REGIONS" EqOpt LengthNum
+	{
+		$$ = &mviewCreateOptions{
+			hasPreSplitRegion: true,
+			options: []*ast.TableOption{{Tp: ast.TableOptionPreSplitRegion, UintValue: $3.(uint64)}},
+		}
+	}
+
+MViewRefreshClauseOpt:
+	/* EMPTY */
+	{
+		$$ = (*ast.MViewRefreshClause)(nil)
+	}
+|	MViewRefreshClause
+	{
+		$$ = $1
+	}
+
+MViewAttributesOpt:
+	/* EMPTY */
+	{
+		$$ = ""
+	}
+|	"ATTRIBUTES" EqOpt stringLit
+	{
+		$$ = $3
+	}
+
+MViewRefreshClause:
+	"REFRESH" "FAST" MViewStartWithOrNextOpt
+	{
+		x := &ast.MViewRefreshClause{}
+		if $3 != nil {
+			x = $3.(*ast.MViewRefreshClause)
+		}
+		x.Method = ast.MViewRefreshMethodFast
+		$$ = x
+	}
+
+MViewStartWithOrNextOpt:
+	/* EMPTY */
+	{
+		// NOTE: don't use typed-nil here, otherwise `$2 != nil` checks may be wrong (Go interface nil gotcha).
+		$$ = nil
+	}
+|	MViewStartWithOrNext
+	{
+		$$ = $1
+	}
+
+MViewStartWithOrNext:
+	"START" "WITH" Expression "NEXT" Expression
+	{
+		$$ = &ast.MViewRefreshClause{StartWith: $3.(ast.ExprNode), Next: $5.(ast.ExprNode)}
+	}
+|	"NEXT" Expression
+	{
+		$$ = &ast.MViewRefreshClause{Next: $2.(ast.ExprNode)}
+	}
+
+CreateMaterializedViewLogStmt:
+	"CREATE" "MATERIALIZED" "VIEW" "LOG" "ON" TableName '(' ColumnList ')' MLogCreateOptionListOpt MLogPurgeClauseOpt MLogAccumulationAlertClauseOpt
+	{
+		opts := $10.(*mlogCreateOptions)
+		$$ = &ast.CreateMaterializedViewLogStmt{
+			Table:             $6.(*ast.TableName),
+			Cols:              $8.([]ast.CIStr),
+			Options:           opts.options,
+			Purge:             $11.(*ast.MLogPurgeClause),
+			AccumulationAlert: $12.(*ast.MLogAccumulationAlertClause),
+		}
+	}
+
+MLogCreateOptionListOpt:
+	/* EMPTY */
+	{
+		$$ = &mlogCreateOptions{}
+	}
+|	MLogCreateOptionList
+	{
+		$$ = $1
+	}
+
+MLogCreateOptionList:
+	MLogCreateOption
+	{
+		$$ = $1
+	}
+|	MLogCreateOptionList MLogCreateOption
+	{
+		opts := $1.(*mlogCreateOptions)
+		opt := $2.(*mlogCreateOptions)
+		if opt.hasShardRowIDBits {
+			if opts.hasShardRowIDBits {
+				yylex.AppendError(yylex.Errorf("Duplicate SHARD_ROW_ID_BITS specified in CREATE MATERIALIZED VIEW LOG"))
+			}
+			opts.hasShardRowIDBits = true
+		}
+		if opt.hasPreSplitRegion {
+			if opts.hasPreSplitRegion {
+				yylex.AppendError(yylex.Errorf("Duplicate PRE_SPLIT_REGIONS specified in CREATE MATERIALIZED VIEW LOG"))
+			}
+			opts.hasPreSplitRegion = true
+		}
+		opts.options = append(opts.options, opt.options...)
+		$$ = opts
+	}
+
+MLogCreateOption:
+	"SHARD_ROW_ID_BITS" EqOpt LengthNum
+	{
+		$$ = &mlogCreateOptions{hasShardRowIDBits: true, options: []*ast.TableOption{{Tp: ast.TableOptionShardRowID, UintValue: $3.(uint64)}}}
+	}
+|	"PRE_SPLIT_REGIONS" EqOpt LengthNum
+	{
+		$$ = &mlogCreateOptions{hasPreSplitRegion: true, options: []*ast.TableOption{{Tp: ast.TableOptionPreSplitRegion, UintValue: $3.(uint64)}}}
+	}
+
+MLogPurgeClauseOpt:
+	/* EMPTY */
+	{
+		$$ = (*ast.MLogPurgeClause)(nil)
+	}
+|	MLogPurgeClause
+	{
+		$$ = $1
+	}
+
+MLogPurgeClause:
+	"PURGE" "IMMEDIATE"
+	{
+		$$ = &ast.MLogPurgeClause{Immediate: true}
+	}
+|	"PURGE" MLogStartWithOpt "NEXT" Expression
+	{
+		var startWith ast.ExprNode
+		if $2 != nil {
+			startWith = $2.(ast.ExprNode)
+		}
+		$$ = &ast.MLogPurgeClause{Immediate: false, StartWith: startWith, Next: $4}
+	}
+
+MLogStartWithOpt:
+	/* EMPTY */
+	{
+		$$ = nil
+	}
+|	"START" "WITH" Expression
+	{
+		$$ = $3
+	}
+
+MLogAccumulationAlertClauseOpt:
+	/* EMPTY */
+	{
+		$$ = (*ast.MLogAccumulationAlertClause)(nil)
+	}
+|	MLogAccumulationAlertClause
+	{
+		$$ = $1
+	}
+
+MLogAccumulationAlertClause:
+	"ALERT" "ROWS" SignedNum
+	{
+		$$ = &ast.MLogAccumulationAlertClause{Rows: $3.(int64)}
+	}
+
+AlterMaterializedViewStmt:
+	"ALTER" "MATERIALIZED" "VIEW" TableName AlterMaterializedViewActionList
+	{
+		$$ = &ast.AlterMaterializedViewStmt{ViewName: $4.(*ast.TableName), Actions: $5.([]*ast.AlterMaterializedViewAction)}
+	}
+
+AlterMaterializedViewActionList:
+	AlterMaterializedViewAction
+	{
+		$$ = []*ast.AlterMaterializedViewAction{$1.(*ast.AlterMaterializedViewAction)}
+	}
+|	AlterMaterializedViewActionList ',' AlterMaterializedViewAction
+	{
+		$$ = append($1.([]*ast.AlterMaterializedViewAction), $3.(*ast.AlterMaterializedViewAction))
+	}
+
+AlterMaterializedViewAction:
+	"COMMENT" EqOpt stringLit
+	{
+		$$ = &ast.AlterMaterializedViewAction{Tp: ast.AlterMaterializedViewActionComment, Comment: $3}
+	}
+|	"REFRESH" MViewStartWithOrNextOpt
+	{
+		refresh := &ast.MViewRefreshClause{Method: ast.MViewRefreshMethodFast}
+		if $2 != nil {
+			schedule := $2.(*ast.MViewRefreshClause)
+			refresh.StartWith = schedule.StartWith
+			refresh.Next = schedule.Next
+		}
+		$$ = &ast.AlterMaterializedViewAction{Tp: ast.AlterMaterializedViewActionRefresh, Refresh: refresh}
+	}
+|	"ATTRIBUTES" EqOpt stringLit
+	{
+		$$ = &ast.AlterMaterializedViewAction{Tp: ast.AlterMaterializedViewActionAttributes, Attributes: $3}
+	}
+
+AlterMaterializedViewLogStmt:
+	"ALTER" "MATERIALIZED" "VIEW" "LOG" "ON" TableName AlterMaterializedViewLogActionList
+	{
+		$$ = &ast.AlterMaterializedViewLogStmt{Table: $6.(*ast.TableName), Actions: $7.([]*ast.AlterMaterializedViewLogAction)}
+	}
+
+AlterMaterializedViewLogActionList:
+	AlterMaterializedViewLogAction
+	{
+		$$ = []*ast.AlterMaterializedViewLogAction{$1.(*ast.AlterMaterializedViewLogAction)}
+	}
+|	AlterMaterializedViewLogActionList ',' AlterMaterializedViewLogAction
+	{
+		$$ = append($1.([]*ast.AlterMaterializedViewLogAction), $3.(*ast.AlterMaterializedViewLogAction))
+	}
+
+AlterMaterializedViewLogAction:
+	AlterMLogPurgeClause
+	{
+		$$ = &ast.AlterMaterializedViewLogAction{Tp: ast.AlterMaterializedViewLogActionPurge, Purge: $1.(*ast.MLogPurgeClause)}
+	}
+|	"ADD" ColumnKeywordOpt '(' ColumnList ')'
+	{
+		$$ = &ast.AlterMaterializedViewLogAction{Tp: ast.AlterMaterializedViewLogActionAddColumn, Cols: $4.([]ast.CIStr)}
+	}
+
+AlterMLogPurgeClause:
+	MLogPurgeClause
+	{
+		$$ = $1
+	}
+|	"PURGE"
+	{
+		$$ = &ast.MLogPurgeClause{}
+	}
+
+DropMaterializedViewStmt:
+	"DROP" "MATERIALIZED" "VIEW" TableName
+	{
+		$$ = &ast.DropMaterializedViewStmt{ViewName: $4.(*ast.TableName)}
+	}
+| 	"DROP" "MATERIALIZED" "VIEW" "IF" "EXISTS" TableName
+	{
+		$$ = &ast.DropMaterializedViewStmt{IfExists: true, ViewName: $6.(*ast.TableName)}
+	}
+
+DropMaterializedViewLogStmt:
+	"DROP" "MATERIALIZED" "VIEW" "LOG" IfExists "ON" TableName
+	{
+		$$ = &ast.DropMaterializedViewLogStmt{IfExists: $5.(bool), Table: $7.(*ast.TableName)}
+	}
+
 /******************************************************************
  * Do statement
  * See https://dev.mysql.com/doc/refman/5.7/en/do.html
@@ -7328,6 +7688,7 @@ UnReservedKeyword:
 |	"AUTO_INCREMENT"
 |	"AFFINITY"
 |	"AFTER"
+|	"ALERT"
 |	"ALWAYS"
 |	"AVG"
 |	"BDR"
@@ -7381,6 +7742,7 @@ UnReservedKeyword:
 |	"FILE"
 |	"FIRST"
 |	"FIXED"
+|	"FAST"
 |	"FLUSH"
 |	"FOLLOWING"
 |	"FORMAT"
@@ -7391,6 +7753,7 @@ UnReservedKeyword:
 |	"HELP"
 |	"HOUR"
 |	"INSERT_METHOD"
+|	"IMMEDIATE"
 |	"LESS"
 |	"LOCAL"
 |	"LAST"
@@ -7460,6 +7823,7 @@ UnReservedKeyword:
 |	"COMPRESSION"
 |	"KEY_BLOCK_SIZE"
 |	"MASTER"
+|	"MATERIALIZED"
 |	"MAX_ROWS"
 |	"MIN_ROWS"
 |	"NATIONAL"
@@ -13082,6 +13446,8 @@ Statement:
 |	AdminStmt
 |	AlterDatabaseStmt
 |	AlterTableStmt
+|	AlterMaterializedViewStmt
+|	AlterMaterializedViewLogStmt
 |	AlterUserStmt
 |	AlterInstanceStmt
 |	AlterRangeStmt
@@ -13103,6 +13469,8 @@ Statement:
 |	CreateIndexStmt
 |	CreateTableStmt
 |	CreateViewStmt
+|	CreateMaterializedViewStmt
+|	CreateMaterializedViewLogStmt
 |	CreateUserStmt
 |	CreateRoleStmt
 |	CreateBindingStmt
@@ -13115,6 +13483,8 @@ Statement:
 |	CreateStatisticsStmt
 |	DistributeTableStmt
 |	DoStmt
+|	DropMaterializedViewStmt
+|	DropMaterializedViewLogStmt
 |	DropDatabaseStmt
 |	DropIndexStmt
 |	DropTableStmt

@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/deeptest"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
@@ -87,6 +88,16 @@ func TestBackfillRetryableErrors(t *testing.T) {
 		sch := &LitBackfillScheduler{}
 		require.False(t, sch.IsRetryableErr(err))
 		require.True(t, sch.IsRetryableErr(errors.New("temporary scheduler error")))
+	})
+
+	t.Run("local-sort disk probe errors are retryable", func(t *testing.T) {
+		err := errors.New("mock local sort disk probe failed")
+		require.True(t, (&backfillDistExecutor{}).IsRetryableError(err))
+	})
+
+	t.Run("confirmed insufficient local-sort disk is not retryable", func(t *testing.T) {
+		err := dbterror.ErrIngestCheckEnvFailed.FastGenByArgs("mock insufficient local sort disk space")
+		require.False(t, (&backfillDistExecutor{}).IsRetryableError(err))
 	})
 }
 

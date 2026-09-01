@@ -934,6 +934,13 @@ func (w *worker) onCreateColumnarIndex(jobCtx *jobContext, job *model.Job) (ver 
 	originalState := indexInfo.State
 	switch indexInfo.State {
 	case model.StateNone:
+		// Reject before the first schema mutation when Columnar Storage is off.
+		// Submit-path already checks; re-check here so ON->OFF between enqueue and
+		// owner execution cannot persist a columnar index.
+		if err := w.checkColumnarStorageEnabled(1, false); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, wrapColumnarStorageGateForColumnarIndex(err)
+		}
 		// none -> delete only
 		indexInfo.State = model.StateDeleteOnly
 		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, originalState != indexInfo.State)

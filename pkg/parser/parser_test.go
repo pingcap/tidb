@@ -433,6 +433,93 @@ func RunTest(t *testing.T, table []testCase, enableWindowFunc bool, MariaDB bool
 	}
 }
 
+func TestMaterializedViewDDLStatements(t *testing.T) {
+	table := []testCase{
+		{"CREATE MATERIALIZED VIEW mv (a) AS SELECT 1", true, "CREATE MATERIALIZED VIEW \x60mv\x60 (\x60a\x60) AS SELECT 1"},
+		{"CREATE MATERIALIZED VIEW mv (a) COMMENT = 'c1' SHARD_ROW_ID_BITS = 2 PRE_SPLIT_REGIONS = 3 REFRESH FAST NEXT 300 ATTRIBUTES = 'x' AS SELECT 1", true, "CREATE MATERIALIZED VIEW \x60mv\x60 (\x60a\x60) COMMENT = 'c1' SHARD_ROW_ID_BITS = 2 PRE_SPLIT_REGIONS = 3 REFRESH FAST NEXT 300 ATTRIBUTES = 'x' AS SELECT 1"},
+		{"CREATE MATERIALIZED VIEW mv (a) COMMENT 'c1' AS SELECT 1", true, "CREATE MATERIALIZED VIEW \x60mv\x60 (\x60a\x60) COMMENT = 'c1' AS SELECT 1"},
+		{"CREATE MATERIALIZED VIEW LOG ON t (a,b) PURGE IMMEDIATE ALERT ROWS 10", true, "CREATE MATERIALIZED VIEW LOG ON \x60t\x60 (\x60a\x60, \x60b\x60) PURGE IMMEDIATE ALERT ROWS 10"},
+		{"CREATE MATERIALIZED VIEW LOG ON t (a) PURGE NEXT 300", true, "CREATE MATERIALIZED VIEW LOG ON \x60t\x60 (\x60a\x60) PURGE NEXT 300"},
+		{"ALTER MATERIALIZED VIEW mv COMMENT = 'c2', REFRESH START WITH now() NEXT 300, ATTRIBUTES = 'y'", true, "ALTER MATERIALIZED VIEW \x60mv\x60 COMMENT = 'c2', REFRESH START WITH NOW() NEXT 300, ATTRIBUTES = 'y'"},
+		{"ALTER MATERIALIZED VIEW mv COMMENT 'c2'", true, "ALTER MATERIALIZED VIEW \x60mv\x60 COMMENT = 'c2'"},
+		{"ALTER MATERIALIZED VIEW mv REFRESH", true, "ALTER MATERIALIZED VIEW \x60mv\x60 REFRESH"},
+		{"ALTER MATERIALIZED VIEW LOG ON t PURGE, ADD COLUMN (b,c)", true, "ALTER MATERIALIZED VIEW LOG ON \x60t\x60 PURGE, ADD COLUMN (\x60b\x60, \x60c\x60)"},
+		{"ALTER MATERIALIZED VIEW LOG ON t PURGE", true, "ALTER MATERIALIZED VIEW LOG ON \x60t\x60 PURGE"},
+		{"DROP MATERIALIZED VIEW IF EXISTS mv", true, "DROP MATERIALIZED VIEW IF EXISTS \x60mv\x60"},
+		{"DROP MATERIALIZED VIEW LOG IF EXISTS ON t", true, "DROP MATERIALIZED VIEW LOG IF EXISTS ON \x60t\x60"},
+	}
+	RunTest(t, table, false, false)
+	wantTypes := []ast.StmtNode{
+		&ast.CreateMaterializedViewStmt{}, &ast.CreateMaterializedViewStmt{}, &ast.CreateMaterializedViewStmt{},
+		&ast.CreateMaterializedViewLogStmt{}, &ast.CreateMaterializedViewLogStmt{},
+		&ast.AlterMaterializedViewStmt{}, &ast.AlterMaterializedViewStmt{}, &ast.AlterMaterializedViewStmt{},
+		&ast.AlterMaterializedViewLogStmt{}, &ast.AlterMaterializedViewLogStmt{},
+		&ast.DropMaterializedViewStmt{}, &ast.DropMaterializedViewLogStmt{},
+	}
+	p := parser.New()
+	for i, tc := range table {
+		stmt, err := p.ParseOneStmt(tc.src, "", "")
+		require.NoError(t, err, tc.src)
+		require.IsType(t, wantTypes[i], stmt, tc.src)
+	}
+}
+
+func TestMaterializedViewDuplicateOptionsErrMsg(t *testing.T) {
+	p := parser.New()
+	dupCases := []struct {
+		sql       string
+		substring string
+	}{
+		{
+			sql:       "CREATE MATERIALIZED VIEW mv (a) COMMENT = 'c1' COMMENT = 'c2' AS SELECT 1",
+			substring: "Duplicate COMMENT specified in CREATE MATERIALIZED VIEW",
+		},
+		{
+			sql:       "CREATE MATERIALIZED VIEW mv (a) SHARD_ROW_ID_BITS = 1 SHARD_ROW_ID_BITS = 2 AS SELECT 1",
+			substring: "Duplicate SHARD_ROW_ID_BITS specified in CREATE MATERIALIZED VIEW",
+		},
+		{
+			sql:       "CREATE MATERIALIZED VIEW mv (a) PRE_SPLIT_REGIONS = 1 PRE_SPLIT_REGIONS = 2 AS SELECT 1",
+			substring: "Duplicate PRE_SPLIT_REGIONS specified in CREATE MATERIALIZED VIEW",
+		},
+		{
+			sql:       "CREATE MATERIALIZED VIEW LOG ON t (a) SHARD_ROW_ID_BITS = 1 SHARD_ROW_ID_BITS = 2",
+			substring: "Duplicate SHARD_ROW_ID_BITS specified in CREATE MATERIALIZED VIEW LOG",
+		},
+		{
+			sql:       "CREATE MATERIALIZED VIEW LOG ON t (a) PRE_SPLIT_REGIONS = 1 PRE_SPLIT_REGIONS = 2",
+			substring: "Duplicate PRE_SPLIT_REGIONS specified in CREATE MATERIALIZED VIEW LOG",
+		},
+	}
+	for _, c := range dupCases {
+		_, err := p.ParseOneStmt(c.sql, "", "")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), c.substring, c.sql)
+	}
+}
+
+func TestMaterializedViewCreateOptionOrder(t *testing.T) {
+	p := parser.New()
+	invalidCases := []string{
+		"CREATE MATERIALIZED VIEW mv (a) REFRESH FAST SHARD_ROW_ID_BITS = 4 AS SELECT 1",
+		"CREATE MATERIALIZED VIEW mv (a) ATTRIBUTES = 'x' REFRESH FAST AS SELECT 1",
+		"CREATE MATERIALIZED VIEW mv (a) REFRESH FAST REFRESH FAST AS SELECT 1",
+		"CREATE MATERIALIZED VIEW mv (a) ATTRIBUTES = 'x' ATTRIBUTES = 'y' AS SELECT 1",
+	}
+	for _, sql := range invalidCases {
+		_, err := p.ParseOneStmt(sql, "", "")
+		require.Error(t, err, sql)
+	}
+}
+
+func TestMaterializedViewLogCreatePurgeClauseSyntax(t *testing.T) {
+	p := parser.New()
+	_, err := p.ParseOneStmt("CREATE MATERIALIZED VIEW LOG ON t (a) PURGE START WITH now()", "", "")
+	require.Error(t, err)
+	_, err = p.ParseOneStmt("CREATE MATERIALIZED VIEW LOG ON t (a) PURGE", "", "")
+	require.Error(t, err)
+}
+
 func RunRestoreTest(t *testing.T, sourceSQLs, expectSQLs string, enableWindowFunc bool, MariaDB bool) {
 	var sb strings.Builder
 	p := parser.New()
