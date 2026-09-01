@@ -29,7 +29,7 @@ mod reserved;
 mod tidb_specific;
 mod unreserved;
 
-const KEYWORD_COUNT: usize = 684;
+const KEYWORD_COUNT: usize = 685;
 
 /// Concatenates the section parts into one contiguous array, in the same
 /// order the Go parser declares them, entirely at compile time.

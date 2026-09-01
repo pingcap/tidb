@@ -1211,6 +1211,7 @@ mod tests {
         "Alter",
         "Create View",
         "Show View",
+        "Operate View",
         "Trigger",
         "References",
     ];

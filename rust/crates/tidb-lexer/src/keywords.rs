@@ -6,7 +6,7 @@
 // are consulted exactly as pkg/parser/misc.go's isTokenIdentifier does.
 #![allow(clippy::all)]
 
-/// GENERAL_KEYWORDS: 805 keywords, sorted for binary search. Generated from pkg/parser/misc.go.
+/// GENERAL_KEYWORDS: 806 keywords, sorted for binary search. Generated from pkg/parser/misc.go.
 pub static GENERAL_KEYWORDS: &[&str] = &[
     "ACCOUNT",
     "ACTION",
@@ -457,6 +457,7 @@ pub static GENERAL_KEYWORDS: &[&str] = &[
     "ONLY",
     "ON_DUPLICATE",
     "OPEN",
+    "OPERATE",
     "OPTIMISTIC",
     "OPTIMIZE",
     "OPTION",

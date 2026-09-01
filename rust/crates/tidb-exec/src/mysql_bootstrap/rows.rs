@@ -296,6 +296,7 @@ const GRANTED_PRIVILEGE_COLUMNS: &[&str] = &[
     "execute_priv",
     "create_view_priv",
     "show_view_priv",
+    "operate_view_priv",
     "create_routine_priv",
     "alter_routine_priv",
     "index_priv",

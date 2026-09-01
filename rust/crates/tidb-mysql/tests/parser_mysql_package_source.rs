@@ -240,10 +240,19 @@ fn runtime_versions_preserve_build_defaults_and_mutation_semantics() {
 #[test]
 fn test_priv_string() {
     let mut privilege = UsagePriv;
-    for bit in 0..=33 {
+    for bit in 0..=34 {
         assert!(!privilege.as_str().is_empty(), "{bit}-th");
         privilege = privilege << 1;
     }
+    assert_eq!(OperateViewPriv.0, 1 << 33);
+    assert_eq!(OperateViewPriv.as_str(), "Operate View");
+    assert_eq!(OperateViewPriv.column_string(), "Operate_view_priv");
+    assert_eq!(OperateViewPriv.set_string(), "Operate View");
+    assert_eq!(AllPriv.0, 1 << 34);
+    assert_eq!(ExtendedPriv.0, 1 << 35);
+    assert!(ALL_GLOBAL_PRIVILEGES.contains(&OperateViewPriv));
+    assert!(ALL_DATABASE_PRIVILEGES.contains(&OperateViewPriv));
+    assert!(ALL_TABLE_PRIVILEGES.contains(&OperateViewPriv));
 }
 
 #[test]
@@ -284,7 +293,7 @@ fn test_privs_has() {
 
 #[test]
 fn test_priv_all_consistency() {
-    for bit in 1..33 {
+    for bit in 1..34 {
         let privilege = PrivilegeType(1 << bit);
         assert!(
             !privilege.column_string().is_empty(),

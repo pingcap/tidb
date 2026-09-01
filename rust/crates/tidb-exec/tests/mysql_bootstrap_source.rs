@@ -198,6 +198,10 @@ fn the_seeded_root_account_loads_back_as_an_unlocked_superuser() {
     assert_eq!(root.authentication_string, "");
     assert_eq!(root.plugin, "mysql_native_password");
     assert!(!root.account_locked);
+    assert!(
+        root.privileges.contains(&"OPERATE VIEW"),
+        "the bootstrap root row must include Go master's OPERATE VIEW grant"
+    );
 }
 
 #[test]

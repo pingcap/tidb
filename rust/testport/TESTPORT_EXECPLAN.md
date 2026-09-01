@@ -184,12 +184,18 @@ For each bounded behavior cluster:
   ignored source tests, and implementation boundary are in
   `receipts/expression_aggregation_audit.md`.
 
-- 2026-09-01: audited all 15 Go-master `pkg/parser/mysql` artifacts (9,678
-  lines). Go's new `OperateViewPriv` changes privilege maps and scope lists,
-  but its parser keyword, generated lexer catalog, bootstrap columns, registry,
-  and executor consumers are split across Rust crates. No partial privilege
-  bit was added; the complete inventory and dependency boundary are in
-  `receipts/parser_mysql_operate_view_audit.md`.
+- 2026-09-01: implemented the dependency-closed Go-master `pkg/parser/mysql`
+  `OPERATE VIEW` delta as one coordinated Rust batch. The 15-artifact,
+  4,847-line parser/mysql inventory and the seven-artifact, 1,347-line
+  `pkg/meta/metadef` inventory were read in full before editing. Rust now
+  synchronizes the generated lexer keyword catalogs, parser restoration,
+  privilege bit/name/set/column maps, global/database/table masks, bootstrap
+  root row, executor account load/write columns, and source-derived table-info
+  fixture. Focused parser, mysql, bootstrap, executor round-trip, metadata,
+  and session regressions pass except for the existing unrelated infoschema
+  header assertion. The exact inventory, fail-before/pass-after evidence,
+  Ready commands, and explicit version285/materialized-view scheduler
+  boundaries are recorded in `receipts/parser_mysql_operate_view_audit.md`.
 
 - 2026-09-01: audited the complete Go `pkg/util/dbterror/exeerrors` package at
   `origin/master` `db35d47066648fe73abce6318d53fc625df51490` against the Rust
@@ -1743,7 +1749,9 @@ For each bounded behavior cluster:
 - `pkg/parser/mysql` confirms that a new privilege cannot be made compatible by
   adding one enum value: generated lexical inputs, parser restoration, scope
   masks, persisted privilege columns, and executor display/check paths must
-  preserve one bit and column order.
+  preserve one bit and column order. The coordinated `OPERATE VIEW` batch now
+  does so, while Go's versioned schema-upgrade and materialized-view scheduler
+  remain outside the Rust dependency closure.
 
 ## Outcomes & Retrospective
 

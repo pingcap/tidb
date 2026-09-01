@@ -1148,6 +1148,11 @@ pub(super) static KEYWORDS_UNRESERVED: &[Keyword] = &[
         section: "unreserved",
     },
     Keyword {
+        word: "OPERATE",
+        reserved: false,
+        section: "unreserved",
+    },
+    Keyword {
         word: "OPTIONAL",
         reserved: false,
         section: "unreserved",

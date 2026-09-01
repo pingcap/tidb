@@ -25,7 +25,7 @@ fn test_keywords() {
 
 #[test]
 fn test_keywords_length() {
-    assert_eq!(KEYWORDS.len(), 684);
+    assert_eq!(KEYWORDS.len(), 685);
     assert_eq!(
         KEYWORDS.iter().filter(|keyword| keyword.reserved).count(),
         233

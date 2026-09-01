@@ -311,6 +311,7 @@ mod tests {
     fn root_is_bootstrapped_with_all_privileges_and_grant_option() {
         let registry = PrivilegeRegistry::default();
         assert!(registry.user_exists("root", "%"));
+        assert!(registry.has_global_priv("root", "%", GlobalPriv::OperateView));
         assert_eq!(
             registry.show_grants("root", "%", &[]).as_deref(),
             Some("GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION")
@@ -383,6 +384,10 @@ mod tests {
             Some(GlobalPriv::CreateTemporaryTables)
         );
         assert_eq!(
+            GlobalPriv::from_grant_name("OPERATE VIEW"),
+            Some(GlobalPriv::OperateView)
+        );
+        assert_eq!(
             GlobalPriv::from_grant_name("DROP ROLE"),
             Some(GlobalPriv::DropRole)
         );
@@ -433,6 +438,20 @@ mod tests {
                  GRANT ALL PRIVILEGES ON `db1`.* TO 'u'@'%'"
             )
         );
+    }
+
+    #[test]
+    fn operate_view_is_grantable_and_visible_at_every_table_scope() {
+        let registry = PrivilegeRegistry::default();
+        registry.create_user("u", "%", "");
+        let privilege = GlobalPriv::OperateView;
+        assert!(privilege.is_valid_at_db_scope());
+        assert!(privilege.is_valid_at_table_scope());
+        registry.grant_db("u", "%", "db1", privilege.bit());
+        registry.grant_table("u", "%", "db1", "v1", privilege.bit());
+        let grants = registry.show_grants("u", "%", &[]).unwrap();
+        assert!(grants.contains("OPERATE VIEW"));
+        assert!(registry.has_table_priv("u", "%", "db1", "v1", privilege));
     }
 
     #[test]

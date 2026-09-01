@@ -445,6 +445,10 @@ impl Parser {
             } else {
                 return Err(self.err_here("expected DATABASES or VIEW after SHOW"));
             }
+        } else if self.is_kw("OPERATE") {
+            self.bump();
+            self.expect_kw("VIEW")?;
+            ("OPERATE VIEW".to_string(), false)
         } else if self.is_kw("LOCK") {
             self.bump();
             self.expect_kw("TABLES")?;

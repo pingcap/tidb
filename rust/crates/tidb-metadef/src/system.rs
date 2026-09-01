@@ -151,6 +151,16 @@ pub const SYS_DATABASE_ID: i64 = RESERVED_GLOBAL_ID_UPPER_BOUND - 60;
 pub const TI_DBSOFT_DELETE_TABLE_STATUS_TABLE_ID: i64 = RESERVED_GLOBAL_ID_UPPER_BOUND - 61;
 /// Go `TiDBMaskingPolicyTableID`.
 pub const TI_DBMASKING_POLICY_TABLE_ID: i64 = RESERVED_GLOBAL_ID_UPPER_BOUND - 62;
+/// Go `TiDBMViewRefreshInfoTableID`.
+pub const TI_DBMVIEW_REFRESH_INFO_TABLE_ID: i64 = RESERVED_GLOBAL_ID_UPPER_BOUND - 63;
+/// Go `TiDBMLogPurgeInfoTableID`.
+pub const TI_DBMLOG_PURGE_INFO_TABLE_ID: i64 = RESERVED_GLOBAL_ID_UPPER_BOUND - 64;
+/// Go `TiDBMViewRefreshHistTableID`.
+pub const TI_DBMVIEW_REFRESH_HIST_TABLE_ID: i64 = RESERVED_GLOBAL_ID_UPPER_BOUND - 65;
+/// Go `TiDBMViewRefreshAlertTableID`.
+pub const TI_DBMVIEW_REFRESH_ALERT_TABLE_ID: i64 = RESERVED_GLOBAL_ID_UPPER_BOUND - 66;
+/// Go `TiDBMLogPurgeHistTableID`.
+pub const TI_DBMLOG_PURGE_HIST_TABLE_ID: i64 = RESERVED_GLOBAL_ID_UPPER_BOUND - 67;
 
 /// Go `IsReservedID`: whether `id` is a reserved global ID.
 #[must_use]
@@ -169,5 +179,40 @@ mod tests {
         assert!(is_reserved_id(RESERVED_GLOBAL_ID_LOWER_BOUND + 1));
         assert!(!is_reserved_id(RESERVED_GLOBAL_ID_LOWER_BOUND));
         assert!(!is_reserved_id(123));
+    }
+
+    /// Go `pkg/meta/metadef/system.go`'s materialized-view table IDs remain
+    /// contiguous and below the masking-policy table in reserved-ID order.
+    #[test]
+    fn materialized_view_ids_follow_masking_policy() {
+        assert_eq!(
+            TI_DBMVIEW_REFRESH_INFO_TABLE_ID,
+            TI_DBMASKING_POLICY_TABLE_ID - 1
+        );
+        assert_eq!(
+            TI_DBMLOG_PURGE_INFO_TABLE_ID,
+            TI_DBMVIEW_REFRESH_INFO_TABLE_ID - 1
+        );
+        assert_eq!(
+            TI_DBMVIEW_REFRESH_HIST_TABLE_ID,
+            TI_DBMLOG_PURGE_INFO_TABLE_ID - 1
+        );
+        assert_eq!(
+            TI_DBMVIEW_REFRESH_ALERT_TABLE_ID,
+            TI_DBMVIEW_REFRESH_HIST_TABLE_ID - 1
+        );
+        assert_eq!(
+            TI_DBMLOG_PURGE_HIST_TABLE_ID,
+            TI_DBMVIEW_REFRESH_ALERT_TABLE_ID - 1
+        );
+        for id in [
+            TI_DBMVIEW_REFRESH_INFO_TABLE_ID,
+            TI_DBMLOG_PURGE_INFO_TABLE_ID,
+            TI_DBMVIEW_REFRESH_HIST_TABLE_ID,
+            TI_DBMVIEW_REFRESH_ALERT_TABLE_ID,
+            TI_DBMLOG_PURGE_HIST_TABLE_ID,
+        ] {
+            assert!(is_reserved_id(id));
+        }
     }
 }

@@ -763,6 +763,7 @@ fn test_simple() {
         "signed",
         "start",
         "global",
+        "operate",
         "tables",
         "tablespace",
         "target",
