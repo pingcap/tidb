@@ -1343,6 +1343,13 @@ For each bounded behavior cluster:
       ignored). Go runtime-stat additions from `bc04813887`/`db35d47066` and
       the concrete Go coprocessor worker remain explicit dependency boundaries
       in `receipts/distsql_audit.md`.
+- 2026-09-01: audited all three Go-master `pkg/errctx` artifacts (389 lines,
+      13 production declarations, and one source test) against the complete
+      `tidb-error::errctx` owner. Every level, group membership, context copy,
+      warning/error path, and `ResolveErrLevel` rule is already represented;
+      no source delta, Rust-only behavior, or safe production edit was found.
+      The full inventory and targeted Go/Rust validation are recorded in
+      `receipts/errctx_audit.md`.
 - [ ] Run Ready validation and self-review only when the requested parity scope
       is genuinely complete enough for a final-status claim.
 
