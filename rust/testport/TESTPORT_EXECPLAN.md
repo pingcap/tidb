@@ -258,6 +258,16 @@ For each bounded behavior cluster:
   found; exact Go-master compilation passed and the explicit boundary is
   recorded in `receipts/session_sessionapi.md`.
 
+- 2026-09-01: audited the complete Go-master `pkg/session/cursor` package:
+  four tracked artifacts and 247 lines, including cursor state, the
+  concurrent `sync.Map` tracker/handle lifecycle, five focused tests (with
+  the 100-thread create/delete stress case), and the five-shard flaky BUILD
+  target. Rust's `cursor_state` is the prepared-protocol cursor rather than
+  this session result-set tracker, and no dependency-closed owner spans the
+  session, static-recordset, and infosync consumers. No Rust-only behavior or
+  safe missing behavior was found; exact Go-master tests passed and the
+  explicit boundary is recorded in `receipts/session_cursor.md`.
+
 - 2026-09-01: refreshed the complete Go-master
   `pkg/util/password-validation` inventory (three artifacts, 379 lines) and
   confirmed it is unchanged from the prior pinned implementation. The Go
