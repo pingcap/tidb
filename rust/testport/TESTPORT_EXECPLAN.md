@@ -185,6 +185,18 @@ For each bounded behavior cluster:
   recorded in `receipts/lightning_backend_tidb.md` and
   `rust/docs/operations/lightning-backend-tidb-audit-execplan.md`.
 
+- 2026-09-01: audited the complete three-artifact Go-master
+  `pkg/lightning/backend` package: 846 lines, 18 production declarations,
+  14 lifecycle tests, one engine-count failpoint, and a 14-shard flaky BUILD
+  target. The inventory covers deterministic engine UUIDs, open/close and
+  unsafe-close sequencing, metric accounting, import retries, duplicate
+  handling, cleanup, and writer interfaces. Current and detached exact-master
+  failpoint suites pass with cleanup. Rust has no dependency-closed engine
+  manager or writer owner, so no Rust-only behavior was removed and no
+  speculative wrapper was added. The explicit boundary is recorded in
+  `receipts/lightning_backend.md` and
+  `rust/docs/operations/lightning-backend-audit-execplan.md`.
+
 - 2026-09-01: audited the complete Go-master
   `pkg/dxf/importinto/conflictrows` package: four tracked artifacts and 872
   lines covering its BUILD target, unique task/subtask path construction,
