@@ -142,11 +142,13 @@ func TestTiFlashManager(t *testing.T) {
 		restore := config.RestoreFunc()
 		defer restore()
 		config.UpdateGlobal(func(conf *config.Config) {
-			conf.CSE.ColumnarCollectTimeout = 50 * time.Millisecond
+			conf.CSE.ColumnarCollectTimeout = 500 * time.Millisecond
 		})
 
+		requestStarted := make(chan struct{}, 1)
 		requestCanceled := make(chan struct{}, 1)
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestStarted <- struct{}{}
 			<-r.Context().Done()
 			requestCanceled <- struct{}{}
 		}))
@@ -162,10 +164,39 @@ func TestTiFlashManager(t *testing.T) {
 			},
 		}
 
-		progress, circuitBreakerTriggered, err := MustGetTiFlashProgressWithCircuitBreaker(context.Background(), 1024, 1, nil, tikvStores)
-		require.NoError(t, err)
-		require.True(t, circuitBreakerTriggered)
-		require.Equal(t, 1.0, progress)
+		type progressResult struct {
+			progress                float64
+			circuitBreakerTriggered bool
+			err                     error
+		}
+		resultCh := make(chan progressResult, 1)
+		go func() {
+			progress, circuitBreakerTriggered, err := MustGetTiFlashProgressWithCircuitBreaker(context.Background(), 1024, 1, nil, tikvStores)
+			resultCh <- progressResult{
+				progress:                progress,
+				circuitBreakerTriggered: circuitBreakerTriggered,
+				err:                     err,
+			}
+		}()
+
+		select {
+		case <-requestStarted:
+		case result := <-resultCh:
+			require.Failf(t, "expected progress collection request to start before circuit breaker returned",
+				"progress=%v circuitBreakerTriggered=%v err=%v", result.progress, result.circuitBreakerTriggered, result.err)
+		case <-time.After(time.Second):
+			t.Fatal("expected progress collection request to start")
+		}
+
+		var result progressResult
+		select {
+		case result = <-resultCh:
+		case <-time.After(2 * time.Second):
+			t.Fatal("expected progress collection circuit breaker to return")
+		}
+		require.NoError(t, result.err)
+		require.True(t, result.circuitBreakerTriggered)
+		require.Equal(t, 1.0, result.progress)
 
 		select {
 		case <-requestCanceled:
