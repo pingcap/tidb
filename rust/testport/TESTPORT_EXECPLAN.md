@@ -4607,6 +4607,16 @@ For each bounded behavior cluster:
   the Go domain, extstore, statement-summary persistence, and failpoint server
   lifecycle; no dependency-closed Rust owner exists, so it remains an explicit
   boundary after the focused failpoint-wrapped integration tests pass.
+- `pkg/server/handler/optimizor` is byte-identical to Go master across seven
+  artifacts and 2,219 lines. Its optimizer-trace, plan-replayer, and statistics
+  endpoints are Go HTTP composition over Domain, InfoSyncer, external storage,
+  and statistics-handle lifecycles. Rust owns several leaf decisions (trace
+  naming, plan-replayer bookkeeping, historical stats, and priority-queue
+  snapshots), but no dependency-closed handler owner; the complete package
+  remains an explicit boundary after the failpoint-wrapped Go suite and
+  `tidb-domain` owner suite pass. See
+  `rust/testport/receipts/server_handler_optimizor.md` and
+  `rust/docs/operations/server-handler-optimizor-audit-execplan.md`.
 
 ## Outcomes & Retrospective
 
