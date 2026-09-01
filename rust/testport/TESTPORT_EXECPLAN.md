@@ -1767,7 +1767,8 @@ For each bounded behavior cluster:
   `receipts/util_importer.md`; `cmd/importer` remains a separate command
   boundary to audit.
 
-- 2026-09-02: revalidated the complete current Go-master `pkg/util/skip` and
+- 2026-09-02: revalidated the complete current Go-master `pkg/util/skip` at
+  `c6054025ed4c32ab3672a2a24ea46892714d21ec` and the existing
   `pkg/util/syncutil` inventories (five artifacts, 130 lines total), including
   the `deadlock`/`!deadlock` build-tag variants and all exported test/lock
   helpers. Rust has no dependency-closed replacement for Go's test-flag
