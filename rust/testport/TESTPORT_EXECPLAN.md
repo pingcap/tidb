@@ -377,6 +377,16 @@ For each bounded behavior cluster:
   this slice and the boundary is recorded in
   `receipts/session_nontransactional.md`.
 
+- 2026-09-01: audited the complete Go-master `pkg/session/test/privileges`
+  package: three tracked test/BUILD artifacts and 138 lines, including the
+  failpoint/goleak harness, `SkipWithGrant` role/auth assertions, unknown-user
+  rejection, and two-shard flaky target. Rust's configured-user-store and
+  session privilege owners already exercise bypass and authentication in
+  executable server/session tests, while the exact Go TestKit/global state
+  remains an explicit source-carrier boundary. No Rust-only behavior or safe
+  missing behavior was found; the exact Go-master failpoint suite passed and
+  the boundary is recorded in `receipts/session_test_privileges.md`.
+
 - 2026-09-01: refreshed the complete Go-master
   `pkg/util/password-validation` inventory (three artifacts, 379 lines) and
   confirmed it is unchanged from the prior pinned implementation. The Go
