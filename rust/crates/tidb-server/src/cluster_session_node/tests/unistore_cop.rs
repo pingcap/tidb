@@ -28,6 +28,8 @@ use tidb_ddl_notifier::{
     publish_schema_change_to_store, DdlNotifier, Handler, SchemaChangeEvent, SessionPool, Store,
     TEST_HANDLER_ID,
 };
+use tidb_model::go_runtime::GoSharedSlice;
+use tidb_model::partition::{PartitionDefinition, PartitionInfo};
 
 use super::super::ddl_notifier::{ClusterNotifierSessionPool, ClusterNotifierTableStore};
 use super::super::{
@@ -101,6 +103,37 @@ fn displayed(rows: Vec<Vec<Datum>>) -> Vec<Vec<String>> {
                 .collect()
         })
         .collect()
+}
+
+fn handle_stats_schema_change(session: &mut ClusterServerSession, event: &SchemaChangeEvent) {
+    session
+        .control_transaction("BEGIN PESSIMISTIC")
+        .expect("stats subscriber transaction begins");
+    if let Err(error) = session.stage_stats_notifier_event(event) {
+        session
+            .control_transaction("ROLLBACK")
+            .expect("failed stats subscriber transaction rolls back");
+        panic!("stats subscriber handles the source event: {error:?}");
+    }
+    session
+        .control_transaction("COMMIT")
+        .expect("stats subscriber transaction commits");
+}
+
+fn partition_payload(ids: &[i64]) -> PartitionInfo {
+    PartitionInfo {
+        definitions: GoSharedSlice::from_vec(
+            ids.iter()
+                .copied()
+                .map(|id| PartitionDefinition {
+                    id,
+                    ..PartitionDefinition::default()
+                })
+                .collect(),
+        ),
+        num: ids.len() as u64,
+        ..PartitionInfo::default()
+    }
 }
 
 /// Pinned Go `checkExchangePartitionRecordValidation` and
@@ -181,6 +214,98 @@ fn exchange_partition_validates_and_swaps_real_rows_atomically() {
             "SELECT id FROM exchange_bad_nt ORDER BY id"
         )),
         [["15"]]
+    );
+}
+
+/// Pinned `TestExchangeAPartition`: the subscriber reads the exchanged
+/// partition and standalone-table metadata and applies Go's count and modify
+/// deltas to the logical/global row.
+#[test]
+fn exchange_partition_event_updates_global_statistics_like_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(83))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "SET GLOBAL tidb_partition_prune_mode = 'dynamic'",
+    );
+    rows(
+        &mut session,
+        "CREATE TABLE stats_exchange_pt (a INT PRIMARY KEY, b INT, INDEX idx(b)) \
+         PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6), \
+         PARTITION p1 VALUES LESS THAN (11), PARTITION p2 VALUES LESS THAN (16), \
+         PARTITION p3 VALUES LESS THAN (21))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO stats_exchange_pt VALUES (1,2),(2,2),(6,2),(11,2),(16,2)",
+    );
+    rows(&mut session, "ANALYZE TABLE stats_exchange_pt");
+    rows(
+        &mut session,
+        "CREATE TABLE stats_exchange_nt (a INT PRIMARY KEY, b INT, INDEX idx(b))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO stats_exchange_nt VALUES (1,2),(2,2),(3,2),(4,2),(5,2)",
+    );
+    rows(&mut session, "ANALYZE TABLE stats_exchange_nt");
+
+    let (partitioned, partition_id, standalone) = {
+        let catalog = stack.factory.catalog.load();
+        let partitioned = catalog
+            .find_table("test", "stats_exchange_pt")
+            .expect("partitioned table is published")
+            .1
+            .clone_like_go();
+        let partition_id = partitioned
+            .partition
+            .as_ref()
+            .expect("partition metadata exists")
+            .read()
+            .definitions
+            .snapshot()
+            .into_iter()
+            .find(|definition| definition.name.lowercase() == "p0")
+            .expect("p0 exists")
+            .id;
+        let standalone = catalog
+            .find_table("test", "stats_exchange_nt")
+            .expect("standalone table is published")
+            .1
+            .clone_like_go();
+        (partitioned, partition_id, standalone)
+    };
+    let logical_id = partitioned.id;
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT count, modify_count FROM mysql.stats_meta WHERE table_id = {logical_id}"
+            ),
+        )),
+        [["5", "0"]]
+    );
+    handle_stats_schema_change(
+        &mut session,
+        &SchemaChangeEvent::exchange_partition(
+            partitioned,
+            partition_payload(&[partition_id]),
+            standalone,
+        ),
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT count, modify_count FROM mysql.stats_meta WHERE table_id = {logical_id}"
+            ),
+        )),
+        [["8", "7"]]
     );
 }
 
@@ -327,6 +452,84 @@ fn ddl_notifier_table_store_delivers_in_order_and_cleans_up() {
     }
     tidb_owner::Listener::on_retire_owner(&notifier);
     assert_eq!(*seen.lock().unwrap(), [1000, 1001, 1002]);
+}
+
+/// Pinned notifier `processEventForHandler` plus statistics
+/// `HandleDDLEvent`: the internal session opens a real pessimistic transaction
+/// before the subscriber stages mutations, commits them with the processed
+/// flag, and then removes the fully processed event.
+#[test]
+fn stats_notifier_uses_a_real_internal_transaction_like_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let factory = Arc::new(stack.factory);
+    let mut client = factory
+        .open_session(session_context(85))
+        .expect("client session opens");
+    rows(&mut client, "USE test");
+    rows(
+        &mut client,
+        "CREATE TABLE stats_notifier_transaction (a INT)",
+    );
+    rows(
+        &mut client,
+        "INSERT INTO stats_notifier_transaction VALUES (1),(2)",
+    );
+    rows(&mut client, "ANALYZE TABLE stats_notifier_transaction");
+    let table_id = factory
+        .catalog
+        .load()
+        .find_table("test", "stats_notifier_transaction")
+        .expect("table is published")
+        .1
+        .id;
+    let version_before = displayed(rows(
+        &mut client,
+        &format!("SELECT version FROM mysql.stats_meta WHERE table_id = {table_id}"),
+    ))[0][0]
+        .parse::<u64>()
+        .expect("stats version is unsigned");
+    rows(&mut client, "DELETE FROM mysql.tidb_ddl_notifier");
+
+    let pool: Arc<dyn SessionPool> = Arc::new(ClusterNotifierSessionPool::new(
+        factory.advanced_sys_session_pool(),
+    ));
+    let mut publisher = pool.get().expect("publisher session");
+    publish_schema_change_to_store(
+        publisher.as_mut(),
+        9_001,
+        -1,
+        SchemaChangeEvent::flashback_cluster(),
+        &ClusterNotifierTableStore,
+    )
+    .expect("flashback event publishes");
+    pool.put(publisher);
+
+    let notifier = super::super::ddl_notifier::build_notifier(&factory, Duration::ZERO);
+    tidb_owner::Listener::on_become_owner(notifier.as_ref());
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let version_after = loop {
+        let pending = displayed(rows(
+            &mut client,
+            "SELECT count(*) FROM mysql.tidb_ddl_notifier",
+        ));
+        let version = displayed(rows(
+            &mut client,
+            &format!("SELECT version FROM mysql.stats_meta WHERE table_id = {table_id}"),
+        ))[0][0]
+            .parse::<u64>()
+            .expect("stats version is unsigned");
+        if pending == [["0"]] && version != version_before {
+            break version;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "stats notifier did not commit the subscriber mutation and clean up the event"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    tidb_owner::Listener::on_retire_owner(notifier.as_ref());
+    assert!(version_after > version_before);
 }
 
 /// Pinned Go `TestStatsCacheShouldNotCacheTemporaryTable`: GLOBAL temporary
@@ -1191,6 +1394,396 @@ fn drop_partitions_statistics_match_go() {
             .expect("stats version is unsigned");
         assert!(retired_version > version);
     }
+}
+
+/// Pinned `TestReorgPartitions`, `TestIncreasePartitionCountOfHashPartitionTable`,
+/// and `TestDecreasePartitionCountOfHashPartitionTable`: the subscriber does
+/// not alter global count during a reorganization, initializes every added
+/// physical ID, and advances every dropped physical ID for delayed GC.
+#[test]
+fn reorganize_partition_event_updates_statistics_like_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(80))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "SET GLOBAL tidb_partition_prune_mode = 'dynamic'",
+    );
+    rows(
+        &mut session,
+        "CREATE TABLE stats_reorganize_event (a INT PRIMARY KEY, b INT, INDEX idx(b)) \
+         PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6), \
+         PARTITION p1 VALUES LESS THAN (11))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO stats_reorganize_event VALUES (1,2),(2,2),(6,2)",
+    );
+    rows(&mut session, "ANALYZE TABLE stats_reorganize_event");
+
+    let table = stack
+        .factory
+        .catalog
+        .load()
+        .find_table("test", "stats_reorganize_event")
+        .expect("partitioned table is published")
+        .1
+        .clone_like_go();
+    let logical_id = table.id;
+    let dropped_id = table
+        .partition
+        .as_ref()
+        .expect("partition metadata exists")
+        .read()
+        .definitions
+        .snapshot()[0]
+        .id;
+    let dropped_version = displayed(rows(
+        &mut session,
+        &format!("SELECT version FROM mysql.stats_meta WHERE table_id = {dropped_id}"),
+    ))[0][0]
+        .parse::<u64>()
+        .expect("partition version is unsigned");
+    let logical_before = displayed(rows(
+        &mut session,
+        &format!("SELECT count, modify_count FROM mysql.stats_meta WHERE table_id = {logical_id}"),
+    ));
+    let added_id = 9_100_000_001_i64;
+    let event = SchemaChangeEvent::reorganize_partitions(
+        table,
+        partition_payload(&[added_id]),
+        partition_payload(&[dropped_id]),
+    );
+    handle_stats_schema_change(&mut session, &event);
+
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT modify_count, count FROM mysql.stats_meta WHERE table_id = {added_id}"
+            ),
+        )),
+        [["0", "0"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!("SELECT count(*) FROM mysql.stats_histograms WHERE table_id = {added_id}"),
+        )),
+        [["3"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT count, modify_count FROM mysql.stats_meta WHERE table_id = {logical_id}"
+            ),
+        )),
+        logical_before
+    );
+    let retired_version = displayed(rows(
+        &mut session,
+        &format!("SELECT version FROM mysql.stats_meta WHERE table_id = {dropped_id}"),
+    ))[0][0]
+        .parse::<u64>()
+        .expect("retired partition version is unsigned");
+    assert!(retired_version > dropped_version);
+}
+
+/// Pinned `TestAddPartitioning` and `TestRemovePartitioning`: newly added
+/// partition placeholders are written before the six global-statistics table
+/// IDs move, and removal moves those same tables before retiring partitions.
+#[test]
+fn add_and_remove_partitioning_events_move_statistics_like_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(81))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "CREATE TABLE stats_partitioning_event \
+         (a INT PRIMARY KEY, b INT, INDEX idx(b))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO stats_partitioning_event VALUES (1,2),(2,2),(6,2),(11,2),(16,2)",
+    );
+    rows(&mut session, "ANALYZE TABLE stats_partitioning_event");
+    let source = stack
+        .factory
+        .catalog
+        .load()
+        .find_table("test", "stats_partitioning_event")
+        .expect("table is published")
+        .1
+        .clone_like_go();
+    let old_table_id = source.id;
+    let global_table_id = 9_200_000_001_i64;
+    let partition_ids = [9_200_000_002_i64, 9_200_000_003_i64];
+    let mut partitioned = source.clone_like_go();
+    partitioned.id = global_table_id;
+    let added = partition_payload(&partition_ids);
+    handle_stats_schema_change(
+        &mut session,
+        &SchemaChangeEvent::add_partitioning(old_table_id, partitioned, added.clone_like_go()),
+    );
+
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT count, modify_count FROM mysql.stats_meta WHERE table_id = {global_table_id}"
+            ),
+        )),
+        [["5", "0"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!("SELECT count(*) FROM mysql.stats_meta WHERE table_id = {old_table_id}"),
+        )),
+        [["0"]]
+    );
+    let initial_partition_versions = partition_ids.map(|partition_id| {
+        assert_eq!(
+            displayed(rows(
+                &mut session,
+                &format!(
+                    "SELECT count(*) FROM mysql.stats_histograms WHERE table_id = {partition_id}"
+                ),
+            )),
+            [["3"]]
+        );
+        displayed(rows(
+            &mut session,
+            &format!("SELECT version FROM mysql.stats_meta WHERE table_id = {partition_id}"),
+        ))[0][0]
+            .parse::<u64>()
+            .expect("partition version is unsigned")
+    });
+
+    let single_table_id = 9_200_000_004_i64;
+    let mut single = source;
+    single.id = single_table_id;
+    handle_stats_schema_change(
+        &mut session,
+        &SchemaChangeEvent::remove_partitioning(global_table_id, single, added),
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT count, modify_count FROM mysql.stats_meta WHERE table_id = {single_table_id}"
+            ),
+        )),
+        [["5", "0"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!("SELECT count(*) FROM mysql.stats_meta WHERE table_id = {global_table_id}"),
+        )),
+        [["0"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT count(*) FROM mysql.stats_histograms WHERE table_id = {single_table_id}"
+            ),
+        )),
+        [["3"]]
+    );
+    for (partition_id, old_version) in partition_ids.into_iter().zip(initial_partition_versions) {
+        let retired_version = displayed(rows(
+            &mut session,
+            &format!("SELECT version FROM mysql.stats_meta WHERE table_id = {partition_id}"),
+        ))[0][0]
+            .parse::<u64>()
+            .expect("retired partition version is unsigned");
+        assert!(retired_version > old_version);
+    }
+}
+
+/// Pinned `ActionFlashbackCluster`: both table-wide version updates use one
+/// transaction start TS, while `last_stats_histograms_version` is untouched.
+#[test]
+fn flashback_cluster_event_refreshes_statistics_versions_like_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(82))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "CREATE TABLE stats_flashback_event (a INT, b INT, INDEX idx(b))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO stats_flashback_event VALUES (1,2),(3,4)",
+    );
+    rows(&mut session, "ANALYZE TABLE stats_flashback_event");
+    let table_id = stack
+        .factory
+        .catalog
+        .load()
+        .find_table("test", "stats_flashback_event")
+        .expect("table is published")
+        .1
+        .id;
+    let before = displayed(rows(
+        &mut session,
+        &format!(
+            "SELECT version, last_stats_histograms_version FROM mysql.stats_meta \
+             WHERE table_id = {table_id}"
+        ),
+    ));
+    handle_stats_schema_change(&mut session, &SchemaChangeEvent::flashback_cluster());
+    let after = displayed(rows(
+        &mut session,
+        &format!(
+            "SELECT version, last_stats_histograms_version FROM mysql.stats_meta \
+             WHERE table_id = {table_id}"
+        ),
+    ));
+    assert_ne!(after[0][0], before[0][0]);
+    assert_eq!(after[0][1], before[0][1]);
+    let histogram_versions = displayed(rows(
+        &mut session,
+        &format!("SELECT version FROM mysql.stats_histograms WHERE table_id = {table_id}"),
+    ));
+    assert!(!histogram_versions.is_empty());
+    assert!(histogram_versions.iter().all(|row| row[0] == after[0][0]));
+}
+
+/// Pinned `TestDumpStatsDeltaBeforeHandleDDLEvent` and
+/// `TestDumpStatsDeltaBeforeHandleAddColumnEvent`: a delayed subscriber event
+/// must not overwrite metadata or histogram rows already written by a delta
+/// flush or a later analyze.
+#[test]
+fn delayed_create_and_add_column_events_preserve_newer_statistics_like_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(84))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+
+    rows(&mut session, "CREATE TABLE stats_delayed_create (c1 INT)");
+    rows(
+        &mut session,
+        "INSERT INTO stats_delayed_create VALUES (1),(2),(3)",
+    );
+    rows(&mut session, "FLUSH STATS_DELTA *.*");
+    let create_table = stack
+        .factory
+        .catalog
+        .load()
+        .find_table("test", "stats_delayed_create")
+        .expect("created table is published")
+        .1
+        .clone_like_go();
+    let create_id = create_table.id;
+    let create_before = displayed(rows(
+        &mut session,
+        &format!(
+            "SELECT version, modify_count, count, last_stats_histograms_version \
+             FROM mysql.stats_meta WHERE table_id = {create_id}"
+        ),
+    ));
+    handle_stats_schema_change(&mut session, &SchemaChangeEvent::create_table(create_table));
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT version, modify_count, count, last_stats_histograms_version \
+                 FROM mysql.stats_meta WHERE table_id = {create_id}"
+            ),
+        )),
+        create_before
+    );
+
+    rows(
+        &mut session,
+        "CREATE TABLE stats_delayed_column \
+         (c1 INT, c2 INT, INDEX idx(c1, c2))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO stats_delayed_column VALUES (1,2),(2,3),(3,4)",
+    );
+    rows(
+        &mut session,
+        "ALTER TABLE stats_delayed_column ADD COLUMN c3 INT",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO stats_delayed_column VALUES (4,5,6)",
+    );
+    rows(
+        &mut session,
+        "ALTER TABLE stats_delayed_column ADD COLUMN c4 INT NOT NULL DEFAULT 0",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO stats_delayed_column(c1,c2) VALUES (6,7)",
+    );
+    rows(
+        &mut session,
+        "ANALYZE TABLE stats_delayed_column ALL COLUMNS",
+    );
+    let (column_table, delayed_columns) = {
+        let catalog = stack.factory.catalog.load();
+        let table = catalog
+            .find_table("test", "stats_delayed_column")
+            .expect("altered table is published")
+            .1
+            .clone_like_go();
+        let columns = table
+            .columns
+            .iter_deref()
+            .filter_map(|column| {
+                let column = column.read();
+                matches!(column.name.lowercase(), "c3" | "c4").then(|| column.clone_like_go())
+            })
+            .collect::<Vec<_>>();
+        (table, columns)
+    };
+    assert_eq!(delayed_columns.len(), 2);
+    let column_table_id = column_table.id;
+    let column_before = displayed(rows(
+        &mut session,
+        &format!(
+            "SELECT version, last_stats_histograms_version FROM mysql.stats_meta \
+             WHERE table_id = {column_table_id}"
+        ),
+    ));
+    for column in delayed_columns {
+        handle_stats_schema_change(
+            &mut session,
+            &SchemaChangeEvent::add_columns(column_table.clone_like_go(), vec![column]),
+        );
+    }
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT version, last_stats_histograms_version FROM mysql.stats_meta \
+                 WHERE table_id = {column_table_id}"
+            ),
+        )),
+        column_before
+    );
 }
 
 /// Pinned DDL subscriber `ActionDropSchema` visits every table's partition

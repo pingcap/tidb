@@ -83,6 +83,15 @@ impl ClusterNotifierSession {
             })
             .map_err(notifier_error)
     }
+
+    fn control_transaction(&self, sql: &str) -> Result<(), NotifierError> {
+        self.with_server(|session| {
+            session
+                .control_transaction(sql)
+                .map(|_| ())
+                .map_err(|error| NotifierError::Message(error.message))
+        })
+    }
 }
 
 impl NotifierSession for ClusterNotifierSession {
@@ -91,15 +100,15 @@ impl NotifierSession for ClusterNotifierSession {
     }
 
     fn begin_pessimistic(&mut self) -> Result<(), NotifierError> {
-        self.write("BEGIN PESSIMISTIC").map(|_| ())
+        self.control_transaction("BEGIN PESSIMISTIC")
     }
 
     fn commit(&mut self) -> Result<(), NotifierError> {
-        self.write("COMMIT").map(|_| ())
+        self.control_transaction("COMMIT")
     }
 
     fn rollback(&mut self) {
-        let _ = self.write("ROLLBACK");
+        let _ = self.control_transaction("ROLLBACK");
     }
 }
 
@@ -170,6 +179,24 @@ fn run_auto_analyze(global_vars: &tidb_session::GlobalSysvars) -> bool {
         .map_or(true, |value| value.eq_ignore_ascii_case("ON"))
 }
 
+fn finish_stats_handler(
+    event: &tidb_ddl_notifier::SchemaChangeEvent,
+    result: Result<(), NotifierError>,
+) -> Result<(), NotifierError> {
+    if let Err(error) = result {
+        // Pinned Go `ddlHandlerImpl.HandleDDLEvent` deliberately logs a
+        // subscriber failure and returns nil. Mark this handler's event
+        // processed as well: leaving it pending would retry mutations which
+        // Go does not retry at the notifier boundary.
+        eprintln!(
+            "{{\"event\":\"stats_ddl_event_failed\",\"schema_change\":{},\"error\":{}}}",
+            serde_json::to_string(&event.to_string()).unwrap_or_else(|_| "\"unknown\"".to_owned()),
+            serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "\"unknown\"".to_owned())
+        );
+    }
+    Ok(())
+}
+
 pub(super) fn build_notifier(
     factory: &Arc<ClusterSessionFactory>,
     stats_lease: Duration,
@@ -183,9 +210,10 @@ pub(super) fn build_notifier(
     ));
     let stats_handler: Handler = Arc::new(|session, event| {
         cluster_session(session)?.with_server(|server| {
-            server
+            let result = server
                 .stage_stats_notifier_event(event)
-                .map_err(|error| notifier_error(error.message))
+                .map_err(|error| notifier_error(error.message));
+            finish_stats_handler(event, result)
         })
     });
     notifier.register_handler(STATS_META_HANDLER_ID, stats_handler);
@@ -306,7 +334,8 @@ pub(super) fn build_notifier(
 
 #[cfg(test)]
 mod tests {
-    use super::run_auto_analyze;
+    use super::{finish_stats_handler, run_auto_analyze};
+    use tidb_ddl_notifier::{NotifierError, SchemaChangeEvent};
     use tidb_session::GlobalSysvars;
 
     #[test]
@@ -329,6 +358,16 @@ mod tests {
             )
             .unwrap();
         assert!(run_auto_analyze(&globals));
+    }
+
+    #[test]
+    fn stats_handler_marks_a_failed_event_processed_like_go() {
+        let event = SchemaChangeEvent::flashback_cluster();
+        assert!(finish_stats_handler(
+            &event,
+            Err(NotifierError::Message("subscriber failed".to_owned())),
+        )
+        .is_ok());
     }
 }
 

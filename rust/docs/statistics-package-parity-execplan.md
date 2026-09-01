@@ -124,12 +124,37 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - [x] (2026-08-30) Reconciled root handletest's collation-load and cache-refresh guards against their production owners. String histogram bounds remain raw collation-key bytes; an equal metadata-version pass retains the exact published snapshot without a reload; and a failed/timeout read preserves the prior cache while recording the failure.
 - [x] (2026-08-30) Reconciled root handletest's uninitialized and missing-partition statistics contracts through exact ordinary-session regressions. Delta-only DDL placeholders stay hidden and pseudo under both outdated-stat settings; dynamic analysis of two out of three partitions publishes the six-row/two-modification global meta and initializes all three columns plus the index.
 - [x] (2026-08-30) Reconciled root handletest `TestVersion` at the live cluster boundary. Periodic, ANALYZE, and LOAD STATS refreshes now use the canonical parent-cache ordered metadata update instead of Rust's whole-snapshot version probe/rebuild; older per-table versions cannot move cached objects backward, targeted refreshes preserve the global watermark, ANALYZE supplies Go's task-derived logical/partition/index ID list rather than its historical-dump IDs, and the legacy helpers/tests were removed.
-- [ ] Implement pinned `UpdateStatsVersion` and `ChangeGlobalStatsID` only with their owning flashback/add-partitioning/remove-partitioning DDL subscriber events and original per-statement transaction boundaries; the previous unreachable flattened planners and synthetic storage-image tests were removed.
+- [x] (2026-08-31) Implemented pinned `UpdateStatsVersion` and `ChangeGlobalStatsID` through their owning flashback/add-partitioning/remove-partitioning subscriber events. Their two and six ordered SQL statements now remain distinct retryable statement boundaries inside one real pessimistic notifier transaction; the production notifier uses the ordinary transaction controller, and statistics handler failures are logged and marked processed like Go.
 - [ ] Wire all pinned Go `SHOW STATS_*` surfaces to the shared cache and storage semantics.
 - [ ] Inventory every production file, platform/generated variant, original test/support artifact, fixture, and validation gate in pinned `pkg/statistics`; close or explicitly retain seed-only gaps until the whole package is complete.
 - [ ] Run the Ready validation profile, including `make lint`, only after the complete package inventory is closed.
 
 ## Surprises & Discoveries
+
+- Observation: the notifier's internal session adapter sent `BEGIN
+  PESSIMISTIC`, `COMMIT`, and `ROLLBACK` through the ordinary write planner,
+  which cannot establish the session's explicit transaction. The statistics
+  subscriber therefore reached its first staged statement with no active
+  transaction even though direct test helpers appeared to work.
+  Evidence: the production-notifier regression failed with `DDL notifier
+  handler has no active transaction`; routing transaction control through the
+  shared session transaction controller makes the same durable event commit
+  and clean up successfully.
+
+- Observation: pinned statistics `HandleDDLEvent` deliberately logs a
+  subscriber error and returns nil. Propagating that error from Rust's handler
+  kept the notifier row pending and retried partial subscriber work, which is
+  observably different from Go.
+  Evidence: pinned `pkg/statistics/handle/ddl/ddl.go` and the Rust handler
+  regression that converts a subscriber error to successful event processing.
+
+- Observation: `UpdateStatsVersion` and `ChangeGlobalStatsID` are one
+  transaction but not one statement. Flattening the former's two updates or
+  the latter's six updates into one staged plan changes statement retry and
+  partial-progress behavior before Go's error-suppressing handler returns.
+  Evidence: pinned `pkg/statistics/handle/ddl/subscriber.go` issues the updates
+  individually in fixed order; Rust now stages exactly one statement at a
+  time in those same orders.
 
 - Observation: the live Rust refresh seam still bypassed the completed parent-cache `Update` implementation. It performed a second all-table metadata scan/whole-snapshot comparison and rebuilt the statement-facing image, so an older metadata row and targeted ANALYZE/LOAD publication were governed by Rust-specific policy rather than the cache's Go rules.
   Evidence: pinned `StatsCacheImpl.Update` queries ordered rows above the five-lease watermark and applies its old-table version/schema guard plus targeted `SkipMoveForward`; the removed Rust helpers instead compared `BTreeMap<table_id, version>` against an entire `StatsSnapshot` and called a separate snapshot loader.

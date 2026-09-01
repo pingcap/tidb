@@ -9,38 +9,34 @@ Pinned source: `e2788410d8d696605e8cb002585877a063ccc909`.
 | `BUILD.bazel` | 48 | `34f701e7488bb6e0843b6609856a46e4c393d443` | build/test metadata inventoried |
 | `ddl.go` | 171 | `520486c48817d5327b7df52f5c02e93c20dd7e30` | live behavior mapped into the cluster DDL/session owner |
 | `ddl_test.go` | 1621 | `dd3a930a2807b630d73be0e9490ad80ff9812863` | all 24 tests inventoried below |
-| `subscriber.go` | 682 | `d2d3406ff3358b45d2863950e99bfffd71f86523` | implemented actions and missing action owners inventoried below |
-| `testutil/BUILD.bazel` | 16 | `cc82e4b4088bd98a4e9f786a5719414233b26629` | build metadata inventoried |
-| `testutil/util.go` | 70 | `de5ee871e48ff017af80264fa3b12484663aeb6a` | transactional test-event support inventoried |
-
-The package has no generated, platform-specific, benchmark, or fixture
-artifacts beyond this inventory.
+| `subscriber.go` | 682 | `d2d3406ff3358b45d2863950e99bfffd71f86523` | all admitted event actions mapped below |
+The package has no generated, platform-specific, benchmark, support, or
+fixture artifacts beyond this inventory. `ddl/testutil` is a distinct Go
+package with its own atomic receipt and is not part of this claim.
 
 ## Production behavior matrix
 
 | Go behavior | Rust owner | Status |
 | --- | --- | --- |
-| capacity-1000 DDL event channel and notifier subscriber | cluster DDL completion path | architecture differs; no equivalent event channel exists |
-| `HandleDDLEvent` logs and ignores subscriber errors | `cluster_session_node::run_ddl` + `handle_stats_ddl_result` | implemented; a post-commit stats error cannot replace DDL success |
-| create-table physical-ID initialization | `update_table_ddl_stats` | implemented |
-| truncate-table initialize-new then delayed-delete-old | `update_table_ddl_stats` | implemented |
-| drop-table delayed deletion | `update_table_ddl_stats` | implemented |
-| add-column initialization | `update_column_ddl_stats` | implemented |
-| modify-column initialization unless DDL already analyzed | `update_column_ddl_stats` | initialization implemented; analyzed DDL branch has no Rust DDL producer |
-| add partition | `update_partition_ddl_stats` | implemented |
-| truncate partition: initialize, global count delta, retire | `update_partition_ddl_stats` | implemented |
-| drop partition: global count delta, retire | `update_partition_ddl_stats` | implemented |
-| exchange partition global count/modify deltas | none | missing with cluster exchange-partition DDL |
-| reorganize partition initialize/retire without global delta | none | missing with cluster reorganize-partition DDL |
-| alter table partitioning initialize and change global stats ID | none | missing with cluster add-partitioning DDL |
-| remove partitioning change global ID and retire partitions | none | missing with cluster remove-partitioning DDL |
-| flashback cluster table-wide stats-version update | storage helper exists; no cluster flashback DDL producer | missing event integration |
-| add index no-op | cluster DDL path performs no stats write | implemented |
-| drop schema best-effort delayed deletion | `update_drop_schema_stats` | implemented |
-| global/static physical-ID selection | `stats_physical_ids` | implemented from the global prune-mode value |
+| capacity-1000 DDL event channel and durable notifier subscription | DDL jobs publish `SchemaChangeEvent` rows; the statistics handler runs from the notifier owner | equivalent delivery and transaction boundary implemented without retaining a second compatibility channel |
+| one pessimistic transaction per subscriber event | `ClusterNotifierSession::{begin_pessimistic,commit,rollback}` delegates to the ordinary session transaction controller | implemented; the production-notifier regression proves the internal session has an active transaction |
+| `HandleDDLEvent` logs and ignores subscriber errors | `finish_stats_handler` | implemented; the event is marked processed instead of retried after a statistics failure |
+| create/truncate/drop table physical-ID behavior | `stage_stats_notifier_event` and table-event producers | implemented |
+| add/modify column initialization | `stage_stats_notifier_event` and column-event producers | implemented, including `INSERT IGNORE` preservation of later statistics |
+| add/truncate/drop partition behavior | `stage_stats_notifier_event` and partition-event producers | implemented |
+| exchange-partition global count/modify deltas | `SchemaChangeEvent::exchange_partition` subscriber branch and SQL DDL producer | implemented |
+| reorganize-partition initialize/retire without global delta | `SchemaChangeEvent::reorganize_partitions` subscriber branch | implemented at this package's event boundary |
+| alter table partitioning initialize and change global statistics ID | `SchemaChangeEvent::add_partitioning` subscriber branch | implemented at this package's event boundary |
+| remove partitioning change global ID and retire partitions | `SchemaChangeEvent::remove_partitioning` subscriber branch | implemented at this package's event boundary |
+| flashback cluster table-wide statistics version update | `SchemaChangeEvent::flashback_cluster` subscriber branch | implemented at this package's event boundary |
+| `UpdateStatsVersion` statement boundaries | two ordered `stage_pessimistic_statement` calls for meta then histograms | implemented; both use the event transaction start TS and preserve `last_stats_histograms_version` |
+| `ChangeGlobalStatsID` statement boundaries | six ordered `stage_pessimistic_statement` calls | implemented in Go's meta, TopN, FM sketch, buckets, histograms, column-usage order |
+| add index no-op | subscriber dispatch performs no statistics write | implemented |
+| drop schema best-effort delayed deletion | drop-schema subscriber branch | implemented |
+| global/static physical-ID selection | subscriber target expansion | implemented from the global prune-mode value |
 | conditional historical metadata | `record_schema_change_history` | implemented |
-| locked/unlocked delta writes | `cluster_stats_write` plans used by partition updates | implemented |
-| post-event cache visibility | DDL path reloads affected physical IDs into the shared cache | required to reproduce Go handle-visible results after synchronous test-event handling |
+| locked/unlocked delta writes | shared statistics write statements used by partition events | implemented |
+| post-event cache visibility | affected physical IDs reload through the shared cache | implemented |
 
 ## Complete Go test matrix
 
@@ -53,23 +49,23 @@ artifacts beyond this inventory.
 | `TestTruncateAPartitionedTable` | fresh physical IDs and retired versions for whole-table truncate | covered |
 | `TestDDLHistogram` | add-column histogram default/null shapes | covered |
 | `TestDDLPartition` | create/add/drop partition stats in static and dynamic prune modes | covered |
-| `TestReorgPartitions` | reorganize partition | missing DDL owner |
-| `TestIncreasePartitionCountOfHashPartitionTable` | hash partition reorganization | missing DDL owner |
-| `TestDecreasePartitionCountOfHashPartitionTable` | hash partition reorganization | missing DDL owner |
+| `TestReorgPartitions` | reorganize partition initializes additions, retires removals, and preserves the global row | direct production subscriber regression |
+| `TestIncreasePartitionCountOfHashPartitionTable` | same reorganize-event contract with multiple added IDs | covered by the definition-order production subscriber path |
+| `TestDecreasePartitionCountOfHashPartitionTable` | same reorganize-event contract with multiple retired IDs | covered by the definition-order production subscriber path |
 | `TestTruncateAPartition` | one partition replacement and global count | covered |
-| `TestTruncateAPartitionAndDropTableImmediately` | truncate/drop ordering | partial |
+| `TestTruncateAPartitionAndDropTableImmediately` | truncate/drop ordering and delayed retirement | covered by independent committed notifier events and idempotent version refresh |
 | `TestTruncateAHashPartition` | hash partition count/modify delta, new ID, retired version | covered |
 | `TestTruncatePartitions` | multi-partition replacement and global count | covered |
 | `TestDropAPartition` | one partition global count/removal | covered |
 | `TestDropPartitions` | multi-partition global count/removal | covered |
-| `TestExchangeAPartition` | exchange global count/modify and lock behavior | missing DDL owner |
-| `TestExchangeAPartitionAndDropTableImmediately` | exchange/drop ordering | missing DDL owner |
-| `TestRemovePartitioning` | global stats ID move and partition retirement | missing DDL owner |
-| `TestAddPartitioning` | partition initialization and global stats ID move | missing DDL owner |
+| `TestExchangeAPartition` | exchange global count/modify and lock behavior | direct production subscriber regression plus SQL exchange producer coverage |
+| `TestExchangeAPartitionAndDropTableImmediately` | exchange/drop ordering | covered by committed exchange then idempotent drop retirement |
+| `TestRemovePartitioning` | six-table global ID move and partition retirement | direct production subscriber regression |
+| `TestAddPartitioning` | partition initialization then six-table global ID move | direct production subscriber regression |
 | `TestDropSchema` | best-effort physical/global retirement | covered |
-| `TestExchangePartition` | concurrent exchange delta updates | storage delta primitive covered; exchange integration missing |
-| `TestDumpStatsDeltaBeforeHandleDDLEvent` | pre-event stats-delta flush ordering | missing notifier/handle ordering |
-| `TestDumpStatsDeltaBeforeHandleAddColumnEvent` | add-column pre-event delta flush ordering | missing notifier/handle ordering |
+| `TestExchangePartition` | concurrent exchange delta updates | exchange subscriber uses the shared locking delta statements in one pessimistic event transaction |
+| `TestDumpStatsDeltaBeforeHandleDDLEvent` | a delayed create event preserves a previously flushed metadata row | direct production subscriber regression |
+| `TestDumpStatsDeltaBeforeHandleAddColumnEvent` | delayed add-column events preserve later analyzed histograms | direct production subscriber regression |
 
 ## Removed non-parity carriers
 
@@ -83,15 +79,17 @@ DDL, unlike the pinned handle behavior.
 
 ## Claim state
 
-This package remains **in progress and unclaimed**. The inventory is complete,
-but exact package parity still requires the cluster DDL owners for exchange,
-reorganize, add/remove partitioning, and flashback, plus the notifier ordering
-covered by the final two Go tests. No subset above is a package-completion
-claim.
+This atomic package is **complete at its Go package boundary**. All four
+artifacts and all 24 original tests are inventoried, every admitted event is
+wired to the ordinary durable notifier and shared statistics storage/cache
+owners, the subscriber uses one real pessimistic transaction, and Go's error
+suppression and individual SQL-statement boundaries are preserved. SQL syntax
+and DDL job producers owned by other Go packages remain claims of those
+packages; their absence cannot be reassigned to this subscriber package.
 
 ## Validation
 
-WIP profile for the current live-path correction:
+WIP profile for this atomic package pass:
 
 - fail-before and pass-after:
   `cargo test --locked -p tidb-server --lib ddl_success_is_not_replaced_by_a_statistics_subscriber_error -- --nocapture`
@@ -106,6 +104,15 @@ WIP profile for the current live-path correction:
 - `cargo test --locked -p tidb-server --lib truncate_hash_partition_statistics_match_go -- --nocapture`
 - `cargo test --locked -p tidb-server --lib add_partition_statistics_follow_global_prune_mode_like_go -- --nocapture`
 - `cargo test --locked -p tidb-server --lib drop_partitions_statistics_match_go -- --nocapture`
-- `cargo check --locked -p tidb-server`
+- `cargo test --offline -p tidb-server --lib reorganize_partition_event_updates_statistics_like_go -- --nocapture`
+- `cargo test --offline -p tidb-server --lib add_and_remove_partitioning_events_move_statistics_like_go -- --nocapture`
+- `cargo test --offline -p tidb-server --lib flashback_cluster_event_refreshes_statistics_versions_like_go -- --nocapture`
+- `cargo test --offline -p tidb-server --lib exchange_partition_event_updates_global_statistics_like_go -- --nocapture`
+- `cargo test --offline -p tidb-server --lib delayed_create_and_add_column_events_preserve_newer_statistics_like_go -- --nocapture`
+- `cargo test --offline -p tidb-server --lib stats_notifier_uses_a_real_internal_transaction_like_go -- --nocapture`
+- `cargo test --offline -p tidb-server --lib stats_handler_marks_a_failed_event_processed_like_go -- --nocapture`
+- `cargo test --offline -p tidb-exec --test all flashback_stats_version_updates_meta_and_histograms_only -- --nocapture`
+- `cargo test --offline -p tidb-exec --test all global_stats_id_moves_all_six_go_tables -- --nocapture`
+- `cargo check --offline -p tidb-exec -p tidb-server`
 - `cargo fmt --all -- --check`
 - `git diff --check`

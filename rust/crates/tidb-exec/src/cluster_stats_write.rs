@@ -1236,32 +1236,119 @@ pub fn plan_stats_meta_version_refresh<S: MetaSnapshot>(
     Ok(plan)
 }
 
-/// Plans pinned Go `UpdateStatsVersion` as its two table-wide UPDATEs.
+/// One ordered statement in pinned Go `UpdateStatsVersion`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StatsVersionTable {
+    /// `UPDATE mysql.stats_meta SET version = ?`.
+    Meta,
+    /// `UPDATE mysql.stats_histograms SET version = ?`.
+    Histograms,
+}
+
+/// Pinned Go `UpdateStatsVersion` statement order.
+pub const STATS_VERSION_TABLES: [StatsVersionTable; 2] =
+    [StatsVersionTable::Meta, StatsVersionTable::Histograms];
+
+/// Plans one pinned Go `UpdateStatsVersion` table-wide UPDATE.
 ///
-/// Only the `version` column changes. In particular, Go does not refresh
-/// `stats_meta.last_stats_histograms_version` in this flashback-cluster path.
+/// Only the `version` column changes. In particular, the `stats_meta`
+/// statement does not refresh `last_stats_histograms_version`.
+pub fn plan_update_stats_table_version<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    target: StatsVersionTable,
+    version: u64,
+) -> Result<StatsWritePlan, StatsWriteError> {
+    let mut plan = StatsWritePlan::default();
+    let (table_name, identity) = match target {
+        StatsVersionTable::Meta => ("stats_meta", &["table_id"][..]),
+        StatsVersionTable::Histograms => {
+            ("stats_histograms", &["table_id", "is_index", "hist_id"][..])
+        }
+    };
+    let table = locate(catalog, table_name)?;
+    let mut rows = StatsRows::open_all(snapshot, table, identity)?;
+    let stored = rows
+        .existing
+        .values()
+        .map(|(_, values)| values.clone())
+        .collect::<Vec<_>>();
+    for mut values in stored {
+        set(table, &mut values, "version", Datum::UInt(version));
+        rows.store(snapshot, catalog, &values, &mut plan)?;
+    }
+    Ok(plan)
+}
+
+/// Plans pinned Go `UpdateStatsVersion` as its two ordered table-wide UPDATEs.
 pub fn plan_update_stats_version<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
     version: u64,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let mut plan = StatsWritePlan::default();
-    for (table_name, identity) in [
-        ("stats_meta", &["table_id"][..]),
-        ("stats_histograms", &["table_id", "is_index", "hist_id"][..]),
-    ] {
-        let table = locate(catalog, table_name)?;
-        let mut rows = StatsRows::open_all(snapshot, table, identity)?;
-        let stored = rows
-            .existing
-            .values()
-            .map(|(_, values)| values.clone())
-            .collect::<Vec<_>>();
-        for mut values in stored {
-            set(table, &mut values, "version", Datum::UInt(version));
-            rows.store(snapshot, catalog, &values, &mut plan)?;
-        }
+    for target in STATS_VERSION_TABLES {
+        let statement = plan_update_stats_table_version(snapshot, catalog, target, version)?;
+        plan.mutations.extend(statement.mutations);
     }
+    Ok(plan)
+}
+
+/// One ordered statement in pinned Go `ChangeGlobalStatsID`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GlobalStatsIdTable {
+    /// `mysql.stats_meta`.
+    Meta,
+    /// `mysql.stats_top_n`.
+    TopN,
+    /// `mysql.stats_fm_sketch`.
+    FmSketch,
+    /// `mysql.stats_buckets`.
+    Buckets,
+    /// `mysql.stats_histograms`.
+    Histograms,
+    /// `mysql.column_stats_usage`.
+    ColumnUsage,
+}
+
+/// Pinned Go `changeGlobalStatsTables` order.
+pub const GLOBAL_STATS_ID_TABLES: [GlobalStatsIdTable; 6] = [
+    GlobalStatsIdTable::Meta,
+    GlobalStatsIdTable::TopN,
+    GlobalStatsIdTable::FmSketch,
+    GlobalStatsIdTable::Buckets,
+    GlobalStatsIdTable::Histograms,
+    GlobalStatsIdTable::ColumnUsage,
+];
+
+/// Plans one pinned Go `ChangeGlobalStatsID` table UPDATE.
+pub fn plan_change_global_stats_table_id<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    target: GlobalStatsIdTable,
+    from: i64,
+    to: i64,
+) -> Result<StatsWritePlan, StatsWriteError> {
+    let (table_name, identity) = match target {
+        GlobalStatsIdTable::Meta => ("stats_meta", &["table_id"][..]),
+        GlobalStatsIdTable::TopN => (
+            "stats_top_n",
+            &["table_id", "is_index", "hist_id", "value"][..],
+        ),
+        GlobalStatsIdTable::FmSketch => {
+            ("stats_fm_sketch", &["table_id", "is_index", "hist_id"][..])
+        }
+        GlobalStatsIdTable::Buckets => (
+            "stats_buckets",
+            &["table_id", "is_index", "hist_id", "bucket_id"][..],
+        ),
+        GlobalStatsIdTable::Histograms => {
+            ("stats_histograms", &["table_id", "is_index", "hist_id"][..])
+        }
+        GlobalStatsIdTable::ColumnUsage => ("column_stats_usage", &["table_id", "column_id"][..]),
+    };
+    let mut plan = StatsWritePlan::default();
+    change_stats_table_id(snapshot, catalog, table_name, identity, from, to, &mut plan)?;
     Ok(plan)
 }
 
@@ -1274,21 +1361,9 @@ pub fn plan_change_global_stats_id<S: MetaSnapshot>(
     to: i64,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let mut plan = StatsWritePlan::default();
-    for (table_name, identity) in [
-        ("stats_meta", &["table_id"][..]),
-        (
-            "stats_top_n",
-            &["table_id", "is_index", "hist_id", "value"][..],
-        ),
-        ("stats_fm_sketch", &["table_id", "is_index", "hist_id"][..]),
-        (
-            "stats_buckets",
-            &["table_id", "is_index", "hist_id", "bucket_id"][..],
-        ),
-        ("stats_histograms", &["table_id", "is_index", "hist_id"][..]),
-        ("column_stats_usage", &["table_id", "column_id"][..]),
-    ] {
-        change_stats_table_id(snapshot, catalog, table_name, identity, from, to, &mut plan)?;
+    for target in GLOBAL_STATS_ID_TABLES {
+        let statement = plan_change_global_stats_table_id(snapshot, catalog, target, from, to)?;
+        plan.mutations.extend(statement.mutations);
     }
     Ok(plan)
 }

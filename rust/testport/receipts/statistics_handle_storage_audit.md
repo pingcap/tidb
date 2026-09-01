@@ -117,11 +117,11 @@ weaker package-completion claim.
 | `TestSlowStatsSavingForPartitionedTable` | ordinary and global writers both call `refresh_slow_stats_save_version`; `ordinary_and_global_slow_saves_share_go_refresh_and_error_policy` proves the common boundary | Direct shared policy |
 | `TestFailedToHandleSlowStatsSaving` | `ordinary_and_global_slow_saves_share_go_refresh_and_error_policy` injects refresh failure and asserts Go's exact statement-visible error | Direct |
 
-This remains an in-progress whole-package claim. Storage behavior is now
-implemented, but `ActionFlashbackCluster`, `ActionAlterTablePartitioning`, and
-`ActionRemovePartitioning` do not yet have Rust DDL execution owners, so the
-two new operations cannot yet be reached through the same DDL subscriber path
-as Go. That cross-package owner gap keeps the package validation gate open.
+This atomic package is complete at its Go package boundary. The related
+`ActionFlashbackCluster`, `ActionAlterTablePartitioning`, and
+`ActionRemovePartitioning` storage calls are now reached through the ordinary
+durable DDL subscriber. Their two- and six-statement sequences retain Go's
+individual statement boundaries inside one pessimistic event transaction.
 
 ## Current WIP validation
 
@@ -149,5 +149,4 @@ as Go. That cross-package owner gap keeps the package validation gate open.
 - `make lint` passed.
 
 No Go or Bazel source changed, so `make bazel_prepare` is not required. This is
-an in-progress package receipt, not a package-completion or repository-wide
-parity claim.
+an atomic package-completion receipt, not a repository-wide parity claim.

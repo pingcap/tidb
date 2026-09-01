@@ -5708,35 +5708,43 @@ impl ClusterServerSession {
     ) -> Result<(), SqlQueryError> {
         let transaction = self.notifier_transaction()?;
         let catalog = self.catalog.load();
-        transactions::stage_pessimistic_statement(transaction, &self.buffer, |snapshot, _| {
-            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-            let plan = tidb_exec::cluster_stats_write::plan_change_global_stats_id(
-                &mut snapshot,
-                &catalog,
-                old_table_id,
-                new_table_id,
-            )
-            .map_err(|error| error.to_string())?;
-            Ok(((), plan.mutations))
-        })
-        .map_err(SqlQueryError::unknown)
+        for target in tidb_exec::cluster_stats_write::GLOBAL_STATS_ID_TABLES {
+            transactions::stage_pessimistic_statement(transaction, &self.buffer, |snapshot, _| {
+                let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                let plan = tidb_exec::cluster_stats_write::plan_change_global_stats_table_id(
+                    &mut snapshot,
+                    &catalog,
+                    target,
+                    old_table_id,
+                    new_table_id,
+                )
+                .map_err(|error| error.to_string())?;
+                Ok(((), plan.mutations))
+            })
+            .map_err(SqlQueryError::unknown)?;
+        }
+        Ok(())
     }
 
     fn stage_stats_version_refresh(&self) -> Result<(), SqlQueryError> {
         let transaction = self.notifier_transaction()?;
         let catalog = self.catalog.load();
         let version = transaction.start_ts();
-        transactions::stage_pessimistic_statement(transaction, &self.buffer, |snapshot, _| {
-            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-            let plan = tidb_exec::cluster_stats_write::plan_update_stats_version(
-                &mut snapshot,
-                &catalog,
-                version,
-            )
-            .map_err(|error| error.to_string())?;
-            Ok(((), plan.mutations))
-        })
-        .map_err(SqlQueryError::unknown)
+        for target in tidb_exec::cluster_stats_write::STATS_VERSION_TABLES {
+            transactions::stage_pessimistic_statement(transaction, &self.buffer, |snapshot, _| {
+                let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                let plan = tidb_exec::cluster_stats_write::plan_update_stats_table_version(
+                    &mut snapshot,
+                    &catalog,
+                    target,
+                    version,
+                )
+                .map_err(|error| error.to_string())?;
+                Ok(((), plan.mutations))
+            })
+            .map_err(SqlQueryError::unknown)?;
+        }
+        Ok(())
     }
 
     fn record_schema_change_history(
