@@ -112,3 +112,30 @@ func TestInitStatsSessionBlockGC(t *testing.T) {
 		require.NoError(t, store.Close())
 	}
 }
+<<<<<<< HEAD
+=======
+
+func TestInitStatsSessionBlockGCCanBeCanceled(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/syssession/ForceBlockGCInTest", "return(true)"))
+
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	dom, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+
+	infoSyncer := dom.InfoSyncer()
+	// This prevents the session from being created because we do not set a session manager.
+	infoSyncer.SetSessionManager(nil)
+	h := dom.StatsHandle()
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(1 * time.Second)
+		cancel()
+	}()
+	require.ErrorIs(t, h.InitStats(ctx, dom.InfoSchema()), context.Canceled)
+	require.ErrorIs(t, h.InitStatsLite(ctx, dom.InfoSchema()), context.Canceled)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/syssession/ForceBlockGCInTest"))
+	dom.Close()
+	require.NoError(t, store.Close())
+}
+>>>>>>> 69b01777cbb (statistics: skip stale stats meta during initialization (#69116))
