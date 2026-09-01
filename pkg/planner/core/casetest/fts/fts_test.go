@@ -30,6 +30,26 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func runFTSExplainCases(t *testing.T, tk *testkit.TestKit, caseName string) {
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Warn []string
+	}
+	integrationSuiteData := GetFTSIndexSuiteData()
+	integrationSuiteData.LoadTestCasesByName(caseName, t, &input, &output)
+	for i, sql := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = sql
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
+			output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+		})
+		tk.MustQuery(sql).Check(testkit.Rows(output[i].Plan...))
+		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
+	}
+}
+
 func TestTiFlashFTSIndexWhere(t *testing.T) {
 	setupStarterFTSTest(t)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`))
@@ -59,45 +79,8 @@ func TestTiFlashFTSIndexWhere(t *testing.T) {
 	tk.MustExec("insert into t1 values (1, 'this is title', 'this is body')")
 	dom := domain.GetDomain(tk.Session())
 	testkit.SetTiFlashReplica(t, dom, "test", "t1")
-
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-		Warn []string
-	}
-	integrationSuiteData := GetFTSIndexSuiteData()
-	integrationSuiteData.LoadTestCases(t, &input, &output)
-	for i, tt := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-			output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
-		})
-		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
-		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
-	}
-
-	explain := func(sql string) string {
-		return strings.Join(testdata.ConvertRowsToStrings(tk.MustQuery("explain format='brief' "+sql).Rows()), "\n")
-	}
-	rangePlan := explain("select * from t1 where fts_match_word('hello', title) and id > 10")
-	require.Contains(t, rangePlan, "TableRangeScan")
-	require.Contains(t, rangePlan, "range:(10,+inf]")
-	require.NotContains(t, rangePlan, "Point_Get")
-
-	pointPlan := explain("select * from t1 where fts_match_word('hello', title) and id = 1")
-	require.Contains(t, pointPlan, "TableRangeScan")
-	require.Contains(t, pointPlan, "range:[1,1]")
-	require.NotContains(t, pointPlan, "Point_Get")
-	require.NotContains(t, pointPlan, "IndexMerge")
-
-	residualTopNPlan := explain("select * from t1 where fts_match_word('hello', title) and id > 10 order by fts_match_word('hello', title) desc limit 10")
-	require.Contains(t, residualTopNPlan, "ftsIndex:hello IN")
-	require.NotContains(t, residualTopNPlan, "ftsIndex:top10 hello IN")
-
 	tk.MustExec(`create table t_multi(
-		id int primary key, a text, b text, c text, d text,
+		id int primary key, a text, b text collate utf8mb4_bin, c text, d text,
 		fulltext key ft_multi(
 			a with (standard),
 			b with (ngram(min_gram=3)),
@@ -106,19 +89,14 @@ func TestTiFlashFTSIndexWhere(t *testing.T) {
 		)
 	)`)
 	testkit.SetTiFlashReplica(t, dom, "test", "t_multi")
-	multiColumnPlan := explain(`select * from t_multi
-		where (fts_match_word('foo', a) or fts_match_word('bar', b with parser ngram))
-		and c like '/path/to/%' and d = 'test'`)
-	require.Contains(t, multiColumnPlan, "foo IN test.t_multi.a")
-	require.Contains(t, multiColumnPlan, "bar IN test.t_multi.b")
-	require.Contains(t, multiColumnPlan, "/path/to/ IN test.t_multi.c")
-	require.Contains(t, multiColumnPlan, "test IN test.t_multi.d")
+	tk.MustExec("create table t2(id int primary key, title text, fulltext key (title))")
+	testkit.SetTiFlashReplica(t, dom, "test", "t2")
+	tk.MustExec("create table t_common(a int, b int, title text, primary key(a,b) clustered, fulltext key (title))")
+	tk.MustExec("create table t_rowid(title text, fulltext key (title))")
+	testkit.SetTiFlashReplica(t, dom, "test", "t_common")
+	testkit.SetTiFlashReplica(t, dom, "test", "t_rowid")
 
-	orderByWithAbsorbedFilterPlan := explain(`select * from t_multi
-		where fts_match_word('foo', a) and c like '/path/to/%'
-		order by fts_match_word('foo', a) desc limit 10`)
-	require.Contains(t, orderByWithAbsorbedFilterPlan, "foo IN test.t_multi.a")
-	require.Contains(t, orderByWithAbsorbedFilterPlan, "filter(/path/to/ IN test.t_multi.c)")
+	runFTSExplainCases(t, tk, "TestTiFlashFTSIndexWhere")
 
 	tk.MustExec(`prepare fts_exact_parameter from "explain format='brief'
 		select * from t_multi where fts_match_word('foo', a) and d = ?"`)
@@ -184,33 +162,9 @@ func TestTiFlashFTSIndexWhere(t *testing.T) {
 		tk.MustContainErrMsg("explain "+testCase.sql, testCase.errContains)
 	}
 
-	tk.MustExec("create table t2(id int primary key, title text, fulltext key (title))")
-	testkit.SetTiFlashReplica(t, dom, "test", "t2")
-	multiDataSourcePlan := explain("select t1.id from t1 join t2 on t1.id=t2.id where fts_match_word('hello', t1.title) and fts_match_word('world', t2.title)")
-	require.Equal(t, 2, strings.Count(multiDataSourcePlan, "ftsIndex:"))
-	require.Contains(t, multiDataSourcePlan, "hello IN test.t1.title")
-	require.Contains(t, multiDataSourcePlan, "world IN test.t2.title")
-
-	tk.MustExec("create table t_common(a int, b int, title text, primary key(a,b) clustered, fulltext key (title))")
-	tk.MustExec("create table t_rowid(title text, fulltext key (title))")
-	testkit.SetTiFlashReplica(t, dom, "test", "t_common")
-	testkit.SetTiFlashReplica(t, dom, "test", "t_rowid")
-	commonHandlePlan := explain("select * from t_common where fts_match_word('hello', title) and a=1")
-	require.Contains(t, commonHandlePlan, "TableRangeScan")
-	require.Contains(t, commonHandlePlan, "range:[1,1]")
-	rowIDPlan := explain("select * from t_rowid where fts_match_word('hello', title) and _tidb_rowid >= -2 and _tidb_rowid < 0")
-	require.Contains(t, rowIDPlan, "TableRangeScan")
-	require.Contains(t, rowIDPlan, "range:[-2,0)")
-
 	tk.MustContainErrMsg("explain select * from t1 force index(primary) where fts_match_word('hello', title)", "matching current TiFlash full-text index path")
 	tk.MustContainErrMsg("explain select * from t1 ignore index(title) where fts_match_word('hello', title)", "matching current TiFlash full-text index path")
 	tk.MustContainErrMsg("explain select /*+ read_from_storage(tikv[t1]) */ * from t1 where fts_match_word('hello', title)", "TiKV-only storage preference")
-
-	orderHintPlan := explain("select /*+ order_index(t1, title) */ * from t1 where fts_match_word('hello', title) order by id")
-	require.Contains(t, orderHintPlan, "Sort")
-	require.Contains(t, orderHintPlan, "keep order:false")
-	warnings := strings.Join(testdata.ConvertRowsToStrings(tk.MustQuery("show warnings").Rows()), "\n")
-	require.Equal(t, 1, strings.Count(warnings, "ORDER_INDEX is inapplicable"))
 
 	tk.MustExec("set @@tidb_isolation_read_engines='tikv'")
 	tk.MustContainErrMsg("explain select * from t1 where fts_match_word('hello', title)", "requires TiFlash in tidb_isolation_read_engines")
@@ -262,15 +216,7 @@ func TestTiFlashFTSPathUsesPrimaryIndexForCommonHandleRange(t *testing.T) {
 	) default charset=utf8mb4 collate=utf8mb4_bin`)
 	testkit.SetTiFlashReplica(t, domain.GetDomain(tk.Session()), "test", "file_nodes")
 
-	plan := strings.Join(testdata.ConvertRowsToStrings(tk.MustQuery(`explain format='brief'
-		select /*+ read_from_storage(tiflash[file_nodes]) */ path
-		from file_nodes force index(idx_path_fts)
-		where fs_id = 1 and (path = '/docs' or path like '/docs/%')
-		order by path`).Rows()), "\n")
-	require.Contains(t, plan, "TableRangeScan")
-	require.Contains(t, plan, "range:[1,1]")
-	require.Contains(t, plan, `or(eq(test.file_nodes.path, "/docs"), like(test.file_nodes.path, "/docs/%", 92))`)
-	require.NotContains(t, plan, `range:[1 "/docs"`)
+	runFTSExplainCases(t, tk, "TestTiFlashFTSPathUsesPrimaryIndexForCommonHandleRange")
 }
 
 func TestTiFlashFTSLikePrefilterExplain(t *testing.T) {
@@ -306,48 +252,7 @@ func TestTiFlashFTSLikePrefilterExplain(t *testing.T) {
 	)`)
 	testkit.SetTiFlashReplica(t, domain.GetDomain(tk.Session()), "test", "t")
 
-	explain := func(sql string) string {
-		return strings.Join(testdata.ConvertRowsToStrings(tk.MustQuery("explain format='brief' "+sql).Rows()), "\n")
-	}
-
-	t.Run("lossy prefilters retain residual conditions", func(t *testing.T) {
-		charNgramPlan := explain(`select * from t
-			where fts_match_word('foo', anchor) and char_ngram like 'abcd%wxyz'`)
-		require.Contains(t, charNgramPlan, "(abcd IN test.t.char_ngram AND wxyz IN test.t.char_ngram)")
-		require.Contains(t, charNgramPlan, `like(test.t.char_ngram, "abcd%wxyz", 92)`)
-
-		wordNgramPlan := explain(`select * from t
-			where fts_match_word('foo', anchor) and word_ci ilike 'Alpha-Beta%Gamma'`)
-		require.Contains(t, wordNgramPlan, "alpha beta gamma IN test.t.word_ci")
-		require.Contains(t, wordNgramPlan, `ilike(test.t.word_ci, "Alpha-Beta%Gamma", 92)`)
-
-		pathHierarchyPlan := explain(`select * from t
-			where fts_match_word('foo', anchor) and path like '/path/to/prefix%'`)
-		require.Contains(t, pathHierarchyPlan, "/path/to/ IN test.t.path")
-		require.Contains(t, pathHierarchyPlan, `like(test.t.path, "/path/to/prefix%", 92)`)
-	})
-
-	t.Run("Boolean prefilter safety", func(t *testing.T) {
-		orPlan := explain(`select * from t
-			where fts_match_word('foo', anchor)
-			and (char_ngram like 'abcd%' or path like '/path/to/prefix%')`)
-		require.Contains(t, orPlan, "(abcd IN test.t.char_ngram OR /path/to/ IN test.t.path)")
-		require.Contains(t, orPlan, `like(test.t.char_ngram, "abcd%", 92)`)
-		require.Contains(t, orPlan, `like(test.t.path, "/path/to/prefix%", 92)`)
-
-		notPlan := explain(`select * from t
-			where fts_match_word('foo', anchor) and not(char_ngram like 'abcd%')`)
-		require.Contains(t, notPlan, `not(like(test.t.char_ngram, "abcd%", 92))`)
-		require.Contains(t, notPlan, "ftsIndex:foo IN test.t.anchor")
-		require.NotContains(t, notPlan, "abcd IN test.t.char_ngram")
-
-		incompleteOrPlan := explain(`select * from t
-			where fts_match_word('foo', anchor) and (char_ngram like 'abcd%' or id > 10)`)
-		require.Contains(t, incompleteOrPlan, `like(test.t.char_ngram, "abcd%", 92)`)
-		require.Contains(t, incompleteOrPlan, "gt(test.t.id, 10)")
-		require.Contains(t, incompleteOrPlan, "ftsIndex:foo IN test.t.anchor")
-		require.NotContains(t, incompleteOrPlan, "abcd IN test.t.char_ngram")
-	})
+	runFTSExplainCases(t, tk, "TestTiFlashFTSLikePrefilterExplain")
 }
 
 func TestTiFlashFTSOrderByWithMultipleCoveredConditions(t *testing.T) {
@@ -383,19 +288,7 @@ func TestTiFlashFTSOrderByWithMultipleCoveredConditions(t *testing.T) {
 	)`)
 	testkit.SetTiFlashReplica(t, domain.GetDomain(tk.Session()), "test", "t")
 
-	plan := strings.Join(testdata.ConvertRowsToStrings(tk.MustQuery(`explain format='brief'
-		select * from t
-		where fts_match_word('foo', anchor)
-			and filter_a = 'one'
-			and filter_b = 'two'
-			and filter_c = 'three'
-		order by fts_match_word('foo', anchor) desc
-		limit 10`).Rows()), "\n")
-	require.Contains(t, plan, "ftsIndex:top10 ")
-	require.Contains(t, plan, "foo IN test.t.anchor")
-	require.Contains(t, plan, "one IN test.t.filter_a")
-	require.Contains(t, plan, "two IN test.t.filter_b")
-	require.Contains(t, plan, "three IN test.t.filter_c")
+	runFTSExplainCases(t, tk, "TestTiFlashFTSOrderByWithMultipleCoveredConditions")
 }
 
 func TestTiFlashFTSIndexTopN(t *testing.T) {
@@ -424,23 +317,7 @@ func TestTiFlashFTSIndexTopN(t *testing.T) {
 	dom := domain.GetDomain(tk.Session())
 	testkit.SetTiFlashReplica(t, dom, "test", "t1")
 
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-		Warn []string
-	}
-	integrationSuiteData := GetFTSIndexSuiteData()
-	integrationSuiteData.LoadTestCases(t, &input, &output)
-	for i, tt := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-			output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
-		})
-		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
-		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
-	}
+	runFTSExplainCases(t, tk, "TestTiFlashFTSIndexTopN")
 }
 
 func TestTiFlashFTSIndexJoin(t *testing.T) {
@@ -469,23 +346,7 @@ func TestTiFlashFTSIndexJoin(t *testing.T) {
 	dom := domain.GetDomain(tk.Session())
 	testkit.SetTiFlashReplica(t, dom, "test", "file_chunks")
 
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-		Warn []string
-	}
-	integrationSuiteData := GetFTSIndexSuiteData()
-	integrationSuiteData.LoadTestCases(t, &input, &output)
-	for i, tt := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-			output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
-		})
-		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
-		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
-	}
+	runFTSExplainCases(t, tk, "TestTiFlashFTSIndexJoin")
 }
 
 func setupStarterFTSTest(t *testing.T) {
