@@ -83,6 +83,13 @@ For each bounded behavior cluster:
   benchmark compilation, formatting, lint, and Ready gates are recorded in
   `receipts/util_stringutil.md`.
 
+- 2026-09-01: completed the Go-master `pkg/util/table-filter` package as one
+  ten-artifact unit. Exported the concrete `ColumnFilterRules` and
+  `ParseColumnFilterRules` API, kept the interface-returning parser as a
+  delegating compatibility entry point, and added the focused concrete-rule
+  regression. The complete source/owner inventory, contract checks, formatting,
+  lint, and Ready gates are recorded in `receipts/util_table_filter.md`.
+
 - 2026-09-01: audited the complete Go `pkg/util/dbterror/exeerrors` package at
   `origin/master` `db35d47066648fe73abce6318d53fc625df51490` against the Rust
   owner on `origin/hparser-integration`. The package has exactly `errors.go`
@@ -1166,6 +1173,9 @@ For each bounded behavior cluster:
 - [x] Complete the Go-master `pkg/util/stringutil` package: port the explicit
       LIKE escape byte for regexp conversion, add its focused regression, and
       update the package receipt.
+- [x] Complete the Go-master `pkg/util/table-filter` package: port the
+      concrete `ColumnFilterRules` parser API, add its focused regression, and
+      update the package receipt.
 - [ ] Audit the next bounded package cluster by reading the requested Go
       `origin/master` first, then fill executable gaps and remove false
       carriers.
@@ -1212,6 +1222,12 @@ For each bounded behavior cluster:
   A focused regression covers custom `+` escaping and confirms a backslash is
   ordinary data when it is not the selected escape. Date/Author: 2026-09-01,
   Codex.
+- Decision: represent Go's exported `ColumnFilterRules` as a public,
+  non-clonable Rust rule-list owner with an inherent `match_column` method and
+  the existing `ColumnFilter` trait implementation. `ParseColumnFilter` boxes
+  that same concrete value, while `ParseColumnFilterRules` returns it directly;
+  this preserves both Go entry points without inventing a second matcher path.
+  Date/Author: 2026-09-01, Codex.
 - Decision: for the continuing loop, newly selected packages compare against
   the fetched Go `origin/master`; the older `e2788410...` pin remains the
   historical source for receipts already completed. `pkg/util/plancodec`
@@ -1494,6 +1510,10 @@ For each bounded behavior cluster:
   source delta was only observable with a non-backslash escape; the added
   regression makes that contract executable without adding a second consumer
   path.
+- Go master exported `ColumnFilterRules` for dumpling's column-filter config
+  while leaving the source test suite unchanged. Rust's private implementation
+  therefore compiled all historical rows yet still lacked the public parser
+  shape; the focused regression now exercises the concrete API directly.
 
 ## Outcomes & Retrospective
 

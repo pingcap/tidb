@@ -26,12 +26,19 @@ pub trait ColumnFilter: Send + Sync {
     fn match_column(&self, column: &str) -> bool;
 }
 
-struct ColumnFilterImpl {
+/// A parsed column-filter rule list.
+pub struct ColumnFilterRules {
     rules: Vec<ColumnRule>,
 }
 
-impl ColumnFilter for ColumnFilterImpl {
-    fn match_column(&self, column: &str) -> bool {
+impl ColumnFilterRules {
+    /// Checks if a column can be processed after applying the parsed rules.
+    #[must_use]
+    pub fn match_column(&self, column: &str) -> bool {
+        self.match_column_impl(column)
+    }
+
+    fn match_column_impl(&self, column: &str) -> bool {
         // Column names and aliases are not case-sensitive on any platform, so
         // always match in lowercase.
         // See https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html
@@ -45,9 +52,20 @@ impl ColumnFilter for ColumnFilterImpl {
     }
 }
 
+impl ColumnFilter for ColumnFilterRules {
+    fn match_column(&self, column: &str) -> bool {
+        self.match_column_impl(column)
+    }
+}
+
 /// Parses a column filter from a list of serialized column-filter rules. The
 /// parsed column filter is case-insensitive.
 pub fn parse_column_filter(args: &[&str]) -> Result<Box<dyn ColumnFilter>, FilterError> {
+    Ok(Box::new(parse_column_filter_rules(args)?))
+}
+
+/// Parses a column-filter rule list into its concrete source-shaped type.
+pub fn parse_column_filter_rules(args: &[&str]) -> Result<ColumnFilterRules, FilterError> {
     let mut p = ColumnRulesParser {
         rules: Vec::with_capacity(args.len()),
         mp: MatcherParser::new(),
@@ -59,12 +77,12 @@ pub fn parse_column_filter(args: &[&str]) -> Result<Box<dyn ColumnFilter>, Filte
 
     p.rules.reverse();
 
-    Ok(Box::new(ColumnFilterImpl { rules: p.rules }))
+    Ok(ColumnFilterRules { rules: p.rules })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::parse_column_filter;
+    use super::{parse_column_filter, parse_column_filter_rules};
     use crate::table_filter::testutil::TempDir;
 
     // Go `TestMatchColumns`.
@@ -187,6 +205,14 @@ mod tests {
                 assert_eq!(f.match_column(col), want, "args={:?} col={col}", tc.args);
             }
         }
+    }
+
+    #[test]
+    fn parse_column_filter_rules_returns_concrete_rules() {
+        let rules = parse_column_filter_rules(&["*", "!secret"]).unwrap();
+        assert!(rules.match_column("visible"));
+        assert!(!rules.match_column("secret"));
+        assert!(rules.match_column("VISIBLE"));
     }
 
     // Go `TestParseFailures`.
