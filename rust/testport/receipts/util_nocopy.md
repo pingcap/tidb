@@ -1,9 +1,9 @@
 # `pkg/util/nocopy` — complete Go-master parity receipt
 
 Comparison source: Go `origin/master` at commit
-`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01). The package is
-unchanged from the earlier pinned audit; this receipt refreshes the authority
-and records the complete artifact hashes.
+`5e8a1a229a7591ddac49a0cd3b795587c2595ab9` (2026-09-01). The package is
+unchanged from the earlier pinned audit; this receipt refreshes the rolling
+master authority and records the complete artifact hashes.
 
 ## Complete inventory
 
@@ -32,9 +32,10 @@ no Rust-only behavior remains in the current owner.
 
 ## Validation and risk
 
-Profile: **WIP** for this documentation-only authority refresh. No Go source,
-imports, Bazel metadata, or module files changed; `make bazel_prepare` and the
-Ready lint gate are not required.
+Profile: **Ready** for this documentation-only authority refresh. No Go source,
+imports, Bazel metadata, or module files changed, so `make bazel_prepare` is
+not required. No source behavior changed and no regression test is added;
+the package's zero-test inventory is itself part of the parity boundary.
 
 ```text
 PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
@@ -46,6 +47,11 @@ OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dep
 DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib \
 cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-util --lib nocopy --offline --locked -- --test-threads=1
 # passed: zero tests ran, matching the Go package inventory
+
+cd rust && cargo +nightly-2026-08-22 fmt --all -- --check
+# passed
+git diff --check
+# passed
 ```
 
 Not verified here: full workspace tests, Bazel execution, or compile-fail vet

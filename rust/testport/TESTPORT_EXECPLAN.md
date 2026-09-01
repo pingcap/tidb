@@ -40,6 +40,17 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: refreshed the complete Go-master `pkg/util/nocopy` inventory at
+  `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: two tracked artifacts, 32
+  lines, one marker type, two methods, and no tests, fixtures, generated or
+  platform variants, or nested packages. The existing
+  `tidb-util::nocopy::NoCopy` remains a zero-sized non-`Copy`/non-`Clone`
+  marker with only Go's no-op lock methods; no Rust-only behavior or missing
+  Go behavior was found. Current and exact detached Go checks, Rust owner
+  check, formatting, and diff checks pass. Updated
+  `receipts/util_nocopy.md` and added the Ready documentation-only plan at
+  `docs/operations/util-nocopy-audit-execplan.md`.
+
 - 2026-09-02: refreshed the complete Go-master `pkg/util/slice` inventory at
   `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: four tracked artifacts, 149
   lines, three production functions, `TestMain`, and one four-row source test;
