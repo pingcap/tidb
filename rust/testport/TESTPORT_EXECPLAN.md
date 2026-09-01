@@ -750,6 +750,12 @@ For each bounded behavior cluster:
   behaviorally valid (including checked Go duration-conversion results), so no
   code was removed; repinned the semantic evidence and corrected the receipt's
   complete-package source inventory.
+- 2026-09-01: refreshed the complete `pkg/util/backoff` inventory against
+  current Go master (`0bc44483e3e41a8ea917d4382dc202369468d200`). All three
+  artifacts and 113 textual lines are unchanged; the native owner still
+  preserves signed-duration width, reset-on-zero, exponential multiplication,
+  and cap semantics with the sole source test identity. The receipt now
+  records current hashes and environment-qualified validation.
 - 2026-08-28: audited every production, test, test-harness, and build file in
   pinned Go `pkg/util/slice`. The owner already preserves all three production
   functions and their nil/empty, ordering, formatting, and short-circuit
