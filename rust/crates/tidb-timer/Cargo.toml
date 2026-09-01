@@ -21,6 +21,7 @@ tidb-ast = { path = "../tidb-ast" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-log = { path = "../tidb-log" }
 tidb-model = { path = "../tidb-model" }
+tidb-pd-client = { path = "../tidb-pd-client" }
 tidb-parser = { path = "../tidb-parser" }
 tidb-resolve = { path = "../tidb-resolve" }
 tidb-sqlexec = { path = "../tidb-sqlexec" }

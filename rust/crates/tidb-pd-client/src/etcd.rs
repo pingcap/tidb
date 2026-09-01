@@ -239,6 +239,7 @@ enum EtcdCommand {
         key: Vec<u8>,
         value: Vec<u8>,
         lease: i64,
+        timeout: Duration,
         reply: mpsc::Sender<Result<(), EtcdError>>,
     },
     /// `Lease.LeaseGrant`: `(lease id, server-chosen TTL seconds)`.
@@ -501,6 +502,17 @@ impl EtcdClient {
     /// Puts one key under a lease: the key expires with the lease -- the
     /// spelling `pkg/domain/serverinfo` stores `/tidb/server/info/<id>` with.
     pub fn put_with_lease(&self, key: &[u8], value: &[u8], lease: i64) -> Result<(), EtcdError> {
+        self.put_with_lease_with_timeout(key, value, lease, self.shared.timeout)
+    }
+
+    /// Puts one key with a lease and the caller's exact operation deadline.
+    pub fn put_with_lease_with_timeout(
+        &self,
+        key: &[u8],
+        value: &[u8],
+        lease: i64,
+        timeout: Duration,
+    ) -> Result<(), EtcdError> {
         let (reply, response) = mpsc::channel();
         self.shared
             .commands
@@ -508,6 +520,7 @@ impl EtcdClient {
                 key: key.to_vec(),
                 value: value.to_vec(),
                 lease,
+                timeout,
                 reply,
             })
             .map_err(|_| EtcdError::Closed)?;
@@ -1007,13 +1020,14 @@ fn run_kv_worker(
                 key,
                 value,
                 lease,
+                timeout: operation_timeout,
                 reply,
             } => {
                 let result = across_endpoints(
                     runtime,
                     endpoints,
                     &mut clients,
-                    timeout,
+                    operation_timeout,
                     security,
                     |runtime, mut client| {
                         let options = PutOptions::new().with_lease(lease);

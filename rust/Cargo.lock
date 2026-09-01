@@ -4256,6 +4256,7 @@ dependencies = [
  "tidb-log",
  "tidb-model",
  "tidb-parser",
+ "tidb-pd-client",
  "tidb-resolve",
  "tidb-sqlexec",
  "tidb-syssession",

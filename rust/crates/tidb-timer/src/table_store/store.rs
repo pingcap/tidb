@@ -34,6 +34,7 @@ use tidb_util::timeutil::{parse_time_zone, system_location, TimeZone};
 use crate::error::{Result, TimerError};
 use crate::go_time::GoTime;
 use crate::mem_store::new_mem_timer_watch_event_notifier;
+use crate::notifier::new_etcd_timer_watch_event_notifier;
 use crate::store::{
     Cond, Context, TimerCond, TimerStore, TimerStoreCore, TimerUpdate, TimerWatchEventNotifier,
     WatchTimerChan, WatchTimerEventType,
@@ -42,6 +43,7 @@ use crate::timer::{
     create_sched_event_policy, validate_time_zone, SchedEventStatus, SchedPolicyType, TimerRecord,
     TimerSpec,
 };
+use tidb_pd_client::EtcdClient;
 
 use super::sql::{
     build_delete_timer_sql, build_insert_timer_sql, build_select_timer_sql, build_update_timer_sql,
@@ -711,18 +713,22 @@ impl TimerStoreCore for TableTimerStoreCore {
 
 /// Go `NewTableTimerStore`.
 ///
-/// Narrowing: Go picks `NewEtcdNotifier(clusterID, etcd)` when an etcd client
-/// is supplied. `notifier.go` is not ported (see the module header), so this
-/// constructor always uses `api.NewMemTimerWatchEventNotifier`, which is
-/// exactly Go's `etcd == nil` branch; the `clusterID` and `etcd` parameters
-/// drop with it. [`TableTimerStoreCore::with_notifier`] keeps the injection
-/// point open for the etcd notifier once it lands.
+/// A supplied etcd client selects the source-compatible notifier and a `None`
+/// client selects the in-memory notifier, matching Go's nil branch.
 pub fn new_table_timer_store(
+    cluster_id: u64,
     pool: Arc<dyn SessionPool<dyn SessionContext>>,
     db_name: &str,
     tbl_name: &str,
+    etcd: Option<Arc<EtcdClient>>,
 ) -> TimerStore {
-    TimerStore::new(Arc::new(TableTimerStoreCore::new(pool, db_name, tbl_name)))
+    let notifier: Arc<dyn TimerWatchEventNotifier> = match etcd {
+        Some(etcd) => new_etcd_timer_watch_event_notifier(cluster_id, etcd),
+        None => new_mem_timer_watch_event_notifier(),
+    };
+    TimerStore::new(Arc::new(TableTimerStoreCore::with_notifier(
+        pool, db_name, tbl_name, notifier,
+    )))
 }
 
 /// Convenience for callers building an id condition, mirroring the shape

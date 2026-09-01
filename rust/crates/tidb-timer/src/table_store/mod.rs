@@ -12,22 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `pkg/timer/tablestore` lands as a SEED: the timer store that keeps its
-//! records in a TiDB table, complete for the SQL layer and the session
-//! plumbing, with the etcd watch notifier named and deferred.
+//! Go `pkg/timer/tablestore` lands as a complete package: the timer store that
+//! keeps its records in a TiDB table, with SQL/session plumbing and the etcd
+//! watch notifier.
 //!
 //! File mapping:
 //! - [`sql`] <- `sql.go` (complete)
 //! - [`store`] <- `store.go` (complete)
-//! - `notifier.go` is **not** ported. It is 321 lines of
-//!   `go.etcd.io/etcd/client/v3` watch plumbing — an etcd client, a watch
-//!   channel per store, and a key namespace derived from the cluster id — and
-//!   this workspace has no etcd client crate. Go's `NewTableTimerStore` picks
-//!   `NewEtcdNotifier` only when an etcd client is passed and otherwise falls
-//!   back to `api.NewMemTimerWatchEventNotifier`; the Rust
-//!   [`store::new_table_timer_store`] is that fallback branch exactly, and
-//!   [`store::TableTimerStoreCore::with_notifier`] leaves the injection point
-//!   open. This is why the package is labelled SEED rather than complete.
+//! - [`crate::notifier`] <- `notifier.go` (complete), using the shared
+//!   [`tidb_pd_client::EtcdClient`] for prefix watches and leased event puts.
 //!
 //! [`json`] is a further boundary module standing in for Go's
 //! `encoding/json`; its own header explains what it does and does not cover.
