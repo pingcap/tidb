@@ -1,7 +1,7 @@
 # `pkg/util/codec` — Go-master parity audit
 
-Pinned Go source: `origin/master` at
-`db35d47066648fe73abce6318d53fc625df51490`.
+Comparison source: Go `origin/master` at commit
+`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01).
 
 ## Complete inventory
 
@@ -27,11 +27,11 @@ functions (including `TestMain`) and six `Benchmark*` functions.
 
 There is no `doc.go`, fixture tree, generated source, or platform-specific Go
 variant. The Bazel target lists exactly the five production files and six test
-files above. Relative to `origin/hparser-integration` (and to the historical
-`b038` receipt's older pin), Go master changes only `codec.go` and
-`collation_test.go`: `Encoder` is documented as a comparable-key encoder,
-`EncodeValue`/`HashCode` are package-level only, and the obsolete encoder
-hash-equality assertion is removed.
+files above. Relative to the Rust branch's Go source snapshot (and to the
+historical `b038` receipt's older pin), this current Go-master delta changes
+only `codec.go` and `collation_test.go`: `Encoder` is documented as a
+comparable-key encoder, `EncodeValue`/`HashCode` are package-level only, and
+the obsolete encoder hash-equality assertion is removed.
 
 ## Rust ownership and parity decision
 
@@ -51,22 +51,24 @@ and the free `hash_code` function owns the lossless hash encoding. The
 executor hash-group-key path and expression source regression use those
 ordinary package functions, so no second collation-mode behavior remains.
 
-The focused regression compares a collated string datum with the same raw
-string datum through `encode_value`, proving value encoding does not consult
-the comparable-key encoder mode. The source-derived method-based hash test
-was deleted because its Go counterpart no longer exists; the complete
-source-derived codec suite continues to cover datum hash equality and all
-collation-aware group/row/column hash paths.
+The focused regressions compare a collated string datum with the same raw
+string datum through both `encode_value` and `hash_code`, proving those
+package-level paths do not consult the comparable-key encoder mode. The
+source-derived method-based hash test was deleted because its Go counterpart
+no longer exists; the complete source-derived codec suite continues to cover
+datum hash equality and all collation-aware group/row/column hash paths. A
+follow-up source regression also asserts the raw-byte hash invariant directly.
 
 ## Validation
 
 Profile: Ready for this package batch; the repository-wide audit is still
 continuing.
 
-- Go source diff against `origin/hparser-integration` and complete artifact
-  inventory — passed.
+- Go source diff against the fetched `origin/master` commit above and complete
+  artifact inventory — passed.
 - `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/codec -count=1` — passed.
 - `cargo +nightly-2026-08-22 test --offline --locked -p tidb-codec --test all -- --test-threads=1` — 163 passed.
+- Focused `codec_package_source` run including the raw-byte hash regression — 63 passed.
 - Focused `tidb-expr` hash-group-key/EncodeValue regression — passed (1).
 - Focused `tidb-executor` hash-group-key consumer regression — passed (1).
 - `cargo +nightly-2026-08-22 check --offline --locked -p tidb-codec -p tidb-expr -p tidb-executor --all-targets` — passed.

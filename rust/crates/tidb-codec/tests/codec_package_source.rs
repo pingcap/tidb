@@ -615,6 +615,13 @@ fn encode_value_uses_raw_string_bytes_without_encoder_collation_mode() {
 }
 
 #[test]
+fn hash_code_uses_raw_string_bytes_without_encoder_collation_mode() {
+    let collated = Datum::new_collation_string("A ", Collation::Utf8Mb4GeneralCi);
+    let plain = Datum::new_string("A ");
+    assert_eq!(hash_code(&collated), hash_code(&plain));
+}
+
+#[test]
 fn test_hash_group_key_collation() {
     let field_type = varchar(Collation::Utf8Mb4GeneralCi);
     assert_eq!(
