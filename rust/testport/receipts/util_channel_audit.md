@@ -4,7 +4,7 @@ Status: complete dependency-closed audit; no source behavior delta or
 Rust-only execution policy was found.
 
 Comparison source: Go `origin/master` at
-`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01). The package has
+`5e8a1a229a7591ddac49a0cd3b795587c2595ab9` (2026-09-01). The package has
 exactly two tracked artifacts and 30 Go lines:
 
 | Artifact | Lines | Role |
@@ -28,16 +28,17 @@ async channel, timeout, or nil-channel policy was added. The Go package has no
 source tests or fixtures, so there is no missing regression carrier and no
 Rust-only behavior to remove.
 
-## Validation
+## Validation (Ready profile)
 
 - `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/channel -count=1`
-- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 check --offline --locked -p tidb-util` (from `rust/`)
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-util --lib --offline --locked` (523 passed, 2 ignored)
+- `cd rust && cargo +nightly-2026-08-22 fmt --all -- --check`
+- `git diff --check`
 
-The Go package reports no test files and the Rust utility crate check passes
-(with one existing private-bound warning in the vendored TiKV client). No Go
-or Rust source changed, so `make bazel_prepare`, failpoint toggling, and the
-code-change portion of the Ready profile were not applicable. Broader channel
-consumers remain outside this leaf audit.
+The Go package reports no test files and the Rust utility crate tests pass
+(with existing warnings in the vendored TiKV client). No Go or Rust source
+changed, so `make bazel_prepare`, failpoint toggling, and a new regression test
+were not applicable. Broader channel consumers remain outside this leaf audit.
 
 This receipt certifies the bounded `pkg/util/channel` inventory and parity
 check; it is not a repository-wide transcreation claim.

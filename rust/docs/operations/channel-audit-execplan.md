@@ -1,7 +1,7 @@
 # Align `pkg/util/channel` with the pinned Go package
 
 This ExecPlan follows `PLANS.md` and uses Go `origin/master` commit
-`0bc44483e3e41a8ea917d4382dc202369468d200` as authority. The package is
+`5e8a1a229a7591ddac49a0cd3b795587c2595ab9` as authority. The package is
 unchanged from the earlier pinned audit; this refresh records the rolling
 master comparison.
 
@@ -20,15 +20,18 @@ generated variants, or `TestMain`.
 - [x] Narrowed `clear` from arbitrary `IntoIterator` values to the native
   standard receive-channel type.
 - [x] Removed both synthetic tests and the retired semantic manifest.
-- [x] Validate the Go zero-test package, Rust owner crate checks, formatting,
-  scoped Clippy, and diff quality.
-- [x] Prepare the validated package snapshot for a normal commit and push.
+- [x] Validate the Go zero-test package, all `tidb-util` library tests,
+  formatting, and diff quality.
+- [x] Refresh the receipt and ExecPlan for the current Go-master authority.
+- [ ] Commit, push, pull, and verify the target branch synchronization.
 
 ## Validation
 
-Use the WIP profile because package-by-package parity work continues. No Go or
-Bazel file changes are made, so `make bazel_prepare` is not required.
+Use the Ready profile for this documentation-only authority refresh. No Go or
+Bazel file changes are made, so `make bazel_prepare` is not required. No new
+regression test is added because the complete Go package has no source tests
+and this batch changes no behavior.
 
 `go test ./pkg/util/channel` reports `[no test files]` as expected.
-`cargo check -p tidb-util --all-targets --locked`, scoped owner Clippy,
+The full `tidb-util` library test suite passes (523 passed, 2 ignored),
 `cargo fmt --all --check`, and `git diff --check` pass.

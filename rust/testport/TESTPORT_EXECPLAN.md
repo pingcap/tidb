@@ -40,6 +40,16 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: refreshed the complete Go-master `pkg/util/channel` inventory
+  (two artifacts, 30 lines, one generic production function, and no source
+  tests, fixtures, generated files, or platform variants) at
+  `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`. The existing borrowed
+  `tidb-util::channel::clear` remains behaviorally equivalent to Go's blocking
+  channel-range cleanup, with no Rust-only policy or missing behavior found.
+  Revalidated the exact detached and current Go package checks plus all 523
+  `tidb-util` library tests, refreshed both channel receipts, and recorded the
+  Ready documentation-only gate in `docs/operations/channel-audit-execplan.md`.
+
 - 2026-09-01: audited the complete Go-master `pkg/sessionctx` root package
   before editing: four tracked artifacts and 319 lines containing six public
   interface contracts, one snapshot-read timestamp helper, three context-key

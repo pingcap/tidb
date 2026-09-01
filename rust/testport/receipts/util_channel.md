@@ -1,9 +1,9 @@
 # `pkg/util/channel` — complete Go-master parity receipt
 
 Comparison source: Go `origin/master` at commit
-`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01). The package is
-unchanged from the earlier pinned audit; this receipt refreshes the authority
-and records the complete artifact hashes.
+`5e8a1a229a7591ddac49a0cd3b795587c2595ab9` (2026-09-01). The package is
+unchanged from the previous pinned audit; this receipt refreshes the rolling
+master authority and records the complete artifact hashes.
 
 ## Complete inventory
 
@@ -33,9 +33,11 @@ package fix; no Rust-only behavior remains in the current owner.
 
 ## Validation and risk
 
-Profile: **WIP** for this documentation-only authority refresh. No Go source,
-imports, Bazel metadata, or module files changed; `make bazel_prepare` and the
-Ready lint gate are not required.
+Profile: **Ready** for this documentation-only authority refresh. No Go source,
+imports, Bazel metadata, or module files changed, so `make bazel_prepare` is
+not required. There is no source behavior fix in this batch and therefore no
+new regression test; the zero-test Go inventory is itself part of the parity
+boundary.
 
 ```text
 PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
@@ -45,8 +47,13 @@ go test ./pkg/util/channel -count=1
 
 OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler \
 DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib \
-cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml -p tidb-util --all-targets --offline --locked
-# passed: tidb-util all targets (workspace warnings only)
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-util --lib --offline --locked
+# passed: 523 passed, 0 failed, 2 ignored (workspace warnings only)
+
+cd rust && cargo +nightly-2026-08-22 fmt --all -- --check
+# passed
+git diff --check
+# passed
 ```
 
 Not verified here: full workspace tests, Bazel execution, or an external
