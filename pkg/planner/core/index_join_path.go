@@ -428,7 +428,7 @@ func indexJoinPathCountAfterAccess4Compare(
 		usedColIDs = append(usedColIDs, path.FullIdxCols[idxOff].UniqueID)
 	}
 	joinKeyNDV := getColsNDVLowerBoundFromHistColl(usedColIDs, indexJoinInfo.innerTableStats.HistColl)
-	if joinKeyNDV <= 0 {
+	if joinKeyNDV <= 1 {
 		return path.CountAfterAccess
 	}
 	return path.CountAfterAccess / float64(joinKeyNDV)
