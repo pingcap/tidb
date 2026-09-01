@@ -1741,6 +1741,7 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 	var gs []string //nolint: prealloc
 	var sortFromIdx int
 	var hasGlobalGrant = false
+	account := formatAccountName(user, host)
 	// Some privileges may granted from role inheritance.
 	// We should find these inheritance relationship.
 	allRoles := p.FindAllUserEffectiveRoles(user, host, roles)
@@ -1776,9 +1777,9 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 	if len(g) > 0 {
 		var s string
 		if (currentPriv & mysql.GrantPriv) > 0 {
-			s = fmt.Sprintf(`GRANT %s ON *.* TO '%s'@'%s' WITH GRANT OPTION`, g, user, host)
+			s = fmt.Sprintf(`GRANT %s ON *.* TO %s WITH GRANT OPTION`, g, account)
 		} else {
-			s = fmt.Sprintf(`GRANT %s ON *.* TO '%s'@'%s'`, g, user, host)
+			s = fmt.Sprintf(`GRANT %s ON *.* TO %s`, g, account)
 		}
 		gs = append(gs, s)
 	}
@@ -1787,9 +1788,9 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 	if len(gs) == 0 && hasGlobalGrant {
 		var s string
 		if (currentPriv & mysql.GrantPriv) > 0 {
-			s = fmt.Sprintf("GRANT USAGE ON *.* TO '%s'@'%s' WITH GRANT OPTION", user, host)
+			s = fmt.Sprintf("GRANT USAGE ON *.* TO %s WITH GRANT OPTION", account)
 		} else {
-			s = fmt.Sprintf("GRANT USAGE ON *.* TO '%s'@'%s'", user, host)
+			s = fmt.Sprintf("GRANT USAGE ON *.* TO %s", account)
 		}
 		gs = append(gs, s)
 	}
@@ -1819,15 +1820,15 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 		if len(g) > 0 {
 			var s string
 			if (priv & mysql.GrantPriv) > 0 {
-				s = fmt.Sprintf(`GRANT %s ON %s.* TO '%s'@'%s' WITH GRANT OPTION`, g, dbName, user, host)
+				s = fmt.Sprintf(`GRANT %s ON %s.* TO %s WITH GRANT OPTION`, g, dbName, account)
 			} else {
-				s = fmt.Sprintf(`GRANT %s ON %s.* TO '%s'@'%s'`, g, dbName, user, host)
+				s = fmt.Sprintf(`GRANT %s ON %s.* TO %s`, g, dbName, account)
 			}
 			gs = append(gs, s)
 		} else if len(g) == 0 && (priv&mysql.GrantPriv) > 0 {
 			// We have GRANT OPTION on the db, but no privilege granted.
 			// Wo we need to print a special USAGE line.
-			s := fmt.Sprintf(`GRANT USAGE ON %s.* TO '%s'@'%s' WITH GRANT OPTION`, dbName, user, host)
+			s := fmt.Sprintf(`GRANT USAGE ON %s.* TO %s WITH GRANT OPTION`, dbName, account)
 			gs = append(gs, s)
 		}
 	}
@@ -1856,15 +1857,15 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 		if len(g) > 0 {
 			var s string
 			if (priv & mysql.GrantPriv) > 0 {
-				s = fmt.Sprintf(`GRANT %s ON %s TO '%s'@'%s' WITH GRANT OPTION`, g, k, user, host)
+				s = fmt.Sprintf(`GRANT %s ON %s TO %s WITH GRANT OPTION`, g, k, account)
 			} else {
-				s = fmt.Sprintf(`GRANT %s ON %s TO '%s'@'%s'`, g, k, user, host)
+				s = fmt.Sprintf(`GRANT %s ON %s TO %s`, g, k, account)
 			}
 			gs = append(gs, s)
 		} else if len(g) == 0 && (priv&mysql.GrantPriv) > 0 {
 			// We have GRANT OPTION on the table, but no privilege granted.
 			// Wo we need to print a special USAGE line.
-			s := fmt.Sprintf(`GRANT USAGE ON %s TO '%s'@'%s' WITH GRANT OPTION`, k, user, host)
+			s := fmt.Sprintf(`GRANT USAGE ON %s TO %s WITH GRANT OPTION`, k, account)
 			gs = append(gs, s)
 		}
 	}
@@ -1886,7 +1887,7 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 	})
 	for k, v := range columnPrivTable {
 		privCols := privOnColumnsToString(v)
-		s := fmt.Sprintf(`GRANT %s ON %s TO '%s'@'%s'`, privCols, k, user, host)
+		s := fmt.Sprintf(`GRANT %s ON %s TO %s`, privCols, k, account)
 		gs = append(gs, s)
 	}
 	slices.Sort(gs[sortFromIdx:])
@@ -1901,7 +1902,7 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 	if ok {
 		sortedRes := make([]string, 0, 10)
 		for k := range edgeTable.roleList {
-			tmp := fmt.Sprintf("'%s'@'%s'", k.Username, k.Hostname)
+			tmp := formatAccountName(k.Username, k.Hostname)
 			sortedRes = append(sortedRes, tmp)
 		}
 		slices.Sort(sortedRes)
@@ -1911,7 +1912,7 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 				g += ", "
 			}
 		}
-		s := fmt.Sprintf(`GRANT %s TO '%s'@'%s'`, g, user, host)
+		s := fmt.Sprintf(`GRANT %s TO %s`, g, account)
 		gs = append(gs, s)
 	}
 
@@ -1955,15 +1956,19 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 	// Merge the DYNAMIC privs into a line for non-grantable and then grantable.
 	if len(dynamicPrivs) > 0 {
 		slices.Sort(dynamicPrivs)
-		s := fmt.Sprintf("GRANT %s ON *.* TO '%s'@'%s'", strings.Join(dynamicPrivs, ","), user, host)
+		s := fmt.Sprintf("GRANT %s ON *.* TO %s", strings.Join(dynamicPrivs, ","), account)
 		gs = append(gs, s)
 	}
 	if len(grantableDynamicPrivs) > 0 {
 		slices.Sort(grantableDynamicPrivs)
-		s := fmt.Sprintf("GRANT %s ON *.* TO '%s'@'%s' WITH GRANT OPTION", strings.Join(grantableDynamicPrivs, ","), user, host)
+		s := fmt.Sprintf("GRANT %s ON *.* TO %s WITH GRANT OPTION", strings.Join(grantableDynamicPrivs, ","), account)
 		gs = append(gs, s)
 	}
 	return gs
+}
+
+func formatAccountName(user, host string) string {
+	return stringutil.Escape(user, mysql.ModeNone) + "@" + stringutil.Escape(host, mysql.ModeNone)
 }
 
 type columnStr = string

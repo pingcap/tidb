@@ -1984,9 +1984,10 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 		authStr = fmt.Sprintf(" AS '%s'", authData)
 	}
 
-	// FIXME: the returned string is not escaped safely
-	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s%s%s %s ACCOUNT %s PASSWORD HISTORY %s PASSWORD REUSE INTERVAL %s%s%s%s",
-		e.User.Username, e.User.Hostname, authPlugin, authStr, require, tokenIssuer, maxUserConnectionsStr, passwordExpiredStr, accountLocked, passwordHistory, passwordReuseInterval, failedLoginAttempts, passwordLockTimeDays, userAttributes)
+	account := stringutil.Escape(e.User.Username, mysql.ModeNone) + "@" +
+		stringutil.Escape(e.User.Hostname, mysql.ModeNone)
+	showStr := fmt.Sprintf("CREATE USER %s IDENTIFIED WITH '%s'%s REQUIRE %s%s%s %s ACCOUNT %s PASSWORD HISTORY %s PASSWORD REUSE INTERVAL %s%s%s%s",
+		account, authPlugin, authStr, require, tokenIssuer, maxUserConnectionsStr, passwordExpiredStr, accountLocked, passwordHistory, passwordReuseInterval, failedLoginAttempts, passwordLockTimeDays, userAttributes)
 	e.appendRow([]any{showStr})
 	return nil
 }
