@@ -40,6 +40,16 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: audited both current Go-master `pkg/util/regionsplit` artifacts
+  (`BUILD.bazel` and `split_handle.go`, 256 lines total) in full, including
+  all production helpers and their DDL/executor call sites. Rust currently
+  owns only lower-level table-key encoders, split transport APIs, and split
+  policy metadata; it has no dependency-closed owner for the Go package's
+  integer/common-handle/index key derivation and typed-error contract. The
+  complete inventory and explicit unclaimed boundary are recorded in
+  `receipts/util_regionsplit.md`; the package source is unchanged at
+  `origin/master`.
+
 - 2026-09-01: re-audited all four current Go-master `pkg/util/kvcache`
   artifacts (including `main_test.go` and every source LRU case) after finding
   a rolling delta that invalidated the pinned receipt. Go master adds
@@ -1808,6 +1818,13 @@ For each bounded behavior cluster:
   consumers can move as one dependency-closed owner. A Rust-only generic HTTP
   helper would duplicate isolated transports and risk observable divergence.
   Date/Author: 2026-09-01, Codex.
+- Decision: keep `pkg/util/regionsplit` explicitly unclaimed. Rust's table-key
+  encoders, split transport, and policy metadata do not provide the Go
+  package's dependency-closed integer/common-handle/index key derivation,
+  prefix-boundary insertion, minimum-step checks, and typed DDL error contract.
+  Adding a detached key generator would omit its `pkg/ddl` and
+  `pkg/executor` consumers and create Rust-only split behavior. Date/Author:
+  2026-09-01, Codex.
 - Decision: preserve the Rust planner-error declaration table and its
   all-prototype initialization guard. Go package initialization registers all
   98 entries, while Go's only explicit test checks 59; the Rust guard is the
