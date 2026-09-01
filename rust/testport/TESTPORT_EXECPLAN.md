@@ -3159,6 +3159,16 @@ For each bounded behavior cluster:
       package tests, repository lint, and diff hygiene pass. No source or BUILD
       artifact changed, so Bazel preparation and Rust cargo checks were not
       applicable. Details are in `receipts/table_tblsession.md`.
+- [x] Audit the complete Go-master `pkg/table/tblctx` package: inventory all
+      four source, test, and BUILD artifacts (654 lines), verify the branch's
+      explicit codec encoder threading remains value-compatible with Go, and
+      record the deleted Rust seed's dependency boundary in its receipt and
+      ExecPlan.
+- [x] Run the Ready validation profile for `pkg/table/tblctx`: tagged Go
+      package tests, repository lint, and diff hygiene pass. No source or BUILD
+      artifact changed in this audit batch, so Bazel preparation and Rust
+      cargo checks were not applicable. Details are in
+      `receipts/table_tblctx.md`.
 - [x] Complete the Go-master `pkg/util/codec` delta: inventory all 12 source,
       test, benchmark, harness, and build artifacts; remove Rust-only encoder
       value/hash methods; update consumers; add the raw-value regression; and
