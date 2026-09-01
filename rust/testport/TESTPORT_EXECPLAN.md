@@ -40,6 +40,15 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: audited all five current Go-master `pkg/standby` artifacts
+  (1,423 lines), including the idle watcher, activation/exit/checkconn HTTP
+  handlers, restart-log and manager-free shutdown paths, classic tests, the
+  `nextgen` build-tag test variant, and Bazel metadata. Rust currently has only
+  standby configuration/CLI and generic signal fragments, not a
+  dependency-closed lifecycle owner, so the complete inventory and explicit
+  boundary are recorded in `receipts/standby.md` without inventing a
+  controller.
+
 - 2026-09-01: audited all five current Go-master `pkg/metaservice` artifacts
   (708 lines), including PD/etcd discovery, keyspace-group validation,
   optional real-etcd coverage, and Bazel metadata. Rust has transport and
