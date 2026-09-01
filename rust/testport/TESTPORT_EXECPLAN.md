@@ -205,6 +205,18 @@ For each bounded behavior cluster:
   production behavior was found; the exact Go-master failpoint suite passed
   and the explicit boundary is recorded in `receipts/sessiontxn.md`.
 
+- 2026-09-01: audited the complete Go-master nested
+  `pkg/sessiontxn/internal` package: two tracked artifacts and 98 lines,
+  including all three transaction/snapshot option helpers and the 16-line
+  BUILD target. It has no package-local tests, fixtures, generated outputs,
+  benchmarks, fuzz inputs, or platform variants; root sessiontxn tests cover
+  its callers. Rust owns assertion parsing, transaction-boundary routing,
+  request-source/replica-read propagation, and snapshot/interceptor traits in
+  adjacent crates, but no dependency-closed replacement for this support
+  package. No Rust-only behavior or safe missing behavior was found; exact
+  Go-master compilation passed and the explicit boundary is recorded in
+  `receipts/sessiontxn_internal.md`.
+
 - 2026-09-01: refreshed the complete Go-master
   `pkg/util/password-validation` inventory (three artifacts, 379 lines) and
   confirmed it is unchanged from the prior pinned implementation. The Go
