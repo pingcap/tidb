@@ -1399,6 +1399,13 @@ For each bounded behavior cluster:
   at `docs/operations/util-injectfailpoint-audit-execplan.md`; no Rust-only
   replacement was added.
 
+- 2026-09-02: refreshed the complete two-artifact Go-master
+  `pkg/util/breakpoint` package (47 lines: public Bazel target and the typed
+  failpoint-backed session callback). Rust still has no failpoint runtime or
+  session-context hook, so the package remains explicitly unclaimed. The
+  current-authority receipt is `receipts/util_breakpoint.md`, with the
+  dedicated ExecPlan at `docs/operations/util-breakpoint-audit-execplan.md`.
+
 - 2026-09-01: revalidated the complete four-artifact
   `pkg/util/column-mapping` package against current Go master. The source,
   tests, README, and Bazel target are unchanged from the pinned transcreation;

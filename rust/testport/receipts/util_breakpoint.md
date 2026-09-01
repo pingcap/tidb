@@ -1,7 +1,7 @@
 # `pkg/util/breakpoint` — Go-master parity boundary receipt
 
 Go baseline: `origin/master` at
-`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01).
+`5e8a1a229a7591ddac49a0cd3b795587c2595ab9` (2026-09-01).
 This package is a failpoint-backed test/debug hook with no production data
 path of its own.
 
@@ -31,9 +31,9 @@ is explicitly unclaimed; no source change is justified.
 
 ## Validation
 
-Profile: **WIP**. This is a complete two-artifact inventory and explicit
-boundary audit with no code change, so `make bazel_prepare` and the Ready lint
-gate are not triggered.
+Profile: **Ready** for this docs-only authority refresh. This is a complete
+two-artifact inventory and explicit boundary audit with no code change, so
+`make bazel_prepare` is not required.
 
 ```text
 PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
@@ -41,6 +41,11 @@ GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
 go test ./pkg/util/breakpoint -count=1
 # ? github.com/pingcap/tidb/pkg/util/breakpoint [no test files]
 ```
+
+The same package probe passed in an exact detached checkout of Go master at
+`5e8a1a229a7591ddac49a0cd3b795587c2595ab9`. Rust workspace formatting, the
+pinned repository lint on a clean committed worktree, and `git diff --check`
+also pass for this audit batch.
 
 ## Risks and unverified behavior
 
