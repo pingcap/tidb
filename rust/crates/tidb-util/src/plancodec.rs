@@ -17,7 +17,8 @@
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
-use std::num::ParseIntError;
+use std::num::IntErrorKind;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::LazyLock;
 
 use base64::engine::general_purpose::STANDARD;
@@ -38,8 +39,7 @@ use crate::texttree::{
 
 /// Encoded sentinel used when a textual plan exceeded TiDB's size limit.
 pub const PLAN_DISCARDED_ENCODED: &str = "[discard]";
-/// Human-readable spelling of a discarded textual or binary plan.
-pub const PLAN_DISCARDED_DECODED: &str = "(plan discarded because too long)";
+const PLAN_DISCARDED_DECODED: &str = "(plan discarded because too long)";
 
 /// Protobuf/Snappy/base64 form of a discarded binary plan.
 pub static BINARY_PLAN_DISCARDED_ENCODED: LazyLock<String> = LazyLock::new(|| {
@@ -59,10 +59,10 @@ pub enum PlanCodecError {
     Snappy(snap::Error),
     /// Invalid ExplainData protobuf data.
     Protobuf(prost::DecodeError),
-    /// A textual plan integer was malformed.
-    Integer(ParseIntError),
-    /// A textual plan violated the tree encoding contract.
+    /// A textual plan field was malformed.
     InvalidPlan(String),
+    /// Textual plan decoding panicked.
+    Panicked,
 }
 
 impl fmt::Display for PlanCodecError {
@@ -80,8 +80,8 @@ impl fmt::Display for PlanCodecError {
             }
             Self::Snappy(_) => f.write_str("snappy: corrupt input"),
             Self::Protobuf(error) => write!(f, "{}", format_protobuf_error(error)),
-            Self::Integer(error) => write!(f, "invalid integer in encoded plan: {error}"),
             Self::InvalidPlan(error) => f.write_str(error),
+            Self::Panicked => f.write_str("DecodePlan panicked"),
         }
     }
 }
@@ -92,8 +92,7 @@ impl Error for PlanCodecError {
             Self::Base64(error) => Some(error),
             Self::Snappy(error) => Some(error),
             Self::Protobuf(error) => Some(error),
-            Self::Integer(error) => Some(error),
-            Self::InvalidPlan(_) => None,
+            Self::InvalidPlan(_) | Self::Panicked => None,
         }
     }
 }
@@ -115,15 +114,6 @@ impl From<prost::DecodeError> for PlanCodecError {
         Self::Protobuf(error)
     }
 }
-
-impl From<ParseIntError> for PlanCodecError {
-    fn from(error: ParseIntError) -> Self {
-        Self::Integer(error)
-    }
-}
-
-/// Result type returned by plan decoders.
-pub type Result<T> = std::result::Result<T, PlanCodecError>;
 
 macro_rules! plan_types {
     ($(($constant:ident, $name:literal)),+ $(,)?) => {
@@ -205,81 +195,56 @@ plan_types!(
 /// A plan type which intentionally has no stable physical ID.
 pub const TYPE_SEQUENCE: &str = "Sequence";
 /// Stable physical ID of [`TYPE_SCALAR_SUBQUERY`].
-pub const TYPE_SCALAR_SUBQUERY_ID: i32 = 60;
+pub const TYPE_SCALAR_SUBQUERY_ID: isize = 60;
 
 /// Converts a plan type string to its stable physical ID, or zero if unknown.
-#[must_use]
-pub fn type_string_to_physical_id(plan_type: &str) -> i32 {
+pub fn type_string_to_physical_id(plan_type: &str) -> isize {
     PLAN_TYPES
         .iter()
         .position(|candidate| *candidate == plan_type)
         .map_or(0, |index| {
-            i32::try_from(index + 1).expect("63 plan types fit i32")
+            isize::try_from(index + 1).expect("63 plan types fit isize")
         })
 }
 
 /// Converts a physical ID to its plan type string.
-#[must_use]
-pub fn physical_id_to_type_string(id: i32) -> String {
-    physical_id_to_type_string_i64(i64::from(id))
-}
-
-fn physical_id_to_type_string_i64(id: i64) -> String {
+pub fn physical_id_to_type_string(id: isize) -> String {
     id.checked_sub(1)
         .and_then(|index| usize::try_from(index).ok())
         .and_then(|index| PLAN_TYPES.get(index))
         .map_or_else(|| format!("UnknownPlanID{id}"), |value| (*value).to_owned())
 }
 
-/// Storage engine encoded into textual plan task fields.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[repr(u8)]
-pub enum PlanStoreType {
-    /// TiKV coprocessor.
-    TiKv = 0,
-    /// TiFlash coprocessor.
-    TiFlash = 1,
-    /// A TiDB instance serving cluster memory tables.
-    TiDb = 2,
-    /// Unknown engine.
-    Unspecified = 255,
-}
-
-impl PlanStoreType {
-    const fn name_for_code(code: i64) -> &'static str {
-        match code {
-            0 => "tikv",
-            1 => "tiflash",
-            2 => "tidb",
-            _ => "unspecified",
-        }
+const fn store_type_name(code: isize) -> &'static str {
+    match code as u8 {
+        0 => "tikv",
+        1 => "tiflash",
+        2 => "tidb",
+        _ => "unspecified",
     }
 }
 
 /// Encodes root/cop task ownership.
-#[must_use]
-pub fn encode_task_type(is_root: bool, store_type: PlanStoreType) -> String {
+pub fn encode_task_type(is_root: bool, store_type: u8) -> String {
     if is_root {
         "0".to_owned()
     } else {
-        format!("1_{}", store_type as u8)
+        format!("1_{store_type}")
     }
 }
 
 /// Encodes task ownership for normalized plans, omitting TiKV's default engine.
-#[must_use]
-pub fn encode_task_type_for_normalize(is_root: bool, store_type: PlanStoreType) -> String {
+pub fn encode_task_type_for_normalize(is_root: bool, store_type: u8) -> String {
     if is_root {
         "0".to_owned()
-    } else if store_type == PlanStoreType::TiKv {
+    } else if store_type == 0 {
         "1".to_owned()
     } else {
-        format!("1_{}", store_type as u8)
+        format!("1_{store_type}")
     }
 }
 
 /// Snappy-compresses and standard-base64 encodes bytes.
-#[must_use]
 pub fn compress(input: &[u8]) -> String {
     let compressed = SnappyEncoder::new()
         .compress_vec(input)
@@ -288,7 +253,7 @@ pub fn compress(input: &[u8]) -> String {
 }
 
 /// Standard-base64 decodes and Snappy-decompresses a block.
-pub fn decompress(input: &[u8]) -> Result<Vec<u8>> {
+pub fn decompress(input: &[u8]) -> std::result::Result<Vec<u8>, PlanCodecError> {
     let compressed = STANDARD.decode(input)?;
     Ok(SnappyDecoder::new().decompress_vec(&compressed)?)
 }
@@ -297,8 +262,15 @@ pub fn decompress(input: &[u8]) -> Result<Vec<u8>> {
 ///
 /// The result is bytes because Go strings, including plan fields, are not
 /// required to be UTF-8.
-pub fn decode_plan(plan: impl AsRef<[u8]>) -> Result<Vec<u8>> {
+pub fn decode_plan(plan: impl AsRef<[u8]>) -> std::result::Result<Vec<u8>, PlanCodecError> {
     let plan = plan.as_ref();
+    match catch_unwind(AssertUnwindSafe(|| decode_plan_inner(plan))) {
+        Ok(result) => result,
+        Err(_) => Err(PlanCodecError::Panicked),
+    }
+}
+
+fn decode_plan_inner(plan: &[u8]) -> std::result::Result<Vec<u8>, PlanCodecError> {
     if plan.is_empty() {
         return Ok(Vec::new());
     }
@@ -313,7 +285,9 @@ pub fn decode_plan(plan: impl AsRef<[u8]>) -> Result<Vec<u8>> {
 }
 
 /// Decodes an uncompressed normalized-plan stream into its aligned tree display.
-pub fn decode_normalized_plan(plan: impl AsRef<[u8]>) -> Result<Vec<u8>> {
+pub fn decode_normalized_plan(
+    plan: impl AsRef<[u8]>,
+) -> std::result::Result<Vec<u8>, PlanCodecError> {
     let plan = plan.as_ref();
     if plan.is_empty() {
         return Ok(Vec::new());
@@ -323,11 +297,11 @@ pub fn decode_normalized_plan(plan: impl AsRef<[u8]>) -> Result<Vec<u8>> {
 
 #[derive(Debug)]
 struct PlanInfo {
-    depth: usize,
+    depth: isize,
     fields: Vec<Vec<u8>>,
 }
 
-fn build_plan_tree(plan: &[u8], add_header: bool) -> Result<Vec<u8>> {
+fn build_plan_tree(plan: &[u8], add_header: bool) -> std::result::Result<Vec<u8>, PlanCodecError> {
     let mut infos = Vec::new();
     for node in plan.split(|byte| *byte == b'\n') {
         if let Some(info) = decode_plan_info(node)? {
@@ -358,12 +332,10 @@ fn build_plan_tree(plan: &[u8], add_header: bool) -> Result<Vec<u8>> {
         );
     }
 
-    let depths: Vec<usize> = infos.iter().map(|info| info.depth).collect();
+    let depths: Vec<isize> = infos.iter().map(|info| info.depth).collect();
     let mut indents = Vec::with_capacity(depths.len());
     for depth in &depths {
-        let len = depth.checked_mul(2).ok_or_else(|| {
-            PlanCodecError::InvalidPlan("encoded plan depth is too large".to_owned())
-        })?;
+        let len = usize::try_from(depth.wrapping_mul(2)).expect("encoded plan depth is negative");
         let mut indent = vec!['\0'; len];
         if len > 0 {
             indent[..len - 2].fill(' ');
@@ -377,7 +349,7 @@ fn build_plan_tree(plan: &[u8], add_header: bool) -> Result<Vec<u8>> {
     for child in 1..depths.len() {
         parent_cache.insert(depths[child], child);
         let parent = find_parent_index(&depths, child, &mut parent_cache);
-        fill_indent(&mut indents, &depths, parent, child)?;
+        fill_indent(&mut indents, &depths, parent, child);
     }
 
     align_fields(&mut infos, &indents);
@@ -401,10 +373,8 @@ fn build_plan_tree(plan: &[u8], add_header: bool) -> Result<Vec<u8>> {
     Ok(output)
 }
 
-fn find_parent_index(depths: &[usize], child: usize, cache: &mut HashMap<usize, usize>) -> usize {
-    let Some(parent_depth) = depths[child].checked_sub(1) else {
-        return 0;
-    };
+fn find_parent_index(depths: &[isize], child: usize, cache: &mut HashMap<isize, usize>) -> usize {
+    let parent_depth = depths[child].wrapping_sub(1);
     if let Some(parent) = cache.get(&parent_depth) {
         return *parent;
     }
@@ -417,28 +387,21 @@ fn find_parent_index(depths: &[usize], child: usize, cache: &mut HashMap<usize, 
     0
 }
 
-fn fill_indent(
-    indents: &mut [Vec<char>],
-    depths: &[usize],
-    parent: usize,
-    child: usize,
-) -> Result<()> {
+fn fill_indent(indents: &mut [Vec<char>], depths: &[isize], parent: usize, child: usize) {
     let depth = depths[child];
     if depth == 0 {
-        return Ok(());
+        return;
     }
-    let column = depth * 2 - 2;
+    let column = usize::try_from(depth.wrapping_mul(2).wrapping_sub(2))
+        .expect("encoded plan indentation is negative");
     for index in (parent + 1..child).rev() {
-        let value = indents[index].get_mut(column).ok_or_else(|| {
-            PlanCodecError::InvalidPlan(format!("encoded plan depth jumps before row {child}"))
-        })?;
+        let value = &mut indents[index][column];
         if *value == TREE_LAST_NODE {
             *value = TREE_MIDDLE_NODE;
             break;
         }
         *value = TREE_BODY;
     }
-    Ok(())
 }
 
 fn align_fields(infos: &mut [PlanInfo], indents: &[Vec<char>]) {
@@ -470,41 +433,49 @@ fn field_len(row: usize, column: usize, info: &PlanInfo, indents: &[Vec<char>]) 
     }
 }
 
-fn decode_plan_info(value: &[u8]) -> Result<Option<PlanInfo>> {
+fn decode_plan_info(value: &[u8]) -> std::result::Result<Option<PlanInfo>, PlanCodecError> {
     let values: Vec<&[u8]> = value.split(|byte| *byte == b'\t').collect();
     if values.len() < 2 {
         return Ok(None);
     }
-    let depth_text = std::str::from_utf8(values[0]).map_err(|error| {
-        PlanCodecError::InvalidPlan(format!("invalid encoded plan depth: {error}"))
-    })?;
-    let depth = depth_text.parse::<isize>()?;
-    let depth = usize::try_from(depth).map_err(|_| {
-        PlanCodecError::InvalidPlan(format!("negative encoded plan depth: {depth}"))
+    let node = String::from_utf8_lossy(value);
+    let depth = parse_go_int(values[0]).map_err(|error| {
+        PlanCodecError::InvalidPlan(format!(
+            "decode plan: {node}, depth: {}, error: {error}",
+            String::from_utf8_lossy(values[0])
+        ))
     })?;
     let ids: Vec<&[u8]> = values[1].split(|byte| *byte == b'_').collect();
     if !matches!(ids.len(), 1 | 2) {
         return Err(PlanCodecError::InvalidPlan(format!(
-            "invalid encoded plan id: {}",
+            "decode plan: {node} error, invalid plan id: {}",
             String::from_utf8_lossy(values[1])
         )));
     }
-    let id = std::str::from_utf8(ids[0])
-        .map_err(|error| PlanCodecError::InvalidPlan(format!("invalid encoded plan id: {error}")))?
-        .parse::<i64>()?;
-    let mut fields = vec![physical_id_to_type_string_i64(id).into_bytes()];
+    let id = parse_go_int(ids[0]).map_err(|error| {
+        PlanCodecError::InvalidPlan(format!(
+            "decode plan: {node}, plan id: {}, error: {error}",
+            String::from_utf8_lossy(values[1])
+        ))
+    })?;
+    let mut fields = vec![physical_id_to_type_string(id).into_bytes()];
     if ids.len() == 2 {
         fields[0].push(b'_');
         fields[0].extend_from_slice(ids[1]);
     }
     if let Some(task) = values.get(2) {
-        fields.push(decode_task_type_bytes(task)?);
+        fields.push(decode_task_type_bytes(task).map_err(|error| {
+            PlanCodecError::InvalidPlan(format!(
+                "decode plan: {node}, task type: {}, error: {error}",
+                String::from_utf8_lossy(task)
+            ))
+        })?);
     }
     fields.extend(values.iter().skip(3).map(|field| field.to_vec()));
     Ok(Some(PlanInfo { depth, fields }))
 }
 
-fn decode_task_type_bytes(value: &[u8]) -> Result<Vec<u8>> {
+fn decode_task_type_bytes(value: &[u8]) -> std::result::Result<Vec<u8>, PlanCodecError> {
     let segments: Vec<&[u8]> = value.split(|byte| *byte == b'_').collect();
     if segments.first() == Some(&b"0".as_slice()) {
         return Ok(b"root".to_vec());
@@ -512,16 +483,27 @@ fn decode_task_type_bytes(value: &[u8]) -> Result<Vec<u8>> {
     if segments.len() == 1 {
         return Ok(b"cop".to_vec());
     }
-    let store = std::str::from_utf8(segments[1])
-        .map_err(|error| PlanCodecError::InvalidPlan(format!("invalid task type: {error}")))?
-        .parse::<i64>()?;
-    Ok(format!("cop[{}]", PlanStoreType::name_for_code(store)).into_bytes())
+    let store = parse_go_int(segments[1]).map_err(PlanCodecError::InvalidPlan)?;
+    Ok(format!("cop[{}]", store_type_name(store)).into_bytes())
+}
+
+fn parse_go_int(value: &[u8]) -> std::result::Result<isize, String> {
+    let quoted = format!("{:?}", String::from_utf8_lossy(value));
+    let text = std::str::from_utf8(value)
+        .map_err(|_| format!("strconv.Atoi: parsing {quoted}: invalid syntax"))?;
+    text.parse::<isize>().map_err(|error| {
+        let message = match error.kind() {
+            IntErrorKind::PosOverflow | IntErrorKind::NegOverflow => "value out of range",
+            _ => "invalid syntax",
+        };
+        format!("strconv.Atoi: parsing {quoted}: {message}")
+    })
 }
 
 /// Appends one textual plan node to an encoded plan stream.
 #[allow(clippy::too_many_arguments)]
 pub fn encode_plan_node(
-    depth: usize,
+    depth: isize,
     id: &str,
     plan_type: &str,
     row_count: f64,
@@ -562,7 +544,7 @@ pub fn encode_plan_node(
 
 /// Appends one node to an uncompressed normalized plan stream.
 pub fn normalize_plan_node(
-    depth: usize,
+    depth: isize,
     plan_type: &str,
     task_type: &str,
     explain_info: &str,
@@ -621,15 +603,22 @@ const FULL_TITLES: [&str; 10] = [
 ];
 
 /// Decodes a protobuf binary plan into EXPLAIN ANALYZE's tabular display.
-pub fn decode_binary_plan(plan: impl AsRef<[u8]>) -> Result<String> {
+pub fn decode_binary_plan(plan: impl AsRef<[u8]>) -> std::result::Result<String, PlanCodecError> {
     let data = decode_explain_data(plan.as_ref())?;
     if data.discarded_due_to_too_long {
         return Ok(PLAN_DISCARDED_DECODED.to_owned());
     }
     let mut rows = Vec::new();
-    if let Some(main) = data.main.as_ref() {
-        decode_binary_operator(main, "", true, data.with_runtime_stats, false, &mut rows);
-    }
+    decode_binary_operator(
+        data.main
+            .as_ref()
+            .expect("binary plan has no main operator"),
+        "",
+        true,
+        data.with_runtime_stats,
+        false,
+        &mut rows,
+    );
     for operator in &data.ctes {
         decode_binary_operator(
             operator,
@@ -673,16 +662,23 @@ pub fn decode_binary_plan_for_connection(
     plan: impl AsRef<[u8]>,
     format: &str,
     for_top_sql: bool,
-) -> Result<Vec<Vec<String>>> {
+) -> std::result::Result<Vec<Vec<String>>, PlanCodecError> {
     let data = decode_explain_data(plan.as_ref())?;
     if data.discarded_due_to_too_long {
         return Ok(Vec::new());
     }
     let brief = format == "brief";
     let mut rows = Vec::new();
-    if let Some(main) = data.main.as_ref() {
-        decode_binary_operator(main, "", true, data.with_runtime_stats, brief, &mut rows);
-    }
+    decode_binary_operator(
+        data.main
+            .as_ref()
+            .expect("binary plan has no main operator"),
+        "",
+        true,
+        data.with_runtime_stats,
+        brief,
+        &mut rows,
+    );
     for operator in &data.ctes {
         decode_binary_operator(
             operator,
@@ -712,7 +708,7 @@ pub fn decode_binary_plan_for_connection(
         .collect())
 }
 
-fn decode_explain_data(plan: &[u8]) -> Result<ExplainData> {
+fn decode_explain_data(plan: &[u8]) -> std::result::Result<ExplainData, PlanCodecError> {
     let bytes = decompress(plan)?;
     Ok(ExplainData::decode(bytes.as_slice())?)
 }
@@ -939,419 +935,110 @@ fn print_access_object(objects: &[AccessObject]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use tidb_proto::tipb::access_object::AccessObject as AccessObjectKind;
-    use tidb_proto::tipb::{
-        AccessObject, DynamicPartitionAccessObject, DynamicPartitionAccessObjects, ExplainData,
-        ExplainOperator, IndexAccess, OperatorLabel, ScanAccessObject, StoreType, TaskType,
-    };
-
     use super::*;
 
     #[test]
-    fn stable_plan_ids_round_trip() {
-        assert_eq!(PLAN_TYPES.len(), 63);
-        for id in 1..=63 {
-            let plan_type = physical_id_to_type_string(id);
-            assert_eq!(type_string_to_physical_id(&plan_type), id);
-        }
-        assert_eq!(type_string_to_physical_id("Sequence"), 0);
-        assert_eq!(physical_id_to_type_string(64), "UnknownPlanID64");
-        assert_eq!(
-            physical_id_to_type_string(i32::MIN),
-            "UnknownPlanID-2147483648"
-        );
-    }
-
-    #[test]
-    fn textual_plan_accepts_machine_width_unknown_plan_ids() {
-        assert_eq!(
-            decode_normalized_plan(b"0\t2147483648\t0\tinfo\n").unwrap(),
-            b"\tUnknownPlanID2147483648\troot\tinfo"
-        );
-        assert_eq!(
-            decode_normalized_plan(b"0\t-2147483649\t0\tinfo\n").unwrap(),
-            b"\tUnknownPlanID-2147483649\troot\tinfo"
-        );
-    }
-
-    #[test]
-    fn task_types_match_upstream_vectors() {
+    fn plan_id_changed() {
         let cases = [
-            (true, PlanStoreType::Unspecified, "0", "root"),
-            (false, PlanStoreType::TiKv, "1_0", "cop[tikv]"),
-            (false, PlanStoreType::TiFlash, "1_1", "cop[tiflash]"),
-            (false, PlanStoreType::TiDb, "1_2", "cop[tidb]"),
+            (TYPE_SELECTION, 1),
+            (TYPE_SET, 2),
+            (TYPE_PROJECTION, 3),
+            (TYPE_AGGREGATION, 4),
+            (TYPE_STREAM_AGG, 5),
+            (TYPE_HASH_AGG, 6),
+            (TYPE_SHOW, 7),
+            (TYPE_JOIN, 8),
+            (TYPE_UNION, 9),
+            (TYPE_TABLE_SCAN, 10),
+            (TYPE_MEM_TABLE_SCAN, 11),
+            (TYPE_UNION_SCAN, 12),
+            (TYPE_INDEX_SCAN, 13),
+            (TYPE_SORT, 14),
+            (TYPE_TOP_N, 15),
+            (TYPE_LIMIT, 16),
+            (TYPE_HASH_JOIN, 17),
+            (TYPE_MERGE_JOIN, 18),
+            (TYPE_INDEX_JOIN, 19),
+            (TYPE_INDEX_MERGE_JOIN, 20),
+            (TYPE_INDEX_HASH_JOIN, 21),
+            (TYPE_APPLY, 22),
+            (TYPE_MAX_ONE_ROW, 23),
+            (TYPE_EXISTS, 24),
+            (TYPE_TABLE_DUAL, 25),
+            (TYPE_SELECT_LOCK, 26),
+            (TYPE_INSERT, 27),
+            (TYPE_UPDATE, 28),
+            (TYPE_DELETE, 29),
+            (TYPE_INDEX_LOOK_UP, 30),
+            (TYPE_TABLE_READER, 31),
+            (TYPE_INDEX_READER, 32),
+            (TYPE_WINDOW, 33),
+            (TYPE_TIKV_SINGLE_GATHER, 34),
+            (TYPE_INDEX_MERGE, 35),
+            (TYPE_POINT_GET, 36),
+            (TYPE_SHOW_DDL_JOBS, 37),
+            (TYPE_BATCH_POINT_GET, 38),
+            (TYPE_CLUSTER_MEM_TABLE_READER, 39),
+            (TYPE_DATA_SOURCE, 40),
+            (TYPE_LOAD_DATA, 41),
+            (TYPE_TABLE_SAMPLE, 42),
+            (TYPE_TABLE_FULL_SCAN, 43),
+            (TYPE_TABLE_RANGE_SCAN, 44),
+            (TYPE_TABLE_ROW_ID_SCAN, 45),
+            (TYPE_INDEX_FULL_SCAN, 46),
+            (TYPE_INDEX_RANGE_SCAN, 47),
+            (TYPE_EXCHANGE_RECEIVER, 48),
+            (TYPE_EXCHANGE_SENDER, 49),
+            (TYPE_CTE_FULL_SCAN, 50),
+            (TYPE_CTE, 51),
+            (TYPE_CTE_TABLE, 52),
+            (TYPE_PARTITION_UNION, 53),
+            (TYPE_SHUFFLE, 54),
+            (TYPE_SHUFFLE_RECEIVER, 55),
+            (TYPE_IMPORT_INTO, 59),
+            (TYPE_LOCAL_INDEX_LOOK_UP, 61),
         ];
-        for (root, store, encoded, decoded) in cases {
-            assert_eq!(encode_task_type(root, store), encoded);
+
+        for (plan_type, expected) in cases {
+            assert_eq!(type_string_to_physical_id(plan_type), expected);
+        }
+    }
+
+    #[test]
+    fn reverse() {
+        for id in 1..=61 {
+            assert_eq!(
+                type_string_to_physical_id(&physical_id_to_type_string(id)),
+                id
+            );
+        }
+    }
+
+    #[test]
+    fn encode_task_type_matches_go() {
+        let cases = [
+            (true, 255, "0", "root"),
+            (false, 0, "1_0", "cop[tikv]"),
+            (false, 1, "1_1", "cop[tiflash]"),
+            (false, 2, "1_2", "cop[tidb]"),
+        ];
+        for (is_root, store_type, encoded, decoded) in cases {
+            assert_eq!(encode_task_type(is_root, store_type), encoded);
             assert_eq!(
                 decode_task_type_bytes(encoded.as_bytes()).unwrap(),
                 decoded.as_bytes()
             );
         }
+
         assert_eq!(decode_task_type_bytes(b"1").unwrap(), b"cop");
         assert!(decode_task_type_bytes(b"1_x").is_err());
-        assert_eq!(
-            decode_task_type_bytes(b"1_255").unwrap(),
-            b"cop[unspecified]"
-        );
-        assert_eq!(
-            encode_task_type_for_normalize(false, PlanStoreType::TiKv),
-            "1"
-        );
-        assert_eq!(
-            encode_task_type_for_normalize(false, PlanStoreType::TiFlash),
-            "1_1"
-        );
     }
 
     #[test]
-    fn textual_plan_encodes_decodes_and_discards() {
-        let mut raw = String::new();
-        encode_plan_node(
-            0,
-            "1",
-            TYPE_HASH_JOIN,
-            3.0,
-            &encode_task_type(true, PlanStoreType::Unspecified),
-            "equal:[eq(a\tb, c\nd)]",
-            "2",
-            "time:1ms",
-            "1 KB",
-            "N/A",
-            &mut raw,
-        );
-        encode_plan_node(
-            1,
-            "2",
-            TYPE_TABLE_SCAN,
-            1.25,
-            &encode_task_type(false, PlanStoreType::TiKv),
-            "table:t",
-            "",
-            "",
-            "",
-            "",
-            &mut raw,
-        );
-        let encoded = compress(raw.as_bytes());
-        let decoded = String::from_utf8(decode_plan(&encoded).unwrap()).unwrap();
-        assert!(decoded.starts_with("\tid"));
-        assert!(decoded.contains("HashJoin_1"));
-        assert!(decoded.contains("└─TableScan_2"));
-        assert!(decoded.contains("equal:[eq(a\\tb, c\\nd)]"));
-        assert!(decoded.contains("cop[tikv]"));
+    fn decode_discard_plan() {
         assert_eq!(
             decode_plan(PLAN_DISCARDED_ENCODED).unwrap(),
             PLAN_DISCARDED_DECODED.as_bytes()
-        );
-        assert_eq!(decode_plan("").unwrap(), b"");
-        assert!(decode_plan("not base64").is_err());
-    }
-
-    #[test]
-    fn textual_plan_preserves_non_utf8_go_string_bytes() {
-        let encoded = compress(b"0\t1\t0\t1\t\xff\n");
-        assert_eq!(
-            decode_plan(encoded).unwrap(),
-            b"\tid       \ttask\testRows\toperator info\n\tSelection\troot\t1      \t\xff"
-        );
-        assert_eq!(
-            decode_normalized_plan(b"0\t1\t0\t\xff\n").unwrap(),
-            b"\tSelection\troot\t\xff"
-        );
-    }
-
-    #[test]
-    fn normalized_plan_has_no_header() {
-        let mut raw = String::new();
-        normalize_plan_node(0, TYPE_SELECTION, "0", "eq(a, 1)", &mut raw);
-        normalize_plan_node(1, TYPE_TABLE_SCAN, "1", "table:t", &mut raw);
-        let decoded = String::from_utf8(decode_normalized_plan(&raw).unwrap()).unwrap();
-        assert!(!decoded.contains("\tid\t"));
-        assert!(decoded.starts_with("\tSelection"));
-        assert!(decoded.contains("└─TableScan"));
-    }
-
-    #[test]
-    fn compression_is_raw_snappy_plus_standard_base64() {
-        let input = b"plan\0bytes";
-        let encoded = compress(input);
-        assert_eq!(decompress(encoded.as_bytes()).unwrap(), input);
-        assert!(decompress(b"***").is_err());
-    }
-
-    fn sample_binary_plan(runtime: bool) -> ExplainData {
-        let scan = ExplainOperator {
-            name: "TableScan_2".to_owned(),
-            brief_name: "TableScan".to_owned(),
-            labels: vec![OperatorLabel::BuildSide as i32],
-            est_rows: 1.0,
-            cost: 2.0,
-            act_rows: 1,
-            task_type: TaskType::Cop as i32,
-            store_type: StoreType::Tikv as i32,
-            access_objects: vec![AccessObject {
-                access_object: Some(AccessObjectKind::ScanObject(ScanAccessObject {
-                    table: "t".to_owned(),
-                    partitions: vec!["p0".to_owned()],
-                    indexes: vec![IndexAccess {
-                        name: "idx".to_owned(),
-                        cols: vec!["a".to_owned(), "b".to_owned()],
-                        ..Default::default()
-                    }],
-                    ..Default::default()
-                })),
-            }],
-            operator_info: "keep order:false".to_owned(),
-            brief_operator_info: "table:t".to_owned(),
-            root_basic_exec_info: "time:1ms".to_owned(),
-            root_group_exec_info: vec!["loops:1".to_owned()],
-            cop_exec_info: "cop_task:num:1".to_owned(),
-            memory_bytes: 1024,
-            disk_bytes: -1,
-            ..Default::default()
-        };
-        let probe = ExplainOperator {
-            name: "Selection_3".to_owned(),
-            brief_name: "Selection".to_owned(),
-            labels: vec![OperatorLabel::ProbeSide as i32],
-            est_rows: 2.0,
-            cost: 3.0,
-            task_type: TaskType::Root as i32,
-            operator_info: "gt(a, 0)".to_owned(),
-            brief_operator_info: "gt(a, 0)".to_owned(),
-            memory_bytes: -1,
-            disk_bytes: -1,
-            ..Default::default()
-        };
-        ExplainData {
-            main: Some(ExplainOperator {
-                name: "HashJoin_1".to_owned(),
-                brief_name: "HashJoin".to_owned(),
-                children: vec![probe, scan],
-                est_rows: 2.0,
-                cost: 1.25,
-                act_rows: 2,
-                task_type: TaskType::Root as i32,
-                operator_info: "equal:[eq(a, b)]".to_owned(),
-                brief_operator_info: "inner join".to_owned(),
-                memory_bytes: 2048,
-                disk_bytes: 0,
-                ..Default::default()
-            }),
-            with_runtime_stats: runtime,
-            ..Default::default()
-        }
-    }
-
-    #[test]
-    fn binary_plan_preserves_tree_order_access_and_runtime_fields() {
-        let encoded = compress(&sample_binary_plan(true).encode_to_vec());
-        let decoded = decode_binary_plan(&encoded).unwrap();
-        assert!(decoded.starts_with("\n| id"));
-        assert!(decoded.contains("HashJoin_1"));
-        let build = decoded.find("TableScan_2(Build)").unwrap();
-        let probe = decoded.find("Selection_3(Probe)").unwrap();
-        assert!(build < probe, "build child must print before probe child");
-        assert!(decoded.contains("table:t, partition:p0, index:idx(a, b)"));
-        assert!(decoded.contains("time:1ms, loops:1, cop_task:num:1"));
-        assert!(decoded.contains("1024 Bytes"));
-        assert!(decoded.contains("N/A"));
-
-        let brief = decode_binary_plan_for_connection(&encoded, "brief", false).unwrap();
-        assert_eq!(brief.len(), 3);
-        assert_eq!(brief[0][0], "HashJoin");
-        assert_eq!(brief[0][6], "inner join");
-        assert_eq!(brief[1][0], "├─TableScan(Build)");
-
-        let top_sql = decode_binary_plan_for_connection(&encoded, "row", true).unwrap();
-        assert_eq!(top_sql[0].len(), 5);
-        assert_eq!(top_sql[0][3], "root");
-    }
-
-    #[test]
-    fn binary_plan_formats_act_rows_through_the_source_signed_boundary() {
-        let encoded = compress(
-            &ExplainData {
-                main: Some(ExplainOperator {
-                    name: "TableScan_1".to_owned(),
-                    act_rows: u64::MAX,
-                    task_type: TaskType::Root as i32,
-                    memory_bytes: -1,
-                    disk_bytes: -1,
-                    ..Default::default()
-                }),
-                with_runtime_stats: true,
-                ..Default::default()
-            }
-            .encode_to_vec(),
-        );
-
-        let connection = decode_binary_plan_for_connection(&encoded, "verbose", false).unwrap();
-        assert_eq!(connection[0][3], "-1");
-        assert!(decode_binary_plan(&encoded).unwrap().contains("| -1 "));
-    }
-
-    #[test]
-    fn connection_formats_select_source_columns() {
-        let encoded = compress(&sample_binary_plan(false).encode_to_vec());
-        let row = decode_binary_plan_for_connection(&encoded, "row", false).unwrap();
-        assert_eq!(
-            row[0],
-            ["HashJoin_1", "2.00", "root", "", "equal:[eq(a, b)]"]
-        );
-
-        let tree = decode_binary_plan_for_connection(&encoded, "plan_tree", false).unwrap();
-        assert_eq!(
-            tree[0],
-            ["HashJoin_1", "1.25", "root", "", "equal:[eq(a, b)]"]
-        );
-
-        let verbose = decode_binary_plan_for_connection(&encoded, "verbose", false).unwrap();
-        assert_eq!(
-            verbose[0],
-            ["HashJoin_1", "2.00", "1.25", "root", "", "equal:[eq(a, b)]"]
-        );
-
-        let unknown = decode_binary_plan_for_connection(&encoded, "unknown", false).unwrap();
-        assert_eq!(unknown.len(), 3);
-        assert!(unknown.iter().all(Vec::is_empty));
-        let decoded = decode_binary_plan(&encoded).unwrap();
-        assert!(decoded.contains("| id"));
-        assert!(!decoded.contains("actRows"));
-    }
-
-    #[test]
-    fn binary_plan_and_connection_use_their_distinct_root_sets() {
-        let mut plan = sample_binary_plan(false);
-        plan.ctes.push(ExplainOperator {
-            name: "CTE_4".to_owned(),
-            task_type: TaskType::Root as i32,
-            ..Default::default()
-        });
-        plan.subqueries.push(ExplainOperator {
-            name: "ScalarSubQuery_5".to_owned(),
-            task_type: TaskType::Root as i32,
-            ..Default::default()
-        });
-        let encoded = compress(&plan.encode_to_vec());
-        let decoded = decode_binary_plan(&encoded).unwrap();
-        assert!(decoded.contains("CTE_4"));
-        assert!(decoded.contains("ScalarSubQuery_5"));
-        let connection = decode_binary_plan_for_connection(&encoded, "verbose", false).unwrap();
-        assert!(connection.iter().any(|row| row[0] == "CTE_4"));
-        assert!(connection.iter().all(|row| row[0] != "ScalarSubQuery_5"));
-
-        let empty = compress(&ExplainData::default().encode_to_vec());
-        assert_eq!(decode_binary_plan(&empty).unwrap(), "");
-        assert!(decode_binary_plan_for_connection(&empty, "row", false)
-            .unwrap()
-            .is_empty());
-    }
-
-    #[test]
-    fn access_objects_and_operator_labels_match_source_rendering() {
-        assert_eq!(
-            print_driver_side(&[
-                OperatorLabel::BuildSide as i32,
-                OperatorLabel::SeedPart as i32,
-                OperatorLabel::RecursivePart as i32,
-                99,
-            ]),
-            "(Build)(Seed Part)(Recursive Part)"
-        );
-
-        let dynamic = |objects| AccessObject {
-            access_object: Some(AccessObjectKind::DynamicPartitionObjects(
-                DynamicPartitionAccessObjects { objects },
-            )),
-        };
-        assert_eq!(
-            print_access_object(&[dynamic(vec![DynamicPartitionAccessObject {
-                all_partitions: true,
-                ..Default::default()
-            }])]),
-            "partition:all"
-        );
-        assert_eq!(
-            print_access_object(&[dynamic(vec![DynamicPartitionAccessObject::default()])]),
-            "partition:dual"
-        );
-        assert_eq!(
-            print_access_object(&[dynamic(vec![
-                DynamicPartitionAccessObject {
-                    table: "t0".to_owned(),
-                    partitions: vec!["p0".to_owned(), "p1".to_owned()],
-                    ..Default::default()
-                },
-                DynamicPartitionAccessObject {
-                    table: "t1".to_owned(),
-                    all_partitions: true,
-                    ..Default::default()
-                },
-            ])]),
-            "partition:p0,p1 of t0, partition:all of t1"
-        );
-        assert_eq!(
-            print_access_object(&[
-                AccessObject {
-                    access_object: Some(AccessObjectKind::OtherObject("range:[1,2]".to_owned())),
-                },
-                AccessObject {
-                    access_object: Some(AccessObjectKind::OtherObject(
-                        "keep order:true".to_owned()
-                    )),
-                },
-            ]),
-            "range:[1,2]keep order:true"
-        );
-
-        let mut rows = Vec::new();
-        decode_binary_operator(
-            &ExplainOperator {
-                name: "FutureOperator_1".to_owned(),
-                task_type: 99,
-                store_type: 98,
-                ..Default::default()
-            },
-            "",
-            true,
-            false,
-            false,
-            &mut rows,
-        );
-        assert_eq!(rows[0][3], "99[98]");
-    }
-
-    #[test]
-    fn binary_discard_sentinel_round_trips() {
-        assert_eq!(
-            decode_binary_plan(BINARY_PLAN_DISCARDED_ENCODED.as_str()).unwrap(),
-            PLAN_DISCARDED_DECODED
-        );
-        assert!(decode_binary_plan_for_connection(
-            BINARY_PLAN_DISCARDED_ENCODED.as_str(),
-            "row",
-            false,
-        )
-        .unwrap()
-        .is_empty());
-    }
-
-    #[test]
-    fn binary_decode_errors_match_sql_warning_vectors() {
-        let cases = [
-            ("some random bytes", "illegal base64 data at input byte 4"),
-            ("c29tZSByYW5kb20gYnl0ZXM=", "snappy: corrupt input"),
-            ("EUBzb21lIHJhbmRvbSBieXRlcw==", "proto: illegal wireType 7"),
-        ];
-        for (input, expected) in cases {
-            assert_eq!(decode_binary_plan(input).unwrap_err().to_string(), expected);
-        }
-        assert_eq!(
-            decode_binary_plan([0xff]).unwrap_err().to_string(),
-            "illegal base64 data at input byte 0"
         );
     }
 }

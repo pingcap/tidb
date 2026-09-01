@@ -36,6 +36,13 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- [x] (2026-08-31) Completed pinned seven-artifact `pkg/util/plancodec`.
+  Restored target-sized IDs/depths, Go's textual panic/error boundary and
+  store-type wrapping, and mandatory binary main-operator behavior. Removed
+  the Rust-only store enum, decoded/result public aliases, diagnostics, and
+  nine supplemental tests; exactly four source test identities remain.
+  Complete inventory and WIP evidence are in `receipts/util_plancodec.md`.
+
 - [x] (2026-08-31) Completed pinned four-artifact
   `pkg/dxf/framework/schstatus`. Added its exact scheduler-status, node-group,
   TTL flag, and tuning-factor JSON behavior plus the sole source test. Removed
@@ -1128,6 +1135,13 @@ For each bounded behavior cluster:
       is genuinely complete enough for a final-status claim.
 
 ## Decision Log
+
+- Decision: `pkg/util/plancodec` treats malformed tree structure exactly at
+  Go's panic boundary. Only `DecodePlan` recovers; normalized and binary
+  decoding do not gain Rust-specific validation or empty-main fallbacks. Go's
+  `kv.StoreType` is represented by its actual `uint8` domain rather than a
+  closed Rust enum, so the parse-then-cast behavior remains intact.
+  Date/Author: 2026-08-31, Codex.
 
 - Decision: the sole behavioral reference is pinned Go commit
   `e2788410d8d696605e8cb002585877a063ccc909`, not current `origin/master` and
