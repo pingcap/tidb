@@ -40,6 +40,18 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: refreshed the complete Go-master
+  `pkg/util/servermemorylimit` inventory at
+  `c6054025ed4c32ab3672a2a24ea46892714d21ec`: three artifacts and 375 lines,
+  including the failpoint-backed controller and history test. The Rust owner
+  retained live memory-limit behavior and exact history rows; removed its one
+  Rust-only constructor `#[must_use]` annotation and added a regression that
+  failed before the edit with one lint error and passes afterward. The
+  failpoint-wrapped current Go test, detached latest-master Go test, focused
+  Rust tests, Ready formatting, pinned lint, and diff hygiene pass. Details
+  are in `receipts/util_servermemorylimit.md` and
+  `docs/operations/util-servermemorylimit-audit-execplan.md`.
+
 - 2026-09-02: refreshed the complete Go-master `pkg/util/sem/compat`
   inventory at `c6054025ed4c32ab3672a2a24ea46892714d21ec`: five artifacts and
   522 lines, including the SEM integration fixture and BUILD metadata. The
