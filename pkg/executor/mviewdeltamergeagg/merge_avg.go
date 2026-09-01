@@ -38,8 +38,8 @@ func (e *Exec) buildAvgMerger(
 	if err != nil {
 		return nil, errors.Annotate(err, "AVG mapping output")
 	}
-	if retTp.EvalType() != types.ETDecimal {
-		return nil, errors.Errorf("AVG mapping output must be decimal, got %s", retTp.EvalType())
+	if retTp.EvalType() != types.ETDecimal && retTp.EvalType() != types.ETReal {
+		return nil, errors.Errorf("AVG mapping output must be decimal or real, got %s", retTp.EvalType())
 	}
 
 	refs := make([]depRef, len(mapping.DependencyColID))
@@ -59,8 +59,8 @@ func (e *Exec) buildAvgMerger(
 		switch i {
 		case 0:
 			sumTp = tp
-			if tp.EvalType() != types.ETDecimal && tp.EvalType() != types.ETInt {
-				return nil, errors.Errorf("AVG SUM dependency must be decimal or integer, got %s", tp.EvalType())
+			if tp.EvalType() != types.ETDecimal && tp.EvalType() != types.ETInt && tp.EvalType() != types.ETReal {
+				return nil, errors.Errorf("AVG SUM dependency must be decimal, integer, or real, got %s", tp.EvalType())
 			}
 		case 1, 2:
 			if err := validateSignedIntType(tp); err != nil {
@@ -115,7 +115,11 @@ func (m *avgMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Colu
 	countExprVals := countExprCol.Int64s()
 	countStarVals := countStarCol.Int64s()
 	resultCol := chunk.NewColumn(m.retTp, input.NumRows())
-	resultCol.ResizeDecimal(input.NumRows(), true)
+	if m.retTp.EvalType() == types.ETReal {
+		resultCol.ResizeFloat64(input.NumRows(), true)
+	} else {
+		resultCol.ResizeDecimal(input.NumRows(), true)
+	}
 
 	for rowIdx := 0; rowIdx < input.NumRows(); rowIdx++ {
 		countExpr := countExprVals[rowIdx]
@@ -135,6 +139,15 @@ func (m *avgMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Colu
 		}
 		if sumCol.IsNull(rowIdx) {
 			return errors.New("AVG state invariant violated: positive COUNT(expr) with NULL SUM")
+		}
+
+		if m.sumTp.EvalType() == types.ETReal {
+			if m.retTp.EvalType() != types.ETReal {
+				return errors.Errorf("AVG real SUM dependency requires real output, got %s", m.retTp.EvalType())
+			}
+			resultCol.Float64s()[rowIdx] = sumCol.Float64s()[rowIdx] / float64(countExpr)
+			resultCol.SetNull(rowIdx, false)
+			continue
 		}
 
 		var sum types.MyDecimal

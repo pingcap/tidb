@@ -640,7 +640,7 @@ func buildFromLocal(
 	if err != nil {
 		return nil, err
 	}
-	avgDependencies, requiredExactSum, err := mapAvgDependencies(local.aggCols, aggArgNotNullByOffset)
+	avgDependencies, requiredExactSum, err := mapAvgDependencies(local.aggCols, aggArgNotNullByOffset, local.baseTable)
 	if err != nil {
 		return nil, err
 	}
@@ -1093,7 +1093,14 @@ func mapSumToCountExprDependencies(aggCols []aggColInfo, sumArgNotNullByOffset m
 // mapAvgDependencies resolves each AVG to the first matching SUM, COUNT(expr),
 // and COUNT(*) in SELECT-list order. For a NOT NULL AVG argument, COUNT(*) can
 // replace COUNT(expr) because both counts are equivalent.
-func mapAvgDependencies(aggCols []aggColInfo, argNotNullByOffset map[int]bool) (map[int][3]int, map[int]bool, error) {
+//
+// Floating-point SUM already has approximate accumulation semantics. Do not
+// mark it as an exact state just because it is used by AVG.
+func mapAvgDependencies(
+	aggCols []aggColInfo,
+	argNotNullByOffset map[int]bool,
+	baseTableInfo *model.TableInfo,
+) (map[int][3]int, map[int]bool, error) {
 	avgDeps := make(map[int][3]int)
 	requiredExactSum := make(map[int]bool)
 	countStarIdx := -1
@@ -1143,7 +1150,10 @@ func mapAvgDependencies(aggCols []aggColInfo, argNotNullByOffset map[int]bool) (
 			)
 		}
 		avgDeps[i] = [3]int{sumIdx, countIdx, countStarIdx}
-		requiredExactSum[sumIdx] = true
+		sumCol := baseTableInfo.FindPublicColumnByName(aggCols[sumIdx].info.ArgColName)
+		if sumCol == nil || (sumCol.GetType() != mysql.TypeFloat && sumCol.GetType() != mysql.TypeDouble) {
+			requiredExactSum[sumIdx] = true
+		}
 	}
 	return avgDeps, requiredExactSum, nil
 }

@@ -1736,8 +1736,10 @@ func validateCreateMaterializedViewQuery(
 				}
 				if aggFunc == ast.AggFuncAvg {
 					switch baseColMap[colName].GetType() {
-					case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeNewDecimal:
-						// Supported exact AVG inputs.
+					case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeNewDecimal,
+						mysql.TypeFloat, mysql.TypeDouble:
+						// Supported AVG inputs. Floating-point AVG follows the
+						// existing approximate floating-point SUM semantics.
 					default:
 						return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
 							fmt.Sprintf("CREATE MATERIALIZED VIEW AVG does not support column type %d", baseColMap[colName].GetType()),

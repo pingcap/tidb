@@ -374,6 +374,79 @@ func TestAvgFinalizesFromUpdatedSumAndCounts(t *testing.T) {
 	require.True(t, res.ComputedCols[7].IsNull(1))
 }
 
+func TestAvgFinalizesFromUpdatedRealSumAndCounts(t *testing.T) {
+	sctx := mock.NewContext()
+	sctx.GetSessionVars().ExecutorConcurrency = 2
+
+	// Schema: [0] delta_count(*), [1] delta_sum(x), [2] delta_count(x), [3] group_key,
+	// [4] mv_sum(x), [5] mv_count(x), [6] mv_count(*), [7] mv_avg(x).
+	ftInt := types.NewFieldType(mysql.TypeLonglong)
+	ftReal := types.NewFieldType(mysql.TypeDouble)
+	fts := []*types.FieldType{ftInt, ftReal, ftInt, ftInt, ftReal, ftInt, ftInt, ftReal}
+	chk := chunk.NewChunkWithCapacity(fts, 2)
+
+	chk.AppendInt64(0, 1)
+	chk.AppendFloat64(1, 4.0)
+	chk.AppendInt64(2, 1)
+	chk.AppendInt64(3, 1)
+	chk.AppendFloat64(4, 6.0)
+	chk.AppendInt64(5, 2)
+	chk.AppendInt64(6, 2)
+	chk.AppendFloat64(7, 99.0)
+
+	chk.AppendInt64(0, -1)
+	chk.AppendFloat64(1, -2.0)
+	chk.AppendInt64(2, -1)
+	chk.AppendInt64(3, 2)
+	chk.AppendFloat64(4, 6.0)
+	chk.AppendInt64(5, 2)
+	chk.AppendInt64(6, 2)
+	chk.AppendFloat64(7, 99.0)
+
+	src := newMockSource(sctx, fts, []*chunk.Chunk{chk})
+	countStarDesc, err := aggregation.NewAggFuncDesc(sctx.GetExprCtx(), ast.AggFuncCount, []expression.Expression{expression.NewOne()}, false)
+	require.NoError(t, err)
+	countArg := &expression.Column{Index: 2, RetType: ftInt}
+	countDesc, err := aggregation.NewAggFuncDesc(sctx.GetExprCtx(), ast.AggFuncCount, []expression.Expression{countArg}, false)
+	require.NoError(t, err)
+	sumArg := &expression.Column{Index: 1, RetType: ftReal}
+	sumDesc, err := aggregation.NewAggFuncDesc(sctx.GetExprCtx(), ast.AggFuncSum, []expression.Expression{sumArg}, false)
+	require.NoError(t, err)
+	avgArg := &expression.Column{Index: 4, RetType: ftReal}
+	avgDesc, err := aggregation.NewAggFuncDesc(sctx.GetExprCtx(), ast.AggFuncAvg, []expression.Expression{avgArg}, false)
+	require.NoError(t, err)
+
+	mergeExec := &Exec{
+		BaseExecutor: exec.NewBaseExecutor(sctx, nil, 0, src),
+		AggMappings: []Mapping{
+			{AggFunc: countStarDesc, ColID: []int{6}, DependencyColID: []int{0}},
+			{AggFunc: countDesc, ColID: []int{5}, DependencyColID: []int{2}},
+			{AggFunc: sumDesc, ColID: []int{4}, DependencyColID: []int{1}},
+			{AggFunc: avgDesc, ColID: []int{7}, DependencyColID: []int{4, 5, 6}},
+		},
+		DeltaAggColCount: 3,
+		TargetInfo: &model.TableInfo{MaterializedView: &model.MaterializedViewInfo{
+			DefinitionDivPrecisionIncrement: 4,
+		}},
+		WorkerCnt: 2,
+	}
+	writer := &collectWriter{}
+	mergeExec.Writer = writer
+
+	require.NoError(t, mergeExec.Open(context.Background()))
+	outChk := exec.NewFirstChunk(mergeExec)
+	require.NoError(t, mergeExec.Next(context.Background(), outChk))
+	require.NoError(t, mergeExec.Close())
+
+	require.Len(t, writer.results, 1)
+	res := writer.results[0]
+	require.Len(t, res.RowOps, 2)
+	require.Equal(t, RowOpUpdate, res.RowOps[0].Tp)
+	require.Equal(t, RowOpUpdate, res.RowOps[1].Tp)
+	require.InDelta(t, 10.0/3.0, res.ComputedCols[7].GetFloat64(0), 1e-12)
+	require.InDelta(t, 4.0, res.ComputedCols[7].GetFloat64(1), 1e-12)
+}
+
 func TestCountAndNonNullSumReal(t *testing.T) {
 	sctx := mock.NewContext()
 	sctx.GetSessionVars().ExecutorConcurrency = 2
