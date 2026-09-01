@@ -3814,6 +3814,10 @@ For each bounded behavior cluster:
   current AST branch does not expose `InPlaceVisitor`/`Walk`, and no Rust
   test-driver owner closes that dependency graph, so the package remains an
   explicit boundary pending the complete parser migration.
+- `pkg/parser/types` is byte-identical to Go master across six artifacts and
+  1,441 lines. `tidb-datatype` owns the FieldType/EvalType, type-name,
+  formatting, JSON, sizing, and error-prototype behavior with source-derived
+  tests; no Rust-only behavior or code delta was found.
 
 ## Outcomes & Retrospective
 
