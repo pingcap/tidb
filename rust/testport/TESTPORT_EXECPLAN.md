@@ -40,6 +40,17 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: refreshed the complete Go-master `pkg/util/watcher` inventory
+  at `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: four tracked artifacts,
+  605 lines, thirteen production functions/methods, the `TestWatcher` suite,
+  and no fixtures, generated files, platform variants, or nested packages.
+  The existing Rust owner preserves Go's polling lifecycle, event priority,
+  metadata, identity, and source event sequence without Rust-only behavior.
+  Current and exact detached Go tests, the focused Rust test, formatting, and
+  diff checks pass. Updated `receipts/util_watcher.md` and added the Ready
+  documentation-only plan at
+  `docs/operations/util-watcher-audit-execplan.md`.
+
 - 2026-09-02: refreshed the complete Go-master `pkg/util/size` inventory at
   `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: two tracked artifacts, 86
   lines, five binary units, fifteen ABI constants, and no tests, fixtures,

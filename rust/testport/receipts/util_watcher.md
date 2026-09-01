@@ -1,14 +1,25 @@
-# `pkg/util/watcher` — complete package transcreation
+# `pkg/util/watcher` — complete Go-master parity receipt
 
-Pinned Go source: `e2788410d8d696605e8cb002585877a063ccc909`.
+Comparison source: Go `origin/master` at
+`5e8a1a229a7591ddac49a0cd3b795587c2595ab9` (2026-09-01). The package is
+unchanged from the earlier pinned implementation; this receipt records the
+rolling authority and complete artifact hashes.
 
 ## Complete inventory
 
-All four pinned artifacts were read in full: `event.go`, `watcher.go`,
-`watcher_test.go`, and `BUILD.bazel`. The package contains two production
-files, one unit test, and one Bazel library/test pair. It has no package doc,
-README, fixture, benchmark, generated file, platform variant, test harness, or
-ownership file. The checkout is byte-identical to the pin.
+All four Go-master artifacts were read in full: `BUILD.bazel`, `event.go`,
+`watcher.go`, and `watcher_test.go` (605 lines total). The package contains
+two production files, thirteen production functions/methods, one
+`TestWatcher` suite with one helper, and one Bazel library/test pair. It has
+no package `doc.go`, README, fixture, benchmark, generated file, platform
+variant, or ownership file.
+
+| Artifact | Lines | Git blob | SHA-256 | Role |
+| --- | ---: | --- | --- | --- |
+| `BUILD.bazel` | 24 | `11e467fb84ac8667886eddceaa0080d439d25fdb` | `b864e930818d7a9fd130bb0a56e53d3862f6f08dd27632cf39b93096d87516e4` | library/test targets |
+| `event.go` | 89 | `6762c11b93cc8286ccc28897f7731c74f828509d` | `b786d23dc804903185c0898af2178f0ffd4fdc6f369111ec898399ef96026d0d` | operation and event types |
+| `watcher.go` | 331 | `0554a671ff00060a94a206e94f1b639ce694ab12` | `faa49cd3a28dd9b22287d428843cea5129ef647b4fdb64ef39e821af933edf43` | polling watcher implementation |
+| `watcher_test.go` | 161 | `dd83334717133acf36ca5d0d0368bca3f9e55674` | `404df4df8f458c7ca73fa1cfdf9a4388ac73189fd34c1f8a986c42d66f46995e` | source event-sequence test |
 
 ## Rust ownership and audit result
 
@@ -32,21 +43,39 @@ annotations, expanded module narrative, and four supplemental tests were
 removed. The remaining test follows the source's real 10 ms ticker and exact
 create/modify/chmod/rename/remove/create/move sequence.
 
-## Validation
+## Validation and risk
 
-Profile: WIP; this is one package checkpoint in the continuing repository
-audit, not a repository-wide readiness claim.
+Profile: **Ready** for this documentation-only authority refresh. No Go
+source, imports, Bazel metadata, or module files changed, so `make
+bazel_prepare` is not required. No source behavior changed and no new
+regression test is added; the existing source-derived `TestWatcher` remains
+the focused behavioral regression.
 
-- `git diff --exit-code e2788410d8d696605e8cb002585877a063ccc909 -- pkg/util/watcher` — passed.
-- `go test ./pkg/util/watcher -count=1` — passed (one source test).
-- `cargo test -p tidb-util --lib --locked watcher::tests::test_watcher -- --exact` — passed (one source test).
-- `cargo check -p tidb-util --lib --locked` — passed without warnings.
-- `rustfmt --edition 2021 --check crates/tidb-util/src/watcher.rs` and
-  `git diff --check` — passed.
+```text
+git diff --exit-code 0bc44483e3e41a8ea917d4382dc202369468d200..origin/master \
+  -- pkg/util/watcher
+# passed: current package is unchanged from the previous authority pin
+
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
+GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
+go test ./pkg/util/watcher -count=1
+# passed (current worktree and exact detached Go-master worktree; one source test)
+
+OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler \
+DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-util --lib watcher::tests::test_watcher --offline --locked -- --exact --test-threads=1
+# passed: one source-derived test
+
+cd rust && cargo +nightly-2026-08-22 fmt --all -- --check
+# passed
+git diff --check
+# passed
+```
 
 No Go or Bazel file changed, so `make bazel_prepare` is not required. Only the
 installed `aarch64-apple-darwin` target was compiled locally; the Windows
-metadata branch was reviewed but not cross-compiled.
+metadata branch was reviewed but not cross-compiled. Full workspace tests and
+Bazel execution remain outside this leaf receipt.
 
 ## Risk
 
