@@ -3,8 +3,9 @@
 Status: Ready for this scoped batch. This receipt covers the complete Go
 package inventory; it is not a repository-wide parity claim.
 
-Published commit: pending publication for this batch; local and remote SHAs
-will be recorded after the push/pull synchronization.
+Published commit: `b3ca14f947d393671698acb7139befa543eaf665` on
+`origin/hparser-integration`; local, tracking, and `git ls-remote` SHAs were
+verified equal after the push/pull synchronization.
 
 Comparison source: Go `origin/master` at `c6054025ed4c32ab3672a2a24ea46892714d21ec`.
 Rust owner: `rust/crates/tidb-ttl/src/session.rs` and

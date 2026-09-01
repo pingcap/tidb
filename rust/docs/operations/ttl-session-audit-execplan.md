@@ -24,8 +24,10 @@ omitted Go interface accessors and removes a Rust-only constructor/state shape.
 - [x] (2026-09-02) Ran the complete Rust TTL tests, Go tagged session tests,
       Rust formatting/check, repository lint, and diff hygiene; the Ready
       profile is green.
-- [ ] Publish the implementation and receipt, fetch the latest branch tip,
-      fast-forward pull, and record matching local/tracking/remote SHAs.
+- [x] (2026-09-02) Published implementation commit
+      `b3ca14f947d393671698acb7139befa543eaf665`, fetched the latest branch
+      tip, fast-forward pulled, and verified matching local/tracking/remote
+      SHAs.
 
 ## Scope and decisions
 
@@ -65,5 +67,5 @@ Rust-only batch.
 ## Outcomes and retrospective
 
 The source-shaped session interface and constructor behavior are complete in
-the implementation pending publication; live server and unported dependency
-surfaces remain explicit and unverified.
+published commit `b3ca14f947d393671698acb7139befa543eaf665`; live server and
+unported dependency surfaces remain explicit and unverified.
