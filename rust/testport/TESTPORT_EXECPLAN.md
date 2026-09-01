@@ -470,6 +470,13 @@ For each bounded behavior cluster:
   against its existing Rust owner. Removed three Rust-only regression cases
   and the extra alias assertion from the source-named suite; the 17 Go test
   identities and source benchmark remain the complete package surface.
+- 2026-09-01: refreshed the complete `pkg/util/encrypt` inventory against Go
+  master (`0bc44483e3e41a8ea917d4382dc202369468d200`). All eight Go artifacts
+  are byte-for-byte unchanged from the prior pin; the existing Rust AES,
+  random-access CTR, SQL codec, benchmark, and consumer ownership remains
+  dependency-closed. Owner and expression gates pass; encrypted-spill tests
+  remain blocked by the unrelated temporary-directory setup helper and are
+  recorded as such in `receipts/b021.md`.
 - 2026-08-29: audited pinned Go `pkg/util/cpu` and found that an atomic port
   requires the absent `pkg/metrics` EMA gauge plus domain/resource-manager
   lifecycle consumers, in addition to a cross-platform process CPU clock.
