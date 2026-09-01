@@ -40,6 +40,13 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: revalidated the six-artifact `pkg/util/sys/storage` inventory
+  against current Go master, including POSIX, Windows, unsupported-target,
+  test, harness, and Bazel variants. Source is unchanged from the earlier
+  Ready transcreation; the Rust storage-capacity owner and focused platform
+  mapping remain valid. The receipt now records `origin/master` explicitly;
+  no additional fix is needed.
+
 - 2026-09-01: audited both current Go-master `pkg/util/injectfailpoint`
   artifacts (90 lines) in full. Its five exported helpers are named DXF
   failpoint/random-error test infrastructure; Rust has no dependency-closed

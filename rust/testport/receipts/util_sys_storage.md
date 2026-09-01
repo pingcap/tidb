@@ -3,9 +3,11 @@
 Status: Ready on the host target. Go remains the behavioral authority; Windows
 and unsupported-target runtime execution remain unrun.
 
-## Pinned inventory
+## Current-master inventory
 
-Comparison source: Go commit
+Comparison source: Go `origin/master` commit
+`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01). The complete
+package tree and source are byte-for-byte unchanged from the earlier pin
 `e2788410d8d696605e8cb002585877a063ccc909`.
 
 The complete package tree at that pin is:
