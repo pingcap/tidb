@@ -404,20 +404,20 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 	if err := checkMaterializedViewEnabled(ctx); err != nil {
 		return err
 	}
+	sessionVars := ctx.GetSessionVars() //nolint:forbidigo
 	is := e.infoCache.GetLatest()
 	schemaName := s.ViewName.Schema
 	if schemaName.O == "" {
-		if ctx.GetSessionVars().CurrentDB == "" {
+		if sessionVars.CurrentDB == "" {
 			return errors.Trace(plannererrors.ErrNoDB)
 		}
-		schemaName = ast.NewCIStr(ctx.GetSessionVars().CurrentDB)
+		schemaName = ast.NewCIStr(sessionVars.CurrentDB)
 		s.ViewName.Schema = schemaName
 	}
 	schema, ok := is.SchemaByName(schemaName)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schemaName)
 	}
-	sessionVars := ctx.GetSessionVars()
 	if _, err := validateCommentLength(sessionVars.StmtCtx.ErrCtx(), sessionVars.SQLMode, s.ViewName.Name.L, &s.Comment, dbterror.ErrTooLongTableComment); err != nil {
 		return errors.Trace(err)
 	}
@@ -559,8 +559,8 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 		AlertWarningSec:                 alertWarningSec,
 		AlertOverdueSec:                 alertOverdueSec,
 		AlertRefreshFailed:              alertRefreshFailed,
-		DefinitionSQLMode:               ctx.GetSessionVars().SQLMode,
-		DefinitionDivPrecisionIncrement: ctx.GetSessionVars().DivPrecisionIncrement,
+		DefinitionSQLMode:               sessionVars.SQLMode,
+		DefinitionDivPrecisionIncrement: sessionVars.DivPrecisionIncrement,
 		DefinitionTimeZone: model.TimeZoneLocation{
 			Name:   tzName,
 			Offset: tzOffset,
@@ -593,7 +593,7 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 		return err
 	}
 	job.AddSystemVars(variable.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
-	AddMViewExecutionSessionVarsToJob(job, ctx.GetSessionVars())
+	AddMViewExecutionSessionVarsToJob(job, sessionVars)
 	jobW := NewJobWrapperWithArgs(job, &model.CreateMaterializedViewArgs{
 		TableInfo:    mvTableInfo,
 		MLogTableIDs: []int64{mlogTable.Meta().ID},
@@ -611,10 +611,11 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 
 func initMaterializedViewReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) error {
 	m := NewDDLReorgMeta(sctx)
-	if sv, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBDDLReorgWorkerCount); ok {
+	sessionVars := sctx.GetSessionVars() //nolint:forbidigo
+	if sv, ok := sessionVars.GetSystemVar(vardef.TiDBDDLReorgWorkerCount); ok {
 		m.SetConcurrency(variable.TidbOptInt(sv, 0))
 	}
-	if sv, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBDDLReorgBatchSize); ok {
+	if sv, ok := sessionVars.GetSystemVar(vardef.TiDBDDLReorgBatchSize); ok {
 		m.SetBatchSize(variable.TidbOptInt(sv, 0))
 	}
 	m.SetMaxWriteSpeed(int(vardef.DDLReorgMaxWriteSpeed.Load()))

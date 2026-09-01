@@ -206,7 +206,7 @@ func setCreateMaterializedViewScheduleEvalSession(
 	sqlMode mysql.SQLMode,
 	scheduleTimeZone *time.Location,
 ) func() {
-	sessVars := sctx.GetSessionVars()
+	sessVars := sctx.GetSessionVars() //nolint:forbidigo
 	originalSQLMode := sessVars.SQLMode
 	originalTypeFlags := sessVars.StmtCtx.TypeFlags()
 	originalErrLevels := sessVars.StmtCtx.ErrLevels()
