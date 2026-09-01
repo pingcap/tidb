@@ -208,6 +208,8 @@ pub use wire_status::{
 pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeError> {
     tidb_util::traceevent::register_with_client_go();
     config.install_process_globals();
+    tidb_util::cgmon::start_cgroup_monitor();
+    let _cgroup_monitor_cleanup = CgroupMonitorCleanup;
     initialize_temp_dir(&config)?;
     let _temp_dir_cleanup = TempDirCleanup;
     {
@@ -300,6 +302,14 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
 }
 
 struct TempDirCleanup;
+
+struct CgroupMonitorCleanup;
+
+impl Drop for CgroupMonitorCleanup {
+    fn drop(&mut self) {
+        tidb_util::cgmon::stop_cgroup_monitor();
+    }
+}
 
 impl Drop for TempDirCleanup {
     fn drop(&mut self) {

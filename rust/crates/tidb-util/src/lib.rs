@@ -35,6 +35,7 @@ pub mod arena;
 pub mod backoff;
 pub mod bitmap;
 pub mod br_summary;
+pub mod cgmon;
 pub mod cgroup;
 pub mod channel;
 pub mod checksum;

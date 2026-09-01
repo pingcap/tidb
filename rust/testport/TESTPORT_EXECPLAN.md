@@ -36,6 +36,13 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- [x] (2026-08-31) Completed pinned Go `pkg/util/cgmon` as one three-artifact
+  package. Added the process-global immediate/ten-second monitor, exact shared
+  gauges, affinity-visible CPU and host/cgroup memory selection, persistent
+  change detection, source logging behavior, non-Linux no-ops, and ordinary
+  server start/stop lifecycle. The sole source test and WIP evidence are
+  recorded in `receipts/util_cgmon.md`.
+
 - [x] (2026-08-31) Completed pinned Go `pkg/util/cgroup` as one nine-artifact
   package. Removed Rust-only scheduler-recommendation and process-RSS APIs,
   restored the signed non-Linux quota result, corrected controller duplicate

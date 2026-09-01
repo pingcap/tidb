@@ -46,6 +46,8 @@ pub use pool::{
     Budget, OutOfCapacityActionArgs, PoolActions, PoolCallbackCtx, PoolError, ResourcePool,
     ResourcePoolState, DEF_MAX_LIMIT, DEF_MAX_UNUSED_BLOCKS, DEF_POOL_ALLOC_ALIGN_SIZE,
 };
+#[cfg(any(target_os = "linux", test))]
+pub(crate) use process::host_memory_total;
 pub use process::{
     allocator_live_heap_sample, apply_process_memory_setting, handle_global_mem_arbitrator_runtime,
     install_process_arbitrator, mem_total, mem_used, parse_server_memory_limit, read_mem_stats,

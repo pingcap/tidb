@@ -38,7 +38,7 @@ enum MemorySource {
 static MEMORY_SOURCE: AtomicU8 = AtomicU8::new(0);
 
 #[cfg(target_os = "linux")]
-fn host_memory_total() -> io::Result<u64> {
+pub(crate) fn host_memory_total() -> io::Result<u64> {
     let content = fs::read_to_string("/proc/meminfo")?;
     let kib = content
         .lines()
@@ -88,7 +88,7 @@ fn current_process_memory_usage() -> io::Result<u64> {
 }
 
 #[cfg(target_os = "macos")]
-fn host_memory_total() -> io::Result<u64> {
+pub(crate) fn host_memory_total() -> io::Result<u64> {
     let output = Command::new("sysctl").args(["-n", "hw.memsize"]).output()?;
     if !output.status.success() {
         return Err(io::Error::other("sysctl hw.memsize failed"));
@@ -148,7 +148,7 @@ fn current_process_memory_usage() -> io::Result<u64> {
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-fn host_memory_total() -> io::Result<u64> {
+pub(crate) fn host_memory_total() -> io::Result<u64> {
     Err(io::Error::new(
         ErrorKind::Unsupported,
         "host memory discovery is not available on this platform",

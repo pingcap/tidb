@@ -479,15 +479,32 @@ fn memory_usage_at(root: &Path) -> io::Result<u64> {
 #[cfg(target_os = "linux")]
 pub fn get_cgroup_cpu() -> io::Result<CpuUsage> {
     let mut usage = cgroup_cpu_at(Path::new("/"), true)?;
-    usage.num_cpu = std::thread::available_parallelism()?.get();
+    usage.num_cpu = logical_cpu_count()?;
     Ok(usage)
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn logical_cpu_count() -> io::Result<usize> {
+    let count = rustix::thread::sched_getaffinity(None)
+        .map_err(io::Error::from)?
+        .count() as usize;
+    if count == 0 {
+        Err(io::Error::other("no logical CPU is available"))
+    } else {
+        Ok(count)
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn logical_cpu_count() -> io::Result<usize> {
+    std::thread::available_parallelism().map(std::num::NonZero::get)
 }
 
 /// Returns the platform CPU count without a cgroup quota on non-Linux hosts.
 #[cfg(not(target_os = "linux"))]
 pub fn get_cgroup_cpu() -> io::Result<CpuUsage> {
     Ok(CpuUsage {
-        num_cpu: std::thread::available_parallelism()?.get(),
+        num_cpu: logical_cpu_count()?,
         ..CpuUsage::default()
     })
 }
