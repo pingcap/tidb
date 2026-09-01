@@ -14,3 +14,14 @@ go_library(
         "//pkg/util/chunk",
     ],
 )
+
+go_test(
+    name = "serialization_test",
+    timeout = "short",
+    srcs = ["serialization_util_test.go"],
+    embed = [":serialization"],
+    deps = [
+        "//pkg/types",
+        "@com_github_stretchr_testify//require",
+    ],
+)
