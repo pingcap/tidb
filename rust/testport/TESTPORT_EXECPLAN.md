@@ -2376,6 +2376,13 @@ For each bounded behavior cluster:
       requested current Go master (`5e8a1a229a`); its 33-artifact inventory is
       byte-identical to the previously audited snapshot, with the only
       intervening Go change in nested `pkg/util/dbterror`.
+- 2026-09-01: audited the complete Go-master `pkg/session/test/bootstraptest2`
+      package: three artifacts and 377 lines covering six historical bootstrap
+      upgrades, distributed-task states, DDL-table-version persistence, the
+      six-shard target, and goleak/failpoint harness. A targeted Go upgrade test
+      passes; Rust's combined BootstrapSession/Domain/DDL/mock-TiKV upgrade
+      pipeline remains an explicit boundary. Details are in
+      `receipts/session_test_bootstraptest2.md`.
 - 2026-09-01: audited all three Go-master `pkg/util/cgmon` artifacts (229
       lines: Linux cgroup monitor, fallback test, and Bazel target). The
       existing Rust cgroup reader covers quota/memory discovery but not this
