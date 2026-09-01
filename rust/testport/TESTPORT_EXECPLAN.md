@@ -40,6 +40,15 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: audited all seven Go-master `pkg/util/profile` artifacts,
+  including the 1,206-byte pprof fixture, two production files, three test
+  files, and Bazel fixture glob. The Rust workspace only preserves the six
+  performance-schema table names; it has no pprof/flamegraph collector,
+  CPU-profiler lifecycle, goroutine parser, or ordinary profile-table
+  executor. The complete inventory and explicit dependency boundary are
+  recorded in `receipts/util_profile.md`; both Go source tests pass with the
+  required `intest` tag where applicable.
+
 - 2026-09-01: audited all three Go-master `pkg/util/etcd` artifacts (140
   lines including the embedded-etcd namespace test and Bazel target). The
   Rust PD etcd owner already had the KV transport, but its single-key delete
@@ -1485,6 +1494,12 @@ For each bounded behavior cluster:
 
 ## Decision Log
 
+- Decision: keep `pkg/util/profile` as an explicit boundary until the pprof
+  decoder, CPU-profiler lifecycle, performance-schema result tables, and
+  session/logging consumers can move as one package unit. The existing Rust
+  SEM table-name list is metadata only; a detached flamegraph parser or
+  sampling thread would not be an ordinary SQL execution path. Date/Author:
+  2026-09-01, Codex.
 - Decision: carry Go `DeleteKeyFromEtcd`'s per-attempt timeout and retry loop
   in `tidb-pd-client::EtcdClient`, then bind the server-info trait adapter to
   its source five-attempt/one-second values. Keep namespace wrapping outside
@@ -1839,6 +1854,11 @@ For each bounded behavior cluster:
 
 ## Surprises & Discoveries
 
+- `pkg/util/profile`'s current-master change is entirely integration-facing:
+  the source collector is unchanged, while `TestProfiles` now starts the
+  CPU profiler and checks six structured log events. Rust's SEM layer already
+  knows the table names, which can look like partial parity until the missing
+  profile executor and pprof path are traced.
 - Go `pkg/util/etcd.DeleteKeyFromEtcd` is not a thin delete wrapper: it
   creates a fresh timeout context for each attempt and retries five times by
   default, while Rust's existing `EtcdClient::delete` only performed one
