@@ -2,9 +2,10 @@
 
 ## Authority and inventory
 
-- Go authority: `e2788410d8d696605e8cb002585877a063ccc909`.
+- Go authority: `5e8a1a229a7591ddac49a0cd3b795587c2595ab9` (`origin/master`).
 - The checkout's `pkg/parser/charset` is byte-identical to that authority.
-- Atomic inventory: 14 files: 10 production files, the generated GB18030 data
+- Atomic inventory: 14 files and 3,319 Go/Bazel lines: 10 production files,
+  the generated GB18030 data
   input, 2 original test files, and `BUILD.bazel`.
 - Go executable inventory: 9 `Test*` functions and
   `BenchmarkGetCharsetDesc`; the manifest's 10-function count is exact.
@@ -46,22 +47,23 @@ dependency on `parser/mysql` and the standard `unicode` table.
 
 ## Validation
 
-WIP profile was used because the repository-wide package parity campaign is
-continuing; this receipt claims only this complete atomic package.
+Ready profile was used because this receipt updates the complete atomic
+package boundary while the repository-wide parity campaign continues.
 
-- `go test -tags=intest,deadlock ./charset` from `pkg/parser` — all source
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./charset -count=1` from `pkg/parser` — all source
   package tests passed after the pinned nested-module dependencies were made
   available. The package has no failpoint imports or injections.
 - `python3 scripts/generate-parser-charset.py` from `rust` followed by a clean
   generated-table diff — all generated images match the pinned Go sources.
-- `cargo test -p tidb-datatype --locked -- --test-threads=1` — 369 unit and 61
-  integration tests passed.
+- `cargo +nightly-2026-08-22 test -p tidb-datatype --test all parser_charset -- --test-threads=1` — 11 source-derived tests passed.
+- `cargo +nightly-2026-08-22 test -p tidb-datatype --lib encoding -- --test-threads=1` — 21 encoding tests passed.
 - `cargo check -p tidb-datatype --benches --locked` — benchmark compiled.
 - `cargo check -p tidb-ast -p tidb-protocol -p tidb-expr --lib --locked` — all
   immediate encoding consumers compiled.
 - `cargo check -p tidb-executor -p tidb-exec --lib --locked` — both execution
   layers compiled; only pre-existing warnings were emitted.
-- `cargo fmt --all -- --check` and `git diff --check` — clean.
+- `cargo +nightly-2026-08-22 fmt --all -- --check`, pinned-Go `make lint`, and
+  `git diff --check` — clean.
 
 No live TiKV/TiFlash service behavior was exercised; this package has no such
 direct dependency.

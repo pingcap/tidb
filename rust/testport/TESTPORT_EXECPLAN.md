@@ -3865,6 +3865,10 @@ For each bounded behavior cluster:
   caching-SHA2 SHA-crypt, and SM3 behavior with 20 source-derived tests;
   malformed-input and byte-domain regressions pass, with no Rust-only behavior
   requiring removal.
+- `pkg/parser/charset` remains byte-identical to current Go master across 14
+  artifacts and 3,319 lines, including the generated GB18030 input. Its
+  existing Rust charset owner passes the focused source-derived and encoding
+  suites; the receipt is refreshed to the current authority and Ready gates.
 
 ## Outcomes & Retrospective
 
