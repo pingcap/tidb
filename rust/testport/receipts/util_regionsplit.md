@@ -1,7 +1,7 @@
 # `pkg/util/regionsplit` — Go-master package boundary receipt
 
 Go source: `origin/master` at
-`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01). The package is
+`5e8a1a229a7591ddac49a0cd3b795587c2595ab9` (2026-09-02). The package is
 byte-for-byte unchanged from the earlier extraction pin
 `e2788410d8d696605e8cb002585877a063ccc909`.
 
@@ -54,11 +54,12 @@ batch.
 
 ## Validation
 
-Profile: WIP for the continuing repository audit; no source or build artifact
-changed.
+Profile: Ready for this documentation-only boundary refresh; no source or
+build artifact changed.
 
-- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/regionsplit -count=1` — passed (`[no test files]`).
-- `git diff --stat e2788410d8d696605e8cb002585877a063ccc909..origin/master -- pkg/util/regionsplit` — empty; source is unchanged at Go master.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/regionsplit -count=1` — PASS (`[no test files]`).
+- Exact pinned Go-master detached worktree: `go test ./pkg/util/regionsplit -count=1` — PASS (`[no test files]`).
+- `git diff --stat e2788410d8d696605e8cb002585877a063ccc909..origin/master -- pkg/util/regionsplit` — empty; source is unchanged at current Go master.
 - Rust search across codec, DDL/executor, distsql, and txnkv crates — found only lower-level encoders/transport and metadata, not a complete owner.
 
 No Go or Bazel file changed, so `make bazel_prepare` is not required. Full
