@@ -95,6 +95,16 @@ For each bounded behavior cluster:
   no speculative metrics facade was added. Recorded the explicit boundary in
   `receipts/objstore_recording.md`.
 
+- 2026-09-01: audited the complete Go-master `pkg/objstore/storeapi`
+  package before editing: three tracked artifacts and 404 lines, including
+  the public storage contracts, permission/options fields, prefix/range
+  helpers, shared multipart-limit sentinel, and two focused tests. Go master
+  removes the obsolete `ReadSeekCloser` alias and adds `MaxUploadParts` /
+  `ErrExceedMaxUploadParts`; Rust has no dependency-closed object-store
+  contract owner, so no Rust-only behavior was removed and no speculative
+  trait was added. Recorded the explicit boundary in
+  `receipts/objstore_storeapi.md`.
+
 - 2026-09-01: audited the complete Go-master `pkg/ingestor/globalsort`
   package before editing: 17 tracked artifacts and 6,814 lines, including the
   external engine, object-store readers, merge and merge-v2 operators, range
