@@ -58,6 +58,15 @@ type Builder struct {
 	infoData *Data
 	store    kv.Storage
 	crossKS  bool
+
+	// partitionID2TableID is a temporary field used during full load (fast path) to
+	// fill the pid2tid btree for partition tables that are not in the must-load list.
+	// It is set via WithPartitionID2TableID and consumed in createSchemaTablesForDB.
+	partitionID2TableID map[int64]int64
+
+	// oldTableForPartitionDiff is set temporarily during applyTableUpdateV2 to cache the
+	// old table before it's removed, so that applyCreateTable can diff changed partitions.
+	oldTableForPartitionDiff table.Table
 }
 
 // SetSchemaVersion sets the schema version of the InfoSchema.
@@ -913,7 +922,14 @@ func applyCreateTable(b *Builder, m meta.Reader, dbInfo *model.DBInfo, tableID i
 		tableNames := b.infoSchema.schemaMap[dbInfo.Name.L]
 		tableNames.tables[tblInfo.Name.L] = tbl
 	}
-	b.addTable(schemaVersion, dbInfo, tblInfo, tbl)
+
+	// For partition-only DDLs, use the cached old table to diff changed partitions.
+	var oldTableForDiff table.Table
+	if isPartitionOnlyAction(tp) && b.enableV2 {
+		oldTableForDiff = b.oldTableForPartitionDiff
+		b.oldTableForPartitionDiff = nil // reset after use
+	}
+	b.addTableWithActionType(schemaVersion, dbInfo, tblInfo, tbl, tp, oldTableForDiff)
 
 	bucketIdx := tableBucketIdx(tableID)
 	slices.SortFunc(b.infoSchema.sortedTablesBuckets[bucketIdx], func(i, j table.Table) int {
@@ -1134,6 +1150,21 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 		}
 	}
 
+	// Fill pid2tid for partition tables that were not in the must-load list.
+	// This is collected by the loader via WithPartitionID2TableID during the fast path
+	// (schemaCacheSize > 0), where partition tables are skipped by IsTableInfoMustLoad
+	// but their pid2tid mappings are still needed for FindTableByPartitionID etc.
+	if b.enableV2 && len(b.partitionID2TableID) > 0 {
+		for pid, tid := range b.partitionID2TableID {
+			btreeSet(&b.infoData.pid2tid, partitionItem{
+				partitionID:   pid,
+				tableID:       tid,
+				schemaVersion: schemaVersion,
+			})
+		}
+		b.partitionID2TableID = nil
+	}
+
 	// initMisc depends on the tables and schemas, so it should be called after createSchemaTablesForDB
 	b.initMisc(policies, resourceGroups, maskingPolicies)
 
@@ -1224,15 +1255,44 @@ func (b *Builder) addDB(schemaVersion int64, di *model.DBInfo, schTbls *schemaTa
 }
 
 func (b *Builder) addTable(schemaVersion int64, di *model.DBInfo, tblInfo *model.TableInfo, tbl table.Table) {
+	b.addTableWithActionType(schemaVersion, di, tblInfo, tbl, model.ActionNone, nil)
+}
+
+// addTableWithActionType inserts a table entry. For partition-only DDLs (add/drop/truncate/reorganize partition),
+// only changed partitions are inserted into pid2tid to avoid re-inserting all partitions.
+func (b *Builder) addTableWithActionType(schemaVersion int64, di *model.DBInfo, tblInfo *model.TableInfo, tbl table.Table, tp model.ActionType, oldTable table.Table) {
 	if b.enableV2 {
 		b.infoData.addReferredForeignKeys(di.Name, tblInfo, schemaVersion)
-		b.infoData.add(tableItem{
+		changedIDs := diffChangedPartitionIDs(oldTable, tblInfo, tp)
+		b.infoData.addPartitions(tableItem{
 			dbName:        di.Name,
 			dbID:          di.ID,
 			tableName:     tblInfo.Name,
 			tableID:       tblInfo.ID,
 			schemaVersion: schemaVersion,
-		}, tbl)
+		}, tbl, changedIDs)
+
+		// For partition-only DDLs that can drop partitions (drop, truncate, reorganize),
+		// tomb-mark the partitions that were removed by comparing old vs new table.
+		// This complements diffDroppedPartitionIDs which relies on AffectedOpts (not always set).
+		if isPartitionOnlyAction(tp) && oldTable != nil {
+			if oldPi := oldTable.Meta().GetPartitionInfo(); oldPi != nil {
+				newPi := tblInfo.GetPartitionInfo()
+				// Build set of remaining partition IDs
+				remaining := make(map[int64]struct{})
+				if newPi != nil {
+					for _, def := range newPi.Definitions {
+						remaining[def.ID] = struct{}{}
+					}
+				}
+				// Tomb-mark partitions that existed in old but not in new
+				for _, def := range oldPi.Definitions {
+					if _, ok := remaining[def.ID]; !ok {
+						btreeSet(&b.infoData.pid2tid, partitionItem{def.ID, schemaVersion, tblInfo.ID, true})
+					}
+				}
+			}
+		}
 	} else {
 		sortedTbls := b.infoSchema.sortedTablesBuckets[tableBucketIdx(tblInfo.ID)]
 		b.infoSchema.sortedTablesBuckets[tableBucketIdx(tblInfo.ID)] = append(sortedTbls, tbl)
@@ -1276,6 +1336,13 @@ func (b *Builder) WithStore(s kv.Storage) *Builder {
 // WithCrossKS marks whether this builder is used to build I_S for cross keyspace.
 func (b *Builder) WithCrossKS(crossKS bool) *Builder {
 	b.crossKS = crossKS
+	return b
+}
+
+// WithPartitionID2TableID sets the partition ID to table ID mapping for filling pid2tid btree
+// during full load. The mapping is consumed in createSchemaTablesForDB and cleared after use.
+func (b *Builder) WithPartitionID2TableID(pid2tid map[int64]int64) *Builder {
+	b.partitionID2TableID = pid2tid
 	return b
 }
 
