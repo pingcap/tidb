@@ -193,6 +193,29 @@ end without a migration: ingest could try to recognise the format it was handed 
 assume MySQL's, and bare output could do something better than erroring, so long as it is
 neither silent truncation nor a format the input side will not take back.
 
+**Bounded parsing.** Nesting costs 9 bytes a level in WKB, so a value inside
+`max_allowed_packet` can nest millions deep. MySQL guards this pre-emptively: on 9.7.2 with
+the default 1 MiB `thread_stack` a too-deep value returns `ERROR 1436 "Thread stack
+overrun"`, a clean session error, and the server stays up. The depth where it trips differs
+per path and scales with `thread_stack`: `ST_GeomFromText` accepts 4235 levels,
+`ST_GeomFromWKB` 7059, a spatial function reading a stored value 7062, and a bare literal
+into a `GEOMETRY` column 10578. That last gap is a hazard MySQL leaves open: it stores a
+geometry too deeply nested for any `ST_*` function to read back, because the insert path
+validates with less stack than the read path uses. TiDB bounds depth explicitly, since
+Go's stack overflow is a fatal, unrecoverable crash rather than MySQL's catchable guard, so
+the bound is what turns a crash into an error. It applies one bound across ingest and read,
+above real data and below MySQL's storage limit, so unlike MySQL it never persists a value
+it cannot read.
+
+**Size.** A vertex is 16 bytes and nothing compresses it, so a geometry costs 16 bytes a
+vertex plus small per-ring and per-part overhead. TiDB's 6 MiB `txn-entry-size-limit` is
+the real ceiling on a stored value, about 393k vertices, and ordinary data reaches it:
+national boundaries at OSM resolution are 172k vertices for Russia (2.6 MiB) and 369k for
+Canada (5.7 MiB), against 37k and 68k for the same two at Natural Earth 1:10m. No separate
+point-count cap is needed for a stored value, and a large geometry is slow rather than
+unbounded. `ST_Subdivide`, the PostGIS remedy for oversized polygons, is deferred with the
+rest of the processing tail.
+
 Why EWKB rather than the alternatives:
 [Investigation & Alternatives](#investigation--alternatives).
 
@@ -569,6 +592,12 @@ Out of scope here, each with a home:
   `ERROR 3559`.
 - Format version: version 1 decodes; an unknown or zero version byte is rejected with a
   clear error rather than misparsed.
+- Hostile input: WKB nested past the depth the parser bounds, truncated and over-long
+  inputs in each format, and a fuzz target over the WKT, WKB and GeoJSON parsers. The bar
+  is a clean error, never a panic or a crash, since Go's stack overflow is unrecoverable
+  where MySQL's `ERROR 1436` guard is not. One case pins the read/ingest bound as equal, a
+  value that ingests must read back, so TiDB does not repeat MySQL's store-but-unreadable
+  gap.
 - Type plumbing: geometry through the audited operation surface returns correct bytes.
 - DDL: `MODIFY`/`CHANGE COLUMN` on a geometry column is rejected for the `SRID` attribute,
   for both subtype directions and for conversion to another type, while `NULL`/`NOT NULL`,
@@ -620,6 +649,11 @@ Risks:
   placeholder wording); a compatibility risk, not a correctness one.
 - **Pure-Go library gaps:** `simplefeatures` covers the v1 surface but not the GEOS-class
   processing tail, which is deferred.
+- **Parsers take untrusted bytes:** geometry parsing is the one new path a client drives
+  with arbitrary input, so a parser bug is an availability risk for the server, not just
+  the session. Go makes this sharper than MySQL: a stack overflow is a fatal crash with no
+  `recover`, where MySQL degrades to `ERROR 1436`. Mitigated by bounding depth explicitly
+  and by fuzzing the parsers.
 
 ## Investigation & Alternatives
 
