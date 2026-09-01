@@ -40,6 +40,17 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: refreshed the complete Go-master `pkg/util/paging` inventory at
+  `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: four tracked artifacts, 162
+  lines, six constants, two production functions, TestMain, and two source
+  tests, with no fixtures, generated/platform variants, benchmarks, or nested
+  packages. The Rust owner and DistSQL default consumer preserve wrapping
+  growth and seek-count formulas without Rust-only behavior. Current and exact
+  detached Go tests, both Rust owner tests, the consumer default-authority test,
+  formatting, and diff checks pass. Updated `receipts/util_paging.md` and
+  added the Ready documentation-only plan at
+  `docs/operations/util-paging-audit-execplan.md`.
+
 - 2026-09-02: refreshed the complete Go-master `pkg/util/vitess` inventory at
   `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: four tracked artifacts, 154
   lines, one production function, five source vectors, TestMain, and no
