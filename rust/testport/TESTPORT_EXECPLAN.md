@@ -235,7 +235,7 @@ For each bounded behavior cluster:
   `docs/operations/util-watcher-audit-execplan.md`.
 
 - 2026-09-02: refreshed the complete Go-master `pkg/util/size` inventory at
-  `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: two tracked artifacts, 86
+  `c6054025ed4c32ab3672a2a24ea46892714d21ec`: two tracked artifacts, 86
   lines, five binary units, fifteen ABI constants, and no tests, fixtures,
   generated or platform variants, or nested packages. Corrected the prior
   receipt's stale blob hashes and line count. The existing `tidb-util::size`

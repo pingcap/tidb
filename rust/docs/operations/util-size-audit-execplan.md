@@ -9,7 +9,7 @@ structure layouts.
 ## Progress
 
 - [x] Read both Go-master artifacts at
-  `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: `BUILD.bazel` and `size.go`
+  `c6054025ed4c32ab3672a2a24ea46892714d21ec`: `BUILD.bazel` and `size.go`
   (86 lines total; five binary units and fifteen ABI constants).
 - [x] Confirm there are no package docs, tests, fixtures, generated/platform
   variants, benchmarks, fuzz targets, or nested packages.
@@ -18,7 +18,7 @@ structure layouts.
   Go header sizes. No Rust-only behavior or missing Go behavior remains.
 - [x] Revalidate current and exact detached Go-master package checks, the Rust
   utility owner check, formatting, and diff quality.
-- [ ] Commit, push, pull, and verify `origin/hparser-integration`.
+- [x] Commit, push, pull, and verify `origin/hparser-integration`.
 
 ## Validation gate
 
