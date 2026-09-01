@@ -479,50 +479,51 @@ func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, job *mod
 	if job == nil || job.ReorgMeta == nil {
 		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: missing reorg metadata")
 	}
+	sessVars := sessCtx.GetSessionVars() //nolint:forbidigo
 	restore := restoreSessCtx(sessCtx)
-	originalMaintenance := sessCtx.GetSessionVars().InMaterializedViewMaintenance
-	originalDB := sessCtx.GetSessionVars().CurrentDB
+	originalMaintenance := sessVars.InMaterializedViewMaintenance
+	originalDB := sessVars.CurrentDB
 	if err := initSessCtx(sessCtx, job.ReorgMeta); err != nil {
 		restore(sessCtx)
 		return nil, errors.Trace(err)
 	}
-	target, err := MViewExecutionSessionVarsFromJob(job, sessCtx.GetSessionVars())
+	target, err := MViewExecutionSessionVarsFromJob(job, sessVars)
 	if err != nil {
 		restore(sessCtx)
 		return nil, errors.Trace(err)
 	}
-	restoreExecution, err := ApplyMViewExecutionSessionVars(sessCtx.GetSessionVars(), target)
+	restoreExecution, err := ApplyMViewExecutionSessionVars(sessVars, target)
 	if err != nil {
 		restore(sessCtx)
 		return nil, errors.Trace(err)
 	}
-	sessCtx.GetSessionVars().CurrentDB = currentDB
-	sessCtx.GetSessionVars().InMaterializedViewMaintenance = true
-	failpoint.InjectCall("createMaterializedViewBuildMaintainMemQuotaApplied", sessCtx.GetSessionVars().MemQuotaQuery)
+	sessVars.CurrentDB = currentDB
+	sessVars.InMaterializedViewMaintenance = true
+	failpoint.InjectCall("createMaterializedViewBuildMaintainMemQuotaApplied", sessVars.MemQuotaQuery)
 	failpoint.InjectCall(
 		"createMaterializedViewBuildTiFlashSessionVarsApplied",
-		sessCtx.GetSessionVars().TiFlashMaxThreads,
-		sessCtx.GetSessionVars().TiFlashFineGrainedShuffleStreamCount,
-		sessCtx.GetSessionVars().TiFlashFineGrainedShuffleBatchSize,
+		sessVars.TiFlashMaxThreads,
+		sessVars.TiFlashFineGrainedShuffleStreamCount,
+		sessVars.TiFlashFineGrainedShuffleBatchSize,
 	)
 	failpoint.InjectCall(
 		"createMaterializedViewBuildTiFlashSpillSessionVarsApplied",
-		sessCtx.GetSessionVars().TiFlashMaxBytesBeforeExternalJoin,
-		sessCtx.GetSessionVars().TiFlashMaxBytesBeforeExternalGroupBy,
-		sessCtx.GetSessionVars().TiFlashMaxBytesBeforeExternalSort,
-		sessCtx.GetSessionVars().TiFlashMaxQueryMemoryPerNode,
-		sessCtx.GetSessionVars().TiFlashQuerySpillRatio,
+		sessVars.TiFlashMaxBytesBeforeExternalJoin,
+		sessVars.TiFlashMaxBytesBeforeExternalGroupBy,
+		sessVars.TiFlashMaxBytesBeforeExternalSort,
+		sessVars.TiFlashMaxQueryMemoryPerNode,
+		sessVars.TiFlashQuerySpillRatio,
 	)
 	failpoint.InjectCall(
 		"createMaterializedViewBuildImportSessionVarsApplied",
-		sessCtx.GetSessionVars().MViewMaintainImportThreads,
-		sessCtx.GetSessionVars().MViewMaintainImportDiskQuota,
+		sessVars.MViewMaintainImportThreads,
+		sessVars.MViewMaintainImportDiskQuota,
 	)
 	return func() {
 		restoreExecution()
 		restore(sessCtx)
-		sessCtx.GetSessionVars().InMaterializedViewMaintenance = originalMaintenance
-		sessCtx.GetSessionVars().CurrentDB = originalDB
+		sessVars.InMaterializedViewMaintenance = originalMaintenance
+		sessVars.CurrentDB = originalDB
 	}, nil
 }
 
@@ -547,7 +548,8 @@ func (w *worker) buildCreateMaterializedViewDataByImport(ctx context.Context, jo
 	}
 	defer func() { restore(); w.sessPool.Put(sessCtx) }()
 	ddlSess := sess.NewSession(sessCtx)
-	buildSQL, err := buildCreateMaterializedViewImportSQL(job.SchemaName, mviewTableInfo, sessCtx.GetSessionVars().MViewMaintainImportThreads, sessCtx.GetSessionVars().MViewMaintainImportDiskQuota)
+	sessVars := sessCtx.GetSessionVars() //nolint:forbidigo
+	buildSQL, err := buildCreateMaterializedViewImportSQL(job.SchemaName, mviewTableInfo, sessVars.MViewMaintainImportThreads, sessVars.MViewMaintainImportDiskQuota)
 	if err != nil {
 		return errors.Trace(err)
 	}
