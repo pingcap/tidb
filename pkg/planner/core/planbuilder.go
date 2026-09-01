@@ -1838,6 +1838,23 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName a
 	ts.SetIsPartition(isPartition)
 	ts.SetSchema(idxColSchema)
 	ts.Columns = physicalop.ExpandVirtualColumn(ts.Columns, ts.Schema(), ts.Table.Columns)
+	if idx.MVIndex && idx.HasCondition() {
+		// The admin index-side check must evaluate the partial condition against fetched table rows.
+		for _, affectedCol := range idx.AffectColumn {
+			colInfo := tblInfo.Columns[affectedCol.Offset]
+			found := false
+			for _, scanCol := range ts.Columns {
+				if scanCol.ID == colInfo.ID {
+					found = true
+					break
+				}
+			}
+			if !found {
+				ts.Columns = append(ts.Columns, colInfo)
+				ts.Schema().Append(fullExprCols.Columns[affectedCol.Offset])
+			}
+		}
+	}
 	switch {
 	case hasExtraCol:
 		ts.Columns = append(ts.Columns, extraInfo)
