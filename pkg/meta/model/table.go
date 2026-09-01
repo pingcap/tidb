@@ -863,18 +863,19 @@ func (s MViewInitBuildState) AccessErrorMessage(objectName string) string {
 
 // MaterializedViewInfo is stored in TableInfo for a materialized view table.
 type MaterializedViewInfo struct {
-	BaseTableIDs            []int64             `json:"base_table_ids"`
-	InitBuildState          MViewInitBuildState `json:"init_build_state,omitempty"`
-	SQLContent              string              `json:"sql_content"`
-	RefreshMethod           string              `json:"refresh_method,omitempty"`
-	RefreshStartWith        string              `json:"refresh_start_with,omitempty"`
-	RefreshNext             string              `json:"refresh_next,omitempty"`
-	AlertWarningSec         int64               `json:"alert_warning_sec,omitempty"`
-	AlertOverdueSec         int64               `json:"alert_overdue_sec,omitempty"`
-	AlertRefreshFailed      bool                `json:"alert_refresh_failed,omitempty"`
-	DefinitionSQLMode       mysql.SQLMode       `json:"definition_sql_mode"`
-	DefinitionTimeZone      TimeZoneLocation    `json:"definition_time_zone"`
-	RefreshScheduleTimeZone TimeZoneLocation    `json:"refresh_schedule_time_zone"`
+	BaseTableIDs                    []int64             `json:"base_table_ids"`
+	InitBuildState                  MViewInitBuildState `json:"init_build_state,omitempty"`
+	SQLContent                      string              `json:"sql_content"`
+	RefreshMethod                   string              `json:"refresh_method,omitempty"`
+	RefreshStartWith                string              `json:"refresh_start_with,omitempty"`
+	RefreshNext                     string              `json:"refresh_next,omitempty"`
+	AlertWarningSec                 int64               `json:"alert_warning_sec,omitempty"`
+	AlertOverdueSec                 int64               `json:"alert_overdue_sec,omitempty"`
+	AlertRefreshFailed              bool                `json:"alert_refresh_failed,omitempty"`
+	DefinitionSQLMode               mysql.SQLMode       `json:"definition_sql_mode"`
+	DefinitionDivPrecisionIncrement int                 `json:"definition_div_precision_increment"`
+	DefinitionTimeZone              TimeZoneLocation    `json:"definition_time_zone"`
+	RefreshScheduleTimeZone         TimeZoneLocation    `json:"refresh_schedule_time_zone"`
 }
 
 // Clone returns a deep copy of the materialized view metadata.
