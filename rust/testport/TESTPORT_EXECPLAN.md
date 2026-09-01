@@ -93,21 +93,17 @@ For each bounded behavior cluster:
   the exact Go-master failpoint suite passed in 2.811s and the boundary is
   recorded in `receipts/sessionctx_stmtctx.md`.
 
-- 2026-09-01: audited the complete Go-master root `pkg/sessionctx/variable`
-  package before editing: 24 tracked artifacts and 15,763 lines, including
-  every session/transaction/system-variable production source, all root tests
-  and support mocks, the 50-shard flaky BUILD target, and OWNERS metadata.
-  There is no root fixture, generated/platform variant, or additional build
-  input. Rust now owns the seven embedding variables (endpoint normalization,
-  process-wide key/base storage, masking, generation, and live publication)
-  and registers six current Go-master additions with exact metadata. A
-  user-info URL regression prevents credentials leaking during endpoint
-  normalization. The six catalog additions whose session/planner/transaction
-  consumers are not dependency-closed remain explicitly catalog-only rather
-  than speculative behavior. The exact Go-master failpoint suite passed in
-  0.559s; Rust formatting and `make lint` passed, while the focused cargo test
-  is blocked before compilation by missing macOS OpenSSL/pkg-config. Recorded
-  the complete inventory and boundary in
+- 2026-09-01: audited all 31 Go-master `pkg/sessionctx/variable` artifacts
+  (18,433 lines: 24 root artifacts plus seven nested test/slow-log artifacts)
+  before editing, including every production/test/support file, BUILD/OWNERS
+  metadata, and the absence of fixtures or generated/platform variants. Rust
+  now owns the seven embedding variables (endpoint normalization, process-wide
+  key/base storage, masking, generation, and live publication) and registers
+  six current Go-master additions with exact metadata. Source-derived tests
+  cover all provider keys, endpoint allowlist cases, version idempotence, and
+  transaction-file validation. The exact Go-master failpoint suite, focused
+  Rust tests, formatting, `make lint`, and diff checks pass. Recorded the
+  complete inventory and explicit remaining boundaries in
   `receipts/sessionctx_variable.md` and the living implementation plan in
   `rust/docs/operations/sessionctx-variable-audit-execplan.md`.
 
@@ -1072,17 +1068,6 @@ For each bounded behavior cluster:
   registry, SessionVars, and slow-log/session tests remain an explicit
   dependency boundary. Complete inventory and Ready evidence are recorded in
   `receipts/sessionctx_vardef_audit.md`.
-
-- 2026-09-01: audited all 31 Go-master `pkg/sessionctx/variable` artifacts
-  (18,433 lines, including every production/test/support file, nested
-  slow-log target, and Bazel manifest) against the `tidb-session` variable
-  owner. Added the 13 current Go-master registry entries, endpoint validation,
-  embedding-key masking/raw access/versioning, and transaction-file minimum
-  mutation validation, with source-shaped SQL regressions. The remaining
-  `SessionVars`, slow-log/status/sequence, compatibility, and nested test
-  owners remain explicit package boundaries. Complete inventory and validation
-  evidence are recorded in `receipts/sessionctx_variable.md` and
-  `operations/sessionctx-variable-audit-execplan.md`.
 
 - 2026-09-01: audited all 14 Go-master `pkg/util/memory` artifacts (11,388
   lines, including BUILD, platform-sensitive memory discovery, stress tests,

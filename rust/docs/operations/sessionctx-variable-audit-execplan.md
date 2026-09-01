@@ -15,9 +15,11 @@ configuration generation only when an effective value changes.
 
 - [x] (2026-09-01) Fetch and pin Go `origin/master` at
   `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`.
-- [x] (2026-09-01) Read all 24 root artifacts (15,763 lines), including every
-  production/test/support file and BUILD/OWNERS metadata. Confirm no root
-  fixture, generated, platform, fuzz, or generator-input artifact exists.
+- [x] (2026-09-01) Read all 31 package artifacts (18,433 lines): 24 root
+  artifacts plus the seven nested `tests/` and `tests/slowlog` artifacts,
+  including every production/test/support file and BUILD/OWNERS metadata.
+  Confirm no fixture, generated, platform, fuzz, or generator-input artifact
+  exists.
 - [x] (2026-09-01) Compare the full function/test inventory with Rust owners;
   keep nested `variable/tests` and `variable/tests/slowlog` as separate
   package claims.
@@ -26,9 +28,8 @@ configuration generation only when an effective value changes.
   startup/SET/RESET/cluster publication and masked reads.
 - [x] (2026-09-01) Add source-derived regressions for endpoint normalization,
   URL user-info stripping, key masking/versioning, and registry metadata.
-- [x] (2026-09-01) Run the exact Go-master failpoint suite, Rust format check,
-  `make lint`, and diff hygiene checks. Record the native OpenSSL blocker for
-  the focused Rust cargo test.
+- [x] (2026-09-01) Run the exact Go-master failpoint suite, focused Rust
+  regressions, Rust format check, `make lint`, and diff hygiene checks.
 - [ ] Fetch immediately before staging, create one meaningful batch commit,
   push it to `origin/hparser-integration`, and verify local/tracking/advertised
   SHAs and zero divergence.
@@ -61,17 +62,15 @@ worktree explicitly:
     cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check
 
     cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml \
-      -p tidb-session --lib tests_session_embedding_source -- --test-threads=1
+      -p tidb-session --lib embedding -- --test-threads=1
 
     PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
     GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 make lint
 
     git diff --check
 
-The Go suite, format check, lint, and diff check must pass. The focused Rust
-test is expected to remain blocked until `pkg-config` and native OpenSSL are
-available on this macOS runner; retry after that environment changes. No Go,
-test-import, Bazel, or module file changed, so `make bazel_prepare` is not
+The Go suite, focused Rust tests, format check, lint, and diff check pass. No
+Go, test-import, Bazel, or module file changed, so `make bazel_prepare` is not
 required for this batch.
 
 ## Surprises & Discoveries
@@ -84,9 +83,6 @@ required for this batch.
   965 root entries. The six non-embedding entries cannot be made runtime
   complete without planner, session, transaction-file, process-atomic, and
   duration owners outside this package.
-- The focused cargo test is blocked before crate compilation by
-  `openssl-sys 0.9.117` requiring unavailable `pkg-config`/OpenSSL for
-  `aarch64-apple-darwin`.
 
 ## Decision Log
 
