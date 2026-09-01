@@ -150,6 +150,16 @@ For each bounded behavior cluster:
   multi-table default-database regression and recorded the exact inventory and
   Ready gates in `receipts/util_parser_audit.md`.
 
+- 2026-09-01: audited all 46 Go-master `pkg/util/topsql` artifacts (14,503
+  Go/Bazel lines, including profiler, gRPC, mocks, generated Top-RU cases,
+  benchmarks, and all 144 source tests). The dependency-closed Rust owners
+  now enforce Go's CAS statement-stats cap and lock normalized SQL/plan map
+  admission with `take`; focused concurrent regressions pass. The reporter
+  channel backpressure and single-target panic-recovery changes are recorded
+  as explicit boundaries because Rust has no corresponding worker or gRPC
+  owner. Complete inventory and validation evidence are in
+  `receipts/util_topsql_audit.md`.
+
 - 2026-09-01: audited all four Go-master `pkg/util/generatedexpr` artifacts
   (181 lines) against `tidb-model::generated_expr`. The Go-master visitor
   migration is API-only and leaves parsing/name-resolution semantics intact;
@@ -1689,6 +1699,12 @@ For each bounded behavior cluster:
   already has no replacing return value, so the parity evidence is a focused
   source-derived regression and inventory receipt rather than a duplicate
   adapter API.
+- TopSQL's Go-master reporter-loss and panic fixes are above the current Rust
+  ownership boundary: without a reporter worker, DataSink registry, or gRPC
+  agent client, implementing them in `tidb-util` would be a cache-only or
+  fabricated transport path. The dependency-closed fixes are the
+  statement-stats CAS reservation and normalized metadata map admission lock;
+  both have concurrent source-derived regressions.
 - `pkg/util/generatedexpr` has the same in-place visitor migration with no
   semantic delta. Its Rust leaf is already source-shaped, but `tidb-model`
   remains a broader seed, so the audit records the boundary instead of

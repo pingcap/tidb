@@ -616,6 +616,10 @@ impl NormalizedSqlMap {
     /// Go `normalizedSQLMap.register`: saves the sqlDigest => normalizedSQL
     /// relationship, discarding it once the map exceeds `MaxCollect`.
     pub fn register(&self, sql_digest: &[u8], normalized_sql: &str, is_internal: bool) {
+        let mut data = self.data.lock().unwrap();
+        // Keep the admission check under the same lock as insertion and take.
+        // This is the mutex equivalent of Go's generation-local reservation:
+        // concurrent registrations cannot overshoot MaxCollect or race a take.
         if self.length.load(Ordering::SeqCst)
             >= topsql_state::GLOBAL_STATE
                 .max_collect
@@ -624,7 +628,6 @@ impl NormalizedSqlMap {
             IGNORE_EXCEED_SQL_COUNTER.fetch_add(1, Ordering::Relaxed);
             return;
         }
-        let mut data = self.data.lock().unwrap();
         if !data.contains_key(sql_digest) {
             data.insert(
                 sql_digest.to_vec(),
@@ -702,6 +705,9 @@ impl NormalizedPlanMap {
     /// normalizedPlan relationship, discarding it once the map exceeds
     /// `MaxCollect`.
     pub fn register(&self, plan_digest: &[u8], normalized_plan: &str, is_large: bool) {
+        let mut data = self.data.lock().unwrap();
+        // Keep the admission check under the same lock as insertion and take;
+        // otherwise concurrent registrations can overshoot MaxCollect.
         if self.length.load(Ordering::SeqCst)
             >= topsql_state::GLOBAL_STATE
                 .max_collect
@@ -710,7 +716,6 @@ impl NormalizedPlanMap {
             IGNORE_EXCEED_PLAN_COUNTER.fetch_add(1, Ordering::Relaxed);
             return;
         }
-        let mut data = self.data.lock().unwrap();
         if !data.contains_key(plan_digest) {
             data.insert(
                 plan_digest.to_vec(),
@@ -774,6 +779,7 @@ impl NormalizedPlanMap {
 mod tests {
     use super::*;
     use crate::topsql_stmtstats::KvStatementStatsItem;
+    use std::sync::{Arc, Barrier};
 
     /// `topsqlstate.GlobalState.MaxCollect` is process-global, and Go's test
     /// binary runs these cases sequentially; Rust's runs them in parallel, so
@@ -1159,6 +1165,29 @@ mod tests {
         assert_eq!("SQL-2", meta.normalized_sql);
         assert!(!meta.is_internal);
         assert!(m.get(b"SQL-3").is_none());
+
+        topsql_state::GLOBAL_STATE
+            .max_collect
+            .store(1, Ordering::SeqCst);
+        let map = Arc::new(NormalizedSqlMap::new());
+        const WORKERS: usize = 64;
+        let barrier = Arc::new(Barrier::new(WORKERS + 1));
+        let mut handles = Vec::with_capacity(WORKERS);
+        for i in 0..WORKERS {
+            let map = Arc::clone(&map);
+            let barrier = Arc::clone(&barrier);
+            handles.push(std::thread::spawn(move || {
+                let digest = (i as u64).to_le_bytes();
+                barrier.wait();
+                map.register(&digest, "normalized", false);
+            }));
+        }
+        barrier.wait();
+        for handle in handles {
+            handle.join().unwrap();
+        }
+        assert_eq!(1, map.len());
+        assert_eq!(1, map.to_proto(b"").len());
     }
 
     #[test]
@@ -1252,6 +1281,35 @@ mod tests {
             m.get(b"PLAN-2")
         );
         assert!(m.get(b"PLAN-3").is_none());
+
+        topsql_state::GLOBAL_STATE
+            .max_collect
+            .store(1, Ordering::SeqCst);
+        let map = Arc::new(NormalizedPlanMap::new());
+        const WORKERS: usize = 64;
+        let barrier = Arc::new(Barrier::new(WORKERS + 1));
+        let mut handles = Vec::with_capacity(WORKERS);
+        for i in 0..WORKERS {
+            let map = Arc::clone(&map);
+            let barrier = Arc::clone(&barrier);
+            handles.push(std::thread::spawn(move || {
+                let digest = (i as u64).to_le_bytes();
+                barrier.wait();
+                map.register(&digest, "normalized", false);
+            }));
+        }
+        barrier.wait();
+        for handle in handles {
+            handle.join().unwrap();
+        }
+        assert_eq!(1, map.len());
+        assert_eq!(
+            1,
+            map.to_proto(b"", &|plan| Ok(plan.to_owned()), &|plan| {
+                String::from_utf8_lossy(plan).into_owned()
+            })
+            .len()
+        );
     }
 
     #[test]
