@@ -365,6 +365,18 @@ For each bounded behavior cluster:
   `receipts/dxf_framework_metering.md` and
   `rust/docs/operations/dxf-framework-metering-audit-execplan.md`.
 
+- 2026-09-02: audited the complete Go-master `pkg/dxf/framework/handle`
+  package: six tracked artifacts and 1,361 lines, with 31 production and 11
+  top-level test declarations. The inventory covers task submission/history,
+  wait/cancel/pause/resume, retry and context cancellation, classic/next-gen
+  region/scope defaults, PD-aware cloud-store prefixes, schedule status/node
+  accounting, TTL flags/tune factors, object-store and metering entrypoints,
+  and failpoint-backed SQL integration. Rust's generic `tidb-dxf` types have no
+  dependency-closed service-handle owner, so no speculative facade or Rust-only
+  behavior was added. Recorded the explicit boundary in
+  `receipts/dxf_framework_handle.md` and
+  `rust/docs/operations/dxf-framework-handle-audit-execplan.md`.
+
 - 2026-09-01: audited the complete direct Go-master parent
   `pkg/dxf/importinto` package: 26 tracked artifacts and 9,158 lines, with
   170 production function/method declarations and 45 top-level test
