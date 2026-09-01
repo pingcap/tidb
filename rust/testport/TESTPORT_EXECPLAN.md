@@ -123,6 +123,25 @@ For each bounded behavior cluster:
   has no GoMock-compatible owner; recorded the generated-support boundary in
   `receipts/objstore_s3like_mock.md`.
 
+- 2026-09-01: audited the complete Go-master Alibaba OSS backend package
+  `pkg/objstore/ossstore` before editing: ten root artifacts and 1,941 lines,
+  including the SDK client adapter, ranged/multipart operations, temporary
+  credential refresher, retry/logger bridges, all 14 permission/presign/
+  credential tests, the skipped live-service CRUD/walk workflow, and the
+  14-shard BUILD target. Go master adds presigning, public-endpoint logging
+  isolation, and opt-in credential forwarding; Rust has no dependency-closed
+  OSS owner, so no Rust-only behavior was removed and no speculative backend
+  was added. Recorded the explicit boundary in
+  `receipts/objstore_ossstore.md`.
+
+- 2026-09-01: audited the separate generated Go package
+  `pkg/objstore/ossstore/mock` in full: three artifacts and 416 lines,
+  including both MockGen outputs for the OSS API and credentials provider. It
+  contains 38 generated methods/recorders, no tests, fixtures, platform
+  variants, or generator inputs, and only the current-master `Presign` mock
+  delta. Rust has no GoMock-compatible owner; recorded the generated-support
+  boundary in `receipts/objstore_ossstore_mock.md`.
+
 - 2026-09-01: audited the complete Go-master `pkg/ingestor/globalsort`
   package before editing: 17 tracked artifacts and 6,814 lines, including the
   external engine, object-store readers, merge and merge-v2 operators, range
