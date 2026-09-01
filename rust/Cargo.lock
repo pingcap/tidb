@@ -3461,6 +3461,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-dxf-operator"
+version = "0.0.0"
+dependencies = [
+ "crossbeam-channel",
+ "regex",
+]
+
+[[package]]
 name = "tidb-errmsg"
 version = "0.0.0"
 dependencies = [

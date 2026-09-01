@@ -1,0 +1,14 @@
+[package]
+name = "tidb-dxf-operator"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "operator"
+
+[dependencies]
+crossbeam-channel = "0.5"
+
+[dev-dependencies]
+regex = "1"
