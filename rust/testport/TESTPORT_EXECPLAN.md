@@ -1533,6 +1533,14 @@ For each bounded behavior cluster:
       goroutine source, or HTTP/profile-table consumer; no detached sampler or
       endpoint was added. Details are in
       `receipts/util_cpuprofile.md`.
+- 2026-09-01: audited all four Go-master `pkg/util/admin` artifacts (412
+      lines including the restricted count path, row/index consistency scan,
+      corruption integration test, and Bazel target). The existing Rust
+      executor/session owner falsely scanned a clustered PRIMARY metadata
+      index that Go intentionally omits because its key is the record key.
+      Filtered that index from whole-table checks, made an explicitly named
+      clustered primary a successful zero-reader check, and added a focused
+      regression. Details are in `receipts/util_admin.md`.
 - 2026-09-01: audited all three Go-master `pkg/util/expensivequery` artifacts
       (220 lines: handler, common TestMain/goleak harness, and Bazel target;
       no source tests). Threshold variables and kill signals exist in Rust,
@@ -1560,6 +1568,15 @@ For each bounded behavior cluster:
       reusable comparator owner; local Rust assertions remain intentionally
       scoped. The package remains explicitly unclaimed; details are in
       `receipts/util_deeptest.md`.
+- 2026-09-01: audited all five Go-master `pkg/util/signal` artifacts (289
+      lines across the Bazel target and POSIX, Windows, WASM, and exit
+      variants). The Go package's one-shot termination handler, POSIX
+      SIGUSR1 goroutine dump, Windows best-effort process signaling, and WASM
+      no-op matrix are complete and unchanged from the current source. Rust
+      has server-local shutdown/exit-code wiring but no dependency-closed
+      cross-platform utility owner; adding another signal thread or stack
+      endpoint would be Rust-only behavior. Details are in
+      `receipts/util_signal.md`.
 - [ ] Run Ready validation and self-review only when the requested parity scope
       is genuinely complete enough for a final-status claim.
 
@@ -1606,10 +1623,15 @@ For each bounded behavior cluster:
   lifecycle; a second Rust timer would be Rust-only behavior. Date/Author:
   2026-09-01, Codex.
 - Decision: keep `pkg/util/cpuprofile` unclaimed until the runtime profiler,
-  pprof decoder/merge path, HTTP handler, profile-table consumers, and
-  labelled test harness can move as one dependency-closed package. A detached
-  Rust sampler or endpoint would duplicate Go runtime ownership and create
-  behavior without its SQL/logging consumers. Date/Author: 2026-09-01, Codex.
+      pprof decoder/merge path, HTTP handler, profile-table consumers, and
+      labelled test harness can move as one dependency-closed package. A detached
+      Rust sampler or endpoint would duplicate Go runtime ownership and create
+      behavior without its SQL/logging consumers. Date/Author: 2026-09-01, Codex.
+- Decision: preserve the clustered PRIMARY metadata entry but exclude it from
+      Rust ADMIN CHECK scans, matching Go's `buildPhysicalIndexLookUpReaders`
+      zero-reader path. A clustered primary key is the record key, not an `_i`
+      range; treating it as a secondary index produces a false inconsistency.
+      Date/Author: 2026-09-01, Codex.
 - Decision: keep `pkg/util/expensivequery` unclaimed until the session manager,
   process-list, histogram/logging, kill-action, and domain bootstrap owners
   can move together. Rust threshold constants alone are not a substitute for
@@ -1629,6 +1651,13 @@ For each bounded behavior cluster:
   production consumer; a Rust assertion framework would be a second test
   policy rather than a dependency-closed transcreation. Date/Author:
   2026-09-01, Codex.
+- Decision: keep `pkg/util/signal` explicitly unclaimed until the Rust server
+  can own the complete cross-platform signal contract (termination ordering,
+  POSIX goroutine dump, Windows process signaling, and WASM no-ops) together
+  with every startup consumer. The existing `shutdown_signal`/`signal_exit`
+  modules cover only server-local Unix shutdown and exit-code behavior; a
+  detached signal adapter would duplicate ownership and create Rust-only
+  behavior. Date/Author: 2026-09-01, Codex.
 - Decision: preserve the Rust planner-error declaration table and its
   all-prototype initialization guard. Go package initialization registers all
   98 entries, while Go's only explicit test checks 59; the Rust guard is the
