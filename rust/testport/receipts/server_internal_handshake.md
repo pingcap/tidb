@@ -37,11 +37,8 @@ Profile: **Ready** for this package batch.
 
 - `go test ./pkg/server/internal/handshake -count=1` — package compiled (no Go
   test files).
-- The focused Rust source suite was attempted with
-  `cargo +nightly-2026-08-22 test --offline -p tidb-server --test all
-  response41 -- --test-threads=1`; compilation was blocked by the host's
-  missing OpenSSL development directory (`openssl-sys` cannot find pkg-config
-  or headers). `cargo fmt --all -- --check` passed.
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --offline --locked -p tidb-server --test all response41 -- --test-threads=1` — passed all four focused response tests.
+- `cargo fmt --all -- --check` — passed.
 - `make lint` and `git diff --check` passed. `make bazel_prepare` was not
   required because no Go or Bazel artifact changed.
 
@@ -49,6 +46,5 @@ Profile: **Ready** for this package batch.
 
 The public Rust field type changes from text keys/values to exact wire-owned
 bytes; this is intentional Go parity but is an API compatibility consideration
-for future Rust consumers. Runtime handshake integration and the Rust focused
-test binary remain unverified locally solely because OpenSSL headers/pkg-config
-are unavailable. No Go production behavior changed.
+for future Rust consumers. Live handshake integration remains outside this
+focused source suite. No Go production behavior changed.

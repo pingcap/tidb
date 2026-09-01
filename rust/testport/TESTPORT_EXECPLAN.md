@@ -4567,9 +4567,8 @@ For each bounded behavior cluster:
   with byte-preserving attributes. The parser emits Go-equivalent diagnostics
   through `tidb-log`, and focused source regressions cover exact field shape,
   malformed attributes, truncation, duplicate keys, NULL frames, and metric
-  boundaries. Go tests and lint pass; Rust execution is blocked on this host's
-  missing OpenSSL development headers/pkg-config. See the two package receipts
-  and `server-handshake-parse-audit-execplan.md`.
+  boundaries. Go tests, both focused Rust filters, and lint pass. See the two
+  package receipts and `server-handshake-parse-audit-execplan.md`.
 - `pkg/server/metrics` is byte-identical to Go master across its two artifacts
   and 135 lines. It is a Go server-facing Prometheus wiring layer with no
   dependency-closed Rust connection-loop owner; the audit records this explicit

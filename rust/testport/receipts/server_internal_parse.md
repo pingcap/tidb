@@ -40,11 +40,8 @@ Profile: **Ready** for this package batch.
 
 - `go test ./pkg/server/internal/parse ./pkg/server/internal/handshake -count=1`
   — passed.
-- Focused Rust source tests were attempted with
-  `cargo +nightly-2026-08-22 test --offline -p tidb-server --test all
-  response41 -- --test-threads=1`; compilation was blocked by the host's
-  missing OpenSSL development directory (`openssl-sys` cannot find pkg-config
-  or headers). `cargo fmt --all -- --check` passed.
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --offline --locked -p tidb-server --test all parse_go_source -- --test-threads=1` — passed all 21 focused parser tests.
+- `cargo fmt --all -- --check` — passed.
 - `make lint` and `git diff --check` passed. `make bazel_prepare` was not
   required because no Go or Bazel artifact changed.
 
@@ -52,6 +49,6 @@ Profile: **Ready** for this package batch.
 
 The parser now exposes byte-owned attribute keys/values to Rust callers; this
 is the required Go string contract but changes the previous Rust-only text
-view. Logger initialization and live SQL handshake integration are not
-verified locally because the focused Rust test binary cannot link without
-OpenSSL development files. Go parser tests and static source coverage passed.
+view. Logger initialization outside the focused parser tests and live SQL
+handshake integration remain outside this package-level source suite. Go parser
+tests and static source coverage passed.

@@ -15,8 +15,7 @@ fix for the handshake response contract and parser consumer.
 - [x] (2026-09-02) Removed the extra response fields, made attrs byte-exact,
       and restored Go-equivalent warning logging through `tidb-log`.
 - [x] (2026-09-02) Added focused exact-field and byte-attribute regressions;
-      Go tests and lint pass, while Rust execution is blocked by missing host
-      OpenSSL development files.
+      Go tests, both focused Rust filters, formatting, and lint pass.
 - [ ] Continue the rolling package inventory with the next unclaimed package.
 
 ## Scope and decision
@@ -32,14 +31,17 @@ speculative compatibility facade was added.
     PATH=<pinned Go>/bin:$PATH GOPATH=<pinned GOPATH> \
       go test ./pkg/server/internal/parse ./pkg/server/internal/handshake -count=1
     cargo +nightly-2026-08-22 fmt --all -- --check
-    cargo +nightly-2026-08-22 test --offline -p tidb-server --test all \
-      response41 -- --test-threads=1
+    OPENSSL_DIR=<bundled OpenSSL> DYLD_LIBRARY_PATH=<bundled OpenSSL>/lib \
+      cargo +nightly-2026-08-22 test --offline --locked -p tidb-server \
+      --test all response41 -- --test-threads=1
+    OPENSSL_DIR=<bundled OpenSSL> DYLD_LIBRARY_PATH=<bundled OpenSSL>/lib \
+      cargo +nightly-2026-08-22 test --offline --locked -p tidb-server \
+      --test all parse_go_source -- --test-threads=1
     make lint
     git diff --check
 
-The Rust command is currently blocked before test execution by unavailable
-OpenSSL headers/pkg-config on this host; the exact failure is recorded in both
-package receipts.
+The Rust commands use the bundled OpenSSL headers and libraries available in
+this workspace; both focused filters pass.
 
 ## Outcome
 
