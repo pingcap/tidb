@@ -1399,6 +1399,13 @@ For each bounded behavior cluster:
       Classic/NextGen selection, canonical names, and old-PD empty-type
       matching; the Go package and two filtered Rust owner tests pass. Details
       are in `receipts/config_kerneltype_audit.md`.
+- 2026-09-01: audited all three Go-master `pkg/config/configtypes` artifacts
+      (204 lines, 10 production marshal/unmarshal methods, and two source
+      tests), including the Bazel target and both JSON/TOML wrappers. The
+      existing `tidb-config::configtypes` owner already preserves
+      docker/go-units byte-size parsing/rendering and Go duration grammar,
+      with focused edge matrices; the Go package and five filtered Rust owner
+      tests pass. Details are in `receipts/config_configtypes_audit.md`.
 - [ ] Run Ready validation and self-review only when the requested parity scope
       is genuinely complete enough for a final-status claim.
 
@@ -1874,6 +1881,11 @@ For each bounded behavior cluster:
   in the shared path. A runtime kernel switch or duplicated platform module
   would be Rust-only behavior, so neither is added. Date/Author: 2026-09-01,
   Codex.
+- Decision: keep `tidb-config::configtypes` as the single serialization owner
+  for Go's `ByteSize` and `Duration` wrappers. The Rust implementations retain
+  the source parser/formatter semantics and expose them through Serde, so a
+  second config-specific parser or a cache-only conversion would be
+  Rust-only behavior. Date/Author: 2026-09-01, Codex.
 
 ## Outcomes & Retrospective
 
