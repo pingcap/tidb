@@ -4578,6 +4578,11 @@ For each bounded behavior cluster:
   prepared-column cache, lazy cursor iterator, and RUv2 reporting have no
   dependency-closed Rust owner; the audit records the explicit boundary rather
   than inventing a second cursor state machine.
+- `pkg/server/internal/util` is byte-identical to Go master across four
+  artifacts and 467 lines. `tidb-protocol` owns and source-tests the
+  length-encoded/null-terminated helpers and charset decoder; buffered TCP,
+  CORS, and test-config adapters remain above the current Rust server owner, so
+  no speculative transport facade was added.
 
 ## Outcomes & Retrospective
 
