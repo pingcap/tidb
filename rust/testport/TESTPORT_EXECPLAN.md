@@ -40,6 +40,14 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: audited all seventeen current Go-master `pkg/util/dbutil`
+  artifacts (2,518 lines across the public utility and nested `dbutiltest`
+  helper), including every SQL-mock/table/index/retry/variable test and all
+  build metadata. Rust has independent SQL, privilege, stats, table-mode, and
+  retry fragments but no dependency-closed `dbutil` owner; the complete
+  boundary is recorded in `receipts/util_dbutil.md` with no speculative Rust
+  behavior.
+
 - 2026-09-01: revalidated the complete ten-artifact `pkg/util/table-filter`
   package against current Go master. The concrete `ColumnFilterRules` API,
   ASCII regexp authority, source test rows, and Rust consumer wiring are
