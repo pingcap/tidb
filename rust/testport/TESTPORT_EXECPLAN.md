@@ -3361,6 +3361,15 @@ For each bounded behavior cluster:
       tests, the global-tracker test, formatting, Ready lint, and diff checks
       pass. Details are in `receipts/util_kvcache.md` and
       `docs/operations/kvcache-audit-execplan.md`.
+- 2026-09-02: refreshed all twelve Go-master `pkg/util/set` artifacts (1,001
+      lines covering five production files, seven source tests, three
+      benchmarks, the test harness, and BUILD) at authority
+      `c6054025ed4c32ab3672a2a24ea46892714d21ec`. Removed all 55 explicit
+      Rust-only `#[must_use]` diagnostics; the focused deny-lint regression
+      failed with 47 errors before the fix and passes afterward. Current and
+      detached Go tests, focused Rust owner tests, formatting, Ready lint, and
+      diff checks pass. Details are in `receipts/util_set.md` and
+      `docs/operations/util-set-audit-execplan.md`.
 - 2026-09-01: audited all four Go-master `pkg/util/cpu` artifacts (308 lines,
       six production functions/methods, two source tests, and one test
       harness), including its failpoint, race/flaky BUILD target, cgroup/EMA,

@@ -1,9 +1,9 @@
 # `pkg/util/set` — complete package transcreation
 
 Go source: `origin/master` at
-`5e8a1a229a7591ddac49a0cd3b795587c2595ab9` (2026-09-01). The package is
-byte-for-byte unchanged from the earlier implementation; this receipt now
-uses the current Go-master authority.
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02). The package is
+unchanged from the earlier implementation and byte-for-byte identical to the
+exact detached latest-master worktree.
 
 ## Complete inventory
 
@@ -63,15 +63,28 @@ checkpoint policy rather than Rust struct sizes.
 HashAgg now consumes `StringSetWithMemoryUsage`, matching Go's executor, and
 performs the same existence check before insertion.
 
+This authority refresh removed all 55 explicit Rust-only `#[must_use]`
+annotations in the set owner, covering public constructors, queries, set
+operations, and private memory-accounting helpers. Go permits callers to
+discard each corresponding function result. The focused
+`return_values_may_be_ignored_like_go` regression calls every public annotated
+surface; its pre-fix compile failed with 47 `unused_must_use` errors and its
+post-fix run passes.
+
 ## Validation
 
-Profile: Ready for this docs-only authority refresh; the package owner and
-focused parity regressions were implemented in the earlier atomic batch.
+Profile: **Ready** for this focused parity fix within the continuing
+package-by-package audit, not a repository-wide readiness claim.
 
-- `rustfmt --edition 2024 --check crates/tidb-util/src/set.rs` — passed.
-- `cargo test -p tidb-util --locked set::tests:: --no-fail-fast` — passed; all
-  seven source tests passed (the substring filter also selected nine existing
-  `intset`/`disjointset` tests).
+- `git -c maintenance.auto=false -c gc.auto=0 fetch origin master --prune` —
+  passed; `origin/master` is `c6054025ed4c32ab3672a2a24ea46892714d21ec`.
+- `git diff --exit-code 5e8a1a229a7591ddac49a0cd3b795587c2595ab9..c6054025ed4c32ab3672a2a24ea46892714d21ec -- pkg/util/set` — passed; no Go source drift.
+- `git ls-tree -r -l c6054025ed4c32ab3672a2a24ea46892714d21ec pkg/util/set` and full-file reads — passed; confirmed the twelve-artifact inventory.
+- `cmp -s /tmp/tidb-go-latest-c605/pkg/util/set/<file> pkg/util/set/<file>` for all twelve artifacts — passed.
+- Pre-fix focused Rust compile with the deny-lint regression — failed with
+  the expected 47 `unused_must_use` errors.
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib CARGO_INCREMENTAL=0 cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-util --lib set::tests::return_values_may_be_ignored_like_go --offline --locked -- --exact` — passed; focused return-contract regression.
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib CARGO_INCREMENTAL=0 cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-util --lib set::tests --offline --locked -- --test-threads=1` — passed; 17 filtered owner/intset/disjointset tests.
 - `cargo check -p tidb-util --bench set --locked` — passed.
 - `cargo check -p tidb-executor --lib --locked` — passed.
 - `cargo test -p tidb-executor --lib --locked hash_agg::tests::distinct_` —
@@ -86,19 +99,11 @@ focused parity regressions were implemented in the earlier atomic batch.
   isolation, confirming the full-suite failure is order/timing dependent and
   outside this package.
 - `git diff --check` — passed.
-- `go test ./pkg/util/set` — blocked before this package compiled by the
-  workspace's existing missing `pkg/util/hack.checkMapABI` build selection and
-  `google.golang.org/grpc/internal/transport` / `http2.TrailerPrefix`
-  dependency mismatch.
-- An exact detached Go-master checkout at
-  `5e8a1a229a7591ddac49a0cd3b795587c2595ab9` has the same dependency mismatch.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/set -count=1` — passed in the current and exact detached latest-master worktrees.
 
-No Go or Bazel file changed, so `make bazel_prepare` is not required.
-Workspace-wide `cargo fmt --all -- --check` is currently blocked by unrelated
-pre-existing formatting drift in `tidb-datatype/src/mydecimal.rs`. Scoped
-`cargo clippy` is also blocked by pre-existing lint failures in dependencies,
-generated protobuf output, and unrelated `tidb-util` modules; neither blocker
-was changed for this package checkpoint.
+No Go, Bazel, module, or Cargo manifest file changed, so `make bazel_prepare`
+was not required. Workspace-wide formatting and repository lint were rerun
+under the Ready profile and passed.
 
 ## Risk
 
