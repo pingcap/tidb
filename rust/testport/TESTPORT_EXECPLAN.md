@@ -114,6 +114,16 @@ For each bounded behavior cluster:
   the full tagged Go package suite passed and the explicit boundary is recorded
   in `receipts/testkit.md`.
 
+- 2026-09-01: audited the complete Go-master `pkg/inference` package: 43
+  artifacts and 7,368 lines, including the Domain adaptor, runtime cache and
+  cancellation path, batching layer, seven provider adapters, protocol models,
+  deterministic mock, shared contract fixtures, 122 tests, and all Bazel
+  targets. The exact Go-master worktree suite passed. Rust has only embedding
+  variable constants and ignored `EMBED_TEXT` gap tests; it has no
+  dependency-closed inference/provider/vector owner. No Rust-only behavior or
+  safe partial production fix was found, so the explicit SEED boundary is
+  recorded in `receipts/inference.md`.
+
 - 2026-09-01: refreshed the complete Go-master
   `pkg/util/password-validation` inventory (three artifacts, 379 lines) and
   confirmed it is unchanged from the prior pinned implementation. The Go
