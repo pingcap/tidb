@@ -28,6 +28,7 @@
 * [Investigation & Alternatives](#investigation--alternatives)
 * [Unresolved Questions](#unresolved-questions)
 * [Future extensions](#future-extensions)
+* [Appendix: binary format lengths](#appendix-binary-format-lengths)
 * [Appendix: SRS catalog and axis order](#appendix-srs-catalog-and-axis-order)
     * [Catalog row contents](#catalog-row-contents)
     * [EPSG terms of use](#epsg-terms-of-use)
@@ -162,7 +163,25 @@ The bare path is MySQL's format in both directions, so ingest never has to guess
 literal is always MySQL's format, and the stored format stays off the user surface. It is
 what makes a Dumpling to Lightning round-trip work with no function call, and what lets a
 `mysqldump` load unchanged. The SRID in those bytes is validated against `SRID n` like any
-other ingest path.
+other ingest path, and the geometry has to consume the input exactly: a byte short or a
+byte long is rejected, as MySQL rejects both with `ERROR 3037`. See
+[the appendix](#appendix-binary-format-lengths) for what that admits.
+
+**That format is not WKB order.** MySQL has one binary representation, `<srid u32 LE><WKB>`,
+and uses it everywhere: what it stores, what a bare `SELECT` returns over the wire, what it
+accepts as a literal, and what it writes to the binlog are the same bytes. Verified on
+9.7.2 for `POINT(37.4 -122.1)` at 4326: `HEX(g)`, the raw wire response and the
+`Write_rows` row image are byte-identical, and inserting those bytes as a literal
+reproduces the row exactly.
+
+`ST_AsBinary` is the one surface that differs, because it reorders to the SRS axis order.
+For that same point the binary representation is longitude then latitude while
+`ST_AsBinary` returns latitude then longitude. At SRID 0 and on the projected SRSs checked
+the two agree. So the bare path swaps the pair on the way in and on the way out for a
+geographic SRS, and does nothing at SRID 0. The swap belongs to the SRS, not to 4326, so
+extending the catalog means taking it from the axis order in the SRS definition rather than
+from a special case (see [Scope and deferrals](#scope-and-deferrals) and
+[the appendix](#appendix-srs-catalog-and-axis-order)).
 
 Extended data (Z/M coordinates, unsupported SRIDs) has no MySQL form, so a bare `SELECT`
 of it errors, naming `ST_AsEWKB` as the way to read it. That is opt-in: such a value only
@@ -502,8 +521,9 @@ Out of scope here, each with a home:
 | Planner, statistics, executor | `ST_*` evaluate on the normal expression path; geometry predicates are ordinary `Selection`s with no access path of their own. No new operator, access path or statistics. `ANALYZE` skips geometry as it skips JSON and the blob types, which means adding `geometry` both to the accepted values of `tidb_analyze_skip_column_types` and to its default, today `json,blob,mediumblob,longblob,mediumtext,longtext`. |
 | TiKV | None. Values are ordinary binary strings; pushdown is deferred. |
 | BR | None. Backs up and restores bytes and metadata without interpreting column values. |
-| Dumpling, Lightning | Geometry dumps as MySQL's internal format, which reloads as a bare literal (see [Types and storage](#types-and-storage)), so the round-trip needs no function call and a `mysqldump` loads unchanged. A table holding extended values cannot be dumped that way, since a bare `SELECT` of them errors; dumping those needs `ST_AsEWKB` and emitting `ST_GeomFromEWKB(0x...)`, which is Dumpling work and TiDB-only output. |
-| TiFlash, TiCDC | Not pass-through: both decode column values against the schema, so each has to learn the type. Out of scope here and tracked separately; until then a table with a geometry column should not be assumed replicable to TiFlash. |
+| Dumpling, Lightning | Geometry dumps as MySQL's binary format, which reloads as a bare literal (see [Types and storage](#types-and-storage)), so the round-trip needs no function call and a `mysqldump` loads unchanged. A table holding extended values cannot be dumped that way, since a bare `SELECT` of them errors; dumping those needs `ST_AsEWKB` and emitting `ST_GeomFromEWKB(0x...)`, which is Dumpling work and TiDB-only output. |
+| DM | Replicating MySQL into TiDB carries geometry in MySQL's binary format, since the binlog row image is the same bytes MySQL stores and returns, and that is exactly what the bare ingest path takes. DM itself needs no change; the conversion, including the geographic axis swap, is TiDB-side. This is the migration case the bare path is chosen for. |
+| TiFlash, TiCDC | Not pass-through, and for a different reason than the tools above: both read the stored value from the KV layer rather than through the SQL layer, so they see the format-version byte and EWKB, not MySQL's format. TiCDC into a MySQL sink therefore has to convert before it emits, and TiFlash has to learn the type before it can replicate at all. Both are separate work; until then a table with a geometry column should not be assumed replicable to TiFlash. |
 | Upgrade | Additive: the type does not exist in earlier releases, so no existing schema or query changes behavior. |
 | Downgrade | A release without the type cannot read a table that has a geometry column, so those columns must be dropped first, an ordinary `DROP COLUMN`. |
 
@@ -538,7 +558,9 @@ Out of scope here, each with a home:
   interprets coordinates error clearly on them.
 - The bare binary boundary is symmetric: bytes from a bare `SELECT` of a MySQL-expressible
   value insert back unchanged as a bare literal, and a `mysqldump` literal loads as the
-  same geometry.
+  same geometry. Byte-compared against MySQL for both SRIDs, which is what catches the
+  geographic axis swap: at 4326 the bare bytes must be longitude-first while
+  `ST_AsBinary` of the same value is latitude-first, and at SRID 0 the two agree.
 - GeoJSON: the table above, each row matched against MySQL 8.4 and 9.7, plus `options` 5
   and 6 keeping a Z position and differing on a fourth element, and `ST_AsGeoJSON`'s
   `digits` rounding and each `flags` bit, byte-compared to MySQL.
@@ -710,6 +732,18 @@ change.
 | `ST_Transform`, which MySQL has had since 8.0.13 and which reprojects between two SRSs | moderate, and pointless before the catalog: with only 0 and 4326 there is nothing to transform to, since 4326 to 4326 is a no-op and MySQL itself rejects a transform to 0 with `ERROR 3742` |
 | User-defined SRSs through `CREATE [OR REPLACE] SPATIAL REFERENCE SYSTEM` and `DROP SPATIAL REFERENCE SYSTEM`, which MySQL also has (there is no `ALTER`; modification is `CREATE OR REPLACE`) | bigger: a writable catalog, a WKT SRS parser, and catalog changes that have to replicate |
 
+**A compact point storage version.** The format-version byte leaves room for layouts
+narrower than EWKB, and a point is the case worth it: version 2 could be
+`<version = 2><f64><f64>`, 17 bytes against the 22 that version 1 needs for the same point,
+since EWKB repeats a byte-order flag and a type word the column already implies. It carries
+no SRID, so it would apply only where a `SRID n` column fixes one, which is the same
+condition under which version 1 already omits the SRID flag.
+
+Two independent checks tell it from a MySQL value, which is what makes it safe to add: the
+first byte is the version, 2 rather than 1, and 17 bytes is a length MySQL's format can
+never produce (see [the appendix](#appendix-binary-format-lengths)). Nothing on the user
+surface changes, since the bare path exchanges MySQL's format either way.
+
 **MySQL byte interop.** A pair of conversion functions, `ST_FromMySQL` and `ST_AsMySQL`,
 would let a MySQL dump land in a `VARBINARY` column and be converted in place, or exposed
 through a generated column, without TiDB adopting MySQL's storage format. It is the
@@ -727,6 +761,35 @@ A `GEOGRAPHY` type is a further extension, covered in
 [the appendix](#appendix-postgis-delta-for-the-type-layer). The function tail, the `MBR*`
 family and the rest of the deferred surface are in
 [Scope and deferrals](#scope-and-deferrals).
+
+## Appendix: binary format lengths
+
+A MySQL binary value is `4 + WKB`, and the WKB size follows the structure rather than one
+formula: a `POINT` is 21, a `LINESTRING` of n points `9 + 16n`, a `POLYGON` of r rings and
+p points `9 + 4r + 16p`, a `MULTIPOINT` of n points `9 + 21n` since each member repeats the
+byte-order flag and type word, and any collection `9 + Σ member sizes`. Requiring the
+parse to end exactly at the input length is therefore an exact check, and the one the bare
+path applies.
+
+It is a validity check, not a format tag. What it admits, computed over those rules and
+spot-checked against 9.7.2:
+
+| | |
+| --- | --- |
+| Smallest valid lengths | 13, 22, 25, 29, 31, 33, 34, 38, 40, 42, 43, 45, 47, 49 |
+| Never valid | 1-12, 14-21, 23-24, 26-28, 30, 32, 35-37, 39, 41, 44, 46, 48, 50, 57, 66 |
+| Largest invalid length | **66**; every length from 67 up is valid |
+
+Some of the small valid ones are counter-intuitive, because this path validates framing and
+not geometry, which `ST_IsValid` covers separately. 29 is a `LINESTRING` with a single
+point, 33 a `POLYGON` whose one ring has a single point, and 22 a
+`GEOMETRYCOLLECTION(GEOMETRYCOLLECTION EMPTY)`, which nests in steps of 9 to give 31, 40
+and 49. All three were accepted by 9.7.2. Only framing errors are rejected: a `LINESTRING`
+with no points, a `POLYGON` with no rings, or any `MULTI*` with no members, since
+`GEOMETRYCOLLECTION` is the only container allowed to be empty.
+
+So no length window can be reserved for another format. Above 66 there is none free, and
+below it a geometry has nowhere to live.
 
 ## Appendix: SRS catalog and axis order
 
@@ -757,10 +820,17 @@ different things across ecosystems, and `ST_X`/`ST_Y` are positional rather than
 `POINT(30 50)`). How other ecosystems order the same bytes is in
 [the PostGIS appendix](#appendix-postgis-delta-for-the-type-layer).
 
-Storing coordinates as parsed is where TiDB and MySQL differ internally without differing
-observably: MySQL stores the opposite order and swaps at every boundary, visible as
-`HEX(g)` and `ST_AsBinary(g)` returning swapped coordinates for the same 4326 point. Both
-engines emit the same WKB.
+Storing coordinates as parsed is where TiDB and MySQL differ. MySQL's binary format orders
+them the other way on a geographic SRS, longitude-first at 4326, and converts only for the
+WKT and WKB surfaces, not at every boundary: `HEX(g)`, the wire response, a bare literal
+and the binlog row image all carry the unconverted order. So for the same 4326 point
+`HEX(g)` differs between the engines while `ST_AsBinary(g)` agrees, and both emit the same
+WKB.
+
+That is why the bare binary path has to swap in both directions for a geographic SRS; see
+*Binary in and out* under [Types and storage](#types-and-storage). Measured on 9.7.2, the
+difference is there for 4326 and not for SRID 0, 3857 or 3006, so it follows the SRS rather
+than the one SRID.
 
 ## Appendix: PostGIS delta for the type layer
 
