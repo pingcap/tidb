@@ -150,6 +150,14 @@ For each bounded behavior cluster:
   multi-table default-database regression and recorded the exact inventory and
   Ready gates in `receipts/util_parser_audit.md`.
 
+- 2026-09-01: audited all four Go-master `pkg/util/generatedexpr` artifacts
+  (181 lines) against `tidb-model::generated_expr`. The Go-master visitor
+  migration is API-only and leaves parsing/name-resolution semantics intact;
+  Rust's existing five tests already cover the complete leaf behavior. No
+  speculative production adapter was added because the surrounding
+  `pkg/meta/model` owner remains a seed; the complete inventory and boundary
+  are recorded in `receipts/util_generatedexpr_audit.md`.
+
 - 2026-09-01: audited the complete Go `pkg/util/dbterror/exeerrors` package at
   `origin/master` `db35d47066648fe73abce6318d53fc625df51490` against the Rust
   owner on `origin/hparser-integration`. The package has exactly `errors.go`
@@ -1681,6 +1689,10 @@ For each bounded behavior cluster:
   already has no replacing return value, so the parity evidence is a focused
   source-derived regression and inventory receipt rather than a duplicate
   adapter API.
+- `pkg/util/generatedexpr` has the same in-place visitor migration with no
+  semantic delta. Its Rust leaf is already source-shaped, but `tidb-model`
+  remains a broader seed, so the audit records the boundary instead of
+  claiming package-complete metadata parity.
 
 ## Outcomes & Retrospective
 
