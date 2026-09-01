@@ -337,6 +337,15 @@ For each bounded behavior cluster:
   `receipts/dumpformat_csvfile.md` and
   `rust/docs/operations/dumpformat-csvfile-audit-execplan.md`.
 
+- 2026-09-01: audited the complete Go-master
+  `pkg/dumpformat/sqlfile` package: four artifacts and 318 lines covering the
+  BUILD target, SQL literal/hex escaping, INSERT tuple writer and splitting
+  accounting, and four focused tests. Rust's `sqlescape` is only a generic
+  argument formatter and has no dependency-closed dump writer owner. No
+  Rust-only behavior or speculative facade was added; the exact detached Go
+  suite and boundary are recorded in `receipts/dumpformat_sqlfile.md` and
+  `rust/docs/operations/dumpformat-sqlfile-audit-execplan.md`.
+
 - 2026-09-01: audited the complete Go-master `pkg/ingestor/globalsort`
   package before editing: 17 tracked artifacts and 6,814 lines, including the
   external engine, object-store readers, merge and merge-v2 operators, range
