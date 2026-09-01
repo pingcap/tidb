@@ -184,6 +184,17 @@ For each bounded behavior cluster:
   production fix was found; the explicit SEED boundary is recorded in
   `receipts/sessiontxn_isolation.md`.
 
+- 2026-09-01: audited the complete Go-master root `pkg/sessiontxn` package:
+  seven tracked artifacts and 3,113 lines, including the manager/provider
+  interfaces, constructors, constant timestamp future, failpoint/test
+  support, all 27 root tests, and the BUILD target. Nested `isolation` and
+  `staleread` packages remain separate audited units. Rust owns transaction
+  state, cluster-session routing, isolation metadata, and KV snapshot traits
+  in adjacent crates, but has no dependency-closed replacement for this
+  interface/support package. No Rust-only behavior or safe missing root
+  production behavior was found; the exact Go-master failpoint suite passed
+  and the explicit boundary is recorded in `receipts/sessiontxn.md`.
+
 - 2026-09-01: refreshed the complete Go-master
   `pkg/util/password-validation` inventory (three artifacts, 379 lines) and
   confirmed it is unchanged from the prior pinned implementation. The Go
