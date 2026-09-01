@@ -54,6 +54,14 @@ For each bounded behavior cluster:
   validator owner and its two consumers remain aligned, with the current
   source/owner validation recorded in `receipts/util_naming.md`.
 
+- 2026-09-01: audited both current Go-master `pkg/util/tableutil` artifacts
+  (58 lines: interface/global factory and Bazel library), confirming there are
+  no source tests, fixtures, generated/platform variants, or nested packages.
+  Rust's temporary-table behavior is distributed across model, session,
+  transaction, executor, and DDL owners without one dependency-closed
+  `TempTable` object/factory seam. The complete boundary is recorded in
+  `receipts/util_tableutil.md`; the package has no standalone fix to test.
+
 - 2026-09-01: audited all seven Go-master `pkg/util/profile` artifacts,
   including the 1,206-byte pprof fixture, two production files, three test
   files, and Bazel fixture glob. The Rust workspace only preserves the six
@@ -1522,6 +1530,11 @@ For each bounded behavior cluster:
   restoring list links. This keeps the O(1) no-promotion contract visible to
   stmt-summary callers and leaves all eviction/callback paths unchanged.
   Date/Author: 2026-09-01, Codex.
+- Decision: keep `pkg/util/tableutil` unclaimed until the model, session,
+  transaction, executor, and auto-ID owners can provide one real temporary
+  table object plus its package-initialized factory. A Rust-only trait or
+  global constructor would duplicate existing SQL paths and cannot satisfy
+  Go's cross-package consumers. Date/Author: 2026-09-01, Codex.
 - Decision: keep `pkg/util/profile` as an explicit boundary until the pprof
   decoder, CPU-profiler lifecycle, performance-schema result tables, and
   session/logging consumers can move as one package unit. The existing Rust
@@ -1893,6 +1906,11 @@ For each bounded behavior cluster:
   `origin/master` adds it inside the existing `TestGet` case. Because the
   method's observable contract is list order—not merely value equality—the
   Rust owner needed an immutable lookup rather than a `get`/relink shim.
+- `pkg/util/tableutil` is only 46 lines, but its `TempTable` interface is the
+  shared type that lets table construction, session overlays, and transaction
+  isolation exchange mutable table state. Rust already implements each
+  consumer's behavior separately; the apparent small leaf is therefore a
+  cross-package integration seam, not a safe standalone port.
 - `pkg/util/profile`'s current-master change is entirely integration-facing:
   the source collector is unchanged, while `TestProfiles` now starts the
   CPU profiler and checks six structured log events. Rust's SEM layer already
