@@ -483,6 +483,15 @@ For each bounded behavior cluster:
   Recorded the inventory and boundary in `receipts/ddl_notifier.md` and
   `rust/docs/operations/ddl-notifier-audit-execplan.md`.
 
+- 2026-09-02: audited the complete Go-master `pkg/domain/affinity` package:
+  exactly four artifacts and 706 lines, including PD affinity-group
+  compatibility fallbacks, bounded URL selection, retry logging, and 11
+  top-level tests. All files are byte-identical to Go master and the package
+  suite passes. Rust has no dependency-closed PD HTTP/DDL affinity owner, so no
+  Rust-only behavior was removed or speculatively implemented. Recorded the
+  boundary in `receipts/domain_affinity.md` and
+  `rust/docs/operations/domain-affinity-audit-execplan.md`.
+
 - 2026-09-02: updated the complete five-artifact Go-master
   `pkg/server/handler/tests` consumer inventory (3,630 lines) for the DXF
   history redaction contract. Its focused API regression now requires
