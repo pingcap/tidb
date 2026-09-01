@@ -40,6 +40,14 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: refreshed the complete Go-master `pkg/util/channel` inventory
+  (two artifacts, 30 lines) and confirmed it is unchanged from the prior
+  pinned audit. Rust's borrowed `tidb-util::channel::clear` already matches
+  Go's blocking channel-drain contract after the earlier removal of arbitrary
+  iterable support. Updated `receipts/util_channel.md` and the package
+  ExecPlan with the current `origin/master` authority; no new behavior was
+  invented.
+
 - 2026-09-01: audited the complete Go-master `pkg/extension/_import`
   package (two artifacts, 26 lines), including the empty registration landing
   package and its public Bazel target. The pinned package has no generated

@@ -1,7 +1,9 @@
 # Align `pkg/util/channel` with the pinned Go package
 
-This ExecPlan follows `PLANS.md` and uses Go commit
-`e2788410d8d696605e8cb002585877a063ccc909` as authority.
+This ExecPlan follows `PLANS.md` and uses Go `origin/master` commit
+`0bc44483e3e41a8ea917d4382dc202369468d200` as authority. The package is
+unchanged from the earlier pinned audit; this refresh records the rolling
+master comparison.
 
 ## Goal
 
