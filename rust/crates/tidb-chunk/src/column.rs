@@ -131,6 +131,17 @@ impl Column {
             + of(self.elem_buf.as_ref().map_or(0, Vec::capacity))
     }
 
+    /// Go `Chunk.UsedMemoryUsage`'s per-column term, using lengths rather than
+    /// capacities so retained reusable allocation is excluded.
+    pub(crate) fn used_memory_usage(&self) -> i64 {
+        let of = |n: usize| i64::try_from(n).unwrap_or(i64::MAX);
+        GO_COLUMN_PAYLOAD_BYTES
+            + of(self.null_bitmap.len())
+            + of(self.offsets.len() * 8)
+            + of(self.data.len())
+            + of(self.elem_buf.as_ref().map_or(0, Vec::len))
+    }
+
     /// Go `newFixedLenColumn`: a fixed-length column whose elements are
     /// `elem_len` bytes, with initial data capacity for `capacity` rows.
     #[must_use]

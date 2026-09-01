@@ -90,6 +90,16 @@ For each bounded behavior cluster:
   regression. The complete source/owner inventory, contract checks, formatting,
   lint, and Ready gates are recorded in `receipts/util_table_filter.md`.
 
+- 2026-09-01: completed the Go-master `pkg/util/chunk` delta as one
+  thirty-artifact package audit. The source adds `Chunk.UsedMemoryUsage`,
+  which reports current buffer lengths rather than retained capacities; the
+  Rust `tidb-chunk` owner now exposes the equivalent per-column and aggregate
+  methods and extends the source memory regression through reset. The full
+  Go source/test/build inventory and Rust owner mapping are recorded in
+  `receipts/util_chunk_audit.md`. Focused Rust, executor-consumer, formatting,
+  lint, and diff gates pass; broad Go/Rust chunk sweeps retain unrelated
+  spill-path/failpoint and timing failures in the receipt.
+
 - 2026-09-01: audited the complete Go `pkg/util/dbterror/exeerrors` package at
   `origin/master` `db35d47066648fe73abce6318d53fc625df51490` against the Rust
   owner on `origin/hparser-integration`. The package has exactly `errors.go`
@@ -1176,6 +1186,9 @@ For each bounded behavior cluster:
 - [x] Complete the Go-master `pkg/util/table-filter` package: port the
       concrete `ColumnFilterRules` parser API, add its focused regression, and
       update the package receipt.
+- [x] Complete the Go-master `pkg/util/chunk` delta: inventory all 30 source,
+      test, harness, and build artifacts; port `Chunk.UsedMemoryUsage` with a
+      length-versus-capacity regression; and update its package receipt.
 - [ ] Audit the next bounded package cluster by reading the requested Go
       `origin/master` first, then fill executable gaps and remove false
       carriers.
@@ -1228,6 +1241,11 @@ For each bounded behavior cluster:
   that same concrete value, while `ParseColumnFilterRules` returns it directly;
   this preserves both Go entry points without inventing a second matcher path.
   Date/Author: 2026-09-01, Codex.
+- Decision: implement Go master's `Chunk.UsedMemoryUsage` in the existing
+  `tidb-chunk` owner, retaining the shared 112-byte column payload term and
+  using lengths for null-bitmap, offsets, data, and element buffers. Keep
+  `MemoryUsage` capacity-based and do not invent a consumer for this
+  informational API. Date/Author: 2026-09-01, Codex.
 - Decision: for the continuing loop, newly selected packages compare against
   the fetched Go `origin/master`; the older `e2788410...` pin remains the
   historical source for receipts already completed. `pkg/util/plancodec`
@@ -1514,6 +1532,11 @@ For each bounded behavior cluster:
   while leaving the source test suite unchanged. Rust's private implementation
   therefore compiled all historical rows yet still lacked the public parser
   shape; the focused regression now exercises the concrete API directly.
+- The current chunk workspace does not reliably provide the Go spill failpoint
+  or temporary spill directories: two existing Go panic tests and 35/279 Rust
+  lib (40/325 nextest) cases fail for those pre-existing paths/timing reasons.
+  The new `UsedMemoryUsage` regression is isolated and passes, so the failures
+  remain validation boundaries rather than prompts for unrelated edits.
 
 ## Outcomes & Retrospective
 

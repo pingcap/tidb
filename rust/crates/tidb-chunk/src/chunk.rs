@@ -161,6 +161,16 @@ impl Chunk {
             .sum()
     }
 
+    /// Go `UsedMemoryUsage`: bytes currently occupied by the chunk's columns,
+    /// summed over lengths rather than capacities.
+    #[must_use]
+    pub fn used_memory_usage(&self) -> i64 {
+        self.columns
+            .iter()
+            .map(|column| column.read().used_memory_usage())
+            .sum()
+    }
+
     /// Go `RequiredRows`.
     #[must_use]
     pub fn required_rows(&self) -> usize {
@@ -2215,6 +2225,8 @@ fn go_test_chunk_memory_usage() {
         .sum();
     // Empty chunk with initial capacity.
     assert_eq!(chk.memory_usage(), expected_usage);
+    let initial_used_memory = chk.used_memory_usage();
+    assert!(initial_used_memory < chk.memory_usage());
 
     let json_obj = tidb_datatype::BinaryJSON::parse("1").expect("valid JSON");
     let time_obj = Time::new(
@@ -2255,6 +2267,12 @@ fn go_test_chunk_memory_usage() {
         })
         .sum::<i64>();
     assert_eq!(chk.memory_usage(), expected_usage);
+    assert!(chk.used_memory_usage() > initial_used_memory);
+
+    let allocated_memory = chk.memory_usage();
+    chk.reset();
+    assert_eq!(chk.used_memory_usage(), initial_used_memory);
+    assert_eq!(chk.memory_usage(), allocated_memory);
 }
 
 /// Go `TestSwapColumn`: swapping columns between chunks (Go's unexported
