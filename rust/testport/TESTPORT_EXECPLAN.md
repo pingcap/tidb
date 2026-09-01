@@ -40,6 +40,17 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: audited four complete bounded ingestor packages against Go
+  master before entering the large engine implementations:
+  `pkg/ingestor/engineapi` (three artifacts, 212 lines), `errdef` (two
+  artifacts, 76 lines, including the current-master
+  `GlobalSort:TooManyDataFiles` addition), `ingestmetric` (two artifacts, 67
+  lines), and `testutils` (two artifacts, 73 lines). All compile as Go
+  packages and have no package-local tests. Rust owns DXF step metadata but no
+  ingest engine/global-sort planner, next-generation client, metric consumer,
+  or object-store test surface, so unused compatibility APIs were not
+  invented. Recorded the explicit boundaries in four package receipts.
+
 - 2026-09-01: audited the complete Go-master `pkg/importsdk` package before
   editing: 18 tracked artifacts (including both Bazel targets and the
   generated GoMock output) and 3,879 lines, with no platform variants,
