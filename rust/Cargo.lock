@@ -4332,6 +4332,7 @@ dependencies = [
  "tidb-kvcache",
  "tidb-log",
  "tidb-metadef",
+ "tidb-model",
  "tidb-mysql",
  "tidb-naming",
  "tidb-parser",

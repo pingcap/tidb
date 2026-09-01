@@ -36,6 +36,21 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- [x] (2026-08-31) Completed pinned two-artifact
+  `pkg/lightning/importdef`. Added only its target database/table carriers with
+  byte-preserving strings, nil map/pointer states, shared mutable table/model
+  pointer identity, and canonical `tidb-model` ownership. The source package
+  has no tests, so none were added. Complete inventory and WIP evidence are in
+  `receipts/lightning_importdef.md`.
+
+- [x] (2026-08-31) Completed pinned three-artifact
+  `pkg/lightning/verification`. Restored the exact three-field common KV-pair
+  boundary, target-width wrapping counters, borrowed keyspace storage, and
+  unordered group-map behavior. Removed the exported CRC/pair helpers,
+  deterministic log order, diagnostics, capability traits, and three
+  supplemental tests; exactly four source tests remain. Complete inventory
+  and WIP evidence are in `receipts/lightning_verification.md`.
+
 - [x] (2026-08-31) Completed pinned five-artifact
   `pkg/lightning/membuf`. Replaced the prior location-token-only allocation
   path with native shared byte-slice aliases, restored target-sized arithmetic,

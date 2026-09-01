@@ -33,6 +33,7 @@ fail = { version = "0.4", optional = true }
 prost.workspace = true
 snap.workspace = true
 tidb-log = { path = "../tidb-log" }
+tidb-model = { path = "../tidb-model" }
 tidb-config = { path = "../tidb-config" }
 tidb-kvcache = { path = "../tidb-kvcache" }
 tidb-metadef = { path = "../tidb-metadef" }

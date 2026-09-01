@@ -58,6 +58,7 @@ pub mod israce;
 pub mod keyspace;
 pub mod kvcache;
 pub mod layered_io;
+pub mod lightning_importdef;
 pub mod lightning_verification;
 pub mod logutil;
 pub mod master_key;
