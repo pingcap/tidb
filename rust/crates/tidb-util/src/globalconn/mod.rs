@@ -99,7 +99,6 @@ impl Gcid {
     ///
     /// Panics when a field exceeds its layout width, with the source's
     /// messages.
-    #[must_use]
     pub fn to_conn_id(&self) -> u64 {
         let mut id: u64 = 0;
         if self.is_64bits {
@@ -203,7 +202,6 @@ pub struct SimpleAllocator {
 
 impl SimpleAllocator {
     /// Creates a new allocator.
-    #[must_use]
     pub fn new() -> Self {
         let mut pool = AutoIncPool::default();
         pool.init(u64::MAX - RESERVED_COUNT);
@@ -358,6 +356,16 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicI64, AtomicU32, Ordering::SeqCst};
     use std::sync::{Arc, Barrier, Mutex};
+
+    // Go permits callers to ignore these return values; Rust must not add a
+    // `must_use` diagnostic at the transcreation boundary.
+    #[test]
+    #[deny(unused_must_use)]
+    fn return_values_may_be_ignored_like_go() {
+        let gcid = parse_conn_id(0).unwrap().0;
+        gcid.to_conn_id();
+        SimpleAllocator::new();
+    }
 
     // Go `TestToConnID`.
     #[test]
