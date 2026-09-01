@@ -41,6 +41,17 @@ For each bounded behavior cluster:
 ## Progress
 
 - 2026-09-01: audited the complete Go-master
+  `pkg/executor/internal/mpp` package (five artifacts, 1,595 lines),
+  including MPP retry/recovery wrappers, bounded result holding, local
+  TiFlash task construction/dispatch/cancellation, stream handling, zone
+  inference, execution-summary reporting, every package test, and the
+  two-shard Bazel target. Rust currently exposes only MPP protocol/client
+  contracts, failed-store probing, planner properties, and TiFlash statistics;
+  no coordinator or TiFlash execution implementation exists. Recorded the
+  explicit boundary in `receipts/executor_internal_mpp.md` without inventing
+  an uncalled execution layer.
+
+- 2026-09-01: audited the complete Go-master
   `pkg/executor/internal/calibrateresource` package (four artifacts, 1,613
   lines), including static/dynamic calibration production code, every
   workload/time-window/metric/TiFlash test, failpoint/goleak harness, and the
