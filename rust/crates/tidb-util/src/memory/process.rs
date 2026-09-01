@@ -76,6 +76,17 @@ fn host_memory_used() -> io::Result<u64> {
     ))
 }
 
+#[cfg(target_os = "linux")]
+fn current_process_memory_usage() -> io::Result<u64> {
+    fs::read_to_string("/proc/self/status")?
+        .lines()
+        .find_map(|line| line.strip_prefix("VmRSS:"))
+        .and_then(|value| value.split_whitespace().next())
+        .and_then(|value| value.parse::<u64>().ok())
+        .and_then(|kib| kib.checked_mul(1024))
+        .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "missing VmRSS"))
+}
+
 #[cfg(target_os = "macos")]
 fn host_memory_total() -> io::Result<u64> {
     let output = Command::new("sysctl").args(["-n", "hw.memsize"]).output()?;
@@ -119,6 +130,23 @@ fn host_memory_used() -> io::Result<u64> {
     Ok(total.saturating_sub(available))
 }
 
+#[cfg(target_os = "macos")]
+fn current_process_memory_usage() -> io::Result<u64> {
+    let pid = std::process::id().to_string();
+    let output = Command::new("ps")
+        .args(["-o", "rss=", "-p", &pid])
+        .output()?;
+    if !output.status.success() {
+        return Err(io::Error::other("ps failed to read process memory"));
+    }
+    std::str::from_utf8(&output.stdout)
+        .ok()
+        .map(str::trim)
+        .and_then(|value| value.parse::<u64>().ok())
+        .and_then(|kib| kib.checked_mul(1024))
+        .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "invalid process RSS"))
+}
+
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn host_memory_total() -> io::Result<u64> {
     Err(io::Error::new(
@@ -132,6 +160,14 @@ fn host_memory_used() -> io::Result<u64> {
     Err(io::Error::new(
         ErrorKind::Unsupported,
         "host memory usage discovery is not available on this platform",
+    ))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn current_process_memory_usage() -> io::Result<u64> {
+    Err(io::Error::new(
+        ErrorKind::Unsupported,
+        "process memory discovery is not available on this platform",
     ))
 }
 
@@ -360,7 +396,7 @@ pub fn allocator_live_heap_sample() -> Option<(i64, i64, i64)> {
 /// Returns the process memory counters consumed by TiDB's memory controllers.
 #[must_use]
 pub fn read_mem_stats() -> MemStats {
-    let rss = crate::cgroup::current_process_memory_usage()
+    let rss = current_process_memory_usage()
         .ok()
         .and_then(|value| i64::try_from(value).ok())
         .unwrap_or(0);

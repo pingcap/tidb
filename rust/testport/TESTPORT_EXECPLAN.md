@@ -36,6 +36,15 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- [x] (2026-08-31) Completed pinned Go `pkg/util/cgroup` as one nine-artifact
+  package. Removed Rust-only scheduler-recommendation and process-RSS APIs,
+  restored the signed non-Linux quota result, corrected controller duplicate
+  handling and mountinfo separator parsing, retained the pinned hybrid memory
+  path, and reduced the test surface to the four portable Go tests plus its
+  Linux-only live CPU test. The native integration decision for Go's
+  process-global `runtime.GOMAXPROCS` operation and WIP evidence are recorded
+  in `receipts/util_cgroup.md`.
+
 - [x] (2026-08-31) Completed pinned Go `pkg/util/execdetails` as the prerequisite
   for memory-alarm running-SQL output. One shared implementation now owns the
   live RUv2 counters and weights; executor and Top-SQL paths re-export/use it
