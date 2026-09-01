@@ -247,6 +247,17 @@ For each bounded behavior cluster:
   or safe missing behavior was found; exact Go-master compilation passed and
   the explicit boundary is recorded in `receipts/session_txninfo.md`.
 
+- 2026-09-01: audited the complete Go-master `pkg/session/sessionapi`
+  package: two tracked artifacts and 111 lines, including the public
+  `Session` interface (embedded `sessionctx.Context` plus 34 explicit
+  methods), identity error sentinel, and BUILD target. It has no tests,
+  fixtures, generated outputs, benchmarks, fuzz inputs, or platform variants.
+  Rust owns concrete session/server/authentication/prepared-execution pieces
+  in adjacent crates, but no dependency-closed replacement for this public
+  plugin-facing API. No Rust-only behavior or safe missing behavior was
+  found; exact Go-master compilation passed and the explicit boundary is
+  recorded in `receipts/session_sessionapi.md`.
+
 - 2026-09-01: refreshed the complete Go-master
   `pkg/util/password-validation` inventory (three artifacts, 379 lines) and
   confirmed it is unchanged from the prior pinned implementation. The Go
