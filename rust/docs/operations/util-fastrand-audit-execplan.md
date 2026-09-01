@@ -9,7 +9,7 @@ API diagnostics.
 ## Progress
 
 - [x] Read all five Go-master artifacts at
-  `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: `BUILD.bazel`, `main_test.go`,
+  `c6054025ed4c32ab3672a2a24ea46892714d21ec`: `BUILD.bazel`, `main_test.go`,
   `random.go`, `random_test.go`, and `runtime.go` (227 lines; three private
   random declarations, four public helpers, `TestMain`, one source test, and
   four benchmarks).
@@ -24,7 +24,7 @@ API diagnostics.
 - [x] Revalidate current and exact detached Go-master tests, focused Rust
   regressions, all-target and benchmark compilation, formatting, diff quality,
   and the pinned detached `make lint` Ready gate.
-- [ ] Commit, push, pull, and verify `origin/hparser-integration`.
+- [x] Commit, push, pull, and verify `origin/hparser-integration`.
 
 ## Validation gate
 

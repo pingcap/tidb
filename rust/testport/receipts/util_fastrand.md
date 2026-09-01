@@ -1,7 +1,7 @@
 # `pkg/util/fastrand` — complete Go-master parity receipt
 
 Comparison source: Go `origin/master` at
-`5e8a1a229a7591ddac49a0cd3b795587c2595ab9` (2026-09-01). The Go package is
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02). The Go package is
 unchanged from the earlier pinned implementation; this receipt records the
 rolling authority and complete artifact hashes.
 Runtime boundary: Go `go1.25.10`, as declared by the pinned repository.
@@ -60,9 +60,9 @@ detached `make lint` gate were run. Go source/Bazel metadata did not change;
 `make bazel_prepare` is not required.
 
 ```text
-git diff --exit-code 0bc44483e3e41a8ea917d4382dc202369468d200..origin/master \
+git diff --exit-code c6054025ed4c32ab3672a2a24ea46892714d21ec..origin/master \
   -- pkg/util/fastrand
-# passed: Go package unchanged from the previous authority pin
+# passed: Go package unchanged at the current authority pin
 
 PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
 GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \

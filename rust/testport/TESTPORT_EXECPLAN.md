@@ -183,7 +183,7 @@ For each bounded behavior cluster:
 
 - 2026-09-02: fixed the Rust-only `must_use` diagnostics in the complete
   Go-master `pkg/util/fastrand` owner. The Go package remains five artifacts and
-  227 lines at `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`, including one source
+  227 lines at `c6054025ed4c32ab3672a2a24ea46892714d21ec`, including one source
   test and four benchmarks; its 64-bit/32-bit runtime algorithms and bounded
   reductions remain aligned. Added a deny-lint regression proving all four
   public return values may be ignored like Go; the pre-fix test failed with
