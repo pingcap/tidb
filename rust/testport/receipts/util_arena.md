@@ -1,13 +1,24 @@
 # `pkg/util/arena` — complete package transcreation
 
-Pinned Go source: `e2788410d8d696605e8cb002585877a063ccc909`.
+Go baseline: `origin/master` at
+`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01). The current source
+is byte-for-byte unchanged from the earlier pinned extraction.
 
 ## Complete inventory
 
-The package has exactly four artifacts, all read in full: `arena.go`,
-`arena_test.go`, `main_test.go`, and `BUILD.bazel`. There is no package doc,
-README, fixture, generated or platform variant, benchmark, fuzz target,
-example, or ownership file. The local Go package is unchanged from the pin.
+The package has exactly four artifacts, all read in full. There is no package
+doc, README, fixture, generated or platform variant, benchmark, fuzz target,
+example, or ownership file.
+
+| Artifact | Lines | Git blob | SHA-256 | Disposition |
+| --- | ---: | --- | --- | --- |
+| `BUILD.bazel` | 24 | `7ef3e758c10cb451da78e44268143bad9019c33c` | `bd91b01a292d54a39aaea56ab375b2e11922edf8d6ad83b3c1644afc387e6818` | library and flaky test target inventoried |
+| `arena.go` | 80 | `07ef575e8748d17219c19d17f07001d8af070af4` | `2e3dc44c7791b08740f594e961fb145852c0927db65c94b4cbf0cfe02683931b` | allocator interface, reusable arena, standard fallback, and reset inventoried |
+| `arena_test.go` | 65 | `e81dd55dc29aa3f981f29e8bc13a1e0327b5c139` | `0130d21898acad7bc440ec720141664009828ec69bce7ff253dfccd74ec7b6dd` | fitting/fallback/reset and standard allocator assertions inventoried |
+| `main_test.go` | 33 | `62e360f9c65def8e28bc05b1d94b601c2e7bc54f` | `b1536bcb5b0cd32422960eb01e1025e6b69a4559bb65392c9976564bc7c40c8c` | common setup and goleak harness inventoried |
+
+Total: 202 textual lines. The two source tests are the complete named test
+matrix; `main_test.go` contributes only `TestMain` setup.
 
 Production behavior is an allocator interface, a simple allocator backed by
 one reusable byte array, and a standard allocator that always allocates fresh
@@ -33,9 +44,8 @@ manifest. Exactly the two Go test identities remain.
 Profile: WIP; this completes one package in the continuing package-by-package
 audit, not a repository-wide readiness claim.
 
-- `go test ./pkg/util/arena` — passed.
-- Post-fix `cargo test -q -p tidb-util arena::tests --lib --locked --
-  --test-threads=1` — passed; two tests ran.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/arena -count=1` — passed.
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --offline --locked -p tidb-util arena::tests --lib -- --test-threads=1` — passed; two tests ran.
 - Complete `cargo test -q -p tidb-util --locked -- --test-threads=1`,
   `cargo check -p tidb-util --all-targets --locked`, `cargo fmt --all --check`,
   and `git diff --check` — passed; 575 library tests passed, 3 were ignored,
