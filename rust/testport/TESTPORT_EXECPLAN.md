@@ -419,6 +419,20 @@ For each bounded behavior cluster:
   blocked, and the boundary is recorded in
   `receipts/session_test_temporarytabletest.md`.
 
+- 2026-09-01: audited the complete Go-master `pkg/session/test/txn` package:
+  three tracked artifacts and 622 lines, including the TestMain/goleak
+  harness, eleven transaction lifecycle/conflict/timestamp/membuffer tests,
+  and eleven-shard flaky BUILD target. Rust owns session autocommit/status,
+  a narrow lazy-transaction predicate, and typed storage retry/membuffer
+  primitives, but not the dependency-closed Go mock-TiKV conflict, read-only,
+  Oracle timestamp, UnionScan, memory, or killed-transaction choreography.
+  Added an explicit ignored source carrier for the Go-master
+  `TestPanicOnRollbackKilledTxn`; no Rust-only behavior or safe standalone
+  implementation was found. The exact Go-master failpoint suite and Ready
+  lint/format checks passed; the targeted Rust carrier build was blocked only
+  by missing OpenSSL/pkg-config. The boundary is recorded in
+  `receipts/session_test_txn.md`.
+
 - 2026-09-01: refreshed the complete Go-master
   `pkg/util/password-validation` inventory (three artifacts, 379 lines) and
   confirmed it is unchanged from the prior pinned implementation. The Go

@@ -512,3 +512,8 @@ ignored_go_test!(
     "Go `pkg/session/test/txn/txn_test.go:483::TestMemBufferCleanupMemoryLeak`.",
     "go-parity-gap: Go membuffer cleanup accounting and query memory quota are not transcreated"
 );
+ignored_go_test!(
+    test_panic_on_rollback_killed_txn,
+    "Go `pkg/session/test/txn/txn_test.go:509::TestPanicOnRollbackKilledTxn`.",
+    "go-parity-gap: killed pessimistic-transaction rollback cleanup is not transcreated"
+);
