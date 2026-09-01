@@ -518,6 +518,13 @@ For each bounded behavior cluster:
   safe-TS filtering, grouping, messages, and source logging. The single source
   test identity covers both upstream subtests. Complete inventory and WIP
   gates are recorded in `receipts/util_cdcutil.md`.
+- 2026-09-01: refreshed the complete `pkg/util/cdcutil` inventory against
+  current Go master (`0bc44483e3e41a8ea917d4382dc202369468d200`). All four
+  artifacts and 489 textual lines are unchanged; the `tidb-domain::cdcutil`
+  owner and embedded-etcd source matrix still cover both key generations,
+  checkpoint/state rules, grouping, and message output. The receipt now
+  records current hashes and environment-qualified validation; BR/Lightning/
+  executor composition roots remain outside this package claim.
 - 2026-08-29: completed the pinned Go `pkg/util/resourcegrouptag` package
   (one production file, one source test, one test harness, and `BUILD.bazel`).
   Split its decoder, label classifier, and first-key extraction out of the
