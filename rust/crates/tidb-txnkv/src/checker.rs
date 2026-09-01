@@ -84,6 +84,7 @@ impl RequestTypeSupportedChecker {
             201 |
             // Aggregate functions.
             3001 | 3002 | 3003 | 3004 | 3005 | 3006 | 3007 | 3008 | 3009 | 3010 | 3020 | 3021 |
+            3022 | 3023 |
             // Window functions.
             4001 | 4002 | 4003 | 4004 | 4005 | 4006 | 4007 | 4008 | 4009 | 4010 | 4011 |
             // ReqSubTypeDesc and ReqSubTypeSignature. Desc also shares the
@@ -102,13 +103,13 @@ mod tests {
         REQ_TYPE_SELECT,
     };
 
-    const SUPPORTED_TIPB_EXPR_TYPES: [i64; 38] = [
+    const SUPPORTED_TIPB_EXPR_TYPES: [i64; 40] = [
         0, 1, 2, 3, 4, 5, 6, 101, 102, 103, 104, 107, 121, 201, 3001, 3002, 3003, 3004, 3005, 3006,
-        3007, 3008, 3009, 3010, 3020, 3021, 4001, 4002, 4003, 4004, 4005, 4006, 4007, 4008, 4009,
-        4010, 4011, 10_000,
+        3007, 3008, 3009, 3010, 3020, 3021, 3022, 3023, 4001, 4002, 4003, 4004, 4005, 4006, 4007,
+        4008, 4009, 4010, 4011, 10_000,
     ];
-    const UNSUPPORTED_TIPB_EXPR_TYPES: [i64; 15] = [
-        105, 106, 108, 151, 3011, 3012, 3013, 3014, 3015, 3016, 3017, 3018, 3019, 3022, 3023,
+    const UNSUPPORTED_TIPB_EXPR_TYPES: [i64; 13] = [
+        105, 106, 108, 151, 3011, 3012, 3013, 3014, 3015, 3016, 3017, 3018, 3019,
     ];
 
     #[test]
@@ -229,5 +230,12 @@ mod tests {
         // -1 and is rejected. These pin the full raw protocol boundary.
         assert!(checker.is_request_type_supported(REQ_TYPE_DAG, i64::MIN));
         assert!(!checker.is_request_type_supported(REQ_TYPE_DAG, i64::MAX));
+    }
+
+    #[test]
+    fn max_count_and_min_count_are_supported_for_select() {
+        let checker = RequestTypeSupportedChecker;
+        assert!(checker.is_request_type_supported(REQ_TYPE_SELECT, 3023));
+        assert!(checker.is_request_type_supported(REQ_TYPE_SELECT, 3022));
     }
 }

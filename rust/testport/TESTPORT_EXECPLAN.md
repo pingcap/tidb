@@ -197,6 +197,14 @@ For each bounded behavior cluster:
   Ready commands, and explicit version285/materialized-view scheduler
   boundaries are recorded in `receipts/parser_mysql_operate_view_audit.md`.
 
+- 2026-09-01: completed the rolling Go-master `pkg/kv` checker delta after
+  reading all 30 package artifacts (5,145 Go/Bazel lines). Rust's native
+  request-support matrix now accepts `ExprType_MinCount` (3022) and
+  `ExprType_MaxCount` (3023), moves them into the supported TIPB disposition,
+  and executes the source-derived regression that was previously ignored.
+  The package-level test inventory and remaining benchmark/integration
+  boundaries are recorded in `receipts/b065.md`.
+
 - 2026-09-01: audited the complete Go `pkg/util/dbterror/exeerrors` package at
   `origin/master` `db35d47066648fe73abce6318d53fc625df51490` against the Rust
   owner on `origin/hparser-integration`. The package has exactly `errors.go`
@@ -1760,6 +1768,10 @@ For each bounded behavior cluster:
   preserve one bit and column order. The coordinated `OPERATE VIEW` batch now
   does so, while Go's versioned schema-upgrade and materialized-view scheduler
   remain outside the Rust dependency closure.
+- `pkg/kv` confirms that the support matrix is a protocol compatibility
+  surface: the two current aggregate identities must be moved together in the
+  native checker and in the supported/unsupported disposition vectors, with
+  the Go test's `ReqTypeSelect` assertions executable rather than ignored.
 
 ## Outcomes & Retrospective
 
