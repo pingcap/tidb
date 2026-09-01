@@ -36,6 +36,16 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- [x] (2026-09-01) Completed the pinned five-artifact `pkg/util/extsort`
+  prerequisite and seven-artifact `pkg/lightning/duplicate` consumer as one
+  dependency-ordered batch. Added the exact external-sorter state machine,
+  recoverable disk runs, sparse block readers, lazy deduplicating merge,
+  concurrent compaction algorithms, internal-key codec, dynamic detector task
+  splitting, handler lifecycle, all 16 sorter tests, and all four detector
+  tests. No duplicate-only in-memory sorter or cache path was added. Complete
+  inventories and WIP evidence are in `receipts/util_extsort.md` and
+  `receipts/lightning_duplicate.md`.
+
 - [x] (2026-09-01) Completed the pinned six-artifact
   `pkg/lightning/log` package. Added exact config adjustment and logger
   initialization, global level/logger replacement, package-qualified core

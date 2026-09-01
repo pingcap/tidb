@@ -4325,6 +4325,7 @@ dependencies = [
  "sha2",
  "snap",
  "tempfile",
+ "tidb-codec",
  "tidb-config",
  "tidb-datatype",
  "tidb-error",

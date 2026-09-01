@@ -35,6 +35,7 @@ snap.workspace = true
 tidb-log = { path = "../tidb-log" }
 tidb-model = { path = "../tidb-model" }
 tidb-config = { path = "../tidb-config" }
+tidb-codec = { path = "../tidb-codec" }
 tidb-kvcache = { path = "../tidb-kvcache" }
 tidb-metadef = { path = "../tidb-metadef" }
 tidb-mysql = { path = "../tidb-mysql" }
