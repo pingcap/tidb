@@ -56,6 +56,15 @@ For each bounded behavior cluster:
   mapping remain valid. The receipt now records `origin/master` explicitly;
   no additional fix is needed.
 
+- 2026-09-01: audited and Ready-validated the six-artifact
+  `pkg/util/sys/linux` package, including Linux, Windows, unsupported-target,
+  source-test, goleak harness, and Bazel selections. The existing
+  `tidb-util::sys::linux` owner matches OS identity, affinity, and Unix peer
+  credentials and is wired into the server affinity startup path; no Rust-only
+  production behavior or missing dependency-closed Go behavior was found. The
+  complete inventory and host/platform risk notes are recorded in
+  `receipts/util_sys_linux.md`.
+
 - 2026-09-01: audited both current Go-master `pkg/util/injectfailpoint`
   artifacts (90 lines) in full. Its five exported helpers are named DXF
   failpoint/random-error test infrastructure; Rust has no dependency-closed
@@ -1885,6 +1894,11 @@ For each bounded behavior cluster:
   failpoint registry and have no matching Rust production consumer; adding a
   probabilistic Rust hook would be test-only Rust behavior. Date/Author:
   2026-09-01, Codex.
+- Decision: retain `tidb-util::sys::linux` as the sole native owner of the
+  six-artifact OS utility boundary. Its Linux/Windows/other-target variants
+  and server affinity call are dependency-closed; the extra peer-UID and
+  no-op checks are platform corroboration, not alternate Rust policy. Date/
+  Author: 2026-09-01, Codex.
 - Decision: preserve the Rust planner-error declaration table and its
   all-prototype initialization guard. Go package initialization registers all
   98 entries, while Go's only explicit test checks 59; the Rust guard is the
