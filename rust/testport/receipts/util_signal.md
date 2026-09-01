@@ -1,7 +1,7 @@
 # `pkg/util/signal` — Go-master parity boundary receipt
 
 Go baseline: `origin/master` at
-`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01).
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02).
 The package is a small cross-platform process-signal adapter; its complete
 inventory is recorded here before any Rust source change.
 
@@ -43,20 +43,52 @@ remains an explicit boundary for a future atomic server/platform migration.
 
 ## Validation
 
-Profile: **WIP**. This is a complete inventory and boundary audit with no code
-change, so `make bazel_prepare` and the Ready lint gate are not triggered.
+Profile: **Ready** for this docs-only authority refresh. No Go, Rust, Bazel,
+or module source changed, so `make bazel_prepare` is not required.
 
 ```text
+git diff --exit-code c6054025ed4c32ab3672a2a24ea46892714d21ec -- \
+  pkg/util/signal
+# passed: current package matches the exact latest Go-master authority
+
 PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
 GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
 go test ./pkg/util/signal -count=1
 # ? github.com/pingcap/tidb/pkg/util/signal [no test files]
+
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
+GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
+GOOS=windows GOARCH=amd64 go list ./pkg/util/signal
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
+GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
+GOOS=windows GOARCH=amd64 go test ./pkg/util/signal -count=1
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
+GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
+GOOS=js GOARCH=wasm go list ./pkg/util/signal
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
+GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
+GOOS=js GOARCH=wasm go test ./pkg/util/signal -count=1
+# passed in current and exact detached Go-master worktrees; selections were
+# POSIX exit+handler, Windows handler, and WASM exit+no-op handler
+
+OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler \
+DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib \
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml \
+  --offline --locked -p tidb-server --lib
+# passed: adjacent server-local shutdown/exit-code owners compile
+
+cd rust && cargo +nightly-2026-08-22 fmt --all -- --check
+# passed
 ```
+
+The focused Rust command emitted only existing workspace warnings. Batch diff
+hygiene also passes. Full workspace tests and Bazel execution remain outside
+this boundary receipt.
 
 ## Risks and unverified behavior
 
-- Correctness: default-host POSIX compilation passed; no Rust replacement is
-  claimed for the stack-dump or platform-specific handlers.
+- Correctness: host POSIX, Windows, and JS/WASM compilation passed; no Rust
+  replacement is claimed for the stack-dump or platform-specific handlers.
 - Compatibility: signal ordering, one-shot shutdown, process signaling, and
   build tags are externally observable; any future native owner must preserve
   all four variants together.

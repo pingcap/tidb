@@ -3674,15 +3674,18 @@ For each bounded behavior cluster:
       reusable comparator owner; local Rust assertions remain intentionally
       scoped. The package remains explicitly unclaimed; details are in
       `receipts/util_deeptest.md`.
-- 2026-09-01: audited all five Go-master `pkg/util/signal` artifacts (289
-      lines across the Bazel target and POSIX, Windows, WASM, and exit
+- 2026-09-02: re-audited all five Go-master `pkg/util/signal` artifacts at
+      `c6054025ed4c32ab3672a2a24ea46892714d21ec` (289 lines across the Bazel
+      target and POSIX, Windows, WASM, and exit
       variants). The Go package's one-shot termination handler, POSIX
       SIGUSR1 goroutine dump, Windows best-effort process signaling, and WASM
       no-op matrix are complete and unchanged from the current source. Rust
       has server-local shutdown/exit-code wiring but no dependency-closed
       cross-platform utility owner; adding another signal thread or stack
-      endpoint would be Rust-only behavior. Details are in
-      `receipts/util_signal.md`.
+      endpoint would be Rust-only behavior. Host, Windows, and JS/WASM Go
+      selections plus the adjacent Rust server library compile. Details are in
+      `receipts/util_signal.md` and
+      `docs/operations/util-signal-audit-execplan.md`.
 - 2026-09-01: audited both Go-master `pkg/util/linter/constructor` artifacts
       (34 lines: public Bazel library and the zero-sized `Constructor` marker).
       It is static-analysis-only metadata consumed by the Go constructor
