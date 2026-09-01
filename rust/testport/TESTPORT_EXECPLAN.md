@@ -40,6 +40,14 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: audited all 18 current Go-master `pkg/plugin` artifacts (2,734
+  lines), including the dynamic/static plugin framework, audit event SPI,
+  etcd flush watcher, lifecycle/error paths, the `conn_ip_example` fixture and
+  manifest, all source/integration tests, and nested Bazel metadata. Rust has
+  only plugin config and a separate auth-registry fragment, so the complete
+  framework boundary is recorded in `receipts/plugin.md` without inventing an
+  uncalled Rust loader or callback path.
+
 - 2026-09-01: audited all nine current Go-master `pkg/extworkload` artifacts
   (1,326 lines across the manager and nested client packages), including every
   gRPC operation, role/deadline/metrics wrapper, request/error path, source
