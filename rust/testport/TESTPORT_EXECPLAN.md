@@ -212,7 +212,7 @@ For each bounded behavior cluster:
       `docs/operations/util-backoff-audit-execplan.md`.
 
 - 2026-09-02: refreshed the complete Go-master `pkg/util/zeropool` inventory
-  at `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: three tracked artifacts,
+  at `c6054025ed4c32ab3672a2a24ea46892714d21ec`: three tracked artifacts,
   281 lines, three production methods, one four-subtest `TestPool`, and four
   benchmarks, with no fixtures, generated/platform variants, or nested
   packages. The existing Rust owner and benchmark translations preserve the

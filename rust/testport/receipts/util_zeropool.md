@@ -1,7 +1,7 @@
 # `pkg/util/zeropool` — complete Go-master parity receipt
 
 Comparison source: Go `origin/master` at
-`5e8a1a229a7591ddac49a0cd3b795587c2595ab9` (2026-09-01). The package is
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02). The package is
 unchanged from the earlier pinned implementation; this receipt records the
 rolling authority and complete artifact hashes.
 
@@ -48,8 +48,8 @@ regression test is added; the existing source-derived `TestPool` suite remains
 the focused regression carrier.
 
 ```text
-git diff --exit-code 0bc44483e3e41a8ea917d4382dc202369468d200..origin/master \
-  -- pkg/util/zeropool
+git diff --exit-code c6054025ed4c32ab3672a2a24ea46892714d21ec -- \
+  pkg/util/zeropool
 # passed: current package is unchanged from the previous authority pin
 
 PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
@@ -71,6 +71,11 @@ cd rust && cargo +nightly-2026-08-22 fmt --all -- --check
 # passed
 git diff --check
 # passed
+
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
+GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
+make lint
+# passed in a clean detached Go-master checkout
 ```
 
 No Go or Bazel file changed, so `make bazel_prepare` is not required.

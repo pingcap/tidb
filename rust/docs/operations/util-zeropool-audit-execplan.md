@@ -8,7 +8,7 @@ native Rust owner, source test suite, and benchmark translations.
 ## Progress
 
 - [x] Read all three Go-master artifacts at
-  `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: `BUILD.bazel`, `pool.go`, and
+  `c6054025ed4c32ab3672a2a24ea46892714d21ec`: `BUILD.bazel`, `pool.go`, and
   `pool_test.go` (281 lines; three production methods, one four-subtest
   `TestPool`, and four benchmarks).
 - [x] Confirm there are no package docs, fixtures, generated/platform
@@ -19,7 +19,7 @@ native Rust owner, source test suite, and benchmark translations.
   supplemental tests and divergent pointer-policy behavior remain removed.
 - [x] Revalidate current and exact detached Go-master tests, the source-owned
   Rust test, all-target/benchmark compilation, formatting, and diff quality.
-- [ ] Commit, push, pull, and verify `origin/hparser-integration`.
+- [x] Commit, push, pull, and verify `origin/hparser-integration`.
 
 ## Validation gate
 
