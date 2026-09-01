@@ -1583,6 +1583,13 @@ For each bounded behavior cluster:
       linter; Rust has no equivalent linter or runtime consumer. The package
       remains explicitly unclaimed with no source change. Details are in
       `receipts/util_linter_constructor.md`.
+- 2026-09-01: audited all three Go-master `pkg/util/tiflashcompute` artifacts
+      (501 lines: dispatch-policy conversions, mock/AWS/test AutoScaler
+      topology fetchers, HTTP parsing, recovery query construction, and Bazel
+      target). Rust preserves AutoScaler configuration names and the TiFlash
+      Compute endpoint identity but has no dependency-closed topology cache or
+      startup consumer. The package remains explicitly unclaimed with no
+      source change. Details are in `receipts/util_tiflashcompute.md`.
 - [ ] Run Ready validation and self-review only when the requested parity scope
       is genuinely complete enough for a final-status claim.
 
@@ -1668,6 +1675,12 @@ For each bounded behavior cluster:
   `Constructor` embedding is interpreted by an external Go AST linter and has
   no Rust runtime or build consumer; adding a native marker would create a
   second, Rust-only static-analysis policy. Date/Author: 2026-09-01, Codex.
+- Decision: keep `pkg/util/tiflashcompute` explicitly unclaimed until the
+  Rust server owns dispatch conversion, AutoScaler HTTP/mock topology fetch,
+  monotonic timestamp caching, recovery parameters, and all startup
+  consumers together. Configuration constants and endpoint identity alone do
+  not reproduce the Go package; a detached Rust fetcher would be Rust-only
+  behavior. Date/Author: 2026-09-01, Codex.
 - Decision: preserve the Rust planner-error declaration table and its
   all-prototype initialization guard. Go package initialization registers all
   98 entries, while Go's only explicit test checks 59; the Rust guard is the
