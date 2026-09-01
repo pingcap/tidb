@@ -130,6 +130,16 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 	}
 	sctx.GetSessionVars().AnalyzeVersion = int(ver)
 
+	// Analyze store batch size. Auto Analyze uses the latest global value instead
+	// of the potentially stale value held by its pooled internal session.
+	analyzeStoreBatchSize, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBAnalyzeStoreBatchSize)
+	if err != nil {
+		return err
+	}
+	if err := sctx.GetSessionVars().SetSystemVar(vardef.TiDBAnalyzeStoreBatchSize, analyzeStoreBatchSize); err != nil {
+		return err
+	}
+
 	// enable historical stats
 	val, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBEnableHistoricalStats)
 	if err != nil {

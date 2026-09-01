@@ -107,6 +107,25 @@ func TestBootstrapMaskingPolicyTable(t *testing.T) {
 	checkTiDBMaskingPolicyTableSchema(t, tk)
 }
 
+func TestBootstrapOperateViewPrivilege(t *testing.T) {
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+
+	checkOperateViewPrivilegeBootstrapSchema(t, testkit.NewTestKit(t, store))
+}
+
+func checkOperateViewPrivilegeBootstrapSchema(t *testing.T, tk *testkit.TestKit) {
+	tk.MustQuery("SELECT column_name FROM information_schema.columns WHERE table_schema='mysql' AND table_name='user' AND column_name='Operate_view_priv'").
+		Check(testkit.Rows("Operate_view_priv"))
+	tk.MustQuery("SELECT column_name FROM information_schema.columns WHERE table_schema='mysql' AND table_name='db' AND column_name='Operate_view_priv'").
+		Check(testkit.Rows("Operate_view_priv"))
+	tk.MustQuery("SELECT LOCATE('Operate View', column_type) > 0 FROM information_schema.columns WHERE table_schema='mysql' AND table_name='tables_priv' AND column_name='Table_priv'").
+		Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT Operate_view_priv FROM mysql.user WHERE User='root' AND Host='%'").
+		Check(testkit.Rows("Y"))
+}
+
 func TestBootstrapMaterializedViewSystemTables(t *testing.T) {
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()

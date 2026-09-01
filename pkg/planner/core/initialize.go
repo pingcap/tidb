@@ -20,6 +20,12 @@ import (
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
+// Init initializes Analyze.
+func (p Analyze) Init(ctx base.PlanContext, offset int) *Analyze {
+	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeAnalyze, offset)
+	return &p
+}
+
 // Init initializes LoadData.
 func (p LoadData) Init(ctx base.PlanContext) *LoadData {
 	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeLoadData, 0)
