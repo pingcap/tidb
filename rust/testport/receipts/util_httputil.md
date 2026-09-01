@@ -1,7 +1,7 @@
 # `pkg/util/httputil` — Go-master parity boundary receipt
 
 Go baseline: `origin/master` at
-`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01).
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02).
 This package is the shared HTTP client/response helper used by BR,
 Lightning, object storage, and other Go tooling.
 
@@ -37,9 +37,8 @@ The package is explicitly unclaimed; no source change is justified.
 
 ## Validation
 
-Profile: **WIP**. This is a complete three-artifact inventory and explicit
-boundary audit with no code change, so `make bazel_prepare` and the Ready lint
-gate are not triggered.
+Profile: **Ready**. This is a complete three-artifact inventory and explicit
+boundary audit with no code change.
 
 ```text
 PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
@@ -47,6 +46,13 @@ GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
 go test ./pkg/util/httputil -count=1
 # ok
 ```
+
+The same focused suite passed in the clean detached Go-master checkout at
+`/tmp/tidb-go-latest-c605`. `cd rust && cargo +nightly-2026-08-22 fmt --all
+-- --check` and `git diff --check` passed. The pinned `make lint` gate passed
+in that clean detached checkout; the active checkout may be temporarily
+instrumented by a concurrent failpoint worker. No Go or Bazel file changed, so
+`make bazel_prepare` is not required.
 
 ## Risks and unverified behavior
 

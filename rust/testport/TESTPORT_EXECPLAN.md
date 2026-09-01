@@ -3686,13 +3686,15 @@ For each bounded behavior cluster:
       Rust helper. The package remains explicitly unclaimed; details are in
       `receipts/util_gcutil.md` and
       `docs/operations/util-gcutil-audit-execplan.md`.
-- 2026-09-01: audited all three Go-master `pkg/util/httputil` artifacts (199
-      lines: TLS-aware 30-second client construction, context GET/JSON/text
-      helpers, non-200 body errors, two source tests, and Bazel target). Rust
-      has separate HTTP transports but no shared client or BR/Lightning
-      object-storage composition root with this contract, so no adapter was
-      added. The package remains explicitly unclaimed; details are in
-      `receipts/util_httputil.md`.
+- 2026-09-02: re-audited all three Go-master `pkg/util/httputil` artifacts at
+      `c6054025ed4c32ab3672a2a24ea46892714d21ec` (199 lines: TLS-aware
+      30-second client construction, context GET/JSON/text helpers, non-200
+      body errors, two source tests, and Bazel target). Rust has separate HTTP
+      transports but no shared client or BR/Lightning/object-storage
+      composition root with this contract, so no adapter was added. The
+      package remains explicitly unclaimed; details are in
+      `receipts/util_httputil.md` and
+      `docs/operations/util-httputil-audit-execplan.md`.
 - 2026-09-01: audited all three Go-master `pkg/util/metricsutil` artifacts
       (269 lines: process/BR metrics registration, keyspace labels, PD retry,
       one source test, and Bazel target). Its initialization fans out across
