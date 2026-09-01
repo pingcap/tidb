@@ -408,6 +408,7 @@ pub fn add_info(add_to: &mut StmtSummaryByDigestElement, add_with: &StmtSummaryB
     if add_to.max_rocksdb_block_read_byte < add_with.max_rocksdb_block_read_byte {
         add_to.max_rocksdb_block_read_byte = add_with.max_rocksdb_block_read_byte;
     }
+    add_to.ia_exec_count += add_with.ia_exec_count;
     add_to.sum_ia_remote_read_segment_count += add_with.sum_ia_remote_read_segment_count;
     if add_to.max_ia_remote_read_segment_count < add_with.max_ia_remote_read_segment_count {
         add_to.max_ia_remote_read_segment_count = add_with.max_ia_remote_read_segment_count;
@@ -938,6 +939,7 @@ mod tests {
                 max_rocksdb_block_read_count: 3,
                 sum_rocksdb_block_read_byte: 4,
                 max_rocksdb_block_read_byte: 4,
+                ia_exec_count: 2,
                 sum_ia_remote_read_segment_count: 8,
                 max_ia_remote_read_segment_count: 3,
 
@@ -1041,6 +1043,7 @@ mod tests {
                 max_rocksdb_block_read_count: 3,
                 sum_rocksdb_block_read_byte: 4,
                 max_rocksdb_block_read_byte: 4,
+                ia_exec_count: 3,
                 sum_ia_remote_read_segment_count: 8,
                 max_ia_remote_read_segment_count: 5,
 
@@ -1146,6 +1149,7 @@ mod tests {
                 max_rocksdb_block_read_count: 3,
                 sum_rocksdb_block_read_byte: 8,
                 max_rocksdb_block_read_byte: 4,
+                ia_exec_count: 5,
                 sum_ia_remote_read_segment_count: 16,
                 max_ia_remote_read_segment_count: 5,
 

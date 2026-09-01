@@ -222,6 +222,8 @@ pub struct StmtRecord {
     pub sum_rocksdb_block_read_byte: u64,
     /// Go `MaxRocksdbBlockReadByte`.
     pub max_rocksdb_block_read_byte: u64,
+    /// Go `IAExecCount`.
+    pub ia_exec_count: i64,
     /// Go `SumIARemoteReadSegmentCount`.
     pub sum_ia_remote_read_segment_count: u64,
     /// Go `MaxIARemoteReadSegmentCount`.
@@ -411,6 +413,7 @@ impl Default for StmtRecord {
             max_rocksdb_block_read_count: 0,
             sum_rocksdb_block_read_byte: 0,
             max_rocksdb_block_read_byte: 0,
+            ia_exec_count: 0,
             sum_ia_remote_read_segment_count: 0,
             max_ia_remote_read_segment_count: 0,
             sum_ia_remote_read_segment_size: 0,
@@ -648,6 +651,9 @@ impl StmtRecord {
                 self.max_rocksdb_block_read_byte = scan_detail.rocksdb_block_read_byte;
             }
             let ia_stats = get_ia_remote_read_segment_stats(Some(scan_detail));
+            if ia_stats.count > 0 {
+                self.ia_exec_count += 1;
+            }
             self.sum_ia_remote_read_segment_count += ia_stats.count;
             if ia_stats.count > self.max_ia_remote_read_segment_count {
                 self.max_ia_remote_read_segment_count = ia_stats.count;
@@ -867,6 +873,7 @@ impl StmtRecord {
         if self.max_rocksdb_block_read_byte < other.max_rocksdb_block_read_byte {
             self.max_rocksdb_block_read_byte = other.max_rocksdb_block_read_byte;
         }
+        self.ia_exec_count += other.ia_exec_count;
         self.sum_ia_remote_read_segment_count += other.sum_ia_remote_read_segment_count;
         if self.max_ia_remote_read_segment_count < other.max_ia_remote_read_segment_count {
             self.max_ia_remote_read_segment_count = other.max_ia_remote_read_segment_count;
@@ -1203,6 +1210,7 @@ impl StmtRecord {
             "max_rocksdb_block_read_byte",
             &self.max_rocksdb_block_read_byte,
         )?;
+        map.serialize_entry("ia_remote_exec_count", &self.ia_exec_count)?;
         map.serialize_entry(
             "sum_ia_remote_read_segment_count",
             &self.sum_ia_remote_read_segment_count,
@@ -1601,6 +1609,7 @@ mod tests {
         assert!((record1.ru.sum_ru_v2 - info.total_ru_v2).abs() < f64::EPSILON);
         assert_eq!(record1.sum_tidb_cpu, info.cpu_usages.tidb_cpu_time);
         assert_eq!(record1.sum_tikv_cpu, info.cpu_usages.tikv_cpu_time);
+        assert_eq!(record1.ia_exec_count, 1);
         assert_eq!(record1.sum_ia_remote_read_segment_count, 3);
         assert_eq!(record1.max_ia_remote_read_segment_count, 3);
 
@@ -1619,6 +1628,7 @@ mod tests {
         assert!((record2.ru.sum_ru_v2 - info.total_ru_v2 * 2.0).abs() < f64::EPSILON);
         assert_eq!(record2.sum_tidb_cpu, info.cpu_usages.tidb_cpu_time * 2);
         assert_eq!(record2.sum_tikv_cpu, info.cpu_usages.tikv_cpu_time * 2);
+        assert_eq!(record2.ia_exec_count, 2);
         assert_eq!(record2.sum_ia_remote_read_segment_count, 6);
         assert_eq!(record2.max_ia_remote_read_segment_count, 3);
 
@@ -1643,6 +1653,7 @@ mod tests {
             serde_json::json!({"stmt_meta_a": "value_a"})
         );
         assert_eq!(items["digest"], serde_json::json!(record2.digest));
+        assert_eq!(items["ia_remote_exec_count"], serde_json::json!(2));
         assert!(items.contains_key("sum_ia_remote_read_segment_count"));
         assert!(items.contains_key("max_ia_remote_read_segment_count"));
         assert!(!items.contains_key("sum_ia_read_segment_count"));
@@ -1656,6 +1667,7 @@ mod tests {
         );
         assert_eq!(items["evicted"], serde_json::json!(true));
         assert_eq!(items["digest"], serde_json::json!(record2.digest));
+        assert_eq!(items["ia_remote_exec_count"], serde_json::json!(2));
 
         store_global_config(restore);
     }

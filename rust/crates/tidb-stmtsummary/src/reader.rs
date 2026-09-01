@@ -441,6 +441,8 @@ pub const MAX_ROCKSDB_BLOCK_READ_COUNT_STR: &str = "MAX_ROCKSDB_BLOCK_READ_COUNT
 pub const AVG_ROCKSDB_BLOCK_READ_BYTE_STR: &str = "AVG_ROCKSDB_BLOCK_READ_BYTE";
 /// Go `MaxRocksdbBlockReadByteStr`.
 pub const MAX_ROCKSDB_BLOCK_READ_BYTE_STR: &str = "MAX_ROCKSDB_BLOCK_READ_BYTE";
+/// Go `IAExecCountStr`.
+pub const IA_EXEC_COUNT_STR: &str = "IA_REMOTE_EXEC_COUNT";
 /// Go `AvgIARemoteReadSegmentCountStr`.
 pub const AVG_IA_REMOTE_READ_SEGMENT_COUNT_STR: &str = "AVG_IA_REMOTE_READ_SEGMENT_COUNT";
 /// Go `MaxIARemoteReadSegmentCountStr`.
@@ -952,6 +954,7 @@ pub fn column_value_factory(name: &str) -> Option<ColumnValueFactory> {
         MAX_ROCKSDB_BLOCK_READ_BYTE_STR => {
             |_, _, _, stats| Datum::new_uint(stats.max_rocksdb_block_read_byte)
         }
+        IA_EXEC_COUNT_STR => |_, _, _, stats| Datum::new_int(stats.ia_exec_count),
         AVG_IA_REMOTE_READ_SEGMENT_COUNT_STR => |_, _, _, stats| {
             Datum::new_real(avg_float4_uint(
                 stats.sum_ia_remote_read_segment_count,
@@ -1518,13 +1521,11 @@ pub(crate) mod tests {
         let reader = new_stmt_summary_reader_for_test(&ss_map);
         let datums = reader.get_stmt_summary_current_rows();
         assert_eq!(datums.len(), 1);
-        let n = timestamp_datum(unix_seconds_in(
-            ss_map.begin_time_for_cur_interval(),
-            Tz::UTC,
-        ));
+        let tz = SessionTimeZone::utc();
+        let n = timestamp_datum(unix_seconds_in(ss_map.begin_time_for_cur_interval(), &tz));
         let e = timestamp_datum(unix_seconds_in(
             ss_map.begin_time_for_cur_interval() + 1800,
-            Tz::UTC,
+            &tz,
         ));
         let f = timestamp_datum(stmt_exec_info1.start_time);
         let is_tikv = i64::from(stmt_exec_info1.stmt_ctx.is_tikv.load(Ordering::SeqCst));
@@ -1786,8 +1787,9 @@ pub(crate) mod tests {
         ss_map.set_max_stmt_count(24).unwrap();
     }
 
-    /// The six IA-remote-read columns both IA tests read, in Go's order.
-    const IA_COLUMN_NAMES: [&str; 6] = [
+    /// The seven IA-remote-read columns both IA tests read, in Go's order.
+    const IA_COLUMN_NAMES: [&str; 7] = [
+        IA_EXEC_COUNT_STR,
         AVG_IA_REMOTE_READ_SEGMENT_COUNT_STR,
         MAX_IA_REMOTE_READ_SEGMENT_COUNT_STR,
         AVG_IA_REMOTE_READ_SEGMENT_SIZE_STR,
@@ -1796,8 +1798,8 @@ pub(crate) mod tests {
         MAX_IA_REMOTE_READ_SEGMENT_WAIT_TIME_STR,
     ];
 
-    /// The two statements both IA tests add: Go's `stmtExecInfo1` and
-    /// `stmtExecInfo2`, differing only in their IA scan-detail counters.
+    /// The two statements both IA tests add: Go's `stmtExecInfo1` has IA
+    /// counters and `stmtExecInfo2` is a standard execution without them.
     fn ia_exec_infos() -> (StmtExecInfo, StmtExecInfo) {
         let mut stmt_exec_info1 = generate_any_exec_info();
         {
@@ -1812,18 +1814,7 @@ pub(crate) mod tests {
             scan_detail.ia_remote_read_segment_duration = Duration::from_millis(5);
         }
 
-        let mut stmt_exec_info2 = generate_any_exec_info();
-        {
-            let scan_detail = stmt_exec_info2
-                .exec_detail
-                .cop_exec_details
-                .scan_detail
-                .as_mut()
-                .unwrap();
-            scan_detail.ia_remote_read_segment_count = 5;
-            scan_detail.ia_remote_read_segment_bytes = 8192;
-            scan_detail.ia_remote_read_segment_duration = Duration::from_millis(9);
-        }
+        let stmt_exec_info2 = generate_any_exec_info();
         (stmt_exec_info1, stmt_exec_info2)
     }
 
@@ -1841,18 +1832,22 @@ pub(crate) mod tests {
 
         let rows = reader.get_stmt_summary_current_rows();
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0][0], Datum::new_real(4.0));
-        assert_eq!(rows[0][1], Datum::new_uint(5));
-        assert_eq!(rows[0][2], Datum::new_real(6144.0));
-        assert_eq!(rows[0][3], Datum::new_uint(8192));
-        assert_eq!(
-            rows[0][4],
-            Datum::new_int(i64::try_from(Duration::from_millis(7).as_nanos()).unwrap())
-        );
+        assert_eq!(rows[0][0], Datum::new_int(1));
+        assert_eq!(rows[0][1], Datum::new_real(1.5));
+        assert_eq!(rows[0][2], Datum::new_uint(3));
+        assert_eq!(rows[0][3], Datum::new_real(2048.0));
+        assert_eq!(rows[0][4], Datum::new_uint(4096));
         assert_eq!(
             rows[0][5],
-            Datum::new_int(i64::try_from(Duration::from_millis(9).as_nanos()).unwrap())
+            Datum::new_int(i64::try_from(Duration::from_micros(2500).as_nanos()).unwrap())
         );
+        assert_eq!(
+            rows[0][6],
+            Datum::new_int(i64::try_from(Duration::from_millis(5).as_nanos()).unwrap())
+        );
+        let history_rows = reader.get_stmt_summary_history_rows();
+        assert_eq!(history_rows.len(), 1);
+        assert_eq!(history_rows[0][0], Datum::new_int(1));
     }
 
     /// Go `TestToDatumIAColumnsChunkRoundTrip`.
@@ -1874,6 +1869,7 @@ pub(crate) mod tests {
         let mut max_unsigned_type = FieldType::new(FieldTypeCode::LongLong);
         max_unsigned_type.set_flags(FieldTypeFlags::UNSIGNED);
         let ret_types = [
+            FieldType::new(FieldTypeCode::LongLong),
             FieldType::new(FieldTypeCode::Double),
             max_unsigned_type.clone(),
             FieldType::new(FieldTypeCode::Double),
@@ -1885,17 +1881,18 @@ pub(crate) mod tests {
         mut_row.set_datums(&rows[0]);
         let row = mut_row.to_row();
 
-        assert!((row.get_float64(0) - 4.0).abs() < f64::EPSILON);
-        assert_eq!(row.get_uint64(1), 5);
-        assert!((row.get_float64(2) - 6144.0).abs() < f64::EPSILON);
-        assert_eq!(row.get_uint64(3), 8192);
-        assert_eq!(
-            row.get_int64(4),
-            i64::try_from(Duration::from_millis(7).as_nanos()).unwrap()
-        );
+        assert_eq!(row.get_int64(0), 1);
+        assert!((row.get_float64(1) - 1.5).abs() < f64::EPSILON);
+        assert_eq!(row.get_uint64(2), 3);
+        assert!((row.get_float64(3) - 2048.0).abs() < f64::EPSILON);
+        assert_eq!(row.get_uint64(4), 4096);
         assert_eq!(
             row.get_int64(5),
-            i64::try_from(Duration::from_millis(9).as_nanos()).unwrap()
+            i64::try_from(Duration::from_micros(2500).as_nanos()).unwrap()
+        );
+        assert_eq!(
+            row.get_int64(6),
+            i64::try_from(Duration::from_millis(5).as_nanos()).unwrap()
         );
     }
 

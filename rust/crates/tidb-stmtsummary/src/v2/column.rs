@@ -21,7 +21,7 @@
 //!
 //! What this file reuses from v1 rather than restating:
 //!
-//! - The column-name constants. Go's `v2/column.go` re-declares 129 constants
+//! - The column-name constants. Go's `v2/column.go` re-declares 130 constants
 //!   that `v1/reader.go` also declares; all 123 identifiers the two files share
 //!   were checked to carry identical string values, and the 6 that only v2
 //!   spells (`AvgRequestUnitRead`, `MaxRequestUnitRead`, `AvgRequestUnitWrite`,
@@ -92,15 +92,15 @@ pub use crate::reader::{
     AVG_TOTAL_KEYS_STR, AVG_TXN_RETRY_STR, AVG_WAIT_TIME_STR, AVG_WRITE_KEYS_STR,
     AVG_WRITE_SIZE_STR, AVG_WRITE_SQL_RESP_TIME_STR, BACKOFF_TYPES_STR, BINARY_PLAN,
     BINDING_DIGEST_STR, BINDING_DIGEST_TEXT_STR, CHARSET, CLUSTER_TABLE_INSTANCE_COLUMN_NAME_STR,
-    COLLATION, DIGEST_STR, DIGEST_TEXT_STR, EXEC_COUNT_STR, FIRST_SEEN_STR, INDEX_NAMES_STR,
-    LAST_SEEN_STR, MAX_BACKOFF_TIME_STR, MAX_COMMIT_BACKOFF_TIME_STR, MAX_COMMIT_TIME_STR,
-    MAX_COMPILE_LATENCY_STR, MAX_COP_PROCESS_ADDRESS_STR, MAX_COP_PROCESS_TIME_STR,
-    MAX_COP_WAIT_ADDRESS_STR, MAX_COP_WAIT_TIME_STR, MAX_DISK_STR, MAX_GET_COMMIT_TS_TIME_STR,
-    MAX_IA_REMOTE_READ_SEGMENT_COUNT_STR, MAX_IA_REMOTE_READ_SEGMENT_SIZE_STR,
-    MAX_IA_REMOTE_READ_SEGMENT_WAIT_TIME_STR, MAX_LATENCY_STR, MAX_LOCAL_LATCH_WAIT_TIME_STR,
-    MAX_MEM_ARBITRATION_STR, MAX_MEM_STR, MAX_PARSE_LATENCY_STR, MAX_PREWRITE_REGIONS_STR,
-    MAX_PREWRITE_TIME_STR, MAX_PROCESSED_KEYS_STR, MAX_PROCESS_TIME_STR, MAX_QUEUED_RC_TIME_STR,
-    MAX_REQUEST_UNIT_READ_STR as MAX_REQUEST_UNIT_READ,
+    COLLATION, DIGEST_STR, DIGEST_TEXT_STR, EXEC_COUNT_STR, FIRST_SEEN_STR, IA_EXEC_COUNT_STR,
+    INDEX_NAMES_STR, LAST_SEEN_STR, MAX_BACKOFF_TIME_STR, MAX_COMMIT_BACKOFF_TIME_STR,
+    MAX_COMMIT_TIME_STR, MAX_COMPILE_LATENCY_STR, MAX_COP_PROCESS_ADDRESS_STR,
+    MAX_COP_PROCESS_TIME_STR, MAX_COP_WAIT_ADDRESS_STR, MAX_COP_WAIT_TIME_STR, MAX_DISK_STR,
+    MAX_GET_COMMIT_TS_TIME_STR, MAX_IA_REMOTE_READ_SEGMENT_COUNT_STR,
+    MAX_IA_REMOTE_READ_SEGMENT_SIZE_STR, MAX_IA_REMOTE_READ_SEGMENT_WAIT_TIME_STR, MAX_LATENCY_STR,
+    MAX_LOCAL_LATCH_WAIT_TIME_STR, MAX_MEM_ARBITRATION_STR, MAX_MEM_STR, MAX_PARSE_LATENCY_STR,
+    MAX_PREWRITE_REGIONS_STR, MAX_PREWRITE_TIME_STR, MAX_PROCESSED_KEYS_STR, MAX_PROCESS_TIME_STR,
+    MAX_QUEUED_RC_TIME_STR, MAX_REQUEST_UNIT_READ_STR as MAX_REQUEST_UNIT_READ,
     MAX_REQUEST_UNIT_V2_STR as MAX_REQUEST_UNIT_V2,
     MAX_REQUEST_UNIT_WRITE_STR as MAX_REQUEST_UNIT_WRITE, MAX_RESOLVE_LOCK_TIME_STR,
     MAX_RESULT_ROWS_STR, MAX_ROCKSDB_BLOCK_CACHE_HIT_COUNT_STR, MAX_ROCKSDB_BLOCK_READ_BYTE_STR,
@@ -293,6 +293,7 @@ pub fn column_factory(name: &str) -> Option<ColumnFactory> {
         MAX_ROCKSDB_BLOCK_READ_BYTE_STR => {
             |_, record| Datum::new_uint(record.max_rocksdb_block_read_byte)
         }
+        IA_EXEC_COUNT_STR => |_, record| Datum::new_int(record.ia_exec_count),
         AVG_IA_REMOTE_READ_SEGMENT_COUNT_STR => |_, record| {
             Datum::new_real(avg_float4_uint(
                 record.sum_ia_remote_read_segment_count,
@@ -698,10 +699,11 @@ mod tests {
         }
     }
 
-    /// The six-column IA fixture Go's `TestIAAvgColumns` and
+    /// The seven-column IA fixture Go's `TestIAAvgColumns` and
     /// `TestIAAvgColumnsChunkRoundTrip` both build.
     fn ia_columns_fixture() -> (Vec<ColumnFactory>, StmtRecord) {
         let cols = columns(&[
+            IA_EXEC_COUNT_STR,
             AVG_IA_REMOTE_READ_SEGMENT_COUNT_STR,
             MAX_IA_REMOTE_READ_SEGMENT_COUNT_STR,
             AVG_IA_REMOTE_READ_SEGMENT_SIZE_STR,
@@ -724,18 +726,7 @@ mod tests {
             scan.ia_remote_read_segment_duration = Duration::from_millis(5);
         }
 
-        let mut info2 = generate_stmt_exec_info_4_test("digest");
-        {
-            let scan = info2
-                .exec_detail
-                .cop_exec_details
-                .scan_detail
-                .as_mut()
-                .unwrap();
-            scan.ia_remote_read_segment_count = 5;
-            scan.ia_remote_read_segment_bytes = 8192;
-            scan.ia_remote_read_segment_duration = Duration::from_millis(9);
-        }
+        let info2 = generate_stmt_exec_info_4_test("digest");
 
         let mut record = new_stmt_record(&info1);
         record.add(&info1);
@@ -747,23 +738,24 @@ mod tests {
     #[test]
     fn test_ia_avg_columns() {
         let (factories, record) = ia_columns_fixture();
-        assert_eq!(factories[0](&MockColumnInfo, &record), Datum::new_real(4.0));
-        assert_eq!(factories[1](&MockColumnInfo, &record), Datum::new_uint(5));
-        assert_eq!(
-            factories[2](&MockColumnInfo, &record),
-            Datum::new_real(6144.0)
-        );
+        assert_eq!(factories[0](&MockColumnInfo, &record), Datum::new_int(1));
+        assert_eq!(factories[1](&MockColumnInfo, &record), Datum::new_real(1.5));
+        assert_eq!(factories[2](&MockColumnInfo, &record), Datum::new_uint(3));
         assert_eq!(
             factories[3](&MockColumnInfo, &record),
-            Datum::new_uint(8192)
+            Datum::new_real(2048.0)
         );
         assert_eq!(
             factories[4](&MockColumnInfo, &record),
-            Datum::new_int(nanos(Duration::from_millis(7)))
+            Datum::new_uint(4096)
         );
         assert_eq!(
             factories[5](&MockColumnInfo, &record),
-            Datum::new_int(nanos(Duration::from_millis(9)))
+            Datum::new_int(nanos(Duration::from_micros(2500)))
+        );
+        assert_eq!(
+            factories[6](&MockColumnInfo, &record),
+            Datum::new_int(nanos(Duration::from_millis(5)))
         );
     }
 
@@ -779,6 +771,7 @@ mod tests {
         let mut max_unsigned_type = FieldType::new(FieldTypeCode::LongLong);
         max_unsigned_type.set_flags(FieldTypeFlags::UNSIGNED);
         let ret_types = vec![
+            FieldType::new(FieldTypeCode::LongLong),
             FieldType::new(FieldTypeCode::Double),
             max_unsigned_type.clone(),
             FieldType::new(FieldTypeCode::Double),
@@ -790,11 +783,12 @@ mod tests {
         mut_row.set_datums(&row_datums);
         let row = mut_row.to_row();
 
-        assert!((row.get_float64(0) - 4.0).abs() < f64::EPSILON);
-        assert_eq!(row.get_uint64(1), 5);
-        assert!((row.get_float64(2) - 6144.0).abs() < f64::EPSILON);
-        assert_eq!(row.get_uint64(3), 8192);
-        assert_eq!(row.get_int64(4), nanos(Duration::from_millis(7)));
-        assert_eq!(row.get_int64(5), nanos(Duration::from_millis(9)));
+        assert_eq!(row.get_int64(0), 1);
+        assert!((row.get_float64(1) - 1.5).abs() < f64::EPSILON);
+        assert_eq!(row.get_uint64(2), 3);
+        assert!((row.get_float64(3) - 2048.0).abs() < f64::EPSILON);
+        assert_eq!(row.get_uint64(4), 4096);
+        assert_eq!(row.get_int64(5), nanos(Duration::from_micros(2500)));
+        assert_eq!(row.get_int64(6), nanos(Duration::from_millis(5)));
     }
 }

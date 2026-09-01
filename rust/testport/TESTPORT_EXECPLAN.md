@@ -129,6 +129,20 @@ For each bounded behavior cluster:
   explicit dependency boundary. Complete inventory and Ready evidence are
   recorded in `receipts/util_memory_audit.md`.
 
+- 2026-09-01: audited all 22 Go-master `pkg/util/stmtsummary` artifacts
+  (11,214 lines, including both BUILD targets, v1/v2 production and test
+  files, benchmarks, and the nested table-test harness). Compared the
+  `8bab3c26d7`, `655769534b`, and `381ac705f9` source deltas: Rust retains the
+  stale-interval evicted-row guard and lock-safe window/record ownership,
+  adds IA execution-count tracking through v1/v2 readers, eviction rollups,
+  merges, chunk paths, and JSON, and fixes v1 plan-encoding fallback plus
+  first-statement internal-summary initialization. Source-shaped regressions
+  cover IA-vs-ordinary executions, history/chunk/JSON paths, plan failure, and
+  internal-only cleanup. The v2 history reader, logger, table tests, and the
+  executor/infoschema/planner integration remain an explicit dependency
+  boundary; the complete inventory and Ready evidence are in
+  `receipts/util_stmtsummary_audit.md`.
+
 - 2026-09-01: audited the complete Go `pkg/util/dbterror/exeerrors` package at
   `origin/master` `db35d47066648fe73abce6318d53fc625df51490` against the Rust
   owner on `origin/hparser-integration`. The package has exactly `errors.go`
@@ -1554,6 +1568,12 @@ For each bounded behavior cluster:
   Rust memory owner had retained the old public helper, so the bounded audit
   removed that Rust-only API and matched the new sentinel behavior before any
   shard indexing.
+- Go's stmt-summary map initializes `isInternal` from the first statement and
+  only then applies logical AND; the Rust map had applied AND to the default
+  `false`, making every new summary look external. The same source delta now
+  substitutes `PlanDiscardedEncoded` when lazy plan encoding fails instead of
+  returning a nil stats pointer. Both cases required ordinary v1 map fixes and
+  focused regressions; the v2 record constructor already matched Go.
 - Go's test-only histogram equality deliberately compares `ToString(0)` and
   therefore ignores metadata absent from that projection. Rust derived
   `PartialEq` is stricter and cannot substitute for this helper's behavior.
@@ -1634,6 +1654,21 @@ For each bounded behavior cluster:
   were skipped by the typed V2 decoder's default restored-data policy. A narrow
   fallback to the existing map path made the source regression pass without
   changing new-collation behavior.
+- Go master places `IAExecCountStr` before the six IA segment aggregate columns
+  and increments it only for executions whose IA segment count is positive;
+  counting bytes or wait time would over-report ordinary executions. The Rust
+  source-derived tests now use one IA and one ordinary execution to pin that
+  distinction in both v1 and v2.
+- The Go stmt-summary race fix snapshots evicted-count rows under one mutex and
+  uses `Peek` while locking records during internal cleanup. Rust's v1 evicted
+  rollup is always behind its owning mutex, while v2 keeps window and record
+  locks separate and acquires them in the documented order; the audit found no
+  missing Rust behavior to patch for those two paths.
+- The stmtsummary owner is intentionally not declared package-complete: Go's
+  v2 reader/logger/table-test files and the executor `SHOW SLOW`, infoschema,
+  and planner consumers are outside the current Rust crate. This batch keeps
+  the implemented record/reader/column behavior aligned without inventing a
+  second integration path.
 
 ## Outcomes & Retrospective
 

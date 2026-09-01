@@ -523,6 +523,8 @@ pub struct StmtSummaryStats {
     pub sum_rocksdb_block_read_byte: u64,
     /// Go `maxRocksdbBlockReadByte`.
     pub max_rocksdb_block_read_byte: u64,
+    /// Go `iaExecCount`.
+    pub ia_exec_count: i64,
     /// Go `sumIARemoteReadSegmentCount`.
     pub sum_ia_remote_read_segment_count: u64,
     /// Go `maxIARemoteReadSegmentCount`.
@@ -698,6 +700,7 @@ impl Default for StmtSummaryStats {
             max_rocksdb_block_read_count: 0,
             sum_rocksdb_block_read_byte: 0,
             max_rocksdb_block_read_byte: 0,
+            ia_exec_count: 0,
             sum_ia_remote_read_segment_count: 0,
             max_ia_remote_read_segment_count: 0,
             sum_ia_remote_read_segment_size: 0,
@@ -769,10 +772,15 @@ impl Default for StmtSummaryStats {
 /// `indexNames` store the values shown at the first time, because it compacts
 /// performance to update every time.
 ///
-/// Go returns `nil` when `GetEncodedPlan` errors; that becomes `None` here.
+/// Go substitutes [`PLAN_DISCARDED_ENCODED`] when `GetEncodedPlan` errors.
+/// The `Option` return is retained for the existing Rust construction API, but
+/// this function now returns `Some` for every `StmtExecInfo`, matching Go.
 #[must_use]
 pub fn new_stmt_summary_stats(sei: &StmtExecInfo) -> Option<StmtSummaryStats> {
-    let (mut sample_plan, plan_hint) = sei.lazy_info.encoded_plan().ok()?;
+    let (mut sample_plan, plan_hint) = sei
+        .lazy_info
+        .encoded_plan()
+        .unwrap_or_else(|_| (PLAN_DISCARDED_ENCODED.to_owned(), String::new()));
     let limit = MAX_ENCODED_PLAN_SIZE_IN_BYTES.load(Ordering::SeqCst);
     if sample_plan.len() > limit {
         sample_plan = PLAN_DISCARDED_ENCODED.to_owned();
@@ -897,6 +905,9 @@ impl StmtSummaryStats {
                 self.max_rocksdb_block_read_byte = scan_detail.rocksdb_block_read_byte;
             }
             let ia_stats = get_ia_remote_read_segment_stats(Some(scan_detail));
+            if ia_stats.count > 0 {
+                self.ia_exec_count += 1;
+            }
             self.sum_ia_remote_read_segment_count += ia_stats.count;
             if ia_stats.count > self.max_ia_remote_read_segment_count {
                 self.max_ia_remote_read_segment_count = ia_stats.count;
@@ -1142,8 +1153,8 @@ impl StmtSummaryByDigest {
     /// Go `(*stmtSummaryByDigest).init`: creates a `stmtSummaryByDigest` from
     /// `StmtExecInfo`.
     ///
-    /// Go would nil-deref when `newStmtSummaryStats` returns nil; here the
-    /// initialization is skipped and `false` is returned.
+    /// Go initializes the summary even when encoded-plan generation fails; the
+    /// fallback marker is produced by [`new_stmt_summary_stats`].
     fn init(&mut self, sei: &StmtExecInfo) -> bool {
         // Use "," to separate table names to support FIND_IN_SET.
         let mut buffer = String::new();
@@ -1523,14 +1534,21 @@ impl StmtSummaryByDigestMap {
             Some(value) => Arc::clone(value),
             None => {
                 // Lazy initialize it to release ssMap.mutex ASAP.
-                let summary = Arc::new(Mutex::new(StmtSummaryByDigest::default()));
+                let summary = Arc::new(Mutex::new(StmtSummaryByDigest {
+                    // Go initializes `isInternal` from the first statement;
+                    // subsequent statements narrow it with logical AND.
+                    is_internal: sei.is_internal,
+                    ..StmtSummaryByDigest::default()
+                }));
                 inner.summary_map.put(key, Arc::clone(&summary));
                 summary
             }
         };
         {
             let mut summary = summary.lock().unwrap();
-            summary.is_internal = summary.is_internal && sei.is_internal;
+            if summary.initialized {
+                summary.is_internal = summary.is_internal && sei.is_internal;
+            }
             summary.add(sei, begin_time, interval_seconds, history_size);
         }
         self.update_metrics_locked(&inner);
@@ -1555,20 +1573,24 @@ impl StmtSummaryByDigestMap {
     /// summaries which are internal summaries.
     pub fn clear_internal(&self) {
         let mut inner = self.inner.lock().unwrap();
+        // Snapshot keys and values without calling `get`: Go's `Peek` keeps
+        // the LRU order unchanged while the record mutex protects
+        // `isInternal` from concurrent AddStatement updates.
         let hashes: Vec<Vec<u8>> = inner
             .summary_map
             .keys()
-            .iter()
-            .map(|key| key.hash().to_vec())
+            .into_iter()
+            .zip(inner.summary_map.values())
+            .filter_map(|(key, summary)| {
+                summary
+                    .lock()
+                    .unwrap()
+                    .is_internal
+                    .then(|| key.hash().to_vec())
+            })
             .collect();
         for hash in hashes {
-            let is_internal = match inner.summary_map.get(hash.as_slice()) {
-                Some(summary) => summary.lock().unwrap().is_internal,
-                None => continue,
-            };
-            if is_internal {
-                inner.summary_map.delete(hash.as_slice());
-            }
+            inner.summary_map.delete(hash.as_slice());
         }
         self.update_metrics_locked(&inner);
     }
@@ -1876,6 +1898,7 @@ pub(crate) mod tests {
         original_sql: String,
         plan: String,
         hint_str: String,
+        plan_error: bool,
         bin_plan: String,
         plan_digest: String,
         binding_sql: String,
@@ -1888,6 +1911,9 @@ pub(crate) mod tests {
         }
 
         fn encoded_plan(&self) -> Result<(String, String), EncodedPlanError> {
+            if self.plan_error {
+                return Err(EncodedPlanError("mock plan encoding error".to_owned()));
+            }
             Ok((self.plan.clone(), self.hint_str.clone()))
         }
 
@@ -2773,6 +2799,112 @@ pub(crate) mod tests {
 
         let datums = reader.get_stmt_summary_current_rows();
         assert_eq!(datums.len(), loops);
+    }
+
+    /// Go `TestAddStatementPlanEncodeError`: a lazy plan encoding failure
+    /// still records the statement with the discarded-plan marker.
+    #[test]
+    fn test_add_statement_plan_encode_error_uses_discarded_marker() {
+        let ss_map = StmtSummaryByDigestMap::new();
+        ss_map.set_begin_time_for_cur_interval(unix_now() + 60);
+
+        let mut info = generate_any_exec_info();
+        info.lazy_info = Arc::new(MockLazyInfo {
+            original_sql: "select 1".to_owned(),
+            plan_error: true,
+            ..MockLazyInfo::default()
+        });
+        ss_map.add_statement(&info);
+
+        let mut key = StmtDigestKey::new();
+        key.init(
+            &info.schema_name,
+            &info.digest,
+            &info.prev_sql_digest,
+            &info.plan_digest,
+            &info.resource_group_name,
+            "",
+        );
+        let summary = ss_map.summary_map_get(&key).expect("summary must exist");
+        let summary = summary.lock().unwrap();
+        let element = summary
+            .history
+            .back()
+            .expect("history must exist")
+            .lock()
+            .unwrap();
+        assert_eq!(element.stats.sample_plan, PLAN_DISCARDED_ENCODED);
+        assert_eq!(element.stats.plan_hint, "");
+        assert_eq!(element.stats.exec_count, 1);
+    }
+
+    /// Go `AddStatement` initializes `isInternal` from the first statement and
+    /// then narrows it with AND; `ClearInternal` removes only pure-internal
+    /// summaries.
+    #[test]
+    fn test_internal_summary_initialization_and_clear() {
+        let ss_map = StmtSummaryByDigestMap::new();
+        ss_map.set_enabled_internal_query(true);
+        ss_map.set_begin_time_for_cur_interval(unix_now() + 60);
+
+        let mut internal_only = generate_any_exec_info();
+        internal_only.digest = "internal_only".to_owned();
+        internal_only.is_internal = true;
+        ss_map.add_statement(&internal_only);
+
+        let mut normal_old = generate_any_exec_info();
+        normal_old.digest = "normal_old".to_owned();
+        ss_map.add_statement(&normal_old);
+
+        let mut normal_new = generate_any_exec_info();
+        normal_new.digest = "normal_new".to_owned();
+        ss_map.add_statement(&normal_new);
+
+        let mut mixed_internal = generate_any_exec_info();
+        mixed_internal.digest = "mixed".to_owned();
+        mixed_internal.is_internal = true;
+        ss_map.add_statement(&mixed_internal);
+        let mut mixed_external = generate_any_exec_info();
+        mixed_external.digest = mixed_internal.digest.clone();
+        ss_map.add_statement(&mixed_external);
+
+        let before_clear: Vec<String> = ss_map
+            .summary_map_values()
+            .into_iter()
+            .map(|summary| summary.lock().unwrap().digest.clone())
+            .collect();
+        let mixed_summary = ss_map
+            .summary_map_values()
+            .into_iter()
+            .find(|summary| summary.lock().unwrap().digest == mixed_internal.digest)
+            .expect("mixed summary must exist");
+        assert!(!mixed_summary.lock().unwrap().is_internal);
+
+        ss_map.set_enabled_internal_query(false);
+        assert_eq!(ss_map.summary_map_size(), before_clear.len() - 1);
+        let after_clear: Vec<String> = ss_map
+            .summary_map_values()
+            .into_iter()
+            .map(|summary| summary.lock().unwrap().digest.clone())
+            .collect();
+        let expected_after_clear: Vec<String> = before_clear
+            .into_iter()
+            .filter(|digest| digest != &internal_only.digest)
+            .collect();
+        assert_eq!(after_clear, expected_after_clear);
+        let mut internal_key = StmtDigestKey::new();
+        internal_key.init(
+            &internal_only.schema_name,
+            &internal_only.digest,
+            &internal_only.prev_sql_digest,
+            &internal_only.plan_digest,
+            &internal_only.resource_group_name,
+            "",
+        );
+        assert!(ss_map.summary_map_get(&internal_key).is_none());
+        assert!(after_clear
+            .iter()
+            .any(|digest| digest == &mixed_internal.digest));
     }
 
     /// Go `TestMaxStmtCount`.
