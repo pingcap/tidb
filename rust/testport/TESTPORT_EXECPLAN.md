@@ -179,6 +179,15 @@ For each bounded behavior cluster:
   `receipts/bindinfo.md`, ExecPlan:
   `docs/operations/bindinfo-audit-execplan.md`.
 
+- 2026-09-01: completed the Go-master `pkg/errctx` inventory (three
+  artifacts, 389 lines), including the production error context, source test,
+  and Bazel target. `tidb-error::errctx` already matches all seven error
+  groups and code mappings, copy-on-write level handling, warning/note
+  publication, multi-error behavior, root-cause aliases, strict context, and
+  ignore/warn precedence. Go and Rust source-derived tests pass; no
+  production change was needed. Receipt: `receipts/errctx.md`, ExecPlan:
+  `docs/operations/errctx-audit-execplan.md`.
+
 - 2026-09-01: audited the complete Go-master `pkg/executor/internal/util`
   package (three artifacts, 161 lines), including recursive executor ID
   rewriting, all child-node cases and unknown-type errors, test-only spill
