@@ -717,8 +717,13 @@ fn mem_arbitrator() {
             }
         );
 
-        let digest_id1 = hash_str("test");
+        let mut digest_builder = DigestIDBuilder::new();
+        digest_builder.add_string("test");
+        let digest_id1 = digest_builder.sum64();
         let digest_id2 = digest_id1 + 1;
+        assert!(m.get_digest_profile_cache(INVALID_DIGEST_ID, 1).is_none());
+        m.update_digest_profile_cache(INVALID_DIGEST_ID, 1009, 1);
+        assert_eq!(m.digest_num.load(SeqCst), 0);
         assert!(m.get_digest_profile_cache(digest_id1, 1).is_none());
         assert_eq!(m.digest_num.load(SeqCst), 0);
         m.update_digest_profile_cache(digest_id1, 1009, 0);

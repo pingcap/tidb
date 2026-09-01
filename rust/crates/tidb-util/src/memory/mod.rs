@@ -37,7 +37,7 @@ pub use arbitrator::{
     DEF_AWAIT_FREE_POOL_SHARD_NUM, DEF_POOL_QUOTA_SHARDS, DEF_POOL_STATUS_SHARDS,
     DEF_TASK_TICK_DUR, ERR_ARBITRATE_FAIL, MAX_ARBITRATOR_MODE,
 };
-pub use arbitrator_utils::{hash_even_num, hash_str};
+pub use arbitrator_utils::{hash_even_num, DigestIDBuilder, INVALID_DIGEST_ID};
 pub use mem_state_recorder::{
     parse_soft_limit_text, parse_work_mode_text, runtime_mem_state_recorder_file_path,
     RuntimeMemStateRecorder,

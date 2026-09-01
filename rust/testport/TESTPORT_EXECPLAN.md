@@ -119,6 +119,16 @@ For each bounded behavior cluster:
   dependency boundary. Complete inventory and Ready evidence are recorded in
   `receipts/sessionctx_vardef_audit.md`.
 
+- 2026-09-01: audited all 14 Go-master `pkg/util/memory` artifacts (11,388
+  lines, including BUILD, platform-sensitive memory discovery, stress tests,
+  and benchmarks) against the `tidb-util::memory` owner. Replaced the removed
+  Unicode `HashStr` surface with Go's length-prefixed `DigestIDBuilder`, added
+  the `InvalidDigestID` sentinel guard to digest-cache lookup/update, and
+  covered component-boundary/order and no-cache-creation regressions. The
+  broader process/global-arbitrator and tracker transition deltas remain an
+  explicit dependency boundary. Complete inventory and Ready evidence are
+  recorded in `receipts/util_memory_audit.md`.
+
 - 2026-09-01: audited the complete Go `pkg/util/dbterror/exeerrors` package at
   `origin/master` `db35d47066648fe73abce6318d53fc625df51490` against the Rust
   owner on `origin/hparser-integration`. The package has exactly `errors.go`
@@ -1288,10 +1298,28 @@ For each bounded behavior cluster:
   `MemoryUsage` capacity-based and do not invent a consumer for this
   informational API. Date/Author: 2026-09-01, Codex.
 - Decision: keep `tidb-codec::Encoder` limited to comparable-key encoding,
-  matching Go master's key-only type. Move value and hash implementations to
-  the existing package-level functions and update every searched Rust
-  consumer; do not preserve a Rust-only fixed-collation value/hash method.
-  Date/Author: 2026-09-01, Codex.
+      matching Go master's key-only type. Move value and hash implementations to
+      the existing package-level functions and update every searched Rust
+      consumer; do not preserve a Rust-only fixed-collation value/hash method.
+      Date/Author: 2026-09-01, Codex.
+- Decision: extend the existing `tidb-vardef` constants owner with the exact
+      Go-master name/default/bound additions, including duration defaults as
+      nanoseconds. Delete the removed `DefTiDBMergePartitionStatsConcurrency`
+      default while retaining its backward-compatible name constant, because Go
+      still registers that name with a literal value. Do not fabricate the
+      unported SysVar registry or SessionVars layer in this constants batch.
+      Date/Author: 2026-09-01, Codex.
+- Decision: treat the current `pkg/tablecodec`/`pkg/util/rowcodec` delta as a
+      caller-surface cleanup because Rust already exposes free row/value
+      functions matching Go master. Keep the retained `Encoder` only at the
+      `GenIndexKey` comparable-key boundary; do not add a compatibility wrapper
+      for the removed row encoder argument. Date/Author: 2026-09-01, Codex.
+- Decision: preserve the V2 typed fast path for ordinary and new-collation
+      reads, but route old-collation common handles through the existing map
+      decoder. The typed leaf has one default restored-data policy, while Go's
+      decoder is mode-sensitive; this narrow fallback restores the handle
+      component without duplicating row decoding. Date/Author: 2026-09-01,
+      Codex.
 - Decision: for the continuing loop, newly selected packages compare against
   the fetched Go `origin/master`; the older `e2788410...` pin remains the
   historical source for receipts already completed. `pkg/util/plancodec`
@@ -1521,6 +1549,11 @@ For each bounded behavior cluster:
   FULL OUTER JOIN, transaction-file, embedding, and connection-event constants
   together; treating them as one constants-layer batch kept the package unit
   coherent without pulling in the still-unported SessionVars registry.
+- Go master removed memory's Unicode-code-point `HashStr` in favor of the
+  length-prefixed byte `DigestIDBuilder` and made digest ID zero a no-op. The
+  Rust memory owner had retained the old public helper, so the bounded audit
+  removed that Rust-only API and matched the new sentinel behavior before any
+  shard indexing.
 - Go's test-only histogram equality deliberately compares `ToString(0)` and
   therefore ignores metadata absent from that projection. Rust derived
   `PartialEq` is stricter and cannot substitute for this helper's behavior.
