@@ -48,6 +48,12 @@ For each bounded behavior cluster:
   verifies key 4 remains newest after reading key 2. The receipt is updated
   in `receipts/util_kvcache.md`; all eight Rust owner tests pass.
 
+- 2026-09-01: refreshed the complete `pkg/util/naming` inventory against
+  current Go master. Its production, test, and Bazel files remain behaviorally
+  identical; only `OWNERS` now filters Bazel approvers separately. The Rust
+  validator owner and its two consumers remain aligned, with the current
+  source/owner validation recorded in `receipts/util_naming.md`.
+
 - 2026-09-01: audited all seven Go-master `pkg/util/profile` artifacts,
   including the 1,206-byte pprof fixture, two production files, three test
   files, and Bazel fixture glob. The Rust workspace only preserves the six

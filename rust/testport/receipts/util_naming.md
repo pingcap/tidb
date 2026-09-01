@@ -1,15 +1,19 @@
-# `pkg/util/naming` — complete package transcreation
+# `pkg/util/naming` — complete current-master package transcreation
 
-Pinned Go source: `e2788410d8d696605e8cb002585877a063ccc909`.
+Go source: `origin/master` at
+`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01).
 
 ## Complete inventory
 
-All four pinned artifacts were read in full: `naming.go`, `naming_test.go`,
+All four artifacts were read in full: `naming.go`, `naming_test.go`,
 `BUILD.bazel`, and `OWNERS`. The package has one production file, one source
 test, one Bazel library/test pair, and package ownership metadata. It has no
 package doc, README, fixture, benchmark, generated source, platform or
-build-tag variant, fuzz target, example, or common test harness. The checkout
-is byte-identical to the pin.
+build-tag variant, fuzz target, example, or common test harness. The
+production, test, and Bazel artifacts are unchanged from the pin. Go master
+only changes `OWNERS`: Bazel files now use the community approver while other
+paths retain the DDL approver; this repository metadata has no Rust runtime
+representation.
 
 ## Rust ownership and audit result
 
@@ -33,15 +37,15 @@ focused regression test protects this previously divergent behavior.
 
 ## Validation
 
-Profile: WIP; this is one package checkpoint in the continuing repository
-audit, not a repository-wide readiness claim.
+Profile: Ready for this package audit; the continuing repository loop is not a
+repository-wide readiness claim.
 
-- `git diff --exit-code e2788410d8d696605e8cb002585877a063ccc909 -- pkg/util/naming` — passed.
-- `GOCACHE=/private/tmp/tidb-go-cache GOTOOLCHAIN=go1.25.10 go test -tags=intest,deadlock -count=1 ./pkg/util/naming` — passed.
-- `cargo test -p tidb-naming --lib --offline -- --nocapture` — passed; 2 tests.
-- `cargo check -p tidb-naming -p tidb-config -p tidb-session -p tidb-util --offline` — passed; existing warnings outside `tidb-naming` remain.
-- `cargo clippy -p tidb-naming --all-targets --offline -- -D warnings` — passed.
-- `rustfmt --edition 2021 --check crates/tidb-naming/src/lib.rs` — passed.
+- `git diff --stat e2788410d8d696605e8cb002585877a063ccc909 origin/master -- pkg/util/naming` — passed; only `OWNERS` changed.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test -tags=intest,deadlock -count=1 ./pkg/util/naming` — passed.
+- `cargo +nightly-2026-08-22 test --offline --locked -p tidb-naming --lib -- --nocapture` — passed; 2 tests.
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 check --offline --locked -p tidb-naming -p tidb-config -p tidb-session -p tidb-util` — passed; existing warnings outside `tidb-naming` remain.
+- `cargo +nightly-2026-08-22 clippy --offline --locked -p tidb-naming --all-targets -- -D warnings` — passed.
+- `cargo +nightly-2026-08-22 fmt --all -- --check` — passed.
 - `git diff --check` — passed.
 
 The regression test failed before the fix because Rust returned `Ok(())` for
