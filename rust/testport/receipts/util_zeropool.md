@@ -1,13 +1,21 @@
-# `pkg/util/zeropool` — complete package transcreation
+# `pkg/util/zeropool` — complete Go-master parity receipt
 
-Pinned Go source: `e2788410d8d696605e8cb002585877a063ccc909`.
+Comparison source: Go `origin/master` at
+`5e8a1a229a7591ddac49a0cd3b795587c2595ab9` (2026-09-01). The package is
+unchanged from the earlier pinned implementation; this receipt records the
+rolling authority and complete artifact hashes.
 
 ## Complete inventory
 
-The package has exactly three artifacts, all read in full: `pool.go`,
-`pool_test.go`, and `BUILD.bazel`. There is no package doc, README, fixture,
-generated or platform variant, or ownership file. The local Go package is
-byte-identical to the pin.
+The package has exactly three Go-master artifacts and 281 lines, all read in
+full: `BUILD.bazel`, `pool.go`, and `pool_test.go`. There is no package
+`doc.go`, README, fixture, generated or platform variant, or ownership file.
+
+| Artifact | Lines | Git blob | SHA-256 | Role |
+| --- | ---: | --- | --- | --- |
+| `BUILD.bazel` | 20 | `016c0c6f674abc3f5a4f00df3a2297d2c402bec7` | `d2cf6c94236cbde3984132bd461b7899eacbf9fedd0f4cf0016a9d02f0763a24` | library/test targets |
+| `pool.go` | 83 | `6b03b743e5e03922b114a228197dd121ec007e93` | `6f55a4b32126c0e2ad1d5883fc5a3efbfbc02a1f2e64c9afb869660e6d5e763a` | generic zero-allocation pool |
+| `pool_test.go` | 178 | `94f367dd82cc1593a61b317cae2c8b3748f6e1e6` | `afb7a2aeb37c5b4664f696643dc702671a92081ffe62cf1adfe347524db2e493` | four-subtest suite and four benchmarks |
 
 Production behavior includes the valid generic zero value, optional factory,
 concurrent `Get` and `Put`, move-out without retaining the returned value, and
@@ -31,19 +39,39 @@ removed that source behavior. The audit removed four supplemental Rust tests
 with no Go equivalent; the remaining test is exactly `TestPool` and retains
 all four Go subtest behaviors.
 
-## Validation
+## Validation and risk
 
-Profile: WIP; this completes one package in the continuing package-by-package
-audit, not a repository-wide readiness claim.
+Profile: **Ready** for this documentation-only authority refresh. No Go
+source, imports, Bazel metadata, or module files changed, so `make
+bazel_prepare` is not required. No source behavior changed and no new
+regression test is added; the existing source-derived `TestPool` suite remains
+the focused regression carrier.
 
-- `go test ./pkg/util/zeropool` — passed.
-- `cargo test -q -p tidb-util zeropool::tests::TestPool --lib --locked -- --exact --test-threads=1` — passed (the one source-owned test and all four subtests).
-- `cargo check -p tidb-util --all-targets --locked` — passed, including all
-  four benchmark translations.
-- `cargo bench --offline --locked -p tidb-util --bench zeropool` — ran all four
-  translated workloads.
-- `cargo clippy --offline --locked -p tidb-util --bench zeropool --no-deps -- -A clippy::needless-borrows-for-generic-args -A clippy::chunks-exact-to-as-chunks -A clippy::new-without-default -D warnings` — passed.
-- `cargo fmt --all --check` and `git diff --check` — passed.
+```text
+git diff --exit-code 0bc44483e3e41a8ea917d4382dc202369468d200..origin/master \
+  -- pkg/util/zeropool
+# passed: current package is unchanged from the previous authority pin
+
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
+GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
+go test ./pkg/util/zeropool -count=1
+# passed (current worktree and exact detached Go-master worktree)
+
+OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler \
+DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-util --lib zeropool::tests::TestPool --offline --locked -- --exact --test-threads=1
+# passed: one source-owned test with four sub-behaviors
+
+OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler \
+DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib \
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml -p tidb-util --all-targets --offline --locked
+# passed: owner plus all four benchmark translations
+
+cd rust && cargo +nightly-2026-08-22 fmt --all -- --check
+# passed
+git diff --check
+# passed
+```
 
 No Go or Bazel file changed, so `make bazel_prepare` is not required.
 
