@@ -40,6 +40,19 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: audited the complete Go-master `pkg/ingestor/simplesst`
+  package before making any change: 19 tracked artifacts and 6,545 lines,
+  including the object-storage byte reader, codec/range properties, concurrent
+  reader, file and KV abstractions, merge iterators, one-file writer, stats,
+  utilities, writer/engine adapter, all eight test files, and the package
+  BUILD target. The current-master variadic file-enumeration API and named
+  per-core connection-limit constant were recorded in the inventory. The
+  failpoint-enabled package suite passed. Rust has no dependency-closed owner
+  for this external-storage SST protocol (local `tidb-util::extsort` and DXF
+  metadata are not equivalents), so no Rust-only behavior was removed and no
+  speculative implementation was added. Recorded the explicit boundary in
+  `receipts/ingestor_simplesst.md`.
+
 - 2026-09-01: completed the package-level `pkg/ingestor` audit after reading
   `doc.go` first: three tracked artifacts and 42 lines at Go master,
   including the current BUILD/OWNERS filters. The root is an empty
@@ -78,6 +91,15 @@ For each bounded behavior cluster:
   The full source-test subset passed; fake-GCS tests remain blocked by missing
   Application Default Credentials. Recorded the explicit boundary in
   `receipts/importsdk.md`.
+
+- 2026-09-01: audited the complete Go-master `pkg/testkit` package: 38 tracked
+  artifacts and 4,202 lines, including all root/nested support code, source
+  tests, `!codes` variants, and Bazel targets. Rust has no dependency-closed
+  owner for the Go mock-store/domain bootstrap, TestKit SQL API, database/sql
+  driver, result/stepped runners, testdata recorder, or logging/failpoint
+  helpers. No Rust-only behavior or safe missing production behavior was found;
+  the full tagged Go package suite passed and the explicit boundary is recorded
+  in `receipts/testkit.md`.
 
 - 2026-09-01: refreshed the complete Go-master
   `pkg/util/password-validation` inventory (three artifacts, 379 lines) and
