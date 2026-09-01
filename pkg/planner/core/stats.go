@@ -244,6 +244,19 @@ func adjustCountAfterAccess(ds *logicalop.DataSource, path *util.AccessPath) {
 	}
 }
 
+// alignCorColCountAfterAccess collapses the min/max row estimates onto CountAfterAccess
+// after correlated equalities have been moved into the access conditions. Those
+// equalities cannot be turned into ranges at plan time, so CountAfterAccess is derived
+// by dividing by the NDV of each correlated column instead of being estimated from
+// ranges, while the min/max still describe the pre-split ranges. Leaving them means a
+// path that started from a full range keeps a table-sized max next to a one-row
+// estimate, and the risk comparison in skyline pruning drops it for phantom risk before
+// cost is considered. The correlated estimate carries no spread of its own.
+func alignCorColCountAfterAccess(path *util.AccessPath) {
+	path.MinCountAfterAccess = path.CountAfterAccess
+	path.MaxCountAfterAccess = path.CountAfterAccess
+}
+
 // deriveIndexPathStats will fulfill the information that the AccessPath need.
 // isIm indicates whether this function is called to generate the partial path for IndexMerge.
 func deriveIndexPathStats(ds *logicalop.DataSource, path *util.AccessPath, _ []expression.Expression, isIm bool) {
@@ -264,6 +277,9 @@ func deriveIndexPathStats(ds *logicalop.DataSource, path *util.AccessPath, _ []e
 				}
 				path.CountAfterAccess = path.CountAfterAccess / ndv
 			}
+		}
+		if len(accesses) > 0 {
+			alignCorColCountAfterAccess(path)
 		}
 	}
 	var indexFilters []expression.Expression
@@ -409,6 +425,9 @@ func deriveCommonHandleTablePathStats(ds *logicalop.DataSource, path *util.Acces
 				}
 				path.CountAfterAccess = path.CountAfterAccess / ndv
 			}
+		}
+		if len(accesses) > 0 {
+			alignCorColCountAfterAccess(path)
 		}
 	}
 	if !isIm {
