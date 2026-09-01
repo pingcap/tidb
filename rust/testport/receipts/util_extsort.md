@@ -1,7 +1,7 @@
 # `pkg/util/extsort` — Go-master package boundary receipt
 
 Go source: `origin/master` at
-`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01). The package is
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02). The package is
 byte-for-byte unchanged from the earlier extraction pin
 `e2788410d8d696605e8cb002585877a063ccc909`.
 
@@ -52,17 +52,22 @@ until the Lightning importer and Pebble/SST ownership can move together.
 
 ## Validation
 
-Profile: WIP for the continuing repository audit; this package has no Rust
-code change.
+Profile: **Ready** for this documentation-only authority refresh; this remains
+one explicit boundary in the continuing repository audit and is not a
+repository-wide readiness claim.
 
-- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/extsort -count=1` — passed (16 source tests).
-- `git diff --stat e2788410d8d696605e8cb002585877a063ccc909..origin/master -- pkg/util/extsort` — empty; source is unchanged at Go master.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/extsort -count=1` — passed (16 source tests; current checkout).
+- `(cd /tmp/tidb-go-latest-c605 && PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/extsort -count=1)` — passed (16 source tests; detached Go master).
+- `git diff --stat c6054025ed4c32ab3672a2a24ea46892714d21ec -- pkg/util/extsort` — empty; source is unchanged at current Go master.
 - Rust search of all crates and Cargo manifests — no Pebble/SSTable/ExternalSorter owner or Lightning importer consumer.
 
-No Go or Bazel file changed, so `make bazel_prepare` is not required. Rust
-owner tests and `make lint` are not applicable to this no-change, explicitly
-unclaimed boundary; full Lightning integration and Pebble crash-recovery tests
-were not run.
+`cd rust && cargo +nightly-2026-08-22 fmt --all -- --check` and
+`git diff --check` passed. The pinned `make lint` gate passed in the clean
+detached Go-master checkout; the active checkout may be temporarily
+instrumented by a concurrent failpoint test worker. No Go or Bazel file
+changed, so `make bazel_prepare` is not required. Rust owner tests are not
+applicable because no dependency-closed owner exists; full Lightning
+integration and Pebble crash-recovery tests were not run.
 
 ## Risks and unverified scope
 

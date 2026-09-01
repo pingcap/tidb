@@ -3669,12 +3669,15 @@ For each bounded behavior cluster:
       session integration, or real heap/goroutine profile recorder. The
       package remains explicitly unclaimed; details are in
       `receipts/util_memoryusagealarm.md`.
-- 2026-09-01: audited all five Go-master `pkg/util/extsort` artifacts (2,667
+- 2026-09-02: refreshed all five Go-master `pkg/util/extsort` artifacts (2,667
       lines: Pebble-backed SST sorting, merge/compaction, 16 source tests, and
-      the Bazel target). Rust has no Pebble/SSTable or Lightning importer
-      owner, so executor row-spill sorting is not a substitute. The package
-      remains explicitly unclaimed; details are in
-      `receipts/util_extsort.md`.
+      the Bazel target) at authority
+      `c6054025ed4c32ab3672a2a24ea46892714d21ec`. Rust still has no
+      Pebble/SSTable or Lightning importer owner, so executor row-spill sorting
+      is not a substitute; current and detached complete Go suites pass. The
+      package remains explicitly unclaimed. Details are in
+      `receipts/util_extsort.md` and
+      `docs/operations/util-extsort-audit-execplan.md`.
 - 2026-09-01: audited both Go-master `pkg/util/gcutil` artifacts (109 lines:
       GC toggles, safe-point SQL loader, snapshot validation, and Bazel target).
       Its behavior spans session globals/restricted SQL, vardef, model time
