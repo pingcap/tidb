@@ -40,6 +40,14 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: refreshed the complete Go-master `pkg/util/nocopy` inventory
+  (two artifacts, 32 lines) and confirmed it is unchanged from the prior
+  pinned audit. Rust's zero-sized `tidb-util::nocopy::NoCopy` marker and
+  no-op lock methods already preserve Go's vet-oriented no-copy contract after
+  removal of the former Rust-only traits and tests. Updated
+  `receipts/util_nocopy.md` with current-master hashes; no new behavior was
+  invented.
+
 - 2026-09-01: refreshed the complete Go-master `pkg/util/tikvutil` inventory
   (two artifacts, 31 lines) and confirmed it is unchanged from the prior
   pinned audit. The Rust `tidb-tikvutil` atomic and its config/session

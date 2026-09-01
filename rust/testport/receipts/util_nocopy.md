@@ -1,56 +1,53 @@
-# `pkg/util/nocopy` — complete package transcreation
+# `pkg/util/nocopy` — complete Go-master parity receipt
 
-Pinned Go source: `e2788410d8d696605e8cb002585877a063ccc909`.
+Comparison source: Go `origin/master` at commit
+`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01). The package is
+unchanged from the earlier pinned audit; this receipt refreshes the authority
+and records the complete artifact hashes.
 
 ## Complete inventory
 
-The package has exactly two artifacts, both read in full: `nocopy.go` and
-`BUILD.bazel`. There is no test, benchmark, package doc, README, fixture,
-generated or platform variant, or ownership file. The local Go package is
-byte-identical to the pin.
+The package contains two tracked artifacts and 32 lines. Both artifacts were
+read in full before this update. There is no package doc, test, benchmark,
+fixture, generated or platform variant, README, or ownership file.
 
-Production behavior is one zero-sized `NoCopy` marker with no-op `Lock` and
-`Unlock` methods. Go's vet analyzer recognizes that method pair and prevents
-copying an embedding owner after use.
+| Artifact | Lines | Git blob | SHA-256 | Role |
+| --- | ---: | --- | --- | --- |
+| `BUILD.bazel` | 8 | `2302693640d29bb8ab7bd59bcb03cd0232aff1e7` | `84ded6ce1ef07c137634b415e5aec1a39ae7b481a889e177fd5c7b05064c4561` | public Go utility library target |
+| `nocopy.go` | 24 | `7bfab1988fcb37b40061cdd8e731d81ea03bf934` | `e02781234846ccc78f8ad9e88486d1e26c99a0ab3d113cd06639cc339cbd992d` | zero-sized no-copy marker and no-op lock methods |
 
-## Rust ownership and audit result
+`NoCopy` is a zero-sized marker implementing `sync.Locker` with empty
+`Lock`/`Unlock` methods. Go's vet analyzer recognizes that method pair and
+prevents copying an embedding owner after use. The package has no tests or
+support fixtures.
 
-`rust/crates/tidb-util/src/nocopy/mod.rs` owns the complete package. Rust
-preserves the zero-sized marker and two no-op methods, while implementing
-neither `Copy` nor `Clone`; this is the native enforcement of the Go vet
-contract. The unit struct itself represents Go's directly constructible zero
-value.
+## Rust ownership and parity
 
-The audit removed the Rust-only public constructor and `Debug` behavior, one
-supplemental unit test, one compile-fail doctest, and the separate semantic
-test manifest. It also removed the legacy nocopy ExecPlan because that document
-required those non-Go artifacts and pinned a different source revision. The Go
-package has none of those artifacts. A later strict-surface re-audit also
-removed the redundant `Default` trait and compile-time `const` calls; Go has
-only ordinary no-op methods on the zero value. The current re-audit condensed
-the remaining porting narrative without changing runtime behavior.
+`rust/crates/tidb-util/src/nocopy/mod.rs` owns the complete package. Its
+zero-sized `NoCopy` marker has no `Copy` or `Clone` implementation and exposes
+only the source-shaped no-op `lock`/`unlock` methods, providing native
+ownership enforcement for Go's vet contract. Earlier Rust-only constructors,
+`Default`/`Debug`, compile-fail tests, and semantic manifests were removed;
+no Rust-only behavior remains in the current owner.
 
-## Validation
+## Validation and risk
 
-Profile: WIP; this completes one package in the continuing package-by-package
-audit, not a repository-wide readiness claim.
+Profile: **WIP** for this documentation-only authority refresh. No Go source,
+imports, Bazel metadata, or module files changed; `make bazel_prepare` and the
+Ready lint gate are not required.
 
-- `cargo check --offline --locked -p tidb-util --all-targets` — passed.
-- `cargo test --offline --locked -p tidb-util --lib nocopy -- --test-threads=1` —
-  passed; zero tests ran, matching the source package's test inventory.
-- `cargo fmt -p tidb-util -- --check` and `git diff --check` — passed.
-- `git diff --exit-code e2788410d8d696605e8cb002585877a063ccc909 -- pkg/util/nocopy` — passed.
-- `GOCACHE=/private/tmp/tidb-go-cache GOTOOLCHAIN=go1.25.10 go test -tags=intest,deadlock -count=1 ./pkg/util/nocopy` — passed; the source has no test files.
-- `cargo check -p tidb-util --lib --offline` — passed.
-- `rustfmt --edition 2021 --check crates/tidb-util/src/nocopy/mod.rs` — passed.
-- `git diff --check` — passed.
+```text
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
+GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
+go test ./pkg/util/nocopy -count=1
+# passed: package compiled; no test files
 
-No Go or Bazel file changed, so `make bazel_prepare` is not required.
+OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler \
+DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-util --lib nocopy --offline --locked -- --test-threads=1
+# passed: zero tests ran, matching the Go package inventory
+```
 
-## Risk
-
-- Correctness: production marker size, ownership semantics, and methods are
-  unchanged.
-- Compatibility: repository-unused Rust-only constructor and formatting
-  behavior are intentionally removed; the current re-audit changes only docs.
-- Performance: unchanged.
+Not verified here: full workspace tests, Bazel execution, or compile-fail vet
+integration. Existing unrelated session/planner worktree changes remain
+outside this receipt.
