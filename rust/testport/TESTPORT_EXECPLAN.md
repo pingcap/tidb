@@ -3141,6 +3141,16 @@ For each bounded behavior cluster:
 - [x] Run the Ready validation profile for `pkg/ttl/client`: tagged Go client
       integration tests, repository lint, and diff hygiene pass with the
       command-local toolchains recorded in `receipts/ttl_client.md`.
+- [x] Complete the Go-master `pkg/ttl/ttlworker` package: inventory all 25
+      production, test, integration-support, and BUILD artifacts; restore the
+      removed external-workload recycling and TTL owner-election behavior,
+      restore its focused regressions and BUILD dependencies, and record the
+      package receipt and audit ExecPlan.
+- [x] Run the Ready validation profile for `pkg/ttl/ttlworker`: focused
+      failpoint-enabled owner/recycle regressions, repository lint, and diff
+      hygiene pass; `make bazel_prepare` was attempted but is unavailable
+      locally because Bazel is not installed. Details are in
+      `receipts/ttl_ttlworker.md`.
 - [x] Complete the Go-master `pkg/util/codec` delta: inventory all 12 source,
       test, benchmark, harness, and build artifacts; remove Rust-only encoder
       value/hash methods; update consumers; add the raw-value regression; and
