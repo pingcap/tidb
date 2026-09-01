@@ -1740,7 +1740,8 @@ For each bounded behavior cluster:
   replacement was added.
 
 - 2026-09-02: refreshed the complete two-artifact Go-master
-  `pkg/util/breakpoint` package (47 lines: public Bazel target and the typed
+  `pkg/util/breakpoint` package at
+  `c6054025ed4c32ab3672a2a24ea46892714d21ec` (47 lines: public Bazel target and the typed
   failpoint-backed session callback). Rust still has no failpoint runtime or
   session-context hook, so the package remains explicitly unclaimed. The
   current-authority receipt is `receipts/util_breakpoint.md`, with the

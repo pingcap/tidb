@@ -13,8 +13,8 @@ Go-only failpoint/session-context boundary.
 - Confirmed there are no package tests, fixtures, generated/platform
   variants, benchmarks, fuzz targets, or nested packages.
 - Revalidated the current checkout and an exact detached Go-master checkout at
-  `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`; both compile probes pass with no
-  test files.
+  `c6054025ed4c32ab3672a2a24ea46892714d21ec`; both failpoint-managed compile
+  probes pass with no test files.
 - Confirmed Rust has no failpoint runtime or session-context notification hook.
   Adding a callback registry would be Rust-only behavior, so no source or
   speculative replacement was added.
@@ -25,7 +25,7 @@ Go-only failpoint/session-context boundary.
       `rust/testport/receipts/util_breakpoint.md`.
 - [x] Current and exact Go-master package compile probes pass.
 - [x] Ready formatting, clean-tree repository lint, and diff checks pass.
-- [ ] Push this receipt/ExecPlan batch, verify remote SHAs, and pull
+- [x] Push this receipt/ExecPlan batch, verify remote SHAs, and pull
       `origin/hparser-integration`.
 
 ## Next boundary
