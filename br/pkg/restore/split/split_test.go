@@ -440,6 +440,126 @@ func checkRegionsBoundaries(t *testing.T, regions []*RegionInfo, expected [][]by
 	}
 }
 
+<<<<<<< HEAD
+=======
+type codecAwareMockPDClient struct {
+	*MockPDClientForSplit
+	keyspaceMeta *keyspacepb.KeyspaceMeta
+}
+
+func (c *codecAwareMockPDClient) WithCallerComponent(caller.Component) pd.Client {
+	return c
+}
+
+func (c *codecAwareMockPDClient) LoadKeyspace(context.Context, string) (*keyspacepb.KeyspaceMeta, error) {
+	return c.keyspaceMeta, nil
+}
+
+type nilRegionByIDMockPDClient struct {
+	*MockPDClientForSplit
+	regionID uint64
+}
+
+func (c *nilRegionByIDMockPDClient) WithCallerComponent(caller.Component) pd.Client {
+	return c
+}
+
+func (c *nilRegionByIDMockPDClient) GetRegionByID(
+	ctx context.Context,
+	regionID uint64,
+	opts ...opt.GetRegionOption,
+) (*router.Region, error) {
+	if regionID == c.regionID {
+		return nil, nil
+	}
+	return c.MockPDClientForSplit.GetRegionByID(ctx, regionID, opts...)
+}
+
+func containsKVEpochNotMatch(err error) bool {
+	if berrors.ErrKVEpochNotMatch.Equal(err) {
+		return true
+	}
+	if cause := errors.Cause(err); cause != nil && cause != err && berrors.ErrKVEpochNotMatch.Equal(cause) {
+		return true
+	}
+	errs, ok := err.(interface{ Errors() []error })
+	if !ok {
+		return false
+	}
+	for _, err := range errs.Errors() {
+		if containsKVEpochNotMatch(err) {
+			return true
+		}
+	}
+	return false
+}
+
+func newCodecV2PDClientForSplitTest(t *testing.T, mockClient *MockPDClientForSplit) *tikv.CodecPDClient {
+	codecPDClient, err := tikv.NewCodecPDClientWithKeyspace(tikv.ModeTxn, &codecAwareMockPDClient{
+		MockPDClientForSplit: mockClient,
+		keyspaceMeta: &keyspacepb.KeyspaceMeta{
+			Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 42},
+			Name:     "test_keyspace",
+		},
+	}, "test_keyspace")
+	require.NoError(t, err)
+	return codecPDClient
+}
+
+func TestPaginateScanRegionWithCodecAwareCodecPDClient(t *testing.T) {
+	ctx := context.Background()
+	t.Run("bounded range", func(t *testing.T) {
+		mockPDClient := NewMockPDClientForSplit()
+		codecPDClient := newCodecV2PDClientForSplitTest(t, mockPDClient)
+		tikvCodec := codecPDClient.GetCodec()
+
+		physicalBoundaries := [][]byte{
+			tikvCodec.EncodeRegionKey([]byte("a")),
+			tikvCodec.EncodeRegionKey([]byte("b")),
+			tikvCodec.EncodeRegionKey([]byte("d")),
+		}
+		mockPDClient.SetRegions(physicalBoundaries)
+
+		client := NewCodecAwareClient(codecPDClient, nil, nil, 100, 4)
+		regions, err := PaginateScanRegionWithCodecAware(
+			ctx,
+			client,
+			tikvCodec.EncodeKey([]byte("a")),
+			tikvCodec.EncodeKey([]byte("d")),
+			2,
+		)
+		require.NoError(t, err)
+		checkRegionsBoundaries(t, regions, physicalBoundaries)
+	})
+
+	t.Run("empty logical end key", func(t *testing.T) {
+		mockPDClient := NewMockPDClientForSplit()
+		codecPDClient := newCodecV2PDClientForSplitTest(t, mockPDClient)
+		tikvCodec := codecPDClient.GetCodec()
+
+		_, physicalEnd := tikvCodec.EncodeRegionRange([]byte("b"), nil)
+		physicalBoundaries := [][]byte{
+			tikvCodec.EncodeRegionKey([]byte("a")),
+			tikvCodec.EncodeRegionKey([]byte("b")),
+			physicalEnd,
+		}
+		mockPDClient.SetRegions(physicalBoundaries)
+
+		client := NewCodecAwareClient(codecPDClient, nil, nil, 100, 4)
+		scanStart, scanEnd := tikvCodec.EncodeRange([]byte("a"), nil)
+		regions, err := PaginateScanRegionWithCodecAware(
+			ctx,
+			client,
+			scanStart,
+			scanEnd,
+			2,
+		)
+		require.NoError(t, err)
+		checkRegionsBoundaries(t, regions, physicalBoundaries)
+	})
+}
+
+>>>>>>> 0bc44483e3e (br: fix region not found (#70772))
 func TestPaginateScanRegion(t *testing.T) {
 	ctx := context.Background()
 	mockPDClient := NewMockPDClientForSplit()
@@ -835,6 +955,31 @@ func TestSplitEmptyRegion(t *testing.T) {
 //	[, aay), [aay, bba), [bba, bbf), [bbf, bbh), [bbh, bbj),
 //	[bbj, cca), [cca, xxe), [xxe, xxz), [xxz, )
 func TestSplitAndScatter(t *testing.T) {
+	t.Run("not leader with missing region by ID returns epoch not match", func(t *testing.T) {
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/split/not-leader-error", "return(false)"))
+		t.Cleanup(func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/split/not-leader-error"))
+		})
+
+		mockPDCli := NewMockPDClientForSplit()
+		regions := mockPDCli.SetRegions([][]byte{[]byte(""), []byte("m"), []byte("")})
+		mockPDCli.SetStores(map[uint64]*metapb.Store{
+			1: {Id: 1, Address: "127.0.0.1:1"},
+		})
+		splitRegion := &RegionInfo{
+			Region: regions[0],
+			Leader: &metapb.Peer{Id: regions[0].Id, StoreId: 1},
+		}
+		client := NewClient(&nilRegionByIDMockPDClient{
+			MockPDClientForSplit: mockPDCli,
+			regionID:             regions[0].Id,
+		}, nil, nil, 100, 4)
+
+		_, err := client.SplitWaitAndScatter(context.Background(), splitRegion, [][]byte{[]byte("a")})
+		require.Error(t, err)
+		require.True(t, containsKVEpochNotMatch(err), "unexpected error: %+v", err)
+	})
+
 	rangeBoundaries := [][]byte{[]byte(""), []byte("aay"), []byte("bba"), []byte("bbh"), []byte("cca"), []byte("")}
 	encodeBytes(rangeBoundaries)
 	mockPDCli := NewMockPDClientForSplit()
