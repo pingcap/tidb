@@ -2394,12 +2394,14 @@ For each bounded behavior cluster:
   and no polling/single-node production fallback. Complete inventory and WIP
   gates are recorded in `receipts/owner.md`; `pkg/util/workloadrepo` integration
   is next.
-- 2026-08-29: audited all five pinned Go `pkg/util/generic` artifacts. Restored
-  signed capacity, nullable signed comparators, constructor panic order, and
-  wrapping sort semantics; removed `is_empty`, four supplemental tests, their
-  semantic manifest, and a stale audit plan. The stats TopN consumer uses the
-  corrected owner. Complete inventory and WIP gates are recorded in
-  `receipts/util_generic.md`.
+- 2026-09-02: refreshed the complete Go-master `pkg/util/generic` inventory at
+  `c6054025ed4c32ab3672a2a24ea46892714d21ec`: five artifacts and 478 lines,
+  including seven heap tests, one map test, and the flaky BUILD target. The
+  existing `tidb-util::generic` owner preserves signed capacity, comparator
+  panic/order and wrapping sort behavior, synchronized-map semantics, and the
+  stats TopN consumer; current and detached Go suites plus all eight Rust owner
+  tests pass. Details are in `receipts/util_generic.md` and
+  `docs/operations/util-generic-audit-execplan.md`.
 - 2026-08-29: re-read all four pinned Go `pkg/util/checksum` artifacts and
   removed two supplemental signed-overflow tests plus their private fixture.
   Production keeps Go's wrapping arithmetic and zeropool-backed reader path;

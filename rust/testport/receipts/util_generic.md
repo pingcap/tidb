@@ -1,59 +1,56 @@
-# `pkg/util/generic` — complete package transcreation
+# `pkg/util/generic` — Go-master parity audit receipt
 
-Pinned TiDB source: `e2788410d8d696605e8cb002585877a063ccc909`.
+Go authority: `origin/master` at `c6054025ed4c32ab3672a2a24ea46892714d21ec`.
 
 ## Complete inventory
 
-The package has exactly five artifacts, all read in full:
-`bounded_min_heap.go`, `bounded_min_heap_test.go`, `sync_map.go`,
-`sync_map_test.go`, and `BUILD.bazel`. There is no package doc, README,
-fixture, benchmark, harness, generated/platform variant, or ownership file.
-The local Go package is byte-identical to the pin.
+The package contains exactly five artifacts, all read in full (478 lines
+total):
 
-Production behavior comprises a bounded best-N heap with a signed comparator,
-nil-comparator and negative-capacity panics, zero-capacity behavior, wrapping
-comparator negation for best-to-worst snapshots, and a generic RWMutex-backed
-map with store, load, delete, and key snapshots. The source has exactly eight
-tests: seven heap tests and one synchronized-map test.
+- `bounded_min_heap.go` (115 lines) and `sync_map.go` (68 lines): production
+  bounded best-N heap and RWMutex-backed generic map;
+- `bounded_min_heap_test.go` (210 lines): seven source test identities;
+- `sync_map_test.go` (62 lines): the source `TestSyncMap` identity;
+- `BUILD.bazel` (23 lines): production and flaky test targets.
 
-## Rust ownership and audit result
+There is no `doc.go`, package harness, fixture, testdata, benchmark, fuzz
+target, example, generated/platform variant, nested package, or other build
+input. All five files are byte-identical to Go master.
 
-`rust/crates/tidb-util/src/generic/` owns the package. The heap now accepts an
-architecture-width signed capacity and an optional signed comparator, checking
-nil before negative capacity exactly like Go. It retains comparator magnitude
-and uses wrapping negation when sorting instead of narrowing comparisons to
-`Ordering`. The Rust-only `is_empty` method was removed.
+## Rust ownership and parity
 
-`SyncMap` retains native `Option<V>` results for Go's `(V, bool)` pairs and
-recovers poisoned locks because Go mutexes do not add a poison failure mode.
-The stats TopN builder now uses the corrected heap contract directly.
+`rust/crates/tidb-util/src/generic/{bounded_min_heap,sync_map}.rs` is the
+complete owner. The heap preserves nil-comparator and negative-capacity
+panics, zero-capacity behavior, signed comparator magnitude and wrapping
+negation for best-to-worst sorting, and all source replacement rules. `SyncMap`
+preserves Go's `(value, bool)` semantics through `Option`, key snapshots, and
+lock-poison recovery. The owner retains exactly the eight source-derived tests;
+the stats TopN consumer uses this canonical heap rather than a duplicate.
 
-Two supplemental owner tests, the two-test external contract, its semantic
-manifest, and a stale standalone audit plan were removed. The owner now has
-exactly the eight Go tests, including the formerly missing constructor safety
-test.
+No Go or Rust production delta was found in this rolling audit, so no new
+package-local regression was warranted. The eight existing source-derived
+tests remain the focused proof.
 
-## Validation
+## Validation (Ready profile)
 
-Profile: WIP; this completes one package in the continuing package-by-package
-audit, not a repository-wide readiness claim.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/generic -count=1` — passed (eight tests).
+- `(cd /tmp/tidb-go-latest-c605 && PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/generic -count=1)` — passed (eight tests).
+- `env OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-util --lib 'generic::' --offline --locked -- --test-threads=1` — passed (eight tests).
+- `cd rust && cargo +nightly-2026-08-22 fmt --all -- --check` — passed.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 make lint` — passed in the clean detached Go-master checkout; the active checkout may be temporarily instrumented by the concurrent failpoint test worker.
+- `git diff --check` — passed for the documentation diff.
 
-- `git diff --exit-code e2788410d8d696605e8cb002585877a063ccc909 -- pkg/util/generic` — passed.
-- `go test ./pkg/util/generic -count=1` — passed, 8 tests.
-- `cargo test --offline --locked -p tidb-util --lib generic:: --no-fail-fast` — passed, exactly 8 tests.
-- `cargo test --offline --locked -p tidb-util --no-run` — passed.
-- `cargo test --offline --locked -p tidb-stats --test all builder_source::` — passed, 27 consumer tests.
-- `cargo fmt -p tidb-util -p tidb-stats -- --check` and `git diff --check` — passed.
+This batch changes documentation only; no Go source, import section, test
+function, Bazel file, or module dependency changed, so `make bazel_prepare` is
+not required. The package has no failpoint use, so the failpoint wrapper is not
+applicable.
 
-No Go or Bazel file changed, so `make bazel_prepare` is not required.
+## Risks and boundaries
 
-## Risk
-
-- Correctness: both exact package suites pass, including nil/negative safety,
-  and all TopN builder consumer tests pass with the signed comparator contract.
-- Compatibility: removes Rust-only APIs/tests/docs and changes the heap
-  constructor to represent Go's nullable comparator and signed capacity. The
-  sole production caller is migrated in the same commit.
-- Performance: heap geometry and operations are unchanged; preserving the
-  signed comparator avoids an information-losing conversion. Lock poison
-  recovery only affects panic paths.
+- Correctness: source tests cover heap ranking, replacement, capacities,
+  comparator direction, safety checks, and map store/load/delete/key behavior.
+- Compatibility: no public API or runtime behavior changed in this batch.
+- Performance: no production code changed; heap and map complexity are
+  unchanged.
+- Not verified locally: broad stats TopN production integration after this
+  no-delta refresh; prior consumer tests remain the integration evidence.
