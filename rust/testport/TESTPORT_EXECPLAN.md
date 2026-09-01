@@ -142,6 +142,25 @@ For each bounded behavior cluster:
   delta. Rust has no GoMock-compatible owner; recorded the generated-support
   boundary in `receipts/objstore_ossstore_mock.md`.
 
+- 2026-09-01: audited the complete Go-master AWS/compatible S3 backend package
+  `pkg/objstore/s3store` before editing: 16 root artifacts and 5,619 lines,
+  including AWS CRUD/multipart/presign, GCS signer, KS3 reader/uploader,
+  Alibaba fallback credentials, Tencent COS provider, region/retry/logger
+  handling, all 72 top-level tests and support helpers, and the 50-shard BUILD
+  target. Current-master additions include GCS/Tencent variants, multipart
+  overflow and content-MD5 handling, credential-chain fallback, and region
+  redirect-log suppression; the exact failpoint-enabled suite passed. Rust has
+  no dependency-closed cloud-object-store owner, so no Rust-only behavior was
+  removed and no speculative backend was added. Recorded the explicit boundary
+  in `receipts/objstore_s3store.md`.
+
+- 2026-09-01: audited the separate generated Go package
+  `pkg/objstore/s3store/mock` in full: two artifacts and 338 lines, including
+  the BUILD target and all 31 MockGen methods/recorders for `S3API`. It has no
+  tests, fixtures, platform variants, or generator inputs and is unchanged from
+  the pinned source. Rust has no GoMock-compatible owner; recorded the
+  generated-support boundary in `receipts/objstore_s3store_mock.md`.
+
 - 2026-09-01: audited the complete Go-master `pkg/ingestor/globalsort`
   package before editing: 17 tracked artifacts and 6,814 lines, including the
   external engine, object-store readers, merge and merge-v2 operators, range
