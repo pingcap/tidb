@@ -1387,8 +1387,9 @@ For each bounded behavior cluster:
   same byte/rune policy and caller-owned enablement semantics. Updated
   `receipts/util_password_validation.md` with current-master hashes.
 
-- 2026-09-02: refreshed the complete Go-master `pkg/util/compress` inventory
-  (two artifacts, 45 lines) and corrected the prior receipt's Bazel line count
+- 2026-09-02: refreshed the complete Go-master `pkg/util/compress` inventory at
+  `c6054025ed4c32ab3672a2a24ea46892714d21ec` (two artifacts, 45 lines) and
+  corrected the prior receipt's Bazel line count
   and current-master authority metadata. The package is unchanged from the implementation
   batch; pooled gzip ownership, statistics block integration, four focused
   stream regressions, and the explicit ingest-control boundary remain intact.

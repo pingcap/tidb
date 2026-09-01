@@ -1,7 +1,7 @@
 # `pkg/util/compress` — complete Go-master parity receipt
 
 Comparison source: Go `origin/master` at commit
-`5e8a1a229a7591ddac49a0cd3b795587c2595ab9` (2026-09-01). The package is
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02). The package is
 byte-for-byte unchanged from the earlier implementation; this refresh records
 the current Go-master authority.
 
@@ -48,24 +48,28 @@ Bazel metadata, or module files changed, so `make bazel_prepare` is not
 required.
 
 ```text
+git diff --exit-code c6054025ed4c32ab3672a2a24ea46892714d21ec -- \
+  pkg/util/compress
+# passed: current package matches the exact latest Go-master authority
+
 PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
 GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
 go test ./pkg/util/compress -count=1
 # passed: package compiled; no test files
 
 OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler \
-DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib \
+DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib \
 cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-util compress::tests:: --lib --offline --locked -- --nocapture
 # passed: 4 focused compression tests
 
 OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler \
-DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib \
+DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib \
 cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-executor load_stats::tests::json_table_blocks_round_trip --lib --offline --locked -- --exact --nocapture
 # passed: 1 integrated statistics block test
 ```
 
 The same Go package probe also passed in an exact detached checkout of Go
-master at `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`.
+master at `c6054025ed4c32ab3672a2a24ea46892714d21ec`.
 
 The focused Rust commands emitted existing workspace warnings only. Not
 verified here: the absent Rust ingest-control consumer, full workspace tests,

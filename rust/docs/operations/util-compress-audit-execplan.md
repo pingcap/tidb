@@ -12,7 +12,7 @@ closed Rust owner and preserve the integrated statistics block contract.
   benchmarks, fuzz targets, or nested packages exist.
 - Revalidated current and exact detached Go-master package probes; both compile
   with no test files and the source is byte-identical at
-  `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`.
+  `c6054025ed4c32ab3672a2a24ea46892714d21ec`.
 - Confirmed `tidb-util::compress` is the sole generic owner, with pooled
   reader/writer reset and close behavior, discard-bound writer construction,
   invalid-header rejection, and unfinished-stream reset regressions.
@@ -27,7 +27,7 @@ closed Rust owner and preserve the integrated statistics block contract.
 - [x] Current and exact Go-master package compile probes pass.
 - [x] Four Rust pool regressions and one integrated statistics regression pass.
 - [x] Ready formatting, clean-tree repository lint, and diff checks pass.
-- [ ] Push this receipt/ExecPlan batch, verify remote SHAs, and pull
+- [x] Push this receipt/ExecPlan batch, verify remote SHAs, and pull
       `origin/hparser-integration`.
 
 ## Next boundary
