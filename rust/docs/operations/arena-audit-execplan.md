@@ -4,6 +4,8 @@ This ExecPlan is a living document. Keep `Progress`, `Surprises & Discoveries`,
 `Decision Log`, and `Outcomes & Retrospective` current while work proceeds.
 
 Reference: `PLANS.md` at repository root; this plan is maintained according to it.
+Current Go authority: `origin/master` at
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02).
 
 ## Purpose / Big Picture
 
@@ -31,7 +33,7 @@ reuses the same bytes.
 - [x] (2026-08-29) Self-reviewed the final package diff and pushed its atomic
   implementation batch.
 - [x] (2026-09-02) Revalidated the package against current Go master
-  `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`; source is unchanged and the
+  `c6054025ed4c32ab3672a2a24ea46892714d21ec`; source is unchanged and the
   exact detached Go package probe passes.
 
 ## Surprises & Discoveries

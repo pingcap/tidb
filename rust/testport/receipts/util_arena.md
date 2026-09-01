@@ -1,7 +1,7 @@
 # `pkg/util/arena` — complete package transcreation
 
 Go baseline: `origin/master` at
-`5e8a1a229a7591ddac49a0cd3b795587c2595ab9` (2026-09-01). The current source
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02). The current source
 is byte-for-byte unchanged from the earlier implementation; this refresh uses
 the current Go-master authority.
 
@@ -45,9 +45,10 @@ manifest. Exactly the two Go test identities remain.
 Profile: Ready for this docs-only authority refresh; the package owner and
 focused regressions were implemented in the earlier atomic batch.
 
-- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/arena -count=1` — passed.
-- The same package test passed in an exact detached checkout of Go master at
-  `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`.
+- `git diff --exit-code 5e8a1a229a7591ddac49a0cd3b795587c2595ab9..c6054025ed4c32ab3672a2a24ea46892714d21ec -- pkg/util/arena` — passed; the package is unchanged.
+- `git diff --exit-code c6054025ed4c32ab3672a2a24ea46892714d21ec..HEAD -- pkg/util/arena` — passed; no Go package drift at the latest authority.
+- `git ls-tree -r -l c6054025ed4c32ab3672a2a24ea46892714d21ec pkg/util/arena` — passed; exactly the four artifacts listed above.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/arena -count=1` — passed in the current and exact detached latest-master (`/tmp/tidb-go-latest-c605`) worktrees.
 - `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --offline --locked -p tidb-util arena::tests --lib -- --test-threads=1` — passed; two tests ran.
 - Complete `cargo test -q -p tidb-util --locked -- --test-threads=1`,
   `cargo check -p tidb-util --all-targets --locked`, `cargo fmt --all --check`,

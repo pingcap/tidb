@@ -2165,8 +2165,8 @@ For each bounded behavior cluster:
   Removed the remaining Rust-only reset-reuse regression and restored exactly
   the two Go test identities; shared backing and reset reuse remain production
   behavior rather than an extra test surface.
-- 2026-09-02: refreshed the complete `pkg/util/arena` inventory against
-  current Go master (`5e8a1a229a7591ddac49a0cd3b795587c2595ab9`). Its four
+- 2026-09-02: re-audited the complete `pkg/util/arena` inventory against
+      current Go master (`c6054025ed4c32ab3672a2a24ea46892714d21ec`). Its four
   artifacts and 202 textual lines are unchanged; the existing safe Rust
   `ArenaBytes` owner still covers shared backing, fitting/fresh allocation,
   reset, and the exact two source test identities. The receipt now records
