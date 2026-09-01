@@ -455,6 +455,14 @@ For each bounded behavior cluster:
   in `receipts/dxf_framework_integrationtests.md` and
   `rust/docs/operations/dxf-framework-integrationtests-audit-execplan.md`.
 
+- 2026-09-02: audited the complete top-level Go-master `pkg/dxf/framework`
+  package: exactly two artifacts and 190 lines, consisting of the public Bazel
+  target and the full framework package guide. Both files are byte-identical
+  to Go master; Rust's `tidb-dxf` owns selected generic values but no
+  dependency-closed framework runtime or SQL/session integration. Recorded the
+  explicit documentation-only boundary in `receipts/dxf_framework.md` and
+  `rust/docs/operations/dxf-framework-audit-execplan.md`.
+
 - 2026-09-02: updated the complete five-artifact Go-master
   `pkg/server/handler/tests` consumer inventory (3,630 lines) for the DXF
   history redaction contract. Its focused API regression now requires
