@@ -9,9 +9,12 @@ import (
 	backup "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	kvconfig "github.com/pingcap/tidb/br/pkg/config"
+	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
@@ -29,6 +32,14 @@ func (f fakeValue) Set(string) error {
 
 func (f fakeValue) Type() string {
 	panic("implement me")
+}
+
+type fakeRestoreFileClient struct {
+	dbs []*metautil.Database
+}
+
+func (c fakeRestoreFileClient) GetDatabases() []*metautil.Database {
+	return c.dbs
 }
 
 func TestUrlNoQuery(t *testing.T) {
@@ -95,6 +106,56 @@ func TestUrlNoQuery(t *testing.T) {
 		}
 		require.Equal(t, tc.expectedValue, field.String, `test-case [%s="%s"]`, tc.expectedName, tc.expectedValue)
 	}
+}
+
+func TestFilterRestoreFilesSkipsMaterializedObjects(t *testing.T) {
+	dbInfo := &model.DBInfo{ID: 1, Name: pmodel.NewCIStr("test")}
+	baseTable := &metautil.Table{
+		DB: dbInfo,
+		Info: &model.TableInfo{
+			ID:   11,
+			Name: pmodel.NewCIStr("base_table"),
+			MaterializedViewBase: &model.MaterializedViewBaseInfo{
+				MLogID:   12,
+				MViewIDs: []int64{13},
+			},
+		},
+		Files: []*backup.File{{Name: "base_table_write.sst"}},
+	}
+	database := &metautil.Database{
+		Info: dbInfo,
+		Tables: []*metautil.Table{
+			baseTable,
+			{
+				DB:    dbInfo,
+				Info:  &model.TableInfo{ID: 12, Name: pmodel.NewCIStr("$mlog$base_table"), MaterializedViewLog: &model.MaterializedViewLogInfo{BaseTableID: 11}},
+				Files: []*backup.File{{Name: "mlog_write.sst"}},
+			},
+			{
+				DB:    dbInfo,
+				Info:  &model.TableInfo{ID: 13, Name: pmodel.NewCIStr("mv_table"), MaterializedView: &model.MaterializedViewInfo{BaseTableIDs: []int64{11}}},
+				Files: []*backup.File{{Name: "mv_write.sst"}},
+			},
+			{
+				DB:    dbInfo,
+				Info:  &model.TableInfo{ID: 14, Name: pmodel.NewCIStr("_mv_shadow"), MaterializedViewShadow: &model.MaterializedViewShadowInfo{SourceMViewID: 13}},
+				Files: []*backup.File{{Name: "shadow_write.sst"}},
+			},
+		},
+	}
+	cfg := &RestoreConfig{
+		Config: Config{
+			TableFilter: filter.CaseInsensitive(must(filter.Parse([]string{"*.*"}))),
+		},
+	}
+
+	files, tables, dbs := filterRestoreFiles(fakeRestoreFileClient{dbs: []*metautil.Database{database}}, cfg)
+
+	require.Len(t, dbs, 1)
+	require.Len(t, tables, 1)
+	require.Same(t, baseTable, tables[0])
+	require.Nil(t, baseTable.Info.MaterializedViewBase)
+	require.Equal(t, []*backup.File{{Name: "base_table_write.sst"}}, files)
 }
 
 func TestTiDBConfigUnchanged(t *testing.T) {

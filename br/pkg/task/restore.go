@@ -1383,7 +1383,7 @@ func dropToBlackhole(
 // filterRestoreFiles filters tables that can't be processed after applying cfg.TableFilter.MatchTable.
 // if the db has no table that can be processed, the db will be filtered too.
 func filterRestoreFiles(
-	client *snapclient.SnapClient,
+	client restoreFileClient,
 	cfg *RestoreConfig,
 ) (files []*backuppb.File, tables []*metautil.Table, dbs []*metautil.Database) {
 	for _, db := range client.GetDatabases() {
@@ -1402,11 +1402,23 @@ func filterRestoreFiles(
 			if table.Info == nil || !cfg.TableFilter.MatchTable(dbName, table.Info.Name.O) {
 				continue
 			}
+			if table.Info.MaterializedView != nil ||
+				table.Info.MaterializedViewLog != nil ||
+				table.Info.MaterializedViewShadow != nil {
+				continue
+			}
+			if table.Info.MaterializedViewBase != nil {
+				table.Info.MaterializedViewBase = nil
+			}
 			files = append(files, table.Files...)
 			tables = append(tables, table)
 		}
 	}
 	return
+}
+
+type restoreFileClient interface {
+	GetDatabases() []*metautil.Database
 }
 
 // tweakLocalConfForRestore tweaks some of configs of TiDB to make the restore progress go well.
