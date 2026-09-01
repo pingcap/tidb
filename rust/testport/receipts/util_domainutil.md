@@ -1,57 +1,56 @@
-# `pkg/util/domainutil` — complete package transcreation
+# `pkg/util/domainutil` — Go-master parity audit receipt
 
-Pinned Go source: `e2788410d8d696605e8cb002585877a063ccc909`.
+Go authority: `origin/master` at `c6054025ed4c32ab3672a2a24ea46892714d21ec`.
 
 ## Complete inventory
 
-The package has exactly two artifacts, both read in full: `repair_vars.go` and
-`BUILD.bazel`. There is no package doc, test, test harness, benchmark, fixture,
-generated input/output, platform variant, README, or ownership file. The local
-Go package is byte-identical to the pin.
+The package contains exactly two artifacts, both read in full (207 lines
+total):
 
-Production behavior is one process-global, mutex-protected repair registry:
-repair mode, a lowercased table-name list, and a hash map of shallow-copied
-database metadata containing quarantined table pointers. It exposes the seven
-registry operations plus the two integer session-context keys and their string
-rendering.
+- `repair_vars.go` (198 lines): the process-global, mutex-protected repair
+  registry, table/database quarantine, lookup/removal operations, and session
+  key strings;
+- `BUILD.bazel` (9 lines): the public production library target.
 
-## Rust ownership and audit result
+There is no package test, `TestMain`, fixture, testdata, benchmark, fuzz
+target, example, generated/platform variant, nested package, or other build
+input. Both files are byte-identical to Go master.
 
-`rust/crates/tidb-domain/src/domainutil.rs` is the sole owner. The audit deleted
-a second independent implementation and its six Rust-only tests from
-`tidb-exec`, removed two more Rust-only owner tests, and removed the extra
-`as_str` convenience in favor of the source-shaped string formatting trait.
+## Rust ownership and parity
 
-The retained owner now uses hash maps/sets rather than a Rust-only sorted-map
-policy, and reuses `tidb-mysql`'s Go `strings.ToLower` implementation rather
-than Rust full-case expansion. Server startup publishes `repair-mode` and
-`repair-table-list` into this one global after installing the effective config,
-matching `cmd/tidb-server/main.go`.
+`rust/crates/tidb-domain/src/domainutil.rs` is the sole owner. It preserves
+the process-global `RepairInfo` lock and state, Go lowercasing, list and
+case-sensitive map matching, shallow DB copy with quarantined table pointers,
+first-match lookup quirk, removal/repair-mode transition, and
+`RepairedTable`/`RepairedDatabase` string values. Infoschema, planner, DDL, and
+server startup retain their ordinary consumer boundaries; the removed
+`tidb-exec` duplicate and Rust-only sorted-map/accessor policy are not present.
 
-Go's infoschema, planner, and DDL packages consume this registry. Their Rust
-integration remains owned by those separate package audits; this receipt does
-not claim those packages complete.
+No Go or Rust production delta was found in this rolling audit. The Go package
+has no source tests, so no new package-local regression was warranted; the
+owner compiles cleanly and existing downstream session tests remain the
+integration evidence.
 
-## Validation
+## Validation (Ready profile)
 
-Profile: WIP; this completes one package in the continuing package-by-package
-audit, not a repository-wide readiness claim.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/domainutil -count=1` — passed (`[no test files]`).
+- `(cd /tmp/tidb-go-latest-c605 && PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/domainutil -count=1)` — passed (`[no test files]`).
+- `env OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml -p tidb-domain --lib --offline --locked` — passed (owner compile; existing warning in `tidb-model`).
+- `cd rust && cargo +nightly-2026-08-22 fmt --all -- --check` — passed.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 make lint` — passed in the clean detached Go-master checkout; the active checkout may be temporarily instrumented by the concurrent failpoint test worker.
+- `git diff --check` — passed for the documentation diff.
 
-- `git diff --exit-code e2788410d8d696605e8cb002585877a063ccc909 -- pkg/util/domainutil` — passed.
-- `go test ./pkg/util/domainutil -count=1` — blocked before package execution by existing build failures: missing `checkMapABI` in `pkg/util/hack` and missing `http2.TrailerPrefix` in gRPC transport.
-- `cargo check --offline --locked -p tidb-domain -p tidb-exec -p tidb-server` — passed with existing warnings.
-- `cargo test --offline --locked -p tidb-domain --no-run` — passed with an existing warning.
-- `rustfmt --edition 2021 --check crates/tidb-domain/src/domainutil.rs crates/tidb-server/src/lib.rs crates/tidb-exec/src/lib.rs` — passed.
-- `git diff --check` — passed.
+This batch changes documentation only; no Go source, import section, test
+function, Bazel file, or module dependency changed, so `make bazel_prepare` is
+not required. The package has no failpoint use, so the failpoint wrapper is not
+applicable.
 
-No Go or Bazel file changed, so `make bazel_prepare` is not required.
+## Risks and boundaries
 
-## Risk
-
-- Correctness: removes split-brain repair state and restores Go case folding
-  and unordered map behavior. The safe Rust getter returns owned collection
-  handles rather than exposing storage after releasing a lock.
-- Compatibility: deletes the unused `tidb-exec::domainutil` API and Rust-only
-  tests; the canonical owner remains public from `tidb-domain`.
-- Performance: removes one unused global registry; active operations retain
-  the same lock and expected constant-time map/set behavior as Go.
+- Correctness: owner compilation and ordinary consumer tests cover shared
+  repair state, lowercasing, quarantine, and removal semantics.
+- Compatibility: no public API or runtime behavior changed in this batch.
+- Performance: no production code changed; registry operations remain
+  lock-protected and map/set-backed.
+- Not verified locally: full `ADMIN REPAIR TABLE` distributed execution;
+  server/session integration remains outside this leaf refresh.

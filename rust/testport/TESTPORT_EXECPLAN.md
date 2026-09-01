@@ -2467,13 +2467,14 @@ For each bounded behavior cluster:
   the real filename generator and directory getter. Complete inventory,
   native storage/writer boundaries, and WIP gates are recorded in
   `receipts/util_replayer.md`.
-- 2026-08-29: audited every production and build artifact in pinned Go
-  `pkg/util/domainutil` plus its startup publication. Removed the second
-  independent Rust repair registry and all package-only Rust tests, retained
-  one `tidb-domain` owner, restored Go hash-map and simple-lowercase behavior,
-  and wired the effective startup repair config into that single global.
-  Complete inventory, integration boundaries, and WIP gates are recorded in
-  `receipts/util_domainutil.md`.
+- 2026-09-02: refreshed the complete Go-master `pkg/util/domainutil`
+  inventory at `c6054025ed4c32ab3672a2a24ea46892714d21ec`: two artifacts and
+  207 lines, with no package tests, fixtures, generated/platform variants, or
+  nested packages. The existing `tidb-domain::domainutil` owner preserves the
+  process-global repair registry, Go lowercasing, quarantine/removal rules,
+  and session-key strings; current and detached Go no-test checks plus the
+  Rust owner compile pass. Details are in `receipts/util_domainutil.md` and
+  `docs/operations/util-domainutil-audit-execplan.md`.
 - 2026-08-29: audited every production and build artifact in pinned Go
   `pkg/util/trxevents` and its ordinary Distsql callback path. Replaced owned
   deep-copy payloads with source-shaped shared pointers, removed value equality
