@@ -72,7 +72,6 @@ impl FdEdge {
     }
 
     /// Go `fdEdge.isEquivalence`: `{xyz} == {xyz}`.
-    #[cfg(test)]
     fn is_equivalence(&self) -> bool {
         self.equiv && self.from.equals(&self.to)
     }
@@ -123,6 +122,9 @@ impl FdEdge {
 
 impl std::fmt::Display for FdEdge {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.equiv && !self.strict {
+            return f.write_str("Wrong functional dependency");
+        }
         let arrow = match (self.equiv, self.strict) {
             (true, _) => "==",
             (false, true) => "-->",
@@ -139,7 +141,13 @@ pub struct FdSet {
     conditional_edges: Vec<ConditionalFd>,
     /// Go `FDSet.NotNullCols`: the columns known never to be NULL, kept so a
     /// lax edge added LATER can still be promoted.
-    not_null_cols: ColSet,
+    pub not_null_cols: ColSet,
+    /// Go `HashCodeToUniqueID` for extended expression columns.
+    pub hash_code_to_unique_id: std::collections::HashMap<Vec<u8>, i64>,
+    /// Go `GroupByCols`.
+    pub group_by_cols: ColSet,
+    /// Go `HasAggBuilt`.
+    pub has_agg_built: bool,
 }
 
 /// The three source decisions consumed by Go `FDSet.MakeOuterJoin`.
@@ -232,7 +240,7 @@ impl FdSet {
 
     /// Go `FDSet.InClosure`: whether `set_b` is inferable from `set_a`. A
     /// short-circuiting [`Self::closure_of_strict`].
-    fn in_closure(&self, set_a: &ColSet, set_b: &ColSet) -> bool {
+    pub fn in_closure(&self, set_a: &ColSet, set_b: &ColSet) -> bool {
         if set_b.subset_of(set_a) {
             return true;
         }
@@ -288,6 +296,27 @@ impl FdSet {
     /// Go `FDSet.AddLaxFunctionalDependency`.
     pub fn add_lax(&mut self, from: ColSet, to: ColSet) {
         self.add_functional_dependency(from, to, false, false);
+    }
+
+    /// Go `FDSet.AddNCFunctionalDependency`: retain an edge until a later
+    /// null-rejecting predicate makes its condition visible.
+    pub fn add_conditional(
+        &mut self,
+        from: ColSet,
+        to: ColSet,
+        condition: ColSet,
+        strict: bool,
+        equiv: bool,
+    ) {
+        self.conditional_edges.push(ConditionalFd {
+            edge: FdEdge {
+                from,
+                to,
+                strict,
+                equiv,
+            },
+            condition,
+        });
     }
 
     /// Go `FDSet.addFunctionalDependency`: insert an edge, keeping the set
@@ -401,6 +430,12 @@ impl FdSet {
         self.add_equivalence_closure(from.union(&to));
     }
 
+    /// Go `FDSet.AddEquivalenceUnion`: every column in `union` belongs to one
+    /// equivalence class.
+    pub fn add_equivalence_union(&mut self, union: ColSet) {
+        self.add_equivalence_closure(union);
+    }
+
     /// Go `FDSet.AddConstants`: every listed column holds one value for all
     /// rows, which propagates through the strict closure and then simplifies
     /// the determinant of every strict edge and the dependency side of every
@@ -451,8 +486,7 @@ impl FdSet {
     }
 
     /// Go `FDSet.EquivalenceCols`: one set per equivalence class.
-    #[cfg(test)]
-    fn equivalence_cols(&self) -> Vec<&ColSet> {
+    pub fn equivalence_cols(&self) -> Vec<&ColSet> {
         self.edges
             .iter()
             .filter(|edge| edge.is_equivalence())
@@ -521,6 +555,18 @@ impl FdSet {
         self.not_null_cols = not_null_set;
     }
 
+    /// Go `FDSet.MakeNullable`: forget NOT NULL facts for the supplied
+    /// columns after an outer join makes them nullable.
+    pub fn make_nullable(&mut self, nullable_cols: &ColSet) {
+        self.not_null_cols.difference_with(nullable_cols);
+    }
+
+    /// Go `FDSet.NotNullCols`.
+    #[must_use]
+    pub fn not_null_cols(&self) -> &ColSet {
+        &self.not_null_cols
+    }
+
     /// Go `FDSet.MakeCartesianProduct`: the dependencies of `T1 x T2`.
     ///
     /// Two independent relations cannot imply anything about each other, so
@@ -536,13 +582,225 @@ impl FdSet {
         }
         self.conditional_edges
             .extend(rhs.conditional_edges.iter().cloned());
+    }
+
+    /// Go `FDSet.AddFrom`: merge another relation's complete dependency set.
+    pub fn add_from(&mut self, rhs: &FdSet) {
+        for edge in &rhs.edges {
+            if edge.equiv {
+                self.add_equivalence_closure(edge.from.clone());
+            } else if edge.is_constant() {
+                self.add_constants(edge.to.clone());
+            } else if edge.strict {
+                self.add_strict(edge.from.clone(), edge.to.clone());
+            } else {
+                self.add_lax(edge.from.clone(), edge.to.clone());
+            }
+        }
+        self.conditional_edges
+            .extend(rhs.conditional_edges.iter().cloned());
         self.not_null_cols.union_with(&rhs.not_null_cols);
+        for (hash_code, unique_id) in &rhs.hash_code_to_unique_id {
+            self.hash_code_to_unique_id
+                .entry(hash_code.clone())
+                .or_insert(*unique_id);
+        }
+        self.group_by_cols.union_with(&rhs.group_by_cols);
+        self.has_agg_built = rhs.has_agg_built;
+    }
+
+    /// Go `FDSet.RegisterUniqueID`. Duplicate or empty hashes leave the first
+    /// registration unchanged.
+    pub fn register_unique_id(&mut self, hash_code: Vec<u8>, unique_id: i64) {
+        if hash_code.is_empty() || self.hash_code_to_unique_id.contains_key(&hash_code) {
+            return;
+        }
+        self.hash_code_to_unique_id.insert(hash_code, unique_id);
+    }
+
+    /// Go `FDSet.IsHashCodeRegistered`.
+    #[must_use]
+    pub fn registered_unique_id(&self, hash_code: &[u8]) -> Option<i64> {
+        self.hash_code_to_unique_id.get(hash_code).copied()
+    }
+
+    /// Go `FDSet.GroupByCols`.
+    #[must_use]
+    pub fn group_by_cols(&self) -> &ColSet {
+        &self.group_by_cols
+    }
+
+    /// Replaces Go `FDSet.GroupByCols` after aggregation extraction.
+    pub fn set_group_by_cols(&mut self, columns: ColSet) {
+        self.group_by_cols = columns;
+    }
+
+    /// Go `FDSet.HasAggBuilt`.
+    #[must_use]
+    pub const fn has_agg_built(&self) -> bool {
+        self.has_agg_built
+    }
+
+    /// Replaces Go `FDSet.HasAggBuilt` after aggregation extraction.
+    pub const fn set_has_agg_built(&mut self, value: bool) {
+        self.has_agg_built = value;
+    }
+
+    /// Go `FDSet.MaxOneRow`: all retained output columns are constants while
+    /// equivalence remains the stronger fact.
+    pub fn max_one_row(&mut self, columns: ColSet) {
+        self.edges = self
+            .edges
+            .iter()
+            .filter(|edge| edge.equiv && edge.from.intersects(&columns))
+            .map(|edge| {
+                let intersection = edge.from.intersection(&columns);
+                FdEdge {
+                    from: intersection.clone(),
+                    to: intersection,
+                    strict: true,
+                    equiv: true,
+                }
+            })
+            .collect();
+        if !columns.is_empty() {
+            self.edges.push(FdEdge {
+                from: ColSet::default(),
+                to: columns,
+                strict: true,
+                equiv: false,
+            });
+        }
+    }
+
+    /// Go `FDSet.ProjectCols`: retain exactly the dependencies visible after
+    /// projecting to `columns`, including transitive and equivalence-based
+    /// determinant substitution.
+    pub fn project_cols(&mut self, columns: &ColSet) {
+        let mut constant_columns = ColSet::default();
+        let mut deleted_determinants = ColSet::default();
+        let mut equivalence_columns = ColSet::default();
+        for index in 0..self.edges.len() {
+            let edge = self.edges[index].clone();
+            if edge.is_constant() {
+                constant_columns = edge.to.clone();
+            }
+            if !edge.to.subset_of(columns) && !edge.equiv && edge.strict {
+                let closure = self.closure_of_strict(&edge.to.union(&edge.from));
+                self.edges[index].to = closure.difference(&edge.from);
+            }
+            if !edge.equiv && !edge.from.subset_of(columns) {
+                deleted_determinants.union_with(&edge.from.difference(columns));
+            }
+            if edge.equiv && edge.from.intersects(columns) {
+                equivalence_columns.union_with(&edge.from);
+            }
+        }
+        deleted_determinants.intersection_with(&equivalence_columns);
+        let equivalence_map = self.make_equivalence_map(&deleted_determinants, columns);
+        if !constant_columns.is_empty() {
+            self.add_constants(constant_columns.clone());
+        }
+
+        let mut retained = Vec::with_capacity(self.edges.len());
+        let mut substituted = Vec::new();
+        for mut edge in std::mem::take(&mut self.edges) {
+            if !edge.to.subset_of(columns) {
+                if edge.equiv {
+                    edge.to.intersection_with(columns);
+                    edge.from.intersection_with(columns);
+                } else if edge.strict {
+                    edge.to.intersection_with(columns);
+                } else {
+                    let deleted = edge.to.difference(columns);
+                    if deleted.subset_of(&constant_columns)
+                        || deleted.subset_of(&self.not_null_cols)
+                    {
+                        edge.to.intersection_with(columns);
+                    } else {
+                        continue;
+                    }
+                }
+                if !edge.is_constant() && edge.remove_columns_to_side(&constant_columns) {
+                    continue;
+                }
+                if !edge.is_equivalence() && edge.remove_columns_to_side(&edge.from.clone()) {
+                    continue;
+                }
+            }
+
+            if !edge.from.subset_of(columns) {
+                let deleted = edge.from.difference(columns);
+                let mut replacements = ColSet::default();
+                let mut found_all = true;
+                deleted.for_each(|column| {
+                    if let Some(replacement) = equivalence_map.get(&column) {
+                        replacements.insert(*replacement);
+                    } else {
+                        found_all = false;
+                    }
+                });
+                if found_all {
+                    let mut from = edge.from.union(&replacements);
+                    from.difference_with(&deleted);
+                    substituted.push(FdEdge { from, ..edge });
+                }
+                continue;
+            }
+            retained.push(edge);
+        }
+        self.edges = retained;
+        for edge in substituted {
+            if edge.equiv {
+                self.add_equivalence_closure(edge.from);
+            } else if edge.is_constant() {
+                self.add_constants(edge.to);
+            } else if edge.strict {
+                self.add_strict(edge.from, edge.to);
+            } else {
+                self.add_lax(edge.from, edge.to);
+            }
+        }
+
+        self.conditional_edges.retain_mut(|conditional| {
+            if !conditional.condition.intersects(columns) {
+                // Pinned Go's projection loop leaves this NC edge in place.
+                return true;
+            }
+            if conditional.edge.is_constant() {
+                conditional.edge.to.intersection_with(columns);
+                return !conditional.edge.to.is_empty();
+            }
+            if conditional.edge.equiv {
+                conditional.edge.from.intersection_with(columns);
+                conditional.edge.to.intersection_with(columns);
+                return !conditional.edge.from.is_empty();
+            }
+            true
+        });
+    }
+
+    fn make_equivalence_map(
+        &self,
+        deleted_determinants: &ColSet,
+        projected_columns: &ColSet,
+    ) -> std::collections::BTreeMap<i64, i64> {
+        let mut result = std::collections::BTreeMap::new();
+        deleted_determinants.for_each(|column| {
+            let mut closure = self.closure_of_equivalence(&ColSet::new([column]));
+            closure.intersection_with(projected_columns);
+            let (replacement, found) = closure.next(0);
+            if found {
+                result.insert(column, replacement);
+            }
+        });
+        result
     }
 
     /// Every column named by an ordinary edge. This mirrors Go `AllCols`;
     /// equivalence edges name their set once, while all other edges contribute
     /// both sides.
-    fn all_cols(&self) -> ColSet {
+    pub fn all_cols(&self) -> ColSet {
         let mut cols = ColSet::default();
         for edge in &self.edges {
             cols.union_with(&edge.from);
@@ -562,25 +820,6 @@ impl FdSet {
             .filter(|edge| edge.strict && !edge.equiv)
             .find(|edge| all_cols.subset_of(&self.closure_of_strict(&edge.from)))
             .map(|edge| edge.from.clone())
-    }
-
-    fn add_conditional(
-        &mut self,
-        from: ColSet,
-        to: ColSet,
-        condition: ColSet,
-        strict: bool,
-        equiv: bool,
-    ) {
-        self.conditional_edges.push(ConditionalFd {
-            edge: FdEdge {
-                from,
-                to,
-                strict,
-                equiv,
-            },
-            condition,
-        });
     }
 
     /// Go `FDSet.MakeOuterJoin`, with `self` as the row-preserving side and
@@ -706,6 +945,12 @@ impl FdSet {
 
         self.not_null_cols.union_with(&filter.not_null_cols);
         self.not_null_cols.difference_with(inner_cols);
+        for (hash_code, unique_id) in &inner.hash_code_to_unique_id {
+            self.hash_code_to_unique_id
+                .insert(hash_code.clone(), *unique_id);
+        }
+        self.group_by_cols.union_with(&inner.group_by_cols);
+        self.has_agg_built |= inner.has_agg_built;
     }
 }
 
@@ -991,6 +1236,105 @@ mod tests {
         // `WHERE a IS NOT NULL` supplies the rest of the determinant.
         fd.make_not_null(ColSet::new([1]));
         assert!(ColSet::new([3]).subset_of(&fd.closure_of_strict(&ColSet::new([1, 2]))));
+    }
+
+    #[test]
+    fn add_from_merges_every_go_fd_kind_and_not_null_fact() {
+        let mut left = FdSet::new();
+        left.add_strict(ColSet::new([1]), ColSet::new([2]));
+        let mut right = FdSet::new();
+        right.add_lax(ColSet::new([3]), ColSet::new([4]));
+        right.add_equivalence_union(ColSet::new([5, 6]));
+        right.add_constants(ColSet::new([7]));
+        right.make_not_null(ColSet::new([3]));
+
+        left.add_from(&right);
+
+        assert_eq!(
+            left.to_string(),
+            "(1)-->(2), (3)-->(4), (5,6)==(5,6), ()-->(7)"
+        );
+        assert!(left.not_null_cols().has(3));
+    }
+
+    #[test]
+    fn max_one_row_keeps_equivalence_and_makes_outputs_constant() {
+        let mut fd = FdSet::new();
+        fd.add_strict(ColSet::new([1]), ColSet::new([2, 3]));
+        fd.add_equivalence_union(ColSet::new([1, 2]));
+
+        fd.max_one_row(ColSet::new([1, 3]));
+
+        assert_eq!(fd.to_string(), "(1)==(1), ()-->(1,3)");
+    }
+
+    #[test]
+    fn project_cols_preserves_transitive_and_equivalent_determinants() {
+        let mut transitive = FdSet::new();
+        transitive.add_strict(ColSet::new([1]), ColSet::new([2]));
+        transitive.add_strict(ColSet::new([2]), ColSet::new([3]));
+        transitive.project_cols(&ColSet::new([1, 3]));
+        assert!(ColSet::new([3]).subset_of(&transitive.closure_of_strict(&ColSet::new([1]))));
+
+        let mut substituted = FdSet::new();
+        substituted.add_strict(ColSet::new([1]), ColSet::new([3]));
+        substituted.add_equivalence_union(ColSet::new([1, 2]));
+        substituted.project_cols(&ColSet::new([2, 3]));
+        assert!(ColSet::new([3]).subset_of(&substituted.closure_of_strict(&ColSet::new([2]))));
+        assert!(!substituted.all_cols().has(1));
+    }
+
+    #[test]
+    fn make_nullable_forgets_only_selected_not_null_columns() {
+        let mut fd = FdSet::new();
+        fd.make_not_null(ColSet::new([1, 2, 3]));
+        fd.make_nullable(&ColSet::new([2, 4]));
+        assert_eq!(fd.not_null_cols().to_string(), "(1,3)");
+    }
+
+    #[test]
+    fn conditional_equivalence_becomes_visible_after_null_rejection() {
+        let mut fd = FdSet::new();
+        fd.add_conditional(
+            ColSet::new([1]),
+            ColSet::new([2]),
+            ColSet::new([2]),
+            true,
+            true,
+        );
+        assert_eq!(
+            sorted(&fd.closure_of_equivalence(&ColSet::new([1]))),
+            vec![1]
+        );
+        fd.make_not_null(ColSet::new([2]));
+        assert_eq!(
+            sorted(&fd.closure_of_equivalence(&ColSet::new([1]))),
+            vec![1, 2]
+        );
+    }
+
+    #[test]
+    fn outer_join_without_a_filter_keeps_both_keys_as_a_combined_key() {
+        let mut outer = FdSet::new();
+        outer.add_strict(ColSet::new([1]), ColSet::new([2]));
+        outer.make_not_null(ColSet::new([1]));
+        let mut inner = FdSet::new();
+        inner.add_strict(ColSet::new([10]), ColSet::new([11]));
+        inner.make_not_null(ColSet::new([10]));
+        outer.make_outer_join(
+            &inner,
+            &FdSet::new(),
+            &ColSet::new([1, 2]),
+            &ColSet::new([10, 11]),
+            OuterJoinOptions {
+                skip_rule_331: true,
+                only_inner_filter: true,
+                inner_is_false: false,
+            },
+        );
+        assert!(outer.in_closure(&ColSet::new([10]), &ColSet::new([11])));
+        assert!(outer.in_closure(&ColSet::new([1, 10]), &ColSet::new([2, 11])));
+        assert!(!outer.not_null_cols().has(10));
     }
 
     /// Go `TestFindCommonEquivClasses`.

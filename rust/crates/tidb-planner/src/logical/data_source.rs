@@ -169,6 +169,12 @@ pub struct DataSource {
     pub possible_access_paths: Vec<DataSourceAccessPath>,
     /// Go `TableInfo.PKIsHandle`.
     pub pk_is_handle: bool,
+    /// Latest-schema public index IDs used by `ExtractFD` for a connected
+    /// `FOR UPDATE` read when the domain schema changed.
+    pub fd_latest_public_index_ids: Option<std::collections::BTreeSet<i64>>,
+    /// Go `DataSource.ExtractFD` returns the PK-only set when its latest-index
+    /// lookup fails.
+    pub fd_latest_index_lookup_failed: bool,
     /// Go `TableInfo.IsCommonHandle`.
     pub is_common_handle: bool,
     /// Go `TableInfo.CommonHandleVersion`.
@@ -261,6 +267,13 @@ impl DataSource {
         let mut nullable = Vec::new();
         for index in &self.indexes {
             if !index.unique || !index.is_public {
+                continue;
+            }
+            if self
+                .fd_latest_public_index_ids
+                .as_ref()
+                .is_some_and(|indexes| !indexes.contains(&index.id))
+            {
                 continue;
             }
             let (nullable_key, strong_key) =
@@ -705,6 +718,8 @@ impl DataSource {
             all_possible_access_paths: self.all_possible_access_paths.clone(),
             possible_access_paths: self.possible_access_paths.clone(),
             pk_is_handle: self.pk_is_handle,
+            fd_latest_public_index_ids: self.fd_latest_public_index_ids.clone(),
+            fd_latest_index_lookup_failed: self.fd_latest_index_lookup_failed,
             is_common_handle: self.is_common_handle,
             common_handle_version: self.common_handle_version,
             is_temporary: self.is_temporary,

@@ -2139,3 +2139,30 @@ No production DDL behavior was changed. Exact WIP validation commands:
 Plan revision note (2026-08-27): created after the user confirmed the
 performance-preserving route to full Go parity across plan cache, aggregation,
 parallel execution, resource groups, sort, and coprocessor packages.
+
+Package receipt (2026-09-01, complete pinned `pkg/planner/funcdep`): Rust now
+derives functional dependencies bottom-up for DataSource, Selection,
+Projection, Join/Apply (including outer-join conditional edges), Aggregation,
+UnionAll, Expand, and pass-through logical operators. The `tidb-funcdep` graph
+gained every public source operation and metadata propagation path used by the
+pinned package.
+
+The complete six-artifact package inventory is recorded in
+`rust/testport/receipts/planner_funcdep.md`. Extraction preserves Go's
+statement-wide id allocation, the `tidb_enable_new_only_full_group_by_check`
+gate, and latest-index behavior for read-committed and locking reads. Parsed
+SQL tests cover the projection/aggregation, UnionAll, Join, and Apply source
+families. Logical-tree regressions cover DataSource keys, inner and outer
+joins, correlated Apply, NULL-rejected outer Apply, expression-id gating, and
+latest-index failure. Exact Ready validation commands:
+
+    GOTOOLCHAIN=go1.25.10 go test -tags=intest,deadlock -count=1 ./pkg/planner/funcdep
+    cd rust
+    cargo fmt --all -- --check
+    cargo test --locked -p tidb-funcdep -- --nocapture
+    cargo test --locked -p tidb-planner logical::functional_dependencies::tests:: -- --nocapture
+    cargo test --locked -p tidb-planner extract_fd_source -- --nocapture
+    cargo check --locked -p tidb-funcdep -p tidb-planner -p tidb-executor
+    cd ..
+    make lint
+    git diff --check

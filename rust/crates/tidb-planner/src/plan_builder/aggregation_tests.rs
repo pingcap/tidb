@@ -25,6 +25,7 @@ use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags, SessionTimeZone};
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_expr::ZonedNoColumns;
+use tidb_funcdep::ColSet;
 
 use super::catalog::{SourceColumn, SourceIndex, SourceIndexColumn, SourceTable, TableSource};
 use super::marker::{MarkerKind, PlanMarker};
@@ -166,6 +167,54 @@ fn build_err(sql: &str) -> String {
         Ok(_) => panic!("{sql} should have been refused"),
         Err(error) => error.message().to_owned(),
     }
+}
+
+#[test]
+fn extract_fd_source_projection_and_aggregation_cases() {
+    let build_with_fd_expression_ids = |sql: &str| {
+        let harness = Harness::new();
+        let mut builder = harness.builder();
+        builder.new_only_full_group_by_check = true;
+        builder
+            .build_select(&parse_select(sql))
+            .unwrap_or_else(|error| panic!("{sql} should build: {}", error.message()))
+            .0
+    };
+
+    let projection = build_with_fd_expression_ids("SELECT a, c, b + 1 FROM t");
+    let projection_schema = projection.schema().expect("projection schema");
+    let projection_fd = projection.extract_fd();
+    assert!(projection_fd.in_closure(
+        &ColSet::new([1]),
+        &ColSet::new(
+            projection_schema
+                .columns
+                .iter()
+                .map(|column| column.unique_id),
+        ),
+    ));
+    assert!(projection_fd.in_closure(
+        &ColSet::new([2]),
+        &ColSet::new([projection_schema.columns[2].unique_id]),
+    ));
+
+    let grouped = build_with_fd_expression_ids("SELECT b + 1, SUM(a) FROM t GROUP BY b");
+    let grouped_schema = grouped.schema().expect("grouped projection schema");
+    let grouped_fd = grouped.extract_fd();
+    assert!(grouped_fd.in_closure(
+        &ColSet::new([2]),
+        &ColSet::new(grouped_schema.columns.iter().map(|column| column.unique_id),),
+    ));
+    assert!(grouped_fd.group_by_cols().has(2));
+
+    let mut harness = Harness::new();
+    harness.catalog.tables[0].indexes[0].unique = true;
+    let mut builder = harness.builder();
+    let (filtered, _) = builder
+        .build_select(&parse_select("SELECT a, c FROM t WHERE b = 1"))
+        .expect("nullable unique key query builds");
+    let filtered_fd = filtered.extract_fd();
+    assert!(filtered_fd.in_closure(&ColSet::new([2]), &ColSet::new([1, 3])));
 }
 
 /// The first operator of the given kind on the way down from the root.

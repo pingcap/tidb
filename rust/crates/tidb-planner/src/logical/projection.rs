@@ -48,6 +48,11 @@ pub struct LogicalProjection {
     /// `Expand`, so its column references are NOT real references and it must
     /// not be eliminated.
     pub proj4_expand: bool,
+    /// Whether Go's statement-scoped
+    /// `MapHashCode2UniqueID4ExtendedCol` recorded this projection's computed
+    /// outputs. The map is populated only while
+    /// `tidb_enable_new_only_full_group_by_check` is enabled.
+    pub fd_expression_ids_registered: bool,
 }
 
 impl LogicalProjection {
@@ -166,6 +171,7 @@ impl LogicalProjection {
             exprs,
             calculate_no_delay: false,
             proj4_expand: false,
+            fd_expression_ids_registered: false,
         }
     }
 
@@ -422,6 +428,7 @@ impl LogicalProjection {
             exprs: self.exprs.clone(),
             calculate_no_delay: self.calculate_no_delay,
             proj4_expand: self.proj4_expand,
+            fd_expression_ids_registered: self.fd_expression_ids_registered,
         }
     }
 }

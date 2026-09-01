@@ -23,8 +23,9 @@
 //! and the duplicate-alias error.
 
 use tidb_ast::{Join, JoinNode, JoinType, SelectStmt, Stmt};
-use tidb_datatype::{FieldType, FieldTypeCode, SessionTimeZone};
+use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags, SessionTimeZone};
 use tidb_expr::ZonedNoColumns;
+use tidb_funcdep::ColSet;
 
 use super::catalog::{SourceColumn, SourceTable, SourceView, TableSource};
 use super::from::{
@@ -170,6 +171,47 @@ fn build(harness: &Harness, sql: &str) -> LogicalPlan {
         .build_select(&parse_select(sql))
         .expect("the statement builds")
         .0
+}
+
+fn primary_key_catalog() -> Harness {
+    let mut harness = Harness::new();
+    for table in &mut harness.catalog.tables {
+        table.columns[0].is_primary_key = true;
+        let flags =
+            table.columns[0].ret_type.flags() | FieldTypeFlags::NOT_NULL | FieldTypeFlags::PRI_KEY;
+        table.columns[0].ret_type.set_flags(flags);
+    }
+    harness
+}
+
+#[test]
+fn extract_fd_source_join_and_apply_cases() {
+    let harness = primary_key_catalog();
+
+    let joined = build(
+        &harness,
+        "SELECT t1.a, t1.b, t2.a, t2.c FROM t1 JOIN t2 ON t1.a = t2.a",
+    );
+    let joined_schema = joined.schema().expect("join projection schema");
+    let joined_fd = joined.extract_fd();
+    assert!(joined_fd
+        .closure_of_equivalence(&ColSet::new([joined_schema.columns[0].unique_id]))
+        .has(joined_schema.columns[2].unique_id));
+    assert!(joined_fd.in_closure(
+        &ColSet::new([joined_schema.columns[0].unique_id]),
+        &ColSet::new(joined_schema.columns.iter().map(|column| column.unique_id),),
+    ));
+
+    let semi = build(
+        &harness,
+        "SELECT t1.a, t1.b FROM t1 WHERE EXISTS (SELECT * FROM t2 WHERE t2.a = t1.a)",
+    );
+    let semi_schema = semi.schema().expect("semi-join projection schema");
+    let semi_fd = semi.extract_fd();
+    assert!(semi_fd.in_closure(
+        &ColSet::new([semi_schema.columns[0].unique_id]),
+        &ColSet::new([semi_schema.columns[1].unique_id]),
+    ));
 }
 
 /// The visible output names of a plan, as `table.column`.

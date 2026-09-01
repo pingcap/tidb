@@ -30,6 +30,7 @@ use tidb_datatype::{
     FieldType, FieldTypeCode, FieldTypeFlags, SessionTimeZone, UNSPECIFIED_LENGTH,
 };
 use tidb_expr::ZonedNoColumns;
+use tidb_funcdep::ColSet;
 
 use super::catalog::{SourceColumn, SourceTable, TableSource};
 use super::set_opr::union_join_field_type;
@@ -212,6 +213,19 @@ fn test_union_all_is_a_bare_union_all_with_one_projection_per_branch() {
         .iter()
         .all(|child| child.tp() == "Projection"));
     assert!(!operator_names(&plan).iter().any(|tp| tp == "Aggregation"));
+}
+
+#[test]
+fn extract_fd_source_union_all_common_equivalence() {
+    let plain = build("SELECT a, b FROM t UNION ALL SELECT a, b FROM t");
+    assert!(plain.extract_fd().equivalence_cols().is_empty());
+
+    let selected = build("SELECT a, b FROM t WHERE a = b UNION ALL SELECT a, b FROM t WHERE a = b");
+    let schema = selected.schema().expect("union schema");
+    let fd = selected.extract_fd();
+    assert!(fd
+        .closure_of_equivalence(&ColSet::new([schema.columns[0].unique_id]))
+        .has(schema.columns[1].unique_id));
 }
 
 #[test]

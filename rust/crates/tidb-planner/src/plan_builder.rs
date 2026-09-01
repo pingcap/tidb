@@ -623,6 +623,9 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     /// rewriter's narrowing of `SessionVars` and nothing in it reads the SQL
     /// mode. Go likewise reads the mode off `SQLMode`, not off the rewriter.
     pub only_full_group_by: bool,
+    /// Go `SessionVars.OptimizerEnableNewOnlyFullGroupByCheck` (default OFF).
+    /// It also gates statement-scoped projection expression-ID registration.
+    pub new_only_full_group_by_check: bool,
     /// Go `SessionVars.OptimizerUseInvisibleIndexes` (default OFF): whether
     /// `getPossibleAccessPaths` may enumerate invisible indexes.
     pub optimizer_use_invisible_indexes: bool,
@@ -900,6 +903,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             no_index_lookup_push_down_hints: Vec::new(),
             // Go's default `sql_mode` carries `ONLY_FULL_GROUP_BY`.
             only_full_group_by: true,
+            new_only_full_group_by_check: false,
             // Go `DefTiDBOptimizerUseInvisibleIndexes = false`.
             optimizer_use_invisible_indexes: false,
             tikv_in_isolation_read: true,
@@ -1788,6 +1792,28 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             self.index_lookup_push_down_session.repeatable_read,
             self.is_for_update_read,
         )?;
+        let check_fd_latest_indexes = (!self.index_lookup_push_down_session.repeatable_read
+            || self.is_for_update_read)
+            && self.ctx.connection_id().is_some_and(|id| id > 0);
+        if check_fd_latest_indexes {
+            match crate::domain_misc::get_latest_index_info(
+                self.source.latest_index_schema(),
+                table.table_id,
+                0,
+            ) {
+                Ok((latest_indexes, true)) if self.is_for_update_read => {
+                    data_source.fd_latest_public_index_ids = Some(
+                        latest_indexes
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|(id, index)| index.is_public.then_some(id))
+                            .collect(),
+                    );
+                }
+                Ok(_) => {}
+                Err(_) => data_source.fd_latest_index_lookup_failed = true,
+            }
+        }
         let mut resolution = crate::access_path::apply_table_index_hints(
             table,
             &public_paths,
@@ -2448,6 +2474,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
 
         let mut projection =
             LogicalProjection::new(self.base(LogicalProjection::TYPE), exprs.clone());
+        projection.fd_expression_ids_registered = self.new_only_full_group_by_check;
         projection.base.set_children(vec![plan]);
         projection
             .base
@@ -2521,6 +2548,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         }
 
         let mut projection = LogicalProjection::new(self.base(LogicalProjection::TYPE), exprs);
+        projection.fd_expression_ids_registered = self.new_only_full_group_by_check;
         projection.base.set_children(vec![plan]);
         projection
             .base
