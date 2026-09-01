@@ -4962,21 +4962,9 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 	default:
 		return dbterror.ErrUnsupportedIndexType.GenWithStackByArgs(indexOption.Tp)
 	}
-<<<<<<< HEAD
-=======
-	if columnarIndexType == model.ColumnarIndexTypeFulltext {
-		if err := checkFullTextSupportedInStarter(); err != nil {
-			return errors.Trace(err)
-		}
-	}
-
-	if err := checkTableTypeForColumnarIndex(tblInfo); err != nil {
-		return errors.Trace(err)
-	}
 	if err := checkColumnarStorageEnabled(ctx); err != nil {
 		return wrapColumnarStorageGateForColumnarIndex(err)
 	}
->>>>>>> 5a064438c49 (ddl, br: gate adding tiflash replica by global variable (#70500))
 
 	metaBuildCtx := NewMetaBuildContextWithSctx(ctx)
 	indexName, _, err = checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, columnarIndexType, ifNotExists)

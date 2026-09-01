@@ -1787,8 +1787,13 @@ func fetchTiFlashReplicaSummaryPath(t *testing.T, ts *basicHTTPHandlerTestSuite,
 
 func TestTiFlashReplicaSummary(t *testing.T) {
 	ts := createBasicHTTPHandlerTestSuite()
-	ts.startServer(t, mockstore.WithMockTiFlash(2))
+	ts.startServer(t)
 	defer ts.stopServer(t)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount"))
+	}()
 
 	tk := testkit.NewTestKit(t, ts.store)
 	tk.MustExec("use test")
