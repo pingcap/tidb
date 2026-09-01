@@ -13,7 +13,19 @@ go_library(
         "//pkg/tablecodec",
         "//pkg/testkit",
         "//pkg/util/codec",
-        "//pkg/util/collate",
+        "@com_github_stretchr_testify//require",
+    ],
+)
+
+go_test(
+    name = "testutil_test",
+    timeout = "short",
+    srcs = ["indexcheck_test.go"],
+    embed = [":testutil"],
+    deps = [
+        "//pkg/parser/mysql",
+        "//pkg/table",
+        "//pkg/types",
         "@com_github_stretchr_testify//require",
     ],
 )

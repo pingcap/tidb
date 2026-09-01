@@ -3169,6 +3169,15 @@ For each bounded behavior cluster:
       artifact changed in this audit batch, so Bazel preparation and Rust
       cargo checks were not applicable. Details are in
       `receipts/table_tblctx.md`.
+- [x] Complete the Go-master `pkg/table/tables/testutil` package: inventory
+      the helper and BUILD metadata, restore table-snapshot collation selection
+      instead of the process default, remove the obsolete dependency, add the
+      focused fail-before/pass-after regression, and record its receipt and
+      ExecPlan.
+- [x] Run the Ready validation profile for `pkg/table/tables/testutil`:
+      complete tagged Go tests, repository lint, and diff hygiene pass;
+      required `make bazel_prepare` was attempted but Bazel is unavailable
+      locally. Details are in `receipts/table_tables_testutil.md`.
 - [x] Complete the Go-master `pkg/util/codec` delta: inventory all 12 source,
       test, benchmark, harness, and build artifacts; remove Rust-only encoder
       value/hash methods; update consumers; add the raw-value regression; and
