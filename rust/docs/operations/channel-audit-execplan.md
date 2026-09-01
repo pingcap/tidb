@@ -1,7 +1,7 @@
 # Align `pkg/util/channel` with the pinned Go package
 
 This ExecPlan follows `PLANS.md` and uses Go `origin/master` commit
-`5e8a1a229a7591ddac49a0cd3b795587c2595ab9` as authority. The package is
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` as authority. The package is
 unchanged from the earlier pinned audit; this refresh records the rolling
 master comparison.
 
@@ -23,7 +23,7 @@ generated variants, or `TestMain`.
 - [x] Validate the Go zero-test package, all `tidb-util` library tests,
   formatting, and diff quality.
 - [x] Refresh the receipt and ExecPlan for the current Go-master authority.
-- [ ] Commit, push, pull, and verify the target branch synchronization.
+- [x] Commit, push, pull, and verify the target branch synchronization.
 
 ## Validation
 
