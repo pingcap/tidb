@@ -780,7 +780,7 @@ type candidatePath struct {
 	// Length equals len(path.PartialIndexPaths). Only set for IndexMerge paths.
 	partialPathMatchResults  []property.PhysicalPropMatchResult
 	indexJoinCols            int     // how many index columns are used in access conditions in this IndexJoin.
-	countAfterAccess4Compare float64 // adjusted CountAfterAccess used only by candidate comparison.
+	countAfterAccess4IndexJoin float64 // adjusted CountAfterAccess used only by index join candidate comparison.
 	isFullRange              bool    // cached result of whether this path covers the full scan range.
 	eqOrInCount              int     // cached result of equalPredicateCount().
 }
@@ -849,9 +849,9 @@ func compareRiskRatio(lhs, rhs *candidatePath) (int, float64) {
 	return 0, 0
 }
 
-func (c *candidatePath) getCountAfterAccess4Compare() float64 {
-	if c.countAfterAccess4Compare > 0 {
-		return c.countAfterAccess4Compare
+func (c *candidatePath) getCountAfterAccess4IndexJoin() float64 {
+	if c.countAfterAccess4IndexJoin > 0 {
+		return c.countAfterAccess4IndexJoin
 	}
 	return c.path.CountAfterAccess
 }
@@ -923,8 +923,8 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 
 	// This rule is empirical but not always correct.
 	// If x's range row count is significantly lower than y's, for example, 1000 times, we think x is better.
-	lhsCountAfterAccess := lhs.getCountAfterAccess4Compare()
-	rhsCountAfterAccess := rhs.getCountAfterAccess4Compare()
+	lhsCountAfterAccess := lhs.getCountAfterAccess4IndexJoin()
+	rhsCountAfterAccess := rhs.getCountAfterAccess4IndexJoin()
 	if lhsCountAfterAccess > 100 && rhsCountAfterAccess > 100 && // to prevent some extreme cases, e.g. 0.01 : 10
 		len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 && // not IndexMerge since its row count estimation is not accurate enough
 		prop.ExpectedCnt == math.MaxFloat64 { // Limit may affect access row count
@@ -1701,8 +1701,8 @@ func getIndexCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *pr
 	return candidate
 }
 
-func getIndexCandidateForIndexJoin(sctx planctx.PlanContext, path *util.AccessPath, indexJoinCols int, countAfterAccess4Compare float64) *candidatePath {
-	candidate := &candidatePath{path: path, indexJoinCols: indexJoinCols, countAfterAccess4Compare: countAfterAccess4Compare}
+func getIndexCandidateForIndexJoin(sctx planctx.PlanContext, path *util.AccessPath, indexJoinCols int, countAfterAccess4IndexJoin float64) *candidatePath {
+	candidate := &candidatePath{path: path, indexJoinCols: indexJoinCols, countAfterAccess4IndexJoin: countAfterAccess4IndexJoin}
 	candidate.matchPropResult = property.PropNotMatched
 	candidate.accessCondsColMap = util.ExtractCol2Len(sctx.GetExprCtx().GetEvalCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
 	candidate.indexCondsColMap = util.ExtractCol2Len(sctx.GetExprCtx().GetEvalCtx(), append(path.AccessConds, path.IndexFilters...), path.FullIdxCols, path.FullIdxColLens)

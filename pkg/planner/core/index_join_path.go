@@ -460,10 +460,10 @@ func indexJoinPathConstructResult(
 	}
 	idxOff2KeyOff := make([]int, len(buildTmp.curIdxOff2KeyOff))
 	copy(idxOff2KeyOff, buildTmp.curIdxOff2KeyOff)
-	countAfterAccess4Compare := indexJoinPathCountAfterAccess4Compare(indexJoinInfo, path, idxOff2KeyOff, usedColsLen)
+	countAfterAccess4IndexJoin := indexJoinPathCountAfterAccess4Compare(indexJoinInfo, path, idxOff2KeyOff, usedColsLen)
 	return &indexJoinPathResult{
 		chosenPath:     path,
-		candidate:      getIndexCandidateForIndexJoin(sctx, path, usedColsLen, countAfterAccess4Compare),
+		candidate:      getIndexCandidateForIndexJoin(sctx, path, usedColsLen, countAfterAccess4IndexJoin),
 		usedColsLen:    len(ranges.Range()[0].LowVal),
 		eqUsedColsNDV:  innerNDV,
 		lastColIsRange: lastColIsRange,
