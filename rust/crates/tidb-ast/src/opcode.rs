@@ -33,7 +33,7 @@ const fn info(name: &'static str, literal: &'static str, is_keyword: bool) -> Op
     }
 }
 
-const OPS: [OpInfo; 33] = [
+const OPS: [OpInfo; 32] = [
     info("", "", false),
     info("and", "AND", true),
     info("leftshift", "<<", false),
@@ -66,7 +66,6 @@ const OPS: [OpInfo; 33] = [
     info("isnull", "IS NULL", true),
     info("istrue", "IS TRUE", true),
     info("isfalse", "IS FALSE", true),
-    info("binary", "BINARY", true),
 ];
 
 /// One valid source SQL opcode.
@@ -138,13 +137,11 @@ pub enum Op {
     IsTruth,
     /// `IS FALSE` predicate.
     IsFalsity,
-    /// Unary `BINARY` cast marker.
-    Binary,
 }
 
 impl Op {
     /// Every declared source opcode, in numeric order.
-    pub const ALL: [Self; 32] = [
+    pub const ALL: [Self; 31] = [
         Self::LogicAnd,
         Self::LeftShift,
         Self::RightShift,
@@ -176,7 +173,6 @@ impl Op {
         Self::IsNull,
         Self::IsTruth,
         Self::IsFalsity,
-        Self::Binary,
     ];
 
     /// Returns the source numeric value.

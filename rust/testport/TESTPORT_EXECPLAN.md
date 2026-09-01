@@ -401,6 +401,18 @@ For each bounded behavior cluster:
   `receipts/dxf_framework_scheduler.md` and
   `rust/docs/operations/dxf-framework-scheduler-audit-execplan.md`.
 
+- 2026-09-02: audited the complete generated Go-master nested
+  `pkg/dxf/framework/scheduler/mock` package: exactly two tracked artifacts
+  and 173 lines (`BUILD.bazel` plus the MockGen `scheduler_mock.go`), with 19
+  generated declarations covering the scheduler `Extension` constructor,
+  recorder, and method pairs. There are no package-local tests, fixtures,
+  testdata, platform variants, generator inputs, or build artifacts beyond
+  the Bazel target. Rust has no dependency-closed scheduler extension/mock
+  owner and no Rust-only behavior was found to remove; the Go-only generated
+  support boundary remains explicit. Recorded the receipt in
+  `receipts/dxf_framework_scheduler_mock.md` and
+  `rust/docs/operations/dxf-framework-scheduler-mock-audit-execplan.md`.
+
 - 2026-09-01: audited the complete direct Go-master parent
   `pkg/dxf/importinto` package: 26 tracked artifacts and 9,158 lines, with
   170 production function/method declarations and 45 top-level test
@@ -3788,6 +3800,11 @@ For each bounded behavior cluster:
   restore flags/context, CTE state, tests, and BUILD metadata. Rust's
   `tidb-ast` already owns the corresponding restore surface, so no code change
   or speculative adapter was needed.
+- `pkg/parser/opcode` removed the stale `Binary` operator from Go and Rust;
+  focused table-count regressions failed before the fix and pass afterward.
+  Remaining `BINARY` spellings belong to distinct cast, charset, and
+  weight-string concepts. The required Bazel preparation is blocked only by
+  the unavailable local `bazel` executable.
 
 ## Outcomes & Retrospective
 

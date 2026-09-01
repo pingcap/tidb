@@ -19,6 +19,10 @@ import (
 )
 
 func TestT(t *testing.T) {
+	if got, want := len(ops), 32; got != want {
+		t.Fatalf("unexpected opcode count: got %d want %d", got, want)
+	}
+
 	op := Plus
 	if op.String() != "plus" {
 		t.Fatalf("invalid op code")

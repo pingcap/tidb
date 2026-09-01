@@ -18,7 +18,7 @@ use std::io;
 
 use tidb_ast::{BinaryOp, Op, RestoreCtx, RestoreFlags, UnaryOp};
 
-const SOURCE_ROWS: [(Op, &str, &str, bool); 32] = [
+const SOURCE_ROWS: [(Op, &str, &str, bool); 31] = [
     (Op::LogicAnd, "and", "AND", true),
     (Op::LeftShift, "leftshift", "<<", false),
     (Op::RightShift, "rightshift", ">>", false),
@@ -50,12 +50,12 @@ const SOURCE_ROWS: [(Op, &str, &str, bool); 32] = [
     (Op::IsNull, "isnull", "IS NULL", true),
     (Op::IsTruth, "istrue", "IS TRUE", true),
     (Op::IsFalsity, "isfalse", "IS FALSE", true),
-    (Op::Binary, "binary", "BINARY", true),
 ];
 
 #[test]
 fn every_source_value_name_literal_and_keyword_bit_is_exact() {
-    assert_eq!(Op::ALL, SOURCE_ROWS.map(|row| row.0));
+    assert_eq!(Op::ALL.len(), 31);
+    assert_eq!(Op::ALL.as_slice(), SOURCE_ROWS.map(|row| row.0).as_slice());
 
     for (index, (op, name, literal, is_keyword)) in SOURCE_ROWS.into_iter().enumerate() {
         assert_eq!(usize::from(op.value()), index + 1);
