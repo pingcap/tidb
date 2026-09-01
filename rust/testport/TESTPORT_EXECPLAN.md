@@ -2188,14 +2188,13 @@ For each bounded behavior cluster:
   being included in this claim.
   Complete inventory and WIP gates are recorded in
   `receipts/util_sqlexec.md`.
-- 2026-08-29: re-audited the complete pinned Go `pkg/util/sli` package and
-  every production integration point used by its sole external source test.
-  Restored Go's signed duration/native-int representation and failpoint,
-  attached one accumulator to each ordinary session, added exact final
-  mutation bytes/keys and remote processed-key details to the cluster and
-  real-TiKV executor paths, invalidated INSERT/REPLACE SELECT, and finalized
-  the accumulator from the common text/prepared command path. Ported
-  `TestTxnWriteThroughputSLI` as one source-derived cluster executor test.
+- 2026-09-02: refreshed the complete Go-master `pkg/util/sli` inventory at
+  `c6054025ed4c32ab3672a2a24ea46892714d21ec`. Read both source artifacts in
+  full (132 lines), confirmed the package is test/fixture/generated/platform
+  variant-free, and re-ran the existing source-derived integration regression.
+  No Rust-only behavior or missing Go behavior remained in the owner, so this
+  boundary is a receipt/ExecPlan refresh only. Details are in
+  `receipts/util_sli.md` and `docs/operations/util-sli-audit-execplan.md`.
 - 2026-08-29: re-audited the complete pinned Go `pkg/util/slice` package.
   Removed Rust-only `must_use` diagnostics from `Int64sToStrings` and
   `DeepClone`; all production behavior and the sole source test identity were
@@ -2808,10 +2807,12 @@ For each bounded behavior cluster:
       duplicate external tests. The current inventory and package ExecPlan are
       recorded in `receipts/util_queue.md` and
       `docs/operations/util-queue-audit-execplan.md`.
-- [x] Complete the pinned `pkg/util/sli` package in its `tidb-util` owner,
-      replace the executor-local observation simulator with direct Go-shaped
-      Prometheus reporting, and remove synthetic failpoint, fixture, and
-      inspection APIs that had no production consumer.
+- [x] Complete the current Go-master `pkg/util/sli` package in its
+      `tidb-util` owner; retain the existing source-shaped accumulator and
+      session/executor integration after a complete 132-line inventory. The
+      current receipt and package ExecPlan record the no-delta audit and Ready
+      evidence: `receipts/util_sli.md` and
+      `docs/operations/util-sli-audit-execplan.md`.
 - [x] Complete the current Go-master `pkg/util/set` package in its `tidb-util`
       owner:
       restore all five concrete memory-aware constructors and tracker rules,
@@ -4583,6 +4584,10 @@ For each bounded behavior cluster:
   length-encoded/null-terminated helpers and charset decoder; buffered TCP,
   CORS, and test-config adapters remain above the current Rust server owner, so
   no speculative transport facade was added.
+- `pkg/server/internal/dump` is byte-identical to Go master across three
+  artifacts and 303 lines. `tidb-protocol` owns the complete length-encoded,
+  BinaryTime, BinaryDateTime, and row framing behavior with source-derived
+  vectors; no duplicate dump facade or Rust-only behavior removal is needed.
 
 ## Outcomes & Retrospective
 
