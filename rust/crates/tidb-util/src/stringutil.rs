@@ -207,10 +207,11 @@ pub fn compile_pattern_inner_binary(pattern: &[u8], escape: u8) -> (Vec<u8>, Vec
     compile_pattern_units(pattern.iter().copied(), Some(escape))
 }
 
-/// Converts a TiDB `LIKE` pattern to an anchored regular expression.
+/// Converts a TiDB `LIKE` pattern to an anchored regular expression using the
+/// caller-provided escape byte.
 #[must_use]
-pub fn compile_like_to_regexp(pattern: impl AsRef<[u8]>) -> String {
-    let (weights, types) = compile_pattern(pattern, b'\\');
+pub fn compile_like_to_regexp(pattern: impl AsRef<[u8]>, escape: u8) -> String {
+    let (weights, types) = compile_pattern(pattern, escape);
     let mut result = String::with_capacity(weights.len().saturating_mul(2) + 2);
     result.push('^');
     for (weight, kind) in weights.into_iter().zip(types) {
@@ -621,11 +622,18 @@ mod tests {
         ];
         for (pattern, expected) in regex_rows {
             assert_eq!(
-                compile_like_to_regexp(pattern),
+                compile_like_to_regexp(pattern, b'\\'),
                 expected,
                 "pattern={pattern:?}"
             );
         }
+    }
+
+    #[test]
+    fn test_compile_like_to_regexp_honors_custom_escape() {
+        assert_eq!(compile_like_to_regexp("+%a", b'+'), "^%a$");
+        assert_eq!(compile_like_to_regexp("+_a", b'+'), "^_a$");
+        assert_eq!(compile_like_to_regexp(r"\%a", b'+'), r"^\\.*a$");
     }
 
     #[test]

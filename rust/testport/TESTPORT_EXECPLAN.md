@@ -75,6 +75,14 @@ For each bounded behavior cluster:
   Rust consumer check, lint, and Ready gates are recorded in
   `receipts/util_serialization.md`.
 
+- 2026-09-01: completed the Go-master `pkg/util/stringutil` package as one
+  four-artifact unit. The rolling source delta changes `CompileLike2Regexp`
+  from an implicit backslash escape to an explicit escape byte; Rust now
+  forwards that byte into the canonical pattern compiler. The source-shaped
+  default suite, custom-escape regression, Rust expression consumer checks,
+  benchmark compilation, formatting, lint, and Ready gates are recorded in
+  `receipts/util_stringutil.md`.
+
 - 2026-09-01: audited the complete Go `pkg/util/dbterror/exeerrors` package at
   `origin/master` `db35d47066648fe73abce6318d53fc625df51490` against the Rust
   owner on `origin/hparser-integration`. The package has exactly `errors.go`
@@ -1155,6 +1163,9 @@ For each bounded behavior cluster:
 - [x] Complete the Go-master `pkg/util/serialization` package: port the
       VectorFloat32 spill framing and decoder, add its focused regression, and
       update the package receipt.
+- [x] Complete the Go-master `pkg/util/stringutil` package: port the explicit
+      LIKE escape byte for regexp conversion, add its focused regression, and
+      update the package receipt.
 - [ ] Audit the next bounded package cluster by reading the requested Go
       `origin/master` first, then fill executable gaps and remove false
       carriers.
@@ -1194,6 +1205,13 @@ For each bounded behavior cluster:
   JSON; Rust's datatype image and owned decoder already provide that exact
   contract. Higher-level `pkg/executor/aggfuncs` callers remain consumers,
   not a second utility implementation. Date/Author: 2026-09-01, Codex.
+- Decision: change `compile_like_to_regexp` to accept and forward the Go
+  `CompileLike2Regexp` escape byte. The utility has no Rust production callers
+  of this helper, so the API change is dependency-closed; the existing
+  expression LIKE path already forwards its escape through `compile_pattern`.
+  A focused regression covers custom `+` escaping and confirms a backslash is
+  ordinary data when it is not the selected escape. Date/Author: 2026-09-01,
+  Codex.
 - Decision: for the continuing loop, newly selected packages compare against
   the fetched Go `origin/master`; the older `e2788410...` pin remains the
   historical source for receipts already completed. `pkg/util/plancodec`
@@ -1471,6 +1489,11 @@ For each bounded behavior cluster:
   fixture. The source's zero-value special case is equivalent to Rust's empty
   vector serialization, so one focused regression covers both the four-byte
   zero image and a non-empty vector while preserving the existing prefix.
+- Go master changed `CompileLike2Regexp`'s signature without adding a new
+  package test row. Because Rust had hard-coded the old default escape, the
+  source delta was only observable with a non-backslash escape; the added
+  regression makes that contract executable without adding a second consumer
+  path.
 
 ## Outcomes & Retrospective
 

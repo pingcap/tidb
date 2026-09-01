@@ -1,13 +1,17 @@
 # `pkg/util/stringutil` — complete package transcreation
 
-Pinned Go source: `e2788410d8d696605e8cb002585877a063ccc909`.
+Pinned Go source: `origin/master` at
+`db35d47066648fe73abce6318d53fc625df51490`.
 
 ## Complete inventory
 
-The package has exactly four artifacts, all read in full: `string_util.go`,
-`string_util_test.go`, `main_test.go`, and `BUILD.bazel`. There is no package
-doc, fixture, generated input/output, platform variant, README, or ownership
-file. The local Go package is byte-identical to the pin.
+The package has exactly four artifacts, all read in full: `string_util.go`
+(573 lines), `string_util_test.go` (292 lines), `main_test.go` (33 lines), and
+`BUILD.bazel` (29 lines). There is no package doc, fixture, generated
+input/output, platform variant, README, or ownership file. Go master differs
+from the hparser integration source only by adding the `escape byte` parameter
+to `CompileLike2Regexp` and passing the SQL-default backslash from its source
+test rows; no build metadata changes.
 
 Production behavior comprises quoted-string decoding; Unicode and binary LIKE
 pattern compilation and matching; LIKE-to-regexp conversion; exact-pattern
@@ -16,9 +20,14 @@ strings; SQL-mode-aware identifier quoting; deterministic label rendering;
 UTF-8 position helpers; ASCII classification/lowercasing; and glob question
 mark escaping.
 
-`string_util_test.go` has seven unit tests and three benchmarks. `main_test.go`
-only installs the ordinary TiDB test environment and goleak harness around the
-package tests; it contains no package behavior or independently runnable test.
+`string_util_test.go` has seven unit tests and three benchmarks:
+`TestUnquote`, `TestPatternMatch`, `TestCompileLike2Regexp`,
+`TestIsExactMatch`, `TestBuildStringFromLabels`, `TestEscapeGlobQuestionMark`,
+and `TestMemoizeStr`, plus `BenchmarkDoMatch`,
+`BenchmarkDoMatchNegative`, and `BenchmarkBuildStringFromLabels`.
+`main_test.go` only installs the ordinary TiDB test environment and goleak
+harness around the package tests; it contains no package behavior or
+independently runnable test.
 
 ## Rust ownership and audit result
 
@@ -28,7 +37,7 @@ escaping, and trailing-space operations use byte slices and vectors. Unicode
 pattern operations decode invalid UTF-8 one byte at a time to Go's replacement
 rune, matching `[]rune(string)`.
 
-The audit removed the public Rust-only `compile_pattern_with_escape` option
+The earlier audit removed the public Rust-only `compile_pattern_with_escape` option
 that disabled escape handling, the UTF-8-only copy and identifier wrappers,
 the duplicate byte-suffixed APIs, the `StringerFn::new` constructor, and the
 public memoization implementation type. It restored the two exported Go inner
@@ -42,25 +51,34 @@ benchmarks are executable in `benches/stringutil.rs` with the exact source
 cases. The expression LIKE consumer now calls the ordinary `compile_pattern`
 entry point; no cache-only or optional-escape path remains.
 
-Other Go packages consume these utilities across planner, executor,
-expression, privilege, types, table, DDL, and collation boundaries. Existing
-Rust packages that already own equivalent higher-level behavior are not given
-duplicate wrappers merely to mirror Go imports; their package audits remain
-responsible for integration behavior. This receipt claims the complete utility
-package, not completion of every consumer package.
+The Go-master delta is now carried by `compile_like_to_regexp(pattern, escape)`;
+the Rust owner compiles with the supplied byte rather than hard-coding a
+backslash. Every Rust call site was searched: there are no production callers
+of this conversion helper, while `tidb-expr::like` independently consumes the
+ordinary `compile_pattern` path and already forwards its escape byte. The
+source-shaped default rows remain unchanged, and a focused custom-escape
+regression covers escaped `%`, `_`, and a non-escape backslash.
+
+Other Go packages consume these utilities across planner, executor, expression,
+privilege, types, table, DDL, and collation boundaries. Existing Rust packages
+that already own equivalent higher-level behavior are not given duplicate
+wrappers merely to mirror Go imports; their package audits remain responsible
+for integration behavior. This receipt claims the complete utility package,
+not completion of every consumer package.
 
 ## Validation
 
-Profile: WIP; this completes one package in the continuing package-by-package
-audit, not a repository-wide readiness claim.
+Profile: Ready for this package batch; the repository-wide package audit is
+still continuing.
 
-- `git diff --exit-code e2788410d8d696605e8cb002585877a063ccc909 -- pkg/util/stringutil` — passed.
-- `go test ./pkg/util/stringutil -count=1` — blocked before package execution by the existing missing `checkMapABI` symbol in `pkg/util/hack`.
-- `cargo test --offline --locked -p tidb-util stringutil::tests --lib` — passed, 7 tests.
+- Go-master source inventory and diff against `origin/hparser-integration` — passed; only the escape-parameter delta described above.
+- `go test ./pkg/util/stringutil -count=1` (current hparser checkout) — passed.
+- `cargo +nightly-2026-08-22 test --offline --locked -p tidb-util stringutil::tests --lib` — passed, 8 tests including the custom-escape regression.
 - `cargo check --offline --locked -p tidb-expr` — passed with existing warnings in `tidb-chunk`.
 - `cargo test --offline --locked -p tidb-expr like` — passed, 37 tests and 10 pre-existing ignored gaps.
 - `cargo bench --offline --locked -p tidb-util --bench stringutil --no-run` — passed.
-- `cargo fmt -p tidb-util -p tidb-expr` — passed.
+- `cargo +nightly-2026-08-22 fmt --all -- --check` — passed.
+- `make lint` — passed.
 - `git diff --check` — passed.
 
 No Go or Bazel file changed, so `make bazel_prepare` is not required.
