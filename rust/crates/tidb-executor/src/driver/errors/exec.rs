@@ -357,7 +357,7 @@ mod tests {
 
     #[test]
     fn local_temporary_space_quota_reaches_the_wire_unchanged() {
-        let message = tidb_util::disk::LOCAL_TEMPORARY_SPACE_QUOTA_ERROR;
+        let message = tidb_util::spill_storage::LOCAL_TEMPORARY_SPACE_QUOTA_ERROR;
         let mysql = rendered(ExecError::SpillFailed(message.to_owned()));
         assert_eq!(mysql, MysqlError::new(1105, *b"HY000", message));
     }

@@ -234,7 +234,7 @@ pub(crate) fn unistore_session_factory(
 /// only the store underneath differs, which is the entire point.
 pub(crate) fn run_unistore_node(
     config: NodeConfig,
-    spill_storage: Arc<tidb_util::disk::SpillStorage>,
+    spill_storage: Arc<tidb_util::spill_storage::SpillStorage>,
     memory_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
 ) -> Result<(), RunConfiguredNodeError> {
     let users = configured_account_store(&config)?;
@@ -308,7 +308,7 @@ pub(crate) fn run_unistore_node(
 /// the reload ticks still run, against this process's own store.
 pub(crate) fn run_unistore_cluster_session(
     config: crate::node_config::NodeConfig,
-    spill_storage: Arc<tidb_util::disk::SpillStorage>,
+    spill_storage: Arc<tidb_util::spill_storage::SpillStorage>,
     memory_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
 ) -> Result<(), crate::real_tikv_node::RunConfiguredNodeError> {
     use crate::real_tikv_node::RunConfiguredNodeError;

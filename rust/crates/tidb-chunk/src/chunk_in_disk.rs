@@ -50,9 +50,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use tidb_datatype::FieldType;
-use tidb_util::disk::{self, SpillStorage, LOCAL_TEMPORARY_SPACE_QUOTA_ERROR};
+use tidb_util::disk;
 use tidb_util::layered_io::ReadAt;
 use tidb_util::memory::LABEL_FOR_CHUNK_DATA_IN_DISK_BY_CHUNKS;
+use tidb_util::spill_storage::{SpillStorage, LOCAL_TEMPORARY_SPACE_QUOTA_ERROR};
 
 use crate::chunk::Chunk;
 use crate::chunk_util::DiskFileReaderWriter;
@@ -250,6 +251,7 @@ impl DataInDiskByChunks {
 
     /// Go `initDiskFile`.
     fn init_disk_file(&mut self) -> Result<(), DiskError> {
+        disk::check_and_init_temp_dir()?;
         let name = format!(
             "{}{}{}",
             self.file_name_prefix_for_test,
@@ -598,7 +600,7 @@ mod tests {
     }
 
     use crate::test_temp_storage::isolated_storage;
-    use tidb_util::disk::SpillEncryptionMethod;
+    use tidb_util::spill_storage::SpillEncryptionMethod;
 
     /// Builds chunk `c` of `chunks` chunks x `rows` rows, deterministically.
     fn payload_chunk(fields: &[FieldType], c: usize, rows: usize) -> Chunk {
@@ -823,7 +825,7 @@ mod tests {
         assert!(matches!(error, DiskError::QuotaExceeded));
         assert_eq!(
             error.to_string(),
-            tidb_util::disk::LOCAL_TEMPORARY_SPACE_QUOTA_ERROR
+            tidb_util::spill_storage::LOCAL_TEMPORARY_SPACE_QUOTA_ERROR
         );
         assert!(storage.global_tracker().bytes_consumed() > 0);
 

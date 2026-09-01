@@ -33,7 +33,7 @@ use tidb_server::{
     SessionTransaction, SqlQueryError, WireStatus, WriteOutcome, SERVER_STATUS_IN_TRANS,
 };
 use tidb_session::ResultMaterializationAuthority;
-use tidb_util::disk::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
+use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
 
 const CLIENT_PROTOCOL_41: u32 = 1 << 9;
 const CLIENT_SECURE_CONNECTION: u32 = 1 << 15;

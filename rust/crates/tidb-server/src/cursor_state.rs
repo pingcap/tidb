@@ -283,7 +283,7 @@ mod tests {
 
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
     use tidb_executor::{OomAction, StatementMemory};
-    use tidb_util::disk::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
+    use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
 
     use super::*;
     use crate::pipeline_session::select_columns;

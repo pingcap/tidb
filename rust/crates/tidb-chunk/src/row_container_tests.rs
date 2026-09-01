@@ -758,7 +758,7 @@ fn a_kill_signal_stops_a_spill_in_progress() {
 fn disk_quota_failure_is_sticky_for_reads_and_later_adds() {
     let storage = crate::test_temp_storage::isolated_storage_with_quota(
         "row-container-quota",
-        tidb_util::disk::SpillEncryptionMethod::Plaintext,
+        tidb_util::spill_storage::SpillEncryptionMethod::Plaintext,
         1,
     );
     let fields = int64_fields();
@@ -769,7 +769,10 @@ fn disk_quota_failure_is_sticky_for_reads_and_later_adds() {
 
     rc.spill_to_disk();
     let stored = rc.spill_error().expect("quota failure must be stored");
-    assert_eq!(stored, tidb_util::disk::LOCAL_TEMPORARY_SPACE_QUOTA_ERROR);
+    assert_eq!(
+        stored,
+        tidb_util::spill_storage::LOCAL_TEMPORARY_SPACE_QUOTA_ERROR
+    );
     assert!(rc.already_spilled(), "the disk authority was installed");
 
     let mut scratch = Chunk::new_with_capacity(&fields, 1);

@@ -174,7 +174,7 @@ pub(crate) fn point_read_result_field_types(plan: &ReadOnlyScanPlan) -> Vec<Fiel
 
 pub(crate) fn default_cursor_memory(
     connection_id: u64,
-    spill_storage: Option<&Arc<tidb_util::disk::SpillStorage>>,
+    spill_storage: Option<&Arc<tidb_util::spill_storage::SpillStorage>>,
     mem_arbitrator: Option<&Arc<tidb_util::memory::MemArbitrator>>,
 ) -> tidb_executor::SessionMemory {
     let memory = tidb_executor::SessionMemory::new(
@@ -287,7 +287,7 @@ pub struct RealTiKvSessionFactory<
     /// Startup-validated temporary-storage authority shared by every cursor
     /// opened by this process. `None` exists only for direct unit factories;
     /// the production runner installs it before accepting connections.
-    spill_storage: Option<Arc<tidb_util::disk::SpillStorage>>,
+    spill_storage: Option<Arc<tidb_util::spill_storage::SpillStorage>>,
     mem_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
     processes: ProcessRegistry,
 }
@@ -437,7 +437,7 @@ where
 
     pub(crate) fn with_spill_storage(
         mut self,
-        spill_storage: Arc<tidb_util::disk::SpillStorage>,
+        spill_storage: Arc<tidb_util::spill_storage::SpillStorage>,
     ) -> Self {
         self.spill_storage = Some(spill_storage);
         self
@@ -1459,7 +1459,7 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
 
 pub(crate) fn run_configured_node_with_spill(
     config: NodeConfig,
-    spill_storage: Arc<tidb_util::disk::SpillStorage>,
+    spill_storage: Arc<tidb_util::spill_storage::SpillStorage>,
     memory_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
 ) -> Result<(), RunConfiguredNodeError> {
     let users = configured_account_store(&config)?;
@@ -1489,7 +1489,7 @@ pub(crate) fn run_bound_node(
     factory: RealTiKvSessionFactory,
     authority: ProductionReadProcessAuthority,
     users: Arc<ConfiguredUserStore>,
-    spill_storage: Arc<tidb_util::disk::SpillStorage>,
+    spill_storage: Arc<tidb_util::spill_storage::SpillStorage>,
     memory_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
     privilege_reloader: Option<PrivilegeReloader>,
 ) -> Result<(), RunConfiguredNodeError> {
@@ -2021,7 +2021,7 @@ pub enum RunConfiguredNodeError {
     /// The required immutable account catalog was rejected.
     Auth(ConfiguredUserStoreError),
     /// Spill storage could not be leased or admitted before listener startup.
-    Spill(tidb_util::disk::SpillStorageOpenError),
+    Spill(tidb_util::spill_storage::SpillStorageOpenError),
     /// The process SIGINT/SIGTERM handler could not be installed.
     Signal(ctrlc::Error),
     /// Production query-authority construction failed.

@@ -21,7 +21,7 @@ use tidb_chunk::chunk_in_disk::DiskError;
 use tidb_chunk::compare::get_compare_func;
 use tidb_chunk::sorted_row_container::SortedRowContainer;
 use tidb_datatype::{FieldType, FieldTypeCode};
-use tidb_util::disk::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
+use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
 
 #[test]
 fn sorted_container_orders_rows_across_spill_and_rejects_late_adds() {

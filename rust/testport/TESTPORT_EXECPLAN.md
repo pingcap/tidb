@@ -36,6 +36,13 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-08-31: completed pinned `pkg/util/disk` as one five-artifact package.
+  Added the missing temp-directory lifecycle and global-tracker constructor,
+  wired server/chunk/memory-alarm consumers to those canonical owners, moved
+  the cross-package spill integration seam out of `tidb_util::disk`, and
+  removed its duplicate lease/sweep implementation plus six Rust-only tests.
+  The complete inventory and WIP gates are in `receipts/util_disk.md`.
+
 - 2026-08-31: re-audited and completed pinned `pkg/util/tiflash` as one
   two-artifact package. The existing open native-integer `ReplicaRead` owner
   and live distsql request propagation remain; removed a Rust-only type alias,
@@ -762,6 +769,11 @@ For each bounded behavior cluster:
       consume vardef's three canonical spellings, retain the threshold and
       distsql propagation, and remove alias/adapter/constant/test extras. The
       atomic inventory and WIP gates are in `receipts/util_tiflash.md`.
+- [x] Complete the pinned `pkg/util/disk` package in `tidb-util`: restore the
+      exact temp-directory lifecycle and both tracker constructors, route its
+      real server/chunk/memory-alarm consumers through them, and remove the
+      Rust-only spill-policy surface from the package. The five-artifact
+      inventory and WIP gates are in `receipts/util_disk.md`.
 - [x] Complete the pinned root `pkg/util/sem` package in its `tidb-util`
       owner, verify its full policy and cross-crate sysvar wiring, retain its
       five source tests, and remove supplementary Rust-only assertions.

@@ -313,7 +313,7 @@ mod tests {
     use std::sync::Arc;
     use tidb_chunk::chunk::Chunk;
     use tidb_datatype::{FieldType, FieldTypeCode};
-    use tidb_util::disk::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
+    use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
 
     fn asc(a: &i64, b: &i64) -> Result<Ordering, ExecError> {
         Ok(a.cmp(b))

@@ -70,7 +70,7 @@ pub fn run_cluster_session_node(config: NodeConfig) -> Result<(), RunConfiguredN
 
 pub(crate) fn run_cluster_session_node_with_spill(
     config: NodeConfig,
-    spill_storage: Arc<tidb_util::disk::SpillStorage>,
+    spill_storage: Arc<tidb_util::spill_storage::SpillStorage>,
     memory_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
 ) -> Result<(), RunConfiguredNodeError> {
     let mut loaded = None;

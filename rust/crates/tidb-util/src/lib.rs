@@ -88,6 +88,7 @@ pub mod set;
 pub mod size;
 pub mod sli;
 pub mod slice;
+pub mod spill_storage;
 pub mod sqlescape;
 pub mod sqlkiller;
 pub mod stringutil;

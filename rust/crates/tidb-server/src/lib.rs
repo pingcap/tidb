@@ -208,6 +208,8 @@ pub use wire_status::{
 pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeError> {
     tidb_util::traceevent::register_with_client_go();
     config.install_process_globals();
+    initialize_temp_dir(&config)?;
+    let _temp_dir_cleanup = TempDirCleanup;
     {
         let global_config = tidb_config::config_tree::config::get_global_config();
         tidb_domain::domainutil::REPAIR_INFO.set_repair_mode(global_config.repair_mode);
@@ -297,6 +299,24 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
     }
 }
 
+struct TempDirCleanup;
+
+impl Drop for TempDirCleanup {
+    fn drop(&mut self) {
+        tidb_util::disk::clean_up();
+    }
+}
+
+fn initialize_temp_dir(config: &NodeConfig) -> Result<(), RunConfiguredNodeError> {
+    tidb_util::disk::initialize_temp_dir().map_err(|source| {
+        RunConfiguredNodeError::Spill(tidb_util::spill_storage::SpillStorageOpenError::Io {
+            operation: "initialize temporary storage directory",
+            path: config.spill_storage.path.clone(),
+            source,
+        })
+    })
+}
+
 fn command_line_privilege_source_requires_cluster(config: &NodeConfig) -> bool {
     config.load_privileges && !config.skip_grant_table
 }
@@ -313,7 +333,7 @@ fn start_system_time_monitor() {
 
 fn open_spill_storage(
     config: &NodeConfig,
-) -> Result<Arc<tidb_util::disk::SpillStorage>, RunConfiguredNodeError> {
+) -> Result<Arc<tidb_util::spill_storage::SpillStorage>, RunConfiguredNodeError> {
     tidb_exec::configure_deadlock_history(
         config.deadlock_history_capacity,
         config.deadlock_history_collect_retryable,
@@ -330,7 +350,7 @@ fn open_spill_storage(
         tidb_util::sem_v2::disable();
         tidb_util::sem::disable();
     }
-    tidb_util::disk::SpillStorage::open(config.spill_storage.clone())
+    tidb_util::spill_storage::SpillStorage::open(config.spill_storage.clone())
         .map(Arc::new)
         .map_err(RunConfiguredNodeError::Spill)
 }

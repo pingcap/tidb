@@ -28,7 +28,7 @@ use tidb_chunk::chunk_util::{
 };
 use tidb_chunk::column::Column;
 use tidb_datatype::{FieldType, FieldTypeCode};
-use tidb_util::disk::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
+use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
 
 const CHECKSUM_PAYLOAD_SIZE: usize = 1020;
 

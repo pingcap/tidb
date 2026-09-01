@@ -364,11 +364,8 @@ impl MemoryUsageAlarm {
         self.update_variable(now);
         let tidb_log_dir = self.config_provider.get_log_dir();
         self.base_record_dir = tidb_log_dir.join("oom_record");
-        // boundary: Go `disk.CheckAndCreateDir` (stat, then MkdirAll 0750);
-        // the Rust disk port does not export it, so the same two steps are
-        // inlined here.
-        if let Err(err) = check_and_create_dir(&self.base_record_dir) {
-            self.err = Some(err);
+        if let Err(err) = crate::disk::check_and_create_dir(&self.base_record_dir) {
+            self.err = Some(err.to_string());
             return;
         }
         // Read last records.
@@ -515,8 +512,8 @@ impl MemoryUsageAlarm {
             self.last_check_time
                 .to_rfc3339_opts(SecondsFormat::Secs, true)
         ));
-        if let Err(err) = check_and_create_dir(&record_dir) {
-            self.err = Some(err);
+        if let Err(err) = crate::disk::check_and_create_dir(&record_dir) {
+            self.err = Some(err.to_string());
             return;
         }
         self.last_record_dir_name.push(record_dir.clone());
@@ -788,21 +785,6 @@ fn format_go_float(v: f64) -> String {
     } else {
         format!("{v}")
     }
-}
-
-/// Go `disk.CheckAndCreateDir` (see the boundary note at the call site).
-fn check_and_create_dir(path: &Path) -> Result<(), String> {
-    if path.exists() {
-        return Ok(());
-    }
-    fs::create_dir_all(path).map_err(|err| err.to_string())?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o750))
-            .map_err(|err| err.to_string())?;
-    }
-    Ok(())
 }
 
 #[cfg(test)]

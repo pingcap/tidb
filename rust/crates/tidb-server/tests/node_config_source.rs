@@ -14,7 +14,7 @@ use tidb_server::{
     run_configured_node, ConfiguredReadColumnKind, NodeConfig, NodeConfigError,
     RunConfiguredNodeError,
 };
-use tidb_util::disk::{SpillEncryptionMethod, SpillStorageOpenError};
+use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorageOpenError};
 
 fn required() -> Vec<&'static str> {
     vec![

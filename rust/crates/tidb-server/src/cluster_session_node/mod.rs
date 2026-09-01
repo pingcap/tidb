@@ -891,7 +891,7 @@ pub struct ClusterSessionFactory {
     /// `KvTable` that was handing it out; see [`crate::cluster_auto_id_seam`].
     auto_ids: Arc<dyn TableAutoIds>,
     /// Process-owned spill authority inherited by every connection.
-    spill_storage: Option<Arc<tidb_util::disk::SpillStorage>>,
+    spill_storage: Option<Arc<tidb_util::spill_storage::SpillStorage>>,
     /// Process-wide memory admission authority installed before listener bind.
     mem_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
     /// The catalog versions live statements and transactions still read at
@@ -1687,7 +1687,10 @@ impl ClusterSessionFactory {
         self
     }
 
-    pub fn with_spill_storage(mut self, spill_storage: Arc<tidb_util::disk::SpillStorage>) -> Self {
+    pub fn with_spill_storage(
+        mut self,
+        spill_storage: Arc<tidb_util::spill_storage::SpillStorage>,
+    ) -> Self {
         self.spill_storage = Some(spill_storage);
         self
     }

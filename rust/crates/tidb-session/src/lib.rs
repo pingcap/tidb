@@ -1431,7 +1431,7 @@ impl Session {
 
     /// Installs the server-owned spill policy for every statement created by
     /// this session.
-    pub fn set_spill_storage(&mut self, storage: Arc<tidb_util::disk::SpillStorage>) {
+    pub fn set_spill_storage(&mut self, storage: Arc<tidb_util::spill_storage::SpillStorage>) {
         self.session_memory.set_spill_storage(storage);
     }
 

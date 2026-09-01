@@ -310,7 +310,7 @@ pub(crate) mod test_temp_storage {
     use std::path::PathBuf;
     use std::sync::Arc;
 
-    use tidb_util::disk::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
+    use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
 
     /// A fresh scratch directory named after the test.
     pub(crate) fn scratch_dir(name: &str) -> PathBuf {

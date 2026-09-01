@@ -80,7 +80,7 @@ pub struct RealTiKvMultiSessionFactory {
     /// The etcd client a catalog change committed here announces itself
     /// through, so peers reload without waiting out their lease.
     schema_notifier: Option<Arc<tidb_pd_client::EtcdClient>>,
-    spill_storage: Option<Arc<tidb_util::disk::SpillStorage>>,
+    spill_storage: Option<Arc<tidb_util::spill_storage::SpillStorage>>,
     mem_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
     processes: ProcessRegistry,
 }
@@ -144,7 +144,7 @@ impl RealTiKvMultiSessionFactory {
 
     pub(crate) fn with_spill_storage(
         mut self,
-        spill_storage: Arc<tidb_util::disk::SpillStorage>,
+        spill_storage: Arc<tidb_util::spill_storage::SpillStorage>,
     ) -> Self {
         self.spill_storage = Some(spill_storage);
         self
@@ -607,7 +607,7 @@ pub fn run_configured_multi_node(config: NodeConfig) -> Result<(), RunConfigured
 
 pub(crate) fn run_configured_multi_node_with_spill(
     config: NodeConfig,
-    spill_storage: Arc<tidb_util::disk::SpillStorage>,
+    spill_storage: Arc<tidb_util::spill_storage::SpillStorage>,
     memory_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
 ) -> Result<(), RunConfiguredNodeError> {
     let users = crate::real_tikv_node::configured_account_store(&config)?;
@@ -637,7 +637,7 @@ pub(crate) fn run_bound_multi_node(
     factory: RealTiKvMultiSessionFactory,
     authority: ProductionReadProcessAuthority,
     users: Arc<ConfiguredUserStore>,
-    spill_storage: Arc<tidb_util::disk::SpillStorage>,
+    spill_storage: Arc<tidb_util::spill_storage::SpillStorage>,
     memory_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
     privilege_reloader: Option<PrivilegeReloader>,
 ) -> Result<(), RunConfiguredNodeError> {

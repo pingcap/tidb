@@ -133,8 +133,9 @@ use tidb_chunk::chunk::Chunk;
 use tidb_chunk::chunk_in_disk::DataInDiskByChunks;
 use tidb_chunk::row::OwnedRow;
 use tidb_datatype::FieldType;
-use tidb_util::disk::{self, SpillStorage};
+use tidb_util::disk;
 use tidb_util::memory::Tracker;
+use tidb_util::spill_storage::SpillStorage;
 
 use crate::executor::ExecError;
 use crate::multi_way_merge::{MemorySource, MultiWayMerger};
@@ -596,8 +597,8 @@ mod tests {
     use std::sync::mpsc::channel;
 
     use tidb_datatype::{FieldType, FieldTypeCode};
-    use tidb_util::disk::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
     use tidb_util::memory::Tracker;
+    use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
 
     use super::*;
     use crate::sort_util::DataCursor;

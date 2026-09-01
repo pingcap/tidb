@@ -23,7 +23,7 @@
 //!
 //! The spill stack has both Go variants: checksum -> file for `plaintext`, and
 //! checksum -> AES-CTR -> file for `aes128-ctr`. The immutable
-//! [`tidb_util::disk::SpillStorage`] passed by the server owns that choice and
+//! [`tidb_util::spill_storage::SpillStorage`] passed by the server owns that choice and
 //! the directory lease for every file in one process.
 
 use crate::chunk::Chunk;
@@ -34,8 +34,8 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use tidb_util::disjointset::Set;
-use tidb_util::disk::{SpillEncryptionMethod, SpillStorage};
 use tidb_util::layered_io::{CloseWrite, ReadAt};
+use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorage};
 use tidb_util::{checksum, encrypt};
 
 /// Go `msgErrSelNotNil`: a bulk copy refuses chunks carrying a selection

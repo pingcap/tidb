@@ -27,13 +27,11 @@ use std::net::IpAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use base64::engine::general_purpose::URL_SAFE;
-use base64::Engine;
 use tidb_config::config_tree::Config as SourceConfig;
 use tidb_config::kerneltype;
 use tidb_pd_client::ClusterSecurity;
 use tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET;
-use tidb_util::disk::{SpillEncryptionMethod, SpillStorageSpec};
+use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorageSpec};
 
 /// Go's `config.Instance.MaxConnections` default is 0, and
 /// `server.go`'s `checkConnectionCount` reads 0 as *unlimited*:
@@ -531,50 +529,6 @@ fn nonempty(value: String) -> Option<String> {
     (!value.is_empty()).then_some(value)
 }
 
-fn resolve_spill_storage(
-    configured_base: Option<&str>,
-    quota_bytes: i64,
-    encryption: SpillEncryptionMethod,
-    host: IpAddr,
-    port: u16,
-) -> SpillStorageSpec {
-    let os_temp = std::env::temp_dir();
-    let source_default = encoded_spill_path(&os_temp, "0.0.0.0", 4000);
-    let base = match configured_base {
-        None => os_temp,
-        Some(path) if std::path::Path::new(path) == source_default => std::env::temp_dir(),
-        Some(path) => PathBuf::from(path),
-    };
-    SpillStorageSpec {
-        path: encoded_spill_path(&base, &host.to_string(), port),
-        quota_bytes,
-        encryption,
-    }
-}
-
-fn encoded_spill_path(base: &std::path::Path, host: &str, port: u16) -> PathBuf {
-    #[cfg(unix)]
-    let uid = rustix::process::getuid().as_raw().to_string();
-    #[cfg(not(unix))]
-    let uid = String::new();
-    encoded_spill_path_for_identity(base, host, port, "0.0.0.0", 10080, &uid)
-}
-
-fn encoded_spill_path_for_identity(
-    base: &std::path::Path,
-    host: &str,
-    port: u16,
-    status_host: &str,
-    status_port: u16,
-    uid: &str,
-) -> PathBuf {
-    let identity = format!("{host}:{port}/{status_host}:{status_port}");
-    let encoded = URL_SAFE.encode(identity.as_bytes());
-    base.join(format!("{uid}_tidb"))
-        .join(encoded)
-        .join("tmp-storage")
-}
-
 impl NodeConfig {
     /// Parses the source-shaped command line, including the executable name.
     ///
@@ -719,7 +673,6 @@ impl NodeConfig {
 
         let mut source = config_path.as_deref().map(load_source_config).transpose()?;
         let mut file_schema_lease = None;
-        let mut temp_storage_base = None;
         let mut temp_storage_quota = -1;
         let mut spill_encryption = SpillEncryptionMethod::Plaintext;
         let mut file_auto_tls = None;
@@ -816,9 +769,6 @@ impl NodeConfig {
             if loaded.is_defined("security.skip-grant-table") {
                 file_skip_grant_table = config.security.skip_grant_table;
             }
-            if loaded.is_defined("tmp-storage-path") {
-                temp_storage_base = Some(config.temp_storage_path.clone());
-            }
             if loaded.is_defined("tmp-storage-quota") {
                 temp_storage_quota = config.temp_storage_quota;
             }
@@ -852,7 +802,7 @@ impl NodeConfig {
         if !host.is_loopback() && !load_privileges && !file_skip_grant_table {
             return Err(NodeConfigError::NonLoopbackHost(host));
         }
-        let port = parse_number("--port", port.as_deref().unwrap_or("4000"))?;
+        let port: u16 = parse_number("--port", port.as_deref().unwrap_or("4000"))?;
         let affinity_cpus = parse_affinity_cpus(affinity_cpus.as_deref().unwrap_or_default())?;
         let store = store.as_deref().unwrap_or("tikv");
         // Go `main.go` registers tikv, unistore and mocktikv; this
@@ -951,10 +901,25 @@ impl NodeConfig {
             cluster_ssl_cert.clone(),
             cluster_ssl_key.clone(),
         )?;
+        let status_host = main_flags
+            .status_host
+            .clone()
+            .unwrap_or_else(|| "0.0.0.0".to_owned());
+        let status_port = main_flags
+            .status_port
+            .as_deref()
+            .map(|port| {
+                port.parse::<u16>()
+                    .map_err(|_| invalid("--status", "expected a port number"))
+            })
+            .transpose()?
+            .unwrap_or(10080);
         if let Some(loaded) = source.as_mut() {
             let config = &mut loaded.config;
             config.host = host.to_string();
             config.port = usize::from(port);
+            config.status.status_host.clone_from(&status_host);
+            config.status.status_port = usize::from(status_port);
             config.store = tidb_config::store::StoreType("tikv".to_owned());
             config.path = pd_endpoints.join(",");
             config.max_allowed_packet = u64::try_from(max_allowed_packet).unwrap_or(u64::MAX);
@@ -979,18 +944,10 @@ impl NodeConfig {
             config.security.spilled_file_encryption_method =
                 spill_encryption.as_config_value().to_owned();
             config.temp_storage_quota = temp_storage_quota;
-            config.temp_storage_path = temp_storage_base.clone().unwrap_or_default();
             config
                 .valid()
                 .map_err(|reason| invalid("--config", &reason))?;
         }
-        let spill_storage = resolve_spill_storage(
-            temp_storage_base.as_deref(),
-            temp_storage_quota,
-            spill_encryption,
-            host,
-            port,
-        );
         // Go `overrideConfig`: the flag wins; otherwise the bind host
         // stands in unless it is the wildcard, in which case Go defers to
         // a local-IP lookup the node performs later. The wildcard arm is
@@ -1010,32 +967,32 @@ impl NodeConfig {
         let mut global_config = source.map_or_else(SourceConfig::default, |loaded| loaded.config);
         global_config.host = host.to_string();
         global_config.port = usize::from(port);
+        global_config.status.status_host.clone_from(&status_host);
+        global_config.status.status_port = usize::from(status_port);
         global_config.store = tidb_config::store::StoreType(store.to_owned());
         global_config.path = pd_endpoints.join(",");
         global_config.max_allowed_packet = u64::try_from(max_allowed_packet).unwrap_or(u64::MAX);
         global_config.instance.max_connections =
             u32::try_from(max_connections).expect("connection limit fits u32");
+        global_config.temp_storage_quota = temp_storage_quota;
+        global_config.security.spilled_file_encryption_method =
+            spill_encryption.as_config_value().to_owned();
         global_config.tidb_edition = tidb_edition.unwrap_or_default();
         global_config.tidb_release_version = tidb_release_version.unwrap_or_default();
         global_config.server_version = server_version.unwrap_or_default();
         validate_version_config(&global_config)?;
         let stats_lease = parse_stats_lease(&global_config.performance.stats_lease)?;
+        global_config.update_temp_storage_path();
+        let spill_storage = SpillStorageSpec {
+            path: PathBuf::from(&global_config.temp_storage_path),
+            quota_bytes: temp_storage_quota,
+            encryption: spill_encryption,
+        };
 
         Ok(Self {
             report_status: main_flags.report_status.unwrap_or(true),
-            status_host: main_flags
-                .status_host
-                .clone()
-                .unwrap_or_else(|| "0.0.0.0".to_owned()),
-            status_port: main_flags
-                .status_port
-                .as_deref()
-                .map(|port| {
-                    port.parse::<u16>()
-                        .map_err(|_| invalid("--status", "expected a port number"))
-                })
-                .transpose()?
-                .unwrap_or(10080),
+            status_host,
+            status_port,
             // Go's config default plus `setGlobalVars`' one `{Port}`
             // replacement (`main.go:1109`).
             socket: socket
@@ -1658,55 +1615,12 @@ fn invalid(option: &str, reason: &str) -> NodeConfigError {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::Path;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     use super::{
-        encoded_spill_path_for_identity, parse_column_descriptor, parse_stats_lease,
-        ConfiguredReadColumnKind, NodeConfig, NodeConfigError, StatsLease, StoreKind,
+        parse_column_descriptor, parse_stats_lease, ConfiguredReadColumnKind, NodeConfig,
+        NodeConfigError, StatsLease, StoreKind,
     };
-
-    #[test]
-    fn spill_path_identity_matches_source_encoding() {
-        for (host, status_host, port, status_port, encoded) in [
-            (
-                "0.0.0.0",
-                "0.0.0.0",
-                4000,
-                10080,
-                "MC4wLjAuMDo0MDAwLzAuMC4wLjA6MTAwODA=",
-            ),
-            (
-                "127.0.0.1",
-                "127.16.5.1",
-                4000,
-                10080,
-                "MTI3LjAuMC4xOjQwMDAvMTI3LjE2LjUuMToxMDA4MA==",
-            ),
-            (
-                "127.0.0.1",
-                "127.16.5.1",
-                4000,
-                15532,
-                "MTI3LjAuMC4xOjQwMDAvMTI3LjE2LjUuMToxNTUzMg==",
-            ),
-        ] {
-            assert_eq!(
-                encoded_spill_path_for_identity(
-                    Path::new("/tmp"),
-                    host,
-                    port,
-                    status_host,
-                    status_port,
-                    "501",
-                ),
-                Path::new("/tmp")
-                    .join("501_tidb")
-                    .join(encoded)
-                    .join("tmp-storage")
-            );
-        }
-    }
 
     /// The cluster TLS options thread into a `ClusterSecurity`, and their
     /// consistency rules (CA required for any material, cert⇔key together)

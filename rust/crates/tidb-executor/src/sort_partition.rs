@@ -43,10 +43,11 @@ use tidb_chunk::chunk_in_disk::DataInDiskByChunks;
 use tidb_chunk::row::OwnedRow;
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::Columns;
-use tidb_util::disk::{self, SpillStorage};
+use tidb_util::disk;
 use tidb_util::memory::{
     ActionOnExceed, ArcAction, BaseOomAction, Tracker, DEF_SPILL_PRIORITY, LABEL_FOR_ROW_CONTAINER,
 };
+use tidb_util::spill_storage::SpillStorage;
 
 use crate::executor::ExecError;
 use crate::sort::{compare_rows, eval_sort_key, SortByItem};

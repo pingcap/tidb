@@ -22,7 +22,7 @@ use tidb_chunk::chunk::Chunk;
 use tidb_chunk::list::RowPtr;
 use tidb_chunk::row_container::RowContainer;
 use tidb_datatype::{FieldType, FieldTypeCode};
-use tidb_util::disk::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
+use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
 
 struct TestStorage {
     authority: Option<Arc<SpillStorage>>,

@@ -86,7 +86,7 @@ pub(crate) mod test_temp_storage {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Arc, OnceLock};
 
-    use tidb_util::disk::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
+    use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
 
     /// One plaintext authority shared by ordinary unit tests. Production never
     /// has an implicit process fallback; this exists only to keep test setup

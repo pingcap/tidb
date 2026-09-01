@@ -57,11 +57,11 @@ use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use tidb_datatype::{estimated_mem_usage, Datum};
-use tidb_util::disk::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
 use tidb_util::memory::{
     ActionOnExceed, ArcAction, BaseOomAction, KillSignalTransport, LogOnExceed, Tracker,
     DEF_MEM_QUOTA_QUERY, DEF_PANIC_PRIORITY, LABEL_FOR_SESSION, LABEL_FOR_SQL_TEXT,
 };
+use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
 use tidb_util::sqlkiller::{KillSignal, SqlKiller};
 
 use crate::executor::ExecError;

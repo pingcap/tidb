@@ -38,10 +38,10 @@ fn server_spill_authority_reaches_every_statement_context() {
         std::process::id()
     ));
     let storage = Arc::new(
-        tidb_util::disk::SpillStorage::open(tidb_util::disk::SpillStorageSpec {
+        tidb_util::spill_storage::SpillStorage::open(tidb_util::spill_storage::SpillStorageSpec {
             path: path.clone(),
             quota_bytes: -1,
-            encryption: tidb_util::disk::SpillEncryptionMethod::Aes128Ctr,
+            encryption: tidb_util::spill_storage::SpillEncryptionMethod::Aes128Ctr,
         })
         .unwrap(),
     );
@@ -56,7 +56,7 @@ fn server_spill_authority_reaches_every_statement_context() {
         assert_eq!(inherited.path(), path);
         assert_eq!(
             inherited.encryption(),
-            tidb_util::disk::SpillEncryptionMethod::Aes128Ctr
+            tidb_util::spill_storage::SpillEncryptionMethod::Aes128Ctr
         );
     }
 

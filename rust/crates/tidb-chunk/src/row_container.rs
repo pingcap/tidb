@@ -55,6 +55,7 @@ use tidb_util::disk;
 use tidb_util::memory::{
     ActionOnExceed, ArcAction, Tracker, DEF_SPILL_PRIORITY, LABEL_FOR_ROW_CONTAINER,
 };
+use tidb_util::spill_storage::SpillStorage;
 
 use crate::chunk::Chunk;
 use crate::chunk_in_disk::DiskError;
@@ -625,7 +626,7 @@ struct RowContainerShared {
     phase_changed: Condvar,
     mem_tracker: Arc<Tracker>,
     disk_tracker: Arc<disk::Tracker>,
-    storage: Arc<disk::SpillStorage>,
+    storage: Arc<SpillStorage>,
     action_spill: Mutex<Option<Arc<SpillDiskAction>>>,
     pre_spill: Mutex<Option<PreSpill>>,
     #[cfg(test)]
@@ -839,11 +840,7 @@ pub struct RowContainer {
 impl RowContainer {
     /// Go `NewRowContainer`.
     #[must_use]
-    pub fn new(
-        field_types: &[FieldType],
-        chunk_size: usize,
-        storage: Arc<disk::SpillStorage>,
-    ) -> Self {
+    pub fn new(field_types: &[FieldType], chunk_size: usize, storage: Arc<SpillStorage>) -> Self {
         let list = List::new(field_types, chunk_size, chunk_size);
         let mem_tracker = Tracker::new(LABEL_FOR_ROW_CONTAINER, -1);
         list.mem_tracker().attach_to(&mem_tracker);

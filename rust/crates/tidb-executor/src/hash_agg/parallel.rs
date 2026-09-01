@@ -752,7 +752,7 @@ struct ParallelSpillPartitions {
     field_types: Vec<FieldType>,
     chunks: Vec<Chunk>,
     files: Vec<Option<DataInDiskByChunks>>,
-    storage: Arc<disk::SpillStorage>,
+    storage: Arc<tidb_util::spill_storage::SpillStorage>,
     disk_tracker: Arc<disk::Tracker>,
     has_data: bool,
 }

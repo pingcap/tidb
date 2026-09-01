@@ -21,7 +21,7 @@ use std::sync::Arc;
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::chunk_in_disk::{DataInDiskByChunks, DiskError};
 use tidb_datatype::{BinaryJSON, FieldType, FieldTypeCode};
-use tidb_util::disk::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
+use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
 
 const CHECKSUM_PAYLOAD_SIZE: usize = 1020;
 
@@ -37,6 +37,7 @@ impl TestStorage {
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).expect("create spill directory");
         let authority = Arc::new(
             SpillStorage::open(SpillStorageSpec {
                 path: path.clone(),

@@ -33,10 +33,10 @@ fn cte_storage_obeys_the_session_spill_policy_and_quota() {
         std::env::temp_dir().join(format!("tidb-session-cte-storage-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&path);
     let storage = Arc::new(
-        tidb_util::disk::SpillStorage::open(tidb_util::disk::SpillStorageSpec {
+        tidb_util::spill_storage::SpillStorage::open(tidb_util::spill_storage::SpillStorageSpec {
             path: path.clone(),
             quota_bytes: -1,
-            encryption: tidb_util::disk::SpillEncryptionMethod::Plaintext,
+            encryption: tidb_util::spill_storage::SpillEncryptionMethod::Plaintext,
         })
         .unwrap(),
     );

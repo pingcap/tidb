@@ -74,7 +74,7 @@ struct MergeHead {
 struct ParallelSortWorker<C: Columns> {
     field_types: Vec<FieldType>,
     detached_tracker: Arc<Tracker>,
-    spill_storage: Arc<tidb_util::disk::SpillStorage>,
+    spill_storage: Arc<tidb_util::spill_storage::SpillStorage>,
     spill_chunk_size: usize,
     by_items: Vec<SortByItem>,
     compare_funcs: Vec<Option<ColumnCompareFunc>>,
@@ -91,7 +91,7 @@ where
 {
     fn new(
         field_types: Vec<FieldType>,
-        spill_storage: Arc<tidb_util::disk::SpillStorage>,
+        spill_storage: Arc<tidb_util::spill_storage::SpillStorage>,
         spill_chunk_size: usize,
         by_items: Vec<SortByItem>,
         ctx: C,

@@ -239,7 +239,7 @@ mod tests {
 
     use super::*;
     use tidb_datatype::{FieldType, FieldTypeCode};
-    use tidb_util::disk::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
+    use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
 
     use std::sync::Arc;
 

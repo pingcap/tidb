@@ -27,8 +27,9 @@ use std::sync::atomic::AtomicI64;
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
 use tidb_datatype::FieldType;
-use tidb_util::disk::{SpillStorage, Tracker as DiskTracker};
+use tidb_util::disk::Tracker as DiskTracker;
 use tidb_util::memory::{ActionOnExceed, ArcAction, Tracker};
+use tidb_util::spill_storage::SpillStorage;
 
 use crate::chunk::Chunk;
 use crate::chunk_in_disk::DiskError;
@@ -506,7 +507,7 @@ mod tests {
     use super::*;
     use crate::compare::get_compare_func;
     use crate::test_temp_storage::{isolated_storage, storage};
-    use tidb_util::disk::SpillEncryptionMethod;
+    use tidb_util::spill_storage::SpillEncryptionMethod;
     use tidb_util::sqlkiller::KillSignal;
 
     fn fields(width: usize) -> Vec<FieldType> {
