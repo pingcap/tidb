@@ -728,32 +728,36 @@ func getDDLReorgHandle(se *sess.Session, job *model.Job) (element *meta.Element,
 	return
 }
 
-func getImportedKeyFromCheckpoint(se *sess.Session, job *model.Job) (imported kv.Key, physicalTableID int64, err error) {
+// getReorgCheckpoint returns an empty checkpoint when reorg_meta does not
+// contain one, preserving the zero-value behavior of the old scalar return.
+func getReorgCheckpoint(se *sess.Session, job *model.Job) (*ingest.ReorgCheckpoint, error) {
 	sql := fmt.Sprintf("select reorg_meta from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
 	ctx := kv.WithInternalSourceType(context.Background(), getDDLRequestSource(job.Type))
 	rows, err := se.Execute(ctx, sql, "get_handle")
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 	if len(rows) == 0 {
-		return nil, 0, meta.ErrDDLReorgElementNotExist
+		return nil, meta.ErrDDLReorgElementNotExist
 	}
 	if !rows[0].IsNull(0) {
 		rawReorgMeta := rows[0].GetBytes(0)
 		var reorgMeta ingest.JobReorgMeta
 		err = json.Unmarshal(rawReorgMeta, &reorgMeta)
 		if err != nil {
-			return nil, 0, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		if cp := reorgMeta.Checkpoint; cp != nil {
 			logutil.DDLIngestLogger().Info("resume physical table ID from checkpoint",
 				zap.Int64("jobID", job.ID),
 				zap.String("global sync key", hex.EncodeToString(cp.GlobalSyncKey)),
+				zap.String("legacy start key", hex.EncodeToString(cp.StartKey)),
+				zap.String("legacy end key", hex.EncodeToString(cp.EndKey)),
 				zap.Int64("checkpoint physical ID", cp.PhysicalID))
-			return cp.GlobalSyncKey, cp.PhysicalID, nil
+			return cp, nil
 		}
 	}
-	return
+	return new(ingest.ReorgCheckpoint), nil
 }
 
 // updateDDLReorgHandle update startKey, endKey physicalTableID and element of the handle.
