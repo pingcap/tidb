@@ -9,7 +9,7 @@ test identity.
 ## Progress
 
 - [x] Read all four Go-master artifacts at
-  `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: `BUILD.bazel`, `main_test.go`,
+  `c6054025ed4c32ab3672a2a24ea46892714d21ec`: `BUILD.bazel`, `main_test.go`,
   `slice.go`, and `slice_test.go` (149 lines total; three production
   functions, `TestMain`, and one four-row test).
 - [x] Confirm there are no package docs, fixtures, generated/platform
@@ -20,7 +20,7 @@ test identity.
   behavior or missing Go behavior remains.
 - [x] Revalidate current and exact detached Go-master tests, the source-derived
   Rust test, the only production consumer, Rust formatting, and diff quality.
-- [ ] Commit, push, pull, and verify `origin/hparser-integration`.
+- [x] Commit, push, pull, and verify `origin/hparser-integration`.
 
 ## Validation gate
 

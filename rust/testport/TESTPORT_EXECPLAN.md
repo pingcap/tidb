@@ -268,7 +268,7 @@ For each bounded behavior cluster:
   `docs/operations/util-nocopy-audit-execplan.md`.
 
 - 2026-09-02: refreshed the complete Go-master `pkg/util/slice` inventory at
-  `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: four tracked artifacts, 149
+  `c6054025ed4c32ab3672a2a24ea46892714d21ec`: four tracked artifacts, 149
   lines, three production functions, `TestMain`, and one four-row source test;
   no fixtures, generated files, platform variants, or nested packages. The
   existing `tidb-util::slice` owner remains behaviorally aligned for empty
