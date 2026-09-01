@@ -1540,6 +1540,14 @@ For each bounded behavior cluster:
       throttles, and domain bootstrap registration do not have a
       dependency-closed owner. The package remains explicitly unclaimed;
       details are in `receipts/util_expensivequery.md`.
+- 2026-09-01: audited all four Go-master `pkg/util/admin` artifacts (412
+      lines: consistency production owner, corrupted-index integration test,
+      common harness, and Bazel target). Rust's executor already owns a
+      substantial admin-check implementation and source-derived corruption
+      tests, but restricted-SQL/session, invisible-index, row-decoder,
+      partition-handle, reporter, and SQL-command seams are not dependency
+      closed for the root utility package. No duplicate checker was added;
+      details are in `receipts/util_admin.md`.
 - [ ] Run Ready validation and self-review only when the requested parity scope
       is genuinely complete enough for a final-status claim.
 
@@ -1595,6 +1603,11 @@ For each bounded behavior cluster:
   can move together. Rust threshold constants alone are not a substitute for
   the Go polling worker and would create Rust-only policy. Date/Author:
   2026-09-01, Codex.
+- Decision: retain `tidb-executor::admin_check` as the sole native consistency
+  checker while keeping root `pkg/util/admin` unclaimed. Its existing tests
+  cover the byte-level corruption core, but adding a utility wrapper would
+  duplicate the Go session/restricted-SQL/index/reporting integration that is
+  still outside the dependency closure. Date/Author: 2026-09-01, Codex.
 - Decision: preserve the Rust planner-error declaration table and its
   all-prototype initialization guard. Go package initialization registers all
   98 entries, while Go's only explicit test checks 59; the Rust guard is the
