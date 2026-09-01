@@ -244,6 +244,21 @@ For each bounded behavior cluster:
   explicit boundary in `receipts/dxf_importinto_conflictedkv.md` and
   `rust/docs/operations/dxf-importinto-conflictedkv-audit-execplan.md`.
 
+- 2026-09-01: audited the complete ten-artifact Go-master
+  `pkg/lightning/config` package: 4,005 lines, 66 production declarations,
+  52 tests, one CPU failpoint, and a 50-shard flaky BUILD target. The inventory
+  covers the full Lightning schema/default and endpoint/TLS adjustment,
+  checkpoint and duplicate policy, TOML/flag loading, redaction, task queue,
+  byte-size codecs, all tests, and ownership/build metadata. A focused
+  `TestRemoveAllowAllFiles` regression now checks parsed DSN semantics instead
+  of dependency-sensitive query ordering. Current and detached exact-master
+  failpoint suites pass with cleanup. Rust's `tidb-config` ByteSize owner maps
+  to the separate `pkg/config/configtypes` package; no dependency-closed
+  Lightning config owner or consumer exists, so no Rust-only behavior was
+  removed and no speculative facade was added. Recorded the explicit boundary
+  in `receipts/lightning_config.md` and
+  `rust/docs/operations/lightning-config-audit-execplan.md`.
+
 - 2026-09-01: audited the complete Go-master
   `pkg/dxf/importinto/mock` package: two tracked artifacts and 74 lines,
   consisting of the public Bazel target and the complete MockGen
