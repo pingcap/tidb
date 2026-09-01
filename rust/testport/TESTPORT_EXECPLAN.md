@@ -40,6 +40,12 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: revalidated the complete ten-artifact `pkg/util/table-filter`
+  package against current Go master. The concrete `ColumnFilterRules` API,
+  ASCII regexp authority, source test rows, and Rust consumer wiring are
+  unchanged from the earlier Ready batch; the receipt now pins
+  `origin/master` explicitly and no further source fix is needed.
+
 - 2026-09-01: audited all thirteen current Go-master `cmd/importer`
   artifacts (1,812 Go lines plus the 155,728-byte `stats.json` fixture),
   including the CLI README/configuration, complete generator/parser/database
