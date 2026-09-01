@@ -132,7 +132,7 @@ macro_rules! plan_types {
             pub const $constant: &str = $name;
         )+
 
-        const PLAN_TYPES: [&str; 63] = [$($constant),+];
+        const PLAN_TYPES: [&str; 64] = [$($constant),+];
     };
 }
 
@@ -200,6 +200,7 @@ plan_types!(
     (TYPE_LOCAL_INDEX_LOOK_UP, "LocalIndexLookUp"),
     (TYPE_PHYSICAL_CTE_SINK, "PhysicalCTESink"),
     (TYPE_PHYSICAL_CTE_SOURCE, "PhysicalCTESource"),
+    (TYPE_ANALYZE, "Analyze"),
 );
 
 /// A plan type which intentionally has no stable physical ID.
@@ -949,17 +950,24 @@ mod tests {
 
     #[test]
     fn stable_plan_ids_round_trip() {
-        assert_eq!(PLAN_TYPES.len(), 63);
-        for id in 1..=63 {
+        assert_eq!(PLAN_TYPES.len(), 64);
+        for id in 1..=64 {
             let plan_type = physical_id_to_type_string(id);
             assert_eq!(type_string_to_physical_id(&plan_type), id);
         }
         assert_eq!(type_string_to_physical_id("Sequence"), 0);
-        assert_eq!(physical_id_to_type_string(64), "UnknownPlanID64");
+        assert_eq!(physical_id_to_type_string(65), "UnknownPlanID65");
         assert_eq!(
             physical_id_to_type_string(i32::MIN),
             "UnknownPlanID-2147483648"
         );
+    }
+
+    #[test]
+    fn analyze_plan_id_matches_go_master() {
+        assert_eq!(TYPE_ANALYZE, "Analyze");
+        assert_eq!(type_string_to_physical_id(TYPE_ANALYZE), 64);
+        assert_eq!(physical_id_to_type_string(64), "Analyze");
     }
 
     #[test]

@@ -6,13 +6,17 @@ current while the audit proceeds.
 
 ## Purpose / Big Picture
 
-Make the Rust SQL implementation behaviorally match TiDB at pinned Go commit
-`e2788410d8d696605e8cb002585877a063ccc909`. The comparison source is the Go
-code itself. Rust-only execution policy, cache-specific pipelines, documentary
-gap tests, and receipts that imply parity without executable behavior are not
-part of the target. A completed transcreation claim is package-atomic as
-required by root `AGENTS.md`; partial work remains implementation progress and
-must not be presented as a completed Go-package port.
+Make the Rust SQL implementation behaviorally match TiDB at the selected Go
+source revision for each package. Historical receipts through 2026-08-31 use
+the pinned Go commit `e2788410d8d696605e8cb002585877a063ccc909`; the current
+rolling comparison follows the user's Go `master` request and records the
+exact fetched `origin/master` commit in each new receipt. The comparison
+source is the Go code itself. Rust-only execution policy, cache-specific
+pipelines, documentary gap tests, and receipts that imply parity without
+executable behavior are not part of the target. A completed transcreation
+claim is package-atomic as required by root `AGENTS.md`; partial work remains
+implementation progress and must not be presented as a completed Go-package
+port.
 
 The user explicitly permits coordinated changes across multiple Rust crates.
 No Go source or Bazel metadata is expected to change.
@@ -35,6 +39,15 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+
+- 2026-09-01: audited the complete Go `pkg/util/plancodec` package at
+  `origin/master` `db35d47066648fe73abce6318d53fc625df51490` against the Rust
+  owner on `origin/hparser-integration`. The seven-artifact package has no
+  generated, platform, fixture, or benchmark variant. Go master appends the
+  stable `Analyze` plan type at physical ID 64; Rust previously returned zero
+  for the name and `UnknownPlanID64` for the ID. Added the table entry and a
+  focused two-way regression, with the complete file/function/test inventory
+  and validation gates in `receipts/util_plancodec.md`.
 
 - 2026-08-31: completed pinned `pkg/util/disk` as one five-artifact package.
   Added the missing temp-directory lifecycle and global-tracker constructor,
@@ -1066,16 +1079,30 @@ For each bounded behavior cluster:
       regressions, workspace formatting, repository `make lint`, and diff
       hygiene all pass with the command-local toolchains recorded in
       `receipts/util_compress_audit.md`.
-- [ ] Audit the next bounded package cluster by reading pinned Go first, then
-      fill executable gaps and remove false carriers.
+- [x] Audit the complete Go-master `pkg/util/plancodec` package, implement its
+      appended Analyze physical ID, and record the package receipt.
+- [x] Run the Ready validation profile for `pkg/util/plancodec`: Go source
+      tests, all 15 Rust owner tests, direct Rust consumer checks, formatting,
+      repository lint, and diff hygiene pass with the command-local toolchains
+      recorded in `receipts/util_plancodec.md`.
+- [ ] Audit the next bounded package cluster by reading the requested Go
+      `origin/master` first, then fill executable gaps and remove false
+      carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope
       is genuinely complete enough for a final-status claim.
 
 ## Decision Log
 
-- Decision: the sole behavioral reference is pinned Go commit
-  `e2788410d8d696605e8cb002585877a063ccc909`, not current `origin/master` and
-  not Rust parity comments. Date/Author: 2026-08-28, Codex.
+- Decision: for the continuing loop, newly selected packages compare against
+  the fetched Go `origin/master`; the older `e2788410...` pin remains the
+  historical source for receipts already completed. `pkg/util/plancodec`
+  therefore includes Go master `Analyze=64` rather than treating ID 64 as
+  unknown. Date/Author: 2026-09-01, Codex.
+- Decision: historical package receipts use pinned Go commit
+  `e2788410d8d696605e8cb002585877a063ccc909`; newly selected packages use the
+  exact fetched Go `origin/master` commit recorded in their receipt. In both
+  cases the behavioral reference is Go source, not Rust parity comments.
+  Date/Author: 2026-08-28, updated 2026-09-01, Codex.
 - Decision: ignored empty tests and documentary receipts are removed rather
   than counted as ports. Real unsupported behavior is either implemented in
   its correct owner or left as an explicit unclaimed inventory item.
@@ -1315,12 +1342,19 @@ For each bounded behavior cluster:
   `REPLACE ... SELECT` transaction case is `readKeys: 0`. Recording successful
   snapshot results fixed the production seam without changing the source
   test's expected output.
+- Go `origin/master` moved the stable plan-ID frontier from 63 to 64 by
+  appending `Analyze`. The Rust codec's unknown-ID regression made this
+  drift directly observable (`Analyze` encoded as zero and ID 64 decoded as
+  `UnknownPlanID64`), so the fix had to extend the table at the end rather
+  than renumber any existing operator.
 
 ## Outcomes & Retrospective
 
 Work remains in progress. Current validated behavior includes ANALYZE prefix
 indexes, MPP equivalence comparison, retained runnable b103 DDL final-state
 tests, lexer tests, funcdep graph tests, and the complete pinned kvcache test
-surface. The final outcome must list exact files and commands, remaining
-unverified packages, and correctness, compatibility, and performance risks
-without claiming repository-wide parity.
+surface. The 2026-09-01 rolling Go-master plancodec batch also restores
+Analyze physical ID 64 and passes its Go/Rust owner and consumer gates. The
+final outcome must list exact files and commands, remaining unverified
+packages, and correctness, compatibility, and performance risks without
+claiming repository-wide parity.
