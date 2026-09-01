@@ -1444,6 +1444,13 @@ For each bounded behavior cluster:
       DDL-owner cleanup, session cancellation, and the live-etcd concurrency
       matrix remain explicit package boundaries in
       `receipts/domain_serverinfo_audit.md`.
+- 2026-09-01: audited the complete two-artifact Go-master `pkg/param`
+      package (72 lines, no source tests, fixtures, generated/platform
+      variants, or nested package). The existing `tidb-protocol` binary
+      parameter carrier and prepared-statement adapter already preserve all
+      four fields and the dedicated `ErrUnknownFieldType` errno; the two
+      source-derived protocol suites pass and no Rust-only behavior was found.
+      Details are in `receipts/param_audit.md`.
 - [ ] Run Ready validation and self-review only when the requested parity scope
       is genuinely complete enough for a final-status claim.
 
@@ -1764,6 +1771,11 @@ For each bounded behavior cluster:
   matching Go's blocking `for range` semantics. Do not add an async wrapper,
   timeout, or nil-channel emulation because those would be Rust-only channel
   policy absent from `pkg/util/channel`. Date/Author: 2026-09-01, Codex.
+- Decision: keep `pkg/param` owned by the existing protocol carrier rather
+  than adding a second crate for a two-field metadata definition. The Rust
+  `BinaryParamError::UnknownFieldType` retains Go's dedicated errno and the
+  ordinary prepared-statement path; no source behavior or Rust-only policy
+  requires an edit. Date/Author: 2026-09-01, Codex.
 - Decision: keep `pkg/util/cpu` unclaimed until its process-time sampler, EMA
   worker, shared gauge, resource-manager CPU scheduler, and server lifecycle
   can land together. `tidb-util::cgroup` is dependency support rather than an
