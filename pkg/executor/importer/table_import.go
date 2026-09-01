@@ -358,11 +358,19 @@ func (ti *TableImporter) EstimateParquetReaderMemory(ctx context.Context, path s
 	return parquetfile.EstimateParquetReaderMemory(ctx, ti.LoadDataController.dataStore, path, fileSize)
 }
 
-func (e *LoadDataController) getParser(ctx context.Context, chunk *Chunk) (mydump.Parser, error) {
+func (e *LoadDataController) getParser(
+	ctx context.Context,
+	chunk *Chunk,
+) (mydump.Parser, *ReaderTimings, error) {
 	fileMeta := chunk.toSourceFileMeta()
+	timings := newReaderTimings(fileMeta.Compression != mydump.CompressionNone)
+	timedStore := &readTimingStorage{
+		Storage: e.dataStore,
+		timings: timings,
+	}
 	info := LoadDataReaderInfo{
 		Opener: func(ctx context.Context) (io.ReadSeekCloser, error) {
-			reader, err := mydump.OpenReader(ctx, &fileMeta, e.dataStore, compressedio.DecompressConfig{
+			reader, err := mydump.OpenReader(ctx, &fileMeta, timedStore, compressedio.DecompressConfig{
 				ZStdDecodeConcurrency: 1,
 			})
 			if err != nil {
@@ -370,11 +378,12 @@ func (e *LoadDataController) getParser(ctx context.Context, chunk *Chunk) (mydum
 			}
 			return reader, nil
 		},
-		Remote: &fileMeta,
+		Remote:        &fileMeta,
+		ReaderTimings: timings,
 	}
 	parser, err := e.GetParser(ctx, info)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	parserReady := false
 	defer func() {
@@ -389,17 +398,18 @@ func (e *LoadDataController) getParser(ctx context.Context, chunk *Chunk) (mydum
 		// if data file is split, only the first chunk need to do skip.
 		// see check in initOptions.
 		if err = HandleSkipNRows(parser, e.IgnoreLines); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		parser.SetRowID(chunk.PrevRowIDMax)
 	} else {
 		// if we reached here, the file must be an uncompressed CSV file.
 		if err = parser.SetPos(chunk.Offset, chunk.PrevRowIDMax); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 	parserReady = true
-	return parser, nil
+	timings.reset()
+	return parser, timings, nil
 }
 
 func (ti *TableImporter) getKVEncoder(chunk *Chunk) (*TableKVEncoder, error) {
