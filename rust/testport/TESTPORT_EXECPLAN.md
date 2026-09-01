@@ -1359,6 +1359,15 @@ For each bounded behavior cluster:
       vectors and eight result-encoder tests pass. No production edit or
       Rust-only behavior removal was justified. Details are in
       `receipts/format_textrow_audit.md`.
+- 2026-09-01: audited all eight Go-master `pkg/errno` artifacts (2,815
+      lines, nine production counter functions, and four test/setup
+      declarations), including the full code/message catalogs, embedded-source
+      tests, info-schema counters, redaction document, and BUILD target. Rust's
+      1,166-code/1,164-message authority already includes the three current
+      dual-password errors and DDL disk-full auto-pause error, while the shared
+      counters preserve the source copy-safety contract. The Go package, eight
+      Rust catalog tests, and the Rust infoschema regression pass; details are
+      in `receipts/errno_audit.md`.
 - [ ] Run Ready validation and self-review only when the requested parity scope
       is genuinely complete enough for a final-status claim.
 
