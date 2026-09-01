@@ -49,6 +49,7 @@ const (
 	cseScanErrorTrailer   = "x-cse-scan-error"
 	cseScanStatusComplete = "complete"
 	cseScanStatusFailed   = "failed"
+	maxCSEDiagnosticBytes = 64 << 10
 )
 
 type cseDumper struct {
@@ -68,8 +69,12 @@ func startCSEDumper(
 	executable, metadataURL string,
 	legacyEncryption bool,
 	threads int,
-	observation *packedExportObservation,
-) (*cseDumper, error) {
+	metrics *metrics,
+) (dumper *cseDumper, resultErr error) {
+	started := time.Now()
+	defer func() {
+		metrics.observePackedPhase(packedPhaseCSEStart, started, resultErr)
+	}()
 	temporary, err := os.MkdirTemp("", "dumpling-cse-")
 	if err != nil {
 		return nil, errors.Annotate(err, "create cse-ctl temporary directory")
@@ -95,14 +100,14 @@ func startCSEDumper(
 		return nil, errors.Annotatef(err, "start %q dumper", executable)
 	}
 
-	dumper := &cseDumper{
+	dumper = &cseDumper{
 		cancel:    cancel,
 		temporary: temporary,
 		done:      make(chan struct{}),
 	}
 	stderrResult := make(chan string, 1)
 	go func() {
-		stderrResult <- readCSEDumperStderr(stderr, observation)
+		stderrResult <- readCSEDumperDiagnostics(stderr)
 	}()
 	go func() {
 		dumper.diagnostics = <-stderrResult
@@ -116,6 +121,25 @@ func startCSEDumper(
 	}
 	dumper.client, dumper.transport = newCSEDumperHTTPClient(socketPath)
 	return dumper, nil
+}
+
+func readCSEDumperDiagnostics(input io.Reader) string {
+	data, err := io.ReadAll(io.LimitReader(input, maxCSEDiagnosticBytes+1))
+	truncated := len(data) > maxCSEDiagnosticBytes
+	if truncated {
+		data = data[:maxCSEDiagnosticBytes]
+		if _, drainErr := io.Copy(io.Discard, input); err == nil {
+			err = drainErr
+		}
+	}
+	diagnostics := strings.TrimSpace(string(data))
+	if truncated {
+		diagnostics += "\ncse-ctl stderr truncated"
+	}
+	if err != nil {
+		diagnostics += "\nread cse-ctl stderr: " + err.Error()
+	}
+	return strings.TrimSpace(diagnostics)
 }
 
 func newCSEDumperHTTPClient(socketPath string) (*http.Client, *http2.Transport) {
@@ -174,7 +198,6 @@ type cseDumperScanRequest struct {
 func (d *cseDumper) scan(
 	ctx context.Context,
 	startKey, endKey []byte,
-	observation *packedExportObservation,
 ) (*cseDumperScan, error) {
 	payload, err := json.Marshal(cseDumperScanRequest{
 		StartKeyHex: hex.EncodeToString(startKey),
@@ -203,9 +226,8 @@ func (d *cseDumper) scan(
 		return nil, errors.Errorf("cse-ctl dumper scan returned %s: %s", response.Status, strings.TrimSpace(string(detail)))
 	}
 	return &cseDumperScan{
-		response:    response,
-		input:       bufio.NewReaderSize(response.Body, 256*1024),
-		observation: newPackedScanContext(observation),
+		response: response,
+		input:    bufio.NewReaderSize(response.Body, 256*1024),
 	}, nil
 }
 
@@ -255,18 +277,16 @@ func (d *cseDumper) close() error {
 }
 
 type cseDumperScan struct {
-	response    *http.Response
-	input       *bufio.Reader
-	observation *packedScanContext
-	finished    bool
+	response *http.Response
+	input    *bufio.Reader
+	finished bool
 }
 
 func (s *cseDumperScan) readRow(keyBuffer, valueBuffer []byte) (key, value []byte, end bool, err error) {
-	key, value, end, err = s.observation.readRow(s.input, keyBuffer, valueBuffer)
+	key, value, end, err = readPackedRow(s.input, keyBuffer, valueBuffer)
 	if err != nil {
 		s.finished = true
 		_ = s.response.Body.Close()
-		s.observation.finish(err)
 		return nil, nil, false, err
 	}
 	if !end {
@@ -277,7 +297,6 @@ func (s *cseDumperScan) readRow(keyBuffer, valueBuffer []byte) (key, value []byt
 	if closeErr := s.response.Body.Close(); err == nil {
 		err = closeErr
 	}
-	s.observation.finish(err)
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -310,9 +329,7 @@ func (s *cseDumperScan) close() error {
 		return nil
 	}
 	s.finished = true
-	err := s.response.Body.Close()
-	s.observation.finish(err)
-	return err
+	return s.response.Body.Close()
 }
 
 func scanCSEDumperRange(
@@ -320,9 +337,8 @@ func scanCSEDumperRange(
 	dumper *cseDumper,
 	startKey, endKey []byte,
 	emit func(key, value []byte) error,
-	observation *packedExportObservation,
 ) error {
-	scan, err := dumper.scan(ctx, startKey, endKey, observation)
+	scan, err := dumper.scan(ctx, startKey, endKey)
 	if err != nil {
 		return err
 	}

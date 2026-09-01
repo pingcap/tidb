@@ -24,7 +24,7 @@ Each `POST /scan` carries hexadecimal inner range keys as JSON and returns the e
 - [x] (2026-07-17) Added opt-in legacy encryption: Dumpling propagates `--cse-legacy-encryption`, and CSE resolves the existing `CSE_MASTER_KEY_*` KMS configuration for legacy shard properties.
 - [x] (2026-07-18) Added SST range-hint pruning and statistics so a range scan reports candidate, retained, and conservatively retained files.
 - [x] (2026-07-18) Removed the draft slow logging, periodic sampling, procfs collection, JSON telemetry, key/range logging, and generic output-storage wrapper.
-- [x] (2026-07-18) Isolated packed-only timing in dedicated files. CSE emits three compact stderr lines; TiDB forwards those lines without parsing and retains one observation handle in each packed-path struct.
+- [x] (2026-07-18) Added the first packed-only timing implementation for diagnosing slow exports.
 - [x] (2026-07-18) Passed focused CSE tests and failpoint-safe Dumpling WIP tests after the scope rewrite.
 - [x] (2026-07-18) Passed CSE format, clippy, and release build; passed TiDB Bazel preparation, optimized build, and Ready lint.
 - [x] (2026-07-18) Exported the real MinIO fixture with the release CSE binary, verified stable hashes and row shape, and audited the packed-only logs for volume and sensitive content.
@@ -32,6 +32,9 @@ Each `POST /scan` carries hexadecimal inner range keys as JSON and returns the e
 - [x] (2026-09-01) Replaced all one-shot stdout process code with one shared `cse-ctl` process and HTTP/2 range scans.
 - [x] (2026-09-01) Extended the existing packed protocol test to cover Unix-socket HTTP/2, new command arguments, completion/failure trailers, missing trailers, and the combined metrics gatherer.
 - [x] (2026-09-01) Passed WIP tests, the race test, Bazel preparation, strict-deps/nogo build, Ready `make lint`, and the final diff audit.
+- [x] (2026-09-01) Removed the custom packed timing state and CSE performance-log forwarding. Added Prometheus timing for the Dumpling-owned CSE startup, row decode, and whole-export phases, while reusing existing Dumpling row, writer, and error metrics.
+- [x] (2026-09-01) Kept scan, shard, KV/byte, SST, and object-I/O metrics exclusively in CSE to avoid duplicating metric families already exported through the combined `/metrics` handler.
+- [x] (2026-09-01) Regenerated Bazel metadata and passed the focused failpoint-safe tests, protocol race test, Bazel build with nogo, Ready lint, and final static audit.
 
 ## Surprises & Discoveries
 
@@ -58,6 +61,9 @@ Each `POST /scan` carries hexadecimal inner range keys as JSON and returns the e
 
 - Observation: CSE scan metrics are process-wide and remain meaningful only when the same process serves all ranges.
   Evidence: `GET /metrics` reads the process Prometheus registry, and the shared `PackedScanPool` owns the aggregate concurrency limit across requests.
+
+- Observation: CSE already exposes packed-reader scan, shard, emitted KV/byte, SST, object-read, snapshot, and iteration measurements.
+  Evidence: `components/native_br/src/metrics.rs` defines the `native_br_packed_reader_*` families. Dumpling therefore needs only timings for work it owns outside CSE.
 
 ## Decision Log
 
@@ -93,17 +99,17 @@ Each `POST /scan` carries hexadecimal inner range keys as JSON and returns the e
   Rationale: Opt-in behavior preserves unencrypted and CMEK reads, while keeping plaintext master-key material out of process arguments.
   Date/Author: 2026-07-17, Codex.
 
-- Decision: Keep Dumpling-side instrumentation inside the packed-export implementation.
-  Rationale: Packed row decoding and child-process I/O are timed by packed types. Generic writer and object-storage source files retain no packed fields, wrappers, phases, branches, or callbacks.
-  Date/Author: 2026-07-18, Codex.
+- Decision: Keep Dumpling-owned packed timings in the existing Dumpling metrics registry.
+  Rationale: A single `dumpling_packed_phase_duration_seconds{phase,result}` histogram covers CSE startup, TiDB row decoding, and the complete packed export without adding state to generic writer or object-storage code.
+  Date/Author: 2026-09-01, Codex.
 
 - Decision: Keep SST selection statistics inside the packed reader.
-  Rationale: Candidate counts are indexed once from the packed manifest and compared with the range-filtered change set, avoiding an extra unfiltered clone and any generic kvengine observation hook.
+  Rationale: Candidate counts are indexed once from the packed manifest and compared with the range-filtered change set, avoiding an extra unfiltered clone or any generic kvengine hook.
   Date/Author: 2026-07-18, Codex.
 
-- Decision: Forward CSE performance output as complete human-readable stderr lines.
-  Rationale: Three `CSE packed perf` lines need no JSON schema, environment gate, field parser, or secondary process protocol. TiDB filters at line boundaries and forwards the original message at debug level.
-  Date/Author: 2026-07-18, Codex.
+- Decision: Treat CSE stderr only as bounded process diagnostics.
+  Rationale: Prometheus is the performance interface. Dumpling continuously drains stderr, retains at most 64 KiB for exit errors, and does not parse or forward a second telemetry format.
+  Date/Author: 2026-09-01, Codex.
 
 - Decision: Replace the one-process-per-range design rather than retain it as a compatibility path.
   Rationale: The current CSE command no longer accepts range flags or writes rows to stdout. One shared process also keeps the manifest, encryption-key cache, scan pool, and Prometheus state alive across requests.
@@ -117,11 +123,15 @@ Each `POST /scan` carries hexadecimal inner range keys as JSON and returns the e
   Rationale: A dynamic `prometheus.Gatherer` parses CSE exposition and `prometheus.Gatherers` merges it with Dumpling's default gatherer, so `promhttp.HandlerFor` retains one consistency-checked encoding path without manually joining HTTP responses.
   Date/Author: 2026-09-01, Codex.
 
+- Decision: Do not duplicate CSE packed-reader metrics in Dumpling.
+  Rationale: CSE owns scans, shards, emitted KVs and bytes, SSTs, object reads, snapshots, and iteration. Dumpling reuses its existing finished-row, writer-duration, and error metrics and adds only phase timings for work outside that boundary.
+  Date/Author: 2026-09-01, Codex.
+
 ## Outcomes & Retrospective
 
 Dumpling now matches CSE's shared service protocol while retaining its TiDB-owned schema, physical-range, row-decoding, and CSV-writing semantics. Exactly one process owns manifest initialization, encryption caches, scan concurrency, metrics, and its private socket. All scan responses require an explicit success trailer, and the process exporter is reachable through Dumpling during the export.
 
-The product-code diff stays small because the old per-range process lifecycle and custom stderr writer were removed instead of retained as compatibility code. Focused and race tests pass, the generated Bazel dependency graph compiles under nogo, and the Ready lint gate passes. A real object-store export remains the only local evidence gap because no built CSE binary or configured fixture was present.
+The product-code diff stays small because the old per-range process lifecycle, custom timing state, and stderr performance parser were removed instead of retained as compatibility code. Dumpling and CSE expose one Prometheus response through the standard `promhttp` path, and the two sides measure disjoint ownership boundaries. Focused and race tests pass, the generated Bazel dependency graph compiles under nogo, and the Ready lint gate passes. A real object-store export remains the only local evidence gap because no built CSE binary or configured fixture was present.
 
 ## Context and Orientation
 
@@ -153,11 +163,9 @@ In `dumpling/export/packed.go`, implement a range-scanner callback, TiDB hash me
 
 Extend existing broad tests. Use a real TiDB mock store transaction as the test range scanner, so production metadata range and JSON logic consumes keys written by TiDB business logic. Run CSE tests, format, clippy, TiDB failpoint-aware target tests, `make lint`, and the real MinIO export. Compare the exact row count and hashes.
 
-### Milestone 4: Make slow exports diagnosable without noisy logs
+### Milestone 4: Make slow exports diagnosable
 
-In Dumpling, keep one packed-export observation handle. Measure child spawn, first row, pipe reads, process wait, row counts/bytes, and packed row decode. Forward complete `CSE packed perf` stderr lines at debug level and emit two compact terminal summaries. Do not add packed observability fields, wrappers, or branches to the generic writer or object-storage implementation.
-
-In CSE, keep timing state in packed-reader and dumper-specific observability files. Emit exactly three human-readable stderr lines for setup, scan, and stdout. Include only manifest size, SST selection, object reads, KV/byte counts, major I/O or compute durations, total time, and success. Do not emit keys, ranges, row content, encryption details, slow samples, procfs data, or JSON telemetry.
+Expose performance data as Prometheus metrics. CSE owns packed-reader scan, shard, KV/byte, SST, snapshot, iteration, and object-I/O measurements. Dumpling owns row decoding, destination writing, completed rows, errors, and total export lifecycle. Do not expose a second telemetry format through stderr; retain only bounded stderr diagnostics for process failures.
 
 ### Milestone 5: Adopt the shared HTTP/2 service protocol
 
@@ -165,12 +173,18 @@ In `dumpling/export/packed_protocol.go`, start one `cse-ctl dumper` with a priva
 
 In `dumpling/export/packed.go`, construct that process owner once at the beginning of `Dumper.dumpPacked`, use it for schema and table ranges, and pass it into every `packedTableData`. Remove executable, metadata URL, legacy-encryption, and per-range child-process state from table iterators. Preserve the existing Dumpling writer concurrency and row decoding behavior.
 
+### Milestone 6: Replace custom packed timing with Prometheus
+
+Delete the packed timing and stderr performance-parser files. Register `dumpling_packed_phase_duration_seconds{phase,result}` with the existing Dumpling registry. Record `cse_start` around process readiness, `decode` around TiDB row decoding, and `export` around the complete packed export. Reuse existing Dumpling metrics for completed rows, destination writes, and terminal errors.
+
+Continuously drain CSE stderr with standard-library readers, retaining at most 64 KiB as process-exit diagnostics. Leave packed-reader scan, shard, KV/byte, SST, snapshot, iteration, and object-I/O metrics in CSE, where they are already exported and automatically included in Dumpling `/metrics` by the combined gatherer.
+
 ## Concrete Steps
 
 From `/DATA/disk3/juncen/developer/tidb_worktrees/exp-export-packed`, use the failpoint-safe test runner because `dumpling/export` contains failpoint instrumentation. The protocol test starts a real HTTP/2 server on a Unix socket, verifies the range JSON and binary frames, and covers complete, failed, and missing trailers plus the combined metrics gatherer.
 
     make bazel_prepare
-    ./tools/check/failpoint-go-test.sh dumpling/export -run '^(TestPackedProtocolRows|TestPackedRowsUseTiDBStorageEncoding|TestConfigValidation)$' -count=1
+    ./tools/check/failpoint-go-test.sh dumpling/export -run '^(TestMetricsRegistration|TestPackedProtocolRows|TestPackedRowsUseTiDBStorageEncoding|TestConfigValidation)$' -count=1
     ./tools/check/failpoint-go-test.sh dumpling/export -run '^TestPackedProtocolRows$' -count=1 -race
     bazel build --remote_cache=https://cache.hawkingrei.com/bazelcache --noremote_upload_local_results //dumpling/export:export
     make lint
@@ -193,6 +207,8 @@ CSE adds the manifest keyspace prefix before storage access, scans `WRITE_CF` at
 
 The private process and socket directory have one owner. Returning from `dumpPacked`, including cancellation and writer errors, closes HTTP connections, cancels and waits for the process, and removes the temporary directory. CSE metrics are gathered only while that owner is live.
 
+`dumpling_packed_phase_duration_seconds` reports only `cse_start`, `decode`, and `export`, each labeled with `success` or `error`. Existing Dumpling metrics continue to report completed rows, writer duration, and errors. CSE alone reports packed-reader scan, shard, KV/byte, SST, snapshot, iteration, and object-I/O measurements.
+
 ## Idempotence and Recovery
 
 All tests, generators, formatters, and lint commands are safe to rerun. Each execution uses `t.TempDir` or `os.MkdirTemp`; cleanup owns only its exact private path.
@@ -201,7 +217,7 @@ The failpoint test script always disables failpoints during cleanup. If a manual
 
 ## Artifacts and Notes
 
-The pre-fix regression run failed to compile because the test required the new socket/concurrency argv and HTTP scan types while production still exposed the old per-range process API. After implementation, the focused test and its race variant pass. The protocol test uses a real `http2.Server` over a Unix listener and observes the completion trailer after consuming the body. The Bazel target also builds with strict dependencies and nogo after Gazelle adds `@org_golang_x_net//http2`, and `make lint` passes.
+The pre-fix regression run failed to compile because the test required the new socket/concurrency argv and HTTP scan types while production still exposed the old per-range process API. After implementation, the focused test and its race variant pass. The protocol test uses a real `http2.Server` over a Unix listener and observes the completion trailer after consuming the body. The metrics test verifies an emitted packed phase histogram sample. The Bazel target also builds with strict dependencies and nogo after Gazelle adds `@org_golang_x_net//http2`, and `make lint` passes.
 
 No current CSE binary or configured object-store fixture was present in the CSE worktree, so a real packed-backup export is not part of the local evidence for this milestone.
 
@@ -219,4 +235,4 @@ DFS backend, bucket/container, prefix, endpoint, credentials, and region come fr
 
 In TiDB, `cseDumper` owns the command, temporary directory, HTTP/2 transport, stderr diagnostics, wait state, and idempotent close. `cseDumper.scan` creates one `cseDumperScan` per HTTP response. `packedRangeScanner` adapts it to metadata loading, and `packedTableData` shares the same owner across all writers. These types remain behind the existing `TableMeta`, `TableDataIR`, and `SQLRowIter` interfaces.
 
-Revision note: Created on 2026-07-16 for the initial packed CSV implementation. Updated on 2026-09-01 to replace the retired one-shot stdout protocol with the shared HTTP/2 Unix-socket service, record CSE exporter exposure, and replace stale validation instructions.
+Revision note: Created on 2026-07-16 for the initial packed CSV implementation. Updated on 2026-09-01 to replace the retired one-shot stdout protocol with the shared HTTP/2 Unix-socket service, expose CSE metrics through Dumpling, replace custom packed timing with Prometheus, and refresh validation instructions.

@@ -132,7 +132,7 @@ func TestPackedProtocolRows(t *testing.T) {
 	}()
 	client, transport := newCSEDumperHTTPClient(socketPath)
 	dumper := &cseDumper{client: client, transport: transport}
-	scan, err := dumper.scan(context.Background(), []byte{0, 0xff}, []byte{0x10}, nil)
+	scan, err := dumper.scan(context.Background(), []byte{0, 0xff}, []byte{0x10})
 	require.NoError(t, err)
 	require.Equal(t, http.MethodPost, requestMethod)
 	require.Equal(t, "/scan", requestURL)
@@ -165,7 +165,7 @@ func TestPackedProtocolRows(t *testing.T) {
 			},
 		}, nil
 	})
-	scan, err = dumper.scan(context.Background(), []byte{1}, []byte{2}, nil)
+	scan, err = dumper.scan(context.Background(), []byte{1}, []byte{2})
 	require.NoError(t, err)
 	_, _, _, err = scan.readRow(nil, nil)
 	require.EqualError(t, err, "cse-ctl dumper scan failed: missing packed file")
@@ -177,15 +177,12 @@ func TestPackedProtocolRows(t *testing.T) {
 			Trailer:    make(http.Header),
 		}, nil
 	})
-	scan, err = dumper.scan(context.Background(), []byte{1}, []byte{2}, nil)
+	scan, err = dumper.scan(context.Background(), []byte{1}, []byte{2})
 	require.NoError(t, err)
 	_, _, _, err = scan.readRow(nil, nil)
 	require.EqualError(t, err, "cse-ctl dumper scan ended without a completion trailer")
-	diagnostics := readCSEDumperStderr(strings.NewReader(
-		"CSE packed perf part=setup manifest=1ms\n"+
-			strings.Repeat("x", maxCSEDumperDiagnosticBytes+1)+"\nlast diagnostic",
-	), nil)
-	require.Equal(t, "1 cse-ctl diagnostic lines omitted\nlast diagnostic", diagnostics)
+	diagnostics := readCSEDumperDiagnostics(strings.NewReader(strings.Repeat("x", maxCSEDiagnosticBytes+1)))
+	require.Equal(t, strings.Repeat("x", maxCSEDiagnosticBytes)+"\ncse-ctl stderr truncated", diagnostics)
 
 	dumper.client.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		require.Equal(t, http.MethodGet, request.Method)

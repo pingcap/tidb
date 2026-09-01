@@ -133,11 +133,11 @@ func packedColumnType(column *model.ColumnInfo) string {
 }
 
 type packedTableData struct {
-	dumper      *cseDumper
-	table       *model.TableInfo
-	ranges      []packedRange
-	observation *packedExportObservation
-	iter        *packedRowIter
+	dumper  *cseDumper
+	table   *model.TableInfo
+	ranges  []packedRange
+	metrics *metrics
+	iter    *packedRowIter
 }
 
 type packedRange struct {
@@ -148,13 +148,13 @@ type packedRange struct {
 func newPackedTableData(
 	dumper *cseDumper,
 	table *model.TableInfo,
-	observation *packedExportObservation,
+	metrics *metrics,
 ) *packedTableData {
 	return &packedTableData{
-		dumper:      dumper,
-		table:       table,
-		ranges:      packedPhysicalTableRanges(table),
-		observation: observation,
+		dumper:  dumper,
+		table:   table,
+		ranges:  packedPhysicalTableRanges(table),
+		metrics: metrics,
 	}
 }
 
@@ -164,13 +164,13 @@ func (d *packedTableData) Start(tctx *tcontext.Context, _ *sql.Conn) error {
 		return err
 	}
 	iter := &packedRowIter{
-		ctx:         tctx,
-		dumper:      d.dumper,
-		ranges:      d.ranges,
-		observation: d.observation,
-		table:       d.table,
-		decoder:     decoder,
-		args:        make([]any, len(decoder.columns)),
+		ctx:     tctx,
+		dumper:  d.dumper,
+		ranges:  d.ranges,
+		metrics: d.metrics,
+		table:   d.table,
+		decoder: decoder,
+		args:    make([]any, len(decoder.columns)),
 	}
 	iter.readNext()
 	d.iter = iter
@@ -189,29 +189,29 @@ func (d *packedTableData) Close() error {
 func (*packedTableData) RawRows() *sql.Rows { return nil }
 
 type packedRowIter struct {
-	ctx         context.Context
-	dumper      *cseDumper
-	ranges      []packedRange
-	nextRange   int
-	scan        *cseDumperScan
-	observation *packedExportObservation
-	table       *model.TableInfo
-	decoder     *packedRowDecoder
-	key         []byte
-	value       []byte
-	args        []any
-	defaults    expression.BuildContext
-	err         error
-	hasRow      bool
+	ctx       context.Context
+	dumper    *cseDumper
+	ranges    []packedRange
+	nextRange int
+	scan      *cseDumperScan
+	metrics   *metrics
+	table     *model.TableInfo
+	decoder   *packedRowDecoder
+	key       []byte
+	value     []byte
+	args      []any
+	defaults  expression.BuildContext
+	err       error
+	hasRow    bool
 }
 
 func (i *packedRowIter) HasNext() bool { return i.err == nil && i.hasRow }
 
 func (i *packedRowIter) Decode(receiver RowReceiver) error {
-	if i.observation == nil {
-		return i.decode(receiver)
-	}
-	return i.observation.decode(func() error { return i.decode(receiver) })
+	started := time.Now()
+	err := i.decode(receiver)
+	i.metrics.observePackedPhase(packedPhaseDecode, started, err)
+	return err
 }
 
 func (i *packedRowIter) decode(receiver RowReceiver) error {
@@ -287,7 +287,6 @@ func (i *packedRowIter) readNext() {
 				i.ctx,
 				rangeToScan.start,
 				rangeToScan.end,
-				i.observation,
 			)
 			if err != nil {
 				i.err = err
@@ -453,10 +452,7 @@ type packedRangeScanner func(
 	emit func(key, value []byte) error,
 ) error
 
-func newCSEDumperRangeScanner(
-	dumper *cseDumper,
-	observation *packedExportObservation,
-) packedRangeScanner {
+func newCSEDumperRangeScanner(dumper *cseDumper) packedRangeScanner {
 	return func(
 		ctx context.Context,
 		startKey, endKey []byte,
@@ -468,7 +464,6 @@ func newCSEDumperRangeScanner(
 			startKey,
 			endKey,
 			emit,
-			observation,
 		)
 	}
 }
@@ -560,9 +555,9 @@ func packedCreateTableSQL(table *model.TableInfo) (string, error) {
 }
 
 func (d *Dumper) dumpPacked() (resultErr error) {
-	observation := newPackedExportObservation(d.tctx)
+	started := time.Now()
 	defer func() {
-		observation.finish(resultErr)
+		d.metrics.observePackedPhase(packedPhaseExport, started, resultErr)
 	}()
 	dumper, err := startCSEDumper(
 		d.tctx,
@@ -570,7 +565,7 @@ func (d *Dumper) dumpPacked() (resultErr error) {
 		d.conf.PackedBackup,
 		d.conf.CSELegacyEncryption,
 		d.conf.Threads,
-		observation,
+		d.metrics,
 	)
 	if err != nil {
 		return err
@@ -584,10 +579,7 @@ func (d *Dumper) dumpPacked() (resultErr error) {
 	}()
 	databases, err := loadPackedDatabases(
 		d.tctx,
-		newCSEDumperRangeScanner(
-			dumper,
-			observation,
-		),
+		newCSEDumperRangeScanner(dumper),
 	)
 	if err != nil {
 		return err
@@ -653,7 +645,7 @@ func (d *Dumper) dumpPacked() (resultErr error) {
 				data := newPackedTableData(
 					dumper,
 					table,
-					observation,
+					d.metrics,
 				)
 				if err := send(NewTaskTableData(meta, data, 0, 1)); err != nil {
 					close(taskIn)
