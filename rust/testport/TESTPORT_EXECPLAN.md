@@ -40,6 +40,14 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: audited the complete Go-master `pkg/extension/_import`
+  package (two artifacts, 26 lines), including the empty registration landing
+  package and its public Bazel target. The pinned package has no generated
+  imports, functions, tests, variants, or fixtures; Rust has no external
+  extension-import generator/build hook. Recorded the explicit build boundary
+  in `receipts/extension_import.md` without inventing a placeholder registry
+  entry or crate.
+
 - 2026-09-01: audited the complete Go-master
   `pkg/executor/internal/mpp` package (five artifacts, 1,595 lines),
   including MPP retry/recovery wrappers, bounded result holding, local
