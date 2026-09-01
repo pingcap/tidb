@@ -526,6 +526,9 @@ fn run_insert_with_physical(
     let mut inserted = 0u64;
     // A source query supplies already-evaluated values; a VALUES list
     // supplies expressions. Both fill the same target offsets.
+    if insert.source.is_none() {
+        ctx.notify_before_executor_first_run();
+    }
     let value_rows: Vec<Vec<Datum>> = match &source_rows {
         Some(rows) => rows.clone(),
         None => Vec::new(),
@@ -2716,6 +2719,7 @@ fn run_update_with_physical(
             &column_names,
             ctx,
         )?;
+        ctx.notify_before_executor_first_run();
         return Ok(0);
     }
     // The retained physical child owns WHERE, ORDER BY and LIMIT exactly as
@@ -2815,7 +2819,10 @@ fn run_update_with_physical(
                     "UPDATE of a sequence is not a statement TiDB accepts",
                 ));
             }
-            TableEntry::Mem(mem) => SourceRows::Mem(mem.rows.clone()),
+            TableEntry::Mem(mem) => {
+                ctx.notify_before_executor_first_run();
+                SourceRows::Mem(mem.rows.clone())
+            }
             TableEntry::Kv(_) => unreachable!("byte-backed tables use the physical child"),
         }
     };
@@ -3332,6 +3339,7 @@ fn run_delete_with_physical(
             &column_names,
             ctx,
         )?;
+        ctx.notify_before_executor_first_run();
         return Ok(0);
     }
     let predicate = if physical_kv_source { None } else { predicate };
@@ -3359,7 +3367,10 @@ fn run_delete_with_physical(
             TableEntry::Sequence(_) => {
                 return Err(DriverError::DeleteSequenceUnsupported(name.clone()));
             }
-            TableEntry::Mem(mem) => SourceRows::Mem(mem.rows.clone()),
+            TableEntry::Mem(mem) => {
+                ctx.notify_before_executor_first_run();
+                SourceRows::Mem(mem.rows.clone())
+            }
             TableEntry::Kv(_) => unreachable!("byte-backed tables use the physical child"),
         }
     };

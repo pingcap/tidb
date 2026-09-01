@@ -1016,6 +1016,10 @@ impl Session {
                 .with_enable_check_constraint(self.enable_check_constraint())
                 .with_sysdate_is_now(sysdate_is_now)
                 .with_resource_group_name(self.active_resource_group.clone())
+                .with_executor_first_run_breakpoint(
+                    Arc::clone(&self.executor_first_run_breakpoint),
+                    self.breakpoint_notify_func(),
+                )
                 .with_lazy_clock(snapshot.timestamp, zone);
             if let Some(latest_index_schema) = latest_index_schema {
                 ctx = ctx.with_latest_index_schema(latest_index_schema);
@@ -1064,6 +1068,10 @@ impl Session {
         .with_tidb_decode_key_snapshot(self.tidb_decode_key_snapshot())
         .with_sysdate_is_now(sysdate_is_now)
         .with_resource_group_name(self.active_resource_group.clone())
+        .with_executor_first_run_breakpoint(
+            Arc::clone(&self.executor_first_run_breakpoint),
+            self.breakpoint_notify_func(),
+        )
         .with_lazy_clock(snapshot.timestamp, zone)
         .with_sql_mode(snapshot.scanner_sql_mode)
         .with_ddl_sql_mode(sql_mode.0)

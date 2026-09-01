@@ -430,6 +430,15 @@ pub trait MdlRelatedTableSink: Send + Sync {
 
 pub struct Session {
     catalog: SharedCatalog,
+    /// Go `session.values`: heterogeneous values addressed by session-context
+    /// stringer keys. Values must be thread-safe because the native session
+    /// moves between connection workers.
+    context_values: HashMap<String, Box<dyn std::any::Any + Send + Sync>>,
+    /// Shared with every executor context built for the current attempt.
+    executor_first_run_breakpoint: Arc<std::sync::atomic::AtomicBool>,
+    /// The cluster transaction layer owns the attempt boundary while this is
+    /// true, so inner pessimistic retries do not re-arm the first-run hook.
+    external_executor_breakpoint_scope: bool,
     /// Go `infosync.ServerInfo.StartTimestamp`: when the hosting server
     /// process started, which the server-tier `Statistics` provider turns
     /// into the `Uptime` status variable (`pkg/server/stat.go:87`). `None`
@@ -756,6 +765,9 @@ impl Session {
     fn unbootstrapped(catalog: SharedCatalog) -> Self {
         Session {
             catalog,
+            context_values: HashMap::new(),
+            executor_first_run_breakpoint: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            external_executor_breakpoint_scope: false,
             server_start_timestamp: None,
             tidb_decode_key_cache: std::sync::Mutex::new(None),
             session_memory: tidb_executor::SessionMemory::new(
@@ -831,6 +843,61 @@ impl Session {
             found_in_binding: false,
             prev_found_in_binding: false,
         }
+    }
+
+    fn breakpoint_notify_func(&self) -> Option<Arc<dyn Fn(String) + Send + Sync + 'static>> {
+        self.context_values
+            .get(tidb_util::breakpoint::NOTIFY_BREAK_POINT_FUNC_KEY)
+            .and_then(|value| value.downcast_ref::<Arc<dyn Fn(String) + Send + Sync + 'static>>())
+            .cloned()
+    }
+
+    /// Starts one server-owned execution attempt. `notify` is false for a
+    /// PREPARE metadata probe, which builds no executor in Go.
+    #[doc(hidden)]
+    pub fn begin_external_executor_breakpoint_scope(&mut self, notify: bool) {
+        self.external_executor_breakpoint_scope = true;
+        self.executor_first_run_breakpoint
+            .store(!notify, std::sync::atomic::Ordering::Release);
+    }
+
+    /// Ends the server-owned execution-attempt scope.
+    #[doc(hidden)]
+    pub fn end_external_executor_breakpoint_scope(&mut self) {
+        self.external_executor_breakpoint_scope = false;
+    }
+
+    /// Notifies at a cluster pre-lock, which is executor execution in Go but
+    /// must precede the fused Rust session runner to carry the locked value.
+    #[doc(hidden)]
+    pub fn notify_before_executor_first_run(&self) {
+        if self
+            .executor_first_run_breakpoint
+            .swap(true, std::sync::atomic::Ordering::AcqRel)
+        {
+            return;
+        }
+        tidb_util::breakpoint::inject(self, "beforeExecutorFirstRun");
+    }
+}
+
+impl tidb_util::context::ValueStoreContext for Session {
+    type Key = str;
+
+    fn set_value(&mut self, key: &Self::Key, value: Box<dyn std::any::Any + Send + Sync>) {
+        self.context_values.insert(key.to_owned(), value);
+    }
+
+    fn value(&self, key: &Self::Key) -> Option<&(dyn std::any::Any + Send + Sync)> {
+        self.context_values.get(key).map(Box::as_ref)
+    }
+
+    fn clear_value(&mut self, key: &Self::Key) {
+        self.context_values.remove(key);
+    }
+
+    fn get_domain(&self) -> Option<&dyn std::any::Any> {
+        None
     }
 }
 
@@ -1680,6 +1747,10 @@ impl Session {
         capture_result_authority: bool,
         execute: impl FnOnce(&mut Self) -> Result<StmtOutput, DriverError>,
     ) -> Result<(StmtOutput, Option<ResultMaterializationAuthority>), DriverError> {
+        if !self.external_executor_breakpoint_scope {
+            self.executor_first_run_breakpoint
+                .store(false, std::sync::atomic::Ordering::Release);
+        }
         self.statement_result_authority.get_mut().take();
         *self
             .process_plan_info

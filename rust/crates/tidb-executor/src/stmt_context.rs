@@ -280,6 +280,12 @@ pub struct StmtContext {
     /// How many coprocessor-equivalent evaluations are open on this thread.
     /// An atomic so parallel agg workers sharing the context stay `Sync`.
     cop_eval_depth: Arc<AtomicU32>,
+    /// Shared by every rebuilt executor of one statement attempt. Go emits
+    /// `beforeExecutorFirstRun` only for the initial executor; pessimistic
+    /// lock retries use their separate after-retry breakpoint.
+    before_executor_first_run: Arc<AtomicBool>,
+    /// The exact Go `func(string)` value copied from the session context.
+    breakpoint_notify_func: Option<Arc<dyn Fn(String) + Send + Sync + 'static>>,
     division_by_zero: ErrorLevel,
     /// Go `ErrGroupBadNull`, used by SLEEP's NULL/negative argument alias and
     /// by the same statement-level policy as column NOT NULL failures.
@@ -766,6 +772,8 @@ impl StmtContext {
             warnings: Arc::default(),
             cop_batch_warnings: Arc::default(),
             cop_eval_depth: Arc::new(AtomicU32::new(0)),
+            before_executor_first_run: Arc::new(AtomicBool::new(false)),
+            breakpoint_notify_func: None,
             division_by_zero,
             bad_null: if strict {
                 ErrorLevel::Error
@@ -1912,6 +1920,34 @@ impl StmtContext {
     pub fn with_process_plan_info_sink(mut self, sink: Arc<Mutex<ProcessPlanInfo>>) -> Self {
         self.process_plan_info = Some(sink);
         self
+    }
+
+    /// Installs the session value and the statement-attempt latch used by
+    /// Go's executor-first-run breakpoint.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn with_executor_first_run_breakpoint(
+        mut self,
+        latch: Arc<AtomicBool>,
+        notify: Option<Arc<dyn Fn(String) + Send + Sync + 'static>>,
+    ) -> Self {
+        self.before_executor_first_run = latch;
+        self.breakpoint_notify_func = notify;
+        self
+    }
+
+    /// Go `ExecStmt.Exec` immediately after `buildExecutor` and before
+    /// `openExecutor`. Rebuilt pessimistic executors share the latch.
+    pub(crate) fn notify_before_executor_first_run(&self) {
+        if self.before_executor_first_run.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        tidb_util::breakpoint::inject_stored_value(
+            self.breakpoint_notify_func
+                .as_ref()
+                .map(|notify| notify as &(dyn std::any::Any + Send + Sync)),
+            "beforeExecutorFirstRun",
+        );
     }
 
     /// Publishes the fields derived from the retained physical tree before

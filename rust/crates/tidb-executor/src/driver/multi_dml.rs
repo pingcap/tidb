@@ -843,6 +843,7 @@ pub(crate) fn run_multi_update(
         })
         .collect::<Result<_, _>>()?;
     let field_types = source.field_types();
+    ctx.notify_before_executor_first_run();
     let rows = selected_rows(
         &mut source,
         &update.where_clause,
@@ -1063,6 +1064,7 @@ pub(crate) fn run_multi_delete(
 ) -> Result<u64, DriverError> {
     let mut source = build_multi_source(from, catalog, current_db, ctx)?;
     let target_slots = resolve_delete_targets(targets, &source)?;
+    ctx.notify_before_executor_first_run();
     let rows = selected_rows(&mut source, &delete.where_clause, &[], &None, ctx)?;
     account_joined_rows(&rows, crate::mem_quota::label::DELETE, ctx)?;
 

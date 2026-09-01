@@ -46,9 +46,9 @@ pub trait ValueStoreContext {
     type Key: ?Sized;
 
     /// Saves a value associated with this context for `key`.
-    fn set_value(&mut self, key: &Self::Key, value: Box<dyn Any>);
+    fn set_value(&mut self, key: &Self::Key, value: Box<dyn Any + Send + Sync>);
     /// Returns the value associated with this context for `key`.
-    fn value(&self, key: &Self::Key) -> Option<&dyn Any>;
+    fn value(&self, key: &Self::Key) -> Option<&(dyn Any + Send + Sync)>;
     /// Clears the value associated with this context for `key`.
     fn clear_value(&mut self, key: &Self::Key);
     /// Returns the domain bound to this context, or `None` for Go's nil value.

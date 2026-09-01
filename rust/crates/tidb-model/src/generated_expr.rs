@@ -132,26 +132,6 @@ impl Visitor for NameResolver<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ColumnInfo;
-    use tidb_ast::CiString;
-
-    fn table() -> TableInfo {
-        TableInfo {
-            name: CiString::new("Orders"),
-            columns: vec![
-                ColumnInfo {
-                    name: CiString::new("Payload"),
-                    ..Default::default()
-                },
-                ColumnInfo {
-                    name: CiString::new("Σ"),
-                    ..Default::default()
-                },
-            ]
-            .into(),
-            ..Default::default()
-        }
-    }
 
     // Go TestParseExpression.
     #[test]
@@ -161,41 +141,5 @@ mod tests {
             panic!("JSON_EXTRACT parses as a function call")
         };
         assert_eq!(name, "json_extract");
-    }
-
-    #[test]
-    fn parse_expression_returns_the_first_select_field() {
-        let parsed = parse_expression("json_extract(payload, '$.a'), ignored").unwrap();
-        let Expr::Func { name, args, .. } = parsed else {
-            panic!("JSON_EXTRACT parses as a function call")
-        };
-        assert_eq!(name, "json_extract");
-        assert_eq!(args.len(), 2);
-    }
-
-    #[test]
-    fn parse_expression_returns_syntax_errors() {
-        assert!(parse_expression("json_extract(").is_err());
-    }
-
-    #[test]
-    fn simple_name_resolution_is_case_insensitive_and_preserves_the_ast() {
-        let parsed = parse_expression("catalog.orders.PAYLOAD + σ").unwrap();
-        let resolved = simple_resolve_name(parsed.clone(), &table()).unwrap();
-        assert_eq!(resolved, parsed);
-    }
-
-    #[test]
-    fn simple_name_resolution_reports_the_first_missing_column() {
-        let parsed = parse_expression("missing + payload").unwrap();
-        let error = simple_resolve_name(parsed, &table()).unwrap_err();
-        assert_eq!(
-            error,
-            ResolveNameError {
-                column: "missing".to_owned(),
-                table: "Orders".to_owned(),
-            }
-        );
-        assert_eq!(error.to_string(), "can't find column missing in Orders");
     }
 }

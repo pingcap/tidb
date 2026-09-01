@@ -217,13 +217,27 @@ For each bounded behavior cluster:
   generated-message `Size()` equivalents, changed predicate ordering to Go's
   unstable `slices.SortFunc` contract, and removed the source-absent predicate
   constructor and four-test carrier. Also completed atomic audits of the
-  two-artifact `pkg/util/breakpoint` and `pkg/util/compress` leaves. They remain
-  explicitly unclaimed: breakpoint needs the ordinary session value store and
-  both executor failpoint injection points; compression needs the generic
-  reusable gzip state shared by storage and the absent ingest-control owner.
-  Receipts are `receipts/statistics_util.md`,
-  `receipts/util_breakpoint_audit.md`, and
-  `receipts/util_compress_audit.md`.
+  two-artifact `pkg/util/breakpoint` and `pkg/util/compress` leaves. Compression
+  remains explicitly unclaimed because it needs the generic reusable gzip
+  state shared by storage and the absent ingest-control owner. Breakpoint was
+  subsequently completed with its session value store and both executor
+  injection points. Receipts are `receipts/statistics_util.md`,
+  `receipts/util_breakpoint.md`, and `receipts/util_compress_audit.md`.
+
+- 2026-09-01: completed pinned `pkg/util/breakpoint` as one two-artifact
+  package. Added its exact typed-key/failpoint/callback behavior, made the
+  ordinary physical executor path own the first-run hook for fresh and cached
+  plans, and integrated the native cluster pre-lock and lock-error retry seams.
+  One attempt latch preserves Go's distinction between full autocommit retries
+  and inner pessimistic retries; PREPARE metadata probes remain execution-free.
+  The source-test-free package retains no Rust-only test. Inventory and WIP
+  gates are in `receipts/util_breakpoint.md`.
+
+- 2026-09-01: completed pinned `pkg/util/generatedexpr` as one four-artifact
+  package in its existing `tidb-model` owner. Verified the synthetic-SELECT
+  parser and bottom-up name resolver against the full Go source, retained the
+  sole source test, and removed four supplemental Rust-only tests. Inventory
+  and WIP gates are in `receipts/util_generatedexpr.md`.
 
 - 2026-09-01: completed inventory and implementation for the currently
   unclaimed pinned Go `pkg/util/sys/storage` package. Its Linux/macOS `statfs`,
@@ -915,11 +929,12 @@ For each bounded behavior cluster:
 - [x] Complete the pinned `pkg/util/size` package in its `tidb-util` owner,
       retain all twenty source constants with Go ABI sizing, and remove the
       supplementary Rust test absent from this test-free Go package.
-- [x] Audit the complete pinned `pkg/util/breakpoint` package. Do not add a
-      detached callback wrapper: its sole behavior requires the ordinary
-      session value store, failpoint registry, and both executor injection
-      sites. The two-artifact inventory is in
-      `receipts/util_breakpoint_audit.md` and remains unclaimed.
+- [x] Complete the pinned `pkg/util/breakpoint` package with the ordinary
+      session value store, exact failpoint/type-assert callback behavior, and
+      both executor injection sites. Preserve full-retry versus inner
+      pessimistic-retry cardinality and suppress PREPARE metadata probes. The
+      two-artifact inventory and WIP gates are in
+      `receipts/util_breakpoint.md`.
 - [x] Audit the complete pinned `pkg/util/compress` package. Its writer and
       reader pools are generic reusable gzip streams shared by statistics
       storage and ingest control; the current fresh, fixed-buffer Rust codecs
