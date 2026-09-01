@@ -354,6 +354,17 @@ For each bounded behavior cluster:
   boundary in `receipts/dxf_framework_testutil.md` and
   `rust/docs/operations/dxf-framework-testutil-audit-execplan.md`.
 
+- 2026-09-02: audited the complete Go-master `pkg/dxf/framework/metering`
+  package: seven tracked artifacts and 1,411 lines, with 30 production and 16
+  test/helper declarations. The inventory covers classic/next-gen recorder
+  gates, monotonic object-store/cluster deltas, SDK writer creation, flush and
+  retry loops, final-unregister cleanup, failure metrics, two failpoint hooks,
+  and the 12-shard flaky test target. Rust has no dependency-closed DXF
+  metering owner beyond unrelated config fields/comments, so no speculative
+  writer or Rust-only behavior was added. Recorded the explicit boundary in
+  `receipts/dxf_framework_metering.md` and
+  `rust/docs/operations/dxf-framework-metering-audit-execplan.md`.
+
 - 2026-09-01: audited the complete direct Go-master parent
   `pkg/dxf/importinto` package: 26 tracked artifacts and 9,158 lines, with
   170 production function/method declarations and 45 top-level test
