@@ -1376,6 +1376,15 @@ For each bounded behavior cluster:
       counters preserve the source copy-safety contract. The Go package, eight
       Rust catalog tests, and the Rust infoschema regression pass; details are
       in `receipts/errno_audit.md`.
+- 2026-09-01: audited all five Go-master `pkg/keyspace` artifacts (404 lines,
+      17 production function/method declarations, three tests, and one
+      benchmark) including the package contract, Bazel target, and every
+      source artifact. The existing `tidb-util::keyspace` owner already
+      preserves namespace construction, cached keyspace bytes, logger-field
+      adaptation, API-context selection, and both username policies with
+      source-shaped regressions. The Go package, seven filtered Rust owner
+      tests, and Rust formatting check pass; details are in
+      `receipts/keyspace_audit.md`.
 - [ ] Run Ready validation and self-review only when the requested parity scope
       is genuinely complete enough for a final-status claim.
 
@@ -1831,6 +1840,14 @@ For each bounded behavior cluster:
   a non-forced rebase must not move the observed base backwards. The Rust
   client now uses the same monotonic CAS and the Go count-and-duration retry
   limit; the etcd service/server remains a separate owner boundary.
+
+- Decision: keep `tidb-util::keyspace` as the complete owner for Go's
+  `pkg/keyspace`. The absent client-go codec and PD API-context types are
+  represented by a narrow trait and value enum, while logger wrapping is
+  represented by the canonical `keyspaceName` field consumed by the Rust
+  logger. These are carrier adaptations of source behavior; adding a fake
+  client or a second logger core would be Rust-only policy, so no such path is
+  added. Date/Author: 2026-09-01, Codex.
 
 ## Outcomes & Retrospective
 
