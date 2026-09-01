@@ -1,7 +1,7 @@
 # `pkg/util/gctuner` — Go-master parity boundary receipt
 
 Comparison source: Go `origin/master` at
-`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01). No Rust crate is a
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02). No Rust crate is a
 dependency-closed owner for this package. The package's direct Go behavior is
 runtime- and lifecycle-bound, so this audit records the complete boundary
 without adding a detached Rust timer or GC policy.
@@ -43,10 +43,15 @@ returns the effective tuned or environment default percentage.
 uses Go's `runtime/debug.SetMemoryLimit`, and recognizes the previous GC's
 memory-limit trigger. It temporarily raises the limit to 110% for one minute
 (three seconds in tests), records the GC counters, and then restores the
-configured limit. Disable/enable nesting, global-memory-arbitration bypass,
-the callback registered with `memory`, and both failpoint-controlled races are
-part of the source contract. `readMemoryInuse` is the only package helper;
-`mem_test.go` deliberately exercises the actual runtime allocator.
+configured limit. Disable/enable nesting and both failpoint-controlled races
+are part of the Go-master source contract. `readMemoryInuse` is the only
+package helper; `mem_test.go` deliberately exercises the actual runtime
+allocator.
+
+The active worktree has an existing branch-only 22-line memory-arbitration
+delta in `memory_limit_tuner.go` (and removes ten test lines) relative to the
+Go-master pin. It is preserved as user-owned scope and is not treated as
+Go-master behavior for this receipt.
 
 ## Rust ownership and integration decision
 
@@ -67,8 +72,8 @@ atomically. No production or Rust test file changed in this audit.
 
 ## Validation
 
-Profile: **WIP**. This is a boundary audit, not a package-complete fix; no
-Ready completion claim or `make bazel_prepare` is made.
+Profile: **Ready** for this complete Go-master boundary refresh; no Rust owner
+or production code changed.
 
 The package uses failpoints in production and its BUILD target, so the
 repository failpoint runner was used. These focused tests passed:
@@ -103,9 +108,12 @@ GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
 ./tools/check/failpoint-go-test.sh pkg/util/gctuner -run '^TestSetMemoryLimit$' -count=1
 ```
 
-Each test reported `PASS`; the long issue-48741 run exceeded the command
-wrapper's 30-second outer polling window during failpoint cleanup after the
-test itself passed. No Go or Bazel file was edited.
+Each selected test reported `PASS` in both the active and exact detached
+Go-master checkouts. `git diff --stat c6054025ed4c32ab3672a2a24ea46892714d21ec
+-- pkg/util/gctuner` records only the pre-existing branch-only delta described
+above. Rust fmt, pinned detached `make lint`, and `git diff --check` passed. No
+Go or Bazel file was edited in this batch, so `make bazel_prepare` is not
+required.
 
 ## Risks and unverified behavior
 

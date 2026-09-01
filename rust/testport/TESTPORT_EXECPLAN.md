@@ -3499,6 +3499,13 @@ For each bounded behavior cluster:
       each focused test (the long issue-48741 test passed before wrapper
       cleanup exceeded its outer poll window), so no partial Rust runtime
       owner was added. Details are in `receipts/util_gctuner_audit.md`.
+- 2026-09-02: re-audited all nine `pkg/util/gctuner` Go-master artifacts at
+      `c6054025ed4c32ab3672a2a24ea46892714d21ec` (993 lines). The detached
+      source contract and focused failpoint tests pass, while Rust still has
+      no dependency-closed finalizer/GOGC/memory-limit owner. An existing
+      branch-only memory-arbitration delta is recorded but preserved; details
+      are in `receipts/util_gctuner_audit.md` and
+      `docs/operations/util-gctuner-audit-execplan.md`.
 - 2026-09-01: inventoried all five Go-master `pkg/domain/serverinfo`
       artifacts (2,295 lines, including the embedded-etcd/fault harness and
       Bazel target). Added the missing status-endpoint claim to the ordinary
