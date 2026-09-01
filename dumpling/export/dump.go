@@ -74,6 +74,7 @@ type Dumper struct {
 	charsetAndDefaultCollationMap map[string]string
 
 	speedRecorder *SpeedRecorder
+	packedService atomic.Pointer[cseDumper]
 }
 
 // NewDumper returns a new Dumper
@@ -1591,7 +1592,7 @@ func startHTTPService(d *Dumper) error {
 	conf := d.conf
 	if conf.StatusAddr != "" {
 		go func() {
-			err := startDumplingService(d.tctx, conf.StatusAddr)
+			err := startDumplingService(d, conf.StatusAddr)
 			if err != nil {
 				d.L().Info("meet error when stopping dumpling http service", log.ShortError(err))
 			}

@@ -10,17 +10,17 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/dumpling/log"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/soheilhy/cmux"
 )
 
 var cmuxReadTimeout = 10 * time.Second
 
-func startHTTPServer(tctx *tcontext.Context, lis net.Listener) {
+func startHTTPServer(d *Dumper, lis net.Listener) {
 	router := http.NewServeMux()
-	router.Handle("/metrics", promhttp.Handler())
+	router.Handle("/metrics", newMetricsHandler(d))
 
 	router.HandleFunc("/debug/pprof/", pprof.Index)
 	router.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
@@ -34,11 +34,22 @@ func startHTTPServer(tctx *tcontext.Context, lis net.Listener) {
 	err := httpServer.Serve(lis)
 	err = errors.Cause(err)
 	if err != nil && !isErrNetClosing(err) && err != http.ErrServerClosed {
-		tctx.L().Info("dumpling http handler return with error", log.ShortError(err))
+		d.tctx.L().Info("dumpling http handler return with error", log.ShortError(err))
 	}
 }
 
-func startDumplingService(tctx *tcontext.Context, addr string) error {
+func newMetricsHandler(d *Dumper) http.Handler {
+	gatherer := prometheus.Gatherers{
+		prometheus.DefaultGatherer,
+		cseMetricsGatherer{owner: d},
+	}
+	return promhttp.InstrumentMetricHandler(
+		prometheus.DefaultRegisterer,
+		promhttp.HandlerFor(gatherer, promhttp.HandlerOpts{}),
+	)
+}
+
+func startDumplingService(d *Dumper, addr string) error {
 	rootLis, err := net.Listen("tcp", addr)
 	if err != nil {
 		return errors.Annotate(err, "start listening")
@@ -49,7 +60,7 @@ func startDumplingService(tctx *tcontext.Context, addr string) error {
 	m.SetReadTimeout(cmuxReadTimeout) // set a timeout, ref: https://github.com/pingcap/tidb-binlog/pull/352
 
 	httpL := m.Match(cmux.HTTP1Fast())
-	go startHTTPServer(tctx, httpL)
+	go startHTTPServer(d, httpL)
 
 	err = m.Serve() // start serving, block
 	if err != nil && isErrNetClosing(err) {

@@ -17,13 +17,22 @@ package export
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/net/http2"
 )
 
 func TestPackedProtocolRows(t *testing.T) {
@@ -80,34 +89,130 @@ func TestPackedProtocolRows(t *testing.T) {
 
 	baseArgs := []string{
 		"dumper",
-		"--metadata-url", "s3://bucket/backup.meta",
-		"--start-key-hex", "00ff",
-		"--end-key-hex", "10",
+		"--metadata-url", "bucket/backup.meta",
+		"--unix-socket", "/tmp/packed.sock",
+		"--scan-concurrency", "7",
 	}
 	require.Equal(
 		t,
 		baseArgs,
-		cseDumperArgs("s3://bucket/backup.meta", false, []byte{0, 0xff}, []byte{0x10}),
+		cseDumperArgs("bucket/backup.meta", "/tmp/packed.sock", false, 7),
 	)
 	require.Equal(
 		t,
 		append(baseArgs, "--legacy-encryption"),
-		cseDumperArgs("s3://bucket/backup.meta", true, []byte{0, 0xff}, []byte{0x10}),
+		cseDumperArgs("bucket/backup.meta", "/tmp/packed.sock", true, 7),
 	)
 
-	stderr := &cseDumperStderr{}
-	for _, chunk := range []string{
-		"human diag",
-		"nostic\nCSE packed ",
-		"perf part=setup manifest=1ms\nnot-CSE packed perf part=scan\n",
-		"CSE packed perf part=scan total=2ms\nlast diagnostic",
-	} {
-		_, err := stderr.Write([]byte(chunk))
-		require.NoError(t, err)
+	var requestBody cseDumperScanRequest
+	var requestMethod, requestURL, contentType string
+	socketPath := filepath.Join(t.TempDir(), "packed.sock")
+	listener, err := net.Listen("unix", socketPath)
+	require.NoError(t, err)
+	serverDone := make(chan struct{})
+	go func() {
+		connection, acceptErr := listener.Accept()
+		if acceptErr == nil {
+			defer connection.Close()
+			server := &http2.Server{}
+			server.ServeConn(connection, &http2.ServeConnOpts{Handler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				requestMethod = request.Method
+				requestURL = request.URL.String()
+				contentType = request.Header.Get("Content-Type")
+				if err := json.NewDecoder(request.Body).Decode(&requestBody); err != nil {
+					http.Error(writer, err.Error(), http.StatusBadRequest)
+					return
+				}
+				writer.Header().Add("Trailer", cseScanStatusTrailer)
+				_, _ = writer.Write([]byte{1, 0, 0, 0, 1, 0, 0, 0, 'k', 'v'})
+				writer.Header().Set(cseScanStatusTrailer, cseScanStatusComplete)
+			})})
+		}
+		close(serverDone)
+	}()
+	client, transport := newCSEDumperHTTPClient(socketPath)
+	dumper := &cseDumper{client: client, transport: transport}
+	scan, err := dumper.scan(context.Background(), []byte{0, 0xff}, []byte{0x10}, nil)
+	require.NoError(t, err)
+	require.Equal(t, http.MethodPost, requestMethod)
+	require.Equal(t, "/scan", requestURL)
+	require.Equal(t, "application/json", contentType)
+	require.Equal(t, cseDumperScanRequest{StartKeyHex: "00ff", EndKeyHex: "10"}, requestBody)
+	key, value, end, err := scan.readRow(nil, nil)
+	require.NoError(t, err)
+	require.False(t, end)
+	require.Equal(t, []byte{'k'}, key)
+	require.Equal(t, []byte{'v'}, value)
+	_, _, end, err = scan.readRow(nil, nil)
+	require.NoError(t, err)
+	require.True(t, end)
+	require.NoError(t, scan.close())
+	transport.CloseIdleConnections()
+	require.NoError(t, listener.Close())
+	select {
+	case <-serverDone:
+	case <-time.After(time.Second):
+		require.Fail(t, "HTTP/2 test server did not stop")
 	}
-	require.True(t, isCSEPackedPerfLine([]byte("CSE packed perf part=output total=3ms")))
-	require.False(t, isCSEPackedPerfLine([]byte("not-CSE packed perf part=scan")))
-	require.Equal(t, "human diagnostic\nnot-CSE packed perf part=scan\nlast diagnostic", stderr.diagnostics())
+
+	dumper.client.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader("")),
+			Trailer: http.Header{
+				http.CanonicalHeaderKey(cseScanStatusTrailer): []string{cseScanStatusFailed},
+				http.CanonicalHeaderKey(cseScanErrorTrailer):  []string{"missing%20packed%20file"},
+			},
+		}, nil
+	})
+	scan, err = dumper.scan(context.Background(), []byte{1}, []byte{2}, nil)
+	require.NoError(t, err)
+	_, _, _, err = scan.readRow(nil, nil)
+	require.EqualError(t, err, "cse-ctl dumper scan failed: missing packed file")
+
+	dumper.client.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader("")),
+			Trailer:    make(http.Header),
+		}, nil
+	})
+	scan, err = dumper.scan(context.Background(), []byte{1}, []byte{2}, nil)
+	require.NoError(t, err)
+	_, _, _, err = scan.readRow(nil, nil)
+	require.EqualError(t, err, "cse-ctl dumper scan ended without a completion trailer")
+	diagnostics := readCSEDumperStderr(strings.NewReader(
+		"CSE packed perf part=setup manifest=1ms\n"+
+			strings.Repeat("x", maxCSEDumperDiagnosticBytes+1)+"\nlast diagnostic",
+	), nil)
+	require.Equal(t, "1 cse-ctl diagnostic lines omitted\nlast diagnostic", diagnostics)
+
+	dumper.client.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		require.Equal(t, http.MethodGet, request.Method)
+		require.Equal(t, cseMetricsURL, request.URL.String())
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/plain; version=0.0.4"}},
+			Body:       io.NopCloser(strings.NewReader("native_br_packed_reader_scanned_shards_total 3\n")),
+		}, nil
+	})
+	recorder := httptest.NewRecorder()
+	owner := &Dumper{}
+	owner.packedService.Store(dumper)
+	newMetricsHandler(owner).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Body.String(), "native_br_packed_reader_scanned_shards_total 3\n")
+	owner.packedService.Store(nil)
+	recorder = httptest.NewRecorder()
+	newMetricsHandler(owner).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.NotContains(t, recorder.Body.String(), "native_br_packed_reader_scanned_shards_total")
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
 }
 
 func TestPackedRowsUseTiDBStorageEncoding(t *testing.T) {

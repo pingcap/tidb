@@ -339,7 +339,7 @@ func TestConfigValidation(t *testing.T) {
 	)
 	for _, testCase := range packedCases {
 		conf := DefaultConfig()
-		conf.PackedBackup = "s3://bucket/backup.meta"
+		conf.PackedBackup = "bucket/backup.meta"
 		if testCase.configure != nil {
 			testCase.configure(conf)
 		}

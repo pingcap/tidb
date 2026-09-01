@@ -217,8 +217,8 @@ type Config struct {
 	// It's used for controlling GC in keyspace-level clusters where PD addresses
 	// may not be discoverable from TiDB.
 	PDAddr string
-	// PackedBackup is the exact CSE packed-backup metadata URL. It is omitted
-	// from config logging because object-store URLs can contain credentials.
+	// PackedBackup is the CSE packed-backup metadata path in
+	// <bucket-or-container>/<meta-object-key> form.
 	PackedBackup  string `json:"-"`
 	CSEExecutable string
 	// CSELegacyEncryption enables the legacy master key for packed-backup reads.
@@ -435,7 +435,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 		units.BytesSize(float64(parquetfile.DefaultRowGroupMemoryLimitBytes)),
 		"Parquet row-group memory limit in bytes (flush threshold by accounted in-memory bytes), accepts human-readable units",
 	)
-	flags.String(flagPackedBackup, "", "Exact CSE packed-backup metadata URL to export without TiDB or PD")
+	flags.String(flagPackedBackup, "", "CSE packed-backup metadata path in <bucket-or-container>/<meta-object-key> form")
 	flags.String(flagCSEExecutable, "cse-ctl", "Path to the cse-ctl executable used for packed-backup export")
 	flags.Bool(flagCSELegacyEncryption, false, "Decrypt legacy-encrypted CSE packed-backup content using CSE_MASTER_KEY_* environment configuration")
 	flags.String(flagGPGKeyFile, "", "Path to an OpenPGP public key file used to encrypt every output file")

@@ -15,140 +15,66 @@
 package export
 
 import (
-	"bytes"
+	"bufio"
 	"fmt"
+	"io"
 	"strings"
-	"sync"
 )
 
 const (
 	csePackedPerfPrefix         = "CSE packed perf "
 	maxCSEDumperDiagnosticBytes = 64 << 10
-	maxCSEDumperStderrLineBytes = 64 << 10
 )
 
-// cseDumperStderr forwards complete packed-perf lines and retains complete
-// non-perf lines only for an eventual child-process error.
-type cseDumperStderr struct {
-	mu              sync.Mutex
-	observation     *packedScanContext
-	pending         []byte
-	diagnosticLines []string
-	diagBytes       int
-	omitted         uint64
-	dropping        bool
-	finished        bool
-}
-
-func newCSEDumperStderr(observation *packedScanContext) cseDumperStderr {
-	return cseDumperStderr{observation: observation}
-}
-
-func (w *cseDumperStderr) Write(data []byte) (int, error) {
-	written := len(data)
-	forward := make([]string, 0, 1)
-
-	w.mu.Lock()
-	for len(data) > 0 {
-		if w.dropping {
-			newline := bytes.IndexByte(data, '\n')
-			if newline < 0 {
-				data = nil
-				continue
-			}
-			w.dropping = false
-			w.omitted++
-			data = data[newline+1:]
-			continue
+func readCSEDumperStderr(input io.Reader, observation *packedExportObservation) string {
+	reader := bufio.NewReader(input)
+	var diagnostics []string
+	var line []byte
+	diagnosticBytes := 0
+	omitted := 0
+	dropping := false
+	consume := func() {
+		if dropping {
+			omitted++
+			return
 		}
-
-		newline := bytes.IndexByte(data, '\n')
-		if newline < 0 {
-			if len(w.pending)+len(data) > maxCSEDumperStderrLineBytes {
-				w.pending = w.pending[:0]
-				w.dropping = true
-			} else {
-				w.pending = append(w.pending, data...)
+		text := strings.TrimSuffix(string(line), "\r")
+		if text == "" {
+			return
+		}
+		if strings.HasPrefix(text, csePackedPerfPrefix) {
+			observation.forwardCSE(text)
+			return
+		}
+		if diagnosticBytes+len(text)+1 > maxCSEDumperDiagnosticBytes {
+			omitted++
+			return
+		}
+		diagnostics = append(diagnostics, text)
+		diagnosticBytes += len(text) + 1
+	}
+	for {
+		fragment, more, err := reader.ReadLine()
+		if !dropping && len(line)+len(fragment) <= maxCSEDumperDiagnosticBytes {
+			line = append(line, fragment...)
+		} else {
+			line = line[:0]
+			dropping = true
+		}
+		if !more {
+			consume()
+			line = line[:0]
+			dropping = false
+		}
+		if err != nil {
+			if err != io.EOF {
+				diagnostics = append(diagnostics, fmt.Sprintf("read cse-ctl stderr: %v", err))
 			}
 			break
 		}
-
-		if len(w.pending)+newline > maxCSEDumperStderrLineBytes {
-			w.pending = w.pending[:0]
-			w.omitted++
-		} else {
-			w.pending = append(w.pending, data[:newline]...)
-			w.consumeLine(&forward)
-		}
-		data = data[newline+1:]
 	}
-	w.mu.Unlock()
-
-	for _, line := range forward {
-		if w.observation != nil {
-			w.observation.forwardCSE(line)
-		}
+	if omitted > 0 {
+		diagnostics = append([]string{fmt.Sprintf("%d cse-ctl diagnostic lines omitted", omitted)}, diagnostics...)
 	}
-	return written, nil
-}
-
-func (w *cseDumperStderr) consumeLine(forward *[]string) {
-	line := bytes.TrimSuffix(w.pending, []byte{'\r'})
-	w.pending = w.pending[:0]
-	if len(line) == 0 {
-		return
-	}
-	if isCSEPackedPerfLine(line) {
-		*forward = append(*forward, string(line))
-		return
-	}
-
-	lineBytes := len(line) + 1
-	if lineBytes > maxCSEDumperDiagnosticBytes {
-		w.omitted++
-		return
-	}
-	for w.diagBytes+lineBytes > maxCSEDumperDiagnosticBytes && len(w.diagnosticLines) > 0 {
-		w.diagBytes -= len(w.diagnosticLines[0]) + 1
-		w.diagnosticLines = w.diagnosticLines[1:]
-		w.omitted++
-	}
-	w.diagnosticLines = append(w.diagnosticLines, string(line))
-	w.diagBytes += lineBytes
-}
-
-func (w *cseDumperStderr) finish() {
-	forward := make([]string, 0, 1)
-	w.mu.Lock()
-	if !w.finished {
-		w.finished = true
-		if w.dropping {
-			w.dropping = false
-			w.omitted++
-		} else if len(w.pending) > 0 {
-			w.consumeLine(&forward)
-		}
-	}
-	w.mu.Unlock()
-	for _, line := range forward {
-		if w.observation != nil {
-			w.observation.forwardCSE(line)
-		}
-	}
-}
-
-func isCSEPackedPerfLine(line []byte) bool {
-	return bytes.HasPrefix(line, []byte(csePackedPerfPrefix))
-}
-
-func (w *cseDumperStderr) diagnostics() string {
-	w.finish()
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	lines := make([]string, 0, len(w.diagnosticLines)+1)
-	if w.omitted > 0 {
-		lines = append(lines, fmt.Sprintf("%d cse-ctl diagnostic lines omitted", w.omitted))
-	}
-	lines = append(lines, w.diagnosticLines...)
-	return strings.Join(lines, "\n")
+	return strings.Join(diagnostics, "\n")
 }

@@ -29,7 +29,6 @@ import (
 type packedExportObservation struct {
 	tctx        *tcontext.Context
 	started     time.Time
-	nextScan    atomic.Uint64
 	scans       packedScanTotals
 	decodeNanos atomic.Int64
 	decoded     atomic.Uint64
@@ -44,11 +43,8 @@ type packedScanTotals struct {
 	kv       atomic.Uint64
 	keyBytes atomic.Uint64
 	valBytes atomic.Uint64
-	spawn    atomic.Int64
 	firstRow atomic.Int64
-	pipeRead atomic.Int64
-	wait     atomic.Int64
-	total    atomic.Int64
+	read     atomic.Int64
 }
 
 func newPackedExportObservation(tctx *tcontext.Context) *packedExportObservation {
@@ -70,16 +66,13 @@ func (o *packedExportObservation) finish(resultErr error) {
 	finished := o.scans.finished.Load()
 	failed := o.scans.failed.Load()
 	o.tctx.L().Info("packed export perf",
-		zap.String("part", "process"),
+		zap.String("part", "scan"),
 		zap.Uint64("scans", o.scans.started.Load()),
 		zap.Uint64("done", finished),
 		zap.Uint64("failed", failed),
-		zap.Duration("spawn_sum", time.Duration(o.scans.spawn.Load())),
 		zap.Duration("first_sum", time.Duration(o.scans.firstRow.Load())),
 		zap.Uint64("first_n", o.scans.first.Load()),
-		zap.Duration("pipe_sum", time.Duration(o.scans.pipeRead.Load())),
-		zap.Duration("wait_sum", time.Duration(o.scans.wait.Load())),
-		zap.Duration("child_sum", time.Duration(o.scans.total.Load())))
+		zap.Duration("read_sum", time.Duration(o.scans.read.Load())))
 	o.tctx.L().Info("packed export perf",
 		zap.String("part", "data"),
 		zap.Uint64("kv", o.scans.kv.Load()),
@@ -93,12 +86,9 @@ func (o *packedExportObservation) finish(resultErr error) {
 
 type packedScanContext struct {
 	parent     *packedExportObservation
-	id         uint64
 	started    time.Time
-	spawnDur   time.Duration
 	firstDur   time.Duration
 	readDur    time.Duration
-	waitDur    time.Duration
 	kv         uint64
 	keyBytes   uint64
 	valBytes   uint64
@@ -108,17 +98,9 @@ type packedScanContext struct {
 func newPackedScanContext(parent *packedExportObservation) *packedScanContext {
 	observation := &packedScanContext{parent: parent, started: time.Now()}
 	if parent != nil {
-		observation.id = parent.nextScan.Add(1)
 		parent.scans.started.Add(1)
 	}
 	return observation
-}
-
-func (o *packedScanContext) spawn(run func() error) error {
-	started := time.Now()
-	err := run()
-	o.spawnDur = time.Since(started)
-	return err
 }
 
 func (o *packedScanContext) readRow(
@@ -139,18 +121,11 @@ func (o *packedScanContext) readRow(
 	return key, value, end, err
 }
 
-func (o *packedScanContext) wait(run func() error) error {
-	started := time.Now()
-	err := run()
-	o.waitDur += time.Since(started)
-	return err
-}
-
-func (o *packedScanContext) forwardCSE(line string) {
-	if o.parent == nil {
+func (o *packedExportObservation) forwardCSE(line string) {
+	if o == nil {
 		return
 	}
-	o.parent.tctx.L().Debug(line, zap.Uint64("scan", o.id))
+	o.tctx.L().Debug(line)
 }
 
 func (o *packedScanContext) finish(err error) {
@@ -170,9 +145,6 @@ func (o *packedScanContext) finish(err error) {
 		totals.kv.Add(o.kv)
 		totals.keyBytes.Add(o.keyBytes)
 		totals.valBytes.Add(o.valBytes)
-		totals.spawn.Add(o.spawnDur.Nanoseconds())
-		totals.pipeRead.Add(o.readDur.Nanoseconds())
-		totals.wait.Add(o.waitDur.Nanoseconds())
-		totals.total.Add(time.Since(o.started).Nanoseconds())
+		totals.read.Add(o.readDur.Nanoseconds())
 	})
 }
