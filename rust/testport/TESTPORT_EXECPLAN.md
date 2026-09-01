@@ -433,6 +433,18 @@ For each bounded behavior cluster:
   by missing OpenSSL/pkg-config. The boundary is recorded in
   `receipts/session_test_txn.md`.
 
+- 2026-09-01: audited the complete Go-master
+  `pkg/session/test/variable` package: three tracked artifacts and 593 lines,
+  including the TestMain/goleak harness, twelve variable/coprocessor/
+  execution/replica/logging tests, three `mockZapCore` methods, and
+  twelve-shard flaky BUILD target. Rust has executable owners for selected
+  scope, isolation-read, replica-read, hint, and max-execution-time contracts,
+  but not the dependency-closed coprocessor OOM/rate-limit, query RU,
+  general-log, or full snapshot/staleness lifecycle seams. No Rust-only
+  behavior or safe standalone implementation was found; the exact Go-master
+  failpoint suite passed and the boundary is recorded in
+  `receipts/session_test_variable.md`.
+
 - 2026-09-01: refreshed the complete Go-master
   `pkg/util/password-validation` inventory (three artifacts, 379 lines) and
   confirmed it is unchanged from the prior pinned implementation. The Go
