@@ -11,8 +11,9 @@ and storage-key owners remain separate.
 - Read both pinned artifacts (256 lines), all 12 production declarations, and
   the public Bazel target; confirmed no tests, fixtures, generated/platform
   variants, or nested packages exist.
-- Refreshed the receipt to Go master `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`
-  and verified the package remains source-identical.
+- Refreshed the receipt to Go master
+  `c6054025ed4c32ab3672a2a24ea46892714d21ec` and verified the package remains
+  source-identical.
 - Confirmed Rust owns only lower-level key encoders and transport; no
   dependency-closed high-level split-key implementation exists, so no
   speculative adapter or Rust-only behavior removal is appropriate.
@@ -21,7 +22,7 @@ and storage-key owners remain separate.
 
 - [x] Current and exact-Go-master package compile probes pass (`[no test files]`).
 - [x] Ready formatting, repository lint, and diff checks pass.
-- [ ] Push this receipt/ExecPlan refresh, verify remote SHAs, and pull
+- [x] Push this receipt/ExecPlan refresh, verify remote SHAs, and pull
       `origin/hparser-integration`.
 
 ## Next boundary
@@ -29,4 +30,3 @@ and storage-key owners remain separate.
 Porting this package requires the complete DDL/executor split-region path,
 table metadata, common-handle codecs, and PD/TiKV scheduling consumers as one
 dependency-closed change with focused arithmetic and boundary regressions.
-
