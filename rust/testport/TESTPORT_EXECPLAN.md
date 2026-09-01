@@ -40,6 +40,25 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: audited the complete Go-master `pkg/session/test/common`
+  package before editing: four tracked artifacts and 600 lines, including
+  seven session metadata/protocol tests, five prepared-statement dedup-cache
+  lifecycle tests, the failpoint/goleak harness, and the twelve-shard flaky
+  BUILD target. The package is unchanged from the pinned Go source. Rust's
+  ignored carriers remain explicit because no dependency-closed TestKit +
+  Domain + storage transaction + PlanCacheStmt protocol owner is available;
+  recorded the boundary in `receipts/session_test_common.md`.
+
+- 2026-09-01: audited the complete Go-master `pkg/session/test/meta` package
+  before editing: three tracked artifacts and 376 lines, covering DDL/meta
+  table initialization, region keys, TTL transaction metrics, timezone-aware
+  information-schema create time, next-generation reserved IDs, the
+  failpoint/goleak harness, and the six-shard flaky BUILD target. The only
+  master delta is the reserved base-table assertion changing from 60 to 65;
+  no Rust behavior was changed because the dependency-closed bootstrap,
+  Domain, mock TiKV, DDL, tablecodec, and SQL owner is not transcreated.
+  Recorded the boundary in `receipts/session_test_meta.md`.
+
 - 2026-09-01: audited the complete Go-master `pkg/ingestor/ingestctrl`
   package before editing: 33 tracked artifacts and 16,709 lines, including
   the BUILD target, 18 production sources, all four platform RLimit variants,
