@@ -2537,6 +2537,14 @@ For each bounded behavior cluster:
       mode and a narrow session-context adapter, with the shared parameter
       contract applied to live evaluation. Exact Go-master and Rust carrier
       suites pass; details are in `receipts/expression_sessionexpr.md`.
+- 2026-09-01: audited the complete Go-master `pkg/expression/generator`
+      directory: eight tracked artifacts and 3,162 lines, including the
+      compiled thread-safety generator, five build-ignore vector/template
+      inputs, seven helper type contexts, and both Bazel targets. The current
+      master snapshot has no delta from the pinned source. This is an explicit
+      Go-only code-generation boundary; generated parent-package outputs remain
+      covered by the expression test-port receipts. Details are in
+      `receipts/expression_generator.md`.
 - [ ] Run Ready validation and self-review only when the requested parity scope
       is genuinely complete enough for a final-status claim.
 
