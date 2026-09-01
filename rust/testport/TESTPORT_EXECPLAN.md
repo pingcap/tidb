@@ -2455,6 +2455,13 @@ For each bounded behavior cluster:
       ordinary startup registration, preserve structured fields and context,
       remove Rust-only public/test surfaces, and port both source benchmarks.
       The atomic inventory and WIP gates are in `receipts/util_traceevent.md`.
+- [x] Inventory the nested `pkg/util/traceevent/test` package independently:
+      two artifacts and 461 lines, four next-gen session/flight-recorder
+      integration tests, and its flaky Bazel target. The root Rust owner covers
+      unit/adapter behavior, but no dependency-closed SQL-session harness
+      exists; the explicit integration boundary and interrupted linker run are
+      recorded in `receipts/util_traceevent_test.md` and
+      `docs/operations/util-traceevent-test-audit-execplan.md`.
 - [x] Complete the pinned root `pkg/util/tracing` package in `tidb-util`:
       preserve shared span-handle semantics, restore its open string phase and
       pointer-preserving CE deduplication, add the four source benchmarks and
