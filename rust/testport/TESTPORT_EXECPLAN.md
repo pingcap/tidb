@@ -40,6 +40,18 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: audited the complete Go-master `pkg/sessionctx/sessionstates`
+  package before editing: five tracked artifacts and 2,578 lines covering the
+  migratable state schema, token timing, certificate rotation,
+  RSA/ECDSA/Ed25519 signing and validation, eighteen tests, binary-protocol
+  helpers, failpoints, and the eighteen-shard flaky BUILD target. Rust has
+  selected session-state carriers and a token-timing owner, but no
+  dependency-closed JSON restore, migration, TLS/signature, prepared-protocol,
+  or authentication owner. No Rust-only behavior or safe standalone
+  implementation was found; the complete Go-master failpoint suite passed in
+  29.543s and the boundary is recorded in
+  `receipts/sessionctx_sessionstates.md`.
+
 - 2026-09-01: audited the complete Go-master `pkg/sessionctx/sysproctrack`
   package before editing: two tracked artifacts and 48 lines containing the
   public `TrackProc`/`Tracker` interfaces and BUILD dependency closure. The
