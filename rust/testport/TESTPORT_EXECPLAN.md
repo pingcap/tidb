@@ -1669,6 +1669,13 @@ For each bounded behavior cluster:
   dependency graph and cannot substitute for the key/value sorter. The
   package remains explicitly unclaimed with no speculative Rust behavior;
   details are in `receipts/util_extsort.md`.
+- 2026-09-01: audited all three Go-master `pkg/util/httputil` artifacts (199
+      lines: shared TLS/timeout client, context-bound JSON/text GET helpers,
+      response/error handling, httptest matrix, and Bazel target). Rust has
+      isolated HTTP transports but no dependency-closed shared client or the
+      BR/Lightning/object-store composition roots. The package remains
+      explicitly unclaimed with no source change; details are in
+      `receipts/util_httputil.md`.
 - [ ] Run Ready validation and self-review only when the requested parity scope
       is genuinely complete enough for a final-status claim.
 
@@ -1781,6 +1788,11 @@ For each bounded behavior cluster:
   safe-point/global-variable contract together. Existing Rust safe-point
   caches and flashback tests are supporting boundaries, not a replacement for
   these public helpers; a detached SQL bridge would be Rust-only behavior.
+  Date/Author: 2026-09-01, Codex.
+- Decision: keep `pkg/util/httputil` explicitly unclaimed until the shared
+  client, TLS/timeout policy, body ownership, and BR/Lightning/object-store
+  consumers can move as one dependency-closed owner. A Rust-only generic HTTP
+  helper would duplicate isolated transports and risk observable divergence.
   Date/Author: 2026-09-01, Codex.
 - Decision: preserve the Rust planner-error declaration table and its
   all-prototype initialization guard. Go package initialization registers all
