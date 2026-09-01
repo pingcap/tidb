@@ -40,6 +40,17 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: audited the complete Go-master `pkg/sessionctx/stmtctx`
+  package before editing: four tracked artifacts and 2,416 lines, including
+  129 production functions, 17 statement-context tests, one benchmark,
+  TestMain, and the 17-shard flaky BUILD target. Rust has executable
+  executor/session/exec owners for selected flags, warnings, caches, stale TSO,
+  status, and statistics, but no dependency-closed owner for the full
+  cross-cutting `StatementContext` contract and its TestKit/Domain test
+  surface. No Rust-only behavior or safe standalone implementation was found;
+  the exact Go-master failpoint suite passed in 2.811s and the boundary is
+  recorded in `receipts/sessionctx_stmtctx.md`.
+
 - 2026-09-01: audited the complete Go-master
   `pkg/session/test/nontransactionaltest` package before editing: three
   tracked artifacts and 614 lines covering six batch-DML behavior tests, the
