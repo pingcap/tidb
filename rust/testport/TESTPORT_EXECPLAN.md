@@ -317,6 +317,16 @@ For each bounded behavior cluster:
   recorded in `receipts/dumpformat_parsedef.md` and
   `rust/docs/operations/dumpformat-parsedef-audit-execplan.md`.
 
+- 2026-09-01: audited the complete Go-master
+  `pkg/dumpformat/testutils` package: two artifacts and 296 lines covering
+  the public BUILD target, all typed Parquet column dispatch and slicing,
+  object-store wrapper, and row-group writer. Go Parquet/importer tests call
+  this support helper, but Rust has no dependency-closed Arrow/Parquet fixture
+  writer or matching object-store owner. No Rust-only behavior or speculative
+  generator was added; the exact package compile and boundary are recorded in
+  `receipts/dumpformat_testutils.md` and
+  `rust/docs/operations/dumpformat-testutils-audit-execplan.md`.
+
 - 2026-09-01: audited the complete Go-master `pkg/ingestor/globalsort`
   package before editing: 17 tracked artifacts and 6,814 lines, including the
   external engine, object-store readers, merge and merge-v2 operators, range
