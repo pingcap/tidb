@@ -141,7 +141,7 @@ func TestPKDBSequenceCacheEpoch(t *testing.T) {
 	tk.MustQuery("select @@global.pkdb_sequence_cache_epoch").Check(testkit.Rows("0"))
 }
 
-func TestSequenceFunctionsRespectRestrictedReadOnly(t *testing.T) {
+func TestSequenceFunctionsRespectReadOnlyModes(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
@@ -150,11 +150,6 @@ func TestSequenceFunctionsRespectRestrictedReadOnly(t *testing.T) {
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("1"))
 
 	tk.MustExec("set global tidb_restricted_read_only = ON")
-	defer func() {
-		tk.MustExec("set global tidb_restricted_read_only = OFF")
-		tk.MustExec("set global tidb_super_read_only = OFF")
-	}()
-
 	err := tk.QueryToErr("select nextval(seq)")
 	require.True(t, terror.ErrorEqual(err, plannererrors.ErrSQLInReadOnlyMode), "err %v", err)
 	err = tk.QueryToErr("select setval(seq, 100)")
@@ -163,6 +158,14 @@ func TestSequenceFunctionsRespectRestrictedReadOnly(t *testing.T) {
 
 	tk.MustExec("set global tidb_restricted_read_only = OFF")
 	tk.MustExec("set global tidb_super_read_only = OFF")
+
+	tk.MustExec("set global tidb_super_read_only = ON")
+	err = tk.QueryToErr("select nextval(seq)")
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrSQLInReadOnlyMode), "err %v", err)
+	err = tk.QueryToErr("select setval(seq, 100)")
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrSQLInReadOnlyMode), "err %v", err)
+	tk.MustExec("set global tidb_super_read_only = OFF")
+
 	tk.MustExec("grant RESTRICTED_REPLICA_WRITER_ADMIN on *.* to 'root'")
 	tk.MustExec("set global tidb_restricted_read_only = ON")
 	tk.MustQuery("select setval(seq, 100)").Check(testkit.Rows("100"))
