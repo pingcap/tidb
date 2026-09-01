@@ -259,6 +259,20 @@ For each bounded behavior cluster:
   in `receipts/lightning_config.md` and
   `rust/docs/operations/lightning-config-audit-execplan.md`.
 
+- 2026-09-02: audited the complete 24-artifact Go-master
+  `pkg/lightning/common` package: 3,875 lines, 94 production declarations,
+  31 test functions, three benchmarks, two logical failpoints, Unix/Windows
+  storage variants, and a 30-shard flaky BUILD target. The inventory covers
+  allocator compatibility, gRPC pooling, duplicate detection, error and retry
+  policy, key adapters, pause gates, TLS/HTTP/PD/TiKV conversion, platform
+  storage accounting, SQL/index helpers, row-count safety, and every test and
+  benchmark. The current and detached exact-master failpoint suites pass after
+  a clean binding-generation rerun. Rust has no dependency-closed common owner
+  or consumer, so no Rust-only behavior was removed and no speculative utility
+  facade was added. Recorded the explicit boundary in
+  `receipts/lightning_common.md` and
+  `rust/docs/operations/lightning-common-audit-execplan.md`.
+
 - 2026-09-01: audited the complete Go-master
   `pkg/dxf/importinto/mock` package: two tracked artifacts and 74 lines,
   consisting of the public Bazel target and the complete MockGen
@@ -280,6 +294,18 @@ For each bounded behavior cluster:
   facade or Rust-only behavior was added. Recorded the explicit Go-only
   boundary in `receipts/dxf_framework_dxfutil.md` and
   `rust/docs/operations/dxf-framework-dxfutil-audit-execplan.md`.
+
+- 2026-09-02: audited the complete Go-master
+  `pkg/dxf/framework/dxfmetric` package: three tracked artifacts and 296
+  lines, covering atomic task/subtask snapshots, Prometheus descriptors,
+  status aggregation, pending/running duration gauges, DXF event vectors,
+  UUID test labels, and registration. It has no tests, fixtures,
+  generated/platform variants, benchmarks, fuzz targets, or generator inputs.
+  Rust's `tidb-dxf` owns task/resource/step data but no dependency-closed DXF
+  Prometheus registry or collector, so no speculative metrics facade or
+  Rust-only behavior was added. Recorded the explicit boundary in
+  `receipts/dxf_framework_dxfmetric.md` and
+  `rust/docs/operations/dxf-framework-dxfmetric-audit-execplan.md`.
 
 - 2026-09-01: audited the complete direct Go-master parent
   `pkg/dxf/importinto` package: 26 tracked artifacts and 9,158 lines, with
