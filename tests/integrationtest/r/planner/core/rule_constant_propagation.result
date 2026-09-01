@@ -183,10 +183,11 @@ id	task	access object	operator info
 Update	root		N/A
 └─Projection	root		planner__core__rule_constant_propagation.t1.id, planner__core__rule_constant_propagation.t1.value, planner__core__rule_constant_propagation.t1._tidb_rowid, ifnull(Column, 0)->Column
   └─HashJoin	root		left outer join, left side:TableReader, equal:[eq(planner__core__rule_constant_propagation.t1.id, planner__core__rule_constant_propagation.t2.id)]
-    ├─HashAgg(Build)	root		group by:planner__core__rule_constant_propagation.t2.id, funcs:count(1)->Column, funcs:firstrow(planner__core__rule_constant_propagation.t2.id)->planner__core__rule_constant_propagation.t2.id
-    │ └─TableReader	root		data:Selection
-    │   └─Selection	cop[tikv]		eq(planner__core__rule_constant_propagation.t2.id, 10)
-    │     └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+    ├─HashAgg(Build)	root		group by:planner__core__rule_constant_propagation.t2.id, funcs:count(Column)->Column, funcs:firstrow(planner__core__rule_constant_propagation.t2.id)->planner__core__rule_constant_propagation.t2.id
+    │ └─TableReader	root		data:HashAgg
+    │   └─HashAgg	cop[tikv]		group by:planner__core__rule_constant_propagation.t2.id, funcs:count(1)->Column
+    │     └─Selection	cop[tikv]		eq(planner__core__rule_constant_propagation.t2.id, 10)
+    │       └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
     └─TableReader(Probe)	root		data:Selection
       └─Selection	cop[tikv]		eq(planner__core__rule_constant_propagation.t1.id, 10)
         └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo

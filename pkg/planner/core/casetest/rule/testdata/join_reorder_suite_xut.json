@@ -1767,10 +1767,10 @@
         "Plan": [
           "HashJoin root  inner join, equal:[eq(test.t1.b, test.t2.b)]",
           "├─HashJoin(Build) root  inner join, equal:[eq(test.t3.a, test.t1.a)]",
-          "│ ├─HashAgg(Build) root  group by:test.t3.a, funcs:firstrow(test.t3.a)->test.t3.a, funcs:count(Column)->Column",
-          "│ │ └─IndexReader root  index:HashAgg",
-          "│ │   └─HashAgg cop[tikv]  group by:test.t3.a, funcs:count(1)->Column",
-          "│ │     └─IndexFullScan cop[tikv] table:t3, index:a(a) keep order:false, stats:pseudo",
+          "│ ├─StreamAgg(Build) root  group by:test.t3.a, funcs:firstrow(test.t3.a)->test.t3.a, funcs:count(Column)->Column",
+          "│ │ └─IndexReader root  index:StreamAgg",
+          "│ │   └─StreamAgg cop[tikv]  group by:test.t3.a, funcs:count(1)->Column",
+          "│ │     └─IndexFullScan cop[tikv] table:t3, index:a(a) keep order:true, stats:pseudo",
           "│ └─TableReader(Probe) root  data:Selection",
           "│   └─Selection cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
           "│     └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
@@ -1793,10 +1793,10 @@
           "    ├─TableReader(Build) root  data:Selection",
           "    │ └─Selection cop[tikv]  not(isnull(test.t2.a))",
           "    │   └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "    └─HashAgg(Probe) root  group by:test.t3.a, funcs:firstrow(test.t3.a)->test.t3.a, funcs:count(1)->Column",
+          "    └─StreamAgg(Probe) root  group by:test.t3.a, funcs:firstrow(test.t3.a)->test.t3.a, funcs:count(1)->Column",
           "      └─IndexReader root  index:Selection",
           "        └─Selection cop[tikv]  not(isnull(test.t3.a))",
-          "          └─IndexRangeScan cop[tikv] table:t3, index:a(a) range: decided by [eq(test.t3.a, test.t1.a)], keep order:false, stats:pseudo"
+          "          └─IndexRangeScan cop[tikv] table:t3, index:a(a) range: decided by [eq(test.t3.a, test.t1.a)], keep order:true, stats:pseudo"
         ],
         "Warning": [
           "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3, t2, t1) */. Maybe you can use the table alias name"
@@ -1826,10 +1826,10 @@
         "Plan": [
           "Projection root  test.t1.a, test.t2.b",
           "└─HashJoin root  inner join, equal:[eq(test.t1.a, test.t3.a)]",
-          "  ├─HashAgg(Build) root  group by:test.t3.a, funcs:firstrow(test.t3.a)->test.t3.a, funcs:count(Column)->Column",
-          "  │ └─IndexReader root  index:HashAgg",
-          "  │   └─HashAgg cop[tikv]  group by:test.t3.a, funcs:count(1)->Column",
-          "  │     └─IndexFullScan cop[tikv] table:t3, index:a(a) keep order:false, stats:pseudo",
+          "  ├─StreamAgg(Build) root  group by:test.t3.a, funcs:firstrow(test.t3.a)->test.t3.a, funcs:count(Column)->Column",
+          "  │ └─IndexReader root  index:StreamAgg",
+          "  │   └─StreamAgg cop[tikv]  group by:test.t3.a, funcs:count(1)->Column",
+          "  │     └─IndexFullScan cop[tikv] table:t3, index:a(a) keep order:true, stats:pseudo",
           "  └─HashJoin(Probe) root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
           "    ├─IndexReader(Build) root  index:IndexFullScan",
           "    │ └─IndexFullScan cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo",
