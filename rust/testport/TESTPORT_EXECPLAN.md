@@ -40,6 +40,17 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: refreshed the complete Go-master `pkg/util/stringutil`
+  inventory at `c6054025ed4c32ab3672a2a24ea46892714d21ec`: four artifacts and
+  927 lines, including all source tests, benchmarks, the goleak harness, and
+  BUILD metadata. The Rust owner already forwards Go's explicit LIKE escape
+  byte; removed its 15 Rust-only `#[must_use]` annotations and added a
+  discardable-return regression that failed before the edit with 15 lint
+  errors and passes afterward. Current and detached latest-master Go tests,
+  all nine Rust tests, Ready formatting, pinned lint, and diff hygiene pass.
+  Details are in `receipts/util_stringutil.md` and
+  `docs/operations/util-stringutil-audit-execplan.md`.
+
 - 2026-09-02: completed the Go-master `pkg/keyspace` package audit at
   `c6054025ed4c32ab3672a2a24ea46892714d21ec`: read all five artifacts and
   404 lines, confirmed no generated/platform/fixture/nested artifacts or Go

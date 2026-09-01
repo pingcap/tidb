@@ -209,7 +209,6 @@ pub fn compile_pattern_inner_binary(pattern: &[u8], escape: u8) -> (Vec<u8>, Vec
 
 /// Converts a TiDB `LIKE` pattern to an anchored regular expression using the
 /// caller-provided escape byte.
-#[must_use]
 pub fn compile_like_to_regexp(pattern: impl AsRef<[u8]>, escape: u8) -> String {
     let (weights, types) = compile_pattern(pattern, escape);
     let mut result = String::with_capacity(weights.len().saturating_mul(2) + 2);
@@ -246,19 +245,16 @@ pub fn compile_like_to_regexp(pattern: impl AsRef<[u8]>, escape: u8) -> String {
 }
 
 /// Matches a binary string against a compiled binary wildcard pattern.
-#[must_use]
 pub fn do_match_binary(input: &[u8], weights: &[u8], types: &[PatternType]) -> bool {
     do_match_units(input, weights, types, |left, right| left == right)
 }
 
 /// Matches a Unicode string against a compiled Unicode wildcard pattern.
-#[must_use]
 pub fn do_match(input: impl AsRef<[u8]>, weights: &[char], types: &[PatternType]) -> bool {
     do_match_customized(input, weights, types, |left, right| left == right)
 }
 
 /// Matches a Unicode string with caller-provided literal-character equality.
-#[must_use]
 pub fn do_match_customized(
     input: impl AsRef<[u8]>,
     weights: &[char],
@@ -314,13 +310,11 @@ fn do_match_units<T: Copy>(
 }
 
 /// Whether a compiled pattern contains no wildcard token.
-#[must_use]
 pub fn is_exact_match(types: &[PatternType]) -> bool {
     types.iter().all(|kind| *kind == PatternType::Match)
 }
 
 /// Creates an independent owned copy of arbitrary Go-string bytes.
-#[must_use]
 pub fn copy(value: &[u8]) -> Vec<u8> {
     value.to_vec()
 }
@@ -368,7 +362,6 @@ pub fn memoize_str<F: FnMut() -> String>(function: F) -> impl fmt::Display {
 }
 
 /// Quotes arbitrary identifier bytes according to `ANSI_QUOTES` mode.
-#[must_use]
 pub fn escape(identifier: &[u8], sql_mode: SqlMode) -> Vec<u8> {
     let quote = if sql_mode.has_ansi_quotes_mode() {
         b'"'
@@ -388,7 +381,6 @@ pub fn escape(identifier: &[u8], sql_mode: SqlMode) -> Vec<u8> {
 }
 
 /// Formats labels in stable key order as `key=value,key=value`.
-#[must_use]
 pub fn build_string_from_labels(labels: &HashMap<String, String>) -> String {
     let mut labels = labels.iter().collect::<Vec<_>>();
     labels.sort_unstable_by_key(|(key, _)| *key);
@@ -400,13 +392,11 @@ pub fn build_string_from_labels(labels: &HashMap<String, String>) -> String {
 }
 
 /// Counts trailing ASCII spaces.
-#[must_use]
 pub fn get_tail_space_count(value: &[u8]) -> i64 {
     value.iter().rev().take_while(|byte| **byte == b' ').count() as i64
 }
 
 /// Returns the width encoded by the first byte of a UTF-8 sequence.
-#[must_use]
 pub const fn utf8_len(first: u8) -> usize {
     if first & 0x80 == 0 {
         1
@@ -430,25 +420,21 @@ pub fn trim_utf8_string(value: &mut &str, trimmed_chars: i64) -> i64 {
 }
 
 /// Converts a zero-based UTF-8 byte index to a one-based character position.
-#[must_use]
 pub fn convert_pos_in_utf8(value: &str, byte_position: i64) -> i64 {
     value[..byte_position as usize].chars().count() as i64 + 1
 }
 
 /// Whether a byte is an uppercase ASCII letter.
-#[must_use]
 pub const fn is_upper_ascii(value: u8) -> bool {
     value.is_ascii_uppercase()
 }
 
 /// Whether a byte is a lowercase ASCII letter.
-#[must_use]
 pub const fn is_lower_ascii(value: u8) -> bool {
     value.is_ascii_lowercase()
 }
 
 /// Whether a byte is an ASCII digit.
-#[must_use]
 pub const fn is_numeric_ascii(value: u8) -> bool {
     value.is_ascii_digit()
 }
@@ -496,7 +482,6 @@ pub fn lower_one_string_excluding_escape_char(value: &mut [u8], escape: u8) -> u
 }
 
 /// Escapes `?` for a glob path pattern.
-#[must_use]
 pub fn escape_glob_question_mark(value: impl AsRef<[u8]>) -> String {
     let mut escaped = String::new();
     for character in decode_go_runes(value.as_ref()) {
@@ -513,6 +498,30 @@ mod tests {
     use std::cell::Cell;
 
     use super::*;
+
+    // Go permits callers to discard these function results; Rust must not add
+    // a `must_use` diagnostic at the transcreation boundary.
+    #[test]
+    #[deny(unused_must_use)]
+    fn return_values_may_be_ignored_like_go() {
+        let (weights, types) = compile_pattern("a", b'\\');
+        compile_like_to_regexp("a", b'\\');
+        do_match_binary(b"a", b"a", &[PatternType::Match]);
+        do_match("a", &weights, &types);
+        do_match_customized("a", &weights, &types, |left, right| left == right);
+        is_exact_match(&types);
+        copy(b"a");
+        escape(b"a", SqlMode::default());
+        build_string_from_labels(&HashMap::new());
+        get_tail_space_count(b"a");
+        utf8_len(b'a');
+        convert_pos_in_utf8("a", 0);
+        is_upper_ascii(b'a');
+        is_lower_ascii(b'a');
+        is_numeric_ascii(b'1');
+        escape_glob_question_mark("a");
+    }
+
     #[test]
     fn test_unquote() {
         let rows: &[(&[u8], &[u8], bool)] = &[
