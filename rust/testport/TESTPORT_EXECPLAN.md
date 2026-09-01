@@ -36,6 +36,14 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- [x] (2026-08-31) Re-audited and completed the pinned 11-artifact
+  `pkg/dxf/framework/proto` package. Restored target-sized Go `int` fields,
+  year-1 offset-preserving `time.Time` values, shared errors, callable test
+  restores, shared test resources, and wrapping atomic allocation. Removed
+  exported dependency helpers, six source-absent tests, and documentation of
+  narrower Rust behavior. All ten source test identities pass. Inventory and
+  WIP evidence are in `receipts/dxf_framework_proto.md`.
+
 - [x] (2026-08-31) Completed the pinned four-artifact
   `pkg/resourcemanager/pool/workerpool` package. Added its shared cancellable
   context, reusable worker lifecycle, panic/error propagation, result-less and
@@ -1130,6 +1138,13 @@ For each bounded behavior cluster:
   behaviorally divergent even if its package tests happened to pass. The
   constructor callback failpoint remains an argument-bearing test seam, not a
   Rust scheduling policy. Date/Author: 2026-08-31, Codex.
+- Decision: `pkg/dxf/framework/proto` is a target-sized value package. Go
+  `int` cannot be frozen to `i64`, zero `time.Time` cannot be represented by a
+  UTC-only optional timestamp, and `error` cannot be flattened to text without
+  changing later scheduler behavior. Rust uses `isize`, an actual year-1
+  `DateTime<FixedOffset>`, and shared error trait objects; external go-units
+  helpers remain private implementation dependencies. Date/Author: 2026-08-31,
+  Codex.
 - Decision: package parity is atomic. File-, function-, batch-, or test-level
   progress cannot be reported as a completed transcreated Go package.
   Date/Author: 2026-08-28, Codex.

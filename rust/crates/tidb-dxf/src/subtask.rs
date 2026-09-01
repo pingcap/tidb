@@ -18,11 +18,11 @@
 use std::fmt;
 use std::sync::atomic::{AtomicI64, Ordering};
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, FixedOffset};
 
 use crate::node::step_resource_bytes_size;
 use crate::step::Step;
-use crate::task::TaskType;
+use crate::task::{go_zero_time, TaskType};
 
 go_string_type! {
     /// Go `SubtaskState`: the state of a subtask.
@@ -44,7 +44,7 @@ pub const SUBTASK_STATE_PAUSED: SubtaskState = SubtaskState::from_static("paused
 
 /// Go `SubtaskBase`: the basic information of a subtask, split out so that the
 /// possibly very large subtask meta need not be loaded into memory.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubtaskBase {
     /// Subtask ID.
     pub id: i64,
@@ -63,17 +63,34 @@ pub struct SubtaskBase {
     /// unfinished subtasks is updated too. Some subtasks, like post-process of
     /// `IMPORT INTO`, do not consume many resources and could lower this; the
     /// field exists so that feature can be built later.
-    pub concurrency: i64,
+    pub concurrency: isize,
     /// The ID of the target executor. Right now it equals `instance_id` and
     /// its value is `IP:PORT`, see `GenerateExecID`.
     pub exec_id: String,
-    /// Creation time; `None` is Go's zero `time.Time`.
-    pub create_time: Option<DateTime<Utc>>,
-    /// The time the subtask started; `None` if it has not started yet.
-    pub start_time: Option<DateTime<Utc>>,
+    /// Creation time.
+    pub create_time: DateTime<FixedOffset>,
+    /// The time the subtask started.
+    pub start_time: DateTime<FixedOffset>,
     /// The ordinal of the subtask, unique for a given task and step, starting
     /// from 1.
-    pub ordinal: i64,
+    pub ordinal: isize,
+}
+
+impl Default for SubtaskBase {
+    fn default() -> Self {
+        Self {
+            id: 0,
+            step: Step::default(),
+            tp: TaskType::default(),
+            task_id: 0,
+            state: SubtaskState::default(),
+            concurrency: 0,
+            exec_id: String::new(),
+            create_time: go_zero_time(),
+            start_time: go_zero_time(),
+            ordinal: 0,
+        }
+    }
 }
 
 impl SubtaskBase {
@@ -100,13 +117,13 @@ impl fmt::Display for SubtaskBase {
 ///
 /// Subtasks of a task run in parallel on different nodes, but on each node at
 /// most one subtask runs at a time, see `StepExecutor`.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct Subtask {
     /// The embedded [`SubtaskBase`]; Go embeds it anonymously.
     pub base: SubtaskBase,
     /// The time the subtask was updated. It doubles as the subtask end time
-    /// once finished, and is `None` if it has not started yet.
-    pub update_time: Option<DateTime<Utc>>,
+    /// once finished.
+    pub update_time: DateTime<FixedOffset>,
     /// The metadata of the subtask, which should not be empty; the metas of
     /// different subtasks of the same step must differ too.
     ///
@@ -118,6 +135,17 @@ pub struct Subtask {
     pub summary: String,
 }
 
+impl Default for Subtask {
+    fn default() -> Self {
+        Self {
+            base: SubtaskBase::default(),
+            update_time: go_zero_time(),
+            meta: Vec::new(),
+            summary: String::new(),
+        }
+    }
+}
+
 impl Subtask {
     /// Go `NewSubtask`: creates a new subtask.
     #[must_use]
@@ -126,9 +154,9 @@ impl Subtask {
         task_id: i64,
         tp: TaskType,
         exec_id: impl Into<String>,
-        concurrency: i64,
+        concurrency: isize,
         meta: Vec<u8>,
-        ordinal: i64,
+        ordinal: isize,
     ) -> Self {
         Self {
             base: SubtaskBase {
@@ -186,12 +214,13 @@ impl Allocatable {
     pub fn alloc(&self, n: i64) -> bool {
         loop {
             let used = self.used.load(Ordering::SeqCst);
-            if used + n > self.capacity {
+            let next = used.wrapping_add(n);
+            if next > self.capacity {
                 return false;
             }
             if self
                 .used
-                .compare_exchange(used, used + n, Ordering::SeqCst, Ordering::SeqCst)
+                .compare_exchange(used, next, Ordering::SeqCst, Ordering::SeqCst)
                 .is_ok()
             {
                 return true;
@@ -238,6 +267,7 @@ impl fmt::Display for StepResource {
 
 #[cfg(test)]
 mod tests {
+    use rand::Rng;
     use std::sync::Arc;
 
     use super::*;
@@ -266,12 +296,6 @@ mod tests {
     }
 
     /// Go `TestAllocatable`.
-    ///
-    /// Adaptation: Go seeds `math/rand` per goroutine from the wall clock; no
-    /// random-number crate is reachable offline, so each thread runs the same
-    /// splitmix64 generator seeded from its own index and the clock. What the
-    /// test proves — that concurrent `Alloc`/`Free` pairs balance out — does
-    /// not depend on the generator.
     #[test]
     fn test_allocatable() {
         let allocatable = Arc::new(Allocatable::new(123_456));
@@ -286,19 +310,12 @@ mod tests {
         assert_eq!(allocatable.used(), 0);
 
         let mut handles = Vec::new();
-        for i in 0..10u64 {
+        for _ in 0..10 {
             let allocatable = Arc::clone(&allocatable);
             handles.push(std::thread::spawn(move || {
-                let mut state = i
-                    .wrapping_mul(0x9E37_79B9_7F4A_7C15)
-                    .wrapping_add(0x2545_F491_4F6C_DD1D);
+                let mut random = rand::thread_rng();
                 for _ in 0..10_000 {
-                    state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
-                    let mut z = state;
-                    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-                    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-                    z ^= z >> 31;
-                    let n = i64::try_from(z % 1000).unwrap();
+                    let n = random.gen_range(0..1000);
                     if allocatable.alloc(n) {
                         allocatable.free(n);
                     }
@@ -309,23 +326,5 @@ mod tests {
             h.join().unwrap();
         }
         assert_eq!(allocatable.used(), 0);
-    }
-
-    /// Not a Go test: pins [`StepResource`]'s rendering, which is the only
-    /// consumer of the hand-rolled `units.BytesSize` replacement.
-    #[test]
-    fn test_step_resource_string() {
-        let r = StepResource {
-            cpu: Allocatable::new(8),
-            mem: Allocatable::new(8 * 1024 * 1024 * 1024),
-        };
-        assert_eq!(r.to_string(), "[CPU=8, Mem=8GiB]");
-        assert_eq!(r.memory_per_core(), 1024 * 1024 * 1024);
-
-        let zero_cpu = StepResource {
-            cpu: Allocatable::new(0),
-            mem: Allocatable::new(42),
-        };
-        assert_eq!(zero_cpu.memory_per_core(), 42);
     }
 }

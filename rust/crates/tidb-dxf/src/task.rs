@@ -19,7 +19,7 @@ use std::cmp::Ordering;
 use std::fmt;
 use std::sync::atomic::{AtomicI64, Ordering as AtomicOrdering};
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, FixedOffset};
 use serde::{Deserialize, Serialize};
 
 use crate::modify::ModifyParam;
@@ -72,13 +72,13 @@ impl TaskState {
 ///
 /// Go declares this as a bare `int` and its `String` method has an
 /// `unknown(%d)` arm, so out-of-range values must survive a round trip. A
-/// newtype over `i64` keeps that, and `#[serde(transparent)]` keeps the JSON
+/// newtype over `isize` keeps that, and `#[serde(transparent)]` keeps the JSON
 /// encoding a bare number as Go's does.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
 )]
 #[serde(transparent)]
-pub struct PrepareMode(pub i64);
+pub struct PrepareMode(pub isize);
 
 /// Go `PrepareModeDisabled`: prepare mode is disabled, the default.
 pub const PREPARE_MODE_DISABLED: PrepareMode = PrepareMode(0);
@@ -88,7 +88,7 @@ pub const PREPARE_MODE_REQUIRED: PrepareMode = PrepareMode(1);
 impl PrepareMode {
     /// Whether this is the default mode, i.e. the value `omitempty` drops.
     #[must_use]
-    pub fn is_disabled(&self) -> bool {
+    fn is_disabled(&self) -> bool {
         *self == PREPARE_MODE_DISABLED
     }
 }
@@ -106,15 +106,15 @@ impl fmt::Display for PrepareMode {
 /// Go `TaskIDLabelName`: the label name of task id.
 pub const TASK_ID_LABEL_NAME: &str = "task_id";
 /// Go `NormalPriority`: the normal priority of a task.
-pub const NORMAL_PRIORITY: i64 = 512;
+pub const NORMAL_PRIORITY: isize = 512;
 
 /// Go `maxConcurrentTaskLowerBound`: the minimum allowed DXF task concurrency.
-pub(crate) const MAX_CONCURRENT_TASK_LOWER_BOUND: i64 = 16;
+pub(crate) const MAX_CONCURRENT_TASK_LOWER_BOUND: isize = 16;
 /// Go `MaxConcurrentTaskUpperBound`: the current safety cap for DXF task
 /// concurrency.
-pub const MAX_CONCURRENT_TASK_UPPER_BOUND: i64 = 1000;
+pub const MAX_CONCURRENT_TASK_UPPER_BOUND: isize = 1000;
 /// Go `DefaultMaxConcurrentTask`: the default DXF task concurrency.
-pub const DEFAULT_MAX_CONCURRENT_TASK: i64 = MAX_CONCURRENT_TASK_LOWER_BOUND;
+pub const DEFAULT_MAX_CONCURRENT_TASK: isize = MAX_CONCURRENT_TASK_LOWER_BOUND;
 
 /// Go `maxConcurrentTask`: an owner-local emergency tuning knob for DXF
 /// scheduling.
@@ -123,19 +123,19 @@ pub const DEFAULT_MAX_CONCURRENT_TASK: i64 = MAX_CONCURRENT_TASK_LOWER_BOUND;
 /// reset on restart, and only affects the TiDB node that receives the update.
 /// Go seeds it from `init()`; here the static's own initializer does that, so
 /// there is no separate initialization phase to observe.
-static MAX_CONCURRENT_TASK: AtomicI64 = AtomicI64::new(DEFAULT_MAX_CONCURRENT_TASK);
+static MAX_CONCURRENT_TASK: AtomicI64 = AtomicI64::new(DEFAULT_MAX_CONCURRENT_TASK as i64);
 
 /// Go `GetMaxConcurrentTask`.
 #[must_use]
-pub fn get_max_concurrent_task() -> i64 {
-    MAX_CONCURRENT_TASK.load(AtomicOrdering::SeqCst)
+pub fn get_max_concurrent_task() -> isize {
+    MAX_CONCURRENT_TASK.load(AtomicOrdering::SeqCst) as isize
 }
 
 /// Go's `fmt.Errorf` value from `SetMaxConcurrentTask`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct MaxConcurrentTaskError {
     /// The rejected value.
-    pub value: i64,
+    value: isize,
 }
 
 impl fmt::Display for MaxConcurrentTaskError {
@@ -157,42 +157,26 @@ impl std::error::Error for MaxConcurrentTaskError {}
 /// Returns [`MaxConcurrentTaskError`] when `value` falls outside
 /// `[MAX_CONCURRENT_TASK_LOWER_BOUND, MAX_CONCURRENT_TASK_UPPER_BOUND]`; the
 /// stored value is then left untouched.
-pub fn set_max_concurrent_task(value: i64) -> Result<(), MaxConcurrentTaskError> {
+pub fn set_max_concurrent_task(value: isize) -> Result<(), MaxConcurrentTaskError> {
     if !(MAX_CONCURRENT_TASK_LOWER_BOUND..=MAX_CONCURRENT_TASK_UPPER_BOUND).contains(&value) {
         return Err(MaxConcurrentTaskError { value });
     }
-    MAX_CONCURRENT_TASK.store(value, AtomicOrdering::SeqCst);
+    MAX_CONCURRENT_TASK.store(value as i64, AtomicOrdering::SeqCst);
     Ok(())
-}
-
-/// Restores the previous max concurrent task on drop.
-///
-/// Go's `SetMaxConcurrentTaskForTest` returns a `func()` that callers invoke
-/// through `defer`; an RAII guard is how Rust spells the same lifetime.
-#[derive(Debug)]
-#[must_use = "the previous value is restored when this guard is dropped"]
-pub struct MaxConcurrentTaskGuard {
-    old: i64,
-}
-
-impl Drop for MaxConcurrentTaskGuard {
-    fn drop(&mut self) {
-        MAX_CONCURRENT_TASK.store(self.old, AtomicOrdering::SeqCst);
-    }
 }
 
 /// Go `SetMaxConcurrentTaskForTest`: sets the knob, bypassing the range check,
 /// and hands back the restore.
-pub fn set_max_concurrent_task_for_test(value: i64) -> MaxConcurrentTaskGuard {
+pub fn set_max_concurrent_task_for_test(value: isize) -> impl FnOnce() {
     let old = get_max_concurrent_task();
-    MAX_CONCURRENT_TASK.store(value, AtomicOrdering::SeqCst);
-    MaxConcurrentTaskGuard { old }
+    MAX_CONCURRENT_TASK.store(value as i64, AtomicOrdering::SeqCst);
+    move || MAX_CONCURRENT_TASK.store(old as i64, AtomicOrdering::SeqCst)
 }
 
 /// Go `ExtraParams`: the extra params of a task.
 ///
 /// Note: only params that are not used for filter or sort live here.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ExtraParams {
     /// Whether the task can be recovered manually. If enabled, the task enters
     /// `awaiting-resolution` when it fails, and the user can then recover it
@@ -211,7 +195,7 @@ pub struct ExtraParams {
     /// changes to it, so the newest value applies on restart. `required_slots`
     /// can be modified while this is left alone, so it may exceed it.
     #[serde(default, skip_serializing_if = "is_zero_i64")]
-    pub max_runtime_slots: i64,
+    pub max_runtime_slots: isize,
     /// The steps in which `max_runtime_slots` takes effect. Empty means all
     /// steps. OOM normally happens in a few specific steps, so limiting only
     /// those reduces the impact on overall performance.
@@ -227,13 +211,13 @@ fn is_false(v: &bool) -> bool {
     !*v
 }
 
-fn is_zero_i64(v: &i64) -> bool {
+fn is_zero_i64(v: &isize) -> bool {
     *v == 0
 }
 
 /// Go `TaskBase`: the basic information of a task, split out so that the
 /// possibly very large task meta need not be loaded into memory.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct TaskBase {
     /// Task ID.
     pub id: i64,
@@ -247,7 +231,7 @@ pub struct TaskBase {
     pub step: Step,
     /// The priority of the task; a smaller value means higher priority. The
     /// valid range is `[1, 1024]` and the default is [`NORMAL_PRIORITY`].
-    pub priority: i64,
+    pub priority: isize,
     /// The required slots of the task.
     ///
     /// Slots are allocated from this when scheduling and when creating the task
@@ -257,20 +241,39 @@ pub struct TaskBase {
     /// Application code should read [`TaskBase::get_runtime_slots`] rather than
     /// this field. In the system table this lives in the `concurrency` column,
     /// because required slots were introduced later.
-    pub required_slots: i64,
+    pub required_slots: isize,
     /// The task should run on TiDB nodes carrying the
     /// `tidb_service_scope=TargetScope` label. For compatibility with previous
     /// versions, `""` and `"background"` both first try the `background` scope
     /// and fall back to the `""` scope.
     pub target_scope: String,
-    /// Creation time; `None` is Go's zero `time.Time`.
-    pub create_time: Option<DateTime<Utc>>,
+    /// Creation time.
+    pub create_time: DateTime<FixedOffset>,
     /// The max node count of the task.
-    pub max_node_count: i64,
+    pub max_node_count: isize,
     /// The extra params of the task.
     pub extra_params: ExtraParams,
     /// The keyspace the task belongs to; only meaningful for nextgen clusters.
     pub keyspace: String,
+}
+
+impl Default for TaskBase {
+    fn default() -> Self {
+        Self {
+            id: 0,
+            key: String::new(),
+            tp: TaskType::default(),
+            state: TaskState::default(),
+            step: Step::default(),
+            priority: 0,
+            required_slots: 0,
+            target_scope: String::new(),
+            create_time: go_zero_time(),
+            max_node_count: 0,
+            extra_params: ExtraParams::default(),
+            keyspace: String::new(),
+        }
+    }
 }
 
 impl TaskBase {
@@ -302,7 +305,7 @@ impl TaskBase {
     /// Go `GetRuntimeSlots`: the runtime slots of the current task step, which
     /// the application layer may use as the concurrency of that step.
     #[must_use]
-    pub fn get_runtime_slots(&self) -> i64 {
+    pub fn get_runtime_slots(&self) -> isize {
         if self.extra_params.max_runtime_slots > 0 {
             if self.extra_params.target_steps.is_empty() {
                 return self.extra_params.max_runtime_slots.min(self.required_slots);
@@ -328,39 +331,45 @@ impl fmt::Display for TaskBase {
             self.priority,
             self.required_slots,
             self.target_scope,
-            format_rfc3339_nano(self.create_time),
+            format_rfc3339_nano(&self.create_time),
         )
     }
 }
 
 /// Formats a timestamp the way Go's `time.RFC3339Nano` layout does: trailing
 /// zeros are trimmed from the fraction, and the dot disappears entirely when
-/// the fraction is zero. `None` renders Go's zero `time.Time`.
-fn format_rfc3339_nano(t: Option<DateTime<Utc>>) -> String {
-    let Some(t) = t else {
-        return "0001-01-01T00:00:00Z".to_owned();
-    };
+/// the fraction is zero.
+fn format_rfc3339_nano(t: &DateTime<FixedOffset>) -> String {
     let nanos = t.timestamp_subsec_nanos();
     let head = t.format("%Y-%m-%dT%H:%M:%S").to_string();
+    let suffix = if t.offset().local_minus_utc() == 0 {
+        "Z".to_owned()
+    } else {
+        t.format("%:z").to_string()
+    };
     if nanos == 0 {
-        return format!("{head}Z");
+        return format!("{head}{suffix}");
     }
     let frac = format!("{nanos:09}");
     let frac = frac.trim_end_matches('0');
-    format!("{head}.{frac}Z")
+    format!("{head}.{frac}{suffix}")
+}
+
+pub(crate) fn go_zero_time() -> DateTime<FixedOffset> {
+    DateTime::parse_from_rfc3339("0001-01-01T00:00:00Z").expect("Go's zero time is valid RFC3339")
 }
 
 /// Go `Task`: the task of the distributed framework.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct Task {
     /// The embedded [`TaskBase`]; Go embeds it anonymously.
     pub base: TaskBase,
     /// Go `SchedulerID`, which is not used now.
     pub scheduler_id: String,
-    /// Start time; `None` is Go's zero `time.Time`.
-    pub start_time: Option<DateTime<Utc>>,
-    /// Last state update time; `None` is Go's zero `time.Time`.
-    pub state_update_time: Option<DateTime<Utc>>,
+    /// Start time.
+    pub start_time: DateTime<FixedOffset>,
+    /// Last state update time.
+    pub state_update_time: DateTime<FixedOffset>,
     /// The metadata of the task. It is read-only in most cases, except when
     /// the task switches to the next step in `Scheduler.OnNextSubtasksBatch`,
     /// when cleanup redacts it, and when 'modifying' changes params inside it.
@@ -368,9 +377,23 @@ pub struct Task {
     /// The task's failure, carried verbatim between the task table and the
     /// scheduler. Go stores an `error`; this package never inspects, wraps, or
     /// matches on it, and the storage column is a plain `BLOB`.
-    pub error: Option<String>,
+    pub error: Option<std::sync::Arc<dyn std::error::Error + Send + Sync>>,
     /// The pending modification of the task.
     pub modify_param: ModifyParam,
+}
+
+impl Default for Task {
+    fn default() -> Self {
+        Self {
+            base: TaskBase::default(),
+            scheduler_id: String::new(),
+            start_time: go_zero_time(),
+            state_update_time: go_zero_time(),
+            meta: Vec::new(),
+            error: None,
+            modify_param: ModifyParam::default(),
+        }
+    }
 }
 
 impl Task {
@@ -392,7 +415,7 @@ pub const EMPTY_META: &[u8] = b"{}";
 
 #[cfg(test)]
 mod tests {
-    use chrono::TimeZone;
+    use chrono::{TimeZone, Utc};
 
     use super::*;
     use crate::step::{STEP_DONE, STEP_INIT, STEP_ONE, STEP_TWO};
@@ -464,7 +487,7 @@ mod tests {
     /// Go `TestMaxConcurrentTask`.
     #[test]
     fn test_max_concurrent_task() {
-        let _restore = set_max_concurrent_task_for_test(DEFAULT_MAX_CONCURRENT_TASK);
+        let restore = set_max_concurrent_task_for_test(DEFAULT_MAX_CONCURRENT_TASK);
 
         assert_eq!(get_max_concurrent_task(), DEFAULT_MAX_CONCURRENT_TASK);
         assert_eq!(MAX_CONCURRENT_TASK_UPPER_BOUND, 1000);
@@ -480,6 +503,7 @@ mod tests {
         assert_eq!(get_max_concurrent_task(), 128);
         assert!(set_max_concurrent_task(MAX_CONCURRENT_TASK_UPPER_BOUND).is_ok());
         assert_eq!(get_max_concurrent_task(), MAX_CONCURRENT_TASK_UPPER_BOUND);
+        restore();
     }
 
     /// Go `TestTaskCompare`.
@@ -489,7 +513,10 @@ mod tests {
             base: TaskBase {
                 id: 100,
                 priority: NORMAL_PRIORITY,
-                create_time: Some(Utc.with_ymd_and_hms(2023, 12, 5, 15, 53, 30).unwrap()),
+                create_time: Utc
+                    .with_ymd_and_hms(2023, 12, 5, 15, 53, 30)
+                    .unwrap()
+                    .fixed_offset(),
                 ..TaskBase::default()
             },
             ..Task::default()
@@ -502,9 +529,15 @@ mod tests {
         assert_eq!(task_a.compare_task(&task_b), Ordering::Less);
 
         task_b.base.priority = task_a.base.priority;
-        task_b.base.create_time = Some(Utc.with_ymd_and_hms(2023, 12, 5, 15, 53, 10).unwrap());
+        task_b.base.create_time = Utc
+            .with_ymd_and_hms(2023, 12, 5, 15, 53, 10)
+            .unwrap()
+            .fixed_offset();
         assert_eq!(task_a.compare_task(&task_b), Ordering::Greater);
-        task_b.base.create_time = Some(Utc.with_ymd_and_hms(2023, 12, 5, 15, 53, 40).unwrap());
+        task_b.base.create_time = Utc
+            .with_ymd_and_hms(2023, 12, 5, 15, 53, 40)
+            .unwrap()
+            .fixed_offset();
         assert_eq!(task_a.compare_task(&task_b), Ordering::Less);
 
         task_b.base.create_time = task_a.base.create_time;
@@ -549,17 +582,5 @@ mod tests {
         let small = crate::node::NodeResource::new(2, 200, 100).limit_dxf_resource(10);
         assert_eq!(small.total_cpu, 1);
         assert_eq!(small.total_mem, 100);
-    }
-
-    /// Go's `TaskBase.String` uses `time.RFC3339Nano`; this pins the trailing
-    /// zero trimming that layout performs and the zero-time rendering that
-    /// `Option::None` stands for.
-    #[test]
-    fn test_task_base_string_time_layout() {
-        assert_eq!(format_rfc3339_nano(None), "0001-01-01T00:00:00Z");
-        let t = Utc.with_ymd_and_hms(2023, 12, 5, 15, 53, 30).unwrap();
-        assert_eq!(format_rfc3339_nano(Some(t)), "2023-12-05T15:53:30Z");
-        let t = t + chrono::Duration::nanoseconds(123_400_000);
-        assert_eq!(format_rfc3339_nano(Some(t)), "2023-12-05T15:53:30.1234Z");
     }
 }
