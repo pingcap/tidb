@@ -1671,13 +1671,15 @@ For each bounded behavior cluster:
   dependency-closed Rust owner; receipts are recorded in
   `receipts/util_logutil.md` and `receipts/util_logutil_consistency.md`.
 
-- 2026-09-01: audited all seventeen current Go-master `pkg/util/dbutil`
+- 2026-09-02: refreshed the complete current Go-master `pkg/util/dbutil`
+  boundary at `c6054025ed4c32ab3672a2a24ea46892714d21ec`: all seventeen
   artifacts (2,518 lines across the public utility and nested `dbutiltest`
-  helper), including every SQL-mock/table/index/retry/variable test and all
-  build metadata. Rust has independent SQL, privilege, stats, table-mode, and
-  retry fragments but no dependency-closed `dbutil` owner; the complete
-  boundary is recorded in `receipts/util_dbutil.md` with no speculative Rust
-  behavior.
+  helper), every SQL-mock/table/index/retry/variable test, and all build
+  metadata were re-read and validated in both worktrees. Rust has independent
+  SQL, privilege, stats, table-mode, and retry fragments but no dependency-
+  closed `dbutil` owner; the Ready receipt and living plan are recorded in
+  `receipts/util_dbutil.md` and `operations/util-dbutil-audit-execplan.md` with
+  no speculative Rust behavior.
 
 - 2026-09-01: audited all ten current Go-master `pkg/util/mock` artifacts
   (1,318 lines), including the broad context, fake transaction, KV client and

@@ -1,9 +1,8 @@
 # `pkg/util/dbutil` — Go-master package boundary receipt
 
 Go source: `origin/master` at
-`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01). The package and its
-nested test helper have no source delta from extraction pin
-`e2788410d8d696605e8cb002585877a063ccc909`.
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02). The package and its
+nested test helper have no source delta from the Go-master authority pin.
 
 ## Complete inventory
 
@@ -64,11 +63,12 @@ regression carrier was added in this boundary batch.
 
 ## Validation
 
-Profile: WIP for the continuing repository audit; no source or build artifact
-changed.
+Profile: **Ready** for the continuing repository audit; no source or build
+artifact changed.
 
-- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/dbutil/... -count=1` — passed (`pkg/util/dbutil` and nested `dbutiltest` compile; all 16 tests pass).
-- `git diff --stat e2788410d8d696605e8cb002585877a063ccc909..origin/master -- pkg/util/dbutil` — empty; source is unchanged at Go master.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/dbutil/... -count=1` — passed in the active worktree (`pkg/util/dbutil` and nested `dbutiltest` compile; all 16 tests pass).
+- The same pinned command passed in the exact detached Go-master worktree `/tmp/tidb-go-latest-c605`.
+- `git diff --exit-code c6054025ed4c32ab3672a2a24ea46892714d21ec -- pkg/util/dbutil` — empty; active package source is unchanged from Go master.
 - Rust search across session, executor, model, stats, transaction, and BR crates found only independent fragments, not a dependency-closed owner.
 
 No Go or Bazel file changed, so `make bazel_prepare` is not required. Live
