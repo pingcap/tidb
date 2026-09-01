@@ -76,9 +76,7 @@ fn ram_in_bytes(size: &str) -> Result<i64, String> {
     } else {
         (&size[..=separator], &size[separator + 1..])
     };
-    let mut value: f64 = number
-        .parse()
-        .map_err(|_| format!("invalid size: '{size}'"))?;
+    let mut value = parse_go_float(number).map_err(|_| format!("invalid size: '{size}'"))?;
     if !value.is_finite() || value < 0.0 {
         return Err(format!("invalid size: '{size}'"));
     }
@@ -124,6 +122,106 @@ fn ram_in_bytes(size: &str) -> Result<i64, String> {
     }
     value *= multiplier as f64;
     Ok(go_float_to_i64(value))
+}
+
+/// Parses the decimal and hexadecimal floating-point forms accepted by Go's
+/// `strconv.ParseFloat`. Rust's standard `f64` parser does not accept the
+/// hexadecimal or digit-separator forms that `docker/go-units` inherits.
+fn parse_go_float(input: &str) -> Result<f64, ()> {
+    let input = strip_go_float_underscores(input)?;
+    let body_start = usize::from(input.starts_with(['+', '-']));
+    let body = &input[body_start..];
+    if body.len() >= 2 && body.as_bytes()[0] == b'0' && matches!(body.as_bytes()[1], b'x' | b'X') {
+        parse_hex_float(&input)
+    } else {
+        input.parse::<f64>().map_err(|_| ())
+    }
+}
+
+/// Removes Go numeric separators while enforcing their placement rules.
+fn strip_go_float_underscores(input: &str) -> Result<String, ()> {
+    if !input.contains('_') {
+        return Ok(input.to_owned());
+    }
+    let bytes = input.as_bytes();
+    let sign_len = usize::from(matches!(bytes.first(), Some(b'+' | b'-')));
+    let is_hex = bytes.len() >= sign_len + 2
+        && bytes[sign_len] == b'0'
+        && matches!(bytes[sign_len + 1], b'x' | b'X');
+    let prefix_end = sign_len + 2;
+    let mut output = String::with_capacity(input.len());
+    for (index, &byte) in bytes.iter().enumerate() {
+        if byte != b'_' {
+            output.push(byte as char);
+            continue;
+        }
+        let Some(&next) = bytes.get(index + 1) else {
+            return Err(());
+        };
+        let previous = bytes[index.saturating_sub(1)];
+        let valid = if is_hex && index == prefix_end {
+            next.is_ascii_hexdigit()
+        } else if is_hex {
+            previous.is_ascii_hexdigit() && next.is_ascii_hexdigit()
+        } else {
+            previous.is_ascii_digit() && next.is_ascii_digit()
+        };
+        if !valid {
+            return Err(());
+        }
+    }
+    Ok(output)
+}
+
+/// Parses a Go hexadecimal floating-point literal (`0x1.8p+1`).
+fn parse_hex_float(input: &str) -> Result<f64, ()> {
+    let sign_len = usize::from(input.starts_with(['+', '-']));
+    let negative = input.as_bytes().first() == Some(&b'-');
+    let body = &input[sign_len + 2..];
+    let exponent_start = body.find(['p', 'P']).ok_or(())?;
+    let (mantissa, exponent) = body.split_at(exponent_start);
+    let exponent = exponent
+        .get(1..)
+        .ok_or(())?
+        .parse::<i32>()
+        .map_err(|_| ())?;
+    if mantissa.is_empty() {
+        return Err(());
+    }
+
+    let mut value = 0.0;
+    let mut fractional_digits = 0i32;
+    let mut after_dot = false;
+    let mut digit_count = 0;
+    for byte in mantissa.bytes() {
+        if byte == b'.' {
+            if after_dot {
+                return Err(());
+            }
+            after_dot = true;
+            continue;
+        }
+        let digit = match byte {
+            b'0'..=b'9' => f64::from(byte - b'0'),
+            b'a'..=b'f' => f64::from(byte - b'a' + 10),
+            b'A'..=b'F' => f64::from(byte - b'A' + 10),
+            _ => return Err(()),
+        };
+        value = value * 16.0 + digit;
+        digit_count += 1;
+        if after_dot {
+            fractional_digits += 1;
+        }
+    }
+    if digit_count == 0 {
+        return Err(());
+    }
+    value *= 16.0f64.powi(-fractional_digits);
+    value *= 2.0f64.powi(exponent);
+    if !value.is_finite() {
+        return Err(());
+    }
+    Ok(if negative { -value } else { value })
 }
 
 fn go_float_to_i64(value: f64) -> i64 {
@@ -440,6 +538,23 @@ mod tests {
             assert_eq!(ram_in_bytes(s).unwrap(), v, "case {s}");
         }
         for s in ["", "hello", "-32", "32.5x"] {
+            assert!(ram_in_bytes(s).is_err(), "case {s}");
+        }
+    }
+
+    #[test]
+    fn ram_in_bytes_accepts_go_float_literals() {
+        for (s, v) in [
+            // strconv.ParseFloat accepts hexadecimal mantissas with a binary
+            // exponent and valid Go digit separators.
+            ("0x1p10KiB", 1024 * 1024),
+            ("0x1.8p1KiB", 3 * 1024),
+            ("0x_1p10KiB", 1024 * 1024),
+            ("1_000KiB", 1_000 * 1024),
+        ] {
+            assert_eq!(ram_in_bytes(s).unwrap(), v, "case {s}");
+        }
+        for s in ["1_e2KiB", "0x1_p10KiB"] {
             assert!(ram_in_bytes(s).is_err(), "case {s}");
         }
     }
