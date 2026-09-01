@@ -1026,6 +1026,7 @@ var defaultSysVars = []*SysVar{
 			tikvstore.TxnCommitBatchSize.Store(uint64(TidbOptInt64(val, int64(tikvstore.DefTxnCommitBatchSize))))
 			return nil
 		}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBColumnarStorageEnabled, Value: BoolToOnOff(vardef.DefTiDBColumnarStorageEnabled), Type: vardef.TypeBool},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBRestrictedReadOnly, Value: BoolToOnOff(vardef.DefTiDBRestrictedReadOnly), Type: vardef.TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		on := TiDBOptOn(val)
 		// For user initiated SET GLOBAL, also change the value of TiDBSuperReadOnly
