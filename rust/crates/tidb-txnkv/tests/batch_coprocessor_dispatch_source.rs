@@ -414,6 +414,35 @@ fn elapsed_deadline_rejects_before_stream_or_wire_admission() {
 }
 
 #[test]
+fn blocking_pull_preserves_pre_admission_transport_error_without_route() {
+    let (server, received, seen, _release) = fixture(ResponseMode::Echo);
+    let mut client = TonicCoprocessorClient::new().unwrap();
+    let expired_call = UnaryCallContext::with_timeout(Duration::ZERO);
+    let mut pending = client
+        .begin(
+            &server.address,
+            None,
+            &request(b"must-not-publish-blocking"),
+            &expired_call,
+        )
+        .expect("worker publishes elapsed deadline through the original completion");
+    let wait_call = UnaryCallContext::with_timeout(Duration::from_secs(1));
+    let error = pending
+        .complete(&wait_call)
+        .expect("worker deadline result")
+        .unwrap_err();
+
+    assert!(matches!(error, DirectUnaryClientError::Timeout { .. }));
+    assert!(received.lock().unwrap().is_empty());
+    assert!(matches!(
+        seen.recv_timeout(Duration::from_millis(50)),
+        Err(mpsc::RecvTimeoutError::Timeout)
+    ));
+    assert_eq!(client.connection_version(&server.address), None);
+    client.close().unwrap();
+}
+
+#[test]
 fn positive_deadline_expiring_before_worker_admission_never_reaches_the_wire() {
     let (server, received, seen, _release) = fixture(ResponseMode::Echo);
     let mut client = TonicCoprocessorClient::new().unwrap();

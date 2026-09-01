@@ -39,6 +39,11 @@ macro_rules! define_command_tags {
         }
 
         impl BatchCommandTag {
+            /// All pinned command tags in protobuf field-number order.
+            pub const ALL: &'static [Self] = &[
+                $(Self::$variant),+
+            ];
+
             /// Returns the exact protobuf oneof field number.
             #[must_use]
             pub const fn field_number(self) -> u32 {

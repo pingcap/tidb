@@ -149,8 +149,10 @@ impl PendingRequest for BatchCoprocessorPending {
         let Some(result) = self.completion.try_complete()? else {
             return Ok(None);
         };
-        if let Err(error) = self.resolve_publication() {
-            return Ok(Some(Err(error)));
+        if result.is_ok() {
+            if let Err(error) = self.resolve_publication() {
+                return Ok(Some(Err(error)));
+            }
         }
         Ok(Some(self.map_result(result)))
     }
@@ -164,8 +166,10 @@ impl PendingRequest for BatchCoprocessorPending {
         call: &crate::rpc::UnaryCallContext,
     ) -> Result<Result<DirectUnaryResponse, DirectUnaryClientError>, CompletionError> {
         let result = self.completion.complete(call)?;
-        if let Err(error) = self.resolve_publication() {
-            return Ok(Err(error));
+        if result.is_ok() {
+            if let Err(error) = self.resolve_publication() {
+                return Ok(Err(error));
+            }
         }
         Ok(self.map_result(result))
     }
