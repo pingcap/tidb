@@ -40,6 +40,29 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: audited the complete Go-master
+  `pkg/executor/internal/querywatch` package (four artifacts, 542 lines),
+  including query-watch production logic, failpoint/goleak harness, all
+  exact/similar/plan/drop tests, and the two-shard Bazel target. Rust has the
+  parser/AST grammar and runaway-watch table metadata but no dependency-closed
+  runaway manager, resource-group controller, or query-watch executor owner;
+  recorded the explicit boundary in
+  `receipts/executor_internal_querywatch.md` without inventing an uncalled
+  execution layer.
+
+- 2026-09-01: audited all 22 current Go-master `pkg/privilege` artifacts
+  (8,415 lines), including manager/connection interfaces, privilege cache and
+  manager, LDAP source/tests, JWT source/tests, all Bazel targets, goleak
+  harness, and embedded certificate/key fixtures. The Rust
+  `tidb-session::PrivilegeRegistry` owner had one measured Unicode mismatch:
+  database privilege matching used ASCII-only case folding while Go uses
+  Unicode-aware `strings.ToUpper`. Changed the matcher to Unicode folding and
+  added `database_matching_folds_non_ascii_like_go_strings_to_upper`, which
+  fails before the fix and passes after it. LDAP/JWKS/extension and full
+  manager/session/storage lifecycle remain explicit package boundaries;
+  receipt: `receipts/privilege.md`, ExecPlan:
+  `docs/operations/privilege-audit-execplan.md`.
+
 - 2026-09-01: audited the complete Go-master `pkg/executor/internal/exec`
   package (five artifacts, 1,610 lines), including the internal Executor
   protocol, panic/killer/tracing/RU-v2 wrappers, clustered-index usage
