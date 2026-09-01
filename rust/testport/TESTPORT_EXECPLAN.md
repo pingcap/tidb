@@ -665,6 +665,16 @@ For each bounded behavior cluster:
   Ready gates pass. Recorded the boundary in `receipts/owner_parity.md` and
   `rust/docs/operations/owner-audit-execplan.md`.
 
+- 2026-09-02: audited the complete Go-master `pkg/ddl/schematracker` package:
+  exactly six artifacts and 2,979 lines, including the DDL checker, schema
+  tracker, InfoStore, 17 tests, and BUILD target. All Go artifacts are
+  byte-identical to Go master and the complete failpoint-aware suite passes.
+  Rust's `tidb-exec` InfoStore is explicitly a one-file seed without the
+  dependency-closed tracker/checker/DDL graph, so no Rust-only behavior was
+  removed or speculatively added. Recorded the boundary in
+  `receipts/ddl_schematracker.md` and
+  `rust/docs/operations/ddl-schematracker-audit-execplan.md`.
+
 - 2026-09-02: updated the complete five-artifact Go-master
   `pkg/server/handler/tests` consumer inventory (3,630 lines) for the DXF
   history redaction contract. Its focused API regression now requires
