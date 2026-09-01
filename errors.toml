@@ -1453,7 +1453,7 @@ Set TTL for a table referenced by foreign key is not allowed
 
 ["ddl:8153"]
 error = '''
-Unsupported clustered primary key type FLOAT/DOUBLE for TTL
+Unsupported clustered primary key type FLOAT/DOUBLE/SET for TTL
 '''
 
 ["ddl:8200"]
