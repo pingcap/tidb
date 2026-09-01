@@ -40,6 +40,17 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: refreshed the complete Go-master `pkg/util/size` inventory at
+  `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: two tracked artifacts, 86
+  lines, five binary units, fifteen ABI constants, and no tests, fixtures,
+  generated or platform variants, or nested packages. Corrected the prior
+  receipt's stale blob hashes and line count. The existing `tidb-util::size`
+  owner preserves Go ABI header values and architecture-width constants with no
+  Rust-only behavior or missing Go behavior. Current and exact detached Go
+  checks, Rust owner check, formatting, and diff checks pass. Updated
+  `receipts/util_size.md` and added the Ready documentation-only plan at
+  `docs/operations/util-size-audit-execplan.md`.
+
 - 2026-09-02: refreshed the complete Go-master `pkg/util/tikvutil` inventory
   at `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: two tracked artifacts, 31
   lines, one exported atomic setting, and no tests, fixtures, generated or
