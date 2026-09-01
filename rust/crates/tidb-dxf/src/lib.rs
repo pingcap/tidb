@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Distributed execution task, subtask, step, and node value types from Go
-//! `pkg/dxf/framework/proto`.
+//! Distributed execution value types from Go `pkg/dxf/framework/proto` and
+//! scheduler status from Go `pkg/dxf/framework/schstatus`.
 
 /// Declares one of Go's `string`-kinded named types.
 ///
@@ -54,6 +54,9 @@ macro_rules! go_string_type {
 
 mod modify;
 mod node;
+/// Scheduler status and resource-tuning values from Go
+/// `pkg/dxf/framework/schstatus`.
+pub mod schstatus;
 mod step;
 mod subtask;
 mod task;

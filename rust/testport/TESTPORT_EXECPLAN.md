@@ -36,6 +36,13 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- [x] (2026-08-31) Completed pinned four-artifact
+  `pkg/dxf/framework/schstatus`. Added its exact scheduler-status, node-group,
+  TTL flag, and tuning-factor JSON behavior plus the sole source test. Removed
+  meta's flattened UTC-only duplicate and corrected its next-gen test gate.
+  Complete inventory and WIP evidence are in
+  `receipts/dxf_framework_schstatus.md`.
+
 - [x] (2026-08-31) Re-audited and completed the pinned 11-artifact
   `pkg/dxf/framework/proto` package. Restored target-sized Go `int` fields,
   year-1 offset-preserving `time.Time` values, shared errors, callable test
@@ -1324,6 +1331,12 @@ For each bounded behavior cluster:
   Go has no public parser API or parser-only tests. Rust's detached helpers and
   aliases are removed until the full execution owner can land.
   Date/Author: 2026-08-29, Codex.
+- Decision: `pkg/dxf/framework/schstatus` retains its own public module and
+  canonical embedded TTL/tuning types. `pkg/meta` consumes that owner rather
+  than flattening a UTC-only copy. `pkg/dxf/framework/dxfutil` remains
+  unclaimed because its runtime acquisition and validation require the absent
+  SQL-server runtime and DXF storage manager; porting only `GenHolderID` would
+  violate package atomicity. Date/Author: 2026-08-31, Codex.
 
 ## Surprises & Discoveries
 

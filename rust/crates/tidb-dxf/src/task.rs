@@ -339,7 +339,7 @@ impl fmt::Display for TaskBase {
 /// Formats a timestamp the way Go's `time.RFC3339Nano` layout does: trailing
 /// zeros are trimmed from the fraction, and the dot disappears entirely when
 /// the fraction is zero.
-fn format_rfc3339_nano(t: &DateTime<FixedOffset>) -> String {
+pub(crate) fn format_rfc3339_nano(t: &DateTime<FixedOffset>) -> String {
     let nanos = t.timestamp_subsec_nanos();
     let head = t.format("%Y-%m-%dT%H:%M:%S").to_string();
     let suffix = if t.offset().local_minus_utc() == 0 {
