@@ -3652,13 +3652,15 @@ For each bounded behavior cluster:
       Compute endpoint identity but has no dependency-closed topology cache or
       startup consumer. The package remains explicitly unclaimed with no
       source change. Details are in `receipts/util_tiflashcompute.md`.
-- 2026-09-01: audited all four Go-master `pkg/util/ddl-checker` artifacts
+- 2026-09-02: refreshed all four Go-master `pkg/util/ddl-checker` artifacts
       (351 lines: mock-session executable checker, upstream DDL syncer, parse
-      and execute matrix, and flaky Bazel test target). Rust has DDL planning
-      and schema-state owners but no dependency-closed mock SQL executor,
-      parser table-existence classifier, or upstream `SHOW CREATE TABLE`
-      syncer. The package remains explicitly unclaimed with no source change;
-      details are in `receipts/util_ddl_checker.md`.
+      and execute matrix, and flaky Bazel test target) at authority
+      `c6054025ed4c32ab3672a2a24ea46892714d21ec`. Rust still has no
+      dependency-closed mock SQL executor, parser table-existence classifier,
+      or upstream `SHOW CREATE TABLE` syncer; the package remains explicitly
+      unclaimed. Current and detached `-tags=intest` Go tests pass. Details are
+      in `receipts/util_ddl_checker.md` and
+      `docs/operations/util-ddl-checker-audit-execplan.md`.
 - 2026-09-01: re-audited all three Go-master `pkg/util/memoryusagealarm`
       artifacts (744 lines, including the race-enabled flaky test target and
       Go-runtime goroutine-profile cases). Rust already has a source-shaped

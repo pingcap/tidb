@@ -1,73 +1,57 @@
 # `pkg/util/ddl-checker` — Go-master parity boundary receipt
 
-Go baseline: `origin/master` at
-`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01).
-This utility runs parsed DDL against a mock TiDB session and can synchronize a
-table definition from an upstream SQL connection.
+Go authority: `origin/master` at `c6054025ed4c32ab3672a2a24ea46892714d21ec`.
 
 ## Complete inventory
 
-All four Go-master artifacts were read in full before the ownership decision.
-There is no package documentation, generated output, platform variant,
-fixture, benchmark, fuzz target, or nested package.
+The package contains exactly four artifacts, all read in full (351 lines
+total):
 
-| Artifact | Lines | Git blob | SHA-256 | Disposition |
-| --- | ---: | --- | --- | --- |
-| `BUILD.bazel` | 35 | `489608bcb776cc0e9f43b42e542f3447e8913ebc` | `8482f816fb4244145b994917c2c9890ce85a51b4d907abb2f68a02286544aa19` | library plus flaky short test target and mock/session dependencies inventoried |
-| `ddl_syncer.go` | 68 | `f94a1451cdcdbd05685b540e333d16f5112feb29` | `9d7b29ba67f076dc55a86ff077d134cd8326ca5dc205498207d7f614fc4909c6` | upstream DB open, CREATE TABLE fetch, drop/recreate, and close lifecycle inventoried |
-| `executable_checker.go` | 164 | `7eda964c4e5ec0ef9760602beae41da6c0912dae` | `5823996165384bb8227755daaadbac1ab0842a7645064b98f88f2192f4e5f3b3` | mockstore/session executor, parser, DDL table-existence classification, and close guard inventoried |
-| `executable_checker_test.go` | 84 | `430f9117ef5700d79d8c2dde95e8ce1416c1593d` | `416445607398dcf152167981fd7596e67fca428660b0b318c1a39dd834a55648` | source parse/execute matrix and mock-store setup inventoried |
+- `ddl_syncer.go` (68 lines): upstream `SHOW CREATE TABLE`, local drop/recreate,
+  and close-order lifecycle;
+- `executable_checker.go` (164 lines): mockstore/session executor, parser,
+  table-existence checks, DDL classification, and idempotent close guard;
+- `executable_checker_test.go` (84 lines): two source tests (`TestParse` and
+  `TestExecute`) with the 12-case DDL/DML matrix;
+- `BUILD.bazel` (35 lines): library and flaky test target with mock/session
+  dependencies.
 
-The package has 12 named production functions/methods, one `ExecutableChecker`
-and one `DDLSyncer` carrier, and the `parseTestData` test matrix with 12
-DDL/DML cases. The
-checker initializes a full Go mockstore session, executes SQL, parses one
-statement with session charset/collation, classifies table names required to
-exist or not exist for each supported DDL AST type, and rejects non-DDL input.
-It uses an atomic close guard and reports a repeated close as an error. The
-syncer obtains upstream `SHOW CREATE TABLE`, drops the local table, recreates
-it, and closes both resources while preserving the first close error.
+There is no `doc.go`, `main_test.go`, fixture, testdata, benchmark, fuzz
+target, example, generated/platform variant, nested package, or other build
+input. All four files are byte-identical to Go master. The source tests require
+the repository's `intest` build tag.
 
-## Rust ownership and integration decision
+## Rust ownership decision
 
-Rust has DDL planning, schema-state, mock-session, and table-lifecycle tests,
-but no dependency-closed equivalent of this utility's mock TiDB SQL executor,
-AST table-existence classifier, upstream `database/sql` syncer, or flaky
-source test harness. The existing native DDL owners are ordinary execution
-paths; adding a checker-only session or a second upstream syncer would be
-Rust-only behavior and would not satisfy the Go package's parser/session
-contract. The package remains explicitly unclaimed; no source change is
-justified.
+Rust has DDL planning, parser, schema, mock-session, and table-lifecycle
+pieces, but no dependency-closed equivalent of this package's mock TiDB SQL
+executor, session charset/collation parser, AST table-existence classifier,
+upstream `database/sql` synchronizer, or close-error lifecycle. Adding a
+checker-only session or a second upstream syncer would be Rust-only behavior
+and would not satisfy the Go package contract. The package remains explicitly
+unclaimed; no production Rust edit or test-only replacement was justified.
 
-## Validation
+## Validation (Ready profile)
 
-Profile: **WIP**. This is a complete four-artifact inventory and explicit
-boundary audit with no code change, so `make bazel_prepare` and the Ready lint
-gate are not triggered.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test -tags=intest ./pkg/util/ddl-checker -count=1 -v` — passed (`TestParse`, `TestExecute`).
+- `(cd /tmp/tidb-go-latest-c605 && PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test -tags=intest ./pkg/util/ddl-checker -count=1 -v)` — passed (`TestParse`, `TestExecute`).
+- `cd rust && cargo +nightly-2026-08-22 fmt --all -- --check` — passed.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 make lint` — passed in the clean detached Go-master checkout; the active checkout may be temporarily instrumented by a concurrent failpoint test worker.
+- `git diff --check` — passed for the documentation diff.
 
-```text
-PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
-GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
-go test ./pkg/util/ddl-checker -count=1
-# expected guard failure: TestExecute requires --tags=intest
+This batch changes documentation only; no Go source, import section, test
+function, Bazel file, or module dependency changed, so `make bazel_prepare` is
+not required. The package has no failpoint use; the `intest` tag is the
+canonical test prerequisite.
 
-PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
-GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
-go test -tags=intest ./pkg/util/ddl-checker -count=1
-# ok
-```
+## Risks and unverified scope
 
-## Risks and unverified behavior
-
-- Correctness: DDL AST classification, session charset/collation, SQL error
-  propagation, close ordering, and upstream CREATE TABLE synchronization stay
-  Go-owned contracts.
-- Compatibility: this helper is test/tooling infrastructure rather than the
-  Rust DDL runtime; a future port must include parser, session, mockstore, and
-  upstream DB dependencies together.
-- Performance: no runtime code changed; the Go checker creates a mockstore and
-  session per checker as its intended test cost.
-- Not verified locally: Bazel's flaky target, all 12 source cases under every
-  storage backend, live upstream MySQL synchronization, and a Rust equivalent
-  of the source test harness. The untagged Go run intentionally fails its
-  repository test guard; the tagged command is the canonical passing result.
+- Correctness: parser/session and 12-case source matrix pass in both Go
+  checkouts, but no Rust checker exists to validate.
+- Compatibility: this is Go test/tooling infrastructure; future porting must
+  include parser, session, mockstore, AST, and upstream DB dependencies as one
+  package unit.
+- Performance: no runtime code changed; Go's intended mockstore-per-checker
+  test cost is unchanged.
+- Not verified locally: Bazel's flaky target, every backend, live upstream
+  MySQL synchronization, and a Rust equivalent of the checker harness.
