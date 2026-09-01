@@ -282,50 +282,14 @@ impl Notifer {
     }
 }
 
-/// Invalid digest IDs disable digest-profile lookup and update (Go
-/// `InvalidDigestID`).
-pub const INVALID_DIGEST_ID: u64 = 0;
-
-/// Incrementally builds a digest-profile ID without allocating a composite
-/// key string (Go `DigestIDBuilder`).
-pub struct DigestIDBuilder {
-    hash: u64,
-}
-
-impl DigestIDBuilder {
-    /// Creates an empty builder with Go's FNV-style initial state.
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            hash: INIT_HASH_KEY,
-        }
+/// Hashes a string (Go `HashStr`; iterates Unicode code points).
+pub fn hash_str(key: &str) -> u64 {
+    let mut hash_key = INIT_HASH_KEY;
+    for c in key.chars() {
+        hash_key = hash_key.wrapping_mul(PRIME64);
+        hash_key ^= c as u64;
     }
-
-    /// Adds a length-prefixed UTF-8 byte string, matching Go's `AddString`.
-    pub fn add_string(&mut self, value: &str) {
-        self.add_u64(value.len() as u64);
-        for &byte in value.as_bytes() {
-            self.add_byte(byte);
-        }
-    }
-
-    fn add_u64(&mut self, mut value: u64) {
-        for _ in 0..8 {
-            self.add_byte(value as u8);
-            value >>= 8;
-        }
-    }
-
-    fn add_byte(&mut self, value: u8) {
-        self.hash = self.hash.wrapping_mul(PRIME64);
-        self.hash ^= u64::from(value);
-    }
-
-    /// Returns the digest-profile ID accumulated so far.
-    #[must_use]
-    pub fn sum64(&self) -> u64 {
-        self.hash
-    }
+    hash_key
 }
 
 /// Hashes a uint64 even number (Go `HashEvenNum`).
@@ -400,28 +364,6 @@ mod tests {
     // Ported from the utils portions of Go `TestBasicUtils`.
     #[test]
     fn basic_utils() {
-        let mut first = DigestIDBuilder::new();
-        first.add_string("ab");
-        first.add_string("c");
-        let mut second = DigestIDBuilder::new();
-        second.add_string("a");
-        second.add_string("bc");
-        assert_ne!(first.sum64(), second.sum64());
-        let mut ordered = DigestIDBuilder::new();
-        ordered.add_string("db1");
-        ordered.add_string("t1");
-        ordered.add_string("db2");
-        ordered.add_string("t2");
-        let mut reversed = DigestIDBuilder::new();
-        reversed.add_string("db2");
-        reversed.add_string("t2");
-        reversed.add_string("db1");
-        reversed.add_string("t1");
-        assert_ne!(ordered.sum64(), reversed.sum64());
-        let mut empty = DigestIDBuilder::new();
-        empty.add_string("");
-        assert_ne!(DigestIDBuilder::new().sum64(), empty.sum64());
-
         {
             const CNT: u64 = 1 << 8;
             let bg_id: u64 = 4068484684;

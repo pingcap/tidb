@@ -51,9 +51,6 @@ impl MemArbitrator {
 
     /// Go `GetDigestProfileCache`.
     pub fn get_digest_profile_cache(&self, digest_id: u64, utime_sec: i64) -> Option<i64> {
-        if digest_id == INVALID_DIGEST_ID {
-            return None;
-        }
         let shard = self.digest_shard(digest_id);
         let pf = shard.map.lock().unwrap().get(&digest_id).cloned()?;
         if utime_sec > pf.last_fetch_utime_sec.load(SeqCst) {
@@ -64,9 +61,6 @@ impl MemArbitrator {
 
     /// Go `UpdateDigestProfileCache`.
     pub fn update_digest_profile_cache(&self, digest_id: u64, mem_consumed: i64, utime_sec: i64) {
-        if digest_id == INVALID_DIGEST_ID {
-            return;
-        }
         let shard = self.digest_shard(digest_id);
         let pf = {
             let mut map = shard.map.lock().unwrap();
