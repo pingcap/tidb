@@ -3766,6 +3766,11 @@ For each bounded behavior cluster:
   BUILD metadata, and both binary SST fixtures. Related Rust TiKV/BR code does
   not close this Lightning-specific dependency graph, so the package remains
   an explicit ownership boundary without a speculative facade.
+- `pkg/parser/ast` adds Go's generated in-place visitor API, materialized-view
+  and full-join nodes, and per-node text caching. The Rust `tidb-ast` crate is
+  only a partial owner (it lacks those nodes and the replacement/in-place API
+  pair), so this parser, grammar, planner, and executor surface remains one
+  dependency-closed boundary rather than a partial port.
 
 ## Outcomes & Retrospective
 
