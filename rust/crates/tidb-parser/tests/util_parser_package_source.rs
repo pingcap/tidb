@@ -58,7 +58,12 @@ fn test_simple_cases() {
 // Go `TestSpace` (pkg/util/parser/parser_test.go:24).
 #[test]
 fn test_space() {
-    let ok_table = [(0, " 1", "1"), (0, "1", "1"), (1, "     1", "1"), (2, "  1", "1")];
+    let ok_table = [
+        (0, " 1", "1"),
+        (0, "1", "1"),
+        (1, "     1", "1"),
+        (2, "  1", "1"),
+    ];
     for (times, input, expected) in ok_table {
         let rest = space(input, times).expect(input);
         assert_eq!(rest, expected);
@@ -166,4 +171,16 @@ fn uncovered_surfaces_match_go_behavior() {
     // Space0 never fails and skips all leading spaces.
     assert_eq!(space0("   x "), "x ");
     assert_eq!(space0("x"), "x");
+}
+
+// Go's AST visitor migration from `StmtNode.Accept` to `ast.Walk` preserves
+// the short-circuit rule: one implicit table is enough, while every qualified
+// table keeps the default database empty.
+#[test]
+fn get_default_db_walks_all_table_refs_without_replacement() {
+    let all_qualified = tidb_parser::parse("select * from db.t join db.u").unwrap();
+    assert_eq!(get_default_db(&all_qualified, "test"), "");
+
+    let second_implicit = tidb_parser::parse("select * from db.t join u").unwrap();
+    assert_eq!(get_default_db(&second_implicit, "test"), "test");
 }

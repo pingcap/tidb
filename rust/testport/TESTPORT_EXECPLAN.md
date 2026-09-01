@@ -143,6 +143,13 @@ For each bounded behavior cluster:
   boundary; the complete inventory and Ready evidence are in
   `receipts/util_stmtsummary_audit.md`.
 
+- 2026-09-01: audited all six Go-master `pkg/util/parser` artifacts (581
+  lines) against the complete `tidb-parser::util_parser` owner. Go's
+  `StmtNode.Accept` to `ast.Walk` migration changes visitor signatures but
+  not traversal semantics; Rust already uses a non-replacing visitor. Added a
+  multi-table default-database regression and recorded the exact inventory and
+  Ready gates in `receipts/util_parser_audit.md`.
+
 - 2026-09-01: audited the complete Go `pkg/util/dbterror/exeerrors` package at
   `origin/master` `db35d47066648fe73abce6318d53fc625df51490` against the Rust
   owner on `origin/hparser-integration`. The package has exactly `errors.go`
@@ -1669,6 +1676,11 @@ For each bounded behavior cluster:
   and planner consumers are outside the current Rust crate. This batch keeps
   the implemented record/reader/column behavior aligned without inventing a
   second integration path.
+- The parser utility's Go-master visitor migration is API-only: `ast.Walk`
+  retains the same short-circuit and table-name predicate. The Rust visitor
+  already has no replacing return value, so the parity evidence is a focused
+  source-derived regression and inventory receipt rather than a duplicate
+  adapter API.
 
 ## Outcomes & Retrospective
 
