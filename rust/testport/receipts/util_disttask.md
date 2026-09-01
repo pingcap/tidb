@@ -1,60 +1,56 @@
-# `pkg/util/disttask` — complete package transcreation
+# `pkg/util/disttask` — Go-master parity audit receipt
 
-Pinned Go source: `e2788410d8d696605e8cb002585877a063ccc909`.
+Go authority: `origin/master` at `c6054025ed4c32ab3672a2a24ea46892714d21ec`.
 
 ## Complete inventory
 
-The package has exactly three artifacts, all read in full: `idservice.go`,
-`idservice_test.go`, and `BUILD.bazel`. There is no package doc, benchmark,
-fixture, generated or platform variant, README, or ownership file. The local
-Go package is byte-identical to the pin.
+The package contains exactly three artifacts, all read in full (133 lines
+total):
 
-Production behavior is the `IP:port` executor ID, first-match server lookup,
-membership test, live infosync lookup, and test-only mock lookup. Discovery
-errors, empty server maps, and missing IDs return the empty string.
+- `idservice.go` (71 lines): executor-ID formatting, membership/index lookup,
+  live infosync lookup, and test-only mock lookup;
+- `idservice_test.go` (38 lines): the single `TestGenServerID` source test and
+  all IPv4/IPv6/empty/out-of-range port vectors;
+- `BUILD.bazel` (24 lines): production and flaky test targets.
 
-## Rust ownership and audit result
+There is no `doc.go`, package harness, fixture, testdata, benchmark, fuzz
+target, example, generated/platform variant, nested package, or other build
+input. All three files are byte-identical to Go master.
 
-`rust/crates/tidb-domain/src/disttask.rs` owns the complete package. It uses
-the existing Rust `ServerInfo` and `serverinfo_syncer::Syncer`, matching the
-Go package's domain dependencies. Rust's existing synchronous syncer boundary
-has no Go-style context parameter; its server-map result and error behavior
-are preserved here. The test-only function receives the mock server map
-explicitly because Rust has no Go package-global mock infosync manager.
+## Rust ownership and parity
 
-The audit removed the former `tidb-util` dependency projection and its public
-discovery trait. It also removed two supplemental Rust tests absent from the
-Go package. `FindServerInfo` again exposes the source's index-or-`-1` result
-instead of a Rust-only `Option` contract. The remaining test is a direct port
-of every `TestGenServerID` row, including the out-of-range port and IPv6 case.
+`rust/crates/tidb-domain/src/disttask.rs` owns the complete package because
+the Go implementation depends on domain infosync/server-info state. It
+preserves `net.JoinHostPort` IPv4/IPv6 formatting, first-match index and `-1`
+sentinel, membership, empty-on-discovery-error/empty-map/missing-ID behavior,
+and the explicit test-only server-map lookup. The owner has one source-derived
+test covering every Go vector; the earlier unused `tidb-util` projection and
+non-Go discovery API are absent.
 
-## Validation
+No Go or Rust production delta was found in this rolling audit, so no new
+package-local regression was warranted. The existing source-derived test is
+the focused regression carrier.
 
-Profile: WIP; this completes one package in the continuing package-by-package
-audit, not a repository-wide readiness claim.
+## Validation (Ready profile)
 
-- `git diff --exit-code e2788410d8d696605e8cb002585877a063ccc909 -- pkg/util/disttask` —
-  passed.
-- `go test ./pkg/util/disttask -count=1` — blocked before package execution by
-  existing build failures in `pkg/util/hack` (`checkMapABI` is undefined) and
-  gRPC transport (`http2.TrailerPrefix` is undefined).
-- `cargo test --offline --locked -p tidb-domain disttask` — passed the one
-  source test; 137 unrelated tests were filtered out.
-- `cargo check --offline --locked -p tidb-domain -p tidb-util --all-targets` —
-  passed; existing warnings remain outside this change.
-- `cargo clippy --offline --locked -p tidb-domain --lib --no-deps -- -A clippy::unnecessary-map-or -A clippy::unnecessary-sort-by -D warnings` —
-  passed. The allowances cover three existing `topn_slow_query` findings;
-  the new package has no lint warning.
-- `cargo fmt --all -- --check` and `git diff --check` — passed.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/disttask -count=1` — passed (one test).
+- `(cd /tmp/tidb-go-latest-c605 && PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/disttask -count=1)` — passed (one test).
+- `env OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-domain --lib disttask::tests --offline --locked -- --test-threads=1` — passed (one source-derived test).
+- `cd rust && cargo +nightly-2026-08-22 fmt --all -- --check` — passed.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 make lint` — passed in the clean detached Go-master checkout; the active checkout may be temporarily instrumented by the concurrent failpoint test worker.
+- `git diff --check` — passed for the documentation diff.
 
-No Go or Bazel file changed, so `make bazel_prepare` is not required.
+This batch changes documentation only; no Go source, import section, test
+function, Bazel file, or module dependency changed, so `make bazel_prepare` is
+not required. The package has no failpoint use, so the failpoint wrapper is not
+applicable.
 
-## Risk
+## Risks and boundaries
 
-- Correctness: the source test, all-target compilation, and owner-crate lint
-  pass. The Go test remains unverified because of the unrelated build
-  failures above.
-- Compatibility: the unused Rust-only `tidb_util::disttask` API is removed;
-  the source-shaped owner is now `tidb_domain::disttask`.
-- Performance: executor-ID formatting and linear lookup retain the source
-  complexity.
+- Correctness: the source vector covers every formatting and index case;
+  discovery errors and missing IDs are represented in the Rust API contract.
+- Compatibility: no public API or runtime behavior changed in this batch.
+- Performance: no production code changed; lookup remains linear over the
+  server list and constant-time in the infosync map.
+- Not verified locally: a live distributed-task infosync deployment; the
+  source test and Rust owner test cover the package logic.

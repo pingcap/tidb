@@ -2311,6 +2311,14 @@ For each bounded behavior cluster:
   conversion, and resize behavior; current and detached Go suites plus the
   four Rust owner tests pass. Details are in `receipts/util_deadlockhistory.md`
   and `docs/operations/util-deadlockhistory-audit-execplan.md`.
+- 2026-09-02: refreshed the complete Go-master `pkg/util/disttask` inventory
+  at `c6054025ed4c32ab3672a2a24ea46892714d21ec`: three artifacts and 133
+  lines, including the single source vector and flaky BUILD target. The
+  existing `tidb-domain::disttask` owner preserves JoinHostPort formatting,
+  first-match/`-1` lookup, and infosync error/missing-ID behavior; current and
+  detached Go tests plus the Rust source-vector test pass. Details are in
+  `receipts/util_disttask.md` and
+  `docs/operations/util-disttask-audit-execplan.md`.
 - 2026-08-29: completed the pinned Go `pkg/util/keydecoder` package (one
   production file, one source test, one test harness, and `BUILD.bazel`). Read
   the complete package first, then removed four supplemental Rust test
