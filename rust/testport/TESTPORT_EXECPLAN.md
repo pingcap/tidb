@@ -3860,6 +3860,11 @@ For each bounded behavior cluster:
   currently consumes this public allowlist, so no speculative facade or
   Rust-only behavior removal was justified; the package remains an explicit
   ownership boundary.
+- `pkg/parser/auth` is byte-identical to Go master across eight artifacts and
+  920 lines. `tidb-parser::auth` owns identity restoration, native SHA-1,
+  caching-SHA2 SHA-crypt, and SM3 behavior with 20 source-derived tests;
+  malformed-input and byte-domain regressions pass, with no Rust-only behavior
+  requiring removal.
 
 ## Outcomes & Retrospective
 
