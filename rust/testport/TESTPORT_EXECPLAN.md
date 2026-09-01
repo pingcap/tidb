@@ -4560,6 +4560,17 @@ For each bounded behavior cluster:
   so this remains an explicit tooling boundary; the exact Go compile is pending
   modernc module downloads after a proxy EOF.
 
+- `pkg/server/internal/handshake` and `pkg/server/internal/parse` are now
+  complete six-artifact inventories (553 lines combined). Rust's handshake
+  response had source-absent `raw_attrs` and `attr_warnings` fields plus a
+  lossy UTF-8 attribute view; the response is now exactly Go's eight fields
+  with byte-preserving attributes. The parser emits Go-equivalent diagnostics
+  through `tidb-log`, and focused source regressions cover exact field shape,
+  malformed attributes, truncation, duplicate keys, NULL frames, and metric
+  boundaries. Go tests and lint pass; Rust execution is blocked on this host's
+  missing OpenSSL development headers/pkg-config. See the two package receipts
+  and `server-handshake-parse-audit-execplan.md`.
+
 ## Outcomes & Retrospective
 
 Work remains in progress. Current validated behavior includes ANALYZE prefix

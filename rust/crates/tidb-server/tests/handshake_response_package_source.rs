@@ -20,7 +20,7 @@ use tidb_server::handshake::{
     CLIENT_CONNECT_ATTRS, CLIENT_CONNECT_WITH_DB, CLIENT_PLUGIN_AUTH, CLIENT_PROTOCOL_41,
     CLIENT_SECURE_CONNECTION, CLIENT_ZSTD_COMPRESSION_ALGORITHM,
 };
-use tidb_server::{parse_response, HandshakeResponse41};
+use tidb_server::{parse_response, HandshakeResponse41, WireString};
 
 fn response_header(capability: u32, collation: u8) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(32);
@@ -56,8 +56,7 @@ fn response41_default_matches_go_zero_value_semantics() {
 #[test]
 fn response41_owns_every_field_and_clones_without_aliasing() {
     let response = HandshakeResponse41 {
-        attrs: HashMap::from([("program_name".to_owned(), "mysql".to_owned())]),
-        raw_attrs: HashMap::from([(b"program_name".to_vec(), b"mysql".to_vec())]),
+        attrs: HashMap::from([("program_name".into(), "mysql".into())]),
         user: "root".into(),
         db_name: "test".into(),
         auth_plugin: "mysql_native_password".into(),
@@ -65,18 +64,23 @@ fn response41_owns_every_field_and_clones_without_aliasing() {
         zstd_level: 17_i32,
         capability: 0x1234_5678,
         collation: 45,
-        attr_warnings: Vec::new(),
     };
     let mut clone = response.clone();
     clone
         .attrs
-        .insert("program_name".to_owned(), "changed".to_owned());
+        .insert("program_name".into(), "changed".into());
     clone.user.push_str("-changed");
     clone.db_name.push_str("-changed");
     clone.auth_plugin.push_str("-changed");
     clone.auth.push(4);
 
-    assert_eq!(response.attrs["program_name"], "mysql");
+    assert_eq!(
+        response
+            .attrs
+            .get(b"program_name".as_slice())
+            .map(WireString::as_bytes),
+        Some(b"mysql".as_slice())
+    );
     assert_eq!(response.user, "root");
     assert_eq!(response.db_name, "test");
     assert_eq!(response.auth_plugin, "mysql_native_password");
@@ -107,8 +111,7 @@ fn parser_populates_the_complete_response41_contract() {
     assert_eq!(
         parse_response(&packet).expect("complete HandshakeResponse41"),
         HandshakeResponse41 {
-            attrs: HashMap::from([("program_name".to_owned(), "mysql".to_owned())]),
-            raw_attrs: HashMap::from([(b"program_name".to_vec(), b"mysql".to_vec())]),
+            attrs: HashMap::from([("program_name".into(), "mysql".into())]),
             user: "root".into(),
             db_name: "test".into(),
             auth_plugin: "mysql_native_password".into(),
@@ -116,7 +119,28 @@ fn parser_populates_the_complete_response41_contract() {
             zstd_level: i32::from(u8::MAX),
             capability,
             collation: 45,
-            attr_warnings: Vec::new(),
         }
     );
+}
+
+#[test]
+fn response41_exposes_only_the_go_source_fields() {
+    let HandshakeResponse41 {
+        attrs,
+        user,
+        db_name,
+        auth_plugin,
+        auth,
+        zstd_level,
+        capability,
+        collation,
+    } = HandshakeResponse41::default();
+    assert!(attrs.is_empty());
+    assert!(user.is_empty());
+    assert!(db_name.is_empty());
+    assert!(auth_plugin.is_empty());
+    assert!(auth.is_empty());
+    assert_eq!(zstd_level, 0);
+    assert_eq!(capability, 0);
+    assert_eq!(collation, 0);
 }

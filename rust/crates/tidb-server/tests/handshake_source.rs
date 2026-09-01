@@ -126,7 +126,13 @@ fn response_parser_preserves_source_header_body_and_attributes() {
     assert_eq!(response.db_name, "test");
     assert_eq!(response.auth_plugin, "mysql_native_password");
     assert_eq!(response.auth, b"abc");
-    assert_eq!(response.attrs.get("ab"), Some(&"cd".to_owned()));
+    assert_eq!(
+        response
+            .attrs
+            .get(b"ab".as_slice())
+            .map(|value| value.as_bytes()),
+        Some(b"cd".as_slice())
+    );
 }
 
 #[test]

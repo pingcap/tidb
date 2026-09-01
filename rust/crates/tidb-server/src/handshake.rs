@@ -604,14 +604,16 @@ pub fn parse_response_body_into_with_attrs_state(
             }
             let end = checked_end(offset, attrs_len, data.len(), "connection attributes")?;
             match parse_attrs(&data[offset..end], attrs_state) {
-                Ok((attrs, raw_attrs, warnings)) => {
+                Ok((attrs, warnings)) => {
                     response.attrs = attrs;
-                    response.raw_attrs = raw_attrs;
-                    response.attr_warnings = warnings;
+                    if !warnings.is_empty() {
+                        tidb_log::debug(&warnings.join("; "), &[]);
+                    }
                 }
-                Err(_) => {
+                Err(error) => {
                     // Go logs this decode failure and accepts the handshake.
                     // It also returns immediately, so zstd parsing is skipped.
+                    tidb_log::warn(&format!("parse attrs failed: {error}"), &[]);
                     return Ok(());
                 }
             }
@@ -646,18 +648,14 @@ pub(crate) struct DecodedConnAttrs {
     has_deprecated_underscore_attr: bool,
 }
 
-type ParsedConnAttrs = (
-    HashMap<String, String>,
-    HashMap<Vec<u8>, Vec<u8>>,
-    Vec<String>,
-);
+type ParsedConnAttrs = (HashMap<WireString, WireString>, Vec<String>);
 
 pub(crate) fn parse_attrs(
     data: &[u8],
     state: &ConnectionAttrsState,
 ) -> Result<ParsedConnAttrs, HandshakeError> {
     if state.limit() == 0 {
-        return Ok((HashMap::new(), HashMap::new(), Vec::new()));
+        return Ok((HashMap::new(), Vec::new()));
     }
     let decoded = decode_conn_attrs(data)?;
     Ok(apply_conn_attrs_policy_and_metrics(decoded, state))
@@ -696,7 +694,6 @@ pub(crate) fn apply_conn_attrs_policy_and_metrics(
 ) -> ParsedConnAttrs {
     let effective_limit = normalize_connect_attrs_limit(state.limit());
     let mut attrs = HashMap::new();
-    let mut raw_attrs = HashMap::new();
     let mut total_size = 0_i64;
     let mut accepted_size = 0_i64;
     let mut truncated = false;
@@ -712,8 +709,7 @@ pub(crate) fn apply_conn_attrs_policy_and_metrics(
             continue;
         }
         if !truncated {
-            attrs.insert(lossy(&key), lossy(&value));
-            raw_attrs.insert(key, value);
+            attrs.insert(WireString::from_bytes(key), WireString::from_bytes(value));
             accepted_size = accepted_size.saturating_add(pair_size);
         }
     }
@@ -730,14 +726,16 @@ pub(crate) fn apply_conn_attrs_policy_and_metrics(
     if truncated {
         let truncated_bytes = decoded.total_size.saturating_sub(accepted_size);
         let value = truncated_bytes.to_string();
-        attrs.insert("_truncated".to_owned(), value.clone());
-        raw_attrs.insert(b"_truncated".to_vec(), value.into_bytes());
+        attrs.insert(
+            WireString::from("_truncated"),
+            WireString::from(value.clone()),
+        );
         warnings.push(format!(
             "session connection attributes truncated: total size {} bytes exceeds performance_schema_session_connect_attrs_size ({}), {} bytes were discarded",
             decoded.total_size, effective_limit, truncated_bytes
         ));
     }
-    (attrs, raw_attrs, warnings)
+    (attrs, warnings)
 }
 
 pub(crate) fn normalize_connect_attrs_limit(limit: i64) -> i64 {
@@ -856,10 +854,6 @@ fn checked_end(
         return Err(HandshakeError::Malformed(format!("{field} is truncated")));
     }
     Ok(end)
-}
-
-fn lossy(bytes: &[u8]) -> String {
-    String::from_utf8_lossy(bytes).into_owned()
 }
 
 /// Errors returned by handshake encoding and parsing.
