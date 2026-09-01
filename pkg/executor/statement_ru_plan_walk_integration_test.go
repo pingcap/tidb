@@ -142,7 +142,7 @@ func TestStatementRUAnalyzeNoDelayLifecycle(t *testing.T) {
 	testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
 		observedConnectionID uint64,
 		state string,
-		_, scanBytes, _, _ float64,
+		_, scanBytes, _, _, _, _ float64,
 	) {
 		if observedConnectionID != connectionID {
 			return
