@@ -48,6 +48,14 @@ For each bounded behavior cluster:
   boundary is recorded in `receipts/util_dbutil.md` with no speculative Rust
   behavior.
 
+- 2026-09-01: audited all ten current Go-master `pkg/util/mock` artifacts
+  (1,318 lines), including the broad context, fake transaction, KV client and
+  store, iterator, metrics mock, test constructor build tag, source tests,
+  benchmark, harness, and Bazel dependencies. Rust has only crate-local
+  trait-specific mocks, not a dependency-closed package owner; the complete
+  Go-only boundary is recorded in `receipts/util_mock.md` and no speculative
+  Rust mock framework was added.
+
 - 2026-09-01: revalidated the complete ten-artifact `pkg/util/table-filter`
   package against current Go master. The concrete `ColumnFilterRules` API,
   ASCII regexp authority, source test rows, and Rust consumer wiring are
@@ -1913,6 +1921,12 @@ For each bounded behavior cluster:
   and server affinity call are dependency-closed; the extra peer-UID and
   no-op checks are platform corroboration, not alternate Rust policy. Date/
   Author: 2026-09-01, Codex.
+- Decision: keep `pkg/util/mock` explicitly unclaimed as Go-only test
+  infrastructure. Its session-context, fake-transaction, KV-store/client,
+  iterator, and metrics mocks span too many Go interface owners for a
+  dependency-closed Rust port; crate-local mocks are not substitutes and a
+  shared Rust framework would be Rust-only behavior. Date/Author: 2026-09-01,
+  Codex.
 - Decision: preserve the Rust planner-error declaration table and its
   all-prototype initialization guard. Go package initialization registers all
   98 entries, while Go's only explicit test checks 59; the Rust guard is the
