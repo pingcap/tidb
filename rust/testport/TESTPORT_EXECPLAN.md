@@ -51,6 +51,19 @@ For each bounded behavior cluster:
   The owner now imports the canonical vardef spellings exactly like Go. The
   complete inventory and WIP gates are in `receipts/util_tiflash.md`.
 
+- 2026-09-01: completed the unclaimed pinned Go `pkg/util/cgroup` package.
+  Read and mapped all nine production, test, platform, and Bazel artifacts;
+  corrected raw controller-count and mount-separator parsing, preserved the
+  pinned hybrid memory-usage fallback, and changed CPU quota conversion to
+  retain Go's signed `-1` unsupported sentinel. Moved host-memory/process-RSS
+  helpers out of the cgroup owner into `tidb-util::memory::process`, removed
+  Rust-only scheduler recommendation wrappers, and added complete source
+  memory/CPU fixture matrices plus public unsupported-platform checks. The
+  inventory, integration boundary, and host validation limits are recorded in
+  `receipts/util_cgroup.md` and
+  `docs/operations/cgroup-audit-execplan.md`; Ready validation and push remain
+  the final step of this batch.
+
 - 2026-08-31: re-audited and completed pinned `pkg/statistics/util`. Corrected
   the shared JSON model to retain protobuf scalar zero fields and count them in
   generated-message `Size()` equivalents, changed predicate ordering to Go's

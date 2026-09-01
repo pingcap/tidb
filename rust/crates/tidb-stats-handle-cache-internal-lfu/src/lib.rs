@@ -259,7 +259,7 @@ fn adjust_mem_cost(total_mem_cost: i64) -> Result<i64, String> {
     if total_mem_cost != 0 {
         return Ok(total_mem_cost);
     }
-    tidb_util::cgroup::effective_memory_limit()
+    tidb_util::memory::effective_memory_limit()
         .map(|total| (total / 5).min(i64::MAX as u64) as i64)
         .map_err(|error| error.to_string())
 }
