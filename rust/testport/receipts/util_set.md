@@ -1,6 +1,9 @@
 # `pkg/util/set` — complete package transcreation
 
-Pinned Go source: `e2788410d8d696605e8cb002585877a063ccc909`.
+Go source: `origin/master` at
+`5e8a1a229a7591ddac49a0cd3b795587c2595ab9` (2026-09-01). The package is
+byte-for-byte unchanged from the earlier implementation; this receipt now
+uses the current Go-master authority.
 
 ## Complete inventory
 
@@ -49,8 +52,8 @@ performs the same existence check before insertion.
 
 ## Validation
 
-Profile: WIP; this is one completed package within the continuing repository
-audit, not a repository-wide readiness claim.
+Profile: Ready for this docs-only authority refresh; the package owner and
+focused parity regressions were implemented in the earlier atomic batch.
 
 - `rustfmt --edition 2024 --check crates/tidb-util/src/set.rs` — passed.
 - `cargo test -p tidb-util --locked set::tests:: --no-fail-fast` — passed; all
@@ -74,6 +77,8 @@ audit, not a repository-wide readiness claim.
   workspace's existing missing `pkg/util/hack.checkMapABI` build selection and
   `google.golang.org/grpc/internal/transport` / `http2.TrailerPrefix`
   dependency mismatch.
+- An exact detached Go-master checkout at
+  `5e8a1a229a7591ddac49a0cd3b795587c2595ab9` has the same dependency mismatch.
 
 No Go or Bazel file changed, so `make bazel_prepare` is not required.
 Workspace-wide `cargo fmt --all -- --check` is currently blocked by unrelated

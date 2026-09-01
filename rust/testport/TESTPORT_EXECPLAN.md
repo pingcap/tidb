@@ -2470,12 +2470,15 @@ For each bounded behavior cluster:
       replace the executor-local observation simulator with direct Go-shaped
       Prometheus reporting, and remove synthetic failpoint, fixture, and
       inspection APIs that had no production consumer.
-- [x] Complete the pinned `pkg/util/set` package in its `tidb-util` owner:
+- [x] Complete the current Go-master `pkg/util/set` package in its `tidb-util`
+      owner:
       restore all five concrete memory-aware constructors and tracker rules,
       retain exactly seven source tests and three benchmarks, remove public
       generic wrapper and ordered-tree policy, restore the free keyed-set API
       and current-key clone/order behavior, pre-size memory-aware constructors,
-      and wire HashAgg to Go's concrete string set.
+      and wire HashAgg to Go's concrete string set. Current inventory and
+      package ExecPlan: `receipts/util_set.md` and
+      `docs/operations/util-set-audit-execplan.md`.
 - [x] Complete the pinned `pkg/util/slice` package in its `tidb-util` owner,
       retain its three production functions and one source test, and remove
       four supplementary non-source tests.
