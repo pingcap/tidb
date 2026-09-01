@@ -40,6 +40,16 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: audited all three Go-master `pkg/util/etcd` artifacts (140
+  lines including the embedded-etcd namespace test and Bazel target). The
+  Rust PD etcd owner already had the KV transport, but its single-key delete
+  omitted Go's per-attempt deadline and bounded retry contract. Added the
+  source constants, timeout-carrying delete command, deterministic retry
+  helper/regression, and wired server-info cleanup to five attempts with its
+  one-second deadline. `SetEtcdCliByNamespace` remains an explicit boundary
+  because no Rust startup path requires a mutable clientv3 namespace wrapper.
+  Inventory and validation are recorded in `receipts/util_etcd.md`.
+
 - 2026-09-01: audited the complete Go `pkg/util/dbterror/plannererrors`
   package at `origin/master`
   `db35d47066648fe73abce6318d53fc625df51490` against the Rust
@@ -1466,6 +1476,12 @@ For each bounded behavior cluster:
 
 ## Decision Log
 
+- Decision: carry Go `DeleteKeyFromEtcd`'s per-attempt timeout and retry loop
+  in `tidb-pd-client::EtcdClient`, then bind the server-info trait adapter to
+  its source five-attempt/one-second values. Keep namespace wrapping outside
+  this batch because Rust has no caller or dependency-closed owner for a
+  mutable clientv3 KV/Watcher/Lease namespace; an unused prefixing client
+  would be a second transport path. Date/Author: 2026-09-01, Codex.
 - Decision: preserve the Rust planner-error declaration table and its
   all-prototype initialization guard. Go package initialization registers all
   98 entries, while Go's only explicit test checks 59; the Rust guard is the
@@ -1808,6 +1824,12 @@ For each bounded behavior cluster:
 
 ## Surprises & Discoveries
 
+- Go `pkg/util/etcd.DeleteKeyFromEtcd` is not a thin delete wrapper: it
+  creates a fresh timeout context for each attempt and retries five times by
+  default, while Rust's existing `EtcdClient::delete` only performed one
+  worker call. The server-info adapter was therefore silently less resilient
+  even though its trait shape looked complete; the retry loop now lives in the
+  transport owner and is exercised independently of a live etcd.
 - Go 1.25's `strconv.ParseFloat`, which backs `docker/go-units.RAMInBytes`,
   accepts hexadecimal floating literals and valid digit separators. The
   existing Rust configtypes owner covered the older decimal-only cases, so

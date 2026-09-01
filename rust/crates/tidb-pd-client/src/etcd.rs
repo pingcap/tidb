@@ -55,6 +55,13 @@ pub const ETCD_RANGE_PATH: &str = "/etcdserverpb.KV/Range";
 /// Exact generated method path for the watch stream.
 pub const ETCD_WATCH_PATH: &str = "/etcdserverpb.Watch/Watch";
 
+/// Go `pkg/util/etcd.KeyOpDefaultTimeout`.
+pub const KEY_OP_DEFAULT_TIMEOUT: Duration = Duration::from_secs(2);
+/// Go `pkg/util/etcd.KeyOpDefaultRetryCnt`.
+pub const KEY_OP_DEFAULT_RETRY_CNT: usize = 5;
+/// Go `pkg/util/etcd.KeyOpRetryInterval`.
+pub const KEY_OP_RETRY_INTERVAL: Duration = Duration::from_millis(30);
+
 /// The etcd key TiDB publishes the cluster's schema version under.
 ///
 /// Source of truth: `pkg/ddl/util/util.go` `DDLGlobalSchemaVersion`.
@@ -218,6 +225,7 @@ enum EtcdCommand {
     /// `KV.DeleteRange` of ONE key -- Go's `DeleteKeyFromEtcd`.
     Delete {
         key: Vec<u8>,
+        timeout: Duration,
         reply: mpsc::Sender<Result<(), EtcdError>>,
     },
     /// `KV.DeleteRange` over `[prefix, prefix+1)` -- Go's
@@ -770,15 +778,35 @@ impl EtcdClient {
 
     /// Deletes one key -- Go's `DeleteKeyFromEtcd`.
     pub fn delete(&self, key: &[u8]) -> Result<(), EtcdError> {
+        self.delete_with_timeout(key, self.shared.timeout)
+    }
+
+    /// Deletes one key with the caller's exact per-operation deadline.
+    pub fn delete_with_timeout(&self, key: &[u8], timeout: Duration) -> Result<(), EtcdError> {
         let (reply, response) = mpsc::channel();
         self.shared
             .commands
             .send(EtcdCommand::Delete {
                 key: key.to_vec(),
+                timeout,
                 reply,
             })
             .map_err(|_| EtcdError::Closed)?;
         response.recv().unwrap_or(Err(EtcdError::Closed))
+    }
+
+    /// Deletes one key with Go's bounded retry contract.
+    ///
+    /// Each attempt gets its own timeout, and failures are logged before the
+    /// next attempt. A zero retry count performs no operation, matching
+    /// `errors.Trace(nil)` in Go's `DeleteKeyFromEtcd`.
+    pub fn delete_with_retry(
+        &self,
+        key: &[u8],
+        retry_cnt: usize,
+        timeout: Duration,
+    ) -> Result<(), EtcdError> {
+        retry_delete(retry_cnt, || self.delete_with_timeout(key, timeout))
     }
 
     /// Deletes every key under the prefix -- Go's
@@ -1354,12 +1382,16 @@ fn run_kv_worker(
                 );
                 let _ = reply.send(result);
             }
-            EtcdCommand::Delete { key, reply } => {
+            EtcdCommand::Delete {
+                key,
+                timeout: operation_timeout,
+                reply,
+            } => {
                 let result = across_endpoints(
                     runtime,
                     endpoints,
                     &mut clients,
-                    timeout,
+                    operation_timeout,
                     security,
                     |runtime, mut client| {
                         runtime
@@ -1413,6 +1445,30 @@ fn run_kv_worker(
             }
         }
     }
+}
+
+fn retry_delete<F>(retry_cnt: usize, mut delete: F) -> Result<(), EtcdError>
+where
+    F: FnMut() -> Result<(), EtcdError>,
+{
+    let mut last_error = None;
+    for attempt in 0..retry_cnt {
+        match delete() {
+            Ok(()) => return Ok(()),
+            Err(error) => {
+                eprintln!(
+                    "{{\"level\":\"warn\",\"event\":\"etcd-cli delete key failed\",\"attempt\":{},\"retry_cnt\":{},\"error\":{error:?}}}",
+                    attempt + 1,
+                    retry_cnt,
+                );
+                last_error = Some(error);
+                if attempt + 1 < retry_cnt {
+                    std::thread::sleep(KEY_OP_RETRY_INTERVAL);
+                }
+            }
+        }
+    }
+    last_error.map_or(Ok(()), Err)
 }
 
 /// Runs one call against the first endpoint that answers.
@@ -2095,6 +2151,38 @@ async fn watch_one_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn util_etcd_retry_constants_match_go() {
+        assert_eq!(KEY_OP_DEFAULT_TIMEOUT, Duration::from_secs(2));
+        assert_eq!(KEY_OP_DEFAULT_RETRY_CNT, 5);
+        assert_eq!(KEY_OP_RETRY_INTERVAL, Duration::from_millis(30));
+    }
+
+    #[test]
+    fn delete_retry_repeats_until_success_and_preserves_zero_count_contract() {
+        let mut attempts = 0;
+        let result = retry_delete(3, || {
+            attempts += 1;
+            if attempts == 3 {
+                Ok(())
+            } else {
+                Err(EtcdError::Closed)
+            }
+        });
+        assert_eq!(result, Ok(()));
+        assert_eq!(attempts, 3);
+
+        let mut called = false;
+        assert_eq!(
+            retry_delete(0, || {
+                called = true;
+                Ok(())
+            }),
+            Ok(())
+        );
+        assert!(!called);
+    }
 
     #[test]
     fn the_global_schema_version_value_is_decimal_ascii() {

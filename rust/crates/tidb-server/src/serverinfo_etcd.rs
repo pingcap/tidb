@@ -25,6 +25,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::Duration;
 
+use tidb_domain::serverinfo::{KEY_OP_DEFAULT_RETRY_CNT, KEY_OP_DEFAULT_TIMEOUT};
 use tidb_domain::serverinfo_syncer::EtcdOps;
 use tidb_domain::status_endpoint_claim::{ObservedStatusEndpointClaim, StatusEndpointClaimCreate};
 use tidb_pd_client::EtcdClient;
@@ -85,7 +86,11 @@ impl EtcdOps for EtcdClientOps {
 
     fn delete(&self, key: &str) -> Result<(), String> {
         self.client
-            .delete(key.as_bytes())
+            .delete_with_retry(
+                key.as_bytes(),
+                KEY_OP_DEFAULT_RETRY_CNT,
+                KEY_OP_DEFAULT_TIMEOUT,
+            )
             .map_err(|error| error.to_string())
     }
 
