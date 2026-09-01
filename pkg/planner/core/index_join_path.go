@@ -397,8 +397,21 @@ func isNDVClose(lhs, rhs float64) bool {
 	return diff/maxVal < 0.2
 }
 
-// indexJoinPathCountAfterAccess4Compare adjusts CountAfterAccess with join EQ predicates
-// that become runtime lookup keys but are invisible to normal DataSource range estimation.
+// indexJoinPathCountAfterAccess4Compare adjusts CountAfterAccess with join EQ.
+//
+// The original CountAfterAccess keeps the selectivity from predicates that have
+// already been considered by access path estimation, and this function further
+// divides it by the NDV of the index join key columns. For example, if the inner
+// table t1 has index(a, b) and the predicates are t1.a=t2.a and t1.b=1, the
+// normal CountAfterAccess may be Estimation(t1.b=1) because the concrete t2.a
+// value is unknown during DataSource estimation. In IndexJoin, t1.a=t2.a becomes
+// a per-probe lookup key, so the compare-time access count should be:
+//
+//	Estimation(t1.b=1) / NDV(t1.a)
+//
+// Constant index columns like b are skipped below because their selectivity is
+// already included in CountAfterAccess; only column-to-column join keys like a
+// contribute to joinKeyNDV.
 func indexJoinPathCountAfterAccess4Compare(
 	indexJoinInfo *indexJoinPathInfo,
 	path *util.AccessPath,
