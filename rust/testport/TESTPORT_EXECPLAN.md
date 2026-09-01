@@ -257,7 +257,7 @@ For each bounded behavior cluster:
   `docs/operations/util-tikvutil-audit-execplan.md`.
 
 - 2026-09-02: refreshed the complete Go-master `pkg/util/nocopy` inventory at
-  `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: two tracked artifacts, 32
+  `c6054025ed4c32ab3672a2a24ea46892714d21ec`: two tracked artifacts, 32
   lines, one marker type, two methods, and no tests, fixtures, generated or
   platform variants, or nested packages. The existing
   `tidb-util::nocopy::NoCopy` remains a zero-sized non-`Copy`/non-`Clone`

@@ -8,7 +8,7 @@ Rust owner without adding behavior beyond Go's vet-oriented lock methods.
 ## Progress
 
 - [x] Read both Go-master artifacts at
-  `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: `BUILD.bazel` and `nocopy.go`
+  `c6054025ed4c32ab3672a2a24ea46892714d21ec`: `BUILD.bazel` and `nocopy.go`
   (32 lines total; one marker type and two methods).
 - [x] Confirm there are no package docs, tests, fixtures, generated/platform
   variants, benchmarks, fuzz targets, or nested packages.
@@ -18,7 +18,7 @@ Rust owner without adding behavior beyond Go's vet-oriented lock methods.
   tests, and semantic manifests are not reintroduced.
 - [x] Revalidate current and exact detached Go-master package checks, Rust
   owner check, formatting, and diff quality.
-- [ ] Commit, push, pull, and verify `origin/hparser-integration`.
+- [x] Commit, push, pull, and verify `origin/hparser-integration`.
 
 ## Validation gate
 
