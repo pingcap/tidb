@@ -20,9 +20,7 @@
 
 use std::sync::{atomic::AtomicU64, Arc};
 
-use crate::{
-    DistSqlContext, PagingConfig, Priority, ReplicaReadType, RequestContext, TiFlashReplicaRead,
-};
+use crate::{DistSqlContext, PagingConfig, Priority, ReplicaRead, ReplicaReadType, RequestContext};
 use tidb_txnkv::{IsolationLevel, Priority as KvPriority, RequestSource};
 
 /// The immutable, dependency-closed request metadata produced by the builder.
@@ -41,7 +39,7 @@ pub struct ReadRequestMetadata {
     /// Effective replica routing preference.
     pub replica_read: ReplicaReadType,
     /// TiFlash node-selection policy copied into the client-send boundary.
-    pub tiflash_replica_read: TiFlashReplicaRead,
+    pub tiflash_replica_read: ReplicaRead,
     /// Paging controls copied without dropping byte size when disabled.
     pub paging: PagingConfig,
     /// Request source metadata.

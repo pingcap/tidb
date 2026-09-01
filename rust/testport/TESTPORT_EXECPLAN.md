@@ -36,6 +36,14 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-08-31: re-audited and completed pinned `pkg/util/tiflash` as one
+  two-artifact package. The existing open native-integer `ReplicaRead` owner
+  and live distsql request propagation remain; removed a Rust-only type alias,
+  five adapter methods, three duplicated vardef string constants, const-only
+  API capability, and the source-test-free package's three supplemental tests.
+  The owner now imports the canonical vardef spellings exactly like Go. The
+  complete inventory and WIP gates are in `receipts/util_tiflash.md`.
+
 - 2026-08-31: re-audited and completed pinned `pkg/statistics/util`. Corrected
   the shared JSON model to retain protobuf scalar zero fields and count them in
   generated-message `Size()` equivalents, changed predicate ordering to Go's
@@ -749,6 +757,11 @@ For each bounded behavior cluster:
       storage and ingest control; the current fresh, fixed-buffer Rust codecs
       are consumer seed behavior, not this package. The two-artifact inventory
       is in `receipts/util_compress_audit.md` and remains unclaimed.
+- [x] Complete the pinned `pkg/util/tiflash` package in its live `tidb-txnkv`
+      owner: preserve Go's open native-integer policy and exact fallbacks,
+      consume vardef's three canonical spellings, retain the threshold and
+      distsql propagation, and remove alias/adapter/constant/test extras. The
+      atomic inventory and WIP gates are in `receipts/util_tiflash.md`.
 - [x] Complete the pinned root `pkg/util/sem` package in its `tidb-util`
       owner, verify its full policy and cross-crate sysvar wiring, retain its
       five source tests, and remove supplementary Rust-only assertions.

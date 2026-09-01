@@ -14,7 +14,7 @@
 
 //! Source-shaped request and DistSQL context fields.
 
-use crate::{ExecutionState, TiFlashReplicaRead, Warning, WarningCollector};
+use crate::{ExecutionState, ReplicaRead, Warning, WarningCollector};
 use tidb_txnkv::ReplicaReadType;
 use tidb_util::paging::{MIN_ALLOWED_MAX_PAGING_SIZE, MIN_PAGING_SIZE};
 
@@ -103,7 +103,7 @@ pub struct RequestContext {
     /// Replica routing preference.
     pub replica_read: ReplicaReadType,
     /// TiFlash node-selection policy projected into client-send metadata.
-    pub tiflash_replica_read: TiFlashReplicaRead,
+    pub tiflash_replica_read: ReplicaRead,
     /// Whether weak consistency is enabled.
     pub weak_consistency: bool,
     /// Whether RC timestamp checking is enabled.
@@ -145,7 +145,7 @@ impl Default for RequestContext {
             enable_chunk_rpc: false,
             session: SessionContext::default(),
             replica_read: ReplicaReadType::default(),
-            tiflash_replica_read: TiFlashReplicaRead::default(),
+            tiflash_replica_read: ReplicaRead::default(),
             weak_consistency: false,
             rc_check_ts: false,
             not_fill_cache: false,

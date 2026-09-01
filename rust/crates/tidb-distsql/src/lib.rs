@@ -119,9 +119,9 @@ pub use table_handle_ranges::table_handles_to_kv_ranges;
 pub use tidb_txnkv::lock::{FixedTimestampSource, LockRecoveryClient, TimestampSource};
 pub use tidb_txnkv::region;
 pub use tidb_txnkv::{
-    IsolationLevel, Priority as KvPriority, ReplicaReadType, RequestSource, RequestType,
-    StoreLabel, StoreType, TiFlashReplicaRead, UnaryCallContext, ALL_REPLICAS, CLOSEST_ADAPTIVE,
-    CLOSEST_REPLICAS, MAX_REMOTE_READ_COUNT_PER_NODE_FOR_CLOSEST_REPLICAS,
+    IsolationLevel, Priority as KvPriority, ReplicaRead, ReplicaReadType, RequestSource,
+    RequestType, StoreLabel, StoreType, UnaryCallContext,
+    MAX_REMOTE_READ_COUNT_PER_NODE_FOR_CLOSEST_REPLICAS,
 };
 pub use tidb_util::paging::{
     calculate_seek_cnt as calculate_seek_count, grow_paging_size, MIN_ALLOWED_MAX_PAGING_SIZE,

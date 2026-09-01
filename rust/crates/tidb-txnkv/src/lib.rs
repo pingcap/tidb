@@ -241,8 +241,7 @@ pub use rpc::{
     DirectUnaryTransportClass, UnaryCallContext, UnaryCancellation, DEFAULT_STORE_LIVENESS_TIMEOUT,
 };
 pub use tiflash::{
-    get_tiflash_replica_read, get_tiflash_replica_read_by_str, ReplicaRead, TiFlashReplicaRead,
-    ALL_REPLICAS, CLOSEST_ADAPTIVE, CLOSEST_REPLICAS,
+    get_tiflash_replica_read, get_tiflash_replica_read_by_str, ReplicaRead,
     MAX_REMOTE_READ_COUNT_PER_NODE_FOR_CLOSEST_REPLICAS,
 };
 pub use trxevents::{

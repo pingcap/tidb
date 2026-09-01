@@ -15,21 +15,21 @@
 //! Direct DistSQL consumer obligations for `pkg/util/tiflash`.
 
 use tidb_distsql::{
-    DistSqlContext, KvRequestMetadata, ReadRequestMetadata, TiFlashReplicaRead,
+    DistSqlContext, KvRequestMetadata, ReadRequestMetadata, ReplicaRead,
 };
 
 #[test]
 fn existing_request_projection_consumes_the_canonical_policy() {
     let mut context = DistSqlContext::default();
-    context.request.tiflash_replica_read = TiFlashReplicaRead::ClosestReplicas;
+    context.request.tiflash_replica_read = ReplicaRead::ClosestReplicas;
 
     let session = ReadRequestMetadata::from_context(&context);
     assert_eq!(
         session.tiflash_replica_read,
-        TiFlashReplicaRead::ClosestReplicas
+        ReplicaRead::ClosestReplicas
     );
     assert_eq!(
         KvRequestMetadata::from_context(&context).tiflash_replica_read,
-        TiFlashReplicaRead::ClosestReplicas
+        ReplicaRead::ClosestReplicas
     );
 }

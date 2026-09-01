@@ -22,7 +22,7 @@
 
 use std::ops::{Deref, DerefMut};
 
-use crate::{DistSqlContext, ReadRequestMetadata, TiFlashReplicaRead};
+use crate::{DistSqlContext, ReadRequestMetadata, ReplicaRead};
 pub use tidb_txnkv::{
     KeyRange as RequestKeyRange, PartitionIdAndRanges, PartitionedKeyRanges as RequestKeyRanges,
 };
@@ -41,7 +41,7 @@ pub const DC_LABEL_KEY: &str = "zone";
 pub struct KvRequestMetadata {
     request: tidb_txnkv::Request,
     /// TiFlash node-selection policy projected into client-send metadata.
-    pub tiflash_replica_read: TiFlashReplicaRead,
+    pub tiflash_replica_read: ReplicaRead,
 }
 
 impl Default for KvRequestMetadata {
@@ -56,7 +56,7 @@ impl Default for KvRequestMetadata {
         };
         Self {
             request,
-            tiflash_replica_read: TiFlashReplicaRead::default(),
+            tiflash_replica_read: ReplicaRead::default(),
         }
     }
 }
@@ -67,7 +67,7 @@ impl KvRequestMetadata {
     pub fn from_request(request: tidb_txnkv::Request) -> Self {
         Self {
             request,
-            tiflash_replica_read: TiFlashReplicaRead::default(),
+            tiflash_replica_read: ReplicaRead::default(),
         }
     }
 
