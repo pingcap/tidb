@@ -3678,12 +3678,14 @@ For each bounded behavior cluster:
       package remains explicitly unclaimed. Details are in
       `receipts/util_extsort.md` and
       `docs/operations/util-extsort-audit-execplan.md`.
-- 2026-09-01: audited both Go-master `pkg/util/gcutil` artifacts (109 lines:
-      GC toggles, safe-point SQL loader, snapshot validation, and Bazel target).
-      Its behavior spans session globals/restricted SQL, vardef, model time
+- 2026-09-02: re-audited all Go-master `pkg/util/gcutil` artifacts at
+      `c6054025ed4c32ab3672a2a24ea46892714d21ec` (109 lines: GC toggles,
+      safe-point SQL loader, snapshot validation, and Bazel target). Its
+      behavior spans session globals/restricted SQL, vardef, model time
       conversion, TiDB errors, and TiKV GC state without one dependency-closed
       Rust helper. The package remains explicitly unclaimed; details are in
-      `receipts/util_gcutil.md`.
+      `receipts/util_gcutil.md` and
+      `docs/operations/util-gcutil-audit-execplan.md`.
 - 2026-09-01: audited all three Go-master `pkg/util/httputil` artifacts (199
       lines: TLS-aware 30-second client construction, context GET/JSON/text
       helpers, non-200 body errors, two source tests, and Bazel target). Rust

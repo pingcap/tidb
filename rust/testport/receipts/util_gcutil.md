@@ -1,7 +1,7 @@
 # `pkg/util/gcutil` — Go-master package boundary receipt
 
 Go source: `origin/master` at
-`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01). The package is
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02). The package is
 byte-for-byte unchanged from the earlier extraction pin
 `e2788410d8d696605e8cb002585877a063ccc909`.
 
@@ -39,15 +39,21 @@ remains explicitly unclaimed until those owners can move together.
 
 ## Validation
 
-Profile: WIP for the continuing repository audit; no Rust code changed.
+Profile: **Ready** for this documentation-only boundary refresh; no Rust code
+changed.
 
 - `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/gcutil -count=1` — package has no Go test files; command reports the expected no-test result.
-- `git diff --stat e2788410d8d696605e8cb002585877a063ccc909..origin/master -- pkg/util/gcutil` — empty; source is unchanged at Go master.
+- `(cd /tmp/tidb-go-latest-c605 && PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/gcutil -count=1)` — passed (`[no test files]`).
+- `git diff --stat c6054025ed4c32ab3672a2a24ea46892714d21ec -- pkg/util/gcutil` — empty; source is unchanged at current Go master.
 - Rust search of the session, vardef, model, error, and txnkv crates — confirmed split ownership and no dependency-closed `gcutil` implementation.
 
-No Go or Bazel file changed, so `make bazel_prepare` is not required. Full
-session integration, restricted-SQL, and live TiKV GC tests were not run for
-this explicitly unclaimed boundary.
+`cd rust && cargo +nightly-2026-08-22 fmt --all -- --check` and
+`git diff --check` passed. The pinned `make lint` gate passed in the clean
+detached Go-master checkout; the active checkout may be temporarily
+instrumented by a concurrent failpoint test worker. No Go or Bazel file
+changed, so `make bazel_prepare` is not required. Full session integration,
+restricted-SQL, and live TiKV GC tests were not run for this explicitly
+unclaimed boundary.
 
 ## Risks and unverified scope
 
