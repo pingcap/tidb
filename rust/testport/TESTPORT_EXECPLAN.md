@@ -124,6 +124,18 @@ For each bounded behavior cluster:
   safe partial production fix was found, so the explicit SEED boundary is
   recorded in `receipts/inference.md`.
 
+- 2026-09-01: audited the complete Go-master `pkg/sessiontxn/staleread`
+  package: 10 tracked artifacts and 1,746 lines, including the stale-read
+  processor, transaction-context provider, AS OF/read-staleness/external-ts
+  utilities, failpoint hook, all 13 package tests, and the BUILD target. The
+  exact Go-master failpoint-managed suite passed. Rust has bounded AS OF
+  history support and timestamp parsing, but no dependency-closed owner for
+  the provider lifecycle, session `tidb_snapshot`/`tidb_read_staleness`
+  semantics, external timestamp cache, follower-read options, or prepared
+  evaluator. No Rust-only behavior or safe partial production fix was found;
+  the explicit SEED boundary is recorded in
+  `receipts/sessiontxn_staleread.md`.
+
 - 2026-09-01: refreshed the complete Go-master
   `pkg/util/password-validation` inventory (three artifacts, 379 lines) and
   confirmed it is unchanged from the prior pinned implementation. The Go
