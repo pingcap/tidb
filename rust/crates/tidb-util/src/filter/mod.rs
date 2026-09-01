@@ -114,7 +114,6 @@ impl Filter {
 
     /// Go `ApplyOn`: returns the (case-normalised) clones of the input tables
     /// that pass the filter. Deprecated in Go; kept for parity.
-    #[must_use]
     pub fn apply_on(&self, stbs: &[Table]) -> Vec<Table> {
         if self.rules.is_none() {
             return stbs.to_vec();
@@ -134,7 +133,6 @@ impl Filter {
     }
 
     /// Go `Apply`: returns the original input tables that pass the filter.
-    #[must_use]
     pub fn apply(&self, stbs: &[Table]) -> Vec<Table> {
         if self.rules.is_none() {
             return stbs.to_vec();
@@ -157,7 +155,6 @@ impl Filter {
     }
 
     /// Go `Match`: whether `tb` should be kept (not filtered out).
-    #[must_use]
     pub fn matches(&self, tb: &Table) -> bool {
         let Some(_rules) = self.rules.as_ref() else {
             return true;

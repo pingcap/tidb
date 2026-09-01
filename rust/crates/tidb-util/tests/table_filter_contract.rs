@@ -92,3 +92,16 @@ fn case_insensitive_filters_use_go_simple_unicode_folding() {
         name: "orders".to_owned(),
     }));
 }
+
+#[test]
+#[deny(unused_must_use)]
+fn filter_return_values_may_be_ignored_like_go() {
+    tidb_util::filter::is_system_schema("mysql");
+    let filter = ReplicationFilter::new(false, None).unwrap();
+    filter.apply_on(&[]);
+    filter.apply(&[]);
+    filter.matches(&Table {
+        schema: "mysql".to_owned(),
+        name: "orders".to_owned(),
+    });
+}

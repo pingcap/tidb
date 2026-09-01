@@ -1,10 +1,12 @@
 # `pkg/util/filter` — complete package transcreation
 
-Pinned Go source: `e2788410d8d696605e8cb002585877a063ccc909`.
+Go source: `origin/master` at
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02), unchanged from
+extraction pin `e2788410d8d696605e8cb002585877a063ccc909`.
 
 ## Complete inventory
 
-The package has exactly six artifacts, all read in full:
+The package has exactly six artifacts (914 textual lines), all read in full:
 
 - `filter.go` — rule construction, regex/trie selection, schema/table
   precedence, cached matching, `ApplyOn`, and `Apply`;
@@ -39,17 +41,28 @@ variants, restored Go's four distinct empty-rule messages, and removed four
 supplementary owner tests that had no pinned Go test counterpart. No code
 outside the deleted file referenced its module.
 
+The authority refresh removed four Rust-only `#[must_use]` diagnostics from
+`is_system_schema`, `Filter::apply_on`, `Filter::apply`, and `Filter::matches`.
+A focused `#[deny(unused_must_use)]` regression failed with four errors before
+the change and passes afterward, matching Go's discardable return values.
+
 ## Validation
 
-Profile: WIP; this is one completed package within the continuing repository
+Profile: **Ready** for this focused parity fix within the continuing repository
 audit, not a repository-wide readiness claim.
 
-- `go test ./pkg/util/filter` — passed.
+- `git diff --exit-code e2788410d8d696605e8cb002585877a063ccc909..c6054025ed4c32ab3672a2a24ea46892714d21ec -- pkg/util/filter` — passed; no Go package drift.
+- `git diff --exit-code c6054025ed4c32ab3672a2a24ea46892714d21ec..HEAD -- pkg/util/filter` — passed; no current-branch Go package drift.
+- `git ls-tree -r -l c6054025ed4c32ab3672a2a24ea46892714d21ec pkg/util/filter` — passed; exactly the six artifacts listed above.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/filter -count=1` — passed in current and exact detached latest-master (`/tmp/tidb-go-latest-c605`) worktrees.
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-util --test table_filter_contract --offline --locked -- --test-threads=1` — passed; four tests including the discard-return regression.
 - `cargo test -p tidb-util --locked filter::` — passed.
 - `cargo test -p tidb-util --locked` — passed.
 - `cargo check -p tidb-exec --lib --locked` — passed.
 - `cargo check -p tidb-session --lib --locked` — passed.
-- `cargo fmt --all -- --check` and `git diff --check` — passed.
+- `cd rust && cargo +nightly-2026-08-22 fmt --all -- --check` — passed.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 make lint` — passed.
+- `git diff --check` — passed.
 
 No Go or Bazel file changed, so `make bazel_prepare` is not required.
 

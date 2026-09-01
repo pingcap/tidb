@@ -24,7 +24,6 @@ pub const INSPECTION_SCHEMA_NAME: &str = "inspection_schema";
 
 /// Go `IsSystemSchema`: whether `schema` (already lower-cased) is a system
 /// schema. Callers pass a lower-cased name; that invariant is debug-checked.
-#[must_use]
 pub fn is_system_schema(schema: &str) -> bool {
     debug_assert_eq!(
         schema,
