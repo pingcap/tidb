@@ -1202,6 +1202,12 @@ For each bounded behavior cluster:
       test, benchmark, harness, and build artifacts; remove Rust-only encoder
       value/hash methods; update consumers; add the raw-value regression; and
       update the package receipt.
+- 2026-09-01: revalidated the complete `pkg/util/codec` delta against the
+      fetched Go `origin/master` commit `0bc44483e3e41a8ea917d4382dc202369468d200`.
+      The key-only `Encoder` surface, package-level raw value/hash functions,
+      consumer wiring, and focused collated-versus-raw regressions are
+      recorded in `receipts/util_codec_audit.md`; no additional Go artifact
+      drift was found after the earlier `db35d470...` audit.
 - [ ] Audit the next bounded package cluster by reading the requested Go
       `origin/master` first, then fill executable gaps and remove false
       carriers.
