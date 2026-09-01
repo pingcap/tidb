@@ -331,6 +331,17 @@ For each bounded behavior cluster:
   `receipts/dxf_framework_mock.md` and
   `rust/docs/operations/dxf-framework-mock-audit-execplan.md`.
 
+- 2026-09-02: audited the complete Go-master `pkg/dxf/example` package: six
+  tracked artifacts and 332 lines, including the package guide, JSON metadata,
+  scheduler/executor implementation, mock-store end-to-end test, and Bazel
+  targets (one flaky test). The 15 declarations cover Example factory
+  registration, Init→StepOne→StepTwo→Done planning, per-subtask metadata,
+  retry/idempotence hooks, and completion waiting. Rust already owns generic
+  Example task/step constants but no dependency-closed scheduler/executor demo
+  or mock-store harness, so no speculative runtime or Rust-only behavior was
+  added. Recorded the explicit boundary in `receipts/dxf_example.md` and
+  `rust/docs/operations/dxf-example-audit-execplan.md`.
+
 - 2026-09-01: audited the complete direct Go-master parent
   `pkg/dxf/importinto` package: 26 tracked artifacts and 9,158 lines, with
   170 production function/method declarations and 45 top-level test
