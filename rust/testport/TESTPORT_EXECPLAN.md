@@ -281,7 +281,7 @@ For each bounded behavior cluster:
 - 2026-09-02: refreshed the complete Go-master `pkg/util/channel` inventory
   (two artifacts, 30 lines, one generic production function, and no source
   tests, fixtures, generated files, or platform variants) at
-  `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`. The existing borrowed
+  `c6054025ed4c32ab3672a2a24ea46892714d21ec`. The existing borrowed
   `tidb-util::channel::clear` remains behaviorally equivalent to Go's blocking
   channel-range cleanup, with no Rust-only policy or missing behavior found.
   Revalidated the exact detached and current Go package checks plus all 523
@@ -4684,6 +4684,14 @@ For each bounded behavior cluster:
   explicit branch boundaries. Focused failpoint-wrapped integration tests pass.
   See `rust/testport/receipts/server_handler_tests.md` and
   `rust/docs/operations/server-handler-tests-audit-execplan.md`.
+- Go master's scalar-subquery statement-boundary repair is restored across
+  `pkg/executor` and `pkg/session`: normal planning and transaction replay now
+  clear `MapScalarSubQ` before selecting each statement's plan. The focused
+  executor, replay, and prefetched-PointGet regressions pass; this remains
+  supporting seed evidence rather than a complete claim for either large
+  package. See
+  `rust/testport/receipts/scalar_subquery_statement_boundary.md` and
+  `rust/docs/operations/scalar-subquery-statement-boundary-execplan.md`.
 
 ## Outcomes & Retrospective
 

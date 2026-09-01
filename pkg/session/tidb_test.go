@@ -22,9 +22,15 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/breakpoint"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
@@ -292,6 +298,63 @@ func TestRUV2MetricsIsolatedPerStatementInExplicitTxn(t *testing.T) {
 
 		MustExec(t, se, "insert into pre_exec_retry_count values (2, 2)")
 	})
+}
+
+func TestScalarSubqueryRegistryTxnReplay(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+	se, err := createSession(store)
+	require.NoError(t, err)
+	defer se.Close()
+	MustExec(t, se, "use test")
+	MustExec(t, se, "set tidb_disable_txn_auto_retry = off")
+	MustExec(t, se, "set tidb_retry_limit = 3")
+	MustExec(t, se, "set tidb_enable_non_prepared_plan_cache_for_dml = off")
+	MustExec(t, se, "create table scalar_registry_retry (id int primary key, v int)")
+	MustExec(t, se, "insert into scalar_registry_retry values (1, 1), (2, 2)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/sessiontxn/isolation/injectOptimisticTxnRetryable", "return(true)")
+	MustExec(t, se, "begin optimistic")
+	MustExec(t, se, "update scalar_registry_retry set v = (select max(v) from scalar_registry_retry) where id = 1")
+	require.Len(t, se.GetSessionVars().MapScalarSubQ, 1)
+	MustExec(t, se, "update scalar_registry_retry set v = v + 1 where id = 2")
+
+	// Observe each rebuilt UPDATE before execution, using the existing
+	// session-scoped breakpoint rather than only inspecting COMMIT's context.
+	var registrySizes, scalarTreeCounts []int
+	var replayPlans []base.Plan
+	se.SetValue(breakpoint.NotifyBreakPointFuncKey, func(_ string) {
+		vars := se.GetSessionVars()
+		if !vars.RetryInfo.Retrying {
+			return
+		}
+		plan, ok := vars.StmtCtx.GetPlan().(base.Plan)
+		require.True(t, ok)
+		if _, ok := plan.(*physicalop.Update); !ok {
+			return
+		}
+		replayPlans = append(replayPlans, plan)
+		registrySizes = append(registrySizes, len(vars.MapScalarSubQ))
+		scalarTreeCounts = append(scalarTreeCounts, len(plannercore.FlattenPhysicalPlan(plan, true).ScalarSubQueries))
+	})
+	defer se.ClearValue(breakpoint.NotifyBreakPointFuncKey)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/breakpoint/"+sessiontxn.BreakPointBeforeExecutorFirstRun, "return")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/session/mockCommitError8942", "1*return(true)->return(false)")
+	MustExec(t, se, "commit")
+	require.Equal(t, uint64(1), se.GetSessionVars().StmtCtx.ExecRetryCount)
+	t.Logf("replay registry sizes=%v flattened scalar trees=%v", registrySizes, scalarTreeCounts)
+
+	rs := MustExecToRecodeSet(t, se, "select id, v from scalar_registry_retry order by id")
+	rows, err := ResultSetToStringSlice(context.Background(), se, rs)
+	require.NoError(t, err)
+	require.NoError(t, rs.Close())
+	require.Equal(t, [][]string{{"1", "2"}, {"2", "3"}}, rows)
+	require.Len(t, replayPlans, 2)
+	update, ok := replayPlans[1].(*physicalop.Update)
+	require.True(t, ok)
+	require.IsType(t, &physicalop.PointGetPlan{}, update.SelectPlan)
+	require.Equal(t, []int{1, 0}, scalarTreeCounts)
+	require.Equal(t, []int{1, 0}, registrySizes)
 }
 
 func TestSchemaCacheSizeVar(t *testing.T) {
