@@ -147,41 +147,6 @@ impl ApproximateTableCountCache {
         }
     }
 
-    /// Looks up a key or loads/inserts one value on a miss.
-    ///
-    /// `now` is supplied by the caller so this state can be tested without
-    /// sleeping and can share the session's statement clock when integrated.
-    pub fn get_or_load<F>(&mut self, key: impl Into<String>, now: Duration, load: F) -> (f64, bool)
-    where
-        F: FnOnce() -> (f64, bool),
-    {
-        let key = key.into();
-        if let Some(entry) = self.entries.get(&key).copied() {
-            if now < entry.expires_at {
-                self.touch(&key);
-                return (entry.value, true);
-            }
-            self.entries.remove(&key);
-            self.remove_from_lru(&key);
-        }
-
-        let (value, has_pd) = load();
-        if self.capacity != 0 {
-            self.remove_from_lru(&key);
-            while self.entries.len() >= self.capacity {
-                let Some(oldest) = self.lru.pop_front() else {
-                    break;
-                };
-                self.entries.remove(&oldest);
-            }
-            let expires_at = now.checked_add(self.ttl).unwrap_or(Duration::MAX);
-            self.entries
-                .insert(key.clone(), CacheEntry { value, expires_at });
-            self.lru.push_back(key);
-        }
-        (value, has_pd)
-    }
-
     /// Reads one unexpired cached value and refreshes its LRU position.
     pub fn get(&mut self, key: &str, now: Duration) -> Option<f64> {
         let entry = self.entries.get(key).copied()?;
@@ -226,35 +191,6 @@ impl ApproximateTableCountCache {
             .map(|entry| entry.expires_at.saturating_sub(now))
             .min()
             .unwrap_or(self.ttl)
-    }
-
-    /// Runs the source key derivation and cache lookup for one table.
-    pub fn get_or_load_table<F>(
-        &mut self,
-        now: Duration,
-        table_id: i64,
-        db_name: &str,
-        table_name: &str,
-        partition_name: &str,
-        load: F,
-    ) -> (f64, bool)
-    where
-        F: FnOnce() -> (f64, bool),
-    {
-        let key = approximate_table_count_key(table_id, db_name, table_name, partition_name);
-        self.get_or_load(key, now, load)
-    }
-
-    /// Returns the number of currently stored entries.
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
-
-    /// Returns whether no entries are currently stored.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
     }
 
     fn touch(&mut self, key: &str) {

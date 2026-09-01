@@ -40,6 +40,15 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: re-audited the complete Go-master
+  `pkg/executor/internal/pdhelper` package (four artifacts, 288 lines),
+  including PD-region and exact-count fallback, process-global TTL/LRU cache,
+  cleanup lifecycle, failpoint/goleak harness, expiry tests, and the two-shard
+  Bazel target. Rust already owns the production cache and cluster provider;
+  removed the uncalled Rust-only public `get_or_load*`, `len`, and `is_empty`
+  helpers and rewrote source-derived tests through `get`/`insert`. Receipt:
+  `receipts/executor_internal_pdhelper.md`.
+
 - 2026-09-01: audited the complete Go-master
   `pkg/executor/internal/testutil` package (six artifacts, 909 lines),
   including all aggregate/limit/sort/window defaults, mock physical-plan and

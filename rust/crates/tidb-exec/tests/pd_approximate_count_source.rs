@@ -27,10 +27,13 @@ fn load_count(
     partition_name: &str,
     miss_count: &mut usize,
 ) -> (f64, bool) {
-    cache.get_or_load_table(now, table_id, db_name, table_name, partition_name, || {
-        *miss_count += 1;
-        (1.0, true)
-    })
+    let key = approximate_table_count_key(table_id, db_name, table_name, partition_name);
+    if let Some(value) = cache.get(&key, now) {
+        return (value, true);
+    }
+    *miss_count += 1;
+    cache.insert(key, now, 1.0);
+    (1.0, true)
 }
 
 #[test]
@@ -169,8 +172,8 @@ fn cleanup_worker_primitives_delete_expired_entries_at_the_next_deadline() {
         Duration::from_millis(60)
     );
     cache.delete_expired(Duration::from_millis(110));
-    assert_eq!(cache.len(), 1);
+    assert_eq!(cache.get("first", Duration::from_millis(110)), None);
     assert_eq!(cache.get("second", Duration::from_millis(110)), Some(2.0));
     cache.delete_expired(Duration::from_millis(140));
-    assert!(cache.is_empty());
+    assert_eq!(cache.get("second", Duration::from_millis(140)), None);
 }
