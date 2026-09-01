@@ -70,6 +70,7 @@ tidb-vardef = { path = "../tidb-vardef" }
 tidb-sqlexec = { path = "../tidb-sqlexec" }
 tidb-syssession = { path = "../tidb-syssession" }
 tidb-resolve = { path = "../tidb-resolve" }
+tidb-resourcemanager = { path = "../tidb-resourcemanager" }
 serde_json = { workspace = true }
 tidb-config = { path = "../tidb-config" }
 toml.workspace = true

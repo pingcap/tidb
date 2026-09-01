@@ -41,6 +41,7 @@ pub mod channel;
 pub mod checksum;
 pub mod column_mapping;
 pub mod context;
+pub mod cpu;
 pub mod dbterror;
 pub mod disjointset;
 pub mod disk;

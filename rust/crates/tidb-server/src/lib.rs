@@ -219,12 +219,14 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
             .set_repair_table_list(global_config.repair_table_list.clone());
     }
     tidb_util::printer::print_tidb_info();
+    start_system_time_monitor();
+    let spill_storage = open_spill_storage(&config)?;
+    let memory_arbitrator = MemoryArbitratorAuthority::open(&config)?;
+    tidb_resourcemanager::instance_resource_manager().start();
+    let _resource_manager_cleanup = ResourceManagerCleanup;
     if config.store_kind == node_config::StoreKind::Unistore {
         // Go: `session.RegisterStore("unistore", mockstore.EmbedUnistoreDriver{})`
         // -- the same node code over the embedded store, no PD dialed.
-        start_system_time_monitor();
-        let spill_storage = open_spill_storage(&config)?;
-        let memory_arbitrator = MemoryArbitratorAuthority::open(&config)?;
         if config.cluster_session {
             return unistore_node::run_unistore_cluster_session(
                 config,
@@ -238,9 +240,6 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
             memory_arbitrator.arbitrator(),
         );
     }
-    start_system_time_monitor();
-    let spill_storage = open_spill_storage(&config)?;
-    let memory_arbitrator = MemoryArbitratorAuthority::open(&config)?;
     if config.cluster_session {
         return run_cluster_session_node_with_spill(
             config,
@@ -305,9 +304,17 @@ struct TempDirCleanup;
 
 struct CgroupMonitorCleanup;
 
+struct ResourceManagerCleanup;
+
 impl Drop for CgroupMonitorCleanup {
     fn drop(&mut self) {
         tidb_util::cgmon::stop_cgroup_monitor();
+    }
+}
+
+impl Drop for ResourceManagerCleanup {
+    fn drop(&mut self) {
+        tidb_resourcemanager::instance_resource_manager().stop();
     }
 }
 

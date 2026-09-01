@@ -3816,6 +3816,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-resourcemanager"
+version = "0.0.0"
+dependencies = [
+ "crossbeam-channel",
+ "fail",
+ "getrandom 0.3.4",
+ "tidb-util",
+ "tracing",
+]
+
+[[package]]
 name = "tidb-schemacmp"
 version = "0.0.0"
 dependencies = [
@@ -3879,6 +3890,7 @@ dependencies = [
  "tidb-proto",
  "tidb-protocol",
  "tidb-resolve",
+ "tidb-resourcemanager",
  "tidb-schemaver",
  "tidb-session",
  "tidb-sqlexec",

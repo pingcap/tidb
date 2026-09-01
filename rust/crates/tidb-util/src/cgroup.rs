@@ -478,6 +478,10 @@ fn memory_usage_at(root: &Path) -> io::Result<u64> {
 /// Returns CPU usage and quota for the current process.
 #[cfg(target_os = "linux")]
 pub fn get_cgroup_cpu() -> io::Result<CpuUsage> {
+    #[cfg(feature = "failpoints")]
+    fail::fail_point!("GetCgroupCPUErr", |_| Err(io::Error::other(
+        "mockAddBatchDDLJobsErr"
+    )));
     let mut usage = cgroup_cpu_at(Path::new("/"), true)?;
     usage.num_cpu = logical_cpu_count()?;
     Ok(usage)
@@ -503,6 +507,10 @@ pub(crate) fn logical_cpu_count() -> io::Result<usize> {
 /// Returns the platform CPU count without a cgroup quota on non-Linux hosts.
 #[cfg(not(target_os = "linux"))]
 pub fn get_cgroup_cpu() -> io::Result<CpuUsage> {
+    #[cfg(feature = "failpoints")]
+    fail::fail_point!("GetCgroupCPUErr", |_| Err(io::Error::other(
+        "mockAddBatchDDLJobsErr"
+    )));
     Ok(CpuUsage {
         num_cpu: logical_cpu_count()?,
         ..CpuUsage::default()

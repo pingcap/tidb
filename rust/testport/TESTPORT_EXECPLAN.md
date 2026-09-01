@@ -36,6 +36,19 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- [x] (2026-08-31) Completed the coupled pinned Go package batch
+  `pkg/util/cpu`, `pkg/resourcemanager/util`,
+  `pkg/resourcemanager/scheduler`, and root `pkg/resourcemanager`. Added the
+  shared process CPU observer/EMA metric and CPU-count failpoint, exact sharded
+  pool registry and scheduler contracts, process-global resource-manager
+  lifecycle, ordinary server integration, and all four source test identities.
+  The batch was kept atomic because the CPU failpoint source test consumes the
+  scheduler and test pool. Complete inventories, native integration decisions,
+  and WIP evidence are in `receipts/util_cpu.md`,
+  `receipts/resourcemanager_util.md`,
+  `receipts/resourcemanager_scheduler.md`, and
+  `receipts/resourcemanager.md`.
+
 - [x] (2026-08-31) Completed pinned Go `pkg/util/cgmon` as one three-artifact
   package. Added the process-global immediate/ten-second monitor, exact shared
   gauges, affinity-visible CPU and host/cgroup memory selection, persistent
