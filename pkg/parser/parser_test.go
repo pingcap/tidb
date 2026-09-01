@@ -4334,6 +4334,55 @@ func TestDDL(t *testing.T) {
 		{"CREATE TABLE t (a int) INSERT_METHOD=FIRST", true, "CREATE TABLE `t` (`a` INT) INSERT_METHOD = FIRST"},
 	}
 	RunTest(t, table, false, false)
+
+	t.Run("unsupported MySQL create table option", func(t *testing.T) {
+		const (
+			sql           = "CREATE TABLE `t` (`id` BIGINT NOT NULL) START TRANSACTION"
+			withEngineSQL = "CREATE TABLE t (a INT) ENGINE=InnoDB START TRANSACTION"
+		)
+
+		p := parser.New()
+		_, err := p.ParseOneStmt(sql, "", "")
+		require.Error(t, err)
+
+		p.SetParserConfig(parser.ParserConfig{
+			EnableWindowFunction:         true,
+			EnableStrictDoubleTypeCheck:  true,
+			EnableUnsupportedMySQLSyntax: true,
+		})
+		stmt, err := p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+		createStmt, ok := stmt.(*ast.CreateTableStmt)
+		require.True(t, ok)
+		require.Len(t, createStmt.Options, 1)
+		require.Equal(t, ast.TableOptionStartTransaction, createStmt.Options[0].Tp)
+
+		var sb strings.Builder
+		require.NoError(t, stmt.Restore(NewRestoreCtx(DefaultRestoreFlags, &sb)))
+		require.Equal(t, "CREATE TABLE `t` (`id` BIGINT NOT NULL) START TRANSACTION", sb.String())
+		restoredStmt, err := p.ParseOneStmt(sb.String(), "", "")
+		require.NoError(t, err)
+		CleanNodeText(stmt)
+		CleanNodeText(restoredStmt)
+		require.Equal(t, stmt, restoredStmt)
+
+		stmt, err = p.ParseOneStmt(withEngineSQL, "", "")
+		require.NoError(t, err)
+		createStmt, ok = stmt.(*ast.CreateTableStmt)
+		require.True(t, ok)
+		require.Len(t, createStmt.Options, 2)
+		require.Equal(t, ast.TableOptionEngine, createStmt.Options[0].Tp)
+		require.Equal(t, ast.TableOptionStartTransaction, createStmt.Options[1].Tp)
+
+		_, err = p.ParseOneStmt("ALTER TABLE t START TRANSACTION", "", "")
+		require.Error(t, err)
+		_, err = p.ParseOneStmt("CREATE SEQUENCE s START TRANSACTION", "", "")
+		require.Error(t, err)
+
+		p.Reset()
+		_, err = p.ParseOneStmt(sql, "", "")
+		require.Error(t, err)
+	})
 }
 
 func TestHintError(t *testing.T) {
