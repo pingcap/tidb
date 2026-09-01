@@ -337,17 +337,19 @@ func appendPoints2Ranges(sctx *rangerctx.RangerContext, origin Ranges, rangePoin
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
-	pointRangeCount := 0
-	for _, originRange := range origin {
-		if originRange.IsPoint(sctx) {
-			pointRangeCount++
+	if rangeMaxCount > 0 {
+		pointRangeCount := 0
+		for _, originRange := range origin {
+			if originRange.IsPoint(sctx) {
+				pointRangeCount++
+			}
 		}
-	}
-	nonPointRangeCount := len(origin) - pointRangeCount
-	newPointCount := len(rangePoints) / 2
-	if rangeCountProductAndSumExceedsLimit(rangeMaxCount, pointRangeCount, newPointCount, nonPointRangeCount) {
-		sctx.RecordRangeFallbackByCount(rangeMaxCount)
-		return origin, true, nil
+		nonPointRangeCount := len(origin) - pointRangeCount
+		newPointCount := len(rangePoints) / 2
+		if rangeCountProductAndSumExceedsLimit(rangeMaxCount, pointRangeCount, newPointCount, nonPointRangeCount) {
+			sctx.RecordRangeFallbackByCount(rangeMaxCount)
+			return origin, true, nil
+		}
 	}
 	// Estimate whether rangeMaxSize will be exceeded first before appending points to ranges.
 	if rangeMaxSize > 0 && estimateMemUsageForAppendPoints2Ranges(origin, rangePoints) > rangeMaxSize {
