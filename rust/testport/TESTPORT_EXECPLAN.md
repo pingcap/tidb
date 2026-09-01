@@ -3738,6 +3738,11 @@ For each bounded behavior cluster:
   on current and exact Go master; the branch's older parser AST keeps
   `view_import` on `Accept` until the in-place visitor migration lands as one
   dependency-closed parser change.
+- `pkg/lightning/tikv` is already byte-identical to Go master across its Pebble
+  SST writer, MVCC/range property collectors, TiKV RPC/version helpers, tests,
+  BUILD metadata, and both binary SST fixtures. Related Rust TiKV/BR code does
+  not close this Lightning-specific dependency graph, so the package remains
+  an explicit ownership boundary without a speculative facade.
 
 ## Outcomes & Retrospective
 
