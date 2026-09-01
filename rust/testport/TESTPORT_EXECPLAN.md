@@ -40,6 +40,13 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-01: refreshed the complete Go-master `pkg/util/compress` inventory
+  (two artifacts, 45 lines) and corrected the prior receipt's Bazel line count
+  and authority metadata. The package is unchanged from the implementation
+  batch; pooled gzip ownership, statistics block integration, four focused
+  stream regressions, and the explicit ingest-control boundary remain intact.
+  Updated `receipts/util_compress_audit.md` with current-master hashes.
+
 - 2026-09-01: refreshed the complete Go-master `pkg/util/nocopy` inventory
   (two artifacts, 32 lines) and confirmed it is unchanged from the prior
   pinned audit. Rust's zero-sized `tidb-util::nocopy::NoCopy` marker and
