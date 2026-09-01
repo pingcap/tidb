@@ -3151,6 +3151,14 @@ For each bounded behavior cluster:
       hygiene pass; `make bazel_prepare` was attempted but is unavailable
       locally because Bazel is not installed. Details are in
       `receipts/ttl_ttlworker.md`.
+- [x] Audit the complete Go-master `pkg/table/tblsession` package: inventory
+      all three source, test, and BUILD artifacts (386 lines), confirm the
+      deleted Rust seed is an unwired partial carrier, and record the explicit
+      session/DML dependency boundary in its receipt and ExecPlan.
+- [x] Run the Ready validation profile for `pkg/table/tblsession`: tagged Go
+      package tests, repository lint, and diff hygiene pass. No source or BUILD
+      artifact changed, so Bazel preparation and Rust cargo checks were not
+      applicable. Details are in `receipts/table_tblsession.md`.
 - [x] Complete the Go-master `pkg/util/codec` delta: inventory all 12 source,
       test, benchmark, harness, and build artifacts; remove Rust-only encoder
       value/hash methods; update consumers; add the raw-value regression; and
