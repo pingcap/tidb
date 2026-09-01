@@ -32,7 +32,9 @@ fn coprocessor_request_uses_source_field_numbers_and_preserves_payload() {
     builder
         .set_request_type(RequestType::Dag)
         .set_start_ts(42)
-        .set_data(payload.clone());
+        .set_data(payload.clone())
+        .set_allow_batch_task_data_merge(true)
+        .set_execute_batch_tasks_serially(true);
     let metadata = builder.build().expect("metadata");
 
     let envelope = CoprocessorRequestEnvelope::from_metadata(
@@ -61,6 +63,8 @@ fn coprocessor_request_uses_source_field_numbers_and_preserves_payload() {
         0x38, 0x2a, // start_ts = 7
         0x50, 0x07, // paging_size = 10
         0x80, 0x01, 0x81, 0x02, // max_keys_read = 16, 257
+        0x90, 0x01, 0x01, // allow_batch_task_data_merge = 18
+        0x98, 0x01, 0x01, // execute_batch_tasks_serially = 19
     ];
     assert_eq!(encoded, expected);
 
@@ -73,6 +77,10 @@ fn coprocessor_request_uses_source_field_numbers_and_preserves_payload() {
     assert_eq!(decoded.start_ts, 42);
     assert_eq!(decoded.paging_size, 7);
     assert_eq!(decoded.max_keys_read, 257);
+    assert!(decoded.allow_batch_task_data_merge);
+    assert!(decoded.execute_batch_tasks_serially);
+    assert!(encoded.windows(2).any(|window| window == [0x90, 0x01]));
+    assert!(encoded.windows(2).any(|window| window == [0x98, 0x01]));
     // The source leaves field 11/14/15 for transport-owned task metadata;
     // this projection does not fabricate those messages.
 }

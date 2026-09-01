@@ -75,6 +75,8 @@ message Request {
   string connection_alias = 13;
   uint64 max_keys_read = 16;
   uint64 paging_size_bytes = 17;
+  bool allow_batch_task_data_merge = 18;
+  bool execute_batch_tasks_serially = 19;
 }
 
 // Region projection consumed by resource-group first-key extraction. Field

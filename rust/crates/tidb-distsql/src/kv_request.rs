@@ -103,6 +103,8 @@ impl KvRequestMetadata {
         };
         self.request_source = session.request_source;
         self.store_batch_size = session.store_batch_size as isize;
+        self.allow_batch_task_data_merge = session.allow_batch_task_data_merge;
+        self.execute_batch_tasks_serially = session.execute_batch_tasks_serially;
         self.resource_group_name = session.resource_group_name;
         self.store_busy_threshold_ns =
             (session.store_busy_threshold_ms as i64).wrapping_mul(1_000_000);

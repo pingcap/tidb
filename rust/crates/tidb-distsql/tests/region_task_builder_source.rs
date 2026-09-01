@@ -666,6 +666,37 @@ fn store_batching_requires_a_leader_selected_peer() {
 }
 
 #[test]
+fn unhinted_store_batching_requires_explicit_merge_opt_in() {
+    let topo = topology(&["", "g", "n", "t", ""]);
+    let mut metadata = request(
+        &["a", "c", "d", "e", "h", "x", "y", "z"],
+        None,
+    )
+    .metadata()
+    .clone();
+    metadata.store_batch_size = 3;
+
+    let unhinted = transport_request(metadata.clone())
+        .build_region_tasks(&topo)
+        .unwrap();
+    assert_eq!(unhinted.len(), 4);
+    assert!(unhinted.iter().all(|task| task.batch_task_list.is_empty()));
+
+    metadata.allow_batch_task_data_merge = true;
+    metadata.execute_batch_tasks_serially = true;
+    let opted_in = transport_request(metadata)
+        .build_region_tasks(&topo)
+        .unwrap();
+    assert_eq!(opted_in.len(), 1);
+    assert_eq!(opted_in[0].batch_task_list.len(), 3);
+    assert_eq!(opted_in[0].row_count_hint, -1);
+    assert!(opted_in[0]
+        .batch_task_list
+        .iter()
+        .all(|task| task.row_count_hint == -1));
+}
+
+#[test]
 fn store_batch_children_preserve_each_region_bucket_version_on_wire() {
     let topo = vec![
         bucket_region(1, 101, &["", "n"]),

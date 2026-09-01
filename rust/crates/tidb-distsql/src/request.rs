@@ -46,6 +46,10 @@ pub struct ReadRequestMetadata {
     pub request_source: RequestSource,
     /// Store batch size.
     pub store_batch_size: u64,
+    /// Whether unhinted store batching may merge child data into the main response.
+    pub allow_batch_task_data_merge: bool,
+    /// Whether batched store tasks should execute serially.
+    pub execute_batch_tasks_serially: bool,
     /// Resource group name.
     pub resource_group_name: String,
     /// Load-based replica-read threshold in milliseconds.
@@ -149,6 +153,8 @@ impl ReadRequestBuilder {
             explicit_source_type: context.explicit_request_source_type.clone(),
         };
         self.request.store_batch_size = context.store_batch_size;
+        self.request.allow_batch_task_data_merge = context.allow_batch_task_data_merge;
+        self.request.execute_batch_tasks_serially = context.execute_batch_tasks_serially;
         self.request.resource_group_name = context.resource_group_name.clone();
         self.request.store_busy_threshold_ms = context.load_based_replica_read_threshold_ms;
         self.request.tikv_client_read_timeout_ms = context.tikv_client_read_timeout_ms;

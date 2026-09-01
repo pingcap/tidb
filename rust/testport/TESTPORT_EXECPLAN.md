@@ -1324,7 +1324,7 @@ For each bounded behavior cluster:
       and `receipts/util_rowdecoder_audit.md`; Go tagged tests and Rust owner
       suites pass, including 55 tablecodec, 27 rowcodec, and 11 rowDecoder
       source cases.
-- [ ] Audit the next bounded package cluster by reading the requested Go
+- [x] Audit the next bounded package cluster by reading the requested Go
       `origin/master` first, then fill executable gaps and remove false
       carriers.
 - 2026-09-01: completed the four-artifact Go-master `pkg/autoid_service`
@@ -1335,6 +1335,14 @@ For each bounded behavior cluster:
       the Go mock-domain suite retains its pre-existing schema-bootstrap
       `require.True` failure. The full inventory and explicit etcd/GRPC server
       boundary are recorded in `receipts/autoid_service_audit.md`.
+- 2026-09-01: completed the 15-artifact Go-master `pkg/distsql` inventory
+      (5,455 lines, 126 production methods, 63 test/helper declarations).
+      Implemented the `b1daa76b65` request batching flags through context,
+      immutable KV metadata, coprocessor wire tags 18/19, and explicit
+      unhinted merge opt-in task batching; 252 Rust distsql tests pass (2
+      ignored). Go runtime-stat additions from `bc04813887`/`db35d47066` and
+      the concrete Go coprocessor worker remain explicit dependency boundaries
+      in `receipts/distsql_audit.md`.
 - [ ] Run Ready validation and self-review only when the requested parity scope
       is genuinely complete enough for a final-status claim.
 

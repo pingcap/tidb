@@ -259,6 +259,31 @@ fn test_request_builder_8() {
     );
 }
 
+#[test]
+fn batch_request_options_round_trip_from_context_and_builder() {
+    let mut context = DistSqlContext::new();
+    context.request.store_batch_size = 3;
+    context.request.allow_batch_task_data_merge = true;
+    context.request.execute_batch_tasks_serially = true;
+
+    let request = RequestBuilder::from_context(&context)
+        .build()
+        .expect("context batch options");
+    assert_eq!(request.store_batch_size, 3);
+    assert!(request.allow_batch_task_data_merge);
+    assert!(request.execute_batch_tasks_serially);
+
+    let mut builder = RequestBuilder::new();
+    builder
+        .set_store_batch_size(5)
+        .set_allow_batch_task_data_merge(true)
+        .set_execute_batch_tasks_serially(true);
+    let request = builder.build().expect("builder batch options");
+    assert_eq!(request.store_batch_size, 5);
+    assert!(request.allow_batch_task_data_merge);
+    assert!(request.execute_batch_tasks_serially);
+}
+
 // Go pkg/distsql/request_builder_test.go::TestRequestBuilderKeepsPagingSizeBytesWhenPagingDisabled.
 #[test]
 fn test_request_builder_keeps_paging_size_bytes_when_paging_disabled() {

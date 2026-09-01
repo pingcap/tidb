@@ -357,10 +357,11 @@ pub(crate) fn build_region_tasks(
     if !all_ranges_covered(&sorted_ranges, &tasks) {
         return None;
     }
-    if metadata.store_batch_size > 0 && hints.is_some() {
+    if metadata.store_batch_size > 0 && (hints.is_some() || metadata.allow_batch_task_data_merge) {
         tasks = batch_tasks(
             tasks,
             u64::try_from(metadata.store_batch_size).unwrap_or(u64::MAX),
+            metadata.allow_batch_task_data_merge,
         );
     }
     // Go batches while visiting regions in ascending key order, then reverses
@@ -607,14 +608,18 @@ mod tests {
     }
 }
 
-fn batch_tasks(tasks: Vec<RegionTaskEnvelope>, batch_size: u64) -> Vec<RegionTaskEnvelope> {
+fn batch_tasks(
+    tasks: Vec<RegionTaskEnvelope>,
+    batch_size: u64,
+    allow_unhinted_merge: bool,
+) -> Vec<RegionTaskEnvelope> {
     let batch_size = usize::try_from(batch_size).unwrap_or(usize::MAX).max(1);
     let mut result = Vec::new();
     let mut store_parent = BTreeMap::<u64, usize>::new();
     for (index, mut task) in tasks.into_iter().enumerate() {
         task.task_id = u64::try_from(index + 1).unwrap_or(u64::MAX);
-        let small =
-            task.store_batch_eligible && task.row_count_hint > 0 && task.row_count_hint <= 32;
+        let small = task.store_batch_eligible
+            && (allow_unhinted_merge || (task.row_count_hint > 0 && task.row_count_hint <= 32));
         if !small {
             result.push(task);
             continue;
@@ -640,7 +645,12 @@ fn batch_tasks(tasks: Vec<RegionTaskEnvelope>, batch_size: u64) -> Vec<RegionTas
         parent.store_busy_threshold_ms = 0;
         parent.paging = false;
         parent.paging_size = 0;
-        parent.row_count_hint = parent.row_count_hint.saturating_add(task.row_count_hint);
+        parent.row_count_hint =
+            if allow_unhinted_merge && (parent.row_count_hint <= 0 || task.row_count_hint <= 0) {
+                -1
+            } else {
+                parent.row_count_hint.saturating_add(task.row_count_hint)
+            };
         parent.batch_task_list.push(task);
     }
     result

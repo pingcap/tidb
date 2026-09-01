@@ -440,6 +440,10 @@ pub struct Request {
     pub request_source: RequestSource,
     /// Per-store coprocessor batch size.
     pub store_batch_size: isize,
+    /// Whether a caller accepts child-task data merged into the main response.
+    pub allow_batch_task_data_merge: bool,
+    /// Whether a store should execute batched tasks serially.
+    pub execute_batch_tasks_serially: bool,
     /// Resource-group name.
     pub resource_group_name: String,
     /// Scan/limit size.

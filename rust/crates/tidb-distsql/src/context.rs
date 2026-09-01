@@ -124,6 +124,10 @@ pub struct RequestContext {
     pub explicit_request_source_type: String,
     /// Batch size for store requests.
     pub store_batch_size: u64,
+    /// Whether unhinted store batching may merge child data into the main response.
+    pub allow_batch_task_data_merge: bool,
+    /// Whether batched store tasks should execute serially.
+    pub execute_batch_tasks_serially: bool,
     /// Resource group name.
     pub resource_group_name: String,
     /// Load-based replica-read threshold in milliseconds.
@@ -156,6 +160,8 @@ impl Default for RequestContext {
             request_source_type: String::new(),
             explicit_request_source_type: String::new(),
             store_batch_size: 0,
+            allow_batch_task_data_merge: false,
+            execute_batch_tasks_serially: false,
             resource_group_name: "default".to_owned(),
             load_based_replica_read_threshold_ms: 0,
             tikv_client_read_timeout_ms: 0,
