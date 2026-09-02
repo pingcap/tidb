@@ -1,7 +1,12 @@
 # `pkg/util/codec` — Go-master parity audit
 
+Status: complete dependency-closed audit at the current Go-master authority;
+the package-level value/hash paths now use the source-shaped non-collating
+implementation while legacy encoder methods remain as compatibility wrappers
+for existing in-tree callers.
+
 Comparison source: Go `origin/master` at commit
-`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01).
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02).
 
 ## Complete inventory
 
@@ -27,11 +32,13 @@ functions (including `TestMain`) and six `Benchmark*` functions.
 
 There is no `doc.go`, fixture tree, generated source, or platform-specific Go
 variant. The Bazel target lists exactly the five production files and six test
-files above. Relative to the Rust branch's Go source snapshot (and to the
-historical `b038` receipt's older pin), this current Go-master delta changes
-only `codec.go` and `collation_test.go`: `Encoder` is documented as a
-comparable-key encoder, `EncodeValue`/`HashCode` are package-level only, and
-the obsolete encoder hash-equality assertion is removed.
+files above. Relative to the hparser branch, current Go master changes only
+`codec.go` and `collation_test.go`: `Encoder` is documented as a comparable-key
+encoder, value/hash encoding is package-level and non-collating, and the
+obsolete encoder hash-equality assertion is removed. This checkout keeps
+source-compatible `Encoder.EncodeValue` and `Encoder.HashCode` wrappers for
+the existing `pkg/tablecodec` and benchmark callers; both delegate to the
+same non-collating paths.
 
 ## Rust ownership and parity decision
 
@@ -53,11 +60,10 @@ ordinary package functions, so no second collation-mode behavior remains.
 
 The focused regressions compare a collated string datum with the same raw
 string datum through both `encode_value` and `hash_code`, proving those
-package-level paths do not consult the comparable-key encoder mode. The
-source-derived method-based hash test was deleted because its Go counterpart
-no longer exists; the complete source-derived codec suite continues to cover
-datum hash equality and all collation-aware group/row/column hash paths. A
-follow-up source regression also asserts the raw-byte hash invariant directly.
+package-level paths do not consult the comparable-key encoder mode. The Go
+compatibility assertion additionally proves the retained method wrapper emits
+the same raw value bytes. The complete source-derived codec suite continues to
+cover datum hash equality and all collation-aware group/row/column hash paths.
 
 ## Validation
 
@@ -66,6 +72,7 @@ continuing.
 
 - Go source diff against the fetched `origin/master` commit above and complete
   artifact inventory — passed.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex go test ./pkg/util/codec -run '^TestEncoderNewCollationEnabled$' -count=1` — passed, including the package-level/non-collating value guard.
 - `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/codec -count=1` — passed.
 - `cargo +nightly-2026-08-22 test --offline --locked -p tidb-codec --test all -- --test-threads=1` — 163 passed.
 - Focused `codec_package_source` run including the raw-byte hash regression — 63 passed.
@@ -76,8 +83,9 @@ continuing.
 - `cargo +nightly-2026-08-22 fmt --all -- --check`, `make lint`, and
   `git diff --check` — passed.
 
-No Go or Bazel file changed, so `make bazel_prepare` is not required. A
-broader `tidb-unistore --all-targets` check was not used as a package gate:
+Go production and test files changed, but no import section, new file, or Bazel
+target changed, so `make bazel_prepare` is not required by the repository gate.
+A broader `tidb-unistore --all-targets` check was not used as a package gate:
 its existing `InProcessClient`/`SynchronousBatchRequestDispatcher` trait
 failure is outside this codec change.
 
