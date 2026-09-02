@@ -26,3 +26,9 @@ func TestIsReservedID(t *testing.T) {
 	require.False(t, IsReservedID(ReservedGlobalIDLowerBound))
 	require.False(t, IsReservedID(123))
 }
+
+func TestPrivilegeTableDefinitionsIncludeOperateView(t *testing.T) {
+	require.Contains(t, CreateUserTable, "Operate_view_priv")
+	require.Contains(t, CreateDBTable, "Operate_view_priv")
+	require.Contains(t, CreateTablesPrivTable, "'Operate View'")
+}

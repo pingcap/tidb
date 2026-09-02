@@ -4381,6 +4381,17 @@ For each bounded behavior cluster:
   package change but is locally blocked by the missing Bazel executable.
   Details are in `receipts/meta_starter_bootstrap.md`.
 
+- 2026-09-02: completed a bounded `pkg/meta/metadef` schema-definition batch
+  against Go master `78cac443a4f46c13bfe27eb247b5c80657952547`. The complete
+  seven-artifact, 1,260-line direct inventory was read before editing. Go now
+  declares `Operate_view_priv` in the user and database privilege tables and
+  `Operate View` in the table-privilege SET, matching the existing Rust
+  `tidb-metadef` owner. A focused DDL contract regression and the full Go
+  package suite pass; the required Bazel preparation gate remains blocked by
+  the unavailable local executable. Materialized-view table constants and
+  upgraded-cluster migration remain explicit `pkg/session` boundaries. See
+  `receipts/meta_metadef_operate_view.md`.
+
 ## Decision Log
 
 - Decision: keep top-level `pkg/util/logutil` on the existing
