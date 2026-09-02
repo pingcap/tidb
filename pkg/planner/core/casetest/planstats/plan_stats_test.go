@@ -378,6 +378,7 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 		require.NoError(t, err)
 		testKit.MustExec("set global tidb_stats_load_pseudo_timeout=false")
 		nodeW := resolve.NewNodeW(stmt)
+		require.NoError(t, executor.ResetContextOfStmt(ctx, stmt))
 		_, _, err = planner.Optimize(context.TODO(), ctx, nodeW, is)
 		require.Error(t, err) // fail sql for timeout when pseudo=false
 
@@ -391,6 +392,7 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 		testKit.MustExec(sql)
 		failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/assertSyncWaitFailed")
 
+		require.NoError(t, executor.ResetContextOfStmt(ctx, stmt))
 		plan, _, err := planner.Optimize(context.TODO(), ctx, nodeW, is)
 		require.NoError(t, err) // not fail sql for timeout when pseudo=true
 		switch pp := plan.(type) {
