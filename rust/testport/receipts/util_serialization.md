@@ -1,18 +1,19 @@
 # `pkg/util/serialization` — complete Go-master package transcreation
 
-Status: Ready for this atomic package batch. This is not a repository-wide
-parity or PR-readiness claim.
+Status: complete dependency-closed audit at the current Go-master authority;
+the production vector framing already matches Go master. The hparser branch
+retains a focused Go regression and test target for that behavior.
+This is not a repository-wide parity or PR-readiness claim.
 
 Go source: `origin/master`
 `c6054025ed4c32ab3672a2a24ea46892714d21ec`.
 
 Rust comparison branch: `origin/hparser-integration`
-`5a005978dda57fbb3373a303660ea0a5f7990b38`.
+`d663c50ff1767cd20bf335dc1f0ea5232dfd08fc`.
 
 ## Complete inventory
 
-The package now has four production artifacts plus one focused regression test,
-all read in full:
+The Go-master package has four artifacts, all read in full:
 
 - `common_util.go` — 52 lines; native-width constants and the nine interface
   type tags.
@@ -22,16 +23,20 @@ all read in full:
 - `deserialization_util.go` — 248 lines; `PosAndBuf`, reset/cursor helpers,
   native primitive and aggregate-value decoders, interface dispatch, and
   Go-master `DeserializeVectorFloat32`.
-- `BUILD.bazel` — 27 lines; one public `go_library` and a focused `go_test`
-  target over the production files and vector regression.
-- `serialization_util_test.go` — 39 lines; empty and non-empty vector framing
-  round-trip, value equality, and cursor-consumption assertions.
+- `BUILD.bazel` — 16 lines; one public `go_library` over the production files.
+
+The hparser checkout additionally retains `serialization_util_test.go` (39
+lines) and a `go_test` target in `BUILD.bazel` as the focused regression
+introduced by the earlier parity batch. These two branch-only artifacts are
+read in full as part of this audit and are intentionally kept to protect the
+restored production behavior.
 
 There is no `doc.go`, test harness, benchmark, fuzz test, fixture or
 `testdata`, generated source/input, platform/build-tag variant, README, or
-ownership artifact. The Go-master source delta is exactly the two vector
-functions; this batch restores that delta and adds the focused test/build
-target without changing the serialization format.
+ownership artifact. The production vector functions are present in current Go
+master and the Rust owner. Relative to Go master, the only current source delta
+is removal of the branch-only regression test and its Bazel target; no
+production serialization format differs.
 
 ## Function inventory and Rust mapping
 
@@ -76,9 +81,8 @@ Profile: Ready. Commands run from the repository root:
 
 - `git ls-tree -r --name-only origin/master -- pkg/util/serialization`, full
   file reads, declaration inventory, and `git diff origin/hparser-integration
-  origin/master -- pkg/util/serialization` — passed; confirmed the four
-  production artifacts plus focused regression, the exact two-function
-  Go-master delta, and the added build target.
+  origin/master -- pkg/util/serialization` — passed; confirmed four
+  Go-master artifacts and the branch-only regression/target removal.
 - Before the fix, the focused test failed to compile because both vector
   functions were undefined. After restoring the exact Go-master methods,
   `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH
@@ -103,10 +107,8 @@ Profile: Ready. Commands run from the repository root:
   GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 make lint` — passed.
 - `git diff --check` — passed.
 
-- `make bazel_prepare` was required because this batch adds a Go test target and
-  changes the Bazel file. With the repository Go toolchain it was attempted and
-  failed before generation because `bazel` is not installed (`make: bazel: No
-  such file or directory`).
+- No Go or Bazel files changed in this receipt refresh, so `make bazel_prepare`
+  is not required.
 
 ## Risks and unverified scope
 
