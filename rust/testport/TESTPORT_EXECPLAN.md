@@ -5598,6 +5598,13 @@ For each bounded behavior cluster:
   `D6D0CEC4D2BB`; direct `NewFunction` and AST-rewriter construction share the
   same wrapper, with inventory and fail-before evidence in
   `rust/testport/receipts/b073.md`.
+- The `pkg/planner/core/rule_eliminate_unionall_dual_item.go` source-shaped
+  adapter now preserves Go's narrow `planChanged` result (dropping a branch
+  from a still-nonempty union is not itself a change) and directly indexes a
+  projection's first child, removing the Rust-only safe fallback. The planner
+  crate and companion difftest inventories, pre-fix failures, focused
+  regressions, and the aggregate-target API blocker are recorded in
+  `rust/testport/receipts/planner_rule_child_access.md`.
 
 ## Outcomes & Retrospective
 
