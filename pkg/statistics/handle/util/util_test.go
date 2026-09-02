@@ -15,6 +15,7 @@
 package util_test
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -27,6 +28,16 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
+
+func TestExecWithOptsWithCtxForwardsCancellation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, _, err := util.ExecWithOptsWithCtx(ctx, tk.Session(), nil, "select 1")
+	require.ErrorIs(t, err, context.Canceled)
+}
 
 type partitionItemLookupForbiddenInfoSchema struct {
 	infoschema.InfoSchema

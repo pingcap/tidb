@@ -114,4 +114,17 @@ was not required.
 - Performance: one additional global-variable read and session update matches
   Go master; the stale extra merge-concurrency read was removed.
 - Broad integration and RealTiKV suites were not run because this package's
-  behavior is covered by its package, consumer, and server compile gates.
+behavior is covered by its package, consumer, and server compile gates.
+
+## 2026-09-02 Go-master source restoration
+
+Against fetched Go master `78cac443a4f46c13bfe27eb247b5c80657952547`, the
+working branch lacked the explicit-context `ExecWithOptsWithCtx` entry point
+and the ordered analyze-store-batch refresh. The utility source now forwards
+the caller context to the restricted executor, moves the timeout failpoint to
+the context-aware row boundary, refreshes `tidb_analyze_store_batch_size`
+immediately after `tidb_analyze_version`, and removes the stale
+Rust-only merge-concurrency mutation. `TestExecWithOptsWithCtxForwardsCancellation`
+and the full failpoint-wrapped Go package suite pass in the detached
+Go-master worktree. The current branch's transient dependency compile failures
+are from the unrelated in-progress `pkg/distsql`/`pkg/execdetails` synchronization.
