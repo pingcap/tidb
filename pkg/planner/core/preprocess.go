@@ -166,6 +166,7 @@ const (
 	// rename table, alter table add foreign key, alter table in prepare stmt, and BR restore.
 	// TODO need a better name to clarify it's meaning
 	inCreateOrDropTable
+	inCreateView
 	// parentIsJoin is set when visiting node's parent is join.
 	parentIsJoin
 	// inRepairTable is set when visiting a repair table statement.
@@ -264,6 +265,9 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.stmtTp = TypeDelete
 	case *ast.SelectStmt:
 		p.stmtTp = TypeSelect
+		if p.flag&inCreateView != 0 && node.LockInfo != nil {
+			node.LockInfo.LockType = ast.SelectLockNone
+		}
 		if node.With != nil {
 			p.preprocessWith.cteStack = append(p.preprocessWith.cteStack, node.With.CTEs)
 		}
@@ -292,7 +296,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkCreateTableGrammar(node)
 	case *ast.CreateViewStmt:
 		p.stmtTp = TypeCreate
-		p.flag |= inCreateOrDropTable
+		p.flag |= inCreateOrDropTable | inCreateView
 		p.checkCreateViewGrammar(node)
 		p.checkCreateViewWithSelectGrammar(node)
 	case *ast.DropTableStmt:
@@ -638,7 +642,7 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		p.checkAutoIncrement(x)
 		p.checkContainDotColumn(x)
 	case *ast.CreateViewStmt:
-		p.flag &= ^inCreateOrDropTable
+		p.flag &= ^(inCreateOrDropTable | inCreateView)
 	case *ast.DropTableStmt, *ast.AlterTableStmt, *ast.RenameTableStmt:
 		p.flag &= ^inCreateOrDropTable
 	case *driver.ParamMarkerExpr:
