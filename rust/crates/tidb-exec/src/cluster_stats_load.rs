@@ -68,7 +68,8 @@ use tidb_stats::cmsketch::{
 };
 use tidb_stats::histogram::{Bucket, Histogram};
 use tidb_stats::{
-    ColAndIdxExistenceMap, Column, ColumnInfo, HistColl, Index, IndexInfo, StatsLoadedStatus, Table,
+    ColAndIdxExistenceMap, Column, ColumnInfo, HistColl, Index, IndexInfo, StatsLoadedStatus,
+    Table, VERSION_2,
 };
 use tidb_stats_handle_cache::StatsMetaRow;
 
@@ -1204,6 +1205,68 @@ impl ClusterStatsLoader {
             self.load_item_payload(snapshot, table_id, &mut item, column_type)?;
         }
         Ok(Some(item))
+    }
+
+    /// Reads one column's distribution as Go
+    /// `storage.ReadColumnDistributionStats` does: metadata, TopN, and
+    /// histogram payload all come from the caller's one snapshot.  Analyze
+    /// V1 metadata intentionally does not read the V2 payload tables, while
+    /// the returned value is marked fully loaded just like Go's temporary
+    /// `statistics.Column`.
+    pub fn load_column_distribution_stats<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        table_id: i64,
+        column_id: i64,
+        table_info: &TableInfo,
+        column_type: &FieldType,
+    ) -> Result<Option<Column>, SystemTableError> {
+        let Some(mut item) = self.load_item(
+            snapshot,
+            table_id,
+            false,
+            column_id,
+            Some(column_type),
+            false,
+        )?
+        else {
+            return Ok(None);
+        };
+        if item.histogram.null_count < 0 {
+            return Err(SystemTableError::Decode {
+                name: self.histograms.name().to_owned(),
+                detail: format!(
+                    "negative null count {} for physical table {}, column {}({})",
+                    item.histogram.null_count,
+                    table_id,
+                    table_info
+                        .cols()
+                        .iter_deref()
+                        .find_map(|column| {
+                            let column = column.read();
+                            (column.id == column_id).then(|| column.name.lowercase().to_owned())
+                        })
+                        .unwrap_or_default(),
+                    column_id,
+                ),
+            });
+        }
+        if item.stats_ver == VERSION_2 {
+            let prefix = [Datum::Int(table_id), Datum::Int(0), Datum::Int(column_id)];
+            // Go reads TopN before histogram buckets and returns immediately
+            // on that error, so a failed TopN read must not spend the bucket
+            // scan or expose a partially populated column.
+            let topn = self.load_topn_prefixed(snapshot, &prefix)?;
+            item.topn =
+                decode_topn_rows(topn.get(&(false, column_id)).map_or(&[][..], Vec::as_slice));
+            let column_types = BTreeMap::from([(column_id, column_type.clone())]);
+            item.histogram.buckets = self
+                .load_buckets_prefixed(snapshot, &prefix, &column_types)?
+                .remove(&(false, column_id))
+                .unwrap_or_default();
+        }
+        item.load_status = StatsLoadedStatus::full_load();
+        Ok(item.to_column(table_id, table_info))
     }
 
     /// Go asynchronous item loading's payload phase after

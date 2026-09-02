@@ -1,28 +1,29 @@
 # `pkg/statistics/handle/storage` package audit
 
 Reference: TiDB Go commit
-`e2788410d8d696605e8cb002585877a063ccc909`.
+`c6054025ed4c32ab3672a2a24ea46892714d21ec`.
 
 ## Complete Go inventory
 
-The package has 11 artifacts and 4,493 lines. Every artifact was read before
+The package has 12 artifacts and 5,051 lines. Every artifact was read before
 the Rust decision.
 
-| Artifact | Lines | Git blob |
-| --- | ---: | --- |
-| `BUILD.bazel` | 83 | `2eaed0a5e560f604fc51f90106f8ab09036db11b` |
-| `dump_test.go` | 707 | `cbfb3f574b752ad124ea1c55d323b0b80856f06d` |
-| `gc.go` | 362 | `5409d0517ee04b153b4b2e51f533f6bd2b045cea` |
-| `gc_test.go` | 159 | `5c09443c9e385bbab586975242fd63afc4768980` |
-| `json.go` | 341 | `2e13988ad8198164e629a911205961da908cfc5a` |
-| `read.go` | 910 | `fb759e067972a9e0d38761fa64d0c6685ece28b2` |
-| `read_test.go` | 240 | `2a6e3942bf888a79676ffb7fb3170a35788465ed` |
-| `save.go` | 579 | `f671304687b40541f5423394c33cc7c903097ba9` |
-| `stats_read_writer.go` | 689 | `bd9bc956407975c29d440614580e4dc95f946ada` |
-| `stats_read_writer_test.go` | 226 | `fa755c995519b1ad2a4f7f468308b00d85c5e18e` |
-| `update.go` | 197 | `0db14574eda367605d4d3b4df9c6d649007833b5` |
+| Artifact | Lines | Git blob | SHA-256 |
+| --- | ---: | --- | --- |
+| `BUILD.bazel` | 85 | `10ec62a5ebc6f674654b2e50718d7bd73ba5386c` | `496fbf4798e97f4bc76be95fc0edcd28f373bc70eb30b44acac3db9b4771e023` |
+| `dump_test.go` | 707 | `cbfb3f574b752ad124ea1c55d323b0b80856f06d` | `c01109ba99aba2f490dc01b3ae45a2258737d93190d7287fc4fcdfaf7778cceb` |
+| `gc.go` | 362 | `5409d0517ee04b153b4b2e51f533f6bd2b045cea` | `e9a7c86922f22a5ce92efa375e69812fa1c1b585a95d6db2fcdf4c7a65d18b2f` |
+| `gc_test.go` | 159 | `5c09443c9e385bbab586975242fd63afc4768980` | `931b7e88a43ec6cfe3f84a09f1f3b97ade646e3de7efe874235cd98b0645ba71` |
+| `json.go` | 341 | `2e13988ad8198164e629a911205961da908cfc5a` | `c495fa76a7efb5d37875a409d7ac3acdcfb2f0bae726f430ffe2be3e8fa6798d` |
+| `read.go` | 1,080 | `eca8eaeffd90d958c304719b5a4ea0c67a74a118` | `e677e16c951eb55190d863d6d7535ab50caa39ed50d0e190421ce14b8a0260fe` |
+| `read_test.go` | 402 | `50bde01f6ca0602dad7ba1c030b0df131d92253a` | `d8b66ef6e8636c51f21928b6eb747f8515baaa1ec93376143b10d0323eb1c875` |
+| `save.go` | 579 | `f671304687b40541f5423394c33cc7c903097ba9` | `ac475156d5654e1e867817bd9f73c828380d55f5396dfaf76aa98ddaeb524adf` |
+| `stats_read_writer.go` | 689 | `bd9bc956407975c29d440614580e4dc95f946ada` | `c077f52d1597446ed68e959f825d87c07d45fe4d9e76a84b9f198c3f6850a4ce` |
+| `stats_read_writer_test.go` | 226 | `fa755c995519b1ad2a4f7f468308b00d85c5e18e` | `07ef9f1cb6d9d0eb783a98d9a3c8de4a1e9499817e302e9450dd02f5a21e0347` |
+| `table_size_stats.go` | 224 | `96bf4a86a0f3d33a766a6cdd484a710478a03980` | `4e3dc7536df23b3ccf633308c2bd8b7384f59fdceb7b0a775c8e202143c4dddd` |
+| `update.go` | 197 | `0db14574eda367605d4d3b4df9c6d649007833b5` | `86a99d9ba2002fba85de5c50327b9d0801abf193660fe0d9d53cb2d155d97553` |
 
-The four test files contain 28 tests and no benchmarks. They validate the
+The four test files contain 29 tests and no benchmarks. They validate the
 integrated package through a mock store/domain: transactional save and delta
 update, storage GC, typed histogram/sketch reconstruction, lazy cache loads,
 JSON dump/load and legacy compatibility, partition/global statistics,
@@ -68,6 +69,12 @@ The current package pass closed five source-proven orchestration gaps:
 - `UpdateStatsVersion` now updates every `stats_meta.version` and
   `stats_histograms.version` from one transaction start TS without changing
   `last_stats_histograms_version`.
+- `ReadColumnDistributionStats` now takes one PD timestamp and one read-only
+  transaction, reads histogram metadata first, then TopN and buckets for
+  Analyze v2, rejects negative null counts before payload reads, returns
+  metadata-only full columns for older stats versions, and publishes no
+  shared-cache mutation on failure. Its DDL auto-presplit consumer is a
+  separate `pkg/ddl` package boundary.
 - `ChangeGlobalStatsID` now moves exactly Go's six tables, in Go's order, in
   one real transaction. Both clustered and `_tidb_rowid` table layouts retain
   valid record/index keys, and a target-key collision aborts the whole plan as
@@ -80,7 +87,7 @@ persists `mysql.stats_*`, and refreshes through the ordinary cache path.
 
 ## Original-test behavior matrix
 
-Every one of the pinned package's 28 tests is accounted for below. “Direct”
+Every one of the pinned package's 29 tests is accounted for below. “Direct”
 means the named Rust regression drives the same production boundary. “Split”
 means the Go integration case crosses Rust crate boundaries and its assertions
 are divided among the named production regressions; it is not treated as a
@@ -109,6 +116,7 @@ weaker package-completion claim.
 | `TestDeleteAnalyzeJobs` | `analyze_commit_size_source::analyze_job_lifecycle_and_timestamp_cleanup_match_go` and the cluster-session delete path | Direct |
 | `TestExtremCaseOfGC` | `cluster_session_node::stats_gc_keeps_meta_for_existing_table_without_histograms` | Direct |
 | `TestLoadStats` | `analyze_commit_size_source::lite_load_keeps_metadata_and_evicts_the_histogram_payload`, `async_global_stats_loads_each_payload_by_item`, and catalog async-load regressions | Split |
+| `TestReadColumnDistributionStatsUsesOneSnapshot` | `analyze_commit_size_source::column_distribution_read_is_atomic_ordered_and_validated` plus `real_tikv_stats::read_column_distribution_stats_from_cluster` | Direct |
 | `TestLoadNonExistentIndexStats` | catalog regressions `load_statistics_after_index_drop` and `failed_async_load_removes_the_item_and_returns_the_storage_error`; cluster loading treats absent metadata as a successful skip | Split |
 | `TestColumnStatsIsInvalidSkipsInternalColumnID` | planner collection rejects nonpositive column IDs; `real_tikv_stats::load_needed_histograms_from_cluster` repeats the storage-boundary guard | Split |
 | `TestLoadNeededHistogramsSkipsInternalColumnID` | `real_tikv_stats::needed_histogram_loading_skips_only_internal_columns`; `load_needed_histograms_from_cluster` removes every queued item after its attempt | Direct |
@@ -140,7 +148,9 @@ individual statement boundaries inside one pessimistic event transaction.
 - `cargo test --locked -p tidb-exec --lib ordinary_and_global_slow_saves_share_go_refresh_and_error_policy -- --nocapture`
   passed: 1 test.
 - `cargo test --locked -p tidb-exec --test all analyze_commit_size_source:: -- --nocapture`
-  passed: 51 tests.
+  passed: 54 tests.
+- `cargo test --locked -p tidb-exec --test all column_distribution_read_is_atomic_ordered_and_validated -- --nocapture`
+  passed: 1 test.
 - `cargo test --locked -p tidb-server --test all load_stats -- --nocapture`
   passed outside the filesystem/network sandbox: 2 tests.
 - `cargo check --locked -p tidb-exec -p tidb-session -p tidb-server` passed.

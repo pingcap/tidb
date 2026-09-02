@@ -185,6 +185,49 @@ pub fn load_stats_item_from_cluster<
     loaded
 }
 
+/// Go `storage.ReadColumnDistributionStats` over real TiKV.
+///
+/// Histogram metadata, TopN, and buckets are read through one read-only
+/// transaction, so a concurrent `ANALYZE` cannot splice two generations into
+/// one column distribution.  This is a direct foreground read and does not
+/// publish anything to the shared statistics cache.
+pub fn read_column_distribution_stats_from_cluster<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+>(
+    opener: &RealOptimisticTransactionOpener<C, L, P>,
+    timeout: Duration,
+    loader: &ClusterStatsLoader,
+    physical_table_id: i64,
+    table_info: &TableInfo,
+    column_id: i64,
+) -> Result<Option<tidb_stats::Column>, SystemTableError> {
+    let Some(column_type) = table_info.cols().iter_deref().find_map(|column| {
+        let column = column.read();
+        (column.id == column_id).then(|| column.field_type.clone())
+    }) else {
+        return Ok(None);
+    };
+    let mut transaction = opener
+        .begin_read_only()
+        .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
+    let loaded = {
+        let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
+        loader.load_column_distribution_stats(
+            &mut snapshot,
+            physical_table_id,
+            column_id,
+            table_info,
+            &column_type,
+        )
+    };
+    transaction
+        .finish_without_writes()
+        .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
+    loaded
+}
+
 fn load_stats_item_payload_from_cluster<
     C: StoreWriteClient,
     L: StoreWriteLoader,

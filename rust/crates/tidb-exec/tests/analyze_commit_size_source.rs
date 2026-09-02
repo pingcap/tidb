@@ -91,6 +91,7 @@ use tidb_txnkv::transaction::{
 struct MetaStore {
     pairs: BTreeMap<Vec<u8>, Vec<u8>>,
     scans: Vec<Vec<u8>>,
+    fail_scan_prefix: Option<Vec<u8>>,
 }
 
 impl MetaSnapshot for MetaStore {
@@ -100,6 +101,11 @@ impl MetaSnapshot for MetaStore {
 
     fn scan_prefix(&mut self, prefix: &[u8]) -> Result<MetaPairs, ClusterCatalogError> {
         self.scans.push(prefix.to_vec());
+        if self.fail_scan_prefix.as_deref() == Some(prefix) {
+            return Err(ClusterCatalogError::Snapshot(
+                "injected statistics scan failure".to_owned(),
+            ));
+        }
         Ok(self
             .pairs
             .iter()
@@ -1463,6 +1469,139 @@ fn one_item_load_uses_only_that_items_key_ranges() {
         store.scans,
         vec![histogram_prefix, bucket_prefix, topn_prefix]
     );
+}
+
+/// Go `ReadColumnDistributionStats` loads metadata, TopN, and buckets from
+/// one caller-owned snapshot.  It reads TopN before buckets, returns no
+/// partial column after either failure, and rejects a corrupt negative
+/// `null_count` before touching either payload table.
+#[test]
+fn column_distribution_read_is_atomic_ordered_and_validated() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let stats = ClusterTableStats {
+        table_id: 4242,
+        version: 440_000_000_000_000_000,
+        snapshot: 439_000_000_000_000_000,
+        last_analyze_version: 440_000_000_000_000_000,
+        last_stats_hist_version: 440_000_000_000_000_000,
+        modify_count: 0,
+        row_count: 10_240,
+        columns: vec![full_histogram(1, false)],
+        indexes: Vec::new(),
+    };
+    let plan = plan_stats_write(&mut store, &catalog, &stats, now()).expect("analyze plans");
+    apply_mutations(&mut store, &plan.mutations);
+    let table = TableInfo {
+        id: stats.table_id,
+        columns: vec![ColumnInfo {
+            id: 1,
+            name: CiString::new("b"),
+            offset: 0,
+            field_type: tidb_datatype::FieldType::new(
+                tidb_datatype::FieldTypeCode::LongLong,
+            ),
+            state: SchemaState::PUBLIC,
+            ..ColumnInfo::default()
+        }]
+        .into(),
+        ..TableInfo::default()
+    };
+    let column_type = table
+        .columns
+        .iter_deref()
+        .next()
+        .expect("the test table has one column")
+        .read()
+        .field_type
+        .clone();
+    let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
+    let item = [Datum::Int(stats.table_id), Datum::Int(0), Datum::Int(1)];
+    let encoded_item = tidb_codec::encode_key(&item).unwrap();
+    let histogram_prefix = tidb_codec::encode_row_key(
+        tidb_metadef::system::STATS_HISTOGRAMS_TABLE_ID,
+        &encoded_item,
+    );
+    let topn_prefix = tidb_codec::table_key::encode_index_seek_key(
+        tidb_metadef::system::STATS_TOP_NTABLE_ID,
+        1,
+        &encoded_item,
+    );
+    let bucket_prefix =
+        tidb_codec::encode_row_key(tidb_metadef::system::STATS_BUCKETS_TABLE_ID, &encoded_item);
+
+    store.scans.clear();
+    store.fail_scan_prefix = Some(topn_prefix.clone());
+    let error = loader
+        .load_column_distribution_stats(
+            &mut store,
+            stats.table_id,
+            1,
+            &table,
+            &column_type,
+        )
+        .expect_err("a TopN read failure aborts the whole column");
+    assert!(error.to_string().contains("injected statistics scan failure"));
+    assert_eq!(store.scans, vec![histogram_prefix.clone(), topn_prefix.clone()]);
+
+    store.scans.clear();
+    store.fail_scan_prefix = None;
+    let loaded = loader
+        .load_column_distribution_stats(
+            &mut store,
+            stats.table_id,
+            1,
+            &table,
+            &column_type,
+        )
+        .expect("the complete distribution loads")
+        .expect("the histogram row exists");
+    assert_eq!(loaded.top_n.as_ref().map(TopN::num), Some(100));
+    assert_eq!(loaded.histogram.buckets.len(), 256);
+    assert!(loaded.stats_loaded_status.is_full_load());
+    assert_eq!(
+        store.scans,
+        vec![histogram_prefix.clone(), topn_prefix, bucket_prefix]
+    );
+
+    let mut version_one = stats.clone();
+    version_one.columns[0].stats_ver = tidb_stats::VERSION_1;
+    let plan = plan_stats_write(&mut store, &catalog, &version_one, now())
+        .expect("the Analyze V1 fixture plans");
+    apply_mutations(&mut store, &plan.mutations);
+    store.scans.clear();
+    let loaded = loader
+        .load_column_distribution_stats(
+            &mut store,
+            stats.table_id,
+            1,
+            &table,
+            &column_type,
+        )
+        .expect("Analyze V1 metadata loads")
+        .expect("the histogram row exists");
+    assert!(loaded.top_n.is_none());
+    assert!(loaded.histogram.buckets.is_empty());
+    assert!(loaded.stats_loaded_status.is_full_load());
+    assert_eq!(store.scans, vec![histogram_prefix.clone()]);
+
+    let mut corrupt = stats.clone();
+    corrupt.columns[0].histogram.null_count = -1;
+    let plan = plan_stats_write(&mut store, &catalog, &corrupt, now())
+        .expect("the stored-corruption fixture plans");
+    apply_mutations(&mut store, &plan.mutations);
+    store.scans.clear();
+    let error = loader
+        .load_column_distribution_stats(
+            &mut store,
+            stats.table_id,
+            1,
+            &table,
+            &column_type,
+        )
+        .expect_err("negative null_count is rejected");
+    assert!(error.to_string().contains("negative null count -1"));
+    assert_eq!(store.scans, vec![histogram_prefix]);
 }
 
 /// Go `SaveColOrIdxStatsToStorage` replaces only the loaded object's payload,

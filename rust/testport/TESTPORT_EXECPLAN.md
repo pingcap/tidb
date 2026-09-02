@@ -42,6 +42,18 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: refreshed and completed the Go-master
+  `pkg/statistics/handle/storage` package boundary at
+  `c6054025ed4c32ab3672a2a24ea46892714d21ec`: all 12 production, test, and
+  build artifacts (5,051 lines), 29 top-level tests, and the absence of
+  fixtures, generated inputs, benchmarks, and platform variants are
+  inventoried. The foreground column-distribution read now owns one PD
+  timestamp/read-only transaction, metadata→TopN→bucket ordering, v1
+  metadata-only behavior, negative-null-count validation, and no cache
+  publication on failure. Its focused ordered/atomic regression passes; DDL
+  auto-presplit consumption is tracked under the separate `pkg/ddl` boundary.
+  Details are in `receipts/statistics_handle_storage_audit.md`.
+
 - 2026-09-02: restored the direct multipart-write limit guard in the complete
   `pkg/objstore/s3store` Go-master inventory. A writer now returns the shared
   `ErrExceedMaxUploadParts` sentinel before issuing part 10,001; the focused
@@ -3260,10 +3272,11 @@ For each bounded behavior cluster:
       incomplete. Inventory is in
       `receipts/statistics_handle_root_audit.md`.
 - [x] Audit the complete pinned `pkg/statistics/handle/storage` package. Remove
-      six public scalar/SQL carriers, their 19 tests, and 28 ignored empty test
-      functions. Go owns one transactional session/storage/cache read-writer
-      package with 11 artifacts and 28 integrated tests; its handle and type
-      dependencies remain incomplete. Inventory is in
+      six public scalar/SQL carriers, their 19 tests, and the ignored empty
+      test functions. Go owns one transactional session/storage/cache
+      read-writer package with 12 artifacts and 29 integrated tests at the
+      current Go-master revision; its DDL auto-presplit consumer remains a
+      separate package boundary. Inventory is in
       `receipts/statistics_handle_storage_audit.md`.
 - [x] Audit the complete pinned `pkg/statistics/handle/autoanalyze/exec`
       package. Remove an unconsumed ratio-parser leaf, a duplicate window
@@ -4461,6 +4474,11 @@ For each bounded behavior cluster:
   cache publication, history, and worker lifecycle. They and the empty test
   carriers are removed until the complete dependency-closed package can land.
   Date/Author: 2026-08-29, Codex.
+- Decision (2026-09-02): keep foreground `ReadColumnDistributionStats` in
+  the storage owner because its Go contract is a single caller-owned snapshot
+  with ordered metadata/TopN/bucket reads and atomic failure semantics. The
+  auto-presplit DDL caller is intentionally audited and committed as its own
+  complete `pkg/ddl` package rather than expanding this storage commit.
 - Decision: `pkg/statistics/handle/autoanalyze/exec` is defined by current
   session execution and its process, metrics, warning, cache, and interruption
   effects. Private ratio/window parsing cannot stand alone as the package, and
