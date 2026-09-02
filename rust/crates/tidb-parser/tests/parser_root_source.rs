@@ -36,6 +36,43 @@ fn test_parentheses_depth_limit() {
 }
 
 #[test]
+fn test_ast_depth_limit_for_binary_chain() {
+    let sql = format!("SELECT {}1", "1+".repeat(11_000));
+    match parse(&sql) {
+        Err(error) => assert!(
+            error
+                .message
+                .contains("AST nesting depth exceeds maximum 10064"),
+            "unexpected error: {error:?}"
+        ),
+        Ok(statement) => {
+            std::mem::forget(statement);
+            panic!("an over-depth AST must be rejected");
+        }
+    }
+}
+
+#[test]
+fn test_ast_depth_limit_for_recursive_expression_forms() {
+    for sql in [
+        format!("SELECT {}1", "!".repeat(11_000)),
+        format!(
+            "SELECT {}1{}",
+            "CASE WHEN true THEN ".repeat(11_000),
+            " ELSE 0 END".repeat(11_000)
+        ),
+    ] {
+        let error = parse(&sql).expect_err("an over-depth recursive expression must be rejected");
+        assert!(
+            error
+                .message
+                .contains("AST nesting depth exceeds maximum 10064"),
+            "unexpected error: {error:?}"
+        );
+    }
+}
+
+#[test]
 fn test_insert_statement_memory_allocation() {
     let sql = format!("insert t values (1){}", ",(1)".repeat(1000));
     let Stmt::Dml(statement) = parse(&sql).expect("the 1,001-row INSERT parses") else {

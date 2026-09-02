@@ -140,10 +140,13 @@ The focused regressions are
 `parser_hint_source::test_max_optimizer_hint_parentheses_depth`. The former
 was run before the fix and reproduced the Rust stack-overflow abort; both tests
 pass after the guard. No Go source, generated parser output, or Bazel metadata
-was edited. The AST-depth half of the Go change remains a separate boundary:
-Rust's recursive unary/parenthesized expression construction needs an
-iterative parser change before that 11,000-node test can be activated safely.
+was edited. The same batch also activates the Go `maxASTDepth` contract for
+11,000-term binary, unary, and nested-CASE expressions: the source-derived
+tests now return `AST nesting depth exceeds maximum 10064`. Rust checks unary
+and CASE recursion before descent (because those parser productions recurse),
+and runs the post-parse AST visitor on a larger stack only for large token
+streams so the visitor itself cannot reintroduce a stack-overflow path.
 
 Validation for this follow-up is recorded in the package batch: focused
-parser/hint regressions, the full owner check and test suite, pinned Rust
-formatting, `make lint`, and `git diff --check`.
+parser/hint/AST regressions, the full owner check and test suite, pinned Rust
+formatting baseline, `make lint`, and `git diff --check`.

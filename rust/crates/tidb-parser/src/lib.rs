@@ -53,9 +53,11 @@ mod traffic;
 mod user;
 pub mod util_parser;
 
+use std::any::Any;
+
 use tidb_ast::{
     AdminStmt, DdlStmt, DescribeTableStmt, ExplainForStmt, ExplainStmt, ExplainTarget, Expr,
-    PlanReplayerStmt, PlanReplayerTarget, StatsLockStmt, StatsLockTable, Stmt,
+    PlanReplayerStmt, PlanReplayerTarget, StatsLockStmt, StatsLockTable, Stmt, Visitable, Visitor,
 };
 
 #[allow(deprecated)]
@@ -245,6 +247,9 @@ fn parse_one_with_parser(sql: &str, p: &mut Parser) -> PResult<Stmt> {
     if let Some(error) = &p.paren_depth_error {
         return Err(error.clone());
     }
+    if let Some(error) = &p.recursive_ast_depth_error {
+        return Err(error.clone());
+    }
     let start = p.peek().offset;
     let mut stmt = p.parse_statement()?;
     let end = if p.is_op(";") {
@@ -255,6 +260,12 @@ fn parse_one_with_parser(sql: &str, p: &mut Parser) -> PResult<Stmt> {
     if end > start {
         stmt.set_text(None, sql.as_bytes()[start..end].to_vec());
     }
+    let (checked_stmt, depth_exceeded) =
+        ast_depth_exceeded(stmt, p.toks.len() > LARGE_AST_VISIT_TOKEN_THRESHOLD);
+    if depth_exceeded {
+        return Err(ast_depth_error(p));
+    }
+    let stmt = checked_stmt.expect("a non-over-depth AST is retained by the depth checker");
     p.skip_semicolons();
     if !p.at_eof() {
         return Err(p.err_here("unexpected trailing tokens"));
@@ -489,6 +500,9 @@ fn parse_multi_with_parser(sql: &str, p: &mut Parser) -> PResult<Vec<Stmt>> {
     if let Some(error) = &p.paren_depth_error {
         return Err(error.clone());
     }
+    if let Some(error) = &p.recursive_ast_depth_error {
+        return Err(error.clone());
+    }
     let mut statements = Vec::new();
     let mut source_start = statement_source_start(sql, 0);
     while p.is_op(";") {
@@ -509,6 +523,13 @@ fn parse_multi_with_parser(sql: &str, p: &mut Parser) -> PResult<Vec<Stmt>> {
         if end > source_start {
             statement.set_text(None, sql.as_bytes()[source_start..end].to_vec());
         }
+        let (checked_statement, depth_exceeded) =
+            ast_depth_exceeded(statement, p.toks.len() > LARGE_AST_VISIT_TOKEN_THRESHOLD);
+        if depth_exceeded {
+            return Err(ast_depth_error(p));
+        }
+        let statement =
+            checked_statement.expect("a non-over-depth AST is retained by the depth checker");
         statements.push(statement);
         if !had_delimiter && !p.at_eof() {
             return Err(p.err_here("expected ';' between statements"));
@@ -565,11 +586,14 @@ struct Parser {
     strict_double_type_check: bool,
     warnings: Vec<HintDiagnostic>,
     paren_depth_error: Option<ParseError>,
+    recursive_ast_depth_error: Option<ParseError>,
 }
 
 /// Bounds user-controlled nesting before recursive parsing can exhaust the
 /// parser stack. This is Go's `maxParenthesesDepth` guard.
 const MAX_PARENTHESES_DEPTH: usize = 10_000;
+const MAX_AST_DEPTH: usize = MAX_PARENTHESES_DEPTH + 64;
+const LARGE_AST_VISIT_TOKEN_THRESHOLD: usize = 4_096;
 
 fn parentheses_depth_error(toks: &[Token]) -> Option<ParseError> {
     let mut depth = 0;
@@ -591,6 +615,104 @@ fn parentheses_depth_error(toks: &[Token]) -> Option<ParseError> {
         }
     }
     None
+}
+
+fn recursive_ast_depth_error(toks: &[Token]) -> Option<ParseError> {
+    let mut unary_depth = 0;
+    let mut case_depth = 0;
+    for token in toks {
+        let is_unary = (token.kind == TokenKind::Op
+            && matches!(token.text.as_str(), "!" | "+" | "-" | "~"))
+            || (token.kind == TokenKind::Keyword && token.text.eq_ignore_ascii_case("NOT"));
+        if is_unary {
+            unary_depth += 1;
+            if unary_depth > MAX_AST_DEPTH {
+                return Some(ParseError {
+                    message: format!("AST nesting depth exceeds maximum {MAX_AST_DEPTH}"),
+                    offset: token.end_offset,
+                    near_offset: token.offset,
+                    errno: None,
+                });
+            }
+        } else {
+            unary_depth = 0;
+        }
+
+        if token.kind == TokenKind::Keyword && token.text.eq_ignore_ascii_case("CASE") {
+            case_depth += 1;
+            if case_depth > MAX_AST_DEPTH {
+                return Some(ParseError {
+                    message: format!("AST nesting depth exceeds maximum {MAX_AST_DEPTH}"),
+                    offset: token.end_offset,
+                    near_offset: token.offset,
+                    errno: None,
+                });
+            }
+        } else if token.kind == TokenKind::Keyword
+            && token.text.eq_ignore_ascii_case("END")
+            && case_depth > 0
+        {
+            case_depth -= 1;
+        }
+    }
+    None
+}
+
+struct AstDepthChecker {
+    depth: usize,
+    exceeded: bool,
+}
+
+impl Visitor for AstDepthChecker {
+    fn enter(&mut self, _node: &mut dyn Any) -> bool {
+        self.depth += 1;
+        if self.depth > MAX_AST_DEPTH {
+            self.exceeded = true;
+            return true;
+        }
+        false
+    }
+
+    fn leave(&mut self, _node: &mut dyn Any) -> bool {
+        self.depth = self.depth.saturating_sub(1);
+        !self.exceeded
+    }
+}
+
+fn visit_ast_depth(mut stmt: Stmt) -> (Option<Stmt>, bool) {
+    let mut checker = AstDepthChecker {
+        depth: 0,
+        exceeded: false,
+    };
+    let _ = stmt.accept(&mut checker);
+    if checker.exceeded {
+        drop(stmt);
+        (None, true)
+    } else {
+        (Some(stmt), false)
+    }
+}
+
+fn ast_depth_exceeded(stmt: Stmt, large_stack: bool) -> (Option<Stmt>, bool) {
+    if !large_stack {
+        return visit_ast_depth(stmt);
+    }
+    std::thread::Builder::new()
+        .name("tidb-parser-ast-depth".to_owned())
+        .stack_size(64 * 1024 * 1024)
+        .spawn(move || visit_ast_depth(stmt))
+        .expect("failed to create AST depth checker thread")
+        .join()
+        .expect("AST depth checker thread panicked")
+}
+
+fn ast_depth_error(p: &Parser) -> ParseError {
+    ParseError {
+        message: format!("AST nesting depth exceeds maximum {MAX_AST_DEPTH}"),
+        offset: p.peek().end_offset,
+        near_offset: p.peek().offset,
+        errno: None,
+    }
 }
 
 impl Parser {
@@ -631,6 +753,7 @@ impl Parser {
         lexer.set_support_window_func(support_window_functions);
         let (toks, lexer_warnings) = lexer.tokenize_with_warnings();
         let paren_depth_error = parentheses_depth_error(&toks);
+        let recursive_ast_depth_error = recursive_ast_depth_error(&toks);
         Parser {
             source: sql.to_owned(),
             toks,
@@ -651,6 +774,7 @@ impl Parser {
                 .map(|message| HintDiagnostic { message })
                 .collect(),
             paren_depth_error,
+            recursive_ast_depth_error,
         }
     }
 
@@ -765,6 +889,7 @@ impl Parser {
             strict_double_type_check: true,
             warnings: Vec::new(),
             paren_depth_error,
+            recursive_ast_depth_error: None,
         }
     }
 
