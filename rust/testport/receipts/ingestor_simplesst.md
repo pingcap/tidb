@@ -1,7 +1,7 @@
 # `pkg/ingestor/simplesst` — complete Go-master parity boundary receipt
 
 Comparison source: Go `origin/master` at commit
-`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01).
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02).
 
 ## Complete inventory
 
@@ -37,8 +37,10 @@ The current Go-master delta from the earlier pinned source is behaviorally
 small but recorded here: `GetAllFileNames` now accepts zero or more
 `nonPartitionedDirs` and matches any supplied directory, while the writer
 names its existing per-core connection limit `maxOpenedConnPerCore` instead of
-using an inline `250` literal. No tests or build metadata changed with those
-updates.
+using an inline `250` literal. This batch restores those exact Go-master
+changes and adds a focused multi-directory regression for `GetAllFileNames`;
+before the fix the test failed to compile because the function accepted only
+one directory.
 
 ## Rust ownership and explicit boundary
 
@@ -53,16 +55,21 @@ close a Go package, so this package remains an explicit parity boundary.
 
 ## Validation and risk
 
-Profile: **WIP** for this documentation-only boundary record. No Go, Bazel,
-module, or Rust source changed, so `make bazel_prepare` and Ready lint are not
-required for this batch. The package uses failpoints; the canonical wrapper
-enabled and disabled them around the test run.
+Profile: **Ready** for this Go behavior batch. The package uses failpoints; the
+canonical wrapper enabled and disabled them around the test run.
 
 ```text
 PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
 GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
-./tools/check/failpoint-go-test.sh pkg/ingestor/simplesst -count=1
-# passed: all package tests in 11.732s; failpoints cleaned up to refcount 0
+./tools/check/failpoint-go-test.sh ./pkg/ingestor/simplesst -count=1
+# passed: all package tests in 11.801s; failpoints cleaned up to refcount 0
+
+Focused regression:
+  go test ./pkg/ingestor/simplesst -run '^TestGetAllFileNamesMatchesMultipleNonPartitionedDirs$' -count=1
+  # passed after the fix; pre-fix compile failed on the variadic call
+
+`make lint` and `git diff --check` passed. `make bazel_prepare` was attempted
+for the changed Go sources and is blocked locally (`bazel: No such file or directory`).
 ```
 
 Not verified here: a live object-storage service, next-generation ingest
