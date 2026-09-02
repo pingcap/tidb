@@ -97,6 +97,16 @@ For each bounded behavior cluster:
   the change; package inventory and validation details are in
   `receipts/util_codec_audit.md`.
 
+- 2026-09-02: completed a Rust-only `pkg/expression` duration-to-YEAR
+  follow-up against Go master `17daba3dfd`. After rechecking all 137 direct
+  root Go artifacts (and the 71 nested package artifacts) plus all 175
+  `tidb-expr` owner artifacts, routed duration YEAR casts through the existing
+  datatype conversion with the statement clock, session zone, and Go concat
+  flag. The focused regression failed before the fix (`125959` instead of the
+  pinned 2020 statement year) and now passes, alongside a `00:20:12` concat
+  row yielding 2012. Details and the Ready validation record are in
+  `receipts/expression_collation_audit.md`.
+
 - 2026-09-02: aligned `LogicalPlan::extract_col_groups` child access with Go
   master `a85e0fd5df`. Join and apply outer-side arms now direct-index the
   required child schemas, and the window arm preserves Go's empty-group early

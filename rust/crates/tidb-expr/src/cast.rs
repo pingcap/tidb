@@ -133,7 +133,7 @@ pub(crate) fn eval_cast(
             tidb_datatype::TimeType::DateTime,
             i64::from(fsp.unwrap_or(0)),
         ),
-        CastType::Year => cast_to_year(&v),
+        CastType::Year => cast_to_year(&v, ctx),
         CastType::Double | CastType::Float => {
             let converted = str_to_real_for_cast(&v, ctx)?;
             Ok(Datum::Real(converted))
@@ -1506,13 +1506,30 @@ fn invalid_time_warning(ctx: &dyn crate::Columns, input: &str) {
 }
 
 /// `CAST(... AS YEAR)`: the operand's calendar year if it parses as a
-/// date-shaped string (confirmed via `goeval`: `CAST('2021-01-01' AS
-/// YEAR)` is `2021`), else a plain `SIGNED`-style integer coercion
-/// (confirmed via `goeval`: `CAST('99' AS YEAR)` is `99` — NOT the
-/// two-digit-year century pivot the `YEAR` COLUMN TYPE applies at
-/// storage time, a genuinely separate rule this scalar CAST does not
-/// share).
-fn cast_to_year(v: &Datum) -> Result<Datum, EvalError> {
+/// date-shaped string (confirmed via `goeval`: `CAST('2021-01-01' AS YEAR)`
+/// is `2021`), else a plain `SIGNED`-style integer coercion (confirmed via
+/// `goeval`: `CAST('99' AS YEAR)` is `99` — NOT the two-digit-year century
+/// pivot the `YEAR` COLUMN TYPE applies at storage time, a genuinely separate
+/// rule this scalar CAST does not share).
+///
+/// A DURATION operand is the one exception to the datum-kind fallback. Go's
+/// `builtinCastDurationAsIntSig` calls `Duration.ConvertToYear`, which mixes
+/// the elapsed time into the statement clock's local calendar date. The
+/// previous Rust path treated the duration as its packed integer (`125959`),
+/// so it never observed either `ctx.now()` or the session time zone.
+fn cast_to_year(v: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
+    if let Datum::Duration(duration) = v {
+        let (utc_secs, nanos, _) = ctx
+            .now()
+            .ok_or(EvalError::Unsupported("no statement clock for a YEAR cast"))?;
+        let now = chrono::DateTime::<chrono::Utc>::from_timestamp(utc_secs, nanos)
+            .ok_or(EvalError::Unsupported("statement clock is out of range"))?
+            .with_timezone(&ctx.time_zone());
+        let year = duration
+            .convert_to_year(now, ctx.cast_time_to_year_through_concat())
+            .map_err(|_| EvalError::Unsupported("duration to YEAR conversion"))?;
+        return Ok(Datum::Int(year));
+    }
     if let Some(s) = coerce_str(v)? {
         if let Some((y, _, _)) = parse_date_ymd(&s) {
             return Ok(Datum::Int(y));

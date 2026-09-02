@@ -73,3 +73,47 @@ Profile: Ready for this bounded Rust package batch.
 - The rest of `pkg/expression` (including expression-node construction,
   session/executor integration, and nested packages) remains an explicit
   dependency boundary in the existing historical receipts.
+
+## Rust follow-up: duration-to-YEAR statement-date conversion
+
+The rolling Go comparison is `origin/master` at
+`17daba3dfde858eebef60f6e4e1bb37268269225`; the root `pkg/expression`
+objects are unchanged from the earlier `a85e0fd5df` inventory. The complete
+root package remains 137 direct artifacts and 128,744 lines (68 production,
+60 test, seven generated, `BUILD.bazel`, and `OWNERS`); its recursive tree is
+208 artifacts and 146,247 lines after including the seven nested package
+boundaries. The Rust owner recheck covers all 175 `tidb-expr` artifacts and
+104,998 lines, including the aggregate-test build input and every source,
+inline test, standalone fixture, benchmark, and support artifact. No Go,
+Bazel, generated, fixture, or platform artifact changed.
+
+Go's `builtinCastDurationAsIntSig.evalInt` calls
+`Duration.ConvertToYear(typeCtx(ctx))` for a YEAR target. With the default
+flag it mixes the elapsed duration into `now.In(ctx.Location())`'s calendar
+date; with `CastTimeToYearThroughConcat` it converts the TIME fields to the
+packed year number before applying `AdjustYear`. Rust's `cast_to_year`
+previously fell through to its signed-integer helper for every duration, so
+`12:59:59` produced `125959` instead of the statement year. Rust now routes
+duration operands through the existing `MySqlDuration::convert_to_year`,
+constructing the statement instant from `Columns::now()` and projecting it
+through the session `SessionTimeZone`; the new context seam carries the Go
+concat flag while retaining the disabled default.
+
+The focused regression was made active in
+`aggregation_arithmetic_cast_source`: on a clean pre-fix `af1f9a6a3e` tree it
+failed with `Int(125959)` versus `Int(2020)`. The fixed tests pin both the
+statement-date path and the concat path (`00:20:12` -> `2012`).
+
+Validation for this follow-up used the Ready profile:
+
+- `cargo +nightly-2026-08-22 test --offline --locked -p tidb-expr --lib test_cast_duration_as_year -- --nocapture` — both focused regressions passed.
+- `cargo +nightly-2026-08-22 check --offline --locked -p tidb-expr --all-targets` — owner all-target compile passed.
+- `cargo +nightly-2026-08-22 test --offline --locked -p tidb-expr --lib -- --test-threads=1` — 1,079 passed, nine pre-existing failures, and 138 documented gap tests ignored; none is in the new duration-to-YEAR tests.
+- `cargo +nightly-2026-08-22 fmt --all -- --check`, `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 make lint`, and `git diff --check` — Ready formatting, lint, and whitespace gates.
+
+Correctness risk is limited to duration operands of `CAST(... AS YEAR)`:
+they now require a statement clock, as Go does, and use the session zone when
+the clock crosses a local date boundary. Other YEAR source domains retain the
+existing parser/integer rules. The duration conversion still reports the
+datatype's existing out-of-range error rather than inventing a new warning
+policy.

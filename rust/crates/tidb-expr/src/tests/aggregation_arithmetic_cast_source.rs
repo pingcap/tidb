@@ -98,6 +98,7 @@ fn cast_eval(
 #[derive(Default)]
 struct ClockCtx {
     warnings: RefCell<Vec<(u16, String)>>,
+    through_concat: bool,
 }
 
 impl Columns for ClockCtx {
@@ -111,6 +112,10 @@ impl Columns for ClockCtx {
 
     fn now(&self) -> Option<(i64, u32, i32)> {
         Some((1_602_288_000, 0, 0))
+    }
+
+    fn cast_time_to_year_through_concat(&self) -> bool {
+        self.through_concat
     }
 }
 
@@ -1784,9 +1789,30 @@ fn test_wrap_with_cast_as_duration() {
 }
 
 #[test]
-#[ignore = "go-parity-gap: durations mix into NOW's date on a Duration→Year target (types/time.go ConvertToYearFromNow); Rust's cast_to_year falls back to the signed-int path (125959) and never consults ctx.now(), so the current-year assertion cannot hold yet"]
 fn test_cast_duration_as_year_yields_the_current_year() {
-    // Go: cast(Duration as year) == int64(time.Now().Year()).
+    let source = FieldType::new(C::Duration);
+    let value = Datum::Duration(MySqlDuration::new(12, 59, 59, 0, 0).expect("duration"));
+    let got = crate::cast::eval_cast(
+        &tidb_ast::CastType::Year,
+        value,
+        Some(&source),
+        &ClockCtx::default(),
+    )
+    .expect("CAST AS YEAR");
+    assert_eq!(got, Datum::Int(2020));
+}
+
+#[test]
+fn test_cast_duration_as_year_honors_concat_mode() {
+    let source = FieldType::new(C::Duration);
+    let value = Datum::Duration(MySqlDuration::new(0, 20, 12, 0, 0).expect("duration"));
+    let ctx = ClockCtx {
+        through_concat: true,
+        ..ClockCtx::default()
+    };
+    let got = crate::cast::eval_cast(&tidb_ast::CastType::Year, value, Some(&source), &ctx)
+        .expect("CAST AS YEAR through concatenation");
+    assert_eq!(got, Datum::Int(2012));
 }
 
 // ---------------------------------------------------------------------

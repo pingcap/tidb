@@ -481,6 +481,13 @@ pub trait Columns {
         None
     }
 
+    /// Go `types.Context.Flags().CastTimeToYearThroughConcat`, used by the
+    /// duration-to-YEAR compatibility path. The default statement context
+    /// leaves this mode disabled.
+    fn cast_time_to_year_through_concat(&self) -> bool {
+        false
+    }
+
     /// Whether `SYSDATE` is an alias of the statement-scoped `NOW`.
     fn sysdate_is_now(&self) -> bool {
         false
