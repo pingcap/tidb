@@ -465,7 +465,6 @@ func (m *MemArbitrator) blockingAllocate(entry *rootPoolEntry, requestedBytes in
 		return ArbitrateFail
 	}
 	if entry.ctx.canceled.Load() {
-		atomic.AddInt64(&m.execMetrics.Task.Fail, 1)
 		return ArbitrateFail
 	}
 
