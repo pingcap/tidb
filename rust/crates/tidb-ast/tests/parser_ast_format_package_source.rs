@@ -22,7 +22,8 @@
 //! output text.
 
 use tidb_ast::{
-    BinaryOp, BitLiteralValue, CastExpr, CastStyle, CastType, Expr, UnaryOp,
+    BinaryOp, BitLiteralValue, CastExpr, CastStyle, CastType, Expr, TrimDirection, UnaryOp,
+    WeightStringType,
 };
 
 fn column(path: &[&str]) -> Expr {
@@ -369,6 +370,65 @@ fn ast_format() {
     assert_eq!(
         cast(string("hello"), CastStyle::BinaryOperator, CastType::Binary { len: None }).format(),
         "BINARY \"hello\""
+    );
+}
+
+/// `pkg/parser/ast/functions.go::FuncCallExpr.specialFormatArgs` keeps
+/// `MEMBER OF` as an infix spelling, while `POSITION`, `WEIGHT_STRING`, and
+/// `TRIM` use the generic comma-separated argument formatter. These rows pin
+/// the exact source behavior for the dedicated Rust AST variants, including
+/// Go's historical double space before the `MEMBER OF` opening parenthesis.
+#[test]
+fn ast_format_special_function_arguments_match_go() {
+    assert_eq!(
+        Expr::MemberOf {
+            expr: Box::new(int("1")),
+            array: Box::new(string("[1,2]")),
+        }
+        .format(),
+        "1 MEMBER OF  (\"[1,2]\")"
+    );
+    assert_eq!(
+        Expr::Position {
+            substr: Box::new(string("a")),
+            str: Box::new(string("abc")),
+        }
+        .format(),
+        "position(\"a\", \"abc\")"
+    );
+    assert_eq!(
+        Expr::WeightString {
+            expr: Box::new(column(&["a"])),
+            as_type: None,
+        }
+        .format(),
+        "weight_string(`a`)"
+    );
+    assert_eq!(
+        Expr::WeightString {
+            expr: Box::new(column(&["a"])),
+            as_type: Some((WeightStringType::Binary, 5)),
+        }
+        .format(),
+        "weight_string(`a`, \"BINARY\", 5)"
+    );
+    assert_eq!(
+        Expr::Trim {
+            expr: Box::new(string("bar")),
+            remstr: None,
+            direction: None,
+        }
+        .format(),
+        "trim(\"bar\")"
+    );
+    assert_eq!(
+        Expr::Trim {
+            expr: Box::new(string("bar")),
+            remstr: Some(Box::new(string("x"))),
+            direction: Some(TrimDirection::Leading),
+        }
+        .format(),
+        "trim(\"bar\", \"x\", LEADING)"
     );
 }
 

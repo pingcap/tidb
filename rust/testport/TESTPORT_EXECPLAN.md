@@ -65,6 +65,15 @@ For each bounded behavior cluster:
   regression now passes; canonical `Restore` remains unchanged. Details are
   appended to `receipts/parser_ast.md`.
 
+- 2026-09-03: completed the next Rust `tidb-ast` formatter boundary from
+  `pkg/parser/ast/functions.go`. `Expr::MemberOf` now preserves Go's infix
+  `Format` text (including its historical double space before `(`), while
+  `Position`, `WeightString`, and `Trim` now use Go's generic lowercase,
+  comma-separated argument formatting. The source-shaped regression failed
+  before the change on the Rust `MEMBER OF` and `POSITION` not-implemented
+  panics and passes after the batch; canonical `Restore` remains unchanged.
+  Details are in `receipts/parser_ast.md`.
+
 - 2026-09-03: aligned the Rust `tidb-planner` aggregation `AggFuncs` access
   boundaries with Go master `049e0e2ba79d79a3a8b1e9ff93ee22fb1cea7dd5`.
   `agg_funcs_cols_for_first_row` and `prune_columns_local` now direct-index

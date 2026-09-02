@@ -98,6 +98,23 @@ source-shaped regression failed before the change on Rust's
 `Format is not implemented for CONVERT USING` panic and passes after the
 change. Canonical `Restore` continues to emit the `USING` syntax.
 
+The same `Format` contract also covers the dedicated Rust variants for
+`POSITION`, `JSON_MEMBEROF`, `WEIGHT_STRING`, and `TRIM`. Go's
+`specialFormatArgs` keeps `MEMBER OF` as infix text (including its historical
+two spaces before the opening parenthesis), while `POSITION`, `WEIGHT_STRING`,
+and `TRIM` fall through the generic comma-separated formatter. Rust now emits
+those exact forms, including the quoted synthetic `CHAR`/`BINARY` argument and
+uppercase trim-direction argument. Canonical `Restore` remains unchanged for
+all four variants.
+
+Pre-fix proof: the focused source-shaped regression
+`ast_format_special_function_arguments_match_go` failed on the first
+`MEMBER OF` row with `Format is not implemented for MEMBER OF`; after adding
+the `POSITION` row, the same pre-fix test also failed on Rust's
+`Format is not implemented for POSITION` panic. After the change, the
+regression passes and covers all four dedicated variants, the optional
+`WEIGHT_STRING AS` clause, and both bare and directional `TRIM` forms.
+
 ## Rust ownership and parity result
 
 `rust/crates/tidb-ast` is a partial source-shaped owner with mutable
