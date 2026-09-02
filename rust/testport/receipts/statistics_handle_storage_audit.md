@@ -160,3 +160,15 @@ individual statement boundaries inside one pessimistic event transaction.
 
 No Go or Bazel source changed, so `make bazel_prepare` is not required. This is
 an atomic package-completion receipt, not a repository-wide parity claim.
+
+## 2026-09-02 Go-master source restoration
+
+Against fetched Go master `78cac443a4f46c13bfe27eb247b5c80657952547`, the
+working branch lacked the storage read implementation and table-size helper.
+The complete 12-artifact source shape is restored, including one-snapshot
+`ReadColumnDistributionStats` ordering/error behavior and statement-local
+`TableSizeStats` reads that skip `mysql.stats_histograms` for TABLE_ROWS-only
+requests. Focused failpoint-wrapped regressions cover the atomic snapshot and
+the histogram-read skip; the full Go-master storage package suite passes in a
+detached test worktree. The existing branch's broader statistics-handle
+integration remains a separate dependency boundary.
