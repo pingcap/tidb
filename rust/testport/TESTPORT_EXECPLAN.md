@@ -42,6 +42,26 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: aligned the Rust `tidb-domain` RU-statistics GC boundary with
+  Go master `a85e0fd5df`. After enumerating the complete 31-artifact root
+  `pkg/domain` boundary and all 17 `tidb-domain` owner artifacts, changed
+  `GCOutdatedRecords` to direct-index the required `count(*)` row like Go;
+  an impossible empty result now panics instead of returning the Rust-only
+  `MissingCountRow` error. The focused regression fails against the pre-fix
+  tree and passes after the change. Details are in
+  `receipts/domain_ru_stats_audit.md`.
+
+- 2026-09-02: aligned the Rust `tidb-util` master-key AES-GCM nonce boundary
+  against Go master `a85e0fd5df`. The complete direct Go package inventory is
+  11 artifacts and 943 lines (including BUILD metadata and all four test
+  files); all 9 Rust `master_key` owner files and 33 in-module tests were read
+  before editing. Rust previously returned `GcmError::InvalidNonceLength` for
+  a 16-byte CTR IV, while Go's `cipher.AEAD.Seal`/`Open` panic on any nonce
+  other than 12 bytes. Rust now preserves that panic with the Go diagnostic,
+  removes the Rust-only error variant, and adds low-level and backend
+  regressions. Full owner validation and the Ready gates are recorded in
+  `receipts/br_encryption_master_key.md`.
+
 - 2026-09-02: aligned the Rust `tidb-expr` collation-name boundary with Go
   master `a85e0fd5df`. After inventorying all 137 root `pkg/expression`
   artifacts and all 175 `tidb-expr` owner artifacts, changed

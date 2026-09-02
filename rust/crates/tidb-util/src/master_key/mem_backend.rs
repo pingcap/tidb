@@ -283,13 +283,15 @@ mod tests {
 
     /// Not in the Go package's test set: a 16-byte CTR IV passes
     /// `NewIVFromSlice` but is not a legal GCM nonce. Go *panics* inside
-    /// `crypto/cipher` here; this port reports the error instead.
+    /// `crypto/cipher` here; the Rust port must preserve that boundary.
     #[test]
-    fn test_ctr_iv_is_rejected_not_panicking() {
+    fn test_ctr_iv_panics_like_go() {
         let backend = MemAesGcmBackend::new(&[0u8; 32]).unwrap();
         let iv = Iv::from_slice(&[0u8; 16]).unwrap();
-        let error = backend.encrypt_content(b"payload", &iv).unwrap_err();
-        assert!(error.contains("incorrect nonce length"), "{error}");
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = backend.encrypt_content(b"payload", &iv);
+        }));
+        assert!(panic.is_err(), "EncryptContent must panic on a CTR IV");
     }
 
     /// Not in the Go package's test set: the metadata a fresh encryption emits

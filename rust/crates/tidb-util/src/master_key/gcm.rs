@@ -28,8 +28,8 @@
 //! added to the workspace, this module should be deleted in favor of it.
 //!
 //! Only the 96-bit nonce case is implemented, because that is the only case Go
-//! `cipher.NewGCM` accepts: Go *panics* on any other nonce length, whereas the
-//! functions here return [`GcmError::InvalidNonceLength`].
+//! `cipher.NewGCM` accepts: Go *panics* on any other nonce length, and these
+//! functions preserve that panic boundary.
 //!
 //! Side channels: the tag comparison is constant-time, and [`gf_mul`] uses no
 //! lookup tables, but its per-bit accumulate is a data-dependent branch, so
@@ -48,8 +48,6 @@ pub const STANDARD_NONCE_LEN: usize = 12;
 /// Why an AES-GCM operation failed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GcmError {
-    /// The nonce was not 12 bytes (Go panics here instead).
-    InvalidNonceLength(usize),
     /// The authentication tag did not verify: Go's `cipher: message
     /// authentication failed`.
     AuthenticationFailed,
@@ -58,12 +56,6 @@ pub enum GcmError {
 impl std::fmt::Display for GcmError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::InvalidNonceLength(length) => {
-                write!(
-                    formatter,
-                    "cipher: incorrect nonce length given to GCM: {length}"
-                )
-            }
             Self::AuthenticationFailed => {
                 write!(formatter, "cipher: message authentication failed")
             }
@@ -99,7 +91,7 @@ impl Aes256Gcm {
         nonce: &[u8],
         plaintext: &[u8],
     ) -> Result<(Vec<u8>, [u8; TAG_LEN]), GcmError> {
-        let counter_block = self.initial_counter(nonce)?;
+        let counter_block = self.initial_counter(nonce);
         let mut counter = counter_block;
         increment32(&mut counter);
         let ciphertext = self.gctr(counter, plaintext);
@@ -110,7 +102,7 @@ impl Aes256Gcm {
     /// Go `AEAD.Open` with nil additional data, taking the ciphertext and tag
     /// separately because `master_key` stores them in separate fields.
     pub fn open(&self, nonce: &[u8], ciphertext: &[u8], tag: &[u8]) -> Result<Vec<u8>, GcmError> {
-        let counter_block = self.initial_counter(nonce)?;
+        let counter_block = self.initial_counter(nonce);
         let expected = self.tag(&counter_block, ciphertext);
         if tag.len() != TAG_LEN || !constant_time_eq(&expected, tag) {
             return Err(GcmError::AuthenticationFailed);
@@ -121,14 +113,17 @@ impl Aes256Gcm {
     }
 
     /// `J0` for a 96-bit nonce: `IV || 0x00000001`.
-    fn initial_counter(&self, nonce: &[u8]) -> Result<[u8; TAG_LEN], GcmError> {
+    fn initial_counter(&self, nonce: &[u8]) -> [u8; TAG_LEN] {
         if nonce.len() != STANDARD_NONCE_LEN {
-            return Err(GcmError::InvalidNonceLength(nonce.len()));
+            panic!(
+                "cipher: incorrect nonce length given to GCM: {}",
+                nonce.len()
+            );
         }
         let mut block = [0u8; TAG_LEN];
         block[..STANDARD_NONCE_LEN].copy_from_slice(nonce);
         block[TAG_LEN - 1] = 1;
-        Ok(block)
+        block
     }
 
     /// `GCTR`: XOR the data with the keystream produced by encrypting
@@ -341,18 +336,19 @@ mod tests {
         assert!(gcm.open(&nonce, &ciphertext, &tag).is_ok());
     }
 
-    /// Go panics on a non-standard nonce; this port reports it.
+    /// Go panics on a non-standard nonce; the Rust boundary does the same.
     #[test]
-    fn test_nonce_length_is_checked() {
+    fn test_nonce_length_panics_like_go() {
         let gcm = Aes256Gcm::new(&[0u8; 32]);
-        assert_eq!(
-            gcm.seal(&[0u8; 16], b""),
-            Err(GcmError::InvalidNonceLength(16))
-        );
-        assert_eq!(
-            gcm.open(&[0u8; 16], b"", &[0u8; 16]),
-            Err(GcmError::InvalidNonceLength(16))
-        );
+        let seal = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = gcm.seal(&[0u8; 16], b"");
+        }));
+        assert!(seal.is_err(), "Seal must panic on a non-standard nonce");
+
+        let open = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = gcm.open(&[0u8; 16], b"", &[0u8; 16]);
+        }));
+        assert!(open.is_err(), "Open must panic on a non-standard nonce");
     }
 
     /// The counter rolls over the low 32 bits only, which matters for payloads
