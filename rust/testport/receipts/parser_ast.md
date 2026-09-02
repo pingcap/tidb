@@ -231,7 +231,10 @@ LOAD DATA, and IMPORT statements. A shared parser-test helper applies the
 balanced visitor to every parsed statement, preserving the Go contract that
 both full and skip-child traversals enter and leave each node. The existing
 procedure source-row and visitor tests are recorded as the owner-side closure
-for the corresponding AST gaps.
+for the corresponding AST gaps. The same owner-side audit confirms live
+parser coverage for IMPORT-FROM-SELECT validation and the three JSON-path
+format rows; the AST crate's active secure-text test covers the explicit
+embedding API-key allowlist.
 
 Pre-fix proof: the newly restored DML script initially failed because the
 multi-line Rust literal removed statement-separating whitespace
