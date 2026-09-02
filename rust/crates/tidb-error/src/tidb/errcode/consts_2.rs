@@ -735,5 +735,7 @@ pub const ErrTiFlashServerTimeout: u16 = 9012;
 pub const ErrTiFlashServerBusy: u16 = 9013;
 /// `ErrTiFlashBackfillIndex` (9014).
 pub const ErrTiFlashBackfillIndex: u16 = 9014;
+/// `ErrSharedLockLost` (9015).
+pub const ErrSharedLockLost: u16 = 9015;
 /// `ErrUserPrefixMismatch` (20003).
 pub const ErrUserPrefixMismatch: u16 = 20003;

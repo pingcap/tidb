@@ -955,6 +955,11 @@ pub const ErrTiFlashBackfillIndex: ErrMessage = ErrMessage {
     raw: "TiFlash backfill index failed: %s",
     redact_arg_pos: &[],
 };
+/// Message metadata for `ErrSharedLockLost`.
+pub const ErrSharedLockLost: ErrMessage = ErrMessage {
+    raw: "Shared lock was lost during lock upgrade; transaction cannot continue, txnStartTS=%d, key=%s",
+    redact_arg_pos: &[1],
+};
 /// Message metadata for `ErrResolveLockTimeout`.
 pub const ErrResolveLockTimeout: ErrMessage = ErrMessage {
     raw: "Resolve lock timeout",

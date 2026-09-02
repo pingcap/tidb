@@ -939,6 +939,11 @@ pub(super) const CATALOG_4: &[CatalogEntry] = &[
         message: ErrTiFlashBackfillIndex,
     },
     CatalogEntry {
+        name: "ErrSharedLockLost",
+        code: errcode::ErrSharedLockLost,
+        message: ErrSharedLockLost,
+    },
+    CatalogEntry {
         name: "ErrResolveLockTimeout",
         code: errcode::ErrResolveLockTimeout,
         message: ErrResolveLockTimeout,
