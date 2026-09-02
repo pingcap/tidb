@@ -1203,6 +1203,10 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			s.sessionVars.StmtCtx.CTEStorageMap = map[int]*executor.CTEStorages{}
 			s.sessionVars.StmtCtx.ResetForRetry()
 			s.sessionVars.PlanCacheParams.Reset()
+			// Replay bypasses ResetContextOfStmt. Start each history item's
+			// planning with an empty scalar registry so a fast or cached plan
+			// cannot inherit scalar subqueries from the previous item.
+			s.sessionVars.MapScalarSubQ = nil
 			schemaVersion, err = st.RebuildPlan(ctx)
 			if err != nil {
 				return err
@@ -3563,6 +3567,10 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 	sc := vars.StmtCtx
 
 	dctx := sc.GetOrInitDistSQLFromCache(func() *distsqlctx.DistSQLContext {
+		var queryCopStoreLimiter *kv.QueryCopStoreLimiter
+		if vars.QueryCopStoreLimit > 0 {
+			queryCopStoreLimiter = kv.NewQueryCopStoreLimiter(vars.QueryCopStoreLimit)
+		}
 		// cross ks session does not have domain.
 		dom := s.GetDomain().(*domain.Domain)
 		var ruConsumptionReporter resourcegroup.ConsumptionReporter
@@ -3603,6 +3611,7 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 			TiFlashQuerySpillRatio:               vars.TiFlashQuerySpillRatio,
 			TiFlashHashJoinVersion:               vars.TiFlashHashJoinVersion,
 
+			QueryCopStoreLimiter:          queryCopStoreLimiter,
 			DistSQLConcurrency:            vars.DistSQLScanConcurrency(),
 			ReplicaReadType:               vars.GetReplicaRead(),
 			WeakConsistency:               sc.WeakConsistency,

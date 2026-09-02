@@ -635,6 +635,9 @@ func setPreferredStoreType(ds *logicalop.DataSource, hintInfo *h.PlanHints) {
 			ds.SCtx().GetSessionVars().StmtCtx.SetHintWarning(errMsg)
 		}
 	}
+	if ds.PreferStoreType != 0 {
+		ds.SCtx().GetSessionVars().StmtCtx.MarkAlternativeLogicalPlanHasStoreTypeHint()
+	}
 }
 
 // findJoinFullSchema walks through single-child wrapper operators (e.g., LogicalSelection
@@ -3010,7 +3013,7 @@ func (b *PlanBuilder) resolveHavingAndOrderBy(ctx context.Context, sel *ast.Sele
 func (b *PlanBuilder) extractAggFuncsInExprs(exprs []ast.ExprNode) ([]*ast.AggregateFuncExpr, map[*ast.AggregateFuncExpr]int) {
 	extractor := &AggregateFuncExtractor{skipAggMap: b.correlatedAggMapper}
 	for _, expr := range exprs {
-		expr.Accept(extractor)
+		ast.Walk(expr, extractor)
 	}
 	aggList := extractor.AggFuncs
 	totalAggMapper := make(map[*ast.AggregateFuncExpr]int, len(aggList))
@@ -3024,8 +3027,7 @@ func (b *PlanBuilder) extractAggFuncsInExprs(exprs []ast.ExprNode) ([]*ast.Aggre
 func (b *PlanBuilder) extractAggFuncsInSelectFields(fields []*ast.SelectField) ([]*ast.AggregateFuncExpr, map[*ast.AggregateFuncExpr]int) {
 	extractor := &AggregateFuncExtractor{skipAggMap: b.correlatedAggMapper}
 	for _, f := range fields {
-		n, _ := f.Expr.Accept(extractor)
-		f.Expr = n.(ast.ExprNode)
+		ast.Walk(f.Expr, extractor)
 	}
 	aggList := extractor.AggFuncs
 	totalAggMapper := make(map[*ast.AggregateFuncExpr]int, len(aggList))
@@ -3039,8 +3041,7 @@ func (b *PlanBuilder) extractAggFuncsInSelectFields(fields []*ast.SelectField) (
 func (b *PlanBuilder) extractAggFuncsInByItems(byItems []*ast.ByItem) []*ast.AggregateFuncExpr {
 	extractor := &AggregateFuncExtractor{skipAggMap: b.correlatedAggMapper}
 	for _, f := range byItems {
-		n, _ := f.Expr.Accept(extractor)
-		f.Expr = n.(ast.ExprNode)
+		ast.Walk(f.Expr, extractor)
 	}
 	return extractor.AggFuncs
 }
@@ -3306,7 +3307,7 @@ func (r *correlatedAggregateResolver) collectFromWhere(p base.LogicalPlan, where
 		return nil
 	}
 	extractor := &AggregateFuncExtractor{skipAggMap: r.b.correlatedAggMapper}
-	_, _ = where.Accept(extractor)
+	ast.Walk(where, extractor)
 	r.b.curClause = whereClause
 	outerAggFuncs, err := r.b.extractCorrelatedAggFuncs(r.ctx, p, extractor.AggFuncs)
 	if err != nil {
@@ -3443,7 +3444,7 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 			}
 			if index != -1 {
 				ret := g.fields[index].Expr
-				ret.Accept(extractor)
+				ast.Walk(ret, extractor)
 				if len(extractor.AggFuncs) != 0 {
 					err = plannererrors.ErrIllegalReference.GenWithStackByArgs(v.Name.OrigColName(), "reference to group function")
 				} else if ast.HasWindowFlag(ret) {
@@ -3471,7 +3472,7 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 			return inNode, false
 		}
 		ret := g.fields[pos-1].Expr
-		ret.Accept(extractor)
+		ast.Walk(ret, extractor)
 		if len(extractor.AggFuncs) != 0 || ast.HasWindowFlag(ret) {
 			fieldName := g.fields[pos-1].AsName.String()
 			if fieldName == "" {
@@ -3902,17 +3903,17 @@ func (b *PlanBuilder) checkOnlyFullGroupByWithOutGroupClause(p base.LogicalPlan,
 	resolver.curClause = fieldList
 	for idx, field := range sel.Fields.Fields {
 		resolver.exprIdx = idx
-		field.Accept(&resolver)
+		ast.Walk(field, &resolver)
 	}
 	if len(resolver.nonAggCols) > 0 {
 		if sel.Having != nil {
-			sel.Having.Expr.Accept(&resolver)
+			ast.Walk(sel.Having.Expr, &resolver)
 		}
 		if sel.OrderBy != nil {
 			resolver.curClause = orderByClause
 			for idx, byItem := range sel.OrderBy.Items {
 				resolver.exprIdx = idx
-				byItem.Expr.Accept(&resolver)
+				ast.Walk(byItem.Expr, &resolver)
 			}
 		}
 	}
@@ -3971,43 +3972,43 @@ type colResolverForOnlyFullGroupBy struct {
 	curClause             clauseCode
 }
 
-func (c *colResolverForOnlyFullGroupBy) Enter(node ast.Node) (ast.Node, bool) {
+func (c *colResolverForOnlyFullGroupBy) Enter(node ast.Node) bool {
 	switch t := node.(type) {
 	case *ast.AggregateFuncExpr:
 		c.hasAggFuncOrAnyValue = true
 		if c.curClause == orderByClause {
 			c.firstOrderByAggColIdx = c.exprIdx
 		}
-		return node, true
+		return true
 	case *ast.FuncCallExpr:
 		// enable function `any_value` in aggregation even `ONLY_FULL_GROUP_BY` is set
 		if t.FnName.L == ast.AnyValue {
 			c.hasAggFuncOrAnyValue = true
-			return node, true
+			return true
 		}
 	case *ast.ColumnNameExpr:
 		c.nonAggCols = append(c.nonAggCols, t.Name)
 		c.nonAggColIdxs = append(c.nonAggColIdxs, c.exprIdx)
-		return node, true
+		return true
 	case *ast.SubqueryExpr:
-		return node, true
+		return true
 	}
-	return node, false
+	return false
 }
 
-func (*colResolverForOnlyFullGroupBy) Leave(node ast.Node) (ast.Node, bool) {
-	return node, true
+func (*colResolverForOnlyFullGroupBy) Leave(ast.Node) bool {
+	return true
 }
 
 type aggColNameResolver struct {
 	colNameResolver
 }
 
-func (*aggColNameResolver) Enter(inNode ast.Node) (ast.Node, bool) {
+func (*aggColNameResolver) Enter(inNode ast.Node) bool {
 	if _, ok := inNode.(*ast.ColumnNameExpr); ok {
-		return inNode, true
+		return true
 	}
-	return inNode, false
+	return false
 }
 
 func allColFromAggExprNode(p base.LogicalPlan, n ast.Node, names map[*types.FieldName]struct{}) {
@@ -4017,7 +4018,7 @@ func allColFromAggExprNode(p base.LogicalPlan, n ast.Node, names map[*types.Fiel
 			names: names,
 		},
 	}
-	n.Accept(extractor)
+	ast.Walk(n, extractor)
 }
 
 type colNameResolver struct {
@@ -4025,22 +4026,22 @@ type colNameResolver struct {
 	names map[*types.FieldName]struct{}
 }
 
-func (*colNameResolver) Enter(inNode ast.Node) (ast.Node, bool) {
+func (*colNameResolver) Enter(inNode ast.Node) bool {
 	switch inNode.(type) {
 	case *ast.ColumnNameExpr, *ast.SubqueryExpr, *ast.AggregateFuncExpr:
-		return inNode, true
+		return true
 	}
-	return inNode, false
+	return false
 }
 
-func (c *colNameResolver) Leave(inNode ast.Node) (ast.Node, bool) {
+func (c *colNameResolver) Leave(inNode ast.Node) bool {
 	if v, ok := inNode.(*ast.ColumnNameExpr); ok {
 		idx, err := expression.FindFieldName(c.p.OutputNames(), v.Name)
 		if err == nil && idx >= 0 {
 			c.names[c.p.OutputNames()[idx]] = struct{}{}
 		}
 	}
-	return inNode, true
+	return true
 }
 
 func allColFromExprNode(p base.LogicalPlan, n ast.Node, names map[*types.FieldName]struct{}) {
@@ -4048,7 +4049,7 @@ func allColFromExprNode(p base.LogicalPlan, n ast.Node, names map[*types.FieldNa
 		p:     p,
 		names: names,
 	}
-	n.Accept(extractor)
+	ast.Walk(n, extractor)
 }
 
 // resolveGbyExprs resolves group by expressions from the group by clause of a select statement.
@@ -5110,13 +5111,28 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 
 	// remain tikv access path to generate point get acceess path if existed
 	// see detail in issue: https://github.com/pingcap/tidb/issues/39543
-	if !(b.isForUpdateRead && b.ctx.GetSessionVars().TxnCtx.IsExplicit) {
+	isForUpdateReadInExplicitTxn := b.isForUpdateRead && b.ctx.GetSessionVars().TxnCtx.IsExplicit
+	if !isForUpdateReadInExplicitTxn {
 		// Skip storage engine check for CreateView.
 		if b.capFlag&canExpandAST == 0 {
 			possiblePaths, err = util.FilterPathByIsolationRead(b.ctx, possiblePaths, tblName, dbName)
 			if err != nil {
 				return nil, err
 			}
+		}
+	}
+	if b.ctx.GetSessionVars().EnableAlternativeLogicalPlans {
+		// FOR UPDATE reads in explicit transactions drop their TiFlash paths
+		// later during physical optimization, so treat them as missing one too.
+		hasTiFlashPath := false
+		for _, path := range possiblePaths {
+			if path.StoreType == kv.TiFlash {
+				hasTiFlashPath = true
+				break
+			}
+		}
+		if !hasTiFlashPath || isForUpdateReadInExplicitTxn {
+			b.ctx.GetSessionVars().StmtCtx.MarkAlternativeLogicalPlanMissingTiFlashPath()
 		}
 	}
 
@@ -6158,7 +6174,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	utlr := &updatableTableListResolver{
 		resolveCtx: b.resolveCtx,
 	}
-	update.Accept(utlr)
+	ast.Walk(update, utlr)
 	orderedList, np, allAssignmentsAreConstant, err := b.buildUpdateLists(ctx, utlr.updatableTableList, update.List, p)
 	if err != nil {
 		return nil, err
@@ -6927,7 +6943,7 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(_ context.Context, spec *ast
 	expr := expression.Constant{Value: val, RetType: boundClause.Expr.GetType()}
 
 	checker := &expression.ParamMarkerInPrepareChecker{}
-	boundClause.Expr.Accept(checker)
+	ast.Walk(boundClause.Expr, checker)
 
 	// If it has paramMarker and is in prepare stmt. We don't need to eval it since its value is not decided yet.
 	if !checker.InPrepareStmt {
@@ -7011,7 +7027,7 @@ func (b *PlanBuilder) checkWindowFuncArgs(ctx context.Context, p base.LogicalPla
 		}
 		checker.InPrepareStmt = false
 		for _, expr := range windowFuncExpr.Args {
-			expr.Accept(checker)
+			ast.Walk(expr, checker)
 		}
 		desc, err := aggregation.NewWindowFuncDesc(b.ctx.GetExprCtx(), windowFuncExpr.Name, args, checker.InPrepareStmt)
 		if err != nil {
@@ -7130,7 +7146,7 @@ func (b *PlanBuilder) buildWindowFunctions(ctx context.Context, p base.LogicalPl
 		for _, windowFunc := range funcs {
 			checker.InPrepareStmt = false
 			for _, expr := range windowFunc.Args {
-				expr.Accept(checker)
+				ast.Walk(expr, checker)
 			}
 			desc, err := aggregation.NewWindowFuncDesc(b.ctx.GetExprCtx(), windowFunc.Name, args[preArgs:preArgs+len(windowFunc.Args)], checker.InPrepareStmt)
 			if err != nil {
@@ -7251,8 +7267,7 @@ func (b *PlanBuilder) checkOriginWindowFrameBound(bound *ast.FrameBound, spec *a
 func extractWindowFuncs(fields []*ast.SelectField) []*ast.WindowFuncExpr {
 	extractor := &WindowFuncExtractor{}
 	for _, f := range fields {
-		n, _ := f.Expr.Accept(extractor)
-		f.Expr = n.(ast.ExprNode)
+		ast.Walk(f.Expr, extractor)
 	}
 	return extractor.windowFuncs
 }
@@ -7468,15 +7483,15 @@ type updatableTableListResolver struct {
 	resolveCtx         *resolve.Context
 }
 
-func (*updatableTableListResolver) Enter(inNode ast.Node) (ast.Node, bool) {
-	switch v := inNode.(type) {
+func (*updatableTableListResolver) Enter(inNode ast.Node) bool {
+	switch inNode.(type) {
 	case *ast.UpdateStmt, *ast.TableRefsClause, *ast.Join, *ast.TableSource, *ast.TableName:
-		return v, false
+		return false
 	}
-	return inNode, true
+	return true
 }
 
-func (u *updatableTableListResolver) Leave(inNode ast.Node) (ast.Node, bool) {
+func (u *updatableTableListResolver) Leave(inNode ast.Node) bool {
 	if v, ok := inNode.(*ast.TableSource); ok {
 		if s, ok := v.Source.(*ast.TableName); ok {
 			if v.AsName.L != "" {
@@ -7496,7 +7511,7 @@ func (u *updatableTableListResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 			}
 		}
 	}
-	return inNode, true
+	return true
 }
 
 // ExtractTableList is a wrapper for tableListExtractor and removes duplicate TableName
@@ -7511,7 +7526,7 @@ func ExtractTableList(node *resolve.NodeW, asName bool) []*ast.TableName {
 		tableNames: []*ast.TableName{},
 		resolveCtx: node.GetResolveContext(),
 	}
-	node.Node.Accept(e)
+	ast.Walk(node.Node, e)
 	tableNames := e.tableNames
 	m := make(map[string]map[string]*ast.TableName) // k1: schemaName, k2: tableName, v: ast.TableName
 	for _, x := range tableNames {
@@ -7540,7 +7555,7 @@ type tableListExtractor struct {
 	resolveCtx *resolve.Context
 }
 
-func (e *tableListExtractor) Enter(n ast.Node) (_ ast.Node, skipChildren bool) {
+func (e *tableListExtractor) Enter(n ast.Node) (skipChildren bool) {
 	innerExtract := func(inner ast.Node, resolveCtx *resolve.Context) []*ast.TableName {
 		if inner == nil {
 			return nil
@@ -7550,7 +7565,7 @@ func (e *tableListExtractor) Enter(n ast.Node) (_ ast.Node, skipChildren bool) {
 			tableNames: []*ast.TableName{},
 			resolveCtx: resolveCtx,
 		}
-		inner.Accept(innerExtractor)
+		ast.Walk(inner, innerExtractor)
 		return innerExtractor.tableNames
 	}
 
@@ -7597,7 +7612,7 @@ func (e *tableListExtractor) Enter(n ast.Node) (_ ast.Node, skipChildren bool) {
 				}
 			}
 		}
-		return n, true
+		return true
 
 	case *ast.ShowStmt:
 		if x.DBName != "" {
@@ -7655,11 +7670,11 @@ func (e *tableListExtractor) Enter(n ast.Node) (_ ast.Node, skipChildren bool) {
 			e.tableNames = append(e.tableNames, innerExtract(v.PreparedAst.Stmt, v.ResolveCtx)...)
 		}
 	}
-	return n, false
+	return false
 }
 
-func (*tableListExtractor) Leave(n ast.Node) (ast.Node, bool) {
-	return n, true
+func (*tableListExtractor) Leave(ast.Node) bool {
+	return true
 }
 
 func collectTableName(node ast.ResultSetNode, updatableName *map[string]bool, info *map[string]*ast.TableName) {

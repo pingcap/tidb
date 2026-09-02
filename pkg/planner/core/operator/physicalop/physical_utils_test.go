@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -116,6 +117,99 @@ func TestTryToGetMppHashAggsForMaxMinCount(t *testing.T) {
 		require.True(t, containsRunMode(plans, MppScalar))
 		require.False(t, containsRunMode(plans, MppTiDB))
 	}
+}
+
+func TestStorageEngineUsage(t *testing.T) {
+	// A single reader reports the engine of its own StoreType. A kv.TiDB reader
+	// (cluster / memory tables) is a TiDB-side read and counts as neither engine.
+	single := []struct {
+		name       string
+		plan       base.PhysicalPlan
+		hasTiKV    bool
+		hasTiFlash bool
+	}{
+		{"tableReader-tikv", &PhysicalTableReader{StoreType: kv.TiKV}, true, false},
+		{"tableReader-tiflash", &PhysicalTableReader{StoreType: kv.TiFlash}, false, true},
+		{"tableReader-tidb", &PhysicalTableReader{StoreType: kv.TiDB}, false, false},
+		{"indexReader", &PhysicalIndexReader{}, true, false},
+		{"indexLookUpReader", &PhysicalIndexLookUpReader{}, true, false},
+		{"pointGet", &PointGetPlan{}, true, false},
+		{"batchPointGet", &BatchPointGetPlan{}, true, false},
+	}
+	for _, c := range single {
+		hasTiKV, hasTiFlash := StorageEngineUsage(c.plan)
+		require.Equal(t, c.hasTiKV, hasTiKV, "%s hasTiKV", c.name)
+		require.Equal(t, c.hasTiFlash, hasTiFlash, "%s hasTiFlash", c.name)
+	}
+
+	// A plan joining a TiFlash read with a TiDB-side (cluster-table) read must
+	// not register as a TiKV/TiFlash mix: there is no TiKV read to arm against.
+	flashAndTiDB := &PhysicalHashJoin{}
+	flashAndTiDB.SetChildren(&PhysicalTableReader{StoreType: kv.TiFlash}, &PhysicalTableReader{StoreType: kv.TiDB})
+	hasTiKV, hasTiFlash := StorageEngineUsage(flashAndTiDB)
+	require.False(t, hasTiKV)
+	require.True(t, hasTiFlash)
+
+	// A genuine TiKV/TiFlash mix reports both.
+	flashAndTiKV := &PhysicalHashJoin{}
+	flashAndTiKV.SetChildren(&PhysicalTableReader{StoreType: kv.TiFlash}, &PhysicalTableReader{StoreType: kv.TiKV})
+	hasTiKV, hasTiFlash = StorageEngineUsage(flashAndTiKV)
+	require.True(t, hasTiKV)
+	require.True(t, hasTiFlash)
+}
+
+func TestHasSingleScanIndexJoin(t *testing.T) {
+	// newIndexJoin wires an index join with the inner side on child 1, the
+	// layout the planner produces for a right-side inner.
+	newIndexJoin := func(inner base.PhysicalPlan) *PhysicalIndexJoin {
+		ij := &PhysicalIndexJoin{}
+		ij.InnerChildIdx = 1
+		ij.SetChildren(&PhysicalTableReader{StoreType: kv.TiFlash}, inner)
+		return ij
+	}
+	// A Selection wrapping the inner reader must not hide it.
+	wrapped := &PhysicalSelection{}
+	wrapped.SetChildren(&PhysicalTableReader{StoreType: kv.TiKV})
+
+	inners := []struct {
+		name       string
+		inner      base.PhysicalPlan
+		singleScan bool
+	}{
+		{"handle-probe", &PhysicalTableReader{StoreType: kv.TiKV}, true},
+		{"covering-index", &PhysicalIndexReader{}, true},
+		{"wrapped-handle-probe", wrapped, true},
+		{"double-read", &PhysicalIndexLookUpReader{}, false},
+		{"index-merge", &PhysicalIndexMergeReader{}, false},
+		{"tiflash-reader", &PhysicalTableReader{StoreType: kv.TiFlash}, false},
+	}
+	for _, c := range inners {
+		require.Equal(t, c.singleScan, HasSingleScanIndexJoin(newIndexJoin(c.inner)), c.name)
+	}
+
+	// The hash and merge variants embed PhysicalIndexJoin by value, so they must
+	// be recognised too.
+	hashJoin := &PhysicalIndexHashJoin{PhysicalIndexJoin: *newIndexJoin(&PhysicalIndexReader{})}
+	require.True(t, HasSingleScanIndexJoin(hashJoin))
+	mergeJoin := &PhysicalIndexMergeJoin{PhysicalIndexJoin: *newIndexJoin(&PhysicalIndexReader{})}
+	require.True(t, HasSingleScanIndexJoin(mergeJoin))
+
+	// Only the inner side counts: a single-scan reader on the outer side of a
+	// double-reading index join is not the access method being protected.
+	outerSingleScan := &PhysicalIndexJoin{}
+	outerSingleScan.InnerChildIdx = 1
+	outerSingleScan.SetChildren(&PhysicalTableReader{StoreType: kv.TiKV}, &PhysicalIndexLookUpReader{})
+	require.False(t, HasSingleScanIndexJoin(outerSingleScan))
+
+	// A plan without any index join reports false, and one buried under other
+	// operators is still found.
+	plainJoin := &PhysicalHashJoin{}
+	plainJoin.SetChildren(&PhysicalTableReader{StoreType: kv.TiKV}, &PhysicalIndexReader{})
+	require.False(t, HasSingleScanIndexJoin(plainJoin))
+	buried := &PhysicalHashAgg{}
+	buried.SetChildren(newIndexJoin(&PhysicalIndexReader{}))
+	require.True(t, HasSingleScanIndexJoin(buried))
+	require.False(t, HasSingleScanIndexJoin(nil))
 }
 
 func TestFlattenTreePushDownPlan(t *testing.T) {

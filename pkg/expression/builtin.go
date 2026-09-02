@@ -56,6 +56,7 @@ type baseBuiltinFunc struct {
 	ctor         collate.Collator
 
 	childrenVectorized     bool
+	useNewCollate          bool
 	childrenVectorizedOnce *sync.Once
 
 	safeToShareAcrossSessionFlag uint32 // 0 not-initialized, 1 safe, 2 unsafe
@@ -93,12 +94,13 @@ func (b *baseBuiltinFunc) setPbCode(c tipb.ScalarFuncSig) {
 	b.pbCode = c
 }
 
-func (b *baseBuiltinFunc) setCollator(ctor collate.Collator) {
-	b.ctor = ctor
-}
-
 func (b *baseBuiltinFunc) collator() collate.Collator {
 	return b.ctor
+}
+
+func (b *baseBuiltinFunc) SetCharsetAndCollation(chs, coll string) {
+	b.collationInfo.SetCharsetAndCollation(chs, coll)
+	b.ctor = collate.GetCollatorWithCollate(b.useNewCollate, coll)
 }
 
 func adjustNullFlagForReturnType(ctx EvalContext, funcName string, args []Expression, bf baseBuiltinFunc) {
@@ -134,12 +136,12 @@ func newBaseBuiltinFunc(ctx BuildContext, funcName string, args []Expression, tp
 
 	bf := baseBuiltinFunc{
 		childrenVectorizedOnce: new(sync.Once),
+		useNewCollate:          ctx.NewCollationEnabled(),
 
 		args: args,
 		tp:   tp,
 	}
 	bf.SetCharsetAndCollation(ec.Charset, ec.Collation)
-	bf.setCollator(collate.GetCollator(ec.Collation))
 	bf.SetCoercibility(ec.Coer)
 	bf.SetRepertoire(ec.Repe)
 	adjustNullFlagForReturnType(ctx.GetEvalCtx(), funcName, args, bf)
@@ -225,12 +227,12 @@ func newBaseBuiltinFuncWithTp(ctx BuildContext, funcName string, args []Expressi
 	fieldType := newReturnFieldTypeForBaseBuiltinFunc(funcName, retType, ec)
 	bf = baseBuiltinFunc{
 		childrenVectorizedOnce: new(sync.Once),
+		useNewCollate:          ctx.NewCollationEnabled(),
 
 		args: args,
 		tp:   fieldType,
 	}
 	bf.SetCharsetAndCollation(ec.Charset, ec.Collation)
-	bf.setCollator(collate.GetCollator(ec.Collation))
 	bf.SetCoercibility(ec.Coer)
 	bf.SetRepertoire(ec.Repe)
 	// note this function must be called after wrap cast function to the args
@@ -285,12 +287,12 @@ func newBaseBuiltinFuncWithFieldTypes(ctx BuildContext, funcName string, args []
 	fieldType := newReturnFieldTypeForBaseBuiltinFunc(funcName, retType, ec)
 	bf = baseBuiltinFunc{
 		childrenVectorizedOnce: new(sync.Once),
+		useNewCollate:          ctx.NewCollationEnabled(),
 
 		args: args,
 		tp:   fieldType,
 	}
 	bf.SetCharsetAndCollation(ec.Charset, ec.Collation)
-	bf.setCollator(collate.GetCollator(ec.Collation))
 	bf.SetCoercibility(ec.Coer)
 	bf.SetRepertoire(ec.Repe)
 	// note this function must be called after wrap cast function to the args
@@ -303,12 +305,12 @@ func newBaseBuiltinFuncWithFieldTypes(ctx BuildContext, funcName string, args []
 func newBaseBuiltinFuncWithFieldType(tp *types.FieldType, args []Expression) (baseBuiltinFunc, error) {
 	bf := baseBuiltinFunc{
 		childrenVectorizedOnce: new(sync.Once),
+		useNewCollate:          collate.NewCollationEnabled(),
 
 		args: args,
 		tp:   tp,
 	}
 	bf.SetCharsetAndCollation(tp.GetCharset(), tp.GetCollate())
-	bf.setCollator(collate.GetCollator(tp.GetCollate()))
 	return bf, nil
 }
 
@@ -437,6 +439,7 @@ func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
 	}
 	b.tp = from.tp
 	b.pbCode = from.pbCode
+	b.useNewCollate = from.useNewCollate
 	b.childrenVectorizedOnce = new(sync.Once)
 	if from.ctor != nil {
 		b.ctor = from.ctor.Clone()
@@ -481,12 +484,12 @@ func newBaseBuiltinCastFunc4String(ctx BuildContext, funcName string, args []Exp
 	if isExplicitCharset {
 		bf = baseBuiltinFunc{
 			childrenVectorizedOnce: new(sync.Once),
+			useNewCollate:          ctx.NewCollationEnabled(),
 
 			args: args,
 			tp:   tp,
 		}
 		bf.SetCharsetAndCollation(tp.GetCharset(), tp.GetCollate())
-		bf.setCollator(collate.GetCollator(tp.GetCollate()))
 		bf.SetCoercibility(CoercibilityExplicit)
 		bf.SetExplicitCharset(true)
 		if tp.GetCharset() == charset.CharsetASCII {
@@ -567,8 +570,6 @@ type builtinFunc interface {
 	setPbCode(tipb.ScalarFuncSig)
 	// PbCode returns PbCode of this signature.
 	PbCode() tipb.ScalarFuncSig
-	// setCollator sets collator for signature.
-	setCollator(ctor collate.Collator)
 	// collator returns collator of this signature.
 	collator() collate.Collator
 	// metadata returns the metadata of a function.

@@ -45,6 +45,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	servererr "github.com/pingcap/tidb/pkg/server/err"
 	"github.com/pingcap/tidb/pkg/server/internal"
@@ -55,12 +58,15 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/arena"
+	"github.com/pingcap/tidb/pkg/util/breakpoint"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -1461,6 +1467,52 @@ func TestPrefetchPointKeys4Delete(t *testing.T) {
 	require.Equal(t, 6, tk.Session().GetSessionVars().TxnCtx.PessimisticCacheHit)
 	tk.MustExec("commit")
 	tk.MustQuery("select * from prefetch").Check(testkit.Rows())
+
+	t.Run("scalar followed by a prebuilt PointGet", func(t *testing.T) {
+		tk.MustExec("insert into prefetch values (1, 1, 10), (2, 2, 20)")
+		tk.MustExec("begin optimistic")
+		defer tk.MustExec("rollback")
+		tk.MustQuery("select c from prefetch where a = 1 and b = 1").Check(testkit.Rows("10"))
+		var response bytes.Buffer
+		cc.pkt = internal.NewPacketIOForTest(bufio.NewWriter(&response))
+		var registrySizes, scalarTreeCounts []int
+		tk.Session().SetValue(breakpoint.NotifyBreakPointFuncKey, func(_ string) {
+			vars := tk.Session().GetSessionVars()
+			plan, ok := vars.StmtCtx.GetPlan().(base.Plan)
+			require.True(t, ok)
+			prebuilt, ok := tk.Session().Value(plannercore.PointPlanKey).(plannercore.PointPlanVal)
+			require.True(t, ok, "handleQuery must supply the prefetched plan entry")
+			if len(registrySizes) == 0 {
+				require.Nil(t, prebuilt.Plan)
+			} else {
+				require.IsType(t, &physicalop.PointGetPlan{}, plan)
+				require.Same(t, prebuilt.Plan, plan, "the second statement must use the prebuilt plan")
+			}
+			registrySizes = append(registrySizes, len(vars.MapScalarSubQ))
+			scalarTreeCounts = append(scalarTreeCounts, len(plannercore.FlattenPhysicalPlan(plan, true).ScalarSubQueries))
+		})
+		defer tk.Session().ClearValue(breakpoint.NotifyBreakPointFuncKey)
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/breakpoint/"+sessiontxn.BreakPointBeforeExecutorFirstRun, "return")
+		err := cc.handleQuery(ctx, "select (select sum(c) from prefetch);select c from prefetch where a = 2 and b = 2;")
+		require.NoError(t, err)
+		t.Logf("multi-statement registry sizes=%v flattened scalar trees=%v", registrySizes, scalarTreeCounts)
+
+		// Each one-column result has a header, column definition, EOF, row and EOF.
+		packets := internal.NewPacketIO(serverutil.NewBufferedReadConn(&testutil.BytesConn{Buffer: response}))
+		for _, expected := range []string{"30", "20"} {
+			for range 3 {
+				_, err = packets.ReadPacket()
+				require.NoError(t, err)
+			}
+			row, err := packets.ReadPacket()
+			require.NoError(t, err)
+			require.Equal(t, append([]byte{byte(len(expected))}, expected...), row)
+			_, err = packets.ReadPacket()
+			require.NoError(t, err)
+		}
+		require.Equal(t, []int{1, 0}, scalarTreeCounts)
+		require.Equal(t, []int{1, 0}, registrySizes)
+	})
 }
 
 func TestPrefetchBatchPointGet(t *testing.T) {

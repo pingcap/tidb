@@ -343,6 +343,7 @@ func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int, inShar
 	lockCtx.Killed = &seVars.SQLKiller.Signal
 	lockCtx.LockExpired = &seVars.TxnCtx.LockExpire
 	lockCtx.InShareMode = inSharedMode
+	lockCtx.AllowSharedLockUpgrade = seVars.EnableSharedLockUpgrade
 
 	if deadline, ok := getMaxExecutionDeadline(sctx); ok {
 		lockCtx.MaxExecutionDeadline = deadline
@@ -925,6 +926,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		}
 	}()
 	vars := ctx.GetSessionVars()
+	// Scalar subquery plans belong to the statement being planned. Clear the
+	// registry before plan selection, including fast and cached plans that can
+	// bypass the reset in buildLogicalPlan.
+	vars.MapScalarSubQ = nil
 	for name, val := range vars.StmtCtx.SetVarHintRestore {
 		err := vars.SetSystemVar(name, val)
 		if err != nil {

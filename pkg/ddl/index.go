@@ -934,6 +934,13 @@ func (w *worker) onCreateColumnarIndex(jobCtx *jobContext, job *model.Job) (ver 
 	originalState := indexInfo.State
 	switch indexInfo.State {
 	case model.StateNone:
+		// Reject before the first schema mutation when Columnar Storage is off.
+		// Submit-path already checks; re-check here so ON->OFF between enqueue and
+		// owner execution cannot persist a columnar index.
+		if err := w.checkColumnarStorageEnabled(1, false); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, wrapColumnarStorageGateForColumnarIndex(err)
+		}
 		// none -> delete only
 		indexInfo.State = model.StateDeleteOnly
 		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, originalState != indexInfo.State)
@@ -1215,8 +1222,20 @@ SwitchIndexState:
 			job.State = model.JobStateCancelled
 			return ver, err
 		}
-		err = preSplitIndexRegions(jobCtx.stepCtx, w.sess.Context, jobCtx.store, tblInfo, allIndexInfos, job.ReorgMeta, args)
+		var statsProvider autoPreSplitStatsProvider
+		for _, idxArg := range args.IndexArgs {
+			if idxArg.AutoPreSplit {
+				statsProvider = w.ddlCtx.statsHandle
+				break
+			}
+		}
+		err = preSplitIndexRegions(
+			jobCtx.stepCtx, w.sess.Context, jobCtx.store, tblInfo, allIndexInfos,
+			job.ReorgMeta, args, statsProvider)
 		if err != nil {
+			if dbterror.ErrPausedDDLJob.Equal(err) {
+				return ver, nil
+			}
 			if !isRetryableJobError(err, job.ErrorCount) {
 				job.State = model.JobStateCancelled
 			}
@@ -2713,11 +2732,11 @@ func writeChunk(
 	writeStmtBufs *variable.WriteStmtBufs,
 	copChunk *chunk.Chunk,
 	tblInfo *model.TableInfo,
-	useNewCollate bool,
 ) (rowCnt int, bytes int, err error) {
 	iter := chunk.NewIterator4Chunk(copChunk)
 	c := copCtx.GetBase()
 	ectx := c.ExprCtx.GetEvalCtx()
+	useNewCollate := c.ExprCtx.NewCollationEnabled()
 
 	maxIdxColCnt := maxIndexColumnCount(indexes)
 	idxDataBuf := make([]types.Datum, maxIdxColCnt)
