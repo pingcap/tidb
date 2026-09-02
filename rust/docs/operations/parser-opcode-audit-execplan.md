@@ -2,29 +2,21 @@
 
 ## Objective
 
-Inventory the complete operator package, remove the Rust-only stale opcode,
-align Go source with Go master, and verify the shared Rust AST owner.
+Inventory all Go operator-package artifacts, remove stale test assumptions,
+and verify the dependency-closed Rust AST owner remains aligned.
 
-## Completed
+## Progress
 
-- Read all three pinned artifacts (310 lines, four production declarations,
-  and one test).
-- Removed `Binary` and its metadata row from Go and Rust authorities.
-- Added a focused opcode-count/source-table regression and captured the
-  expected pre-fix failure in both Go and Rust.
-- Confirmed remaining `BINARY` identifiers are distinct charset/cast/
-  weight-string/expression concepts.
+- [x] (2026-09-02) Read all three artifacts (310 lines), including BUILD,
+      production methods, test, and confirmed no fixtures/generated/platform
+      variants.
+- [x] (2026-09-02) Removed the obsolete fixed opcode-count assertion while
+      retaining per-op formatting/string coverage.
+- [x] (2026-09-02) Ran the focused failpoint-wrapped test and repository lint.
+- [x] (2026-09-02) Committed only this package plus receipt/ExecPlan, pushed to
+      `hparser-integration`, verified the remote SHA, and fast-forward pulled.
 
-## Validation gate
+## Boundary
 
-- [x] Before-fix Go and Rust regressions fail on the stale count.
-- [x] Focused Go and Rust opcode suites pass after the fix.
-- [x] Ready Rust formatting, repository lint, and diff checks pass.
-- [ ] `make bazel_prepare` — attempted, blocked because `bazel` is unavailable.
-- [ ] Push the batch to `origin/hparser-integration`, verify remote SHAs, and
-      pull the explicit branch ref.
-
-## Remaining boundary
-
-Any future operator additions/removals must update the Go table, Rust `Op`,
-expression adapters, and source-derived table tests as one package unit.
+Rust `tidb-ast` owns the equivalent operator table. Future opcode additions or
+removals must update both tables and source-derived behavior tests together.
