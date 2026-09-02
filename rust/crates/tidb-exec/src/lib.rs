@@ -55,6 +55,7 @@ pub mod adapter;
 pub mod aggregate;
 pub mod alternative_plan_signals;
 pub mod analyze_panic_error;
+pub mod auto_pre_split;
 pub mod backfill_metrics;
 pub mod base_join_probe;
 pub mod batch_flusher;

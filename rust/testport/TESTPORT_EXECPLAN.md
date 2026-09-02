@@ -42,6 +42,19 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: completed the current Go-master `pkg/ddl` root inventory before
+  editing: 139 direct artifacts (63 production, 74 tests, `BUILD.bazel`, and
+  `OWNERS`), 89,091 Go/BUILD lines, and 1,016 top-level test/benchmark
+  declarations. The automatic-index-pre-split delta from
+  `c6054025ed4c32ab3672a2a24ea46892714d21ec` is now carried through the Rust
+  parser/AST, independent `auto_presplit` job argument, feature/keyword
+  catalogs, DDL catalog write, and a pure TopN/histogram quantile planner with
+  focused regressions. The branch has no dependency-closed DDL
+  `SplittableStore` owner, so PD split execution is recorded as an explicit
+  boundary instead of inventing a second region client. Details are in
+  `receipts/ddl_auto_presplit_audit.md`; this is one package-level batch, not a
+  repository-wide parity claim.
+
 - 2026-09-02: refreshed and completed the Go-master
   `pkg/statistics/handle/storage` package boundary at
   `c6054025ed4c32ab3672a2a24ea46892714d21ec`: all 12 production, test, and

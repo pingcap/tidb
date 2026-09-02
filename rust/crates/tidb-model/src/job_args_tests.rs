@@ -1631,6 +1631,34 @@ pub(crate) fn go_test_add_index_args() {
 }
 
 #[test]
+pub(crate) fn go_test_auto_pre_split_index_arg_json_is_separate_from_manual_split() {
+    let auto = IndexArg {
+        auto_pre_split: true,
+        ..Default::default()
+    };
+    let encoded = serde_json::to_value(&auto).expect("AUTO index arg serializes");
+    assert_eq!(encoded["auto_presplit"], true);
+    assert!(encoded.get("split_opt").is_none());
+
+    let decoded: IndexArg = serde_json::from_value(serde_json::json!({
+        "auto_presplit": true,
+    }))
+    .expect("AUTO index arg decodes");
+    assert!(decoded.auto_pre_split);
+    assert!(decoded.split_opt.is_none());
+
+    let manual: IndexArg = serde_json::from_value(serde_json::json!({
+        "auto_presplit": true,
+        "split_opt": {"num": 4},
+    }))
+    .expect("manual split payload decodes");
+    // The persisted shape can contain both fields after a mixed-version
+    // handoff; the executor's manual path decides precedence.
+    assert!(manual.auto_pre_split);
+    assert_eq!(manual.split_opt.unwrap().read().num, 4);
+}
+
+#[test]
 pub(crate) fn go_test_drop_index_arguments() {
     let args = GoShared::new(ModifyIndexArgs {
         index_args: vec![IndexArg {

@@ -184,6 +184,8 @@ pub enum AlterColumnAction {
         if_not_exists: bool,
         /// The index, complete except for id and column offsets.
         index: Box<IndexInfo>,
+        /// Whether Go's AUTO pre-split marker was present on this sub-action.
+        auto_pre_split: bool,
     },
     /// `DROP INDEX`/`DROP KEY`.
     DropIndex {
@@ -545,6 +547,11 @@ pub enum DdlStatement {
         /// offsets the publishing transaction resolves against the stored
         /// table.
         index: Box<IndexInfo>,
+        /// Go `IndexArg.AutoPreSplit`: request best-effort automatic
+        /// leading-column region boundaries while the index is built.
+        /// Explicit `split_opt` boundaries are represented by the caller's
+        /// separate manual path and take precedence over this marker.
+        auto_pre_split: bool,
     },
     /// `DROP INDEX name ON [schema.]table`.
     DropIndex {
@@ -1198,10 +1205,12 @@ fn lower_alter_table_catalog(
                         DdlStatement::CreateIndex {
                             if_not_exists,
                             index,
+                            auto_pre_split,
                             ..
                         } => actions.push(AlterColumnAction::AddIndex {
                             if_not_exists,
                             index,
+                            auto_pre_split,
                         }),
                         other => {
                             unreachable!(
@@ -1573,10 +1582,12 @@ fn lower_alter_table_catalog(
                             DdlStatement::CreateIndex {
                                 if_not_exists,
                                 index,
+                                auto_pre_split,
                                 ..
                             } => actions.push(AlterColumnAction::AddIndex {
                                 if_not_exists,
                                 index,
+                                auto_pre_split,
                             }),
                             other => unreachable!(
                                 "lower_alter_add_index lowers to CreateIndex, got {other:?}"
@@ -2276,6 +2287,7 @@ fn lower_create_index(
         schema,
         table,
         if_not_exists: create.if_not_exists,
+        auto_pre_split: create.options.auto_pre_split && create.options.pre_split_regions.is_none(),
         index: Box::new(IndexInfo {
             // The publishing transaction allocates it from the table's own
             // space, which is `TableInfo.MaxIndexID` and not the global one.
@@ -3119,6 +3131,7 @@ pub fn plan_persisted_check_constraint_job_step<S: MetaSnapshot>(
             diff,
             created_id: None,
             backfill: Vec::new(),
+            auto_pre_split: false,
             exchange_partition_validation: None,
             check_constraint_validation: validation,
             mdl_info_update: schema_changed
@@ -3196,6 +3209,11 @@ pub struct DdlWrite {
     /// index and its contents become visible at one commit timestamp and no
     /// reader can see one without the other.
     pub backfill: Vec<IndexBackfill>,
+    /// Automatic index pre-split request carried from the add-index option.
+    /// Planning the concrete boundaries is deliberately separate from the
+    /// catalog mutation so a caller can provide statistics at the same
+    /// snapshot and keep AUTO best-effort.
+    pub auto_pre_split: bool,
     /// The row-routing proof owed by `EXCHANGE PARTITION ... WITH
     /// VALIDATION`, evaluated from the same snapshot before this write set is
     /// committed. `None` is Go's `WITHOUT VALIDATION` path.
@@ -3872,6 +3890,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
     let mut global_ids = GlobalIdAllocator::load(snapshot)?;
     let mut created_id = None;
     let mut backfill = Vec::new();
+    let mut auto_pre_split = false;
     let mut exchange_partition_validation = None;
     let mut check_constraint_validation = None;
     let mut exchange_partition_label_swap = None;
@@ -5697,7 +5716,9 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                     AlterColumnAction::AddIndex {
                         if_not_exists,
                         index,
+                        auto_pre_split: action_auto_pre_split,
                     } => {
+                        auto_pre_split |= *action_auto_pre_split;
                         if let Some(existing) = find_index(&info, index.name.original()) {
                             let existing = existing.read();
                             if *if_not_exists {
@@ -6043,7 +6064,9 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             table,
             if_not_exists,
             index,
+            auto_pre_split: requested_auto_pre_split,
         } => {
+            auto_pre_split = *requested_auto_pre_split;
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
             if let Some(existing) = find_index(stored, index.name.original()) {
                 let existing = existing.read();
@@ -6647,6 +6670,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
         diff,
         created_id,
         backfill,
+        auto_pre_split,
         exchange_partition_validation,
         check_constraint_validation,
         mdl_info_update,

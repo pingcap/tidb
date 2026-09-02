@@ -94,6 +94,13 @@ pub struct IndexOption {
     pub primary_key_tp: i64,
     /// Global-index marker.
     pub global: bool,
+    /// Leading-column-only automatic pre-splitting for add-index DDL.
+    ///
+    /// Go keeps this runtime-only on the AST because the persisted job arg
+    /// owns the durable marker instead.  It is nevertheless part of the
+    /// source option contract and must survive parse/restore.
+    #[serde(skip)]
+    pub auto_pre_split: bool,
     /// Secondary engine attribute.
     pub secondary_engine_attr: String,
     /// On-demand columnar-replica marker.

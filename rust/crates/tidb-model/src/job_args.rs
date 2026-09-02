@@ -2294,6 +2294,17 @@ pub struct IndexArg {
     /// Finished-job global-index marker.
     #[serde(default, skip_serializing_if = "crate::serde_helpers::is_false")]
     pub is_global: bool,
+    /// Best-effort automatic pre-split marker for add-index jobs.
+    ///
+    /// This stays separate from `split_opt` for rolling upgrades: an older
+    /// owner may ignore this unknown field, but must not mistake AUTO for an
+    /// empty manual split payload.
+    #[serde(
+        rename = "auto_presplit",
+        default,
+        skip_serializing_if = "crate::serde_helpers::is_false"
+    )]
+    pub auto_pre_split: bool,
     /// V2-only pre-split payload.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub split_opt: Option<GoShared<IndexArgSplitOpt>>,

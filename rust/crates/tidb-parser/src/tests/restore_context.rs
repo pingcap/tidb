@@ -195,6 +195,16 @@ fn go_ast_test_presplit_index_special_comments() {
     }
 }
 
+/// Go uses a dedicated `auto_presplit` feature id for AUTO so a rolling
+/// parser can gate this optimization independently from manual boundaries.
+#[test]
+fn go_ast_test_auto_presplit_index_special_comment() {
+    assert_eq!(
+        restore_special("ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = AUTO"),
+        "ALTER TABLE `t` ADD INDEX(`a`) /*T![auto_presplit] PRE_SPLIT_REGIONS = AUTO */",
+    );
+}
+
 /// Index-owned special-comment rows from Go
 /// `pkg/parser/ast/ddl_test.go:655 TestIfExistsRestore`.
 #[test]

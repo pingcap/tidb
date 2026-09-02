@@ -3151,6 +3151,30 @@ fn create_index_stores_the_index_and_owes_a_backfill() {
     );
 }
 
+/// The Go c605 add-index path carries AUTO independently of manual split
+/// arguments.  The catalog plan must retain that request instead of silently
+/// dropping it while constructing `IndexInfo`.
+#[test]
+fn create_index_auto_pre_split_marker_reaches_catalog_write() {
+    let mut store = bootstrapped();
+    let table_id = table_with_two_columns(&mut store);
+    let auto = plan(
+        &mut store,
+        "CREATE INDEX vi ON u6.minimal (v) PRE_SPLIT_REGIONS = AUTO",
+        470_000_000,
+    );
+    assert!(auto.auto_pre_split);
+    assert_eq!(auto.backfill.first().unwrap().index.read().id, 1);
+    assert_eq!(stored_table(&auto, table_id)["index_info"][0]["idx_name"]["O"], "vi");
+
+    let manual = plan(
+        &mut store,
+        "CREATE INDEX manual ON u6.minimal (v) PRE_SPLIT_REGIONS = 4",
+        470_000_001,
+    );
+    assert!(!manual.auto_pre_split);
+}
+
 /// Go captures `collate.NewCollationEnabled()` in `DDLReorgMeta` when the job
 /// is built. The backfill must carry that snapshot rather than re-read the
 /// runtime switch after the catalog mutation has already been planned.

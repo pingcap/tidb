@@ -116,6 +116,38 @@ fn go_parser_alter_index_options_rows_match() {
     ], 23);
 }
 
+/// `pkg/parser/parser_test.go` rows added with automatic add-index
+/// pre-splitting. AUTO is a distinct option from manual boundaries and keeps
+/// its marker through the AST restore path.
+#[test]
+fn go_parser_auto_pre_split_index_rows_match() {
+    assert_source_cases(
+        &[
+            (
+                "ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = AUTO",
+                true,
+                "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = AUTO",
+            ),
+            (
+                "CREATE INDEX idx ON t (a) PRE_SPLIT_REGIONS AUTO",
+                true,
+                "CREATE INDEX `idx` ON `t` (`a`) PRE_SPLIT_REGIONS = AUTO",
+            ),
+            (
+                "ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = AUTO PRE_SPLIT_REGIONS = 4",
+                true,
+                "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = 4",
+            ),
+            (
+                "ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = 4 PRE_SPLIT_REGIONS = AUTO",
+                true,
+                "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = 4",
+            ),
+        ],
+        4,
+    );
+}
+
 /// `pkg/parser/parser_test.go:3311-3334`: vector and columnar ALTER INDEX
 /// grammar, including the rejected shorthand spellings.
 #[test]

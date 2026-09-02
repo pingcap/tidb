@@ -98,6 +98,11 @@ pub(super) static KEYWORDS_UNRESERVED: &[Keyword] = &[
         section: "unreserved",
     },
     Keyword {
+        word: "AUTO",
+        reserved: false,
+        section: "unreserved",
+    },
+    Keyword {
         word: "AUTOEXTEND_SIZE",
         reserved: false,
         section: "unreserved",
