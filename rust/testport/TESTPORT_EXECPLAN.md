@@ -42,6 +42,15 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: completed a follow-up `pkg/store/copr` Go-package batch against
+  Go master `1c1a334d2b`: updated the dependency-closed client-go API-v2 pin,
+  retained source-shaped bucket-version cache handling, and added the focused
+  StoreBatch child-lock regression proving decoded primary keys are encoded
+  exactly once. The complete 20-artifact copr inventory remains the atomic
+  boundary; failpoint-wrapped validation passes, while Bazel preparation is
+  blocked by the missing local executable. Details are in
+  `receipts/store_copr.md`.
+
 - 2026-09-02: completed a follow-up `pkg/distsql` Go-package batch for
   coprocessor request-limiter wait statistics at current `origin/master`
   `1c1a334d2b`. The complete 15-artifact root inventory remains the atomic

@@ -129,3 +129,25 @@ their previous allocation and scheduling behavior. Live TiKV/PD behavior,
 Bazel analysis, the nested package's current-branch test run, and a Rust
 coprocessor worker implementation remain unverified or explicitly outside
 this package boundary.
+
+## Follow-up Go package batch: API-v2 StoreBatch lock keys
+
+Go master `1c1a334d2b` (pulled 2026-09-02) advances client-go to
+`v2.0.8-0.20260831103552-e4905600583b`, whose API-v2 response decoder returns
+decoded bucket/lock boundaries before TiDB updates the region cache or resolves
+child locks. The coprocessor package keeps that source contract and now has a
+focused API-v2 StoreBatch lock regression using a keyspace codec; the test
+asserts that the check-txn-status primary key is encoded exactly once. The
+matching kvproto/PD imports are present in the package BUILD target, and the
+Go module checksum/Bazel pin is updated as the dependency-closed package input.
+
+Ready evidence for this package-level follow-up:
+
+- failpoint-wrapped `TestHandleBatchCopResponse/API_V2_child_lock` and the full
+  root `pkg/store/copr` package suite pass with the current client-go pin;
+- `gofmt`, `git diff --check`, and `make lint` pass;
+- `make bazel_prepare` is required for the BUILD/dependency changes but is
+  blocked locally because the `bazel` executable is unavailable.
+
+The complete 20-artifact root inventory remains the atomic Go package boundary;
+the nested `copr_test` and `metrics` packages are unchanged separate claims.
