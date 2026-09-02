@@ -42,6 +42,16 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: completed a bounded `pkg/planner/core/operator/physicalop`
+  Go-package batch against Go master `1c1a334d2b`: restored
+  `StorageEngineUsage` and `HasSingleScanIndexJoin` with focused physical-tree
+  regressions and BUILD metadata. The Rust `tidb-planner` owner now exposes
+  equivalent reader-boundary and inner-probe predicates over its closed
+  `PhysicalPlan` tree. The failpoint-aware Go tests and lint pass; Rust planner
+  compilation is blocked by missing OpenSSL/pkg-config, and
+  `make bazel_prepare` is blocked by the missing Bazel executable. Details are
+  in `receipts/planner_physicalop_engine_usage.md`.
+
 - 2026-09-02: completed a second bounded `pkg/sessionctx/vardef` Go-package
   batch against Go master `1c1a334d2be1dce64888b6e1f054462c566b0734`:
   restored the process-global plan-replayer file-retention duration, its

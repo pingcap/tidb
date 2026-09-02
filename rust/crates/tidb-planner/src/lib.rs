@@ -175,6 +175,7 @@ pub mod selectivity_greedy;
 pub mod signed_bigint_ranger;
 pub mod stack_contract;
 pub mod stats_info;
+pub mod storage_engine_usage;
 pub mod string_writer;
 pub mod table_sampler;
 pub mod task;
