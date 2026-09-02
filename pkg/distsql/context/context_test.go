@@ -44,6 +44,7 @@ func TestContextDetach(t *testing.T) {
 		Killed:          &sqlkiller.Signal,
 	}
 	warnHandler := contextutil.NewStaticWarnHandler(5)
+	queryCopStoreLimiter := kv.NewQueryCopStoreLimiter(1)
 
 	obj := &DistSQLContext{
 		WarnHandler:            warnHandler,
@@ -72,6 +73,7 @@ func TestContextDetach(t *testing.T) {
 		TiFlashQuerySpillRatio:               1.0,
 		TiFlashHashJoinVersion:               joinversion.HashJoinVersionLegacy,
 
+		QueryCopStoreLimiter:          queryCopStoreLimiter,
 		DistSQLConcurrency:            1,
 		ReplicaReadType:               kv.ReplicaReadFollower,
 		WeakConsistency:               true,
@@ -112,6 +114,7 @@ func TestContextDetach(t *testing.T) {
 			"$.RunawayChecker",
 			"$.RUConsumptionReporter",
 			"$.ExecDetails",
+			"$.QueryCopStoreLimiter",
 		}))
 
 	staticObj := obj.Detach()
@@ -135,5 +138,6 @@ func TestContextDetach(t *testing.T) {
 			"$.RuntimeStatsColl",
 			"$.WarnHandler",
 			"$.ResourceGroupTagger",
+			"$.QueryCopStoreLimiter",
 		}))
 }

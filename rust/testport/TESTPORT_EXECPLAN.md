@@ -61,6 +61,14 @@ For each bounded behavior cluster:
   post-fix failpoint-aware focused and full package suites passed. The Rust
   owner and downstream distsql/session consumers remain separate boundaries.
 
+- 2026-09-02: completed the direct `pkg/distsql/context` Go-package batch in
+  one commit after pulling Go master `febee17ec716d86b1e355e5400ef9e4f4f190bad`.
+  Restored `DistSQLContext.QueryCopStoreLimiter` and extended
+  `TestContextDetach` to preserve the statement-scoped limiter. The focused
+  pre-fix test failed at compile time on the missing struct field; focused and
+  full post-fix package tests passed. The package inventory covered all three
+  artifacts and has no fixtures, generated inputs, or platform variants.
+
 - 2026-09-02: completed the Go-master `pkg/parser` materialized-view DDL
   syntax delta in one parser-package batch. Before editing, the full root
   parser inventory (33 artifacts, 64,956 lines, generated grammar/keyword
