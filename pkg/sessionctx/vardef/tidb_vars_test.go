@@ -39,6 +39,11 @@ func TestIsMDLEnabledInNextGen(t *testing.T) {
 	require.True(t, IsMDLEnabled())
 }
 
+func TestQueryCopStoreLimitConstants(t *testing.T) {
+	require.Equal(t, "tidb_query_cop_store_limit", TiDBQueryCopStoreLimit)
+	require.Equal(t, 15, DefTiDBQueryCopStoreLimit)
+}
+
 func runConcurrentTest(b *testing.B, limiter interface {
 	Allow() bool
 }, goroutines int) {

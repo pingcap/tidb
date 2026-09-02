@@ -1,7 +1,7 @@
 # `pkg/sessionctx/vardef` Go-master parity audit
 
 Comparison source: Go `origin/master` at commit
-`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01).
+`febee17ec716d86b1e355e5400ef9e4f4f190bad` (2026-09-02).
 
 This receipt records the complete package inventory and the bounded constants
 delta implemented in the Rust `tidb-vardef` owner. It does not claim the full
@@ -12,7 +12,7 @@ belong to later dependency-closed package units.
 ## Complete Go package inventory
 
 The package has exactly seven artifacts (3 production Go files, 2 Go tests, a
-Bazel target, and OWNERS), with 3,046 lines in the Go-master snapshot:
+Bazel target, and OWNERS), with 3,060 lines in the Go-master snapshot:
 
 | artifact | lines | inventory |
 | --- | ---: | --- |
@@ -21,7 +21,7 @@ Bazel target, and OWNERS), with 3,046 lines in the Go-master snapshot:
 | `runtime.go` | 89 | 9 functions: four lease setter/getter pairs and `IsReadOnlyVarInNextGen`; four process-wide atomic durations |
 | `runtime_test.go` | 36 | `TestIsReadOnlyVarInNextGen`; next-gen-only case matrix |
 | `sysvar.go` | 352 | `SetNamesVariables`, `SetCharsetVariables`, and the complete system-variable name/mode/scope/type constant layer; no functions |
-| `tidb_vars.go` | 2,431 | 22 functions (duration/memory helpers, exchange-compression and scope helpers, clustered-index conversion, DDL/runtime atomic accessors, MDL/assertion policy), name/default/bound constants, and process-global atomics |
+| `tidb_vars.go` | 2,445 | 22 functions (duration/memory helpers, exchange-compression and scope helpers, clustered-index conversion, DDL/runtime atomic accessors, MDL/assertion policy), name/default/bound constants, and process-global atomics |
 | `tidb_vars_test.go` | 85 | `TestIsMDLEnabledInNextGen`, `runConcurrentTest`, and three rate-limiter benchmarks |
 
 There are no package fixtures, generated files, platform-specific variants, or
@@ -61,6 +61,12 @@ the source inventory list, and keeps `tidb-vardef`'s documented totals at 521
 name/value constants and 395 `Def*` defaults. Focused regressions assert every
 new name and value, including the duration conversion and transaction-file
 bound.
+
+The 2026-09-02 Go package batch restores the missing
+`TiDBQueryCopStoreLimit` name and `DefTiDBQueryCopStoreLimit` default required
+by the Go session-variable registry. `TestQueryCopStoreLimitConstants` pins
+the exact spelling and default; the dependent variable sysvar registration is
+tracked as a separate `pkg/sessionctx/variable` package batch.
 
 ## Validation (Ready profile)
 

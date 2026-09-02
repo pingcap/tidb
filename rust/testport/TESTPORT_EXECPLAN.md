@@ -69,6 +69,13 @@ For each bounded behavior cluster:
   full post-fix package tests passed. The package inventory covered all three
   artifacts and has no fixtures, generated inputs, or platform variants.
 
+- 2026-09-02: completed the bounded `pkg/sessionctx/vardef` Go-package batch
+  in one commit after pulling Go master
+  `febee17ec716d86b1e355e5400ef9e4f4f190bad`. Restored the query cop-store
+  limiter system-variable name and default constant and added an exact-value
+  regression. Focused and full vardef tests passed; the broader vardef/runtime
+  and variable registry deltas remain explicit package boundaries.
+
 - 2026-09-02: completed the Go-master `pkg/parser` materialized-view DDL
   syntax delta in one parser-package batch. Before editing, the full root
   parser inventory (33 artifacts, 64,956 lines, generated grammar/keyword
