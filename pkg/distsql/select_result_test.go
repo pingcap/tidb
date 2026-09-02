@@ -32,7 +32,47 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
 )
+
+type limiterWaitResponse struct {
+	*mockResponse
+	wait copr.LimiterWaitStats
+}
+
+func (r *limiterWaitResponse) GetLimiterWaitStats() copr.LimiterWaitStats {
+	return r.wait
+}
+
+func TestSelectResultCloseRecordsLimiterWaitStats(t *testing.T) {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().StmtCtx = stmtctx.NewStmtCtx()
+	ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
+	wait := copr.LimiterWaitStats{TotalTime: 5 * time.Millisecond, MaxTime: 3 * time.Millisecond}
+	result := &selectResult{
+		ctx:        ctx.GetDistSQLCtx(),
+		resp:       &limiterWaitResponse{mockResponse: &mockResponse{}, wait: wait},
+		rootPlanID: 1234,
+		stats: &selectResultRuntimeStats{
+			copRespTime: execdetails.Percentile[execdetails.Duration]{},
+			reqStat:     tikv.NewRegionRequestRuntimeStats(),
+		},
+	}
+	result.stats.copRespTime.Add(execdetails.Duration(time.Millisecond))
+	result.stats.procKeys.Add(execdetails.Int64(1))
+
+	require.NoError(t, result.close())
+	require.Equal(t, wait, result.stats.limiterWait)
+	require.Contains(t,
+		ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(result.rootPlanID).String(),
+		"limiter_wait:{total:5ms, max:3ms}")
+
+	clone := result.stats.Clone().(*selectResultRuntimeStats)
+	require.Equal(t, wait, clone.limiterWait)
+	result.stats.Merge(clone)
+	require.Equal(t, 10*time.Millisecond, result.stats.limiterWait.TotalTime)
+	require.Equal(t, 3*time.Millisecond, result.stats.limiterWait.MaxTime)
+}
 
 func TestUpdateCopRuntimeStats(t *testing.T) {
 	ctx := mock.NewContext()

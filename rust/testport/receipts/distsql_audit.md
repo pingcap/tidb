@@ -80,6 +80,34 @@ The executor-side merge-sort caller still passes the legacy rate-limit type;
 that is a separate `pkg/executor` package boundary and is intentionally not
 claimed by this receipt.
 
+## Follow-up Go package batch: limiter wait runtime statistics
+
+The current Go-master snapshot (`1c1a334d2b`, pulled 2026-09-02) exposes
+coprocessor request-limiter wait totals and maxima through `selectResult`.
+`close` now preserves the response close error while harvesting
+`copr.HasLimiterWaitStats`, `selectResultRuntimeStats` carries the aggregate
+through clone/merge, and its textual runtime-stat rendering reports the
+`limiter_wait` field. `TestSelectResultCloseRecordsLimiterWaitStats` covers
+collection, formatting, clone, and merge semantics. The Rust
+`tidb-distsql` runtime contract now carries the same saturating total/max
+aggregate and source-derived regression coverage; concrete Rust transport
+response plumbing remains an explicit boundary because no dependency-closed
+coprocessor response owner exists yet.
+
+Ready evidence for this package-level batch:
+
+- failpoint-wrapped Go focused test
+  `TestSelectResultCloseRecordsLimiterWaitStats` passes;
+- `cargo +nightly-2026-08-22 test --offline --locked -p tidb-distsql --test all limiter_wait -- --test-threads=1` — one focused Rust test passed;
+- `git diff --check` passes; the pinned `make lint` Ready gate is run before
+  commit; `make bazel_prepare` remains required for the Go test/import changes
+  but is blocked by the unavailable local Bazel executable.
+
+The complete 15-artifact root inventory above remains the atomic Go package
+boundary. Nested executor consumers and live TiKV transport are separate
+claims, and no Rust-only limiter behavior was introduced beyond the bounded
+runtime aggregate contract.
+
 ## Validation and boundaries
 
 - `cargo +nightly-2026-08-22 test --offline --locked -p tidb-distsql --test all -- --test-threads=1` — 252 passed, 2 ignored.

@@ -763,6 +763,7 @@ func (r *selectResult) close() error {
 	if respSize > 0 {
 		r.memConsume(-respSize)
 	}
+	closeErr := r.resp.Close()
 	if r.ctx != nil {
 		if unconsumed, ok := r.resp.(copr.HasUnconsumedCopRuntimeStats); ok && unconsumed != nil {
 			unconsumedCopStats := unconsumed.CollectUnconsumedCopRuntimeStats()
@@ -773,6 +774,13 @@ func (r *selectResult) close() error {
 		}
 	}
 	if r.stats != nil && r.ctx != nil {
+		if r.ctx.RuntimeStatsColl != nil && r.rootPlanID > 0 {
+			if provider, ok := r.resp.(copr.HasLimiterWaitStats); ok && provider != nil {
+				if limiterWait := provider.GetLimiterWaitStats(); !limiterWait.IsZero() {
+					r.stats.limiterWait.Merge(limiterWait)
+				}
+			}
+		}
 		defer func() {
 			if ci, ok := r.resp.(copr.CopInfo); ok {
 				r.stats.buildTaskDuration = ci.GetBuildTaskElapsed()
@@ -788,7 +796,7 @@ func (r *selectResult) close() error {
 			r.ctx.RuntimeStatsColl.RegisterStats(r.rootPlanID, r.stats)
 		}()
 	}
-	return r.resp.Close()
+	return closeErr
 }
 
 type selRespChannelIter struct {
@@ -1004,6 +1012,7 @@ type selectResultRuntimeStats struct {
 	storeBatchedFallbackNum uint64
 	buildTaskDuration       time.Duration
 	fetchRspDuration        time.Duration
+	limiterWait             copr.LimiterWaitStats
 }
 
 func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *copr.CopRuntimeStats, respTime time.Duration) {
@@ -1048,6 +1057,7 @@ func (s *selectResultRuntimeStats) Clone() execdetails.RuntimeStats {
 		storeBatchedFallbackNum: s.storeBatchedFallbackNum,
 		buildTaskDuration:       s.buildTaskDuration,
 		fetchRspDuration:        s.fetchRspDuration,
+		limiterWait:             s.limiterWait,
 	}
 	newRs.copRespTime.MergePercentile(&s.copRespTime)
 	newRs.procKeys.MergePercentile(&s.procKeys)
@@ -1090,6 +1100,7 @@ func (s *selectResultRuntimeStats) Merge(rs execdetails.RuntimeStats) {
 	s.storeBatchedFallbackNum += other.storeBatchedFallbackNum
 	s.buildTaskDuration += other.buildTaskDuration
 	s.fetchRspDuration += other.fetchRspDuration
+	s.limiterWait.Merge(other.limiterWait)
 }
 
 func (s *selectResultRuntimeStats) String() string {
@@ -1134,6 +1145,13 @@ func (s *selectResultRuntimeStats) String() string {
 		if s.buildTaskDuration > 0 {
 			buf.WriteString(", build_task_duration: ")
 			buf.WriteString(execdetails.FormatDuration(s.buildTaskDuration))
+		}
+		if !s.limiterWait.IsZero() {
+			buf.WriteString(", limiter_wait:{total:")
+			buf.WriteString(execdetails.FormatDuration(s.limiterWait.TotalTime))
+			buf.WriteString(", max:")
+			buf.WriteString(execdetails.FormatDuration(s.limiterWait.MaxTime))
+			buf.WriteString("}")
 		}
 		if s.distSQLConcurrency > 0 {
 			buf.WriteString(", max_distsql_concurrency: ")

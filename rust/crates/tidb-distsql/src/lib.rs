@@ -78,9 +78,10 @@ pub use distsql_runtime::{
     analyze_request_source, analyze_result_metadata, can_use_chunk_rpc, checksum_result_metadata,
     mpp_result_metadata, select_result_metadata, select_with_runtime_stats, set_encode_type,
     system_endian, tiflash_conf_metadata, with_sql_kv_exec_counter_interceptor, EncodeType,
-    OutgoingMetadata, SelectInput, SelectResultMetadata, SelectResultRuntimeStats, SystemEndian,
-    TiFlashSettings, ANALYZE_RESULT_LABEL, CHECKSUM_RESULT_LABEL, DAG_RESULT_LABEL,
-    GENERAL_SQL_TYPE, INTERNAL_SQL_TYPE, INTERNAL_TXN_STATS_SOURCE, MPP_RESULT_LABEL,
+    LimiterWaitStats, OutgoingMetadata, SelectInput, SelectResultMetadata,
+    SelectResultRuntimeStats, SystemEndian, TiFlashSettings, ANALYZE_RESULT_LABEL,
+    CHECKSUM_RESULT_LABEL, DAG_RESULT_LABEL, GENERAL_SQL_TYPE, INTERNAL_SQL_TYPE,
+    INTERNAL_TXN_STATS_SOURCE, MPP_RESULT_LABEL,
 };
 pub use envelope::{ExecutorKind, ExecutorShape, RequestEnvelope, ESTIMATED_REGION_ROW_COUNT};
 pub use execution::{CancelHandle, CpuUsage, ExecutionState, KillHandle, KvVariables};

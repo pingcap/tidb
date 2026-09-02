@@ -42,6 +42,17 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: completed a follow-up `pkg/distsql` Go-package batch for
+  coprocessor request-limiter wait statistics at current `origin/master`
+  `1c1a334d2b`. The complete 15-artifact root inventory remains the atomic
+  boundary. `selectResult` now preserves response close errors while recording
+  limiter wait total/max statistics through close, clone, merge, and string
+  rendering; focused Go regression coverage passes. The bounded Rust
+  `tidb-distsql` runtime aggregate and source-level regression were added, but
+  full cargo validation is blocked by missing local OpenSSL/pkg-config
+  dependencies. Details and remaining transport boundaries are in
+  `receipts/distsql_audit.md`.
+
 - 2026-09-02: audited the complete Go-master root `pkg/executor` boundary
   before editing: 173 direct artifacts and 101,740 lines, including 171 Go
   production/test files, `BUILD.bazel`, and `OWNERS`, with 1,395
