@@ -42,6 +42,14 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-03: aligned Rust `tidb-expr` DECIMAL-to-DOUBLE metadata
+  propagation with Go master `049e0e2ba79d79a3a8b1e9ff93ee22fb1cea7dd5`.
+  `wrap_with_cast_as_real` now updates an owned DECIMAL child to Go's
+  propagated `(flen=48, decimal=30)` domain before constructing the real cast.
+  The focused metadata regression, cast source module, owner all-target check,
+  full owner suite, and Ready lint gates pass; details are in the expression
+  receipt.
+
 - 2026-09-03: refreshed the Rust `tidb-tikvutil` owner for Go master
   `049e0e2ba79d79a3a8b1e9ff93ee22fb1cea7dd5`. The complete two-artifact
   `pkg/util/tikvutil` package is unchanged and already exposes Go's one

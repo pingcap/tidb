@@ -1097,6 +1097,27 @@ fn test_cast_func_sig_as_real() {
     }
 }
 
+/// Go's DECIMAL→REAL signature propagates the DOUBLE display metadata back
+/// onto its decimal child before execution. This metadata is observable on a
+/// nested arithmetic expression even though the cast value itself is already
+/// covered by `test_cast_func_sig_as_real`.
+#[test]
+fn cast_decimal_as_real_propagates_child_metadata() {
+    let mut source_type = FieldType::new(C::NewDecimal);
+    source_type.set_flen(5);
+    source_type.set_decimal(2);
+    let source = const_typed(Datum::Decimal(Decimal::from_literal("0.99")), source_type);
+    let wrapped = crate::aggregation::wrap_cast::wrap_with_cast_as_real(source).unwrap();
+    let Expression::ScalarFunction(function) = wrapped else {
+        panic!("expected a cast scalar function")
+    };
+    let child = function.args.first().expect("cast argument");
+    let child_type = child.static_type().expect("decimal child type");
+    assert_eq!(child_type.code(), C::NewDecimal);
+    assert_eq!(child_type.flen(), 48);
+    assert_eq!(child_type.decimal(), 30);
+}
+
 #[test]
 fn test_cast_func_sig_as_string() {
     // Unspecified-length table: float rendering follows Go's shortest-float

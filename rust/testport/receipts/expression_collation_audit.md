@@ -496,3 +496,50 @@ run, while the rounded constant and comparison domain now match Go.
 Compatibility risk is limited to callers that inspect the retained structural
 casts for Go's still-unmodeled exceptional constant folds; value comparison
 semantics are unchanged.
+
+## Rust follow-up: DECIMAL-to-DOUBLE type propagation
+
+The rolling Go authority remains `origin/master` at
+`049e0e2ba79d79a3a8b1e9ff93ee22fb1cea7dd5` (2026-09-03). Before editing, the
+complete direct `pkg/expression` inventory was rechecked at 137 artifacts and
+128,744 lines (68 production files, 60 tests, seven generated sources,
+`BUILD.bazel`, and `OWNERS`); the recursive package boundary is 208 artifacts
+and 146,247 lines. The Rust `tidb-expr` owner remains 175 tracked artifacts
+and 105,908 lines, including production modules, in-module and standalone
+tests, generated-test inputs, fixtures/support, benchmarks, Cargo metadata,
+and the aggregate test build input. No Go, Bazel, generated output, fixture,
+platform, or build artifact changed.
+
+Go's `castAsRealFunctionClass.getFunction` invokes `PropagateType` for a
+DECIMAL operand before returning the `builtinCastDecimalAsRealSig`
+(`pkg/expression/builtin_cast.go:219`, `pkg/expression/expression.go:1238-1308`).
+That propagation changes the nested DECIMAL's display width/scale to the
+DOUBLE domain (capped at `flen=48`, `decimal=30`), preserving enough integer
+digits while exposing the full 30-digit non-fixed fractional metadata. The
+Rust cast wrapper previously converted the value correctly but left the
+child's declared `(flen, decimal)` untouched, which was a Rust-only metadata
+divergence visible to nested casts and explain/type consumers. Rust now applies
+the same width/scale calculation to its owned child before constructing
+`cast_double`; the Go-style clone is unnecessary because Rust's by-value
+expression is already unaliased.
+
+The focused source regression
+`cast_decimal_as_real_propagates_child_metadata` fails on a clean pre-fix
+`05451eccc7` worktree with `left: 5`, `right: 48` and passes after the change.
+The existing 59-row aggregation/cast source module now reports 33 passed and
+26 documented gaps, with no value regressions. The complete `test_cast_func_sig_as_real`
+value table remains active alongside the metadata assertion.
+
+Ready validation for this follow-up used the dependency-closed `tidb-expr`
+owner and repository gates:
+
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr --lib aggregation_arithmetic_cast_source -- --nocapture --test-threads=1` — 33 passed, 26 documented gap tests ignored.
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr --all-targets` — pass.
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr --lib -- --test-threads=1` — 1,099 passed, 0 failed, 133 documented gap tests ignored.
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check`, `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex make lint`, and `git diff --check` — pass.
+
+Correctness risk is limited to result-type metadata: the propagated child
+remains a DECIMAL value and only its declared DOUBLE-compatible width/scale is
+adjusted. Compatibility risk is limited to callers that intentionally inspect
+the old unpropagated child metadata; the cast value and all non-DECIMAL cast
+paths are unchanged.
