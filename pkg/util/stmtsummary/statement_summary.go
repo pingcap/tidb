@@ -199,6 +199,7 @@ type stmtSummaryStats struct {
 	maxRocksdbBlockReadCount       uint64
 	sumRocksdbBlockReadByte        uint64
 	maxRocksdbBlockReadByte        uint64
+	iaExecCount                    int64
 	sumIARemoteReadSegmentCount    uint64
 	maxIARemoteReadSegmentCount    uint64
 	sumIARemoteReadSegmentSize     uint64
@@ -424,11 +425,12 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 	if !exist {
 		// Lazy initialize it to release ssMap.mutex ASAP.
 		summary = new(stmtSummaryByDigest)
+		summary.isInternal = sei.IsInternal
 		ssMap.summaryMap.Put(key, summary)
 	} else {
 		summary = value.(*stmtSummaryByDigest)
+		summary.isInternal = summary.isInternal && sei.IsInternal
 	}
-	summary.isInternal = summary.isInternal && sei.IsInternal
 	if summary != nil {
 		summary.add(sei, beginTime, intervalSeconds, historySize)
 	}
@@ -461,7 +463,7 @@ func (ssMap *stmtSummaryByDigestMap) clearInternal() {
 	defer ssMap.Unlock()
 
 	for _, key := range ssMap.summaryMap.Keys() {
-		summary, ok := ssMap.summaryMap.Get(key)
+		summary, ok := ssMap.summaryMap.Peek(key)
 		if !ok {
 			continue
 		}
@@ -726,7 +728,8 @@ func newStmtSummaryStats(sei *StmtExecInfo) *stmtSummaryStats {
 	// because it compacts performance to update every time.
 	samplePlan, planHint, e := sei.LazyInfo.GetEncodedPlan()
 	if e != nil {
-		return nil
+		samplePlan = plancodec.PlanDiscardedEncoded
+		planHint = ""
 	}
 	if len(samplePlan) > MaxEncodedPlanSizeInBytes {
 		samplePlan = plancodec.PlanDiscardedEncoded
@@ -875,6 +878,9 @@ func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo, warningCount int, affect
 			ssStats.maxRocksdbBlockReadByte = sei.ExecDetail.ScanDetail.RocksdbBlockReadByte
 		}
 		iaStats := execdetails.GetIARemoteReadSegmentStats(sei.ExecDetail.ScanDetail)
+		if iaStats.Count > 0 {
+			ssStats.iaExecCount++
+		}
 		ssStats.sumIARemoteReadSegmentCount += iaStats.Count
 		if iaStats.Count > ssStats.maxIARemoteReadSegmentCount {
 			ssStats.maxIARemoteReadSegmentCount = iaStats.Count

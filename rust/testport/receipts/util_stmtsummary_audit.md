@@ -1,7 +1,7 @@
 # `pkg/util/stmtsummary` — Go-master parity audit
 
 Comparison source: Go `origin/master` at commit
-`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01).
+`94eb995357f34b7bab4889a82f0405797046447d` (2026-09-02).
 
 This receipt records the current Go-master delta implemented by the native
 `tidb-stmtsummary` owner. It does not claim that the whole Go package is
@@ -57,14 +57,25 @@ The same Go-master source also replaces the old v1 plan-error nil path with
   v1 `StmtSummaryStats` and v2 `StmtRecord`, registers the new column factory,
   preserves Go column order, and emits the JSON field. Focused source-derived
   regressions cover one IA execution plus one ordinary execution, current and
-  history rows, chunk round-trips, eviction aggregation, v2 merges and JSON,
-  plan-encoding failure fallback, and internal-only cleanup.
+history rows, chunk round-trips, eviction aggregation, v2 merges and JSON,
+plan-encoding failure fallback, and internal-only cleanup.
+
+The 2026-09-02 Go package batch restores all of the above root-package
+behavior in `pkg/util/stmtsummary` from the current Go master source,
+including the eviction lock snapshot, stale-interval filter, IA
+execution-count column, internal-query LRU cleanup, plan-error fallback, and
+associated BUILD shard metadata. No Rust owner source was changed in this
+batch; the v2 and executor/infoschema/planner boundaries remain explicit
+below.
 
 ## Validation (Ready profile)
 
 - Failpoint-enabled Go root targeted run:
   `./tools/check/failpoint-go-test.sh pkg/util/stmtsummary -run 'Test(ToDatumIAColumns|ToDatumIAColumnsChunkRoundTrip|AddStatementPlanEncodeError|ToEvictedCountDatumConcurrent|CurrentRowsExcludePreviousIntervalEvictedOther|DisablingInternalQueryPreservesLRUOrder)$' -count=1`
   — passed.
+- Failpoint-enabled Go root full package run:
+  `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex ./tools/check/failpoint-go-test.sh ./pkg/util/stmtsummary -count=1 -vet=off`
+  — passed (0.553s).
 - Failpoint-enabled Go v2 targeted run:
   `./tools/check/failpoint-go-test.sh pkg/util/stmtsummary/v2 -run 'Test(IAAvgColumns|IAAvgColumnsChunkRoundTrip|HistoryReader|StmtRecord|StmtWindow)' -count=1`
   — passed.
@@ -74,12 +85,14 @@ The same Go-master source also replaces the old v1 plan-error nil path with
 - `rustup run nightly-2026-08-22 rustfmt --edition 2021 --check` over all five edited Rust owner files — passed.
 - `git diff --check` — passed.
 - `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 make lint` — passed.
+- The required `make bazel_prepare` was attempted for the BUILD shard and new
+  top-level tests, but is blocked locally because no `bazel` executable is
+  installed (`make: bazel: No such file or directory`).
 
 The broad `pkg/util/stmtsummary/v2/tests` table suite was started with the
 failpoint runner but did not complete within the local run window; no table
 fixture was changed in this batch.
 
-No Go or Bazel file changed, so `make bazel_prepare` is not required.
 OpenSSL-dependent Rust commands use the bundled Poppler root as `OPENSSL_DIR`
 and its `lib` directory in `DYLD_LIBRARY_PATH`.
 

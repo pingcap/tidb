@@ -2142,6 +2142,16 @@ For each bounded behavior cluster:
   boundary; the complete inventory and Ready evidence are in
   `receipts/util_stmtsummary_audit.md`.
 
+- 2026-09-02: completed the `pkg/util/stmtsummary` root-package parity batch
+  as one Go-package commit. Restored current Go-master behavior for
+  lock-safe evicted-count snapshots, stale-interval filtering, IA execution
+  counts and column order, internal-query LRU cleanup, and plan-encoding error
+  fallback; added focused regressions for each path and updated the v1 BUILD
+  shard metadata. The failpoint-aware focused and full root suites plus
+  `make lint` passed; `make bazel_prepare` remains blocked by the missing local
+  Bazel executable. The v2 and executor/infoschema/planner surfaces remain the
+  explicit package boundary recorded in `receipts/util_stmtsummary_audit.md`.
+
 - 2026-09-01: audited all six Go-master `pkg/util/parser` artifacts (581
   lines) against the complete `tidb-parser::util_parser` owner. Go's
   `StmtNode.Accept` to `ast.Walk` migration changes visitor signatures but
