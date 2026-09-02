@@ -53,7 +53,7 @@ Documentation
 
 - [ ] Needs to be included in the user-facing release notes
 
-<!-- If selected, you can either write a release note below following [Release Notes Language Style Guide](https://pingcap.github.io/tidb-dev-guide/contribute-to-tidb/release-notes-style-guide.html) (**recommended**), or leave it as `None`, in which case the release note bot will automatically generate one when preparing the release notes file. -->
+If selected, you can either write a release note below following [Release Notes Language Style Guide](https://pingcap.github.io/tidb-dev-guide/contribute-to-tidb/release-notes-style-guide.html) (**recommended**), or leave it as `None`, in which case the release note bot will automatically generate one when preparing the release notes file.
 
 ```release-note
 None
