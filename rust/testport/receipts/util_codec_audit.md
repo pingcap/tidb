@@ -6,11 +6,13 @@ implementation while legacy encoder methods remain as compatibility wrappers
 for existing in-tree callers.
 
 Comparison source: Go `origin/master` at commit
-`1c1a334d2be1dce64888b6e1f054462c566b0734` (2026-09-02).
+`17daba3dfde858eebef60f6e4e1bb37268269225` (2026-09-02). The package
+objects are unchanged from the previously recorded authority
+`1c1a334d2be1dce64888b6e1f054462c566b0734`.
 
 ## Complete inventory
 
-The package has exactly 12 Go artifacts and 4,542 lines. All production,
+The package has exactly 12 Go artifacts and 4,546 lines. All production,
 test, benchmark, harness, and Bazel files were read before editing. The
 production surface contains 90 functions; the tests contain 32 `Test*`
 functions (including `TestMain`) and six `Benchmark*` functions.
@@ -21,7 +23,7 @@ functions (including `TestMain`) and six `Benchmark*` functions.
 | `bench_test.go` | 118 | six codec benchmarks and daily harness |
 | `bytes.go` | 227 | comparable/compact byte framing |
 | `bytes_test.go` | 120 | byte codec vectors and malformed inputs |
-| `codec.go` | 1,957 | datum key/value, hash, row, and chunk codecs |
+| `codec.go` | 1,961 | datum key/value, hash, row, and chunk codecs |
 | `codec_test.go` | 1,340 | scalar, row, range, hash, and size tests |
 | `collation_test.go` | 189 | encoder and hash collation tests |
 | `decimal.go` | 69 | decimal framing and decoding |
@@ -132,6 +134,41 @@ Follow-up validation for the current-master TypeNull path:
 - `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex ./tools/check/failpoint-go-test.sh pkg/util/codec -run '^Test' -count=1 -vet=off` — passed.
 - `make bazel_prepare` — required by the Go production edit; blocked locally
   because the `bazel` executable is unavailable.
+
+## Rust follow-up: schema-aware BIT width boundary
+
+Go `appendUintToChunk` derives `byteSize := (ft.GetFlen() + 7) >> 3` and
+passes it directly to `NewBinaryLiteralFromUint`, whose invalid-width branch
+panics. Rust `decode_one_typed` previously clamped negative widths and mapped
+zero or oversized widths to `None`, silently dropping the declared BIT padding
+and avoiding the source panic. It now preserves the source boundary: the
+integer conversion and typed-width validation both panic with `Invalid
+byteSize`, while valid 1..=8 byte widths continue through the typed
+`BinaryLiteral` constructor.
+
+The focused regression is
+`codec_package_source::test_decode_one_typed_bit_width_panics_like_go`, which
+uses a `BIT(0)` schema and an encoded unsigned value. The test failed on the
+pre-fix tree because decoding returned a trimmed literal instead of panicking;
+it passes after the fix. The complete package inventory above remains the
+scope for this follow-up: no Go source, fixture, generated file, platform
+variant, or build target changed.
+
+Follow-up validation (Ready profile):
+
+- On detached pre-fix commit `c311057cef`,
+  `cargo +nightly-2026-08-22 test --offline --locked -p tidb-codec --test all test_decode_one_typed_bit_width_panics_like_go -- --nocapture`
+  failed because no panic occurred.
+- The same focused command passes after the fix and observes the exact
+  `Invalid byteSize` panic payload.
+- `cargo +nightly-2026-08-22 test --offline --locked -p tidb-codec --test all -- --test-threads=1`
+  — 166 passed, zero failed, zero ignored.
+- `cargo +nightly-2026-08-22 check --offline --locked -p tidb-codec --all-targets`
+  — passed.
+- `cargo +nightly-2026-08-22 fmt --all -- --check`, `make lint`, and
+  `git diff --check` — passed.
+- `make bazel_prepare` is not required for this Rust-only batch; no Go source,
+  Go import section, top-level Go test, Bazel metadata, or module file changed.
 
 ## Risk
 

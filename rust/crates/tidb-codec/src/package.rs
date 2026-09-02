@@ -690,11 +690,11 @@ pub fn decode_one_typed_in_timezone<'a, TZ: TimeZone>(
             field_type.collation(),
         ),
         (FieldTypeCode::Bit, Datum::UInt(value)) => {
-            let byte_size = ((field_type.flen() + 7) >> 3).max(0) as usize;
-            let width = u8::try_from(byte_size)
-                .ok()
-                .and_then(|width| BinaryLiteralWidth::try_from(width).ok());
-            Datum::new_mysql_bit(BinaryLiteral::from_uint(value, width))
+            let byte_size = (field_type.flen() + 7) >> 3;
+            let byte_size = u8::try_from(byte_size).unwrap_or_else(|_| panic!("Invalid byteSize"));
+            let width = BinaryLiteralWidth::try_from(byte_size)
+                .unwrap_or_else(|_| panic!("Invalid byteSize"));
+            Datum::new_mysql_bit(BinaryLiteral::from_uint(value, Some(width)))
         }
         (_, value) => value,
     };

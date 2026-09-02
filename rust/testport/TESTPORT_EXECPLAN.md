@@ -89,6 +89,14 @@ For each bounded behavior cluster:
   regressions cover both unchecked boundaries; details are appended to
   `receipts/expression_collation_audit.md`.
 
+- 2026-09-02: aligned the Rust `tidb-codec` schema-aware BIT decoder with Go
+  master `17daba3dfd`. `decode_one_typed` now preserves Go's direct
+  `NewBinaryLiteralFromUint` invalid-width panic instead of converting zero,
+  negative, or oversized widths into a Rust-only unpadded literal. The
+  focused `BIT(0)` regression fails against the pre-fix tree and passes after
+  the change; package inventory and validation details are in
+  `receipts/util_codec_audit.md`.
+
 - 2026-09-02: aligned three bounded Rust `tidb-planner` logical-optimization
   rule entry boundaries with Go master `a85e0fd5df`. Union-all-dual,
   derive-TopN-from-window, and max/min elimination now direct-index the same

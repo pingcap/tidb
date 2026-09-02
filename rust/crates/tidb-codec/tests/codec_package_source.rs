@@ -419,6 +419,22 @@ fn test_decode_one_to_chunk() {
 }
 
 #[test]
+fn test_decode_one_typed_bit_width_panics_like_go() {
+    let mut bit = FieldType::new(FieldTypeCode::Bit);
+    bit.set_flen(0);
+    let encoded = encode_value(&[Datum::UInt(1)]).unwrap();
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        decode_one_typed(&encoded, &bit).unwrap();
+    }))
+    .expect_err("Go panics for an invalid binary-literal byte size");
+    let message = panic
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| panic.downcast_ref::<String>().map(String::as_str));
+    assert_eq!(message, Some("Invalid byteSize"));
+}
+
+#[test]
 fn test_hash_group() {
     let values = [Datum::Int(1), Datum::Null, Datum::Int(-1)];
     let encoded = hash_group_key(&values, &FieldType::new(FieldTypeCode::LongLong)).unwrap();
