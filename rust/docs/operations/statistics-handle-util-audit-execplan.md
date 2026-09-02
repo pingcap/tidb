@@ -38,7 +38,7 @@ Bazel, or module file changed, so `make bazel_prepare` is not required.
   consumer tests, and a `tidb-server` compile pass.
 - [x] Ready Rust formatting, repository lint, scoped diff, and commit checks
   pass.
-- [ ] Commit, push, pull, and remote SHA verification complete.
+- [x] Commit, push, pull, and remote SHA verification complete.
 
 ## Next boundary
 
