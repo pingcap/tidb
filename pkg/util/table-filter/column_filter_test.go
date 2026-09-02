@@ -194,6 +194,20 @@ func TestMatchColumns(t *testing.T) {
 	}
 }
 
+func TestParseColumnFilterRules(t *testing.T) {
+	rules, err := filter.ParseColumnFilterRules([]string{"foo*", "!foobar"})
+	require.NoError(t, err)
+	require.True(t, rules.MatchColumn("foo"))
+	require.False(t, rules.MatchColumn("foobar"))
+	require.False(t, rules.MatchColumn("bar"))
+
+	// ParseColumnFilter remains the interface-returning compatibility entry point.
+	legacy, err := filter.ParseColumnFilter([]string{"foo*", "!foobar"})
+	require.NoError(t, err)
+	require.Equal(t, rules.MatchColumn("foo"), legacy.MatchColumn("foo"))
+	require.Equal(t, rules.MatchColumn("foobar"), legacy.MatchColumn("foobar"))
+}
+
 func TestParseFailures(t *testing.T) {
 	cases := []struct {
 		arg string

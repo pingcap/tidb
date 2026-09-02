@@ -1,9 +1,12 @@
 # `pkg/util/table-filter` — complete package transcreation
 
+Status: complete dependency-closed audit at the current Go-master authority;
+the concrete column-rule API missing from the hparser branch has been
+restored, with the legacy interface-returning parser retained.
+
 Go source: `origin/master` at
-`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01). The package is
-byte-for-byte unchanged from the earlier audit pin
-`db35d47066648fe73abce6318d53fc625df51490`.
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02). This refresh
+supersedes the earlier `0bc44483e3e41a8ea917d4382dc202369468d200` pin.
 
 ## Complete inventory
 
@@ -18,18 +21,18 @@ The package has exactly ten artifacts, all read in full:
 - `matchers.go` — string, universal, and regexp matchers;
 - `parser.go` — table/column grammar and nonrecursive file imports;
 - `table_filter.go` — table/schema filtering, case folding, and the all filter;
-- `column_filter_test.go` — four tests;
+- `column_filter_test.go` — five tests;
 - `compat_test.go` — four tests;
 - `table_filter_test.go` — six tests;
 - `BUILD.bazel` — one library and one test target containing the five
   production and three test files.
 
 There is no `doc.go`, ownership file, generated/platform source, fixture,
-benchmark, example test, or additional test harness. Go master differs from
-the hparser integration source only by exporting the `ColumnFilterRules`
-concrete rule-list type, adding `ParseColumnFilterRules`, and making
-`ParseColumnFilter` delegate to it; the build target and all source test rows
-are unchanged.
+  benchmark, example test, or additional test harness. Go master differs from
+  the hparser integration source only by exporting the `ColumnFilterRules`
+  concrete rule-list type, adding `ParseColumnFilterRules`, and making
+  `ParseColumnFilter` delegate to it; this batch restores that source delta and
+  adds one focused API regression. The build target is unchanged.
 
 ## Rust ownership and audit result
 
@@ -65,7 +68,9 @@ Profile: Ready for this package batch; the repository-wide package audit is
 still continuing.
 
 - Go-master source inventory and diff against `origin/hparser-integration` — passed; only the concrete column-rule API delta described above.
-- `go test ./pkg/util/table-filter -count=1` (current hparser checkout) — passed (14 tests).
+- Pre-fix detached worktree run with the new API regression — failed at compile time because `ParseColumnFilterRules` was undefined.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex go test ./pkg/util/table-filter -run '^TestParseColumnFilterRules$' -count=1` — passed.
+- `go test ./pkg/util/table-filter -count=1` (current hparser checkout) — passed (15 tests, including the concrete API regression).
 - Before the fix,
   `cargo test -p tidb-util --locked table_filter::matchers::tests::go_perl_character_classes_are_ascii`
   — failed because `\d` matched Arabic-Indic digits; the same command passes
@@ -80,7 +85,9 @@ still continuing.
 - `cargo +nightly-2026-08-22 fmt --all -- --check`, `make lint`, and
   `git diff --check` — passed.
 
-No Go or Bazel file changed, so `make bazel_prepare` is not required.
+Go production and test files changed, including a new top-level test, so
+`make bazel_prepare` was required and is blocked locally because the `bazel`
+executable is not installed.
 
 ## Risk
 
