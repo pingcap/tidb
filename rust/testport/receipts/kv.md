@@ -1,7 +1,7 @@
 # `pkg/kv` — Go-master parity receipt
 
 Comparison source: Go `origin/master` at commit
-`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01).
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02).
 
 ## Complete Go inventory
 
@@ -88,6 +88,14 @@ This batch did close two concrete owner defects:
 The scheduler source test now pins its concrete payload/completion types,
 which removes inference-only test wiring from the package gate.
 
+The hparser branch was still missing three Go-master KV contracts. The Go
+checker now accepts `tipb.ExprType_MaxCount` and `tipb.ExprType_MinCount` for
+SELECT/INDEX pushdown, and `kv.Request` carries the
+`AllowBatchTaskDataMerge` and `ExecuteBatchTasksSerially` controls already
+consumed by the Rust distsql owner. Go regressions cover the two expression
+types and both request flags; the pre-fix run failed to compile because the
+request fields were absent.
+
 ## Validation
 
 Profile: **Ready** for this package batch; the repository-wide package loop
@@ -117,8 +125,10 @@ cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check
 
 PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
 GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
-go test ./pkg/kv -run 'Test(IsRequestTypeSupported|Error|FaultInjectionBasic|PartialNext|IsPoint|BasicFunc|Handle|PaddingHandle|HandleMap|CommonHandlesFitIntHandleRange|HandleMapWithPartialHandle|MemAwareHandleMapWithPartialHandle|KeyRangeDefinition|IncInt64|GetInt64|IsUserKS|IsSystemKS|Version|MppVersion|ExchangeCompressionMode|SetCDCWriteSource|SetLossyDDLReorgSource|Interface|BackOff|RetryExceedCountError|InnerTxnStartTsBox)$' -count=1
-# passed
+go test ./pkg/kv -run 'Test(IsRequestTypeSupported|RequestBatchTaskFlags)$' -count=1
+# passed after the fix; pre-fix compile failed on the missing Request fields
+tools/check/failpoint-go-test.sh ./pkg/kv -count=1
+# passed with failpoint cleanup
 
 OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler \
 DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib \
@@ -131,8 +141,9 @@ make lint
 # passed
 ```
 
-No Go/Bazel/import/go.mod file changed, so `make bazel_prepare` was not
-required by the repository gate. The full Rust owner test binary needs the
+Go production and test sources changed, so `make bazel_prepare` was required
+and attempted; it is blocked locally because the `bazel` executable is not
+installed. No Bazel metadata could be regenerated. The full Rust owner test binary needs the
 larger `RUST_MIN_STACK` setting for one existing mixed-mutation test; with it,
 the suite passes.
 

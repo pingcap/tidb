@@ -84,3 +84,12 @@ func TestResourceGroupTagEncoding(t *testing.T) {
 		require.Nil(t, resTag.KeyspaceName)
 	}
 }
+
+func TestRequestBatchTaskFlags(t *testing.T) {
+	request := Request{
+		AllowBatchTaskDataMerge:   true,
+		ExecuteBatchTasksSerially: true,
+	}
+	require.True(t, request.AllowBatchTaskDataMerge)
+	require.True(t, request.ExecuteBatchTasksSerially)
+}

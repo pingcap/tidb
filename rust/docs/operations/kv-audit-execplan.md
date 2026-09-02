@@ -23,6 +23,11 @@ semantics only when the dependency-closed tests prove the change.
    blocking-pull regression alongside the existing nonblocking elapsed-
    deadline regression; both preserve the original typed `Timeout`.
 5. Recorded the full package parity receipt in `rust/testport/receipts/kv.md`.
+6. Restored the missing Go `MaxCount`/`MinCount` pushdown cases and the two
+   batch-task request flags, with focused Go regressions and fail-before/pass-
+   after evidence.
+7. Published the follow-up Go parity commit to `origin/hparser-integration`,
+   fetched and fast-forward pulled, and verified the remote SHA.
 
 ## Validation gate
 
@@ -34,9 +39,11 @@ semantics only when the dependency-closed tests prove the change.
 - [x] `cargo fmt --all -- --check` passes.
 - [x] Workspace Rust check passes offline and locked.
 - [x] Ready profile `make lint` passes.
-- [x] No `make bazel_prepare`: no Go/Bazel/import/go.mod change occurred.
-- [x] Meaningful batch commit created; push to `origin/hparser-integration`
-  after the final fetch below.
+- [x] `make bazel_prepare` attempted for the Go/Bazel changes; blocked because
+  the local `bazel` executable is unavailable.
+- [x] Meaningful follow-up batch committed, pushed to
+  `origin/hparser-integration`, and remote SHA verified after a fast-forward
+  fetch.
 
 ## Remaining boundaries
 
