@@ -44,8 +44,10 @@ The current Go-master delta from the earlier pinned source
 `e2788410d8d696605e8cb002585877a063ccc909` was read in full. BUILD adds the
 GCS/Tencent sources and SDK dependencies and expands the test target from ten
 to fifty shards. AWS client multipart writes now enforce the shared
-`MaxUploadParts` sentinel and map uploader overflow errors; client tests add
-content-MD5 and metric coverage. Go master adds a GCS-specific V4 signer and
+`MaxUploadParts` sentinel and map uploader overflow errors; this batch restores
+the direct `multipartWriter.Write` guard and adds
+`TestMultipartWriterRejectsExcessParts`, which prevents an out-of-range part
+RPC. Client tests add content-MD5 and metric coverage. Go master adds a GCS-specific V4 signer and
 tests, Tencent COS CVM-role credentials and tests, AWS retry suppression for
 expected region redirects, Alibaba ECS RAM fallback credentials, GCS region
 discovery bypass, profile/role/configuration handling, and expanded local HTTP
@@ -66,17 +68,42 @@ speculative. This package remains an explicit parity boundary.
 
 ## Validation and risk
 
-Profile: **WIP** for this documentation-only boundary record. No Go, Bazel,
-module, or Rust source changed. The package uses failpoints; the canonical
-wrapper was run against exact Go `origin/master`.
+Profile: **Ready attempted** for this bounded writer fix. The package uses
+failpoints; the canonical wrapper was run against the current checkout. Scoped
+revive lint passes. Repository `make lint` remains blocked by 986 pre-existing
+`var-naming` diagnostics outside this package, and `make bazel_prepare` is
+required for the new top-level regression but blocked because no `bazel`
+executable is installed.
 
 ```text
 PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
-GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
-./tools/check/failpoint-go-test.sh pkg/objstore/s3store -count=1
-# exact Go origin/master source: PASS, 8.005s
+GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex \
+./tools/check/failpoint-go-test.sh ./pkg/objstore/s3store -run '^TestMultipartWriterRejectsExcessParts$' -count=1
+# pre-fix probe panicked in the nil S3 client after attempting an out-of-range RPC; post-fix: PASS
+
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
+GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex \
+./tools/check/failpoint-go-test.sh ./pkg/objstore/s3store -count=1
+# PASS, 5.6s; failpoints enabled and disabled by the wrapper
+
+tools/bin/revive -formatter friendly -config tools/check/revive.toml ./pkg/objstore/s3store/...
+# passed (scoped package lint)
+
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
+GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex \
+make bazel_prepare
+# blocked: bazel executable is unavailable
+
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
+GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex \
+make lint
+# blocked by existing repository-wide var-naming diagnostics; no diagnostic points into this package
+
+git diff --check
+# passed
 ```
 
 Not verified here: live AWS/GCS/KS3/Tencent services, Bazel's 50-shard target,
 Windows execution, or full-workspace tests. No Rust validation was applicable
-because no Rust source changed.
+because no Rust source changed; the remaining Go-master cloud-provider deltas
+are still outside this bounded fix.

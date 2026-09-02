@@ -42,6 +42,15 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: restored the direct multipart-write limit guard in the complete
+  `pkg/objstore/s3store` Go-master inventory. A writer now returns the shared
+  `ErrExceedMaxUploadParts` sentinel before issuing part 10,001; the focused
+  regression panicked before the fix and passes afterward. The full
+  failpoint-wrapped package suite and scoped lint pass; Ready repository lint
+  and Bazel preparation retain the documented baseline/tooling blockers. The
+  remaining GCS/Tencent/Aliyun and uploader deltas stay an explicit boundary.
+  Details are in `receipts/objstore_s3store.md`.
+
 - 2026-09-02: restored the shared multipart-upload contract in the complete
   `pkg/objstore/storeapi` inventory (three artifacts, 402 lines, with no
   generated/platform/fixture inputs). `MaxUploadParts = 10000` and the exact

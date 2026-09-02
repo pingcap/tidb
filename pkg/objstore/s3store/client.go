@@ -412,6 +412,9 @@ type multipartWriter struct {
 // UploadPart update partial data to s3, we should call CreateMultipartUpload to start it,
 // and call CompleteMultipartUpload to finish it.
 func (u *multipartWriter) Write(ctx context.Context, data []byte) (int, error) {
+	if len(u.completeParts)+1 > storeapi.MaxUploadParts {
+		return 0, errors.Trace(storeapi.ErrExceedMaxUploadParts)
+	}
 	partInput := &s3.UploadPartInput{
 		Body:          bytes.NewReader(data),
 		Bucket:        u.createOutput.Bucket,
