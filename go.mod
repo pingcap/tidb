@@ -363,6 +363,8 @@ replace (
 	// TODO: Remove after pingcap/kvproto#1592 merges into release-8.5.
 	github.com/pingcap/kvproto v0.0.0-20261026071505-70b5775c3362 => github.com/0xPoe/kvproto v0.0.0-20261109130652-84d3e0d6afdd
 	github.com/pingcap/tidb/pkg/parser => ./pkg/parser
+	// TODO: Remove after tikv/client-go#2173 merges into tidb-8.5.
+	github.com/tikv/client-go/v2 v2.0.8-0.20261027104816-348a939fb4b6 => github.com/0xPoe/client-go/v2 v2.0.0-20261113205045-001c9cea5db5
 	// etcd 3.5 uses the interceptors removed in otelgrpc v0.60.0.
 	// Remove this compatibility pin when etcd is upgraded to v3.6.1 or later.
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc => go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.59.0
