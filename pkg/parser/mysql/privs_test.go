@@ -92,3 +92,20 @@ func TestPrivAllConsistency(t *testing.T) {
 	// so it's +2
 	require.Equal(t, len(Priv2UserCol)+2, len(Priv2Str))
 }
+
+func TestOperateViewPrivilegeRegistry(t *testing.T) {
+	require.Equal(t, PrivilegeType(1<<33), OperateViewPriv)
+	require.Equal(t, "Operate View", OperateViewPriv.String())
+	require.Equal(t, "Operate View", OperateViewPriv.SetString())
+	require.Equal(t, "Operate_view_priv", OperateViewPriv.ColumnString())
+
+	priv, ok := NewPrivFromSetEnum("Operate View")
+	require.True(t, ok)
+	require.Equal(t, OperateViewPriv, priv)
+	priv, ok = NewPrivFromColumn("Operate_view_priv")
+	require.True(t, ok)
+	require.Equal(t, OperateViewPriv, priv)
+	require.Contains(t, AllGlobalPrivs, OperateViewPriv)
+	require.Contains(t, AllDBPrivs, OperateViewPriv)
+	require.Contains(t, AllTablePrivs, OperateViewPriv)
+}

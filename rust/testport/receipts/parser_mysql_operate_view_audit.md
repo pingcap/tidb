@@ -9,7 +9,7 @@ session package or materialized-view maintenance scheduler has been
 transcreated; those remain explicit integration boundaries below.
 
 Comparison source: Go `origin/master` at
-`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01), with the privilege
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02), with the privilege
 change from `8cde78af3c` (`session, parser, privilege, executor: add OPERATE
 VIEW privilege`) and the materialized-view metadata change from
 `d6afc7d991`.
@@ -51,6 +51,11 @@ bit enum. The seven metadef files, their tests, and build/ownership metadata
 were likewise read before adding the five target-master table definitions and
 reserved IDs.
 
+The hparser branch was still missing the Go-side `OperateViewPriv` registry
+delta. `TestOperateViewPrivilegeRegistry` failed before the fix because the
+symbol was undefined; it now verifies bit 33, all string/set/column reverse
+maps, and global/database/table scope membership.
+
 ## Rust ownership and comparison
 
 The nearest Rust owners are:
@@ -89,7 +94,8 @@ Profile: Ready for this code batch. The package-complete claim is limited to
 the implemented privilege/metadata seams; session versioned upgrade code and
 materialized-view execution remain unverified integration boundaries.
 
-- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./mysql -count=1` from `pkg/parser` — passed.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 tools/check/failpoint-go-test.sh ./pkg/parser/mysql -run '^(TestOperateViewPrivilegeRegistry|TestPrivAllConsistency|TestPrivColumn|TestPrivSetString)$' -count=1` — passed after the fix (pre-fix compile failure recorded above).
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 tools/check/failpoint-go-test.sh ./pkg/parser/mysql -count=1` — passed.
 - `OPENSSL_DIR=... DYLD_LIBRARY_PATH=... cargo +nightly-2026-08-22 test --offline --locked -p tidb-parser --lib operate_view_privilege_restores_as_a_static_privilege -- --test-threads=1` — passed after the fix; the same test failed before the parser branch was restored (`expected a privilege`).
 - `OPENSSL_DIR=... DYLD_LIBRARY_PATH=... cargo +nightly-2026-08-22 test --offline --locked -p tidb-mysql --test parser_mysql_package_source -- --test-threads=1` — 17 passed, including bit 33, map, set, and scope assertions.
 - `OPENSSL_DIR=... DYLD_LIBRARY_PATH=... cargo +nightly-2026-08-22 test --offline --locked -p tidb-lexer --test all -- --test-threads=1` — passed, including the target 689-keyword catalog length after the Go-master keyword refresh.
@@ -102,7 +108,9 @@ materialized-view execution remain unverified integration boundaries.
 - `make lint` — Ready gate; passed after the final receipt/plan edits.
 - `git diff --check` — passed.
 
-No Go or Bazel file changed, so `make bazel_prepare` is not required.
+Go production and test sources changed, so `make bazel_prepare` was required
+and attempted; it is blocked locally because the `bazel` executable is not
+installed. No Bazel metadata could be regenerated.
 
 ## Risks and unverified surfaces
 

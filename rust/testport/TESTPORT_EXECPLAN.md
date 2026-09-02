@@ -42,6 +42,16 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: refreshed the complete Go-master
+  `pkg/statistics/handle/util/test` support boundary at
+  `c6054025ed4c32ab3672a2a24ea46892714d21ec`: two artifacts and 49 lines,
+  with no package tests, fixtures, generated/platform variants, or build
+  extras. The distinct typed-context matcher owner remains aligned with the
+  strict Go assertion, TiKV request-source extraction, and exact diagnostic
+  text; current/detached probes, owner checks, and Ready gates pass. Details
+  are in `receipts/statistics_handle_util_test.md` and
+  `docs/operations/statistics-handle-util-test-audit-execplan.md`.
+
 - 2026-09-02: corrected the complete Go-master
   `pkg/statistics/handle/util` boundary at
   `c6054025ed4c32ab3672a2a24ea46892714d21ec`: seven root artifacts and 927
@@ -3029,8 +3039,9 @@ For each bounded behavior cluster:
       `tidb-stats-handle-util-test`: match a typed request context, preserve
       the wrong-type panic and exact description, remove the string-only
       predicate and its two supplemental tests, and make ordinary `StatsCtx`
-      carry the matching request source. The atomic inventory and WIP gates
-      are in `receipts/statistics_handle_util_test.md`.
+      carry the matching request source. The current Go-master inventory and
+      Ready gates are in `receipts/statistics_handle_util_test.md` and
+      `docs/operations/statistics-handle-util-test-audit-execplan.md`.
 - [x] Complete the pinned `pkg/statistics/handle/logutil` package in
       `tidb-stats-handle-logutil`: preserve all four category-tagged logger
       constructors and both source sampling policies over the shared logutil
