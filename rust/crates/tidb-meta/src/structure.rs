@@ -486,10 +486,12 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
             keys.push(encoded);
             Ok(())
         })?;
-        // Go has no snapshot guard here and would nil-panic instead; failing
-        // with the snapshot error is the recoverable stand-in.
+        // Go has no snapshot guard here and nil-panics when the first key is
+        // deleted through its absent readWriter. Preserve that impossible
+        // shape rather than turning it into a Rust-only recoverable error.
         if !keys.is_empty() {
-            self.require_writable()?;
+            self.require_writable()
+                .expect("TxStructure.HClear requires a writable readWriter");
         }
         for encoded in keys {
             self.transaction.delete(&encoded)?;

@@ -241,6 +241,24 @@ fn hash_operations_cover_set_get_iterate_last_n_inc_del_clear_and_nil_values() {
     assert_eq!(new_tx.get(key).unwrap().as_deref(), Some(b"abc".as_slice()));
 }
 
+// Go `HClear` calls the nil readWriter directly instead of returning
+// `ErrWriteOnSnapshot`; a populated read-only hash therefore panics.
+#[test]
+fn hash_clear_on_a_read_only_snapshot_panics_like_go() {
+    let mut transaction = MemoryTransaction::default();
+    let key = b"a";
+    {
+        let mut tx = TxStructure::new(&mut transaction, &[0x00]);
+        tx.hset(key, b"field", b"value").unwrap();
+    }
+
+    let mut snapshot = TxStructure::read_only(&mut transaction, &[0x00]);
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = snapshot.hclear(key);
+    }))
+    .is_err());
+}
+
 // Go `TestError`: every structure error carries its own code, not ErrUnknown.
 #[test]
 fn structure_errors_expose_their_source_error_codes() {

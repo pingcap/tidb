@@ -1,7 +1,7 @@
 # `pkg/structure` — Go-master parity receipt
 
 Comparison source: Go `origin/master` at commit
-`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01).
+`a85e0fd5dfa914e73eed97f17af584061252bc3c` (2026-09-02).
 
 ## Complete Go inventory
 
@@ -41,49 +41,50 @@ The dependency-closed Rust owner is `rust/crates/tidb-meta/src/structure.rs`
 five Go behavior tests. The crate's `Cargo.toml`, `src/lib.rs`, and generated
 `tests/all.rs` harness were also inspected for module/build wiring.
 
-The Rust owner already matches the Go key layout, byte-order metadata,
-missing-key results, decimal int64 encoding, hash/list ordering, reverse
-iterator start-field semantics, bounded-key malformed-entry skipping, and
-snapshot write refusal. No Rust-only production path or ignored test was
-found. The Rust API intentionally uses `Option`/`Result` and a
-`read_only` constructor because Rust cannot alias two mutable transaction
-handles; this is the documented equivalent of Go's nil `readWriter`.
+The Rust owner matches the Go key layout, byte-order metadata, missing-key
+results, decimal int64 encoding, hash/list ordering, reverse iterator
+start-field semantics, bounded-key malformed-entry skipping, and the normal
+snapshot write refusal. One Rust-only production path remained in `HClear`:
+Go collects hash keys and then calls the nil `readWriter.Delete` directly, so
+a populated read-only snapshot panics; Rust had conditionally called
+`require_writable` and returned `ErrWriteOnSnapshot` instead. The owner now
+preserves the Go panic boundary while leaving empty-hash clears successful (no
+delete is attempted in either implementation).
 
-No source change is justified for this package, so no regression test was
-added in this batch. The existing source-derived tests remain the focused
-regression surface for the complete owner.
+The focused source-derived regression
+`hash_clear_on_a_read_only_snapshot_panics_like_go` populates a hash, opens a
+read-only structure over the same prefix, and catches the expected panic. It
+was applied to a clean pre-fix `e8e7abbbcf` tree and failed because the old
+implementation returned `WriteOnSnapshot`; it passes after the fix.
 
 ## Validation
 
-Profile: **Ready** for this package audit; the repository-wide loop remains
-in progress.
+Profile: **Ready** for this bounded package batch; the repository-wide loop
+remains in progress.
 
 ```text
 OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler \
-DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib \
-cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-meta --test all structure_ --offline --locked
-# 5 passed, 0 failed
+DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib \
+cargo +nightly-2026-08-22 test --offline --locked -p tidb-meta --test all -- --test-threads=1
+# 59 passed, 0 failed, 3 ignored out of 62
 
 OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler \
-DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib \
-cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml \
-  -p tidb-util -p tidb-meta -p tidb-executor -p tidb-session --offline --locked
+DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib \
+cargo +nightly-2026-08-22 check --offline --locked -p tidb-meta --all-targets
 # passed; existing warnings only
 ```
 
-`cargo fmt --all -- --check` reports one pre-existing formatting difference in
-`tidb-planner/src/ranger/go_cases.rs`; no structure file is implicated.
-The workspace-wide check reaches an unavailable system OpenSSL when server
-dependencies are included. No Go or Bazel file changed, so
-`make bazel_prepare` is not required for this docs-only batch.
+`cargo +nightly-2026-08-22 fmt --all -- --check`, the repository `make lint`
+Ready gate, and `git diff --check` pass for the committed tree.
 
 ## Risk and remaining boundaries
 
-- Correctness risk is low: this batch changes no executable code and records
-  the already-tested owner boundary.
-- Compatibility risk is limited to callers that require Go's concrete
-  `kv.Transaction`/panic behavior; those are represented by the Rust raw
-  transaction trait and explicit error result rather than a second API.
+- Correctness risk is low: the panic is reachable only when a caller attempts
+  to clear a populated read-only snapshot, which is the malformed mutation
+  that Go exposes through its nil writer.
+- Compatibility risk is limited to callers that relied on Rust's prior
+  `WriteOnSnapshot` error from `HClear`; valid writable and empty-read-only
+  clears retain their behavior.
 - Performance is unchanged; reverse and bounded scans retain their existing
   transaction adapter contracts.
 - Not verified locally: Bazel analysis and the full Go `pkg/structure` test

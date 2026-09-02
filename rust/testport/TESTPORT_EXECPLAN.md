@@ -62,6 +62,15 @@ For each bounded behavior cluster:
   regressions. Full owner validation and the Ready gates are recorded in
   `receipts/br_encryption_master_key.md`.
 
+- 2026-09-02: corrected the Rust `tidb-meta` `TxStructure::hclear` boundary
+  against Go master `a85e0fd5df`. The complete `pkg/structure` inventory is
+  eight artifacts and 1,423 lines; all 19 `tidb-meta` owner artifacts (7,886
+  lines, including 10 aggregated test sources) were inventoried before
+  editing. Go directly dereferences its nil `readWriter` when clearing a
+  populated read-only hash, while Rust returned `WriteOnSnapshot`; Rust now
+  panics at that boundary and has a focused pre-fix-failing regression. The
+  updated package receipt is `receipts/structure.md`.
+
 - 2026-09-02: aligned the Rust `tidb-expr` collation-name boundary with Go
   master `a85e0fd5df`. After inventorying all 137 root `pkg/expression`
   artifacts and all 175 `tidb-expr` owner artifacts, changed
