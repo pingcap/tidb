@@ -1,7 +1,7 @@
 # `pkg/util/traceevent` — complete package transcreation
 
-Pinned Go source: `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`
-(`origin/master`).
+Pinned Go source: `origin/master` at
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02).
 
 ## Complete inventory
 
@@ -52,13 +52,13 @@ Both source benchmarks are executable in `benches/traceevent.rs`.
 Profile: Ready for this receipt refresh; this remains one package boundary in
 the continuing repository audit, not a repository-wide readiness claim.
 
-- `git diff --exit-code 5e8a1a229a7591ddac49a0cd3b795587c2595ab9 -- pkg/util/traceevent` — PASS.
-- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test -tags=intest,deadlock -count=1 ./pkg/util/traceevent` — PASS; 0.468s.
-- `cargo +nightly-2026-08-22 test -p tidb-util --lib traceevent::tests -- --test-threads=1` — PASS; 12 tests.
-- `cargo +nightly-2026-08-22 check -p tidb-util --bench traceevent` — PASS.
-- `cargo +nightly-2026-08-22 check -p tidb-server` — PASS; existing warnings outside this package remain.
-- `cargo +nightly-2026-08-22 fmt --all -- --check` — PASS.
-- `git diff --check` — passed.
+- `git diff --exit-code c6054025ed4c32ab3672a2a24ea46892714d21ec -- pkg/util/traceevent` — PASS; root source is unchanged at current Go master.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test -tags=intest,deadlock -count=1 ./pkg/util/traceevent` — PASS in the active worktree (0.337s).
+- The same pinned Go command passed in the exact detached Go-master worktree `/tmp/tidb-go-latest-c605` (0.329s).
+- `env OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-util --lib 'traceevent::tests' -- --test-threads=1` — PASS; 12 tests.
+- Existing owner validation also passed the traceevent benchmark check and `tidb-server` compilation; warnings outside this package remain.
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check` — PASS.
+- `git diff --check -- rust/testport/receipts/util_traceevent.md rust/docs/operations/util-traceevent-audit-execplan.md rust/testport/TESTPORT_EXECPLAN.md` — PASS.
 
 The live-hook regression could not compile against the prior fake registry API;
 after the fix it emits through `tikv_client::trace` into the real recorder.
@@ -76,4 +76,4 @@ is not required.
   receives the source context.
 - Performance: the disabled path still exits before allocating an event. The
   enabled path owns fields exactly once and both source benchmark workloads
-  compile; no comparative benchmark was run in this WIP checkpoint.
+  compile; no comparative benchmark was run in this Ready refresh.

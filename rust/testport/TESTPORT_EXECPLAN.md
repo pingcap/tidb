@@ -84,6 +84,15 @@ For each bounded behavior cluster:
   hygiene pass. Details are in `receipts/util_disk.md` and
   `docs/operations/util-disk-audit-execplan.md`.
 
+- 2026-09-02: re-audited the complete root `pkg/util/traceevent` boundary at
+  current Go master `c6054025ed4c32ab3672a2a24ea46892714d21ec`: seven
+  artifacts and 2,359 lines, including every adapter/flight-recorder/event
+  production and test function, both benchmarks, and BUILD metadata. The live
+  `tidb-util` owner, vendored client hooks, structured fields/context, and
+  source-derived tests remain aligned; current/detached Go suites and twelve
+  focused Rust tests pass. Details are in `receipts/util_traceevent.md` and
+  `docs/operations/util-traceevent-audit-execplan.md`.
+
 - 2026-09-02: refreshed the complete Go-master `pkg/util/stringutil`
   inventory at `c6054025ed4c32ab3672a2a24ea46892714d21ec`: four artifacts and
   927 lines, including all source tests, benchmarks, the goleak harness, and
@@ -2937,7 +2946,9 @@ For each bounded behavior cluster:
       replace the disconnected fake client registry with live hooks, restore
       ordinary startup registration, preserve structured fields and context,
       remove Rust-only public/test surfaces, and port both source benchmarks.
-      The atomic inventory and WIP gates are in `receipts/util_traceevent.md`.
+      The atomic inventory and Ready gates are in
+      `receipts/util_traceevent.md` and
+      `docs/operations/util-traceevent-audit-execplan.md`.
 - [x] Inventory the nested `pkg/util/traceevent/test` package independently:
       two artifacts and 461 lines, four next-gen session/flight-recorder
       integration tests, and its flaky Bazel target. The root Rust owner covers
