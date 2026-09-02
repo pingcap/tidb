@@ -15,9 +15,7 @@
 package ddl
 
 import (
-	"bytes"
 	"context"
-	"encoding/hex"
 	"fmt"
 
 	"github.com/docker/go-units"
@@ -228,31 +226,5 @@ func getTableSizeByID(ctx context.Context, store kv.Storage, tbl table.Table) in
 
 func estimateTableSizeByID(ctx context.Context, pdCli pdhttp.Client, store helper.Storage, pid int64) (int64, error) {
 	sk, ek := tablecodec.GetTableHandleKeyRange(pid)
-	start, end := store.GetCodec().EncodeRegionRange(sk, ek)
-	var totalSize int64
-	for {
-		regionInfos, err := pdCli.GetRegionsByKeyRange(ctx, pdhttp.NewKeyRange(start, end), 128)
-		if err != nil {
-			return 0, err
-		}
-		if len(regionInfos.Regions) == 0 {
-			break
-		}
-		for _, r := range regionInfos.Regions {
-			// ApproximateSize is SST/blob file size (can reflect compression), while
-			// ApproximateKvSize is KV data size and usually better tracks logical table size.
-			// Use max() because ApproximateKvSize can be zero when TiKV does not report it.
-			sizeInMiB := max(r.ApproximateSize, r.ApproximateKvSize)
-			totalSize += sizeInMiB * units.MiB
-		}
-		lastKey := regionInfos.Regions[len(regionInfos.Regions)-1].EndKey
-		start, err = hex.DecodeString(lastKey)
-		if err != nil {
-			return 0, err
-		}
-		if bytes.Compare(start, end) >= 0 {
-			break
-		}
-	}
-	return totalSize, nil
+	return helper.NewHelper(store).EstimateKeyRangeSize(ctx, pdCli, sk, ek)
 }

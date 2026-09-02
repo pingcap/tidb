@@ -39,6 +39,48 @@ const (
 	// Each node should handle at least 2 subtasks, each 100GiB data.
 	// For every additional 200 GiB of data, add 1 node.
 	baseDataSize = 200 * units.GiB
+	// exportTargetSeconds is the wall-clock budget an export task should finish
+	// within, independent of table count.
+	exportTargetSeconds = 30 * 60
+	// exportPodBandwidth is the measured per-pod S3 upload bandwidth cap (a few
+	// concurrent chunk-sized streams already saturate it, more concurrency past
+	// that doesn't add throughput).
+	exportPodBandwidth = 400 * units.MiB
+	// baseDataSizeForExport is how much data one reference (baseCores-core) node
+	// clears within exportTargetSeconds at exportPodBandwidth.
+	baseDataSizeForExport = float64(exportPodBandwidth) * exportTargetSeconds
+	// ExportDumpConcurrencyMultiplier mirrors pkg/dxf/export's
+	// countCapMultiplier: the Dump step's per-node small-chunk concurrency is
+	// this times allocated slots. It lives here, not in pkg/dxf/export,
+	// because export imports this package, so the reverse would cycle;
+	// pkg/dxf/export references this instead of defining its own copy.
+	// Kept equal to ExportSchemaConcurrencyMultiplier by explicit choice, not
+	// because Dump's per-chunk cost was benchmarked the same way Schema's
+	// 8x->16x jump was (Dump does real KV-scan+encode work, not just a PUT) —
+	// real-cluster timing (2026-08-25, 149,745 tables) still measured Dump at
+	// ~321 tables/s vs Schema's ~1,608 tables/s at this same multiplier, so
+	// this may need its own dedicated benchmark and separate value later.
+	ExportDumpConcurrencyMultiplier = 16
+	// ExportSchemaConcurrencyMultiplier is ExportDumpConcurrencyMultiplier's
+	// counterpart for the Schema step, mirroring pkg/dxf/export's
+	// schemaConcurrencyMultiplier. Schema PUTs are small and latency-bound
+	// with no bandwidth-bound case to protect against (see
+	// schemaConcurrencyMultiplier's own doc comment), and measured
+	// single-stream throughput scales close to linearly from 8x to 16x/core
+	// with no meaningful per-op latency increase.
+	ExportSchemaConcurrencyMultiplier = 16
+	// baseTableCountForExport is how many small (latency-bound) table chunks
+	// one reference (baseCores-core) node's Dump and Schema phases together
+	// clear within exportTargetSeconds, run sequentially at full concurrency
+	// (ExportDumpConcurrencyMultiplier*baseCores for Dump,
+	// ExportSchemaConcurrencyMultiplier*baseCores for Schema). Calibrated from
+	// measured per-chunk latency in real cluster testing, then rounded down
+	// so this constant only ever under-promises node/slot count, never
+	// over-promises finishing within exportTargetSeconds. NOT yet
+	// recalibrated for the ExportDumpConcurrencyMultiplier 4->16 change above
+	// (Dump's per-chunk latency at 16x concurrency hasn't been isolated from
+	// contention effects) — still based on the 4x-multiplier measurement.
+	baseTableCountForExport = 1_300_000
 	// To improve performance for small tasks, we assume that on a 8c machine,
 	// importing 200 GiB of data requires full utilization of a single node’s resources.
 	// Therefore, for every additional 25 GiB, add 1 slot as an estimate for task's
@@ -46,6 +88,8 @@ const (
 	baseSizePerConc = 25 * units.GiB
 	// The maximum number of nodes that can be used for add-index.
 	maxNodeCountLimitForAddIndex = 30
+	// The maximum number of nodes that can be used for export.
+	maxNodeCountLimitForExport = 30
 	// The maximum number of nodes that can be used for import-into.
 	// this value is based on previous performance test, for a quite common scenario,
 	// to import 100TiB data within 24 hours, we need about 32 8c nodes.
@@ -93,26 +137,41 @@ func NewRCCalc(dataSize int64, nodeCPU int, indexSizeRatio float64, factors *sch
 func (rc *ResourceCalc) CalcMaxNodeCountForAddIndex() int {
 	size := rc.getAmplifiedDataSize()
 	limit := rc.factors.AmplifyFactor * maxNodeCountLimitForAddIndex
-	return rc.calcMaxNodeCountBySize(size, limit)
+	return rc.calcMaxNodeCountBySize(size, limit, baseDataSize)
+}
+
+// CalcMaxNodeCountForExport calculates the maximum number of nodes needed to
+// finish an export within exportTargetSeconds. Node count is the larger of
+// two independent bounds: bytes (bandwidth-bound Dump work) and tableCount
+// (latency-bound Dump+Schema work on many small chunks) — a data size that's
+// trivial in bytes but spread across enough tables can still miss the
+// deadline on a single node if only bytes are considered.
+func (rc *ResourceCalc) CalcMaxNodeCountForExport(tableCount int64) int {
+	size := rc.getAmplifiedDataSize()
+	limit := rc.factors.AmplifyFactor * maxNodeCountLimitForExport
+	byBytes := rc.calcMaxNodeCountBySize(size, limit, baseDataSizeForExport)
+	amplifiedTableCount := int64(rc.factors.AmplifyFactor * float64(tableCount))
+	byTableCount := rc.calcMaxNodeCountBySize(amplifiedTableCount, limit, baseTableCountForExport)
+	return max(byBytes, byTableCount)
 }
 
 // CalcMaxNodeCountForImportInto calculates the maximum number of nodes to execute import-into.
 func (rc *ResourceCalc) CalcMaxNodeCountForImportInto() int {
 	size := rc.getAmplifiedDataSize()
 	limit := rc.factors.AmplifyFactor * maxNodeCountLimitForImportInto
-	return rc.calcMaxNodeCountBySize(size, limit)
+	return rc.calcMaxNodeCountBySize(size, limit, baseDataSize)
 }
 
 func (rc *ResourceCalc) getAmplifiedDataSize() int64 {
 	return int64(rc.factors.AmplifyFactor * (1 + rc.indexSizeRatio) * float64(rc.dataSize))
 }
 
-func (rc *ResourceCalc) calcMaxNodeCountBySize(size int64, limit float64) int {
+func (rc *ResourceCalc) calcMaxNodeCountBySize(size int64, limit, baseSize float64) int {
 	if rc.nodeCPU <= 0 {
 		return 0
 	}
 	r := baseCores / float64(rc.nodeCPU)
-	nodeCnt := float64(size) * r / baseDataSize
+	nodeCnt := float64(size) * r / baseSize
 	nodeCnt = min(nodeCnt, limit*r)
 	nodeCnt = max(nodeCnt, 1)
 	return int(math.Round(nodeCnt))
@@ -147,6 +206,21 @@ func (rc *ResourceCalc) CalcRequiredSlots() int {
 		return 4
 	}
 	slots := float64(size) / baseSizePerConc
+	slots = min(slots, float64(rc.nodeCPU))
+	slots = max(slots, 1)
+	return int(math.Round(slots))
+}
+
+// CalcRequiredSlotsForExport calculates the required slots for an export
+// task, the larger of two independent bounds: bytes (CalcRequiredSlots) and
+// tableCount (latency-bound Dump+Schema concurrency for many small chunks).
+// A separate method from CalcRequiredSlots because the table-count bound is
+// export-specific; import-into and add-index only need the byte-driven one.
+func (rc *ResourceCalc) CalcRequiredSlotsForExport(tableCount int64) int {
+	bySize := float64(rc.CalcRequiredSlots())
+	amplifiedTableCount := rc.factors.AmplifyFactor * float64(tableCount)
+	byTableCount := amplifiedTableCount / baseTableCountForExport * baseCores
+	slots := max(bySize, byTableCount)
 	slots = min(slots, float64(rc.nodeCPU))
 	slots = max(slots, 1)
 	return int(math.Round(slots))

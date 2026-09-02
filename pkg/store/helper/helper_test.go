@@ -19,6 +19,7 @@ import (
 	"cmp"
 	"context"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -180,6 +181,148 @@ func TestGetRegionsTableInfoWithKeyspace(t *testing.T) {
 	hV2 := &helper.Helper{Store: &codecOnlyStorage{codec: codecV2}}
 	tableInfosViaAPI := hV2.GetRegionsTableInfo(regionsInfoForAPI, infoschema.DBInfoAsInfoSchema(schemas), nil)
 	require.Equal(t, tableInfos, tableInfosViaAPI)
+}
+
+type terminalRegionPDClient struct {
+	pd.Client
+	calls int
+}
+
+func (c *terminalRegionPDClient) WithCallerID(string) pd.Client {
+	return c
+}
+
+func (c *terminalRegionPDClient) GetRegionsByKeyRange(
+	context.Context,
+	*pd.KeyRange,
+	int,
+) (*pd.RegionsInfo, error) {
+	c.calls++
+	if c.calls > 1 {
+		return nil, fmt.Errorf("unexpected request after terminal region")
+	}
+	return &pd.RegionsInfo{
+		Regions: []pd.RegionInfo{{
+			EndKey:            "",
+			ApproximateSize:   1,
+			ApproximateKvSize: 2,
+		}},
+	}, nil
+}
+
+type terminalRegionStorage struct {
+	helper.Storage
+	codec tikv.Codec
+	pdCli pd.Client
+}
+
+func (s *terminalRegionStorage) GetCodec() tikv.Codec {
+	return s.codec
+}
+
+func (s *terminalRegionStorage) GetPDHTTPClient() pd.Client {
+	return s.pdCli
+}
+
+func (*terminalRegionStorage) GetRegionCache() *tikv.RegionCache {
+	return nil
+}
+
+func TestRegionSizePaginationStopsAtTerminalRegion(t *testing.T) {
+	codecV2, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{
+		Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 1},
+		Name:     "test_keyspace",
+	})
+	require.NoError(t, err)
+
+	codecs := []struct {
+		name  string
+		codec tikv.Codec
+	}{
+		{name: "classic", codec: tikv.NewCodecV1(tikv.ModeTxn)},
+		{name: "keyspace", codec: codecV2},
+	}
+	start, end := kv.Key("a"), kv.Key("z")
+	const expectedSize = int64(2 * 1024 * 1024)
+	for _, tc := range codecs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Run("region-sizes", func(t *testing.T) {
+				pdCli := &terminalRegionPDClient{}
+				h := helper.NewHelper(&terminalRegionStorage{codec: tc.codec, pdCli: pdCli})
+				endKeys, sizes, err := h.RegionApproximateSizes(t.Context(), start, end)
+				require.NoError(t, err)
+				require.Equal(t, []kv.Key{end}, endKeys)
+				require.Equal(t, []int64{expectedSize}, sizes)
+				require.Equal(t, 1, pdCli.calls)
+			})
+
+			t.Run("total-size", func(t *testing.T) {
+				pdCli := &terminalRegionPDClient{}
+				h := helper.NewHelper(&terminalRegionStorage{codec: tc.codec, pdCli: pdCli})
+				size, err := h.EstimateKeyRangeSize(t.Context(), pdCli, start, end)
+				require.NoError(t, err)
+				require.Equal(t, expectedSize, size)
+				require.Equal(t, 1, pdCli.calls)
+			})
+		})
+	}
+}
+
+type foreignKeyspacePDClient struct {
+	pd.Client
+	calls         int
+	foreignEndKey string
+}
+
+func (c *foreignKeyspacePDClient) WithCallerID(string) pd.Client {
+	return c
+}
+
+func (c *foreignKeyspacePDClient) GetRegionsByKeyRange(
+	context.Context,
+	*pd.KeyRange,
+	int,
+) (*pd.RegionsInfo, error) {
+	c.calls++
+	if c.calls > 1 {
+		return nil, fmt.Errorf("unexpected request after terminal region")
+	}
+	return &pd.RegionsInfo{
+		Regions: []pd.RegionInfo{{
+			EndKey:            c.foreignEndKey,
+			ApproximateSize:   1,
+			ApproximateKvSize: 2,
+		}},
+	}, nil
+}
+
+// TestRegionSizeStopsAtForeignKeyspaceBoundary reproduces the last region
+// holding data for our keyspace reporting a raw end key that decodes as
+// belonging to a different (adjacent) keyspace, since keyspaces are packed
+// back to back with no gap. RegionApproximateSizes must treat that as "no
+// more data for us past this point", the same as an empty end key, rather
+// than failing the whole scan.
+func TestRegionSizeStopsAtForeignKeyspaceBoundary(t *testing.T) {
+	ourCodec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{
+		Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 1},
+		Name:     "our_keyspace",
+	})
+	require.NoError(t, err)
+	otherCodec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{
+		Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 2},
+		Name:     "other_keyspace",
+	})
+	require.NoError(t, err)
+	foreignEndKey := otherCodec.EncodeRegionKey([]byte("z"))
+
+	start, end := kv.Key("a"), kv.Key("z")
+	pdCli := &foreignKeyspacePDClient{foreignEndKey: hex.EncodeToString(foreignEndKey)}
+	h := helper.NewHelper(&terminalRegionStorage{codec: ourCodec, pdCli: pdCli})
+	endKeys, sizes, err := h.RegionApproximateSizes(t.Context(), start, end)
+	require.NoError(t, err)
+	require.Equal(t, []kv.Key{end}, endKeys)
+	require.Equal(t, []int64{2 * 1024 * 1024}, sizes)
+	require.Equal(t, 1, pdCli.calls)
 }
 
 // TestGetPDRegionStatsKeyspaceEncoding verifies that GetPDRegionStats encodes the table

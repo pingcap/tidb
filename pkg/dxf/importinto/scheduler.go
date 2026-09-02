@@ -31,13 +31,13 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/dxf/framework/dxfmetric"
+	"github.com/pingcap/tidb/pkg/dxf/framework/dxfutil"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/planner"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/executor/importer"
-	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
@@ -301,8 +301,8 @@ func (*importScheduler) writePreparedChunkMap(
 	}
 	defer store.Close()
 	preparedMeta := PreparedMeta{
-		BaseExternalMeta: globalsort.BaseExternalMeta{
-			ExternalPath: globalsort.PreparedMetaPath(taskID),
+		BaseExternalMeta: dxfutil.BaseExternalMeta{
+			ExternalPath: dxfutil.PreparedMetaPath(taskID),
 		},
 		ChunkMap: chunkMap,
 	}
