@@ -1,14 +1,17 @@
 # `pkg/util/tracing` — complete package transcreation
 
-Pinned Go source: `e2788410d8d696605e8cb002585877a063ccc909`.
+Pinned Go source: `origin/master` at
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02).
 
 ## Complete inventory
 
-The package inventory is `BUILD.bazel`, `main_test.go`, `noop_bench_test.go`,
-`opt_trace.go`, `util.go`, and `util_test.go`. It contains two production
-files, six top-level source tests, and four benchmarks. It has no package doc,
-fixture, generated source, platform/build-tag variant, fuzz target, example,
-or ownership file. The checkout package is byte-identical to the pin.
+The package inventory is exactly six artifacts: `BUILD.bazel` (38 lines),
+`main_test.go` (33), `noop_bench_test.go` (54), `opt_trace.go` (41),
+`util.go` (398), and `util_test.go` (151), for 715 lines. It contains two
+production files, six top-level source tests, and four benchmarks. It has no
+package doc, fixture, generated source, platform/build-tag variant, fuzz
+target, example, or ownership file. The checkout package is byte-identical to
+the pin.
 
 `main_test.go` supplies Go's package-wide test setup and goroutine-leak check;
 Rust's test harness has no corresponding process hook or Go goroutines, so it
@@ -42,17 +45,16 @@ twice. All four source benchmark workloads are executable in
 
 ## Validation
 
-Profile: WIP; this is one package checkpoint in the continuing repository
-audit, not a repository-wide readiness claim.
+Profile: **Ready**; this is one completed package within the continuing
+repository audit, not a repository-wide readiness claim.
 
-- `git diff --exit-code e2788410d8d696605e8cb002585877a063ccc909 -- pkg/util/tracing` — passed.
-- `GOCACHE=/private/tmp/tidb-go-cache GOTOOLCHAIN=go1.25.10 go test -tags=intest,deadlock -count=1 ./pkg/util/tracing` — passed.
-- `cargo test -p tidb-util --lib --offline tracing::tests -- --nocapture` — passed; seven tests.
-- `cargo test -p tidb-util --lib --offline traceevent::tests -- --nocapture` — passed; twelve downstream tests.
-- `cargo check -p tidb-util --bench tracing --offline` — passed.
-- `cargo check -p tidb-server --offline` — passed; existing warnings outside this package remain.
-- `rustfmt --edition 2021 --check crates/tidb-util/src/tracing.rs crates/tidb-util/src/traceevent/mod.rs crates/tidb-util/src/traceevent/adapter.rs crates/tidb-util/benches/tracing.rs` — passed.
-- `git diff --check` — passed.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test -tags=intest,deadlock -count=1 ./pkg/util/tracing` — passed in the active worktree and in the exact detached Go-master worktree `/tmp/tidb-go-latest-c605`.
+- `git diff --exit-code c6054025ed4c32ab3672a2a24ea46892714d21ec -- pkg/util/tracing` — empty; all six Go artifacts are unchanged at Go master.
+- `env OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-util --lib 'tracing::tests' -- --nocapture` — passed; seven tests.
+- `env OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -p tidb-util --bench tracing` — passed; all four benchmark carriers compile.
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check` — passed.
+- `git diff --check -- rust/testport/receipts/util_tracing.md rust/docs/operations/util-tracing-audit-execplan.md rust/testport/TESTPORT_EXECPLAN.md` — passed.
+- Commit, push, pull, and remote SHA verification are recorded for this receipt refresh.
 
 The shared-span regression failed before the fix with two recordings and
 passed afterward with one. No Go or Bazel file changed, so

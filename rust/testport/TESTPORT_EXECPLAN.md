@@ -93,6 +93,16 @@ For each bounded behavior cluster:
   focused Rust tests pass. Details are in `receipts/util_traceevent.md` and
   `docs/operations/util-traceevent-audit-execplan.md`.
 
+- 2026-09-02: re-audited the complete root `pkg/util/tracing` boundary at
+  current Go master `c6054025ed4c32ab3672a2a24ea46892714d21ec`: six artifacts
+  and 715 lines, including the context/span production surface, package test
+  harness, six source tests, four benchmarks, and BUILD metadata. The live
+  `tidb-util` owner retains shared span state, open phases, CE record identity,
+  source-derived tests, and benchmark carriers; current/detached Go suites,
+  seven focused Rust tests, and benchmark compilation pass. Details are in
+  `receipts/util_tracing.md` and
+  `docs/operations/util-tracing-audit-execplan.md`.
+
 - 2026-09-02: refreshed the complete Go-master `pkg/util/stringutil`
   inventory at `c6054025ed4c32ab3672a2a24ea46892714d21ec`: four artifacts and
   927 lines, including all source tests, benchmarks, the goleak harness, and
@@ -2960,7 +2970,8 @@ For each bounded behavior cluster:
       preserve shared span-handle semantics, restore its open string phase and
       pointer-preserving CE deduplication, add the four source benchmarks and
       empty `OptimizeTracer`, and remove supplementary Rust-only APIs/tests.
-      The atomic inventory and WIP gates are in `receipts/util_tracing.md`.
+      The atomic inventory and Ready gates are in `receipts/util_tracing.md`
+      and `docs/operations/util-tracing-audit-execplan.md`.
 - [x] Complete the pinned `pkg/session/syssession` package in the
       `tidb-syssession` owner: replace the executor-local policy fragments
       with the full owner/operation/pool lifecycle, remove ignored empty
