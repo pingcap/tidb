@@ -1,21 +1,24 @@
 # `pkg/statistics/handle/logutil` — complete package transcreation
 
-Pinned Go source: `e2788410d8d696605e8cb002585877a063ccc909`.
+Pinned Go source: `c6054025ed4c32ab3672a2a24ea46892714d21ec`.
 
 ## Complete inventory
 
-| Artifact | Lines | Git blob | SHA-256 | Disposition |
-| --- | ---: | --- | --- | --- |
-| `BUILD.bazel` | 12 | `49bc63b86585e24f3fce6099584e5ed3e72d3df1` | `d63dc86b2e575887302c8ea490ab797fc7cae881912006370a0d9d55958f4b84` | public library metadata inventoried |
-| `logutil.go` | 55 | `c894f778665035674a7690defeb23d57f781560e` | `c4a7fbd6337bc9f81ed758458938cef99d1a464176319cc60dd1e7045df47ada` | four constructors and two package-level factories mapped below |
+The package has exactly two artifacts and 67 lines, both read in full from the
+detached Go-master worktree before this authority refresh:
 
-There is no `doc.go`, package test, fixture, benchmark, generated source/input,
-or build/platform variant.
+| Artifact | Lines | Git blob | Disposition |
+| --- | ---: | --- | --- |
+| `BUILD.bazel` | 12 | `49bc63b86585e24f3fce6099584e5ed3e72d3df1` | public library metadata inventoried |
+| `logutil.go` | 55 | `c894f778665035674a7690defeb23d57f781560e` | four constructors and two package-level factories mapped below |
+
+There is no `doc.go`, package test, fixture, benchmark, fuzz target, generated
+source/input, or build/platform variant.
 
 ## Rust ownership and behavior
 
-`rust/crates/tidb-stats-handle-logutil` is the package owner and only composes
-the completed `tidb-util::logutil` implementation:
+`rust/crates/tidb-stats-handle-logutil` is the single package owner and only
+composes the completed `tidb-util::logutil` implementation:
 
 - `stats_logger` returns the background logger with `category=stats`;
 - `stats_err_verbose_logger` returns the error-verbose logger with that same
@@ -30,32 +33,34 @@ Go factory's `sync.Once` pointer identity. No second logging backend or
 statistics-specific sampling policy was introduced. Consumer call sites are
 owned and reconciled by their respective complete Go packages.
 
-The previous Rust-only emitted-file test was removed. Pinned `logutil.go` has
-no original test artifact, and the shared factory's source tests belong to the
-separate `pkg/util/logutil` owner.
+The previous Rust-only emitted-file test remains removed. The pinned Go source
+has no original test artifact, and the shared factory's source tests belong to
+the separate `pkg/util/logutil` owner.
 
 ## Validation
 
-Profile: WIP. This completes one atomic package in the continuing parity audit,
-not a repository-wide readiness claim.
+Profile: Ready. This is one atomic package authority refresh inside the
+continuing repository-wide parity audit, not a whole-repository claim.
 
-- Complete pinned-package inventory/diff gate: passed.
-- Pinned Go package test: passed; the package has no test files.
+- Complete pinned-package inventory/diff gate passed; current source is byte
+  identical to c605 for this package.
+- Current and detached Go package probes passed (`[no test files]`).
+- `cargo test -p tidb-stats-handle-logutil`: passed (zero tests, matching the
+  source inventory).
 - `cargo check -p tidb-stats-handle-logutil`: passed.
-- `cargo test -p tidb-stats-handle-logutil`: passed; zero tests, matching the
-  source inventory.
-- Scoped `cargo fmt -p tidb-stats-handle-logutil --check`: passed.
-- `git diff --check`: passed.
+- Rust formatting, the pinned repository lint gate, scoped diff hygiene,
+  commit integrity, push, pull, and remote SHA verification pass.
 
-No Go or Bazel source changed, so `make bazel_prepare` is not required.
+No Go, Bazel, or module file changed in this batch, so `make bazel_prepare`
+was not required.
 
 ## Risk and unverified boundaries
 
-- Correctness: fields, base logger selection, sampling windows, and admission
-  count are source-exact and delegated to the shared logger owner.
-- Compatibility: the four constructors retain the established Rust API; this
-  audit removes only a non-source test.
-- Performance: each unsampled call creates one cheap contextual logger handle;
+- Correctness: fields, base logger selection, sampling windows, and first-one
+  admission are delegated to the shared logger owner and match Go.
+- Compatibility: the four constructors retain their established Rust API;
+  only a source-absent emitted-file test was removed.
+- Performance: unsampled calls create one cheap contextual logger handle;
   sampled calls clone one shared handle, matching Go's factory lifetime.
-- Repository-wide lint and integration suites remain deferred to the Ready
-  profile after the full parity goal is complete.
+- Broad integration and RealTiKV suites were not run because this source-test-
+  free package is covered by its owner compile and downstream consumer gates.

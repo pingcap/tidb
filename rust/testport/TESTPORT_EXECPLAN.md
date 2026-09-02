@@ -43,6 +43,17 @@ For each bounded behavior cluster:
 ## Progress
 
 - 2026-09-02: refreshed the complete Go-master
+  `pkg/statistics/handle/logutil` boundary at
+  `c6054025ed4c32ab3672a2a24ea46892714d21ec`: two artifacts and 67 lines,
+  with no source tests, fixtures, generated/platform variants, or build
+  extras. The single Rust owner still composes the shared background,
+  error-verbose, and sampled logger factories with exact category, lifetime,
+  admission, and five-/ten-minute window behavior. Current/detached probes,
+  owner checks, and Ready gates pass. Details are in
+  `receipts/statistics_handle_logutil.md` and
+  `docs/operations/statistics-handle-logutil-audit-execplan.md`.
+
+- 2026-09-02: refreshed the complete Go-master
   `pkg/statistics/handle/util/test` support boundary at
   `c6054025ed4c32ab3672a2a24ea46892714d21ec`: two artifacts and 49 lines,
   with no package tests, fixtures, generated/platform variants, or build
@@ -3045,8 +3056,10 @@ For each bounded behavior cluster:
 - [x] Complete the pinned `pkg/statistics/handle/logutil` package in
       `tidb-stats-handle-logutil`: preserve all four category-tagged logger
       constructors and both source sampling policies over the shared logutil
-      owner, without adding tests to the source-test-free package. The atomic
-      inventory and WIP gates are in `receipts/statistics_handle_logutil.md`.
+      owner, without adding tests to the source-test-free package. The current
+      Go-master inventory and Ready gates are in
+      `receipts/statistics_handle_logutil.md` and
+      `docs/operations/statistics-handle-logutil-audit-execplan.md`.
 - [x] Complete the pinned `pkg/statistics/handle/internal` support package in
       `tidb-stats-handle-internal`: replace the opaque snapshot workaround
       with `AssertTableEqual` over actual statistics tables, and remove its
