@@ -582,7 +582,11 @@ pub(crate) fn wrap_comparison_arguments(
     fn operand(expression: &Expression) -> Option<CmpOperand<'_>> {
         expression.static_type().map(move |field_type| CmpOperand {
             field_type,
-            is_constant: matches!(expression, Expression::Constant(_)),
+            // Go's `NewFunction` folds a wholly-constant subtree before
+            // `GetAccurateCmpType` sees it. The Rust rewriter keeps that
+            // subtree as a scalar node, so use the same foldability gate
+            // instead of testing only the node variant.
+            is_constant: crate::constant_fold::folds_to_constant(expression),
             is_column: matches!(expression, Expression::Column(_)),
         })
     }

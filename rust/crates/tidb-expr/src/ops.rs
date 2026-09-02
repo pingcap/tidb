@@ -484,6 +484,16 @@ pub(crate) fn eval_binary_full(
     let duration_vs_constant = (operands.lhs.is_duration_column() && operands.rhs.is_constant())
         || (operands.rhs.is_duration_column() && operands.lhs.is_constant());
     if duration_vs_constant && matches!(op, Eq | Ge | Gt | Le | Lt | Ne | NullEq) {
+        if l == Datum::Null || r == Datum::Null {
+            return Ok(if op == NullEq {
+                Datum::Int(0)
+            } else {
+                Datum::Null
+            });
+        }
+        if let (Datum::Duration(a), Datum::Duration(b)) = (&l, &r) {
+            return Ok(ordering_to_bool(op, a.compare(*b)));
+        }
         let text_side = |value: &Datum| match value {
             Datum::String(value) => Some(String::from_utf8_lossy(value.bytes()).into_owned()),
             Datum::Bytes(value) => Some(String::from_utf8_lossy(value).into_owned()),

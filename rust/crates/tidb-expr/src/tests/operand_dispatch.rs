@@ -247,6 +247,7 @@ fn a_duration_compares_as_a_duration_only_against_a_constant() {
     assert_eq!(over_columns("t = concat('1:00',':00')", &row()), "INT:1");
     assert_eq!(over_columns("t = v", &row()), "INT:0");
     assert_eq!(over_columns("t = 'xyz'", &row()), "NULL");
+    assert_eq!(over_columns("t <=> 'xyz'", &row()), "INT:0");
     assert_eq!(over_columns("t = w", &row()), "INT:0");
 }
 

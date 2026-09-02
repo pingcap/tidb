@@ -117,3 +117,48 @@ the clock crosses a local date boundary. Other YEAR source domains retain the
 existing parser/integer rules. The duration conversion still reports the
 datatype's existing out-of-range error rather than inventing a new warning
 policy.
+
+## Rust follow-up: duration-column comparison with folded constants
+
+The rolling Go comparison remains `origin/master` at
+`17daba3dfde858eebef60f6e4e1bb37268269225`. Before this follow-up, the complete
+root `pkg/expression` inventory was rechecked: 137 direct artifacts and
+128,744 lines (68 production files, 60 tests, seven generated sources,
+`BUILD.bazel`, and `OWNERS`), with 208 artifacts and 146,247 lines across its
+seven nested package boundaries. The Rust owner inventory covers all 175
+`tidb-expr` artifacts and 104,998 lines, including source tests, standalone
+fixtures, benchmark/support inputs, and the shared aggregate-test build input.
+No Go, Bazel, generated, fixture, or platform artifact changed.
+
+Go's `GetAccurateCmpType` receives a `*Constant` after `NewFunction` runs
+`foldConstant`; therefore `duration_col = CONCAT('1:00', ':00')` selects the
+ETDuration signature just like a literal constant, while a VARCHAR column keeps
+ETString. Rust's comparison wrapper previously classified only a literal
+`Expression::Constant` as constant. The concat subtree consequently selected
+ETString and the duration column later reached numeric conversion with its
+unspecified FSP, which panicked. Rust now uses the existing
+`constant_fold::folds_to_constant` predicate when constructing `CmpOperand`,
+so foldable scalar subtrees follow Go's post-fold dispatch. The runtime
+duration-constant arm also compares two duration values directly after the
+cast and returns the Go NULL/`<=>` result when an invalid constant casts to
+NULL, avoiding numeric conversion of an unspecified-FSP duration.
+
+The focused `operand_dispatch` regression covers the literal, foldable
+`CONCAT`, duration-column/VARCHAR-column, invalid constant, and NULL-safe
+invalid-constant rows. A clean pre-fix `368ab79bb1` worktree failed the test
+with `nonnegative duration FSP: TryFromIntError(NegOverflow)` in
+`duration::to_number`; the fixed tree passes all rows.
+
+Validation for this follow-up used the Ready profile:
+
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --offline --locked -p tidb-expr --lib tests::operand_dispatch::a_duration_compares_as_a_duration_only_against_a_constant -- --nocapture` — all focused rows passed.
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 check --offline --locked -p tidb-expr --all-targets` — owner all-target compile passed.
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --offline --locked -p tidb-expr --lib -- --test-threads=1` — 1,080 passed, eight pre-existing failures (compare refinement, constant folding/const-level, and an external JSON schema resource), and 138 documented gap tests ignored.
+- `cargo +nightly-2026-08-22 fmt --all -- --check`, `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 make lint`, and `git diff --check` — Ready formatting, lint, and whitespace gates.
+
+Correctness risk is limited to comparison dispatch for a duration column and a
+constant or foldable constant subtree. Non-constant duration comparisons still
+use the Go string domain, and other temporal/numeric comparison domains are
+unchanged. Compatibility risk is confined to replacing a Rust panic with the
+Go duration comparison or NULL result; there is no new externally visible
+state or performance-sensitive path.

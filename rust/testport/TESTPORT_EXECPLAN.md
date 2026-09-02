@@ -107,6 +107,16 @@ For each bounded behavior cluster:
   row yielding 2012. Details and the Ready validation record are in
   `receipts/expression_collation_audit.md`.
 
+- 2026-09-02: extended the same Rust-only `pkg/expression` batch for
+  duration-column comparisons. Reusing Go's post-`foldConstant` constant
+  predicate makes a foldable `CONCAT` select ETDuration instead of the
+  string/numeric fallback; invalid duration constants now return Go's NULL
+  comparison result without converting an unspecified-FSP column to a number.
+  The focused literal/concat/column/invalid/NULL-safe regression failed on
+  clean `368ab79bb1` with the FSP panic and passes after the fix. The complete
+  package inventory and Ready evidence are appended to
+  `receipts/expression_collation_audit.md`.
+
 - 2026-09-02: aligned `LogicalPlan::extract_col_groups` child access with Go
   master `a85e0fd5df`. Join and apply outer-side arms now direct-index the
   required child schemas, and the window arm preserves Go's empty-group early
