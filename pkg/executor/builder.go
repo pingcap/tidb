@@ -537,8 +537,13 @@ func buildIndexLookUpChecker(b *executorBuilder, p *physicalop.PhysicalIndexLook
 
 func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) exec.Executor {
 	canUseFastCheck := true
+	tblInfo := v.Table.Meta()
 	for _, idx := range v.IndexInfos {
 		if idx.MVIndex || idx.IsColumnarIndex() {
+			canUseFastCheck = false
+			break
+		}
+		if idx.ContainsVirtualGeneratedTemporalWithDateColumn(tblInfo) {
 			canUseFastCheck = false
 			break
 		}
