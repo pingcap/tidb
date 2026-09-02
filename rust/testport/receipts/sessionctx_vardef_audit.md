@@ -1,13 +1,14 @@
 # `pkg/sessionctx/vardef` Go-master parity audit
 
 Comparison source: Go `origin/master` at commit
-`febee17ec716d86b1e355e5400ef9e4f4f190bad` (2026-09-02).
+`1c1a334d2be1dce64888b6e1f054462c566b0734` (2026-09-02).
 
-This receipt records the complete package inventory and the bounded constants
-delta implemented in the Rust `tidb-vardef` owner. It does not claim the full
-`pkg/sessionctx/vardef` package is transcreated: the mutable runtime globals,
-the Go `SysVar` registry, `SessionVars`, and slow-log/session integration still
-belong to later dependency-closed package units.
+This receipt records the complete package inventory and two bounded parity
+batches implemented in the Go package and Rust `tidb-vardef` owner. It does
+not claim the full `pkg/sessionctx/vardef` package is transcreated: the other
+mutable runtime globals, the Go `SysVar` registry, `SessionVars`, and
+slow-log/session integration still belong to later dependency-closed package
+units.
 
 ## Complete Go package inventory
 
@@ -30,9 +31,10 @@ additional nested build targets. The Go source has 2 production test cases and
 
 The Rust owner inventory is `Cargo.toml`, `lib.rs`, `tidb_vars.rs`,
 `defaults.rs`, `bounds.rs`, `modes.rs`, `global_sysvar_initial.rs`, the three
-in-crate test modules, and the external `tests/tidb_vars_source.rs` carrier. The owner is
-intentionally limited to the constants/modes and pure global-initial-value
-policy; the remaining Go runtime/session registry is explicitly unclaimed.
+in-crate test modules, and the external `tests/tidb_vars_source.rs` carrier.
+The owner now includes the plan-replayer retention atomic and its source
+regression; the remaining Go runtime/session registry is explicitly
+unclaimed.
 
 ## Go-master delta and parity decisions
 
@@ -68,6 +70,14 @@ by the Go session-variable registry. `TestQueryCopStoreLimitConstants` pins
 the exact spelling and default; the dependent variable sysvar registration is
 tracked as a separate `pkg/sessionctx/variable` package batch.
 
+The follow-up runtime batch restores the Go-master
+`SetPlanReplayerFileRetentionTime`/`GetPlanReplayerFileRetentionTime` process
+global, its `TiDBPlanReplayerFileRetentionTime` name and seven-day default,
+and a focused setter/getter regression. Rust stores the same signed nanosecond
+representation in an `AtomicI64`, preserving Go's `time.Duration` contract;
+the domain GC caller and `pkg/sessionctx/variable` registration remain
+separate package boundaries.
+
 ## Validation (Ready profile)
 
 Go-master source tests, run in a detached worktree at the exact comparison
@@ -85,9 +95,9 @@ Rust owner and source carriers:
 
 ```text
 cargo +nightly-2026-08-22 test --offline --locked -p tidb-vardef --lib -- --test-threads=1
-43 passed, 0 failed, 113 ignored
+43 passed, 0 failed, 107 ignored
 cargo +nightly-2026-08-22 test --offline --locked -p tidb-vardef --test tidb_vars_source -- --test-threads=1
-2 passed, 0 failed
+3 passed, 0 failed
 cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check
 git diff --check
 ```
@@ -98,15 +108,21 @@ The repository Ready lint was run with the bundled Go runtime:
 PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 make lint
 ```
 
-No Go source, import block, Bazel file, or Go module dependency changed, so
-`make bazel_prepare` is not required for this Rust-only batch.
+The new Go regression failed before the runtime API was restored with
+undefined `Get/SetPlanReplayerFileRetentionTime`; it passes after the fix.
+The Rust source regression likewise failed before the owner API existed with
+unresolved imports, then passes with the implementation.
+
+`make bazel_prepare` is required because this follow-up restores Go source and
+test behavior; the local run is blocked by the unavailable `bazel` executable.
 
 ## Risks and unverified surfaces
 
-The constants are compile-time API additions/removal only; the primary risk is
-an incorrect source spelling, literal type, or duration conversion. The Go
-`SessionVars`/`SysVar` registration and validation behavior was executed in the
-Go-master worktree but is not implemented in the Rust constants crate. The
-full runtime atomics, embedding hooks, transaction-file wiring, Windows and
-other unsupported targets, and the 113 intentionally ignored Rust session/
-registry tests remain unverified by this package checkpoint.
+The constants are compile-time API additions/removal only; the runtime batch's
+primary risk is an incorrect source spelling, signed nanosecond conversion, or
+global-state lifecycle. The Go `SessionVars`/`SysVar` registration and
+validation behavior was executed in the Go-master worktree but is not
+implemented in the Rust constants crate. The remaining runtime atomics,
+embedding hooks, transaction-file wiring, Windows and other unsupported
+targets, and the intentionally ignored Rust session/registry tests remain
+unverified by this package checkpoint.

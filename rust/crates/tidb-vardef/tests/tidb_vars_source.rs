@@ -15,7 +15,8 @@
 //! Source tests for `pkg/sessionctx/vardef/tidb_vars_test.go`.
 
 use tidb_vardef::{
-    is_mdl_enabled, is_read_only_var_in_next_gen, set_enable_mdl, tidb_vars::TIDB_DDL_DISK_QUOTA,
+    is_mdl_enabled, is_read_only_var_in_next_gen, plan_replayer_file_retention_time,
+    set_enable_mdl, set_plan_replayer_file_retention_time, tidb_vars::TIDB_DDL_DISK_QUOTA,
     tidb_vars::TIDB_DDL_ENABLE_FAST_REORG, tidb_vars::TIDB_DDL_REORG_MAX_WRITE_SPEED,
     tidb_vars::TIDB_ENABLE_DIST_TASK, tidb_vars::TIDB_ENABLE_MDL,
     tidb_vars::TIDB_MAX_DIST_TASK_NODES,
@@ -52,4 +53,27 @@ fn read_only_vars_are_detected_in_nextgen_source() {
     assert!(is_read_only_var_in_next_gen(TIDB_DDL_DISK_QUOTA));
     assert!(is_read_only_var_in_next_gen(TIDB_ENABLE_DIST_TASK));
     assert!(is_read_only_var_in_next_gen(TIDB_DDL_ENABLE_FAST_REORG));
+}
+
+struct RestorePlanReplayerRetention(i64);
+
+impl Drop for RestorePlanReplayerRetention {
+    fn drop(&mut self) {
+        set_plan_replayer_file_retention_time(self.0);
+    }
+}
+
+/// Source: `pkg/sessionctx/vardef/runtime.go::Set/GetPlanReplayerFileRetentionTime`.
+#[test]
+fn plan_replayer_file_retention_time_is_process_global_source() {
+    let original = plan_replayer_file_retention_time();
+    let _restore = RestorePlanReplayerRetention(original);
+    assert_eq!(
+        original,
+        tidb_vardef::defaults::DEF_TIDB_PLAN_REPLAYER_FILE_RETENTION_TIME
+    );
+
+    let retention = 2 * 60 * 60 * 1_000_000_000_i64;
+    set_plan_replayer_file_retention_time(retention);
+    assert_eq!(plan_replayer_file_retention_time(), retention);
 }

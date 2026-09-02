@@ -16,6 +16,7 @@ package vardef
 
 import (
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/stretchr/testify/require"
@@ -33,4 +34,13 @@ func TestIsReadOnlyVarInNextGen(t *testing.T) {
 	require.True(t, IsReadOnlyVarInNextGen(TiDBDDLDiskQuota))
 	require.True(t, IsReadOnlyVarInNextGen(TiDBDDLEnableFastReorg))
 	require.True(t, IsReadOnlyVarInNextGen(TiDBEnableDistTask))
+}
+
+func TestPlanReplayerFileRetentionTime(t *testing.T) {
+	original := GetPlanReplayerFileRetentionTime()
+	t.Cleanup(func() { SetPlanReplayerFileRetentionTime(original) })
+
+	retention := 2 * time.Hour
+	SetPlanReplayerFileRetentionTime(retention)
+	require.Equal(t, retention, GetPlanReplayerFileRetentionTime())
 }

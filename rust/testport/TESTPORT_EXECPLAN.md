@@ -42,6 +42,17 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: completed a second bounded `pkg/sessionctx/vardef` Go-package
+  batch against Go master `1c1a334d2be1dce64888b6e1f054462c566b0734`:
+  restored the process-global plan-replayer file-retention duration, its
+  system-variable name and seven-day default, and focused Go/Rust setter-getter
+  regressions. Rust keeps Go's signed nanosecond `time.Duration` representation
+  in an `AtomicI64`. The package receipt now records the current source hash and
+  the remaining SysVar/domain integration boundary. Ready validation passes
+  for the Go package, Rust owner/source tests, Rust formatting, lint, and diff
+  checks; `make bazel_prepare` is required by the restored Go files and is
+  blocked by the missing local Bazel executable.
+
 - 2026-09-02: completed a bounded `pkg/sessionctx/stmtctx` Go-package batch
   against Go master `1c1a334d2b`: restored the three alternative-plan storage
   signals (mixed TiKV/TiFlash, missing TiFlash path, and explicit

@@ -29,7 +29,8 @@
 //! and the sysvar `TypeFlag` already live in `tidb-exec`
 //! (`sysvar_scope`/`sysvar_type`). Still DEFERRED from the full package: the
 //! remainder of the mutable `var (...)` block of runtime-tunable global sysvar
-//! backing stores, apart from the two ANALYZE defaults above (many need
+//! backing stores, apart from the two ANALYZE defaults and plan-replayer
+//! retention setting above (many need
 //! config/system-memory-derived initializers,
 //! `rate.Limiter`, or typed pointers, and are runtime state better wired when
 //! the session layer consumes them, not on the simple-query path),
@@ -61,6 +62,15 @@ pub static MEMORY_USAGE_ALARM_RATIO: AtomicU64 =
 pub static MEMORY_USAGE_ALARM_KEEP_RECORD_NUM: AtomicI64 =
     AtomicI64::new(defaults::DEF_MEMORY_USAGE_ALARM_KEEP_RECORD_NUM);
 
+/// Go `vardef`'s process-wide plan-replayer file retention duration.
+///
+/// The Go API uses `time.Duration`, whose underlying representation is a
+/// signed number of nanoseconds. Keeping the same representation here lets
+/// callers preserve the source setter/getter contract without silently
+/// clamping or converting values at this package boundary.
+pub static PLAN_REPLAYER_FILE_RETENTION_TIME: AtomicI64 =
+    AtomicI64::new(defaults::DEF_TIDB_PLAN_REPLAYER_FILE_RETENTION_TIME);
+
 const OOM_ACTION_CANCEL: u8 = 0;
 const OOM_ACTION_LOG: u8 = 1;
 
@@ -76,6 +86,17 @@ pub fn memory_usage_alarm_ratio() -> f64 {
 /// Stores Go `vardef.MemoryUsageAlarmRatio`.
 pub fn set_memory_usage_alarm_ratio(value: f64) {
     MEMORY_USAGE_ALARM_RATIO.store(value.to_bits(), Ordering::SeqCst);
+}
+
+/// Loads Go `vardef.GetPlanReplayerFileRetentionTime` as nanoseconds.
+#[must_use]
+pub fn plan_replayer_file_retention_time() -> i64 {
+    PLAN_REPLAYER_FILE_RETENTION_TIME.load(Ordering::SeqCst)
+}
+
+/// Stores Go `vardef.SetPlanReplayerFileRetentionTime` as nanoseconds.
+pub fn set_plan_replayer_file_retention_time(nanoseconds: i64) {
+    PLAN_REPLAYER_FILE_RETENTION_TIME.store(nanoseconds, Ordering::SeqCst);
 }
 
 /// Loads Go `vardef.OOMAction`.
