@@ -69,9 +69,11 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	servererr "github.com/pingcap/tidb/pkg/server/err"
+	"github.com/pingcap/tidb/pkg/server/internal/advertisedstatus"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util"
@@ -524,6 +526,16 @@ func (s *Server) Run(dom *domain.Domain) error {
 	terror.RegisterFinish()
 	go s.startNetworkListener(s.listener, false, errChan)
 	go s.startNetworkListener(s.socket, true, errChan)
+	if s.cfg.Status.ReportStatus {
+		endpointCheckCtx, cancelEndpointCheck := context.WithCancel(context.Background())
+		defer cancelEndpointCheck()
+		advertisedstatus.Start(endpointCheckCtx, advertisedstatus.Options{
+			ReportStatus:     s.cfg.Status.ReportStatus,
+			StatusListener:   s.statusListener,
+			AdvertiseAddress: s.cfg.AdvertiseAddress,
+			LocalID:          s.dom.DDL().GetID(),
+		})
+	}
 	if RunInGoTest && !isClosed(RunInGoTestChan) {
 		close(RunInGoTestChan)
 	}
@@ -818,7 +830,7 @@ func (s *Server) onConn(conn *clientConn) {
 		return
 	}
 
-	logutil.Logger(ctx).Debug("new connection", zap.String("remoteAddr", conn.bufReadConn.RemoteAddr().String()))
+	conn.logConnectionEvent(ctx, "login_success")
 
 	defer func() {
 		terror.Log(conn.Close())
@@ -868,6 +880,16 @@ func (s *Server) onConn(conn *clientConn) {
 	if err != nil {
 		return
 	}
+}
+
+func (cc *clientConn) logConnectionEvent(ctx context.Context, event string) {
+	if !vardef.EnableConnectionEventLog.Load() {
+		return
+	}
+	logutil.Logger(ctx).Info("connection event",
+		zap.String("event", event),
+		zap.Stringer("user", cc.getCtx().GetSessionVars().User),
+		zap.String("remoteAddr", cc.bufReadConn.RemoteAddr().String()))
 }
 
 func (cc *clientConn) connectInfo() *variable.ConnectionInfo {

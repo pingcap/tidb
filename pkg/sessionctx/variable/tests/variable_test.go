@@ -634,12 +634,14 @@ func TestSetSysVar(t *testing.T) {
 	originalCfg := *config.GetGlobalConfig()
 	originalDeployMode := deploymode.Get()
 	originalRequireSecureTransport := tidbtls.RequireSecureTransport.Load()
+	originalEnableConnectionEventLog := vardef.EnableConnectionEventLog.Load()
 	t.Cleanup(func() {
 		config.StoreGlobalConfig(&originalCfg)
 		if kerneltype.IsNextGen() {
 			require.NoError(t, deploymode.Set(originalDeployMode))
 		}
 		tidbtls.RequireSecureTransport.Store(originalRequireSecureTransport)
+		vardef.EnableConnectionEventLog.Store(originalEnableConnectionEventLog)
 	})
 
 	mock := variable.NewMockGlobalAccessor4Tests()
@@ -669,6 +671,12 @@ func TestSetSysVar(t *testing.T) {
 
 	require.NoError(t, variable.GetSysVar(vardef.RequireSecureTransport).SetGlobalFromHook(context.Background(), mock.SessionVars, vardef.On, false))
 	require.True(t, tidbtls.RequireSecureTransport.Load())
+
+	require.NoError(t, variable.GetSysVar(vardef.TiDBEnableConnectionEventLog).SetGlobalFromHook(context.Background(), mock.SessionVars, vardef.On, false))
+	require.True(t, vardef.EnableConnectionEventLog.Load())
+
+	require.NoError(t, variable.GetSysVar(vardef.TiDBEnableConnectionEventLog).SetGlobalFromHook(context.Background(), mock.SessionVars, vardef.Off, false))
+	require.False(t, vardef.EnableConnectionEventLog.Load())
 }
 
 func TestSkipSysvarCache(t *testing.T) {

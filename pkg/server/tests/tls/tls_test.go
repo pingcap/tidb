@@ -642,6 +642,7 @@ func TestStatusAPIWithTLS(t *testing.T) {
 	tidbserver.RunInGoTestChan = make(chan struct{})
 	server, err := tidbserver.NewServer(cfg, ts.Tidbdrv)
 	require.NoError(t, err)
+	server.SetDomain(ts.Domain)
 
 	go func() {
 		err := server.Run(nil)
@@ -700,6 +701,7 @@ func TestStatusAPIWithTLSCNCheck(t *testing.T) {
 	tidbserver.RunInGoTestChan = make(chan struct{})
 	server, err := tidbserver.NewServer(cfg, ts.Tidbdrv)
 	require.NoError(t, err)
+	server.SetDomain(ts.Domain)
 
 	go func() {
 		err := server.Run(nil)
