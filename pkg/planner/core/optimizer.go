@@ -1320,14 +1320,115 @@ func existsCartesianProduct(p LogicalPlan) bool {
 	if join, ok := p.(*LogicalJoin); ok && len(join.EqualConditions) == 0 {
 		return join.JoinType == InnerJoin || join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin
 	}
+<<<<<<< HEAD
 	for _, child := range p.Children() {
 		if existsCartesianProduct(child) {
 			return true
-		}
-	}
-	return false
+=======
+	return slices.ContainsFunc(p.Children(), existsCartesianProduct)
 }
 
+// DefaultDisabledLogicalRulesList indicates the logical rules which should be banned.
+var DefaultDisabledLogicalRulesList *atomic.Value
+
+func disableReuseChunkIfNeeded(sctx base.PlanContext, plan base.PhysicalPlan) {
+	if !sctx.GetSessionVars().IsAllocValid() {
+		return
+	}
+	if disableReuseChunk, continueIterating := checkSkipReuseChunkForOverlongType(sctx, plan); disableReuseChunk || !continueIterating {
+		return
+	}
+	for _, child := range plan.Children() {
+		disableReuseChunkIfNeeded(sctx, child)
+	}
+}
+
+// checkSkipReuseChunkForOverlongType walks the root-side physical plan tree top-down and stops at
+// the first reader / point get boundary. Only those operators materialize rows into the reusable
+// chunk owned by the current statement, so higher-level physical operators only decide whether the
+// traversal should continue.
+func checkSkipReuseChunkForOverlongType(sctx base.PlanContext, plan base.PhysicalPlan) (skipReuseChunk bool, continueIterating bool) {
+	if plan == nil {
+		return false, false
+	}
+	switch plan.(type) {
+	case *physicalop.PhysicalTableReader, *physicalop.PhysicalIndexReader,
+		*physicalop.PhysicalIndexLookUpReader, *physicalop.PhysicalIndexMergeReader:
+		if shouldSkipReuseChunkForPhysicalPlan(plan) {
+			sctx.GetSessionVars().ClearAlloc(nil, false)
+			return true, false
+		}
+	case *physicalop.PointGetPlan, *physicalop.BatchPointGetPlan:
+		if shouldSkipReuseChunkForPhysicalPlan(plan) {
+			sctx.GetSessionVars().ClearAlloc(nil, false)
+			return true, false
+		}
+	default:
+		// Other physical operators do not read data, so we can continue to iterate.
+		return false, true
+	}
+	// Once we reach a reader / point get, its children are nil or stay on the coprocessor side, so
+	// no other root-side operator can affect the reusable-chunk decision.
+	return false, false
+}
+
+var (
+	// MaxMemoryLimitForOverlongType is the memory limit for overlong type column check.
+	// Why is it not 128 ?
+	// Because many customers allocate a portion of memory to their management programs,
+	// the actual amount of usable memory does not align to 128GB.
+	// TODO: We are also lacking test data for instances with less than 128GB of memory, so we need to plan the rules here.
+	// TODO: internal sql can force to use chunk reuse if we ensure the memory usage is safe.
+	// TODO: We can consider the limit/Topn in the future.
+	MaxMemoryLimitForOverlongType = 120 * size.GB
+	maxFlenForOverlongType        = mysql.MaxBlobWidth * 2
+)
+
+// shouldSkipReuseChunkForPhysicalPlan checks whether one reader / point get should skip chunk reuse
+// because of overlong output columns. The decision is based on retained reusable-chunk memory rather
+// than full query output size.
+//
+// For readers with trusted row-count stats, we estimate:
+//
+//	average size of overlong columns * min(estimated row count, MaxChunkSize)
+//
+// All relaxed paths first require server memory >= MaxMemoryLimitForOverlongType; otherwise chunk
+// reuse is unconditionally disabled. Point gets and batch point gets have an exact operator-level
+// row bound, while non-point readers only take the relaxed path when row-count stats are trusted.
+// Only readers with trusted row-count stats use observed average sizes.
+func shouldSkipReuseChunkForPhysicalPlan(plan base.PhysicalPlan) bool {
+	schema := plan.Schema()
+	if schema == nil {
+		return false
+	}
+	totalFlen := 0
+	overlongColumns := make([]*expression.Column, 0, len(schema.Columns))
+	for _, column := range schema.Columns {
+		switch column.RetType.GetType() {
+		case mysql.TypeLongBlob,
+			mysql.TypeBlob, mysql.TypeJSON, mysql.TypeTiDBVectorFloat32:
+			// These types are still treated as unbounded here, so keep the old conservative behavior.
+			return true
+		case mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeTinyBlob, mysql.TypeMediumBlob:
+			// if the column is varchar and the length of
+			// the column is defined to be more than 1000,
+			// the column is considered a large type and
+			// disable chunk_reuse.
+			if column.RetType.GetFlen() <= 1000 {
+				continue
+			}
+			totalFlen += column.RetType.GetFlen()
+			overlongColumns = append(overlongColumns, column)
+>>>>>>> de3035d3fa5 (planner: refine reuse chunk gating for overlong types (#67235))
+		}
+	}
+	if totalFlen == 0 {
+		return false
+	}
+	return !allowReuseChunkForOverlongType(plan, overlongColumns, totalFlen)
+}
+
+<<<<<<< HEAD
 // DefaultDisabledLogicalRulesList indicates the logical rules which should be banned.
 var DefaultDisabledLogicalRulesList *atomic.Value
 
@@ -1366,6 +1467,53 @@ func checkOverlongColType(sctx PlanContext, plan PhysicalPlan) bool {
 		if existsOverlongType(plan.Schema()) {
 			sctx.GetSessionVars().ClearAlloc(nil, false)
 			return true
+=======
+// allowReuseChunkForOverlongType applies the relaxed rule for bounded overlong columns. It first
+// checks the host-memory gate, then estimates the retained memory of one reusable chunk instead of
+// the whole result set.
+func allowReuseChunkForOverlongType(plan base.PhysicalPlan, overlongColumns []*expression.Column, totalFlen int) bool {
+	totalMemory, err := memory.MemTotal()
+	if err != nil || totalMemory <= 0 || totalMemory < MaxMemoryLimitForOverlongType {
+		return false
+	}
+	estimatedRows, hasTrustedStats := estimateReusableChunkRowsForOverlongType(plan)
+	if estimatedRows <= 0 {
+		// Without a trusted row bound, keep the old conservative behavior for non-point readers.
+		return false
+	}
+
+	// Estimate the retained reusable chunk size as rows per chunk * bytes per row.
+	rowsPerReusableChunk := estimatedRows
+	switch plan.(type) {
+	case *physicalop.PointGetPlan:
+	default:
+		rowsPerReusableChunk = min(rowsPerReusableChunk, float64(plan.SCtx().GetSessionVars().MaxChunkSize))
+	}
+
+	statsInfo := plan.StatsInfo()
+	estimatedBytesPerRow := float64(totalFlen)
+	if hasTrustedStats && hasUsableOverlongTypeSizeStats(statsInfo, overlongColumns) {
+		// Real stats let us use the observed average size instead of the schema worst case.
+		estimatedBytesPerRow = getAvgRowSize(statsInfo, overlongColumns)
+	}
+	estimatedReusableChunkBytes := rowsPerReusableChunk * estimatedBytesPerRow
+	return estimatedReusableChunkBytes <= float64(maxFlenForOverlongType)
+}
+
+func hasUsableOverlongTypeSizeStats(statsInfo *property.StatsInfo, overlongColumns []*expression.Column) bool {
+	if statsInfo == nil || statsInfo.HistColl == nil || statsInfo.HistColl.Pseudo ||
+		statsInfo.HistColl.RealtimeCount == 0 || statsInfo.HistColl.ColNum() == 0 {
+		return false
+	}
+	for _, column := range overlongColumns {
+		colStats := statsInfo.HistColl.GetCol(column.UniqueID)
+		if colStats == nil {
+			return false
+		}
+		// Keep the schema-level fallback when this column would still fall back to EstimateTypeWidth.
+		if !colStats.IsHandle && colStats.TotColSize == 0 && colStats.NullCount != statsInfo.HistColl.RealtimeCount {
+			return false
+>>>>>>> de3035d3fa5 (planner: refine reuse chunk gating for overlong types (#67235))
 		}
 	}
 	return false
@@ -1392,4 +1540,35 @@ func existsOverlongType(schema *expression.Schema) bool {
 		}
 	}
 	return false
+}
+
+// estimateReusableChunkRowsForOverlongType returns the row bound used by the reusable-chunk memory
+// estimate together with a flag indicating whether the caller may use observed average row sizes.
+// Point gets and batch point gets have an exact operator-level row bound. Non-point readers only
+// enter the relaxed path when row-count stats are trusted.
+func estimateReusableChunkRowsForOverlongType(plan base.PhysicalPlan) (estimatedRows float64, hasTrustedStats bool) {
+	statsInfo := plan.StatsInfo()
+	if statsInfo == nil || statsInfo.RowCount <= 0 {
+		return 0, false
+	}
+
+	switch plan.(type) {
+	case *physicalop.PointGetPlan:
+		return math.Ceil(statsInfo.RowCount), true
+	case *physicalop.BatchPointGetPlan:
+		if statsInfo.HistColl == nil || statsInfo.HistColl.Pseudo {
+			return math.Ceil(statsInfo.RowCount), false
+		}
+		return math.Ceil(statsInfo.RowCount), true
+	case *physicalop.PhysicalTableReader, *physicalop.PhysicalIndexReader,
+		*physicalop.PhysicalIndexLookUpReader, *physicalop.PhysicalIndexMergeReader:
+		// Non-point readers only take the relaxed path when row-count stats are trusted.
+		if statsInfo.HistColl == nil || statsInfo.HistColl.Pseudo ||
+			statsInfo.HistColl.RealtimeCount == 0 || statsInfo.HistColl.ColNum() == 0 {
+			return 0, false
+		}
+		return math.Ceil(statsInfo.RowCount), true
+	default:
+		return 0, false
+	}
 }
