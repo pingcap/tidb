@@ -42,6 +42,18 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: completed the bounded `pkg/privilege/privileges` Go package
+  batch against Go master
+  `78cac443a4f46c13bfe27eb247b5c80657952547`. The complete direct inventory
+  covers ten upstream artifacts and 7,411 lines, plus one focused branch
+  regression file. Restored the OPERATE VIEW cache/load/visibility behavior,
+  MySQL USER_ATTRIBUTES row-filter modes, and the SEM-v2 columnar-variable
+  privilege regression. Focused failpoint-aware tests pass. The end-to-end
+  USER_ATTRIBUTES integration case remains explicitly owned by the missing
+  `pkg/executor/infoschema_reader.go` consumer; Bazel preparation is blocked
+  by the missing local executable. Details are in
+  `receipts/privilege_privileges.md`.
+
 - 2026-09-02: completed the bounded `pkg/planner/core` Go package storage
   signal batch against Go master
   `78cac443a4f46c13bfe27eb247b5c80657952547`. The complete direct inventory
