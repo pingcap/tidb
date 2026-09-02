@@ -42,6 +42,14 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: completed a follow-up `pkg/util/codec` Go-package batch against
+  Go master `1c1a334d2be1dce64888b6e1f054462c566b0734`: restored the TypeNull
+  pre-allocation `canSkip` call that marks null join keys before hashing, which
+  prevents empty NULL keys from colliding with empty byte keys. The focused
+  failpoint-aware codec suite passes; `make bazel_prepare` is blocked by the
+  unavailable Bazel executable. The focused `pkg/executor/join` regression is
+  recorded in its own package receipt.
+
 - 2026-09-02: completed a bounded `pkg/planner/core/operator/physicalop`
   Go-package batch against Go master `1c1a334d2b`: restored
   `StorageEngineUsage` and `HasSingleScanIndexJoin` with focused physical-tree

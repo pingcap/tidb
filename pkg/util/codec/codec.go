@@ -629,6 +629,9 @@ func preAllocForSerializedKeyBuffer(
 				serializedKeyLens[j] += sizeByteNum + int(column.GetJSON(physicalRowindex).CalculateHashValueSize())
 			}
 		case mysql.TypeNull:
+			for _, physicalRowIndex := range usedRows {
+				canSkip(physicalRowIndex)
+			}
 		default:
 			return serializedKeysBuffer, errors.Errorf("unsupport column type for pre-alloc %d", tps[i].GetType())
 		}

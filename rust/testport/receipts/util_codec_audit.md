@@ -6,7 +6,7 @@ implementation while legacy encoder methods remain as compatibility wrappers
 for existing in-tree callers.
 
 Comparison source: Go `origin/master` at commit
-`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02).
+`1c1a334d2be1dce64888b6e1f054462c566b0734` (2026-09-02).
 
 ## Complete inventory
 
@@ -39,6 +39,16 @@ obsolete encoder hash-equality assertion is removed. This checkout keeps
 source-compatible `Encoder.EncodeValue` and `Encoder.HashCode` wrappers for
 the existing `pkg/tablecodec` and benchmark callers; both delegate to the
 same non-collating paths.
+
+## Follow-up current-master null-key fix
+
+The `febee17ec7` Go-master regression exercises a `TypeNull` join key. The
+pre-allocation pass must call its existing `canSkip` closure for TypeNull so
+the closure marks `nullVector` before hash computation; omitting that call lets
+an empty NULL key collide with an empty byte key. This batch restores that
+per-row behavior in `codec.go`. The join package owns the focused regression
+and is recorded separately; no Rust codec change is needed because the Rust
+owner already marks null join keys before serialization.
 
 ## Rust ownership and parity decision
 
@@ -88,6 +98,15 @@ target changed, so `make bazel_prepare` is not required by the repository gate.
 A broader `tidb-unistore --all-targets` check was not used as a package gate:
 its existing `InProcessClient`/`SynchronousBatchRequestDispatcher` trait
 failure is outside this codec change.
+
+Follow-up validation for the current-master TypeNull path:
+
+- Before the fix, the Go-master `TestAntiSemiJoinTypeNullBuildKey` regression
+  failed with an empty result; after restoring the `canSkip` call it passes in
+  the owning join package.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex ./tools/check/failpoint-go-test.sh pkg/util/codec -run '^Test' -count=1 -vet=off` — passed.
+- `make bazel_prepare` — required by the Go production edit; blocked locally
+  because the `bazel` executable is unavailable.
 
 ## Risk
 
