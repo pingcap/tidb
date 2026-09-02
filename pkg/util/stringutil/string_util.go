@@ -257,9 +257,15 @@ func matchRune(a, b rune) bool {
 	*/
 }
 
-// CompileLike2Regexp convert a like `lhs` to a regular expression
-func CompileLike2Regexp(str string) string {
-	patChars, patTypes := CompilePattern(str, '\\')
+// CompileLike2Regexp converts a LIKE pattern to a regular expression. The
+// optional escape argument defaults to the SQL backslash escape for legacy
+// callers; callers with a custom LIKE escape should pass it explicitly.
+func CompileLike2Regexp(str string, escapes ...byte) string {
+	escape := byte('\\')
+	if len(escapes) > 0 {
+		escape = escapes[0]
+	}
+	patChars, patTypes := CompilePattern(str, escape)
 	var result strings.Builder
 	result.Grow(len(patChars)*2 + 2)
 	result.WriteByte('^')

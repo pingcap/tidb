@@ -1,13 +1,17 @@
 # `pkg/util/stringutil` — Go-master parity audit receipt
 
 Status: complete dependency-closed audit at the current Go-master authority;
-the Rust owner now has Go's discardable return-value contract.
+the Go helper now accepts an explicit LIKE escape while retaining legacy
+one-argument callers, and the Rust owner has Go's discardable return-value
+contract.
 
 Go source: `origin/master` at
 `c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02). Relative to the
 hparser integration checkout, this authority carries the explicit escape-byte
-parameter on `CompileLike2Regexp`; the Rust owner already forwards that byte
-through its canonical pattern compiler.
+parameter on `CompileLike2Regexp`; the Go implementation uses a variadic
+compatibility parameter so existing one-argument planner callers continue to
+compile while new callers can pass the SQL escape byte. The Rust owner already
+forwards that byte through its canonical pattern compiler.
 
 ## Complete inventory
 
@@ -17,7 +21,8 @@ The package has exactly four artifacts, all read in full: `string_util.go`
 input/output, platform variant, README, or ownership file. Go master differs
 from the hparser integration source only by adding the `escape byte` parameter
 to `CompileLike2Regexp` and passing the SQL-default backslash from its source
-test rows; no build metadata changes.
+test rows; this checkout carries that contract via a variadic parameter for
+source compatibility. No build metadata changes.
 
 Production behavior comprises quoted-string decoding; Unicode and binary LIKE
 pattern compilation and matching; LIKE-to-regexp conversion; exact-pattern
@@ -63,8 +68,8 @@ the Rust owner compiles with the supplied byte rather than hard-coding a
 backslash. Every Rust call site was searched: there are no production callers
 of this conversion helper, while `tidb-expr::like` independently consumes the
 ordinary `compile_pattern` path and already forwards its escape byte. The
-source-shaped default rows remain unchanged, and a focused custom-escape
-regression covers escaped `%`, `_`, and a non-escape backslash.
+source-shaped default rows remain unchanged. The Go regression now exercises
+both the legacy default and a custom escape (`+`) covering escaped `%`.
 
 Other Go packages consume these utilities across planner, executor, expression,
 privilege, types, table, DDL, and collation boundaries. Existing Rust packages
@@ -85,6 +90,8 @@ Profile: Ready for this package batch; the repository-wide package audit is
 still continuing.
 
 - Go-master source inventory and diff against `origin/hparser-integration` — passed; only the escape-parameter delta described above.
+- Pre-fix `go test ./pkg/util/stringutil -run '^TestCompileLike2Regexp$' -count=1` — failed as expected because the one-argument helper could not accept the new escape byte.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/stringutil -run '^(TestCompileLike2Regexp|TestPatternMatch)$' -count=1` — passed, including the custom-escape regression.
 - `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/stringutil -count=1` (current hparser checkout) — passed.
 - Same Go command from detached `/tmp/tidb-go-latest-c605` — passed.
 - `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib CARGO_INCREMENTAL=0 cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-util --lib stringutil::tests::return_values_may_be_ignored_like_go --offline --locked -- --exact` — passed after the 15-error pre-fix failure.
@@ -96,8 +103,9 @@ still continuing.
 - `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 make lint` — passed.
 - `git diff --check` — passed.
 
-No Go or Bazel file changed in this batch, so `make bazel_prepare` is not
-required. Failpoint toggling is not applicable to this package.
+Go source and test files changed in this follow-up, so `make bazel_prepare` was
+required but is blocked locally because the `bazel` executable is not installed.
+Failpoint toggling is not applicable to this package.
 
 ## Risk
 

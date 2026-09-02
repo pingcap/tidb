@@ -35,15 +35,19 @@ may discard helper results exactly as Go callers do.
 - [x] (2026-09-02) Ran current and detached latest-master Go tests, the
       focused Rust regression, all nine Rust stringutil tests, Rust formatting,
       pinned repository lint, and diff hygiene.
-- [ ] Push this batch to `origin/hparser-integration`, verify local/remote
+- [x] (2026-09-02) Restored the current Go-master LIKE escape contract with a
+      variadic compatibility parameter, added a custom-escape regression, and
+      recorded the expected pre-fix compile failure.
+- [x] (2026-09-02) Push this batch to `origin/hparser-integration`, verify local/remote
       SHAs, and fetch the newest target branch before the next boundary.
 
 ## Surprises & Discoveries
 
-- The hparser integration checkout still has the one-argument Go helper,
+- The hparser integration checkout still had the one-argument Go helper,
   whereas current Go `master` supplies an escape byte and updates its caller.
-  The Rust helper already follows current `master`; no second conversion path
-  is needed in this batch.
+  A variadic Go parameter preserves existing planner callers while exposing the
+  current contract to new callers; the Rust helper already follows current
+  `master`, so no second conversion path is needed.
 - Go strings are arbitrary byte sequences. The Rust owner consequently uses
   byte slices for quoting, binary matching, copying, and trailing-space logic,
   and decodes invalid UTF-8 one byte at a time to Go's replacement rune.
@@ -68,6 +72,7 @@ may discard helper results exactly as Go callers do.
 
 Run from the repository root unless a command says otherwise:
 
+    PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/stringutil -run '^(TestCompileLike2Regexp|TestPatternMatch)$' -count=1
     PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/stringutil -count=1
     (cd /tmp/tidb-go-latest-c605 && PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/stringutil -count=1)
     OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib CARGO_INCREMENTAL=0 cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-util --lib stringutil::tests::return_values_may_be_ignored_like_go --offline --locked -- --exact
@@ -76,10 +81,11 @@ Run from the repository root unless a command says otherwise:
     PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 make lint
     git diff --check
 
-Expected results are two passing Go suites, one focused Rust regression, nine
-Rust stringutil tests, clean formatting, successful pinned lint, and no
-whitespace errors. No Go or Bazel artifact changed in this batch, so
-`make bazel_prepare` and failpoint toggling are not required.
+Expected results are passing focused and full Go suites, one focused Rust
+regression, nine Rust stringutil tests, clean formatting, successful pinned
+lint, and no whitespace errors. Because Go source and tests changed,
+`make bazel_prepare` is required; it is currently blocked by the missing local
+`bazel` executable. Failpoint toggling is not applicable.
 
 ## Outcomes & Retrospective
 
