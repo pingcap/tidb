@@ -4969,6 +4969,13 @@ For each bounded behavior cluster:
   `rust/testport/receipts/planner_cardinality.md`; larger appended-handle,
   recursive-estimation, JSON-selectivity, and golden-fixture deltas remain
   explicit follow-up boundaries.
+- `pkg/store/copr` now passes each store-batched child response's own lock to
+  the existing lock resolver, restoring Go-master child-lock fallback without
+  changing batching or retry policy. The complete 20-artifact root inventory,
+  pre-fix failing/post-fix passing regression, failpoint-wrapped package suite,
+  and Ready evidence are in `rust/testport/receipts/store_copr.md`; nested
+  `copr_test` and `metrics` remain separate package boundaries and live TiKV
+  transport parity remains recorded in `distsql_audit.md`.
 
 ## Outcomes & Retrospective
 

@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/driver/backoff"
 	"github.com/pingcap/tidb/pkg/util/paging"
@@ -29,6 +30,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
+	tikvutil "github.com/tikv/client-go/v2/util"
 )
 
 func buildTestCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv.Request, eventCb trxevents.EventCallback) ([]*copTask, error) {
@@ -1169,4 +1172,42 @@ func TestHandleBatchCopResponseUpdatesChildBucketsOnVersionNotMatch(t *testing.T
 	require.Equal(t, regionIDs[1], loc.Region.GetID())
 	require.Equal(t, uint64(99), loc.Buckets.GetVersion())
 	require.Equal(t, bucketKeys, loc.Buckets.GetKeys())
+}
+
+func TestHandleBatchCopResponseResolvesChildLock(t *testing.T) {
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	testutils.BootstrapWithSingleStore(cluster)
+	tikvStore, err := tikv.NewTestTiKVStore(mockClient, pdClient, nil, nil, 0)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, tikvStore.Close()) })
+
+	var resolvedLocks, committedLocks tikvutil.TSSet
+	kvClient := txnsnapshot.NewClientHelper(tikvStore, &resolvedLocks, &committedLocks, false)
+	kvClient.Stats = tikv.NewRegionRequestRuntimeStats()
+	child := &copTask{taskID: 1}
+	worker := &copIteratorWorker{
+		req:                     &kv.Request{StartTs: 10},
+		kvclient:                kvClient,
+		storeBatchedNum:         &atomic.Uint64{},
+		storeBatchedFallbackNum: &atomic.Uint64{},
+	}
+
+	_, _, err = worker.handleBatchCopResponse(
+		backoff.NewBackofferWithVars(context.Background(), 3000, nil),
+		nil,
+		&coprocessor.Response{BatchResponses: []*coprocessor.StoreBatchTaskResponse{{
+			TaskId: child.taskID,
+			Locked: &kvrpcpb.LockInfo{
+				Key:         []byte("key"),
+				PrimaryLock: []byte("primary"),
+				LockVersion: 1,
+				// Keep lock cleanup synchronous with the test.
+				LockType: kvrpcpb.Op_PessimisticLock,
+			},
+		}}},
+		map[uint64]*batchedCopTask{child.taskID: {task: child}},
+	)
+	require.NoError(t, err)
+	require.Equal(t, 1, kvClient.Stats.GetRPCStatsCount())
 }
