@@ -1180,9 +1180,9 @@ func TestKeyspaceMeta(t *testing.T) {
 	}
 
 	keyspaceMeta := &keyspacepb.KeyspaceMeta{
-		Id:     keyspaceID,
-		Name:   keyspace.System,
-		Config: cfg,
+		Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: keyspaceID},
+		Name:     keyspace.System,
+		Config:   cfg,
 	}
 
 	store := testkit.CreateMockStore(t, mockstore.WithCurrentKeyspaceMeta(keyspaceMeta))
@@ -1191,7 +1191,7 @@ func TestKeyspaceMeta(t *testing.T) {
 	rows := tk.MustQuery("select * from information_schema.keyspace_meta").Rows()
 	require.Equal(t, 1, len(rows))
 	require.Equal(t, keyspaceMeta.Name, rows[0][0])
-	require.Equal(t, fmt.Sprintf("%d", keyspaceMeta.Id), rows[0][1])
+	require.Equal(t, fmt.Sprintf("%d", keyspaceMeta.GetId()), rows[0][1])
 	actualCfg := make(map[string]string)
 	err := json.Unmarshal([]byte(rows[0][2].(string)), &actualCfg)
 	require.Nil(t, err)

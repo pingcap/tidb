@@ -61,8 +61,8 @@ func TestBootstrapSessionImplUserKSVersionGuard(t *testing.T) {
 		store, err := mockstore.NewMockStore(
 			mockstore.WithStoreType(mockstore.EmbedUnistore),
 			mockstore.WithCurrentKeyspaceMeta(&keyspacepb.KeyspaceMeta{
-				Id:   keyspaceID,
-				Name: keyspaceName,
+				Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: keyspaceID},
+				Name:     keyspaceName,
 			}),
 		)
 		require.NoError(t, err)

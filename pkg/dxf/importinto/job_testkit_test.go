@@ -80,7 +80,7 @@ func TestSubmitTaskNextgen(t *testing.T) {
 			*cliP = cluster.Client(int(id - 1))
 			// we will close the client.
 			cluster.TakeClient(int(id - 1))
-			codec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Id: id, Name: ks})
+			codec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: id}, Name: ks})
 			require.NoError(t, err)
 			etcd.SetEtcdCliByNamespace(*cliP, keyspace.MakeKeyspaceEtcdNamespace(codec))
 		},

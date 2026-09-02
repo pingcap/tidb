@@ -4167,7 +4167,7 @@ func (e *memtableRetriever) setDataForKeyspaceMeta(sctx sessionctx.Context) (err
 
 	if meta != nil {
 		keyspaceName = meta.Name
-		keyspaceID = fmt.Sprintf("%d", meta.Id)
+		keyspaceID = fmt.Sprintf("%d", meta.GetId())
 		if len(meta.Config) > 0 {
 			keyspaceCfg, err = json.Marshal(meta.Config)
 			if err != nil {

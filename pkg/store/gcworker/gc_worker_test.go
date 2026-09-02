@@ -1493,9 +1493,9 @@ func testResolveLocksWithKeyspacesImpl(t *testing.T, subCaseName string) {
 			gcManagementType = pd.KeyspaceConfigGCManagementTypeUnified
 		}
 		return &keyspacepb.KeyspaceMeta{
-			Id:     id,
-			Name:   name,
-			Config: map[string]string{pd.KeyspaceConfigGCManagementType: gcManagementType},
+			Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: id},
+			Name:     name,
+			Config:   map[string]string{pd.KeyspaceConfigGCManagementType: gcManagementType},
 		}
 	}
 

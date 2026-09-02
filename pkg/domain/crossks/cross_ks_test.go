@@ -161,7 +161,7 @@ func TestManager(t *testing.T) {
 			}
 			// we will close the client.
 			cluster.TakeClient(i)
-			codec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Id: ksID, Name: ks})
+			codec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: ksID}, Name: ks})
 			require.NoError(t, err)
 			etcd.SetEtcdCliByNamespace(cli, keyspace.MakeKeyspaceEtcdNamespace(codec))
 			return cli
@@ -222,8 +222,8 @@ func TestManager(t *testing.T) {
 	t.Run("bootstrap failure removes virtual server info", func(t *testing.T) {
 		const targetKS = "ks-bootstrap"
 		targetStore, err := mockstore.NewMockStore(mockstore.WithCurrentKeyspaceMeta(&keyspacepb.KeyspaceMeta{
-			Id:   keyspaceIDs[targetKS],
-			Name: targetKS,
+			Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: keyspaceIDs[targetKS]},
+			Name:     targetKS,
 		}))
 		require.NoError(t, err)
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/beforeGetStore",
@@ -427,7 +427,7 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 				continue
 			}
 			cluster.TakeClient(i)
-			codec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Id: ksID, Name: ks})
+			codec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: ksID}, Name: ks})
 			require.NoError(t, err)
 			etcd.SetEtcdCliByNamespace(cli, keyspace.MakeKeyspaceEtcdNamespace(codec))
 			return cli
@@ -503,7 +503,7 @@ func TestDomainAlterTableModeInKeyspaceSubmitOnly(t *testing.T) {
 				continue
 			}
 			cluster.TakeClient(i)
-			codec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Id: ksID, Name: ks})
+			codec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: ksID}, Name: ks})
 			require.NoError(t, err)
 			etcd.SetEtcdCliByNamespace(cli, keyspace.MakeKeyspaceEtcdNamespace(codec))
 			return cli
