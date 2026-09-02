@@ -52,6 +52,19 @@ For each bounded behavior cluster:
   `receipts/planner_core_storage_signals.md`; Bazel preparation is
   blocked by the missing local executable.
 
+- 2026-09-02: completed the bounded `pkg/planner/core/casetest/mpp` Go
+  package batch against Go master
+  `78cac443a4f46c13bfe27eb247b5c80657952547`. The complete direct inventory
+  covers seven artifacts and 7,369 lines, including all three Go test files,
+  the BUILD target, and the three MPP fixture files. Restored the
+  alternative-engine round regression source, mock TiFlash fixtures, recorded
+  plan outputs, and BUILD dependencies/shard metadata as one package-level
+  batch. No dependency-closed Rust testkit owner exists for this fixture
+  package; the remaining cross-runtime MPP boundary is explicit in
+  `receipts/planner_core_casetest_mpp_engine_rounds.md`. Focused Go validation,
+  lint, Rust formatting, and diff checks are required for Ready; Bazel
+  preparation is blocked by the missing local executable.
+
 - 2026-09-02: completed a follow-up `pkg/util/codec` Go-package batch against
   Go master `1c1a334d2be1dce64888b6e1f054462c566b0734`: restored the TypeNull
   pre-allocation `canSkip` call that marks null join keys before hashing, which

@@ -1,12 +1,13 @@
 # `pkg/planner` — alternative storage-engine rounds parity receipt
 
 Status: complete direct-package inventory; restored the Go optimizer's
-engine-restricted alternative rounds and per-invocation cleanup behavior. This
-is a package-level batch, not a claim that the nested planner packages or the
-full mock TiFlash integration are complete.
+engine-restricted alternative rounds and per-invocation cleanup behavior. The
+nested `pkg/planner/core/casetest/mpp` fixture/test package is covered by the
+companion receipt `planner_core_casetest_mpp_engine_rounds.md`; the surrounding
+planner core packages and Rust planner runtime remain separate boundaries.
 
 Comparison source: Go `origin/master` at
-`1c1a334d2be1dce64888b6e1f054462c566b0734` (2026-09-02).
+`78cac443a4f46c13bfe27eb247b5c80657952547` (2026-09-02).
 
 ## Complete Go inventory
 
@@ -78,8 +79,8 @@ the unrelated `auto_pre_split.rs` `FieldType::default()` compile errors.
   the single-scan index-join exception; the new gate and map-restoration
   regression covers the state transitions, while full plan-shape behavior
   still belongs to the nested MPP integration suite.
-- The complete Go master MPP fixture (`core/casetest/mpp`) was not copied into
-  this direct package; live mock TiFlash plan selection and execution were not
-  run locally.
+- The complete Go-master MPP fixture is restored and inventoried in the
+  companion receipt. Live mock TiFlash plan selection and execution still
+  depend on the Go testkit validation described there.
 - Bazel analysis is unverified because the local `bazel` executable is absent;
   Windows builds and full-workspace tests were not run.
