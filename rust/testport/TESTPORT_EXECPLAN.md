@@ -42,6 +42,14 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-03: aligned the Rust `tidb-ast` `Expr::ConvertUsing::format`
+  boundary with Go master `049e0e2ba79d79a3a8b1e9ff93ee22fb1cea7dd5`.
+  Go's `FuncCallExpr.Format` prints this parsed form as a generic lowercase
+  call with comma-separated, double-quoted arguments, while Rust previously
+  panicked with a Rust-only not-implemented path. The focused source-shaped
+  regression now passes; canonical `Restore` remains unchanged. Details are
+  appended to `receipts/parser_ast.md`.
+
 - 2026-09-03: aligned the Rust `tidb-planner` aggregation `AggFuncs` access
   boundaries with Go master `049e0e2ba79d79a3a8b1e9ff93ee22fb1cea7dd5`.
   `agg_funcs_cols_for_first_row` and `prune_columns_local` now direct-index

@@ -89,6 +89,15 @@ The same AST-package batch also fills the new `IndexOptions::auto_pre_split`
 field in its in-module restore fixture, keeping the owner’s all-target test
 build complete after the existing pre-split port.
 
+The Rust `Expr::ConvertUsing` formatter now follows Go's `FuncCallExpr.Format`
+boundary at `origin/master` `049e0e2ba79d79a3a8b1e9ff93ee22fb1cea7dd5`:
+`CONVERT(expr USING charset)` is represented as a generic function call for
+`Format`, so the output is the lowercase name with comma-separated,
+double-quoted arguments (for example, `convert("abc", "latin1")`). The
+source-shaped regression failed before the change on Rust's
+`Format is not implemented for CONVERT USING` panic and passes after the
+change. Canonical `Restore` continues to emit the `USING` syntax.
+
 ## Rust ownership and parity result
 
 `rust/crates/tidb-ast` is a partial source-shaped owner with mutable
@@ -104,9 +113,16 @@ the existing AST restore owner; no speculative AST facade was added.
 
 Profile: Ready for the Rust AST behavior and receipt update.
 
+The additional `ConvertUsing` formatter regression was first run against the
+unfixed owner and failed with `Format is not implemented for CONVERT USING`.
+After the fix, the focused test and the complete AST aggregate pass. The
+current aggregate result is 129 passed, 0 failed, and 8 ignored; the ignored
+cases remain the documented parser-grammar or JSON-path boundaries below.
+The owner all-target check also passes.
+
 ```text
 PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-ast --test all -- --test-threads=1
-PASS; 127 passed, 0 failed, 9 ignored.
+PASS; 129 passed, 0 failed, 8 ignored.
 
 OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -p tidb-ast --all-targets
 PASS.

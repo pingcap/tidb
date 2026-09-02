@@ -372,6 +372,18 @@ fn ast_format() {
     );
 }
 
+/// Go's `FuncCallExpr.Format` treats `CONVERT(expr USING charset)` as the
+/// generic function call it stores: the formatter emits the lowercase name,
+/// comma-separated arguments, and double-quoted strings.
+#[test]
+fn convert_using_format_matches_go_generic_func_call() {
+    let expr = Expr::ConvertUsing {
+        expr: Box::new(string("abc")),
+        charset: "latin1".to_string(),
+    };
+    assert_eq!(expr.format(), "convert(\"abc\", \"latin1\")");
+}
+
 fn like_expr(expr: Expr, pattern: Expr, escape: Option<u8>) -> Expr {
     Expr::Like {
         expr: Box::new(expr),

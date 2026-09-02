@@ -229,7 +229,17 @@ impl Expr {
                 out.push_str(" END");
             }
             Self::Cast(cast) => format_cast(cast, out),
-            Self::ConvertUsing { .. } => panic!("Format is not implemented for CONVERT USING"),
+            Self::ConvertUsing { expr, charset } => {
+                // Go stores CONVERT(expr USING charset) as a generic
+                // FuncCallExpr for Format, so it emits the lowercase function
+                // name and the two formatted arguments rather than restoring
+                // the USING syntax.
+                out.push_str("convert(");
+                expr.format_into(out);
+                out.push_str(", ");
+                format_double_quoted_string(charset, out);
+                out.push(')');
+            }
             Self::Collate { expr, collation } => {
                 expr.format_into(out);
                 out.push_str(" COLLATE ");
