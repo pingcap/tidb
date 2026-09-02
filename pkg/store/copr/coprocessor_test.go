@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
@@ -35,8 +36,10 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	tikvutil "github.com/tikv/client-go/v2/util"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
 )
@@ -1095,8 +1098,107 @@ func TestHandleBatchCopResponseRedaction(t *testing.T) {
 	}
 }
 
+type apiV2StoreBatchLockClient struct {
+	tikv.Client
+	copResponse              *tikvrpc.Response
+	checkTxnStatusPrimaryKey []byte
+}
+
+func (c *apiV2StoreBatchLockClient) SendRequest(
+	ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration,
+) (*tikvrpc.Response, error) {
+	switch req.Type {
+	case tikvrpc.CmdCop:
+		return c.copResponse, nil
+	case tikvrpc.CmdCheckTxnStatus:
+		c.checkTxnStatusPrimaryKey = append([]byte(nil), req.CheckTxnStatus().GetPrimaryKey()...)
+	}
+	return c.Client.SendRequest(ctx, addr, req, timeout)
+}
+
+type apiV2KeyspacePDClient struct {
+	pd.Client
+	meta *keyspacepb.KeyspaceMeta
+}
+
+func (c *apiV2KeyspacePDClient) LoadKeyspace(context.Context, string) (*keyspacepb.KeyspaceMeta, error) {
+	return c.meta, nil
+}
+
+func testHandleBatchCopResponseResolvesAPIV2ChildLock(t *testing.T) {
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	testutils.BootstrapWithSingleStore(cluster)
+
+	keyspaceMeta := &keyspacepb.KeyspaceMeta{
+		Id:    42,
+		Name:  "test-keyspace",
+		State: keyspacepb.KeyspaceState_ENABLED,
+	}
+	codec, err := tikv.NewCodecV2(tikv.ModeTxn, keyspaceMeta)
+	require.NoError(t, err)
+	child := &copTask{taskID: 1}
+	primaryKey := []byte("primary")
+	rawClient := &apiV2StoreBatchLockClient{
+		Client: mockClient,
+		copResponse: &tikvrpc.Response{Resp: &coprocessor.Response{
+			BatchResponses: []*coprocessor.StoreBatchTaskResponse{
+				{
+					TaskId: child.taskID,
+					Locked: &kvrpcpb.LockInfo{
+						Key:         codec.EncodeKey([]byte("key")),
+						PrimaryLock: codec.EncodeKey(primaryKey),
+						LockVersion: 1,
+						// Keep lock cleanup synchronous with the test.
+						LockType: kvrpcpb.Op_PessimisticLock,
+					},
+				},
+			},
+		}},
+	}
+	tikvStore, err := tikv.NewTestKeyspaceTiKVStore(
+		rawClient,
+		&apiV2KeyspacePDClient{Client: pdClient, meta: keyspaceMeta},
+		nil, nil, 0, *keyspaceMeta,
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, tikvStore.Close()) })
+
+	decodedResp, err := tikvStore.GetTiKVClient().SendRequest(
+		context.Background(), "store1",
+		&tikvrpc.Request{
+			Type: tikvrpc.CmdCop,
+			Req: &coprocessor.Request{Tasks: []*coprocessor.StoreBatchTask{
+				{TaskId: child.taskID},
+			}},
+		},
+		time.Second,
+	)
+	require.NoError(t, err)
+
+	var resolvedLocks, committedLocks tikvutil.TSSet
+	worker := &copIteratorWorker{
+		req: &kv.Request{StartTs: 10},
+		kvclient: txnsnapshot.NewClientHelper(
+			tikvStore, &resolvedLocks, &committedLocks, false,
+		),
+		storeBatchedNum:         &atomic.Uint64{},
+		storeBatchedFallbackNum: &atomic.Uint64{},
+	}
+	_, _, err = worker.handleBatchCopResponse(
+		backoff.NewBackofferWithVars(context.Background(), 3000, nil),
+		nil,
+		decodedResp.Resp.(*coprocessor.Response),
+		map[uint64]*batchedCopTask{child.taskID: {task: child}},
+	)
+	require.NoError(t, err)
+	// Lock resolution must encode the decoded primary exactly once.
+	require.Equal(t, codec.EncodeKey(primaryKey), rawClient.checkTxnStatusPrimaryKey)
+}
+
 func TestHandleBatchCopResponse(t *testing.T) {
 	t.Run("resolves a child lock", testHandleBatchCopResponseResolvesChildLock)
+	t.Run("resolves an API V2 child lock", testHandleBatchCopResponseResolvesAPIV2ChildLock)
 	t.Run("handles merged and unanswered tasks", testHandleBatchCopResponseMergedAndUnansweredTasks)
 	t.Run("counts fallbacks after Region split", testHandleBatchCopResponseFallbackCountersAfterRegionSplit)
 	t.Run("rebuilds a store batch after a Region cache miss", testHandleStoreBatchRegionCacheMiss)
