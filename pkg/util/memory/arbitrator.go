@@ -1013,8 +1013,6 @@ func (m *MemArbitrator) deleteUnderKill(entry *rootPoolEntry) {
 	if entry.arbitratorMu.underKill.start {
 		m.underKill.delete(entry)
 		entry.arbitratorMu.underKill.start = false
-
-		m.warnKillCancel(entry, &entry.arbitratorMu.underKill, "Finish to `KILL` root pool")
 	}
 }
 
@@ -1183,17 +1181,6 @@ func (m *MemArbitrator) resetRootPoolEntry(entry *rootPoolEntry) bool {
 	}
 
 	return true
-}
-
-func (m *MemArbitrator) warnKillCancel(entry *rootPoolEntry, ctx *entryKillCancelCtx, reason string) {
-	m.actions.Warn(
-		reason,
-		zap.Uint64("uid", entry.pool.uid),
-		zap.String("name", entry.pool.name),
-		zap.String("mem-priority", entry.ctx.memPriority.String()),
-		zap.Int64("reclaimed", ctx.reclaim),
-		zap.Time("start-time", ctx.startTime),
-	)
 }
 
 // RemoveRootPoolByID removes & terminates the root pool by ID
@@ -2704,7 +2691,7 @@ func (m *MemArbitrator) updateTrackedHeapStats() (top3 top3DigestDataGroup) {
 
 			if ctx := e.ctx.Load(); ctx.available() {
 				inuse := ctx.arbitrateHelper.MemUsage()
-				totalTrackedHeap += min(e.pool.ApproxCap(),inuse.RootPoolUsed)
+				totalTrackedHeap += min(e.pool.ApproxCap(), inuse.RootPoolUsed)
 				top3.update(ctx.id, inuse.HeapInuse, m.approxUnixTimeSec())
 				maxHeapUsed = max(maxHeapUsed, inuse.MaxHeapUsed)
 			}
@@ -2863,13 +2850,9 @@ func (m *MemArbitrator) handleMemRisk(gcExecuted bool) {
 
 	memToReclaim := m.heapController.memInuse.Load() - m.memRisk()
 
-	if m.intoOOMRisk() {
-		profile := m.recordDebugProfile()
-		profile.append(zap.Int64("quota-to-reclaim", max(0, memToReclaim)))
-		m.actions.Warn("`OOM RISK`: try to `KILL` running root pool", profile.fields[:profile.n]...)
-	}
+	m.intoOOMRisk()
 
-	newKillNum, reclaiming := m.killTopnEntry(memToReclaim)
+	newKillNum, _ := m.killTopnEntry(memToReclaim)
 	underKillNum := 0
 	for _, entry := range m.underKill.entries {
 		if !entry.arbitratorMu.underKill.fail {
@@ -2880,56 +2863,6 @@ func (m *MemArbitrator) handleMemRisk(gcExecuted bool) {
 	if newKillNum != 0 {
 		m.heapController.memRisk.startTime.t = m.innerTime() // restart oom check
 		m.heapController.memRisk.startTime.unixMilli.Store(m.heapController.memRisk.startTime.t.UnixMilli())
-
-		{ // warning
-			profile := m.recordDebugProfile()
-			profile.append(
-				zap.Int64("pool-under-kill-num", m.underKill.num),
-				zap.Int("new-kill-num", newKillNum),
-				zap.Int64("quota-under-reclaim", reclaiming),
-				zap.Int64("rest-quota-to-reclaim", max(0, memToReclaim-reclaiming)),
-			)
-			m.actions.Warn("Restart runtime memory check", profile.fields[:profile.n]...)
-		}
-	} else if underKillNum == 0 {
-		forceKill := 0
-		for { // make all tasks success
-			entry := m.frontTaskEntry()
-			if entry == nil {
-				break
-			}
-			// force kill
-			if ctx := entry.ctx.Load(); ctx.available() {
-				ctx.stop(ArbitratorOOMRiskKill)
-				m.execMetrics.Risk.OOMKill[entry.ctx.memPriority]++
-				forceKill++
-				if m.removeTask(entry) {
-					entry.windUp(0, ArbitrateFail)
-				}
-			}
-		}
-		if forceKill != 0 {
-			profile := m.recordDebugProfile()
-			profile.append(
-				zap.Int("kill-awaiting-num", forceKill),
-				zap.Int64("pool-under-kill-num", m.underKill.num),
-				zap.Int64("quota-under-reclaim", reclaiming),
-				zap.Int64("rest-quota-to-reclaim", max(0, memToReclaim-reclaiming)),
-			)
-			m.actions.Warn("No more running root pool can be killed to resolve `OOM RISK`; KILL all awaiting tasks;",
-				profile.fields[:profile.n]...,
-			)
-		} else {
-			profile := m.recordDebugProfile()
-			profile.append(
-				zap.Int64("pool-under-kill-num", m.underKill.num),
-				zap.Int64("quota-under-reclaim", reclaiming),
-				zap.Int64("rest-quota-to-reclaim", max(0, memToReclaim-reclaiming)),
-			)
-			m.actions.Warn("No more running root pool or awaiting task can be terminated to resolve `OOM RISK`",
-				profile.fields[:profile.n]...,
-			)
-		}
 	}
 
 	if !gcExecuted {
@@ -2940,20 +2873,12 @@ func (m *MemArbitrator) handleMemRisk(gcExecuted bool) {
 func (m *MemArbitrator) killTopnEntry(required int64) (newKillNum int, reclaimed int64) {
 	if m.underKill.num > 0 {
 		now := m.innerTime()
-		for uid, entry := range m.underKill.entries {
+		for _, entry := range m.underKill.entries {
 			ctx := &entry.arbitratorMu.underKill
 			if ctx.fail {
 				continue
 			}
 			if deadline := ctx.startTime.Add(defKillCancelCheckTimeout); now.Compare(deadline) >= 0 {
-				m.actions.Error("Failed to `KILL` root pool due to timeout",
-					zap.Uint64("uid", uid),
-					zap.String("name", entry.pool.name),
-					zap.Int64("mem-to-reclaim", ctx.reclaim),
-					zap.String("mem-priority", entry.ctx.memPriority.String()),
-					zap.Time("start-time", ctx.startTime),
-					zap.Time("deadline", deadline),
-				)
 				ctx.fail = true
 				continue
 			}
@@ -2967,7 +2892,7 @@ func (m *MemArbitrator) killTopnEntry(required int64) (newKillNum int, reclaimed
 
 	for prio := minArbitrationPriority; prio < maxArbitrationPriority; prio++ {
 		for pos := m.entryMap.maxQuotaShardIndex - 1; pos >= 0; pos-- {
-			for uid, entry := range m.entryMap.quotaShards[prio][pos].entries {
+			for _, entry := range m.entryMap.quotaShards[prio][pos].entries {
 				if entry.arbitratorMu.underKill.start || entry.notRunning() {
 					continue
 				}
@@ -2984,20 +2909,7 @@ func (m *MemArbitrator) killTopnEntry(required int64) (newKillNum int, reclaimed
 					ctx.stop(ArbitratorOOMRiskKill)
 					newKillNum++
 					m.execMetrics.Risk.OOMKill[prio]++
-
-					{ // warning
-						m.actions.Warn("Start to `KILL` root pool",
-							zap.Uint64("uid", uid),
-							zap.String("name", entry.pool.name),
-							zap.Int64("mem-used", memoryUsed),
-							zap.String("mem-priority", ctx.memPriority.String()),
-							zap.Int64("rest-to-reclaim", max(0, required-reclaimed)))
-					}
 					if m.removeTask(entry) {
-						{ // warning
-							m.actions.Warn("Make the mem quota subscription failed",
-								zap.Uint64("uid", uid), zap.String("name", entry.pool.name))
-						}
 						entry.windUp(0, ArbitrateFail)
 					}
 
@@ -3328,10 +3240,6 @@ func (m *MemArbitrator) intoMemRisk() {
 
 	if lastRisk, magnif, ok := m.calcMemRisk(); ok {
 		if magnif > defMaxMagnif {
-			// There may be extreme memory leak issues. It's recommended to set soft limit manually.
-			m.actions.Warn("Memory pressure is abnormally high",
-				zap.Int64("mem-magnification-ratio(‰)", magnif),
-				zap.Int64("upper-limit-ratio(‰)", defMaxMagnif))
 			magnif = defMaxMagnif
 		}
 		{
