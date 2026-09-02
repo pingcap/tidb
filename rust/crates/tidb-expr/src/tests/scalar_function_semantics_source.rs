@@ -33,7 +33,7 @@
 
 use crate::column::Column;
 use crate::constant::Constant;
-use crate::expression::{ConstLevel, Expression};
+use crate::expression::{expressions_semantic_equal, ConstLevel, Expression};
 use crate::scalar_function::ScalarFunction;
 use tidb_ast::CiString;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode, FieldTypeFlags};
@@ -146,19 +146,79 @@ fn test_scalar_function_equal_after_clean_hash_code() {
     assert_eq!(one.hash_code(), one_cached.as_slice());
 }
 
-/// go-parity-gap: `TestExpressionSemanticEqual`
+/// GO PORT of `scalar_function_test.go:30` `TestExpressionSemanticEqual`.
+///
+/// This is intentionally made live with the canonical hash implementation
+/// below; the source's commutative and directed comparison identities are
+/// executable without the per-signature builtin object model.
 /// (`scalar_function_test.go:30`, driving
 /// `ExpressionsSemanticEqual` at `scalar_function.go:618`) relies on
 /// `CanonicalHashCode` / `simpleCanonicalizedHashCode`
 /// (`scalar_function.go:622-682`): commutative names sort argument hashes,
 /// directed comparisons canonicalize to GE/GT swapped forms, `not(x<y)`
-/// normalizes to `x>=y`, and constants hash in their typed domain. This
-/// crate defers `CanonicalHashCode` entirely
-/// ([`crate::scalar_function`] header), so the whole order-sensitive /
-/// order-insensitive case table has nothing to drive.
+/// normalizes to `x>=y`, and constants hash in their typed domain. The Rust
+/// owner now exposes the same context-free bytes through
+/// [`Expression::canonical_hash_code`].
 #[test]
-#[ignore = "go-parity-gap: ExpressionsSemanticEqual needs CanonicalHashCode/simpleCanonicalizedHashCode, deferred in scalar_function.rs"]
-fn test_expression_semantic_equal() {}
+fn test_expression_semantic_equal() {
+    fn column_expression(column: &Column) -> Expression {
+        Expression::Column(column.clone())
+    }
+    fn function(name: &str, args: Vec<Expression>) -> Expression {
+        Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new(name),
+            longlong_type(),
+            args,
+        ))
+    }
+    let a = Column::new(1, double_type());
+    let b = Column::new(2, longlong_type());
+
+    let lt_ab = function("lt", vec![column_expression(&a), column_expression(&b)]);
+    let gt_ba = function("gt", vec![column_expression(&b), column_expression(&a)]);
+    assert!(expressions_semantic_equal(&lt_ab, &gt_ba));
+    let lt_ba_direct = function("lt", vec![column_expression(&b), column_expression(&a)]);
+    assert!(!expressions_semantic_equal(&lt_ab, &lt_ba_direct));
+
+    let gt_ab = function("gt", vec![column_expression(&a), column_expression(&b)]);
+    let lt_ba = function("lt", vec![column_expression(&b), column_expression(&a)]);
+    assert!(expressions_semantic_equal(&gt_ab, &lt_ba));
+
+    let le_ab = function("le", vec![column_expression(&a), column_expression(&b)]);
+    let ge_ba = function("ge", vec![column_expression(&b), column_expression(&a)]);
+    assert!(expressions_semantic_equal(&le_ab, &ge_ba));
+
+    let ge_ab = function("ge", vec![column_expression(&a), column_expression(&b)]);
+    let le_ba = function("le", vec![column_expression(&b), column_expression(&a)]);
+    assert!(expressions_semantic_equal(&ge_ab, &le_ba));
+
+    let not_lt_ab = function("not", vec![lt_ab.clone()]);
+    assert!(expressions_semantic_equal(&not_lt_ab, &ge_ab));
+
+    let not_ge_ab = function("not", vec![ge_ab.clone()]);
+    assert!(expressions_semantic_equal(&lt_ab, &not_ge_ab));
+
+    let plus_ab = function("plus", vec![column_expression(&a), column_expression(&b)]);
+    let plus_ba = function("plus", vec![column_expression(&b), column_expression(&a)]);
+    assert!(expressions_semantic_equal(&plus_ab, &plus_ba));
+
+    let mul_ab = function("mul", vec![column_expression(&a), column_expression(&b)]);
+    let mul_ba = function("mul", vec![column_expression(&b), column_expression(&a)]);
+    assert!(expressions_semantic_equal(&mul_ab, &mul_ba));
+    assert!(!expressions_semantic_equal(&plus_ab, &mul_ab));
+
+    let eq_ab = function("eq", vec![column_expression(&a), column_expression(&b)]);
+    let eq_ba = function("eq", vec![column_expression(&b), column_expression(&a)]);
+    assert!(expressions_semantic_equal(&eq_ab, &eq_ba));
+
+    let and_left = function("and", vec![eq_ab.clone(), plus_ba.clone()]);
+    let and_right = function("and", vec![plus_ab.clone(), eq_ba.clone()]);
+    assert!(expressions_semantic_equal(&and_left, &and_right));
+
+    let or_left = function("or", vec![mul_ab, plus_ab]);
+    let or_right = function("or", vec![plus_ba, mul_ba]);
+    assert!(expressions_semantic_equal(&or_left, &or_right));
+}
 
 /// go-parity-gap: `TestColumnSubstituteGroupingCleansHashCode`
 /// (`scalar_function_test.go:139`) builds a `grouping(col0)` node carrying
@@ -170,8 +230,8 @@ fn test_expression_semantic_equal() {}
 /// ([`crate::expr_util::substitute`]) cleans the plain hashcode only because
 /// the grouping special case is DEFERRED (`scalar_function.rs:340`): a
 /// `grouping` ScalarFunction cannot carry
-/// [`crate::grouping::GroupingMetadata`] yet, and `CanonicalHashCode` is
-/// unported.
+/// [`crate::grouping::GroupingMetadata`] yet, so the source's metadata-bearing
+/// canonical bytes cannot be reproduced at this boundary.
 #[test]
 #[ignore = "go-parity-gap: grouping-metadata-bearing ScalarFunction nodes (SetMetadata path) plus CanonicalHashCode cleaning are deferred in scalar_function.rs"]
 fn test_column_substitute_grouping_cleans_hash_code() {}

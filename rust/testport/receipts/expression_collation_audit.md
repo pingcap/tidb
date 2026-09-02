@@ -217,6 +217,57 @@ that invalid temporal/numeric constants now become NULL or typed constants at
 build time, as in Go. JSON and non-constant operands retain their prior paths;
 there is no new performance-sensitive loop.
 
+## Rust follow-up: canonical expression semantic equality
+
+The rolling Go authority is `origin/master` at
+`049e0e2ba79d79a3a8b1e9ff93ee22fb1cea7dd5` (2026-09-03). Before editing, the
+complete root `pkg/expression` inventory was rechecked: 137 direct artifacts
+and 128,744 lines (68 production files, 60 tests, seven generated sources,
+`BUILD.bazel`, and `OWNERS`), with 208 artifacts and 146,247 lines across the
+seven nested package boundaries. There is no source delta for this package
+between the prior `a85e0fd5df` authority and the current master. The Rust
+`tidb-expr` owner was rechecked at 175 tracked artifacts and 105,478 lines;
+its pre-edit source and support inventory includes all production files,
+in-module and standalone tests, fixture/support inputs, generated-test inputs,
+benchmarks, Cargo metadata, and the shared aggregate-test build input. No Go,
+Bazel, generated, fixture, platform, or build artifact changed.
+
+Go's `ExpressionsSemanticEqual` delegates to `CanonicalHashCode`, and
+`simpleCanonicalizedHashCode` (`pkg/expression/scalar_function.go:622-682`)
+sorts commutative child hashes, reverses the directed `LE`/`LT` forms, and
+rewrites `NOT` over the four directed comparisons. Rust previously had no
+canonical path: the source-shaped `TestExpressionSemanticEqual` was an empty
+ignored test and callers could only compare ordinary structural hash bytes.
+The Rust `Expression`, `Constant`, and `ScalarFunction` owners now expose
+canonical bytes on demand and `expressions_semantic_equal` compares those
+bytes. The implementation preserves Go's scalar-function flag/name encoding,
+typed literal/parameter/deferred leaves, commutative ordering, directed
+comparison identities, cast result-type suffix, and the source's empty inner
+`NOT` default for an unknown scalar child.
+
+The focused source-derived `test_expression_semantic_equal` now covers
+`LT`/`GT`, `LE`/`GE`, all four `NOT` rewrites, `PLUS`/`MUL`/`EQ`/`AND`/`OR`
+commutativity, nested canonical children, and negative direct-order/name
+cases. On the pre-fix tree, activating this test failed to compile because
+`Expression::canonical_hash_code` did not exist; the fixed test passes.
+Grouping metadata remains an explicit gap because the Rust node model does not
+yet carry Go's `BuiltinGroupingImplSig` metadata, and the separate `Values`
+and `Hash64` parity gaps are unchanged.
+
+Validation for this follow-up used the Ready profile:
+
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr --lib scalar_function_semantics_source -- --nocapture` — the source module ran eight tests, with all four live tests passing and four documented gap tests ignored.
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr --all-targets` — owner all-target compile passed.
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr --lib -- --test-threads=1` — 1,089 tests passed, five pre-existing failures (comparison-control shapes, constant folding/const-level, and the shared unary-minus hex expectation), and 134 documented gap tests ignored; none exercises the new canonical bytes.
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check`, `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex make lint`, and `git diff --check` — Ready formatting, lint, and whitespace gates passed.
+
+Correctness risk is limited to canonical plan-key bytes: semantic equality now
+recognizes exactly the Go commutative/comparison identities, while ordinary
+`HashCode` remains unchanged. Compatibility risk is that callers relying on a
+Rust-only absence of canonical bytes now receive owned allocations; the bytes
+are derived per call rather than cached, so performance-sensitive callers may
+need a later cache once the Rust expression tree is fully integrated.
+
 ## Rust follow-up: cast target nullability
 
 The rolling Go authority remains `origin/master` at

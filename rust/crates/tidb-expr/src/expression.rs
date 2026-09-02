@@ -27,7 +27,8 @@
 //! `CorrelatedColumn`, and the ~30 `Eval*`/`GetType(ctx)`/`ResolveIndices`/
 //! `ExplainInfo` methods of the interface (they need `EvalContext`,
 //! `chunk.Row`, and the `builtinFunc` dispatch). Structural, context-free
-//! methods (identity, hash code, const-level) are ported now.
+//! methods (identity, hash code, canonical semantic hash, const-level) are
+//! ported now.
 
 pub use crate::column::{Column, CorrelatedColumn};
 pub use crate::constant::{Constant, ParamMarker};
@@ -72,6 +73,14 @@ pub enum Expression {
     CorrelatedColumn(CorrelatedColumn),
     /// A built-in function applied to arguments (Go `*ScalarFunction`).
     ScalarFunction(ScalarFunction),
+}
+
+/// Go `ExpressionsSemanticEqual`: compare expression trees using their
+/// canonicalized hash bytes, so commutative operators and equivalent directed
+/// comparisons share one semantic identity.
+#[must_use]
+pub fn expressions_semantic_equal(left: &Expression, right: &Expression) -> bool {
+    left.canonical_hash_code() == right.canonical_hash_code()
 }
 
 /// The two facts needed to prove that a predicate rejects an outer-join row
@@ -518,6 +527,25 @@ impl Expression {
             Expression::Constant(c) => c.hash_code(),
             Expression::CorrelatedColumn(c) => c.hash_code(),
             Expression::ScalarFunction(c) => c.hash_code(),
+        }
+    }
+
+    /// Go `Expression.CanonicalHashCode`: leaves retain their ordinary
+    /// type-tagged bytes while scalar functions normalize commutative and
+    /// directed-comparison forms recursively.
+    #[must_use]
+    pub fn canonical_hash_code(&self) -> Vec<u8> {
+        match self {
+            Expression::Column(column) => {
+                let mut column = column.clone();
+                column.hash_code().to_vec()
+            }
+            Expression::Constant(constant) => constant.canonical_hash_code(),
+            Expression::CorrelatedColumn(column) => {
+                let mut column = column.clone();
+                column.hash_code().to_vec()
+            }
+            Expression::ScalarFunction(function) => function.canonical_hash_code(),
         }
     }
 

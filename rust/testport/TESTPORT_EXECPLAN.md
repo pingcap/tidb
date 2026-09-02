@@ -129,6 +129,16 @@ For each bounded behavior cluster:
   package inventory and Ready evidence are appended to
   `receipts/expression_collation_audit.md`.
 
+- 2026-09-03: aligned Rust `tidb-expr` canonical semantic equality with Go
+  master `049e0e2ba79d`. `Expression`, `Constant`, and `ScalarFunction` now
+  derive the Go-compatible canonical hash bytes, including commutative child
+  ordering, directed comparison reversal, `NOT` comparison rewrites, and
+  cast result-type identity. The source-shaped semantic-equality table is
+  live with a pre-fix compile-failure record and passes the focused Ready
+  test; grouping metadata and the separate `Values`/`Hash64` gaps remain
+  explicit. Details are appended to
+  `receipts/expression_collation_audit.md`.
+
 - 2026-09-02: aligned `LogicalPlan::extract_col_groups` child access with Go
   master `a85e0fd5df`. Join and apply outer-side arms now direct-index the
   required child schemas, and the window arm preserves Go's empty-group early

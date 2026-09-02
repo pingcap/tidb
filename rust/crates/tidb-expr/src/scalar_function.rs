@@ -26,8 +26,8 @@
 //! families owned by the shared dispatch modules. Unknown builtin names fail
 //! explicitly. Remaining structural gaps are `Equal` (Go's
 //! compares through the function's `equal(ctx, ...)`); the `Grouping`
-//! branch of `ReHashCode` (needs `BuiltinGroupingImplSig`); `CanonicalHashCode`;
-//! per-signature collation; and `MemoryUsage`.
+//! branch of `ReHashCode` (needs `BuiltinGroupingImplSig`); per-signature
+//! collation; and `MemoryUsage`.
 
 use crate::context::{Columns, EvalError};
 use crate::expr_collation::CollationInfo;
@@ -213,6 +213,22 @@ pub fn unary_op_name(op: UnaryOp) -> &'static str {
     }
 }
 
+fn append_canonical_name(output: &mut Vec<u8>, name: &str) {
+    encode_compact_bytes(output, name.as_bytes());
+}
+
+fn append_canonical_args(output: &mut Vec<u8>, args: &[Vec<u8>]) {
+    for code in args {
+        output.extend_from_slice(code);
+    }
+}
+
+fn append_canonical_args_reversed(output: &mut Vec<u8>, args: &[Vec<u8>]) {
+    for code in args.iter().rev() {
+        output.extend_from_slice(code);
+    }
+}
+
 /// Go `ScalarFunction`: the application of a built-in function to arguments.
 #[derive(Clone, Debug, Default)]
 pub struct ScalarFunction {
@@ -222,8 +238,7 @@ pub struct ScalarFunction {
     pub ret_type: Option<FieldType>,
     /// The function arguments. In Go these live inside `Function.getArgs()`.
     pub args: Vec<Expression>,
-    /// Lazily-filled `HashCode` cache (Go `hashcode`). Go also caches a
-    /// `canonicalhashcode`; that field lands with `CanonicalHashCode`.
+    /// Lazily-filled `HashCode` cache (Go `hashcode`).
     hashcode: Vec<u8>,
 
     /// Go embedded collation state (via the `Function`'s `collationInfo`).
@@ -367,13 +382,98 @@ impl ScalarFunction {
         &self.hashcode
     }
 
+    /// Go `ScalarFunction.CanonicalHashCode` and
+    /// `simpleCanonicalizedHashCode`: normalize commutative operators and
+    /// equivalent directed comparisons before concatenating child hashes.
+    /// The bytes are freshly owned so a rewrite cannot mutate a returned
+    /// canonical key through an alias.
+    #[must_use]
+    pub fn canonical_hash_code(&self) -> Vec<u8> {
+        let arg_codes: Vec<Vec<u8>> = self
+            .args
+            .iter()
+            .map(Expression::canonical_hash_code)
+            .collect();
+        let name = self.func_name.lowercase();
+        let mut canonical = vec![SCALAR_FUNCTION_FLAG];
+
+        match name {
+            "plus" | "mul" | "eq" | "in" | "or" | "and" => {
+                append_canonical_name(&mut canonical, &name);
+                let mut sorted = arg_codes;
+                sorted.sort();
+                append_canonical_args(&mut canonical, &sorted);
+            }
+            "ge" | "le" => {
+                append_canonical_name(&mut canonical, "ge");
+                if name == "ge" {
+                    append_canonical_args(&mut canonical, &arg_codes);
+                } else {
+                    append_canonical_args_reversed(&mut canonical, &arg_codes);
+                }
+            }
+            "gt" | "lt" => {
+                append_canonical_name(&mut canonical, "gt");
+                if name == "gt" {
+                    append_canonical_args(&mut canonical, &arg_codes);
+                } else {
+                    append_canonical_args_reversed(&mut canonical, &arg_codes);
+                }
+            }
+            "not" => {
+                if let Some(Expression::ScalarFunction(child)) = self.args.first() {
+                    let child_args: Vec<Vec<u8>> = child
+                        .args
+                        .iter()
+                        .map(Expression::canonical_hash_code)
+                        .collect();
+                    match child.func_name.lowercase() {
+                        "gt" => {
+                            append_canonical_name(&mut canonical, "ge");
+                            append_canonical_args_reversed(&mut canonical, &child_args);
+                        }
+                        "lt" => {
+                            append_canonical_name(&mut canonical, "ge");
+                            append_canonical_args(&mut canonical, &child_args);
+                        }
+                        "ge" => {
+                            append_canonical_name(&mut canonical, "gt");
+                            append_canonical_args_reversed(&mut canonical, &child_args);
+                        }
+                        "le" => {
+                            append_canonical_name(&mut canonical, "gt");
+                            append_canonical_args(&mut canonical, &child_args);
+                        }
+                        // Go's inner switch has no default arm. Preserve its
+                        // exact canonical bytes for a scalar child whose
+                        // name is not one of the four comparison operators.
+                        _ => {}
+                    }
+                } else {
+                    append_canonical_name(&mut canonical, &name);
+                    append_canonical_args(&mut canonical, &arg_codes);
+                }
+            }
+            _ => {
+                append_canonical_name(&mut canonical, &name);
+                append_canonical_args(&mut canonical, &arg_codes);
+                if name == "cast" {
+                    if let Some(ret_type) = &self.ret_type {
+                        canonical.push(ret_type.eval_type() as u8);
+                    }
+                }
+            }
+        }
+        canonical
+    }
+
     /// Go `ScalarFunction.CleanHashCode` (`scalar_function.go:604`): drops the
     /// cached hash code so the next [`Self::hash_code`] recomputes it.
     ///
     /// Required by every rewrite that mutates [`Self::args`] in place --
     /// `SetExprColumnInOperand` and `ColumnSubstituteImpl`'s grouping arm both
-    /// call it in Go. Go also clears `canonicalhashcode`; this crate does not
-    /// cache one yet, so there is nothing else to drop.
+    /// call it in Go. Canonical bytes are derived on demand, so there is no
+    /// second cache to clear here.
     pub fn clean_hash_code(&mut self) {
         self.hashcode.clear();
     }

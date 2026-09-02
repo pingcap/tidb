@@ -16,11 +16,11 @@
 //! `ParamMarker`.
 //!
 //! Ported: the struct and its structural, context-free methods (static type,
-//! const-level, correlation, and the lazily-cached `HashCode`). DEFERRED (need
+//! const-level, correlation, and the lazily-cached `HashCode`). Canonical hash
+//! bytes are derived on demand for semantic comparison. DEFERRED (need
 //! `EvalContext`/`chunk.Row` or the param/user-var machinery): all `Eval*`,
 //! `GetType(ctx)`'s param-type inference, `Equal` (it evaluates and compares
-//! values through a collator), `StringWithCtx`/`ExplainInfo`, `CanonicalHashCode`,
-//! and `MemoryUsage`.
+//! values through a collator), `StringWithCtx`/`ExplainInfo`, and `MemoryUsage`.
 
 use std::hash::{Hash, Hasher};
 
@@ -165,6 +165,26 @@ impl Constant {
             self.hashcode.extend_from_slice(&hash_code(&self.value));
         }
         &self.hashcode
+    }
+
+    /// Go `Constant.CanonicalHashCode`: use canonical child bytes for a
+    /// deferred expression and the ordinary value hash for literals and
+    /// parameters. Constants have no commutative rewrite of their own.
+    #[must_use]
+    pub fn canonical_hash_code(&self) -> Vec<u8> {
+        if let Some(deferred) = &self.deferred_expr {
+            return deferred.canonical_hash_code();
+        }
+        if let Some(param) = self.param_marker {
+            let mut bytes = Vec::with_capacity(9);
+            bytes.push(PARAMETER_FLAG);
+            encode_int(&mut bytes, param.order);
+            return bytes;
+        }
+        let mut bytes = Vec::with_capacity(1 + 9);
+        bytes.push(CONSTANT_FLAG);
+        bytes.extend_from_slice(&hash_code(&self.value));
+        bytes
     }
 
     /// Go `Constant.Hash64`: hashes every field that participates in
