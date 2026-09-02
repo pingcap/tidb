@@ -31,6 +31,44 @@ import (
 	"go.uber.org/zap"
 )
 
+// CheckMViewUpdatable checks whether a DML operation on a materialized view or materialized view
+// log table should be rejected. It returns an error if the table is an MV or MV log and the current
+// session is not in internal maintenance mode.
+func CheckMViewUpdatable(
+	sv *variable.SessionVars, tableInfo *model.TableInfo, aliasName, op string,
+) error {
+	if tableInfo.MaterializedView == nil && tableInfo.MaterializedViewLog == nil {
+		return nil
+	}
+
+	allowMaintenance, err := allowMViewMaintenanceBypass(sv)
+	if err != nil {
+		return err
+	}
+	if allowMaintenance {
+		return nil
+	}
+
+	if aliasName == "" {
+		aliasName = tableInfo.Name.O
+	}
+
+	return plannererrors.ErrNonUpdatableTable.GenWithStackByArgs(aliasName, op)
+}
+
+func allowMViewMaintenanceBypass(sv *variable.SessionVars) (bool, error) {
+	if !sv.InMaterializedViewMaintenance {
+		return false, nil
+	}
+	// All MV maintenance work should use internal sessions (restricted SQL).
+	if !sv.InRestrictedSQL {
+		return false, plannererrors.ErrInternal.GenWithStack(
+			"materialized view maintenance should only run in restricted SQL mode",
+		)
+	}
+	return true, nil
+}
+
 // CheckMViewReadable checks whether a read on a materialized view should be rejected because
 // its initial build is not ready yet.
 func CheckMViewReadable(sv *variable.SessionVars, tableInfo *model.TableInfo, aliasName string) error {
@@ -41,12 +79,11 @@ func CheckMViewReadable(sv *variable.SessionVars, tableInfo *model.TableInfo, al
 	if initBuildState.IsReady() {
 		return nil
 	}
-	if sv.InMaterializedViewMaintenance {
-		if !sv.InRestrictedSQL {
-			return plannererrors.ErrInternal.GenWithStack(
-				"materialized view maintenance should only run in restricted SQL mode",
-			)
-		}
+	allowMaintenance, err := allowMViewMaintenanceBypass(sv)
+	if err != nil {
+		return err
+	}
+	if allowMaintenance {
 		return nil
 	}
 	if aliasName == "" {

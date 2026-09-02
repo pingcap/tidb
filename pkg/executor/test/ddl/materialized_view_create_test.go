@@ -1197,6 +1197,15 @@ func TestCreateMaterializedViewPauseAndResume(t *testing.T) {
 	tk.MustQuery("show tables like 'mv_pause'").Check(testkit.Rows("mv_pause"))
 	err := tk.ExecToErr("select * from mv_pause")
 	require.ErrorContains(t, err, "initial build is in progress")
+	for _, sql := range []string{
+		"insert into mv_pause values (9, 1, 1)",
+		"replace into mv_pause values (9, 1, 1)",
+		"load data local infile '/tmp/nonexistent.csv' into table mv_pause",
+		"import into mv_pause from '/tmp/nonexistent.csv'",
+	} {
+		err = tk.ExecToErr(sql)
+		require.ErrorContains(t, err, "not updatable", sql)
+	}
 	tkCtl.MustQuery("admin resume ddl jobs " + jobID).Check(testkit.Rows(jobID + " successful"))
 	select {
 	case err := <-ddlDone:
