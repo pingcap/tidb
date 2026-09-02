@@ -2644,6 +2644,9 @@ func (worker *copIteratorWorker) handleBatchBucketVersionNotMatch(bo *Backoffer,
 		zap.Uint64("latest bucket version", bucketVersionNotMatch.GetVersion()),
 		zap.Uint64("request bucket version", task.bucketsVer),
 		zap.Uint64("regionID", task.region.GetID()))
+	// client-go decodes API v2 bucket keys before this cache update; otherwise the
+	// cache would compare encoded boundaries with decoded task keys. Malformed keys
+	// fail response decoding before reaching this point.
 	childRPCCtx := &tikv.RPCContext{Region: task.region}
 	worker.store.GetRegionCache().OnBucketVersionNotMatch(childRPCCtx, bucketVersionNotMatch.GetVersion(), bucketVersionNotMatch.GetKeys())
 }
