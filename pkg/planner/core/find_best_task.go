@@ -925,6 +925,10 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	// If x's range row count is significantly lower than y's, for example, 1000 times, we think x is better.
 	lhsCountAfterAccess := lhs.getCountAfterAccess4IndexJoin()
 	rhsCountAfterAccess := rhs.getCountAfterAccess4IndexJoin()
+	// For IndexJoin inner candidates, the adjusted CountAfterAccess may become a small per-probe lookup count.
+	// If it falls below this guard, skip this empirical row-count rule intentionally and let the later
+	// IndexJoin-specific NDV/cost comparison decide. Normal DataSource candidates still use the original
+	// AccessPath.CountAfterAccess, so their behavior here is unchanged.
 	if lhsCountAfterAccess > 100 && rhsCountAfterAccess > 100 && // to prevent some extreme cases, e.g. 0.01 : 10
 		len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 && // not IndexMerge since its row count estimation is not accurate enough
 		prop.ExpectedCnt == math.MaxFloat64 { // Limit may affect access row count
