@@ -42,6 +42,16 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: completed a bounded `pkg/sessionctx/stmtctx` Go-package batch
+  against Go master `1c1a334d2b`: restored the three alternative-plan storage
+  signals (mixed TiKV/TiFlash, missing TiFlash path, and explicit
+  `READ_FROM_STORAGE` hint) with mark/reset behavior and a focused Go
+  regression. The dependency-closed Rust `tidb-exec::AlternativePlanSignals`
+  owner now carries the same eleven-field state, with source-backed mark and
+  reset tests. The full failpoint-aware Go package and focused Rust target
+  pass; `make bazel_prepare` is blocked by the missing local executable.
+  Details are in `receipts/sessionctx_stmtctx.md`.
+
 - 2026-09-02: completed a bounded `pkg/bindinfo` Go-package batch against
   Go master `1c1a334d2b`: restored `mayHaveSQLBinding` and its parser matrix,
   excluding INSERT/REPLACE `VALUES` and `SET` forms while preserving

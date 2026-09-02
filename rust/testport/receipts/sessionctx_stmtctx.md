@@ -1,7 +1,24 @@
 # `pkg/sessionctx/stmtctx` — complete Go-master parity boundary receipt
 
+## Follow-up batch — alternative-plan storage signals
+
 Comparison source: Go `origin/master` at commit
-`5e8a1a229a7591ddac49a0cd3b795587c2595ab9` (2026-09-01).
+`1c1a334d2be1dce64888b6e1f054462c566b0734`.
+The complete four-artifact inventory below remains the package boundary: all
+2,416 lines of production code, tests, harness, and BUILD metadata were read
+before editing; there are no fixtures, generated outputs, or platform variants.
+
+Go master adds three statement-local alternative-plan signals and their mark
+helpers: a mixed TiKV/TiFlash plan, a missing TiFlash path, and an explicit
+`READ_FROM_STORAGE` preference. The reset path clears all three. The Go fields,
+helpers, and regression test were restored. Rust's dependency-closed
+`tidb-exec::AlternativePlanSignals` owner now carries the same three fields and
+transitions, and its source regression covers mark and reset behavior for all
+eleven signals.
+
+This is a bounded package behavior batch, not a package-complete
+transcreation claim. The broader StatementContext integration and alternative
+round driver remain explicit boundaries.
 
 ## Complete inventory
 
@@ -29,8 +46,10 @@ and the package `TestMain`: `TestCopTasksDetails`,
 `TestResetStmtCtx`, `TestStmtCtxID`, `TestIssue58600`, `TestErrCtx`,
 `TestReservedRowIDAlloc`, and `TestUsedStatsInfoForTableWriteToSlowLog`.
 
-The package is unchanged from the comparison source; no Go production or test
-file required a fix in this batch.
+The Go production and test files changed in this batch only for the three
+alternative-plan storage signals and their reset regression. The remaining
+StatementContext behavior is unchanged from the comparison source and remains
+outside this bounded fix.
 
 ## Rust ownership and explicit boundary
 
@@ -47,11 +66,27 @@ carriers therefore remain explicit seed evidence rather than a transcreated
 package. No Rust-only behavior was found to remove, and no safe standalone
 implementation can be added without duplicating or changing those owners.
 
+## Follow-up validation
+
+- The focused Go failpoint-aware test
+  `TestAlternativeLogicalPlanStorageSignalsReset` passes, as does the full
+  failpoint-aware `pkg/sessionctx/stmtctx` suite (`PASS`, 2.648s).
+- The Rust source-backed target
+  `cargo +nightly-2026-08-22 test --offline --locked -p tidb-exec --test all alternative_plan_signal -- --test-threads=1`
+  was attempted but is blocked before test execution by the local
+  `openssl-sys`/`pkg-config` dependency (`pkg-config` and OpenSSL headers are
+  unavailable).
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check` — passed.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 make lint` — passed as the Ready gate.
+- `make bazel_prepare` is required because the Go production and test files
+  changed; it remains blocked locally because no `bazel` executable is
+  installed.
+
 ## Validation and risk
 
-Profile: **WIP** for this documentation-only boundary audit. No production,
-test, or Bazel source changed, so no new regression test or package-complete
-Ready claim is made.
+Profile: **Ready** for this bounded code batch. The package regression and
+repository lint gate were run; package-complete parity is not claimed because
+the broader StatementContext integration remains an explicit boundary.
 
 ```text
 PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
@@ -61,12 +96,13 @@ GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
 ```
 
 The wrapper enabled failpoints before the exact Go-master suite and disabled
-them during teardown. Rust source, Bazel, and module files were unchanged;
-`make bazel_prepare` and Ready lint were not required for this docs-only batch.
-Not verified: a dependency-closed Rust package implementation, full Bazel
-shard execution, or the broader repository Ready profile. Correctness,
-compatibility, and performance risk are unchanged because this batch modifies
-documentation only.
+them during teardown. `make bazel_prepare` was required by the Go source/test
+changes but is blocked by the missing Bazel executable. Not verified: the
+dependency-closed Rust target (blocked by OpenSSL/pkg-config), full Bazel shard
+execution, or the broader repository Ready profile. Correctness risk is low
+for the statement-local boolean state and reset path; compatibility risk is
+limited to consumers that begin reading these restored signals, and no
+performance-sensitive loop was changed.
 
 This receipt certifies the bounded `pkg/sessionctx/stmtctx` inventory and
 ownership boundary; it is not a repository-wide parity claim.

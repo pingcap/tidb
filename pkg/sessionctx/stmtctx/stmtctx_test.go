@@ -502,6 +502,21 @@ func TestResetStmtCtx(t *testing.T) {
 	require.Equal(t, errctx.NewContextWithLevels(levels, sc), sc.ErrCtx())
 }
 
+func TestAlternativeLogicalPlanStorageSignalsReset(t *testing.T) {
+	sc := stmtctx.NewStmtCtx()
+	sc.MarkAlternativeLogicalPlanMixedStorageEngines()
+	sc.MarkAlternativeLogicalPlanMissingTiFlashPath()
+	sc.MarkAlternativeLogicalPlanHasStoreTypeHint()
+	require.True(t, sc.AlternativeLogicalPlanMixedStorageEngines)
+	require.True(t, sc.AlternativeLogicalPlanMissingTiFlashPath)
+	require.True(t, sc.AlternativeLogicalPlanHasStoreTypeHint)
+
+	sc.ResetAlternativeLogicalPlanSignals()
+	require.False(t, sc.AlternativeLogicalPlanMixedStorageEngines)
+	require.False(t, sc.AlternativeLogicalPlanMissingTiFlashPath)
+	require.False(t, sc.AlternativeLogicalPlanHasStoreTypeHint)
+}
+
 func TestStmtCtxID(t *testing.T) {
 	sc := stmtctx.NewStmtCtx()
 	currentID := sc.CtxID()
