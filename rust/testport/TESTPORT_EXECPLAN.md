@@ -2131,6 +2131,15 @@ For each bounded behavior cluster:
   owner. Complete inventory and validation evidence are in
   `receipts/util_topsql_audit.md`.
 
+- 2026-09-02: completed the standalone `pkg/util/topsql/reporter/metrics`
+  leaf in one package batch. The Go backpressure-drop counter and its exact
+  label binding are restored, with a focused counter-increment regression and
+  full package test. The parent reporter worker remains an explicit
+  cross-package boundary with no dependency-closed Rust owner. Ready gates
+  include `make lint` and `git diff --check`; `make bazel_prepare` is blocked
+  only by the missing local Bazel executable. Updated
+  `receipts/util_topsql_audit.md`.
+
 - 2026-09-01: audited all four Go-master `pkg/util/generatedexpr` artifacts
   (181 lines) against `tidb-model::generated_expr`. The Go-master visitor
   migration is API-only and leaves parsing/name-resolution semantics intact;
