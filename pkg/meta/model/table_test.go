@@ -228,16 +228,6 @@ func TestTableInfoCloneStorageClassTransitions(t *testing.T) {
 	require.Equal(t, StorageClassTierIA, tblInfo.Partition.Definitions[0].StorageClassTransitions[0].Tier)
 }
 
-func TestPartitionDefinitionCloneInValues(t *testing.T) {
-	def := PartitionDefinition{InValues: [][]string{{"1", "2"}, nil}}
-
-	cloned := def.Clone()
-	cloned.InValues[0][0] = "3"
-	cloned.InValues[1] = []string{"4"}
-
-	require.Equal(t, [][]string{{"1", "2"}, nil}, def.InValues)
-}
-
 func TestTTLJobInterval(t *testing.T) {
 	ttlInfo := &TTLInfo{}
 

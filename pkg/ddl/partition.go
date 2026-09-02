@@ -398,6 +398,10 @@ func clonePartitionDefinitions(defs []model.PartitionDefinition) []model.Partiti
 	cloned := make([]model.PartitionDefinition, len(defs))
 	for i := range defs {
 		cloned[i] = defs[i].Clone()
+		cloned[i].InValues = make([][]string, len(defs[i].InValues))
+		for j := range defs[i].InValues {
+			cloned[i].InValues[j] = slices.Clone(defs[i].InValues[j])
+		}
 	}
 	return cloned
 }
