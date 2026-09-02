@@ -1,19 +1,22 @@
 # `pkg/statistics/handle/usage/indexusage` — complete package transcreation
 
-Pinned Go source: `e2788410d8d696605e8cb002585877a063ccc909`.
+Pinned Go source: `c6054025ed4c32ab3672a2a24ea46892714d21ec` (Go `master` at
+the audit boundary).
 
 ## Complete inventory
 
 The package has exactly three artifacts, all read in full and byte-compared
 against the pin:
 
-- `BUILD.bazel` — one public library and one short, flaky, four-shard test
-  target;
-- `collector.go` — index identity, sample/bucket construction, pooled map
-  merge, global/session/statement collectors, worker lifecycle, and
-  `model.TableInfo`-driven garbage collection;
-- `collector_test.go` — four tests and the three-case parallel
-  `BenchmarkIndexCollector`.
+| Artifact | Lines | Git blob | SHA-256 |
+| --- | ---: | --- | --- |
+| `BUILD.bazel` | 22 | `731370c58dc675932c90b1b7a8995b2d52a7532c` | `33fc29495f98cdf5e845058063c3e2a998ed4b9fc5489ab94b72694e4413140c` |
+| `collector.go` | 287 | `f5811f27d72cd9a0b0f48ddfafc4a568d5a8ed99` | `c6c646b6a9a0d54a426f0e101286dc25fefa56c17152b3cf16d84d8cf9a7de8c` |
+| `collector_test.go` | 259 | `8cd6bc1b3d8c31cffb41a06f0fe00ce4daacf353` | `6708bcd4affef549741ee4eb2630183f9883567910fae0a9311d88876e2740ec` |
+
+The production/test surface is 568 lines. Every function, test, benchmark,
+and BUILD attribute was read; the current checkout is byte-identical to this
+pin.
 
 There is no `doc.go`, fixture, generated source/input, or build/platform
 variant.
@@ -36,8 +39,10 @@ variant.
   nullable index-pointer slices, including the source nil-dereference boundary;
 - all four source tests run under the owner with the exact 64 sessions ×
   100,000 operations concurrency workload;
-- the source parallel benchmark is executable with report frequencies 1, 4,
-  and 8.
+- the source parallel benchmark is represented by the owner benchmark with
+  report frequencies 1, 4, and 8. Rust uses a fixed operation workload and
+  native thread scope because Go's `testing.B`/`RunParallel` timing harness
+  has no direct equivalent; benchmark timing is not a correctness claim.
 
 The former flattened `tidb-stats::index_usage` module was removed together
 with its public private-source constants, public map snapshot, public test
@@ -48,19 +53,19 @@ server consumers now depend on this package directly.
 
 ## Validation
 
-Profile: WIP. This completes one atomic package in the continuing parity audit,
-not a repository-wide readiness claim.
+Profile: Ready. This completes one atomic package in the continuing parity
+audit, not a repository-wide readiness claim.
 
 - Complete pinned-package inventory/diff gate: passed.
-- Pinned Go package test: passed.
-- `cargo test -p tidb-stats-handle-usage-indexusage`: passed, 4 tests.
-- Exact concurrent Rust source test: passed at 6,400,000 operations.
-- Source benchmark compiled in optimized bench profile.
-- `cargo check -p tidb-stats`, `cargo check -p tidb-session -p tidb-server`,
-  and the targeted session information-schema test passed.
-- Full `tidb-stats` translated integration suite passed after removal of the
-  duplicate, supplemental, and workaround tests.
-- Scoped Rust formatting and `git diff --check`: passed.
+- Current and detached exact-master Go package tests: passed.
+- `cargo test --manifest-path rust/Cargo.toml --offline --locked -p
+  tidb-stats-handle-usage-indexusage`: passed, 4 tests, including the exact
+  6,400,000-operation concurrent source workload.
+- `cargo check --manifest-path rust/Cargo.toml --offline --locked -p
+  tidb-stats-handle-usage-indexusage --benches`: passed.
+- Rust consumers (`tidb-stats`, `tidb-session`, and `tidb-server`) compile with
+  the owner; the source-derived statistics integration suite remains covered.
+- Ready Rust formatting, pinned repository lint, and `git diff --check`: passed.
 
 No Go or Bazel source changed, so `make bazel_prepare` is not required.
 
@@ -73,5 +78,5 @@ No Go or Bazel source changed, so `make bazel_prepare` is not required.
   all production consumers compile and the user-visible row test passes.
 - Performance: report no longer clones the accumulated map; the exact source
   concurrency workload and optimized benchmark compilation cover the hot path.
-- Repository-wide lint and integration suites remain deferred to the Ready
-  profile after the full parity goal is complete.
+- Broader repository and integration suites remain outside this package-scoped
+  gate and are tracked by the continuing parity ExecPlan.

@@ -2237,8 +2237,11 @@ For each bounded behavior cluster:
   concurrent test workload, and removed flattened public constants, test
   accessors, map snapshots, copied-map reporting, three duplicate tests, five
   supplemental tests, and the parent package's direct-closure GC workaround.
-  Inventory and WIP gates are in
-  `receipts/statistics_handle_usage_indexusage.md`.
+  The 2026-09-02 Go-master re-audit read all 568 lines and found no
+  source-vs-owner behavior gap or Rust-only production path; the native
+  benchmark harness adaptation is documented. Inventory and Ready gates are
+  in `receipts/statistics_handle_usage_indexusage.md` and
+  `docs/operations/statistics-handle-usage-indexusage-audit-execplan.md`.
 - 2026-08-29: completed the pinned Go
   `pkg/statistics/handle/usage/collector` package in the distinct
   `tidb-stats-handle-usage-collector` owner. Moved its three source tests out
@@ -3091,8 +3094,9 @@ For each bounded behavior cluster:
       `tidb-stats-handle-usage-indexusage`: own the real model-driven GC,
       samples, global/session/statement collectors, four source tests, and
       parallel benchmark; remove narrowed and duplicate aggregate surfaces.
-      The atomic inventory and WIP gates are in
-      `receipts/statistics_handle_usage_indexusage.md`.
+      The atomic inventory and Ready gates are in
+      `receipts/statistics_handle_usage_indexusage.md` and
+      `docs/operations/statistics-handle-usage-indexusage-audit-execplan.md`.
 - [x] Audit the pinned parent `pkg/statistics/handle/usage` package as one
       atomic unit and remove its disconnected key, pending-ID,
       transaction-mode, SQL-string, empty-test, and function-batch carriers.
