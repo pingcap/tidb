@@ -1213,6 +1213,10 @@ type PartitionDefinition struct {
 func (ci *PartitionDefinition) Clone() PartitionDefinition {
 	nci := *ci
 	nci.LessThan = slices.Clone(ci.LessThan)
+	nci.InValues = slices.Clone(ci.InValues)
+	for i := range nci.InValues {
+		nci.InValues[i] = slices.Clone(ci.InValues[i])
+	}
 	nci.StorageClassTransitions = slices.Clone(ci.StorageClassTransitions)
 	return nci
 }
