@@ -54,6 +54,17 @@ For each bounded behavior cluster:
   by the missing local executable. Details are in
   `receipts/privilege_privileges.md`.
 
+- 2026-09-02: completed the bounded `pkg/executor` USER_ATTRIBUTES consumer
+  follow-up against Go master
+  `78cac443a4f46c13bfe27eb247b5c80657952547`. The complete root inventory
+  (173 direct artifacts, 101,740 lines) had already been read; this batch
+  restores the ordinary `infoschema_reader.go` privilege filter handoff and
+  the SQL-visible regression owned by the privilege test suite. The pre-fix
+  test exposed all rows to an ordinary account and passes after filtering.
+  The required Bazel preparation gate remains blocked by the unavailable
+  local executable. Details are in
+  `receipts/executor_user_attributes.md`.
+
 - 2026-09-02: completed the bounded `pkg/planner/core` Go package storage
   signal batch against Go master
   `78cac443a4f46c13bfe27eb247b5c80657952547`. The complete direct inventory
