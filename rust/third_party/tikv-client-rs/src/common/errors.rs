@@ -99,6 +99,9 @@ pub enum Error {
     /// TiKV detected a pessimistic-lock deadlock.
     #[error(transparent)]
     Deadlock(#[from] crate::error::DeadlockError),
+    /// TiKV confirmed that a shared-lock upgrade lost its ownership.
+    #[error(transparent)]
+    SharedLockLost(#[from] crate::error::SharedLockLostError),
     /// We tried to use 1pc for a transaction, but it didn't work. Probably should have used 2pc.
     #[error("1PC transaction could not be committed.")]
     OnePcFailure,
@@ -255,6 +258,9 @@ impl From<ProtoKeyError> for Error {
         }
         if let Some(assertion_failed) = error.assertion_failed.take() {
             return crate::error::AssertionFailedError { assertion_failed }.into();
+        }
+        if let Some(shared_lock_lost) = error.shared_lock_lost.take() {
+            return crate::error::SharedLockLostError { shared_lock_lost }.into();
         }
         if let Some(not_found) = error.txn_not_found.take() {
             return Error::TxnNotFound(not_found);

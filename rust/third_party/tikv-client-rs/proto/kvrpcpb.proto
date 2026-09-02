@@ -1103,6 +1103,9 @@ message KeyError {
   AssertionFailed assertion_failed = 10; // Assertion of a `Mutation` is evaluated as a failure.
   PrimaryMismatch primary_mismatch = 11; // CheckTxnStatus is sent to a lock that's not the primary.
   TxnLockNotFound txn_lock_not_found = 12; // TxnLockNotFound indicates the txn lock is not found.
+  LockUpgradeConflict lock_upgrade_conflict = 13; // LockUpgradeConflict indicates a shared-lock upgrade protocol conflict.
+  // SharedLockLost deterministically confirms that the transaction's shared-lock ownership was lost.
+  SharedLockLost shared_lock_lost = 14;
 
   // Extra information for error debugging
   DebugInfo debug_info = 100;
@@ -1125,6 +1128,26 @@ message WriteConflict {
   bytes primary = 4;
   uint64 conflict_commit_ts = 5;
   Reason reason = 6;
+}
+
+message LockUpgradeConflict {
+  enum Reason {
+    Unknown = 0;
+    DuplicateInFlight = 1;
+    SecondUpgrader = 2;
+  }
+
+  bytes key = 1;
+  uint64 start_ts = 2;
+  uint64 owner_start_ts = 3;
+  Reason reason = 4;
+}
+
+// SharedLockLost means the pending upgrade did not acquire the exclusive lock.
+// The transaction must not continue, but rollback remains valid.
+message SharedLockLost {
+  bytes key = 1;
+  uint64 start_ts = 2;
 }
 
 message AlreadyExist {

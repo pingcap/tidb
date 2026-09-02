@@ -406,6 +406,18 @@ pub fn gen_write_conflict_in_tidb_err(start_ts: u64) -> KvError {
     )
 }
 
+/// Generates `pkg/kv.ErrSharedLockLost` with the caller's redacted key text.
+#[must_use]
+pub fn gen_shared_lock_lost_err(start_ts: u64, key: impl AsRef<str>) -> KvError {
+    KvError::generated(
+        SHARED_LOCK_LOST_IDENTITY,
+        format!(
+            "Shared lock was lost during lock upgrade; transaction cannot continue, txnStartTS={start_ts}, key={}",
+            key.as_ref()
+        ),
+    )
+}
+
 fn truncate_chars(value: &str, maximum: usize) -> Cow<'_, str> {
     let mut characters = value.char_indices();
     let Some((end, _)) = characters.nth(maximum) else {

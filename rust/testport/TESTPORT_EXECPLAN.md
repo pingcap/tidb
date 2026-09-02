@@ -42,6 +42,19 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: audited the complete Go-master `pkg/store/driver/txn`
+  boundary at `94eb995357f34b7bab4889a82f0405797046447d`: 12 tracked
+  artifacts, 2,208 lines, 114 functions, and eight test declarations, with
+  no Go fixtures, generated inputs, platform variants, or package docs. The
+  Rust TiKV owner now carries KeyError fields 13/14, preserves typed shared
+  lock loss, maps upgrade conflicts to a non-retryable deadlock, and supports
+  the source-compatible shared-to-exclusive buffer transition behind the
+  existing lock-context admission guard. Focused owner regressions and the
+  dependency-closed `tidb-txnkv` checks are passing; the Rust lock-context
+  session gate, session rollback, and SQL consumer wiring remain separate
+  package boundaries. Details are in
+  `receipts/store_driver_txn.md`.
+
 - 2026-09-02: refreshed the complete Go-master `pkg/kv` inventory at
   `94eb995357f34b7bab4889a82f0405797046447d`: 30 tracked artifacts, 5,435
   lines, 288 functions, 36 test/benchmark declarations, and no fixture,

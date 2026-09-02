@@ -332,7 +332,16 @@ fn apply_transaction_resource_group_tagger<R: StoreRequest>(
 
 fn pessimistic_deadlock(error: &Error) -> Option<kvrpcpb::Deadlock> {
     match error {
-        Error::KeyError(error) => error.deadlock.clone(),
+        Error::KeyError(error) => error.deadlock.clone().or_else(|| {
+            error
+                .lock_upgrade_conflict
+                .as_ref()
+                .map(|conflict| kvrpcpb::Deadlock {
+                    lock_ts: conflict.owner_start_ts,
+                    lock_key: conflict.key.clone(),
+                    ..Default::default()
+                })
+        }),
         Error::ExtractedErrors(errors) | Error::MultipleKeyErrors(errors) => {
             errors.iter().find_map(pessimistic_deadlock)
         }
@@ -9452,6 +9461,39 @@ mod tests {
     use fail::FailScenario;
 
     #[test]
+    fn source_go_store_driver_txn_lock_upgrade_error_mapping() {
+        let error = Error::KeyError(Box::new(kvrpcpb::KeyError {
+            lock_upgrade_conflict: Some(kvrpcpb::LockUpgradeConflict {
+                key: b"key".to_vec(),
+                start_ts: 101,
+                owner_start_ts: 202,
+                reason: kvrpcpb::lock_upgrade_conflict::Reason::SecondUpgrader as i32,
+            }),
+            ..Default::default()
+        }));
+        let deadlock = super::pessimistic_deadlock(&error).expect("upgrade maps to deadlock");
+        assert_eq!(deadlock.lock_ts, 202);
+        assert_eq!(deadlock.lock_key, b"key");
+        assert_eq!(deadlock.deadlock_key_hash, 0);
+    }
+
+    #[test]
+    fn source_go_store_driver_txn_shared_lock_lost_stays_typed() {
+        let error = Error::from(kvrpcpb::KeyError {
+            shared_lock_lost: Some(kvrpcpb::SharedLockLost {
+                key: b"key".to_vec(),
+                start_ts: 101,
+            }),
+            ..Default::default()
+        });
+        let Error::SharedLockLost(error) = error else {
+            panic!("shared lock loss must not become a generic key error")
+        };
+        assert_eq!(error.shared_lock_lost.start_ts, 101);
+        assert_eq!(error.shared_lock_lost.key, b"key");
+    }
+
+    #[test]
     fn source_uncovered_effective_wait_preserves_future_start_time() {
         let now = std::time::UNIX_EPOCH + Duration::from_secs(1);
         let wait_start = now + Duration::from_millis(50);
@@ -16950,13 +16992,14 @@ mod tests {
         assert!(pessimistic
             .buffer
             .is_shared_locked(&Key::from(b"shared".to_vec())));
-        let error = pessimistic
-            .lock_keys(["shared".to_owned()])
-            .await
-            .unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("upgrading a shared lock to an exclusive lock is not supported"));
+        pessimistic
+            .buffer
+            .lock_with_returned_value(Key::from(b"shared".to_vec()), false, None)
+            .unwrap();
+        assert!(pessimistic.buffer.is_locked(&Key::from(b"shared".to_vec())));
+        assert!(!pessimistic
+            .buffer
+            .is_shared_locked(&Key::from(b"shared".to_vec())));
         pessimistic
             .buffer
             .delete(Key::from(b"shared".to_vec()))

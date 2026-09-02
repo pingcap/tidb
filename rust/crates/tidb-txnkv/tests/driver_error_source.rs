@@ -113,6 +113,24 @@ fn latch_write_conflict_preserves_start_ts_through_nested_wrappers() {
 }
 
 #[test]
+fn shared_lock_lost_uses_the_tikv_catalog_identity_and_redacted_key() {
+    let source = StorageDriverError::SharedLockLost {
+        start_ts: 101,
+        key: "6B6579".to_owned(),
+    }
+    .context("stack");
+    let ConvertedDriverError::Kv(converted) = to_tidb_driver_error(&source) else {
+        panic!("shared lock loss must use the KV catalog identity")
+    };
+    assert_eq!(converted.mysql_code(), MysqlErrorCode::SharedLockLost);
+    assert_eq!(converted.rfc_code(), "tikv:9015");
+    assert_eq!(
+        converted.to_string(),
+        "Shared lock was lost during lock upgrade; transaction cannot continue, txnStartTS=101, key=6B6579"
+    );
+}
+
+#[test]
 fn unrecognized_errors_preserve_outer_context() {
     let source = StorageDriverError::Other("client detail".to_owned()).context("outer");
     assert_eq!(

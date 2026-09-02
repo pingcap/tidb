@@ -133,6 +133,21 @@ impl fmt::Display for DeadlockError {
 
 impl StdError for DeadlockError {}
 
+/// TiKV confirmed that a transaction lost ownership of a shared lock while
+/// upgrading it. Rollback remains valid, but the transaction cannot continue.
+#[derive(Debug)]
+pub struct SharedLockLostError {
+    pub shared_lock_lost: kvrpcpb::SharedLockLost,
+}
+
+impl fmt::Display for SharedLockLostError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&protobuf_text(&self.shared_lock_lost))
+    }
+}
+
+impl StdError for SharedLockLostError {}
+
 #[derive(Debug)]
 pub struct PdError {
     pub error: pdpb::Error,

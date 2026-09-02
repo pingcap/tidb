@@ -136,12 +136,13 @@ pub use driver::tikv_opener::{
 pub use driver::tikv_transaction::{TikvTransactionDriver, TikvTransactionError};
 pub use driver_error::{to_tidb_driver_error, ConvertedDriverError, StorageDriverError};
 pub use error::{
-    gen_entry_too_large_err, gen_key_exists_err, gen_key_too_large_err, gen_txn_too_large_err,
-    gen_write_conflict_in_tidb_err, is_err_not_found, is_txn_retryable_error, ErrorClass, KvError,
-    MysqlErrorCode, ERR_ASSERTION_FAILED, ERR_CANNOT_SET_NIL_VALUE, ERR_ENTRY_TOO_LARGE,
-    ERR_INVALID_TXN, ERR_KEY_EXISTS, ERR_KEY_TOO_LARGE, ERR_LOCK_EXPIRE, ERR_NOT_EXIST,
-    ERR_NOT_IMPLEMENTED, ERR_SHARED_LOCK_LOST, ERR_TXN_RETRYABLE, ERR_TXN_TOO_LARGE,
-    ERR_WRITE_CONFLICT, ERR_WRITE_CONFLICT_IN_TIDB, TXN_RETRYABLE_MARK,
+    gen_entry_too_large_err, gen_key_exists_err, gen_key_too_large_err, gen_shared_lock_lost_err,
+    gen_txn_too_large_err, gen_write_conflict_in_tidb_err, is_err_not_found,
+    is_txn_retryable_error, ErrorClass, KvError, MysqlErrorCode, ERR_ASSERTION_FAILED,
+    ERR_CANNOT_SET_NIL_VALUE, ERR_ENTRY_TOO_LARGE, ERR_INVALID_TXN, ERR_KEY_EXISTS,
+    ERR_KEY_TOO_LARGE, ERR_LOCK_EXPIRE, ERR_NOT_EXIST, ERR_NOT_IMPLEMENTED, ERR_SHARED_LOCK_LOST,
+    ERR_TXN_RETRYABLE, ERR_TXN_TOO_LARGE, ERR_WRITE_CONFLICT, ERR_WRITE_CONFLICT_IN_TIDB,
+    TXN_RETRYABLE_MARK,
 };
 pub use fault_injection::{
     new_injected_storage, new_injected_store, InjectedSnapshot, InjectedStore, InjectedTransaction,

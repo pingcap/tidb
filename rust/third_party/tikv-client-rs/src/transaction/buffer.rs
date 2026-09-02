@@ -881,9 +881,6 @@ impl Buffer {
             self.primary_key.get_or_insert_with(|| key.clone());
         }
         let current_flags = self.memdb_flags(&key);
-        if current_flags.has_locked_in_share_mode() && !shared {
-            return Err("upgrading a shared lock to an exclusive lock is not supported");
-        }
         let effective_shared =
             shared && (!current_flags.has_locked() || current_flags.has_locked_in_share_mode());
         let cache_key = key.clone();
