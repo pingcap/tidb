@@ -390,3 +390,57 @@ the three operands previously inferred different pairwise domains; non-BETWEEN
 comparisons and the existing NOT rewrite shape are unchanged. The temporary
 context-free fallback for unsupported future eval types preserves their old
 shape until a corresponding Go cast is transcreated.
+
+## Rust follow-up: arithmetic construction types, deferred folding, and binary-literal unary minus
+
+The rolling Go authority is `origin/master` at
+`049e0e2ba79d79a3a8b1e9ff93ee22fb1cea7dd5` (2026-09-03). Before editing, the
+complete root `pkg/expression` inventory was rechecked: 137 direct artifacts
+and 128,744 lines (68 production files, 60 tests, seven generated sources,
+`BUILD.bazel`, and `OWNERS`), with 208 artifacts and 146,247 lines across the
+recursive package boundaries. The Rust `tidb-expr` owner was rechecked at 175
+tracked artifacts and 105,744 lines before this batch, including production,
+in-module and standalone tests, fixture/support and generated-test inputs,
+benchmarks, Cargo metadata, and the aggregate test build input. No Go, Bazel,
+generated output, fixture, platform, or build artifact changed.
+
+Three source-derived gaps were closed in one `pkg/expression` batch. Go's
+`newFunctionImpl` lets each arithmetic function class replace the caller's
+placeholder return type with its inferred integer/real/decimal result. Rust's
+direct `RealFunctionBuilder` path previously left `plus(Column, constant)` as
+`Unspecified`, so comparison refinement inserted a Rust-only `cast_signed`
+around the arithmetic node. Rust now consults the existing arithmetic result
+inference with the statement's unsigned-subtraction and division-precision
+settings before the generic builtin table. Go's `FoldConstant` also carries a
+`ParamMarker`/`DeferredExpr` provenance bit onto a folded replacement; Rust
+previously dropped it and reported a strict constant. The construction fold
+now marks a result with deferred provenance whenever any constant argument is
+context-only. Finally, the source unary-minus table classifies a
+`BinaryLiteral` as REAL (`-0x1A` -> `-26.0`); the Rust AST-tier expectation had
+been stale at `DEC:-26` and is aligned with the Go table while the CHUNK tier
+already agreed.
+
+Focused regressions now cover arithmetic result typing before comparison
+refinement, preservation of context-only provenance after folding a parameter,
+the complete constant-folding operator-argument table, the Go `ConstLevel`
+case table, and the binary/bit literal unary-minus rows. On the clean pre-fix
+`d92766fd6d` worktree, the constant-folding regression failed with
+`left: "cast_signed", right: "plus"`; the const-level regression failed with
+`left: ConstLevel(2), right: ConstLevel(1)`; and the binary-literal row failed
+with `left: "FLOAT:-26", right: "DEC:-26"`. The fixed focused tests pass.
+
+Validation for this follow-up uses the Ready profile:
+
+- Focused source and unit regressions: `arithmetic_builder_infers_result_type_before_comparison_refinement`, `folding_a_parameter_keeps_context_only_provenance`, `constant_folding_operator_arguments_reduce_in_place`, `test_const_level_case_table`, and `hex_and_bit_literals_are_binary_literals_in_a_numeric_context` — all pass.
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr --all-targets` — owner all-target compile passed.
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr --lib -- --test-threads=1` — 1,095 tests passed, two unchanged baseline comparison-control shape failures (`test_compare` and `test_compare_function_with_refine`), and 133 documented gap tests ignored.
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check`, the pinned detached `make lint` command, and `git diff --check` — Ready formatting, lint, and whitespace gates (run before commit).
+
+Correctness risk is limited to construction metadata and plan-cache
+provenance: arithmetic nodes now carry the same inferred type Go uses, and
+context-only constants cannot be frozen as strict literals. Compatibility risk
+is limited to callers that intentionally depended on an unspecified arithmetic
+type or the stale DECIMAL test label; value evaluation and the existing binary
+literal conversion are unchanged. The new provenance marker retains a cloned
+expression for later context evaluation, which adds allocation only when a
+folded subtree contains a parameter/deferred argument.

@@ -96,11 +96,20 @@ fn fold_current_value_in(expr: &mut Expression, ctx: &impl crate::Columns) -> Op
     let original_collation = func.collation.clone();
     let unfoldable = is_unfoldable(func.func_name.lowercase());
     let mut has_null_arg = false;
+    let mut has_deferred_arg = false;
     let mut all_const_arg = true;
     for arg in &func.args {
         match arg {
-            Expression::Constant(constant) if constant.value.is_null() => has_null_arg = true,
-            Expression::Constant(_) => {}
+            Expression::Constant(constant) => {
+                has_null_arg |= constant.value.is_null();
+                // Go's `foldConstant` carries ParamMarker/DeferredExpr
+                // provenance onto the replacement Constant through its
+                // `DeferredExpr` field.  Dropping that bit here turns a
+                // context-only expression into a strict constant and lets a
+                // cached plan freeze a parameter value.
+                has_deferred_arg |=
+                    constant.deferred_expr.is_some() || constant.param_marker.is_some();
+            }
             _ => all_const_arg = false,
         }
     }
@@ -118,6 +127,9 @@ fn fold_current_value_in(expr: &mut Expression, ctx: &impl crate::Columns) -> Op
     }
     let mut folded = crate::constant::Constant::new(value.clone(), ret_type);
     folded.collation = original_collation;
+    if has_deferred_arg {
+        folded.deferred_expr = Some(Box::new(expr.clone()));
+    }
     *expr = Expression::Constant(folded);
     Some(value)
 }

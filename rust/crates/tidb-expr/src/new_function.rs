@@ -57,10 +57,10 @@
 //!   [`crate::scalar_function`]'s BRIDGE DECISION). Consequently:
 //!   - Arity is verified exactly, via
 //!     [`crate::builtin_registry::verify_args_by_count`].
-//!   - The return type comes from this crate's own name-keyed inference
-//!     table, `rewriter::result_type::builtin_return_type`, which is the
-//!     nearest thing to `f.getRetTp()`. When that table has no entry, the
-//!     CALLER's `ret_type` is kept. Go's rule is
+//!   - The return type comes from this crate's arithmetic inference table
+//!     followed by the name-keyed `rewriter::result_type::builtin_return_type`,
+//!     which together are the nearest thing to `f.getRetTp()`. When neither
+//!     table has an entry, the CALLER's `ret_type` is kept. Go's rule is
 //!     `if builtinRetTp != TypeUnspecified || retType == TypeUnspecified {
 //!     retType = builtinRetTp }`; the Rust rule is the same statement with
 //!     "the table produced an answer" standing in for "the signature's
@@ -289,7 +289,25 @@ pub fn new_function_impl(
     // == TypeUnspecified { retType = builtinRetTp }`. See the module header's
     // `getFunction` narrowing for why the inference table stands in for
     // `f.getRetTp()`.
-    let ret_type = crate::rewriter::result_type::builtin_return_type(func_name, &func_args)
+    // Go's function-class `getFunction` infers arithmetic result metadata
+    // before applying the caller's placeholder `retType`.  Keep that same
+    // precedence for direct `NewFunction` callers (the AST rewriter already
+    // uses this helper's arithmetic table for binary operators); otherwise a
+    // non-constant `plus` built through a `FunctionBuilder` remains
+    // `Unspecified` and comparison construction inserts a spurious
+    // `cast_signed` around it.
+    let arithmetic_type = match func_args.as_slice() {
+        [lhs, rhs] => crate::builtin_arithmetic::infer_arithmetic_type_with_context(
+            func_name,
+            lhs,
+            rhs,
+            ctx.no_unsigned_subtraction(),
+            ctx.div_precision_increment(),
+        ),
+        _ => None,
+    };
+    let ret_type = arithmetic_type
+        .or_else(|| crate::rewriter::result_type::builtin_return_type(func_name, &func_args))
         .filter(|inferred| {
             inferred.code() != FieldTypeCode::Unspecified
                 || ret_type.code() == FieldTypeCode::Unspecified
@@ -459,8 +477,9 @@ mod tests {
         scalar_funcs_to_exprs, type_infer_for_null,
     };
     use crate::column::Column;
-    use crate::constant::Constant;
+    use crate::constant::{Constant, ParamMarker};
     use crate::context::NoColumns;
+    use crate::expr_util::{FunctionBuilder, RealFunctionBuilder};
     use crate::expression::Expression;
     use crate::scalar_function::ScalarFunction;
     use crate::{Columns, EvalError};
@@ -609,6 +628,67 @@ mod tests {
         )
         .expect("plus over a column builds");
         assert_eq!(as_func(&built).func_name.lowercase(), "plus");
+    }
+
+    /// Go's arithmetic function classes infer the result type even when the
+    /// caller supplies an unspecified placeholder.  A correctly typed
+    /// `plus(Column, constant)` must stay in the integer comparison domain;
+    /// leaving it unspecified makes `lt(Column, plus(...))` acquire a
+    /// Rust-only `cast_signed` wrapper during comparison refinement.
+    #[test]
+    fn arithmetic_builder_infers_result_type_before_comparison_refinement() {
+        let builder = RealFunctionBuilder::new(&NoColumns);
+        let column =
+            |id| Expression::Column(Column::new(id, FieldType::new(FieldTypeCode::LongLong)));
+        let sum = builder
+            .new_function("plus", None, vec![column(1), int_constant(1)])
+            .expect("plus over a column builds");
+        assert_eq!(
+            as_func(&sum)
+                .ret_type
+                .as_ref()
+                .expect("plus has a result type")
+                .code(),
+            FieldTypeCode::LongLong
+        );
+
+        let comparison = builder
+            .new_function("lt", None, vec![column(0), sum])
+            .expect("lt over the arithmetic expression builds");
+        let right = &as_func(&comparison).get_args()[1];
+        assert_eq!(
+            as_func(right).func_name.lowercase(),
+            "plus",
+            "comparison refinement must not wrap a typed integer expression"
+        );
+    }
+
+    /// Go's `FoldConstant` preserves parameter provenance on a folded result.
+    /// The value is available for this construction context, but the
+    /// expression must remain `ConstOnlyInContext` so a plan cache cannot
+    /// treat it as a strict literal.
+    #[test]
+    fn folding_a_parameter_keeps_context_only_provenance() {
+        let mut parameter = Constant::new(Datum::Int(7), FieldType::new(FieldTypeCode::LongLong));
+        parameter.param_marker = Some(ParamMarker { order: 0 });
+        let folded = new_function(
+            &NoColumns,
+            "plus",
+            FieldType::new(FieldTypeCode::LongLong),
+            vec![int_constant(1), Expression::Constant(parameter)],
+        )
+        .expect("plus over a parameter builds");
+        let Expression::Constant(constant) = &folded else {
+            panic!("the constant expression should fold during construction");
+        };
+        assert!(
+            constant.deferred_expr.is_some(),
+            "folded parameter must retain deferred provenance"
+        );
+        assert_eq!(
+            folded.const_level(),
+            crate::expression::ConstLevel::ONLY_IN_CONTEXT
+        );
     }
 
     /// NEW COVERAGE of the arity gate, Go `ErrIncorrectParameterCount` (1582).

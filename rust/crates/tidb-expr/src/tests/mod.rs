@@ -2183,9 +2183,8 @@ fn hex_and_bit_literals_are_binary_literals_in_a_numeric_context() {
     ] {
         assert_eq!(chunk_e(expr), want, "{expr} (chunk tier)");
     }
-    // `-0x1A` is Go's -26; only the label's TYPE differs between this tier
-    // and the chunk tier, which `gorun` cannot distinguish, so the value is
-    // what is asserted.
-    assert_eq!(e("-0x1A"), "DEC:-26");
+    // `-0x1A` is a BinaryLiteral in Go's unary-minus table and therefore
+    // takes the REAL signature in both the AST and CHUNK evaluators.
+    assert_eq!(e("-0x1A"), "FLOAT:-26");
     assert_eq!(chunk_e("-0x1A"), "FLOAT:-26");
 }

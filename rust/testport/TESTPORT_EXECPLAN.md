@@ -168,6 +168,15 @@ For each bounded behavior cluster:
   method compile failure. Ready evidence and the retained leaf-hash boundary
   are recorded in `receipts/expression_collation_audit.md`.
 
+- 2026-09-03: aligned the Rust `tidb-expr` arithmetic construction and
+  constant-folding boundaries with Go master. Direct function builders now
+  infer arithmetic return types before comparison refinement, folded
+  parameter/deferred subtrees retain context-only provenance, and the AST
+  unary-minus binary-literal expectation matches Go's REAL result. Focused
+  source regressions cover the three cases plus the complete constant-folding
+  and `ConstLevel` tables; fail-before and Ready evidence are recorded in
+  `receipts/expression_collation_audit.md`.
+
 - 2026-09-02: aligned `LogicalPlan::extract_col_groups` child access with Go
   master `a85e0fd5df`. Join and apply outer-side arms now direct-index the
   required child schemas, and the window arm preserves Go's empty-group early
