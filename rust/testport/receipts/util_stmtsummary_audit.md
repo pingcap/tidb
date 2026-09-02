@@ -1,7 +1,7 @@
 # `pkg/util/stmtsummary` — Go-master parity audit
 
 Comparison source: Go `origin/master` at commit
-`94eb995357f34b7bab4889a82f0405797046447d` (2026-09-02).
+`febee17ec716d86b1e355e5400ef9e4f4f190bad` (2026-09-02).
 
 This receipt records the current Go-master delta implemented by the native
 `tidb-stmtsummary` owner. It does not claim that the whole Go package is
@@ -68,6 +68,15 @@ associated BUILD shard metadata. No Rust owner source was changed in this
 batch; the v2 and executor/infoschema/planner boundaries remain explicit
 below.
 
+The same package boundary includes the 2026-09-02 `pkg/util/stmtsummary/v2`
+batch. Its complete direct inventory (five production files, six test/
+benchmark files, and one BUILD target) was re-read before editing. Go-master
+behavior now records IA execution counts in v2 records and JSON, exposes the
+column factory and history/memory readers, snapshots the evicted window begin
+time, and serializes internal-query cleanup under the record mutex. The
+nested `v2/tests` table package was audited but unchanged; Rust's missing v2
+reader/logger/table ownership and SQL integration remain explicit boundaries.
+
 ## Validation (Ready profile)
 
 - Failpoint-enabled Go root targeted run:
@@ -79,6 +88,15 @@ below.
 - Failpoint-enabled Go v2 targeted run:
   `./tools/check/failpoint-go-test.sh pkg/util/stmtsummary/v2 -run 'Test(IAAvgColumns|IAAvgColumnsChunkRoundTrip|HistoryReader|StmtRecord|StmtWindow)' -count=1`
   — passed.
+- Pre-fix v2 regression run (before restoring the Go fields/column): the
+  failpoint runner failed to compile with the expected missing
+  `IAExecCountStr` and `StmtRecord.IAExecCount` symbols.
+- Post-fix failpoint-enabled v2 focused run:
+  `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex ./tools/check/failpoint-go-test.sh ./pkg/util/stmtsummary/v2 -run '^(TestIAAvgColumns|TestIAAvgColumnsChunkRoundTrip|TestMemReader|TestHistoryReader|TestStmtRecord|TestStmtWindow|TestEvictedConcurrentWithRotate)$' -count=1 -vet=off`
+  — passed (0.856s).
+- Post-fix failpoint-enabled v2 full package run:
+  `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex ./tools/check/failpoint-go-test.sh ./pkg/util/stmtsummary/v2 -count=1 -vet=off`
+  — passed (0.806s).
 - `cargo +nightly-2026-08-22 test --offline --locked -p tidb-stmtsummary --lib -- --test-threads=1` — 46 passed, including the two new v1 regressions.
 - `cargo +nightly-2026-08-22 check --offline --locked -p tidb-stmtsummary --all-targets` — passed.
 - `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test -tags=intest ./pkg/executor -run '^TestAdminShowSlowIARemoteReadStats$' -count=1` — passed against Go master.

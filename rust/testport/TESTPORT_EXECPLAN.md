@@ -2152,6 +2152,15 @@ For each bounded behavior cluster:
   Bazel executable. The v2 and executor/infoschema/planner surfaces remain the
   explicit package boundary recorded in `receipts/util_stmtsummary_audit.md`.
 
+- 2026-09-02: completed the direct `pkg/util/stmtsummary/v2` package as one
+  Go-package batch. Restored IA execution-count fields and column factories,
+  persisted JSON/history readback, rotate-safe eviction begin-time snapshots,
+  and record-locked internal-query cleanup; added focused regressions for the
+  IA, LRU, and concurrent-rotate paths and updated its BUILD shard metadata.
+  The pre-fix suite failed on the missing Go symbols; post-fix failpoint-aware
+  focused and full v2 suites passed. The nested `v2/tests` table package and
+  SQL integration consumers remain the explicit boundary in the receipt.
+
 - 2026-09-01: audited all six Go-master `pkg/util/parser` artifacts (581
   lines) against the complete `tidb-parser::util_parser` owner. Go's
   `StmtNode.Accept` to `ast.Walk` migration changes visitor signatures but
