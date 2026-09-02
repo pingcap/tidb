@@ -288,6 +288,46 @@ fn test_error_msg() {
     }
 }
 
+/// Go `pkg/parser/ast/functions_test.go::{TestConvert,TestChar}`.
+///
+/// These cases execute in the parser package in Go even though the source
+/// tests live beside the AST restore tests: the grammar action validates and
+/// canonicalizes the charset argument before constructing the AST node.
+#[test]
+fn test_function_charset_arguments_match_ast_source() {
+    let cases = [
+        (r#"SELECT CONVERT("abc" USING "latin1")"#, Some("latin1"), None),
+        (r#"SELECT CONVERT("abc" USING laTiN1)"#, Some("latin1"), None),
+        (r#"SELECT CONVERT("abc" USING "binary")"#, Some("binary"), None),
+        (r#"SELECT CONVERT("abc" USING biNaRy)"#, Some("binary"), None),
+        (r#"SELECT CONVERT(a USING a)"#, None, Some("a")),
+        (r#"SELECT CONVERT("abc" USING CONCAT("utf", "8"))"#, None, Some("CONCAT")),
+        (r#"SELECT CHAR("abc" USING "latin1")"#, Some("latin1"), None),
+        (r#"SELECT CHAR("abc" USING laTiN1)"#, Some("latin1"), None),
+        (r#"SELECT CHAR("abc" USING "binary")"#, Some("binary"), None),
+        (r#"SELECT CHAR("abc" USING binary)"#, Some("binary"), None),
+        (r#"SELECT CHAR(a USING a)"#, None, Some("a")),
+        (r#"SELECT CHAR("abc" USING CONCAT("utf", "8"))"#, None, Some("CONCAT")),
+    ];
+    for (sql, expected_charset, expected_error) in cases {
+        match (parse(sql), expected_charset, expected_error) {
+            (Ok(statement), Some(charset), None) => {
+                let restored = statement.restore();
+                assert!(restored.contains(&format!("'{charset}'")), "{sql}: {restored}");
+            }
+            (Err(error), None, Some(charset)) => {
+                assert_eq!(
+                    error.compatibility_message(sql),
+                    format!("[parser:1115]Unknown character set: '{charset}'")
+                );
+            }
+            (other, expected, expected_error) => panic!(
+                "{sql}: expected charset {expected:?}/error {expected_error:?}, got {other:?}"
+            ),
+        }
+    }
+}
+
 /// Complete cases from Go `pkg/parser/parser_test.go`'s `TestParserErrMsg`.
 #[test]
 fn test_parser_err_msg() {

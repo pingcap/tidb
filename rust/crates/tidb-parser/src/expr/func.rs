@@ -319,8 +319,9 @@ impl Parser {
         if self.is_kw("USING") {
             self.bump();
             let raw = self.parse_using_charset_name()?;
-            let charset =
-                canonical_charset(&raw).ok_or_else(|| self.err_here("unknown character set"))?;
+            let charset = canonical_charset(&raw).ok_or_else(|| {
+                self.err_here(&format!("[parser:1115]Unknown character set: '{raw}'"))
+            })?;
             args.push(Expr::RawString(charset.to_string()));
         } else {
             args.push(Expr::Null);

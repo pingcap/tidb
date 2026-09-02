@@ -144,3 +144,40 @@ gates for this batch.
 
 Keep `pkg/parser/ast` as an explicit Rust ownership boundary until that
 dependency closure is available.
+
+## Rust follow-up: parser-owned charset validation
+
+The complete 36-artifact `pkg/parser/ast` inventory above was rechecked
+against `origin/master` at `049e0e2ba79d79a3a8b1e9ff93ee22fb1cea7dd5`; the
+package has no Go-master delta. Its `functions_test.go::TestConvert` and
+`TestChar` cases execute parser grammar actions in Go, so the AST crate's
+source-shaped carrier remains ignored for dependency-direction reasons. The
+actual Rust owner is `tidb-parser`, whose parser, lexer charset registry,
+standalone source tests, aggregate test build input, and Cargo metadata were
+inventoried before this change. No Go, generated, fixture, platform, or build
+artifact changed.
+
+Rust previously validated an invalid `USING` name only after the cursor had
+advanced to the closing delimiter, producing a generic syntax diagnostic and
+losing the offending token. Go reports the token-specific
+`[parser:1115]Unknown character set: '<name>'` diagnostic. `parse_convert`
+and `parse_char_func` now retain the raw charset token while validating and
+emit the exact compatibility message. The new parser source test covers the
+four valid case-insensitive/string forms plus invalid bare identifiers and
+function-shaped names from both Go tests.
+
+Pre-fix proof: the activated source table failed on
+`SELECT CONVERT(a USING a)` (`line 1 column 25 near ")"` instead of the Go
+1115 diagnostic). After the fix, the focused table passes.
+
+Validation (Ready scoped evidence):
+
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-parser --test all test_function_charset_arguments_match_ast_source -- --nocapture --test-threads=1` — passed.
+- `cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -p tidb-parser --all-targets` — owner all-target check.
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check`, repository `make lint`, and `git diff --check` — Ready gates.
+
+Correctness risk is limited to parser diagnostics for `CONVERT(... USING)`
+and `CHAR(... USING ...)`; valid charset canonicalization is unchanged.
+Compatibility risk is reduced because invalid names now preserve Go's error
+class/code and raw token. No hot-path evaluation or allocation behavior
+changes beyond the short-lived validation string.

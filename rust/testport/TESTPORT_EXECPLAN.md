@@ -139,6 +139,13 @@ For each bounded behavior cluster:
   explicit. Details are appended to
   `receipts/expression_collation_audit.md`.
 
+- 2026-09-03: aligned Rust `tidb-parser` charset diagnostics with Go
+  `pkg/parser/ast/functions_test.go::{TestConvert,TestChar}`. `CONVERT(...
+  USING ...)` and `CHAR(... USING ...)` now retain the raw charset token and
+  emit Go's `[parser:1115]Unknown character set: '<name>'` message for invalid
+  names; the source-shaped parser table is live and passing. Details are
+  appended to `receipts/parser_ast.md` and `receipts/b058.md`.
+
 - 2026-09-02: aligned `LogicalPlan::extract_col_groups` child access with Go
   master `a85e0fd5df`. Join and apply outer-side arms now direct-index the
   required child schemas, and the window arm preserves Go's empty-group early

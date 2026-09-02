@@ -57,7 +57,9 @@ impl Parser {
             self.bump();
             let raw = self.parse_using_charset_name()?;
             let charset = canonical_charset(&raw)
-                .ok_or_else(|| self.err_here("unknown character set"))?
+                .ok_or_else(|| {
+                    self.err_here(&format!("[parser:1115]Unknown character set: '{raw}'"))
+                })?
                 .to_string();
             self.expect_op(")")?;
             return Ok(Expr::ConvertUsing {
