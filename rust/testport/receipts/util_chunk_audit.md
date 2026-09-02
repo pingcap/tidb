@@ -1,13 +1,17 @@
 # `pkg/util/chunk` — complete package audit and `UsedMemoryUsage` parity
 
+Status: complete dependency-closed audit at the current Go-master authority;
+the missing Go `Chunk.UsedMemoryUsage` method and source regression have been
+restored, matching the existing Rust owner.
+
 Go source: `origin/master` at
-`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01). The package is
-byte-for-byte unchanged from the earlier audit pin
-`db35d47066648fe73abce6318d53fc625df51490`.
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02). This refresh
+supersedes the earlier `0bc44483e3e41a8ea917d4382dc202369468d200` pin.
 
 ## Complete inventory
 
-The package has exactly 29 artifacts and 11,342 Go lines. Every production
+The package has exactly 29 artifacts and 11,342 Go lines at `origin/master`.
+Every production
 file, test, support harness, and build row was read from the pinned tree; the
 earlier source-shaped transcreation receipts `b015`, `b016`, and `b017` cover
 the complete Go test-function mapping and the Rust owner/test surface.
@@ -47,7 +51,8 @@ the complete Go test-function mapping and the Rust owner/test surface.
 There is no `doc.go`, generated or platform-specific source, fixture tree,
 benchmark, example, or additional harness in this package. Go master differs
 from `origin/hparser-integration` only in `Chunk.UsedMemoryUsage` and its
-three assertions in `TestChunkMemoryUsage`; `BUILD.bazel` is unchanged.
+three assertions in `TestChunkMemoryUsage`; this batch restores those Go
+source changes locally. `BUILD.bazel` is unchanged.
 
 ## Rust ownership and implementation
 
@@ -76,10 +81,10 @@ memory-accounting integration was added.
 Profile: Ready for this package batch; the repository-wide audit is still
 continuing.
 
-- `go test ./pkg/util/chunk -count=1` — the two existing spill failpoint tests
-  (`TestPanicWhenSpillToDisk`, `TestPanicDuringSortedRowContainerSpill`) fail
-  because the failpoint does not fire in this environment; the new memory
-  behavior is not involved.
+- Pre-fix detached worktree run with the new `TestChunkMemoryUsage` assertions —
+  failed at compile time because `Chunk.UsedMemoryUsage` was undefined.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex ./tools/check/failpoint-go-test.sh pkg/util/chunk -run '^TestChunkMemoryUsage$' -count=1` — passed.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex ./tools/check/failpoint-go-test.sh pkg/util/chunk -count=1` — passed; failpoint enable/disable was reference-counted by the shared runner.
 - `cargo +nightly-2026-08-22 test --offline --locked -p tidb-chunk chunk::go_test_chunk_memory_usage --lib` — passed (1).
 - `cargo +nightly-2026-08-22 check --offline --locked -p tidb-executor --all-targets` — passed.
 - `cargo +nightly-2026-08-22 fmt --all -- --check` — passed.
@@ -90,7 +95,9 @@ continuing.
   failures (35/279 lib tests; 40/325 nextest tests). The focused regression
   passes; those unrelated failures remain explicitly unverified here.
 
-No Go or Bazel file changed, so `make bazel_prepare` is not required.
+`make bazel_prepare` was attempted for the restored Go source and is blocked
+locally because the `bazel` executable is not installed. The package uses
+failpoints, so the canonical wrapper was used for both Go runs above.
 
 ## Risk
 
