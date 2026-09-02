@@ -158,12 +158,10 @@ Commands run from the repository root:
 - `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all --
   --check` — passed.
 
-No Go source, Go import block, test function, Bazel file, or module metadata
-changed, so `make bazel_prepare` is not required. The pinned `make lint` was
-run successfully on a clean committed worktree; the concurrent working tree
-has unrelated uncommitted failpoint-generated edits that produce unrelated
-lint findings. `git diff --check` is run after the receipt/plan documentation
-batch is staged.
+The initial authority refresh was docs-only, but the follow-up source batch
+below changes Go production/tests and therefore requires the Bazel preparation
+gate. The pinned `make lint` and `git diff --check` are rerun for that batch;
+the Rust formatting gate applies only when Rust owner files change.
 
 ## Risks and unverified scope
 
@@ -173,8 +171,44 @@ batch is staged.
 - Compatibility: adding only the 22-type or read-pool fragments would expose
   APIs without their Go consumers; removing the seed wrappers now could break
   existing Rust callers. Both actions are deferred with the boundary recorded.
-- Performance: no production behavior changed and no performance claim is
-  made; Prometheus and concurrent context paths remain unverified.
+- Performance: the Go additions add only bounded scalar snapshots and
+  read-pool fields; Prometheus and concurrent context paths remain unverified
+  in the Rust owners.
 - Not verified locally: non-host Go/Rust platform selections, unavailable
   resource-manager/client-go integrations, and higher-level executor/session
   callers that consume this package.
+
+## Go-master source restoration batch (`78cac443a4f46c13bfe27eb247b5c80657952547`)
+
+The current Go `origin/master` is
+`78cac443a4f46c13bfe27eb247b5c80657952547`. The complete eight-artifact
+inventory was re-read before applying the three-file, 580-insertion/17-
+deletion source delta as one `pkg/util/execdetails` package commit. Go's
+read-pool task details are now carried through `ExecDetails` formatting/zap
+fields and synchronized merges; runtime statistics expose checked root/cop
+row evidence, response-summary coverage, per-request Analyze scan-byte
+estimates, typed hash-state lifecycle, and Explain-RU output; and the source
+tests cover the new fields, merge semantics, malformed/zero evidence, and
+state transitions. A focused branch regression was added to ensure read-pool
+merges do not alter request counts.
+
+This is a Go behavior restoration batch, not a package-complete Rust
+transcreation claim. The changed `RecordCopStats` signature is intentionally
+paired with the still-pending Go `pkg/distsql` and `pkg/store/copr` consumer
+updates; until those package batches land, callers outside this package remain
+an explicit compile boundary. The Rust `tidb-exec` seed owners still lack the
+context/client-go/protobuf/metrics integration and were not modified.
+
+Latest validation evidence:
+
+- Pre-fix command:
+  `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex go test ./pkg/util/execdetails -run '^TestReadPoolTaskDetailsMergePreservesRequestCount$' -count=1 -vet=off`
+  — failed as expected with the missing `MergeReadPoolTaskDetails` method and
+  `ReadPoolTaskDetails` field.
+- Post-fix focused run for the new regression, `TestString`, and
+  `TestCopRuntimeStats` with the same environment — passed (`0.457s`).
+- Post-fix full package run with the same environment — passed (`0.464s`).
+- `git diff --check` — passed before staging.
+- `make lint` and `make bazel_prepare` are required Ready gates after this
+  source/API batch. No Rust source changed, so pinned Rust formatting is not
+  applicable to this batch.

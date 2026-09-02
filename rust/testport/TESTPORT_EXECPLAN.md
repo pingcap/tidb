@@ -2305,6 +2305,18 @@ For each bounded behavior cluster:
   `receipts/util_execdetails_audit.md` and
   `docs/operations/util-execdetails-audit-execplan.md`.
 
+- 2026-09-02: restored the current Go-master `pkg/util/execdetails` source
+  delta as one Go-package batch at
+  `78cac443a4f46c13bfe27eb247b5c80657952547`. The complete eight-artifact
+  inventory remains the atomic boundary. Added read-pool detail propagation,
+  checked runtime row/summary evidence, Analyze scan-byte estimation,
+  hash-state lifecycle, Explain-RU types, and focused source regressions. The
+  package suite passes, while the changed `RecordCopStats` API leaves the
+  pending `pkg/distsql` and `pkg/store/copr` callers as an explicit integration
+  boundary; no Rust seed owner was modified. Ready lint/Bazel gates are
+  required before commit, with Bazel unavailable locally. Details are in
+  `receipts/util_execdetails_audit.md`.
+
 - 2026-09-01: completed the Go-master `pkg/util/sqlkiller` package as one
   three-artifact unit. Ported the concurrent-reset lock/swap ordering and
   source failpoint interleaves, made pre-reset receivers close instead of
