@@ -14,6 +14,10 @@
 
 //! Go-shaped AST-to-planner expression rewriting and constant-fold ordering.
 
+use crate::aggregation::wrap_cast::{
+    wrap_with_cast_as_decimal, wrap_with_cast_as_duration, wrap_with_cast_as_int,
+    wrap_with_cast_as_real, wrap_with_cast_as_string, wrap_with_cast_as_time,
+};
 use crate::column::Column;
 use crate::constant::Constant;
 use crate::constant_fold::ConstantFoldMode;
@@ -22,7 +26,8 @@ use crate::scalar_function::{binary_op_name, unary_op_name};
 use crate::EvalError;
 use tidb_ast::{BinaryOp, CiString, Expr, GetFormatSelector, IsTarget, UnaryOp};
 use tidb_datatype::{
-    default_field_type_for_value, Datum, FieldType, FieldTypeCode, FieldTypeValue, TimeType,
+    default_field_type_for_value, Datum, EvalType, FieldType, FieldTypeCode, FieldTypeValue,
+    TimeType,
 };
 
 /// Go `mysql.DefaultDecimal` (`parser/mysql/const.go`): the value a decimal
@@ -445,6 +450,116 @@ fn binary_expression(
             )))
         }
         None => Ok(scalar(name, vec![left, right])),
+    }
+}
+
+/// Go `ResolveType4Between` (`pkg/expression/builtin_compare.go:395`), which
+/// resolves one comparison domain across all three BETWEEN operands before
+/// the two binary comparisons are built.
+fn resolve_type4_between(args: [&Expression; 3]) -> EvalType {
+    let eval_type = |expr: &Expression| {
+        expr.static_type()
+            .map_or(EvalType::String, FieldType::eval_type)
+    };
+    let base_cmp_type = |lhs: EvalType, rhs: EvalType| {
+        if lhs.is_string_kind() && rhs.is_string_kind() {
+            EvalType::String
+        } else if lhs == EvalType::Int && rhs == EvalType::Int {
+            EvalType::Int
+        } else if (lhs == EvalType::Decimal && rhs == EvalType::String)
+            || (lhs == EvalType::String && rhs == EvalType::Decimal)
+        {
+            EvalType::Real
+        } else if (lhs == EvalType::Int || lhs == EvalType::Decimal)
+            && (rhs == EvalType::Int || rhs == EvalType::Decimal)
+        {
+            EvalType::Decimal
+        } else {
+            EvalType::Real
+        }
+    };
+
+    let mut cmp_type = eval_type(args[0]);
+    for arg in &args[1..] {
+        cmp_type = base_cmp_type(cmp_type, eval_type(arg));
+    }
+    if cmp_type == EvalType::String {
+        if args[0]
+            .static_type()
+            .is_some_and(|field_type| field_type.code() == FieldTypeCode::Duration)
+        {
+            cmp_type = EvalType::Duration;
+        } else if args.iter().any(|arg| {
+            arg.static_type()
+                .is_some_and(|field_type| field_type.code().is_type_temporal())
+        }) {
+            cmp_type = EvalType::Datetime;
+        }
+    }
+    if args.iter().all(|arg| {
+        arg.static_type()
+            .is_some_and(|field_type| field_type.eval_type() == EvalType::Int)
+            || matches!(
+                arg,
+                Expression::Constant(constant)
+                    if matches!(&constant.value, Datum::BinaryLiteral(_))
+            )
+    }) {
+        return EvalType::Int;
+    }
+    cmp_type
+}
+
+/// Applies Go's `wrapExpWithCast` to all three BETWEEN operands. The common
+/// type is deliberately chosen once, rather than allowing the lower and upper
+/// comparisons to infer independently from their two arms.
+fn wrap_between_arguments(
+    args: [&Expression; 3],
+    cmp_type: EvalType,
+    connection: (&str, &str),
+) -> Result<[Expression; 3], EvalError> {
+    let [expr, low, high] = args;
+    match cmp_type {
+        EvalType::Int => Ok([
+            wrap_with_cast_as_int(expr.clone(), None)?,
+            wrap_with_cast_as_int(low.clone(), None)?,
+            wrap_with_cast_as_int(high.clone(), None)?,
+        ]),
+        EvalType::Real => Ok([
+            wrap_with_cast_as_real(expr.clone())?,
+            wrap_with_cast_as_real(low.clone())?,
+            wrap_with_cast_as_real(high.clone())?,
+        ]),
+        EvalType::Decimal => Ok([
+            wrap_with_cast_as_decimal(expr.clone())?,
+            wrap_with_cast_as_decimal(low.clone())?,
+            wrap_with_cast_as_decimal(high.clone())?,
+        ]),
+        EvalType::String => Ok([
+            wrap_with_cast_as_string(expr.clone(), connection)?,
+            wrap_with_cast_as_string(low.clone(), connection)?,
+            wrap_with_cast_as_string(high.clone(), connection)?,
+        ]),
+        EvalType::Duration => Ok([
+            wrap_with_cast_as_duration(expr.clone())?,
+            wrap_with_cast_as_duration(low.clone())?,
+            wrap_with_cast_as_duration(high.clone())?,
+        ]),
+        EvalType::Datetime => {
+            let target = FieldType::new(FieldTypeCode::Datetime);
+            Ok([
+                wrap_with_cast_as_time(expr.clone(), target.clone())?,
+                wrap_with_cast_as_time(low.clone(), target.clone())?,
+                wrap_with_cast_as_time(high.clone(), target)?,
+            ])
+        }
+        // ResolveType4Between returns one of the six cases above for all
+        // currently supported scalar field types. Preserve the source shape
+        // if a future type reaches this narrow adapter before its Go cast is
+        // transcreated.
+        EvalType::Timestamp | EvalType::Json | EvalType::VectorFloat32 => {
+            Ok([expr.clone(), low.clone(), high.clone()])
+        }
     }
 }
 
@@ -1082,6 +1197,11 @@ fn rewrite_leaf_compound(
             let value = rewrite_expr_resolved(expr, resolver)?;
             let low = rewrite_expr_resolved(low, resolver)?;
             let high = rewrite_expr_resolved(high, resolver)?;
+            let [value, low, high] = wrap_between_arguments(
+                [&value, &low, &high],
+                resolve_type4_between([&value, &low, &high]),
+                resolver.connection_charset_info(),
+            )?;
             let (lower_op, upper_op, joiner) = if *not {
                 (BinaryOp::Lt, BinaryOp::Gt, "or")
             } else {

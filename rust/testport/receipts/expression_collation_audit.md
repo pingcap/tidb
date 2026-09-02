@@ -257,3 +257,43 @@ Correctness risk is limited to cast result metadata for nullable versus NOT
 NULL sources. Compatibility risk is limited to restoring Go's nullable result
 flag while preserving caller-owned target metadata; no evaluation algorithm or
 performance-sensitive loop changes.
+
+## Rust follow-up: BETWEEN shared coercion
+
+The rolling Go authority remains `origin/master` at
+`17daba3dfde858eebef60f6e4e1bb37268269225`. Before this follow-up, the
+dependency-closed `pkg/expression` root and nested owner inventory was already
+complete (137 direct artifacts / 208 recursive artifacts, including tests,
+generated inputs and build metadata); the Rust `tidb-expr` owner was likewise
+complete at 175 tracked artifacts. No Go, Bazel, generated output, fixture,
+platform, or build artifact changed.
+
+Go's `ResolveType4Between` and `expressionRewriter.wrapExpWithCast`
+(`pkg/expression/builtin_compare.go:395-423`,
+`pkg/planner/core/expression_rewriter.go:2746-2785`) derive one comparison
+domain across the subject and both bounds before constructing GE/LE. The old
+Rust `Expr::Between` rewrite built each comparison directly from its two raw
+arms, so a string subject, DATETIME lower bound, and string upper bound used a
+separate string upper comparison and returned 0 instead of Go's 1. Rust now
+resolves the six Go domains and applies the matching `WrapWithCastAs*` adapter
+to all three operands before either arm is built; a caller's connection
+charset is passed through the string wrapper.
+
+The source-derived planner regression
+`between_string_subject_with_datetime_bound_uses_shared_coercion` is active.
+A clean pre-fix `dca53c865d` worktree with the test body restored failed with
+Rust result `0`; the fixed test passes. The existing integer/datetime BETWEEN
+rows remain covered by the neighboring source test.
+
+Validation used the Ready profile for the dependency-closed owner:
+
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --offline --locked -p tidb-planner --test all between_string_subject_with_datetime_bound_uses_shared_coercion -- --nocapture --test-threads=1` — focused source regression passed.
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --offline --locked -p tidb-expr --lib rewriter::tests -- --nocapture --test-threads=1` — blocked by unrelated concurrent edits to `constant.rs`, `expression.rs`, `scalar_function.rs`, and `tests/scalar_function_semantics_source.rs` (`canonical_hash_code` compile errors); no those files were changed here.
+- `cargo +nightly-2026-08-22 fmt --all -- --check` and `git diff --check` — formatting and whitespace checks are clean for this batch.
+
+Correctness risk is limited to BETWEEN's pre-comparison coercion domain and
+the corresponding cast wrappers. Compatibility risk is limited to cases where
+the three operands previously inferred different pairwise domains; non-BETWEEN
+comparisons and the existing NOT rewrite shape are unchanged. The temporary
+context-free fallback for unsupported future eval types preserves their old
+shape until a corresponding Go cast is transcreated.

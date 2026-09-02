@@ -5619,6 +5619,12 @@ For each bounded behavior cluster:
   `cast_ret_type_clones_share_nothing_across_builds`, inventory, pre-fix
   failure, and Ready validation are recorded in
   `rust/testport/receipts/expression_collation_audit.md` and `b087.md`.
+- The `pkg/planner/core` BETWEEN rewrite now resolves one Go-compatible
+  comparison domain across the subject and both bounds, then casts all three
+  before constructing GE/LE (or the existing NOT form). The mixed
+  string/DATETIME/string source regression is active; pre-fix failure,
+  inventory, validation, and the unrelated concurrent owner compile blocker
+  are recorded in `rust/testport/receipts/expression_collation_audit.md`.
 
 ## Outcomes & Retrospective
 
