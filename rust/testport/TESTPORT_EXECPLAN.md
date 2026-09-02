@@ -4938,6 +4938,15 @@ For each bounded behavior cluster:
   regression, failpoint-wrapped package suite, and Ready evidence are in
   `rust/testport/receipts/store_gcworker.md`; Rust has no dependency-closed GC
   worker owner, so no Rust-only behavior was removed.
+- `pkg/planner/util` is restored to current Go master in one package batch:
+  `SplitCorColAccessCondFromFilters` now marks full-length equality-matched
+  index columns in `AccessPath.ConstCols`, including execution-time
+  correlated equalities, so later index columns can provide scan order. The
+  complete 16-artifact root inventory, pre-fix failing/post-fix passing
+  regression, package suite, and Ready evidence are in
+  `rust/testport/receipts/planner_util.md`; nested utility directories remain
+  separate package claims, and Rust's partial order matcher remains an
+  explicit correlated-planning boundary.
 
 ## Outcomes & Retrospective
 
