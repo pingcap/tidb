@@ -15,9 +15,12 @@
 //! Complete dependency-neutral data contracts from `pkg/kv/kv.go`.
 
 use std::cmp::Ordering;
-use std::sync::atomic::{AtomicI64, AtomicU64, Ordering as AtomicOrdering};
-use std::sync::Arc;
-use tokio::sync::Semaphore;
+use std::collections::HashMap;
+use std::future::Future;
+use std::sync::atomic::{AtomicI64, AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
+use std::sync::{Arc, Mutex};
+
+use tokio::sync::Notify;
 
 use crate::{Key, KeyRange, ReplicaReadType, RequestSource, ResourceGroupTagBuilder};
 
@@ -375,6 +378,152 @@ pub struct StoreLabel {
     pub value: String,
 }
 
+/// Limits the aggregate number of in-flight coprocessor request attempts.
+///
+/// A token covers one actual RPC attempt and is explicitly released before a
+/// retry selects its next store, matching Go `kv.CoprRequestLimiter`.
+pub struct CoprRequestLimiter {
+    capacity: usize,
+    in_use: AtomicUsize,
+    available: Notify,
+}
+
+impl CoprRequestLimiter {
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            capacity,
+            in_use: AtomicUsize::new(0),
+            available: Notify::new(),
+        }
+    }
+
+    /// Blocks until one token is acquired or either cancellation future
+    /// completes. Returns `true` when cancellation wins; otherwise callers
+    /// must call [`Self::release`] exactly once.
+    pub async fn acquire_with_context<C, D>(&self, context: C, done: D) -> bool
+    where
+        C: Future<Output = ()>,
+        D: Future<Output = ()>,
+    {
+        tokio::pin!(context);
+        tokio::pin!(done);
+        tokio::select! {
+            _ = &mut context => true,
+            _ = &mut done => true,
+            _ = self.acquire_token() => false,
+        }
+    }
+
+    async fn acquire_token(&self) {
+        loop {
+            let available = self.available.notified();
+            if self.try_acquire() {
+                return;
+            }
+            available.await;
+        }
+    }
+
+    /// Attempts to acquire one token without blocking.
+    #[must_use]
+    pub fn try_acquire(&self) -> bool {
+        let mut current = self.in_use.load(AtomicOrdering::Acquire);
+        while current < self.capacity {
+            match self.in_use.compare_exchange_weak(
+                current,
+                current + 1,
+                AtomicOrdering::AcqRel,
+                AtomicOrdering::Acquire,
+            ) {
+                Ok(_) => return true,
+                Err(observed) => current = observed,
+            }
+        }
+        false
+    }
+
+    /// Releases one acquired token.
+    ///
+    /// # Panics
+    ///
+    /// Panics when no token is held, matching Go's redundant-release guard.
+    pub fn release(&self) {
+        let mut current = self.in_use.load(AtomicOrdering::Acquire);
+        loop {
+            assert!(current != 0, "release a redundant cop request token");
+            match self.in_use.compare_exchange_weak(
+                current,
+                current - 1,
+                AtomicOrdering::AcqRel,
+                AtomicOrdering::Acquire,
+            ) {
+                Ok(_) => {
+                    self.available.notify_one();
+                    return;
+                }
+                Err(observed) => current = observed,
+            }
+        }
+    }
+
+    /// Returns the maximum number of concurrent request attempts.
+    #[must_use]
+    pub const fn capacity(&self) -> usize {
+        self.capacity
+    }
+}
+
+/// Creates a coprocessor request limiter, or `None` for a non-positive limit.
+#[must_use]
+pub fn new_copr_request_limiter(capacity: isize) -> Option<Arc<CoprRequestLimiter>> {
+    (capacity > 0).then(|| Arc::new(CoprRequestLimiter::with_capacity(capacity as usize)))
+}
+
+/// Owns one coprocessor request limiter per TiKV store for one statement.
+pub struct QueryCopStoreLimiter {
+    limit: usize,
+    stores: Mutex<HashMap<u64, Arc<CoprRequestLimiter>>>,
+}
+
+impl QueryCopStoreLimiter {
+    /// Returns the query-scoped limiter for a TiKV store. Store ID zero is not
+    /// a concrete store and therefore has no limiter.
+    #[must_use]
+    pub fn get_store_limiter(&self, store_id: u64) -> Option<Arc<CoprRequestLimiter>> {
+        if store_id == 0 {
+            return None;
+        }
+        let mut stores = self
+            .stores
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        Some(
+            stores
+                .entry(store_id)
+                .or_insert_with(|| Arc::new(CoprRequestLimiter::with_capacity(self.limit)))
+                .clone(),
+        )
+    }
+
+    /// Returns the per-store concurrency limit.
+    #[must_use]
+    pub const fn capacity(&self) -> usize {
+        self.limit
+    }
+}
+
+/// Creates a query-scoped per-store limiter, or `None` for a non-positive
+/// limit.
+#[must_use]
+pub fn new_query_cop_store_limiter(limit: isize) -> Option<Arc<QueryCopStoreLimiter>> {
+    (limit > 0).then(|| {
+        Arc::new(QueryCopStoreLimiter {
+            limit: limit as usize,
+            stores: Mutex::new(HashMap::new()),
+        })
+    })
+}
+
 /// Complete dependency-neutral metadata carried by Go `kv.Request`.
 #[derive(Clone, Default)]
 pub struct Request {
@@ -390,8 +539,12 @@ pub struct Request {
     pub partition_id_and_ranges: Vec<PartitionIdAndRanges>,
     /// Request concurrency.
     pub concurrency: isize,
-    /// Shared in-flight coprocessor request limiter.
-    pub coprocessor_rate_limit: Option<Arc<Semaphore>>,
+    /// Shared in-flight coprocessor request limiter used when no query-level
+    /// per-store limiter is present.
+    pub copr_request_limiter: Option<Arc<CoprRequestLimiter>>,
+    /// Query-scoped per-store limiter. When present, this takes precedence
+    /// over [`Self::copr_request_limiter`].
+    pub query_cop_store_limiter: Option<Arc<QueryCopStoreLimiter>>,
     /// Isolation level.
     pub isolation_level: IsolationLevel,
     /// Priority.

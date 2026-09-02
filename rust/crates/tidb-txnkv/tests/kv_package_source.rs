@@ -110,6 +110,112 @@ fn package_root_data_and_option_contracts_are_distinct_and_complete() {
     assert_eq!(request.store_busy_threshold_ns, -3);
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn TestCoprRequestLimiterWaitsUntilRelease() {
+    let limiter = new_copr_request_limiter(1).expect("positive capacity");
+    assert_eq!(limiter.capacity(), 1);
+    assert!(limiter.try_acquire());
+    assert!(!limiter.try_acquire());
+
+    let waiting = {
+        let limiter = Arc::clone(&limiter);
+        tokio::spawn(async move {
+            let cancelled = limiter
+                .acquire_with_context(std::future::pending(), std::future::pending())
+                .await;
+            if !cancelled {
+                limiter.release();
+            }
+            cancelled
+        })
+    };
+    tokio::task::yield_now().await;
+    assert!(!waiting.is_finished());
+
+    limiter.release();
+    assert!(
+        !tokio::time::timeout(Duration::from_secs(1), waiting)
+            .await
+            .expect("waiting acquire completes after release")
+            .expect("waiting acquire task")
+    );
+    assert!(limiter.try_acquire());
+    limiter.release();
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn TestCoprRequestLimiterAcquireCanBeCanceled() {
+    let limiter = new_copr_request_limiter(1).expect("positive capacity");
+    assert!(limiter.try_acquire());
+
+    let (context_cancel, context_wait) = tokio::sync::oneshot::channel::<()>();
+    let waiting = {
+        let limiter = Arc::clone(&limiter);
+        tokio::spawn(async move {
+            limiter
+                .acquire_with_context(
+                    async move {
+                        let _ = context_wait.await;
+                    },
+                    std::future::pending(),
+                )
+                .await
+        })
+    };
+    tokio::task::yield_now().await;
+    context_cancel.send(()).expect("cancel context");
+    assert!(waiting.await.expect("context-cancelled acquire"));
+
+    let (done, done_wait) = tokio::sync::oneshot::channel::<()>();
+    let waiting = {
+        let limiter = Arc::clone(&limiter);
+        tokio::spawn(async move {
+            limiter
+                .acquire_with_context(std::future::pending(), async move {
+                    let _ = done_wait.await;
+                })
+                .await
+        })
+    };
+    tokio::task::yield_now().await;
+    done.send(()).expect("close done");
+    assert!(waiting.await.expect("done-cancelled acquire"));
+
+    limiter.release();
+    assert!(limiter.try_acquire());
+    limiter.release();
+}
+
+#[test]
+fn TestCoprRequestLimiterRedundantReleasePanics() {
+    assert!(new_copr_request_limiter(0).is_none());
+    let limiter = new_copr_request_limiter(1).expect("positive capacity");
+    let panic = std::panic::catch_unwind(|| limiter.release()).expect_err("redundant release");
+    let message = panic
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| panic.downcast_ref::<String>().map(String::as_str));
+    assert_eq!(message, Some("release a redundant cop request token"));
+}
+
+#[test]
+fn TestQueryCopStoreLimiter() {
+    assert!(new_query_cop_store_limiter(0).is_none());
+    let group = new_query_cop_store_limiter(1).expect("positive limit");
+    assert_eq!(group.capacity(), 1);
+    assert!(group.get_store_limiter(0).is_none());
+
+    let store_one = group.get_store_limiter(1).expect("store one");
+    assert!(Arc::ptr_eq(
+        &store_one,
+        &group.get_store_limiter(1).expect("same store one")
+    ));
+    assert!(!Arc::ptr_eq(
+        &store_one,
+        &group.get_store_limiter(2).expect("store two")
+    ));
+}
+
 #[test]
 fn TestPartialNext() {
     let key_a = tidb_codec::encode_value(&[Datum::new_string("abc"), Datum::new_string("def")])
@@ -904,6 +1010,7 @@ fn TestError() {
         &ERR_NOT_IMPLEMENTED,
         &ERR_WRITE_CONFLICT,
         &ERR_WRITE_CONFLICT_IN_TIDB,
+        &ERR_SHARED_LOCK_LOST,
     ] {
         assert_ne!(error.mysql_code().as_u16(), 1105);
         assert_eq!(
@@ -911,6 +1018,12 @@ fn TestError() {
             error.rfc_code().split(':').nth(1).expect("code")
         );
     }
+    assert_eq!(ERR_SHARED_LOCK_LOST.mysql_code().as_u16(), 9015);
+    assert_eq!(
+        ERR_SHARED_LOCK_LOST.message_template(),
+        "Shared lock was lost during lock upgrade; transaction cannot continue, txnStartTS=%d, key=%s"
+    );
+    assert_eq!(ERR_SHARED_LOCK_LOST.redact_arg_positions(), &[1]);
 }
 
 #[test]

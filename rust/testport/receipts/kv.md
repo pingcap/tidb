@@ -1,24 +1,25 @@
 # `pkg/kv` — Go-master parity receipt
 
 Comparison source: Go `origin/master` at commit
-`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02).
+`94eb995357f34b7bab4889a82f0405797046447d` (2026-09-02).
 
 ## Complete Go inventory
 
-The package contains exactly 30 tracked artifacts and 5,145 lines. Every
-production file, test, and Bazel target was read before editing. There is no
-package `doc.go`, benchmark, fixture, generated Go source, or
-platform-specific Go variant.
+The package contains exactly 30 tracked artifacts and 5,435 lines. Every
+production file, test, benchmark, and Bazel target was read before editing.
+There is no package `doc.go`, fixture, generated Go source, or
+platform-specific Go variant. The complete function inventory contains 288
+functions, including 36 top-level Test/Benchmark declarations.
 
 | Artifact | Lines | Git blob | SHA-256 |
 | --- | ---: | --- | --- |
-| `BUILD.bazel` | 116 | `cb8d9b3cbb9501ca989b55c453773297918a58dd` | `43473fed5636d0fa957df553084e1f3f22fc51d4100e91fa5084899e7e652807` |
+| `BUILD.bazel` | 116 | `f09b93f1a5e1fb1cb512a66cc43518d5f1518d22` | `8439ba89ff64ad4224a370dd34ffe5033b98007416e03cb9cc315faa79df720b` |
 | `assertion.go` | 48 | `734df841bc62ca8acab6b4fb7fac35ae276052df` | `1b8f5b85ee599712bbb4672e9b893f8589bf972ad74bf4a1a505cebada423e00` |
 | `cachedb.go` | 99 | `ac13955e4f39998917ec170f65309d9830f46fe3` | `76d7eba5ee6044c9ccc1fcfadfb1a8317629cb7adc84bbf5658829fb418d9c17` |
-| `checker.go` | 70 | `cd8436dd356a84e653bb5f3ad31c9ca4130c8a3b` | `09c8744c19f81d6b66ccc162d666247a271ca76af5b46f68dbab9578de4c3323` |
-| `checker_test.go` | 35 | `8e2dc9de2f3aacb7c475bd0cb2cd951858ae6614` | `d5368154d23f386aabdccc123a5f01d1fc27f85355ab6da06b94b2386b76bba0` |
-| `error.go` | 101 | `b09326477bee3085236c84460db1e9fd780dc6f0` | `ade076091766dcf81339dbf6e577682942af38ddabdb4502e7a8a9cf6ba84936` |
-| `error_test.go` | 43 | `08c2bde9e9c62b1284f9fb0ed7f85c097a0de8f4` | `897f0d7ac33ac935502bbe4b1fd1bbd513f63f20628281690c20160cfb9197ca` |
+| `checker.go` | 70 | `cf6e8f72fe897d1716cf4f5f9434eb9a21e21092` | `27c139866da09604bfb52b5959e2be2733122cb3b75cd2a1a1f643d8034412cc` |
+| `checker_test.go` | 37 | `26f8803418559ef72bcc11d31f7c4237a2073b7b` | `179667ad538eed3fb3528aa2847ac13f9c663796034b32568cdee27dcb9135b7` |
+| `error.go` | 103 | `bab6112ef4db442ac0d6322eb9652d0fcd945577` | `61e265726a707fc5531328bd1b070c9541fccd5782439279fcd7b76bf81b0fa3` |
+| `error_test.go` | 44 | `221a11b5bb5b324b3bb9b7a4631388e7fa8a0810` | `d1b6f3f039b229ad4f840b4e4f9bb24419dd4ac2395bb6de24237c6f38dc4708` |
 | `fault_injection.go` | 138 | `7716a9c3a874f1ea3752f30d4f9a2e516c7d100b` | `6ed3c1543a894ce924f42124c66dcf5040934208b522617c2db432dd2807de3c` |
 | `fault_injection_test.go` | 95 | `e3a92e8c60bd29d8855f33a9b46656bb3d22eb2f` | `e1b317802242296a20583f87f91d17890bb4a01e83ef70354316a703b3eec879` |
 | `interface_mock_test.go` | 325 | `e0f0d38a465e20f98ca19e7c4ee2eef092472828` | `6bdbcdc064017217af530751276dc81f533f9bf748c65e8adade505d8c7175f2` |
@@ -26,8 +27,8 @@ platform-specific Go variant.
 | `key.go` | 764 | `490e1e7aea65e97c8f67032c8adb2d37d5c3da0e` | `2f8dad6f5b54df5e90d230dddc8d336bfff78b35641bcd20b01395ad5d8d15b1` |
 | `key_test.go` | 479 | `23a42443391c21484eb31db2ee3ee70f1971bdcb` | `5e26bc3afa5beb4883546ab34eec76d481c5512d9caf7cbbe6d142ebe9e449c9` |
 | `keyflags.go` | 105 | `3ac8b666d369b4d742c05fec563f5f845e87e669` | `9b16a0046d47e739dfe28aef7efd1e439d46ae5bd8d5b745923a3541df27915b` |
-| `kv.go` | 932 | `4333f345f6280e8c4da6ec15bc3313f8856612cc` | `5b9becb897b2bf97bc85c30732ee1d6cde6eaf99a5d683c695928b79ecd5c919` |
-| `kv_test.go` | 86 | `f944c0f0e271956aee40de459374dbd538dd014d` | `c993f81f56b03940c7af585b7cce0460fefe27efed4fd1a030d76865e9d3c7dc` |
+| `kv.go` | 1035 | `13a388ffcf43db29433c6236d0d58c71ae97ebed` | `fece55fde1eff524b54f1757e1fda08c4446c6c05b860549e56c3fc6f214c86c` |
+| `kv_test.go` | 268 | `2be44797730634a06f51726823b9457ad218de23` | `928ea09a9935bdaa779661be3e28f049c906f216bcda3f1ac15d0319e194bcfd` |
 | `main_test.go` | 36 | `d62d0f9f7bb83a0313edac95e4f1f3eb4e0abf9f` | `fa97a86ce3a5d763c4c27d62dc45d2a77313e61c480bf84890f1d0cdb5549737` |
 | `mock_test.go` | 88 | `10db70da8ebbce5dc4ecdb327b36a06327de65eb` | `55c967418dd78f68404ae7eb590b86e65ea1971969ce7c9db2ce2eb64768821f` |
 | `mpp.go` | 265 | `f56738aab639d33507e2cbe5a5d22444c841d78f` | `ad57eaaabf5bddd07132caece41414db02908d509df7b9faf8caabfdc79d1c47` |
@@ -50,8 +51,9 @@ retry and inner-transaction helpers, version and UniStore variables, and
 numeric/meta utilities. Tests cover request support, SQL error identities,
 fault injection, interface mocks, key/range/handle behavior, transaction
 retry and inner-TXN timestamps, source bitfields, numeric counters, keyspace
-classification, versions, and MPP compression settings. The Bazel target
-contains one public library and a 27-shard test target.
+classification, versions, MPP compression settings, and the concurrent
+coprocessor limiter lifecycle. The Bazel target contains one public library
+and a 32-shard test target.
 
 ## Rust ownership and decision
 
@@ -60,7 +62,8 @@ The Rust dependency-closed owner is split across `rust/crates/tidb-txnkv`:
 - `key.rs`, `key_flags.rs`, `assertion.rs`, `error.rs`, `checker.rs`,
   `version.rs`, `option.rs`, `txn_scope.rs`, `mpp.rs`, `unistore.rs`, and
   `variables.rs` carry the leaf contracts.
-- `kv_api.rs` and `kv_contract.rs` carry the root interfaces/data contracts;
+- `kv_api.rs` and `kv_contract.rs` carry the root interfaces/data contracts,
+  including request-scoped aggregate and per-store coprocessor limiters;
   `cache_db.rs`, `fault_injection.rs`, `iteration.rs`, `inner_txn.rs`, and
   `new_txn.rs` carry their helpers.
 - `driver`, `region`, `lock`, `transaction`, and `rpc` carry the live TiKV
@@ -87,6 +90,15 @@ This batch did close two concrete owner defects:
 
 The scheduler source test now pins its concrete payload/completion types,
 which removes inference-only test wiring from the package gate.
+
+The latest Go master adds cancellation-aware `CoprRequestLimiter` and
+query-scoped `QueryCopStoreLimiter` types, and replaces the old generic rate
+limit field on `kv.Request`. Rust now owns the same token admission,
+explicit-release panic, per-store identity, and request-field contracts. The
+new async regressions cover release admission, context/done cancellation,
+redundant release, and stable per-store limiter reuse. The new
+`ERR_SHARED_LOCK_LOST` prototype also carries Go's code 9015, exact message,
+and key-redaction position.
 
 The hparser branch was still missing three Go-master KV contracts. The Go
 checker now accepts `tipb.ExprType_MaxCount` and `tipb.ExprType_MinCount` for

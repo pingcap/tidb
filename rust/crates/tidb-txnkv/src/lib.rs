@@ -140,8 +140,8 @@ pub use error::{
     gen_write_conflict_in_tidb_err, is_err_not_found, is_txn_retryable_error, ErrorClass, KvError,
     MysqlErrorCode, ERR_ASSERTION_FAILED, ERR_CANNOT_SET_NIL_VALUE, ERR_ENTRY_TOO_LARGE,
     ERR_INVALID_TXN, ERR_KEY_EXISTS, ERR_KEY_TOO_LARGE, ERR_LOCK_EXPIRE, ERR_NOT_EXIST,
-    ERR_NOT_IMPLEMENTED, ERR_TXN_RETRYABLE, ERR_TXN_TOO_LARGE, ERR_WRITE_CONFLICT,
-    ERR_WRITE_CONFLICT_IN_TIDB, TXN_RETRYABLE_MARK,
+    ERR_NOT_IMPLEMENTED, ERR_SHARED_LOCK_LOST, ERR_TXN_RETRYABLE, ERR_TXN_TOO_LARGE,
+    ERR_WRITE_CONFLICT, ERR_WRITE_CONFLICT_IN_TIDB, TXN_RETRYABLE_MARK,
 };
 pub use fault_injection::{
     new_injected_storage, new_injected_store, InjectedSnapshot, InjectedStore, InjectedTransaction,
@@ -173,11 +173,12 @@ pub use kv_api::{
     Storage, StorageWithPd, Transaction,
 };
 pub use kv_contract::{
-    find_keys_in_stage, set_txn_entry_size_limit, set_txn_total_size_limit, txn_entry_size_limit,
-    txn_total_size_limit, CoprocessorRequestAdjuster, IsolationLevel, Paging, PartitionIdAndRanges,
-    PartitionedKeyRanges, Priority, Request, RequestType, RunawayAction, RunawayChecker,
-    StoreLabel, StoreType, DEFAULT_TXN_ENTRY_SIZE_LIMIT, DEFAULT_TXN_TOTAL_SIZE_LIMIT,
-    GLOBAL_REPLICA_SCOPE, UNCOMMITTED_INDEX_KV_FLAG,
+    find_keys_in_stage, new_copr_request_limiter, new_query_cop_store_limiter,
+    set_txn_entry_size_limit, set_txn_total_size_limit, txn_entry_size_limit, txn_total_size_limit,
+    CoprRequestLimiter, CoprocessorRequestAdjuster, IsolationLevel, Paging, PartitionIdAndRanges,
+    PartitionedKeyRanges, Priority, QueryCopStoreLimiter, Request, RequestType, RunawayAction,
+    RunawayChecker, StoreLabel, StoreType, DEFAULT_TXN_ENTRY_SIZE_LIMIT,
+    DEFAULT_TXN_TOTAL_SIZE_LIMIT, GLOBAL_REPLICA_SCOPE, UNCOMMITTED_INDEX_KV_FLAG,
 };
 pub use mem_storage::{MemIterator, MemStorage, MemStorageError};
 pub use mpp::{

@@ -42,6 +42,16 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: refreshed the complete Go-master `pkg/kv` inventory at
+  `94eb995357f34b7bab4889a82f0405797046447d`: 30 tracked artifacts, 5,435
+  lines, 288 functions, 36 test/benchmark declarations, and no fixture,
+  generated, platform, or package-doc inputs. The new request-scoped
+  aggregate/per-store coprocessor limiters and the shared-lock-lost error
+  identity are implemented in `tidb-txnkv`, with focused cancellation,
+  release, per-store reuse, and error-catalog regressions. This remains a
+  package-level boundary while distsql/session/store/copr consumers are
+  audited separately. Details are in `receipts/kv.md`.
+
 - 2026-09-02: completed the Go-master `pkg/parser` materialized-view DDL
   syntax delta in one parser-package batch. Before editing, the full root
   parser inventory (33 artifacts, 64,956 lines, generated grammar/keyword

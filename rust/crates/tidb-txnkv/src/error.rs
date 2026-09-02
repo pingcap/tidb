@@ -88,6 +88,8 @@ pub enum MysqlErrorCode {
     LockExpire = tidb::errcode::ErrLockExpire,
     /// `mysql.ErrWriteConflict`.
     WriteConflict = tidb::errcode::ErrWriteConflict,
+    /// `mysql.ErrSharedLockLost`.
+    SharedLockLost = tidb::errcode::ErrSharedLockLost,
 }
 
 impl MysqlErrorCode {
@@ -285,6 +287,11 @@ const LOCK_EXPIRE_IDENTITY: ErrorIdentity = ErrorIdentity::from_message(
     MysqlErrorCode::LockExpire,
     tidb::errname::ErrLockExpire,
 );
+const SHARED_LOCK_LOST_IDENTITY: ErrorIdentity = ErrorIdentity::from_message(
+    ErrorClass::TiKv,
+    MysqlErrorCode::SharedLockLost,
+    tidb::errname::ErrSharedLockLost,
+);
 const ASSERTION_FAILED_IDENTITY: ErrorIdentity = ErrorIdentity::from_message(
     ErrorClass::TiKv,
     MysqlErrorCode::AssertionFailed,
@@ -316,6 +323,8 @@ pub static ERR_WRITE_CONFLICT_IN_TIDB: KvError =
     KvError::prototype(WRITE_CONFLICT_IN_TIDB_IDENTITY);
 /// `pkg/kv.ErrLockExpire`.
 pub static ERR_LOCK_EXPIRE: KvError = KvError::prototype(LOCK_EXPIRE_IDENTITY);
+/// `pkg/kv.ErrSharedLockLost`.
+pub static ERR_SHARED_LOCK_LOST: KvError = KvError::prototype(SHARED_LOCK_LOST_IDENTITY);
 /// `pkg/kv.ErrAssertionFailed`.
 pub static ERR_ASSERTION_FAILED: KvError = KvError::prototype(ASSERTION_FAILED_IDENTITY);
 
