@@ -126,3 +126,13 @@ implemented in the Rust constants crate. The remaining runtime atomics,
 embedding hooks, transaction-file wiring, Windows and other unsupported
 targets, and the intentionally ignored Rust session/registry tests remain
 unverified by this package checkpoint.
+
+## 2026-09-02 Go-master source restoration
+
+Against fetched Go master `78cac443a4f46c13bfe27eb247b5c80657952547`, the
+working branch was missing the `tidb_analyze_store_batch_size` name, default,
+and upper bound. The constants were restored in `tidb_vars.go` exactly as Go
+defines them (`4` default and `8` maximum); the dependent session registry is
+recorded in the separate `pkg/sessionctx/variable` receipt. The focused
+variable regression failed before the constants existed and passes after the
+restoration in the detached Go-master test worktree.

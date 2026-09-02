@@ -329,6 +329,10 @@ const (
 	// For versions earlier than v7.6.0, the scan concurrency of index serial scans during ANALYZE is controlled by the tidb_index_serial_scan_concurrency variable.
 	TiDBAnalyzeDistSQLScanConcurrency = "tidb_analyze_distsql_scan_concurrency"
 
+	// TiDBAnalyzeStoreBatchSize is the maximum number of child Region tasks grouped with one main Region task
+	// in a store-batched Analyze request. 0 disables store batching for Analyze.
+	TiDBAnalyzeStoreBatchSize = "tidb_analyze_store_batch_size"
+
 	// TiDBOptInSubqToJoinAndAgg is used to enable/disable the optimizer rule of rewriting IN subquery.
 	TiDBOptInSubqToJoinAndAgg = "tidb_opt_insubq_to_join_and_agg"
 
@@ -1426,6 +1430,9 @@ const (
 	// for any type of configuration item that has concurrent workers.
 	MaxConfigurableConcurrency = 256
 
+	// MaxTiDBAnalyzeStoreBatchSize is the upper bound for child Region tasks in one Analyze store batch.
+	MaxTiDBAnalyzeStoreBatchSize uint64 = 8
+
 	// MaxShardRowIDBits is the maximum number of bits that can be used for row-id sharding.
 	MaxShardRowIDBits = 15
 
@@ -1462,6 +1469,7 @@ const (
 	DefDistSQLScanConcurrency               = 15
 	DefTiDBQueryCopStoreLimit               = 15
 	DefAnalyzeDistSQLScanConcurrency        = 4
+	DefTiDBAnalyzeStoreBatchSize            = 4
 	DefBuildStatsConcurrency                = 2
 	DefBuildSamplingStatsConcurrency        = 2
 	DefAutoAnalyzeRatio                     = 0.5

@@ -166,3 +166,14 @@ slow-log parser/evaluator integration, status-variable map, sequence state,
 removed/no-op compatibility layer, mock accessor, and nested integration test
 suite still require their own dependency-closed batches. Full Go package,
 Bazel shards, and the full Rust workspace were not run for this checkpoint.
+
+## 2026-09-02 Go-master source restoration
+
+Against fetched Go master `78cac443a4f46c13bfe27eb247b5c80657952547`, the
+branch was missing the session-side `tidb_analyze_store_batch_size` contract.
+`SessionVars` now initializes `AnalyzeStoreBatchSize` to Go's default, and the
+global/session registry validates the unsigned range `0..8` before updating the
+session field. `TestTiDBAnalyzeStoreBatchSize` pins default initialization and
+the session setter path; it passes in the detached Go-master Ready test
+worktree. The package's unrelated large registry deltas remain outside this
+batch.

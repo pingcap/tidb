@@ -81,6 +81,21 @@ func TestSysVar(t *testing.T) {
 	analyzeScan := variable.GetSysVar(vardef.TiDBAnalyzeDistSQLScanConcurrency)
 	require.NotNil(t, analyzeScan)
 	require.Equal(t, analyzeScan.Value, sysProcScan.Value)
+
+	analyzeStoreBatch := variable.GetSysVar(vardef.TiDBAnalyzeStoreBatchSize)
+	require.NotNil(t, analyzeStoreBatch)
+	require.Equal(t, "4", analyzeStoreBatch.Value)
+	require.Equal(t, uint64(8), analyzeStoreBatch.MaxValue)
+}
+
+func TestTiDBAnalyzeStoreBatchSize(t *testing.T) {
+	sv := variable.GetSysVar(vardef.TiDBAnalyzeStoreBatchSize)
+	require.NotNil(t, sv)
+
+	vars := variable.NewSessionVars(nil)
+	require.Equal(t, vardef.DefTiDBAnalyzeStoreBatchSize, vars.AnalyzeStoreBatchSize)
+	require.NoError(t, sv.SetSessionFromHook(vars, "8"))
+	require.Equal(t, 8, vars.AnalyzeStoreBatchSize)
 }
 
 func TestIndexJoinBuildV2SysVarCompatibility(t *testing.T) {
