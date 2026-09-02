@@ -89,6 +89,15 @@ For each bounded behavior cluster:
   regressions cover both unchecked boundaries; details are appended to
   `receipts/expression_collation_audit.md`.
 
+- 2026-09-02: aligned three bounded Rust `tidb-planner` logical-optimization
+  rule entry boundaries with Go master `a85e0fd5df`. Union-all-dual,
+  derive-TopN-from-window, and max/min elimination now direct-index the same
+  `Children()[0]`, `AggFuncs[0]`, `Args[0]`, and `Schema().Columns[i]` slots
+  that Go indexes, preserving panic behavior on malformed trees while
+  retaining all ordinary early-return guards. Four focused regressions fail
+  before the fix and pass after it; details are in
+  `receipts/planner_rule_child_access.md`.
+
 - 2026-09-02: extended the bounded Rust-only `tidb-planner` child-accessor
   batch against Go master `a85e0fd5df` after the first validation exposed the
   physical sequence-construction boundary. Logical and physical sequence

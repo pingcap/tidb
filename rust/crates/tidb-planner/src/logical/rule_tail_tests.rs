@@ -40,14 +40,17 @@ use crate::plan_base::PlanIdAllocator;
 
 use crate::find_best_task::LogicalJoinType;
 
+use super::aggregation::{LogicalAggregation, AGG_FUNC_MAX};
 use super::cte::{CteClass, LogicalCTE};
 use super::data_source::DataSource;
 use super::expand::{LogicalExpand, RollupGroupingSet};
 use super::join::LogicalJoin;
 use super::projection::LogicalProjection;
+use super::rule::LogicalOptRule;
 use super::rule_derive_topn_from_window::derive_topn;
 use super::rule_eliminate_empty_selection::eliminate_empty_selection;
 use super::rule_eliminate_unionall_dual_item::union_all_eliminate_dual_item;
+use super::rule_max_min_elimination::MaxMinEliminator;
 use super::rule_push_down_sequence::push_down_sequence;
 use super::rule_resolve_expand::gen_expand;
 use super::rule_result_reorder::result_reorder;
@@ -840,4 +843,92 @@ fn the_derivation_walks_past_a_deep_chain_and_respects_allow_derive_topn() {
     }
     assert_eq!(kind(&node.children()[0].children()[0]), "DataSource");
     untouched.dismantle();
+}
+
+// ***************************************************************************
+// Child-access panic boundaries — these Go rule bodies index children (or the
+// single agg function/argument) directly, so a malformed tree panics instead
+// of taking a Rust-only `None`/error refusal.
+// ***************************************************************************
+
+#[test]
+fn a_projection_branch_without_children_panics_like_gos_direct_index() {
+    let allocator = PlanIdAllocator::default();
+    let ctx = test_context(&allocator);
+    let plan = with_children(
+        LogicalPlan::UnionAll(LogicalUnionAll::new(base(
+            &allocator,
+            "UnionAll",
+            Some(schema_of(&[1])),
+        ))),
+        vec![LogicalPlan::Projection(LogicalProjection::new(
+            base(&allocator, "Projection", Some(schema_of(&[1]))),
+            Vec::new(),
+        ))],
+    );
+
+    // Go: `proj.Children()[0].(*logicalop.LogicalTableDual)`.
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        union_all_eliminate_dual_item(&ctx, plan)
+    }))
+    .is_err());
+}
+
+#[test]
+fn a_childless_selection_panics_when_derive_topn_probes_it_like_go() {
+    let allocator = PlanIdAllocator::default();
+    let ctx = test_context(&allocator);
+    let plan = LogicalPlan::Selection(LogicalSelection::new(
+        base(&allocator, "Selection", None),
+        vec![le_const(2, 5)],
+    ));
+
+    // Go `windowIsTopN` reads `p.Children()[0]` unconditionally.
+    assert!(
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| { derive_topn(&ctx, plan) }))
+            .is_err()
+    );
+}
+
+#[test]
+fn a_window_without_children_panics_at_the_grandchild_probe_like_go() {
+    let allocator = PlanIdAllocator::default();
+    let ctx = test_context(&allocator);
+    let mut window = row_number_window(&allocator, "row_number", data_source(&allocator, &[1]));
+    drop(window.base_mut().take_children());
+    let plan = selection(&allocator, vec![le_const(2, 5)], window);
+
+    // Go: `grandChild := child.Children()[0]` before the type assertion.
+    assert!(
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| { derive_topn(&ctx, plan) }))
+            .is_err()
+    );
+}
+
+#[test]
+fn a_max_min_aggregation_without_a_child_panics_like_gos_direct_index() {
+    let allocator = PlanIdAllocator::default();
+    let ctx = test_context(&allocator);
+    let max = tidb_expr::aggregation::AggFuncDesc {
+        base: BaseFuncDesc {
+            name: AGG_FUNC_MAX.to_owned(),
+            args: vec![Expression::Column(column(1))],
+            ret_type: int_type(),
+        },
+        mode: tidb_expr::aggregation::AggFunctionMode::Complete,
+        has_distinct: false,
+        order_by_items: Vec::new(),
+        grouping_id: 0,
+    };
+    let plan = LogicalPlan::Aggregation(LogicalAggregation::new(
+        base(&allocator, "Aggregation", Some(schema_of(&[9]))),
+        vec![max],
+        Vec::new(),
+    ));
+
+    // Go: `f := agg.AggFuncs[0]`, `f.Args[0]`, `child := agg.Children()[0]`.
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        MaxMinEliminator.optimize(&ctx, plan)
+    }))
+    .is_err());
 }

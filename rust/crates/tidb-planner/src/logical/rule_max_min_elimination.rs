@@ -139,7 +139,8 @@ fn check_column_can_use_index(
 fn clone_subplan(ctx: &RuleContext<'_>, plan: &LogicalPlan) -> Option<LogicalPlan> {
     match plan {
         LogicalPlan::Selection(selection) => {
-            let child = clone_subplan(ctx, selection.base.children().first()?)?;
+            // Go `cloneSubPlans` indexes `p.Children()[0]` unconditionally.
+            let child = clone_subplan(ctx, &selection.base.children()[0])?;
             let mut cloned = LogicalPlan::Selection(LogicalSelection::new(
                 BaseLogicalPlan::new(
                     ctx.allocator,
@@ -172,21 +173,17 @@ fn eliminate_single(
     ctx: &RuleContext<'_>,
     mut aggregation: LogicalAggregation,
 ) -> Result<LogicalAggregation, PlanError> {
-    let function = aggregation
-        .agg_funcs
-        .first()
-        .ok_or_else(|| PlanError::internal("max/min aggregation has no function"))?;
-    let argument = function
-        .args()
-        .first()
-        .cloned()
-        .ok_or_else(|| PlanError::internal("max/min aggregation has no argument"))?;
+    // Go `eliminateSingleMaxMin` reads `agg.AggFuncs[0]`, `f.Args[0]`, and
+    // `agg.Children()[0]`, so a malformed aggregation panics instead of
+    // reporting an internal error.
+    let function = &aggregation.agg_funcs[0];
+    let argument = function.args()[0].clone();
     let mut child = aggregation
         .base
         .take_children()
         .into_iter()
         .next()
-        .ok_or_else(|| PlanError::internal("max/min aggregation has no child"))?;
+        .expect("max/min elimination requires an aggregation child");
 
     if !extract_columns(&argument).is_empty() {
         if !argument
@@ -241,9 +238,11 @@ fn split_aggregations(
     ctx: &RuleContext<'_>,
     aggregation: &LogicalAggregation,
 ) -> Option<Vec<LogicalAggregation>> {
-    let child = aggregation.base.children().first()?;
+    // Go `splitAggFuncAndCheckIndices` indexes `agg.Children()[0]`,
+    // `f.Args[0]`, and `agg.Schema().Columns[i]` unconditionally.
+    let child = &aggregation.base.children()[0];
     for function in &aggregation.agg_funcs {
-        let Expression::Column(column) = function.args().first()? else {
+        let Expression::Column(column) = &function.args()[0] else {
             return None;
         };
         if !check_column_can_use_index(child, column, Vec::new()) {
@@ -254,7 +253,7 @@ fn split_aggregations(
     let schema = aggregation.base.base.schema()?;
     let mut split = Vec::with_capacity(aggregation.agg_funcs.len());
     for (offset, function) in aggregation.agg_funcs.iter().enumerate() {
-        let output = schema.columns.get(offset)?.clone();
+        let output = schema.columns[offset].clone();
         let mut new_aggregation = LogicalPlan::Aggregation(LogicalAggregation::new(
             {
                 let mut base = BaseLogicalPlan::new(

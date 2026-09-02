@@ -118,7 +118,9 @@ fn window_is_topn(selection: &super::LogicalSelection, child: &LogicalPlan) -> O
     if window_columns.len() != 1 || window_columns[0].unique_id != column.unique_id {
         return None;
     }
-    let LogicalPlan::DataSource(data_source) = child.children().first()? else {
+    // Go indexes the window's first child before asserting its type:
+    // `grandChild := child.Children()[0]`.
+    let LogicalPlan::DataSource(data_source) = &child.children()[0] else {
         return None;
     };
     // Go: "Give up if TiFlash is one possible access path of all." See this
@@ -166,9 +168,9 @@ impl OwnedRewrite for DeriveTopN<'_, '_> {
         let LogicalPlan::Selection(selection) = &node else {
             return (node, ());
         };
-        let Some(child) = node.children().first() else {
-            return (node, ());
-        };
+        // Go `windowIsTopN` indexes `p.Children()[0]` unconditionally, so a
+        // childless selection panics instead of skipping the rewrite.
+        let child = &node.children()[0];
         let Some(count) = window_is_topn(selection, child) else {
             return (node, ());
         };
