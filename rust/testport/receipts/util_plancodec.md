@@ -9,7 +9,7 @@ into this leaf claim.
 ## Pinned inventory
 
 Comparison source: Go `origin/master` at commit
-`db35d47066648fe73abce6318d53fc625df51490` (2026-08-31), with the Rust
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-01), with the Rust
 implementation from `origin/hparser-integration`
 `5a005978dda57fbb3373a303660ea0a5f7990b38`.
 
@@ -68,16 +68,17 @@ and remain explicit integration gaps rather than false plancodec claims.
 | Binary ExplainData rendering, connection column selection, access objects, labels, runtime fields, and discard sentinel | `decode_binary_plan`, `decode_binary_plan_for_connection`, and private renderer helpers | Complete; the existing source-derived vectors cover the distinct CTE/subquery and runtime paths. |
 | `BUILD.bazel` library/test targets and `TestMain` setup | Cargo workspace member, `lib.rs` export, and owner test module | Complete build mapping; no generated/platform artifact is omitted. |
 
-Go master added:
+Go master added (and this checkout now restores):
 
     TypeAnalyze = "Analyze"
     typeAnalyzeID int = 64
 
 The Rust table previously stopped at `PhysicalCTESource` (63), so decoding a
 new Go Analyze plan returned `UnknownPlanID64` and encoding it returned zero.
-The table now includes `TYPE_ANALYZE` at position 64. The focused regression
-asserts both directions, and the stable round-trip test now treats 65 as the
-first unknown ID.
+The Go checkout also lacked the new source constant and both switch cases;
+those are restored alongside the focused two-way regression. Both tables now
+include Analyze at position 64, and the stable round-trip test treats 65 as
+the first unknown ID.
 
 ## Validation
 
@@ -102,15 +103,18 @@ Observed on 2026-09-01: the Go package suite passed:
 
     ok  github.com/pingcap/tidb/pkg/util/plancodec  0.464s
 
-The Rust owner suite passed all 15 tests, the affected-crate check passed,
-formatting and diff hygiene passed, and `make lint` exited 0. Existing
+The regression was verified to fail before the source mapping with
+`undefined: typeAnalyzeID`; after the mapping, the focused and complete Go
+suite pass. The Rust owner suite passed all 15 tests, the affected-crate
+check passed, formatting and diff hygiene passed, and `make lint` exited 0.
+Existing
 workspace warnings in the vendored client, planner, executor, model, and
 transaction crates were unchanged by this batch. The focused regression was
-verified to fail before the table change: with
-the pre-fix 63-entry table it returned `left: 0, right: 64` for
-`type_string_to_physical_id("Analyze")`. After the fix it passes together
-with the complete owner suite. `make bazel_prepare` is not required because
-this batch changes no Go file, Go import, Bazel file, or module dependency.
+verified in the Rust owner to fail before the table change: with the pre-fix
+63-entry table it returned `left: 0, right: 64` for
+`type_string_to_physical_id("Analyze")`. `make bazel_prepare` is not required
+because this batch changes no Go import, Bazel file, new Go file, or module
+dependency.
 
 ## Risks and unverified targets
 

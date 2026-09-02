@@ -2140,14 +2140,15 @@ For each bounded behavior cluster:
   production or test behavior was added. Inventory and Ready evidence are in
   `receipts/util_dbterror_exeerrors.md`.
 
-- 2026-09-01: audited the complete Go `pkg/util/plancodec` package at
-  `origin/master` `db35d47066648fe73abce6318d53fc625df51490` against the Rust
+- 2026-09-02: refreshed the complete Go `pkg/util/plancodec` package at
+  `origin/master` `c6054025ed4c32ab3672a2a24ea46892714d21ec` against the Rust
   owner on `origin/hparser-integration`. The seven-artifact package has no
   generated, platform, fixture, or benchmark variant. Go master appends the
-  stable `Analyze` plan type at physical ID 64; Rust previously returned zero
-  for the name and `UnknownPlanID64` for the ID. Added the table entry and a
-  focused two-way regression, with the complete file/function/test inventory
-  and validation gates in `receipts/util_plancodec.md`.
+  stable `Analyze` plan type at physical ID 64; the checkout's Go table was
+  missing the source constant and both switch cases even though Rust already
+  carried the entry. Restored the Go mapping and focused two-way regression;
+  complete inventory and Ready validation are recorded in
+  `receipts/util_plancodec.md`.
 
 - 2026-08-31: completed pinned `pkg/util/disk` as one five-artifact package.
   Added the missing temp-directory lifecycle and global-tracker constructor,
