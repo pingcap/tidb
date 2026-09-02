@@ -2077,6 +2077,10 @@ func (b *executorBuilder) buildHashJoinFromChildExecs(leftExec, rightExec exec.E
 		colsFromChildren = colsFromChildren[:len(colsFromChildren)-1]
 	}
 	childrenUsedSchema := markChildrenUsedCols(colsFromChildren, v.Children()[0].Schema(), v.Children()[1].Schema())
+	var outputColumnOrder []int
+	if v.JoinType == base.RightOuterJoin {
+		outputColumnOrder = getHashJoinV1OutputColumnOrder(colsFromChildren, childrenUsedSchema, v.Children()[0].Schema().Len())
+	}
 	var fullJoinBuildJoinerJoinType, fullJoinProbeJoinerJoinType base.JoinType
 	var fullJoinBuildJoinerOuterIsRight, fullJoinProbeJoinerOuterIsRight bool
 	var fullJoinBuildJoinerDefaultValues, fullJoinProbeJoinerDefaultValues []types.Datum
@@ -2122,7 +2126,11 @@ func (b *executorBuilder) buildHashJoinFromChildExecs(leftExec, rightExec exec.E
 			// Keep Joiner as probe-mismatch joiner for shared non-full code paths.
 			worker.Joiner = worker.FullJoinProbeJoiner
 		} else {
-			worker.Joiner = join.NewJoiner(b.sctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, lhsTypes, rhsTypes, childrenUsedSchema, isNAJoin)
+			if outputColumnOrder == nil {
+				worker.Joiner = join.NewJoiner(b.sctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, lhsTypes, rhsTypes, childrenUsedSchema, isNAJoin)
+			} else {
+				worker.Joiner = join.NewRightOuterJoinerWithOutputColumnOrder(b.sctx, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, lhsTypes, rhsTypes, childrenUsedSchema, outputColumnOrder)
+			}
 		}
 		worker.WorkerID = i
 		e.ProbeWorkers[i] = worker
@@ -3495,6 +3503,22 @@ func markChildrenUsedCols(outputCols []*expression.Column, childSchemas ...*expr
 		prefixLen += childSchema.Len()
 	}
 	return
+}
+
+func getHashJoinV1OutputColumnOrder(outputCols []*expression.Column, childrenUsed [][]int, leftSchemaLen int) []int {
+	leftThenRightOrder := make([]int, 0, len(outputCols))
+	leftThenRightOrder = append(leftThenRightOrder, childrenUsed[0]...)
+	for _, idx := range childrenUsed[1] {
+		leftThenRightOrder = append(leftThenRightOrder, leftSchemaLen+idx)
+	}
+	outputColumnOrder := make([]int, 0, len(outputCols))
+	for _, col := range outputCols {
+		outputColumnOrder = append(outputColumnOrder, col.Index)
+	}
+	if slices.Equal(leftThenRightOrder, outputColumnOrder) {
+		return nil
+	}
+	return outputColumnOrder
 }
 
 func (*executorBuilder) corColInDistPlan(plans []base.PhysicalPlan) bool {

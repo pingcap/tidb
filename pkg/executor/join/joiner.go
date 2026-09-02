@@ -210,6 +210,20 @@ func NewJoiner(ctx sessionctx.Context, joinType plannerbase.JoinType,
 	panic("unsupported join type in func NewJoiner()")
 }
 
+// NewRightOuterJoinerWithOutputColumnOrder creates a right outer joiner whose output follows
+// indexes in the merged left-right schema.
+func NewRightOuterJoinerWithOutputColumnOrder(ctx sessionctx.Context, outerIsRight bool,
+	defaultInner []types.Datum, filter []expression.Expression, lhsColTypes, rhsColTypes []*types.FieldType,
+	childrenUsed [][]int, outputColumnOrder []int) Joiner {
+	joiner := NewJoiner(ctx, plannerbase.RightOuterJoin, outerIsRight, defaultInner, filter, lhsColTypes, rhsColTypes, childrenUsed, false).(*rightOuterJoiner)
+	joiner.outputColumnOrder = slices.Clone(outputColumnOrder)
+	shallowRowType := make([]*types.FieldType, 0, len(lhsColTypes)+len(rhsColTypes))
+	shallowRowType = append(shallowRowType, lhsColTypes...)
+	shallowRowType = append(shallowRowType, rhsColTypes...)
+	joiner.shallowRow = chunk.MutRowFromTypes(shallowRowType)
+	return joiner
+}
+
 type outerRowStatusFlag byte
 
 const (
@@ -234,6 +248,10 @@ type baseJoiner struct {
 	// 1. every columns are used if lUsed/rUsed is nil.
 	// 2. no columns are used if lUsed/rUsed is not nil but the size of lUsed/rUsed is 0.
 	lUsed, rUsed []int
+
+	// outputColumnOrder is nil when the output follows the existing left-then-right layout.
+	// Otherwise, it contains output column indexes in the unpruned merged left-right row.
+	outputColumnOrder []int
 }
 
 func (j *baseJoiner) initDefaultInner(innerTypes []*types.FieldType, defaultInner []types.Datum) {
@@ -247,6 +265,12 @@ func (*baseJoiner) makeJoinRowToChunk(chk *chunk.Chunk, lhs, rhs chunk.Row, lUse
 	// Fix: https://github.com/pingcap/tidb/issues/5771
 	lWide := chk.AppendRowByColIdxs(lhs, lUsed)
 	chk.AppendPartialRowByColIdxs(lWide, rhs, rUsed)
+}
+
+func (j *baseJoiner) makeOutputJoinRowToChunk(chk *chunk.Chunk, lhs, rhs chunk.Row) {
+	j.shallowRow.ShallowCopyPartialRow(0, lhs)
+	j.shallowRow.ShallowCopyPartialRow(lhs.Len(), rhs)
+	chk.AppendRowByColIdxs(j.shallowRow.ToRow(), j.outputColumnOrder)
 }
 
 // makeShallowJoinRow shallow copies `inner` and `outer` into `shallowRow`.
@@ -268,6 +292,10 @@ func (j *baseJoiner) filter(input, output *chunk.Chunk, outerColLen int, lUsed, 
 	j.selected, err = expression.VectorizedFilter(j.ctx.GetExprCtx().GetEvalCtx(), j.ctx.GetSessionVars().EnableVectorizedExpression, j.conditions, chunk.NewIterator4Chunk(input), j.selected)
 	if err != nil {
 		return false, err
+	}
+	if len(j.outputColumnOrder) > 0 {
+		input = input.Prune(j.outputColumnOrder)
+		return chunk.CopySelectedJoinRowsDirect(input, j.selected, output)
 	}
 	// Batch copies selected rows to output chunk.
 	innerColOffset, outerColOffset := 0, input.NumCols()-outerColLen
@@ -317,7 +345,9 @@ func (j *baseJoiner) filterAndCheckOuterRowStatus(
 		}
 	}
 
-	if lUsed != nil || rUsed != nil {
+	if len(j.outputColumnOrder) > 0 {
+		input = input.Prune(j.outputColumnOrder)
+	} else if lUsed != nil || rUsed != nil {
 		lSize := innerColsLen
 		if !j.outerIsRight {
 			lSize = input.NumCols() - innerColsLen
@@ -348,6 +378,9 @@ func (j *baseJoiner) Clone() baseJoiner {
 	}
 	if j.chk != nil {
 		base.chk = j.chk.CopyConstruct()
+		if len(j.outputColumnOrder) > 0 {
+			base.shallowRow = j.shallowRow.Clone()
+		}
 	} else {
 		base.shallowRow = j.shallowRow.Clone()
 	}
@@ -356,6 +389,7 @@ func (j *baseJoiner) Clone() baseJoiner {
 	}
 	base.lUsed = slices.Clone(j.lUsed)
 	base.rUsed = slices.Clone(j.rUsed)
+	base.outputColumnOrder = slices.Clone(j.outputColumnOrder)
 	return base
 }
 
@@ -938,9 +972,16 @@ func (j *rightOuterJoiner) TryToMatchInners(outer chunk.Row, inners chunk.Iterat
 	}
 
 	numToAppend := chk.RequiredRows() - chk.NumRows()
-	for ; inners.Current() != inners.End() && numToAppend > 0; numToAppend-- {
-		j.makeJoinRowToChunk(chkForJoin, inners.Current(), outer, lUsed, rUsed)
-		inners.Next()
+	if len(j.conditions) == 0 && len(j.outputColumnOrder) > 0 {
+		for ; inners.Current() != inners.End() && numToAppend > 0; numToAppend-- {
+			j.makeOutputJoinRowToChunk(chkForJoin, inners.Current(), outer)
+			inners.Next()
+		}
+	} else {
+		for ; inners.Current() != inners.End() && numToAppend > 0; numToAppend-- {
+			j.makeJoinRowToChunk(chkForJoin, inners.Current(), outer, lUsed, rUsed)
+			inners.Next()
+		}
 	}
 	err = inners.Error()
 	if err != nil {
@@ -969,8 +1010,14 @@ func (j *rightOuterJoiner) TryToMatchOuters(outers chunk.Iterator, inner chunk.R
 	}
 
 	outer, numToAppend, cursor := outers.Current(), chk.RequiredRows()-chk.NumRows(), 0
-	for ; outer != outers.End() && cursor < numToAppend; outer, cursor = outers.Next(), cursor+1 {
-		j.makeJoinRowToChunk(chkForJoin, inner, outer, lUsed, rUsed)
+	if len(j.conditions) == 0 && len(j.outputColumnOrder) > 0 {
+		for ; outer != outers.End() && cursor < numToAppend; outer, cursor = outers.Next(), cursor+1 {
+			j.makeOutputJoinRowToChunk(chkForJoin, inner, outer)
+		}
+	} else {
+		for ; outer != outers.End() && cursor < numToAppend; outer, cursor = outers.Next(), cursor+1 {
+			j.makeJoinRowToChunk(chkForJoin, inner, outer, lUsed, rUsed)
+		}
 	}
 
 	outerRowStatus = outerRowStatus[:0]
@@ -985,6 +1032,10 @@ func (j *rightOuterJoiner) TryToMatchOuters(outers chunk.Iterator, inner chunk.R
 }
 
 func (j *rightOuterJoiner) OnMissMatch(_ bool, outer chunk.Row, chk *chunk.Chunk) {
+	if len(j.outputColumnOrder) > 0 {
+		j.makeOutputJoinRowToChunk(chk, j.defaultInner, outer)
+		return
+	}
 	lWide := chk.AppendRowByColIdxs(j.defaultInner, j.lUsed)
 	chk.AppendPartialRowByColIdxs(lWide, outer, j.rUsed)
 }
