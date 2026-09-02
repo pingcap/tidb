@@ -2917,7 +2917,8 @@ For each bounded behavior cluster:
       exact temp-directory lifecycle and both tracker constructors, route its
       real server/chunk/memory-alarm consumers through them, and remove the
       Rust-only spill-policy surface from the package. The five-artifact
-      inventory and WIP gates are in `receipts/util_disk.md`.
+      inventory and Ready gates are in `receipts/util_disk.md` and
+      `docs/operations/util-disk-audit-execplan.md`.
 - [x] Complete the pinned root `pkg/util/sem` package in its `tidb-util`
       owner, verify its full policy and cross-crate sysvar wiring, retain its
       five source tests, and remove supplementary Rust-only assertions.

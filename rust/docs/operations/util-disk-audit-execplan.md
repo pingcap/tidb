@@ -32,7 +32,7 @@ under `unused_must_use`.
 - [x] (2026-09-02) Ran current and detached latest-master Go tests, both
       focused Rust regressions, Rust formatting, pinned repository lint, and
       diff hygiene.
-- [ ] Push this batch to `origin/hparser-integration`, verify local/remote
+- [x] Push this batch to `origin/hparser-integration`, verify local/remote
       SHAs, and fetch the newest target branch before the next boundary.
 
 ## Surprises & Discoveries
@@ -63,9 +63,9 @@ Run from the repository root unless a command says otherwise:
 
     PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/disk -count=1
     (cd /tmp/tidb-go-latest-c605 && PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/disk -count=1)
-    OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib CARGO_INCREMENTAL=0 cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-util --lib disk::tests::return_values_may_be_ignored_like_go --offline --locked -- --exact
-    OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib CARGO_INCREMENTAL=0 cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-util --lib disk::temp_dir::tests::test_remove_dir --offline --locked -- --exact --nocapture
-    (cd rust && cargo +nightly-2026-08-22 fmt --all -- --check)
+    OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib CARGO_INCREMENTAL=0 cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-util --lib disk::tests::return_values_may_be_ignored_like_go --offline --locked -- --exact
+    OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib CARGO_INCREMENTAL=0 cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-util --lib disk::temp_dir::tests::test_remove_dir --offline --locked -- --exact --nocapture
+    cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check
     PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 make lint
     git diff --check
 
