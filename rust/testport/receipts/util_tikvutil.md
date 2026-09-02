@@ -1,7 +1,7 @@
 # `pkg/util/tikvutil` — complete Go-master parity receipt
 
 Comparison source: Go `origin/master` at commit
-`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02). The package is
+`049e0e2ba79d79a3a8b1e9ff93ee22fb1cea7dd5` (2026-09-03). The package is
 unchanged from the earlier pinned audit; this receipt refreshes the rolling
 master authority and records the complete artifact hashes.
 
@@ -30,14 +30,17 @@ sysvar consumers load/store that single atomic with sequential consistency,
 including cluster-table publication and reset. Earlier Rust-only wrapper
 getters/setters and a private duplicate atomic were removed; no Rust-only
 behavior remains in the current owner, and the Go-visible value width,
-initialization, ordering, and publication semantics match.
+initialization, ordering, and publication semantics match. The new
+`tests/tikvutil_contract.rs` regression exercises the public static's source
+default, signed `i32` storage, and atomic arithmetic; it is intentionally
+Rust-side because the Go package has no test artifact.
 
 ## Validation and risk
 
-Profile: **Ready** for this documentation-only authority refresh. No Go source,
-imports, Bazel metadata, or module files changed, so `make bazel_prepare` is
-not required. No source behavior changed and no regression test is added;
-the package has no source test and this batch only refreshes authority data.
+Profile: **Ready** for this Rust owner contract regression and authority
+refresh. No Go source, imports, Bazel metadata, or module files changed, so
+`make bazel_prepare` is not required. The production owner was already
+aligned; this batch adds executable coverage for its exported contract.
 
 ```text
 PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
@@ -49,6 +52,12 @@ OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dep
 DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib \
 cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml -p tidb-tikvutil -p tidb-config -p tidb-session --offline --locked
 # passed for the owner and all three consumers (workspace warnings only)
+
+OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler \
+DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-tikvutil --test tikvutil_contract -- --test-threads=1
+# passed: 1 test
 
 cd rust && cargo +nightly-2026-08-22 fmt --all -- --check
 # passed
@@ -62,5 +71,6 @@ make lint
 ```
 
 Not verified here: full workspace tests, Bazel execution, or real TiKV commit
-throughput. Existing unrelated session/planner worktree changes remain outside
-this receipt.
+throughput. Existing unrelated expression worktree changes remain outside this
+receipt. The pinned workspace-wide formatter is also blocked by those
+uncommitted changes; the changed test file is individually rustfmt-clean.

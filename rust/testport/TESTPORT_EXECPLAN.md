@@ -42,6 +42,13 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-03: refreshed the Rust `tidb-tikvutil` owner for Go master
+  `049e0e2ba79d79a3a8b1e9ff93ee22fb1cea7dd5`. The complete two-artifact
+  `pkg/util/tikvutil` package is unchanged and already exposes Go's one
+  process-wide `AtomicI32`; a focused public-contract test now pins its 128
+  default, signed width, and atomic update behavior. Details are in
+  `receipts/util_tikvutil.md`.
+
 - 2026-09-03: aligned the Rust `tidb-ast` `Expr::ConvertUsing::format`
   boundary with Go master `049e0e2ba79d79a3a8b1e9ff93ee22fb1cea7dd5`.
   Go's `FuncCallExpr.Format` prints this parsed form as a generic lowercase
