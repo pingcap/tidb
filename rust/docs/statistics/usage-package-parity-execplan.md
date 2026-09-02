@@ -4,7 +4,7 @@ This ExecPlan is a living document maintained under `PLANS.md`.
 
 ## Purpose / Big Picture
 
-Pinned TiDB commit `e2788410d8d696605e8cb002585877a063ccc909` defines `pkg/statistics/handle/usage` as the owner of session table deltas, predicate-column usage, index-usage delegation, dump selection, batching, persistence, and garbage collection. Its imported `pkg/statistics/handle/usage/predicatecolumn` package owns the corresponding storage reads, cleanup, and replacement writes. Rust already has most of these behaviors split across `tidb-stats-handle-usage`, `tidb-exec`, and the cluster session node, but the existing audit deliberately makes no package-completion claim. This work verifies both complete package inventories, removes remaining Rust-only API behavior, fills source API gaps, and validates the ordinary end-to-end paths.
+Pinned TiDB commit `c6054025ed4c32ab3672a2a24ea46892714d21ec` defines `pkg/statistics/handle/usage` as the owner of session table deltas, predicate-column usage, index-usage delegation, dump selection, batching, persistence, and garbage collection. Its imported `pkg/statistics/handle/usage/predicatecolumn` package owns the corresponding storage reads, cleanup, and replacement writes. Rust already has most of these behaviors split across `tidb-stats-handle-usage`, `tidb-exec`, and the cluster session node, but the existing audit deliberately makes no package-completion claim. This work verifies both complete package inventories, removes remaining Rust-only API behavior, fills source API gaps, and validates the ordinary end-to-end paths.
 
 ## Progress
 
@@ -20,6 +20,12 @@ Pinned TiDB commit `e2788410d8d696605e8cb002585877a063ccc909` defines `pkg/stati
   source; represent absent latest-infoschema tables separately from empty
   schemas and reproduce `CONVERT_TZ`'s invalid-zero-to-NULL behavior on reads,
   predicate selection, and replacement writes.
+- [x] (2026-09-02) Re-audit all eight root-usage artifacts (1,678 lines) against
+  Go master `c6054025…`, re-read the complete native owner and server/exec
+  persistence seams, and confirm no source-vs-owner behavior gap or Rust-only
+  production path remains.
+- [x] (2026-09-02) Refresh the root-usage receipt with exact line/blob/hash
+  inventory and keep the previously recorded Ready validation evidence.
 
 ## Surprises & Discoveries
 
@@ -131,3 +137,8 @@ receipt had inferred both schema presence and `CONVERT_TZ` validity from the
 happy path. `plan_get_predicate_columns` now accepts an explicit absent-schema
 state, and predicate timestamp writes/reads use the pinned invalid-zero NULL
 contract. No new policy or feature was introduced.
+
+Revision note (2026-09-02): the complete root-usage inventory was refreshed
+against Go master `c6054025…`; all eight artifacts remain byte-identical to the
+previous `e2788410…` pin. The multi-crate ownership and existing Ready gates
+remain valid.

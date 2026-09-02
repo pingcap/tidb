@@ -3102,8 +3102,9 @@ For each bounded behavior cluster:
       transaction-mode, SQL-string, empty-test, and function-batch carriers.
       The package remains explicitly unclaimed until the ordinary stats
       handle, session, schema, transaction, persistence, and integration paths
-      exist. The complete inventory is in
-      `receipts/statistics_handle_usage_audit.md`.
+      exist. The complete Go-master inventory and Ready validation are in
+      `receipts/statistics_handle_usage_audit.md` and
+      `docs/statistics/usage-package-parity-execplan.md`.
 - [x] Complete the pinned `pkg/statistics/handle/cache/internal` interface
       package in `tidb-stats-handle-cache-internal`: bind it to shared actual
       statistics tables, preserve all eleven pointer-receiver methods,
