@@ -4976,6 +4976,13 @@ For each bounded behavior cluster:
   and Ready evidence are in `rust/testport/receipts/store_copr.md`; nested
   `copr_test` and `metrics` remain separate package boundaries and live TiKV
   transport parity remains recorded in `distsql_audit.md`.
+- `pkg/objstore/ossstore` now follows Go master for OSS presigned downloads
+  and `SendCredentials`: the data client keeps its configured endpoint while a
+  logging-disabled public-endpoint client signs URLs, and refreshed credentials
+  are forwarded only when requested. The complete ten-artifact inventory,
+  focused presign/credential regressions, package suite, and Ready evidence are
+  in `rust/testport/receipts/objstore_ossstore.md`; Rust has no dependency-closed
+  OSS backend owner, so no speculative Rust behavior was added.
 
 ## Outcomes & Retrospective
 
