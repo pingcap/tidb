@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -77,6 +78,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/testutils"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 func TestTimezonePushDown(t *testing.T) {
@@ -1360,6 +1362,16 @@ func TestUnionLimit(t *testing.T) {
 	tk.MustQuery("select * from union_limit limit 10")
 }
 
+type lowResolutionOracleCounter struct {
+	oracle.Oracle
+	asyncCalls atomic.Int64
+}
+
+func (o *lowResolutionOracleCounter) GetLowResolutionTimestampAsync(ctx context.Context, opt *oracle.Option) oracle.Future {
+	o.asyncCalls.Add(1)
+	return o.Oracle.GetLowResolutionTimestampAsync(ctx, opt)
+}
+
 func TestLowResolutionTSORead(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -1369,13 +1381,24 @@ func TestLowResolutionTSORead(t *testing.T) {
 	tk.MustExec("create table low_resolution_tso(a int key)")
 	tk.MustExec("insert low_resolution_tso values (1)")
 
-	// enable low resolution tso
+	// enable low resolution tso for a single statement through SET_VAR
+	lowResOracle := &lowResolutionOracleCounter{Oracle: store.GetOracle()}
+	store.(tikv.Storage).SetOracle(lowResOracle)
+	tk.MustQuery("select /*+ set_var(tidb_low_resolution_tso=on) */ * from low_resolution_tso").Check(testkit.Rows("1"))
+	require.Positive(t, lowResOracle.asyncCalls.Load())
+	tk.MustQuery("select @@tidb_low_resolution_tso").Check(testkit.Rows("0"))
 	require.False(t, tk.Session().GetSessionVars().UseLowResolutionTSO())
+	tk.MustExec("begin")
+	err := tk.ExecToErr("select /*+ set_var(tidb_low_resolution_tso=on) */ * from low_resolution_tso for update")
+	require.EqualError(t, err, "can not execute select for update statement when 'tidb_low_resolution_tso' is set")
+	tk.MustExec("rollback")
+
+	// enable low resolution tso
 	tk.MustExec("set @@tidb_low_resolution_tso = 'on'")
 	require.True(t, tk.Session().GetSessionVars().UseLowResolutionTSO())
 
 	tk.MustQuery("select * from low_resolution_tso")
-	err := tk.ExecToErr("update low_resolution_tso set a = 2")
+	err = tk.ExecToErr("update low_resolution_tso set a = 2")
 	require.Error(t, err)
 	tk.MustExec("set @@tidb_low_resolution_tso = 'off'")
 	tk.MustExec("update low_resolution_tso set a = 2")

@@ -941,6 +941,15 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		if err != nil {
 			logutil.BgLogger().Warn("Failed to restore the variable after SET_VAR hint", zap.String("variable name", name), zap.String("expected value", val))
 		}
+		// The transaction copies the request source type when it is activated and shares
+		// it with its snapshots, so a SET_VAR hint on it reaches the transaction through
+		// the statement's snapshot but is never undone there. Restore it explicitly so
+		// the commit does not carry the hinted value.
+		if strings.EqualFold(name, vardef.TiDBExplicitRequestSourceType) {
+			if txn, err := ctx.Txn(false); err == nil && txn != nil && txn.Valid() {
+				txn.SetOption(kv.ExplicitRequestSourceType, vars.ExplicitRequestSourceType)
+			}
+		}
 	}
 	vars.StmtCtx.SetVarHintRestore = nil
 	var sc *stmtctx.StatementContext
