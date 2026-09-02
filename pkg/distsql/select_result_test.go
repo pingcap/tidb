@@ -74,7 +74,9 @@ func TestUpdateCopRuntimeStats(t *testing.T) {
 	require.NotEqual(t, len(sr.copPlanIDs), len(sr.selectResp.GetExecutionSummaries()))
 
 	backOffSleep["RegionMiss"] = time.Duration(200)
-	sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{CopExecDetails: execdetails.CopExecDetails{CalleeAddress: "callee", BackoffSleep: backOffSleep}}, 0, false)
+	sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{
+		CopExecDetails: execdetails.CopExecDetails{CalleeAddress: "callee", BackoffSleep: backOffSleep},
+	}, 0, false)
 	require.False(t, ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.ExistsCopStats(1234))
 	require.Equal(t, sr.stats.backoffSleep["RegionMiss"], time.Duration(200))
 
@@ -83,7 +85,9 @@ func TestUpdateCopRuntimeStats(t *testing.T) {
 	require.Equal(t, len(sr.copPlanIDs), len(sr.selectResp.GetExecutionSummaries()))
 
 	backOffSleep["RegionMiss"] = time.Duration(300)
-	sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{CopExecDetails: execdetails.CopExecDetails{CalleeAddress: "callee", BackoffSleep: backOffSleep}}, 0, false)
+	sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{
+		CopExecDetails: execdetails.CopExecDetails{CalleeAddress: "callee", BackoffSleep: backOffSleep},
+	}, 0, false)
 	require.Equal(t, "tikv_task:{time:1ns, loops:1}", ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopStats(1234).String())
 	require.Equal(t, sr.stats.backoffSleep["RegionMiss"], time.Duration(500))
 	snapshot := ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopRowsSnapshot(1234)
@@ -147,6 +151,72 @@ func TestUpdateCopRuntimeStats(t *testing.T) {
 			require.True(t, snapshot.Invalid)
 			require.False(t, snapshot.Observed())
 		}
+	})
+
+	t.Run("close collects limiter wait stats once", func(t *testing.T) {
+		closeCtx := mock.NewContext()
+		closeCtx.GetSessionVars().StmtCtx = stmtctx.NewStmtCtx()
+		closeCtx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
+		limiterWaitResp := &mockResponse{
+			closeErr: fmt.Errorf("close failed"),
+			limiterWait: copr.LimiterWaitStats{
+				TotalTime: 5 * time.Millisecond,
+				MaxTime:   3 * time.Millisecond,
+			},
+			unconsumedCopStats: []*copr.CopRuntimeStats{{
+				CopExecDetails: execdetails.CopExecDetails{
+					CalleeAddress: "late-callee",
+					BackoffSleep:  map[string]time.Duration{"RegionMiss": time.Millisecond},
+				},
+			}},
+		}
+		closeResult := selectResult{
+			ctx:        closeCtx.GetDistSQLCtx(),
+			resp:       limiterWaitResp,
+			rootPlanID: 1234,
+			copPlanIDs: []int{1234},
+			storeType:  kv.TiKV,
+			stats:      &selectResultRuntimeStats{},
+			selectResp: &tipb.SelectResponse{ExecutionSummaries: []*tipb.ExecutorExecutionSummary{{
+				TimeProcessedNs: &i,
+				NumProducedRows: &i,
+				NumIterations:   &i,
+			}}},
+		}
+		require.NoError(t, closeResult.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{
+			CopExecDetails: execdetails.CopExecDetails{CalleeAddress: "callee"},
+		}, 0, false))
+
+		require.ErrorIs(t, closeResult.close(), limiterWaitResp.closeErr)
+		require.True(t, limiterWaitResp.limiterWaitReadAfterClose)
+		require.True(t, limiterWaitResp.unconsumedReadAfterClose)
+		require.Equal(t, limiterWaitResp.limiterWait, closeResult.stats.limiterWait)
+		require.Equal(t, time.Millisecond, closeResult.stats.backoffSleep["RegionMiss"])
+		require.Contains(t,
+			closeCtx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(closeResult.rootPlanID).String(),
+			"limiter_wait:{total:5ms, max:3ms}")
+		copTaskCount, _ := closeCtx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopCountAndRows(closeResult.rootPlanID)
+		require.Equal(t, int32(1), copTaskCount)
+		require.ErrorIs(t, closeResult.close(), limiterWaitResp.closeErr)
+		require.Equal(t, 1, limiterWaitResp.closeCalls)
+		require.Equal(t, limiterWaitResp.limiterWait, closeResult.stats.limiterWait)
+	})
+
+	t.Run("close without runtime stats", func(t *testing.T) {
+		resp := &mockResponse{limiterWait: copr.LimiterWaitStats{
+			TotalTime: time.Millisecond,
+			MaxTime:   time.Millisecond,
+		}}
+		result := selectResult{
+			ctx:        &distsqlctx.DistSQLContext{},
+			resp:       resp,
+			rootPlanID: sr.rootPlanID,
+		}
+		require.NotPanics(t, func() {
+			require.NoError(t, result.close())
+		})
+		require.True(t, resp.closed)
+		require.Nil(t, result.stats)
 	})
 }
 
