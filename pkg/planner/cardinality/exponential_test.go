@@ -18,6 +18,10 @@ import (
 	"math"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -81,4 +85,20 @@ func TestApplyExponentialBackoff(t *testing.T) {
 		// Empty input should return lower bound
 		testExponentialBackoffHelper(t, "Empty input", []float64{}, 5, 100, 5.0, 0.1)
 	})
+}
+
+func TestEqualRowCountZeroRepeatFallsBackToUniformEstimate(t *testing.T) {
+	sctx := mock.NewContext()
+	value := types.NewIntDatum(1)
+	histogram := statistics.NewHistogram(1, 2, 0, 0, types.NewFieldType(mysql.TypeLonglong), 1, 0)
+	histogram.AppendBucket(&value, &value, 10, 0)
+	column := &statistics.Column{
+		Histogram: *histogram,
+		TopN:      statistics.NewTopN(0),
+		StatsVer:  statistics.Version2,
+	}
+
+	result, err := equalRowCountOnColumn(sctx, column, value, nil, 10, 0)
+	require.NoError(t, err)
+	require.InDelta(t, 5, result.Est, 1e-9)
 }

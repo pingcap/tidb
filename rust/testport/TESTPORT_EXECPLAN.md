@@ -4960,6 +4960,15 @@ For each bounded behavior cluster:
   `rust/testport/receipts/planner_util.md`; nested utility directories remain
   separate package claims, and Rust's partial order matcher remains an
   explicit correlated-planning boundary.
+- `pkg/planner/cardinality` restores the Go-master zero-repeat histogram
+  fallback in one package batch: column and index equality estimates now
+  treat `Repeat == 0` as missing point frequency and use the uniform estimate
+  instead of returning an exact zero. The complete 18-artifact inventory,
+  pre-fix failing/post-fix passing regression, failpoint-wrapped package suite,
+  and Ready evidence are in
+  `rust/testport/receipts/planner_cardinality.md`; larger appended-handle,
+  recursive-estimation, JSON-selectivity, and golden-fixture deltas remain
+  explicit follow-up boundaries.
 
 ## Outcomes & Retrospective
 
