@@ -654,3 +654,55 @@ Rust-only acceptance of uninitialized grouping nodes now receive the source
 initialization error. The standalone `GroupingFunction` API remains intact;
 there is no new performance-sensitive loop beyond the source-required mark
 encoding and evaluation.
+
+## Rust follow-up: COALESCE temporal result FSP
+
+The rolling Go authority remains `origin/master` at
+`049e0e2ba79d79a3a8b1e9ff93ee22fb1cea7dd5` (2026-09-03). Before editing, the
+complete direct `pkg/expression` inventory was rechecked at 137 artifacts and
+128,744 lines (68 production files, 60 tests, seven generated sources,
+`BUILD.bazel`, and `OWNERS`); the recursive package boundary remains 208
+artifacts and 146,247 lines. The Rust `tidb-expr` owner remains 175 tracked
+artifacts and 105,908 lines, including production modules, in-module and
+standalone tests, generated-test inputs, fixtures/support, benchmarks, Cargo
+metadata, and the aggregate test build input. The relevant Go implementation
+and source table were read in full: `pkg/expression/builtin_compare.go`'s
+`coalesceFunctionClass`, `builtinCoalesceTimeSig`,
+`builtinCoalesceDurationSig`, and `pkg/expression/builtin_compare_test.go`'s
+`TestCoalesce`. No Go, Bazel, generated, fixture, platform, or build artifact
+changed.
+
+Go's COALESCE builder merges the result type's temporal decimal, while its
+`builtinCoalesceTimeSig.evalTime` and `builtinCoalesceDurationSig.evalDuration`
+stamp the selected value with that FSP after evaluating each argument. The
+`newBaseBuiltinFuncWithTp` path does not cast temporal arguments, so a first
+non-NULL `TIME(0)`/`DATETIME(0)` value must render with the merged
+`TIME(3)`/`DATETIME(3)` metadata. Rust's generic result-family check treated
+both values as already compatible and returned the first argument unchanged,
+leaving the `.000` suffix out. `ScalarFunction::coerce_to_ret_type` now has a
+COALESCE-only temporal tail that updates FSP metadata without rounding the
+instant, matching Go's `SetFsp` behavior; other functions continue through
+the existing family conversion path.
+
+The focused source regression `test_coalesce_fraction_promotion` covers both
+duration and datetime rows through the rewritten chunk evaluator. A clean
+pre-fix `b542b953ea` worktree with the temporary active assertions failed on
+`left: "DUR:12:59:59"`, `right: "DUR:12:59:59.000"`; the fixed test passes and
+also verifies the datetime `.000` rendering. The context-free AST helper is
+not used for this assertion because it intentionally carries no static
+FieldType/FSP metadata, whereas Go's bug is in the typed signature path.
+
+Ready validation for this follow-up used the dependency-closed `tidb-expr`
+owner and repository gates:
+
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr --lib compare_control_source -- --nocapture --test-threads=1` — 13 passed, 4 documented gap tests ignored.
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr --all-targets` — pass.
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr --lib -- --test-threads=1` — 1,105 passed, 0 failed, 130 documented gap tests ignored.
+- `rustfmt +nightly-2026-08-22 --edition 2021 --check` over the two edited Rust files and `git diff --check` — pass.
+
+Correctness risk is limited to typed COALESCE temporal results: the selected
+instant is unchanged and only its source-compatible FSP metadata is updated;
+invalid metadata is not introduced because result types come from validated
+expression inference. Compatibility risk is limited to callers that depended
+on the prior Rust-only omission of trailing zero temporal digits. Performance
+impact is one small metadata copy on each non-NULL COALESCE temporal result.

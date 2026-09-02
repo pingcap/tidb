@@ -522,8 +522,7 @@ fn test_ifnull_typed_pairs() {
 ///
 /// All rows are expressed on the chunk tier, where Go's
 /// `primitiveValsToConstants` typing applies. Temporals pin the fixed clock
-/// day. Two rows whose result DURATION/DATETIME fraction-promotion is not
-/// modeled yet are split into [`coalesce_fraction_promotion_gap`].
+/// day.
 #[test]
 fn test_coalesce() {
     for (expr, want) in [
@@ -577,12 +576,23 @@ fn test_coalesce() {
 /// `coalesce(time(0), time(3))` renders `"12:59:59.000"` and the datetime
 /// twin `"12:59:59.000000"` (Go builds
 /// `durationWithFspAndZeroMicrosecond`/`tmWithFspAndZeroMicrosecond`). This
-/// tier keeps the FIRST non-null argument's own fsp instead:
-/// `coalesce(cast('12:59:59' as time), cast('12:59:59.555' as time(3)))`
-/// currently answers `DUR:12:59:59` (chunk tier, measured in-session).
+/// The chunk evaluator must preserve Go's result FSP metadata on the selected
+/// value, including a zero-fraction value widened to the merged precision.
 #[test]
-#[ignore = "go-parity-gap: coalesce does not promote the surviving argument to the aggregated max-fsp temporal type; Go re-renders .000/.000000 suffixes"]
-fn coalesce_fraction_promotion_gap() {}
+fn test_coalesce_fraction_promotion() {
+    for (expr, expected) in [
+        (
+            "coalesce(cast('12:59:59' as time), cast('12:59:59.555' as time(3)))",
+            "DUR:12:59:59.000",
+        ),
+        (
+            "coalesce(cast('2020-10-10 12:59:59' as datetime), cast('2020-10-10 12:59:59.555' as datetime(3)))",
+            "STR:2020-10-10 12:59:59.000",
+        ),
+    ] {
+        assert_eq!(chunk_e(expr), expected, "chunk: {expr}");
+    }
+}
 
 /// GO PORT of `pkg/expression/builtin_compare_test.go:237 TestIntervalFunc`
 /// over its full table, including the uint64-boundary sign-rule rows and

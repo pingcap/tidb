@@ -633,6 +633,41 @@ impl ScalarFunction {
         let Some(ret_type) = self.get_static_type() else {
             return Ok(value);
         };
+        // Go's `builtinCoalesceTimeSig`/`builtinCoalesceDurationSig` stamps
+        // every selected temporal value with the merged result FSP after
+        // evaluating it. `newBaseBuiltinFuncWithTp` does not wrap temporal
+        // arguments, so the selected value can still carry the first
+        // argument's original precision. Preserve the value's instant and
+        // update only that metadata here; a general `ConvertTo` would also
+        // round the instant, which is not what Coalesce's `SetFsp` does.
+        if self.func_name.lowercase() == "coalesce" {
+            let target_fsp = if ret_type.decimal() == tidb_datatype::UNSPECIFIED_LENGTH {
+                0
+            } else {
+                ret_type.decimal()
+            };
+            match (&value, ret_type.code()) {
+                (
+                    Datum::Time(time),
+                    tidb_datatype::FieldTypeCode::Date
+                    | tidb_datatype::FieldTypeCode::Datetime
+                    | tidb_datatype::FieldTypeCode::Timestamp,
+                ) => {
+                    let mut time = *time;
+                    let _ = time.set_fsp(target_fsp);
+                    return Ok(Datum::Time(time));
+                }
+                (Datum::Duration(duration), tidb_datatype::FieldTypeCode::Duration) => {
+                    return Ok(Datum::Duration(
+                        tidb_datatype::MySqlDuration::from_raw_parts(
+                            duration.nanoseconds(),
+                            target_fsp,
+                        ),
+                    ));
+                }
+                _ => {}
+            }
+        }
         if same_eval_family(&value, ret_type) {
             return Ok(value);
         }

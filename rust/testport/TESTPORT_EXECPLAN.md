@@ -5781,6 +5781,15 @@ For each bounded behavior cluster:
   the complete seven-file Rust owner inventory are recorded in
   `rust/testport/receipts/util_stmtsummary_audit.md`; no Go source was edited.
 
+- 2026-09-03: aligned the Rust `tidb-expr` COALESCE temporal result metadata
+  with Go master `049e0e2ba79d79a3a8b1e9ff93ee22fb1cea7dd5`. Go's
+  `builtinCoalesceTimeSig` and `builtinCoalesceDurationSig` stamp the selected
+  value with the merged result FSP; Rust now does the same in the typed scalar
+  path without changing the instant. The focused duration and datetime
+  regressions reproduce the `.000` suffixes, and the complete `tidb-expr`
+  owner plus Ready gates pass. Details, inventory, fail-before evidence, and
+  risks are recorded in `rust/testport/receipts/expression_collation_audit.md`.
+
 ## Outcomes & Retrospective
 
 Work remains in progress. Current validated behavior includes ANALYZE prefix
