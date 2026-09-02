@@ -28,6 +28,7 @@ import (
 	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -118,6 +119,34 @@ func TestExternalFileWriter(t *testing.T) {
 	for i := range tests {
 		testFn(&tests[i], t)
 	}
+}
+
+type contextWriter struct {
+	ctx context.Context
+	got []byte
+}
+
+func (w *contextWriter) Write(ctx context.Context, p []byte) (int, error) {
+	w.ctx = ctx
+	w.got = append(w.got[:0], p...)
+	return len(p), nil
+}
+
+func (w *contextWriter) Close(context.Context) error {
+	return nil
+}
+
+func TestNewIOWriterBindsContext(t *testing.T) {
+	ctx := context.WithValue(context.Background(), struct{}{}, "value")
+	writer := &contextWriter{}
+	adapted := objectio.NewIOWriter(ctx, writer)
+
+	payload := []byte("payload")
+	n, err := adapted.Write(payload)
+	require.NoError(t, err)
+	require.Equal(t, len(payload), n)
+	require.Same(t, ctx, writer.ctx)
+	require.Equal(t, payload, writer.got)
 }
 
 func TestCompressReaderWriter(t *testing.T) {
