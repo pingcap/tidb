@@ -128,6 +128,13 @@ pub(crate) fn eval_unary(
             BitNeg => Datum::UInt(!i),
             Not | NotKeyword => unreachable!("handled above"),
         }),
+        // Go's unary-minus type inference promotes hybrid values to ETReal;
+        // only DECIMAL and temporal values take the decimal signature. Keep
+        // the REAL result for ENUM/SET ordinals and binary literals instead
+        // of letting the generic numeric conversion fall through to DECIMAL.
+        Datum::BinaryLiteral(_) | Datum::Enum(_, _) | Datum::Set(_, _) if matches!(op, Minus) => {
+            Ok(Datum::Real(-to_f64(v)))
+        }
         Datum::Null => unreachable!("handled above"),
         Datum::MinNotNull | Datum::MaxValue => unreachable!("rejected above"),
         other => {

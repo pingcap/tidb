@@ -5575,6 +5575,12 @@ For each bounded behavior cluster:
   focused presign/credential regressions, package suite, and Ready evidence are
   in `rust/testport/receipts/objstore_ossstore.md`; Rust has no dependency-closed
   OSS backend owner, so no speculative Rust behavior was added.
+- `pkg/expression` unary-minus hybrid operands now match Go master: ENUM, SET,
+  and binary-literal values use the REAL result domain (`-1.0`) instead of the
+  generic DECIMAL fallback. The current-master expression tree was
+  re-inventoried before editing (208 artifacts, including tests, generated
+  inputs/outputs, support files, and BUILD metadata); the executable regression
+  and fail-before evidence are recorded in `rust/testport/receipts/b073.md`.
 
 ## Outcomes & Retrospective
 

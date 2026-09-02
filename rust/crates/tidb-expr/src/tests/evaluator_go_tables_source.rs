@@ -236,11 +236,25 @@ fn unary_minus_temporal_and_decimal_operands_match_source() {
 
 /// Hybrid-kind Minus rows of `pkg/expression/evaluator_test.go:534
 /// TestUnaryOp`'s FIRST table ({Enum{a,1} -> -1.0}, {Set{a,1} -> -1.0},
-/// {BinaryLiteral(1) -> -1.0}): Go answers in the REAL domain; this crate
-/// answers DEC:-1 for those kinds today. Left as boundary evidence.
+/// {BinaryLiteral(1) -> -1.0}): Go answers in the REAL domain.
 #[test]
-#[ignore = "go-parity-gap: unary minus over Enum/Set/BinaryLiteral datums yields DEC:-1 where Go's table pins a KindFloat64 -1.0"]
-fn unary_minus_hybrid_and_binary_literal_kinds_diverge() {}
+fn unary_minus_hybrid_and_binary_literal_kinds_match_source() {
+    use tidb_ast::UnaryOp;
+    use tidb_datatype::{BinaryLiteral, MysqlEnum, MysqlSet};
+
+    let cases = [
+        Datum::new_enum(MysqlEnum::new("a", 1), tidb_datatype::Collation::Binary),
+        Datum::new_set(MysqlSet::new("a", 1), tidb_datatype::Collation::Binary),
+        Datum::BinaryLiteral(BinaryLiteral::from_uint(1, None)),
+    ];
+    for operand in cases {
+        assert_eq!(
+            apply_unary_of(UnaryOp::Minus, operand),
+            Datum::Real(-1.0),
+            "unary minus should use Go's REAL signature for hybrid operands"
+        );
+    }
+}
 
 /// Value tiers of `pkg/expression/evaluator_test.go:102 TestSleep`. Under WARN
 /// errctx levels (`non-strict`) SLEEP(NULL) and SLEEP(-1) each downgrade their
