@@ -4292,6 +4292,16 @@ For each bounded behavior cluster:
   `make bazel_prepare` is blocked by the unavailable Bazel executable. Details
   are in `receipts/domain_plan_replayer_retention.md`.
 
+- 2026-09-02: completed a bounded `pkg/meta/autoid` Go-package batch against
+  Go master `1c1a334d2be1dce64888b6e1f054462c566b0734`. Restored the complete
+  Go-master `autoid_service.go` synchronization/retry behavior, its focused
+  transfer/concurrency/RPC regressions, and the 17-shard BUILD metadata in one
+  package unit. The Rust `tidb-exec` client slice was already aligned; its
+  etcd-backed server owner remains a separate boundary. Focused and full
+  failpoint-aware Go package suites pass, with lint, Rust formatting, and diff
+  checks as Ready gates; `make bazel_prepare` is blocked by the unavailable
+  Bazel executable. Details are in `receipts/meta_autoid_audit.md`.
+
 ## Decision Log
 
 - Decision: keep top-level `pkg/util/logutil` on the existing

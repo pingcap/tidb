@@ -1,14 +1,13 @@
 # `pkg/meta/autoid` — Go-master allocator-service parity receipt
 
-Status: complete inventory; implemented the dependency-closed service-client
-slice from Go master. Rust now records the greatest allocation response
-monotonically (including unsigned ordering), distinguishes forced from
-monotonic rebases, and stops repeated RPC failures at the source count-and-time
-limit. The etcd-backed Go service owner and live gRPC integration remain an
-explicit boundary.
+Status: complete inventory; restored the dependency-closed service-client
+behavior in the Go checkout and kept the corresponding Rust client slice
+aligned. Go now carries the current allocation/rebase synchronization and
+bounded RPC retry policy; the etcd-backed Go service owner and live gRPC
+integration remain an explicit Rust boundary.
 
 Comparison source: Go `origin/master` at
-`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01). The package has 11
+`1c1a334d2be1dce64888b6e1f054462c566b0734` (2026-09-02). The package has 11
 tracked artifacts and 4,402 lines. It has no fixture/testdata directory,
 generated production source, platform-specific variant, or nested Go package.
 
@@ -34,7 +33,18 @@ editing, including the current-master additions from `f31b27fd75`
 (count-and-duration RPC retry limits), `17c0dd0fe4` (keyspace request fields),
 and `52920c5f6d` (concurrent ownership transfer and monotonic allocation).
 
-## Implemented Rust slice
+## Implemented Go and Rust slices
+
+The Go package was behind this complete Go-master source in the checkout.
+This batch restores the three changed artifacts (`BUILD.bazel`,
+`autoid_service.go`, and `autoid_service_test.go`) as one Go-package unit.
+The service now serializes transfer/forced rebase against allocation, records
+the greatest successful response monotonically (including unsigned ordering),
+and stops repeated RPC failures at the source count-and-duration limit. The
+expanded tests exercise out-of-order responses, transfer ordering and
+rollback, forced versus monotonic rebases, retry-limit logging, and context
+cancellation. The BUILD target now has the 17-shard metadata and all current
+test dependencies.
 
 - `tidb-exec::AutoIdServiceAllocator::alloc` now records `resp.max`, as Go's
   `updateLastAllocated` does, rather than the lower range endpoint. A CAS loop
@@ -56,15 +66,19 @@ connection reset and cancellation-aware backoff remain the transport boundary.
 
 ## Validation
 
-Profile: Ready for this code batch. The production edit is confined to the
-existing Rust service-client owner and its unit test; no Go or Bazel source was
-changed, so `make bazel_prepare` is not required.
+Profile: Ready for this code batch. Go production/test and Bazel files were
+restored, so the required `make bazel_prepare` gate was attempted and is
+blocked locally because the `bazel` executable is unavailable.
 
-- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/meta/autoid -run '^(TestInMemoryAlloc|TestAllocCanceledRPCReturnsQuickly|TestRebaseCanceledRPCReturnsQuickly|TestBackoffCtxAware)$' -count=1` — passed.
-- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --offline --locked -p tidb-exec --lib cluster_auto_id -- --test-threads=1` — 8 passed.
-- `rustup run nightly-2026-08-22 rustfmt --edition 2021 --check crates/tidb-exec/src/cluster_auto_id.rs` — passed.
-- `make lint` — passed.
+- Before the Go restoration, the Go-master transfer regression failed to
+  compile with missing `stateMu`, `rpcRetryPolicy`, and related methods.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 ./tools/check/failpoint-go-test.sh pkg/meta/autoid -run '^(TestSinglePointAllocTransfer|TestAutoIDRPCRetry)$' -count=1` — passed.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 ./tools/check/failpoint-go-test.sh pkg/meta/autoid -count=1` — passed.
+- The Ready re-run of `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-exec --lib cluster_auto_id -- --test-threads=1` was blocked before test execution by five pre-existing `FieldType::default()` compile errors in `rust/crates/tidb-exec/src/auto_pre_split.rs` (lines 367-382), outside this Go-only batch. The earlier owner run had 8 passing tests; no Rust files changed here.
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check` — passed.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 make lint` — passed.
 - `git diff --check` — passed after the code and documentation edits.
+- `make bazel_prepare` — attempted as required for the Go/BUILD changes; blocked locally because `bazel` is unavailable.
 
 ## Risks and unverified surfaces
 
@@ -79,3 +93,6 @@ changed, so `make bazel_prepare` is not required.
   remain unverified.
 - Live cross-node ownership transfer and mixed-version upgrade behavior were
   not run locally.
+- The current Rust owner test remains unverified until the unrelated
+  `auto_pre_split.rs` `FieldType::default()` compile errors are resolved in
+  that separate `pkg/ddl` boundary.
