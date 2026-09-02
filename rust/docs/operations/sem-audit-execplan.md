@@ -19,7 +19,13 @@ After this plan is complete, the direct Go package at `pkg/util/sem` will have o
 - [x] (2026-08-11 12:47Z) Implemented the missing default-value and logging behavior without creating a crate dependency cycle; both focused regressions and all six direct Rust SEM tests pass.
 - [x] (2026-08-11 12:53Z) Added the semantic receipt and completed pre-sync Ready validation; one unrelated session test failure was reproduced unchanged on the remote base and every remaining test passed.
 - [x] (2026-08-11 13:20Z) Rebased the one-package commit without conflict onto remote `7c3dc1398cb7f0261dccbbdfe33a99a5739bdf8c` and repeated the Ready profile; the same unrelated session failure reproduced on that exact clean base and every remaining gate passed.
-- [ ] Publish the one-package commit linearly and verify the remote SHA.
+- [x] (2026-09-02) Re-read all four current Go-master artifacts at
+  `c6054025ed4c32ab3672a2a24ea46892714d21ec`, reran both current/detached Go
+  suites, the five Rust predicate tests, and the focused session-default
+  regression, then refreshed the package receipt to Ready.
+- [x] (2026-09-02) Published the one-package commit linearly to
+  `origin/hparser-integration` and verified matching local/tracking/remote
+  SHAs before fetching the newest target branch.
 
 ## Surprises & Discoveries
 
@@ -56,11 +62,16 @@ After this plan is complete, the direct Go package at `pkg/util/sem` will have o
 
 ## Outcomes & Retrospective
 
-Implementation and post-sync Ready validation are complete, but publication is not. The direct source and test inventory, source revision, failpoint decision, Go oracle, two pre-fix failures, semantic receipt, focused regressions, full owning-crate coverage, formatting, clippy, lint, Bazel decision, and exact remote-base failure reproduction are fixed. Only a final remote fetch, linear push, and remote-SHA verification remain.
+Implementation, current-authority re-audit, and post-sync Ready validation are
+complete. The direct source and test inventory, source revision, failpoint
+decision, Go oracle, two pre-fix failures, semantic receipt, focused
+regressions, full owning-crate coverage, formatting, clippy, lint, Bazel
+decision, exact remote-base failure reproduction, and linear publication are
+recorded here.
 
 ## Context and Orientation
 
-The accepted direct Go package consists of `pkg/util/sem/BUILD.bazel`, `pkg/util/sem/main_test.go`, `pkg/util/sem/sem.go`, and `pkg/util/sem/sem_test.go` at `69f71e4ab14ab9ff9099fc5cf332734fde22ba6a`. The subdirectories `pkg/util/sem/compat` and `pkg/util/sem/v2` are separate Go packages and are outside this claim.
+The accepted direct Go package consists of `pkg/util/sem/BUILD.bazel`, `pkg/util/sem/main_test.go`, `pkg/util/sem/sem.go`, and `pkg/util/sem/sem_test.go` at current authority `c6054025ed4c32ab3672a2a24ea46892714d21ec`. The subdirectories `pkg/util/sem/compat` and `pkg/util/sem/v2` are separate Go packages and are outside this claim.
 
 Go stores the SEM flag in an atomic integer. `Enable` sets the flag, changes the global sysvar definitions for `tidb_enable_enhanced_security` to `ON` and `hostname` to `localhost`, then writes an informational log. `Disable` clears the flag, changes enhanced security to `OFF`, and changes `hostname` to `os.Hostname()` only when that lookup succeeds. The remaining functions are pure string predicates.
 

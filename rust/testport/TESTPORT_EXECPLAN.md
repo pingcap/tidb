@@ -66,6 +66,14 @@ For each bounded behavior cluster:
   `docs/operations/util-sem-compat-audit-execplan.md`; detached latest-master
   full Go execution remains unverified because it did not terminate locally.
 
+- 2026-09-02: re-audited the complete root `pkg/util/sem` package at current
+  Go master `c6054025ed4c32ab3672a2a24ea46892714d21ec`: four artifacts, five
+  source tests, and no hidden variants or fixtures. The existing native SEM
+  owner and cross-crate session-default integration remain aligned; current
+  and detached Go suites, five Rust predicate tests, the focused session
+  regression, Ready formatting, and the recorded lint gates pass. Details are
+  in `receipts/util_sem.md` and `docs/operations/sem-audit-execplan.md`.
+
 - 2026-09-02: refreshed the complete Go-master `pkg/util/disk` inventory at
   `c6054025ed4c32ab3672a2a24ea46892714d21ec`: five artifacts and 283 lines,
   with directory locking, cleanup, tracker aliases, and the concurrent source
@@ -2921,7 +2929,9 @@ For each bounded behavior cluster:
       `docs/operations/util-disk-audit-execplan.md`.
 - [x] Complete the pinned root `pkg/util/sem` package in its `tidb-util`
       owner, verify its full policy and cross-crate sysvar wiring, retain its
-      five source tests, and remove supplementary Rust-only assertions.
+      five source tests, and remove supplementary Rust-only assertions. The
+      current Ready receipt and living plan are in `receipts/util_sem.md` and
+      `docs/operations/sem-audit-execplan.md`.
 - [x] Complete the pinned root `pkg/util/traceevent` package across
       `tidb-util`, the vendored `tikv-client`, and server initialization:
       replace the disconnected fake client registry with live hooks, restore
