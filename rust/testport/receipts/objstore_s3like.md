@@ -1,7 +1,7 @@
 # `pkg/objstore/s3like` — complete Go-master parity boundary receipt
 
 Comparison source: Go `origin/master` at commit
-`5e8a1a229a7591ddac49a0cd3b795587c2595ab9` (2026-09-01).
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-01).
 
 ## Complete inventory
 
@@ -22,13 +22,13 @@ separate Go package and is covered by its own receipt.
 | `retry.go` | 193 | `2137664600febb5d856af98fce7b53173d59c07f` | `bb7e3c81a3edd5762c1edd15f90277928b94d89f57fce805ff6d9ded78950251` | AWS/OSS retry adapter, delay policy, connection-error classifiers, failpoint |
 | `store.go` | 684 | `03cbe0930fd20fb7d544a9d900ce56da58e1f620` | `6a61a641460aeb1c901836ec9bad0a99227366f8bb0522d7ebd3f9391bd65bd4` | S3 options/flags, CRUD, ranged opens, walks, multipart create, rename, presign |
 
-The production sources contain 50 functions/methods. The single test source
-contains one top-level test, with table-driven checks for all permission
-dispatches, annotated backend failures, unknown permissions, and the all-clear
-path. The reader, writer, retry, range parser, option validation, replication
-status, deletion batching, walk filtering, and presign behavior were read
-function by function; the BUILD dependency and flaky test settings were also
-read rather than inferred.
+The production sources contain 50 functions/methods. The source test contains
+three top-level tests in this checkout: the original table-driven permission
+checks plus focused regressions for retry-log suppression and non-positive
+presign expiration. The reader, writer, retry, range parser, option
+validation, replication status, deletion batching, walk filtering, and
+presign behavior were read function by function; the BUILD dependency and
+flaky test settings were also read rather than inferred.
 
 The current Go-master delta from the earlier pinned source
 `e2788410d8d696605e8cb002585877a063ccc909` was read in full. `Retryer` now
@@ -45,22 +45,22 @@ cloud retry adapters, multipart/ranged I/O, provider option parsing, or
 Prometheus labels. Rust references to presigned URLs and plan-replayer storage
 traits are narrower consumers and are not this package's backend implementation.
 
-No Rust-only behavior was found to remove, and no missing Go behavior can be
-implemented safely without introducing a speculative cloud-storage stack and
-its provider-specific dependencies. This package remains an explicit parity
-boundary.
+No Rust-only behavior was found to remove, and no Rust implementation was
+needed for the Go-only compatibility restoration. The checkout now matches
+Go master for the retry suppressor and positive presign-expiration guard while
+the package remains an explicit Rust parity boundary.
 
 ## Validation and risk
 
-Profile: **WIP** for this documentation-only boundary record. No Go, Bazel,
-module, or Rust source changed. The package uses failpoints, so the canonical
-failpoint wrapper was used against the exact Go `origin/master` worktree.
+Profile: **Ready** for this bounded Go compatibility fix; the package remains
+an explicit Rust parity boundary. The package uses failpoints, so the
+canonical failpoint wrapper was used after the focused regressions were added.
 
 ```text
 PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
 GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
-./tools/check/failpoint-go-test.sh pkg/objstore/s3like -count=1
-# exact Go origin/master source: PASS, 0.461s
+./tools/check/failpoint-go-test.sh ./pkg/objstore/s3like -count=1
+# PASS
 ```
 
 The generated mock package was compiled independently from the exact same
@@ -73,6 +73,11 @@ go test ./pkg/objstore/s3like/mock -count=1
 # exact Go origin/master source: [no test files], passed
 ```
 
-Not verified here: cloud-provider integration services, Bazel's flaky target,
-Windows execution, or full-workspace tests. No Rust validation was applicable
-because no Rust source changed.
+The pre-fix focused test run failed to compile because `WithLogSuppressor` was
+undefined; the post-fix focused and full failpoint-wrapped suites pass.
+`make lint` and `git diff --check` are run for the pushed batch. Because the
+new tests add top-level `Test*` functions, `make bazel_prepare` is required by
+repository policy; it is attempted and blocked by the missing local `bazel`
+executable. Not verified here: cloud-provider integration services, Bazel's
+flaky target, Windows execution, or full-workspace tests. No Rust validation
+was applicable because no Rust source changed.

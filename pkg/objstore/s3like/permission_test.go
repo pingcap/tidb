@@ -18,7 +18,9 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/pingcap/tidb/pkg/objstore/s3like/mock"
@@ -26,6 +28,25 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
+
+type presignClient struct {
+	*mock.MockPrefixClient
+	called bool
+}
+
+func (c *presignClient) PresignObject(context.Context, string, time.Duration) (string, error) {
+	c.called = true
+	return "presigned", nil
+}
+
+type retryerStub struct {
+	aws.Retryer
+	retryable bool
+}
+
+func (retryerStub) IsInstanceMetadataError(error) bool { return false }
+
+func (r retryerStub) IsErrorRetryable(error) bool { return r.retryable }
 
 func TestCheckPermissions(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -65,4 +86,30 @@ func TestCheckPermissions(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.True(t, ctrl.Satisfied())
+}
+
+func TestPresignFileRejectsNonPositiveExpiration(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	client := &presignClient{MockPrefixClient: mock.NewMockPrefixClient(ctrl)}
+	storage := s3like.NewStorage(client, storeapi.BucketPrefix{}, nil, nil)
+
+	_, err := storage.PresignFile(context.Background(), "object", 0)
+	require.EqualError(t, err, "presign expiration must be positive")
+	require.False(t, client.called)
+
+	url, err := storage.PresignFile(context.Background(), "object", time.Second)
+	require.NoError(t, err)
+	require.Equal(t, "presigned", url)
+	require.True(t, client.called)
+}
+
+func TestRetryerLogSuppressorPreservesRetryDecision(t *testing.T) {
+	called := false
+	retryer := s3like.NewRetryer(retryerStub{retryable: true}).WithLogSuppressor(func(error) bool {
+		called = true
+		return true
+	})
+
+	require.True(t, retryer.IsErrorRetryable(errors.New("transient")))
+	require.True(t, called)
 }
