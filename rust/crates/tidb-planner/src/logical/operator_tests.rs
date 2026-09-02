@@ -3960,3 +3960,66 @@ fn window_extract_col_groups_only_indexes_the_child_for_non_empty_groups() {
     }))
     .is_err());
 }
+
+// ***** Aggregation AggFuncs index boundaries *****
+
+/// Go `getAggFuncsColsForFirstRow` (`logical_aggregation.go:724-725`) indexes
+/// `la.AggFuncs[idx]` and `Args[0]` unguarded while walking the schema.
+#[test]
+fn first_row_columns_panics_when_the_schema_outgrows_the_aggs_like_go() {
+    let aggregation = LogicalAggregation::new(
+        super::BaseLogicalPlan::with_id(1, LogicalAggregation::TYPE, 0),
+        vec![agg(AGG_FUNC_FIRST_ROW, vec![col_expr(1)])],
+        vec![col_expr(2)],
+    );
+    let schema = schema(&[9, 10]);
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = aggregation.agg_funcs_cols_for_first_row(&schema);
+    }))
+    .is_err());
+}
+
+#[test]
+fn first_row_columns_panics_on_an_argument_less_firstrow_like_go() {
+    let aggregation = LogicalAggregation::new(
+        super::BaseLogicalPlan::with_id(1, LogicalAggregation::TYPE, 0),
+        vec![agg(AGG_FUNC_FIRST_ROW, Vec::new())],
+        vec![col_expr(2)],
+    );
+    let schema = schema(&[9]);
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = aggregation.agg_funcs_cols_for_first_row(&schema);
+    }))
+    .is_err());
+}
+
+/// Go `PruneColumns` (`logical_aggregation.go:123`) indexes `la.AggFuncs[i]`
+/// directly over the schema-derived `used` list.
+#[test]
+fn prune_columns_panics_when_the_schema_outgrows_the_aggs_like_go() {
+    let mut aggregation = LogicalAggregation::new(
+        super::BaseLogicalPlan::with_id(1, LogicalAggregation::TYPE, 0),
+        vec![agg(AGG_FUNC_FIRST_ROW, vec![col_expr(1)])],
+        Vec::new(),
+    );
+    let mut schema = schema(&[9, 10]);
+    let parent = vec![column(9)];
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        aggregation.prune_columns_local(&parent, &mut schema);
+    }))
+    .is_err());
+}
+
+/// Go `getAggFuncsColsForConstResult` guards `idx >= len(la.AggFuncs)` with
+/// an explicit break — a longer schema is NOT a panic there.
+#[test]
+fn const_result_columns_keeps_gos_explicit_length_guard() {
+    let aggregation = LogicalAggregation::new(
+        super::BaseLogicalPlan::with_id(1, LogicalAggregation::TYPE, 0),
+        vec![agg(AGG_FUNC_MAX, vec![col_expr(1)])],
+        vec![col_expr(2)],
+    );
+    let schema = schema(&[9, 10]);
+    let (cols, exprs) = aggregation.agg_funcs_cols_for_const_result(&schema);
+    assert!(cols.is_empty() && exprs.is_empty());
+}

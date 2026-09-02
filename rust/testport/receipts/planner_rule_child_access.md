@@ -156,3 +156,35 @@ Risks are limited to malformed source-shaped trees (which now panic at Go's
 direct index) and the returned change flag for valid non-empty unions; no
 planner tree or SQL execution path is altered. There is no new allocation or
 hot-path traversal cost.
+
+## Follow-up batch: aggregation `AggFuncs` index boundaries
+
+Comparison source: Go `origin/master` at
+`049e0e2ba79d79a3a8b1e9ff93ee22fb1cea7dd5`. The owning
+`pkg/planner/core/operator/logicalop` tree has 43 tracked artifacts and 16,086
+lines: 35 production files (including the two generated Go outputs), five
+logical-operator test/support files, three checked-in cascades fixture files,
+and two BUILD manifests. There are no platform-specific variants, fuzz
+corpora, or additional generated inputs. All artifacts were inventoried; the
+relevant `logical_aggregation.go` and logical-operator test/build inputs were
+read in full before editing. The Rust owner remains the 344-artifact
+`tidb-planner` crate inventory recorded above.
+
+Go's `PruneColumns` and `getAggFuncsColsForFirstRow` directly index the
+schema-derived `AggFuncs` slot, and the latter directly indexes `Args[0]`.
+Rust previously returned a Rust-only empty/partial answer for a schema longer
+than the aggregate list or an argument-less `firstrow`; it now uses the same
+direct indexes. `getAggFuncsColsForConstResult` retains Go's explicit
+`idx >= len(AggFuncs)` break, pinned by a non-panicking regression.
+
+The four focused regressions in `src/logical/operator_tests.rs` cover the two
+`firstrow` boundaries, pruning, and the guarded constant-result loop. Before
+the production edit, the three panic-contract tests failed; after the edit
+they pass. No Go source, Bazel metadata, generated output, or fixture was
+changed.
+
+Validation for this package batch uses the Ready Rust scope: focused owner
+tests, the full `tidb-planner --lib` and aggregate targets, all-targets check,
+pinned formatting, repository lint, and diff checks. Existing unrelated
+planner baseline failures remain documented in the ExecPlan and are not caused
+by this batch.

@@ -42,6 +42,15 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-03: aligned the Rust `tidb-planner` aggregation `AggFuncs` access
+  boundaries with Go master `049e0e2ba79d79a3a8b1e9ff93ee22fb1cea7dd5`.
+  `agg_funcs_cols_for_first_row` and `prune_columns_local` now direct-index
+  `AggFuncs` (and `Args[0]`) exactly where Go does, preserving panic behavior
+  for malformed plans; `agg_funcs_cols_for_const_result` keeps Go's explicit
+  length guard. Three pre-fix-failing panic regressions plus the guarded-loop
+  pin were added. Complete `logicalop` inventory and Ready evidence are in
+  `receipts/planner_rule_child_access.md`.
+
 - 2026-09-02: aligned the Rust `tidb-ast` SET restoration security boundary
   with Go master `17daba3dfd`. The complete `pkg/parser/ast` inventory remains
   36 tracked artifacts (34,448 lines, including generated visitor inputs and

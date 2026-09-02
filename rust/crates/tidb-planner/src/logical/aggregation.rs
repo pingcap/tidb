@@ -198,15 +198,10 @@ impl LogicalAggregation {
         }
         let mut cols = Vec::with_capacity(self.agg_funcs.len());
         for (idx, column) in self_schema.columns.iter().enumerate() {
-            let Some(func) = self.agg_funcs.get(idx) else {
-                break;
-            };
-            if func.name() == AGG_FUNC_FIRST_ROW
-                && func
-                    .args()
-                    .first()
-                    .is_some_and(|arg| extract_columns(arg).len() == 1)
-            {
+            // Go indexes `la.AggFuncs[idx]` and `Args[0]` unguarded
+            // (`logical_aggregation.go:724-725`).
+            let func = &self.agg_funcs[idx];
+            if func.name() == AGG_FUNC_FIRST_ROW && extract_columns(&func.args()[0]).len() == 1 {
                 cols.push(column.clone());
             }
         }
@@ -324,9 +319,9 @@ impl LogicalAggregation {
         let mut all_first_row = true;
         let mut all_remain_first_row = true;
         for i in (0..used.len()).rev() {
-            let Some(func) = self.agg_funcs.get(i) else {
-                continue;
-            };
+            // Go indexes `la.AggFuncs[i]` directly
+            // (`logical_aggregation.go:123`).
+            let func = &self.agg_funcs[i];
             if func.name() != AGG_FUNC_FIRST_ROW {
                 all_first_row = false;
             }
