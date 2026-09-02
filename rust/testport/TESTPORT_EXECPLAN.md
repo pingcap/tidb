@@ -42,6 +42,16 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-03: aligned the Rust transaction and SQL error consumers for Go
+  master `pkg/store/driver/txn`'s shared-lock-loss response. Both direct
+  `KeyError.shared_lock_lost` responses and the vendored client error now
+  become a typed terminal `TransactionCause`, preserving the transaction
+  start timestamp and client-go key redaction. The `tidb-exec` boundary emits
+  the registered `[tikv:9015]` message instead of the Rust generic 1105 path;
+  focused classification and SQL-scope regressions pass. Session-level
+  rollback wiring remains a separately inventoried boundary. Details are in
+  `rust/testport/receipts/store_driver_txn.md`.
+
 - 2026-09-03: closed the two executable sequence-arithmetic gaps in the
   `pkg/ddl` sequence-function carrier. Go master’s
   `pkg/meta/autoid.CalcSequenceBatchSize` relies on wrapping signed `int64`
@@ -5790,6 +5800,15 @@ For each bounded behavior cluster:
   regressions reproduce the `.000` suffixes, and the complete `tidb-expr`
   owner plus Ready gates pass. Details, inventory, fail-before evidence, and
   risks are recorded in `rust/testport/receipts/expression_collation_audit.md`.
+- 2026-09-03: aligned the Rust `pkg/executor` consumer for
+  `INFORMATION_SCHEMA.USER_ATTRIBUTES` with Go master. `tidb-executor` now
+  serves the declared three-column schema, while `tidb-session` reads the
+  JSON `metadata` member from `mysql.user` and applies the MySQL 8.0.22
+  SELECT/UPDATE, CREATE USER, SYSTEM_USER, and self-only visibility matrix
+  through the existing privilege registry. The focused session regression
+  covers every visibility mode and metadata output; complete inventory,
+  fail-before evidence, and remaining boundaries are recorded in
+  `rust/testport/receipts/executor_user_attributes.md`.
 
 ## Outcomes & Retrospective
 

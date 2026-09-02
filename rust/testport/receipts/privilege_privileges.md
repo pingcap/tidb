@@ -44,8 +44,11 @@ before that executor package is restored (an ordinary user still sees all
 rows), so it is not added to this package batch. The focused filter tests pin
 the package-owned behavior without hiding that boundary.
 
-No dependency-closed Rust owner implements TiDB's privilege cache and live
-INFORMATION_SCHEMA user filtering, so no speculative Rust facade was added.
+No separate Rust privilege-package facade was added: the bounded
+`pkg/executor` consumer alignment uses the existing `PrivilegeRegistry` host
+matching and dynamic-privilege APIs directly. The executor receipt
+(`receipts/executor_user_attributes.md`) owns that SQL-visible row materializer;
+this receipt remains limited to the Go privilege-cache and filter semantics.
 
 ## Regression and validation
 
@@ -76,7 +79,8 @@ make bazel_prepare
 
 - Correctness risk is concentrated in matching the viewing account and
   distinguishing SYSTEM_USER targets; focused unit tests cover those modes.
-- The executor consumer and end-to-end INFORMATION_SCHEMA filtering remain
-  unverified until the owning executor package is restored.
+- The Rust executor consumer and end-to-end INFORMATION_SCHEMA filtering are
+  covered by the focused session regression, but the full executor package
+  remains an explicit unverified boundary.
 - Bazel analysis, Windows/platform builds, and full-workspace tests were not
   run locally.

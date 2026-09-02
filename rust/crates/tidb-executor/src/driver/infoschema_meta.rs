@@ -1973,6 +1973,38 @@ const USER_PRIVILEGES_COLUMNS: &[InfoColumn] = &[
     },
 ];
 
+/// Go `infoschema.tableUserAttributesCols`.
+///
+/// The rows are read from the real `mysql.user` table by the session layer,
+/// then filtered using MySQL's account-visibility rules. `ATTRIBUTE` is the
+/// JSON `metadata` object unquoted by Go's `setDataForUserAttributes`.
+const USER_ATTRIBUTES_COLUMNS: &[InfoColumn] = &[
+    InfoColumn {
+        name: "USER",
+        tp: FieldTypeCode::Varchar,
+        size: 32,
+        flag: NOT_NULL_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "HOST",
+        tp: FieldTypeCode::Varchar,
+        size: 255,
+        flag: NOT_NULL_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "ATTRIBUTE",
+        tp: FieldTypeCode::LongBlob,
+        size: UNSPECIFIED_LENGTH,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+];
+
 /// Go `infoschema.tableSchemaPrivilegesCols`.
 ///
 /// CAPTURED: this table -- and its `TABLE_PRIVILEGES` / `COLUMN_PRIVILEGES`
@@ -2202,6 +2234,7 @@ const SERVED_TABLES: &[(&str, &[InfoColumn])] = &[
     ),
     ("TIDB_TRX", WORKLOAD_TIDB_TRX_COLUMNS),
     ("USER_PRIVILEGES", USER_PRIVILEGES_COLUMNS),
+    ("USER_ATTRIBUTES", USER_ATTRIBUTES_COLUMNS),
     ("VIEWS", VIEWS_COLUMNS),
 ];
 

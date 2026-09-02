@@ -676,6 +676,8 @@ impl Session {
                 self.deadlock_history_table_rows()?
             } else if table_name.eq_ignore_ascii_case("USER_PRIVILEGES") {
                 self.user_privileges_table_rows()
+            } else if table_name.eq_ignore_ascii_case("USER_ATTRIBUTES") {
+                self.user_attributes_table_rows(&scratch, ctx)
             } else if table_name.eq_ignore_ascii_case("TIDB_SERVERS_INFO") {
                 self.tidb_servers_info_table_rows()
             } else if table_name.eq_ignore_ascii_case("CLUSTER_INFO") {
@@ -694,6 +696,98 @@ impl Session {
             );
         }
         Ok(scratch)
+    }
+
+    /// Go `memtableRetriever.setDataForUserAttributes`: read the metadata
+    /// object from the real `mysql.user` table, then apply MySQL 8.0.22's
+    /// account-visibility rules before exposing the virtual rows. The query
+    /// runs against the statement's catalog snapshot, so account DML and
+    /// `INFORMATION_SCHEMA.USER_ATTRIBUTES` cannot observe different rows.
+    fn user_attributes_table_rows(
+        &self,
+        catalog: &Catalog,
+        ctx: &tidb_executor::StmtContext,
+    ) -> Vec<Vec<tidb_datatype::Datum>> {
+        let Ok((_columns, rows)) = tidb_executor::run_select_meta_in(
+            "SELECT User, Host, JSON_UNQUOTE(JSON_EXTRACT(User_attributes, '$.metadata')) \
+             FROM mysql.user",
+            catalog,
+            "mysql",
+            ctx,
+        ) else {
+            // A bare in-process catalog has no bootstrapped mysql.user table.
+            // Go's restricted reader returns no rows in that shape rather than
+            // fabricating account metadata.
+            return Vec::new();
+        };
+
+        let Some((viewer_user, viewer_host)) = self.current_identity() else {
+            return rows;
+        };
+        let Some(registry) = self.privileges.as_ref() else {
+            return rows;
+        };
+        if self.privilege_bypassed {
+            return rows;
+        }
+
+        let can_read_all = registry.has_priv_mask_with_roles(
+            viewer_user,
+            viewer_host,
+            self.active_roles(),
+            tidb_mysql::consts::SystemDB,
+            "user",
+            privilege::GlobalPriv::Select.bit() | privilege::GlobalPriv::Update.bit(),
+        );
+        let can_create_user = registry.has_priv_mask_with_roles(
+            viewer_user,
+            viewer_host,
+            self.active_roles(),
+            "",
+            "",
+            privilege::GlobalPriv::CreateUser.bit(),
+        );
+        let caller_is_system_user = registry.has_dynamic_priv_with_roles(
+            viewer_user,
+            viewer_host,
+            self.active_roles(),
+            "SYSTEM_USER",
+            false,
+        );
+
+        rows.into_iter()
+            .filter(|row| {
+                if row.len() != 3 || can_read_all {
+                    return row.len() == 3;
+                }
+                let Some(user) = crate::datum_text(&row[0]) else {
+                    return false;
+                };
+                let Some(host) = crate::datum_text(&row[1]) else {
+                    return false;
+                };
+                // `record.match(viewer)` in Go selects a stored account row
+                // whose host pattern matches the viewer. The registry's
+                // account matcher is the same host-pattern implementation.
+                let is_self = registry.account_matches(
+                    &(user.clone(), host.clone()),
+                    viewer_user,
+                    viewer_host,
+                );
+                if is_self {
+                    return true;
+                }
+                if !can_create_user {
+                    return false;
+                }
+                if caller_is_system_user {
+                    return true;
+                }
+                // `SYSTEM_USER` is a dynamic privilege with SUPER fallback,
+                // so a CREATE USER caller cannot inspect a protected target.
+                !registry.has_dynamic_priv(&user, &host, "SYSTEM_USER", false)
+            })
+            .collect()
     }
 
     /// Go `stmtSummaryRetriever.initSummaryRowsReader` for the cumulative
