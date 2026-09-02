@@ -1105,6 +1105,10 @@ func (w *worker) onSetTableFlashReplica(jobCtx *jobContext, job *model.Job) (ver
 	}
 	replicaInfo := args.TiflashReplica
 
+	failpoint.Inject("forceSetTiFlashReplicaSkipColumnarStorageGate", func() {
+		args.SkipColumnarStorageGate = true
+	})
+
 	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -1117,6 +1121,12 @@ func (w *worker) onSetTableFlashReplica(jobCtx *jobContext, job *model.Job) (ver
 
 	// Check the validity of the replica count. For example, not exceeding the tiflash store count.
 	err = w.checkTiFlashReplicaCount(replicaInfo.Count)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	err = w.checkColumnarStorageEnabled(replicaInfo.Count, args.SkipColumnarStorageGate)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -1188,6 +1198,36 @@ func (w *worker) checkTiFlashReplicaCount(replicaCount uint64) error {
 	defer w.sessPool.Put(ctx)
 
 	return checkTiFlashReplicaCount(ctx, replicaCount)
+}
+
+func (w *worker) checkColumnarStorageEnabled(replicaCount uint64, skipColumnarStorageGate bool) error {
+	// Removing TiFlash replica or skipping the gate (e.g. placement-rule repair)
+	// does not require tidb_columnar_storage_enabled to be enabled.
+	if replicaCount == 0 || skipColumnarStorageGate {
+		return nil
+	}
+	ctx, err := w.sessPool.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer w.sessPool.Put(ctx)
+
+	return checkColumnarStorageEnabled(ctx)
+}
+
+func (w *worker) checkCreateTableColumnarStorage(job *model.Job, tbInfo *model.TableInfo) error {
+	if tbInfo.TiFlashReplica == nil {
+		return nil
+	}
+	err := w.checkColumnarStorageEnabled(tbInfo.TiFlashReplica.Count, false)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		if tableHasColumnarIndex(tbInfo) {
+			return wrapColumnarStorageGateForColumnarIndex(err)
+		}
+		return err
+	}
+	return nil
 }
 
 func onUpdateTiFlashReplicaStatus(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
