@@ -3109,8 +3109,9 @@ For each bounded behavior cluster:
       package in `tidb-stats-handle-cache-internal`: bind it to shared actual
       statistics tables, preserve all eleven pointer-receiver methods,
       and remove the generic value, extra method, and source-absent mock tests.
-      The atomic inventory and WIP gates are in
-      `receipts/statistics_handle_cache_internal.md`.
+      The atomic inventory and Ready gates are in
+      `receipts/statistics_handle_cache_internal.md` and
+      `docs/operations/statistics-handle-cache-internal-audit-execplan.md`.
 - [x] Complete the pinned `pkg/statistics/handle/cache/internal/mapcache`
       package in `tidb-stats-handle-cache-internal-mapcache`: derive cost from
       actual statistics tables, retain shared pointers across independent map
