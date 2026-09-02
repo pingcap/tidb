@@ -36,9 +36,10 @@ README, or ownership artifact.
 | `ttlstatus_test.go` | 181 | table status tests |
 
 The production Go files and BUILD metadata are byte-identical to current Go
-master. The branch's `task_test.go` has an existing 18-line test-harness
-stabilization relative to Go master; it was preserved and not part of this
-batch. The Rust owner inventory was also read in full: the five cache modules,
+master. Before this batch, the branch's `task_test.go` lacked Go master's
+18-line test-harness stabilization; the helper now stops the TTL job manager
+before both task-row tests, preventing background GC from deleting their
+fixtures. The Rust owner inventory was also read in full: the five cache modules,
 the aggregate `cache_test.rs`, package module header, crate manifest, lockfile,
 and crate root.
 
@@ -80,12 +81,14 @@ Profile: **Ready**.
 - `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -p tidb-ttl --all-targets`
 - the same locked toolchain with `cargo ... test --offline --locked -p tidb-ttl --test cache_test -- --test-threads=1` — 20 passed.
 - the same locked toolchain with `cargo ... test --offline --locked -p tidb-ttl --tests -- --test-threads=1` — cache (20), session (11), and SQL (5) tests passed.
-- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test -tags=intest ./pkg/ttl/cache -count=1` — passed (19.402s).
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test -tags=intest,deadlock ./pkg/ttl/cache -run '^(TestRowToTTLTask|TestInsertIntoTTLTask)$' -count=1` — passed after the Go harness fix.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 tools/check/failpoint-go-test.sh ./pkg/ttl/cache -run '^(TestRowToTTLTask|TestInsertIntoTTLTask)$' -count=1` — passed with failpoint cleanup.
 - `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 make lint` — required Ready gate.
 - `git diff --check` — passed.
 
-No Go source, import section, test target, or Bazel file changed, so the
-`make bazel_prepare` gate was not applicable to this Rust-only implementation.
+Go test source changed, so `make bazel_prepare` was required and attempted;
+it is blocked locally because the `bazel` executable is not installed. No
+Bazel metadata could be regenerated.
 
 ## Risks and unverified scope
 

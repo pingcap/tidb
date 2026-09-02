@@ -30,6 +30,14 @@ available task codec and JSON state gaps while retaining the real-
 - [x] (2026-09-02) Published commit `cca2f7711b4ac393d8ef0d979dda8accd9c3d243`
   to `origin/hparser-integration`, fetched and fast-forward pulled the latest
   tip, and verified local, tracking, and `git ls-remote` SHAs match.
+- [x] (2026-09-02) Restored Go master's TTL task test harness: both task-row
+  tests now stop and await the background TTL job manager before inserting
+  fixtures, preventing nondeterministic task GC.
+- [x] (2026-09-02) Ran focused task regressions, repository lint, and diff
+  checks; attempted `make bazel_prepare` (blocked by missing `bazel`).
+- [x] (2026-09-02) Committed this Go test-harness batch with the updated
+  receipt, pushed to `hparser-integration`, verified the remote SHA, and
+  fast-forward pulled.
 
 ## Scope and decisions
 
@@ -58,8 +66,8 @@ Run from the repository root:
     PATH=<pinned Go>/bin:$PATH GOPATH=<pinned GOPATH> make lint
     git diff --check
 
-No Go/Bazel artifact changed, so `make bazel_prepare` is not required for this
-Rust-only batch.
+The Go test source changed in this follow-up, so `make bazel_prepare` is
+required; the local executable is unavailable.
 
 ## Decision log
 
