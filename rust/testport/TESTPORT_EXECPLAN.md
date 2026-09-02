@@ -3112,12 +3112,15 @@ For each bounded behavior cluster:
       The atomic inventory and Ready gates are in
       `receipts/statistics_handle_cache_internal.md` and
       `docs/operations/statistics-handle-cache-internal-audit-execplan.md`.
-- [x] Complete the pinned `pkg/statistics/handle/cache/internal/mapcache`
-      package in `tidb-stats-handle-cache-internal-mapcache`: derive cost from
-      actual statistics tables, retain shared pointers across independent map
-      copies, implement the complete cache contract, and remove the generic
-      caller-cost surface and source-absent tests. The atomic inventory and WIP
-      gates are in `receipts/statistics_handle_cache_internal_mapcache.md`.
+- [x] Re-audit the complete `pkg/statistics/handle/cache/internal/mapcache`
+      package at Go master `c6054025ed4c32ab3672a2a24ea46892714d21ec`: two
+      production/build artifacts and 151 lines, with no hidden variants or
+      source tests. The native owner derives costs from actual statistics
+      tables, retains shared pointers across independent copies, implements
+      the complete cache contract, and adds only the synchronization required
+      by shared Rust cache ownership. The receipt, focused owner tests, and
+      Ready gates are in `receipts/statistics_handle_cache_internal_mapcache.md`
+      and `docs/operations/statistics-handle-cache-internal-mapcache-audit-execplan.md`.
 - [x] Audit the pinned `pkg/statistics/handle/cache/internal/lfu` package as
       one five-artifact unit and remove its table-free key-set, shard,
       caller-memory, source-absent test, and stale function-batch carriers.
