@@ -43,21 +43,6 @@ type handleRange struct {
 	end   int64
 }
 
-func TestRequestBuilderCoprRequestLimiter(t *testing.T) {
-	limiter := kv.NewCoprRequestLimiter(3)
-	request, err := (&RequestBuilder{}).
-		SetCoprRequestLimiter(limiter).
-		SetStoreBatchSize(4).
-		SetAllowBatchTaskDataMerge(true).
-		SetExecuteBatchTasksSerially(true).
-		Build()
-	require.NoError(t, err)
-	require.Same(t, limiter, request.CoprRequestLimiter)
-	require.Equal(t, 4, request.StoreBatchSize)
-	require.True(t, request.AllowBatchTaskDataMerge)
-	require.True(t, request.ExecuteBatchTasksSerially)
-}
-
 func TestTableHandlesToKVRanges(t *testing.T) {
 	handles := []kv.Handle{
 		kv.IntHandle(0),

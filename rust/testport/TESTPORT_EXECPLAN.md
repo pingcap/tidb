@@ -42,6 +42,21 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: restored the Go-master analyze-store-batch contract in one
+  dependency-closed source batch. `pkg/sessionctx/vardef` now exposes the
+  `tidb_analyze_store_batch_size` name/default/bound, `pkg/sessionctx/variable`
+  initializes and validates the session field, and
+  `pkg/statistics/handle/util` refreshes the global value in source order while
+  forwarding explicit SQL contexts. The complete
+  `pkg/statistics/handle/storage` inventory is restored with one-snapshot
+  column-distribution reads and statement-local table-size stats that skip
+  histogram scans for TABLE_ROWS-only requests. Focused failpoint-aware Go
+  regressions pass in the detached Go-master worktree; current-branch Ready
+  lint remains gated by the concurrent distsql/execdetails source sync and
+  `make bazel_prepare` remains blocked because `bazel` is unavailable. Receipts:
+  `sessionctx_vardef_audit.md`, `sessionctx_variable.md`,
+  `statistics_handle_util.md`, and `statistics_handle_storage_audit.md`.
+
 - 2026-09-02: completed the bounded `pkg/metrics` Go-package batch against
   current Go master `78cac443a4f46c13bfe27eb247b5c80657952547` as one
   package commit. The complete inventory covers 60 artifacts and 139,824
@@ -300,6 +315,18 @@ For each bounded behavior cluster:
   enablement; `make bazel_prepare` remains blocked by the unavailable local
   Bazel executable. The executor merge-sort caller is a separate package
   boundary and remains queued for its own migration.
+
+- 2026-09-02: restored the current Go-master `pkg/distsql` consumer delta in
+  one Go-package batch at
+  `78cac443a4f46c13bfe27eb247b5c80657952547`. The complete 14-artifact
+  inventory covers root and context targets, tests, benchmark support, and
+  ownership metadata. `selectResult` now preserves close errors, propagates
+  read-pool/runtime evidence, validates response-summary coverage, and records
+  raw Analyze execution details; focused and full failpoint-aware tests pass.
+  The changed `RecordCopStats` API is now wired to this package, while the
+  separate `pkg/store/copr` transport and Rust response-owner boundaries remain
+  explicit. `make lint` and the required Bazel gate are run before commit;
+  Bazel is unavailable locally. Details are in `receipts/distsql_audit.md`.
 
 - 2026-09-02: completed the Go-master `pkg/parser` materialized-view DDL
   syntax delta in one parser-package batch. Before editing, the full root

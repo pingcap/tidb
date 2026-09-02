@@ -515,7 +515,8 @@ func (builder *RequestBuilder) SetStoreBatchSize(storeBatchSize int) *RequestBui
 }
 
 // SetAllowBatchTaskDataMerge opts into batching without row-count hints and lets
-// TiKV merge child data into the main response.
+// TiKV merge child data into the main response. The caller must bound response
+// size and handle both merged and per-task response shapes.
 func (builder *RequestBuilder) SetAllowBatchTaskDataMerge(allow bool) *RequestBuilder {
 	builder.AllowBatchTaskDataMerge = allow
 	return builder

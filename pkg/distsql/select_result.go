@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -334,6 +335,11 @@ type selectResult struct {
 	fieldTypes              []*types.FieldType
 	intermediateOutputTypes [][]*types.FieldType
 	ctx                     *dcontext.DistSQLContext
+	isAnalyze               bool // Selects the Analyze close path even when execution-info collection is disabled.
+	// collectExecDetailsForRaw enables statistics collection for raw responses,
+	// which bypass the SelectResponse decoding and statistics path in fetchResp.
+	// Only Analyze currently opts in, using the execution-info setting captured at request creation.
+	collectExecDetailsForRaw bool
 
 	selectResp       *tipb.SelectResponse
 	selectRespSize   int64 // record the selectResp.Size() when it is initialized.
@@ -355,11 +361,18 @@ type selectResult struct {
 	memTracker       *memory.Tracker
 
 	stats *selectResultRuntimeStats
+
+	// scanDetailForRaw accumulates raw-response scan details for this request.
+	// Analyze uses these request totals to estimate scan bytes before combining requests.
+	scanDetailForRaw clientutil.ScanDetail
 	// distSQLConcurrency and paging are only for collecting information, and they don't affect the process of execution.
 	distSQLConcurrency int
 	paging             bool
 
 	iter *selectResultIter
+
+	closeOnce sync.Once
+	closeErr  error
 }
 
 func (r *selectResult) fetchResp(ctx context.Context) error {
@@ -412,6 +425,7 @@ func (r *selectResult) fetchRespWithIntermediateResults(ctx context.Context, int
 				if hasStats, ok := resultSubset.(CopRuntimeStats); ok {
 					if copStats := hasStats.GetCopRuntimeStats(); copStats != nil {
 						r.ctx.ExecDetails.MergeCopExecDetails(&copStats.CopExecDetails, duration)
+						r.ctx.ExecDetails.MergeReadPoolTaskDetails(copStats.ReadPoolTaskDetails)
 					}
 				}
 			}
@@ -475,6 +489,7 @@ func (r *selectResult) fetchRespWithIntermediateResults(ctx context.Context, int
 					return err
 				}
 				r.ctx.ExecDetails.MergeCopExecDetails(&copStats.CopExecDetails, duration)
+				r.ctx.ExecDetails.MergeReadPoolTaskDetails(copStats.ReadPoolTaskDetails)
 			}
 		}
 		if len(r.selectResp.Chunks) != 0 {
@@ -544,6 +559,11 @@ func (r *selectResult) NextRaw(ctx context.Context) (data []byte, err error) {
 
 	resultSubset, err := r.resp.Next(ctx)
 	r.partialCount++
+	if r.collectExecDetailsForRaw && resultSubset != nil {
+		if withStats, ok := resultSubset.(CopRuntimeStats); ok {
+			r.recordCopRuntimeStatsForRaw(withStats.GetCopRuntimeStats(), resultSubset.RespTime())
+		}
+	}
 	if resultSubset != nil && err == nil {
 		data = resultSubset.GetData()
 	}
@@ -630,6 +650,20 @@ func recordExecutionSummariesForTiFlashTasks(runtimeStatsColl *execdetails.Runti
 	FillDummySummariesForTiFlashTasks(runtimeStatsColl, storeType, allPlanIDs, recordedPlanIDs)
 }
 
+func (r *selectResult) getOrCreateRuntimeStats() *selectResultRuntimeStats {
+	if r.stats == nil {
+		r.stats = &selectResultRuntimeStats{
+			distSQLConcurrency: r.distSQLConcurrency,
+		}
+		if ci, ok := r.resp.(copr.CopInfo); ok {
+			conc, extraConc := ci.GetConcurrency()
+			r.stats.distSQLConcurrency = conc
+			r.stats.extraConcurrency = extraConc
+		}
+	}
+	return r.stats
+}
+
 func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr.CopRuntimeStats, respTime time.Duration, forUnconsumedStats bool) (err error) {
 	callee := copStats.CalleeAddress
 	if r.rootPlanID <= 0 || r.ctx.RuntimeStatsColl == nil || (callee == "" && (copStats.ReqStats == nil || copStats.ReqStats.GetRPCStatsCount() == 0)) {
@@ -646,17 +680,23 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 		tikvmetrics.ObserveReadSLI(uint64(readKeys), readTime, readSize)
 	}
 
-	if r.stats == nil {
-		r.stats = &selectResultRuntimeStats{
-			distSQLConcurrency: r.distSQLConcurrency,
-		}
-		if ci, ok := r.resp.(copr.CopInfo); ok {
-			conc, extraConc := ci.GetConcurrency()
-			r.stats.distSQLConcurrency = conc
-			r.stats.extraConcurrency = extraConc
-		}
-	}
+	r.getOrCreateRuntimeStats()
 	r.stats.mergeCopRuntimeStats(copStats, respTime)
+	if forUnconsumedStats {
+		// selectResp still refers to the last consumed response. Keep the generic
+		// RPC/scan/time evidence above, but do not invent a response-summary
+		// expectation or replay summaries from the last consumed response.
+		if copStats.TimeDetail.ProcessTime > 0 {
+			r.ctx.CPUUsage.MergeTikvCPUTime(copStats.TimeDetail.ProcessTime)
+		}
+		return nil
+	}
+	if r.storeType == kv.TiKV {
+		// Every consumed TiKV response is expected to carry one execution summary
+		// for each cop plan ID. Record that expectation before validating the
+		// returned summary slice so missing summaries remain explicit.
+		r.ctx.RuntimeStatsColl.RecordExpectedCopResponseSummaries(r.copPlanIDs)
+	}
 
 	// If hasExecutor is true, it means the summary is returned from TiFlash.
 	hasExecutor := false
@@ -683,9 +723,54 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 	if copStats.TimeDetail.ProcessTime > 0 {
 		r.ctx.CPUUsage.MergeTikvCPUTime(copStats.TimeDetail.ProcessTime)
 	}
+	if r.storeType == kv.TiKV {
+		summaries := r.selectResp.GetExecutionSummaries()
+		if len(summaries) == 0 {
+			// The response contributes no operator rows, but its request-root scan,
+			// time, and read-pool evidence remain chargeable.
+			if len(r.copPlanIDs) > 0 {
+				r.ctx.RuntimeStatsColl.RecordCopStats(
+					r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType,
+					copStats.ScanDetail, copStats.TimeDetail, copStats.ReadPoolTaskDetails, nil)
+			}
+			return nil
+		}
+		malformed := len(summaries) != len(r.copPlanIDs)
+		for _, summary := range summaries {
+			if summary == nil || summary.TimeProcessedNs == nil ||
+				summary.NumProducedRows == nil || summary.NumIterations == nil {
+				malformed = true
+				break
+			}
+		}
+		if malformed {
+			r.ctx.RuntimeStatsColl.InvalidateCopResponseSummaries(r.copPlanIDs)
+			logutil.Logger(ctx).Warn("invalid cop task execution summaries",
+				zap.Int("expected", len(r.copPlanIDs)), zap.Int("received", len(summaries)))
+			return nil
+		}
+	}
+	if r.storeType != kv.TiKV && !hasExecutor &&
+		len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
+		// TiFlash streaming responses carry positional execution summaries only
+		// in the last response, so an empty summary slice is expected.
+		if !(r.storeType == kv.TiFlash && len(r.selectResp.GetExecutionSummaries()) == 0) {
+			logutil.Logger(ctx).Warn("invalid cop task execution summaries length",
+				zap.Int("expected", len(r.copPlanIDs)),
+				zap.Int("received", len(r.selectResp.GetExecutionSummaries())))
+		}
+		return nil
+	}
 	if hasExecutor {
 		if len(r.copPlanIDs) > 0 {
-			r.ctx.RuntimeStatsColl.RecordCopStats(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType, copStats.ScanDetail, copStats.TimeDetail, nil)
+			r.ctx.RuntimeStatsColl.RecordCopStats(
+				r.copPlanIDs[len(r.copPlanIDs)-1],
+				r.storeType,
+				copStats.ScanDetail,
+				copStats.TimeDetail,
+				copStats.ReadPoolTaskDetails,
+				nil,
+			)
 		}
 		recordExecutionSummariesForTiFlashTasks(r.ctx.RuntimeStatsColl, r.selectResp.GetExecutionSummaries(), r.storeType, r.copPlanIDs)
 		// report MPP cross AZ network traffic bytes to resource control manager.
@@ -699,18 +784,6 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 			}
 		}
 	} else {
-		// For cop task cases, we still need this protection.
-		if len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
-			// for TiFlash streaming call(BatchCop and MPP), it is by design that only the last response will
-			// carry the execution summaries, so it is ok if some responses have no execution summaries, should
-			// not trigger an error log in this case.
-			if !forUnconsumedStats && !(r.storeType == kv.TiFlash && len(r.selectResp.GetExecutionSummaries()) == 0) {
-				logutil.Logger(ctx).Warn("invalid cop task execution summaries length",
-					zap.Int("expected", len(r.copPlanIDs)),
-					zap.Int("received", len(r.selectResp.GetExecutionSummaries())))
-			}
-			return
-		}
 		for i, detail := range r.selectResp.GetExecutionSummaries() {
 			var summary *tipb.ExecutorExecutionSummary
 			if detail != nil && detail.TimeProcessedNs != nil &&
@@ -719,7 +792,14 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 			}
 			planID := r.copPlanIDs[i]
 			if i == len(r.copPlanIDs)-1 {
-				r.ctx.RuntimeStatsColl.RecordCopStats(planID, r.storeType, copStats.ScanDetail, copStats.TimeDetail, summary)
+				r.ctx.RuntimeStatsColl.RecordCopStats(
+					planID,
+					r.storeType,
+					copStats.ScanDetail,
+					copStats.TimeDetail,
+					copStats.ReadPoolTaskDetails,
+					summary,
+				)
 			} else if summary != nil {
 				r.ctx.RuntimeStatsColl.RecordOneCopTask(planID, r.storeType, summary)
 			}
@@ -754,48 +834,133 @@ func (r *selectResult) Close() error {
 	if r.iter != nil {
 		return errors.New("selectResult is invalid after IntoIter()")
 	}
+	if r.isAnalyze {
+		return r.closeAnalyze()
+	}
 	return r.close()
 }
 
+// recordCopRuntimeStatsForRaw records coprocessor statistics without decoding a
+// SelectResponse or relying on per-executor summaries. Callers must honor
+// collectExecDetailsForRaw; plan-level statistics are attributed to rootPlanID.
+// respTime is the response duration, or zero for unconsumed statistics.
+func (r *selectResult) recordCopRuntimeStatsForRaw(copStats *copr.CopRuntimeStats, respTime time.Duration) {
+	if copStats == nil || r.ctx == nil {
+		return
+	}
+	if r.ctx.ExecDetails != nil {
+		// The raw path does not measure local fetch time for statement Cop_time.
+		r.ctx.ExecDetails.MergeCopExecDetails(&copStats.CopExecDetails, 0)
+		r.ctx.ExecDetails.MergeReadPoolTaskDetails(copStats.ReadPoolTaskDetails)
+	}
+	if r.ctx.RuntimeStatsColl != nil && r.rootPlanID > 0 {
+		if r.stats == nil {
+			r.stats = &selectResultRuntimeStats{distSQLConcurrency: r.distSQLConcurrency}
+			if ci, ok := r.resp.(copr.CopInfo); ok {
+				r.stats.distSQLConcurrency, r.stats.extraConcurrency = ci.GetConcurrency()
+			}
+		}
+		r.stats.mergeCopRuntimeStats(copStats, respTime)
+		r.ctx.RuntimeStatsColl.RecordCopStats(
+			r.rootPlanID,
+			r.storeType,
+			copStats.ScanDetail,
+			copStats.TimeDetail,
+			copStats.ReadPoolTaskDetails,
+			nil,
+		)
+	}
+	if copStats.ScanDetail != nil {
+		r.scanDetailForRaw.Merge(copStats.ScanDetail)
+	}
+}
+
+func (r *selectResult) closeAnalyze() error {
+	metrics.DistSQLPartialCountHistogram.Observe(float64(r.partialCount))
+	respSize := atomic.SwapInt64(&r.selectRespSize, 0)
+	if respSize > 0 {
+		r.memConsume(-respSize)
+	}
+
+	closeErr := r.resp.Close()
+	if !r.collectExecDetailsForRaw || r.ctx == nil {
+		return closeErr
+	}
+	if unconsumed, ok := r.resp.(copr.HasUnconsumedCopRuntimeStats); ok && unconsumed != nil {
+		for _, copStats := range unconsumed.CollectUnconsumedCopRuntimeStats() {
+			r.recordCopRuntimeStatsForRaw(copStats, 0)
+		}
+	}
+	if r.ctx.RuntimeStatsColl != nil && r.rootPlanID > 0 {
+		if r.stats != nil {
+			r.ctx.RuntimeStatsColl.RegisterStats(r.rootPlanID, r.stats)
+		}
+		if scanBytes, ok := execdetails.EstimateScanBytes(
+			r.scanDetailForRaw.TotalKeys,
+			r.scanDetailForRaw.ProcessedKeys,
+			r.scanDetailForRaw.ProcessedKeysSize,
+		); ok {
+			r.ctx.RuntimeStatsColl.RecordAnalyzeScanBytes(r.rootPlanID, scanBytes)
+		}
+	}
+	return closeErr
+}
+
 func (r *selectResult) close() error {
+	r.closeOnce.Do(func() {
+		r.closeErr = r.closeImpl()
+	})
+	return r.closeErr
+}
+
+func (r *selectResult) closeImpl() error {
 	metrics.DistSQLPartialCountHistogram.Observe(float64(r.partialCount))
 	respSize := atomic.SwapInt64(&r.selectRespSize, 0)
 	if respSize > 0 {
 		r.memConsume(-respSize)
 	}
 	closeErr := r.resp.Close()
-	if r.ctx != nil {
-		if unconsumed, ok := r.resp.(copr.HasUnconsumedCopRuntimeStats); ok && unconsumed != nil {
-			unconsumedCopStats := unconsumed.CollectUnconsumedCopRuntimeStats()
-			for _, copStats := range unconsumedCopStats {
-				_ = r.updateCopRuntimeStats(context.Background(), copStats, time.Duration(0), true)
-				r.ctx.ExecDetails.MergeCopExecDetails(&copStats.CopExecDetails, 0)
-			}
+	if r.ctx == nil {
+		return closeErr
+	}
+
+	if unconsumed, ok := r.resp.(copr.HasUnconsumedCopRuntimeStats); ok && unconsumed != nil {
+		unconsumedCopStats := unconsumed.CollectUnconsumedCopRuntimeStats()
+		for _, copStats := range unconsumedCopStats {
+			_ = r.updateCopRuntimeStats(context.Background(), copStats, time.Duration(0), true)
+			r.ctx.ExecDetails.MergeCopExecDetails(&copStats.CopExecDetails, 0)
+			r.ctx.ExecDetails.MergeReadPoolTaskDetails(copStats.ReadPoolTaskDetails)
 		}
 	}
-	if r.stats != nil && r.ctx != nil {
-		if r.ctx.RuntimeStatsColl != nil && r.rootPlanID > 0 {
-			if provider, ok := r.resp.(copr.HasLimiterWaitStats); ok && provider != nil {
-				if limiterWait := provider.GetLimiterWaitStats(); !limiterWait.IsZero() {
-					r.stats.limiterWait.Merge(limiterWait)
-				}
-			}
-		}
-		defer func() {
-			if ci, ok := r.resp.(copr.CopInfo); ok {
-				r.stats.buildTaskDuration = ci.GetBuildTaskElapsed()
-				batched, fallback := ci.GetStoreBatchInfo()
-				if batched != 0 || fallback != 0 {
-					r.stats.storeBatchedNum, r.stats.storeBatchedFallbackNum = batched, fallback
-					telemetryStoreBatchedCnt.Add(float64(r.stats.storeBatchedNum))
-					telemetryStoreBatchedFallbackCnt.Add(float64(r.stats.storeBatchedFallbackNum))
-					telemetryBatchedQueryTaskCnt.Add(float64(r.stats.copRespTime.Size()))
-				}
-			}
-			r.stats.fetchRspDuration = r.fetchDuration
-			r.ctx.RuntimeStatsColl.RegisterStats(r.rootPlanID, r.stats)
-		}()
+
+	if r.rootPlanID <= 0 || r.ctx.RuntimeStatsColl == nil {
+		return closeErr
 	}
+
+	if provider, ok := r.resp.(copr.HasLimiterWaitStats); ok && provider != nil {
+		if limiterWait := provider.GetLimiterWaitStats(); !limiterWait.IsZero() {
+			r.getOrCreateRuntimeStats().limiterWait.Merge(limiterWait)
+		}
+	}
+
+	if r.stats == nil {
+		return closeErr
+	}
+
+	if ci, ok := r.resp.(copr.CopInfo); ok {
+		r.stats.buildTaskDuration = ci.GetBuildTaskElapsed()
+		batched, fallback := ci.GetStoreBatchInfo()
+		if batched != 0 || fallback != 0 {
+			r.stats.storeBatchedNum = batched
+			r.stats.storeBatchedFallbackNum = fallback
+			telemetryStoreBatchedCnt.Add(float64(batched))
+			telemetryStoreBatchedFallbackCnt.Add(float64(fallback))
+			telemetryBatchedQueryTaskCnt.Add(float64(r.stats.copRespTime.Size()))
+		}
+	}
+
+	r.stats.fetchRspDuration = r.fetchDuration
+	r.ctx.RuntimeStatsColl.RegisterStats(r.rootPlanID, r.stats)
 	return closeErr
 }
 
@@ -1049,7 +1214,6 @@ func (s *selectResultRuntimeStats) Clone() execdetails.RuntimeStats {
 		copRespTime:             execdetails.Percentile[execdetails.Duration]{},
 		procKeys:                execdetails.Percentile[execdetails.Int64]{},
 		backoffSleep:            make(map[string]time.Duration, len(s.backoffSleep)),
-		reqStat:                 tikv.NewRegionRequestRuntimeStats(),
 		distSQLConcurrency:      s.distSQLConcurrency,
 		extraConcurrency:        s.extraConcurrency,
 		CoprCacheHitNum:         s.CoprCacheHitNum,
@@ -1066,7 +1230,9 @@ func (s *selectResultRuntimeStats) Clone() execdetails.RuntimeStats {
 	}
 	newRs.totalProcessTime += s.totalProcessTime
 	newRs.totalWaitTime += s.totalWaitTime
-	newRs.reqStat = s.reqStat.Clone()
+	if s.reqStat != nil {
+		newRs.reqStat = s.reqStat.Clone()
+	}
 	return &newRs
 }
 
@@ -1088,7 +1254,13 @@ func (s *selectResultRuntimeStats) Merge(rs execdetails.RuntimeStats) {
 	}
 	s.totalProcessTime += other.totalProcessTime
 	s.totalWaitTime += other.totalWaitTime
-	s.reqStat.Merge(other.reqStat)
+	if other.reqStat != nil {
+		if s.reqStat == nil {
+			s.reqStat = other.reqStat.Clone()
+		} else {
+			s.reqStat.Merge(other.reqStat)
+		}
+	}
 	s.CoprCacheHitNum += other.CoprCacheHitNum
 	if other.distSQLConcurrency > s.distSQLConcurrency {
 		s.distSQLConcurrency = other.distSQLConcurrency

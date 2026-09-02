@@ -121,3 +121,46 @@ runtime aggregate contract.
 This receipt is a bounded parity slice, not a claim that the entire distsql
 package has been transcreated. Continue the package loop with the remaining
 runtime-stat and transport boundaries recorded above.
+
+## Current Go-master consumer batch (`78cac443a4f46c13bfe27eb247b5c80657952547`)
+
+The current fetched Go `origin/master` is
+`78cac443a4f46c13bfe27eb247b5c80657952547`. The complete package inventory
+was re-read before editing and corrected to the actual 14 tracked artifacts:
+11 root files (including `BUILD.bazel`, `OWNERS`, benchmark and test harnesses)
+and the three `pkg/distsql/context` artifacts. The inventory totals 5,077
+lines, 14 production/test/build artifacts, 126 production declarations, and
+40 test/benchmark declarations; there is no `doc.go`, fixture/testdata tree,
+generated source, platform variant, or additional nested package.
+
+This one package-scoped batch applies the nine-file, 738-insertion/133-
+deletion Go-master delta. `selectResult` now preserves response-close errors
+while collecting unconsumed runtime stats, propagates read-pool details,
+validates and records response-summary coverage, and supports raw Analyze
+execution-stat collection with open-ended close handling. The request and
+context surfaces retain the query-scoped cop limiter. Focused regressions
+`TestSelectAppliesQueryCopStoreLimiter` and
+`TestCloseCollectsUnconsumedStatsAfterResponseClose` pass, as does the full
+failpoint-aware root package suite. The nested context test deletion is a
+source-parity cleanup with no production behavior change.
+
+The batch is intentionally Go-only: `pkg/util/execdetails` supplies the
+runtime evidence API and `pkg/store/copr` remains the separate transport
+owner. Rust's `tidb-distsql` crate has the bounded limiter aggregate but no
+dependency-closed coprocessor response owner, so no speculative Rust wiring
+was added. The remaining TiKV/client-go integration is an explicit boundary.
+
+Latest validation evidence:
+
+- Pre-fix failpoint-aware command:
+  `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex ./tools/check/failpoint-go-test.sh ./pkg/distsql -run '^TestCloseCollectsUnconsumedStatsAfterResponseClose$' -count=1 -vet=off`
+  — failed as expected because the restored `RecordCopStats` API had not yet
+  been connected (missing read-pool argument in existing callers).
+- Post-fix focused failpoint-aware run for both new tests — passed (`0.793s`).
+- Post-fix full failpoint-aware root package run — passed (`0.745s`), with
+  expected warnings for intentionally malformed summary fixtures.
+- `git diff --check` — passed before staging.
+- `make lint` is required for the final Ready gate; `make bazel_prepare` is
+  required by the BUILD/test changes and remains blocked locally because no
+  Bazel executable is installed. No Rust source changed, so pinned Rust
+  formatting is not applicable to this Go consumer batch.
