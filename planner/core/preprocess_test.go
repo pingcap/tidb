@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -423,5 +424,36 @@ func TestPreprocessCTE(t *testing.T) {
 		err = stmts[0].Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &rs))
 		require.NoError(t, err)
 		require.Equal(t, tc.after, rs.String())
+	}
+}
+
+func TestPreprocessCTEConsumerCountIsIdempotent(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int)")
+
+	testCases := []struct {
+		name          string
+		sql           string
+		consumerCount int
+	}{
+		{name: "single consumer", sql: "with cte as (select * from t) select * from cte", consumerCount: 1},
+		{name: "multiple consumers", sql: "with cte as (select * from t) select * from cte c1 join cte c2", consumerCount: 2},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			stmt, err := parser.New().ParseOneStmt(testCase.sql, "", "")
+			require.NoError(t, err)
+			selectStmt := stmt.(*ast.SelectStmt)
+			cte := selectStmt.With.CTEs[0]
+
+			for i := 0; i < 2; i++ {
+				err = core.Preprocess(context.Background(), tk.Session(), stmt)
+				require.NoError(t, err)
+				require.Equal(t, testCase.consumerCount, cte.ConsumerCount)
+			}
+		})
 	}
 }
