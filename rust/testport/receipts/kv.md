@@ -1,7 +1,7 @@
 # `pkg/kv` — Go-master parity receipt
 
 Comparison source: Go `origin/master` at commit
-`94eb995357f34b7bab4889a82f0405797046447d` (2026-09-02).
+`febee17ec716d86b1e355e5400ef9e4f4f190bad` (2026-09-02).
 
 ## Complete Go inventory
 
@@ -100,6 +100,13 @@ redundant release, and stable per-store limiter reuse. The new
 `ERR_SHARED_LOCK_LOST` prototype also carries Go's code 9015, exact message,
 and key-redaction position.
 
+The 2026-09-02 Go package batch restores those current Go-master KV contracts
+in the integration branch: the aggregate and per-store limiter types and
+request fields, the shared-lock error identity, and their focused lifecycle
+regressions. The Rust owner changes above remain a separate earlier commit;
+this batch changes only the complete Go `pkg/kv` package and its parity
+receipt/plan.
+
 The hparser branch was still missing three Go-master KV contracts. The Go
 checker now accepts `tipb.ExprType_MaxCount` and `tipb.ExprType_MinCount` for
 SELECT/INDEX pushdown, and `kv.Request` carries the
@@ -137,10 +144,15 @@ cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check
 
 PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
 GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
-go test ./pkg/kv -run 'Test(IsRequestTypeSupported|RequestBatchTaskFlags)$' -count=1
-# passed after the fix; pre-fix compile failed on the missing Request fields
-tools/check/failpoint-go-test.sh ./pkg/kv -count=1
-# passed with failpoint cleanup
+TMPDIR=/tmp/tidb-codex \
+./tools/check/failpoint-go-test.sh ./pkg/kv -run '^(TestCoprRequestLimiterWaitsUntilRelease|TestCoprRequestLimiterAcquireCanBeCanceled|TestCoprRequestLimiterRedundantReleasePanics|TestCoprRequestLimiterConcurrentAcquireRelease|TestQueryCopStoreLimiter|TestError)$' -count=1 -vet=off
+# passed in 0.503s; pre-fix compile failed on the missing limiter constructors
+
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
+GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
+TMPDIR=/tmp/tidb-codex \
+./tools/check/failpoint-go-test.sh ./pkg/kv -count=1 -vet=off
+# passed in 0.577s with failpoint cleanup
 
 OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler \
 DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib \
@@ -155,7 +167,7 @@ make lint
 
 Go production and test sources changed, so `make bazel_prepare` was required
 and attempted; it is blocked locally because the `bazel` executable is not
-installed. No Bazel metadata could be regenerated. The full Rust owner test binary needs the
+installed (`make: bazel: No such file or directory`). No Bazel metadata could be regenerated. The full Rust owner test binary needs the
 larger `RUST_MIN_STACK` setting for one existing mixed-mutation test; with it,
 the suite passes.
 

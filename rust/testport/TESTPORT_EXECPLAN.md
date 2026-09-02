@@ -52,6 +52,15 @@ For each bounded behavior cluster:
   package-level boundary while distsql/session/store/copr consumers are
   audited separately. Details are in `receipts/kv.md`.
 
+- 2026-09-02: completed the complete `pkg/kv` Go-package batch in one commit
+  after pulling Go master `febee17ec716d86b1e355e5400ef9e4f4f190bad`.
+  Restored cancellation-aware aggregate/per-store coprocessor limiters,
+  request limiter fields, and the shared-lock-lost error identity; added the
+  focused wait/cancel/release/concurrency regressions and updated the BUILD
+  shard metadata. The pre-fix limiter tests failed on missing constructors;
+  post-fix failpoint-aware focused and full package suites passed. The Rust
+  owner and downstream distsql/session consumers remain separate boundaries.
+
 - 2026-09-02: completed the Go-master `pkg/parser` materialized-view DDL
   syntax delta in one parser-package batch. Before editing, the full root
   parser inventory (33 artifacts, 64,956 lines, generated grammar/keyword
