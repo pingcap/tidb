@@ -2416,6 +2416,19 @@ For each bounded behavior cluster:
   focused and full v2 suites passed. The nested `v2/tests` table package and
   SQL integration consumers remain the explicit boundary in the receipt.
 
+- 2026-09-02: applied the latest `origin/master`
+  `78cac443a4f46c13bfe27eb247b5c80657952547` `pkg/util/stmtsummary` delta as
+  one package-scoped batch. Restored newest-first history retention with
+  chronological output, execution-count average columns, empty-table-name
+  filtering, newest-entry history reset, normalized v2 record text, and the
+  rotation-safe, descriptor-bounded v2 history reader. Added source-derived
+  regressions and updated all affected BUILD shard metadata. Root and v2
+  failpoint-aware focused/full suites pass; the v2 table harness is blocked by
+  an unrelated unfinished statistics edit that does not compile. `make lint`,
+  Rust formatting, and diff checks are required Ready gates; `make
+  bazel_prepare` remains blocked by the unavailable local Bazel executable.
+  Details are in `receipts/util_stmtsummary_audit.md`.
+
 - 2026-09-01: audited all six Go-master `pkg/util/parser` artifacts (581
   lines) against the complete `tidb-parser::util_parser` owner. Go's
   `StmtNode.Accept` to `ast.Walk` migration changes visitor signatures but

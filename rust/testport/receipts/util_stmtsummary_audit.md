@@ -77,6 +77,28 @@ time, and serializes internal-query cleanup under the record mutex. The
 nested `v2/tests` table package was audited but unchanged; Rust's missing v2
 reader/logger/table ownership and SQL integration remain explicit boundaries.
 
+## Latest Go-master follow-up (`78cac443a4f46c13bfe27eb247b5c80657952547`)
+
+The fetched Go `origin/master` is now `78cac443a4f46c13bfe27eb247b5c80657952547`.
+This package-scoped batch applies that commit's 15-file delta (569 insertions,
+135 deletions) as one unit across the already inventoried 22 artifacts. v1
+history collection now returns the newest retained intervals in chronological
+order, average KV/PD/backoff/write-response columns divide by execution count,
+table-name serialization skips empty table entries, and history reset keeps
+the newest element. The v2 record uses the same table-name filtering and
+normalized SQL formatting. The v2 history reader now enumerates paths before
+opening files, preserves a rotating current file by inode, bounds open file
+descriptors through worker-side close, and handles metadata lookup failures;
+the v2 table harness covers open-ended time ranges. Focused regressions were
+added for each of these source behaviors, including the pre-fix evicted-history
+failure reproduced locally.
+
+The v2 table test could not compile in this shared workspace because an
+unrelated in-progress `pkg/statistics/handle/util` edit references the absent
+`vardef.TiDBAnalyzeStoreBatchSize` symbol. That edit is outside this package
+and was preserved. The Rust owner and executor/infoschema/planner integration
+remain explicit boundaries; no speculative Rust changes were made.
+
 ## Validation (Ready profile)
 
 - Failpoint-enabled Go root targeted run:
@@ -113,6 +135,31 @@ fixture was changed in this batch.
 
 OpenSSL-dependent Rust commands use the bundled Poppler root as `OPENSSL_DIR`
 and its `lib` directory in `DYLD_LIBRARY_PATH`.
+
+Latest `78cac443a4` follow-up evidence:
+
+- Pre-fix failpoint-aware run:
+  `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex ./tools/check/failpoint-go-test.sh ./pkg/util/stmtsummary -run '^TestEvictedHistoryCollectionKeepsLatestIntervals$' -count=1 -vet=off`
+  — failed as expected (`actual: 1`, `expected: 2`).
+- Root focused run for latest regressions with the same failpoint wrapper and
+  environment, `-run '^(TestEvictedHistoryCollectionKeepsLatestIntervals|TestExecutionAverageColumnsUseExecCount|TestTableNamesSkipEmptyTables)$'`
+  — passed.
+- Root full package run with the same wrapper and environment — passed
+  (0.479s).
+- v2 focused run with the same wrapper and environment,
+  `-run '^(TestStmtFiles|TestHistoryReader|TestStmtRecordTableNamesSkipEmptyTables|TestStmtRecordFormatsDigestText)$'`
+  — passed.
+- v2 full package run with the same wrapper and environment — passed
+  (0.811s).
+- Focused `pkg/util/stmtsummary/v2/tests`
+  `TestStmtSummaryHistoryOpenEndedTimeRange` — blocked at compile time by the
+  unrelated in-progress statistics edit's undefined
+  `vardef.TiDBAnalyzeStoreBatchSize` reference.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 make lint` — passed.
+- `git diff --check` — passed; no Rust source changed in this follow-up.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 make bazel_prepare`
+  — required for the test/BUILD changes and blocked because the local `bazel`
+  executable is unavailable.
 
 ## Risks and unverified surfaces
 
