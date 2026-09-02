@@ -4931,6 +4931,14 @@ For each bounded behavior cluster:
   `rust/testport/receipts/store_mockstore_unistore_tikv.md` and
   `rust/docs/operations/store-mockstore-unistore-tikv-audit-execplan.md`.
 
+- `pkg/store/gcworker` is restored to Go master in one package batch: after a
+  successful keyspace-level GC round, the worker recycles completed GCV2 work
+  and registers the next task for master/TTL roles, with best-effort error
+  logging. The complete four-artifact inventory, focused role/keyspace
+  regression, failpoint-wrapped package suite, and Ready evidence are in
+  `rust/testport/receipts/store_gcworker.md`; Rust has no dependency-closed GC
+  worker owner, so no Rust-only behavior was removed.
+
 ## Outcomes & Retrospective
 
 Work remains in progress. Current validated behavior includes ANALYZE prefix
