@@ -81,6 +81,14 @@ For each bounded behavior cluster:
   `receipts/expression_collation_audit.md`; the full library run has 1,076
   passes, nine documented baseline failures, and 139 ignored gap tests.
 
+- 2026-09-02: extended the bounded Rust `tidb-expr` expression-utility batch
+  against Go master `a85e0fd5df`. `GetFuncArg` now direct-indexes function
+  arguments like Go (while retaining `None` for non-functions), and
+  `ExtractColumnsFromColOpCol` now panics on two-argument non-column values
+  after returning `None` for non-two-argument shapes. Focused pre-fix-failing
+  regressions cover both unchecked boundaries; details are appended to
+  `receipts/expression_collation_audit.md`.
+
 - 2026-09-02: extended the bounded Rust-only `tidb-planner` child-accessor
   batch against Go master `a85e0fd5df` after the first validation exposed the
   physical sequence-construction boundary. Logical and physical sequence

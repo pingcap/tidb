@@ -124,12 +124,12 @@ pub fn check_args_not_multi_column_row(args: &[Expression]) -> Result<(), usize>
 /// Go `GetFuncArg` (`util.go:1349`): the `idx`-th argument of `e`, or `None`
 /// when `e` is not a function.
 ///
-/// Go indexes unguarded and panics on an out-of-range `idx`; `None` covers
-/// both that and the non-function case.
+/// Go indexes unguarded and panics on an out-of-range `idx`; this preserves
+/// that boundary while `None` remains reserved for a non-function expression.
 #[must_use]
 pub fn get_func_arg(e: &Expression, idx: usize) -> Option<&Expression> {
     match e {
-        Expression::ScalarFunction(function) => function.get_args().get(idx),
+        Expression::ScalarFunction(function) => Some(&function.get_args()[idx]),
         _ => None,
     }
 }

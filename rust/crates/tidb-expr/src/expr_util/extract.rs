@@ -519,12 +519,22 @@ pub fn is_col_op_col(sf: &ScalarFunction) -> Option<(&Column, &Column)> {
 /// Go `ExtractColumnsFromColOpCol` (`util.go:2381`): the two columns of a
 /// condition the caller has ALREADY established is `col op col`.
 ///
-/// Go type-asserts without the `, ok` form and panics otherwise; returning
-/// `None` is the same contract expressed without a panic, and
+/// Go returns nil columns when the arity is not two, but type-asserts without
+/// the `, ok` form and panics when either of two arguments is not a column.
 /// [`is_col_op_col`] is the check Go expects the caller to have made.
 #[must_use]
 pub fn extract_columns_from_col_op_col(sf: &ScalarFunction) -> Option<(&Column, &Column)> {
-    is_col_op_col(sf)
+    let args = sf.get_args();
+    if args.len() != 2 {
+        return None;
+    }
+    let Expression::Column(left) = &args[0] else {
+        panic!("ExtractColumnsFromColOpCol expected a column as argument 0");
+    };
+    let Expression::Column(right) = &args[1] else {
+        panic!("ExtractColumnsFromColOpCol expected a column as argument 1");
+    };
+    Some((left, right))
 }
 
 /// Go `ExtractCorColumns` over a batch: the correlated columns of every
